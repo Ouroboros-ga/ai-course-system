@@ -84,8 +84,7 @@ ai-smart-course-system/
 ├── deploy/                  # 部署配置（Docker、Nginx，一键部署）
 ├── docs/                    # 赛题要求的全量交付文档（需求分析、架构设计、演示视频等）
 ├── .gitignore               # Git 忽略文件配置
-├── README.md                # 项目说明文档（本文件）
-└── 项目一键启动指南.md      # 新手零门槛启动步骤
+└──  README.md                # 项目说明文档（本文件）
 ```
 
 
