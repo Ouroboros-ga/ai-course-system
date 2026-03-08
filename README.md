@@ -1,39 +1,190 @@
-# ai-smart-course-system
+<h1 align="center">
+基于泛雅平台的 AI 互动智课生成与实时问答系统
+</h1>
 
-#### 介绍
-{**以下是 Gitee 平台说明，您可以替换此简介**
-Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
-无论是个人、团队、或是企业，都能够用 Gitee 实现代码托管、项目管理、协作开发。企业项目请看 [https://gitee.com/enterprises](https://gitee.com/enterprises)}
+<p align="center">
+  <img src="https://img.shields.io/badge/版本-0.1.0-yellow.svg" alt="版本">
+  <img src="https://img.shields.io/badge/作者--purple.svg" alt="作者">
+  <img src="https://img.shields.io/badge/Python-3.12-blue.svg" alt="Python">
+  <img src="https://img.shields.io/badge/Vue-3.x-green.svg" alt="Vue">
+  <img src="https://img.shields.io/badge/FastAPI-0.115+-teal.svg" alt="FastAPI">
+</p>
 
-#### 软件架构
-软件架构说明
+---
 
+## 📖 项目背景
+在教育数字化转型深入推进的背景下，个性化学习与高效知识传递成为核心需求。传统课件多以静态文档、预制视频为主，存在“讲授模式固化、互动反馈缺失、个性化答疑不足”等痛点——教师需重复录制讲解内容，学生遇疑无法即时获得针对性解答，导致学习效率与知识吸收效果受限。
 
-#### 安装教程
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 使用说明
-
-1.  xxxx
-2.  xxxx
-3.  xxxx
-
-#### 参与贡献
-
-1.  Fork 本仓库
-2.  新建 Feat_xxx 分支
-3.  提交代码
-4.  新建 Pull Request
+本项目积极响应教育部《教育信息化 2.0 行动计划》，依托超星集团“泛雅网络教学平台”的海量优质教学资源与用户基础，旨在打造一款集 **“智能解析、交互讲授、实时答疑、进度续接”** 于一体的 AI 互动智课系统。我们致力于将静态课件转化为可交互的智能讲授内容，通过实时问答机制打破学习壁垒，既减轻教师备课负担，又满足学生个性化学习需求，推动教育数字化转型。
 
 
-#### 特技
+## 🚀 核心功能
+本项目完全贴合赛题要求，核心实现三大功能模块：
 
-1.  使用 Readme\_XXX.md 来支持不同的语言，例如 Readme\_en.md, Readme\_zh.md
-2.  Gitee 官方博客 [blog.gitee.com](https://blog.gitee.com)
-3.  你可以 [https://gitee.com/explore](https://gitee.com/explore) 这个地址来了解 Gitee 上的优秀开源项目
-4.  [GVP](https://gitee.com/gvp) 全称是 Gitee 最有价值开源项目，是综合评定出的优秀开源项目
-5.  Gitee 官方提供的使用手册 [https://gitee.com/help](https://gitee.com/help)
-6.  Gitee 封面人物是一档用来展示 Gitee 会员风采的栏目 [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+### 1. 智课生成模块
+- **智能课件解析**：支持 PPT、PDF 文档上传，自动提取知识点、公式、图表等内容，识别知识点逻辑结构。
+- **结构化脚本生成**：基于大语言模型 API，生成包含开场白、核心讲解、过渡语的结构化讲授脚本，支持教师手动编辑优化。
+- **语音/数字人讲授**：对接语音合成 API，将脚本转化为自然流畅的语音流，支持数字人播报（可选扩展）。
+
+### 2. 实时问答交互模块
+- **多模态问答入口**：提供文字与语音双重问答入口，适配 Web/移动端不同学习场景。
+- **上下文关联问答**：构建上下文关联模型，结合课件内容与对话历史，确保 AI 回答紧扣知识点，杜绝幻觉。
+- **多轮交互支持**：支持学生连续追问，AI 能理解对话上下文，提供层层深入的精准解答。
+
+### 3. 进度续接与节奏调整模块
+- **智能断点续接**：学生打断提问后，自动记录原讲授节点，问答结束后无缝回归原知识点继续讲解。
+- **理解度分析与节奏调整**：通过 NLP 技术分析学生提问内容，判断其对知识点的理解程度，动态调整后续讲授的快慢与深度。
+- **进度可视化**：提供学习进度条、知识点掌握情况可视化展示，帮助学生清晰了解学习状态。
+
+
+## 🛠️ 技术栈
+本项目采用轻量化、新手友好的技术栈，核心能力通过成熟 API 实现，无需复杂模型训练：
+
+| 技术领域       | 选型方案                                                                 |
+|----------------|--------------------------------------------------------------------------|
+| 核心语言       | Python 3.12                                                              |
+| 后端框架       | FastAPI（高性能异步 Web 框架，自动生成接口文档）                        |
+| 前端框架       | Vue 3 + Vite + Element Plus（组件库开箱即用，国内文档完善）            |
+| 数据库         | SQLite3（开发期，零配置）/ MySQL 8.0（上线期，无缝切换）               |
+| 课件解析       | python-pptx（PPT 解析）、pdfplumber（PDF 解析）、百度 OCR API（公式/图片识别） |
+| AI 能力        | 豆包/通义千问/文心一言大模型 API（无需本地部署，直接调用）             |
+| 语音处理       | 阿里云/腾讯云 TTS（语音合成）、ASR（语音识别）API                       |
+| 部署工具       | Docker Compose（一键启动，规避环境不一致问题）                          |
+
+
+## 📁 项目结构
+项目采用前后端分离架构，目录分层清晰，职责单一，支持团队并行开发：
+
+```
+ai-smart-course-system/
+├── backend/                 # 后端 FastAPI 项目（核心业务逻辑）
+│   ├── app/
+│   │   ├── main.py          # 项目入口，FastAPI 实例创建、路由注册
+│   │   ├── core/            # 全局核心配置（密钥、数据库、异常处理）
+│   │   ├── common/          # 通用工具类（大模型/语音 API 封装、课件解析工具）
+│   │   ├── models/          # 数据库 ORM 模型（用户、课件、问答、进度模型）
+│   │   ├── schemas/         # 接口请求/响应数据校验模型（Pydantic）
+│   │   ├── services/        # 核心业务逻辑层（智课生成、问答、进度业务）
+│   │   └── api/             # 接口路由层（对应三大核心模块）
+│   ├── requirements.txt     # 后端依赖包，一键 pip 安装
+│   ├── .env.example         # 环境变量示例（密钥、配置，复制即可用）
+│   └── run.py               # 后端一键启动脚本
+├── frontend/                # 前端 Vue 3 项目（用户交互界面）
+│   ├── src/
+│   │   ├── router/          # 路由配置（分教师/学生端）
+│   │   ├── store/           # 全局状态管理（Pinia）
+│   │   ├── api/             # 接口请求封装（与后端接口一一对应）
+│   │   ├── components/      # 全局通用组件（智课播放、问答聊天框、上传器等）
+│   │   ├── views/           # 页面组件（分教师/学生端，对应赛题功能）
+│   │   └── utils/           # 通用工具函数（权限、音频、格式处理）
+│   ├── package.json         # 前端依赖，一键 npm 安装
+│   ├── vite.config.js       # Vite 配置
+│   └── .env.example         # 环境变量示例（后端接口地址）
+├── database/                # 数据库脚本、测试数据（100份文理工类课件样本）
+├── deploy/                  # 部署配置（Docker、Nginx，一键部署）
+├── docs/                    # 赛题要求的全量交付文档（需求分析、架构设计、演示视频等）
+├── .gitignore               # Git 忽略文件配置
+├── README.md                # 项目说明文档（本文件）
+└── 项目一键启动指南.md      # 新手零门槛启动步骤
+```
+
+
+## ⚙️ 快速开始
+### 1. 环境准备
+确保本地已安装：
+- Python 3.12+
+- Node.js 18+
+- Git
+
+```bash
+# 克隆项目（替换为你的 Gitee 仓库地址）
+git clone https://gitee.com/Ouroboros/ai-smart-course-system.git
+cd ai-smart-course-system
+```
+
+### 2. 后端启动
+```bash
+# 进入后端目录
+cd backend
+
+# 创建虚拟环境（可选，推荐）
+python -m venv venv
+# 激活虚拟环境（Windows）
+venv\Scripts\activate
+# 激活虚拟环境（Linux/Mac）
+source venv/bin/activate
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 配置环境变量：复制 .env.example 为 .env，填入你的 API Key
+cp .env.example .env
+# 编辑 .env 文件，配置大模型、语音 API 密钥等
+
+# 启动后端服务
+python run.py
+```
+后端启动后，访问 `http://localhost:8000/docs` 查看自动生成的 API 交互文档。
+
+### 3. 前端启动
+```bash
+# 进入前端目录（新开一个终端）
+cd frontend
+
+# 安装依赖
+npm install
+
+# 配置环境变量：复制 .env.example 为 .env，填入后端接口地址
+cp .env.example .env
+
+# 启动前端开发服务器
+npm run dev
+```
+前端启动后，访问终端显示的本地地址（如 `http://localhost:5173`）即可使用系统。
+
+
+
+
+## 🤝 Gitee 协作规范
+为避免代码冲突、版本混乱，团队严格遵循以下协作规则：
+
+### 1. 分支管理
+仅保留4类分支，禁止创建其他分支：
+- `main`：主分支，存放最终可交付的稳定代码
+- `dev`：开发主分支，存放迭代完成的功能代码（仅可通过 PR 合并）
+- `feature/角色-功能名`：功能开发分支（如 `feature/后端A-ppt解析`）
+- `bugfix/角色-问题名`：bug 修复分支（如 `bugfix/前端B-问答窗口样式`）
+
+### 2. 代码提交规范
+所有提交遵循「前缀+描述」格式，单次提交只做一件事：
+- `feat`：新增功能（如 `feat: 完成PPT课件解析接口开发`）
+- `fix`：修复 bug（如 `fix: 修复多轮对话上下文丢失问题`）
+- `docs`：文档编写/修改（如 `docs: 补充需求分析文档`）
+- `style`：样式调整/代码格式优化（如 `style: 优化教师端脚本编辑页样式`）
+- `refactor`：代码重构（无功能变更）
+- `test`：测试代码/数据补充
+
+### 3. PR 评审流程
+1. 功能开发完成后，推送 `feature` 分支到远程仓库
+2. 提交 PR 到 `dev` 分支，关联对应 Issue
+3. 由对接成员评审（如后端A的PR由后端B评审），通过后合并到 `dev`
+4. 合并后删除远程功能分支
+
+
+## 📊 性能指标（赛题要求）
+本项目目标达成以下性能指标（基于100份文理工类课件测试集）：
+- 课件解析响应时间：≤ 2分钟/份
+- 问答响应时间：≤ 5秒
+- 知识点识别准确率：≥ 80%
+- 答案准确率：≥ 85%
+- 支持并发访问：≥ 10人
+
+
+## 📜 许可证
+本项目基于 [MIT License](LICENSE) 开源。
+
+---
+
+<div align="center">
+    <b>让每一份课件都会说话，让每一次学习都有回应。</b>
+</div>
