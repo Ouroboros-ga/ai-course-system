@@ -1,9 +1,7 @@
 <!-- Parent.vue -->
 <template>
   <div class="chat-page">
-    <!-- 其他内容 -->
-    <ChatBox />
-
+    <ChatBox class="chat-box" />
     <InputBox
       @send="handleSendMessage"
       @add="handleAddAttachment"
@@ -25,3 +23,20 @@ const handleAddAttachment = () => {
   // TODO: 打开文件选择器
 }
 </script>
+
+<style scoped>
+.chat-page {
+  height: 75vh;
+  display: flex;
+  flex-direction: column;
+  background-color: rgba(0, 0, 0, 0);
+  /* 底部安全区回退值（0 表示没有安全区时的默认值） */
+  padding-bottom: env(safe-area-inset-bottom, 80);
+}
+
+.chat-box {
+  flex: 1;
+  overflow-y: auto;
+  /* 其余样式由 chatBox 组件自己负责 */
+}
+</style>

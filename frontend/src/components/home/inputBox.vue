@@ -1,28 +1,39 @@
 <script setup>
 import { ref } from 'vue';
 
-// 定义发射的事件
 const emit = defineEmits(['send', 'add']);
 
-// 响应式数据
 const message = ref('');
 const isFocused = ref(false);
+const isComposing = ref(false); // 输入法组合状态
 
-// 处理发送消息
+// 发送消息
 const handleSend = () => {
   const text = message.value.trim();
-  if (!text) return;
+  if (!text || isComposing.value) return; // 组合中不发送
 
-  emit('send', text);  // 向父组件发射 send 事件，携带消息文本
-  message.value = '';  // 发送后清空输入框
+  emit('send', text);
+  message.value = '';
 };
 
-// 处理键盘事件（回车发送，支持 Shift+Enter 换行）
-const handleKeyup = (e) => {
-  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-    e.preventDefault();  // 阻止默认换行
-    handleSend();
+// 键盘事件（改为 keydown 及时阻止默认行为）
+const handleKeydown = (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();          // 阻止换行/提交
+    if (!isComposing.value) {    // 不在输入法组合中才触发发送
+      handleSend();
+    }
   }
+};
+
+// 组合事件：开始组合时标记
+const handleCompositionStart = () => {
+  isComposing.value = true;
+};
+
+// 组合事件：结束组合时取消标记
+const handleCompositionEnd = () => {
+  isComposing.value = false;
 };
 </script>
 
@@ -54,7 +65,9 @@ const handleKeyup = (e) => {
           placeholder="输入消息..."
           @focus="isFocused = true"
           @blur="isFocused = false"
-          @keyup="handleKeyup"
+          @keydown="handleKeydown"
+          @compositionstart="handleCompositionStart"
+          @compositionend="handleCompositionEnd"
           aria-label="消息输入框"
         />
       </div>
@@ -63,8 +76,8 @@ const handleKeyup = (e) => {
       <button
         class="action-btn send-btn"
         type="button"
-        :class="{ 'active': message.trim().length > 0 }"
-        :disabled="message.trim().length === 0"
+        :class="{ 'active': message.trim().length > 0 && !isComposing }"
+        :disabled="message.trim().length === 0 || isComposing"
         @click="handleSend"
         aria-label="发送消息"
       >
@@ -81,14 +94,14 @@ const handleKeyup = (e) => {
 <style scoped>
 /* ========== 容器样式 ========== */
 .input-container {
+  position: relative;      /* 为光晕提供定位参考 */
   width: 100%;
   display: flex;
   justify-content: center;
   z-index: 1000;
-  /* ✅ 移除动画，直接显示 */
   opacity: 1;
   transform: translateY(0);
-  pointer-events: none;
+  pointer-events: none;    /* 允许内部元素接收事件 */
 }
 
 .input-container * {
@@ -110,7 +123,7 @@ const handleKeyup = (e) => {
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   max-width: 600px;
   width: 90%;
-  position: relative;
+  margin: 16px auto;       /* 添加垂直间距 */
 }
 
 .input-wrapper.focused {
@@ -212,6 +225,8 @@ const handleKeyup = (e) => {
 .glow-effect {
   position: absolute;
   bottom: -20px;
+  left: 50%;
+  transform: translateX(-50%);
   width: 60%;
   height: 20px;
   background: radial-gradient(ellipse at center, rgba(0,0,0,0.1) 0%, rgba(0,0,0,0) 70%);
@@ -222,15 +237,11 @@ const handleKeyup = (e) => {
 
 /* ========== 移动端适配 ========== */
 @media (max-width: 768px) {
-  .input-container {
-    bottom: calc(16px + env(safe-area-inset-bottom));
-    padding: 0 12px;
-  }
-
   .input-wrapper {
     width: 100%;
     max-width: 100%;
     padding: 6px 10px;
+    margin: 12px 12px calc(12px + env(safe-area-inset-bottom));
   }
 
   .action-btn {
@@ -240,6 +251,11 @@ const handleKeyup = (e) => {
 
   .input-area input {
     font-size: 14px;
+  }
+
+  /* 光晕适当缩小 */
+  .glow-effect {
+    width: 80%;
   }
 }
 </style>
