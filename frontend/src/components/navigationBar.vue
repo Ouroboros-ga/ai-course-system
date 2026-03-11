@@ -6,10 +6,10 @@
   <div class="app-container">
     <!-- 顶部导航栏 -->
     <nav class="navbar">
-      <div class="logo">
+      <router-link to="/home" class="logo">
         <span class="logo-icon">🦀</span>
         Smartarb
-      </div>
+      </router-link>
 
       <div class="nav-links">
         <router-link to="/home" class="nav-item">
@@ -41,33 +41,10 @@
   为确保本组件开箱即用，此处直接使用具体颜色值
 */
 
-/* 全局容器 - 🎨 渐变背景版本 */
-.app-container {
-  min-height: 100vh;
-
-  /* ✨ 多层渐变背景：主渐变 + 径向光晕 + 顶部高光 */
-  background-image:
-    /* 强对比主渐变：蓝 → 白 → 青 */
-    linear-gradient(135deg, #e3f0ff 0%, #f8fafc 50%, #e8fcff 100%),
-
-      /* 高亮顶部光晕 */
-    radial-gradient(ellipse at 50% 0%, rgba(14, 165, 233, 0.35) 0%, rgba(50, 176, 232, 0.15) 30%, transparent 75%),
-
-      /* 青蓝底部光晕 */
-    radial-gradient(ellipse at 50% 100%, rgba(245, 249, 251, 0.3) 0%, rgba(56, 189, 248, 0.12) 35%, transparent 70%);
-
-  background-attachment: fixed;
-  background-size: 100% 100%, 130% 130%, 130% 130%;
-
-  font-family: 'Inter', system-ui, -apple-system, sans-serif;
-  color: #0f172a;
-  display: flex;
-  flex-direction: column;
-}
 
 /* 🔷 导航栏样式 - 保持原有增强设计 */
 .navbar {
-  position: sticky;
+  //position: sticky;
   top: 0;
   z-index: 100;
   display: flex;
@@ -83,6 +60,8 @@
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid #e2e8f0;
   position: relative;
+
+  border-radius: 28px;
 
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.04),
@@ -150,6 +129,8 @@
   gap: 0.5rem;
   text-shadow: 0 0 20px rgba(14, 165, 233, 0.1);
   cursor: pointer;
+
+  text-decoration: none;
 }
 
 .logo-icon {

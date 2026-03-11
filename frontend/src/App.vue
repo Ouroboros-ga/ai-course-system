@@ -1,10 +1,11 @@
 <script setup>
   import navigationBar from "./components/navigationBar.vue"
+  import gradientBackground from "./components/gradientBackground.vue"
 </script>
 
 <template>
-<!--  <h1>APP</h1>-->
   <navigationBar />
+  <gradientBackground v-bind:animated="true" />
 </template>
 
 <style scoped></style>
