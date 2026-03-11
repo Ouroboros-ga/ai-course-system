@@ -1,11 +1,27 @@
-<script setup>
-
-</script>
-
+<!-- Parent.vue -->
 <template>
-  <h1>这是home页面</h1>
+  <div class="chat-page">
+    <!-- 其他内容 -->
+    <ChatBox />
+
+    <InputBox
+      @send="handleSendMessage"
+      @add="handleAddAttachment"
+    />
+  </div>
 </template>
 
-<style scoped>
+<script setup>
+import InputBox from '../components/home/inputBox.vue'
+import ChatBox from '../components/home/chatBox.vue'
 
-</style>
+const handleSendMessage = (text) => {
+  console.log('📤 发送消息:', text)
+  // TODO: 调用 API 发送消息
+}
+
+const handleAddAttachment = () => {
+  console.log('📎 点击添加附件')
+  // TODO: 打开文件选择器
+}
+</script>
