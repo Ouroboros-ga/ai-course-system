@@ -6,13 +6,13 @@
   <div class="app-container">
     <!-- 顶部导航栏 -->
     <nav class="navbar">
-      <router-link to="/home" class="logo">
+      <router-link to="/" class="logo">
         <span class="logo-icon">🦀</span>
         Smartarb
       </router-link>
 
       <div class="nav-links">
-        <router-link to="/home" class="nav-item">
+        <router-link to="/" class="nav-item">
           Home
         </router-link>
         <router-link to="/about" class="nav-item">
