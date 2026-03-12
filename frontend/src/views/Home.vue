@@ -10,8 +10,8 @@
 </template>
 
 <script setup>
-import InputBox from '../components/home/inputBox.vue'
-import ChatBox from '../components/home/chatBox.vue'
+import InputBox from '../components/home/InputBox.vue'
+import ChatBox from '../components/home/ChatBox.vue'
 
 const handleSendMessage = (text) => {
   console.log('📤 发送消息:', text)
