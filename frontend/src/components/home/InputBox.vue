@@ -1,11 +1,25 @@
 <script setup>
-import { ref } from 'vue';
+import { ref, nextTick } from 'vue';
 
 const emit = defineEmits(['send', 'add']);
 
 const message = ref('');
 const isFocused = ref(false);
 const isComposing = ref(false); // 输入法组合状态
+const textareaRef = ref(null);
+
+// 自动调整 textarea 高度
+const autoResize = () => {
+  const textarea = textareaRef.value;
+  if (!textarea) return;
+
+  textarea.style.height = 'auto'; // 先重置高度
+  const lineHeight = 24; // 单行高度
+  const maxHeight = lineHeight * 3; // 最大3行
+
+  const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+  textarea.style.height = newHeight + 'px';
+};
 
 // 发送消息
 const handleSend = () => {
@@ -14,6 +28,7 @@ const handleSend = () => {
 
   emit('send', text);
   message.value = '';
+  nextTick(() => autoResize()); // 清空后重置高度
 };
 
 // 键盘事件（改为 keydown 及时阻止默认行为）
@@ -59,17 +74,20 @@ const handleCompositionEnd = () => {
 
       <!-- 输入框区域 -->
       <div class="input-area">
-        <input
+        <textarea
+          ref="textareaRef"
+          class="input-text"
           v-model="message"
-          type="text"
           placeholder="输入消息..."
+          rows="1"
           @focus="isFocused = true"
           @blur="isFocused = false"
           @keydown="handleKeydown"
+          @input="autoResize"
           @compositionstart="handleCompositionStart"
           @compositionend="handleCompositionEnd"
           aria-label="消息输入框"
-        />
+        ></textarea>
       </div>
 
       <!-- 发送按钮 -->
@@ -81,7 +99,12 @@ const handleCompositionEnd = () => {
         @click="handleSend"
         aria-label="发送消息"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24"
+             fill="none"
+             stroke="currentColor"
+             stroke-width="2"
+             stroke-linecap="round"
+             stroke-linejoin="round">
           <line x1="22" y1="2" x2="11" y2="13"></line>
           <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
         </svg>
@@ -92,6 +115,47 @@ const handleCompositionEnd = () => {
 </template>
 
 <style scoped>
+
+.input-text {
+  width: 100%;
+  border: none;
+  outline: none;
+  font-size: 16px;
+  color: #333;
+  padding: 0;
+  font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+  resize: none;
+  line-height: 1.5;
+  height: 24px;
+  min-height: 24px;
+  max-height: 72px; /* 3行高度 */
+  overflow-y: auto;
+  word-wrap: break-word;
+  word-break: break-all;
+
+  background: rgba(0, 0, 0, 0);
+}
+
+/* 自定义滚动条样式 */
+.input-text::-webkit-scrollbar {
+  width: 4px;
+}
+
+.input-text::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.input-text::-webkit-scrollbar-thumb {
+  background: #ddd;
+  border-radius: 2px;
+}
+
+.input-text::-webkit-scrollbar-thumb:hover {
+  background: #ccc;
+}
+
 /* ========== 容器样式 ========== */
 .input-container {
   position: relative;      /* 为光晕提供定位参考 */
@@ -111,19 +175,19 @@ const handleCompositionEnd = () => {
 /* ========== 主包裹层 ========== */
 .input-wrapper {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   padding: 8px 12px;
-  border-radius: 50px;
+  border-radius: 30px;
   box-shadow:
     0 10px 30px -10px rgba(0, 0, 0, 0.1),
     0 0 0 1px rgba(0, 0, 0, 0.05);
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   max-width: 600px;
   width: 90%;
-  margin: 16px auto;       /* 添加垂直间距 */
+  margin: 16px auto;
 }
 
 .input-wrapper.focused {
@@ -175,7 +239,11 @@ const handleCompositionEnd = () => {
 .input-area {
   flex: 1;
   margin: 0 4px;
-  overflow: hidden;
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+
+  //background: blue;
 }
 
 .input-area input {

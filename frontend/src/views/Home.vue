@@ -10,12 +10,21 @@
 </template>
 
 <script setup>
+import { useCounterStore } from "@/stores/counter.js";
+const counter = useCounterStore()
+
 import InputBox from '../components/home/InputBox.vue'
 import ChatBox from '../components/home/ChatBox.vue'
 
 const handleSendMessage = (text) => {
   console.log('📤 发送消息:', text)
-  // TODO: 调用 API 发送消息
+  let theId = 0
+  if (counter.messages.length !== 0){
+    let index = counter.messages.length - 1
+    theId = counter.messages[index].id + 1
+  }
+  counter.addMessage({id: theId, class: 'user', message: text})
+  console.log(counter.messages)
 }
 
 const handleAddAttachment = () => {

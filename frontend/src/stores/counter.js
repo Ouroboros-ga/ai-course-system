@@ -2,11 +2,26 @@ import { ref, computed } from 'vue'
 import { defineStore } from 'pinia'
 
 export const useCounterStore = defineStore('counter', () => {
-  const count = ref(0)
-  const doubleCount = computed(() => count.value * 2)
-  function increment() {
-    count.value++
+
+  // messages格式：[{id: 1, class: 'user', message: 'Hello World'}]
+  const messages = ref([])  // 消息列表
+
+  function addMessage(message) {
+    messages.value.push(message)
   }
 
-  return { count, doubleCount, increment }
+  function removeMessage(id) {
+    messages.value = messages.value.filter(msg => msg.id !== id)
+  }
+
+  function clearMessages() {
+    messages.value = []
+  }
+
+  return {
+    messages,
+    addMessage,
+    clearMessages,
+    removeMessage,
+  }
 })
