@@ -15,6 +15,9 @@
         <router-link to="/" class="nav-item">
           Home
         </router-link>
+        <router-link to="/chat" class="nav-item">
+          Home
+        </router-link>
         <router-link to="/about" class="nav-item">
           About
         </router-link>
@@ -61,7 +64,7 @@
   border-bottom: 1px solid #e2e8f0;
   position: relative;
 
-  border-radius: 28px;
+  border-radius: 0;
 
   box-shadow:
     0 1px 3px rgba(0, 0, 0, 0.04),
