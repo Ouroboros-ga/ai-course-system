@@ -16,7 +16,7 @@
           Home
         </router-link>
         <router-link to="/chat" class="nav-item">
-          Home
+          Chat
         </router-link>
         <router-link to="/about" class="nav-item">
           About
