@@ -1,14 +1,19 @@
-<script setup>
-
-</script>
-
 <template>
-  <div class="document-container">
-    <h1>这是document页面</h1>
-    <p>这里存放着一些关于本网站的文档</p>
+  <div class="document-page">
+    <DocumentContent />
   </div>
 </template>
 
-<style scoped>
+<script setup>
+import DocumentContent from '../components/document/DocumentContent.vue'
+</script>
 
+<style scoped>
+.document-page {
+  height: 75vh;
+  display: flex;
+  flex-direction: column;
+  background-color: rgba(0, 0, 0, 0);
+  padding-bottom: env(safe-area-inset-bottom, 80);
+}
 </style>

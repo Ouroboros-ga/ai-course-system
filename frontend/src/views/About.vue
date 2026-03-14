@@ -1,19 +1,19 @@
-<script setup>
-</script>
 <template>
-  <div class="about-container">
-    <h1>这是 about 页面</h1>
-    <p>这是一个关于页面</p>
-    <p>这里编写这这个网站的介绍</p>
+  <div class="about-page">
+    <AboutContent />
   </div>
 </template>
 
+<script setup>
+import AboutContent from '../components/about/AboutContent.vue'
+</script>
+
 <style scoped>
-.about-container {
-  width: 100%;
-  height: 100%;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
+.about-page {
+  height: 75vh;
+  display: flex;
+  flex-direction: column;
+  background-color: rgba(0, 0, 0, 0);
+  padding-bottom: env(safe-area-inset-bottom, 80);
 }
 </style>
