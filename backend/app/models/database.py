@@ -1,6 +1,4 @@
 
-
-
 from sqlmodel import SQLModel, create_engine, Session
 from typing import Generator
 
@@ -8,7 +6,7 @@ DATABASE_URL = f"sqlite:///smart_class.db"
 
 engine = create_engine(
     DATABASE_URL,
-    echo=True,  # True: 在控制台打印 SQL 语句，方便调试；生产环境可改为 False
+    echo=False,  # True: 在控制台打印 SQL 语句，方便调试；生产环境可改为 False
     connect_args={"check_same_thread": False}
 )
 
