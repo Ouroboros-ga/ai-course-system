@@ -270,8 +270,8 @@ onUnmounted(() => {
     rgba(255, 255, 255, 0.05) 30%,
     transparent 70%
   );
-  left: calc(var(--mouse-x, 0.5) * 100%);
-  top: calc(var(--mouse-y, 0.5) * 100%);
+  //left: calc(var(--mouse-x, 0.5) * 100%);
+  //top: calc(var(--mouse-y, 0.5) * 100%);
   transform: translate(-50%, -50%);
   pointer-events: none;
   z-index: 4;
@@ -296,7 +296,7 @@ onUnmounted(() => {
   background-size: 60px 60px;
   z-index: 2;
   pointer-events: none;
-  transform: translateY(var(--scroll-y, 0));
+  //transform: translateY(var(--scroll-y, 0));
 }
 
 /* ═══════════════════════════════════════════════════════════

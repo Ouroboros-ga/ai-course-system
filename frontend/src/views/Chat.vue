@@ -24,7 +24,10 @@ const handleSendMessage = (text) => {
     theId = counter.messages[index].id + 1
   }
   counter.addMessage({id: theId, class: 'user', message: text})
-  console.log(counter.messages)
+
+  // TODO: 模拟ai回答
+  counter.addMessage({id: theId + 1, class: 'ai', message: '模拟ai回答'})
+  // console.log(counter.messages)
 }
 
 const handleAddAttachment = () => {

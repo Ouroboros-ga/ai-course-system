@@ -1,10 +1,20 @@
 <script setup>
+import {ref} from "vue";
+
 const props = defineProps({
   message: {
     type: String,
     required: true
   }
 })
+
+let nowTime = ref(
+  new Date().toLocaleTimeString(
+    'zh-CN',
+    { hour: '2-digit', minute: '2-digit' }
+  )
+)
+
 </script>
 
 <template>
@@ -13,17 +23,26 @@ const props = defineProps({
     <div class="user-bubble">
       {{ props.message }}
     </div>
+    <div class="now-time">
+      {{ nowTime }}
+    </div>
   </div>
 </template>
 
 <style scoped>
-
 .line {
   display: flex;
+  flex-direction: column;
   justify-content: flex-end;
-  align-items: flex-start;
+  align-items: flex-end;
   padding: 0 16px;
   margin-bottom: 12px;
+}
+
+.now-time {
+  color: #1c1c1e;
+  font-size: 12px;
+  transform: translateX(12px);
 }
 
 .user-bubble {
