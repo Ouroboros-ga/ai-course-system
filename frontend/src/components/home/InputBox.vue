@@ -8,6 +8,23 @@ const isFocused = ref(false);
 const isComposing = ref(false); // 输入法组合状态
 const textareaRef = ref(null);
 
+const handleFileChange = (event) => {
+  const file = event.target.files[0]
+
+  if (file) {
+    console.log('选择的文件:', file.name)
+
+    // 这里可以把文件传给父组件
+    emit('add', file)
+
+    // 或者直接在这里处理上传逻辑
+    // ...
+  }
+
+  // 清空 value，允许重复选择相同文件
+  event.target.value = ''
+}
+
 // 自动调整 textarea 高度
 const autoResize = () => {
   const textarea = textareaRef.value;
@@ -60,17 +77,28 @@ const handleCompositionEnd = () => {
     <div class="input-wrapper" :class="{ 'focused': isFocused }">
 
       <!-- 添加附件按钮 -->
-      <button
+      <label
         class="action-btn add-btn"
-        type="button"
-        @click="emit('add')"
         aria-label="添加附件"
       >
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <input
+          type="file"
+          style="display: none"
+          @change="handleFileChange"
+          accept=".xlsx,.xls,.doc,.docx,.jpg,.png"
+        />
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.5"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
           <line x1="12" y1="5" x2="12" y2="19"></line>
           <line x1="5" y1="12" x2="19" y2="12"></line>
         </svg>
-      </button>
+      </label>
 
       <!-- 输入框区域 -->
       <div class="input-area">

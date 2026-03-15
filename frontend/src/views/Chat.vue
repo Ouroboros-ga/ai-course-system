@@ -30,9 +30,9 @@ const handleSendMessage = (text) => {
   // console.log(counter.messages)
 }
 
-const handleAddAttachment = () => {
+const handleAddAttachment = (file) => {
   console.log('📎 点击添加附件')
-  // TODO: 打开文件选择器
+  console.log(file)
 }
 </script>
 
