@@ -72,13 +72,13 @@ const handleClickLogin = () => {
 /* 2. 进场 初始状态 */
 .login-modal-enter-from {
   opacity: 0;         /* 透明 */
-  transform: scale(0.99); /* 稍微小一点 */
+  transform: scale(0.95); /* 稍微小一点 */
 }
 
 /* 3. 离场 结束状态 */
 .login-modal-leave-to {
   opacity: 0;
-  transform: scale(1.01); /* 离开时稍微放大一点点，产生“远去”感 */
+  transform: scale(1.05); /* 离开时稍微放大一点点，产生“远去”感 */
 }
 
 </style>
