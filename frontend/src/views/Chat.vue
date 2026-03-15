@@ -1,4 +1,4 @@
-<!-- Parent.vue -->
+<!-- Chat.vue -->
 <template>
   <div class="chat-page">
     <ChatBox class="chat-box" />
@@ -13,8 +13,8 @@
 import { useCounterStore } from "@/stores/counter.js";
 const counter = useCounterStore()
 
-import InputBox from '../components/home/InputBox.vue'
-import ChatBox from '../components/home/ChatBox.vue'
+import InputBox from '@/components/chat/InputBox.vue'
+import ChatBox from '@/components/chat/ChatBox.vue'
 
 const handleSendMessage = (text) => {
   console.log('📤 发送消息:', text)
@@ -38,17 +38,13 @@ const handleAddAttachment = (file) => {
 
 <style scoped>
 .chat-page {
-  height: 75vh;
+  height: 82vh;
   display: flex;
   flex-direction: column;
-  background-color: rgba(0, 0, 0, 0);
-  /* 底部安全区回退值（0 表示没有安全区时的默认值） */
-  padding-bottom: env(safe-area-inset-bottom, 80);
+  box-sizing: border-box;
+  flex: 1;
+
+  //background: red;
 }
 
-.chat-box {
-  flex: 1;
-  overflow-y: auto;
-  /* 其余样式由 chatBox 组件自己负责 */
-}
 </style>

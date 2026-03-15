@@ -1,7 +1,7 @@
 <script setup>
 import { ref, defineAsyncComponent } from 'vue'
 // 假设你已经在别的地方引入了 store
-import { useCounterStore } from '@/stores/counter'
+import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
 // 1. 提前定义好异步组件（只定义一次，性能高）
@@ -49,14 +49,14 @@ const getComponent = (type) => {
 .chat-box {
   width: 100%;
   height: 100%;               /* 由父容器 flex 控制高度 */
-  padding: 20px;
+  padding: 0 20px 20px 20px;
   overflow-y: auto;
   background: transparent;
   display: flex;
   flex-direction: column;
   gap: 16px;
   /* ✨ 添加上下边框 */
-  border-top: 1px solid rgba(0, 0, 0, 0.2);
+  //border-top: 1px solid rgba(0, 0, 0, 0.2);
   border-bottom: 2px solid rgba(0, 0, 0, 0.1);
 
   /* 滚动条美化 */
@@ -85,7 +85,7 @@ const getComponent = (type) => {
 /* 移动端适配 */
 @media (max-width: 768px) {
   .chat-box {
-    padding: 12px;
+    padding: 0px 12px 12px 12px;
     gap: 12px;
   }
 }

@@ -205,11 +205,13 @@
 /* 主内容区域 */
 .main-content {
   flex: 1;
-  padding: 2.5rem;
+  padding: 0 2.5rem 2.5rem 2.5rem;
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
+
+  //background: red;
 }
 
 /* 路由切换淡入淡出动画 */
