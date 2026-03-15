@@ -136,21 +136,28 @@ const handleSubmit = () => {
 
 <style scoped>
 /* --- 容器与背景 --- */
+/* Login.vue 中的 <style scoped> */
 .login-container {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+  /* 1. 删除 top/left/transform 的居中方式 */
+  position: fixed;
+  top: 0;
+  left: 0;
   width: 100%;
-  max-width: 450px;
+  height: 100%;
+
+  /* 2. 使用 Flexbox 实现水平垂直居中 */
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow: visible;
-  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 
+  overflow: hidden;
+  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  /* 确保 z-index 足够高，盖住下面的内容 */
   z-index: 20;
+
+  pointer-events: none; /* 让鼠标事件穿透 */
 }
+
 
 
 /* --- 毛玻璃卡片 --- */
@@ -167,6 +174,8 @@ const handleSubmit = () => {
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   z-index: 10;
   color: #555; /* 全局灰色字体 */
+
+  pointer-events: auto;
 }
 
 /* --- 头部切换 --- */

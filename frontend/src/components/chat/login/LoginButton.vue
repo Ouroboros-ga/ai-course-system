@@ -21,8 +21,9 @@ const handleClick = () => {
 <style scoped>
 .login-btn {
   position: absolute;
-  right: 20px;
+  right: -20px;
   top: 20px;
+  //transform: translateX(40px);
 
   display: flex;
   align-items: center;
@@ -42,7 +43,7 @@ const handleClick = () => {
   cursor: pointer;
   overflow: hidden;
 
-  transition: all 0.3s ease;
+  transition: all 0.2s ease;
 }
 
 
