@@ -190,7 +190,7 @@ const handleCompositionEnd = () => {
   width: 100%;
   display: flex;
   justify-content: center;
-  z-index: 1000;
+  z-index: 10;
   opacity: 1;
   transform: translateY(0);
   pointer-events: none;    /* 允许内部元素接收事件 */

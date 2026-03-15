@@ -30,6 +30,30 @@ let nowTime = ref(
 </template>
 
 <style scoped>
+/* --- 新增动画定义 --- */
+@keyframes pop-in {
+  0% {
+    opacity: 0;               /* 初始透明 */
+    transform: scale(0.8) translateX(20px); /* 初始缩小并向右偏移 */
+  }
+  70% {
+    transform: scale(1.05) translateX(-2px); /* 中间阶段稍微放大并向左回弹，模拟惯性 */
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateX(0); /* 回归原位 */
+  }
+}
+
+@keyframes appear {
+  from{
+    opacity: 0;
+  }
+  to{
+    opacity: 1;
+  }
+}
+
 .line {
   display: flex;
   flex-direction: column;
@@ -43,9 +67,15 @@ let nowTime = ref(
   color: #1c1c1e;
   font-size: 12px;
   transform: translateX(12px);
+
+  animation: appear 0.4s ease;
 }
 
 .user-bubble {
+  /* --- 应用动画 --- */
+  animation: pop-in 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  /* 这是一个“弹性”时间曲线，让回弹效果更自然 */
+
   /* 1. 核心毛玻璃属性：背景半透明 */
   background: rgba(138, 203, 255, 0.25); /* 白色底，25%不透明度 */
 
