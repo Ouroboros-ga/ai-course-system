@@ -65,27 +65,29 @@ const goToTop = () => {
 </script>
 
 <template>
-  <div class="container">
-    <div class="slide page1">
-      <div class="hero-content">
-        <h1 class="main-title">泛雅 AI 智课 实时互动<br>免费试用 - 重构课堂体验</h1>
-        <p class="sub-title">
-          基于泛雅平台的 AI 互动智课生成与实时问答系统！融合 RAG 与大模型技术，自动生成互动课件、智能续接学习进度、7×24 小时实时答疑。免费无水印，支持高校教学场景，助力教育数字化升级，让每一堂课都更智能、更高效！
-        </p>
+  <div>
+    <div class="container">
+      <div class="slide page1">
+        <div class="hero-content">
+          <h1 class="main-title">泛雅 AI 智课 实时互动<br>免费试用 - 重构课堂体验</h1>
+          <p class="sub-title">
+            基于泛雅平台的 AI 互动智课生成与实时问答系统！融合 RAG 与大模型技术，自动生成互动课件、智能续接学习进度、7×24 小时实时答疑。免费无水印，支持高校教学场景，助力教育数字化升级，让每一堂课都更智能、更高效！
+          </p>
 
-        <button class="use-btn" @click="goToChat">立即使用</button>
+          <button class="use-btn" @click="goToChat">立即使用</button>
+        </div>
       </div>
+
+      <div class="slide page2"></div>
+      <div class="slide page3"></div>
+      <div class="slide page4"></div>
     </div>
 
-    <div class="slide page2"></div>
-    <div class="slide page3"></div>
-    <div class="slide page4"></div>
+    <div class="scroll-arrow" @click="goNext">↓</div>
+
+    <!-- 🔥 右下角回到顶部按钮（你要的位置） -->
+    <button class="back-top" @click="goToTop">↑</button>
   </div>
-
-  <div class="scroll-arrow" @click="goNext">↓</div>
-
-  <!-- 🔥 右下角回到顶部按钮（你要的位置） -->
-  <button class="back-top" @click="goToTop">↑</button>
 </template>
 
 <style scoped>
