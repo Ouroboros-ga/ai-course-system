@@ -1,29 +1,68 @@
 <script setup>
 import { ref } from 'vue'
+import { showToast } from '@/utils/toast.js'
 
 // 状态管理：当前是否为登录模式
 const isLoginMode = ref(true)
 
+// 自定义信号
+const emit = defineEmits(['loginSend', 'registerSend']);
+
+
 // 表单数据
 const form = ref({
   username: '',
-  email: '',
   password: '',
   confirmPassword: ''
 })
 
 // 提交表单
 const handleSubmit = () => {
-  if (isLoginMode.value) {
-    console.log('登录信息:', { email: form.value.email, password: form.value.password })
-    alert('登录请求已发送（查看控制台）')
-  } else {
+  // --- 定义校验规则 ---
+
+  // 用户名规则：1-80位，纯英文字母
+  const usernameRegex = /^[a-zA-Z]{1,80}$/
+
+  // 密码规则：6-18位，仅包含英文字母和数字
+  const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
+
+  // 1. 校验用户名
+  if (!form.value.username) {
+    showToast('用户名不能为空！')
+    return
+  }
+  if (!usernameRegex.test(form.value.username)) {
+    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。')
+    return
+  }
+
+  // 2. 校验密码
+  if (!form.value.password) {
+    showToast('密码不能为空！')
+    return
+  }
+  if (!passwordRegex.test(form.value.password)) {
+    showToast('密码格式错误：长度需在6~18位之间，且只能包含英文字母和数字。')
+    return
+  }
+
+  // 3. 注册模式下的额外校验
+  if (!isLoginMode.value) {
     if (form.value.password !== form.value.confirmPassword) {
-      alert('两次密码输入不一致！')
+      showToast('两次密码输入不一致！')
       return
     }
-    console.log('注册信息:', form.value)
-    alert('注册请求已发送（查看控制台）')
+    // console.log('注册信息:', form.value)
+    // alert('注册请求已发送（查看控制台）')
+    emit('loginSend', form.value)
+  } else {
+    const loginData = {
+      username: form.value.username,
+      password: form.value.password
+    }
+    // console.log('登录信息:', loginData)
+    // alert('登录请求已发送（查看控制台）')
+    emit('registerSend', loginData)
   }
 }
 </script>
@@ -58,11 +97,12 @@ const handleSubmit = () => {
           <!-- 登录模板 -->
           <div v-if="isLoginMode" key="login" class="form-content">
             <div class="input-group">
-              <label>邮箱</label>
+              <label>用户名</label>
               <input
-                type="email"
-                v-model="form.email"
-                placeholder="请输入邮箱"
+                type="text"
+                v-model="form.username"
+                placeholder="请输入用户名 (仅英文字母)"
+                maxlength="80"
                 required
               />
             </div>
@@ -71,7 +111,8 @@ const handleSubmit = () => {
               <input
                 type="password"
                 v-model="form.password"
-                placeholder="请输入密码"
+                placeholder="请输入密码 (6-18位字母或数字)"
+                maxlength="18"
                 required
               />
             </div>
@@ -90,16 +131,8 @@ const handleSubmit = () => {
               <input
                 type="text"
                 v-model="form.username"
-                placeholder="请输入用户名"
-                required
-              />
-            </div>
-            <div class="input-group">
-              <label>邮箱</label>
-              <input
-                type="email"
-                v-model="form.email"
-                placeholder="请输入邮箱"
+                placeholder="请输入用户名 (仅英文字母)"
+                maxlength="80"
                 required
               />
             </div>
@@ -108,7 +141,8 @@ const handleSubmit = () => {
               <input
                 type="password"
                 v-model="form.password"
-                placeholder="请输入密码"
+                placeholder="请输入密码 (6-18位字母或数字)"
+                maxlength="18"
                 required
               />
             </div>
@@ -118,6 +152,7 @@ const handleSubmit = () => {
                 type="password"
                 v-model="form.confirmPassword"
                 placeholder="再次输入密码"
+                maxlength="18"
                 required
               />
             </div>
@@ -136,45 +171,32 @@ const handleSubmit = () => {
 
 <style scoped>
 /* --- 容器与背景 --- */
-/* Login.vue 中的 <style scoped> */
 .login-container {
-  /* 1. 删除 top/left/transform 的居中方式 */
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-
-  /* 2. 使用 Flexbox 实现水平垂直居中 */
   display: flex;
   justify-content: center;
   align-items: center;
-
   overflow: hidden;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  /* 确保 z-index 足够高，盖住下面的内容 */
   z-index: 20;
-
-  pointer-events: none; /* 让鼠标事件穿透 */
+  pointer-events: none;
 }
-
-
 
 /* --- 毛玻璃卡片 --- */
 .glass-card {
   position: relative;
   width: 420px;
   padding: 40px;
-  /* 白色半透明背景，营造高级玻璃感 */
-  background: rgba(255, 255, 255, 0.65);
-  backdrop-filter: blur(15px);
-  -webkit-backdrop-filter: blur(15px);
+  background: rgba(255, 255, 255, 0.95);
   border-radius: 24px;
   border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
   z-index: 10;
-  color: #555; /* 全局灰色字体 */
-
+  color: #555;
   pointer-events: auto;
 }
 
@@ -183,7 +205,7 @@ const handleSubmit = () => {
   display: flex;
   position: relative;
   margin-bottom: 35px;
-  background: rgba(0, 0, 0, 0.03); /* 极淡的灰底 */
+  background: rgba(0, 0, 0, 0.03);
   border-radius: 12px;
   padding: 4px;
 }
@@ -193,16 +215,16 @@ const handleSubmit = () => {
   padding: 12px 0;
   background: transparent;
   border: none;
-  color: #888; /* 未激活时深灰 */
+  color: #888;
   font-size: 16px;
   font-weight: 500;
   cursor: pointer;
-  transition: color 0.3s ease; /* 柔和过渡 */
+  transition: color 0.3s ease;
   z-index: 2;
 }
 
 .tab-header button.active {
-  color: #333; /* 激活时主色 */
+  color: #333;
 }
 
 .tab-header .slider {
@@ -213,7 +235,6 @@ const handleSubmit = () => {
   height: calc(100% - 8px);
   background: #fff;
   border-radius: 8px;
-  /* 修改动画：去掉弹跳，使用柔和的 ease */
   transition: transform 0.35s ease-in-out;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   z-index: 1;
@@ -238,16 +259,16 @@ const handleSubmit = () => {
   margin-bottom: 8px;
   font-size: 13px;
   font-weight: 500;
-  color: #666; /* 标签灰色 */
+  color: #666;
 }
 
 .input-group input {
   width: 100%;
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.5); /* 半透明白底输入框 */
+  background: rgba(255, 255, 255, 0.5);
   border: 1px solid rgba(0, 0, 0, 0.05);
   border-radius: 10px;
-  color: #333; /* 输入内容灰色 */
+  color: #333;
   font-size: 15px;
   outline: none;
   transition: all 0.3s ease;
@@ -255,13 +276,13 @@ const handleSubmit = () => {
 }
 
 .input-group input::placeholder {
-  color: #a0a0a0; /* 占位符浅灰 */
+  color: #a0a0a0;
 }
 
 .input-group input:focus {
   background: rgba(255, 255, 255, 0.9);
-  border-color: #a8c0ff; /* 柔和的聚焦色 */
-  box-shadow: 0 0 0 3px rgba(168, 192, 255, 0.15); /* 极淡的光晕 */
+  border-color: #a8c0ff;
+  box-shadow: 0 0 0 3px rgba(168, 192, 255, 0.15);
 }
 
 /* 辅助选项 */
@@ -317,7 +338,6 @@ const handleSubmit = () => {
 }
 
 /* --- 动画定义 --- */
-/* 柔和的淡入淡出上移动画 */
 .soft-transition-enter-active,
 .soft-transition-leave-active {
   transition: all 0.35s ease;
@@ -325,15 +345,14 @@ const handleSubmit = () => {
 
 .soft-transition-enter-from {
   opacity: 0;
-  transform: translateY(15px); /* 从下方淡入 */
+  transform: translateY(15px);
 }
 
 .soft-transition-leave-to {
   opacity: 0;
-  transform: translateY(-15px); /* 向上方淡出 */
+  transform: translateY(-15px);
 }
 
-/* 确保离开的元素绝对定位，不占空间 */
 .soft-transition-leave-active {
   position: absolute;
   width: 100%;

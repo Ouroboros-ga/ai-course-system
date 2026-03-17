@@ -1,18 +1,17 @@
 // src/api/request.js
 import axios from 'axios'
+// 1. 引入 toast 工具
+import { showToast } from '@/utils/toast'
 
 // 创建 axios 实例
 const service = axios.create({
-  // TODO 从环境变量读取 api 地址
-  baseURL: import.meta.env.VITE_APP_BASE_API, // 从环境变量读取 api 地址
-  timeout: 5000 // 请求超时时间
+  baseURL: import.meta.env.VITE_APP_BASE_API,
+  timeout: 10000 // 建议稍微设长一点
 })
 
 // 请求拦截器
 service.interceptors.request.use(
   config => {
-    // 在发送请求之前做些什么
-    // 例如：在 headers 中添加 token
     const token = localStorage.getItem('token')
     if (token) {
       config.headers['Authorization'] = `Bearer ${token}`
@@ -20,7 +19,6 @@ service.interceptors.request.use(
     return config
   },
   error => {
-    // 对请求错误做些什么
     console.log('Request Error:', error)
     return Promise.reject(error)
   }
@@ -29,28 +27,61 @@ service.interceptors.request.use(
 // 响应拦截器
 service.interceptors.response.use(
   response => {
-    // 对响应数据做点什么
     const res = response.data
 
-    // 这里根据后端约定的状态码进行判断
-    // 假设后端返回格式为 { code: 200, data: {}, message: 'success' }
+    // 2. 处理业务逻辑错误 (后端返回 code 非 200)
     if (res.code !== 200) {
-      // 例如：token 过期，跳转登录页
+
+      // 特殊状态码处理：Token 过期
       if (res.code === 401) {
-        console.error('Token过期，请重新登录')
-        // 这里可以触发退出的 action
+        showToast('登录状态已过期，请重新登录', 'error')
+
+        // 清除 token 并跳转登录页
+        localStorage.removeItem('token')
+        // window.location.href = '/login' // 建议结合路由跳转
+      } else {
+        // 3. 普通业务错误，直接弹出后端返回的错误信息
+        showToast(res.message || '请求失败', 'error')
       }
 
-      // 返回错误信息给页面 catch
       return Promise.reject(new Error(res.message || 'Error'))
     } else {
-      // 正常返回数据
-      return res
+      // 正常返回数据 (剥离 data 层)
+      return res.data
     }
   },
   error => {
-    // 对响应错误做点什么 (如 HTTP 网络错误)
-    console.log('Response Error:', error.message)
+    // 4. 处理 HTTP 网络错误 (如 404, 500, 超时)
+    let message = '网络连接异常，请稍后再试'
+
+    if (error.response) {
+      // 有响应，但状态码不对
+      switch (error.response.status) {
+        case 401:
+          message = '未授权，请重新登录'
+          break
+        case 403:
+          message = '拒绝访问'
+          break
+        case 404:
+          message = '请求资源不存在'
+          break
+        case 500:
+          message = '服务器开小差了'
+          break
+        default:
+          message = error.response.data?.message || '未知错误'
+      }
+    } else if (error.message.includes('timeout')) {
+      message = '请求超时，请检查网络'
+    } else if (error.message.includes('Network Error')) {
+      message = '网络断开，请检查连接'
+    }
+
+    // 5. 弹出错误提示
+    showToast(message, 'error')
+
+    console.error('Response Error:', error)
     return Promise.reject(error)
   }
 )

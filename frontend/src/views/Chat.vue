@@ -1,11 +1,8 @@
 <!-- Chat.vue -->
 <template>
   <div class="chat-page">
-    <!-- 使用 Transition 包裹 Login 组件 -->
-    <LoginButton @click="handleClickLogin" />
-    <Transition name="login-modal">
-      <Login v-if="isLogin" />
-    </Transition>
+    <!-- 使用封装好的 LoginIndex 组件 -->
+    <UserIndex />
 
     <ChatBox class="chat-box" />
     <InputBox
@@ -19,12 +16,13 @@
 import { useCounterStore } from "@/stores/counter.js";
 const counter = useCounterStore()
 
+// 引入组件
 import InputBox from '@/components/chat/InputBox.vue'
 import ChatBox from '@/components/chat/ChatBox.vue'
-import Login from '@/components/chat/login/Login.vue'
-import LoginButton from '@/components/chat/login/LoginButton.vue'
+// 引入封装后的登录组件
+import UserIndex from '@/components/chat/User/UserIndex.vue'
 
-import {ref} from "vue";
+// import {ref} from "vue";
 
 const handleSendMessage = (text) => {
   console.log('📤 发送消息:', text)
@@ -43,12 +41,6 @@ const handleAddAttachment = (file) => {
   console.log('📎 点击添加附件')
   console.log(file)
 }
-
-const isLogin = ref(false)
-const handleClickLogin = () => {
-  console.log('登录球')
-  isLogin.value = !isLogin.value
-}
 </script>
 
 <style scoped>
@@ -58,27 +50,8 @@ const handleClickLogin = () => {
   flex-direction: column;
   box-sizing: border-box;
   flex: 1;
-  position: relative; /* 确保相对定位，虽然 Login 是 fixed，但这是个好习惯 */
+  position: relative;
 }
 
-/* --- 登录界面动画样式 --- */
-
-/* 1. 进场/离场 动画过程 */
-.login-modal-enter-active,
-.login-modal-leave-active {
-  transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-}
-
-/* 2. 进场 初始状态 */
-.login-modal-enter-from {
-  opacity: 0;         /* 透明 */
-  transform: scale(0.95); /* 稍微小一点 */
-}
-
-/* 3. 离场 结束状态 */
-.login-modal-leave-to {
-  opacity: 0;
-  transform: scale(1.05); /* 离开时稍微放大一点点，产生“远去”感 */
-}
-
+/* 原来的登录动画样式已经移动到 LoginIndex.vue 中，这里可以删除 */
 </style>

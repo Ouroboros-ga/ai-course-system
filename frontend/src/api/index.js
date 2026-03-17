@@ -1,3 +1,4 @@
 import * as chat from './chat.js'
+import * as user from './user.js'
 
-export { chat }
+export default { chat, user }
