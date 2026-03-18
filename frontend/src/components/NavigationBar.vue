@@ -21,8 +21,8 @@
         <router-link to="/about" class="nav-item">
           About
         </router-link>
-        <router-link to="/document" class="nav-item">
-          Document
+        <router-link to="/profile" class="nav-item">
+          Profile
         </router-link>
       </div>
     </nav>
