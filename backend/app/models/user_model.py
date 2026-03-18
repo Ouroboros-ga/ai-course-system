@@ -77,6 +77,11 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.utcnow(), description="账号创建时间")
     updated_at: Optional[datetime] = Field(default=None, description="最后更新时间")
 
+    progress_records: List["LearningProgress"] = Relationship(
+        back_populates="user",
+        sa_relationship_kwargs={"lazy": "selectin"}  # 可选：优化查询性能
+    )
+
     # ==========================================
     # 3. 关系定义 (Relationships)
     # ==========================================
@@ -93,6 +98,7 @@ class User(SQLModel, table=True):
     # 4. 业务逻辑方法
     # ==========================================
 
+
     @field_validator('email')
     def validate_email(cls, v):
         """验证邮箱格式（支持教育机构邮箱）"""
@@ -105,48 +111,48 @@ class User(SQLModel, table=True):
             raise ValueError('邮箱格式不正确，请使用有效的邮箱地址（支持教育机构邮箱如.edu.cn）')
         return v.lower()  # 统一转换为小写存储
 
-    def is_teacher(self) -> bool:
-        """判断是否为教师 (权限控制用)"""
-        return self.role == UserRole.TEACHER
-
-    def is_student(self) -> bool:
-        """判断是否为学生 (权限控制用)"""
-        return self.role == UserRole.STUDENT
-
-    def can_edit_script(self) -> bool:
-        """
-        业务规则：只有教师可以编辑智课脚本
-        对应需求：提供教师脚本编辑功能
-        """
-        return self.is_teacher() and self.is_active
-
-    def can_ask_question(self) -> bool:
-        """
-        业务规则：激活的学生可以发起实时问答
-        对应需求：多模态实时问答
-        """
-        return self.is_student() and self.is_active
-
-    def can_generate_intelligent_course(self) -> bool:
-        """
-        业务规则：只有教师可以生成智课
-        对应需求：智课生成模块
-        """
-        return self.is_teacher() and self.is_active
-
-    def can_access_course_content(self) -> bool:
-        """
-        业务规则：激活的学生可以访问课程内容
-        对应需求：观看智课
-        """
-        return self.is_student() and self.is_active
-
-    def get_user_type_display(self) -> str:
-        """获取用户类型显示名称"""
-        return "教师" if self.is_teacher() else "学生"
-
-    def update_last_learning_position(self, course_id: int, node: str):
-        """更新最后学习位置，用于进度续接功能"""
-        self.last_active_course_id = course_id
-        self.last_learning_node = node
-        self.updated_at = datetime.utcnow()
+    # def is_teacher(self) -> bool:
+    #     """判断是否为教师 (权限控制用)"""
+    #     return self.role == UserRole.TEACHER
+    #
+    # def is_student(self) -> bool:
+    #     """判断是否为学生 (权限控制用)"""
+    #     return self.role == UserRole.STUDENT
+    #
+    # def can_edit_script(self) -> bool:
+    #     """
+    #     业务规则：只有教师可以编辑智课脚本
+    #     对应需求：提供教师脚本编辑功能
+    #     """
+    #     return self.is_teacher() and self.is_active
+    #
+    # def can_ask_question(self) -> bool:
+    #     """
+    #     业务规则：激活的学生可以发起实时问答
+    #     对应需求：多模态实时问答
+    #     """
+    #     return self.is_student() and self.is_active
+    #
+    # def can_generate_intelligent_course(self) -> bool:
+    #     """
+    #     业务规则：只有教师可以生成智课
+    #     对应需求：智课生成模块
+    #     """
+    #     return self.is_teacher() and self.is_active
+    #
+    # def can_access_course_content(self) -> bool:
+    #     """
+    #     业务规则：激活的学生可以访问课程内容
+    #     对应需求：观看智课
+    #     """
+    #     return self.is_student() and self.is_active
+    #
+    # def get_user_type_display(self) -> str:
+    #     """获取用户类型显示名称"""
+    #     return "教师" if self.is_teacher() else "学生"
+    #
+    # def update_last_learning_position(self, course_id: int, node: str):
+    #     """更新最后学习位置，用于进度续接功能"""
+    #     self.last_active_course_id = course_id
+    #     self.last_learning_node = node
+    #     self.updated_at = datetime.utcnow()
