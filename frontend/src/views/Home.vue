@@ -1,215 +1,271 @@
 <script setup>
-import { onMounted, onUnmounted, ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const current = ref(0)
-const isScrolling = ref(false)
+const containerRef = ref(null)
 
-onMounted(() => {
-  const slides = document.querySelectorAll('.slide')
-
-  const handleWheel = (e) => {
-    if (isScrolling.value) return
-    if (Math.abs(e.deltaY) < 50) return
-
-    isScrolling.value = true
-
-    if (e.deltaY > 0) {
-      if (current.value < slides.length - 1) current.value++
-    } else {
-      if (current.value > 0) current.value--
-    }
-
-    slides[current.value].scrollIntoView({
-      behavior: 'smooth',
-      block: 'start'
-    })
-
-    setTimeout(() => {
-      isScrolling.value = false
-    }, 500)
-  }
-
-  window.addEventListener('wheel', handleWheel)
-  onUnmounted(() => {
-    window.removeEventListener('wheel', handleWheel)
-  })
-})
-
-// 点击箭头下一页
+// 🔥 这里的逻辑变得非常简单自然
 const goNext = () => {
-  const slides = document.querySelectorAll('.slide')
-  if (isScrolling.value) return
-  if (current.value >= slides.length - 1) return
-
-  isScrolling.value = true
-  current.value++
-  slides[current.value].scrollIntoView({ behavior: 'smooth', block: 'start' })
-  setTimeout(() => { isScrolling.value = false }, 500)
+  const container = containerRef.value
+  const nextTop = container.scrollTop + window.innerHeight
+  container.scrollTo({ top: nextTop, behavior: 'smooth' })
 }
 
-// 点击立即使用 → 跳转到聊天页面
+const goToTop = () => {
+  containerRef.value.scrollTo({ top: 0, behavior: 'smooth' })
+}
+
 const goToChat = () => {
   router.push('/chat')
-}
-
-// 🔥 回到顶部（回到第一页）
-const goToTop = () => {
-  if (isScrolling.value) return
-  current.value = 0
-  const slides = document.querySelectorAll('.slide')
-  slides[0].scrollIntoView({ behavior: 'smooth', block: 'start' })
-  setTimeout(() => { isScrolling.value = false }, 500)
 }
 </script>
 
 <template>
-  <div>
-    <div class="container">
-      <div class="slide page1">
-        <div class="hero-content">
-          <h1 class="main-title">泛雅 AI 智课 实时互动<br>免费试用 - 重构课堂体验</h1>
-          <p class="sub-title">
-            基于泛雅平台的 AI 互动智课生成与实时问答系统！融合 RAG 与大模型技术，自动生成互动课件、智能续接学习进度、7×24 小时实时答疑。免费无水印，支持高校教学场景，助力教育数字化升级，让每一堂课都更智能、更高效！
+  <div class="home-wrapper">
+    <!-- 主滚动容器 -->
+    <div class="main-container" ref="containerRef">
+
+      <!-- 第一页：Hero Section -->
+      <section class="slide hero-page">
+        <div class="content-box">
+          <div class="badge">Next-Gen AI Education</div>
+          <h1 class="main-title">
+            泛雅 AI 智课 <span class="text-blue">实时互动</span><br>
+            <span class="sub-gradient">重构课堂学习体验</span>
+          </h1>
+          <p class="description">
+            基于泛雅平台的 AI 互动智课生成与实时问答系统。融合 RAG 与大模型技术，自动生成互动课件、智能续接学习进度。支持高校教学场景，助力教育数字化升级。
           </p>
 
-          <button class="use-btn" @click="goToChat">立即使用</button>
+          <div class="btn-group">
+            <button class="use-btn" @click="goToChat">立即使用</button>
+            <button class="secondary-btn">了解更多</button>
+          </div>
         </div>
-      </div>
+      </section>
 
-      <div class="slide page2"></div>
-      <div class="slide page3"></div>
-      <div class="slide page4"></div>
+      <!-- 其他页面：直接使用图片背景 -->
+      <section class="slide page2"></section>
+      <section class="slide page3"></section>
+      <section class="slide page4"></section>
     </div>
 
-    <div class="scroll-arrow" @click="goNext">↓</div>
+    <!-- 固定 UI 元素 -->
+    <div class="scroll-arrow" @click="goNext">
+      <div class="mouse">
+        <div class="wheel"></div>
+      </div>
+    </div>
 
-    <!-- 🔥 右下角回到顶部按钮（你要的位置） -->
-    <button class="back-top" @click="goToTop">↑</button>
+    <button class="back-top" @click="goToTop" title="回到顶部">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="3">
+        <path d="M18 15l-6-6-6 6" />
+      </svg>
+    </button>
   </div>
 </template>
 
 <style scoped>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-html, body {
-  margin: 0;
-  padding: 0;
+/* 1. 基础布局：强制全屏且锁定滚动 */
+.home-wrapper {
+  position: fixed;
+  inset: 0;
   overflow: hidden;
+  background: #f8fafc;
 }
 
-.container {
+.main-container {
   width: 100%;
-  height: 100vh;
-  overflow: hidden;
+  height: 100%;
+  overflow-y: auto;
+  scroll-behavior: smooth;
+  /* 🔥 核心：CSS 物理滚动捕捉 */
+  scroll-snap-type: y mandatory;
+  scrollbar-width: none; /* 隐藏滚动条 (Firefox) */
 }
 
+.main-container::-webkit-scrollbar {
+  display: none; /* 隐藏滚动条 (Chrome/Safari) */
+}
+
+/* 2. Slide 基础定义 */
 .slide {
   width: 100%;
   height: 100vh;
-  background-size: cover;
-  background-position: center;
+  /* 确保每一页都能精准对齐 */
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   position: relative;
+  overflow: hidden;
 }
 
-.page1 {
-  background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+/* 3. 第一页 Hero 内容排版 */
+.hero-page {
+  background: radial-gradient(circle at 10% 20%, rgba(216, 241, 255, 0.4) 0%, rgba(255, 255, 255, 1) 90%);
+  padding: 0 5%;
 }
 
-.page2 { background-image: url('@/assets/home/主页照片1.png'); }
-.page3 { background-image: url('@/assets/home/主页照片1.png'); }
-.page4 { background-image: url('@/assets/home/主页照片1.png'); }
-
-.hero-content {
-  position: absolute;
-  top: 42%;
-  left: 50%;
-  transform: translate(-50%, -50%);
+.content-box {
+  max-width: 1000px;
   text-align: center;
-  width: 90%;
-  max-width: 1200px;
-  color: #0f172a;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.badge {
+  padding: 6px 16px;
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border-radius: 100px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  letter-spacing: 1px;
 }
 
 .main-title {
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
-  font-weight: 700;
+  font-size: clamp(2rem, 5vw, 4rem);
+  font-weight: 800;
   line-height: 1.1;
-  margin-bottom: 1.8rem;
+  color: #0f172a;
 }
 
-.sub-title {
-  font-size: clamp(1rem, 2vw, 1.25rem);
-  line-height: 1.7;
-  color: #334155;
-  max-width: 900px;
-  margin: 0 auto 2.5rem;
+.sub-gradient {
+  background: linear-gradient(90deg, #3b82f6, #2dd4bf);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.description {
+  font-size: clamp(1rem, 1.5vw, 1.25rem);
+  color: #64748b;
+  max-width: 750px;
+  line-height: 1.6;
+}
+
+/* 4. 按钮样式 */
+.btn-group {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
 }
 
 .use-btn {
-  padding: 16px 48px;
-  font-size: 18px;
+  padding: 16px 40px;
+  font-size: 1.125rem;
   font-weight: 600;
-  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  background: #3b82f6;
   color: white;
   border: none;
-  border-radius: 50px;
+  border-radius: 12px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 10px 15px -3px rgba(59, 130, 246, 0.3);
 }
 
 .use-btn:hover {
-  transform: translateY(-3px);
-  box-shadow: 0 12px 24px rgba(59, 130, 246, 0.4);
+  transform: translateY(-2px);
+  background: #2563eb;
+  box-shadow: 0 20px 25px -5px rgba(59, 130, 246, 0.4);
 }
 
+.secondary-btn {
+  padding: 16px 40px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  background: white;
+  color: #334155;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+  background: #f1f5f9;
+}
+
+/* 5. 图片背景页 */
+.page2, .page3, .page4 {
+  background-image: url('@/assets/home/主页照片1.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+/* 6. 交互元素 - 更好的向下指引 */
 .scroll-arrow {
   position: fixed;
-  bottom: 35px;
+  bottom: 30px;
   left: 50%;
   transform: translateX(-50%);
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  background-color: rgba(100, 100, 100, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-  color: #fff;
-  z-index: 999;
   cursor: pointer;
+  z-index: 100;
+  opacity: 0.6;
+  transition: 0.3s;
 }
 
-/* 🔥 右下角回到顶部按钮样式 */
+.scroll-arrow:hover { opacity: 1; }
+
+.mouse {
+  width: 26px;
+  height: 42px;
+  border: 2px solid #64748b;
+  border-radius: 20px;
+  display: flex;
+  justify-content: center;
+  padding-top: 8px;
+}
+
+.wheel {
+  width: 4px;
+  height: 8px;
+  background: #3b82f6;
+  border-radius: 2px;
+  animation: scroll-anim 2s infinite;
+}
+
+@keyframes scroll-anim {
+  0% { transform: translateY(0); opacity: 1; }
+  100% { transform: translateY(15px); opacity: 0; }
+}
+
+/* 7. 返回顶部 */
 .back-top {
   position: fixed;
-  right: 30px;
-  bottom: 30px;
-  width: 50px;
-  height: 50px;
-  border-radius: 50%;
-  background: rgba(59, 130, 246, 0.9);
-  color: white;
-  font-size: 22px;
-  border: none;
+  right: 24px;
+  bottom: 24px;
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  background: white;
+  color: #3b82f6;
+  border: 1px solid #e2e8f0;
   cursor: pointer;
-  z-index: 999;
+  z-index: 100;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  transition: 0.3s;
+  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
 }
 
 .back-top:hover {
-  background: #1d4ed8;
-  transform: scale(1.08);
+  background: #3b82f6;
+  color: white;
+  transform: scale(1.1);
+}
+
+/* 8. 响应式微调 */
+@media (max-width: 768px) {
+  .btn-group { flex-direction: column; width: 100%; }
+  .content-box { width: 100%; }
+  .main-title { font-size: 2.25rem; }
 }
 </style>
