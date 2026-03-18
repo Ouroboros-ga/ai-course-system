@@ -203,9 +203,9 @@ const goToChat = () => {
   animation: flow 6s ease infinite;
 }
 @keyframes flow {
-  0% { background-position: 0% 50%; }
+  0% { background-position: 0 50%; }
   50% { background-position: 100% 50%; }
-  100% { background-position: 0% 50%; }
+  100% { background-position: 0 50%; }
 }
 
 .text-blue { color: #3b82f6; }
