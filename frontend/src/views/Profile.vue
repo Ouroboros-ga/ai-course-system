@@ -1,11 +1,13 @@
 <script setup>
-
+import UsersData from "@/components/profile/UsersData.vue";
 </script>
 
 <template>
-<div>
-  <h1>这是Profile页面</h1>
-</div>
+  <div>
+    <UsersData>
+
+    </UsersData>
+  </div>
 </template>
 
 <style scoped>
