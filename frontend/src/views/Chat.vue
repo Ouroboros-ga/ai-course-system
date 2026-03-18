@@ -2,7 +2,6 @@
 <template>
   <div class="chat-page">
     <!-- 使用封装好的 LoginIndex 组件 -->
-    <UserIndex />
 
     <ChatBox class="chat-box" />
     <InputBox
@@ -19,8 +18,6 @@ const counter = useCounterStore()
 // 引入组件
 import InputBox from '@/components/chat/InputBox.vue'
 import ChatBox from '@/components/chat/ChatBox.vue'
-// 引入封装后的登录组件
-import UserIndex from '@/components/chat/User/UserIndex.vue'
 
 // import {ref} from "vue";
 

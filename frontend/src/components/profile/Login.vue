@@ -120,7 +120,7 @@ const handleSubmit = () => {
               <label class="remember">
                 <input type="checkbox"> 记住我
               </label>
-              <a href="#" class="forgot">忘记密码？</a>
+<!--              <a href="#" class="forgot">忘记密码？</a>-->
             </div>
           </div>
 
@@ -172,18 +172,12 @@ const handleSubmit = () => {
 <style scoped>
 /* --- 容器与背景 --- */
 .login-container {
-  position: fixed;
-  top: 0;
-  left: 0;
   width: 100%;
-  height: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
-  overflow: hidden;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  z-index: 20;
-  pointer-events: none;
+  pointer-events: none;  /* 让非卡片区域点击穿透 */
 }
 
 /* --- 毛玻璃卡片 --- */

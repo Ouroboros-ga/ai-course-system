@@ -205,7 +205,7 @@
 /* 主内容区域 */
 .main-content {
   flex: 1;
-  padding: 0 2.5rem 2.5rem 2.5rem;
+  padding: 0 2.5rem 0 2.5rem;
   max-width: 1200px;
   margin: 0 auto;
   width: 100%;
