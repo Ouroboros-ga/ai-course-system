@@ -14,10 +14,10 @@
       />
 
       <!-- 3. 底部版权 -->
-      <div class="footer">
-        <p>泛雅智能教学平台 · 企业版 v2.4.1</p>
-        <p class="copyright">© 2026 泛雅科技 保留所有权利</p>
-      </div>
+<!--      <div class="footer">-->
+<!--        <p>泛雅智能教学平台 · 企业版 v2.4.1</p>-->
+<!--        <p class="copyright">© 2026 泛雅科技 保留所有权利</p>-->
+<!--      </div>-->
     </div>
   </div>
 </template>
@@ -55,7 +55,7 @@ const handleLogout = () => {
   box-sizing: border-box;
   display: flex;
   justify-content: center;
-  background-color: #f4f6f9; /* 浅灰背景 */
+  //background-color: #f4f6f9; /* 浅灰背景 */
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
