@@ -7,10 +7,7 @@ import UserInfoCard from "./UserInfoCard.vue"
 import api from '@/api/index.js'
 
 // 用户信息状态
-const userInfo = ref({
-  id: 0,
-  username: "amq"
-}) // 初始为 null，展示登录页
+const userInfo = ref(null) // 初始为 null，展示登录页
 
 // 控制是否显示设置面板
 const showSettingsPanel = ref(false)
@@ -72,6 +69,7 @@ const handleLogout = () => {
   <div class="user-index-wrapper">
 
     <!-- 1. 未登录状态：显示 Login 组件 -->
+    <!-- Login 组件内部已经有 flex 居中样式，只需父级给高度 -->
     <Login
       v-if="!userInfo"
       class="login-modal"
@@ -88,7 +86,6 @@ const handleLogout = () => {
     />
 
     <!-- 3. 设置面板 (浮层/弹窗) -->
-    <!-- 使用 Teleport 或简单定位将其覆盖在页面之上 -->
     <Transition name="fade">
       <div v-if="userInfo && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
         <UserInfoCard
@@ -107,11 +104,18 @@ const handleLogout = () => {
 <style scoped>
 .user-index-wrapper {
   width: 100%;
-  height: 100%;
-  min-height: 80vh;
+  /* 关键修改：让容器撑满整个视口高度 */
+  height: 100vh;
   position: relative;
-}
 
+  /* 关键修改：使用 Flex 布局 */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+
+  /* 背景美化（可选）：如果 Profile.vue 没有设置背景，可以在这里设置 */
+  //background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+}
 /* 遮罩层样式 */
 .settings-overlay {
   position: fixed;
