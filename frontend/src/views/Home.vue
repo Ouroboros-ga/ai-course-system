@@ -45,6 +45,12 @@ const goToChat = () => {
 </template>
 
 <style scoped>
+  /* 给每个 section 统一加顶部内边距 */
+.main-container > * {
+  padding-top: 70px; /* 匹配导航栏高度 */
+  min-height: 100vh;
+  scroll-snap-align: start;
+}
 .home-wrapper {
   position: fixed;
   inset: 0;
@@ -63,4 +69,36 @@ const goToChat = () => {
 .main-container::-webkit-scrollbar {
   display: none;
 }
+  /* 手机端适配（≤768px） */
+  @media (max-width: 768px) {
+    /* 1. 取消全屏滚动吸附，改成正常滚动 */
+    .main-container {
+      scroll-snap-type: none;
+    }
+
+    /* 2. 所有区块取消强制 100vh 高度，随内容自适应 */
+    .main-container > * {
+      min-height: auto;
+      padding: 80px 20px 40px; /* 上下左右留白更舒服 */
+    }
+
+    /* 3. 第二张 Feature 卡片：3列 → 1列 */
+    .feature-grid {
+      grid-template-columns: 1fr !important;
+      gap: 20px;
+    }
+
+    /* 4. 第三张 Chat 模块：左右布局 → 上下布局 */
+    .chat-section {
+      flex-direction: column !important;
+      gap: 30px;
+    }
+    .chat-preview {
+      width: 100% !important;
+    }
+    .chat-text {
+      width: 100% !important;
+      text-align: left;
+    }
+  }
 </style>
