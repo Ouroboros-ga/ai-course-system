@@ -1,7 +1,77 @@
-<!-- components/chat/login/LoginIndex.vue -->
+<!-- UserIndex.vue -->
+<script setup>
+import { ref } from 'vue'
+import Login from './Login.vue'
+import UsersData from './UsersData.vue' // 引入用户中心主页
+import UserInfoCard from "./UserInfoCard.vue"
+import api from '@/api/index.js'
+
+// 用户信息状态
+const userInfo = ref({
+  id: 0,
+  username: "amq"
+}) // 初始为 null，展示登录页
+
+// 控制是否显示设置面板
+const showSettingsPanel = ref(false)
+
+// --- 业务逻辑处理 ---
+
+// 1. 登录成功
+const handleLoginSend = async (data) => {
+  console.log('触发登录发送', data)
+  try {
+    // 模拟 API 调用
+    // const res = await api.user.login(data)
+    // 模拟登录成功返回数据
+    const mockUser = { id: 1, username: data.username || 'Amq' }
+    userInfo.value = mockUser
+    console.log('登录成功')
+  } catch (error) {
+    console.error('登录失败', error)
+  }
+}
+
+// 2. 注册成功
+const handleRegisterSend = async (data) => {
+  console.log('触发注册发送', data)
+  try {
+    // const res = await api.user.register(data)
+    userInfo.value = { id: Date.now(), username: data.username }
+    console.log('注册成功并自动登录')
+  } catch (error) {
+    console.error('注册失败', error)
+  }
+}
+
+// 3. 打开设置面板 (由 UsersData 触发)
+const handleOpenSettings = () => {
+  showSettingsPanel.value = true
+}
+
+// 4. 更新用户名 (由 UserInfoCard 触发)
+const handleUpdateUsername = (data) => {
+  userInfo.value = { ...userInfo.value, username: data.username }
+  showSettingsPanel.value = false // 关闭面板
+}
+
+// 5. 更新密码
+const handleUpdatePassword = (data) => {
+  console.log('密码已更新', data)
+  showSettingsPanel.value = false // 关闭面板
+}
+
+// 6. 退出登录
+const handleLogout = () => {
+  userInfo.value = null
+  showSettingsPanel.value = false
+}
+</script>
+
 <template>
   <div class="user-index-wrapper">
-    <!-- 1. 未登录状态：显示登录/注册组件 -->
+
+    <!-- 1. 未登录状态：显示 Login 组件 -->
     <Login
       v-if="!userInfo"
       class="login-modal"
@@ -9,112 +79,59 @@
       @registerSend="handleRegisterSend"
     />
 
-    <!-- 2. 已登录状态：显示用户信息卡片 -->
-    <UserInfoCard
+    <!-- 2. 已登录状态：显示用户中心主页 -->
+    <UsersData
       v-else
       :userInfo="userInfo"
-      @updateUsername="handleUpdateUsername"
-      @updatePassword="handleUpdatePassword"
+      @openSettings="handleOpenSettings"
       @logout="handleLogout"
     />
+
+    <!-- 3. 设置面板 (浮层/弹窗) -->
+    <!-- 使用 Teleport 或简单定位将其覆盖在页面之上 -->
+    <Transition name="fade">
+      <div v-if="userInfo && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
+        <UserInfoCard
+          :userInfo="userInfo"
+          @updateUsername="handleUpdateUsername"
+          @updatePassword="handleUpdatePassword"
+          @logout="handleLogout"
+          @close="showSettingsPanel = false"
+        />
+      </div>
+    </Transition>
+
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue'
-import Login from './Login.vue'
-// 引入用户信息卡片组件 (请确认路径是否正确，这里假设放在同级目录或指定目录)
-import UserInfoCard from "@/components/profile/UserInfoCard.vue";
-import api from '@/api/index.js'
-
-// 用户信息状态，初始为 null 表示未登录
-const userInfo = ref({
-  id: 1,
-  username: 'Amq',
-})
-
-/**
- * 处理登录逻辑
- */
-const handleLoginSend = async (data) => {
-  console.log('触发登录发送', data)
-  try {
-    // 调用登录接口
-    const res = await api.user.login(data)
-
-    // 假设 res.data 包含用户信息 (根据你的实际接口结构调整)
-    if (res.data) {
-      // 1. 保存用户信息到状态
-      userInfo.value = res.data
-      // 2. 可以选择存入 localStorage 持久化 (可选)
-      // localStorage.setItem('user', JSON.stringify(res.data))
-      console.log('登录成功，已切换至用户卡片')
-    }
-  } catch (error) {
-    console.error('登录失败', error)
-    // 可以在这里添加错误提示
-  }
-}
-
-/**
- * 处理注册逻辑
- */
-const handleRegisterSend = async (data) => {
-  console.log('触发注册发送', data)
-  try {
-    const res = await api.user.register(data)
-    // 注册成功后的逻辑：
-    // 选项A: 提示注册成功，请登录 (不切换视图)
-    // 选项B: 注册成功后自动登录 (如下所示)
-    if (res.data) {
-      userInfo.value = res.data
-      console.log('注册成功并自动登录')
-    }
-  } catch (error) {
-    console.error('注册失败', error)
-  }
-}
-
-/**
- * 处理修改用户名
- */
-const handleUpdateUsername = async (data) => {
-  console.log('请求修改用户名:', data)
-  // await api.user.updateName(data)
-  // 乐观更新：直接更新本地状态，无需重新请求用户信息
-  userInfo.value = { ...userInfo.value, username: data.username }
-}
-
-/**
- * 处理修改密码
- */
-const handleUpdatePassword = async (data) => {
-  console.log('请求修改密码:', data)
-  // await api.user.updatePwd(data)
-  // 通常修改密码后不需要切换视图，提示成功即可
-}
-
-/**
- * 处理退出登录
- */
-const handleLogout = () => {
-  // 1. 清空状态，视图会自动切回登录页
-  userInfo.value = null
-  // 2. 清除持久化数据 (如果有)
-  // localStorage.removeItem('user')
-  // 3. 可能需要调用后端的 logout 接口
-  console.log('已退出登录')
-}
-</script>
-
 <style scoped>
 .user-index-wrapper {
-  position: relative;
   width: 100%;
   height: 100%;
-  min-height: 60vh;  /* 最小高度保障 */
+  min-height: 80vh;
+  position: relative;
+}
+
+/* 遮罩层样式 */
+.settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
+  z-index: 100;
+}
+
+/* 简单的淡入淡出动画 */
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
 }
 </style>
