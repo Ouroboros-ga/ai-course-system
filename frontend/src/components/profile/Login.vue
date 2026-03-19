@@ -178,6 +178,9 @@ const handleSubmit = () => {
   align-items: center;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   pointer-events: none;  /* 让非卡片区域点击穿透 */
+
+  //background-color: red;
+  transform: translateY(-80px);
 }
 
 /* --- 毛玻璃卡片 --- */
