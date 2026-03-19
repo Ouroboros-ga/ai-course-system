@@ -25,11 +25,9 @@
 </template>
 
 <script setup>
-// 必须保留 script 标签，哪怕是空的，才能满足 Vue 语法要求
 </script>
 
 <style scoped>
-/* 基础结构 */
 .slide {
   width: 100%;
   height: 100vh;
@@ -65,7 +63,6 @@
   justify-content: center;
 }
 
-/* 标题 */
 .main-title {
   font-size: 3.5rem;
   font-weight: 800;
@@ -88,7 +85,6 @@
   color: #3b82f6;
 }
 
-/* 描述文字 */
 .description {
   font-size: 1.2rem;
   color: #64748b;
@@ -96,7 +92,6 @@
   margin-bottom: 2rem;
 }
 
-/* 按钮组 */
 .btn-group {
   display: flex;
   gap: 1rem;
@@ -140,7 +135,6 @@
   box-shadow: 0 14px 32px rgba(59, 130, 246, 0.35);
 }
 
-/* 图片区域 */
 .image-placeholder {
   width: 100%;
   max-width: 500px;
@@ -163,20 +157,19 @@
 }
 
 /* ====================================== */
-/* 📱 手机响应式（内容垂直居中，不贴顶） */
+/* 📱 手机端：图片正常 + 文字往下一点 */
 /* ====================================== */
 @media (max-width: 768px) {
   .slide {
     height: auto !important;
     min-height: 100vh !important;
-    padding: 180px 20px 100px !important; /* 👈 这里加大顶部内边距 */
+    padding: 140px 20px 80px !important;
   }
 
   .split-content {
     flex-direction: column !important;
     gap: 2.5rem !important;
     text-align: center !important;
-    padding-top: 0 !important;
   }
 
   .text-side {
@@ -200,6 +193,12 @@
   .image-placeholder {
     height: 240px !important;
     max-width: 100% !important;
+    display: block !important;
+  }
+
+  .visual-side {
+    display: flex !important;
+    width: 100% !important;
   }
 }
 </style>
