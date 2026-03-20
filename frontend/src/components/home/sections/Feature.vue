@@ -19,8 +19,10 @@
             <h3>课件智能生成</h3>
             <p>上传文档自动生成结构化课件，规范信息完整展示。</p>
             <div class="card-actions">
-              <button class="action-btn">♡</button>
-              <button class="action-btn">→</button>
+              <button class="action-btn heart-btn" @click="toggleLike(0)">
+                {{ liked[0] ? '❤️' : '♡' }}
+              </button>
+              <button class="action-btn" @click="goToChat">→</button>
             </div>
           </div>
         </div>
@@ -31,8 +33,10 @@
             <h3>随堂习题产出</h3>
             <p>随时随地，自动生成练习与互动任务，沟通协作很便捷。</p>
             <div class="card-actions">
-              <button class="action-btn">♡</button>
-              <button class="action-btn">→</button>
+              <button class="action-btn heart-btn" @click="toggleLike(1)">
+                {{ liked[1] ? '❤️' : '♡' }}
+              </button>
+              <button class="action-btn" @click="goToChat">→</button>
             </div>
           </div>
         </div>
@@ -44,8 +48,10 @@
             <h3>进度智能续接</h3>
             <p>清晰备注记录学习轨迹，团队合作更顺畅。</p>
             <div class="card-actions">
-              <button class="action-btn">♡</button>
-              <button class="action-btn">→</button>
+              <button class="action-btn heart-btn" @click="toggleLike(2)">
+                {{ liked[2] ? '❤️' : '♡' }}
+              </button>
+              <button class="action-btn" @click="goToChat">→</button>
             </div>
           </div>
         </div>
@@ -56,8 +62,10 @@
             <h3>AI 实时讲解</h3>
             <p>上传课件后，AI 自动朗读页面内容，逐页讲解知识点。</p>
             <div class="card-actions">
-              <button class="action-btn">♡</button>
-              <button class="action-btn">→</button>
+              <button class="action-btn heart-btn" @click="toggleLike(3)">
+                {{ liked[3] ? '❤️' : '♡' }}
+              </button>
+              <button class="action-btn" @click="goToChat">→</button>
             </div>
           </div>
         </div>
@@ -68,8 +76,10 @@
             <h3>智能问答互动</h3>
             <p>随时提问，AI 结合课件精准回答，支持语音交互。</p>
             <div class="card-actions">
-              <button class="action-btn">♡</button>
-              <button class="action-btn">→</button>
+              <button class="action-btn heart-btn" @click="toggleLike(4)">
+                {{ liked[4] ? '❤️' : '♡' }}
+              </button>
+              <button class="action-btn" @click="goToChat">→</button>
             </div>
           </div>
         </div>
@@ -78,18 +88,35 @@
   </div>
 </template>
 
+<script setup>
+import { ref } from 'vue'
+
+// ✅ 默认全部都是红心
+const liked = ref([true, true, true, true, true])
+
+// 切换爱心（带动画）
+const toggleLike = (index) => {
+  liked.value[index] = !liked.value[index]
+}
+
+// 跳转到聊天界面
+const goToChat = () => {
+  window.location.href = 'http://localhost:5173/chat#/chat'
+}
+</script>
+
 <style scoped>
 /* 核心容器 */
 .feature-section {
   width: 100%;
   min-height: 100vh;
   display: flex;
-  align-items: center; /* 纵向居中 */
+  align-items: center;
   justify-content: center;
   padding: 60px 5%;
   background: #ffffff;
   overflow-x: hidden;
-  gap: 80px; /* 大屏下增加标题和卡片的间距 */
+  gap: 80px;
   transition: all 0.5s ease;
 }
 
@@ -123,7 +150,6 @@
 
 .feature-grid {
   display: grid;
-  /* 加大卡片宽度：从原来的 230px 增加到 280px */
   grid-template-columns: repeat(3, 280px);
   grid-auto-rows: 320px;
   gap: 25px;
@@ -133,7 +159,7 @@
 .feature-card {
   background: #f7f9fc;
   border-radius: 20px;
-  transform: skewX(-10deg); /* 稍微加大斜度更有视觉冲击力 */
+  transform: skewX(-10deg);
   transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
 }
 
@@ -205,62 +231,70 @@
   background: #fff;
   color: #9ca3af;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.25s ease;
+}
+
+/* ✅ 爱心动画：缩放 + 弹跳 */
+.heart-btn {
+  transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+}
+.heart-btn:active {
+  transform: scale(0.7);
+}
+
+/* 箭头悬浮 */
+.action-btn:last-child:hover {
+  background: #f0f4ff;
+  color: #3b82f6;
+  transform: translateX(3px);
 }
 
 /* ============================================================
-   响应式核心策略：消灭难受的 P2 状态
+   响应式
    ============================================================ */
-
-/* 1. 当屏幕小于 1400px 时，如果左右并排开始挤压卡片，立即切换到 P3（居中模式） */
 @media (max-width: 1350px) {
   .feature-section {
-    flex-direction: column; /* 变为垂直排列 */
+    flex-direction: column;
     align-items: center;
     padding-top: 100px;
     gap: 60px;
   }
-
   .feature-header {
     text-align: center;
-    padding-right: 0;
   }
-
   .section-title {
     font-size: 3.2rem;
   }
 }
 
-/* 2. 中等屏幕下保持卡片的跨列感，但可以稍微缩小一点卡片 */
 @media (max-width: 950px) {
   .feature-grid {
-    grid-template-columns: repeat(3, 240px); /* 略微缩小 */
+    grid-template-columns: repeat(3, 240px);
     grid-auto-rows: 280px;
   }
 }
 
-/* 3. 在你非常满意的移动端状态下，取消所有倾斜 */
 @media (max-width: 768px) {
   .feature-section {
     padding: 60px 20px;
   }
-
   .feature-grid {
-    grid-template-columns: 1fr; /* 单列模式 */
+    grid-template-columns: 1fr;
     grid-auto-rows: auto;
-    width: 100%;
     max-width: 450px;
   }
-
   .feature-card, .card-inner {
-    transform: none; /* 移动端彻底取消倾斜，解决 P2 的变形感 */
+    transform: none;
     height: auto;
   }
-
   .row-1, .row-2, .col-1, .col-2, .col-3 {
     grid-column: auto !important;
     grid-row: auto !important;
   }
-
   .section-title {
     font-size: 2.2rem;
   }
