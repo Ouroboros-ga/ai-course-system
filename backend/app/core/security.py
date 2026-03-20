@@ -1,4 +1,3 @@
-# app/core/security.py
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
@@ -6,14 +5,11 @@ from typing import Optional, List, Dict, Any
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
-from passlib.context import CryptContext
+import bcrypt
 
 from app.core.config import settings, UserRole
 
-# --------------------------
-# 1. 基础工具初始化
-# --------------------------
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = bcrypt
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/user/login", auto_error=False)
 
 # --------------------------
@@ -107,10 +103,10 @@ async def verify_request_signature(request: Request):
 # 3. JWT身份认证实现
 # --------------------------
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    return pwd_context.checkpw(plain_password.encode('utf-8'), hashed_password.encode('utf-8'))
 
 def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+    return pwd_context.hashpw(password.encode('utf-8'), pwd_context.gensalt()).decode('utf-8')
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
