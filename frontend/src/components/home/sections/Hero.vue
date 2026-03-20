@@ -11,7 +11,7 @@
           免费试用·重构课堂体验·智能课件·AI 答疑·一站式教学平台
         </p>
         <div class="btn-group">
-          <button class="use-btn" @click="$emit('go-chat')">立即使用</button>
+          <button class="use-btn" @click="$emit('go-chat')">免费使用</button>
         </div>
       </div>
 
