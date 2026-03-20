@@ -30,7 +30,12 @@ const handleLoginSend = async (data) => {
 const handleRegisterSend = async (data) => {
   console.log('触发注册发送', data)
   try {
-    userInfo.value = await api.user.register(data)
+    // 只发送username和password字段，不发送confirmPassword字段
+    const registerData = {
+      username: data.username,
+      password: data.password
+    }
+    userInfo.value = await api.user.register(registerData)
     console.log('注册成功并自动登录')
   } catch (error) {
     console.error('注册失败', error)
@@ -110,7 +115,7 @@ const handleLogout = () => {
   align-items: center;
 
   /* 背景美化（可选）：如果 Profile.vue 没有设置背景，可以在这里设置 */
-  //background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  /* //background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); */
 }
 /* 遮罩层样式 */
 .settings-overlay {

@@ -57,8 +57,7 @@ async def verify_request_signature(request: Request):
         "/api/v1/user/login",
         "/api/v1/user/register",
         "/docs",
-        "/openapi.json",
-        "/api/v1/user/me"
+        "/openapi.json"
     ]
     if any(current_path.startswith(path) for path in whitelist_paths):
         return True

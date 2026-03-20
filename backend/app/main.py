@@ -5,11 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
 from app.core.security import verify_request_signature
 from app.core.exceptions import global_exception_handler, unified_response
+from app.models.database import create_tables
 
 
 # 导入示例路由TODO
 from app.api.v1.endpoints import user
 from app.schemas import UnifiedResponse
+
+# 创建数据库表
+create_tables()
 
 # 创建FastAPI实例（全局注册签名校验依赖）
 app = FastAPI(
