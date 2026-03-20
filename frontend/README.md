@@ -1,53 +1,161 @@
- **前端目录
-** 
+## Project Setup
+
+```sh
+npm install
 ```
+
+### Compile and Hot-Reload for Development
+
+```sh
+npm run dev
+```
+
+### Compile and Minify for Production
+
+```sh
+npm run build
+```
+
+### Lint with [ESLint](https://eslint.org/)
+
+```sh
+npm run lint
+```
+
+## 前端目录结构
+
+```text
 frontend/
-├── public/                  # 静态资源（图片、favicon等）
 ├── src/
-│   ├── main.js              # 项目入口
-│   ├── App.vue              # 根组件
-│   ├── router/              # 路由配置（分教师/学生端）
-│   │   ├── index.js
-│   │   ├── teacher_router.js  # 教师端路由
-│   │   └── student_router.js  # 学生端路由
-│   ├── store/               # 全局状态管理（Pinia，比Vuex更简单）
-│   │   ├── index.js
-│   │   ├── user.js          # 用户状态管理
-│   │   ├── course.js        # 智课状态管理
-│   │   └── qa.js            # 问答状态管理
-│   ├── api/                 # 接口请求封装（与后端接口一一对应）
-│   │   ├── index.js         # axios实例配置、拦截器
-│   │   ├── smart_course_api.js
-│   │   ├── qa_api.js
-│   │   ├── progress_api.js
-│   │   └── user_api.js
-│   ├── components/          # 全局通用组件（全项目复用）
-│   │   ├── CommonHeader.vue
-│   │   ├── CoursePlayer.vue  # 智课播放核心组件
-│   │   ├── QaChatBox.vue     # 问答聊天框核心组件
-│   │   ├── Uploader.vue      # 文件上传组件
-│   │   └── ProgressBar.vue   # 学习进度组件
-│   ├── views/               # 页面组件（分教师/学生端，对应赛题功能）
-│   │   ├── teacher/          # 教师端页面（前端A负责）
-│   │   │   ├── Login.vue
-│   │   │   ├── CourseList.vue       # 课件列表页
-│   │   │   ├── CourseEdit.vue       # 课件解析、脚本编辑页（智课生成核心）
-│   │   │   └── CoursePreview.vue    # 智课预览页
-│   │   ├── student/          # 学生端页面（前端B负责）
-│   │   │   ├── Login.vue
-│   │   │   ├── CourseHall.vue       # 智课大厅页
-│   │   │   ├── CourseStudy.vue      # 智课学习页（问答、进度核心）
-│   │   │   └── StudyRecord.vue      # 学习记录页
-│   │   └── Home.vue         # 项目首页
-│   ├── utils/               # 通用工具函数
-│   │   ├── auth.js          # 权限、token处理
-│   │   ├── audio.js         # 音频播放、录音处理
-│   │   └── format.js        # 时间、格式处理
-│   ├── assets/              # 样式、图片资源
-│   │   ├── css/             # 全局样式
-│   │   └── images/          # 图片资源
-├── package.json             # 前端依赖，一键npm安装
-├── vite.config.js           # vite配置
-├── .env.example             # 环境变量示例（后端接口地址）
-└── README.md                # 前端启动说明
+│   ├── api/                    # API接口管理
+│   │   ├── chat.js             # 聊天相关API
+│   │   ├── index.js            # 基础API配置
+│   │   └── user.js             # 用户相关API
+│   │
+│   ├── assets/                 # 静态资源
+│   │   ├── home/               # 主页相关图片
+│   │   │   └── 主页照片1.png
+│   │   └── Avatar.svg          # 头像SVG
+│   │
+│   ├── components/             # 全局组件
+│   │   ├── GradientBackground.vue  # 渐变背景组件
+│   │   ├── NavigationBar.vue   # 导航栏组件
+│   │   │
+│   │   ├── chat/               # 聊天功能组件
+│   │   │   ├── ChatBox.vue     # 聊天框容器
+│   │   │   ├── InputBox.vue    # 输入框组件
+│   │   │   └── bubble/         # 消息气泡
+│   │   │       ├── AiBubble.vue    # AI消息气泡
+│   │   │       └── UserBubble.vue  # 用户消息气泡
+│   │   │
+│   │   ├── home/               # 首页组件
+│   │   │   ├── sections/       # 首页各模块
+│   │   │   │   ├── Chat.vue        # 聊天模块
+│   │   │   │   ├── Feature.vue     # 特性展示
+│   │   │   │   ├── Footer.vue      # 页脚
+│   │   │   │   ├── Hero.vue        # 英雄区域
+│   │   │   │   └── Value.vue       # 价值主张
+│   │   │   └── ui/             # UI辅助组件
+│   │   │       ├── BackTop.vue     # 返回顶部
+│   │   │       └── ScrollArrow.vue # 滚动箭头
+│   │   │
+│   │   └── profile/            # 个人资料组件
+│   │       ├── data/           # 数据展示组件
+│   │       │   ├── MenuGrid.vue    # 菜单网格
+│   │       │   └── UserCard.vue    # 用户卡片
+│   │       ├── Login.vue       # 登录组件
+│   │       ├── UserIndex.vue   # 用户主页
+│   │       ├── UserInfoCard.vue # 用户信息卡片
+│   │       └── UsersData.vue   # 用户数据列表
+│   │
+│   ├── router/                 # 路由配置
+│   │   └── index.js            # 路由定义
+│   │
+│   ├── stores/                 # 状态管理
+│   │   └── counter.js          # Pinia状态存储
+│   │
+│   ├── utils/                  # 工具函数
+│   │   ├── getCookies.js       # Cookie获取
+│   │   ├── request.js          # 请求封装
+│   │   └── toast.js            # 提示消息
+│   │
+│   ├── views/                  # 页面视图
+│   │   ├── About.vue           # 关于页面
+│   │   ├── Chat.vue            # 聊天页面
+│   │   ├── Home.vue            # 首页
+│   │   └── Profile.vue         # 个人资料页
+│   │
+│   ├── App.vue                 # 根组件
+│   └── main.js                 # 应用入口
+│
+├── package.json                # 项目依赖和脚本
+└── vite.config.js              # Vite构建配置
+```
+
+## API接口文档
+
+### 1. 用户模块接口
+
+#### 1.1 用户登录
+- **接口地址**: `/user/login`
+- **请求方法**: POST
+- **请求参数**:
+```json
+{
+  "username": "用户名",
+  "password": "密码" 
+}
+```
+- **返回结果**:
+```json
+{ 
+  "code": 200,
+  "message": "登录成功", 
+  "data": { 
+    "token": "用户令牌",
+    "userInfo": { 
+      "id": "用户ID"
+    }
+  }
+}
+```
+- **错误处理**:
+```json
+{
+  "code": 401,
+  "message": "用户名密码错误",
+  "data": null
+}
+```
+
+#### 1.2 用户注册
+- **接口地址**: `/user/register`
+- **请求方法**: POST
+- **请求参数**:
+```json
+{
+  "username": "用户名",
+  "password": "密码"
+}
+```
+- **返回结果**:
+```json
+{ 
+  "code": 200,
+  "message": "注册并登录成功", 
+  "data": { 
+    "token": "用户令牌",
+    "userInfo": { 
+      "id": "用户ID"
+    }
+  }
+}
+```
+- **错误处理**:
+```json
+{
+  "code": 409,
+  "message": "用户名已存在",
+  "data": null
+}
 ```
