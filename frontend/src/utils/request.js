@@ -5,7 +5,7 @@ import { showToast } from '@/utils/toast'
 
 // 创建 axios 实例
 const service = axios.create({
-  baseURL: import.meta.env.VITE_APP_BASE_API,
+  baseURL: 'http://localhost:8000/',
   timeout: 10000 // 建议稍微设长一点
 })
 

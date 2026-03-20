@@ -54,7 +54,7 @@ const handleSubmit = () => {
     }
     // console.log('注册信息:', form.value)
     // alert('注册请求已发送（查看控制台）')
-    emit('loginSend', form.value)
+    emit('registerSend', form.value)
   } else {
     const loginData = {
       username: form.value.username,
@@ -62,7 +62,7 @@ const handleSubmit = () => {
     }
     // console.log('登录信息:', loginData)
     // alert('登录请求已发送（查看控制台）')
-    emit('registerSend', loginData)
+    emit('loginSend', loginData)
   }
 }
 </script>
