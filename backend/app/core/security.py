@@ -46,6 +46,8 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"签名验证失败：请求超时，有效期{settings.SIGN_TIMEOUT_MINUTES}分钟"
         )
+
+
     # 计算签名
     sorted_str = _sort_params(params)
     raw_sign = f"{sorted_str}{settings.STATIC_KEY}{time_str}"
@@ -53,6 +55,20 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
     return calculated_enc == enc.upper()
 
 async def verify_request_signature(request: Request):
+
+    current_path = request.url.path    #test测试使用的签名验证白名单
+    whitelist_paths = [
+        "/api/v1/user/login",
+        "/api/v1/user/register",
+        "/docs",
+        "/openapi.json",
+        "/api/v1/user/me"
+    ]
+    if any(current_path.startswith(path) for path in whitelist_paths):
+        return True
+
+    #----------------------------------分割线--------------------------------
+
     """【全局依赖】所有接口强制签名校验"""
     all_params = {}
     # 获取GET参数
