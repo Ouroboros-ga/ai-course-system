@@ -1,3 +1,6 @@
+
+from __future__ import annotations
+
 from sqlmodel import SQLModel, Field, Relationship
 from pydantic import field_validator
 from typing import Optional, List
@@ -54,6 +57,10 @@ class User(SQLModel, table=True):
         description="泛雅平台原始账号ID (学号/工号)"
     )
 
+    hashed_password: str = Field(..., description="密码哈希值")  # 必填
+
+    school_id: Optional[str] = Field(default=None, description="所属学校ID")  # 可选，用于多学校场景
+
     # 标记该账号是否已通过泛雅平台验证
     is_fanya_verified: bool = Field(default=False, description="是否已通过泛雅平台身份认证")
 
@@ -77,10 +84,10 @@ class User(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.utcnow(), description="账号创建时间")
     updated_at: Optional[datetime] = Field(default=None, description="最后更新时间")
 
-    progress_records: List["LearningProgress"] = Relationship(
-        back_populates="user",
-        sa_relationship_kwargs={"lazy": "selectin"}  # 可选：优化查询性能
-    )
+    # progress_records: List["LearningProgress"] = Relationship(
+    #     back_populates="user",
+    #     sa_relationship_kwargs={"lazy": "selectin"}  # 可选：优化查询性能
+    # )
 
     # ==========================================
     # 3. 关系定义 (Relationships)

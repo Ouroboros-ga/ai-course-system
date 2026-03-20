@@ -9,7 +9,7 @@ from app.core.exceptions import global_exception_handler, unified_response
 
 # 导入示例路由TODO
 from app.api.v1.endpoints import user
-
+from app.schemas import UnifiedResponse
 
 # 创建FastAPI实例（全局注册签名校验依赖）
 app = FastAPI(
