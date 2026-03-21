@@ -46,8 +46,8 @@ service.interceptors.response.use(
 
       return Promise.reject(new Error(res.message || 'Error'))
     } else {
-      // 正常返回完整响应数据，让业务层处理
-      return res
+      // 正常返回 data 数据，剥离 code/message 层
+      return res.data
     }
   },
   error => {
