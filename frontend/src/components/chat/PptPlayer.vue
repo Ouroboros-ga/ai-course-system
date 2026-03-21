@@ -15,10 +15,10 @@
 
         <PptControlBar
           :isPlaying="isPlaying"
-          :current-page="currentPage"
-          :total-pages="totalPages"
+          :progress="0"
           @toggle="togglePlay"
-          @page-change="handlePageChange"
+          @prev-page="() => currentPage = Math.max(1, currentPage - 1)"
+          @next-page="() => currentPage = Math.min(totalPages, currentPage + 1)"
         />
       </div>
 
