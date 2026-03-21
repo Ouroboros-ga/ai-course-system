@@ -8,11 +8,11 @@
       <div class="user-header">
         <div class="avatar">
           <!-- 这里可以根据用户名动态生成头像背景色或显示首字母 -->
-          <span>{{ userInfo.username ? userInfo.username.charAt(0).toUpperCase() : 'U' }}</span>
+          <span>{{ counter.userData.username ? counter.userData.username.charAt(0).toUpperCase() : 'U' }}</span>
         </div>
         <div class="user-info">
-          <h3 class="username">{{ userInfo.username || '未登录' }}</h3>
-          <p class="user-id">ID: {{ userInfo.id || '...' }}</p>
+          <h3 class="username">{{ counter.userData.username || '未登录' }}</h3>
+          <p class="user-id">ID: {{ counter.userData.id || '...' }}</p>
         </div>
       </div>
 
@@ -107,16 +107,8 @@
 import { ref, reactive } from 'vue'
 import { showToast } from '@/utils/toast.js' // 假设你使用了和登录页相同的 toast 工具
 
-// 接收父组件传递的用户信息
-const props = defineProps({
-  userInfo: {
-    type: Object,
-    default: () => ({
-      id: '',
-      username: 'Guest'
-    })
-  }
-})
+import { useCounterStore } from '@/stores/counter.js'
+const counter = useCounterStore()
 
 // 定义事件
 const emit = defineEmits(['updateUsername', 'updatePassword', 'logout'])

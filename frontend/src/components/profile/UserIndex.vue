@@ -6,8 +6,8 @@ import UsersData from './UsersData.vue' // 引入用户中心主页
 import UserInfoCard from "./UserInfoCard.vue"
 import api from '@/api/index.js'
 
-// 用户信息状态
-const userInfo = ref(null) // 初始为 null，展示登录页
+import { useCounterStore } from '@/stores/counter.js'
+const counter = useCounterStore()
 
 // 控制是否显示设置面板
 const showSettingsPanel = ref(false)
@@ -18,12 +18,10 @@ const showSettingsPanel = ref(false)
 const handleLoginSend = async (data) => {
   console.log('触发登录发送', data)
   try {
-    // 模拟 API 调用
     const res = await api.user.login(data)
-    // 模拟登录成功返回数据
-    console.log("后端获取的信息", res)
-    const mockUser = { id: 1, username: data.username || 'Amq' }
-    userInfo.value = mockUser
+    localStorage.setItem('token', res.token)
+    counter.userData.username = data.username
+    counter.userData.id = res.userInfo.id
     console.log('登录成功')
   } catch (error) {
     console.error('登录失败', error)
@@ -34,9 +32,14 @@ const handleLoginSend = async (data) => {
 const handleRegisterSend = async (data) => {
   console.log('触发注册发送', data)
   try {
-    const res = await api.user.login(data)
-    console.log("后端获取的信息", res)
-    userInfo.value = { id: Date.now(), username: data.username }
+    const registerData = {
+      username: data.username,
+      password: data.password
+    }
+    const res = await api.user.register(registerData)
+    localStorage.setItem('token', res.token)
+    counter.userData.username = data.username
+    counter.userData.id = res.userInfo.id
     console.log('注册成功并自动登录')
   } catch (error) {
     console.error('注册失败', error)
@@ -50,7 +53,7 @@ const handleOpenSettings = () => {
 
 // 4. 更新用户名 (由 UserInfoCard 触发)
 const handleUpdateUsername = (data) => {
-  userInfo.value = { ...userInfo.value, username: data.username }
+  counter.userData = { ...counter.userData, username: data.username }
   showSettingsPanel.value = false // 关闭面板
 }
 
@@ -62,7 +65,11 @@ const handleUpdatePassword = (data) => {
 
 // 6. 退出登录
 const handleLogout = () => {
-  userInfo.value = null
+  localStorage.removeItem('token')
+  counter.userData = {
+    username: null,
+    id: null,
+  }
   showSettingsPanel.value = false
 }
 </script>
@@ -73,7 +80,7 @@ const handleLogout = () => {
     <!-- 1. 未登录状态：显示 Login 组件 -->
     <!-- Login 组件内部已经有 flex 居中样式，只需父级给高度 -->
     <Login
-      v-if="!userInfo"
+      v-if="!counter.userData.id"
       class="login-modal"
       @loginSend="handleLoginSend"
       @registerSend="handleRegisterSend"
@@ -82,16 +89,14 @@ const handleLogout = () => {
     <!-- 2. 已登录状态：显示用户中心主页 -->
     <UsersData
       v-else
-      :userInfo="userInfo"
       @openSettings="handleOpenSettings"
       @logout="handleLogout"
     />
 
     <!-- 3. 设置面板 (浮层/弹窗) -->
     <Transition name="fade">
-      <div v-if="userInfo && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
+      <div v-if="counter.userData.id && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
         <UserInfoCard
-          :userInfo="userInfo"
           @updateUsername="handleUpdateUsername"
           @updatePassword="handleUpdatePassword"
           @logout="handleLogout"

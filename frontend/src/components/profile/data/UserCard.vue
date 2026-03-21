@@ -7,16 +7,16 @@
       <div class="avatar-wrapper">
         <div class="avatar">
           <!-- 计算首字母 -->
-          {{ userInfo.username ? userInfo.username.charAt(0).toUpperCase() : 'U' }}
+          {{ counter.userData.username ? counter.userData.username.charAt(0).toUpperCase() : 'U' }}
         </div>
         <div class="status-dot"></div>
       </div>
 
       <div class="user-info">
-        <h2 class="name">{{ userInfo.username || '未命名用户' }}</h2>
+        <h2 class="name">{{ counter.userData.username || '未命名用户' }}</h2>
         <p class="role">系统管理员</p>
         <div class="id-badge">
-          <span>ID: {{ userInfo.id }}</span>
+          <span>ID: {{ counter.userData.id }}</span>
         </div>
       </div>
 
@@ -30,12 +30,8 @@
 </template>
 
 <script setup>
-const props = defineProps({
-  userInfo: {
-    type: Object,
-    default: () => ({ username: 'Guest', id: '...' })
-  }
-})
+import { useCounterStore } from '@/stores/counter.js'
+const counter = useCounterStore()
 
 const emit = defineEmits(['logout'])
 

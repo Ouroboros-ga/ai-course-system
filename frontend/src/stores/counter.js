@@ -18,10 +18,16 @@ export const useCounterStore = defineStore('counter', () => {
     messages.value = []
   }
 
+  const userData = ref({
+    username: null,
+    id: null,
+  })
+
   return {
     messages,
     addMessage,
     clearMessages,
     removeMessage,
+    userData,
   }
 })

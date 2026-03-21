@@ -4,7 +4,6 @@
 
       <!-- 1. 引入用户卡片组件 -->
       <UserCard
-        :userInfo="userInfo"
         @logout="handleLogout"
       />
 
@@ -25,14 +24,6 @@
 <script setup>
 import UserCard from './data/UserCard.vue'
 import MenuGrid from './data/MenuGrid.vue'
-
-// 接收父组件传递的数据
-const props = defineProps({
-  userInfo: {
-    type: Object,
-    default: () => ({ username: 'Guest' })
-  }
-})
 
 // 定义事件
 const emit = defineEmits(['openSettings', 'logout'])
