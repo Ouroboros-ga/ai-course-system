@@ -52,16 +52,18 @@ const handleSubmit = () => {
       showToast('两次密码输入不一致！')
       return
     }
-    // console.log('注册信息:', form.value)
-    // alert('注册请求已发送（查看控制台）')
-    emit('registerSend', form.value)
+    // 注册：只发送 username 和 password
+    const registerData = {
+      username: form.value.username,
+      password: form.value.password
+    }
+    emit('registerSend', registerData)
   } else {
+    // 登录：发送 username 和 password
     const loginData = {
       username: form.value.username,
       password: form.value.password
     }
-    // console.log('登录信息:', loginData)
-    // alert('登录请求已发送（查看控制台）')
     emit('loginSend', loginData)
   }
 }

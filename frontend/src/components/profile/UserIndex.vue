@@ -1,10 +1,11 @@
 <!-- UserIndex.vue -->
 <script setup>
-import {ref} from 'vue'
+import { ref } from 'vue'
 import Login from './Login.vue'
 import UsersData from './UsersData.vue' // 引入用户中心主页
 import UserInfoCard from "./UserInfoCard.vue"
 import api from '@/api/index.js'
+import { showToast } from '@/utils/toast.js'
 
 // 用户信息状态
 const userInfo = ref(null) // 初始为 null，展示登录页
@@ -14,30 +15,49 @@ const showSettingsPanel = ref(false)
 
 // --- 业务逻辑处理 ---
 
-// 1. 登录成功
+// 1. 登录
 const handleLoginSend = async (data) => {
   console.log('触发登录发送', data)
   try {
-    // 模拟 API 调用
-    userInfo.value = await api.user.login(data)
-    console.log('登录成功')
+    const res = await api.user.login(data)
+    // 检查后端返回的成功状态
+    if (res.code === 200) {
+      userInfo.value = res.data
+      // 保存 token 到 localStorage
+      if (res.data.token) {
+        localStorage.setItem('token', res.data.token)
+      }
+      showToast('登录成功！')
+      console.log('登录成功', res.data)
+    } else {
+      showToast(res.message || '登录失败')
+      console.error('登录失败', res.message)
+    }
   } catch (error) {
+    const msg = error.response?.data?.message || error.message || '登录失败，请检查网络'
+    showToast(msg)
     console.error('登录失败', error)
   }
 }
 
-// 2. 注册成功
+// 2. 注册
 const handleRegisterSend = async (data) => {
   console.log('触发注册发送', data)
   try {
-    // 只发送username和password字段，不发送confirmPassword字段
-    const registerData = {
-      username: data.username,
-      password: data.password
+    const res = await api.user.register(data)
+    // 检查后端返回的成功状态
+    if (res.code === 200) {
+      showToast('注册成功！')
+      console.log('注册成功', res.data)
+      // 注册成功后自动登录
+      await handleLoginSend(data)
+    } else {
+      showToast(res.message || '注册失败')
+      console.error('注册失败', res.message)
     }
-    userInfo.value = await api.user.register(registerData)
-    console.log('注册成功并自动登录')
   } catch (error) {
+    const msg = error.response?.data?.message || error.message || '注册失败，请检查网络'
+    showToast(msg)
     console.error('注册失败', error)
   }
 }
@@ -115,7 +135,7 @@ const handleLogout = () => {
   align-items: center;
 
   /* 背景美化（可选）：如果 Profile.vue 没有设置背景，可以在这里设置 */
-  /* //background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); */
+  //background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
 }
 /* 遮罩层样式 */
 .settings-overlay {
