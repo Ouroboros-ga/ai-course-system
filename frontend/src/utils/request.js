@@ -34,7 +34,7 @@ service.interceptors.response.use(
 
       // 特殊状态码处理：Token 过期
       if (res.code === 401) {
-        showToast('登录状态已过期，请重新登录', 'error')
+        showToast('用户名密码错误', 'error')
 
         // 清除 token 并跳转登录页
         localStorage.removeItem('token')

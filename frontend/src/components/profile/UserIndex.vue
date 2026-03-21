@@ -19,6 +19,8 @@ const handleLoginSend = async (data) => {
   console.log('触发登录发送', data)
   try {
     const res = await api.user.login(data)
+    console.log(res)
+
     localStorage.setItem('token', res.token)
     counter.userData.username = data.username
     counter.userData.id = res.userInfo.id
@@ -37,6 +39,8 @@ const handleRegisterSend = async (data) => {
       password: data.password
     }
     const res = await api.user.register(registerData)
+    console.log(res)
+
     localStorage.setItem('token', res.token)
     counter.userData.username = data.username
     counter.userData.id = res.userInfo.id
