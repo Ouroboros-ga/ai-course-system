@@ -155,4 +155,36 @@ onMounted(() => {
   line-height: 1.7;
   margin: 0;
 }
+
+/* 移动端适配：≤768px 时，功能项一行一个 */
+@media (max-width: 768px) {
+  .slide {
+    padding: 10vh 5% 0;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .section-title {
+    font-size: 2rem;
+    margin-bottom: 3rem;
+  }
+
+  .value-grid {
+    grid-template-columns: 1fr;
+    gap: 2rem;
+  }
+
+  .v-item {
+    padding: 1.5rem 0;
+  }
+
+  .v-item h4 {
+    font-size: 1.4rem;
+  }
+
+  .v-item p {
+    font-size: 1rem;
+    line-height: 1.6;
+  }
+}
 </style>
