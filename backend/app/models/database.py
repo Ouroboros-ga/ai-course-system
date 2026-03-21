@@ -1,8 +1,11 @@
 
 from sqlmodel import SQLModel, create_engine, Session
 from typing import Generator
+import os
 
-DATABASE_URL = f"sqlite:///smart_class.db"
+# 获取当前文件所在目录，确保数据库创建在 backend 目录下
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'smart_class.db')}"
 
 engine = create_engine(
     DATABASE_URL,

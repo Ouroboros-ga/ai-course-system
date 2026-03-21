@@ -98,7 +98,7 @@ class LearningProgress(SQLModel, table=True):
     last_accessed_at: datetime = Field(default_factory=datetime.utcnow, description="最后访问时间")
 
     # 关系定义
-    user: Optional["User"] = Relationship(back_populates="progress_records")  # 注意：这里引用了 User，需确保 user_model 已定义或处理循环导入
+    #user: Optional["User"] = Relationship(back_populates="progress_records")  # 注意：这里引用了 User，需确保 user_model 已定义或处理循环导入
     course: Optional[Course] = Relationship(back_populates="progress_records")
 
 # --- 注意：循环导入处理 ---

@@ -11,7 +11,11 @@ class UserRole(str, Enum):
 
 # 全局配置类
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"
+    )
 
     # --------------------------
     # 签名校验核心配置（规范强制要求）
