@@ -1,6 +1,6 @@
 <!-- UserIndex.vue -->
 <script setup>
-import {ref} from 'vue'
+import { ref } from 'vue'
 import Login from './Login.vue'
 import UsersData from './UsersData.vue' // 引入用户中心主页
 import UserInfoCard from "./UserInfoCard.vue"
@@ -19,7 +19,11 @@ const handleLoginSend = async (data) => {
   console.log('触发登录发送', data)
   try {
     // 模拟 API 调用
-    userInfo.value = await api.user.login(data)
+    const res = await api.user.login(data)
+    // 模拟登录成功返回数据
+    console.log("后端获取的信息", res)
+    const mockUser = { id: 1, username: data.username || 'Amq' }
+    userInfo.value = mockUser
     console.log('登录成功')
   } catch (error) {
     console.error('登录失败', error)
@@ -30,12 +34,9 @@ const handleLoginSend = async (data) => {
 const handleRegisterSend = async (data) => {
   console.log('触发注册发送', data)
   try {
-    // 只发送username和password字段，不发送confirmPassword字段
-    const registerData = {
-      username: data.username,
-      password: data.password
-    }
-    userInfo.value = await api.user.register(registerData)
+    const res = await api.user.login(data)
+    console.log("后端获取的信息", res)
+    userInfo.value = { id: Date.now(), username: data.username }
     console.log('注册成功并自动登录')
   } catch (error) {
     console.error('注册失败', error)
