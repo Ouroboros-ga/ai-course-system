@@ -8,7 +8,7 @@
     <nav class="navbar">
       <router-link to="/" class="logo">
         <span class="logo-icon">🦀</span>
-        Smartarb
+        Smartrab
       </router-link>
 
       <div class="nav-links">
