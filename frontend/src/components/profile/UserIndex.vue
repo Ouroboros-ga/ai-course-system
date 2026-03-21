@@ -1,16 +1,17 @@
 <script setup>
 import { ref } from 'vue'
-import Login from './LoginIn/Login.vue' // 若Login.vue在LoginIn文件夹下
+import Login from './LoginIn/Login.vue'
 import UserCard from './LoginIn/UserCard.vue'
 import StatsCard from './LoginIn/StatsCard.vue'
 import MenuGrid from './LoginIn/MenuGrid.vue'
 import UserInfoCard from './LoginIn/UserInfoCard.vue'
 import PreferenceSettings from './LoginIn/PreferenceSettings.vue'
+import MyCourses from './LoginIn/MyCourses.vue' // 导入我的课程（不是学习偏好）
 
-// 其余逻辑代码保持不变
 const userInfo = ref(null)
 const showSettingsPanel = ref(false)
 const showPreferencePanel = ref(false)
+const showMyCoursesPanel = ref(false) // 控制我的课程面板（和学习偏好无关）
 
 const courseCount = ref('')
 const chatCount = ref('')
@@ -48,11 +49,23 @@ const handleLogout = () => {
   userInfo.value = null
   showSettingsPanel.value = false
   showPreferencePanel.value = false
+  showMyCoursesPanel.value = false // 退出时关闭我的课程
   courseCount.value = ''
   chatCount.value = ''
   studyMinutes.value = ''
 }
 
+// 打开我的课程（独立方法）
+const handleOpenMyCourses = () => {
+  showMyCoursesPanel.value = true
+}
+
+// 关闭我的课程
+const handleCloseMyCourses = () => {
+  showMyCoursesPanel.value = false
+}
+
+// 原有方法（学习偏好）
 const handleOpenSettings = () => showSettingsPanel.value = true
 const handleOpenPreference = () => showPreferencePanel.value = true
 const handleSavePreference = (prefs) => {
@@ -84,10 +97,12 @@ const handleUpdatePassword = (data) => {
       <MenuGrid
         @openSettings="handleOpenSettings"
         @openPreference="handleOpenPreference"
-        @logout="handleLogout"
+        @myCourses="handleOpenMyCourses"
+      @logout="handleLogout"
       />
     </div>
 
+    <!-- 账户设置面板 -->
     <Transition name="fade">
       <div v-if="userInfo && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
         <UserInfoCard
@@ -100,12 +115,20 @@ const handleUpdatePassword = (data) => {
       </div>
     </Transition>
 
+    <!-- 学习偏好面板（原有，和我的课程无关） -->
     <Transition name="fade">
       <div v-if="userInfo && showPreferencePanel" class="settings-overlay" @click.self="showPreferencePanel = false">
         <PreferenceSettings
           @close="showPreferencePanel = false"
           @save="handleSavePreference"
         />
+      </div>
+    </Transition>
+
+    <!-- 我的课程面板（独立，全新功能） -->
+    <Transition name="fade">
+      <div v-if="userInfo && showMyCoursesPanel" class="settings-overlay" @click.self="handleCloseMyCourses">
+        <MyCourses @close="handleCloseMyCourses" />
       </div>
     </Transition>
   </div>
