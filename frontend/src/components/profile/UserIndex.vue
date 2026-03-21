@@ -19,8 +19,9 @@ const handleLoginSend = async (data) => {
   console.log('触发登录发送', data)
   try {
     // 模拟 API 调用
-    // const res = await api.user.login(data)
+    const res = await api.user.login(data)
     // 模拟登录成功返回数据
+    console.log("后端获取的信息", res)
     const mockUser = { id: 1, username: data.username || 'Amq' }
     userInfo.value = mockUser
     console.log('登录成功')
@@ -33,7 +34,8 @@ const handleLoginSend = async (data) => {
 const handleRegisterSend = async (data) => {
   console.log('触发注册发送', data)
   try {
-    // const res = await api.user.register(data)
+    const res = await api.user.login(data)
+    console.log("后端获取的信息", res)
     userInfo.value = { id: Date.now(), username: data.username }
     console.log('注册成功并自动登录')
   } catch (error) {
