@@ -3,33 +3,45 @@ import requests
 
 router = APIRouter()
 
-# 你的 KEY
 SOMARK_API_KEY = "sk-Ah-CISudxWZzbqVOVHKVhaCqexgYOrEpXekaDW0r8A4"
-SOMARK_URL = "https://somark.tech/api/v1/extract/acc_sync"  # 官方正确地址
-
+SOMARK_URL = "https://somark.tech/api/v1/extract/acc_sync"
 
 @router.post("/api/somark/parse")
 async def parse_file(file: UploadFile = File(...)):
     try:
-        # 读取文件
         file_content = await file.read()
 
-        # ✅ 正确的请求格式（只写一次！）
         resp = requests.post(
             SOMARK_URL,
             files={"file": (file.filename, file_content, file.content_type)},
             data={
-                "output_formats": ["markdown", "json"],
+                "output_formats": ["json"],
                 "api_key": SOMARK_API_KEY
-            }
+            },
+            timeout=30
         )
 
-        # 打印日志
-        print("SoMark 返回状态码:", resp.status_code)
-        print("SoMark 返回内容:", resp.text)
+        data = resp.json()
 
-        return resp.json()
+        # ==============================
+        # ✅ 完全按照你后台的结构来取！
+        # ==============================
+        pages = []
+        result = data.get("data", {}).get("result", {})
+        raw_pages = result.get("outputs", {}).get("json", {}).get("pages", [])
+
+        for page in raw_pages:
+            content = ""
+            for block in page.get("blocks", []):
+                content += block.get("content", "") + "\n\n"
+
+            pages.append({
+                "title": f"第{page['page_num']+1}页",
+                "content": content.strip()
+            })
+
+        return {"pages": pages}
 
     except Exception as e:
-        print("SoMark 调用失败:", str(e))
+        print("错误：", e)
         return {"pages": []}

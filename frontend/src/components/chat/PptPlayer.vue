@@ -1,7 +1,10 @@
 <template>
   <div class="ppt-section">
-    <!-- 👇 关键修复：传入 currentPage -->
-    <PptHeader :file="file" :totalPages="totalPages" :current-page="currentPage" />
+    <PptHeader
+      :file="file"
+      :totalPages="totalPages"
+      :current-page="currentPage"
+    />
 
     <div class="ppt-display-area">
       <PptUpload v-if="!file" @click="triggerUpload" @drop="handleDrop" />
@@ -70,7 +73,12 @@ const startAnalysis = async (f) => {
     const formData = new FormData()
     formData.append('file', f)
 
-    const res = await service.post('http://127.0.0.1:8000/api/somark/parse', formData)
+    // ✅ 只改这里！！！
+    const res = await service({
+      url: 'http://127.0.0.1:8000/api/somark/parse',
+      method: 'POST',
+      data: formData
+    })
 
     pages.value = res.data?.pages || []
     totalPages.value = pages.value.length || 1
@@ -90,11 +98,6 @@ const startAnalysis = async (f) => {
 
 const togglePlay = () => {
   isPlaying.value = !isPlaying.value
-}
-
-const handlePageChange = (page) => {
-  if (page < 1 || page > totalPages.value) return
-  currentPage.value = page
 }
 </script>
 
