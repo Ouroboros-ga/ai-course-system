@@ -4,9 +4,12 @@
 支持 PDF, DOCX, XLSX, 图片, 音频 (需要 asr 扩展)
 支持 CPU / GPU 一键切换
 """
+import os
+
+os.environ["CUDA_VISIBLE_DEVICES"] = ""
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import logging
-import os
 import platform
 from pathlib import Path
 from typing import Optional, Union
@@ -17,7 +20,7 @@ import torch
 # ==========================================
 # 核心逻辑：设备选择与环境配置
 # ==========================================
-def resolve_device(device_preference: str = "auto") -> str:
+def resolve_device(device_preference: str = "cpu") -> str:
     """
     解析并设置运行设备.
     返回: "cuda" 或 "cpu"
@@ -26,7 +29,10 @@ def resolve_device(device_preference: str = "auto") -> str:
 
     # 1. 强制 CPU 模式 (必须在导入 docling 或加载模型前设置)
     if device_preference == "cpu":
+        # 1. 禁用 CUDA，让 torch 看不到显卡
         os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        # 2. 禁用 MPS (Mac 加速)，确保回退到 CPU
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         logging.info("⚙️ 配置: 强制 CPU 模式 (已屏蔽 CUDA)")
         return "cpu"
 
@@ -183,12 +189,7 @@ class UniversalDocProcessor:
 # ============================================
 if __name__ == "__main__":
     # 模拟导入测试文件路径 (实际使用时请替换为真实路径)
-    # from config import DOCX_PATH, PDF_PATH, XLSX_PATH
-
-    # 为了演示，这里假设一些测试文件
-    PDF_PATH = Path("test.pdf")
-    DOCX_PATH = Path("test.docx")
-    XLSX_PATH = Path("test.xlsx")
+    from __init__ import DOCX_PATH, PDF_PATH, XLSX_PATH
 
     # ==========================================
     # 使用环境变量控制: DOCLING_DEVICE=cpu / cuda
@@ -199,10 +200,10 @@ if __name__ == "__main__":
     # processor = UniversalDocProcessor()
 
     # 方式 2: 强制 CPU (用于调试或显存不足时)
-    # processor = UniversalDocProcessor(device="cpu")
+    processor = UniversalDocProcessor(device="cpu")
 
     # 方式 3: 强制 GPU (如果不存在会自动回退)
-    processor = UniversalDocProcessor(device="cuda")
+    # processor = UniversalDocProcessor(device="cuda")
 
     print("=" * 60)
     print(f"系统: {platform.system()} | 设备模式: {processor.device.upper()}")
