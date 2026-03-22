@@ -1,12 +1,12 @@
-
 from __future__ import annotations
 
-from sqlmodel import SQLModel, Field, Relationship
+from sqlmodel import SQLModel, Field
 from pydantic import field_validator
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from enum import Enum
 import re
+
 
 class UserRole(str, Enum):
     """
@@ -15,18 +15,23 @@ class UserRole(str, Enum):
     TEACHER: 负责上传课件、编辑脚本、生成智课
     STUDENT: 负责观看智课、实时问答、进度续接
     """
+
     TEACHER = "teacher"
     STUDENT = "student"
+
 
 class User(SQLModel, table=True):
     """
     用户数据库表模型
     作为系统的身份核心，连接泛雅平台与 AI 功能模块
     """
-    __tablename__ = "users" #或者使用 tablename: str = "users"
+
+    __tablename__ = "users"  # 或者使用 tablename: str = "users"
 
     # --- 主键 ---
-    id: Optional[int] = Field(default=None, primary_key=True, description="系统内部唯一用户ID")
+    id: Optional[int] = Field(
+        default=None, primary_key=True, description="系统内部唯一用户ID"
+    )
 
     # --- 基础身份信息 ---
     username: str = Field(
@@ -34,18 +39,17 @@ class User(SQLModel, table=True):
         unique=True,
         min_length=3,
         max_length=50,
-        description="用户名 (支持泛雅账号同步或自定义)"
+        description="用户名 (支持泛雅账号同步或自定义)",
     )
 
-    real_name: Optional[str] = Field(default=None, max_length=50, description="真实姓名 (用于教学管理)")
+    real_name: Optional[str] = Field(
+        default=None, max_length=50, description="真实姓名 (用于教学管理)"
+    )
 
     email: Optional[str] = Field(
         default=None,
-        sa_column_kwargs={
-            "unique": True,
-            "index": True
-        },
-        description="联系邮箱（支持教育机构邮箱如.edu.cn）"
+        sa_column_kwargs={"unique": True, "index": True},
+        description="联系邮箱（支持教育机构邮箱如.edu.cn）",
     )
 
     # --- 泛雅平台集成关键字段 ---
@@ -54,20 +58,24 @@ class User(SQLModel, table=True):
         default=None,
         index=True,
         unique=True,
-        description="泛雅平台原始账号ID (学号/工号)"
+        description="泛雅平台原始账号ID (学号/工号)",
     )
 
     hashed_password: str = Field(..., description="密码哈希值")  # 必填
 
-    school_id: Optional[str] = Field(default=None, description="所属学校ID")  # 可选，用于多学校场景
+    school_id: Optional[str] = Field(
+        default=None, description="所属学校ID"
+    )  # 可选，用于多学校场景
 
     # 标记该账号是否已通过泛雅平台验证
-    is_fanya_verified: bool = Field(default=False, description="是否已通过泛雅平台身份认证")
+    is_fanya_verified: bool = Field(
+        default=False, description="是否已通过泛雅平台身份认证"
+    )
 
     # --- 业务角色 ---
     role: UserRole = Field(
         default=UserRole.STUDENT,
-        description="用户角色：teacher (课件生产者) 或 student (消费者)"
+        description="用户角色：teacher (课件生产者) 或 student (消费者)",
     )
 
     # --- 状态控制 ---
@@ -75,13 +83,19 @@ class User(SQLModel, table=True):
 
     # --- 业务上下文辅助字段 (优化体验) ---
     # 记录用户最后学习的课程ID，用于"进度智能续接"功能的快速入口
-    last_active_course_id: Optional[int] = Field(default=None, description="最后活跃的课程ID")
+    last_active_course_id: Optional[int] = Field(
+        default=None, description="最后活跃的课程ID"
+    )
 
     # 记录用户最后学习的章节/节点，用于精确进度续接
-    last_learning_node: Optional[str] = Field(default=None, description="最后学习的课件节点")
+    last_learning_node: Optional[str] = Field(
+        default=None, description="最后学习的课件节点"
+    )
 
     # --- 时间戳 ---
-    created_at: datetime = Field(default_factory=lambda: datetime.utcnow(), description="账号创建时间")
+    created_at: datetime = Field(
+        default_factory=lambda: datetime.utcnow(), description="账号创建时间"
+    )
     updated_at: Optional[datetime] = Field(default=None, description="最后更新时间")
 
     # progress_records: List["LearningProgress"] = Relationship(
@@ -105,17 +119,18 @@ class User(SQLModel, table=True):
     # 4. 业务逻辑方法
     # ==========================================
 
-
-    @field_validator('email')
+    @field_validator("email")
     def validate_email(cls, v):
         """验证邮箱格式（支持教育机构邮箱）"""
         if v is None:
             return v
 
         # 教育场景优化：支持.edu.cn等教育机构域名
-        pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:[a-zA-Z]{2,}|edu\.cn|com\.cn|net\.cn|org\.cn)$'
+        pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.(?:[a-zA-Z]{2,}|edu\.cn|com\.cn|net\.cn|org\.cn)$"
         if not re.match(pattern, v, re.IGNORECASE):
-            raise ValueError('邮箱格式不正确，请使用有效的邮箱地址（支持教育机构邮箱如.edu.cn）')
+            raise ValueError(
+                "邮箱格式不正确，请使用有效的邮箱地址（支持教育机构邮箱如.edu.cn）"
+            )
         return v.lower()  # 统一转换为小写存储
 
     # def is_teacher(self) -> bool:

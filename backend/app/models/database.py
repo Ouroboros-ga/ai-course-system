@@ -1,4 +1,3 @@
-
 from sqlmodel import SQLModel, create_engine, Session
 from typing import Generator
 import os
@@ -10,11 +9,13 @@ DATABASE_URL = f"sqlite:///{os.path.join(BASE_DIR, 'smart_class.db')}"
 engine = create_engine(
     DATABASE_URL,
     echo=False,  # True: 在控制台打印 SQL 语句，方便调试；生产环境可改为 False
-    connect_args={"check_same_thread": False}
+    connect_args={"check_same_thread": False},
 )
+
 
 def create_tables():
     SQLModel.metadata.create_all(engine)
+
 
 def get_session() -> Generator[Session, None, None]:
     """

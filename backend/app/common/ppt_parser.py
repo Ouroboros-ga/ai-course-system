@@ -2,7 +2,7 @@ import io
 import logging
 import tempfile
 import zipfile
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, BinaryIO
 
@@ -27,12 +27,14 @@ logger = logging.getLogger(__name__)
 
 class PPTParseError(Exception):
     """PPT 解析过程中的自定义异常"""
+
     pass
 
 
 @dataclass
 class SlideContent:
     """单页幻灯片的结构化数据容器"""
+
     slide_number: int
     title: str
     text_content: List[str]
@@ -49,6 +51,7 @@ class SlideContent:
 @dataclass
 class PPTParseResult:
     """整个PPT的解析结果容器"""
+
     file_name: str
     slide_count: int
     slides: List[SlideContent]
@@ -60,12 +63,14 @@ class PPTParseResult:
             "file_name": self.file_name,
             "slide_count": self.slide_count,
             "slides": [s.to_dict() for s in self.slides],
-            "metadata": self.metadata or {}
+            "metadata": self.metadata or {},
         }
 
 
 class PPTParser:
-    def __init__(self, extract_images: bool = False, image_output_dir: Optional[str] = None):
+    def __init__(
+        self, extract_images: bool = False, image_output_dir: Optional[str] = None
+    ):
         """
         初始化PPT解析器
 
@@ -110,7 +115,9 @@ class PPTParser:
             except Exception as e:
                 logger.warning(f"清理临时目录失败: {str(e)}")
 
-    def parse(self, file_source: Union[str, BinaryIO, Any], filename: str = "unknown.pptx") -> PPTParseResult:
+    def parse(
+        self, file_source: Union[str, BinaryIO, Any], filename: str = "unknown.pptx"
+    ) -> PPTParseResult:
         """
         通用解析接口（支持文件路径、文件对象、FastAPI UploadFile）
 
@@ -119,12 +126,12 @@ class PPTParser:
         :raises PPTParseError: 解析失败时抛出
         """
         # 适配 FastAPI/Starlette 的 UploadFile 对象
-        if hasattr(file_source, 'file'):
+        if hasattr(file_source, "file"):
             # 保存引用以便读取内容
             file_source = file_source.file
             # 尝试从 UploadFile 获取真实文件名
-            if hasattr(file_source, 'name') and filename == "unknown.pptx":
-                filename = getattr(file_source, 'name', filename)
+            if hasattr(file_source, "name") and filename == "unknown.pptx":
+                filename = getattr(file_source, "name", filename)
 
         try:
             # python-pptx 原生支持文件路径和文件对象
@@ -141,7 +148,7 @@ class PPTParser:
                 file_name=filename,
                 slide_count=len(prs.slides),
                 slides=slides_content,
-                metadata=metadata
+                metadata=metadata,
             )
         except zipfile.BadZipFile:
             logger.error("无效的PPTX文件（非ZIP格式）")
@@ -161,7 +168,7 @@ class PPTParser:
         file_like = io.BytesIO(content)
 
         # 优先使用上传文件的原始文件名
-        filename = getattr(upload_file, 'filename', 'unknown.pptx')
+        filename = getattr(upload_file, "filename", "unknown.pptx")
 
         return self.parse(file_like, filename=filename)
 
@@ -202,7 +209,7 @@ class PPTParser:
             text_raw="\n".join(texts),
             images=images or None,
             tables=tables or None,
-            notes=notes
+            notes=notes,
         )
 
     def _extract_title(self, slide) -> str:
@@ -228,8 +235,8 @@ class PPTParser:
             image = shape.image
             # 规范化扩展名
             ext = image.ext.lower()
-            if ext not in ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff']:
-                ext = 'png'  # 默认兜底
+            if ext not in ["png", "jpg", "jpeg", "gif", "bmp", "tiff"]:
+                ext = "png"  # 默认兜底
 
             # 生成唯一文件名
             filename = f"slide_{slide_number}_shape_{shape.shape_id}.{ext}"
@@ -241,15 +248,14 @@ class PPTParser:
             logger.debug(f"图片已保存: {filepath}")
             return filepath
         except Exception as e:
-            logger.warning(f"图片保存失败 (Slide {slide_number}, Shape {shape.shape_id}): {str(e)}")
+            logger.warning(
+                f"图片保存失败 (Slide {slide_number}, Shape {shape.shape_id}): {str(e)}"
+            )
             return None
 
     def _parse_table(self, table) -> List[List[str]]:
         """解析表格数据"""
-        return [
-            [cell.text.strip() for cell in row.cells]
-            for row in table.rows
-        ]
+        return [[cell.text.strip() for cell in row.cells] for row in table.rows]
 
     def _extract_metadata(self, prs) -> Dict[str, Any]:
         """提取元数据"""
@@ -258,7 +264,7 @@ class PPTParser:
             "author": props.author or "",
             "title": props.title or "",
             "subject": props.subject or "",
-            "modified": str(props.modified) if props.modified else ""
+            "modified": str(props.modified) if props.modified else "",
         }
 
     # 兼容旧代码：保留 __del__ 作为最后的防线，但不再推荐依赖

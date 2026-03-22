@@ -1,7 +1,7 @@
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from enum import Enum
 from typing import List
+
 
 # 规范要求的角色枚举（RBAC权限核心）
 class UserRole(str, Enum):
@@ -9,12 +9,11 @@ class UserRole(str, Enum):
     TEACHER = "teacher"
     ADMIN = "admin"
 
+
 # 全局配置类
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
-        extra="ignore"
+        env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
     # --------------------------
@@ -41,8 +40,9 @@ class Settings(BaseSettings):
         "/api/v1/user/login",
         "/docs",
         "/openapi.json",
-        "/"
+        "/",
     ]
+
 
 # 全局单例配置
 settings = Settings()

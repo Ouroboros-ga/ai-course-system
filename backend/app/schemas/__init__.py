@@ -8,7 +8,7 @@ from .common_schema import (
     UnifiedResponse,
     LoginRequest,
     LoginResponse,
-    LoginResponseData
+    LoginResponseData,
 )
 # from .user_schema import UserCreate, UserUpdate, UserResponse
 # from .smart_course_schema import (
