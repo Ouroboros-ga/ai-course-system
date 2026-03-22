@@ -4,17 +4,41 @@
 支持 PDF, DOCX, XLSX, 图片, 音频 (需要 asr 扩展)
 支持 CPU / GPU 一键切换
 """
-import os
 
+import logging
+import os
+import platform
+from pathlib import Path
+from typing import Literal, Optional, Union
+
+PLATFORM: Literal["cpu", "gpu"] = "cpu"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-import logging
-import platform
-from pathlib import Path
-from typing import Optional, Union
+try:
+    if PLATFORM == "gpu":
+        import torch
 
-import torch
+    # Docling 核心库导入
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import (
+        AsrPipelineOptions,
+        PdfPipelineOptions,
+    )
+    from docling.document_converter import (
+        AudioFormatOption,
+        DocumentConverter,
+        PdfFormatOption,
+    )
+
+    AUDIO_SUPPORT: bool = True
+except ImportError:
+    AUDIO_SUPPORT = False
+    logging.warning("未安装 audio 支持。请运行: uv add 'docling[asr]' 来启用语音功能。")
+
+finally:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logger = logging.getLogger(__name__)
 
 
 # ==========================================
@@ -52,30 +76,9 @@ def resolve_device(device_preference: str = "cpu") -> str:
     return "cpu"
 
 
-# ==========================================
-# Docling 核心库导入
-# ==========================================
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions
-from docling.document_converter import DocumentConverter, PdfFormatOption
-
-# 音频处理相关 (可选)
-try:
-    from docling.datamodel.pipeline_options import AsrPipelineOptions
-    from docling.document_converter import AudioFormatOption
-
-    AUDIO_SUPPORT: bool = True
-except ImportError:
-    AUDIO_SUPPORT = False
-    logging.warning("未安装 audio 支持。请运行: uv add 'docling[asr]' 来启用语音功能。")
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-logger = logging.getLogger(__name__)
-
-
 class Markdown(str):
     """自定义 Markdown 类型，方便类型提示和 IDE 识别"""
+
     pass
 
 
@@ -86,9 +89,9 @@ class UniversalDocProcessor:
     """
 
     def __init__(
-            self,
-            artifacts_path: str = "/home/will_m/.cache/docling/models",
-            device: str = "cpu"
+        self,
+        artifacts_path: str = "/home/will_m/.cache/docling/models",
+        device: str = "cpu",
     ):
         """
         初始化处理器
@@ -127,10 +130,10 @@ class UniversalDocProcessor:
         self.converter = DocumentConverter(format_options=format_options)
 
     def convert(
-            self,
-            file_path: Union[str, Path],
-            output_path: Optional[Union[str, Path]] = None,
-            save_file: bool = True,
+        self,
+        file_path: Union[str, Path],
+        output_path: Optional[Union[str, Path]] = None,
+        save_file: bool = True,
     ) -> Markdown:
         """
         转换文档为 Markdown
@@ -162,7 +165,7 @@ class UniversalDocProcessor:
         return Markdown(markdown_content)
 
     def convert_batch(
-            self, file_paths: list[Union[str, Path]], output_dir: Union[str, Path]
+        self, file_paths: list[Union[str, Path]], output_dir: Union[str, Path]
     ) -> list[Markdown]:
         """
         批量转换文档

@@ -10,6 +10,7 @@ from typing import Optional, Union
 
 from docling.datamodel.base_models import InputFormat
 from docling.datamodel.pipeline_options import PdfPipelineOptions
+
 # Docling 核心库
 from docling.document_converter import DocumentConverter, PdfFormatOption
 
