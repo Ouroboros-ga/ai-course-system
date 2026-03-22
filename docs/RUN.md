@@ -1,11 +1,13 @@
 # 后端 BACKEND
 ```bash
+cd ..
 cd ./backend/
 uv run python -m uvicorn app.main:app --reload --host  0.0.0.0  --port 8000
 ```
 
 # 前端 FRONTEND
 ```bash
+cd ..
 cd ./frontend/
 npm run dev
 ```
