@@ -17,5 +17,5 @@ or
 visit [here](http://localhost:5173)
 
 # ABOUT
-- API 服务: http://localhost:8001
-- API 文档: http://localhost:8001/docs
+- API 服务: http://localhost:8000
+- API 文档: http://localhost:8000/docs
