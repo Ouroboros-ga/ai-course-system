@@ -1,31 +1,28 @@
-from sqlmodel import SQLModel, Field, Relationship, JSON
+from __future__ import annotations
+
+from sqlmodel import SQLModel, Field, Relationship, JSON, Column
 from typing import Optional, List
 from datetime import datetime
 from enum import Enum
-from sqlalchemy import Column
-
-# --- 枚举定义 ---
 
 
 class CourseStatus(str, Enum):
     """课程状态枚举"""
 
-    DRAFT = "draft"  # 草稿
-    PUBLISHED = "published"  # 已发布
-    ARCHIVED = "archived"  # 已归档
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
 
 
 class ScriptNodeType(str, Enum):
-    """脚本节点类型枚举 (建议使用字符串以便 JSON 可读)"""
+    """脚本节点类型枚举"""
 
-    LECTURE = "lecture"  # 讲解
-    QUESTION = "question"  # 提问
-    BREAKPOINT = "breakpoint"  # 断点
-    SUMMARY = "summary"  # 总结
-    VIDEO = "video"  # 视频
-
-
-# --- 数据模型 ---
+    LECTURE = "lecture"
+    QUESTION = "question"
+    BREAKPOINT = "breakpoint"
+    SUMMARY = "summary"
+    VIDEO = "video"
+    INTERACTIVE = "interactive"
 
 
 class Course(SQLModel, table=True):
@@ -35,90 +32,84 @@ class Course(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    # 泛雅平台映射字段
     fanya_course_id: str = Field(index=True, description="泛雅课程ID")
     fanya_course_name: str = Field(description="泛雅原始课程名称")
 
-    # 本地智课字段
     title: str = Field(description="智课标题")
     description: Optional[str] = Field(default=None, description="课程描述")
-    teacher_id: int = Field(foreign_key="users.id", description="所属教师ID")
+    cover_image: Optional[str] = Field(default=None, description="封面图片URL")
 
-    # 状态管理
+    teacher_id: int = Field(foreign_key="users.id", index=True, description="所属教师ID")
+
     status: CourseStatus = Field(default=CourseStatus.DRAFT, description="课程状态")
     is_ai_generated: bool = Field(default=False, description="是否由AI生成")
 
-    # 时间戳
+    total_duration: int = Field(default=0, description="总时长(秒)")
+    total_nodes: int = Field(default=0, description="脚本总节点数")
+
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
 
-    # 关系定义
-    scripts: List["CourseScript"] = Relationship(back_populates="course")
-    progress_records: List["LearningProgress"] = Relationship(back_populates="course")
-
 
 class CourseScript(SQLModel, table=True):
-    """AI生成的结构化脚本表 (核心互动逻辑)"""
+    """AI生成的结构化脚本表"""
 
     __tablename__ = "course_scripts"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+
     course_id: int = Field(
         foreign_key="courses.id", index=True, description="所属课程ID"
     )
 
     version: int = Field(default=1, description="脚本版本号")
+    version_name: Optional[str] = Field(default=None, description="版本名称")
 
-    # 核心：存储结构化 JSON 数据
-    # 示例结构: [{"node_id": 1, "type": "lecture", "content": "...", "ppt_page": 1}, ...]
     script_content: dict = Field(
         ...,
-        sa_column=Column(JSON, nullable=False),  # 关键！映射到数据库 JSON 类型
-        description="结构化脚本内容",
+        sa_column=Column(JSON, nullable=False),
+        description="结构化脚本内容(JSON)",
     )
 
     summary_text: Optional[str] = Field(default=None, description="AI生成的课程摘要")
+    keywords: Optional[str] = Field(default=None, description="关键词(JSON数组)")
+
     is_active: bool = Field(default=True, description="是否为当前激活版本")
+
+    audio_url: Optional[str] = Field(default=None, description="合成音频URL")
+    audio_duration: int = Field(default=0, description="音频时长(秒)")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     created_by: int = Field(foreign_key="users.id", description="创建者/教师ID")
 
-    # 关系定义
-    course: Optional[Course] = Relationship(back_populates="scripts")
 
+class ScriptNode(SQLModel, table=True):
+    """脚本节点表：存储每个节点的详细信息"""
 
-class LearningProgress(SQLModel, table=True):
-    """学生学习进度追踪表 (断点续接核心)"""
-
-    __tablename__ = "learning_progress"
+    __tablename__ = "script_nodes"
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    user_id: int = Field(foreign_key="users.id", index=True, description="学生ID")
-    course_id: int = Field(foreign_key="courses.id", index=True, description="课程ID")
-
-    # 断点信息
-    current_node_id: Optional[int] = Field(
-        default=None, description="当前所在的脚本节点ID"
-    )
-    current_timestamp: float = Field(default=0.0, description="当前视频/音频进度 (秒)")
-    current_page: int = Field(default=1, description="当前PPT页码")
-
-    # 统计信息
-    completion_rate: float = Field(
-        default=0.0, ge=0.0, le=1.0, description="完成度 0.0-1.0"
-    )
-    last_accessed_at: datetime = Field(
-        default_factory=datetime.utcnow, description="最后访问时间"
+    script_id: int = Field(
+        foreign_key="course_scripts.id", index=True, description="所属脚本ID"
     )
 
-    # 关系定义
-    # user: Optional["User"] = Relationship(back_populates="progress_records")  # 注意：这里引用了 User，需确保 user_model 已定义或处理循环导入
-    course: Optional[Course] = Relationship(back_populates="progress_records")
+    node_index: int = Field(description="节点序号")
+    node_type: ScriptNodeType = Field(description="节点类型")
 
+    title: Optional[str] = Field(default=None, description="节点标题")
+    content: str = Field(description="节点内容/讲解文本")
 
-# --- 注意：循环导入处理 ---
-# 由于 LearningProgress 引用了 "User"，而 User 可能引用了 LearningProgress
-# 最佳实践是将 Relationship 中的类型写为字符串 "User"，并在 user_model.py 中做同样处理。
-# 如果 user_model.py 还没定义 progress_records 关系，请先暂时注释掉上面 LearningProgress 中的 user 关系，
-# 或者在 user_model.py 中补全关系。
+    page_start: int = Field(default=1, description="关联PPT起始页")
+    page_end: int = Field(default=1, description="关联PPT结束页")
+
+    timestamp_start: float = Field(default=0.0, description="音频起始时间(秒)")
+    timestamp_end: float = Field(default=0.0, description="音频结束时间(秒)")
+
+    duration: int = Field(default=0, description="节点时长(秒)")
+
+    extra_data: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="扩展元数据(JSON)"
+    )
+
+    created_at: datetime = Field(default_factory=datetime.utcnow)
