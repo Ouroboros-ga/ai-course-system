@@ -1,8 +1,8 @@
 # app/main.py
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.security import verify_request_signature
+from app.core.signature_middleware import SignatureMiddleware
 from app.core.exceptions import global_exception_handler, unified_response
 from app.models.database import create_tables
 
@@ -14,16 +14,15 @@ from app.schemas import UnifiedResponse
 # 创建数据库表
 create_tables()
 
-# 创建FastAPI实例（全局注册签名校验依赖）
+# 创建FastAPI实例
 app = FastAPI(
     title="超星AI互动智课系统",
     description="符合超星开放API设计规范的后端服务",
     version="v1",
-    dependencies=[Depends(verify_request_signature)],
 )
 
-# 注册全局异常处理
-app.add_exception_handler(HTTPException, global_exception_handler)
+# 注册签名验证中间件（必须在CORS之后，路由之前）
+app.add_middleware(SignatureMiddleware)
 
 # CORS跨域配置
 app.add_middleware(
@@ -33,6 +32,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册全局异常处理
+app.add_exception_handler(HTTPException, global_exception_handler)
 
 # 注册路由
 app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])

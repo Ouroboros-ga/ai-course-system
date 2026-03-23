@@ -24,7 +24,15 @@ def _sort_params(params: Dict[str, Any]) -> str:
         if k != "enc" and v is not None and str(v).strip() != ""
     }
     sorted_keys = sorted(filtered_params.keys())
-    return "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])
+    result = "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])
+    
+    # 调试日志
+    print(f"【后端签名调试】原始参数: {params}")
+    print(f"【后端签名调试】过滤后参数: {filtered_params}")
+    print(f"【后端签名调试】排序后键: {sorted_keys}")
+    print(f"【后端签名调试】拼接字符串: {result}")
+    
+    return result
 
 
 def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> bool:
@@ -50,12 +58,21 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
     sorted_str = _sort_params(params)
     raw_sign = f"{sorted_str}{settings.STATIC_KEY}{time_str}"
     calculated_enc = hashlib.md5(raw_sign.encode("utf-8")).hexdigest().upper()
+    
+    # 调试日志
+    print(f"【后端签名调试】原始签名串: {raw_sign}")
+    print(f"【后端签名调试】计算的签名: {calculated_enc}")
+    print(f"【后端签名调试】收到的签名: {enc.upper()}")
+    print(f"【后端签名调试】签名匹配: {calculated_enc == enc.upper()}")
+    
     return calculated_enc == enc.upper()
 
 
 async def verify_request_signature(request: Request):
 
     current_path = request.url.path  # test测试使用的签名验证白名单
+    print(f"【后端签名调试】收到请求: {request.method} {current_path}")
+    
     whitelist_paths = [
         "/api/v1/user/login",
         "/api/v1/user/register",
@@ -63,6 +80,7 @@ async def verify_request_signature(request: Request):
         "/openapi.json",
     ]
     if any(current_path.startswith(path) for path in whitelist_paths):
+        print(f"【后端签名调试】白名单路径，跳过验证")
         return True
 
     # ----------------------------------分割线--------------------------------
@@ -73,19 +91,20 @@ async def verify_request_signature(request: Request):
     all_params.update(dict(request.query_params))
     # 获取POST参数
     if request.method in ["POST", "PUT", "DELETE"]:
-        if request.headers.get("content-type") == "application/json":
+        content_type = request.headers.get("content-type", "")
+        print(f"【后端签名调试】Content-Type: {content_type}")
+        if "application/json" in content_type:
             try:
                 body_json = await request.json()
+                print(f"【后端签名调试】POST JSON 数据: {body_json}")
                 all_params.update(body_json)
-            except:
-                pass
-        elif "multipart/form-data" in request.headers.get(
-            "content-type", ""
-        ) or "application/x-www-form-urlencoded" in request.headers.get(
-            "content-type", ""
-        ):
+            except Exception as e:
+                print(f"【后端签名调试】读取 JSON 失败: {e}")
+        elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
             form_data = await request.form()
             all_params.update(dict(form_data))
+
+    print(f"【后端签名调试】所有参数: {all_params}")
 
     # 校验必填参数
     time_str = all_params.get("time")
