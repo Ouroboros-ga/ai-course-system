@@ -12,6 +12,7 @@ class UnifiedResponse(BaseModel):
 
 class UserInfo(BaseModel):
     id: str
+    username: str = ""
 
 
 class LoginResponseData(BaseModel):
@@ -31,3 +32,12 @@ class RegisterRequest(BaseModel):
 
 class LoginResponse(UnifiedResponse):
     data: Optional[LoginResponseData] = None
+
+
+class ModifyUserRequest(BaseModel):
+    """用户信息修改请求"""
+    id: str
+    username: str
+    password: str
+    newUsername: str = ""
+    newPassword: str = ""
