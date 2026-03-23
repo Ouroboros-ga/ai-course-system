@@ -159,3 +159,43 @@ frontend/
   "data": null
 }
 ```
+---
+### 1.3 用户信息修改
+#### 接口描述
+用于用户修改自己的用户名或密码。修改成功后，服务端会颁发新的Token，旧Token立即失效，客户端需更新本地存储的Token。
+#### 基本信息
+- **接口地址**: `/user/modify`
+- **请求方法**: `POST`
+- **Content-Type**: `application/json`
+#### 请求参数
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| id | String | 是 | 当前登录用户的ID（建议从Token中解析，此处保留作为参数传递） |
+| username | String | 是 | 用户当前的用户名（用于身份校验） |
+| password | String | 是 | 用户当前的密码 |
+| newUsername | String | 否 | 修改后的新用户名。若不修改用户名，此项传空字符串 |
+| newPassword | String | 否 | 修改后的新密码。若不修改密码，此项传空字符串 |
+**请求示例**:
+```json
+{
+  "id": "1001",
+  "username": "old_name",
+  "password": "old_pass_123",
+  "newUsername": "new_name_2024",
+  "newPassword": "new_pass_456"
+}
+```
+**成功响应示例**:
+```json
+{
+  "code": 200,
+  "message": "修改成功",
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "userInfo": {
+      "id": "1001",
+      "username": "new_name_2024"
+    }
+  }
+}
+```
