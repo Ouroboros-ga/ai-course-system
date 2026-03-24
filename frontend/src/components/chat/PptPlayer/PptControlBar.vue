@@ -1,7 +1,11 @@
 <template>
   <div class="ai-control-bar">
-    <!-- 左侧：循环 + 倍速 + 音量 -->
+    <!-- 左侧：翻页 + 循环 + 倍速 + 音量 -->
     <div class="control-left">
+      <!-- 👇 这里只加了两个翻页按钮 -->
+      <button class="btn-icon" @click="$emit('prev-page')">◀</button>
+      <button class="btn-icon" @click="$emit('next-page')">▶</button>
+
       <button class="btn-icon" @click="emit('loop')">↺</button>
 
       <div class="speed-wrapper">
@@ -45,7 +49,14 @@
 <script setup>
 import { ref } from 'vue';
 const props = defineProps(['isPlaying', 'progress']);
-const emit = defineEmits(['toggle', 'loop', 'speed-change', 'volume-change']);
+const emit = defineEmits([
+  'toggle',
+  'loop',
+  'speed-change',
+  'volume-change',
+  'prev-page', // 👈 新增
+  'next-page'  // 👈 新增
+]);
 
 const speed = ref(1.0);
 const isMuted = ref(false);
@@ -93,8 +104,8 @@ const toggleMute = () => {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 24px; /* 👈 增大 gap，让按钮和进度条整体右移 */
-  margin-left: 16px; /* 👈 给进度条更多空间，不超出容器 */
+  gap: 24px;
+  margin-left: 16px;
 }
 
 .btn-icon {
@@ -157,7 +168,7 @@ const toggleMute = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-left: 8px; /* 👈 让按钮本身再往右挪一点 */
+  margin-left: 8px;
 }
 
 .progress-container {

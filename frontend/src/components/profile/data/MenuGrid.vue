@@ -20,46 +20,47 @@
 </template>
 
 <script setup>
-const emit = defineEmits(['openSettings'])
+const emit = defineEmits(['openSettings', 'openPreference'])
 
-// 菜单配置数据
+// 👉 替换为贴合你项目的菜单配置
 const menuItems = [
   {
-    title: '账户设置',
-    desc: '管理个人资料、修改密码',
-    icon: '⚙️',
+    title: '我的课程与课件',
+    desc: '快速进入课程AI智课，管理历史上传课件',
+    icon: '🧑‍🏫',
     gradient: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-    action: 'settings'
+    action: 'courses'
   },
   {
-    title: '安全中心',
-    desc: '双因素认证、登录日志',
-    icon: '🛡️',
+    title: '账户安全',
+    desc: '修改密码、查看登录记录，保障账号安全',
+    icon: '🔐',
     gradient: 'linear-gradient(135deg, #f093fb 0%, #f5576c 100%)',
-    action: 'security'
+    action: 'settings' // 沿用原有的 settings 逻辑，触发修改用户名/密码
   },
   {
-    title: '偏好设置',
-    desc: '主题、布局、消息通知',
-    icon: '🎨',
+    title: '学习偏好',
+    desc: '自定义语音播报、通知、界面风格',
+    icon: '⚙️',
     gradient: 'linear-gradient(135deg, #4facfe 0%, #00f2fe 100%)',
     action: 'preference'
   },
   {
-    title: '开发者选项',
-    desc: 'API 密钥与调试工具',
-    icon: '💻',
+    title: '学习数据中心',
+    desc: '查看学习进度、问答统计，导出学习报告',
+    icon: '📊',
     gradient: 'linear-gradient(135deg, #43e97b 0%, #38f9d7 100%)',
-    action: 'dev'
+    action: 'stats'
   }
 ]
 
 const handleClick = (action) => {
   if (action === 'settings') {
     emit('openSettings')
+  } else if (action === 'preference') {
+    emit('openPreference')
   } else {
     console.log(`点击了：${action}`)
-    // 这里可以扩展其他菜单的点击逻辑
   }
 }
 </script>

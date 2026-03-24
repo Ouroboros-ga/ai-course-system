@@ -1,44 +1,26 @@
-# app/main.py
-from fastapi import FastAPI, Depends, HTTPException
+# main.py  
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.security import verify_request_signature
-from app.core.exceptions import global_exception_handler, unified_response
-from app.models.database import create_tables
+# 👇 导入你的 somark 路由（假设放在 api/somark.py）  
+from .api import somark
 
+# 创建 FastAPI 应用  
+app = FastAPI(title="AI 课件助手 API", version="1.0")
 
-# 导入示例路由TODO
-from app.api.v1.endpoints import user
-from app.schemas import UnifiedResponse
-
-# 创建数据库表
-create_tables()
-
-# 创建FastAPI实例（全局注册签名校验依赖）
-app = FastAPI(
-    title="超星AI互动智课系统",
-    description="符合超星开放API设计规范的后端服务",
-    version="v1",
-    dependencies=[Depends(verify_request_signature)],
-)
-
-# 注册全局异常处理
-app.add_exception_handler(HTTPException, global_exception_handler)
-
-# CORS跨域配置
+# 跨域配置（前端可以正常调用）  
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],          # 生产环境建议改为具体域名  
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 注册路由
-app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])
+# 👇 注册 SoMark 解析接口  
+app.include_router(somark.router)
 
-
-# 根路径健康检查
-@app.get("/", tags=["健康检查"], response_model=UnifiedResponse)
-async def health_check():
-    return unified_response(200, "服务运行正常", {"version": "v1"})
+# 测试接口  
+@app.get("/")
+def root():
+    return {"message": "AI 课件助手后端运行成功！"}  
