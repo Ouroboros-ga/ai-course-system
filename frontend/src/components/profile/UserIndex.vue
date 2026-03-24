@@ -1,22 +1,36 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import Login from './LoginIn/Login.vue'
 import UserCard from './LoginIn/UserCard.vue'
 import StatsCard from './LoginIn/StatsCard.vue'
 import MenuGrid from './LoginIn/MenuGrid.vue'
 import UserInfoCard from './LoginIn/UserInfoCard.vue'
 import PreferenceSettings from './LoginIn/PreferenceSettings.vue'
-import MyCourses from './LoginIn/MyCourses.vue' // 导入我的课程（不是学习偏好）
+import MyCourses from './LoginIn/MyCourses.vue'
 
+// 登录状态
 const userInfo = ref(null)
+
+// 面板控制
 const showSettingsPanel = ref(false)
 const showPreferencePanel = ref(false)
-const showMyCoursesPanel = ref(false) // 控制我的课程面板（和学习偏好无关）
+const showMyCoursesPanel = ref(false)
 
-const courseCount = ref('')
-const chatCount = ref('')
-const studyMinutes = ref('')
+// 统计数据（统一数字类型，消除TS警告）
+const courseCount = ref(0)
+const chatCount = ref(0)
+const studyMinutes = ref(0)
 
+// 页面加载时自动恢复登录（刷新不掉态）
+onMounted(() => {
+  const savedUser = localStorage.getItem('userInfo')
+  if (savedUser) {
+    userInfo.value = JSON.parse(savedUser)
+    loadUserStats()
+  }
+})
+
+// 加载统计数据
 const loadUserStats = () => {
   if (!userInfo.value) return
   setTimeout(() => {
@@ -26,56 +40,68 @@ const loadUserStats = () => {
   }, 300)
 }
 
+// 登录
 const handleLoginSend = async (data) => {
   try {
     const mockUser = { id: 1, username: data.username || 'Amq' }
     userInfo.value = mockUser
+    localStorage.setItem('userInfo', JSON.stringify(mockUser)) // 持久化
     loadUserStats()
   } catch (error) {
     console.error('登录失败', error)
   }
 }
 
+// 注册
 const handleRegisterSend = async (data) => {
   try {
-    userInfo.value = { id: Date.now(), username: data.username }
+    const newUser = { id: Date.now(), username: data.username }
+    userInfo.value = newUser
+    localStorage.setItem('userInfo', JSON.stringify(newUser))
     loadUserStats()
   } catch (error) {
     console.error('注册失败', error)
   }
 }
 
+// 退出登录
 const handleLogout = () => {
   userInfo.value = null
   showSettingsPanel.value = false
   showPreferencePanel.value = false
-  showMyCoursesPanel.value = false // 退出时关闭我的课程
-  courseCount.value = ''
-  chatCount.value = ''
-  studyMinutes.value = ''
+  showMyCoursesPanel.value = false
+
+  courseCount.value = 0
+  chatCount.value = 0
+  studyMinutes.value = 0
+
+  localStorage.removeItem('userInfo')
+  localStorage.removeItem('userPreferences')
 }
 
-// 打开我的课程（独立方法）
+// 我的课程
 const handleOpenMyCourses = () => {
   showMyCoursesPanel.value = true
 }
-
-// 关闭我的课程
 const handleCloseMyCourses = () => {
   showMyCoursesPanel.value = false
 }
 
-// 原有方法（学习偏好）
+// 设置面板
 const handleOpenSettings = () => showSettingsPanel.value = true
 const handleOpenPreference = () => showPreferencePanel.value = true
+
 const handleSavePreference = (prefs) => {
   console.log('保存学习偏好:', prefs)
   localStorage.setItem('userPreferences', JSON.stringify(prefs))
 }
+
 const handleUpdateUsername = (data) => {
-  userInfo.value = { ...userInfo.value, username: data.username }
+  userInfo.value.username = data.username
+  localStorage.setItem('userInfo', JSON.stringify(userInfo.value))
   showSettingsPanel.value = false
 }
+
 const handleUpdatePassword = (data) => {
   console.log('密码已更新', data)
   showSettingsPanel.value = false
@@ -84,6 +110,7 @@ const handleUpdatePassword = (data) => {
 
 <template>
   <div class="user-index-wrapper">
+    <!-- 未登录：登录页 -->
     <Login
       v-if="!userInfo"
       class="login-modal"
@@ -91,6 +118,7 @@ const handleUpdatePassword = (data) => {
       @registerSend="handleRegisterSend"
     />
 
+    <!-- 已登录：主页 -->
     <div v-else class="profile-content">
       <UserCard :userInfo="userInfo" @logout="handleLogout" />
       <StatsCard :userStats="{ courseCount, chatCount, studyMinutes }" />
@@ -98,13 +126,13 @@ const handleUpdatePassword = (data) => {
         @openSettings="handleOpenSettings"
         @openPreference="handleOpenPreference"
         @myCourses="handleOpenMyCourses"
-      @logout="handleLogout"
+        @logout="handleLogout"
       />
     </div>
 
-    <!-- 账户设置面板 -->
+    <!-- 账户设置 -->
     <Transition name="fade">
-      <div v-if="userInfo && showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
+      <div v-if="showSettingsPanel" class="settings-overlay" @click.self="showSettingsPanel = false">
         <UserInfoCard
           :userInfo="userInfo"
           @updateUsername="handleUpdateUsername"
@@ -115,24 +143,34 @@ const handleUpdatePassword = (data) => {
       </div>
     </Transition>
 
-    <!-- 学习偏好面板（原有，和我的课程无关） -->
+    <!-- 学习偏好 -->
     <Transition name="fade">
-      <div v-if="userInfo && showPreferencePanel" class="settings-overlay" @click.self="showPreferencePanel = false">
+      <div v-if="showPreferencePanel" class="settings-overlay" @click.self="showPreferencePanel = false">
         <PreferenceSettings
-          @close="showPreferencePanel = false"
+          @close="showPreferencePanel.value = false"
           @save="handleSavePreference"
         />
       </div>
     </Transition>
 
-    <!-- 我的课程面板（独立，全新功能） -->
+    <!-- 我的课程 -->
     <Transition name="fade">
-      <div v-if="userInfo && showMyCoursesPanel" class="settings-overlay" @click.self="handleCloseMyCourses">
+      <div v-if="showMyCoursesPanel" class="settings-overlay" @click.self="handleCloseMyCourses">
         <MyCourses @close="handleCloseMyCourses" />
       </div>
     </Transition>
   </div>
 </template>
+
+<!-- 动画必须放外面，否则不生效 & 报未使用 -->
+<style>
+.fade-enter-active, .fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+.fade-enter-from, .fade-leave-to {
+  opacity: 0;
+}
+</style>
 
 <style scoped>
 .user-index-wrapper {
@@ -164,11 +202,5 @@ const handleUpdatePassword = (data) => {
   justify-content: center;
   align-items: center;
   z-index: 100;
-}
-.fade-enter-active, .fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-.fade-enter-from, .fade-leave-to {
-  opacity: 0;
 }
 </style>
