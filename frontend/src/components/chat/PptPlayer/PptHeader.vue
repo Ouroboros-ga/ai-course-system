@@ -13,8 +13,35 @@
 defineProps(['file', 'totalPages']);
 </script>
 <style scoped>
-.ppt-header { display: flex; justify-content: space-between; align-items: center; padding: 0 4px; }
-.header-info h2 { font-size: 18px; color: #1f2937; margin: 0 0 4px 0; }
-.header-info p { font-size: 12px; color: #6b7280; margin: 0; }
-.btn-knowledge { background: #eff6ff; color: #2563eb; border: none; padding: 6px 12px; border-radius: 99px; font-size: 13px; cursor: pointer; display: flex; align-items: center; gap: 6px; }
+.ppt-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 4px;
+}
+
+.header-info h2 {
+  font-size: 18px;
+  color: #1f2937;
+  margin: 0 0 4px 0;
+}
+
+.header-info p {
+  font-size: 12px;
+  color: #6b7280;
+  margin: 0;
+}
+
+.btn-knowledge {
+  background: #eff6ff;
+  color: #2563eb;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 99px;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 </style>
