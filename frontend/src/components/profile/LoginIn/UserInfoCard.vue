@@ -55,6 +55,14 @@
                   maxlength="80"
                 />
               </div>
+              <div class="input-group">
+                <label>当前密码</label>
+                <input
+                  type="password"
+                  v-model="form.oldPassword"
+                  placeholder="请输入当前密码"
+                />
+              </div>
               <button type="submit" class="submit-btn">保存修改</button>
             </form>
           </div>
@@ -147,7 +155,7 @@ const handleSubmitUsername = () => {
   }
 
   // 发送事件给父组件处理 API
-  emit('updateUsername', { username: form.username })
+  emit('updateUsername', { username: form.username, oldPassword: form.oldPassword })
 
   // 乐观更新或等待父组件反馈后关闭
   // resetForm()
