@@ -1,8 +1,6 @@
-<!-- UserIndex.vue -->
 <script setup>
 import { ref, onMounted } from 'vue'
 import Login from './LoginIn/Login.vue'
-import UsersData from './LoginIn/UsersData.vue'
 import UserInfoCard from "./LoginIn/UserInfoCard.vue"
 import StatsCard from "./LoginIn/StatsCard.vue"
 import PreferenceSettings from "./LoginIn/PreferenceSettings.vue"
@@ -214,7 +212,7 @@ const handleLogout = () => {
   showSettingsPanel.value = false
   showPreferencePanel.value = false
   showMyCoursesPanel.value = false
-  
+
   // 重置统计数据
   courseCount.value = 0
   chatCount.value = 0
@@ -233,15 +231,42 @@ const handleLogout = () => {
       @registerSend="handleRegisterSend"
     />
 
-    <!-- 2. 已登录状态 -->
+    <!-- 2. 已登录状态：顺序 = 用户 → 统计 → 四个方格 -->
     <div v-else class="profile-content">
-      <UsersData
-        @openSettings="handleOpenSettings"
-        @openPreference="handleOpenPreference"
-        @myCourses="handleMyCourses"
-        @logout="handleLogout"
-      />
+      <!-- 1. 用户卡片（只保留头像+ID+退出登录，去掉内部四个格子） -->
+      <div class="user-card">
+        <div class="user-info">
+          <div class="avatar">K</div>
+          <div>
+            <div class="username">{{ counter.userData.username }}</div>
+            <div class="user-id">ID: {{ counter.userData.id }}</div>
+          </div>
+        </div>
+        <button class="logout-btn" @click="handleLogout">退出登录</button>
+      </div>
+
+      <!-- 2. 统计卡片（3个数字） -->
       <StatsCard :userStats="{ courseCount, chatCount, studyMinutes }" />
+
+      <!-- 3. 四个方格子菜单（带图标，和你原来的样式一致） -->
+      <div class="menu-grid">
+        <div class="menu-item" @click="handleOpenSettings">
+          <div class="menu-icon">⚙️</div>
+          <div>账户设置</div>
+        </div>
+        <div class="menu-item" @click="handleOpenPreference">
+          <div class="menu-icon">🎨</div>
+          <div>学习偏好</div>
+        </div>
+        <div class="menu-item" @click="handleMyCourses">
+          <div class="menu-icon">📚</div>
+          <div>我的课程</div>
+        </div>
+        <div class="menu-item" @click="handleLogout">
+          <div class="menu-icon">🚪</div>
+          <div>退出登录</div>
+        </div>
+      </div>
     </div>
 
     <!-- 3. 设置面板 -->
@@ -291,9 +316,81 @@ const handleLogout = () => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 20px;
   padding: 40px 20px;
   box-sizing: border-box;
+}
+
+/* 用户卡片样式（替代原来的 UsersData，只保留头像+ID+退出） */
+.user-card {
+  background: white;
+  padding: 24px;
+  border-radius: 16px;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.avatar {
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  background: #6366f1;
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: bold;
+}
+.username {
+  font-size: 20px;
+  font-weight: 600;
+}
+.user-id {
+  font-size: 14px;
+  color: #666;
+}
+.logout-btn {
+  width: 100%;
+  padding: 12px;
+  border: 1px solid #f43f5e;
+  border-radius: 12px;
+  background: white;
+  color: #f43f5e;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+/* 四个方格子菜单（带图标，和你原来的样式一致） */
+.menu-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.menu-item {
+  background: white;
+  padding: 24px 16px;
+  border-radius: 16px;
+  text-align: center;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  transition: transform 0.2s;
+}
+.menu-item:active {
+  transform: scale(0.97);
+}
+.menu-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+}
+.menu-item div:last-child {
+  font-size: 15px;
+  font-weight: 500;
+  color: #333;
 }
 
 .settings-overlay {

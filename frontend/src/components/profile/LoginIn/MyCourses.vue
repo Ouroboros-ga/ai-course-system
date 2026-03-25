@@ -23,7 +23,7 @@
 </template>
 
 <script setup>
-import { ref, defineEmits } from 'vue'
+import { ref } from 'vue'
 
 // 定义返回事件
 const emit = defineEmits(['close'])

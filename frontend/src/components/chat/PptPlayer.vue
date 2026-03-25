@@ -37,12 +37,17 @@
 </template>
 
 <script setup>
-import { ref, defineEmits, computed } from 'vue'
+import { ref, computed } from 'vue'
 import PptHeader from './PptPlayer/PptHeader.vue'
 import PptUpload from './PptPlayer/PptUpload.vue'
 import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
 import PptControlBar from './PptPlayer/PptControlBar.vue'
-import service from '@/utils/request'
+import { showToast } from '@/utils/toast'
+
+import api from '@/api/index.js'
+
+import { useCounterStore } from '@/stores/counter.js'
+const counter = useCounterStore()
 
 const emit = defineEmits(['file-upload', 'analysis-end'])
 
@@ -70,22 +75,23 @@ const startAnalysis = async (f) => {
   isAnalyzing.value = true
 
   try {
+    // 调用上传接口
     const formData = new FormData()
     formData.append('file', f)
+    formData.append('fileName', f.name)
+    formData.append('userId', counter.userData.id)
 
-    // ✅ 只改这里！！！
-    const res = await service({
-      url: 'http://127.0.0.1:8000/api/somark/parse',
-      method: 'POST',
-      data: formData
-    })
+    console.log('开始上传文件：', f.name)
+    const res = await api.chat.uploadFile(formData)
 
+    console.log('上传成功:', res)
     pages.value = res.data?.pages || []
     totalPages.value = pages.value.length || 1
     currentPage.value = 1
 
   } catch (err) {
-    console.error('解析失败', err)
+    console.error('上传失败', err)
+    showToast(err, 'error')
     pages.value = []
     totalPages.value = 1
     currentPage.value = 1
@@ -146,18 +152,19 @@ const togglePlay = () => {
 .page-content {
   font-size: 16px;
   line-height: 1.8;
-  color: #4b5563;
+  color: #4b5565;
 }
 
 .hidden-input {
   display: none;
 }
 
+/* 👇👇👇 这里我帮你改长了！！！ */
 @media (max-width: 768px) {
   .ppt-section {
     flex: none;
     width: 100%;
-    height: 45vh;
+    height: 75vh;  /* 👈 原来 45vh → 现在 60vh，变长了 */
     min-height: 300px;
   }
   .ppt-display-area {
