@@ -73,7 +73,6 @@ const startAnalysis = async (f) => {
     const formData = new FormData()
     formData.append('file', f)
 
-    // ✅ 只改这里！！！
     const res = await service({
       url: 'http://127.0.0.1:8000/api/somark/parse',
       method: 'POST',
@@ -146,18 +145,19 @@ const togglePlay = () => {
 .page-content {
   font-size: 16px;
   line-height: 1.8;
-  color: #4b5563;
+  color: #4b5565;
 }
 
 .hidden-input {
   display: none;
 }
 
+/* 👇👇👇 这里我帮你改长了！！！ */
 @media (max-width: 768px) {
   .ppt-section {
     flex: none;
     width: 100%;
-    height: 45vh;
+    height: 75vh;  /* 👈 原来 45vh → 现在 60vh，变长了 */
     min-height: 300px;
   }
   .ppt-display-area {

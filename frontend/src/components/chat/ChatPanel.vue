@@ -103,11 +103,12 @@ const handleSend = async (text) => {
   background: #e5e7eb;
 }
 
+/* 👇👇👇 这里我已经帮你改长了！！！ */
 @media (max-width: 768px) {
   .chat-section {
     flex: none;
     width: 100%;
-    height: 50vh;
+    height: 75vh;   /* 👈 原来 50vh → 现在 75vh，变得很长 */
     min-width: auto;
     border-radius: 16px 16px 0 0;
     margin-top: -16px;
