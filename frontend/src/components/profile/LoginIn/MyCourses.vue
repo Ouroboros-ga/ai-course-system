@@ -28,7 +28,8 @@ import { ref } from 'vue'
 // 定义返回事件
 const emit = defineEmits(['close'])
 
-// 模拟我的课程数据const courses = ref([
+// 模拟我的课程数据
+const courses = ref([
   { id: 1, icon: '📚', name: 'Vue3 实战开发', progress: 85, status: '进行中' },
   { id: 2, icon: '💻', name: 'JavaScript 高级语法', progress: 60, status: '进行中' },
   { id: 3, icon: '📝', name: '前端工程化实践', progress: 100, status: '已完成' }
