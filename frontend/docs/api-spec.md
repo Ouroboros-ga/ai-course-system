@@ -58,7 +58,7 @@ api.user.login(loginData)
 - `password`: 密码（必填）
 
 **返回数据：**
-```javascript
+```jsoon
 {
   token: 'your_jwt_token',
   user: {
@@ -91,7 +91,7 @@ api.user.register(registerData)
 - `password`: 密码（必填）
 
 **返回数据：**
-```javascript
+```jsoon
 {
   message: '注册成功',
   user: {
@@ -126,7 +126,7 @@ api.user.modify(modifyData)
 - `password`: 密码（必填）
 
 **返回数据：**
-```javascript
+```jsoon
 {
   message: '修改成功',
   user: {
@@ -160,7 +160,7 @@ api.chat.sendChatMessage(formData)
 - `file`: 文件对象（可选）
 
 **返回数据：**
-```javascript
+```jsoon
 {
   message_id: 1,
   status: 'sent'
@@ -188,7 +188,7 @@ api.chat.receiveChatMessage(messageData)
 - `message_id`: 消息ID（必填）
 
 **返回数据：**
-```javascript
+```jsoon
 {
   message: 'AI回复内容',
   status: 'received'
