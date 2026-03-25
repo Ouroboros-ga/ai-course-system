@@ -19,3 +19,5 @@ visit [here](http://localhost:5173)
 # ABOUT
 - API 服务: http://localhost:8001
 - API 文档: http://localhost:8001/docs
+
+$env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
