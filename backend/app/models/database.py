@@ -2,18 +2,6 @@ from sqlmodel import SQLModel, create_engine, Session
 from typing import Generator
 import os
 
-from app.models.user_model import User
-from app.models.course_model import (
-    Course,
-    CourseScript,
-    ScriptNode,
-    KnowledgeTree,
-    KnowledgeChapter,
-    CourseParseRecord,
-)
-from app.models.qa_model import QASession, QAMessage, QAContext
-from app.models.progress_model import LearningProgress, NodeProgress, UnderstandingAnalysis
-
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
 os.makedirs(DATABASE_DIR, exist_ok=True)

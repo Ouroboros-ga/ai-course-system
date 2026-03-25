@@ -34,6 +34,19 @@ class ParseStatus(str, Enum):
     FAILED = "failed"
 
 
+class DoclingLabel(str, Enum):
+    """Docling 文档元素标签枚举"""
+
+    SECTION = "section"
+    TABLE = "table"
+    TEXT = "text"
+    PICTURE = "picture"
+    CODE = "code"
+    LIST = "list"
+    TITLE = "title"
+    PARAGRAPH = "paragraph"
+
+
 class Course(SQLModel, table=True):
     """课程主表：映射泛雅课程与本地智课"""
 
@@ -56,9 +69,10 @@ class Course(SQLModel, table=True):
     total_duration: int = Field(default=0, description="总时长(秒)")
     total_nodes: int = Field(default=0, description="脚本总节点数")
 
-    source_file_name: Optional[str] = Field(default=None, description="原始PPT文件名")
-    source_file_path: Optional[str] = Field(default=None, description="原始PPT存储路径")
-    total_pages: int = Field(default=0, description="PPT总页数")
+    source_file_name: Optional[str] = Field(default=None, description="原始文件名")
+    source_file_path: Optional[str] = Field(default=None, description="原始文件存储路径")
+    source_mimetype: Optional[str] = Field(default=None, description="原始文件MIME类型")
+    total_pages: int = Field(default=0, description="总页数")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -134,31 +148,37 @@ class ScriptNode(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
-class KnowledgeTree(SQLModel, table=True):
+class DoclingDocument(SQLModel, table=True):
     """
-    知识点树主表
-    存储一次PPT解析生成的知识点树元数据
+    Docling 解析文档主表
+    存储一次文档解析生成的结构化数据
     """
 
-    __tablename__ = "knowledge_trees"
+    __tablename__ = "docling_documents"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-
-    parse_id: str = Field(unique=True, index=True, description="解析ID，如parse20240520001")
 
     course_id: Optional[int] = Field(
         default=None, foreign_key="courses.id", index=True, description="关联的课程ID"
     )
 
-    course_name: Optional[str] = Field(default=None, description="课程名称")
+    schema_name: str = Field(default="DoclingDocument", description="文档schema名称")
+    version: str = Field(default="1.10.0", description="Docling版本")
 
-    source_file_name: Optional[str] = Field(default=None, description="原始PPT文件名")
-    source_file_path: Optional[str] = Field(default=None, description="原始PPT存储路径")
+    doc_name: str = Field(description="文档名称")
 
-    total_pages: int = Field(default=0, description="PPT总页数")
-    total_chapters: int = Field(default=0, description="知识点总数")
+    origin_filename: Optional[str] = Field(default=None, description="原始文件名")
+    origin_mimetype: Optional[str] = Field(default=None, description="原始文件MIME类型")
+    origin_binary_hash: Optional[int] = Field(default=None, description="文件二进制哈希")
+
+    source_file_path: Optional[str] = Field(default=None, description="原始文件存储路径")
 
     status: ParseStatus = Field(default=ParseStatus.PENDING, description="解析状态")
+
+    total_groups: int = Field(default=0, description="分组数量")
+    total_tables: int = Field(default=0, description="表格数量")
+    total_texts: int = Field(default=0, description="文本数量")
+    total_pictures: int = Field(default=0, description="图片数量")
 
     raw_json: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="原始解析JSON完整数据"
@@ -170,41 +190,30 @@ class KnowledgeTree(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
 
 
-class KnowledgeChapter(SQLModel, table=True):
+class DoclingGroup(SQLModel, table=True):
     """
-    知识点章节表
-    扁平化存储知识点树的每个节点，通过 parent_id 维护层级关系
+    Docling 文档分组表
+    存储 groups 数据（如 Excel 的 sheet）
     """
 
-    __tablename__ = "knowledge_chapters"
+    __tablename__ = "docling_groups"
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    tree_id: int = Field(
-        foreign_key="knowledge_trees.id", index=True, description="所属知识点树ID"
+    doc_id: int = Field(
+        foreign_key="docling_documents.id", index=True, description="所属文档ID"
     )
 
-    chapter_id: str = Field(index=True, description="章节ID，如chap001_02_03")
+    self_ref: str = Field(description="自引用路径，如#/groups/0")
 
-    parent_id: Optional[int] = Field(
-        default=None, foreign_key="knowledge_chapters.id", description="父节点ID"
-    )
+    parent_ref: Optional[str] = Field(default=None, description="父节点引用")
 
-    chapter_name: str = Field(description="知识点名称")
+    name: str = Field(description="分组名称，如sheet名称")
+    label: str = Field(default="section", description="标签类型")
 
-    level: int = Field(description="层级深度(1=章,2=节,3=知识点,4=子知识点)")
+    content_layer: str = Field(default="body", description="内容层级")
 
-    is_key_point: bool = Field(default=False, description="是否为重点知识点")
-
-    page_range: Optional[str] = Field(default=None, description="对应PPT页码范围，如'27-40'")
-
-    page_start: Optional[int] = Field(default=None, description="起始页码")
-
-    page_end: Optional[int] = Field(default=None, description="结束页码")
-
-    description: Optional[str] = Field(default=None, description="知识点简要描述")
-
-    sort_order: int = Field(default=0, description="同层级排序序号")
+    sort_order: int = Field(default=0, description="排序序号")
 
     extra_data: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="扩展数据(JSON)"
@@ -213,24 +222,146 @@ class KnowledgeChapter(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
 
 
-class CourseParseRecord(SQLModel, table=True):
+class DoclingTable(SQLModel, table=True):
     """
-    课程解析记录表
-    记录课程与知识点解析的关联关系
+    Docling 表格数据表
+    存储解析出的表格数据
     """
 
-    __tablename__ = "course_parse_records"
+    __tablename__ = "docling_tables"
 
     id: Optional[int] = Field(default=None, primary_key=True)
 
-    course_id: int = Field(
-        foreign_key="courses.id", index=True, description="课程ID"
+    doc_id: int = Field(
+        foreign_key="docling_documents.id", index=True, description="所属文档ID"
     )
 
-    tree_id: int = Field(
-        foreign_key="knowledge_trees.id", index=True, description="知识点树ID"
+    group_id: Optional[int] = Field(
+        default=None, foreign_key="docling_groups.id", description="所属分组ID"
     )
 
-    is_current: bool = Field(default=True, description="是否为当前使用的解析版本")
+    self_ref: str = Field(description="自引用路径，如#/tables/0")
+
+    label: str = Field(default="table", description="标签类型")
+
+    page_no: int = Field(default=1, description="所在页码")
+
+    bbox_l: float = Field(default=0.0, description="边界框左")
+    bbox_t: float = Field(default=0.0, description="边界框上")
+    bbox_r: float = Field(default=0.0, description="边界框右")
+    bbox_b: float = Field(default=0.0, description="边界框下")
+
+    num_rows: int = Field(default=0, description="表格行数")
+    num_cols: int = Field(default=0, description="表格列数")
+
+    table_data: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="表格数据(JSON)"
+    )
+
+    captions: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="表格标题(JSON)"
+    )
+
+    sort_order: int = Field(default=0, description="排序序号")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+
+
+class DoclingTableCell(SQLModel, table=True):
+    """
+    Docling 表格单元格表
+    扁平化存储表格单元格数据，便于查询
+    """
+
+    __tablename__ = "docling_table_cells"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    table_id: int = Field(
+        foreign_key="docling_tables.id", index=True, description="所属表格ID"
+    )
+
+    row_idx: int = Field(description="行索引")
+    col_idx: int = Field(description="列索引")
+
+    row_span: int = Field(default=1, description="行跨度")
+    col_span: int = Field(default=1, description="列跨度")
+
+    text: str = Field(default="", description="单元格文本内容")
+
+    is_column_header: bool = Field(default=False, description="是否为列标题")
+    is_row_header: bool = Field(default=False, description="是否为行标题")
+    is_row_section: bool = Field(default=False, description="是否为行分区")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+
+
+class DoclingText(SQLModel, table=True):
+    """
+    Docling 文本内容表
+    存储解析出的文本内容
+    """
+
+    __tablename__ = "docling_texts"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    doc_id: int = Field(
+        foreign_key="docling_documents.id", index=True, description="所属文档ID"
+    )
+
+    group_id: Optional[int] = Field(
+        default=None, foreign_key="docling_groups.id", description="所属分组ID"
+    )
+
+    self_ref: str = Field(description="自引用路径")
+
+    label: str = Field(default="text", description="标签类型")
+
+    text: str = Field(description="文本内容")
+
+    page_no: int = Field(default=1, description="所在页码")
+
+    sort_order: int = Field(default=0, description="排序序号")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+
+
+class DoclingPicture(SQLModel, table=True):
+    """
+    Docling 图片表
+    存储解析出的图片信息
+    """
+
+    __tablename__ = "docling_pictures"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    doc_id: int = Field(
+        foreign_key="docling_documents.id", index=True, description="所属文档ID"
+    )
+
+    group_id: Optional[int] = Field(
+        default=None, foreign_key="docling_groups.id", description="所属分组ID"
+    )
+
+    self_ref: str = Field(description="自引用路径")
+
+    label: str = Field(default="picture", description="标签类型")
+
+    image_url: Optional[str] = Field(default=None, description="图片URL或存储路径")
+
+    page_no: int = Field(default=1, description="所在页码")
+
+    bbox_l: float = Field(default=0.0, description="边界框左")
+    bbox_t: float = Field(default=0.0, description="边界框上")
+    bbox_r: float = Field(default=0.0, description="边界框右")
+    bbox_b: float = Field(default=0.0, description="边界框下")
+
+    captions: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="图片标题(JSON)"
+    )
+
+    sort_order: int = Field(default=0, description="排序序号")
 
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
