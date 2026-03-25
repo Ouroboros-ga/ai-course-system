@@ -252,7 +252,13 @@ service.interceptors.request.use(
     if (config.method === 'get') {
       config.params = { ...config.params, time, enc }
     } else {
-      config.data = { ...config.data, time, enc }
+      // 如果是 FormData，追加到 FormData 中而不是替换
+      if (config.data instanceof FormData) {
+        config.data.append('time', time)
+        config.data.append('enc', enc)
+      } else {
+        config.data = { ...config.data, time, enc }
+      }
     }
 
     console.log('【签名调试】最终请求数据:', config.data)
@@ -270,8 +276,15 @@ service.interceptors.response.use(
   response => {
     const res = response.data
 
+    // 调试日志：查看实际接收到的响应
+    console.log('【响应调试】原始响应:', res)
+    console.log('【响应调试】code类型:', typeof res.code, 'code值:', res.code)
+    console.log('【响应调试】code == 200:', res.code == 200)
+    console.log('【响应调试】code === 200:', res.code === 200)
+
     // 2. 处理业务逻辑错误 (后端返回 code 非 200)
-    if (res.code !== 200) {
+    // 使用 == 进行宽松比较，处理字符串和数字类型
+    if (res.code != 200) {
 
       // 特殊状态码处理：Token 过期
       if (res.code === 401) {

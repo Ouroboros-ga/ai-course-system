@@ -1,5 +1,4 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-DOUBAO_ENDPOINT_ID=ep-api-key-20260325203556
 from enum import Enum
 from typing import List, Optional
 

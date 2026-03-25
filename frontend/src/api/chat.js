@@ -27,7 +27,7 @@ export function getChatHistory(data = {}) {
  */
 export function uploadFile(formData) {
   return request({
-    url: '/chat/file/upload',
+    url: '/document/upload',
     method: 'post',
     headers: {
       'Content-Type': 'multipart/form-data'

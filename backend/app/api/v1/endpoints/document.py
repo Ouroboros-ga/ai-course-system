@@ -1,6 +1,7 @@
 """
 文档处理API接口
 流程：上传文件 -> 解析为Markdown -> AI分析 -> 返回结果
+Updated: 2026-03-25
 """
 
 import os
@@ -17,7 +18,9 @@ from app.schemas.document_schema import (
     DocumentAnalyzeRequest,
     DocumentAnalyzeResponse,
 )
+from app.schemas.common_schema import UnifiedResponse
 from app.common.llm_client import llm_client, Message
+from app.core.exceptions import unified_response
 
 # 尝试导入文档解析模块
 try:
@@ -27,7 +30,7 @@ except ImportError:
     DOCLING_AVAILABLE = False
     print("警告: Docling文档解析模块未安装，将使用模拟模式")
 
-router = APIRouter(prefix="/document", tags=["文档处理"])
+router = APIRouter(tags=["文档处理"])
 
 # 临时存储上传文件（生产环境应使用云存储或数据库）
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "ai_course_uploads"
@@ -37,14 +40,14 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 document_cache = {}
 
 
-@router.post("/upload", response_model=DocumentUploadResponse)
+@router.post("/upload", response_model=UnifiedResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="上传的文档文件 (PDF, DOCX, PPTX等)")
 ):
     """
     上传文档并解析
-    
+
     流程：
     1. 保存上传的文件
     2. 使用Docling解析为Markdown
@@ -54,22 +57,22 @@ async def upload_document(
     try:
         # 生成文档ID
         document_id = str(uuid.uuid4())
-        
+
         # 保存文件
         file_ext = Path(file.filename).suffix.lower()
         safe_filename = f"{document_id}{file_ext}"
         file_path = UPLOAD_DIR / safe_filename
-        
+
         with open(file_path, "wb") as f:
             content = await file.read()
             f.write(content)
-        
+
         # 检查文件大小
         file_size = file_path.stat().st_size
         if file_size > 50 * 1024 * 1024:  # 50MB限制
             file_path.unlink()
             raise HTTPException(status_code=413, detail="文件大小超过50MB限制")
-        
+
         # 解析文档为Markdown
         if DOCLING_AVAILABLE:
             try:
@@ -81,10 +84,10 @@ async def upload_document(
                 markdown_content = await _fallback_parse(file_path)
         else:
             markdown_content = await _fallback_parse(file_path)
-        
+
         # 调用AI分析文档内容
         ai_analysis = await _analyze_document(str(markdown_content))
-        
+
         # 缓存结果
         document_cache[document_id] = {
             "filename": file.filename,
@@ -92,23 +95,25 @@ async def upload_document(
             "analysis": ai_analysis,
             "file_path": str(file_path)
         }
-        
-        return DocumentUploadResponse(
-            success=True,
+
+        return unified_response(
+            code=200,
             message="文档上传并解析成功",
-            document_id=document_id,
-            filename=file.filename,
-            markdown_content=str(markdown_content)[:2000] + "..." if len(str(markdown_content)) > 2000 else str(markdown_content),
-            ai_analysis=ai_analysis
+            data={
+                "document_id": document_id,
+                "filename": file.filename,
+                "markdown_content": str(markdown_content)[:2000] + "..." if len(str(markdown_content)) > 2000 else str(markdown_content),
+                "ai_analysis": ai_analysis
+            }
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
-        return DocumentUploadResponse(
-            success=False,
+        return unified_response(
+            code=500,
             message="文档处理失败",
-            error=str(e)
+            data={"error": str(e)}
         )
 
 
