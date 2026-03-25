@@ -1,9 +1,12 @@
 <!-- UserIndex.vue -->
 <script setup>
 import { ref, onMounted } from 'vue'
-import Login from './Login.vue'
-import UsersData from './UsersData.vue'
-import UserInfoCard from "./UserInfoCard.vue"
+import Login from './LoginIn/Login.vue'
+import UsersData from './LoginIn/UsersData.vue'
+import UserInfoCard from "./LoginIn/UserInfoCard.vue"
+import StatsCard from "./LoginIn/StatsCard.vue"
+import PreferenceSettings from "./LoginIn/PreferenceSettings.vue"
+import MyCourses from "./LoginIn/MyCourses.vue"
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
 
@@ -12,6 +15,13 @@ const counter = useCounterStore()
 
 // 控制是否显示设置面板
 const showSettingsPanel = ref(false)
+const showPreferencePanel = ref(false)
+const showMyCoursesPanel = ref(false)
+
+// 统计数据
+const courseCount = ref(0)
+const chatCount = ref(0)
+const studyMinutes = ref(0)
 
 // --- 页面加载时恢复登录状态 ---
 onMounted(() => {
@@ -23,8 +33,19 @@ onMounted(() => {
   if (token && id && !counter.userData.id) {
     counter.userData.id = id
     counter.userData.username = username
+    loadUserStats()
   }
 })
+
+// 加载统计数据
+const loadUserStats = () => {
+  if (!counter.userData.id) return
+  setTimeout(() => {
+    courseCount.value = Math.floor(Math.random() * 30 + 5)
+    chatCount.value = Math.floor(Math.random() * 200 + 20)
+    studyMinutes.value = Math.floor(Math.random() * 180 + 30)
+  }, 300)
+}
 
 // --- 业务逻辑处理 ---
 
@@ -43,6 +64,7 @@ const handleLoginSend = async (data) => {
     counter.userData.id = res.userInfo.id
 
     showToast("登录成功", "success")
+    loadUserStats()
   } catch (error) {
     console.error('登录失败', error)
     showToast(error || "错误", "error")
@@ -68,6 +90,7 @@ const handleRegisterSend = async (data) => {
     counter.userData.id = res.userInfo.id
 
     showToast("注册成功并自动登录", "success")
+    loadUserStats()
   } catch (error) {
     console.error('注册失败', error)
     showToast(error || "错误", "error")
@@ -79,7 +102,34 @@ const handleOpenSettings = () => {
   showSettingsPanel.value = true
 }
 
-// 4. 更新用户名 (严格适配接口文档)
+// 4. 打开偏好设置
+const handleOpenPreference = () => {
+  showPreferencePanel.value = true
+}
+
+// 5. 打开我的课程
+const handleMyCourses = () => {
+  showMyCoursesPanel.value = true
+}
+
+// 6. 关闭偏好设置
+const handleClosePreference = () => {
+  showPreferencePanel.value = false
+}
+
+// 7. 关闭我的课程
+const handleCloseMyCourses = () => {
+  showMyCoursesPanel.value = false
+}
+
+// 8. 保存学习偏好
+const handleSavePreference = (prefs) => {
+  console.log('保存学习偏好:', prefs)
+  localStorage.setItem('userPreferences', JSON.stringify(prefs))
+  showPreferencePanel.value = false
+}
+
+// 9. 更新用户名 (严格适配接口文档)
 const handleUpdateUsername = async (data) => {
   // data 由子组件传入: { username: "新用户名", oldPassword: "当前密码" }
   console.log('准备更新用户名:', data)
@@ -117,7 +167,7 @@ const handleUpdateUsername = async (data) => {
   }
 }
 
-// 5. 更新密码 (严格适配接口文档)
+// 10. 更新密码 (严格适配接口文档)
 const handleUpdatePassword = async (data) => {
   // data 由子组件传入: { oldPassword: "旧密码", newPassword: "新密码" }
   console.log('准备更新密码:', data)
@@ -148,12 +198,13 @@ const handleUpdatePassword = async (data) => {
   }
 }
 
-// 6. 退出登录
+// 11. 退出登录
 const handleLogout = () => {
   // 清除所有相关缓存
   localStorage.removeItem('token')
   localStorage.removeItem('userId')
   localStorage.removeItem('username')
+  localStorage.removeItem('userPreferences')
 
   // 重置 Store
   counter.userData = {
@@ -161,6 +212,13 @@ const handleLogout = () => {
     id: null,
   }
   showSettingsPanel.value = false
+  showPreferencePanel.value = false
+  showMyCoursesPanel.value = false
+  
+  // 重置统计数据
+  courseCount.value = 0
+  chatCount.value = 0
+  studyMinutes.value = 0
 }
 </script>
 
@@ -176,11 +234,15 @@ const handleLogout = () => {
     />
 
     <!-- 2. 已登录状态 -->
-    <UsersData
-      v-else
-      @openSettings="handleOpenSettings"
-      @logout="handleLogout"
-    />
+    <div v-else class="profile-content">
+      <UsersData
+        @openSettings="handleOpenSettings"
+        @openPreference="handleOpenPreference"
+        @myCourses="handleMyCourses"
+        @logout="handleLogout"
+      />
+      <StatsCard :userStats="{ courseCount, chatCount, studyMinutes }" />
+    </div>
 
     <!-- 3. 设置面板 -->
     <Transition name="fade">
@@ -194,11 +256,27 @@ const handleLogout = () => {
       </div>
     </Transition>
 
+    <!-- 4. 学习偏好 -->
+    <Transition name="fade">
+      <div v-if="counter.userData.id && showPreferencePanel" class="settings-overlay" @click.self="showPreferencePanel = false">
+        <PreferenceSettings
+          @close="handleClosePreference"
+          @save="handleSavePreference"
+        />
+      </div>
+    </Transition>
+
+    <!-- 5. 我的课程 -->
+    <Transition name="fade">
+      <div v-if="counter.userData.id && showMyCoursesPanel" class="settings-overlay" @click.self="handleCloseMyCourses">
+        <MyCourses @close="handleCloseMyCourses" />
+      </div>
+    </Transition>
+
   </div>
 </template>
 
 <style scoped>
-/* 样式部分保持不变 */
 .user-index-wrapper {
   width: 100%;
   height: 100vh;
@@ -206,6 +284,16 @@ const handleLogout = () => {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.profile-content {
+  max-width: 900px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding: 40px 20px;
+  box-sizing: border-box;
 }
 
 .settings-overlay {
