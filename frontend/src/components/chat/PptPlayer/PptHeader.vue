@@ -3,15 +3,18 @@
     <div class="header-info">
       <h2 v-if="file">{{ file.name }}</h2>
       <h2 v-else>未选择课程文件</h2>
-      <p v-if="file">当前进度：12 / {{ totalPages }} 页</p>
+      <p v-if="file">当前进度：{{ currentPage }} / {{ totalPages }} 页</p>
       <p v-else>请上传 PPT 或 PDF 开始生成智课</p>
     </div>
     <button v-if="file" class="btn-knowledge">📄 知识图谱</button>
   </div>
 </template>
+
 <script setup>
-defineProps(['file', 'totalPages']);
+// 👇 新增 currentPage 属性
+defineProps(['file', 'totalPages', 'currentPage']);
 </script>
+
 <style scoped>
 .ppt-header {
   display: flex;
