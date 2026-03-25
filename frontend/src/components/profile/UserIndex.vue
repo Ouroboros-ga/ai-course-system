@@ -1,7 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import Login from './LoginIn/Login.vue'
-import UsersData from './LoginIn/UsersData.vue'
 import UserInfoCard from "./LoginIn/UserInfoCard.vue"
 import StatsCard from "./LoginIn/StatsCard.vue"
 import PreferenceSettings from "./LoginIn/PreferenceSettings.vue"
