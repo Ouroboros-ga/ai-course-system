@@ -5,6 +5,10 @@ from app.models.course_model import (
     ScriptNode,
     CourseStatus,
     ScriptNodeType,
+    KnowledgeTree,
+    KnowledgeChapter,
+    CourseParseRecord,
+    ParseStatus,
 )
 from app.models.qa_model import (
     QASession,
@@ -29,6 +33,10 @@ __all__ = [
     "ScriptNode",
     "CourseStatus",
     "ScriptNodeType",
+    "KnowledgeTree",
+    "KnowledgeChapter",
+    "CourseParseRecord",
+    "ParseStatus",
     "QASession",
     "QAMessage",
     "QAContext",

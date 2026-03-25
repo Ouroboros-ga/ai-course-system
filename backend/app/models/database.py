@@ -3,7 +3,14 @@ from typing import Generator
 import os
 
 from app.models.user_model import User
-from app.models.course_model import Course, CourseScript, ScriptNode
+from app.models.course_model import (
+    Course,
+    CourseScript,
+    ScriptNode,
+    KnowledgeTree,
+    KnowledgeChapter,
+    CourseParseRecord,
+)
 from app.models.qa_model import QASession, QAMessage, QAContext
 from app.models.progress_model import LearningProgress, NodeProgress, UnderstandingAnalysis
 

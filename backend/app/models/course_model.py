@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from sqlmodel import SQLModel, Field, Relationship, JSON, Column
-from typing import Optional, List
+from sqlmodel import SQLModel, Field, JSON, Column
+from typing import Optional
 from datetime import datetime
 from enum import Enum
 
@@ -25,6 +25,15 @@ class ScriptNodeType(str, Enum):
     INTERACTIVE = "interactive"
 
 
+class ParseStatus(str, Enum):
+    """解析状态枚举"""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class Course(SQLModel, table=True):
     """课程主表：映射泛雅课程与本地智课"""
 
@@ -46,6 +55,10 @@ class Course(SQLModel, table=True):
 
     total_duration: int = Field(default=0, description="总时长(秒)")
     total_nodes: int = Field(default=0, description="脚本总节点数")
+
+    source_file_name: Optional[str] = Field(default=None, description="原始PPT文件名")
+    source_file_path: Optional[str] = Field(default=None, description="原始PPT存储路径")
+    total_pages: int = Field(default=0, description="PPT总页数")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
     updated_at: datetime = Field(default_factory=datetime.utcnow)
@@ -94,6 +107,10 @@ class ScriptNode(SQLModel, table=True):
         foreign_key="course_scripts.id", index=True, description="所属脚本ID"
     )
 
+    chapter_id: Optional[str] = Field(
+        default=None, index=True, description="关联的知识点ID，如chap001_02_03"
+    )
+
     node_index: int = Field(description="节点序号")
     node_type: ScriptNodeType = Field(description="节点类型")
 
@@ -108,8 +125,112 @@ class ScriptNode(SQLModel, table=True):
 
     duration: int = Field(default=0, description="节点时长(秒)")
 
+    is_key_point: bool = Field(default=False, description="是否为重点知识点")
+
     extra_data: Optional[dict] = Field(
         default=None, sa_column=Column(JSON), description="扩展元数据(JSON)"
     )
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class KnowledgeTree(SQLModel, table=True):
+    """
+    知识点树主表
+    存储一次PPT解析生成的知识点树元数据
+    """
+
+    __tablename__ = "knowledge_trees"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    parse_id: str = Field(unique=True, index=True, description="解析ID，如parse20240520001")
+
+    course_id: Optional[int] = Field(
+        default=None, foreign_key="courses.id", index=True, description="关联的课程ID"
+    )
+
+    course_name: Optional[str] = Field(default=None, description="课程名称")
+
+    source_file_name: Optional[str] = Field(default=None, description="原始PPT文件名")
+    source_file_path: Optional[str] = Field(default=None, description="原始PPT存储路径")
+
+    total_pages: int = Field(default=0, description="PPT总页数")
+    total_chapters: int = Field(default=0, description="知识点总数")
+
+    status: ParseStatus = Field(default=ParseStatus.PENDING, description="解析状态")
+
+    raw_json: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="原始解析JSON完整数据"
+    )
+
+    error_message: Optional[str] = Field(default=None, description="解析失败时的错误信息")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
+
+
+class KnowledgeChapter(SQLModel, table=True):
+    """
+    知识点章节表
+    扁平化存储知识点树的每个节点，通过 parent_id 维护层级关系
+    """
+
+    __tablename__ = "knowledge_chapters"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    tree_id: int = Field(
+        foreign_key="knowledge_trees.id", index=True, description="所属知识点树ID"
+    )
+
+    chapter_id: str = Field(index=True, description="章节ID，如chap001_02_03")
+
+    parent_id: Optional[int] = Field(
+        default=None, foreign_key="knowledge_chapters.id", description="父节点ID"
+    )
+
+    chapter_name: str = Field(description="知识点名称")
+
+    level: int = Field(description="层级深度(1=章,2=节,3=知识点,4=子知识点)")
+
+    is_key_point: bool = Field(default=False, description="是否为重点知识点")
+
+    page_range: Optional[str] = Field(default=None, description="对应PPT页码范围，如'27-40'")
+
+    page_start: Optional[int] = Field(default=None, description="起始页码")
+
+    page_end: Optional[int] = Field(default=None, description="结束页码")
+
+    description: Optional[str] = Field(default=None, description="知识点简要描述")
+
+    sort_order: int = Field(default=0, description="同层级排序序号")
+
+    extra_data: Optional[dict] = Field(
+        default=None, sa_column=Column(JSON), description="扩展数据(JSON)"
+    )
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+
+
+class CourseParseRecord(SQLModel, table=True):
+    """
+    课程解析记录表
+    记录课程与知识点解析的关联关系
+    """
+
+    __tablename__ = "course_parse_records"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    course_id: int = Field(
+        foreign_key="courses.id", index=True, description="课程ID"
+    )
+
+    tree_id: int = Field(
+        foreign_key="knowledge_trees.id", index=True, description="知识点树ID"
+    )
+
+    is_current: bool = Field(default=True, description="是否为当前使用的解析版本")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
