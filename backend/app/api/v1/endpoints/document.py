@@ -96,14 +96,15 @@ async def upload_document(
             "file_path": str(file_path)
         }
 
+        # 按照接口文档规范返回数据
         return unified_response(
             code=200,
-            message="文档上传并解析成功",
+            message="上传并解析成功",
             data={
-                "document_id": document_id,
-                "filename": file.filename,
-                "markdown_content": str(markdown_content)[:2000] + "..." if len(str(markdown_content)) > 2000 else str(markdown_content),
-                "ai_analysis": ai_analysis
+                "fullContent": str(markdown_content),
+                "title": file.filename,
+                "audioUrl": None,  # TODO: 集成TTS生成音频
+                "ChatId": document_id
             }
         )
 

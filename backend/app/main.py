@@ -39,6 +39,8 @@ app.add_exception_handler(HTTPException, global_exception_handler)
 # 注册路由
 app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])
 app.include_router(document.router, prefix="/api/v1/document", tags=["文档处理"])
+# 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
+app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
 
 
 # 根路径健康检查
