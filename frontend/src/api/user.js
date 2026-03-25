@@ -31,33 +31,16 @@ export function register(data) {
 }
 
 /**
- * 获取用户信息
+ * 用户数据修改
+ * @param {Object} data - 用户数据修改
+ * @param {number} data.id - 用户id
+ * @param {string} data.username - 用户名
+ * @param {string} data.password - 密码
  */
-export function getUserInfo() {
+export function modify(data) {
   return request({
-    url: '/user/me',
-    method: 'get'
-  })
-}
-
-/**
- * 用户退出登录
- */
-export function logout() {
-  return request({
-    url: '/user/logout',
-    method: 'post'
-  })
-}
-
-/**
- * 更新用户信息
- * @param {Object} data - 更新数据
- */
-export function updateUserInfo(data) {
-  return request({
-    url: '/user/update',
-    method: 'put',
+    url: '/user/modify',
+    method: 'post',
     data
   })
 }

@@ -17,6 +17,7 @@ from app.schemas.common_schema import (
     LoginResponseData,
     UserInfo,
     RegisterRequest,
+    ModifyUserRequest,
 )
 from app.core.exceptions import unified_response
 
@@ -100,3 +101,62 @@ async def user_register(
 @router.get("/me", response_model=UnifiedResponse)
 async def get_my_info(current_user=Depends(teacher_student_allowed)):
     return unified_response(code=200, message="获取成功", data=current_user)
+
+
+@router.post("/modify", response_model=LoginResponse)
+async def user_modify(
+    request: ModifyUserRequest, session: Session = Depends(get_session)
+):
+    """用户信息修改接口"""
+    # 1. 查找用户
+    statement = select(User).where(User.id == int(request.id))
+    user = session.exec(statement).first()
+
+    if not user:
+        return LoginResponse(code=404, message="用户不存在", data=None)
+
+    # 2. 验证当前用户名和密码
+    if user.username != request.username:
+        return LoginResponse(code=401, message="用户名不匹配", data=None)
+
+    if not verify_password(request.password, user.hashed_password):
+        return LoginResponse(code=401, message="密码错误", data=None)
+
+    # 3. 检查新用户名是否已被占用
+    if request.newUsername and request.newUsername != user.username:
+        existing = session.exec(
+            select(User).where(User.username == request.newUsername)
+        ).first()
+        if existing:
+            return LoginResponse(code=409, message="新用户名已被占用", data=None)
+        user.username = request.newUsername
+
+    # 4. 修改密码
+    if request.newPassword:
+        user.hashed_password = get_password_hash(request.newPassword)
+
+    # 5. 保存修改
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    # 6. 生成新Token（使旧Token失效）
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "username": user.username,
+            "role": user.role.value if hasattr(user.role, "value") else user.role,
+            "school_id": user.school_id,
+        },
+        expires_delta=access_token_expires,
+    )
+
+    return LoginResponse(
+        code=200,
+        message="修改成功",
+        data=LoginResponseData(
+            token=access_token,
+            userInfo=UserInfo(id=str(user.id), username=user.username),
+        ),
+    )

@@ -1,57 +1,122 @@
 <template>
   <div class="ppt-section">
-    <!-- 头部 -->
-    <PptHeader :file="file" :totalPages="45" />
+    <PptHeader
+      :file="file"
+      :totalPages="totalPages"
+      :current-page="currentPage"
+    />
 
-    <!-- 内容区 -->
     <div class="ppt-display-area">
       <PptUpload v-if="!file" @click="triggerUpload" @drop="handleDrop" />
       <PptAnalyzing v-else-if="isAnalyzing" />
 
       <div v-else class="ppt-content-wrapper">
-        <div class="ppt-placeholder">
-          <div style="font-size: 48px; color: #fee2e2; margin-bottom: 16px;">📊</div>
-          <p>PPT 第 12 页预览区域</p>
-          <span style="font-size: 12px; color: #9ca3af;">(此处接入 PDF/PPT 渲染组件)</span>
+        <div class="ppt-content">
+          <h3 class="page-title">{{ currentPageData?.title || '解析完成' }}</h3>
+          <div class="page-content" v-html="currentPageData?.content || '等待AI解析内容...'"></div>
         </div>
-        <PptControlBar :isPlaying="isPlaying" @toggle="togglePlay" />
+
+        <PptControlBar
+          :isPlaying="isPlaying"
+          :progress="0"
+          @toggle="togglePlay"
+          @prev-page="() => currentPage = Math.max(1, currentPage - 1)"
+          @next-page="() => currentPage = Math.min(totalPages, currentPage + 1)"
+        />
       </div>
 
-      <input type="file" ref="fileInput" @change="handleFileChange" class="hidden-input" accept=".ppt,.pptx,.pdf">
+      <input
+        type="file"
+        ref="fileInput"
+        @change="handleFileChange"
+        class="hidden-input"
+        accept=".ppt,.pptx,.pdf"
+      />
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, defineEmits } from 'vue';
-import PptHeader from './PptPlayer/PptHeader.vue';
-import PptUpload from './PptPlayer/PptUpload.vue';
-import PptAnalyzing from './PptPlayer/PptAnalyzing.vue';
-import PptControlBar from './PptPlayer/PptControlBar.vue';
+import { ref, computed } from 'vue'
+import PptHeader from './PptPlayer/PptHeader.vue'
+import PptUpload from './PptPlayer/PptUpload.vue'
+import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
+import PptControlBar from './PptPlayer/PptControlBar.vue'
+import { showToast } from '@/utils/toast'
 
-const emit = defineEmits(['file-upload', 'analysis-end']);
-const file = ref(null);
-const isAnalyzing = ref(false);
-const isPlaying = ref(false);
-const fileInput = ref(null);
+import api from '@/api/index.js'
 
-const triggerUpload = () => fileInput.value.click();
-const handleFileChange = (e) => startAnalysis(e.target.files[0]);
-const handleDrop = (e) => startAnalysis(e.dataTransfer.files[0]);
+import { useCounterStore } from '@/stores/counter.js'
+const counter = useCounterStore()
 
-const startAnalysis = (f) => {
-  if(!f) return;
-  file.value = f;
-  emit('file-upload', f);
-  isAnalyzing.value = true;
-  setTimeout(() => { isAnalyzing.value = false; isPlaying.value = true; emit('analysis-end'); }, 3000);
-};
-const togglePlay = () => isPlaying.value = !isPlaying.value;
+const emit = defineEmits(['file-upload', 'analysis-end'])
+
+const file = ref(null)
+const isAnalyzing = ref(false)
+const isPlaying = ref(false)
+const fileInput = ref(null)
+
+const pages = ref([])
+const currentPage = ref(1)
+const totalPages = ref(1)
+
+const currentPageData = computed(() => {
+  return pages.value[currentPage.value - 1] || {}
+})
+
+const triggerUpload = () => fileInput.value.click()
+const handleFileChange = (e) => startAnalysis(e.target.files[0])
+const handleDrop = (e) => startAnalysis(e.dataTransfer.files[0])
+
+const startAnalysis = async (f) => {
+  if (!f) return
+  file.value = f
+  emit('file-upload', f)
+  isAnalyzing.value = true
+
+  try {
+    // 调用上传接口
+    const formData = new FormData()
+    formData.append('file', f)
+    formData.append('fileName', f.name)
+    formData.append('userId', counter.userData.id)
+
+    console.log('开始上传文件：', f.name)
+    const res = await api.chat.uploadFile(formData)
+
+    console.log('上传成功:', res)
+    // 后端返回的数据结构：{ code, message, data: { document_id, filename, markdown_content, ai_analysis } }
+    // 将内容按段落分割成页面
+    const content = res?.data?.markdown_content || res?.data?.ai_analysis || ''
+    const paragraphs = content.split('\n\n').filter(p => p.trim())
+    pages.value = paragraphs.map((p, i) => ({
+      title: `第 ${i + 1} 页`,
+      content: p.replace(/\n/g, '<br>')
+    }))
+    totalPages.value = pages.value.length || 1
+    currentPage.value = 1
+
+  } catch (err) {
+    console.error('上传失败', err)
+    showToast(err, 'error')
+    pages.value = []
+    totalPages.value = 1
+    currentPage.value = 1
+  } finally {
+    isAnalyzing.value = false
+    isPlaying.value = true
+    emit('analysis-end')
+  }
+}
+
+const togglePlay = () => {
+  isPlaying.value = !isPlaying.value
+}
 </script>
 
 <style scoped>
 .ppt-section {
-  flex: 6.5; /* 左侧占 6.5 份 */
+  flex: 6.5;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -63,7 +128,7 @@ const togglePlay = () => isPlaying.value = !isPlaying.value;
   flex: 1;
   background: white;
   border-radius: 16px;
-  box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
   border: 1px solid #f3f4f6;
   position: relative;
   overflow: hidden;
@@ -80,25 +145,33 @@ const togglePlay = () => isPlaying.value = !isPlaying.value;
   flex-direction: column;
 }
 
-.ppt-placeholder {
+.ppt-content {
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: #9ca3af;
+  padding: 40px 32px;
+  overflow-y: auto;
+}
+.page-title {
+  font-size: 24px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 20px;
+}
+.page-content {
+  font-size: 16px;
+  line-height: 1.8;
+  color: #4b5565;
 }
 
 .hidden-input {
   display: none;
 }
 
-/* 📱 移动端适配 */
+/* 👇👇👇 这里我帮你改长了！！！ */
 @media (max-width: 768px) {
   .ppt-section {
     flex: none;
     width: 100%;
-    height: 45vh;
+    height: 75vh;  /* 👈 原来 45vh → 现在 60vh，变长了 */
     min-height: 300px;
   }
   .ppt-display-area {

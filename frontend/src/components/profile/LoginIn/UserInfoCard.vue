@@ -1,4 +1,3 @@
-<!-- components/chat/user/UserInfoCard.vue -->
 <template>
   <div class="user-card-container">
     <!-- 毛玻璃卡片 -->
@@ -56,6 +55,14 @@
                   maxlength="80"
                 />
               </div>
+              <div class="input-group">
+                <label>当前密码</label>
+                <input
+                  type="password"
+                  v-model="form.oldPassword"
+                  placeholder="请输入当前密码"
+                />
+              </div>
               <button type="submit" class="submit-btn">保存修改</button>
             </form>
           </div>
@@ -105,7 +112,6 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
-import { showToast } from '@/utils/toast.js' // 假设你使用了和登录页相同的 toast 工具
 
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
@@ -149,7 +155,7 @@ const handleSubmitUsername = () => {
   }
 
   // 发送事件给父组件处理 API
-  emit('updateUsername', { username: form.username })
+  emit('updateUsername', { username: form.username, oldPassword: form.oldPassword })
 
   // 乐观更新或等待父组件反馈后关闭
   // resetForm()
@@ -188,17 +194,14 @@ const handleLogout = () => {
 </script>
 
 <style scoped>
-/* --- 容器与背景 --- */
 .user-card-container {
   width: 100%;
   display: flex;
   justify-content: center;
   align-items: center;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  pointer-events: none; /* 点击穿透 */
+  pointer-events: none;
 }
-
-/* --- 毛玻璃卡片 (复用 Login.vue 风格) --- */
 .glass-card {
   position: relative;
   width: 420px;
@@ -210,10 +213,8 @@ const handleLogout = () => {
   z-index: 10;
   color: #555;
   pointer-events: auto;
-  overflow: hidden; /* 防止动画溢出 */
+  overflow: hidden;
 }
-
-/* --- 用户头部区域 --- */
 .user-header {
   display: flex;
   align-items: center;
@@ -221,7 +222,6 @@ const handleLogout = () => {
   border-bottom: 1px solid rgba(0, 0, 0, 0.05);
   margin-bottom: 20px;
 }
-
 .avatar {
   width: 56px;
   height: 56px;
@@ -236,42 +236,30 @@ const handleLogout = () => {
   margin-right: 16px;
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
 }
-
-.user-info {
-  flex: 1;
-}
-
 .user-info .username {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
   color: #333;
 }
-
 .user-info .user-id {
   margin: 4px 0 0 0;
   font-size: 12px;
   color: #999;
 }
-
-/* --- 主体切换区域 --- */
 .card-body {
   position: relative;
-  min-height: 260px; /* 确保有最小高度防止跳动 */
+  min-height: 260px;
 }
-
 .transition-wrapper {
   position: relative;
   width: 100%;
 }
-
-/* --- 菜单列表样式 --- */
 .menu-list {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-
 .menu-item {
   display: flex;
   align-items: center;
@@ -281,30 +269,24 @@ const handleLogout = () => {
   cursor: pointer;
   transition: all 0.2s ease;
 }
-
 .menu-item:hover {
   background: rgba(102, 126, 234, 0.08);
   transform: translateX(4px);
 }
-
 .menu-item .icon {
   font-size: 18px;
   margin-right: 12px;
 }
-
 .menu-item span {
   flex: 1;
   font-size: 15px;
   color: #444;
 }
-
 .menu-item .arrow {
   font-size: 18px;
   color: #ccc;
   font-weight: 300;
 }
-
-/* --- 退出登录按钮 --- */
 .logout-btn {
   width: 100%;
   margin-top: 30px;
@@ -317,19 +299,15 @@ const handleLogout = () => {
   cursor: pointer;
   transition: all 0.3s ease;
 }
-
 .logout-btn:hover {
   background: rgba(255, 100, 100, 0.1);
   border-color: rgba(255, 100, 100, 0.5);
 }
-
-/* --- 编辑面板样式 --- */
 .panel-header {
   display: flex;
   align-items: center;
   margin-bottom: 24px;
 }
-
 .back-btn {
   background: none;
   border: none;
@@ -339,28 +317,20 @@ const handleLogout = () => {
   padding-right: 12px;
   transition: color 0.2s;
 }
-
-.back-btn:hover {
-  color: #333;
-}
-
+.back-btn:hover { color: #333; }
 .panel-header h4 {
   margin: 0;
   font-size: 16px;
   color: #333;
   font-weight: 500;
 }
-
-/* --- 表单样式 (复用 Login.vue) --- */
 .edit-form {
   display: flex;
   flex-direction: column;
 }
-
 .input-group {
   margin-bottom: 20px;
 }
-
 .input-group label {
   display: block;
   margin-bottom: 8px;
@@ -368,7 +338,6 @@ const handleLogout = () => {
   font-weight: 500;
   color: #666;
 }
-
 .input-group input {
   width: 100%;
   padding: 14px 16px;
@@ -381,13 +350,11 @@ const handleLogout = () => {
   transition: all 0.3s ease;
   box-sizing: border-box;
 }
-
 .input-group input:focus {
   background: rgba(255, 255, 255, 0.9);
   border-color: #a8c0ff;
   box-shadow: 0 0 0 3px rgba(168, 192, 255, 0.15);
 }
-
 .submit-btn {
   width: 100%;
   padding: 14px;
@@ -402,28 +369,22 @@ const handleLogout = () => {
   box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
   margin-top: 10px;
 }
-
 .submit-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
 }
-
-/* --- 动画定义 (与 Login.vue 保持一致) --- */
 .soft-transition-enter-active,
 .soft-transition-leave-active {
   transition: all 0.35s ease;
 }
-
 .soft-transition-enter-from {
   opacity: 0;
-  transform: translateX(20px); /* 从右侧滑入 */
+  transform: translateX(20px);
 }
-
 .soft-transition-leave-to {
   opacity: 0;
-  transform: translateX(-20px); /* 向左侧滑出 */
+  transform: translateX(-20px);
 }
-
 .soft-transition-leave-active {
   position: absolute;
   width: 100%;
