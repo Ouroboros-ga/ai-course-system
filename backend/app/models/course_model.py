@@ -169,7 +169,7 @@ class DoclingDocument(SQLModel, table=True):
 
     origin_filename: Optional[str] = Field(default=None, description="原始文件名")
     origin_mimetype: Optional[str] = Field(default=None, description="原始文件MIME类型")
-    origin_binary_hash: Optional[int] = Field(default=None, description="文件二进制哈希")
+    origin_binary_hash: Optional[str] = Field(default=None, description="文件二进制哈希")
 
     source_file_path: Optional[str] = Field(default=None, description="原始文件存储路径")
 
