@@ -17,6 +17,17 @@ import platform
 from pathlib import Path
 from typing import Any, Optional, Union
 
+if True:
+    # 配置日志
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    logger = logging.getLogger(__name__)
+    # ==========================================
+    # 核心修复：配置 HuggingFace 国内镜像源
+    # ==========================================
+    # 必须在导入 docling 或下载模型前设置
+    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+    logger.info("⚙️ 已配置 HuggingFace 镜像源: hf-mirror.com")
+
 import torch
 # Docling 核心库导入
 from docling.datamodel.base_models import InputFormat
@@ -35,19 +46,6 @@ try:
 except ImportError:
     AUDIO_SUPPORT = False
     logging.warning("未安装 audio 支持。请运行: uv add 'docling[asr]' 来启用语音功能。")
-
-# 配置日志
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
-
-# ==========================================
-# 核心修复：配置 HuggingFace 国内镜像源
-# ==========================================
-# 必须在导入 docling 或下载模型前设置
-if "HF_ENDPOINT" not in os.environ:
-    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    logger.info("⚙️ 已配置 HuggingFace 镜像源: hf-mirror.com")
-
 
 # ==========================================
 # 核心逻辑：设备选择与环境配置
@@ -200,7 +198,7 @@ class DocProcessor:
 
         # 配置 PDF 处理选项
         pipeline_options = PdfPipelineOptions(
-            artifacts_path=str(self.artifacts_path),  # 确保传入字符串
+            # artifacts_path=str(self.artifacts_path),  # 确保传入字符串
             do_table_structure=True,  # 启用表格识别
             do_ocr=False,  # 启用 OCR
         )
