@@ -1,7 +1,7 @@
 """
 文档处理API接口
 流程：上传文件 -> 解析为Markdown -> AI分析 -> 返回结果
-Updated: 2026-03-25
+Updated: 2026-03-26
 """
 
 import os
@@ -79,14 +79,18 @@ async def upload_document(
                 processor = UniversalDocProcessor()
                 markdown_content = processor.convert(file_path, save_file=False)
             except Exception as e:
-                # 如果Docling解析失败，尝试使用备用方法
                 print(f"Docling解析失败: {e}")
                 markdown_content = await _fallback_parse(file_path)
         else:
             markdown_content = await _fallback_parse(file_path)
 
-        # 调用AI分析文档内容
-        ai_analysis = await _analyze_document(str(markdown_content))
+        # 调用AI分析文档内容（失败不影响返回解析结果）
+        ai_analysis = ""
+        try:
+            ai_analysis = await _analyze_document(str(markdown_content))
+        except Exception as e:
+            print(f"AI分析失败: {e}")
+            ai_analysis = f"AI分析暂时不可用: {str(e)}"
 
         # 缓存结果
         document_cache[document_id] = {
@@ -103,7 +107,7 @@ async def upload_document(
             data={
                 "fullContent": str(markdown_content),
                 "title": file.filename,
-                "audioUrl": None,  # TODO: 集成TTS生成音频
+                "audioUrl": None,
                 "ChatId": document_id
             }
         )
