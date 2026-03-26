@@ -4,6 +4,7 @@
       <h3>历史对话</h3>
     </div>
 
+
     <div class="history-list">
       <div
         class="history-item"
@@ -15,12 +16,14 @@
         <div class="item-time">{{ item.time }}</div>
       </div>
 
+
       <div class="empty" v-if="!historyList.length">
         暂无聊天记录
       </div>
     </div>
   </div>
 </template>
+
 
 <script setup>
 import { ref } from 'vue';
@@ -30,10 +33,12 @@ const historyList = ref([
   { id: 3, title: '前端工程化配置', time: '昨天 16:10' },
 ]);
 
+
 const handleSelect = (item) => {
   console.log('选中记录：', item);
 };
 </script>
+
 
 <style scoped>
 .history-wrapper {
@@ -47,11 +52,13 @@ const handleSelect = (item) => {
   box-sizing: border-box;
 }
 
+
 .history-header {
   margin-bottom: 14px;
   padding-bottom: 10px;
   border-bottom: 1px solid #f1f3f5;
 }
+
 
 .history-header h3 {
   margin: 0;
@@ -59,6 +66,7 @@ const handleSelect = (item) => {
   font-weight: 600;
   color: #1f2937;
 }
+
 
 .history-list {
   flex: 1;
@@ -68,6 +76,7 @@ const handleSelect = (item) => {
   gap: 8px;
 }
 
+
 .history-item {
   padding: 12px 14px;
   background: #f9fafb;
@@ -76,9 +85,11 @@ const handleSelect = (item) => {
   transition: all 0.2s ease;
 }
 
+
 .history-item:hover {
   background: #eff6ff;
 }
+
 
 .item-title {
   font-size: 14px;
@@ -90,10 +101,12 @@ const handleSelect = (item) => {
   text-overflow: ellipsis;
 }
 
+
 .item-time {
   font-size: 12px;
   color: #9ca3af;
 }
+
 
 .empty {
   text-align: center;

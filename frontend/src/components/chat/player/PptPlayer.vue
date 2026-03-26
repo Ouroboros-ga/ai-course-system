@@ -85,9 +85,9 @@ const startAnalysis = async (f) => {
     const res = await api.chat.uploadFile(formData)
 
     console.log('上传成功:', res)
-    // 按照接口文档规范，后端返回：{ code, message, data: { fullContent, title, audioUrl, ChatId } }
+    // 后端返回的数据结构：{ code, message, data: { document_id, filename, markdown_content, ai_analysis } }
     // 将内容按段落分割成页面
-    const content = res?.data?.fullContent || ''
+    const content = res?.data?.markdown_content || res?.data?.ai_analysis || ''
     const paragraphs = content.split('\n\n').filter(p => p.trim())
     pages.value = paragraphs.map((p, i) => ({
       title: `第 ${i + 1} 页`,
