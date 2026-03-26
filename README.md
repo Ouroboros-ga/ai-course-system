@@ -57,18 +57,60 @@
 
 ```
 ai-smart-course-system/
-├── backend/                 # 后端 FastAPI 项目（核心业务逻辑）
-│   ├── app/
-│   │   ├── main.py          # 项目入口，FastAPI 实例创建、路由注册
-│   │   ├── core/            # 全局核心配置（密钥、数据库、异常处理）
-│   │   ├── common/          # 通用工具类（大模型/语音 API 封装、课件解析工具）
-│   │   ├── models/          # 数据库 ORM 模型（用户、课件、问答、进度模型）
-│   │   ├── schemas/         # 接口请求/响应数据校验模型（Pydantic）
-│   │   ├── services/        # 核心业务逻辑层（智课生成、问答、进度业务）
-│   │   └── api/             # 接口路由层（对应三大核心模块）
-│   ├── requirements.txt     # 后端依赖包，一键 pip 安装
-│   ├── .env.example         # 环境变量示例（密钥、配置，复制即可用）
-│   └── run.py               # 后端一键启动脚本
+├── src
+├──components
+├── about/
+│   ├── AboutFeatures.vue     # 核心功能展示卡片
+│   ├── AboutFooter.vue       # 底部版权信息
+│   ├── AboutHero.vue         # 顶部标题区
+│   ├── AboutIntro.vue        # 项目介绍
+│   └── AboutTechStack.vue    # 技术栈展示
+├── chat/
+│   ├── ChatPanel/
+│   │   ├── ChatInput.vue     # 聊天输入框
+│   │   ├── MessageBubble.vue # 消息气泡
+│   │   └── MessageList.vue   # 消息列表
+│   ├── PptPlayer/
+│   │   ├── PptAnalyzing.vue  # PPT分析状态
+│   │   ├── PptControlBar.vue # PPT控制栏
+│   │   ├── PptHeader.vue     # PPT头部信息
+│   │   └── PptUpload.vue     # PPT上传
+│   ├── wait/
+│   │   ├── bubble/
+│   │   │   ├── AiBubble.vue  # AI消息气泡
+│   │   │   └── UserBubble.vue # 用户消息气泡
+│   │   ├── ChatBox.vue       # 聊天框
+│   │   └── InputBox.vue      # 输入框
+│   ├── ChatHistory.vue       # 聊天历史记录
+│   ├── ChatPanel.vue         # 聊天面板主组件
+│   ├── ChatTopNav.vue        # 聊天页面顶部导航
+│   ├── DesktopLayout.vue     # 桌面端布局
+│   ├── HistorySidebar.vue    # 历史记录侧边栏
+│   ├── MobileLayout.vue      # 移动端布局
+│   └── PptPlayer.vue         # PPT播放器主组件
+├── home/
+│   ├── sections/
+│   │   ├── Chat.vue          # 聊天功能展示
+│   │   ├── Feature.vue       # 特色
+│   │   ├── Footer.vue        # 页脚
+│   │   ├── Hero.vue          # 主角区
+│   │   └── Value.vue         # 价值
+│   └── ui/
+│       ├── BackTop.vue       # 返回顶部按钮
+│       └── ScrollArrow.vue   # 滚动箭头
+├── profile/
+│   ├── LoginIn/
+│   │   ├── Login.vue         # 登录组件
+│   │   ├── MenuGrid.vue      # 菜单网格
+│   │   ├── MyCourses.vue     # 我的课程
+│   │   ├── PreferenceSettings.vue # 偏好设置
+│   │   ├── StatsCard.vue     # 统计卡片
+│   │   ├── UserCard.vue      # 用户卡片
+│   │   ├── UserInfoCard.vue  # 用户信息卡片
+│   │   └── UsersData.vue     # 用户数据
+│   └── UserIndex.vue         # 个人中心主组件
+├── GradientBackground.vue    # 全局渐变背景
+├── NavigationBar.vue         # 全局导航栏
 ├── frontend/                # 前端 Vue 3 项目（用户交互界面）
 │   ├── src/
 │   │   ├── router/          # 路由配置（分教师/学生端）

@@ -16,8 +16,8 @@
 </template>
 
 <script setup>
-import UserCard from './UserCard.vue'
-import MenuGrid from './MenuGrid.vue'
+import UserCard from '../usercard/UserCard.vue'
+import MenuGrid from '../menu/MenuGrid.vue'
 
 // 定义事件
 const emit = defineEmits(['openSettings', 'openPreference', 'myCourses', 'logout'])

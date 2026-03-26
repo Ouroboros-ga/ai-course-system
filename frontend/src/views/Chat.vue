@@ -36,13 +36,13 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
-import PptPlayer from '@/components/chat/PptPlayer.vue';
-import ChatPanel from '@/components/chat/ChatPanel.vue';
-import ChatHistory from '@/components/chat/ChatHistory.vue';
-import ChatTopNav from '@/components/chat/ChatTopNav.vue';
-import HistorySidebar from '@/components/chat/HistorySidebar.vue';
-import DesktopLayout from '@/components/chat/DesktopLayout.vue';
-import MobileLayout from '@/components/chat/MobileLayout.vue';
+import PptPlayer from '@/components/chat/player/PptPlayer.vue';
+import ChatPanel from '@/components/chat/panel/ChatPanel.vue';
+import ChatHistory from '@/components/chat/history/ChatHistory.vue';
+import ChatTopNav from '@/components/chat/topnav/ChatTopNav.vue';
+import HistorySidebar from '@/components/chat/sidebar/HistorySidebar.vue';
+import DesktopLayout from '@/components/chat/layout/DesktopLayout.vue';
+import MobileLayout from '@/components/chat/layout/MobileLayout.vue';
 
 const currentFile = ref(null);
 const isAnalyzing = ref(false);

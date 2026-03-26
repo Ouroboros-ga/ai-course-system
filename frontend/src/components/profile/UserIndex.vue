@@ -1,10 +1,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
-import Login from './LoginIn/Login.vue'
-import UserInfoCard from "./LoginIn/UserInfoCard.vue"
-import StatsCard from "./LoginIn/StatsCard.vue"
-import PreferenceSettings from "./LoginIn/PreferenceSettings.vue"
-import MyCourses from "./LoginIn/MyCourses.vue"
+import Login from './LoginIn/login/Login.vue'
+import UserInfoCard from "./LoginIn/userinfo/UserInfoCard.vue"
+import StatsCard from "./LoginIn/stats/StatsCard.vue"
+import PreferenceSettings from "./LoginIn/preference/PreferenceSettings.vue"
+import MyCourses from "./LoginIn/courses/MyCourses.vue"
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
 

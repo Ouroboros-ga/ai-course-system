@@ -5,8 +5,8 @@ import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
 // 1. 提前定义好异步组件（只定义一次，性能高）
-const UserBubble = defineAsyncComponent(() => import('@/components/chat/wait/bubble/UserBubble.vue'))
-const AiBubble = defineAsyncComponent(() => import('@/components/chat/wait/bubble/AiBubble.vue'))
+const UserBubble = defineAsyncComponent(() => import('@/components/chat/wait/bubble/user/UserBubble.vue'))
+const AiBubble = defineAsyncComponent(() => import('@/components/chat/wait/bubble/ai/AiBubble.vue'))
 
 // 2. 建立映射关系：key 是类型，value 是组件
 const bubbleMap = {
@@ -56,7 +56,6 @@ const getComponent = (type) => {
   flex-direction: column;
   gap: 16px;
   /* ✨ 添加上下边框 */
-  //border-top: 1px solid rgba(0, 0, 0, 0.2);
   border-bottom: 2px solid rgba(0, 0, 0, 0.1);
 
   /* 滚动条美化 */
