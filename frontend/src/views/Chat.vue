@@ -1,12 +1,18 @@
 <template>
   <div class="chat-page-container">
-    <ChatTopNav :show-history="showHistory" @toggle-history="showHistory = !showHistory" />
+    <!-- 顶部导航：动画 1 -->
+    <ChatTopNav
+      class="fade-in-up"
+      :show-history="showHistory"
+      @toggle-history="showHistory = !showHistory"
+    />
 
     <HistorySidebar :show-history="showHistory">
       <ChatHistory />
     </HistorySidebar>
 
-    <div class="content-box">
+    <!-- 内容区域：动画 2 -->
+    <div class="content-box fade-in-up">
       <DesktopLayout v-if="!isMobile" :show-history="showHistory">
         <template #main>
           <PptPlayer
@@ -103,6 +109,26 @@ onUnmounted(() => {
   padding: 16px;
   box-sizing: border-box;
   position: relative;
+}
+
+/* ====================== */
+/* 🔥 统一高级淡入动画 */
+/* ====================== */
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(35px);
+  animation: fadeInUp 0.7s cubic-bezier(0.24, 1, 0.32, 1) forwards;
+}
+
+/* 依次出现：导航 → 内容 */
+.fade-in-up:nth-child(1) { animation-delay: 0.1s; }
+.fade-in-up:nth-child(3) { animation-delay: 0.25s; }
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @media (max-width: 768px) {
