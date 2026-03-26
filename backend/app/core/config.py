@@ -48,9 +48,9 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_API_BASE: str = ""
     LLM_MODEL_NAME: str = ""
-    LLM_MAX_TOKENS: int = 4096
+    LLM_MAX_TOKENS: int = 8192
     LLM_TEMPERATURE: float = 0.7
-    LLM_TIMEOUT: int = 60
+    LLM_TIMEOUT: int = 180
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""
