@@ -85,14 +85,29 @@ const startAnalysis = async (f) => {
     const res = await api.chat.uploadFile(formData)
 
     console.log('上传成功:', res)
-    // 后端返回的数据结构：{ code, message, data: { document_id, filename, markdown_content, ai_analysis } }
-    // 将内容按段落分割成页面
-    const content = res?.data?.markdown_content || res?.data?.ai_analysis || ''
-    const paragraphs = content.split('\n\n').filter(p => p.trim())
-    pages.value = paragraphs.map((p, i) => ({
-      title: `第 ${i + 1} 页`,
-      content: p.replace(/\n/g, '<br>')
-    }))
+    // 后端返回的数据结构：
+    // { code, message, data: { markdownContent, scriptContent, summaryText, keywords, nodes } }
+    // 优先使用AI生成的脚本内容(scriptContent)，其次使用Markdown内容(markdownContent)
+    const scriptContent = res?.data?.scriptContent
+    const markdownContent = res?.data?.markdownContent
+    
+    if (scriptContent && scriptContent.nodes && scriptContent.nodes.length > 0) {
+      // 使用AI生成的脚本节点
+      pages.value = scriptContent.nodes.map((node, i) => ({
+        title: node.title || `第 ${i + 1} 节`,
+        content: node.content?.replace(/\n/g, '<br>') || '',
+        type: node.node_type,
+        duration: node.duration,
+        isKeyPoint: node.is_key_point
+      }))
+    } else if (markdownContent) {
+      // 使用Markdown内容
+      const paragraphs = markdownContent.split('\n\n').filter(p => p.trim())
+      pages.value = paragraphs.map((p, i) => ({
+        title: `第 ${i + 1} 页`,
+        content: p.replace(/\n/g, '<br>')
+      }))
+    }
     totalPages.value = pages.value.length || 1
     currentPage.value = 1
 

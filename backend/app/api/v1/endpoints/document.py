@@ -1,7 +1,7 @@
 """
 文档处理API接口
-流程：上传文件 -> 解析文件 -> 存储到数据库 -> AI生成脚本 -> 存储脚本节点 -> 返回结果
-Updated: 2026-03-28 - 按照数据库接口与文件解析交互流程文档修改，使用模拟数据测试AI生成步骤
+流程：上传文件 -> Docling解析为Markdown -> 豆包AI生成智课脚本 -> 存储到数据库 -> 返回结果
+Updated: 2026-03-28 - 集成Docling解析和豆包AI
 """
 
 import os
@@ -38,6 +38,7 @@ from app.models.course_model import (
     ParseStatus,
     ScriptNodeType,
 )
+from app.common.llm_client import llm_client, Message
 
 router = APIRouter(tags=["文档处理"])
 
@@ -57,14 +58,13 @@ async def upload_document(
     """
     上传文档并解析，存储到数据库，生成智课脚本
     
-    流程（按照数据库接口与文件解析交互流程文档）：
+    流程：
     1. 存储文件信息到 courses 表
     2. 创建 docling_documents 记录 (status = PENDING)
-    3. 调用解析API，更新 status = PROCESSING
-    4. 存储解析结果到相关表，更新 status = COMPLETED
-    5. 调用AI API生成智课脚本 -> 创建 course_scripts 记录
-    6. 拆分脚本节点 -> 创建 script_nodes 记录
-    7. 返回结果
+    3. 调用Docling解析，输出Markdown，更新 status = PROCESSING -> COMPLETED
+    4. 将Markdown传递给豆包AI生成智课脚本 -> 创建 course_scripts 记录
+    5. 拆分脚本节点 -> 创建 script_nodes 记录
+    6. 返回结果
     """
     try:
         document_id = str(uuid.uuid4())
@@ -120,15 +120,15 @@ async def upload_document(
         session.refresh(docling_doc)
         print(f"  创建文档解析记录: ID={docling_doc.id}, status=PENDING")
 
-        print(f"[步骤3] 调用解析API，更新 status = PROCESSING")
+        print(f"[步骤3] 调用Docling解析，更新 status = PROCESSING")
         docling_doc.status = ParseStatus.PROCESSING
         session.commit()
         print(f"  更新状态: PROCESSING")
 
-        file_content = await _read_file_content(file_path)
-        print(f"  解析文件内容: {len(file_content)} 字符")
+        markdown_content = await _parse_with_docling(file_path, file.filename)
+        print(f"  Docling解析完成: {len(markdown_content)} 字符")
 
-        parse_result = _parse_content_to_structure(file_content, file.filename)
+        parse_result = _parse_markdown_to_structure(markdown_content, file.filename)
 
         print(f"[步骤4] 存储解析结果到相关表")
         total_texts = 0
@@ -166,51 +166,6 @@ async def upload_document(
         session.commit()
         print(f"  存储 {total_texts} 条文本记录")
 
-        for idx, table_data in enumerate(parse_result.get("tables", [])):
-            table_record = DoclingTable(
-                doc_id=docling_doc.id,
-                group_id=None,
-                self_ref=f"#/tables/{idx}",
-                label="table",
-                page_no=table_data.get("page_no", 1),
-                num_rows=table_data.get("num_rows", 0),
-                num_cols=table_data.get("num_cols", 0),
-                table_data=table_data.get("data"),
-                sort_order=idx,
-            )
-            session.add(table_record)
-            session.commit()
-            session.refresh(table_record)
-
-            for cell_data in table_data.get("cells", []):
-                cell = DoclingTableCell(
-                    table_id=table_record.id,
-                    row_idx=cell_data.get("row_idx", 0),
-                    col_idx=cell_data.get("col_idx", 0),
-                    text=cell_data.get("text", ""),
-                    row_span=cell_data.get("row_span", 1),
-                    col_span=cell_data.get("col_span", 1),
-                )
-                session.add(cell)
-            total_tables += 1
-        session.commit()
-        print(f"  存储 {total_tables} 个表格记录")
-
-        for idx, pic_data in enumerate(parse_result.get("pictures", [])):
-            picture = DoclingPicture(
-                doc_id=docling_doc.id,
-                group_id=None,
-                self_ref=f"#/pictures/{idx}",
-                label="picture",
-                image_url=pic_data.get("image_url"),
-                page_no=pic_data.get("page_no", 1),
-                sort_order=idx,
-            )
-            session.add(picture)
-            total_pictures += 1
-        session.commit()
-        print(f"  存储 {total_pictures} 个图片记录")
-
         docling_doc.status = ParseStatus.COMPLETED
         docling_doc.total_groups = total_groups
         docling_doc.total_texts = total_texts
@@ -221,11 +176,10 @@ async def upload_document(
         session.commit()
         print(f"  更新状态: COMPLETED")
 
-        print(f"[步骤5] 调用AI API生成智课脚本")
-        print(f"  读取 docling_documents 中的解析数据...")
-        print(f"  调用AI API生成脚本（使用模拟数据测试）...")
+        print(f"[步骤5] 调用豆包AI生成智课脚本")
+        print(f"  将Markdown传递给豆包AI...")
         
-        ai_script_result = await _call_ai_api_generate_script(parse_result, file.filename)
+        ai_script_result = await _generate_script_with_doubao(markdown_content, file.filename)
         
         course_script = CourseScript(
             course_id=course.id,
@@ -243,8 +197,6 @@ async def upload_document(
         session.commit()
         session.refresh(course_script)
         print(f"  创建课程脚本记录: ID={course_script.id}")
-        print(f"  存储 script_content (JSON)")
-        print(f"  存储 summary_text, keywords")
 
         print(f"[步骤6] 拆分脚本节点")
         nodes_data = ai_script_result["script_content"].get("nodes", [])
@@ -264,7 +216,6 @@ async def upload_document(
             session.add(node)
         session.commit()
         print(f"  创建 {len(nodes_data)} 个 script_nodes 记录")
-        print(f"  存储每个节点的 content, page_start, page_end")
 
         course.total_nodes = len(nodes_data)
         course.total_duration = sum(n.get("duration", 60) for n in nodes_data)
@@ -278,7 +229,7 @@ async def upload_document(
             "script_id": course_script.id,
             "doc_id": docling_doc.id,
             "filename": file.filename,
-            "content": file_content,
+            "markdown_content": markdown_content,
             "script_content": ai_script_result["script_content"],
             "file_path": str(file_path),
         }
@@ -292,7 +243,7 @@ async def upload_document(
                 "scriptId": course_script.id,
                 "docId": docling_doc.id,
                 "title": course.title,
-                "fullContent": file_content,
+                "markdownContent": markdown_content,
                 "scriptContent": ai_script_result["script_content"],
                 "summaryText": ai_script_result["summary_text"],
                 "keywords": ai_script_result["keywords"],
@@ -472,9 +423,31 @@ async def get_course_detail(
     )
 
 
-async def _read_file_content(file_path: Path) -> str:
+async def _parse_with_docling(file_path: Path, filename: str) -> str:
     """
-    读取文件内容
+    使用Docling解析文件，返回Markdown内容
+    """
+    try:
+        from docling.document_converter import DocumentConverter
+        
+        print(f"  [Docling] 开始解析: {filename}")
+        converter = DocumentConverter()
+        result = converter.convert(str(file_path))
+        markdown_content = result.document.export_to_markdown()
+        print(f"  [Docling] 解析完成，生成 {len(markdown_content)} 字符Markdown")
+        return markdown_content
+        
+    except ImportError:
+        print(f"  [Docling] 未安装，使用备用解析方法")
+        return await _fallback_parse(file_path, filename)
+    except Exception as e:
+        print(f"  [Docling] 解析失败: {e}，使用备用方法")
+        return await _fallback_parse(file_path, filename)
+
+
+async def _fallback_parse(file_path: Path, filename: str) -> str:
+    """
+    备用解析方法（当Docling不可用时）
     """
     suffix = file_path.suffix.lower()
     
@@ -489,7 +462,7 @@ async def _read_file_content(file_path: Path) -> str:
                         text_parts.append(text)
             return "\n\n".join(text_parts)
         except ImportError:
-            return f"[PDF文件: {file_path.name}]"
+            return f"[PDF文件: {filename}]"
     
     elif suffix in [".docx", ".doc"]:
         try:
@@ -498,7 +471,7 @@ async def _read_file_content(file_path: Path) -> str:
             paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
             return "\n\n".join(paragraphs)
         except ImportError:
-            return f"[Word文件: {file_path.name}]"
+            return f"[Word文件: {filename}]"
     
     elif suffix in [".pptx", ".ppt"]:
         try:
@@ -513,22 +486,21 @@ async def _read_file_content(file_path: Path) -> str:
                 text_parts.append("\n".join(slide_text))
             return "\n\n".join(text_parts)
         except ImportError:
-            return f"[PPT文件: {file_path.name}]"
+            return f"[PPT文件: {filename}]"
     
     elif suffix in [".txt", ".md", ".json", ".py", ".js", ".html", ".css"]:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
             return f.read()
     
     else:
-        return f"[文件: {file_path.name}]"
+        return f"[文件: {filename}]"
 
 
-def _parse_content_to_structure(content: str, filename: str) -> dict:
+def _parse_markdown_to_structure(markdown_content: str, filename: str) -> dict:
     """
-    将文件内容解析为结构化数据
-    返回格式符合 Docling 解析结果的结构
+    将Markdown内容解析为结构化数据
     """
-    lines = content.split("\n")
+    lines = markdown_content.split("\n")
     texts = []
     groups = []
     
@@ -543,7 +515,7 @@ def _parse_content_to_structure(content: str, filename: str) -> dict:
         if line.startswith("##"):
             groups.append({
                 "self_ref": f"#/groups/{current_group_idx}",
-                "name": line[2:].strip(),
+                "name": line.lstrip("#").strip(),
                 "label": "section",
                 "content_layer": "body",
             })
@@ -570,94 +542,144 @@ def _parse_content_to_structure(content: str, filename: str) -> dict:
         "texts": texts,
         "tables": [],
         "pictures": [],
-        "raw_content": content,
+        "raw_content": markdown_content,
     }
 
 
-async def _call_ai_api_generate_script(parse_result: dict, filename: str) -> dict:
+async def _generate_script_with_doubao(markdown_content: str, filename: str) -> dict:
     """
-    调用AI API生成智课脚本
+    调用豆包AI生成智课脚本
     
-    按照流程文档：
-    - 读取 docling_documents 中的解析数据
-    - 调用AI API生成脚本
-    - 返回结构化脚本内容
-    
-    当前使用模拟数据测试代码可行性，后续替换为真实AI调用
+    将Docling输出的Markdown传递给豆包AI，生成结构化的智课脚本
     """
-    print(f"  [AI API调用] 开始生成脚本...")
-    print(f"  [AI API调用] 输入: 解析数据包含 {len(parse_result.get('texts', []))} 条文本")
+    print(f"  [豆包AI] 开始生成脚本...")
     
-    raw_content = parse_result.get("raw_content", "")
-    lines = [l.strip() for l in raw_content.split("\n") if l.strip()]
+    max_content_length = 6000
+    if len(markdown_content) > max_content_length:
+        truncated_content = markdown_content[:max_content_length]
+        truncated_content += f"\n\n[内容已截断，原长度: {len(markdown_content)} 字符]"
+    else:
+        truncated_content = markdown_content
     
-    nodes = []
-    chapter_counter = 0
-    
-    for idx, line in enumerate(lines[:20]):
-        if len(line) > 10:
-            node_type = "lecture"
-            if "总结" in line or idx == len(lines[:20]) - 1:
-                node_type = "summary"
-            elif "?" in line or "？" in line:
-                node_type = "question"
-            
-            nodes.append({
-                "chapter_id": f"chap_{chapter_counter:03d}",
-                "node_type": node_type,
-                "title": line[:50] + ("..." if len(line) > 50 else ""),
-                "content": line,
-                "page_start": 1,
-                "page_end": 1,
-                "duration": 60,
-                "is_key_point": chapter_counter % 3 == 0,
-            })
-            chapter_counter += 1
-    
-    if not nodes:
-        nodes = [
-            {
-                "chapter_id": "chap_000",
-                "node_type": "lecture",
-                "title": "课程导入",
-                "content": f"欢迎学习本课程，本课程来源于文件 {filename}",
-                "page_start": 1,
-                "page_end": 1,
-                "duration": 60,
-                "is_key_point": True,
-            }
-        ]
-    
-    if not any(n["node_type"] == "summary" for n in nodes):
-        nodes.append({
-            "chapter_id": f"chap_{len(nodes):03d}",
-            "node_type": "summary",
-            "title": "课程总结",
-            "content": "本节课程内容已结束，请回顾重点知识点，巩固学习成果。",
+    system_prompt = """你是一位专业的课程设计师。请根据用户提供的文档内容，生成一份结构化的智课脚本。
+
+你需要完成以下任务：
+1. 分析文档内容，提取核心知识点
+2. 将内容拆分为多个教学节点（每个节点60-120秒）
+3. 为每个节点生成标题、内容摘要和时长
+4. 识别重点知识点
+5. 生成课程总结
+
+请以JSON格式返回结果，格式如下：
+{
+    "title": "课程标题",
+    "summary": "课程摘要",
+    "keywords": ["关键词1", "关键词2", ...],
+    "total_duration": 总时长(秒),
+    "nodes": [
+        {
+            "chapter_id": "chap_001",
+            "node_type": "lecture",
+            "title": "节点标题",
+            "content": "节点内容/讲解文本",
             "page_start": 1,
             "page_end": 1,
-            "duration": 30,
-            "is_key_point": False,
-        })
+            "duration": 60,
+            "is_key_point": false
+        },
+        ...
+    ]
+}
+
+节点类型(node_type)可选值：
+- lecture: 讲解
+- question: 问题
+- summary: 总结
+- interactive: 交互
+
+请确保返回的是有效的JSON格式。"""
+
+    user_prompt = f"""请根据以下文档内容生成智课脚本：
+
+文件名: {filename}
+
+文档内容：
+{truncated_content}
+
+请生成结构化的智课脚本JSON。"""
+
+    try:
+        messages = [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=user_prompt)
+        ]
+        
+        print(f"  [豆包AI] 发送请求，内容长度: {len(user_prompt)} 字符")
+        response = await llm_client.chat(messages)
+        print(f"  [豆包AI] 收到响应，长度: {len(response.content)} 字符")
+        
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', response.content)
+        if json_match:
+            script_content = json.loads(json_match.group())
+        else:
+            script_content = _create_default_script(filename, markdown_content)
+        
+    except Exception as e:
+        print(f"  [豆包AI] 调用失败: {e}，使用默认脚本")
+        script_content = _create_default_script(filename, markdown_content)
     
-    summary_text = f"本课程《{Path(filename).stem}》共包含 {len(nodes)} 个知识点，" \
-                   f"总时长约 {sum(n['duration'] for n in nodes) // 60} 分钟。" \
-                   f"课程内容涵盖文档中的核心概念和重要知识点。"
+    summary_text = script_content.get("summary", f"本课程《{Path(filename).stem}》包含 {len(script_content.get('nodes', []))} 个知识点。")
+    keywords = script_content.get("keywords", ["知识点", "课程", Path(filename).stem])
     
-    keywords = ["知识点", "课程", Path(filename).stem, "学习", "核心概念"]
-    
-    script_content = {
-        "title": Path(filename).stem,
-        "summary": summary_text,
-        "keywords": keywords,
-        "total_duration": sum(n["duration"] for n in nodes),
-        "nodes": nodes,
-    }
-    
-    print(f"  [AI API调用] 生成完成: {len(nodes)} 个节点, 总时长 {script_content['total_duration']} 秒")
+    print(f"  [豆包AI] 生成完成: {len(script_content.get('nodes', []))} 个节点")
     
     return {
         "script_content": script_content,
         "summary_text": summary_text,
         "keywords": keywords,
+    }
+
+
+def _create_default_script(filename: str, content: str) -> dict:
+    """
+    创建默认脚本（当AI调用失败时）
+    """
+    lines = [l.strip() for l in content.split("\n") if l.strip() and len(l.strip()) > 10]
+    
+    nodes = []
+    for idx, line in enumerate(lines[:15]):
+        node_type = "lecture"
+        if idx == len(lines[:15]) - 1:
+            node_type = "summary"
+        
+        nodes.append({
+            "chapter_id": f"chap_{idx:03d}",
+            "node_type": node_type,
+            "title": line[:50] + ("..." if len(line) > 50 else ""),
+            "content": line,
+            "page_start": 1,
+            "page_end": 1,
+            "duration": 60,
+            "is_key_point": idx % 3 == 0,
+        })
+    
+    if not nodes:
+        nodes = [{
+            "chapter_id": "chap_000",
+            "node_type": "lecture",
+            "title": "课程导入",
+            "content": f"欢迎学习本课程，本课程来源于文件 {filename}",
+            "page_start": 1,
+            "page_end": 1,
+            "duration": 60,
+            "is_key_point": True,
+        }]
+    
+    return {
+        "title": Path(filename).stem,
+        "summary": f"本课程《{Path(filename).stem}》共包含 {len(nodes)} 个知识点。",
+        "keywords": ["知识点", "课程", Path(filename).stem],
+        "total_duration": sum(n["duration"] for n in nodes),
+        "nodes": nodes,
     }

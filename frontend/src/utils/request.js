@@ -6,7 +6,7 @@ import { showToast } from '@/utils/toast'
 // 创建 axios 实例
 const service = axios.create({
   baseURL: 'http://localhost:8000/api/v1',
-  timeout: 10000 // 建议稍微设长一点
+  timeout: 180000 // 3分钟，匹配后端Docling解析+AI处理的超时时间
 })
 
 // 静态密钥（与后端保持一致）
