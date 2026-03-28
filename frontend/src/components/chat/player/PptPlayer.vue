@@ -2,8 +2,6 @@
   <div class="ppt-section">
     <PptHeader
       :file="file"
-      :totalPages="totalPages"
-      :current-page="currentPage"
     />
 
     <div class="ppt-display-area">
@@ -12,16 +10,31 @@
 
       <div v-else class="ppt-content-wrapper">
         <div class="ppt-content">
-          <h3 class="page-title">{{ currentPageData?.title || '解析完成' }}</h3>
-          <div class="page-content" v-html="currentPageData?.content || '等待AI解析内容...'"></div>
+          <h3 class="page-title">{{ currentData?.title || '解析完成' }}</h3>
+          <div class="page-content" v-html="currentData?.content || '等待AI解析内容...'"></div>
         </div>
 
+        <!-- 隐藏的原生音频标签 -->
+        <audio
+          ref="audioRef"
+          :src="audioSrc"
+          @timeupdate="onTimeUpdate"
+          @loadedmetadata="onLoadedMetadata"
+          @ended="onEnded"
+          style="display: none;"
+        ></audio>
+
+        <!-- 更新后的控制条组件 -->
         <PptControlBar
-          :isPlaying="isPlaying"
-          :progress="0"
+          :is-playing="isPlaying"
+          :current-time="currentTime"
+          :duration="duration"
+          :volume="currentVolume"
           @toggle="togglePlay"
-          @prev-page="() => currentPage = Math.max(1, currentPage - 1)"
-          @next-page="() => currentPage = Math.min(totalPages, currentPage + 1)"
+          @seek="handleSeek"
+          @speed-change="changeSpeed"
+          @volume-change="changeVolume"
+          @loop="toggleLoop"
         />
       </div>
 
@@ -37,7 +50,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import PptHeader from './PptPlayer/PptHeader.vue'
 import PptUpload from './PptPlayer/PptUpload.vue'
 import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
@@ -56,12 +69,18 @@ const isAnalyzing = ref(false)
 const isPlaying = ref(false)
 const fileInput = ref(null)
 
-const pages = ref([])
-const currentPage = ref(1)
-const totalPages = ref(1)
+// --- 新增：音频播放器相关状态 ---
+const audioRef = ref(null)
+ // 音频地址，如果在 startAnalysis 获取到了音频URL，请赋值给这里
+const audioSrc = ref('/assets/audio/girl.mp3')
+const currentVolume = ref(1); // 默认最大音量
+const currentTime = ref(0)
+const duration = ref(0)
+const isLoop = ref(false)
 
-const currentPageData = computed(() => {
-  return pages.value[currentPage.value - 1] || {}
+const currentData = ref({
+  title: '',
+  content: ''
 })
 
 const triggerUpload = () => fileInput.value.click()
@@ -75,7 +94,6 @@ const startAnalysis = async (f) => {
   isAnalyzing.value = true
 
   try {
-    // 调用上传接口
     const formData = new FormData()
     formData.append('file', f)
     formData.append('fileName', f.name)
@@ -85,47 +103,99 @@ const startAnalysis = async (f) => {
     const res = await api.chat.uploadFile(formData)
 
     console.log('上传成功:', res)
-    // 后端返回的数据结构：
-    // { code, message, data: { markdownContent, scriptContent, summaryText, keywords, nodes } }
-    // 优先使用AI生成的脚本内容(scriptContent)，其次使用Markdown内容(markdownContent)
-    const scriptContent = res?.data?.scriptContent
-    const markdownContent = res?.data?.markdownContent
-    
-    if (scriptContent && scriptContent.nodes && scriptContent.nodes.length > 0) {
-      // 使用AI生成的脚本节点
-      pages.value = scriptContent.nodes.map((node, i) => ({
-        title: node.title || `第 ${i + 1} 节`,
-        content: node.content?.replace(/\n/g, '<br>') || '',
-        type: node.node_type,
-        duration: node.duration,
-        isKeyPoint: node.is_key_point
-      }))
-    } else if (markdownContent) {
-      // 使用Markdown内容
-      const paragraphs = markdownContent.split('\n\n').filter(p => p.trim())
-      pages.value = paragraphs.map((p, i) => ({
-        title: `第 ${i + 1} 页`,
-        content: p.replace(/\n/g, '<br>')
-      }))
+    if (res.data) {
+      currentData.value = {
+        title: res.data.title || '解析完成',
+        content: res.data.content || '等待 AI 解析内容...'
+      }
+      // TODO:将后端返回值匹配
+      // 👉 建议：如果后端返回了音频地址，在这里赋值
+      // if (res.data.audioUrl) {
+      //   audioSrc.value = res.data.audioUrl
+      // }
     }
-    totalPages.value = pages.value.length || 1
-    currentPage.value = 1
 
   } catch (err) {
     console.error('上传失败', err)
     showToast(err, 'error')
-    pages.value = []
-    totalPages.value = 1
-    currentPage.value = 1
+    currentData.value = { title: '', content: '' }
   } finally {
     isAnalyzing.value = false
-    isPlaying.value = true
+    // isPlaying.value = true // 注意：不要在这里自动设为true，等音频加载好再决定
     emit('analysis-end')
   }
 }
 
+// --- 新增：音频控制方法 ---
+
+// 1. 播放/暂停
 const togglePlay = () => {
+  if (!audioRef.value || !audioSrc.value) return
+
+  if (isPlaying.value) {
+    audioRef.value.pause()
+  } else {
+    audioRef.value.play()
+  }
   isPlaying.value = !isPlaying.value
+}
+
+// 2. 更新当前时间 (由 audio 的 timeupdate 事件触发)
+const onTimeUpdate = () => {
+  if (audioRef.value) {
+    currentTime.value = audioRef.value.currentTime
+  }
+}
+
+// 3. 音频加载完成，获取总时长
+const onLoadedMetadata = () => {
+  if (audioRef.value) {
+    duration.value = audioRef.value.duration
+    // 如果需要自动播放，可以在这里调用 play()
+  }
+}
+
+// 4. 播放结束
+const onEnded = () => {
+  isPlaying.value = false
+  currentTime.value = 0
+}
+
+// 5. 进度跳转
+const handleSeek = (time) => {
+  if (audioRef.value) {
+    audioRef.value.currentTime = time
+    currentTime.value = time
+  }
+}
+
+// 6. 倍速控制
+const changeSpeed = (speed) => {
+  if (audioRef.value) {
+    audioRef.value.playbackRate = speed
+  }
+}
+
+// 7. 音量控制 (value: 0 静音, 1 正常)
+const changeVolume = (value) => {
+  if (audioRef.value) {
+    // 1. 更新父组件的状态，以便子组件显示正确的滑块位置
+    currentVolume.value = value;
+
+    // 2. 控制原生 audio 标签
+    audioRef.value.volume = value;
+    audioRef.value.muted = (value === 0);
+  }
+};
+
+
+// 8. 循环控制
+const toggleLoop = () => {
+  if (audioRef.value) {
+    isLoop.value = !isLoop.value
+    audioRef.value.loop = isLoop.value
+    showToast(isLoop.value ? '已开启循环播放' : '已关闭循环播放', 'info')
+  }
 }
 </script>
 
@@ -181,12 +251,11 @@ const togglePlay = () => {
   display: none;
 }
 
-/* 👇👇👇 这里我帮你改长了！！！ */
 @media (max-width: 768px) {
   .ppt-section {
     flex: none;
     width: 100%;
-    height: 75vh;  /* 👈 原来 45vh → 现在 60vh，变长了 */
+    height: 75vh;
     min-height: 300px;
   }
   .ppt-display-area {

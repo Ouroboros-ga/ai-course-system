@@ -3,8 +3,6 @@
     <div class="header-info">
       <h2 v-if="file">{{ file.name }}</h2>
       <h2 v-else>未选择课程文件</h2>
-      <p v-if="file">当前进度：{{ currentPage }} / {{ totalPages }} 页</p>
-      <p v-else>请上传 PPT 或 PDF 开始生成智课</p>
     </div>
 
     <!-- 知识图谱按钮（美化版 + 点击打开弹窗） -->
@@ -28,7 +26,7 @@
 import { ref } from 'vue'
 import KnowledgeGraphModal from './KnowledgeGraphModal.vue'
 
-defineProps(['file', 'totalPages', 'currentPage'])
+defineProps(['file'])
 
 const showModal = ref(false)
 
