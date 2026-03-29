@@ -178,3 +178,24 @@ class User(SQLModel, table=True):
     #     self.last_active_course_id = course_id
     #     self.last_learning_node = node
     #     self.updated_at = datetime.utcnow()
+
+
+class ChatHistory(SQLModel, table=True):
+    """
+    聊天历史记录表
+    存储用户的聊天会话记录
+    """
+
+    __tablename__ = "chat_histories"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    user_id: int = Field(
+        foreign_key="users.id", index=True, description="用户ID"
+    )
+
+    content: str = Field(description="聊天内容/会话标题")
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow, description="创建时间"
+    )

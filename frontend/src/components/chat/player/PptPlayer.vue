@@ -106,13 +106,11 @@ const startAnalysis = async (f) => {
     if (res.data) {
       currentData.value = {
         title: res.data.title || '解析完成',
-        content: res.data.content || '等待 AI 解析内容...'
+        content: res.data.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...'
       }
-      // TODO:将后端返回值匹配
-      // 👉 建议：如果后端返回了音频地址，在这里赋值
-      // if (res.data.audioUrl) {
-      //   audioSrc.value = res.data.audioUrl
-      // }
+      if (res.data.audioUrl) {
+        audioSrc.value = res.data.audioUrl
+      }
     }
 
   } catch (err) {

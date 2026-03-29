@@ -234,23 +234,18 @@ async def upload_document(
             "file_path": str(file_path),
         }
 
+        mind_map_json = _generate_mind_map(ai_script_result["script_content"])
+
         print(f"[步骤7] 返回结果给前端")
         return unified_response(
             code=200,
-            message="上传并解析成功，智课脚本已生成",
+            message="上传并解析成功",
             data={
-                "courseId": course.id,
-                "scriptId": course_script.id,
-                "docId": docling_doc.id,
+                "fullContent": markdown_content,
                 "title": course.title,
-                "markdownContent": markdown_content,
-                "scriptContent": ai_script_result["script_content"],
-                "summaryText": ai_script_result["summary_text"],
-                "keywords": ai_script_result["keywords"],
                 "audioUrl": None,
+                "mindMapJson": mind_map_json,
                 "chatId": document_id,
-                "totalNodes": course.total_nodes,
-                "totalDuration": course.total_duration,
             }
         )
 
@@ -682,4 +677,39 @@ def _create_default_script(filename: str, content: str) -> dict:
         "keywords": ["知识点", "课程", Path(filename).stem],
         "total_duration": sum(n["duration"] for n in nodes),
         "nodes": nodes,
+    }
+
+
+def _generate_mind_map(script_content: dict) -> dict:
+    """
+    根据脚本内容生成思维导图JSON结构
+    """
+    nodes = script_content.get("nodes", [])
+    title = script_content.get("title", "课程内容")
+    keywords = script_content.get("keywords", [])
+    
+    children = []
+    
+    for node in nodes:
+        child = {
+            "text": node.get("title", "未命名节点"),
+        }
+        if node.get("is_key_point"):
+            child["highlight"] = True
+        children.append(child)
+    
+    if not children:
+        for kw in keywords[:5]:
+            children.append({"text": kw})
+    
+    if not children:
+        children = [
+            {"text": "知识点1"},
+            {"text": "知识点2"},
+            {"text": "知识点3"},
+        ]
+    
+    return {
+        "text": title,
+        "children": children
     }
