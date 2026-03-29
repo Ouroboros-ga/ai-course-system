@@ -31,6 +31,7 @@ import { ref } from 'vue'
 import MindMap from './mindMap/MindMap.vue'
 
 const props = defineProps({
+  mindMapData: Object,
   show: Boolean,
   fileName: String
 })
@@ -41,42 +42,6 @@ const close = () => {
   emit('update:show', false)
 }
 
-// 定义存储思维导图数据的 JSON 变量TODO: 用状态管理变量替换
-// 结构为树状：name 为节点名称，children 为子节点数组
-const mindMapData = ref({
-  name: '前端开发技术',
-  children: [
-    {
-      name: 'HTML',
-      children: [
-        { name: '语义化标签' },
-        { name: '表单验证' }
-      ]
-    },
-    {
-      name: 'CSS',
-      children: [
-        { name: 'Flex布局' },
-        { name: 'Grid布局' },
-        { name: '响应式设计' }
-      ]
-    },
-    {
-      name: 'JavaScript',
-      children: [
-        {
-          name: 'Vue.js',
-          children: [
-            { name: 'Composition API' },
-            { name: 'Reactivity' }
-          ]
-        },
-        { name: 'React' },
-        { name: 'TypeScript' }
-      ]
-    }
-  ]
-})
 </script>
 
 <style scoped>

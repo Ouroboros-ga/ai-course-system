@@ -2,6 +2,7 @@
   <div class="ppt-section">
     <PptHeader
       :file="file"
+      :mindMapData="currentData.mindMapJson"
     />
 
     <div class="ppt-display-area">
@@ -17,7 +18,7 @@
         <!-- 隐藏的原生音频标签 -->
         <audio
           ref="audioRef"
-          :src="audioSrc"
+          :src="currentData.audioUrl"
           @timeupdate="onTimeUpdate"
           @loadedmetadata="onLoadedMetadata"
           @ended="onEnded"
@@ -80,7 +81,10 @@ const isLoop = ref(false)
 
 const currentData = ref({
   title: '',
-  content: ''
+  content: '',
+  chatId: '',
+  audioUrl: '',
+  mindMapJson: {"text": "根"},
 })
 
 const triggerUpload = () => fileInput.value.click()
@@ -103,20 +107,21 @@ const startAnalysis = async (f) => {
     const res = await api.chat.uploadFile(formData)
 
     console.log('上传成功:', res)
-    if (res.data) {
+    if (res) {
       currentData.value = {
-        title: res.data.title || '解析完成',
-        content: res.data.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...'
-      }
-      if (res.data.audioUrl) {
-        audioSrc.value = res.data.audioUrl
+        title: res.title || '解析完成',
+        content: res.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...',
+        chatId: res.chatId,
+        mindMapJson: res.mindMapJson,
+        audioUrl: res.audioUrl || '/assets/audio/girl.mp3',
       }
     }
+    console.log('解析结果:', currentData.value)
 
   } catch (err) {
     console.error('上传失败', err)
     showToast(err, 'error')
-    currentData.value = { title: '', content: '' }
+    currentData.value = {title: '', content: '', chatId: '', audioUrl: '', mindMapJson: {"text": "根"}}
   } finally {
     isAnalyzing.value = false
     // isPlaying.value = true // 注意：不要在这里自动设为true，等音频加载好再决定
@@ -198,6 +203,7 @@ const toggleLoop = () => {
 </script>
 
 <style scoped>
+// TODO 样式 适配移动端
 .ppt-section {
   flex: 6.5;
   display: flex;
@@ -232,18 +238,26 @@ const toggleLoop = () => {
   flex: 1;
   padding: 40px 32px;
   overflow-y: auto;
+  max-height: calc(100% - 80px);
 }
+
 .page-title {
   font-size: 24px;
   font-weight: 600;
   color: #1f2937;
   margin-bottom: 20px;
 }
+
 .page-content {
   font-size: 16px;
   line-height: 1.8;
   color: #4b5565;
+  max-height: 70vh;
+  overflow-y: auto;
+  word-wrap: break-word;
+  word-break: break-all;
 }
+
 
 .hidden-input {
   display: none;

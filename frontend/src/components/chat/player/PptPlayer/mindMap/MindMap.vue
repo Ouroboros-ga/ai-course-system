@@ -101,9 +101,12 @@ const calculateLayout = (data) => {
   function traverse(node, depth, parentId) {
     const x = config.startX + depth * (config.nodeWidth + config.horizontalSpacing)
 
+    // 兼容多种属性名：name / label / text
+    const nodeName = node.name || node.label || node.text || '未命名'
+
     const nodeData = {
-      id: node.name + depth + Math.random(),
-      name: node.name,
+      id: nodeName + depth + Math.random(),
+      name: nodeName,
       x: x,
       y: currentY,
       isRoot: depth === 0,
