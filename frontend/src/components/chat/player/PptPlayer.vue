@@ -51,7 +51,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import PptHeader from './PptPlayer/PptHeader.vue'
 import PptUpload from './PptPlayer/PptUpload.vue'
 import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
@@ -64,18 +64,17 @@ import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
-const emit = defineEmits(['file-upload', 'analysis-end'])
+const props = defineProps(['initialData'])
+const emit = defineEmits(['file-upload', 'analysis-complete'])
 
 const file = ref(null)
 const isAnalyzing = ref(false)
 const isPlaying = ref(false)
 const fileInput = ref(null)
+const isRestoredData = ref(false)
 
-// --- 新增：音频播放器相关状态 ---
 const audioRef = ref(null)
- // 音频地址，如果在 startAnalysis 获取到了音频URL，请赋值给这里
-const audioSrc = ref('/assets/audio/girl.mp3')
-const currentVolume = ref(1); // 默认最大音量
+const currentVolume = ref(1)
 const currentTime = ref(0)
 const duration = ref(0)
 const isLoop = ref(false)
@@ -87,6 +86,15 @@ const currentData = ref({
   audioUrl: '',
   mindMapJson: {"text": "根"},
 })
+
+watch(() => props.initialData, (newData) => {
+  if (newData && newData.chatId) {
+    currentData.value = { ...newData }
+    file.value = { name: newData.title || '已恢复的文件', size: 0, type: 'restored' }
+    isRestoredData.value = true
+    isAnalyzing.value = false
+  }
+}, { immediate: true })
 
 const triggerUpload = () => fileInput.value.click()
 const handleFileChange = (e) => startAnalysis(e.target.files[0])
@@ -116,6 +124,7 @@ const startAnalysis = async (f) => {
         mindMapJson: res.mindMapJson,
         audioUrl: res.audioUrl || '/assets/audio/girl.mp3',
       }
+      emit('analysis-complete', { ...currentData.value })
     }
     console.log('解析结果:', currentData.value)
 
@@ -125,8 +134,6 @@ const startAnalysis = async (f) => {
     currentData.value = {title: '', content: '', chatId: '', audioUrl: '', mindMapJson: {"text": "根"}}
   } finally {
     isAnalyzing.value = false
-    // isPlaying.value = true // 注意：不要在这里自动设为true，等音频加载好再决定
-    emit('analysis-end')
   }
 }
 
@@ -134,7 +141,7 @@ const startAnalysis = async (f) => {
 
 // 1. 播放/暂停
 const togglePlay = () => {
-  if (!audioRef.value || !audioSrc.value) return
+  if (!audioRef.value || !currentData.value.audioUrl) return
 
   if (isPlaying.value) {
     audioRef.value.pause()
@@ -238,7 +245,6 @@ const toggleLoop = () => {
   flex: 1;
   padding: 40px 32px;
   overflow-y: auto;
-  //max-height: calc(100% - 100px);
 }
 
 .page-title {
