@@ -12,7 +12,7 @@
       <div v-else class="ppt-content-wrapper">
         <div class="ppt-content">
           <h3 class="page-title">{{ currentData?.title || '解析完成' }}</h3>
-          <div class="page-content" v-html="currentData?.content || '等待AI解析内容...'"></div>
+          <PptContent :content="currentData?.content"/>
         </div>
 
         <!-- 隐藏的原生音频标签 -->
@@ -56,6 +56,7 @@ import PptHeader from './PptPlayer/PptHeader.vue'
 import PptUpload from './PptPlayer/PptUpload.vue'
 import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
 import PptControlBar from './PptPlayer/PptControlBar.vue'
+import PptContent from './PptPlayer/PptContent.vue'
 import { showToast } from '@/utils/toast'
 
 import api from '@/api/index.js'
@@ -110,7 +111,7 @@ const startAnalysis = async (f) => {
     if (res) {
       currentData.value = {
         title: res.title || '解析完成',
-        content: res.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...',
+        content: res.fullContent,
         chatId: res.chatId,
         mindMapJson: res.mindMapJson,
         audioUrl: res.audioUrl || '/assets/audio/girl.mp3',
@@ -203,7 +204,6 @@ const toggleLoop = () => {
 </script>
 
 <style scoped>
-// TODO 样式 适配移动端
 .ppt-section {
   flex: 6.5;
   display: flex;
@@ -238,7 +238,7 @@ const toggleLoop = () => {
   flex: 1;
   padding: 40px 32px;
   overflow-y: auto;
-  max-height: calc(100% - 80px);
+  //max-height: calc(100% - 100px);
 }
 
 .page-title {
@@ -246,16 +246,6 @@ const toggleLoop = () => {
   font-weight: 600;
   color: #1f2937;
   margin-bottom: 20px;
-}
-
-.page-content {
-  font-size: 16px;
-  line-height: 1.8;
-  color: #4b5565;
-  max-height: 70vh;
-  overflow-y: auto;
-  word-wrap: break-word;
-  word-break: break-all;
 }
 
 
