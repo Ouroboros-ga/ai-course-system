@@ -2,6 +2,7 @@
   <div class="ppt-section">
     <PptHeader
       :file="file"
+      :mindMapData="currentData.mindMapJson"
     />
 
     <div class="ppt-display-area">
@@ -11,13 +12,13 @@
       <div v-else class="ppt-content-wrapper">
         <div class="ppt-content">
           <h3 class="page-title">{{ currentData?.title || '解析完成' }}</h3>
-          <div class="page-content" v-html="currentData?.content || '等待AI解析内容...'"></div>
+          <PptContent :content="currentData?.content"/>
         </div>
 
         <!-- 隐藏的原生音频标签 -->
         <audio
           ref="audioRef"
-          :src="audioSrc"
+          :src="currentData.audioUrl"
           @timeupdate="onTimeUpdate"
           @loadedmetadata="onLoadedMetadata"
           @ended="onEnded"
@@ -50,11 +51,12 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import PptHeader from './PptPlayer/PptHeader.vue'
 import PptUpload from './PptPlayer/PptUpload.vue'
 import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
 import PptControlBar from './PptPlayer/PptControlBar.vue'
+import PptContent from './PptPlayer/PptContent.vue'
 import { showToast } from '@/utils/toast'
 
 import api from '@/api/index.js'
@@ -62,26 +64,60 @@ import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
-const emit = defineEmits(['file-upload', 'analysis-end'])
+const props = defineProps(['initialData', 'resetTrigger'])
+const emit = defineEmits(['file-upload', 'analysis-complete'])
 
 const file = ref(null)
 const isAnalyzing = ref(false)
 const isPlaying = ref(false)
 const fileInput = ref(null)
+const isRestoredData = ref(false)
 
-// --- 新增：音频播放器相关状态 ---
 const audioRef = ref(null)
- // 音频地址，如果在 startAnalysis 获取到了音频URL，请赋值给这里
-const audioSrc = ref('/assets/audio/girl.mp3')
-const currentVolume = ref(1); // 默认最大音量
+const currentVolume = ref(1)
 const currentTime = ref(0)
 const duration = ref(0)
 const isLoop = ref(false)
 
 const currentData = ref({
   title: '',
-  content: ''
+  content: '',
+  chatId: '',
+  audioUrl: '',
+  mindMapJson: {"text": "根"},
 })
+
+// 监听重置触发器
+watch(() => props.resetTrigger, () => {
+  // 重置所有状态
+  file.value = null
+  isAnalyzing.value = false
+  isPlaying.value = false
+  currentData.value = {
+    title: '',
+    content: '',
+    chatId: '',
+    audioUrl: '',
+    mindMapJson: {"text": "根"},
+  }
+  currentTime.value = 0
+  duration.value = 0
+
+  // 如果音频正在播放，则停止它
+  if (audioRef.value) {
+    audioRef.value.pause()
+    audioRef.value.currentTime = 0
+  }
+}, { immediate: false })
+
+watch(() => props.initialData, (newData) => {
+  if (newData && newData.chatId) {
+    currentData.value = { ...newData }
+    file.value = { name: newData.title || '已恢复的文件', size: 0, type: 'restored' }
+    isRestoredData.value = true
+    isAnalyzing.value = false
+  }
+}, { immediate: true })
 
 const triggerUpload = () => fileInput.value.click()
 const handleFileChange = (e) => startAnalysis(e.target.files[0])
@@ -89,17 +125,6 @@ const handleDrop = (e) => startAnalysis(e.dataTransfer.files[0])
 
 const startAnalysis = async (f) => {
   if (!f) return
-  
-  if (!counter.token) {
-    showToast('请先登录后再上传文件', 'error')
-    return
-  }
-  
-  if (!counter.userData.id) {
-    showToast('用户信息不完整，请重新登录', 'error')
-    return
-  }
-  
   file.value = f
   emit('file-upload', f)
   isAnalyzing.value = true
@@ -117,24 +142,27 @@ const startAnalysis = async (f) => {
     if (res) {
       currentData.value = {
         title: res.title || '解析完成',
-        content: res.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...'
+        content: res.fullContent,
+        chatId: res.chatId,
+        mindMapJson: res.mindMapJson,
+        audioUrl: res.audioUrl || '/assets/audio/girl.mp3',
       }
-      if (res.audioUrl) {
-        audioSrc.value = res.audioUrl
-      }
-      emit('analysis-end', {
-        courseId: res.courseId,
-        chatId: res.chatId
-      })
+      emit('analysis-complete', { ...currentData.value })
     }
+    console.log('解析结果:', currentData.value)
 
   } catch (err) {
     console.error('上传失败', err)
-    showToast(err.response?.data?.message || err.message || '上传失败', 'error')
-    currentData.value = { title: '', content: '' }
-    emit('analysis-end', null)
-  } finally {
+    showToast(err, 'error')
+    file.value = null
     isAnalyzing.value = false
+    currentData.value = {
+      title: '',
+      content: '',
+      chatId: '',
+      audioUrl: '',
+      mindMapJson: {"text": "根"}
+    }
   }
 }
 
@@ -142,7 +170,7 @@ const startAnalysis = async (f) => {
 
 // 1. 播放/暂停
 const togglePlay = () => {
-  if (!audioRef.value || !audioSrc.value) return
+  if (!audioRef.value || !currentData.value.audioUrl) return
 
   if (isPlaying.value) {
     audioRef.value.pause()
@@ -247,17 +275,14 @@ const toggleLoop = () => {
   padding: 40px 32px;
   overflow-y: auto;
 }
+
 .page-title {
   font-size: 24px;
   font-weight: 600;
   color: #1f2937;
   margin-bottom: 20px;
 }
-.page-content {
-  font-size: 16px;
-  line-height: 1.8;
-  color: #4b5565;
-}
+
 
 .hidden-input {
   display: none;

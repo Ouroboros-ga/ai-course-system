@@ -5,6 +5,7 @@
       class="fade-in-up"
       :show-history="showHistory"
       @toggle-history="showHistory = !showHistory"
+      @create-new-session="createNewSession"
     />
 
     <HistorySidebar :show-history="showHistory">
@@ -14,42 +15,46 @@
     <!-- 内容区域：动画 2 -->
     <div class="content-box fade-in-up">
       <DesktopLayout v-if="!isMobile" :show-history="showHistory">
-        <template #main>
-          <PptPlayer
-            @file-upload="handleFileUpload"
-            @analysis-end="handleAnalysisEnd"
-          />
-        </template>
-        <template #sidebar>
-          <ChatPanel 
-            :hasFile="!!currentFile" 
-            :courseId="currentCourseId"
-            :chatId="currentChatId"
-          />
-        </template>
-      </DesktopLayout>
+      <template #main>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #sidebar>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+        />
+      </template>
+    </DesktopLayout>
 
-      <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
-        <template #ppt>
-          <PptPlayer
-            @file-upload="handleFileUpload"
-            @analysis-end="handleAnalysisEnd"
-          />
-        </template>
-        <template #chat>
-          <ChatPanel 
-            :hasFile="!!currentFile" 
-            :courseId="currentCourseId"
-            :chatId="currentChatId"
-          />
-        </template>
-      </MobileLayout>
+    <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
+      <template #ppt>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #chat>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+        />
+      </template>
+    </MobileLayout>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
 import PptPlayer from '@/components/chat/player/PptPlayer.vue';
 import ChatPanel from '@/components/chat/panel/ChatPanel.vue';
 import ChatHistory from '@/components/chat/history/ChatHistory.vue';
@@ -58,29 +63,75 @@ import HistorySidebar from '@/components/chat/sidebar/HistorySidebar.vue';
 import DesktopLayout from '@/components/chat/layout/DesktopLayout.vue';
 import MobileLayout from '@/components/chat/layout/MobileLayout.vue';
 
+const STORAGE_KEY = 'chatCurrentData';
+
 const currentFile = ref(null);
+const currentData = ref(null);
 const isAnalyzing = ref(false);
 const showHistory = ref(false);
 const activeTab = ref('ppt');
 const isMobile = ref(false);
-const currentCourseId = ref(null);
-const currentChatId = ref(null);
+const resetTrigger = ref(0);
+
+const hasValidData = computed(() => {
+  return Boolean(currentData.value?.chatId && currentData.value?.content);
+});
+
+const loadFromStorage = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.currentFile) {
+          currentFile.value = parsed.currentFile;
+        }
+        if (parsed.currentData && parsed.currentData.chatId) {
+          currentData.value = parsed.currentData;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('加载本地存储数据失败:', e);
+    localStorage.removeItem(STORAGE_KEY);
+  }
+};
+
+const saveToStorage = () => {
+  try {
+    const dataToSave = {
+      currentFile: currentFile.value,
+      currentData: currentData.value,
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+  } catch (e) {
+    console.error('保存到本地存储失败:', e);
+  }
+};
+
+watch([currentFile, currentData], () => {
+  saveToStorage();
+}, { deep: true });
 
 const handleFileUpload = (file) => {
   currentFile.value = file;
+  currentData.value = null;
   isAnalyzing.value = true;
 };
 
-const handleAnalysisEnd = (data) => {
+const handleAnalysisComplete = (data) => {
+  currentData.value = data;
   isAnalyzing.value = false;
-  if (data) {
-    if (data.courseId) {
-      currentCourseId.value = data.courseId;
-    }
-    if (data.chatId) {
-      currentChatId.value = data.chatId;
-    }
-  }
+};
+
+const createNewSession = () => {
+  currentFile.value = null;
+  currentData.value = null;
+  isAnalyzing.value = false;
+  localStorage.removeItem('chatMessages');
+  localStorage.removeItem(STORAGE_KEY);
+  resetTrigger.value += 1;
 };
 
 const checkMobile = () => {
@@ -96,6 +147,7 @@ const preventScroll = (e) => {
 };
 
 onMounted(() => {
+  loadFromStorage();
   checkMobile();
   window.addEventListener('resize', checkMobile);
   if (isMobile.value) {

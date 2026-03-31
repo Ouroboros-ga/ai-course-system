@@ -1,5 +1,9 @@
 <template>
   <header class="top-nav">
+    <button class="new-session-btn" @click="createNewSession">
+      <span class="icon">+</span>
+      <span class="text">新建会话</span>
+    </button>
     <button class="history-btn" @click="toggleHistory">
       <span v-if="showHistory">←</span>
       <span v-else>三</span>
@@ -16,10 +20,14 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['toggle-history'])
+const emit = defineEmits(['toggle-history', 'create-new-session'])
 
 const toggleHistory = () => {
   emit('toggle-history')
+}
+
+const createNewSession = () => {
+  emit('create-new-session')
 }
 </script>
 
@@ -61,5 +69,37 @@ const toggleHistory = () => {
   font-size: 16px;
   font-weight: 600;
   color: #111;
+}
+.new-session-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: none;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+}
+.new-session-btn:hover {
+  background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
+  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+  transform: translateY(-1px);
+}
+.new-session-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(102, 126, 234, 0.3);
+}
+.new-session-btn .icon {
+  font-size: 18px;
+  font-weight: bold;
+  line-height: 1;
+}
+.new-session-btn .text {
+  font-size: 13px;
 }
 </style>

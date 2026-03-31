@@ -45,11 +45,46 @@
 
 <script setup>
 import MessageBubble from './MessageBubble.vue';
-import { ref, watch, nextTick } from 'vue';
+import { ref, watch, nextTick, onMounted } from 'vue';
+
+const MESSAGES_STORAGE_KEY = 'chatMessages';
 
 const props = defineProps(['hasFile']);
 const messages = ref([]);
 const listRef = ref(null);
+
+const loadMessagesFromStorage = () => {
+  try {
+    const saved = localStorage.getItem(MESSAGES_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        const validMessages = parsed.filter(msg => 
+          msg && typeof msg === 'object' && 
+          (msg.role === 'user' || msg.role === 'ai') &&
+          typeof msg.content === 'string'
+        );
+        messages.value = validMessages;
+      }
+    }
+  } catch (e) {
+    console.error('加载聊天记录失败:', e);
+    localStorage.removeItem(MESSAGES_STORAGE_KEY);
+  }
+};
+
+const saveMessagesToStorage = () => {
+  try {
+    localStorage.setItem(MESSAGES_STORAGE_KEY, JSON.stringify(messages.value));
+  } catch (e) {
+    console.error('保存聊天记录失败:', e);
+  }
+};
+
+watch(messages, () => {
+  saveMessagesToStorage();
+  scrollToBottom();
+}, { deep: true });
 
 const scrollToBottom = () => {
   nextTick(() => {
@@ -59,11 +94,19 @@ const scrollToBottom = () => {
   });
 };
 
-watch(messages, () => scrollToBottom(), { deep: true });
+onMounted(() => {
+  loadMessagesFromStorage();
+});
 
 defineExpose({
   addMessage: (msg) => {
-    messages.value.push(msg);
+    if (msg && typeof msg === 'object' && typeof msg.content === 'string') {
+      messages.value.push(msg);
+    }
+  },
+  clearMessages: () => {
+    messages.value = [];
+    localStorage.removeItem(MESSAGES_STORAGE_KEY);
   }
 });
 </script>

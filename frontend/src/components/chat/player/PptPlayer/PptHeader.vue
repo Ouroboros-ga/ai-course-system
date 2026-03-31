@@ -18,6 +18,7 @@
     <KnowledgeGraphModal
       v-model:show="showModal"
       :fileName="file?.name"
+      :mindMapData="mindMapData"
     />
   </div>
 </template>
@@ -26,7 +27,13 @@
 import { ref } from 'vue'
 import KnowledgeGraphModal from './KnowledgeGraphModal.vue'
 
-defineProps(['file'])
+const props = defineProps({
+  file: {
+    type: Object,
+    default: null
+  },
+  mindMapData: Object,
+})
 
 const showModal = ref(false)
 
@@ -34,6 +41,7 @@ const openModal = () => {
   showModal.value = true
 }
 </script>
+
 
 <style scoped>
 .ppt-header {

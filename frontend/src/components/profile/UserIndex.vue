@@ -242,7 +242,7 @@ const handleLogout = () => {
       <!-- 1. 用户卡片（只保留头像+ID+退出登录，去掉内部四个格子） -->
       <div class="user-card">
         <div class="user-info">
-          <div class="avatar">K</div>
+          <div class="avatar">{{ counter.userData.username[0].toUpperCase() }}</div>
           <div>
             <div class="username">{{ counter.userData.username }}</div>
             <div class="user-id">ID: {{ counter.userData.id }}</div>

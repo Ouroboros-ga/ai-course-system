@@ -2,8 +2,11 @@
   <div class="chat-section">
     <div class="chat-header">
       <div class="assistant-status">
-        <div class="status-dot"></div>
+        <div class="status-dot" :class="{ 'status-disabled': !canChat }"></div>
         <span>AI 助教</span>
+        <span v-if="isAnalyzing" class="status-text analyzing">解析中...</span>
+        <span v-else-if="!hasFile" class="status-text waiting">等待上传</span>
+        <span v-else-if="!hasValidData" class="status-text waiting">等待解析</span>
       </div>
       <button class="btn-more">⋮</button>
     </div>
@@ -14,7 +17,7 @@
     />
 
     <ChatInput
-      :disabled="!hasFile"
+      :disabled="!canChat"
       :tips="['没听懂，再讲一遍', '这页 PPT 重点是什么？']"
       @send="handleSend"
     />
@@ -22,49 +25,52 @@
 </template>
 
 <script setup>
-import { ref } from 'vue';
+import { ref, computed, watch } from 'vue';
 import MessageList from './ChatPanel/MessageList.vue';
 import ChatInput from './ChatPanel/ChatInput.vue';
-import api from '@/api/index.js';
-import { showToast } from '@/utils/toast';
 
-const props = defineProps(['hasFile', 'courseId', 'chatId']);
+const props = defineProps({
+  hasFile: {
+    type: Boolean,
+    default: false
+  },
+  isAnalyzing: {
+    type: Boolean,
+    default: false
+  },
+  hasValidData: {
+    type: Boolean,
+    default: false
+  }
+});
+
 const messageListRef = ref(null);
-const currentChatId = ref(props.chatId || null);
 
-const handleSend = async (text) => {
-  if (!text) return;
+const canChat = computed(() => {
+  return props.hasFile && !props.isAnalyzing && props.hasValidData;
+});
+
+watch(() => props.hasFile, (newVal) => {
+  if (!newVal) {
+    messageListRef.value?.clearMessages();
+  }
+});
+
+const handleSend = (text) => {
+  if (!text || !canChat.value) return;
 
   messageListRef.value?.addMessage({
     role: 'user',
     content: text
   });
 
-  try {
-    const res = await api.chat.askQuestion({
-      question: text,
-      chatId: currentChatId.value,
-      courseId: props.courseId
-    });
-
-    if (res.chatId && !currentChatId.value) {
-      currentChatId.value = res.chatId;
-    }
-
+  setTimeout(() => {
     messageListRef.value?.addMessage({
       role: 'ai',
-      content: res.answer,
+      content: `我收到了你的问题：「${text}」，正在为你解答...`,
       showResumeBtn: true
     });
-  } catch (err) {
-    console.error('问答失败', err);
-    showToast(err.message || '问答失败，请重试', 'error');
-    messageListRef.value?.addMessage({
-      role: 'ai',
-      content: '抱歉，我遇到了一些问题，请稍后再试。',
-      showResumeBtn: false
-    });
-  }
+  }, 1000);
 };
 </script>
 
@@ -104,6 +110,24 @@ const handleSend = async (text) => {
   background: #22c55e;
   border-radius: 50%;
   animation: pulse 2s infinite;
+}
+.status-dot.status-disabled {
+  background: #9ca3af;
+  animation: none;
+}
+.status-text {
+  font-size: 12px;
+  font-weight: normal;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+.status-text.analyzing {
+  background: #fef3c7;
+  color: #d97706;
+}
+.status-text.waiting {
+  background: #e5e7eb;
+  color: #6b7280;
 }
 @keyframes pulse {
   0% { opacity: 1; }
