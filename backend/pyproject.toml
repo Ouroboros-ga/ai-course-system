@@ -1,7 +1,8 @@
 [project]
 name = "ai-course-system"
 version = "0.1.0"
-description = "Add your description here"
+description = """本项目使用uv作为包管理器; 兼容Windows, Linux; Python版本: 3.12;
+目前优先确保使用cpu运行文档处理模型."""
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -19,5 +20,6 @@ dependencies = [
     "docling>=2.81.0",
     "transformers>=4.57.6",
     "ruff>=0.15.7",
-    "ty>=0.0.24",
+    "ty>=0.0.25",
+    "onnxruntime>=1.24.4",
 ]

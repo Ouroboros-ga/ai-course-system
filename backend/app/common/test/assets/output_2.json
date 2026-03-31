@@ -1,0 +1,1891 @@
+{
+  "schema_name": "DoclingDocument",
+  "version": "1.10.0",
+  "name": "tst",
+  "origin": {
+    "mimetype": "application/pdf",
+    "binary_hash": 10674153899333066549,
+    "filename": "tst.pdf"
+  },
+  "furniture": {
+    "self_ref": "#/furniture",
+    "children": [],
+    "content_layer": "furniture",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "body": {
+    "self_ref": "#/body",
+    "children": [
+      {
+        "$ref": "#/texts/0"
+      },
+      {
+        "$ref": "#/texts/1"
+      },
+      {
+        "$ref": "#/texts/2"
+      },
+      {
+        "$ref": "#/texts/3"
+      },
+      {
+        "$ref": "#/texts/4"
+      },
+      {
+        "$ref": "#/texts/5"
+      },
+      {
+        "$ref": "#/texts/6"
+      },
+      {
+        "$ref": "#/texts/7"
+      },
+      {
+        "$ref": "#/texts/8"
+      },
+      {
+        "$ref": "#/texts/9"
+      },
+      {
+        "$ref": "#/texts/10"
+      },
+      {
+        "$ref": "#/texts/11"
+      },
+      {
+        "$ref": "#/texts/12"
+      },
+      {
+        "$ref": "#/texts/13"
+      },
+      {
+        "$ref": "#/texts/14"
+      },
+      {
+        "$ref": "#/texts/15"
+      },
+      {
+        "$ref": "#/texts/16"
+      },
+      {
+        "$ref": "#/groups/0"
+      },
+      {
+        "$ref": "#/texts/20"
+      },
+      {
+        "$ref": "#/texts/21"
+      },
+      {
+        "$ref": "#/texts/22"
+      },
+      {
+        "$ref": "#/texts/23"
+      },
+      {
+        "$ref": "#/texts/24"
+      },
+      {
+        "$ref": "#/texts/25"
+      },
+      {
+        "$ref": "#/texts/26"
+      },
+      {
+        "$ref": "#/groups/1"
+      },
+      {
+        "$ref": "#/texts/29"
+      },
+      {
+        "$ref": "#/texts/30"
+      },
+      {
+        "$ref": "#/texts/31"
+      },
+      {
+        "$ref": "#/texts/32"
+      },
+      {
+        "$ref": "#/texts/33"
+      },
+      {
+        "$ref": "#/groups/2"
+      },
+      {
+        "$ref": "#/texts/37"
+      },
+      {
+        "$ref": "#/groups/3"
+      },
+      {
+        "$ref": "#/texts/41"
+      },
+      {
+        "$ref": "#/texts/42"
+      },
+      {
+        "$ref": "#/texts/43"
+      },
+      {
+        "$ref": "#/texts/44"
+      },
+      {
+        "$ref": "#/texts/45"
+      },
+      {
+        "$ref": "#/texts/46"
+      },
+      {
+        "$ref": "#/texts/47"
+      },
+      {
+        "$ref": "#/texts/48"
+      },
+      {
+        "$ref": "#/texts/49"
+      },
+      {
+        "$ref": "#/groups/4"
+      },
+      {
+        "$ref": "#/texts/53"
+      },
+      {
+        "$ref": "#/texts/54"
+      },
+      {
+        "$ref": "#/texts/55"
+      },
+      {
+        "$ref": "#/texts/56"
+      }
+    ],
+    "content_layer": "body",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "groups": [
+    {
+      "self_ref": "#/groups/0",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [
+        {
+          "$ref": "#/texts/17"
+        },
+        {
+          "$ref": "#/texts/18"
+        },
+        {
+          "$ref": "#/texts/19"
+        }
+      ],
+      "content_layer": "body",
+      "name": "list",
+      "label": "list"
+    },
+    {
+      "self_ref": "#/groups/1",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [
+        {
+          "$ref": "#/texts/27"
+        },
+        {
+          "$ref": "#/texts/28"
+        }
+      ],
+      "content_layer": "body",
+      "name": "list",
+      "label": "list"
+    },
+    {
+      "self_ref": "#/groups/2",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [
+        {
+          "$ref": "#/texts/34"
+        },
+        {
+          "$ref": "#/texts/35"
+        },
+        {
+          "$ref": "#/texts/36"
+        }
+      ],
+      "content_layer": "body",
+      "name": "list",
+      "label": "list"
+    },
+    {
+      "self_ref": "#/groups/3",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [
+        {
+          "$ref": "#/texts/38"
+        },
+        {
+          "$ref": "#/texts/39"
+        },
+        {
+          "$ref": "#/texts/40"
+        }
+      ],
+      "content_layer": "body",
+      "name": "list",
+      "label": "list"
+    },
+    {
+      "self_ref": "#/groups/4",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [
+        {
+          "$ref": "#/texts/50"
+        },
+        {
+          "$ref": "#/texts/51"
+        },
+        {
+          "$ref": "#/texts/52"
+        }
+      ],
+      "content_layer": "body",
+      "name": "list",
+      "label": "list"
+    }
+  ],
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 71.064,
+            "t": 755.3619829101563,
+            "r": 523.99,
+            "b": 737.3619829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            25
+          ]
+        }
+      ],
+      "orig": "基于计算机导论学习的大学生职业生涯规划与学业发展路",
+      "text": "基于计算机导论学习的大学生职业生涯规划与学业发展路",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 270.53,
+            "t": 727.2819829101563,
+            "r": 333.79,
+            "b": 709.2819829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            3
+          ]
+        }
+      ],
+      "orig": "径研究",
+      "text": "径研究",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 283.61,
+            "t": 683.9203429101563,
+            "r": 318.72999999999996,
+            "b": 669.8803429101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            2
+          ]
+        }
+      ],
+      "orig": "摘要",
+      "text": "摘要",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/3",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 650.3679829101562,
+            "r": 536.3520000000003,
+            "b": 498.2979829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            389
+          ]
+        }
+      ],
+      "orig": "本文是基于计算机导论学习的职业生涯规划与学业发展路径研究的一篇论文，旨 在探讨如何基于计算机导论的学习，制定系统化的个人职业生涯与学业规划。文章首 先通过自我剖析与行业趋势分析，明确了以开源软件开发、独立游戏后端及软件策划 为核心的职业方向。针对这些目标，论文研究了为实现职业目标所需的核心知识体系、 关键技能与实践经验，并据此制定了详细的大学期间行动计划，包括重点课程的学习 序列、专业证书的考取路径以及旨在锻炼综合能力的实践活动。规划表明，通过有步 骤地学习操作系统、数据结构、计算机网络等核心课程，有选择地获取 HarmonyOS 应 用开发者、 CET 等权威证书，并积极参与 ACM 竞赛、开源项目及实习，能够有效构 建个人技术壁垒，积累工业级开发经验，最终提升就业竞争力。本文结论认为，一份 清晰且可执行的系统化规划，是驱动个人在计算机领域持续成长与发展的关键引擎。",
+      "text": "本文是基于计算机导论学习的职业生涯规划与学业发展路径研究的一篇论文，旨 在探讨如何基于计算机导论的学习，制定系统化的个人职业生涯与学业规划。文章首 先通过自我剖析与行业趋势分析，明确了以开源软件开发、独立游戏后端及软件策划 为核心的职业方向。针对这些目标，论文研究了为实现职业目标所需的核心知识体系、 关键技能与实践经验，并据此制定了详细的大学期间行动计划，包括重点课程的学习 序列、专业证书的考取路径以及旨在锻炼综合能力的实践活动。规划表明，通过有步 骤地学习操作系统、数据结构、计算机网络等核心课程，有选择地获取 HarmonyOS 应 用开发者、 CET 等权威证书，并积极参与 ACM 竞赛、开源项目及实习，能够有效构 建个人技术壁垒，积累工业级开发经验，最终提升就业竞争力。本文结论认为，一份 清晰且可执行的系统化规划，是驱动个人在计算机领域持续成长与发展的关键引擎。"
+    },
+    {
+      "self_ref": "#/texts/4",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 482.69798291015627,
+            "r": 490.53999999999996,
+            "b": 470.69798291015627,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            35
+          ]
+        }
+      ],
+      "orig": "关键词： 职业生涯规划，学业发展，计算机，开源软件，专业证书，实践活动",
+      "text": "关键词： 职业生涯规划，学业发展，计算机，开源软件，专业证书，实践活动"
+    },
+    {
+      "self_ref": "#/texts/5",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 270.53,
+            "t": 450.2719829101563,
+            "r": 333.79,
+            "b": 432.2719829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            4
+          ]
+        }
+      ],
+      "orig": "1 绪论",
+      "text": "1 绪论",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/6",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 411.0379829101563,
+            "r": 535.8840000000002,
+            "b": 352.3579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            130
+          ]
+        }
+      ],
+      "orig": "计算机导论作为计算机科学领域的入门课程，其核心内容涵盖了计算机基础知识、 操作系统、数据结构、计算机网络及软件工程等关键模块。它通过精炼核心概念、运 用生动的修辞与实例，不仅帮助初学者构建起对计算机科学的基本认知框架，更在一 定程度上指引了未来的职业发展方向。",
+      "text": "计算机导论作为计算机科学领域的入门课程，其核心内容涵盖了计算机基础知识、 操作系统、数据结构、计算机网络及软件工程等关键模块。它通过精炼核心概念、运 用生动的修辞与实例，不仅帮助初学者构建起对计算机科学的基本认知框架，更在一 定程度上指引了未来的职业发展方向。"
+    },
+    {
+      "self_ref": "#/texts/7",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 336.8779829101563,
+            "r": 514.87,
+            "b": 231.48798291015623,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            246
+          ]
+        }
+      ],
+      "orig": "对于每一位大学生而言，无论其就读于何种院校，最终目标均是参与社会劳动， 实现个人价值，即就业。因此，职业生涯规划是一个具有普遍意义的课题。在当前计 算机行业，存在一个显著矛盾：市场对具备即战力的年轻劳动力需求旺盛，而应届毕 业生普遍缺乏实际的实习与项目开发经验。为解决这一矛盾，尽早地进行合理、系统 的职业生涯规划显得至关重要。它能够帮助我们在校期间明确学习目标，引导我们在 掌握理论知识之余，有意识、有方向地积累实践经验，从而有效提升就业竞争力，为 未来追求更高质量的职业生活奠定坚实基础。",
+      "text": "对于每一位大学生而言，无论其就读于何种院校，最终目标均是参与社会劳动， 实现个人价值，即就业。因此，职业生涯规划是一个具有普遍意义的课题。在当前计 算机行业，存在一个显著矛盾：市场对具备即战力的年轻劳动力需求旺盛，而应届毕 业生普遍缺乏实际的实习与项目开发经验。为解决这一矛盾，尽早地进行合理、系统 的职业生涯规划显得至关重要。它能够帮助我们在校期间明确学习目标，引导我们在 掌握理论知识之余，有意识、有方向地积累实践经验，从而有效提升就业竞争力，为 未来追求更高质量的职业生活奠定坚实基础。"
+    },
+    {
+      "self_ref": "#/texts/8",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 215.88798291015632,
+            "r": 521.5,
+            "b": 125.98798291015635,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            200
+          ]
+        }
+      ],
+      "orig": "此外，通过对网络信息的甄别与思考，我了解到计算机行业存在的诸如'35岁危 机'、历史网络泡沫经济等现象，以及当前与昔日泡沫具有相似性的 AI 炒作热潮。这 些观察表明，计算机行业的发展并非一帆风顺，而是呈现螺旋式上升的复杂态势。此 种行业特性警示我们，'工欲善其事，必先利其器'，唯有打下坚实牢固的计算机科 学基础，掌握应对技术变迁的核心能力，方能在充满不确定性与激烈竞争的职业生涯 中立于不败之地。",
+      "text": "此外，通过对网络信息的甄别与思考，我了解到计算机行业存在的诸如'35岁危 机'、历史网络泡沫经济等现象，以及当前与昔日泡沫具有相似性的 AI 炒作热潮。这 些观察表明，计算机行业的发展并非一帆风顺，而是呈现螺旋式上升的复杂态势。此 种行业特性警示我们，'工欲善其事，必先利其器'，唯有打下坚实牢固的计算机科 学基础，掌握应对技术变迁的核心能力，方能在充满不确定性与激烈竞争的职业生涯 中立于不败之地。"
+    },
+    {
+      "self_ref": "#/texts/9",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 70.824,
+            "t": 110.50798291015633,
+            "r": 514.8240000000001,
+            "b": 82.9079829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            73
+          ]
+        }
+      ],
+      "orig": "基于以上认知，本文将通过深入分析个人兴趣、能力特质与行业需求，提出一套 涵盖课程学习、证书考取与实践锻炼的综合性学业与职业发展规划，以期为个人发展",
+      "text": "基于以上认知，本文将通过深入分析个人兴趣、能力特质与行业需求，提出一套 涵盖课程学习、证书考取与实践锻炼的综合性学业与职业发展规划，以期为个人发展"
+    },
+    {
+      "self_ref": "#/texts/10",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 772.1679829101563,
+            "r": 316.87,
+            "b": 760.1679829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            20
+          ]
+        }
+      ],
+      "orig": "提供清晰路线图，并为同侪提供参考与启发。",
+      "text": "提供清晰路线图，并为同侪提供参考与启发。"
+    },
+    {
+      "self_ref": "#/texts/11",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 252.41,
+            "t": 739.7619829101562,
+            "r": 351.79,
+            "b": 721.7619829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            6
+          ]
+        }
+      ],
+      "orig": "2 论文主体",
+      "text": "2 论文主体",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/12",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 696.2803429101563,
+            "r": 197.39000000000001,
+            "b": 682.2403429101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "2.1  课程学习规划",
+      "text": "2.1  课程学习规划",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/13",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 94.824,
+            "t": 662.8479829101562,
+            "r": 514.8240000000001,
+            "b": 650.8479829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            35
+          ]
+        }
+      ],
+      "orig": "构建坚实的知识体系是实现职业目标的基石。基于计算机导论的启发与对职业需",
+      "text": "构建坚实的知识体系是实现职业目标的基石。基于计算机导论的启发与对职业需"
+    },
+    {
+      "self_ref": "#/texts/14",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 647.2479829101563,
+            "r": 436.9,
+            "b": 635.2479829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            30
+          ]
+        }
+      ],
+      "orig": "求的研判，我计划在大学期间系统化、有重点地完成以下课程学习：",
+      "text": "求的研判，我计划在大学期间系统化、有重点地完成以下课程学习："
+    },
+    {
+      "self_ref": "#/texts/15",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 615.6579829101563,
+            "r": 191.45,
+            "b": 603.6579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            13
+          ]
+        }
+      ],
+      "orig": "2.1.1  核心课程深耕",
+      "text": "2.1.1  核心课程深耕",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/16",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 584.9379829101563,
+            "r": 536.548,
+            "b": 557.4579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            70
+          ]
+        }
+      ],
+      "orig": "将重点学习操作系统、数据结构与算法、计算机网络、软件工程、数学（微积分、 线性代数、概率论） 以及英语。这些课程构成了计算机科学的理论基础：",
+      "text": "将重点学习操作系统、数据结构与算法、计算机网络、软件工程、数学（微积分、 线性代数、概率论） 以及英语。这些课程构成了计算机科学的理论基础："
+    },
+    {
+      "self_ref": "#/texts/17",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 541.8579829101562,
+            "r": 536.3299999999999,
+            "b": 514.2579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            52
+          ]
+        }
+      ],
+      "orig": " 操作系统与计算机网络是软件运行的基石，深刻理解它们对于进行系统级编程、 性能优化和环境搭建至关重要。",
+      "text": " 操作系统与计算机网络是软件运行的基石，深刻理解它们对于进行系统级编程、 性能优化和环境搭建至关重要。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/18",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 510.6579829101563,
+            "r": 521.62,
+            "b": 483.1779829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            74
+          ]
+        }
+      ],
+      "orig": " 数据结构与算法、软件工程及数学是构建高质量应用的'钢筋水泥'，直接决 定了软件系统的效率、可靠性与可维护性，是评价一个程序员技术深度的关键指标。",
+      "text": " 数据结构与算法、软件工程及数学是构建高质量应用的'钢筋水泥'，直接决 定了软件系统的效率、可靠性与可维护性，是评价一个程序员技术深度的关键指标。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/19",
+      "parent": {
+        "$ref": "#/groups/0"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 479.57798291015627,
+            "r": 520.94,
+            "b": 451.9779829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            73
+          ]
+        }
+      ],
+      "orig": " 英语作为全球计算机领域的通用语言，是获取最新技术资讯、阅读国际顶尖文 献、参与全球开源社区协作的必备工具，堪称个人技术发展道路上的'加速器'。",
+      "text": " 英语作为全球计算机领域的通用语言，是获取最新技术资讯、阅读国际顶尖文 献、参与全球开源社区协作的必备工具，堪称个人技术发展道路上的'加速器'。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/20",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 432.51798291015626,
+            "r": 191.45,
+            "b": 420.51798291015626,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            13
+          ]
+        }
+      ],
+      "orig": "2.1.2  扩展课程选修",
+      "text": "2.1.2  扩展课程选修",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/21",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 401.7979829101563,
+            "r": 536.62,
+            "b": 358.5979829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            85
+          ]
+        }
+      ],
+      "orig": "为拓宽技术视野，适应多元化职业路径，我将有计划地选修编译原理、机器学习、 云计算、区块链、数据库系统、人工智能等前沿课程。这些知识将有助于我在特定领 域形成差异化竞争力。",
+      "text": "为拓宽技术视野，适应多元化职业路径，我将有计划地选修编译原理、机器学习、 云计算、区块链、数据库系统、人工智能等前沿课程。这些知识将有助于我在特定领 域形成差异化竞争力。"
+    },
+    {
+      "self_ref": "#/texts/22",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 339.1579829101563,
+            "r": 227.57,
+            "b": 327.1579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            16
+          ]
+        }
+      ],
+      "orig": "2.1.3  学习策略与资源利用",
+      "text": "2.1.3  学习策略与资源利用",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/23",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 308.4379829101563,
+            "r": 517.54,
+            "b": 234.12798291015633,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            173
+          ]
+        }
+      ],
+      "orig": "在信息爆炸的时代，高效利用在线资源是提升学习效果的关键。我将通过 Bilibili 观看优质教学视频，利用 Deepseek 等 AI 工具辅助理解复杂概念，在 Github 上探索真 实项目源码，并在知乎等平台参与技术讨论。遵循'学习-实践-总结'的循环，通过 定期整理复习笔记、构建个人知识库，来加深理解、查漏补缺，不断完善自身的知识 体系。",
+      "text": "在信息爆炸的时代，高效利用在线资源是提升学习效果的关键。我将通过 Bilibili 观看优质教学视频，利用 Deepseek 等 AI 工具辅助理解复杂概念，在 Github 上探索真 实项目源码，并在知乎等平台参与技术讨论。遵循'学习-实践-总结'的循环，通过 定期整理复习笔记、构建个人知识库，来加深理解、查漏补缺，不断完善自身的知识 体系。"
+    },
+    {
+      "self_ref": "#/texts/24",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 214.28034291015626,
+            "r": 197.39000000000001,
+            "b": 200.2403429101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "2.2  证书考取计划",
+      "text": "2.2  证书考取计划",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/25",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 180.72798291015624,
+            "r": 514.8240000000001,
+            "b": 153.24798291015622,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            40
+          ]
+        }
+      ],
+      "orig": "专业证书是个人能力的有力佐证，能够有效提升简历的竞争力。我的证书考取计 划如下：",
+      "text": "专业证书是个人能力的有力佐证，能够有效提升简历的竞争力。我的证书考取计 划如下："
+    },
+    {
+      "self_ref": "#/texts/26",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 133.6679829101563,
+            "r": 227.57,
+            "b": 121.6679829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            16
+          ]
+        }
+      ],
+      "orig": "2.2.1  证书选择与价值分析",
+      "text": "2.2.1  证书选择与价值分析",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/27",
+      "parent": {
+        "$ref": "#/groups/1"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 70.824,
+            "t": 102.94798291015627,
+            "r": 513.77,
+            "b": 75.34798291015636,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            75
+          ]
+        }
+      ],
+      "orig": " 大学英语四六级（ CET-4/CET-6 ） ：作为强制性外语能力证明，其备考过程能 敦促我保持并提升英语水平，为阅读外文资料和技术文档打下基础。",
+      "text": " 大学英语四六级（ CET-4/CET-6 ） ：作为强制性外语能力证明，其备考过程能 敦促我保持并提升英语水平，为阅读外文资料和技术文档打下基础。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/28",
+      "parent": {
+        "$ref": "#/groups/1"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 772.1679829101563,
+            "r": 524.47,
+            "b": 729.0879829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            112
+          ]
+        }
+      ],
+      "orig": " HarmonyOS 应用开发者认证（基础与高级） ：华为鸿蒙系统作为新兴的国产操 作系统，其生态发展潜力巨大。获取该认证不仅能系统学习鸿蒙应用开发流程，更能 证明我具备工业级的移动应用开发能力，增强在特定领域的就业优势。",
+      "text": " HarmonyOS 应用开发者认证（基础与高级） ：华为鸿蒙系统作为新兴的国产操 作系统，其生态发展潜力巨大。获取该认证不仅能系统学习鸿蒙应用开发流程，更能 证明我具备工业级的移动应用开发能力，增强在特定领域的就业优势。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/29",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 709.5279829101563,
+            "r": 203.45,
+            "b": 697.5279829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            14
+          ]
+        }
+      ],
+      "orig": "2.2.2  备考规划与执行",
+      "text": "2.2.2  备考规划与执行",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/30",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 678.8079829101563,
+            "r": 521.5699999999999,
+            "b": 604.4979829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            179
+          ]
+        }
+      ],
+      "orig": "计划于大一学年12月及次年寒假期间，在保障校内课程学业的前提下，集中进行 CET-4 和 HarmonyOS 基础认证的备考。备考将结合官方教材、往年真题进行系统性复 习。对于 HarmonyOS 认证，将严格遵循鸿蒙开发者学堂的课程体系，在集成开发环境 DevEco Studio 中完成一系列实战项目，并通过官方题库进行强化练习，确保理论与实 践相结合。",
+      "text": "计划于大一学年12月及次年寒假期间，在保障校内课程学业的前提下，集中进行 CET-4 和 HarmonyOS 基础认证的备考。备考将结合官方教材、往年真题进行系统性复 习。对于 HarmonyOS 认证，将严格遵循鸿蒙开发者学堂的课程体系，在集成开发环境 DevEco Studio 中完成一系列实战项目，并通过官方题库进行强化练习，确保理论与实 践相结合。"
+    },
+    {
+      "self_ref": "#/texts/31",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 584.6503429101563,
+            "r": 239.51000000000002,
+            "b": 570.6103429101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            14
+          ]
+        }
+      ],
+      "orig": "2.3  实践活动与能力锻炼",
+      "text": "2.3  实践活动与能力锻炼",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/32",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 94.824,
+            "t": 551.2179829101563,
+            "r": 542.64,
+            "b": 539.2179829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            36
+          ]
+        }
+      ],
+      "orig": "理论联系实际是培养综合能力的关键。我计划通过以下活动锻炼硬技能与软技能：",
+      "text": "理论联系实际是培养综合能力的关键。我计划通过以下活动锻炼硬技能与软技能："
+    },
+    {
+      "self_ref": "#/texts/33",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 519.6579829101563,
+            "r": 203.45,
+            "b": 507.6579829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            14
+          ]
+        }
+      ],
+      "orig": "2.3.1  社团与竞赛参与",
+      "text": "2.3.1  社团与竞赛参与",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/34",
+      "parent": {
+        "$ref": "#/groups/2"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 94.824,
+            "t": 488.9379829101563,
+            "r": 519.89,
+            "b": 476.66052836470175,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            38
+          ]
+        }
+      ],
+      "orig": " 加入 ACM 社团并参与算法竞赛，旨在极限压力下提升算法设计、实现与优化",
+      "text": " 加入 ACM 社团并参与算法竞赛，旨在极限压力下提升算法设计、实现与优化",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/35",
+      "parent": {
+        "$ref": "#/groups/2"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 473.33798291015626,
+            "r": 436.9,
+            "b": 461.33798291015626,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            30
+          ]
+        }
+      ],
+      "orig": "能力，同时锻炼在团队中的协作、沟通能力以及英文文献阅读能力。",
+      "text": "能力，同时锻炼在团队中的协作、沟通能力以及英文文献阅读能力。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/36",
+      "parent": {
+        "$ref": "#/groups/2"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 457.83798291015626,
+            "r": 521.09,
+            "b": 430.2379829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            61
+          ]
+        }
+      ],
+      "orig": " 考虑加入演讲或主持社团，有意识地训练语言表达与公开演讲能力，提升个人 魅力和社交自信，弥补技术从业者常有的软技能短板。",
+      "text": " 考虑加入演讲或主持社团，有意识地训练语言表达与公开演讲能力，提升个人 魅力和社交自信，弥补技术从业者常有的软技能短板。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/37",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 410.6779829101563,
+            "r": 227.57,
+            "b": 398.6779829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            16
+          ]
+        }
+      ],
+      "orig": "2.3.2  项目实践与经验积累",
+      "text": "2.3.2  项目实践与经验积累",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/38",
+      "parent": {
+        "$ref": "#/groups/3"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 379.95798291015626,
+            "r": 524.5,
+            "b": 336.8779829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            98
+          ]
+        }
+      ],
+      "orig": " 开源项目是积累实际开发经验的最佳平台。通过向 Github 上的优秀项目提交代 码（ Pull Request ） 、修复 Bug 或开发新功能，可以学习先进的工程实践、代码规范与协 作流程。",
+      "text": " 开源项目是积累实际开发经验的最佳平台。通过向 Github 上的优秀项目提交代 码（ Pull Request ） 、修复 Bug 或开发新功能，可以学习先进的工程实践、代码规范与协 作流程。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/39",
+      "parent": {
+        "$ref": "#/groups/3"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 333.2779829101563,
+            "r": 542.52,
+            "b": 289.8439829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            133
+          ]
+        }
+      ],
+      "orig": " 实习、兼职与个人项目是接触真实业务场景的途径。我的规划是：短期目标 （大一） ：完成数个独立小项目，如' CRC 校验码模拟器'、'开源 HarmonyOS 小游 戏'、' Unity 简易 2D 游戏'或' OpenGL 图形学演示项目'，以熟悉完整开发流程。",
+      "text": " 实习、兼职与个人项目是接触真实业务场景的途径。我的规划是：短期目标 （大一） ：完成数个独立小项目，如' CRC 校验码模拟器'、'开源 HarmonyOS 小游 戏'、' Unity 简易 2D 游戏'或' OpenGL 图形学演示项目'，以熟悉完整开发流程。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/40",
+      "parent": {
+        "$ref": "#/groups/3"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 92.784,
+            "t": 286.5679829101563,
+            "r": 524.3299999999999,
+            "b": 258.96798291015625,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            60
+          ]
+        }
+      ],
+      "orig": " 长期目标（大二、大三） ：积极寻求实习机会，参与更大规模的商业或团体 开源项目，深入了解软件开发生命周期和团队管理。",
+      "text": " 长期目标（大二、大三） ：积极寻求实习机会，参与更大规模的商业或团体 开源项目，深入了解软件开发生命周期和团队管理。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/41",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 239.5279829101563,
+            "r": 167.3,
+            "b": 227.5279829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "2.3.3  成果评估",
+      "text": "2.3.3  成果评估",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/42",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 208.80798291015628,
+            "r": 521.23,
+            "b": 165.60798291015635,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            123
+          ]
+        }
+      ],
+      "orig": "实践活动的成效需要通过可量化的指标进行评估：开源项目可通过其在Github上 获得的Star 数量和社区影响力来间接衡量；发布的HarmonyOS应用可通过华为开发者 平台的月活跃用户（MAU） 等数据统计进行评估；算法竞赛的成果直接体现为比赛排",
+      "text": "实践活动的成效需要通过可量化的指标进行评估：开源项目可通过其在Github上 获得的Star 数量和社区影响力来间接衡量；发布的HarmonyOS应用可通过华为开发者 平台的月活跃用户（MAU） 等数据统计进行评估；算法竞赛的成果直接体现为比赛排"
+    },
+    {
+      "self_ref": "#/texts/43",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 162.12798291015633,
+            "r": 542.64,
+            "b": 150.12798291015633,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            38
+          ]
+        }
+      ],
+      "orig": "名与获奖等级；而实习经验的价值则通过项目总结、技术沉淀与人脉拓展来综合评估。",
+      "text": "名与获奖等级；而实习经验的价值则通过项目总结、技术沉淀与人脉拓展来综合评估。"
+    },
+    {
+      "self_ref": "#/texts/44",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 70.824,
+            "t": 130.26034291015628,
+            "r": 239.51000000000002,
+            "b": 116.22034291015632,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            14
+          ]
+        }
+      ],
+      "orig": "2.4  整合规划与时间管理",
+      "text": "2.4  整合规划与时间管理",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/45",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 3,
+          "bbox": {
+            "l": 94.824,
+            "t": 96.70798291015626,
+            "r": 412.87,
+            "b": 84.70798291015626,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            26
+          ]
+        }
+      ],
+      "orig": "将上述所有计划整合并高效执行，依赖于科学的时间管理。",
+      "text": "将上述所有计划整合并高效执行，依赖于科学的时间管理。"
+    },
+    {
+      "self_ref": "#/texts/46",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 772.1679829101563,
+            "r": 168.14,
+            "b": 760.1679829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "2.4.1  规划整合",
+      "text": "2.4.1  规划整合",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/47",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 741.4479829101563,
+            "r": 514.8240000000001,
+            "b": 698.3679829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            107
+          ]
+        }
+      ],
+      "orig": "我将利用在线课表工具精细规划每周的学习、备考与实践时间。同时，我计划开 发或利用现有工具，将课程表、证书备考日程、项目截止日期等所有任务统一集成到 HarmonyOS Next 的日历应用中，实现一站式管理与提醒。",
+      "text": "我将利用在线课表工具精细规划每周的学习、备考与实践时间。同时，我计划开 发或利用现有工具，将课程表、证书备考日程、项目截止日期等所有任务统一集成到 HarmonyOS Next 的日历应用中，实现一站式管理与提醒。"
+    },
+    {
+      "self_ref": "#/texts/48",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 678.8079829101563,
+            "r": 167.3,
+            "b": 666.8079829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            11
+          ]
+        }
+      ],
+      "orig": "2.4.2  应对挑战",
+      "text": "2.4.2  应对挑战",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/49",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 648.0879829101563,
+            "r": 515.74,
+            "b": 620.6079829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            41
+          ]
+        }
+      ],
+      "orig": "我预见到执行过程中可能面临时间冲突、精力不足、资源寻找困难等挑战。应对 策略包括：",
+      "text": "我预见到执行过程中可能面临时间冲突、精力不足、资源寻找困难等挑战。应对 策略包括："
+    },
+    {
+      "self_ref": "#/texts/50",
+      "parent": {
+        "$ref": "#/groups/4"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 94.944,
+            "t": 604.9779829101562,
+            "r": 527.14,
+            "b": 592.9779829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            36
+          ]
+        }
+      ],
+      "orig": " 提升效率：通过使用番茄工作法、任务优先级排序等方法，最大化利用时间。",
+      "text": " 提升效率：通过使用番茄工作法、任务优先级排序等方法，最大化利用时间。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/51",
+      "parent": {
+        "$ref": "#/groups/4"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 589.3779829101563,
+            "r": 521.06,
+            "b": 561.8979829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            50
+          ]
+        }
+      ],
+      "orig": " 积极求助：对于技术难题和资源匮乏，主动向导师、学长学姐请教，或合理利 用AI 工具寻求解决方案。",
+      "text": " 积极求助：对于技术难题和资源匮乏，主动向导师、学长学姐请教，或合理利 用AI 工具寻求解决方案。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/52",
+      "parent": {
+        "$ref": "#/groups/4"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "list_item",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 558.2979829101563,
+            "r": 536.3520000000003,
+            "b": 515.0979829101562,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            89
+          ]
+        }
+      ],
+      "orig": " 保持弹性与动力：计划并非一成不变。我将通过定期与朋友交流、与导师讨论 进展来审视和调整规划。同时，通过设定阶段性奖励、记录成长点滴来进行自我激励， 保持持续前进的内在驱动力。",
+      "text": " 保持弹性与动力：计划并非一成不变。我将通过定期与朋友交流、与导师讨论 进展来审视和调整规划。同时，通过设定阶段性奖励、记录成长点滴来进行自我激励， 保持持续前进的内在驱动力。",
+      "enumerated": false,
+      "marker": ""
+    },
+    {
+      "self_ref": "#/texts/53",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 243.41,
+            "t": 494.8119829101563,
+            "r": 360.91,
+            "b": 476.8119829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            7
+          ]
+        }
+      ],
+      "orig": "3 结论与展望",
+      "text": "3 结论与展望",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/54",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 455.5579829101563,
+            "r": 514.8240000000001,
+            "b": 412.4779829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            105
+          ]
+        }
+      ],
+      "orig": "本文基于计算机导论的学习与个人反思，系统地构建了一份大学期间的职业生涯 与学业发展蓝图。必须承认，受限于当前的认知水平，此规划仍存在一定的模糊性与 探索性，但它无疑为我提供了一个清晰的行动框架和自我认知的镜子。",
+      "text": "本文基于计算机导论的学习与个人反思，系统地构建了一份大学期间的职业生涯 与学业发展蓝图。必须承认，受限于当前的认知水平，此规划仍存在一定的模糊性与 探索性，但它无疑为我提供了一个清晰的行动框架和自我认知的镜子。"
+    },
+    {
+      "self_ref": "#/texts/55",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 396.8779829101563,
+            "r": 514.8240000000001,
+            "b": 353.7979829101563,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            98
+          ]
+        }
+      ],
+      "orig": "在个人发展层面，执行此规划的过程本身即是对论文写作、项目规划、时间管理 等综合能力的极大提升。在社会价值层面，我期望通过未来的开源贡献与应用开发， 能为填补某些细分领域优质软件的缺失贡献一份力量。",
+      "text": "在个人发展层面，执行此规划的过程本身即是对论文写作、项目规划、时间管理 等综合能力的极大提升。在社会价值层面，我期望通过未来的开源贡献与应用开发， 能为填补某些细分领域优质软件的缺失贡献一份力量。"
+    },
+    {
+      "self_ref": "#/texts/56",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 4,
+          "bbox": {
+            "l": 70.824,
+            "t": 338.19798291015627,
+            "r": 515.1279999999999,
+            "b": 232.80798291015628,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            262
+          ]
+        }
+      ],
+      "orig": "展望未来，计算机技术，特别是人工智能，正以前所未有的速度演进。因此，本 规划将是一个动态的、持续迭代的过程。未来，我将依据自身能力的阶段性发展，不 断对规划进行修正与补全。同时，我会密切关注AI技术发展趋势，适时将AI学习路 线动态地融入我的整体发展规划中，确保个人技能栈与时代需求同步进化。尽管技术 潮流变幻莫测，但专注于构建扎实的计算机科学基础、培养卓越的软件开发能力与打 造有价值的软件产品，这一核心方向是明确且坚定的。一份清晰、可执行且富于弹性 的系统化规划，正是驱动我在计算机领域实现持续成长与长远发展的核心引擎。",
+      "text": "展望未来，计算机技术，特别是人工智能，正以前所未有的速度演进。因此，本 规划将是一个动态的、持续迭代的过程。未来，我将依据自身能力的阶段性发展，不 断对规划进行修正与补全。同时，我会密切关注AI技术发展趋势，适时将AI学习路 线动态地融入我的整体发展规划中，确保个人技能栈与时代需求同步进化。尽管技术 潮流变幻莫测，但专注于构建扎实的计算机科学基础、培养卓越的软件开发能力与打 造有价值的软件产品，这一核心方向是明确且坚定的。一份清晰、可执行且富于弹性 的系统化规划，正是驱动我在计算机领域实现持续成长与长远发展的核心引擎。"
+    }
+  ],
+  "pictures": [],
+  "tables": [],
+  "key_value_items": [],
+  "form_items": [],
+  "pages": {
+    "1": {
+      "size": {
+        "width": 595.3200073242188,
+        "height": 841.9199829101562
+      },
+      "page_no": 1
+    },
+    "2": {
+      "size": {
+        "width": 595.3200073242188,
+        "height": 841.9199829101562
+      },
+      "page_no": 2
+    },
+    "3": {
+      "size": {
+        "width": 595.3200073242188,
+        "height": 841.9199829101562
+      },
+      "page_no": 3
+    },
+    "4": {
+      "size": {
+        "width": 595.3200073242188,
+        "height": 841.9199829101562
+      },
+      "page_no": 4
+    }
+  }
+}

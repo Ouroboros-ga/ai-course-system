@@ -1,83 +1,139 @@
 <template>
   <div class="chat-page-container">
-    <!-- 顶部导航栏（确保箭头永远可见） -->
-    <header class="top-nav">
-      <button class="history-btn" @click="showHistory = !showHistory">
-        <span v-if="showHistory">←</span>
-        <span v-else>三</span>
-      </button>
-      <div class="nav-title">Smartrab 课堂</div>
-    </header>
+    <!-- 顶部导航：动画 1 -->
+    <ChatTopNav
+      class="fade-in-up"
+      :show-history="showHistory"
+      @toggle-history="showHistory = !showHistory"
+      @create-new-session="createNewSession"
+    />
 
-    <!-- 历史记录侧边栏：修复标题遮挡 -->
-    <div class="history-sidebar-wrapper" :class="{ open: showHistory }">
-      <div class="history-sidebar">
-        <div class="history-header">
-          <h3>历史对话</h3>
-        </div>
-        <ChatHistory />
-        <div class="mobile-profile" v-if="showHistory">
-          <img src="https://picsum.photos/200/200" alt="profile" />
-        </div>
-      </div>
-    </div>
+    <HistorySidebar :show-history="showHistory">
+      <ChatHistory />
+    </HistorySidebar>
 
-    <!-- 内容区域 -->
-    <div class="content-box">
-      <!-- 桌面端三栏布局 -->
-      <div v-if="!isMobile" class="desktop-layout">
-        <div class="main-content">
-          <PptPlayer
-            @file-upload="handleFileUpload"
-            @analysis-end="isAnalyzing = false"
-          />
-        </div>
-        <div class="chat-sidebar" :class="{ hidden: showHistory }">
-          <ChatPanel :hasFile="!!currentFile" />
-        </div>
-      </div>
+    <!-- 内容区域：动画 2 -->
+    <div class="content-box fade-in-up">
+      <DesktopLayout v-if="!isMobile" :show-history="showHistory">
+      <template #main>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #sidebar>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+          :currentData="currentData"
+        />
+      </template>
+    </DesktopLayout>
 
-      <!-- 移动端全屏切换布局 -->
-      <div v-else class="mobile-layout">
-        <div v-show="activeTab === 'ppt'" class="tab-content">
-          <PptPlayer
-            @file-upload="handleFileUpload"
-            @analysis-end="isAnalyzing = false"
-          />
-        </div>
-        <div v-show="activeTab === 'chat'" class="tab-content">
-          <ChatPanel :hasFile="!!currentFile" />
-        </div>
-
-        <!-- 底部TAB -->
-        <div class="mobile-tab">
-          <button @click="activeTab = 'ppt'" :class="{ active: activeTab === 'ppt' }">
-            PPT
-          </button>
-          <button @click="activeTab = 'chat'" :class="{ active: activeTab === 'chat' }">
-            对话
-          </button>
-        </div>
-      </div>
+    <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
+      <template #ppt>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #chat>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+          :currentData="currentData"
+        />
+      </template>
+    </MobileLayout>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue';
-import PptPlayer from '@/components/chat/PptPlayer.vue';
-import ChatPanel from '@/components/chat/ChatPanel.vue';
-import ChatHistory from '@/components/chat/ChatHistory.vue';
+import { ref, onMounted, onUnmounted, watch, computed } from 'vue';
+import PptPlayer from '@/components/chat/player/PptPlayer.vue';
+import ChatPanel from '@/components/chat/panel/ChatPanel.vue';
+import ChatHistory from '@/components/chat/history/ChatHistory.vue';
+import ChatTopNav from '@/components/chat/topnav/ChatTopNav.vue';
+import HistorySidebar from '@/components/chat/sidebar/HistorySidebar.vue';
+import DesktopLayout from '@/components/chat/layout/DesktopLayout.vue';
+import MobileLayout from '@/components/chat/layout/MobileLayout.vue';
+
+const STORAGE_KEY = 'chatCurrentData';
 
 const currentFile = ref(null);
+const currentData = ref(null);
 const isAnalyzing = ref(false);
 const showHistory = ref(false);
 const activeTab = ref('ppt');
 const isMobile = ref(false);
+const resetTrigger = ref(0);
+
+const hasValidData = computed(() => {
+  return Boolean(currentData.value?.chatId && currentData.value?.content);
+});
+
+const loadFromStorage = () => {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.currentFile) {
+          currentFile.value = parsed.currentFile;
+        }
+        if (parsed.currentData && parsed.currentData.chatId) {
+          currentData.value = parsed.currentData;
+        }
+      }
+    }
+  } catch (e) {
+    console.error('加载本地存储数据失败:', e);
+    localStorage.removeItem(STORAGE_KEY);
+  }
+};
+
+const saveToStorage = () => {
+  try {
+    const dataToSave = {
+      currentFile: currentFile.value,
+      currentData: currentData.value,
+      savedAt: new Date().toISOString()
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
+  } catch (e) {
+    console.error('保存到本地存储失败:', e);
+  }
+};
+
+watch([currentFile, currentData], () => {
+  saveToStorage();
+}, { deep: true });
 
 const handleFileUpload = (file) => {
   currentFile.value = file;
+  currentData.value = null;
   isAnalyzing.value = true;
+};
+
+const handleAnalysisComplete = (data) => {
+  currentData.value = data;
+  isAnalyzing.value = false;
+};
+
+const createNewSession = () => {
+  currentFile.value = null;
+  currentData.value = null;
+  isAnalyzing.value = false;
+  localStorage.removeItem('chatMessages');
+  localStorage.removeItem(STORAGE_KEY);
+  resetTrigger.value += 1;
 };
 
 const checkMobile = () => {
@@ -93,6 +149,7 @@ const preventScroll = (e) => {
 };
 
 onMounted(() => {
+  loadFromStorage();
   checkMobile();
   window.addEventListener('resize', checkMobile);
   if (isMobile.value) {
@@ -121,46 +178,6 @@ onUnmounted(() => {
   font-family: system-ui, sans-serif;
 }
 
-/* 顶部导航栏（所有设备通用） */
-.top-nav {
-  position: relative;
-  height: 48px;
-  background: white;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  z-index: 9999;
-}
-.history-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 10px;
-  border: none;
-  background: #f1f5f9;
-  font-size: 16px;
-  font-weight: bold;
-  color: #333;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  z-index: 10000;
-  transition: all 0.2s ease;
-}
-.history-btn:hover {
-  background: #e2e8f0;
-}
-.nav-title {
-  flex: 1;
-  text-align: center;
-  font-size: 16px;
-  font-weight: 600;
-  color: #111;
-}
-
 .content-box {
   flex: 1;
   display: flex;
@@ -170,101 +187,26 @@ onUnmounted(() => {
   position: relative;
 }
 
-/* -------------------------- */
-/* 历史面板：修复标题遮挡 + 不超出背景 */
-/* -------------------------- */
-.history-sidebar-wrapper {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 0;
-  height: 0;
-  border-radius: 16px;
-  overflow: hidden;
-  z-index: 21;
-  transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-  transform-origin: top left;
-  background: white;
-}
-
-.history-sidebar-wrapper.open {
-  width: 100%;
-  height: 100%;
-  border-radius: 16px;
-  top: 0;
-  left: 0;
-}
-
-.history-sidebar {
-  width: 100%;
-  height: 100%;
-  padding: 0; /* 🔴 去掉全局padding，改为给标题单独加padding */
-  overflow-y: auto;
+/* ====================== */
+/* 🔥 统一高级淡入动画 */
+/* ====================== */
+.fade-in-up {
   opacity: 0;
-  transition: opacity 0.3s ease;
-  background: white;
-  box-sizing: border-box;
+  transform: translateY(35px);
+  animation: fadeInUp 0.7s cubic-bezier(0.24, 1, 0.32, 1) forwards;
 }
 
-.history-sidebar-wrapper.open .history-sidebar {
-  opacity: 1;
+/* 依次出现：导航 → 内容 */
+.fade-in-up:nth-child(1) { animation-delay: 0.1s; }
+.fade-in-up:nth-child(3) { animation-delay: 0.25s; }
+
+@keyframes fadeInUp {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
-/* 🔴 新增：历史对话标题区域，确保文字不被遮挡 */
-.history-header {
-  padding: 20px 20px 12px;
-  border-bottom: 1px solid #f1f5f9;
-}
-.history-header h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  color: #111;
-}
-
-/* -------------------------- */
-/* 桌面端弹性自适应布局 */
-/* -------------------------- */
-.desktop-layout {
-  display: flex;
-  gap: 16px;
-  flex: 1;
-  position: relative;
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.main-content {
-  flex: 2;
-  min-width: 300px;
-  background: white;
-  border-radius: 16px;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.chat-sidebar {
-  flex: 1;
-  min-width: 280px;
-  max-width: 450px;
-  background: white;
-  border-radius: 16px;
-  overflow: hidden;
-  transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-  opacity: 1;
-  transform: translateX(0);
-  box-sizing: border-box;
-}
-
-.chat-sidebar.hidden {
-  opacity: 0;
-  transform: translateX(50px);
-  pointer-events: none;
-}
-
-/* -------------------------- */
-/* 移动端：保留动画 + 不超出背景 + 标题可见 */
-/* -------------------------- */
 @media (max-width: 768px) {
   .chat-page-container {
     height: 100vh;
@@ -274,85 +216,5 @@ onUnmounted(() => {
   .content-box {
     padding: 0 12px 12px;
   }
-
-  .mobile-layout {
-    display: flex;
-    flex-direction: column;
-    flex: 1;
-    height: calc(100vh - 48px - 60px);
-  }
-
-  .tab-content {
-    flex: 1;
-    overflow-y: auto;
-    width: 100%;
-    box-sizing: border-box;
-    background: white;
-    border-radius: 16px;
-    padding: 12px;
-    margin: 0;
-  }
-
-  .mobile-tab {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: 60px;
-    background: white;
-    display: flex;
-    box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
-    z-index: 20;
-  }
-  .mobile-tab button {
-    flex: 1;
-    border: none;
-    background: none;
-    font-size: 15px;
-    color: #666;
-  }
-  .mobile-tab button.active {
-    color: #4f46e5;
-    font-weight: bold;
-  }
-
-  .history-sidebar-wrapper {
-    position: absolute !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 0 !important;
-    height: 0 !important;
-    border-radius: 16px !important;
-    transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-    background: white !important;
-    z-index: 21 !important;
-  }
-  .history-sidebar-wrapper.open {
-    width: 100% !important;
-    height: 100% !important;
-    border-radius: 16px !important;
-    top: 0 !important;
-    left: 0 !important;
-    padding: 0 !important;
-    max-width: none !important;
-  }
-  .history-sidebar {
-    opacity: 1 !important;
-    padding: 0 !important;
-  }
-  .history-header {
-    padding: 20px 20px 12px !important;
-  }
-}
-
-.mobile-profile {
-  display: none;
-  position: absolute;
-  bottom: 20px;
-  left: 20px;
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  overflow: hidden;
 }
 </style>

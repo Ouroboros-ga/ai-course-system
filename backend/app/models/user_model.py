@@ -178,3 +178,54 @@ class User(SQLModel, table=True):
     #     self.last_active_course_id = course_id
     #     self.last_learning_node = node
     #     self.updated_at = datetime.utcnow()
+
+
+class ChatHistory(SQLModel, table=True):
+    """
+    聊天历史记录表
+    存储用户的聊天会话记录
+    """
+
+    __tablename__ = "chat_histories"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    user_id: int = Field(
+        foreign_key="users.id", index=True, description="用户ID"
+    )
+
+    content: str = Field(description="聊天内容/会话标题")
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow, description="创建时间"
+    )
+
+
+class MessageRole(str, Enum):
+    """消息角色枚举"""
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+
+
+class ChatMessage(SQLModel, table=True):
+    """
+    聊天消息表
+    存储会话中的具体消息（用户问题和AI回答）
+    """
+
+    __tablename__ = "chat_messages"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    chat_id: int = Field(
+        foreign_key="chat_histories.id", index=True, description="所属会话ID"
+    )
+
+    role: MessageRole = Field(description="消息角色：user/assistant/system")
+
+    content: str = Field(description="消息内容")
+
+    created_at: datetime = Field(
+        default_factory=datetime.utcnow, description="创建时间"
+    )

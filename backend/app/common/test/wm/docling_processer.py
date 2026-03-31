@@ -9,28 +9,29 @@ import logging
 import os
 import platform
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
+
+import torch
+
+# Docling 核心库导入
+from docling.datamodel.base_models import InputFormat
+from docling.datamodel.pipeline_options import (
+    AsrPipelineOptions,
+    PdfPipelineOptions,
+)
+from docling.document_converter import (
+    DocumentConverter,
+    PdfFormatOption,
+)
 
 PLATFORM: Literal["cpu", "gpu"] = "cpu"
 os.environ["CUDA_VISIBLE_DEVICES"] = ""
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+
 try:
-    if PLATFORM == "gpu":
-        import torch
-
-    # Docling 核心库导入
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import (
-        AsrPipelineOptions,
-        PdfPipelineOptions,
-    )
-    from docling.document_converter import (
-        AudioFormatOption,
-        DocumentConverter,
-        PdfFormatOption,
-    )
-
+    # noinspection PyUnusedImports
+    from docling.document_converter import AudioFormatOption
     AUDIO_SUPPORT: bool = True
 except ImportError:
     AUDIO_SUPPORT = False
@@ -44,12 +45,14 @@ finally:
 # ==========================================
 # 核心逻辑：设备选择与环境配置
 # ==========================================
-def resolve_device(device_preference: str = "cpu") -> str:
+def resolve_device(device_preference: str = "cpu") -> Literal["cpu", "cuda"]:
     """
     解析并设置运行设备.
     返回: "cuda" 或 "cpu"
     """
     device_preference = device_preference.lower()
+    if device_preference not in ["cpu", "cuda", "auto"]:
+        raise ValueError("""该函数只接受["cpu", "cuda", "auto"]""")
 
     # 1. 强制 CPU 模式 (必须在导入 docling 或加载模型前设置)
     if device_preference == "cpu":
@@ -77,8 +80,7 @@ def resolve_device(device_preference: str = "cpu") -> str:
 
 
 class Markdown(str):
-    """自定义 Markdown 类型，方便类型提示和 IDE 识别"""
-
+    """Just for type hint"""
     pass
 
 
@@ -89,9 +91,9 @@ class UniversalDocProcessor:
     """
 
     def __init__(
-        self,
-        artifacts_path: str = "/home/will_m/.cache/docling/models",
-        device: str = "cpu",
+            self,
+            artifacts_path: str = "/home/will_m/.cache/docling/models",
+            device: str = "cpu",
     ):
         """
         初始化处理器
@@ -116,7 +118,7 @@ class UniversalDocProcessor:
         # 如果 resolve_device() 设置了 CUDA_VISIBLE_DEVICES=""，Docling 会自动回退到 CPU
 
         # 初始化转换器
-        format_options: dict[InputFormat, PdfFormatOption | AudioFormatOption] = {
+        format_options: dict[InputFormat, Any] = {
             InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
         }
 
@@ -129,11 +131,11 @@ class UniversalDocProcessor:
 
         self.converter = DocumentConverter(format_options=format_options)
 
-    def convert(
-        self,
-        file_path: Union[str, Path],
-        output_path: Optional[Union[str, Path]] = None,
-        save_file: bool = True,
+    def convert2md(
+            self,
+            file_path: Union[str, Path],
+            output_path: Optional[Union[str, Path]] = None,
+            save_file: bool = True,
     ) -> Markdown:
         """
         转换文档为 Markdown
@@ -164,8 +166,11 @@ class UniversalDocProcessor:
 
         return Markdown(markdown_content)
 
+    def convert2json(self):
+        pass
+
     def convert_batch(
-        self, file_paths: list[Union[str, Path]], output_dir: Union[str, Path]
+            self, file_paths: list[Union[str, Path]], output_dir: Union[str, Path]
     ) -> list[Markdown]:
         """
         批量转换文档
@@ -178,7 +183,7 @@ class UniversalDocProcessor:
             try:
                 file_path = Path(file_path)
                 output_file = output_dir / f"{file_path.stem}.md"
-                markdown = self.convert(file_path, output_file)
+                markdown = self.convert2md(file_path, output_file)
                 results.append(markdown)
             except Exception as e:
                 logger.error(f"处理失败 {file_path}: {e}")
@@ -192,7 +197,7 @@ class UniversalDocProcessor:
 # ============================================
 if __name__ == "__main__":
     # 模拟导入测试文件路径 (实际使用时请替换为真实路径)
-    from __init__ import DOCX_PATH, PDF_PATH, XLSX_PATH
+    from wm import DOCX_PATH, PDF_PATH, XLSX_PATH
 
     # ==========================================
     # 使用环境变量控制: DOCLING_DEVICE=cpu / cuda
@@ -222,7 +227,7 @@ if __name__ == "__main__":
         if path.exists():
             print(f"\n[{idx + 1}] Converting {path.suffix.upper()}:")
             try:
-                md = processor.convert(path)
+                md = processor.convert2md(path)
                 print(f"预览 (前100字): {md[:100]}...\n")
             except Exception as e:
                 print(f"Error: {e}")
