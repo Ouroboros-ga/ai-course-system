@@ -69,3 +69,35 @@ export function uploadFile(formData) {
     data: formData
   })
 }
+
+/**
+ * AI问答接口
+ * @param {Object} data - 请求参数
+ * @param {string} data.question - 用户问题（必填）
+ * @param {number} [data.chatId] - 会话ID，不传则创建新会话
+ * @param {number} [data.courseId] - 课程ID，用于基于文档问答
+ * @returns {Promise} 返回AI回答
+ */
+export function askQuestion(data) {
+  return request({
+    url: '/chat/ask',
+    method: 'post',
+    data: {
+      question: data.question,
+      chatId: data.chatId || null,
+      courseId: data.courseId || null
+    }
+  })
+}
+
+/**
+ * 获取会话中的所有消息
+ * @param {number} chatId - 会话ID
+ * @returns {Promise} 返回消息列表
+ */
+export function getChatMessages(chatId) {
+  return request({
+    url: `/chat/messages/${chatId}`,
+    method: 'get'
+  })
+}

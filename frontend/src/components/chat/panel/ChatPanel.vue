@@ -13,7 +13,6 @@
       ref="messageListRef"
     />
 
-    <!-- 👈 恢复：没文件就禁用，有文件才能用 -->
     <ChatInput
       :disabled="!hasFile"
       :tips="['没听懂，再讲一遍', '这页 PPT 重点是什么？']"
@@ -26,9 +25,12 @@
 import { ref } from 'vue';
 import MessageList from './ChatPanel/MessageList.vue';
 import ChatInput from './ChatPanel/ChatInput.vue';
+import api from '@/api/index.js';
+import { showToast } from '@/utils/toast';
 
-const props = defineProps(['hasFile']);
+const props = defineProps(['hasFile', 'courseId', 'chatId']);
 const messageListRef = ref(null);
+const currentChatId = ref(props.chatId || null);
 
 const handleSend = async (text) => {
   if (!text) return;
@@ -38,13 +40,31 @@ const handleSend = async (text) => {
     content: text
   });
 
-  setTimeout(() => {
+  try {
+    const res = await api.chat.askQuestion({
+      question: text,
+      chatId: currentChatId.value,
+      courseId: props.courseId
+    });
+
+    if (res.chatId && !currentChatId.value) {
+      currentChatId.value = res.chatId;
+    }
+
     messageListRef.value?.addMessage({
       role: 'ai',
-      content: `我收到了你的问题：「${text}」，正在为你解答...`,
+      content: res.answer,
       showResumeBtn: true
     });
-  }, 1000);
+  } catch (err) {
+    console.error('问答失败', err);
+    showToast(err.message || '问答失败，请重试', 'error');
+    messageListRef.value?.addMessage({
+      role: 'ai',
+      content: '抱歉，我遇到了一些问题，请稍后再试。',
+      showResumeBtn: false
+    });
+  }
 };
 </script>
 
@@ -103,12 +123,11 @@ const handleSend = async (text) => {
   background: #e5e7eb;
 }
 
-/* 👇👇👇 这里我已经帮你改长了！！！ */
 @media (max-width: 768px) {
   .chat-section {
     flex: none;
     width: 100%;
-    height: 75vh;   /* 👈 原来 50vh → 现在 75vh，变得很长 */
+    height: 75vh;
     min-width: auto;
     border-radius: 16px 16px 0 0;
     margin-top: -16px;

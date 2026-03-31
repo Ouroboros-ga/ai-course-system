@@ -17,11 +17,15 @@
         <template #main>
           <PptPlayer
             @file-upload="handleFileUpload"
-            @analysis-end="isAnalyzing = false"
+            @analysis-end="handleAnalysisEnd"
           />
         </template>
         <template #sidebar>
-          <ChatPanel :hasFile="!!currentFile" />
+          <ChatPanel 
+            :hasFile="!!currentFile" 
+            :courseId="currentCourseId"
+            :chatId="currentChatId"
+          />
         </template>
       </DesktopLayout>
 
@@ -29,11 +33,15 @@
         <template #ppt>
           <PptPlayer
             @file-upload="handleFileUpload"
-            @analysis-end="isAnalyzing = false"
+            @analysis-end="handleAnalysisEnd"
           />
         </template>
         <template #chat>
-          <ChatPanel :hasFile="!!currentFile" />
+          <ChatPanel 
+            :hasFile="!!currentFile" 
+            :courseId="currentCourseId"
+            :chatId="currentChatId"
+          />
         </template>
       </MobileLayout>
     </div>
@@ -55,10 +63,24 @@ const isAnalyzing = ref(false);
 const showHistory = ref(false);
 const activeTab = ref('ppt');
 const isMobile = ref(false);
+const currentCourseId = ref(null);
+const currentChatId = ref(null);
 
 const handleFileUpload = (file) => {
   currentFile.value = file;
   isAnalyzing.value = true;
+};
+
+const handleAnalysisEnd = (data) => {
+  isAnalyzing.value = false;
+  if (data) {
+    if (data.courseId) {
+      currentCourseId.value = data.courseId;
+    }
+    if (data.chatId) {
+      currentChatId.value = data.chatId;
+    }
+  }
 };
 
 const checkMobile = () => {

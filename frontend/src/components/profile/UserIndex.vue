@@ -23,12 +23,12 @@ const studyMinutes = ref(0)
 
 // --- 页面加载时恢复登录状态 ---
 onMounted(() => {
-  const token = localStorage.getItem('token')
+  counter.checkAuth()
   const id = localStorage.getItem('userId')
   const username = localStorage.getItem('username')
 
   // 如果本地有数据且 Store 为空，则恢复
-  if (token && id && !counter.userData.id) {
+  if (counter.token && id && !counter.userData.id) {
     counter.userData.id = id
     counter.userData.username = username
     loadUserStats()
@@ -58,8 +58,13 @@ const handleLoginSend = async (data) => {
     localStorage.setItem('username', data.username)
 
     // 更新内存状态
-    counter.userData.username = data.username
-    counter.userData.id = res.userInfo.id
+    counter.setAuth({
+      token: res.token,
+      userInfo: {
+        id: res.userInfo.id,
+        username: data.username
+      }
+    })
 
     showToast("登录成功", "success")
     loadUserStats()
@@ -84,8 +89,13 @@ const handleRegisterSend = async (data) => {
     localStorage.setItem('username', data.username)
 
     // 更新内存状态
-    counter.userData.username = data.username
-    counter.userData.id = res.userInfo.id
+    counter.setAuth({
+      token: res.token,
+      userInfo: {
+        id: res.userInfo.id,
+        username: data.username
+      }
+    })
 
     showToast("注册成功并自动登录", "success")
     loadUserStats()
@@ -199,16 +209,12 @@ const handleUpdatePassword = async (data) => {
 // 11. 退出登录
 const handleLogout = () => {
   // 清除所有相关缓存
-  localStorage.removeItem('token')
   localStorage.removeItem('userId')
   localStorage.removeItem('username')
   localStorage.removeItem('userPreferences')
 
   // 重置 Store
-  counter.userData = {
-    username: null,
-    id: null,
-  }
+  counter.clearAuth()
   showSettingsPanel.value = false
   showPreferencePanel.value = false
   showMyCoursesPanel.value = false

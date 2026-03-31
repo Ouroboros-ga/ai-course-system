@@ -89,6 +89,17 @@ const handleDrop = (e) => startAnalysis(e.dataTransfer.files[0])
 
 const startAnalysis = async (f) => {
   if (!f) return
+  
+  if (!counter.token) {
+    showToast('请先登录后再上传文件', 'error')
+    return
+  }
+  
+  if (!counter.userData.id) {
+    showToast('用户信息不完整，请重新登录', 'error')
+    return
+  }
+  
   file.value = f
   emit('file-upload', f)
   isAnalyzing.value = true
@@ -103,24 +114,27 @@ const startAnalysis = async (f) => {
     const res = await api.chat.uploadFile(formData)
 
     console.log('上传成功:', res)
-    if (res.data) {
+    if (res) {
       currentData.value = {
-        title: res.data.title || '解析完成',
-        content: res.data.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...'
+        title: res.title || '解析完成',
+        content: res.fullContent?.replace(/\n/g, '<br>') || '等待 AI 解析内容...'
       }
-      if (res.data.audioUrl) {
-        audioSrc.value = res.data.audioUrl
+      if (res.audioUrl) {
+        audioSrc.value = res.audioUrl
       }
+      emit('analysis-end', {
+        courseId: res.courseId,
+        chatId: res.chatId
+      })
     }
 
   } catch (err) {
     console.error('上传失败', err)
-    showToast(err, 'error')
+    showToast(err.response?.data?.message || err.message || '上传失败', 'error')
     currentData.value = { title: '', content: '' }
+    emit('analysis-end', null)
   } finally {
     isAnalyzing.value = false
-    // isPlaying.value = true // 注意：不要在这里自动设为true，等音频加载好再决定
-    emit('analysis-end')
   }
 }
 

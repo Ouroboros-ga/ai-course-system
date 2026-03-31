@@ -1,7 +1,7 @@
 """
 文档处理API接口
 流程：上传文件 -> Docling解析为Markdown -> 豆包AI生成智课脚本 -> 存储到数据库 -> 返回结果
-Updated: 2026-03-28 - 集成Docling解析和豆包AI
+Updated: 2026-03-28 - 集成Docling解析和豆包AI，添加用户认证
 """
 
 import os
@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
@@ -23,6 +23,7 @@ from app.schemas.document_schema import (
 )
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -38,6 +39,7 @@ from app.models.course_model import (
     ParseStatus,
     ScriptNodeType,
 )
+from app.models.user_model import ChatHistory
 from app.common.llm_client import llm_client, Message
 
 router = APIRouter(tags=["文档处理"])
@@ -47,26 +49,34 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
 
-DEFAULT_TEACHER_ID = 1
-
 
 @router.post("/upload", response_model=UnifiedResponse)
 async def upload_document(
+    request: Request,
     file: UploadFile = File(..., description="上传的文档文件 (PDF, DOCX, PPTX等)"),
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     上传文档并解析，存储到数据库，生成智课脚本
     
+    需要用户登录认证
+    
     流程：
-    1. 存储文件信息到 courses 表
-    2. 创建 docling_documents 记录 (status = PENDING)
-    3. 调用Docling解析，输出Markdown，更新 status = PROCESSING -> COMPLETED
-    4. 将Markdown传递给豆包AI生成智课脚本 -> 创建 course_scripts 记录
-    5. 拆分脚本节点 -> 创建 script_nodes 记录
-    6. 返回结果
+    1. 验证用户身份
+    2. 存储文件信息到 courses 表
+    3. 创建 docling_documents 记录 (status = PENDING)
+    4. 调用Docling解析，输出Markdown，更新 status = PROCESSING -> COMPLETED
+    5. 将Markdown传递给豆包AI生成智课脚本 -> 创建 course_scripts 记录
+    6. 拆分脚本节点 -> 创建 script_nodes 记录
+    7. 创建聊天记录归档
+    8. 返回结果
     """
     try:
+        user_id = int(current_user["user_id"])
+        username = current_user.get("username", "user")
+        print(f"[认证] 用户 {username} (ID: {user_id}) 上传文件")
+
         document_id = str(uuid.uuid4())
 
         file_ext = Path(file.filename).suffix.lower()
@@ -80,7 +90,11 @@ async def upload_document(
         file_size = file_path.stat().st_size
         if file_size > 50 * 1024 * 1024:
             file_path.unlink()
-            raise HTTPException(status_code=413, detail="文件大小超过50MB限制")
+            return unified_response(
+                code=400,
+                message="文件大小超过限制（最大50MB）",
+                data=None
+            )
 
         print(f"[步骤1] 存储文件信息到 courses 表")
         print(f"  文件已保存: {file_path}")
@@ -90,7 +104,7 @@ async def upload_document(
             fanya_course_name=file.filename,
             title=Path(file.filename).stem,
             description=f"从文件 {file.filename} 导入的课程",
-            teacher_id=DEFAULT_TEACHER_ID,
+            teacher_id=user_id,
             status=CourseStatus.DRAFT,
             is_ai_generated=False,
             source_file_name=file.filename,
@@ -191,7 +205,7 @@ async def upload_document(
             is_active=True,
             audio_url=None,
             audio_duration=0,
-            created_by=DEFAULT_TEACHER_ID,
+            created_by=user_id,
         )
         session.add(course_script)
         session.commit()
@@ -224,10 +238,22 @@ async def upload_document(
         session.commit()
         print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}")
 
+        print(f"[步骤7] 创建聊天记录归档")
+        chat_record = ChatHistory(
+            user_id=user_id,
+            content=f"{file.filename} 解析",
+        )
+        session.add(chat_record)
+        session.commit()
+        session.refresh(chat_record)
+        chat_id = chat_record.id
+        print(f"  创建聊天记录: ID={chat_id}")
+
         document_cache[document_id] = {
             "course_id": course.id,
             "script_id": course_script.id,
             "doc_id": docling_doc.id,
+            "chat_id": chat_id,
             "filename": file.filename,
             "markdown_content": markdown_content,
             "script_content": ai_script_result["script_content"],
@@ -236,7 +262,7 @@ async def upload_document(
 
         mind_map_json = _generate_mind_map(ai_script_result["script_content"])
 
-        print(f"[步骤7] 返回结果给前端")
+        print(f"[步骤8] 返回结果给前端")
         return unified_response(
             code=200,
             message="上传并解析成功",
@@ -245,7 +271,8 @@ async def upload_document(
                 "title": course.title,
                 "audioUrl": None,
                 "mindMapJson": mind_map_json,
-                "chatId": document_id,
+                "chatId": chat_id,
+                "courseId": course.id,
             }
         )
 
