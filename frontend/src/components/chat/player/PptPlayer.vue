@@ -144,6 +144,7 @@ const startAnalysis = async (f) => {
         title: res.title || '解析完成',
         content: res.fullContent,
         chatId: res.chatId,
+        courseId: res.courseId,
         mindMapJson: res.mindMapJson,
         audioUrl: res.audioUrl || '/assets/audio/girl.mp3',
       }

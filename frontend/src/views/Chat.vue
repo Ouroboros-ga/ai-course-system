@@ -28,6 +28,7 @@
           :hasFile="!!currentFile" 
           :isAnalyzing="isAnalyzing"
           :hasValidData="hasValidData"
+          :currentData="currentData"
         />
       </template>
     </DesktopLayout>
@@ -46,6 +47,7 @@
           :hasFile="!!currentFile" 
           :isAnalyzing="isAnalyzing"
           :hasValidData="hasValidData"
+          :currentData="currentData"
         />
       </template>
     </MobileLayout>

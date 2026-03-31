@@ -48,3 +48,4 @@ backend/.env
 database/smart_class.db
 .gitignore
 database/smart_class.db
+database/smart_class.db

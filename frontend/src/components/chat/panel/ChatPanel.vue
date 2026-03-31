@@ -28,6 +28,8 @@
 import { ref, computed, watch } from 'vue';
 import MessageList from './ChatPanel/MessageList.vue';
 import ChatInput from './ChatPanel/ChatInput.vue';
+import api from '@/api/index.js';
+import { showToast } from '@/utils/toast';
 
 const props = defineProps({
   hasFile: {
@@ -41,22 +43,34 @@ const props = defineProps({
   hasValidData: {
     type: Boolean,
     default: false
+  },
+  currentData: {
+    type: Object,
+    default: () => null
   }
 });
 
 const messageListRef = ref(null);
+const currentChatId = ref(null);
 
 const canChat = computed(() => {
   return props.hasFile && !props.isAnalyzing && props.hasValidData;
 });
 
+watch(() => props.currentData, (newData) => {
+  if (newData && newData.chatId) {
+    currentChatId.value = newData.chatId;
+  }
+}, { immediate: true });
+
 watch(() => props.hasFile, (newVal) => {
   if (!newVal) {
     messageListRef.value?.clearMessages();
+    currentChatId.value = null;
   }
 });
 
-const handleSend = (text) => {
+const handleSend = async (text) => {
   if (!text || !canChat.value) return;
 
   messageListRef.value?.addMessage({
@@ -64,13 +78,31 @@ const handleSend = (text) => {
     content: text
   });
 
-  setTimeout(() => {
+  try {
+    const res = await api.chat.askQuestion({
+      question: text,
+      chatId: currentChatId.value,
+      courseId: props.currentData?.courseId
+    });
+
+    if (res.chatId && !currentChatId.value) {
+      currentChatId.value = res.chatId;
+    }
+
     messageListRef.value?.addMessage({
       role: 'ai',
-      content: `我收到了你的问题：「${text}」，正在为你解答...`,
+      content: res.answer,
       showResumeBtn: true
     });
-  }, 1000);
+  } catch (err) {
+    console.error('问答失败', err);
+    showToast(err.message || '问答失败，请重试', 'error');
+    messageListRef.value?.addMessage({
+      role: 'ai',
+      content: '抱歉，我遇到了一些问题，请稍后再试。',
+      showResumeBtn: false
+    });
+  }
 };
 </script>
 
