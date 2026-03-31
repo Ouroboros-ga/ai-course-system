@@ -5,6 +5,7 @@
       class="fade-in-up"
       :show-history="showHistory"
       @toggle-history="showHistory = !showHistory"
+      @create-new-session="createNewSession"
     />
 
     <HistorySidebar :show-history="showHistory">
@@ -14,38 +15,40 @@
     <!-- 内容区域：动画 2 -->
     <div class="content-box fade-in-up">
       <DesktopLayout v-if="!isMobile" :show-history="showHistory">
-        <template #main>
-          <PptPlayer
-            :initialData="currentData"
-            @file-upload="handleFileUpload"
-            @analysis-complete="handleAnalysisComplete"
-          />
-        </template>
-        <template #sidebar>
-          <ChatPanel 
-            :hasFile="!!currentFile" 
-            :isAnalyzing="isAnalyzing"
-            :hasValidData="hasValidData"
-          />
-        </template>
-      </DesktopLayout>
+      <template #main>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #sidebar>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+        />
+      </template>
+    </DesktopLayout>
 
-      <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
-        <template #ppt>
-          <PptPlayer
-            :initialData="currentData"
-            @file-upload="handleFileUpload"
-            @analysis-complete="handleAnalysisComplete"
-          />
-        </template>
-        <template #chat>
-          <ChatPanel 
-            :hasFile="!!currentFile" 
-            :isAnalyzing="isAnalyzing"
-            :hasValidData="hasValidData"
-          />
-        </template>
-      </MobileLayout>
+    <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
+      <template #ppt>
+        <PptPlayer
+          :initialData="currentData"
+          :reset-trigger="resetTrigger"
+          @file-upload="handleFileUpload"
+          @analysis-complete="handleAnalysisComplete"
+        />
+      </template>
+      <template #chat>
+        <ChatPanel 
+          :hasFile="!!currentFile" 
+          :isAnalyzing="isAnalyzing"
+          :hasValidData="hasValidData"
+        />
+      </template>
+    </MobileLayout>
     </div>
   </div>
 </template>
@@ -68,6 +71,7 @@ const isAnalyzing = ref(false);
 const showHistory = ref(false);
 const activeTab = ref('ppt');
 const isMobile = ref(false);
+const resetTrigger = ref(0);
 
 const hasValidData = computed(() => {
   return Boolean(currentData.value?.chatId && currentData.value?.content);
@@ -119,6 +123,15 @@ const handleFileUpload = (file) => {
 const handleAnalysisComplete = (data) => {
   currentData.value = data;
   isAnalyzing.value = false;
+};
+
+const createNewSession = () => {
+  currentFile.value = null;
+  currentData.value = null;
+  isAnalyzing.value = false;
+  localStorage.removeItem('chatMessages');
+  localStorage.removeItem(STORAGE_KEY);
+  resetTrigger.value += 1;
 };
 
 const checkMobile = () => {

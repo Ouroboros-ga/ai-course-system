@@ -25,7 +25,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, watch } from 'vue';
 import MessageList from './ChatPanel/MessageList.vue';
 import ChatInput from './ChatPanel/ChatInput.vue';
 
@@ -48,6 +48,12 @@ const messageListRef = ref(null);
 
 const canChat = computed(() => {
   return props.hasFile && !props.isAnalyzing && props.hasValidData;
+});
+
+watch(() => props.hasFile, (newVal) => {
+  if (!newVal) {
+    messageListRef.value?.clearMessages();
+  }
 });
 
 const handleSend = (text) => {

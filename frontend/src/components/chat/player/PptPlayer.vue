@@ -64,7 +64,7 @@ import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
-const props = defineProps(['initialData'])
+const props = defineProps(['initialData', 'resetTrigger'])
 const emit = defineEmits(['file-upload', 'analysis-complete'])
 
 const file = ref(null)
@@ -86,6 +86,29 @@ const currentData = ref({
   audioUrl: '',
   mindMapJson: {"text": "根"},
 })
+
+// 监听重置触发器
+watch(() => props.resetTrigger, () => {
+  // 重置所有状态
+  file.value = null
+  isAnalyzing.value = false
+  isPlaying.value = false
+  currentData.value = {
+    title: '',
+    content: '',
+    chatId: '',
+    audioUrl: '',
+    mindMapJson: {"text": "根"},
+  }
+  currentTime.value = 0
+  duration.value = 0
+
+  // 如果音频正在播放，则停止它
+  if (audioRef.value) {
+    audioRef.value.pause()
+    audioRef.value.currentTime = 0
+  }
+}, { immediate: false })
 
 watch(() => props.initialData, (newData) => {
   if (newData && newData.chatId) {
@@ -131,9 +154,15 @@ const startAnalysis = async (f) => {
   } catch (err) {
     console.error('上传失败', err)
     showToast(err, 'error')
-    currentData.value = {title: '', content: '', chatId: '', audioUrl: '', mindMapJson: {"text": "根"}}
-  } finally {
+    file.value = null
     isAnalyzing.value = false
+    currentData.value = {
+      title: '',
+      content: '',
+      chatId: '',
+      audioUrl: '',
+      mindMapJson: {"text": "根"}
+    }
   }
 }
 
