@@ -17,6 +17,7 @@
     "dompurify": "^3.3.3",
     "highlight.js": "^11.11.1",
     "js-cookie": "^3.0.5",
+    "katex": "^0.16.44",
     "marked": "^17.0.5",
     "marked-highlight": "^2.2.3",
     "pinia": "^3.0.4",

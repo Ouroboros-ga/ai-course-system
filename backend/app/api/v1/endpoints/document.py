@@ -851,3 +851,66 @@ def _generate_mind_map(script_content: dict) -> dict:
         "text": title,
         "children": children
     }
+
+
+# ==================== TTS语音合成接口 ====================
+
+from app.common.tts_client import tts_client
+from fastapi.responses import Response
+
+
+@router.post("/tts/synthesize")
+async def synthesize_speech(
+    text: str = File(..., description="要合成的文本"),
+    voice: Optional[str] = File(None, description="音色"),
+    sample_rate: Optional[int] = File(16000, description="采样率"),
+    output_format: Optional[str] = File("mp3", description="输出格式"),
+):
+    """
+    语音合成接口
+    
+    将文本转换为语音，返回音频文件
+    
+    参数:
+    - text: 要合成的文本
+    - voice: 音色（可选，默认使用配置中的音色）
+    - sample_rate: 采样率（可选，默认16000）
+    - output_format: 输出格式（可选，默认mp3）
+    
+    返回:
+    - 音频文件（二进制数据）
+    """
+    try:
+        print(f"[TTS] 开始合成语音: {text[:50]}...")
+        
+        response = await tts_client.synthesize(
+            text=text,
+            voice=voice,
+            sample_rate=sample_rate,
+            output_format=output_format
+        )
+        
+        print(f"[TTS] 合成成功，音频大小: {len(response.audio_data)} 字节")
+        
+        content_type_map = {
+            "mp3": "audio/mpeg",
+            "wav": "audio/wav",
+            "pcm": "audio/pcm",
+        }
+        
+        content_type = content_type_map.get(output_format.lower(), "audio/mpeg")
+        
+        return Response(
+            content=response.audio_data,
+            media_type=content_type,
+            headers={
+                "Content-Disposition": f"attachment; filename=speech.{output_format}",
+                "X-Latency-Ms": str(response.latency_ms),
+            }
+        )
+        
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"[TTS] 错误详情:\n{error_detail}")
+        raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")

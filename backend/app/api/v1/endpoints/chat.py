@@ -17,6 +17,7 @@ from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
 from app.common.llm_client import llm_client, Message
+from app.services.progress_service import progress_service
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -164,6 +165,7 @@ async def ask_question(
     chatId: Optional[int] = Body(None, description="会话ID，不传则创建新会话"),
     courseId: Optional[int] = Body(None, description="课程ID，用于基于文档问答"),
     question: str = Body(..., description="用户问题"),
+    currentNodeId: Optional[int] = Body(None, description="当前学习节点ID，用于理解度分析"),
 ):
     """
     AI问答接口
@@ -174,6 +176,7 @@ async def ask_question(
     1. 如果传入courseId，AI会基于该课程的文档内容回答问题
     2. 如果传入chatId，会在该会话中继续对话
     3. 如果都不传，创建新会话进行普通对话
+    4. 如果传入currentNodeId，会进行理解度分析
     """
     try:
         user_id = int(current_user["user_id"])
@@ -244,6 +247,29 @@ async def ask_question(
         session.add(assistant_message)
         session.commit()
         session.refresh(assistant_message)
+
+        understanding_analysis = None
+        if courseId and currentNodeId:
+            print(f"[聊天] 进行理解度分析...")
+            try:
+                analysis_result = await progress_service.handle_student_question(
+                    session=session,
+                    user_id=user_id,
+                    course_id=courseId,
+                    question=question,
+                    current_node_id=currentNodeId,
+                    chat_messages=history_messages,
+                )
+                understanding_analysis = {
+                    "level": analysis_result["understanding"]["level"],
+                    "score": analysis_result["understanding"]["score"],
+                    "keywordsWeak": analysis_result["understanding"]["keywords_weak"],
+                    "suggestions": analysis_result["understanding"]["suggestions"],
+                    "paceAdjustment": analysis_result["pace_adjustment"],
+                }
+                print(f"[聊天] 理解度: {understanding_analysis['level']}, 分数: {understanding_analysis['score']}")
+            except Exception as e:
+                print(f"[聊天] 理解度分析失败: {str(e)}")
         
         return unified_response(
             code=200,
@@ -252,6 +278,7 @@ async def ask_question(
                 "chatId": chatId,
                 "answer": ai_answer,
                 "messageId": assistant_message.id,
+                "understandingAnalysis": understanding_analysis,
             }
         )
         

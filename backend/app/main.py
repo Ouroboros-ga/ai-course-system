@@ -8,7 +8,7 @@ from app.models.database import create_tables
 
 
 # 导入路由
-from app.api.v1.endpoints import user, document, chat
+from app.api.v1.endpoints import user, document, chat, progress
 from app.schemas import UnifiedResponse
 
 # 创建数据库表
@@ -40,6 +40,7 @@ app.add_exception_handler(HTTPException, global_exception_handler)
 app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])
 app.include_router(document.router, prefix="/api/v1/document", tags=["文档处理"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["聊天模块"])
+app.include_router(progress.router, prefix="/api/v1/progress", tags=["进度续接"])
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
 
