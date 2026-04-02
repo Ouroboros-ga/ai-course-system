@@ -20,6 +20,11 @@ const router = createRouter({
       component: loadView('Chat') // 简化懒加载写法
     },
     {
+      path: '/zhikestore',
+      name: 'zhikestore',
+      component: loadView('Zhikestore') // 简化懒加载写法
+    },
+    {
       path: '/about',
       name: 'about',
       component: loadView('About')

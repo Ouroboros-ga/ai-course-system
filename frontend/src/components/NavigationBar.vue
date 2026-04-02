@@ -18,6 +18,9 @@
         <router-link to="/chat" class="nav-item">
           Chat
         </router-link>
+        <router-link to="/zhikestore" class="nav-item">
+          Zhikestore
+        </router-link>
         <router-link to="/about" class="nav-item">
           About
         </router-link>
