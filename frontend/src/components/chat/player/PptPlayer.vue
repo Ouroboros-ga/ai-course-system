@@ -6,7 +6,12 @@
     />
 
     <div class="ppt-display-area">
-      <PptUpload v-if="!file" @click="triggerUpload" @drop="handleDrop" />
+      <PptUpload
+        v-if="!file"
+        @click="triggerUpload"
+        @open-config="openConfigModal"
+        @drop-with-config="handleDropStoreFile"
+      />
       <PptAnalyzing v-else-if="isAnalyzing" />
 
       <div v-else class="ppt-content-wrapper">
@@ -15,7 +20,7 @@
           <PptContent :content="currentData?.content"/>
         </div>
 
-        <!-- 隐藏的原生音频标签 -->
+        <!-- ✅ 修复：正确闭合 audio 标签 -->
         <audio
           ref="audioRef"
           :src="currentData.audioUrl"
@@ -25,7 +30,6 @@
           style="display: none;"
         ></audio>
 
-        <!-- 更新后的控制条组件 -->
         <PptControlBar
           :is-playing="isPlaying"
           :current-time="currentTime"
@@ -47,6 +51,12 @@
         accept=".ppt,.pptx,.pdf"
       />
     </div>
+
+    <FileConfigModal
+      :visible="showConfigModal"
+      @close="showConfigModal = false"
+      @confirm="handleConfigConfirm"
+    />
   </div>
 </template>
 
@@ -58,11 +68,11 @@ import PptAnalyzing from './PptPlayer/PptAnalyzing.vue'
 import PptControlBar from './PptPlayer/PptControlBar.vue'
 import PptContent from './PptPlayer/PptContent.vue'
 import { showToast } from '@/utils/toast'
-
 import api from '@/api/index.js'
-
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
+
+import FileConfigModal from '@/components/chat/Fileconfigmodal/FileConfigModal.vue'
 
 const props = defineProps(['initialData', 'resetTrigger'])
 const emit = defineEmits(['file-upload', 'analysis-complete'])
@@ -87,9 +97,32 @@ const currentData = ref({
   mindMapJson: {"text": "根"},
 })
 
-// 监听重置触发器
+const showConfigModal = ref(false)
+const userConfig = ref(null)
+const pendingDropFile = ref(null)
+
+const openConfigModal = () => {
+  showConfigModal.value = true
+}
+
+const handleDropStoreFile = (file) => {
+  pendingDropFile.value = file
+  openConfigModal()
+}
+
+const handleConfigConfirm = (config) => {
+  userConfig.value = config
+  showConfigModal.value = false
+
+  if (pendingDropFile.value) {
+    startAnalysis(pendingDropFile.value)
+    pendingDropFile.value = null
+  } else {
+    triggerUpload()
+  }
+}
+
 watch(() => props.resetTrigger, () => {
-  // 重置所有状态
   file.value = null
   isAnalyzing.value = false
   isPlaying.value = false
@@ -102,8 +135,8 @@ watch(() => props.resetTrigger, () => {
   }
   currentTime.value = 0
   duration.value = 0
+  pendingDropFile.value = null
 
-  // 如果音频正在播放，则停止它
   if (audioRef.value) {
     audioRef.value.pause()
     audioRef.value.currentTime = 0
@@ -121,7 +154,6 @@ watch(() => props.initialData, (newData) => {
 
 const triggerUpload = () => fileInput.value.click()
 const handleFileChange = (e) => startAnalysis(e.target.files[0])
-const handleDrop = (e) => startAnalysis(e.dataTransfer.files[0])
 
 const startAnalysis = async (f) => {
   if (!f) return
@@ -135,10 +167,11 @@ const startAnalysis = async (f) => {
     formData.append('fileName', f.name)
     formData.append('userId', counter.userData.id)
 
-    console.log('开始上传文件：', f.name)
-    const res = await api.chat.uploadFile(formData)
+    if (userConfig.value) {
+      formData.append('aiConfig', JSON.stringify(userConfig.value))
+    }
 
-    console.log('上传成功:', res)
+    const res = await api.chat.uploadFile(formData)
     if (res) {
       currentData.value = {
         title: res.title || '解析完成',
@@ -150,29 +183,17 @@ const startAnalysis = async (f) => {
       }
       emit('analysis-complete', { ...currentData.value })
     }
-    console.log('解析结果:', currentData.value)
-
   } catch (err) {
     console.error('上传失败', err)
     showToast(err, 'error')
     file.value = null
     isAnalyzing.value = false
-    currentData.value = {
-      title: '',
-      content: '',
-      chatId: '',
-      audioUrl: '',
-      mindMapJson: {"text": "根"}
-    }
+    currentData.value = { title: '', content: '', chatId: '', audioUrl: '', mindMapJson: {"text": "根"} }
   }
 }
 
-// --- 新增：音频控制方法 ---
-
-// 1. 播放/暂停
 const togglePlay = () => {
   if (!audioRef.value || !currentData.value.audioUrl) return
-
   if (isPlaying.value) {
     audioRef.value.pause()
   } else {
@@ -181,28 +202,23 @@ const togglePlay = () => {
   isPlaying.value = !isPlaying.value
 }
 
-// 2. 更新当前时间 (由 audio 的 timeupdate 事件触发)
 const onTimeUpdate = () => {
   if (audioRef.value) {
     currentTime.value = audioRef.value.currentTime
   }
 }
 
-// 3. 音频加载完成，获取总时长
 const onLoadedMetadata = () => {
   if (audioRef.value) {
     duration.value = audioRef.value.duration
-    // 如果需要自动播放，可以在这里调用 play()
   }
 }
 
-// 4. 播放结束
 const onEnded = () => {
   isPlaying.value = false
   currentTime.value = 0
 }
 
-// 5. 进度跳转
 const handleSeek = (time) => {
   if (audioRef.value) {
     audioRef.value.currentTime = time
@@ -210,27 +226,20 @@ const handleSeek = (time) => {
   }
 }
 
-// 6. 倍速控制
 const changeSpeed = (speed) => {
   if (audioRef.value) {
     audioRef.value.playbackRate = speed
   }
 }
 
-// 7. 音量控制 (value: 0 静音, 1 正常)
 const changeVolume = (value) => {
   if (audioRef.value) {
-    // 1. 更新父组件的状态，以便子组件显示正确的滑块位置
     currentVolume.value = value;
-
-    // 2. 控制原生 audio 标签
     audioRef.value.volume = value;
     audioRef.value.muted = (value === 0);
   }
 };
 
-
-// 8. 循环控制
 const toggleLoop = () => {
   if (audioRef.value) {
     isLoop.value = !isLoop.value
@@ -283,7 +292,6 @@ const toggleLoop = () => {
   color: #1f2937;
   margin-bottom: 20px;
 }
-
 
 .hidden-input {
   display: none;
