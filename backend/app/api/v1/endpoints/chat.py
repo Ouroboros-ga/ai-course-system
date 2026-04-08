@@ -16,7 +16,7 @@ from app.core.security import get_current_user, teacher_student_allowed
 from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
-from app.common.llm_client import llm_client, Message
+from app.services import qa_service
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -225,16 +225,18 @@ async def ask_question(
         )
         history_messages = session.exec(statement).all()
         
-        messages = await _build_messages(history_messages, question, context_content)
+        history_list = [
+            {"role": msg.role.value, "content": msg.content}
+            for msg in history_messages
+        ]
         
-        print(f"[聊天] 调用LLM生成回答...")
-        response = await llm_client.chat(
-            messages=messages,
-            temperature=0.7,
-            max_tokens=2048,
+        print(f"[聊天] 调用QA服务生成回答...")
+        ai_answer = await qa_service.ask_question(
+            question=question,
+            context_content=context_content,
+            history_messages=history_list,
         )
-        ai_answer = response.content
-        print(f"[聊天] LLM回答: {ai_answer[:100]}...")
+        print(f"[聊天] QA服务回答: {ai_answer[:100]}...")
         
         assistant_message = ChatMessage(
             chat_id=chatId,
@@ -299,40 +301,6 @@ async def _get_course_context(session: Session, course_id: int) -> str:
         context_parts.insert(0, f"【课程摘要】\n{course_script.summary_text}\n")
     
     return "\n\n".join(context_parts)
-
-
-async def _build_messages(
-    history_messages: List[ChatMessage],
-    current_question: str,
-    context_content: str = ""
-) -> List[Message]:
-    """
-    构建发送给LLM的消息列表
-    """
-    messages = []
-    
-    if context_content:
-        max_context_length = 8000
-        if len(context_content) > max_context_length:
-            context_content = context_content[:max_context_length] + "\n\n[内容已截断...]"
-        
-        system_prompt = f"""你是一个智能课程助手。请基于以下文档内容回答用户的问题。
-如果问题与文档内容无关，请礼貌地告知用户你只能回答与文档相关的问题。
-
-【文档内容】
-{context_content}
-
-请根据以上内容回答用户的问题，回答要准确、清晰、有帮助。"""
-    else:
-        system_prompt = """你是一个智能课程助手。请友好、专业地回答用户的问题。
-如果用户询问与课程、学习相关的问题，请提供有建设性的建议。"""
-    
-    messages.append(Message(role="system", content=system_prompt))
-    
-    for msg in history_messages[-10:]:
-        messages.append(Message(role=msg.role.value, content=msg.content))
-    
-    return messages
 
 
 @router.post("/create", response_model=UnifiedResponse)

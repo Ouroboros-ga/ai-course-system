@@ -40,7 +40,7 @@ from app.models.course_model import (
     ScriptNodeType,
 )
 from app.models.user_model import ChatHistory
-from app.common.llm_client import llm_client, Message
+from app.services import smart_course_service
 
 router = APIRouter(tags=["文档处理"])
 
@@ -193,7 +193,9 @@ async def upload_document(
         print(f"[步骤5] 调用豆包AI生成智课脚本")
         print(f"  将Markdown传递给豆包AI...")
         
-        ai_script_result = await _generate_script_with_doubao(markdown_content, file.filename)
+        ai_script_result = await smart_course_service.generate_structured_script(
+            markdown_content, file.filename
+        )
         
         course_script = CourseScript(
             course_id=course.id,
@@ -565,145 +567,6 @@ def _parse_markdown_to_structure(markdown_content: str, filename: str) -> dict:
         "tables": [],
         "pictures": [],
         "raw_content": markdown_content,
-    }
-
-
-async def _generate_script_with_doubao(markdown_content: str, filename: str) -> dict:
-    """
-    调用豆包AI生成智课脚本
-    
-    将Docling输出的Markdown传递给豆包AI，生成结构化的智课脚本
-    """
-    print(f"  [豆包AI] 开始生成脚本...")
-    
-    max_content_length = 6000
-    if len(markdown_content) > max_content_length:
-        truncated_content = markdown_content[:max_content_length]
-        truncated_content += f"\n\n[内容已截断，原长度: {len(markdown_content)} 字符]"
-    else:
-        truncated_content = markdown_content
-    
-    system_prompt = """你是一位专业的课程设计师。请根据用户提供的文档内容，生成一份结构化的智课脚本。
-
-你需要完成以下任务：
-1. 分析文档内容，提取核心知识点
-2. 将内容拆分为多个教学节点（每个节点60-120秒）
-3. 为每个节点生成标题、内容摘要和时长
-4. 识别重点知识点
-5. 生成课程总结
-
-请以JSON格式返回结果，格式如下：
-{
-    "title": "课程标题",
-    "summary": "课程摘要",
-    "keywords": ["关键词1", "关键词2", ...],
-    "total_duration": 总时长(秒),
-    "nodes": [
-        {
-            "chapter_id": "chap_001",
-            "node_type": "lecture",
-            "title": "节点标题",
-            "content": "节点内容/讲解文本",
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": false
-        },
-        ...
-    ]
-}
-
-节点类型(node_type)可选值：
-- lecture: 讲解
-- question: 问题
-- summary: 总结
-- interactive: 交互
-
-请确保返回的是有效的JSON格式。"""
-
-    user_prompt = f"""请根据以下文档内容生成智课脚本：
-
-文件名: {filename}
-
-文档内容：
-{truncated_content}
-
-请生成结构化的智课脚本JSON。"""
-
-    try:
-        messages = [
-            Message(role="system", content=system_prompt),
-            Message(role="user", content=user_prompt)
-        ]
-        
-        print(f"  [豆包AI] 发送请求，内容长度: {len(user_prompt)} 字符")
-        response = await llm_client.chat(messages)
-        print(f"  [豆包AI] 收到响应，长度: {len(response.content)} 字符")
-        
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', response.content)
-        if json_match:
-            script_content = json.loads(json_match.group())
-        else:
-            script_content = _create_default_script(filename, markdown_content)
-        
-    except Exception as e:
-        print(f"  [豆包AI] 调用失败: {e}，使用默认脚本")
-        script_content = _create_default_script(filename, markdown_content)
-    
-    summary_text = script_content.get("summary", f"本课程《{Path(filename).stem}》包含 {len(script_content.get('nodes', []))} 个知识点。")
-    keywords = script_content.get("keywords", ["知识点", "课程", Path(filename).stem])
-    
-    print(f"  [豆包AI] 生成完成: {len(script_content.get('nodes', []))} 个节点")
-    
-    return {
-        "script_content": script_content,
-        "summary_text": summary_text,
-        "keywords": keywords,
-    }
-
-
-def _create_default_script(filename: str, content: str) -> dict:
-    """
-    创建默认脚本（当AI调用失败时）
-    """
-    lines = [l.strip() for l in content.split("\n") if l.strip() and len(l.strip()) > 10]
-    
-    nodes = []
-    for idx, line in enumerate(lines[:15]):
-        node_type = "lecture"
-        if idx == len(lines[:15]) - 1:
-            node_type = "summary"
-        
-        nodes.append({
-            "chapter_id": f"chap_{idx:03d}",
-            "node_type": node_type,
-            "title": line[:50] + ("..." if len(line) > 50 else ""),
-            "content": line,
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": idx % 3 == 0,
-        })
-    
-    if not nodes:
-        nodes = [{
-            "chapter_id": "chap_000",
-            "node_type": "lecture",
-            "title": "课程导入",
-            "content": f"欢迎学习本课程，本课程来源于文件 {filename}",
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": True,
-        }]
-    
-    return {
-        "title": Path(filename).stem,
-        "summary": f"本课程《{Path(filename).stem}》共包含 {len(nodes)} 个知识点。",
-        "keywords": ["知识点", "课程", Path(filename).stem],
-        "total_duration": sum(n["duration"] for n in nodes),
-        "nodes": nodes,
     }
 
 
