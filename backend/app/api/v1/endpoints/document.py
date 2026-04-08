@@ -263,13 +263,19 @@ async def upload_document(
         }
 
         mind_map_json = _generate_mind_map(ai_script_result["script_content"])
-
+        
+        beautiful_markdown = ai_script_result.get("beautiful_markdown", markdown_content)
+        
         print(f"[步骤8] 返回结果给前端")
+        print(f"  精美Markdown长度: {len(beautiful_markdown)}")
+        print(f"  原始Markdown长度: {len(markdown_content)}")
+        
         return unified_response(
             code=200,
             message="上传并解析成功",
             data={
-                "fullContent": markdown_content,
+                "fullContent": beautiful_markdown,
+                "rawContent": markdown_content,
                 "title": course.title,
                 "audioUrl": None,
                 "mindMapJson": mind_map_json,
@@ -472,52 +478,86 @@ async def _parse_with_docling(file_path: Path, filename: str) -> str:
 async def _fallback_parse(file_path: Path, filename: str) -> str:
     """
     备用解析方法（当Docling不可用时）
+    生成结构化的Markdown格式
     """
     suffix = file_path.suffix.lower()
     
     if suffix == ".pdf":
         try:
             import pdfplumber
-            text_parts = []
+            text_parts = [f"# {Path(filename).stem}\n"]
             with pdfplumber.open(file_path) as pdf:
-                for page in pdf.pages:
+                for page_num, page in enumerate(pdf.pages, 1):
                     text = page.extract_text()
                     if text:
-                        text_parts.append(text)
-            return "\n\n".join(text_parts)
+                        text_parts.append(f"\n## 第{page_num}页\n")
+                        text_parts.append(f"{text}\n")
+            return "\n".join(text_parts)
         except ImportError:
-            return f"[PDF文件: {filename}]"
+            return f"# {filename}\n\n[PDF文件需要安装pdfplumber库才能解析]"
     
     elif suffix in [".docx", ".doc"]:
         try:
             from docx import Document
             doc = Document(file_path)
-            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
-            return "\n\n".join(paragraphs)
+            text_parts = [f"# {Path(filename).stem}\n"]
+            
+            for para in doc.paragraphs:
+                if para.text.strip():
+                    if para.style.name.startswith('Heading'):
+                        level = int(para.style.name.replace('Heading ', '')) if para.style.name != 'Heading' else 1
+                        text_parts.append(f"\n{'#' * level} {para.text.strip()}\n")
+                    else:
+                        text_parts.append(f"{para.text.strip()}\n")
+            
+            return "\n".join(text_parts)
         except ImportError:
-            return f"[Word文件: {filename}]"
+            return f"# {filename}\n\n[Word文件需要安装python-docx库才能解析]"
     
     elif suffix in [".pptx", ".ppt"]:
         try:
             from pptx import Presentation
             prs = Presentation(file_path)
-            text_parts = []
+            text_parts = [f"# {Path(filename).stem}\n"]
+            text_parts.append("\n> 本文档由PPT自动解析生成\n")
+            
             for slide_num, slide in enumerate(prs.slides, 1):
-                slide_text = [f"## 第{slide_num}页"]
+                title = ""
+                if slide.shapes.title and slide.shapes.title.text:
+                    title = slide.shapes.title.text.strip()
+                
+                text_parts.append(f"\n## 第{slide_num}页{': ' + title if title else ''}\n")
+                
+                content_items = []
                 for shape in slide.shapes:
                     if hasattr(shape, "text") and shape.text.strip():
-                        slide_text.append(shape.text.strip())
-                text_parts.append("\n".join(slide_text))
-            return "\n\n".join(text_parts)
+                        text = shape.text.strip()
+                        if text != title:
+                            content_items.append(text)
+                
+                for item in content_items:
+                    if len(item) < 50 and not item.endswith(('。', '，', '：', '.', ',', ':')):
+                        if item.endswith('?') or item.endswith('？'):
+                            text_parts.append(f"\n### ❓ {item}\n")
+                        else:
+                            text_parts.append(f"\n### {item}\n")
+                    else:
+                        text_parts.append(f"\n{item}\n")
+            
+            return "\n".join(text_parts)
         except ImportError:
-            return f"[PPT文件: {filename}]"
+            return f"# {filename}\n\n[PPT文件需要安装python-pptx库才能解析]"
     
     elif suffix in [".txt", ".md", ".json", ".py", ".js", ".html", ".css"]:
         with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            return f.read()
+            content = f.read()
+        if suffix == ".md":
+            return content
+        else:
+            return f"# {filename}\n\n```\n{content}\n```"
     
     else:
-        return f"[文件: {filename}]"
+        return f"# {filename}\n\n[不支持的文件格式: {suffix}]"
 
 
 def _parse_markdown_to_structure(markdown_content: str, filename: str) -> dict:
@@ -567,6 +607,145 @@ def _parse_markdown_to_structure(markdown_content: str, filename: str) -> dict:
         "tables": [],
         "pictures": [],
         "raw_content": markdown_content,
+    }
+
+
+async def _generate_script_with_doubao(markdown_content: str, filename: str) -> dict:
+    """
+    调用豆包AI生成智课脚本
+    
+    将Docling输出的Markdown传递给豆包AI，生成结构化的智课脚本
+    """
+    print(f"  [豆包AI] 开始生成脚本...")
+    
+    max_content_length = 6000
+    if len(markdown_content) > max_content_length:
+        truncated_content = markdown_content[:max_content_length]
+        truncated_content += f"\n\n[内容已截断，原长度: {len(markdown_content)} 字符]"
+    else:
+        truncated_content = markdown_content
+    
+    system_prompt = """你是一位专业的课程设计师。请根据用户提供的文档内容，生成一份结构化的智课脚本。
+
+你需要完成以下任务：
+1. 分析文档内容，提取核心知识点
+2. 将内容拆分为多个教学节点（每个节点60-120秒）
+3. 为每个节点生成标题、内容摘要和时长
+4. 识别重点知识点
+5. 生成课程总结
+
+请以JSON格式返回结果，格式如下：
+{
+    "title": "课程标题",
+    "summary": "课程摘要",
+    "keywords": ["关键词1", "关键词2", ...],
+    "total_duration": 总时长(秒),
+    "nodes": [
+        {
+            "chapter_id": "chap_001",
+            "node_type": "lecture",
+            "title": "节点标题",
+            "content": "节点内容/讲解文本",
+            "page_start": 1,
+            "page_end": 1,
+            "duration": 60,
+            "is_key_point": false
+        },
+        ...
+    ]
+}
+
+节点类型(node_type)可选值：
+- lecture: 讲解
+- question: 问题
+- summary: 总结
+- interactive: 交互
+
+请确保返回的是有效的JSON格式。"""
+
+    user_prompt = f"""请根据以下文档内容生成智课脚本：
+
+文件名: {filename}
+
+文档内容：
+{truncated_content}
+
+请生成结构化的智课脚本JSON。"""
+
+    try:
+        messages = [
+            Message(role="system", content=system_prompt),
+            Message(role="user", content=user_prompt)
+        ]
+        
+        print(f"  [豆包AI] 发送请求，内容长度: {len(user_prompt)} 字符")
+        response = await llm_client.chat(messages)
+        print(f"  [豆包AI] 收到响应，长度: {len(response.content)} 字符")
+        
+        import re
+        json_match = re.search(r'\{[\s\S]*\}', response.content)
+        if json_match:
+            script_content = json.loads(json_match.group())
+        else:
+            script_content = _create_default_script(filename, markdown_content)
+        
+    except Exception as e:
+        print(f"  [豆包AI] 调用失败: {e}，使用默认脚本")
+        script_content = _create_default_script(filename, markdown_content)
+    
+    summary_text = script_content.get("summary", f"本课程《{Path(filename).stem}》包含 {len(script_content.get('nodes', []))} 个知识点。")
+    keywords = script_content.get("keywords", ["知识点", "课程", Path(filename).stem])
+    
+    print(f"  [豆包AI] 生成完成: {len(script_content.get('nodes', []))} 个节点")
+    
+    return {
+        "script_content": script_content,
+        "summary_text": summary_text,
+        "keywords": keywords,
+    }
+
+
+def _create_default_script(filename: str, content: str) -> dict:
+    """
+    创建默认脚本（当AI调用失败时）
+    """
+    lines = [l.strip() for l in content.split("\n") if l.strip() and len(l.strip()) > 10]
+    
+    nodes = []
+    for idx, line in enumerate(lines[:15]):
+        node_type = "lecture"
+        if idx == len(lines[:15]) - 1:
+            node_type = "summary"
+        
+        nodes.append({
+            "chapter_id": f"chap_{idx:03d}",
+            "node_type": node_type,
+            "title": line[:50] + ("..." if len(line) > 50 else ""),
+            "content": line,
+            "page_start": 1,
+            "page_end": 1,
+            "duration": 60,
+            "is_key_point": idx % 3 == 0,
+        })
+    
+    if not nodes:
+        nodes = [{
+            "chapter_id": "chap_000",
+            "node_type": "lecture",
+            "title": "课程导入",
+            "content": f"欢迎学习本课程，本课程来源于文件 {filename}",
+            "page_start": 1,
+            "page_end": 1,
+            "duration": 60,
+            "is_key_point": True,
+        }]
+    
+    return {
+        "title": Path(filename).stem,
+        "summary": f"本课程《{Path(filename).stem}》共包含 {len(nodes)} 个知识点。",
+        "keywords": ["知识点", "课程", Path(filename).stem],
+        "total_duration": sum(n["duration"] for n in nodes),
+        "nodes": nodes,
     }
 
 

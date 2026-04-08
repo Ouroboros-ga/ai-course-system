@@ -18,8 +18,8 @@
         <router-link to="/chat" class="nav-item">
           Chat
         </router-link>
-        <router-link to="/zhikestore" class="nav-item">
-          Zhikestore
+        <router-link to="/Edulib" class="nav-item">
+          Edulib
         </router-link>
         <router-link to="/about" class="nav-item">
           About
