@@ -65,7 +65,13 @@ class BaseTTSClient(ABC):
         except httpx.TimeoutException:
             raise TTSError(f"TTS API请求超时 ({timeout}秒)")
         except httpx.HTTPStatusError as e:
-            raise TTSError(f"TTS API请求失败: {e.response.status_code} - {e.response.text}")
+            error_text = e.response.text
+            try:
+                error_json = json.loads(error_text)
+                error_msg = error_json.get("message", error_text)
+            except:
+                error_msg = error_text
+            raise TTSError(f"TTS API请求失败: {e.response.status_code} - {error_msg}")
         except Exception as e:
             raise TTSError(f"TTS API请求异常: {str(e)}")
 
@@ -241,6 +247,131 @@ class TencentTTSClient(BaseTTSClient):
         )
 
 
+class VolcengineTTSClient(BaseTTSClient):
+    """
+    火山引擎TTS客户端
+    文档: https://www.volcengine.com/docs/6561/79823
+    """
+    
+    def __init__(self):
+        self.app_id = settings.VOLCENGINE_TTS_APP_ID
+        self.access_token = settings.VOLCENGINE_TTS_ACCESS_TOKEN
+        self.secret_key = settings.VOLCENGINE_TTS_SECRET_KEY
+        self.default_voice = settings.TTS_VOICE or "zh_female_shuangkuaisisi_moon_bigtts"
+        self.default_sample_rate = settings.TTS_SAMPLE_RATE
+        self.default_format = settings.TTS_FORMAT
+        self.timeout = 60
+        
+        if not self.app_id or not self.access_token or not self.secret_key:
+            logger.warning("火山引擎TTS配置不完整，请在.env中设置VOLCENGINE_TTS相关配置")
+    
+    def _generate_signature(self, payload: str) -> str:
+        """
+        生成火山引擎签名
+        """
+        hmac_obj = hmac.new(
+            self.secret_key.encode("utf-8"),
+            payload.encode("utf-8"),
+            hashlib.sha256
+        )
+        return hmac_obj.hexdigest()
+    
+    async def synthesize(
+        self,
+        text: str,
+        voice: Optional[str] = None,
+        sample_rate: Optional[int] = None,
+        output_format: Optional[str] = None,
+        **kwargs,
+    ) -> TTSResponse:
+        """
+        火山引擎语音合成
+        
+        API文档: https://www.volcengine.com/docs/6561/79823
+        """
+        url = "https://openspeech.bytedance.com/api/v1/tts"
+        
+        voice = voice or self.default_voice
+        sample_rate = sample_rate or self.default_sample_rate
+        output_format = output_format or self.default_format
+        
+        format_map = {
+            "mp3": "mp3",
+            "wav": "wav",
+            "pcm": "pcm",
+        }
+        audio_format = format_map.get(output_format.lower(), "mp3")
+        
+        payload_dict = {
+            "app": {
+                "appid": self.app_id,
+                "token": self.access_token,
+                "cluster": "volcano_tts",
+            },
+            "user": {
+                "uid": "user_001"
+            },
+            "audio": {
+                "voice_type": voice,
+                "encoding": audio_format,
+                "speed_ratio": kwargs.get("speed_ratio", 1.0),
+                "volume_ratio": kwargs.get("volume_ratio", 1.0),
+                "pitch_ratio": kwargs.get("pitch_ratio", 1.0),
+            },
+            "request": {
+                "reqid": str(uuid.uuid4()),
+                "text": text,
+                "operation": "query",
+            }
+        }
+        
+        payload = json.dumps(payload_dict, ensure_ascii=False)
+        
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer; {self.access_token}",
+        }
+        
+        try:
+            response_data, latency_ms = await self._make_request(
+                url, headers, payload=payload_dict, timeout=self.timeout
+            )
+            
+            result = json.loads(response_data.decode('utf-8'))
+            
+            if result.get("code") != 3000:
+                error_msg = result.get("message", "未知错误")
+                raise TTSError(f"火山引擎TTS错误: {error_msg}")
+            
+            data = result.get("data")
+            if not data:
+                raise TTSError("火山引擎TTS返回的数据为空")
+            
+            if isinstance(data, str):
+                audio_base64 = data
+            else:
+                audio_base64 = data.get("audio", "")
+            
+            if not audio_base64:
+                raise TTSError("火山引擎TTS返回的音频数据为空")
+            
+            audio_data = base64.b64decode(audio_base64)
+            
+            return TTSResponse(
+                audio_data=audio_data,
+                audio_format=output_format,
+                sample_rate=sample_rate,
+                latency_ms=latency_ms,
+            )
+            
+        except json.JSONDecodeError as e:
+            raise TTSError(f"火山引擎TTS响应解析失败: {str(e)}")
+        except Exception as e:
+            if isinstance(e, TTSError):
+                raise
+            raise TTSError(f"火山引擎TTS请求失败: {str(e)}")
+
+
 class MockTTSClient(BaseTTSClient):
     async def synthesize(
         self,
@@ -278,6 +409,7 @@ class TTSClient:
         clients = {
             "aliyun": AliyunTTSClient,
             "tencent": TencentTTSClient,
+            "volcengine": VolcengineTTSClient,
             "mock": MockTTSClient,
         }
 

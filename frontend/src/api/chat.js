@@ -76,7 +76,8 @@ export function uploadFile(formData) {
  * @param {string} data.question - 用户问题（必填）
  * @param {number} [data.chatId] - 会话ID，不传则创建新会话
  * @param {number} [data.courseId] - 课程ID，用于基于文档问答
- * @returns {Promise} 返回AI回答
+ * @param {number} [data.currentNodeId] - 当前学习节点ID，用于理解度分析
+ * @returns {Promise} 返回AI回答和理解度分析
  */
 export function askQuestion(data) {
   return request({
@@ -85,7 +86,8 @@ export function askQuestion(data) {
     data: {
       question: data.question,
       chatId: data.chatId || null,
-      courseId: data.courseId || null
+      courseId: data.courseId || null,
+      currentNodeId: data.currentNodeId || null
     }
   })
 }

@@ -11,9 +11,11 @@ import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
 import DOMPurify from 'dompurify'
+import katex from 'katex'
 
-// 非 scoped 引入高亮主题，避免样式优先级问题
+// 非 scoped 引入高亮主题和KaTeX样式
 import 'highlight.js/styles/github-dark.css'
+import 'katex/dist/katex.min.css'
 
 const props = defineProps({
   content: {
@@ -40,15 +42,101 @@ markedInstance.setOptions({
   breaks: true
 })
 
-// 2. 解析 + 防 XSS 清理
+/**
+ * 提取并替换数学公式，避免被Markdown解析器处理
+ * @param {string} text - 原始文本
+ * @returns {Object} - { text: 替换后的文本, formulas: 公式数组 }
+ */
+function extractFormulas(text) {
+  const formulas = []
+  let index = 0
+  
+  // 先处理块级公式 $$...$$
+  let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
+    const placeholder = `%%BLOCK_FORMULA_${index}%%`
+    formulas.push({
+      placeholder,
+      formula: formula.trim(),
+      isBlock: true
+    })
+    index++
+    return placeholder
+  })
+  
+  // 再处理行内公式 $...$
+  processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+    const placeholder = `%%INLINE_FORMULA_${index}%%`
+    formulas.push({
+      placeholder,
+      formula: formula.trim(),
+      isBlock: false
+    })
+    index++
+    return placeholder
+  })
+  
+  return { text: processedText, formulas }
+}
+
+/**
+ * 渲染数学公式
+ * @param {string} html - HTML字符串
+ * @param {Array} formulas - 公式数组
+ * @returns {string} - 渲染后的HTML
+ */
+function renderFormulas(html, formulas) {
+  let result = html
+  
+  formulas.forEach(({ placeholder, formula, isBlock }) => {
+    try {
+      const rendered = katex.renderToString(formula, {
+        displayMode: isBlock,
+        throwOnError: false,
+        output: 'html',
+        strict: false,
+        trust: true
+      })
+      
+      // 块级公式用div包裹，行内公式用span包裹
+      const wrappedHtml = isBlock
+        ? `<div class="katex-block">${rendered}</div>`
+        : `<span class="katex-inline">${rendered}</span>`
+      
+      result = result.replace(placeholder, wrappedHtml)
+    } catch (error) {
+      // 如果KaTeX渲染失败，显示原始公式
+      console.warn('KaTeX渲染失败:', error.message, '公式:', formula)
+      const errorHtml = isBlock
+        ? `<div class="katex-error">$$${formula}$$</div>`
+        : `<span class="katex-error">$${formula}$</span>`
+      result = result.replace(placeholder, errorHtml)
+    }
+  })
+  
+  return result
+}
+
+// 2. 解析 + 数学公式渲染 + 防 XSS 清理
 const renderedContent = computed(() => {
   if (!props.content) return '<p class="placeholder">等待AI解析内容...</p>'
 
-  // 同步解析（传入 { async: false } 防止新版返回 Promise）
-  const rawHtml = markedInstance.parse(props.content, { async: false })
-
-  // 使用 DOMPurify 清理潜在的恶意脚本
-  return DOMPurify.sanitize(rawHtml)
+  // 步骤1: 提取数学公式
+  const { text: textWithoutFormulas, formulas } = extractFormulas(props.content)
+  
+  // 步骤2: 解析Markdown
+  const rawHtml = markedInstance.parse(textWithoutFormulas, { async: false })
+  
+  // 步骤3: 渲染数学公式
+  const htmlWithFormulas = renderFormulas(rawHtml, formulas)
+  
+  // 步骤4: 使用 DOMPurify 清理潜在的恶意脚本
+  // 允许KaTeX需要的class和样式
+  const cleanHtml = DOMPurify.sanitize(htmlWithFormulas, {
+    ADD_ATTR: ['class', 'style'],
+    ADD_TAGS: ['span', 'div']
+  })
+  
+  return cleanHtml
 })
 </script>
 
@@ -249,6 +337,60 @@ const renderedContent = computed(() => {
 
 .markdown-body :deep(del) {
   color: #94a3b8;
+}
+
+/* ===== KaTeX 数学公式样式 ===== */
+
+/* 行内公式 */
+.markdown-body :deep(.katex-inline) {
+  display: inline;
+  padding: 0 2px;
+}
+
+/* 块级公式 */
+.markdown-body :deep(.katex-block) {
+  display: block;
+  text-align: center;
+  margin: 1.5em 0;
+  padding: 1em;
+  background: #f8fafc;
+  border-radius: 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+/* KaTeX容器样式 */
+.markdown-body :deep(.katex) {
+  font-size: 1.1em;
+  color: #1f2937;
+}
+
+.markdown-body :deep(.katex-block .katex) {
+  font-size: 1.3em;
+}
+
+/* 数学公式滚动条 */
+.markdown-body :deep(.katex-block::-webkit-scrollbar) {
+  height: 6px;
+}
+
+.markdown-body :deep(.katex-block::-webkit-scrollbar-track) {
+  background: transparent;
+}
+
+.markdown-body :deep(.katex-block::-webkit-scrollbar-thumb) {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+
+/* 公式错误提示 */
+.markdown-body :deep(.katex-error) {
+  color: #dc2626;
+  background: #fee2e2;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
+  font-size: 0.9em;
 }
 
 /* ===== 外层容器滚动条美化 ===== */

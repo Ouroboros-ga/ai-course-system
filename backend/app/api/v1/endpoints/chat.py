@@ -16,7 +16,8 @@ from app.core.security import get_current_user, teacher_student_allowed
 from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
-from app.services import qa_service
+from app.common.llm_client import llm_client, Message
+from app.services.progress_service import progress_service
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -164,6 +165,7 @@ async def ask_question(
     chatId: Optional[int] = Body(None, description="会话ID，不传则创建新会话"),
     courseId: Optional[int] = Body(None, description="课程ID，用于基于文档问答"),
     question: str = Body(..., description="用户问题"),
+    currentNodeId: Optional[int] = Body(None, description="当前学习节点ID，用于理解度分析"),
 ):
     """
     AI问答接口
@@ -174,6 +176,7 @@ async def ask_question(
     1. 如果传入courseId，AI会基于该课程的文档内容回答问题
     2. 如果传入chatId，会在该会话中继续对话
     3. 如果都不传，创建新会话进行普通对话
+    4. 如果传入currentNodeId，会进行理解度分析
     """
     try:
         user_id = int(current_user["user_id"])
@@ -225,18 +228,16 @@ async def ask_question(
         )
         history_messages = session.exec(statement).all()
         
-        history_list = [
-            {"role": msg.role.value, "content": msg.content}
-            for msg in history_messages
-        ]
+        messages = await _build_messages(history_messages, question, context_content)
         
-        print(f"[聊天] 调用QA服务生成回答...")
-        ai_answer = await qa_service.ask_question(
-            question=question,
-            context_content=context_content,
-            history_messages=history_list,
+        print(f"[聊天] 调用LLM生成回答...")
+        response = await llm_client.chat(
+            messages=messages,
+            temperature=0.7,
+            max_tokens=2048,
         )
-        print(f"[聊天] QA服务回答: {ai_answer[:100]}...")
+        ai_answer = response.content
+        print(f"[聊天] LLM回答: {ai_answer[:100]}...")
         
         assistant_message = ChatMessage(
             chat_id=chatId,
@@ -246,6 +247,29 @@ async def ask_question(
         session.add(assistant_message)
         session.commit()
         session.refresh(assistant_message)
+
+        understanding_analysis = None
+        if courseId and currentNodeId:
+            print(f"[聊天] 进行理解度分析...")
+            try:
+                analysis_result = await progress_service.handle_student_question(
+                    session=session,
+                    user_id=user_id,
+                    course_id=courseId,
+                    question=question,
+                    current_node_id=currentNodeId,
+                    chat_messages=history_messages,
+                )
+                understanding_analysis = {
+                    "level": analysis_result["understanding"]["level"],
+                    "score": analysis_result["understanding"]["score"],
+                    "keywordsWeak": analysis_result["understanding"]["keywords_weak"],
+                    "suggestions": analysis_result["understanding"]["suggestions"],
+                    "paceAdjustment": analysis_result["pace_adjustment"],
+                }
+                print(f"[聊天] 理解度: {understanding_analysis['level']}, 分数: {understanding_analysis['score']}")
+            except Exception as e:
+                print(f"[聊天] 理解度分析失败: {str(e)}")
         
         return unified_response(
             code=200,
@@ -254,6 +278,7 @@ async def ask_question(
                 "chatId": chatId,
                 "answer": ai_answer,
                 "messageId": assistant_message.id,
+                "understandingAnalysis": understanding_analysis,
             }
         )
         
@@ -301,6 +326,40 @@ async def _get_course_context(session: Session, course_id: int) -> str:
         context_parts.insert(0, f"【课程摘要】\n{course_script.summary_text}\n")
     
     return "\n\n".join(context_parts)
+
+
+async def _build_messages(
+    history_messages: List[ChatMessage],
+    current_question: str,
+    context_content: str = ""
+) -> List[Message]:
+    """
+    构建发送给LLM的消息列表
+    """
+    messages = []
+    
+    if context_content:
+        max_context_length = 8000
+        if len(context_content) > max_context_length:
+            context_content = context_content[:max_context_length] + "\n\n[内容已截断...]"
+        
+        system_prompt = f"""你是一个智能课程助手。请基于以下文档内容回答用户的问题。
+如果问题与文档内容无关，请礼貌地告知用户你只能回答与文档相关的问题。
+
+【文档内容】
+{context_content}
+
+请根据以上内容回答用户的问题，回答要准确、清晰、有帮助。"""
+    else:
+        system_prompt = """你是一个智能课程助手。请友好、专业地回答用户的问题。
+如果用户询问与课程、学习相关的问题，请提供有建设性的建议。"""
+    
+    messages.append(Message(role="system", content=system_prompt))
+    
+    for msg in history_messages[-10:]:
+        messages.append(Message(role=msg.role.value, content=msg.content))
+    
+    return messages
 
 
 @router.post("/create", response_model=UnifiedResponse)

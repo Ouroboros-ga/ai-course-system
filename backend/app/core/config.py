@@ -19,6 +19,7 @@ class LLMProvider(str, Enum):
 class TTSProvider(str, Enum):
     ALIYUN = "aliyun"
     TENCENT = "tencent"
+    VOLCENGINE = "volcengine"
 
 
 class Settings(BaseSettings):
@@ -84,6 +85,11 @@ class Settings(BaseSettings):
     TENCENT_TTS_SECRET_ID: str = ""
     TENCENT_TTS_SECRET_KEY: str = ""
     TENCENT_TTS_APP_ID: str = ""
+
+    # 火山引擎TTS配置
+    VOLCENGINE_TTS_APP_ID: str = ""
+    VOLCENGINE_TTS_ACCESS_TOKEN: str = ""
+    VOLCENGINE_TTS_SECRET_KEY: str = ""
 
     # --------------------------
     # 安全白名单
