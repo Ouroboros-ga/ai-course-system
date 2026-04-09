@@ -2,6 +2,7 @@
 文档处理API接口
 流程：上传文件 -> Docling解析为Markdown -> 豆包AI生成智课脚本 -> 存储到数据库 -> 返回结果
 Updated: 2026-03-28 - 集成Docling解析和豆包AI，添加用户认证
+Updated: 2026-04-09 - 重构：解析逻辑迁移到document_service服务层
 """
 
 import os
@@ -40,6 +41,7 @@ from app.models.course_model import (
     ScriptNodeType,
 )
 from app.models.user_model import ChatHistory
+from app.services.document_service import document_service
 from app.services import smart_course_service
 
 router = APIRouter(tags=["文档处理"])
@@ -66,11 +68,10 @@ async def upload_document(
     1. 验证用户身份
     2. 存储文件信息到 courses 表
     3. 创建 docling_documents 记录 (status = PENDING)
-    4. 调用Docling解析，输出Markdown，更新 status = PROCESSING -> COMPLETED
-    5. 将Markdown传递给豆包AI生成智课脚本 -> 创建 course_scripts 记录
-    6. 拆分脚本节点 -> 创建 script_nodes 记录
-    7. 创建聊天记录归档
-    8. 返回结果
+    4. 调用document_service处理文档（解析+RAG+脚本生成）
+    5. 存储解析结果到数据库
+    6. 创建聊天记录归档
+    7. 返回结果
     """
     try:
         user_id = int(current_user["user_id"])
@@ -134,15 +135,27 @@ async def upload_document(
         session.refresh(docling_doc)
         print(f"  创建文档解析记录: ID={docling_doc.id}, status=PENDING")
 
-        print(f"[步骤3] 调用Docling解析，更新 status = PROCESSING")
+        print(f"[步骤3] 调用document_service处理文档")
         docling_doc.status = ParseStatus.PROCESSING
         session.commit()
         print(f"  更新状态: PROCESSING")
 
-        markdown_content = await _parse_with_docling(file_path, file.filename)
-        print(f"  Docling解析完成: {len(markdown_content)} 字符")
+        process_result = await document_service.process_document(
+            file_path=file_path,
+            filename=file.filename,
+            enable_rag=True,
+            enable_script=True,
+        )
+        
+        parse_result = process_result.parse_result
+        structure_result = process_result.structure_result
+        script_result = process_result.script_result
+        rag_result = process_result.rag_result
+        mind_map = process_result.mind_map
 
-        parse_result = _parse_markdown_to_structure(markdown_content, file.filename)
+        print(f"  文档解析完成: {parse_result.parse_method}, {len(parse_result.markdown_content)} 字符")
+        print(f"  RAG预处理: 公式{rag_result.formula_count}个, 表格{rag_result.table_count}个, 知识点{len(rag_result.knowledge_points)}个")
+        print(f"  脚本生成: {len(script_result.nodes)} 个节点")
 
         print(f"[步骤4] 存储解析结果到相关表")
         total_texts = 0
@@ -150,7 +163,7 @@ async def upload_document(
         total_pictures = 0
         total_groups = 0
 
-        for group_data in parse_result.get("groups", []):
+        for group_data in structure_result.groups:
             group = DoclingGroup(
                 doc_id=docling_doc.id,
                 self_ref=group_data.get("self_ref", f"#/groups/{total_groups}"),
@@ -165,7 +178,7 @@ async def upload_document(
             total_groups += 1
         print(f"  存储 {total_groups} 个分组记录")
 
-        for idx, text_data in enumerate(parse_result.get("texts", [])):
+        for idx, text_data in enumerate(structure_result.texts):
             text_record = DoclingText(
                 doc_id=docling_doc.id,
                 group_id=None,
@@ -185,25 +198,25 @@ async def upload_document(
         docling_doc.total_texts = total_texts
         docling_doc.total_tables = total_tables
         docling_doc.total_pictures = total_pictures
-        docling_doc.raw_json = parse_result
+        docling_doc.raw_json = {
+            "groups": structure_result.groups,
+            "texts": structure_result.texts,
+            "tables": structure_result.tables,
+            "pictures": structure_result.pictures,
+            "raw_content": structure_result.raw_content,
+        }
         docling_doc.updated_at = datetime.utcnow()
         session.commit()
         print(f"  更新状态: COMPLETED")
 
-        print(f"[步骤5] 调用豆包AI生成智课脚本")
-        print(f"  将Markdown传递给豆包AI...")
-        
-        ai_script_result = await smart_course_service.generate_structured_script(
-            markdown_content, file.filename
-        )
-        
+        print(f"[步骤5] 存储智课脚本到数据库")
         course_script = CourseScript(
             course_id=course.id,
             version=1,
             version_name="v1.0",
-            script_content=ai_script_result["script_content"],
-            summary_text=ai_script_result["summary_text"],
-            keywords=json.dumps(ai_script_result["keywords"], ensure_ascii=False),
+            script_content=script_result.script_content,
+            summary_text=script_result.summary,
+            keywords=json.dumps(script_result.keywords, ensure_ascii=False),
             is_active=True,
             audio_url=None,
             audio_duration=0,
@@ -215,26 +228,25 @@ async def upload_document(
         print(f"  创建课程脚本记录: ID={course_script.id}")
 
         print(f"[步骤6] 拆分脚本节点")
-        nodes_data = ai_script_result["script_content"].get("nodes", [])
-        for idx, node_data in enumerate(nodes_data):
-            node = ScriptNode(
+        for idx, node in enumerate(script_result.nodes):
+            script_node = ScriptNode(
                 script_id=course_script.id,
-                chapter_id=node_data.get("chapter_id", f"chap_{idx:03d}"),
+                chapter_id=node.chapter_id,
                 node_index=idx,
-                node_type=ScriptNodeType(node_data.get("node_type", "lecture")),
-                title=node_data.get("title", f"节点 {idx + 1}"),
-                content=node_data.get("content", ""),
-                page_start=node_data.get("page_start", 1),
-                page_end=node_data.get("page_end", 1),
-                duration=node_data.get("duration", 60),
-                is_key_point=node_data.get("is_key_point", False),
+                node_type=ScriptNodeType(node.node_type),
+                title=node.title,
+                content=node.content,
+                page_start=node.page_start,
+                page_end=node.page_end,
+                duration=node.duration,
+                is_key_point=node.is_key_point,
             )
-            session.add(node)
+            session.add(script_node)
         session.commit()
-        print(f"  创建 {len(nodes_data)} 个 script_nodes 记录")
+        print(f"  创建 {len(script_result.nodes)} 个 script_nodes 记录")
 
-        course.total_nodes = len(nodes_data)
-        course.total_duration = sum(n.get("duration", 60) for n in nodes_data)
+        course.total_nodes = len(script_result.nodes)
+        course.total_duration = script_result.total_duration
         course.is_ai_generated = True
         course.updated_at = datetime.utcnow()
         session.commit()
@@ -257,30 +269,32 @@ async def upload_document(
             "doc_id": docling_doc.id,
             "chat_id": chat_id,
             "filename": file.filename,
-            "markdown_content": markdown_content,
-            "script_content": ai_script_result["script_content"],
+            "markdown_content": parse_result.markdown_content,
+            "script_content": script_result.script_content,
             "file_path": str(file_path),
+            "rag_knowledge_points": rag_result.knowledge_points,
         }
 
-        mind_map_json = _generate_mind_map(ai_script_result["script_content"])
-        
-        beautiful_markdown = ai_script_result.get("beautiful_markdown", markdown_content)
-        
         print(f"[步骤8] 返回结果给前端")
-        print(f"  精美Markdown长度: {len(beautiful_markdown)}")
-        print(f"  原始Markdown长度: {len(markdown_content)}")
         
         return unified_response(
             code=200,
             message="上传并解析成功",
             data={
-                "fullContent": beautiful_markdown,
-                "rawContent": markdown_content,
+                "fullContent": script_result.beautiful_markdown,
+                "rawContent": parse_result.markdown_content,
                 "title": course.title,
                 "audioUrl": None,
-                "mindMapJson": mind_map_json,
+                "mindMapJson": mind_map,
                 "chatId": chat_id,
                 "courseId": course.id,
+                "ragInfo": {
+                    "formulaCount": rag_result.formula_count,
+                    "tableCount": rag_result.table_count,
+                    "domainTermCount": rag_result.domain_term_count,
+                    "treeNodeCount": rag_result.tree_node_count,
+                    "knowledgePointCount": len(rag_result.knowledge_points),
+                } if not rag_result.error else None,
             }
         )
 
@@ -451,337 +465,6 @@ async def get_course_detail(
             } if docling_doc else None,
         }
     )
-
-
-async def _parse_with_docling(file_path: Path, filename: str) -> str:
-    """
-    使用Docling解析文件，返回Markdown内容
-    """
-    try:
-        from docling.document_converter import DocumentConverter
-        
-        print(f"  [Docling] 开始解析: {filename}")
-        converter = DocumentConverter()
-        result = converter.convert(str(file_path))
-        markdown_content = result.document.export_to_markdown()
-        print(f"  [Docling] 解析完成，生成 {len(markdown_content)} 字符Markdown")
-        return markdown_content
-        
-    except ImportError:
-        print(f"  [Docling] 未安装，使用备用解析方法")
-        return await _fallback_parse(file_path, filename)
-    except Exception as e:
-        print(f"  [Docling] 解析失败: {e}，使用备用方法")
-        return await _fallback_parse(file_path, filename)
-
-
-async def _fallback_parse(file_path: Path, filename: str) -> str:
-    """
-    备用解析方法（当Docling不可用时）
-    生成结构化的Markdown格式
-    """
-    suffix = file_path.suffix.lower()
-    
-    if suffix == ".pdf":
-        try:
-            import pdfplumber
-            text_parts = [f"# {Path(filename).stem}\n"]
-            with pdfplumber.open(file_path) as pdf:
-                for page_num, page in enumerate(pdf.pages, 1):
-                    text = page.extract_text()
-                    if text:
-                        text_parts.append(f"\n## 第{page_num}页\n")
-                        text_parts.append(f"{text}\n")
-            return "\n".join(text_parts)
-        except ImportError:
-            return f"# {filename}\n\n[PDF文件需要安装pdfplumber库才能解析]"
-    
-    elif suffix in [".docx", ".doc"]:
-        try:
-            from docx import Document
-            doc = Document(file_path)
-            text_parts = [f"# {Path(filename).stem}\n"]
-            
-            for para in doc.paragraphs:
-                if para.text.strip():
-                    if para.style.name.startswith('Heading'):
-                        level = int(para.style.name.replace('Heading ', '')) if para.style.name != 'Heading' else 1
-                        text_parts.append(f"\n{'#' * level} {para.text.strip()}\n")
-                    else:
-                        text_parts.append(f"{para.text.strip()}\n")
-            
-            return "\n".join(text_parts)
-        except ImportError:
-            return f"# {filename}\n\n[Word文件需要安装python-docx库才能解析]"
-    
-    elif suffix in [".pptx", ".ppt"]:
-        try:
-            from pptx import Presentation
-            prs = Presentation(file_path)
-            text_parts = [f"# {Path(filename).stem}\n"]
-            text_parts.append("\n> 本文档由PPT自动解析生成\n")
-            
-            for slide_num, slide in enumerate(prs.slides, 1):
-                title = ""
-                if slide.shapes.title and slide.shapes.title.text:
-                    title = slide.shapes.title.text.strip()
-                
-                text_parts.append(f"\n## 第{slide_num}页{': ' + title if title else ''}\n")
-                
-                content_items = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        text = shape.text.strip()
-                        if text != title:
-                            content_items.append(text)
-                
-                for item in content_items:
-                    if len(item) < 50 and not item.endswith(('。', '，', '：', '.', ',', ':')):
-                        if item.endswith('?') or item.endswith('？'):
-                            text_parts.append(f"\n### ❓ {item}\n")
-                        else:
-                            text_parts.append(f"\n### {item}\n")
-                    else:
-                        text_parts.append(f"\n{item}\n")
-            
-            return "\n".join(text_parts)
-        except ImportError:
-            return f"# {filename}\n\n[PPT文件需要安装python-pptx库才能解析]"
-    
-    elif suffix in [".txt", ".md", ".json", ".py", ".js", ".html", ".css"]:
-        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-            content = f.read()
-        if suffix == ".md":
-            return content
-        else:
-            return f"# {filename}\n\n```\n{content}\n```"
-    
-    else:
-        return f"# {filename}\n\n[不支持的文件格式: {suffix}]"
-
-
-def _parse_markdown_to_structure(markdown_content: str, filename: str) -> dict:
-    """
-    将Markdown内容解析为结构化数据
-    """
-    lines = markdown_content.split("\n")
-    texts = []
-    groups = []
-    
-    current_group_idx = 0
-    text_idx = 0
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        
-        if line.startswith("##"):
-            groups.append({
-                "self_ref": f"#/groups/{current_group_idx}",
-                "name": line.lstrip("#").strip(),
-                "label": "section",
-                "content_layer": "body",
-            })
-            current_group_idx += 1
-        else:
-            texts.append({
-                "self_ref": f"#/texts/{text_idx}",
-                "label": "paragraph",
-                "text": line,
-                "page_no": 1,
-            })
-            text_idx += 1
-    
-    if not groups:
-        groups.append({
-            "self_ref": "#/groups/0",
-            "name": filename,
-            "label": "section",
-            "content_layer": "body",
-        })
-    
-    return {
-        "groups": groups,
-        "texts": texts,
-        "tables": [],
-        "pictures": [],
-        "raw_content": markdown_content,
-    }
-
-
-async def _generate_script_with_doubao(markdown_content: str, filename: str) -> dict:
-    """
-    调用豆包AI生成智课脚本
-    
-    将Docling输出的Markdown传递给豆包AI，生成结构化的智课脚本
-    """
-    print(f"  [豆包AI] 开始生成脚本...")
-    
-    max_content_length = 6000
-    if len(markdown_content) > max_content_length:
-        truncated_content = markdown_content[:max_content_length]
-        truncated_content += f"\n\n[内容已截断，原长度: {len(markdown_content)} 字符]"
-    else:
-        truncated_content = markdown_content
-    
-    system_prompt = """你是一位专业的课程设计师。请根据用户提供的文档内容，生成一份结构化的智课脚本。
-
-你需要完成以下任务：
-1. 分析文档内容，提取核心知识点
-2. 将内容拆分为多个教学节点（每个节点60-120秒）
-3. 为每个节点生成标题、内容摘要和时长
-4. 识别重点知识点
-5. 生成课程总结
-
-请以JSON格式返回结果，格式如下：
-{
-    "title": "课程标题",
-    "summary": "课程摘要",
-    "keywords": ["关键词1", "关键词2", ...],
-    "total_duration": 总时长(秒),
-    "nodes": [
-        {
-            "chapter_id": "chap_001",
-            "node_type": "lecture",
-            "title": "节点标题",
-            "content": "节点内容/讲解文本",
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": false
-        },
-        ...
-    ]
-}
-
-节点类型(node_type)可选值：
-- lecture: 讲解
-- question: 问题
-- summary: 总结
-- interactive: 交互
-
-请确保返回的是有效的JSON格式。"""
-
-    user_prompt = f"""请根据以下文档内容生成智课脚本：
-
-文件名: {filename}
-
-文档内容：
-{truncated_content}
-
-请生成结构化的智课脚本JSON。"""
-
-    try:
-        messages = [
-            Message(role="system", content=system_prompt),
-            Message(role="user", content=user_prompt)
-        ]
-        
-        print(f"  [豆包AI] 发送请求，内容长度: {len(user_prompt)} 字符")
-        response = await llm_client.chat(messages)
-        print(f"  [豆包AI] 收到响应，长度: {len(response.content)} 字符")
-        
-        import re
-        json_match = re.search(r'\{[\s\S]*\}', response.content)
-        if json_match:
-            script_content = json.loads(json_match.group())
-        else:
-            script_content = _create_default_script(filename, markdown_content)
-        
-    except Exception as e:
-        print(f"  [豆包AI] 调用失败: {e}，使用默认脚本")
-        script_content = _create_default_script(filename, markdown_content)
-    
-    summary_text = script_content.get("summary", f"本课程《{Path(filename).stem}》包含 {len(script_content.get('nodes', []))} 个知识点。")
-    keywords = script_content.get("keywords", ["知识点", "课程", Path(filename).stem])
-    
-    print(f"  [豆包AI] 生成完成: {len(script_content.get('nodes', []))} 个节点")
-    
-    return {
-        "script_content": script_content,
-        "summary_text": summary_text,
-        "keywords": keywords,
-    }
-
-
-def _create_default_script(filename: str, content: str) -> dict:
-    """
-    创建默认脚本（当AI调用失败时）
-    """
-    lines = [l.strip() for l in content.split("\n") if l.strip() and len(l.strip()) > 10]
-    
-    nodes = []
-    for idx, line in enumerate(lines[:15]):
-        node_type = "lecture"
-        if idx == len(lines[:15]) - 1:
-            node_type = "summary"
-        
-        nodes.append({
-            "chapter_id": f"chap_{idx:03d}",
-            "node_type": node_type,
-            "title": line[:50] + ("..." if len(line) > 50 else ""),
-            "content": line,
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": idx % 3 == 0,
-        })
-    
-    if not nodes:
-        nodes = [{
-            "chapter_id": "chap_000",
-            "node_type": "lecture",
-            "title": "课程导入",
-            "content": f"欢迎学习本课程，本课程来源于文件 {filename}",
-            "page_start": 1,
-            "page_end": 1,
-            "duration": 60,
-            "is_key_point": True,
-        }]
-    
-    return {
-        "title": Path(filename).stem,
-        "summary": f"本课程《{Path(filename).stem}》共包含 {len(nodes)} 个知识点。",
-        "keywords": ["知识点", "课程", Path(filename).stem],
-        "total_duration": sum(n["duration"] for n in nodes),
-        "nodes": nodes,
-    }
-
-
-def _generate_mind_map(script_content: dict) -> dict:
-    """
-    根据脚本内容生成思维导图JSON结构
-    """
-    nodes = script_content.get("nodes", [])
-    title = script_content.get("title", "课程内容")
-    keywords = script_content.get("keywords", [])
-    
-    children = []
-    
-    for node in nodes:
-        child = {
-            "text": node.get("title", "未命名节点"),
-        }
-        if node.get("is_key_point"):
-            child["highlight"] = True
-        children.append(child)
-    
-    if not children:
-        for kw in keywords[:5]:
-            children.append({"text": kw})
-    
-    if not children:
-        children = [
-            {"text": "知识点1"},
-            {"text": "知识点2"},
-            {"text": "知识点3"},
-        ]
-    
-    return {
-        "text": title,
-        "children": children
-    }
 
 
 # ==================== TTS语音合成接口 ====================

@@ -24,10 +24,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from app.common.formula_placeholder import FormulaPlaceholderReplacer, FormulaReplaceResult
-from app.common.table_flattener import TableFlattener, FlattenResult
-from app.common.ik_tokenizer import IKTokenizer, TokenizeResult, EducationalDictionary
-from app.common.tree_rag import (
+from app.common.RAG.formula_placeholder import FormulaPlaceholderReplacer, FormulaReplaceResult
+from app.common.RAG.table_flattener import TableFlattener, FlattenResult
+from app.common.RAG.ik_tokenizer import IKTokenizer, TokenizeResult, EducationalDictionary
+from app.common.RAG.tree_rag import (
     DoclingTreeBuilder,
     TreeRAGRetriever,
     TreeBuildResult,

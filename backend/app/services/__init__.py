@@ -12,6 +12,21 @@ from app.services.progress_service import (
     NodeLocator,
     PaceAdjuster,
 )
+from app.services.document_service import (
+    document_service,
+    DocumentService,
+    DocumentParser,
+    StructureParser,
+    ScriptGenerator,
+    MindMapGenerator,
+    RAGProcessor,
+    ParseResult,
+    StructureResult,
+    ScriptResult,
+    ScriptNode,
+    RAGProcessResult,
+    DocumentProcessResult,
+)
 
 __all__ = [
     "smart_course_service",
@@ -25,4 +40,17 @@ __all__ = [
     "UnderstandingAnalyzer",
     "NodeLocator",
     "PaceAdjuster",
+    "document_service",
+    "DocumentService",
+    "DocumentParser",
+    "StructureParser",
+    "ScriptGenerator",
+    "MindMapGenerator",
+    "RAGProcessor",
+    "ParseResult",
+    "StructureResult",
+    "ScriptResult",
+    "ScriptNode",
+    "RAGProcessResult",
+    "DocumentProcessResult",
 ]
