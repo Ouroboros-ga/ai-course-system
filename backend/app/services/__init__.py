@@ -5,7 +5,13 @@
 
 from app.services.smart_course_service import smart_course_service, SmartCourseService, ScriptPromptBuilder
 from app.services.qa_service import qa_service, QAService, QAPromptBuilder
-from app.services.progress_service import progress_service, ProgressService, ProgressPromptBuilder
+from app.services.progress_service import (
+    progress_service,
+    ProgressService,
+    UnderstandingAnalyzer,
+    NodeLocator,
+    PaceAdjuster,
+)
 
 __all__ = [
     "smart_course_service",
@@ -16,5 +22,7 @@ __all__ = [
     "QAPromptBuilder",
     "progress_service",
     "ProgressService",
-    "ProgressPromptBuilder",
+    "UnderstandingAnalyzer",
+    "NodeLocator",
+    "PaceAdjuster",
 ]
