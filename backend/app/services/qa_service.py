@@ -433,6 +433,146 @@ class QAService:
             "suggested_action": "continue",
             "reasoning": "分析失败，使用默认值"
         }
+    
+    async def ask_question_with_multi_kb(
+        self,
+        question: str,
+        kb_ids: List[int] = None,
+        subject: str = None,
+        history_messages: List[dict] = None,
+        top_k: int = 5,
+        strict_mode: bool = True
+    ) -> Dict[str, Any]:
+        """
+        基于多学科知识库的问答
+        
+        Args:
+            question: 用户问题
+            kb_ids: 知识库ID列表
+            subject: 学科过滤 (math/physics/chemistry/...)
+            history_messages: 历史消息
+            top_k: 返回知识点数量
+            strict_mode: 是否使用严格知识库模式
+            
+        Returns:
+            dict: {
+                "answer": "回答内容",
+                "knowledge_points": [...],
+                "kb_context": "知识库上下文"
+            }
+        """
+        from sqlmodel import Session
+        from app.models.database import get_session
+        from app.models.knowledge_model import SubjectType
+        from app.services.knowledge_service import KnowledgeSearchService
+        
+        session = next(get_session())
+        
+        try:
+            subject_enum = None
+            if subject:
+                try:
+                    subject_enum = SubjectType(subject)
+                except ValueError:
+                    pass
+            
+            kb_context, knowledge_points = KnowledgeSearchService.get_context_for_question(
+                session=session,
+                question=question,
+                kb_ids=kb_ids,
+                subject=subject_enum,
+                top_k=top_k,
+            )
+            
+            if not kb_context:
+                return {
+                    "answer": "抱歉，当前知识库中未找到相关信息。",
+                    "knowledge_points": [],
+                    "kb_context": None,
+                }
+            
+            if strict_mode:
+                answer = await self.ask_question_with_knowledge_base(
+                    question=question,
+                    context_content=kb_context,
+                    knowledge_points=knowledge_points,
+                    history_messages=history_messages,
+                )
+            else:
+                result = await self.ask_question_with_rag(
+                    question=question,
+                    course_context=kb_context,
+                    history_messages=history_messages,
+                    use_rag=False,
+                    strict_mode=False,
+                )
+                answer = result["answer"]
+            
+            return {
+                "answer": answer,
+                "knowledge_points": knowledge_points,
+                "kb_context": kb_context,
+            }
+            
+        except Exception as e:
+            print(f"[QAService] 多学科知识库问答失败: {str(e)}")
+            return {
+                "answer": f"知识库检索失败: {str(e)}",
+                "knowledge_points": [],
+                "kb_context": None,
+            }
+        finally:
+            session.close()
+    
+    def retrieve_from_multi_kb(
+        self,
+        question: str,
+        kb_ids: List[int] = None,
+        subject: str = None,
+        top_k: int = 5,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        """
+        从多学科知识库检索上下文
+        
+        Args:
+            question: 用户问题
+            kb_ids: 知识库ID列表
+            subject: 学科过滤
+            top_k: 返回知识点数量
+            
+        Returns:
+            tuple: (上下文文本, 知识点列表)
+        """
+        from sqlmodel import Session
+        from app.models.database import get_session
+        from app.models.knowledge_model import SubjectType
+        from app.services.knowledge_service import KnowledgeSearchService
+        
+        session = next(get_session())
+        
+        try:
+            subject_enum = None
+            if subject:
+                try:
+                    subject_enum = SubjectType(subject)
+                except ValueError:
+                    pass
+            
+            kb_context, knowledge_points = KnowledgeSearchService.get_context_for_question(
+                session=session,
+                question=question,
+                kb_ids=kb_ids,
+                subject=subject_enum,
+                top_k=top_k,
+            )
+            
+            return kb_context, knowledge_points
+            
+        except Exception as e:
+            print(f"[QAService] 多学科知识库检索失败: {str(e)}")
+            return "", []
+        finally:
+            session.close()
 
 
 qa_service = QAService()
