@@ -45,3 +45,4 @@ venv/
 ENV/
 backend/.env
 .venv
+database/smart_class.db
