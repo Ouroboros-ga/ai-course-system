@@ -12,8 +12,8 @@ import UserIndex from "@/components/profile/UserIndex.vue";
 .profile-page {
   position: relative;
   width: 100%;
-  height: 100%;
-  min-height: calc(100vh - 120px);
+  height: calc(100vh - 60px);
+  overflow: hidden;
 }
 
 /* 🔥 项目统一高级淡入动画 */

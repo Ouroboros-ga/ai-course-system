@@ -185,13 +185,13 @@ onUnmounted(() => {
 }
 
 .content-box {
-  flex: 1;
+  flex: none;
+  height: calc(100vh - 60px - 48px - 16px);
   display: flex;
   flex-direction: column;
-  padding: 16px;
+  padding: 4px 16px 16px;
   box-sizing: border-box;
   position: relative;
-  min-height: 0;
   overflow: hidden;
 }
 
@@ -222,6 +222,7 @@ onUnmounted(() => {
   }
 
   .content-box {
+    height: calc(100vh - 60px - 48px - 16px - 60px);
     padding: 0 12px 12px;
   }
 }

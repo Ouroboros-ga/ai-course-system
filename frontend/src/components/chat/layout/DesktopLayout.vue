@@ -21,7 +21,7 @@ defineProps({
 <style scoped>
 .desktop-layout {
   display: flex;
-  gap: 16px;
+  gap: 8px;
   flex: 1;
   position: relative;
   width: 100%;
