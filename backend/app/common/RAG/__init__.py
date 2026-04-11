@@ -3,6 +3,7 @@ from app.common.RAG.table_flattener import TableFlattener, FlattenResult, Parsed
 from app.common.RAG.ik_tokenizer import IKTokenizer, TokenizeResult, EducationalDictionary, Token, TokenType
 from app.common.RAG.tree_rag import DoclingTreeBuilder, TreeRAGRetriever, TreeNode, NodeType, TreeBuildResult, RetrievalResult
 from app.common.RAG.rag_utils import RAGPipeline, DocumentProcessResult, RAGAnswer, rag_pipeline
+from app.common.RAG.keyword_extractor import StatisticalKeywordExtractor, HybridKeywordExtractor, ExtractionResult
 
 __all__ = [
     "FormulaPlaceholderReplacer",
@@ -27,4 +28,7 @@ __all__ = [
     "DocumentProcessResult",
     "RAGAnswer",
     "rag_pipeline",
+    "StatisticalKeywordExtractor",
+    "HybridKeywordExtractor",
+    "ExtractionResult",
 ]
