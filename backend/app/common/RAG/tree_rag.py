@@ -468,7 +468,7 @@ class TreeRAGRetriever:
 
     def _build_inverted_index(self, node: TreeNode) -> None:
         """构建倒排索引"""
-        from app.common.ik_tokenizer import IKTokenizer
+        from app.common.RAG.ik_tokenizer import IKTokenizer
 
         tokenizer = IKTokenizer()
 
@@ -526,7 +526,7 @@ class TreeRAGRetriever:
 
     def _keyword_retrieve(self, query: str) -> List[RetrievalResult]:
         """关键词检索"""
-        from app.common.ik_tokenizer import IKTokenizer
+        from app.common.RAG.ik_tokenizer import IKTokenizer
 
         tokenizer = IKTokenizer()
         query_result = tokenizer.tokenize(query)
