@@ -14,6 +14,14 @@ from datetime import datetime
 
 from app.common.llm_client import llm_client, Message
 from app.common.RAG import rag_pipeline
+from app.common.prompts.document_analysis import (
+    KNOWLEDGE_EXTRACTION_PROMPT,
+    build_knowledge_extraction_prompt
+)
+from app.common.prompts.knowledge_to_script import (
+    KNOWLEDGE_TO_SCRIPT_PROMPT,
+    build_knowledge_to_script_prompt
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -298,6 +306,234 @@ class StructureParser:
             pictures=[],
             raw_content=markdown_content
         )
+
+
+class KnowledgeExtractor:
+    """知识点提取器 - 使用LLM从文档中提取结构化知识点"""
+
+    @staticmethod
+    async def extract_knowledge_points(
+        document_content: str,
+        filename: str = "",
+        max_content_length: int = 8000
+    ) -> str:
+        """
+        从文档内容中提取知识点，返回结构化Markdown
+
+        Args:
+            document_content: 文档内容
+            filename: 文件名
+            max_content_length: 最大内容长度
+
+        Returns:
+            str: 结构化的Markdown知识点文档
+        """
+        logger.info(f"[KnowledgeExtractor] 开始提取知识点: {filename}")
+
+        # 截断内容以适应模型上下文限制
+        if len(document_content) > max_content_length:
+            truncated_content = document_content[:max_content_length]
+            truncated_content += f"\n\n[内容已截断，原长度: {len(document_content)} 字符]"
+        else:
+            truncated_content = document_content
+
+        # 使用提示词构建函数
+        user_prompt = build_knowledge_extraction_prompt(truncated_content, filename)
+
+        try:
+            messages = [
+                Message(role="system", content=KNOWLEDGE_EXTRACTION_PROMPT),
+                Message(role="user", content=user_prompt)
+            ]
+
+            logger.info(f"[KnowledgeExtractor] 发送AI请求，内容长度: {len(user_prompt)} 字符")
+            response = await llm_client.chat(messages, temperature=0.3)
+            logger.info(f"[KnowledgeExtractor] 收到AI响应，长度: {len(response.content)} 字符")
+
+            return response.content
+
+        except Exception as e:
+            logger.error(f"[KnowledgeExtractor] 知识点提取失败: {e}")
+            # 返回一个基本的错误提示Markdown
+            return f"""# {filename or '文档'} - 知识点提取失败
+
+由于技术原因，无法自动提取知识点。请手动整理文档内容。
+
+**错误信息**: {str(e)}
+"""
+
+    @staticmethod
+    def parse_knowledge_markdown(markdown_content: str) -> List[Dict[str, Any]]:
+        """
+        解析知识点Markdown，提取结构化的知识点列表
+
+        Args:
+            markdown_content: 知识点Markdown内容
+
+        Returns:
+            List[Dict]: 知识点列表，每项包含 id, title, level, content
+        """
+        knowledge_points = []
+        lines = markdown_content.split('\n')
+
+        current_kp = None
+        content_buffer = []
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            # 检测标题行
+            if line.startswith('#'):
+                # 保存上一个知识点
+                if current_kp:
+                    current_kp['content'] = '\n'.join(content_buffer).strip()
+                    knowledge_points.append(current_kp)
+                    content_buffer = []
+
+                # 解析标题级别
+                level = len(line) - len(line.lstrip('#'))
+                title = line.lstrip('#').strip()
+
+                current_kp = {
+                    'id': f"知识点{len(knowledge_points) + 1}",
+                    'title': title,
+                    'level': level,
+                    'content': ''
+                }
+            else:
+                # 累积内容
+                if current_kp:
+                    content_buffer.append(line)
+
+        # 保存最后一个知识点
+        if current_kp:
+            current_kp['content'] = '\n'.join(content_buffer).strip()
+            knowledge_points.append(current_kp)
+
+        logger.info(f"[KnowledgeExtractor] 解析出 {len(knowledge_points)} 个知识点")
+        return knowledge_points
+
+    @staticmethod
+    async def generate_script_from_knowledge(
+        knowledge_markdown: str,
+        filename: str = "",
+        max_content_length: int = 8000
+    ) -> Dict[str, Any]:
+        """
+        从知识点 Markdown 生成结构化智课脚本
+
+        Args:
+            knowledge_markdown: 知识点 Markdown 内容
+            filename: 文件名
+            max_content_length: 最大内容长度
+
+        Returns:
+            Dict: 结构化脚本 JSON
+        """
+        logger.info(f"[KnowledgeExtractor] 开始从知识点生成脚本: {filename}")
+
+        # 截断内容以适应模型上下文限制
+        if len(knowledge_markdown) > max_content_length:
+            truncated_content = knowledge_markdown[:max_content_length]
+            truncated_content += f"\n\n[内容已截断，原长度: {len(knowledge_markdown)} 字符]"
+        else:
+            truncated_content = knowledge_markdown
+
+        # 使用提示词构建函数
+        user_prompt = build_knowledge_to_script_prompt(truncated_content, filename)
+
+        try:
+            messages = [
+                Message(role="system", content=KNOWLEDGE_TO_SCRIPT_PROMPT),
+                Message(role="user", content=user_prompt)
+            ]
+
+            logger.info(f"[KnowledgeExtractor] 发送脚本生成请求，内容长度: {len(user_prompt)} 字符")
+            response = await llm_client.chat(messages, temperature=0.5)
+            logger.info(f"[KnowledgeExtractor] 收到脚本响应，长度: {len(response.content)} 字符")
+
+            # 提取 JSON
+            json_match = re.search(r'\{[\s\S]*\}', response.content)
+            if json_match:
+                script_content = json.loads(json_match.group())
+            else:
+                # 如果无法解析 JSON，返回默认结构
+                script_content = KnowledgeExtractor._create_default_script(filename, knowledge_markdown)
+
+            return script_content
+
+        except Exception as e:
+            logger.error(f"[KnowledgeExtractor] 脚本生成失败: {e}")
+            return KnowledgeExtractor._create_default_script(filename, knowledge_markdown)
+
+    @staticmethod
+    def _create_default_script(filename: str, knowledge_markdown: str) -> Dict[str, Any]:
+        """
+        创建默认脚本（当AI调用失败时）
+        """
+        lines = [l.strip() for l in knowledge_markdown.split("\n") if l.strip().startswith('#')]
+
+        sections = []
+
+        # 开场白
+        sections.append({
+            "type": "opening",
+            "id": "sec_000",
+            "title": "课程开场",
+            "content": f"同学们好！欢迎学习《{Path(filename).stem if filename else '本课程'}》。在今天的课程中，我们将一起探索这个有趣的主题。希望通过今天的学习，大家能够掌握核心概念，并能够灵活运用到实际问题中。",
+            "duration": 45,
+            "tone": "enthusiastic",
+            "transitions": {
+                "next": "接下来，让我们进入今天的第一个知识点。"
+            }
+        })
+
+        # 知识点
+        for idx, line in enumerate(lines[:8]):
+            if idx == 0:  # 跳过主标题
+                continue
+
+            title = line.lstrip('#').strip()
+            prev_transition = "首先，" if idx == 1 else ("最后，" if idx == len(lines[:8]) - 1 else "接下来，")
+            next_transition = "" if idx == len(lines[:8]) - 1 else "理解了概念后，我们继续往下看。"
+
+            sections.append({
+                "type": "knowledge_point",
+                "id": f"sec_{idx:03d}",
+                "title": title[:40] + ("..." if len(title) > 40 else ""),
+                "definition": title,
+                "explanation": f"这是关于{title[:20]}的详细解释。",
+                "examples": [f"示例：相关应用场景"],
+                "content": f"{prev_transition}我们来学习{title[:40]}。{title}这个概念非常重要。",
+                "duration": 90,
+                "difficulty": "medium",
+                "is_key_point": idx % 2 == 0,
+                "transitions": {
+                    "prev": prev_transition.strip('，'),
+                    "next": next_transition
+                }
+            })
+
+        # 总结语
+        sections.append({
+            "type": "summary",
+            "id": "sec_999",
+            "title": "课程总结",
+            "key_points": ["核心要点回顾"],
+            "content": "今天我们学习了本课程的核心内容，希望大家课后能够复习巩固。",
+            "duration": 60,
+            "next_preview": "下节课我们将继续深入学习。"
+        })
+
+        return {
+            "title": Path(filename).stem if filename else "课程",
+            "summary": f"本课程《{Path(filename).stem if filename else '课程'}》共包含 {len(sections)} 个教学环节。",
+            "keywords": ["知识点", "课程"],
+            "total_duration": sum(s.get("duration", 60) for s in sections),
+            "sections": sections
+        }
 
 
 class ScriptGenerator:
@@ -604,10 +840,11 @@ class RAGProcessor:
 
 class DocumentService:
     """文档处理服务"""
-    
+
     def __init__(self):
         self.parser = DocumentParser()
         self.structure_parser = StructureParser()
+        self.knowledge_extractor = KnowledgeExtractor()
         self.script_generator = ScriptGenerator()
         self.mind_map_generator = MindMapGenerator()
         self.rag_processor = RAGProcessor()
@@ -680,17 +917,97 @@ class DocumentService:
         仅解析文件，不进行其他处理
         """
         return await self.parser.parse_file(file_path, filename)
-    
+
+    async def extract_knowledge_only(
+        self,
+        markdown_content: str,
+        filename: str = ""
+    ) -> Dict[str, Any]:
+        """
+        仅提取知识点
+
+        Args:
+            markdown_content: Markdown内容
+            filename: 文件名
+
+        Returns:
+            Dict: 包含 knowledge_markdown 和 knowledge_points 的结果
+        """
+        knowledge_markdown = await self.knowledge_extractor.extract_knowledge_points(
+            markdown_content, filename
+        )
+        knowledge_points = self.knowledge_extractor.parse_knowledge_markdown(
+            knowledge_markdown
+        )
+        return {
+            "knowledge_markdown": knowledge_markdown,
+            "knowledge_points": knowledge_points
+        }
+
+    async def generate_script_from_knowledge_only(
+        self,
+        knowledge_markdown: str,
+        filename: str = ""
+    ) -> Dict[str, Any]:
+        """
+        仅从知识点生成智课脚本
+
+        Args:
+            knowledge_markdown: 知识点 Markdown 内容
+            filename: 文件名
+
+        Returns:
+            Dict: 结构化脚本 JSON
+        """
+        return await self.knowledge_extractor.generate_script_from_knowledge(
+            knowledge_markdown, filename
+        )
+
+    async def extract_and_generate_script(
+        self,
+        markdown_content: str,
+        filename: str = ""
+    ) -> Dict[str, Any]:
+        """
+        完整流程：提取知识点并生成智课脚本
+
+        Args:
+            markdown_content: 文档 Markdown 内容
+            filename: 文件名
+
+        Returns:
+            Dict: 包含 knowledge_markdown, knowledge_points, script 的完整结果
+        """
+        logger.info(f"[DocumentService] 开始完整流程：提取知识点并生成脚本 - {filename}")
+
+        # 步骤1：提取知识点
+        knowledge_result = await self.extract_knowledge_only(markdown_content, filename)
+        knowledge_markdown = knowledge_result["knowledge_markdown"]
+        knowledge_points = knowledge_result["knowledge_points"]
+
+        # 步骤2：从知识点生成脚本
+        script = await self.knowledge_extractor.generate_script_from_knowledge(
+            knowledge_markdown, filename
+        )
+
+        logger.info(f"[DocumentService] 完整流程完成：提取了 {len(knowledge_points)} 个知识点，生成了 {len(script.get('sections', []))} 个教学环节")
+
+        return {
+            "knowledge_markdown": knowledge_markdown,
+            "knowledge_points": knowledge_points,
+            "script": script
+        }
+
     async def generate_script_only(
         self,
         markdown_content: str,
         filename: str
     ) -> ScriptResult:
         """
-        仅生成智课脚本
+        仅生成智课脚本（基于原始文档内容）
         """
         return await self.script_generator.generate_script(markdown_content, filename)
-    
+
     def process_rag_only(
         self,
         markdown_content: str,

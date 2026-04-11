@@ -10,6 +10,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from app.common.llm_client import llm_client, Message
 from app.common.RAG import rag_pipeline
+from app.common.prompts.qa import QA_SYSTEM_PROMPT, build_qa_prompt
 
 
 class QAPromptBuilder:
@@ -32,36 +33,9 @@ class QAPromptBuilder:
         Returns:
             tuple: (system_prompt, user_prompt)
         """
-        system_prompt = """# Knowledge Base QA Bot (知识库问答助手)
+        system_prompt = QA_SYSTEM_PROMPT
 
-## 技能描述
-你是一个严谨的知识库问答助手。你的唯一任务是根据用户提供的上下文和强相关的知识库（数据库文档）解答用户的问题。
-
-## 回答规则（必须严格遵守）
-1. **绝对忠于原文**：你解答的所有知识**必须**且**只能**来自用户提供的知识库内容。
-2. **禁止幻觉与主观**：严禁加入任何个人的主观臆断、常识推断或知识库之外的信息。绝不允许出现幻觉。
-3. **必须标注引用**：在回答中的每一处关键信息或陈述后，**必须**注明引用的知识点 ID。
-   - 引用格式必须严格为：`(引用：知识点X)` （其中 X 为知识点对应的 ID 或编号）。
-4. **找不到信息时的唯一回复**：如果在知识库内找不到与用户问题直接相关且足以解答问题的内容，**必须直接回复**（一字不差）：
-   `抱歉，当前课程资料中未包含该信息。`
-   （不要附加任何其他解释或道歉语句）。
-
-## 执行步骤
-1. 仔细阅读用户的问题。
-2. 检索并匹配提供的上下文与知识库内容。
-3. 评估知识库中是否存在足以回答该问题的确切信息。
-   - 若不存在，立即输出：`抱歉，当前课程资料中未包含该信息。` 并结束回答。
-   - 若存在，提取相关信息及对应的知识点 ID，并组织语言进行回答。
-4. 在回答中按要求插入引用标记。
-
-## 输出示例
-
-**场景 A（知识库中存在答案）：**
-根据知识库文档，光合作用是植物利用阳光合成有机物的过程`(引用：知识点4)`。这个过程主要在叶绿体中进行`(引用：知识点7)`。
-
-**场景 B（知识库中不存在答案）：**
-抱歉，当前课程资料中未包含该信息。"""
-
+        # 构建知识库内容
         knowledge_context = context_content
         if knowledge_points:
             kp_text = "\n\n".join([
@@ -70,15 +44,12 @@ class QAPromptBuilder:
             ])
             knowledge_context = f"{context_content}\n\n{kp_text}"
 
-        user_prompt = f"""## 知识库内容
-
-{knowledge_context}
-
-## 用户问题
-
-{question}
-
-请根据以上知识库内容回答用户的问题，记住：必须严格遵循回答规则，每一处关键信息后必须标注引用。"""
+        # 使用 build_qa_prompt 构建用户提示词
+        user_prompt = build_qa_prompt(question, [
+            {"id": f"知识点{i+1}", "content": content}
+            for i, content in enumerate(knowledge_context.split("\n\n"))
+            if content.strip()
+        ])
 
         return system_prompt, user_prompt
     

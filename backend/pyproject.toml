@@ -22,4 +22,5 @@ dependencies = [
     "ruff>=0.15.7",
     "ty>=0.0.25",
     "onnxruntime>=1.24.4",
+    "gradio-client>=2.4.1",
 ]
