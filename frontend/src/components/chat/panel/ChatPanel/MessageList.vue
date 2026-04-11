@@ -38,6 +38,14 @@
       </div>
       <div class="bubble-container">
         <MessageBubble v-bind="msg" />
+        <!-- 仅AI消息显示跳转按钮 -->
+        <button
+          v-if="msg.role === 'ai' && msg.slideIndex !== undefined"
+          class="jump-btn"
+          @click="handleJump(msg.slideIndex)"
+        >
+          跳转到对应位置
+        </button>
       </div>
     </div>
   </div>
@@ -49,9 +57,16 @@ import { ref, watch, nextTick, onMounted } from 'vue';
 
 const MESSAGES_STORAGE_KEY = 'chatMessages';
 
+// 新增：定义跳转事件，父组件可监听
+const emit = defineEmits(['jumpToSlide']);
 const props = defineProps(['hasFile']);
 const messages = ref([]);
 const listRef = ref(null);
+
+// 新增：跳转按钮点击事件
+const handleJump = (slideIndex) => {
+  emit('jumpToSlide', slideIndex);
+};
 
 const loadMessagesFromStorage = () => {
   try {
@@ -59,8 +74,8 @@ const loadMessagesFromStorage = () => {
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed)) {
-        const validMessages = parsed.filter(msg => 
-          msg && typeof msg === 'object' && 
+        const validMessages = parsed.filter(msg =>
+          msg && typeof msg === 'object' &&
           (msg.role === 'user' || msg.role === 'ai') &&
           typeof msg.content === 'string'
         );
@@ -120,6 +135,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
 }
 .message-row {
   display: flex;
@@ -159,5 +175,24 @@ defineExpose({
 }
 .row-user .bubble-container {
   align-items: flex-end;
+}
+
+/* 新增：跳转按钮样式 */
+.jump-btn {
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 6px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  color: #6b7280;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+.jump-btn:hover {
+  background: #f3f4f6;
+  color: #2563eb;
+  border-color: #2563eb;
 }
 </style>

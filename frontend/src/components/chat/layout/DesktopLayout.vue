@@ -26,6 +26,8 @@ defineProps({
   position: relative;
   width: 100%;
   box-sizing: border-box;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .main-content {
@@ -35,6 +37,9 @@ defineProps({
   border-radius: 16px;
   overflow: hidden;
   box-sizing: border-box;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .chat-sidebar {
@@ -48,6 +53,9 @@ defineProps({
   opacity: 1;
   transform: translateX(0);
   box-sizing: border-box;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .chat-sidebar.hidden {

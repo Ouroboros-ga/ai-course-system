@@ -9,6 +9,9 @@
       <span v-else>三</span>
     </button>
     <div class="nav-title">Smartrab 课堂</div>
+    <button class="upload-btn" @click="handleUpload">
+      上传智课
+    </button>
   </header>
 </template>
 
@@ -20,7 +23,7 @@ defineProps({
   }
 })
 
-const emit = defineEmits(['toggle-history', 'create-new-session'])
+const emit = defineEmits(['toggle-history', 'create-new-session', 'open-upload'])
 
 const toggleHistory = () => {
   emit('toggle-history')
@@ -28,6 +31,10 @@ const toggleHistory = () => {
 
 const createNewSession = () => {
   emit('create-new-session')
+}
+
+const handleUpload = () => {
+  emit('open-upload')
 }
 </script>
 
@@ -38,10 +45,10 @@ const createNewSession = () => {
   background: white;
   display: flex;
   align-items: center;
-  justify-content: space-between;
   padding: 0 12px;
   box-shadow: 0 1px 3px rgba(0,0,0,0.06);
   z-index: 9999;
+  gap: 8px;
 }
 .history-btn {
   width: 36px;
@@ -56,8 +63,6 @@ const createNewSession = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  position: relative;
-  z-index: 10000;
   transition: all 0.2s ease;
 }
 .history-btn:hover {
@@ -101,5 +106,42 @@ const createNewSession = () => {
 }
 .new-session-btn .text {
   font-size: 13px;
+}
+
+/* 上传按钮 */
+.upload-btn {
+  padding: 8px 18px;
+  border-radius: 10px;
+  border: none;
+  background: #2563eb;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
+}
+.upload-btn:hover {
+  background: #1d4ed8;
+  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.4);
+  transform: translateY(-1px);
+}
+.upload-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3);
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .new-session-btn .text {
+    display: none;
+  }
+  .new-session-btn {
+    padding: 8px 10px;
+  }
+  .upload-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+  }
 }
 </style>

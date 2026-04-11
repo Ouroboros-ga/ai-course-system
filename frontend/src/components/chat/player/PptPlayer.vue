@@ -257,6 +257,7 @@ const toggleLoop = () => {
   gap: 16px;
   min-width: 0;
   height: 100%;
+  min-height: 0;
 }
 
 .ppt-display-area {
@@ -270,7 +271,7 @@ const toggleLoop = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 500px;
+  min-height: 0;
 }
 
 .ppt-content-wrapper {
