@@ -118,7 +118,7 @@ const handleSend = async (text) => {
   box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
   height: 100%;
   min-width: 320px;
-  min-height: 500px;
+  min-height: 0;
 }
 .chat-header {
   padding: 16px;

@@ -15,7 +15,9 @@ const config = ref({
   chatTone: 'teacher',
   replyMode: 'direct',
   outputFormat: 'qa',
-  interactionMode: 'passive'
+  interactionMode: 'passive',
+  avatar: 'xiaoshuai', // 新增：默认小帅
+  prompt: ''
 })
 
 const handleConfirm = () => {
@@ -107,6 +109,40 @@ const handleClose = () => {
             </label>
           </div>
         </div>
+
+        <!-- 🔥 新增：数字人形象选择 -->
+        <div class="config-item">
+          <label class="config-label">👤 数字人形象</label>
+          <div class="option-group">
+            <label class="radio-option">
+              <input type="radio" v-model="config.avatar" value="xiaoshuai" />
+              <span>🧑‍ 小帅</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" v-model="config.avatar" value="xiaomei" />
+              <span>👩‍🏫 小美</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" v-model="config.avatar" value="laoshi" />
+              <span>👧 小王</span>
+            </label>
+            <label class="radio-option">
+              <input type="radio" v-model="config.avatar" value="xiaohong" />
+              <span>💻 自定义</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- 自定义提示词输入框 -->
+        <div class="config-item">
+          <label class="config-label">✏️ 自定义提示词</label>
+          <textarea
+            v-model="config.prompt"
+            class="prompt-input"
+            placeholder="请输入自定义提示词（例如：用小学生能听懂的话讲解，重点突出公式推导）"
+            rows="3"
+          ></textarea>
+        </div>
       </div>
 
       <div class="modal-footer">
@@ -186,12 +222,36 @@ const handleClose = () => {
   border-radius:12px;cursor:pointer;font-size:14px;font-weight:500;
 }
 
-/* 移动端强适配 */
+.prompt-input {
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #334155;
+  background: #fff;
+  resize: vertical;
+  outline: none;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+.prompt-input:focus {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+}
+.prompt-input::placeholder {
+  color: #94a3b8;
+}
+
 @media (max-width:768px){
   .modal-content{width:95vw;border-radius:16px;}
   .option-group{gap:8px;}
   .radio-option{padding:8px 10px;font-size:12px;}
   .modal-body{padding:20px 16px;}
   .modal-header h3{font-size:17px;}
+  .prompt-input {
+    font-size: 13px;
+    padding: 10px 12px;
+  }
 }
 </style>

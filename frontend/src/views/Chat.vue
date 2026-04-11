@@ -15,43 +15,46 @@
     <!-- 内容区域：动画 2 -->
     <div class="content-box fade-in-up">
       <DesktopLayout v-if="!isMobile" :show-history="showHistory">
-      <template #main>
-        <PptPlayer
-          :initialData="currentData"
-          :reset-trigger="resetTrigger"
-          @file-upload="handleFileUpload"
-          @analysis-complete="handleAnalysisComplete"
-        />
-      </template>
-      <template #sidebar>
-        <ChatPanel 
-          :hasFile="!!currentFile" 
-          :isAnalyzing="isAnalyzing"
-          :hasValidData="hasValidData"
-          :currentData="currentData"
-        />
-      </template>
-    </DesktopLayout>
+        <template #main>
+          <PptPlayer
+            :initialData="currentData"
+            :reset-trigger="resetTrigger"
+            @file-upload="handleFileUpload"
+            @analysis-complete="handleAnalysisComplete"
+          />
+        </template>
+        <template #sidebar>
+          <ChatPanel
+            :hasFile="!!currentFile"
+            :isAnalyzing="isAnalyzing"
+            :hasValidData="hasValidData"
+            :currentData="currentData"
+          />
+        </template>
+      </DesktopLayout>
 
-    <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
-      <template #ppt>
-        <PptPlayer
-          :initialData="currentData"
-          :reset-trigger="resetTrigger"
-          @file-upload="handleFileUpload"
-          @analysis-complete="handleAnalysisComplete"
-        />
-      </template>
-      <template #chat>
-        <ChatPanel 
-          :hasFile="!!currentFile" 
-          :isAnalyzing="isAnalyzing"
-          :hasValidData="hasValidData"
-          :currentData="currentData"
-        />
-      </template>
-    </MobileLayout>
+      <MobileLayout v-else :default-tab="activeTab" @tab-change="activeTab = $event">
+        <template #ppt>
+          <PptPlayer
+            :initialData="currentData"
+            :reset-trigger="resetTrigger"
+            @file-upload="handleFileUpload"
+            @analysis-complete="handleAnalysisComplete"
+          />
+        </template>
+        <template #chat>
+          <ChatPanel
+            :hasFile="!!currentFile"
+            :isAnalyzing="isAnalyzing"
+            :hasValidData="hasValidData"
+            :currentData="currentData"
+          />
+        </template>
+      </MobileLayout>
     </div>
+
+    <!-- 可拖动数字人组件 -->
+    <DraggableAvatar />
   </div>
 </template>
 
@@ -64,6 +67,8 @@ import ChatTopNav from '@/components/chat/topnav/ChatTopNav.vue';
 import HistorySidebar from '@/components/chat/sidebar/HistorySidebar.vue';
 import DesktopLayout from '@/components/chat/layout/DesktopLayout.vue';
 import MobileLayout from '@/components/chat/layout/MobileLayout.vue';
+// 新增：引入可拖动数字人组件
+import DraggableAvatar from '@/components/chat/avatar/DraggableAvatar.vue';
 
 const STORAGE_KEY = 'chatCurrentData';
 
@@ -172,10 +177,11 @@ onUnmounted(() => {
   gap: 0;
   padding: 0;
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
   background: #f8fafc;
   position: relative;
   font-family: system-ui, sans-serif;
+  overflow: hidden;
 }
 
 .content-box {
@@ -185,6 +191,8 @@ onUnmounted(() => {
   padding: 16px;
   box-sizing: border-box;
   position: relative;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ====================== */
