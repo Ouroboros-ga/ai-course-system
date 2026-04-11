@@ -124,11 +124,11 @@ const handleClose = () => {
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="laoshi" />
-              <span>💻 小王</span>
+              <span>👧 小王</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="xiaohong" />
-              <span>👧 小红</span>
+              <span>💻 自定义</span>
             </label>
           </div>
         </div>
