@@ -280,14 +280,15 @@ const switchPage = (page) => {
 <style scoped>
 .warehouse-page {
   width: 100%;
-  min-height: calc(100vh - 70px);
+  height: calc(100vh - 60px);
   background: #f8fafc;
   padding: 24px;
   box-sizing: border-box;
+  overflow: hidden;
 }
 .fade-normal { animation: fadeNormal 0.3s ease; }
 @keyframes fadeNormal { from { opacity: 0.8; } to { opacity: 1; } }
-.main-layout { display: flex; gap: 20px; height: auto; min-height: calc(100vh - 120px); }
+.main-layout { display: flex; gap: 20px; height: 100%; }
 .left-sidebar {
   width: 200px;
   flex-shrink: 0;
@@ -335,6 +336,8 @@ const switchPage = (page) => {
   border-radius: 16px;
   padding: 20px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  overflow-y: auto;
+  min-height: 0;
 }
 .tool-bar {
   display: flex;

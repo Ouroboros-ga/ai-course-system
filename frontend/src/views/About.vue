@@ -106,10 +106,10 @@ onMounted(() => activeNav.value = 'overview')
 
 <style scoped>
 /* 全局基础 */
-.about-container{display:flex;width:100%;min-height:calc(100vh - 70px);background:#f6f8fa;}
+.about-container{display:flex;width:100%;height:calc(100vh - 60px);background:#f6f8fa;overflow:hidden;}
 
 /* 左侧高阶侧边栏 */
-.pro-sidebar{width:240px;background:#fff;border-radius:0 16px 16px 0;box-shadow:2px 0 10px rgba(0,0,0,0.06);position:sticky;top:70px;height:calc(100vh - 70px);padding:24px 0;border-left:none;}
+.pro-sidebar{width:240px;background:#fff;border-radius:0 16px 16px 0;box-shadow:2px 0 10px rgba(0,0,0,0.06);height:100%;padding:24px 0;border-left:none;overflow-y:auto;}
 .sidebar-title{font-size:16px;font-weight:600;color:#2c3e50;padding:0 20px 16px;border-bottom:1px solid #eee;margin-bottom:12px;}
 .nav-list{padding:0 12px;}
 .nav-item{padding:13px 16px;border-radius:10px;margin-bottom:6px;color:#555;cursor:pointer;transition:0.3s ease;}
@@ -117,7 +117,7 @@ onMounted(() => activeNav.value = 'overview')
 .nav-item.active{background:#eaf4ff;color:#2563eb;font-weight:500;}
 
 /* 右侧主内容 */
-.pro-main{flex:1;padding:30px 40px;}
+.pro-main{flex:1;padding:30px 40px;overflow-y:auto;}
 .main-h2{font-size:24px;color:#1e293b;margin-bottom:22px;border-left:4px solid #2563eb;padding-left:12px;}
 
 /* 通用动画区块 */

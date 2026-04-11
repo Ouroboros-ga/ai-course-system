@@ -269,16 +269,16 @@ const toggleLoop = () => {
   position: relative;
   overflow: hidden;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
   min-height: 0;
 }
 
 .ppt-content-wrapper {
-  width: 100%;
-  height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  padding-bottom: 70px;
 }
 
 .ppt-content {
