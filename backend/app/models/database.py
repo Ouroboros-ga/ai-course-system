@@ -6,11 +6,15 @@ from app.models.course_model import (
     Course,
     CourseScript,
     DoclingDocument,
-    ChatSession,
-    ChatMessage,
+)
+from app.models.user_model import (
     User,
+    ChatHistory,
+    ChatMessage,
+)
+from app.models.progress_model import (
     LearningProgress,
-    CourseNodeProgress,
+    NodeProgress,
 )
 from app.models.knowledge_model import (
     KnowledgeBase,
