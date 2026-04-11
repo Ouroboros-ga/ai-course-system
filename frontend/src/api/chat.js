@@ -60,12 +60,19 @@ export function deleteChatRecord(chatId, userId) {
  *   - userId: 用户 ID
  */
 export function uploadFile(formData) {
+  const token = localStorage.getItem('token')
+  const headers = {
+    'Content-Type': 'multipart/form-data'
+  }
+  
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  
   return request({
     url: '/chat/file/upload',
     method: 'post',
-    headers: {
-      'Content-Type': 'multipart/form-data'
-    },
+    headers: headers,
     data: formData
   })
 }
