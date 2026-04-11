@@ -135,6 +135,7 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-height: 0;
 }
 .message-row {
   display: flex;

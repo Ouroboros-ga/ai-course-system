@@ -177,10 +177,11 @@ onUnmounted(() => {
   gap: 0;
   padding: 0;
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
   background: #f8fafc;
   position: relative;
   font-family: system-ui, sans-serif;
+  overflow: hidden;
 }
 
 .content-box {
@@ -190,6 +191,8 @@ onUnmounted(() => {
   padding: 16px;
   box-sizing: border-box;
   position: relative;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ====================== */

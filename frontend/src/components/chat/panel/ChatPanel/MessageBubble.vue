@@ -41,7 +41,7 @@ markedInstance.setOptions({
 function extractFormulas(text) {
   const formulas = []
   let index = 0
-  
+
   let processedText = text.replace(/\$\$([\s\S]+?)\$\$/g, (match, formula) => {
     const placeholder = `%%BLOCK_FORMULA_${index}%%`
     formulas.push({
@@ -52,7 +52,7 @@ function extractFormulas(text) {
     index++
     return placeholder
   })
-  
+
   processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
     const placeholder = `%%INLINE_FORMULA_${index}%%`
     formulas.push({
@@ -63,13 +63,13 @@ function extractFormulas(text) {
     index++
     return placeholder
   })
-  
+
   return { text: processedText, formulas }
 }
 
 function renderFormulas(html, formulas) {
   let result = html
-  
+
   formulas.forEach(({ placeholder, formula, isBlock }) => {
     try {
       const rendered = katex.renderToString(formula, {
@@ -79,11 +79,11 @@ function renderFormulas(html, formulas) {
         strict: false,
         trust: true
       })
-      
+
       const wrappedHtml = isBlock
         ? `<div class="katex-block">${rendered}</div>`
         : `<span class="katex-inline">${rendered}</span>`
-      
+
       result = result.replace(placeholder, wrappedHtml)
     } catch (error) {
       console.warn('KaTeX渲染失败:', error.message, '公式:', formula)
@@ -93,24 +93,24 @@ function renderFormulas(html, formulas) {
       result = result.replace(placeholder, errorHtml)
     }
   })
-  
+
   return result
 }
 
 const renderedContent = computed(() => {
   if (!props.content) return ''
-  
+
   const { text: textWithoutFormulas, formulas } = extractFormulas(props.content)
-  
+
   const rawHtml = markedInstance.parse(textWithoutFormulas, { async: false })
-  
+
   const htmlWithFormulas = renderFormulas(rawHtml, formulas)
-  
+
   const cleanHtml = DOMPurify.sanitize(htmlWithFormulas, {
     ADD_ATTR: ['class', 'style'],
     ADD_TAGS: ['span', 'div']
   })
-  
+
   return cleanHtml
 })
 
