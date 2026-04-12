@@ -86,7 +86,9 @@ const handleLoginSend = async (data) => {
     loadUserStats()
   } catch (error) {
     console.error('登录失败', error)
-    showToast(error || "错误", "error")
+    // 提取错误信息（兼容字符串和对象格式）
+    const errorMsg = error?.message || error?.toString() || error || "登录失败，请检查用户名和密码"
+    showToast(errorMsg, "error")
   }
 }
 
@@ -133,7 +135,9 @@ const handleRegisterSend = async (data) => {
     loadUserStats()
   } catch (error) {
     console.error('注册失败', error)
-    showToast(error || "错误", "error")
+    // 提取错误信息（兼容字符串和对象格式）
+    const errorMsg = error?.message || error?.toString() || error || "注册失败，请稍后重试"
+    showToast(errorMsg, "error")
   }
 }
 

@@ -216,12 +216,6 @@ function generateSignature(params) {
   const rawSign = sortedStr + STATIC_KEY + timeStr
   const enc = md5(rawSign)
 
-  // 调试日志
-  console.log('【签名调试】过滤后参数:', filteredParams)
-  console.log('【签名调试】排序后键:', sortedKeys)
-  console.log('【签名调试】拼接字符串:', sortedStr)
-  console.log('【签名调试】原始签名串:', rawSign)
-
   return { time: timeStr, enc }
 }
 
@@ -238,15 +232,7 @@ service.interceptors.request.use(
     const data = config.data || {}
     const allParams = { ...params, ...data }
 
-    // 调试日志
-    console.log('【签名调试】原始参数:', allParams)
-    console.log('【签名调试】请求方法:', config.method)
-    console.log('【签名调试】请求URL:', config.url)
-
     const { time, enc } = generateSignature(allParams)
-
-    console.log('【签名调试】生成的时间:', time)
-    console.log('【签名调试】生成的签名:', enc)
 
     // 将签名添加到请求参数中
     if (config.method === 'get') {
@@ -261,12 +247,10 @@ service.interceptors.request.use(
       }
     }
 
-    console.log('【签名调试】最终请求数据:', config.data)
-
     return config
   },
   error => {
-    console.log('Request Error:', error)
+    console.error('Request Error:', error)
     return Promise.reject(error)
   }
 )
@@ -276,14 +260,7 @@ service.interceptors.response.use(
   response => {
     const res = response.data
 
-    // 调试日志：查看实际接收到的响应
-    console.log('【响应调试】原始响应:', res)
-    console.log('【响应调试】code类型:', typeof res.code, 'code值:', res.code)
-    console.log('【响应调试】code == 200:', res.code == 200)
-    console.log('【响应调试】code === 200:', res.code === 200)
-
-    // 2. 处理业务逻辑错误 (后端返回 code 非 200)
-    // 使用 == 进行宽松比较，处理字符串和数字类型
+    // 处理业务逻辑错误 (后端返回 code 非 200)
     if (res.code != 200) {
 
       // 特殊状态码处理：Token 过期
@@ -292,9 +269,8 @@ service.interceptors.response.use(
 
         // 清除 token 并跳转登录页
         localStorage.removeItem('token')
-        // window.location.href = '/login' // 建议结合路由跳转
       } else {
-        // 3. 普通业务错误，直接弹出后端返回的错误信息
+        // 普通业务错误，直接弹出后端返回的错误信息
         showToast(res.message || '请求失败', 'error')
       }
 
@@ -305,11 +281,10 @@ service.interceptors.response.use(
     }
   },
   error => {
-    // 4. 处理 HTTP 网络错误 (如 404, 500, 超时)
+    // 处理 HTTP 网络错误 (如 404, 500, 超时)
     let message = '网络连接异常，请稍后再试'
 
     if (error.response) {
-      // 有响应，但状态码不对
       switch (error.response.status) {
         case 401:
           message = '未授权，请重新登录'
@@ -332,9 +307,7 @@ service.interceptors.response.use(
       message = '网络断开，请检查连接'
     }
 
-    // 5. 弹出错误提示
     showToast(message, 'error')
-
     console.error('Response Error:', error)
     return Promise.reject(error)
   }

@@ -206,6 +206,89 @@
           <button class="action-btn primary" @click="saveAllNodes">
             🔒 保存全部修改
           </button>
+          <button
+            v-if="courseId"
+            class="action-btn"
+            :class="{ 'publish-btn': !isPublished, 'unpublish-btn': isPublished }"
+            @click="togglePublishCourse"
+            :disabled="isPublishing"
+          >
+            {{ isPublishing ? '处理中...' : (isPublished ? '📢 已发布' : '🚀 发布课程') }}
+          </button>
+        </div>
+
+        <!-- 学生统计面板 -->
+        <div v-if="courseId && showStudentStats" class="student-stats-panel">
+          <div class="stats-header" @click="toggleStatsPanel">
+            <span>👥 学生学习情况</span>
+            <span class="stats-toggle">{{ showStatsDetail ? '▼' : '▶' }}</span>
+          </div>
+          
+          <div v-if="showStatsDetail" class="stats-content">
+            <!-- 统计概览 -->
+            <div class="stats-overview">
+              <div class="stat-card">
+                <div class="stat-number">{{ courseStats.totalStudents || 0 }}</div>
+                <div class="stat-label">选课人数</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">{{ courseStats.avgProgress || 0 }}%</div>
+                <div class="stat-label">平均进度</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">{{ courseStats.avgUnderstanding || 0 }}%</div>
+                <div class="stat-label">平均理解度</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-number">{{ courseStats.totalStudyHours || 0 }}h</div>
+                <div class="stat-label">总学习时长</div>
+              </div>
+            </div>
+
+            <!-- 进度分布条 -->
+            <div v-if="courseStats.progressDistribution" class="progress-distribution">
+              <div class="dist-item" v-for="(count, label) in progressLabels" :key="label">
+                <span class="dist-label">{{ label }}</span>
+                <div class="dist-bar-bg">
+                  <div 
+                    class="dist-bar-fill" 
+                    :style="{ width: getDistPercent(count) + '%' }"
+                    :class="'dist-' + label"
+                  ></div>
+                </div>
+                <span class="dist-count">{{ count }}人</span>
+              </div>
+            </div>
+
+            <!-- 学生列表 -->
+            <div v-if="studentsList.length > 0" class="students-list">
+              <div class="list-header">学生详情</div>
+              <div 
+                v-for="student in studentsList" 
+                :key="student.enrollmentId"
+                class="student-row"
+              >
+                <div class="student-name">{{ student.username }}</div>
+                <div class="student-progress-wrap">
+                  <div class="mini-progress-bar">
+                    <div 
+                      class="mini-progress-fill"
+                      :style="{ width: student.progress + '%' }"
+                      :class="getProgressClass(student.progress)"
+                    ></div>
+                  </div>
+                  <span class="progress-text">{{ student.progress }}%</span>
+                </div>
+                <span 
+                  class="understanding-badge"
+                  :class="'level-' + student.level"
+                >{{ getLevelLabel(student.level) }}</span>
+              </div>
+            </div>
+            <div v-else-if="!isLoadingStats && courseStats.totalStudents === 0" class="no-students">
+              暂无学生选择此课程（请先发布课程）
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -239,6 +322,23 @@ const isUploading = ref(false)
 const uploadProgress = ref('准备上传...')
 const parseInfo = ref(null)
 const courseId = ref(null)
+
+// 发布课程相关
+const isPublished = ref(false)
+const isPublishing = ref(false)
+
+// 学生统计相关
+const showStudentStats = ref(true)
+const showStatsDetail = ref(true)
+const isLoadingStats = ref(false)
+const courseStats = ref({
+  totalStudents: 0,
+  avgProgress: 0,
+  avgUnderstanding: 0,
+  totalStudyHours: 0,
+  progressDistribution: null,
+})
+const studentsList = ref([])
 
 // 音频状态
 const audioUrl = ref('')
@@ -508,6 +608,11 @@ const processFile = async (file) => {
 
       currentNodeIndex.value = 0
       showToast(`文档解析完成: ${knowledgeTree.value.length} 个知识点`, 'success')
+
+      // 加载课程统计信息（如果有课程ID）
+      if (courseId.value) {
+        loadCourseStats()
+      }
     }
   } catch (error) {
     console.error('文档处理失败:', error)
@@ -727,6 +832,136 @@ const generateTTS = async () => {
     showToast(error.message || '语音生成失败，请重试', 'error')
   } finally {
     isGeneratingTTS.value = false
+  }
+}
+
+// ==================== 发布课程功能 ====================
+
+const togglePublishCourse = async () => {
+  if (!courseId.value) return
+
+  isPublishing.value = true
+  try {
+    const endpoint = isPublished.value ? 'unpublish' : 'publish'
+    const response = await fetch(`http://localhost:8000/api/v1/document/course/${courseId.value}/${endpoint}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${counter.token}` }
+    })
+
+    if (response.ok) {
+      const data = await response.json()
+      isPublished.value = !isPublished.value
+      showToast(data.message, 'success')
+
+      // 刷新统计数据
+      await loadCourseStats()
+    } else {
+      const errorData = await response.json()
+      throw new Error(errorData.message || '操作失败')
+    }
+  } catch (error) {
+    console.error('发布课程失败:', error)
+    showToast(error.message || '操作失败', 'error')
+  } finally {
+    isPublishing.value = false
+  }
+}
+
+// ==================== 学生统计功能 ====================
+
+const progressLabels = computed(() => {
+  const dist = courseStats.value.progressDistribution || {}
+  return [
+    { label: '未开始', count: dist.not_started || 0 },
+    { label: '初学', count: dist.beginner || 0 },
+    { label: '进阶', count: dist.intermediate || 0 },
+    { label: '熟练', count: dist.advanced || 0 },
+    { label: '完成', count: dist.completed || 0 },
+  ]
+})
+
+const toggleStatsPanel = () => {
+  showStatsDetail.value = !showStatsDetail.value
+  if (showStatsDetail.value && courseId.value) {
+    loadCourseStats()
+  }
+}
+
+const getDistPercent = (count) => {
+  const total = courseStats.value.totalStudents || 1
+  return Math.round((count / total) * 100)
+}
+
+const getProgressClass = (progress) => {
+  if (progress >= 80) return 'high'
+  if (progress >= 50) return 'medium'
+  return 'low'
+}
+
+const getLevelLabel = (level) => {
+  const labels = { excellent: '优秀', high: '良好', medium: '一般', low: '需加强' }
+  return labels[level] || level
+}
+
+const loadCourseStats = async () => {
+  if (!courseId.value) return
+
+  isLoadingStats.value = true
+  try {
+    // 获取课程统计
+    const statsRes = await fetch(
+      `http://localhost:8000/api/v1/document/course/${courseId.value}/stats`,
+      { headers: { Authorization: `Bearer ${counter.token}` } }
+    )
+
+    if (statsRes.ok) {
+      const statsData = await statsRes.json()
+      if (statsData.code === 200) {
+        courseStats.value = {
+          totalStudents: statsData.data.total_students,
+          avgProgress: statsData.data.avg_progress,
+          avgUnderstanding: statsData.data.avg_understanding,
+          totalStudyHours: statsData.data.total_study_hours,
+          progressDistribution: statsData.data.progress_distribution,
+        }
+
+        // 如果有学生，获取学生列表
+        if (courseStats.value.totalStudents > 0) {
+          await loadStudentsList()
+        } else {
+          studentsList.value = []
+        }
+      }
+    }
+  } catch (error) {
+    console.error('加载课程统计失败:', error)
+  } finally {
+    isLoadingStats.value = false
+  }
+}
+
+const loadStudentsList = async () => {
+  try {
+    const res = await fetch(
+      `http://localhost:8000/api/v1/document/course/${courseId.value}/students`,
+      { headers: { Authorization: `Bearer ${counter.token}` } }
+    )
+
+    if (res.ok) {
+      const data = await res.json()
+      if (data.code === 200) {
+        studentsList.value = data.data.students.map(s => ({
+          enrollmentId: s.enrollment_id,
+          username: s.username,
+          progress: s.overall_progress,
+          level: s.understanding_level,
+          understandingScore: s.avg_understanding_score,
+          studyMinutes: s.total_study_minutes,
+        }))
+      }
+    }
+  } catch (error) {
+    console.error('加载学生列表失败:', error)
   }
 }
 </script>
@@ -1429,5 +1664,236 @@ const generateTTS = async () => {
   .main-content {
     min-height: 600px;
   }
+}
+
+/* 发布按钮样式 */
+.publish-btn {
+  background: linear-gradient(135deg, #10b981, #059669) !important;
+  color: white !important;
+  border-color: transparent !important;
+}
+
+.publish-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4) !important;
+}
+
+.unpublish-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706) !important;
+  color: white !important;
+  border-color: transparent !important;
+}
+
+.unpublish-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4) !important;
+}
+
+/* 学生统计面板 */
+.student-stats-panel {
+  margin-top: 16px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+}
+
+.stats-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+  user-select: none;
+}
+
+.stats-header:hover {
+  background: #f1f5f9;
+  border-radius: 8px 8px 0 0;
+}
+
+.stats-toggle {
+  font-size: 12px;
+  color: #6b7280;
+}
+
+.stats-content {
+  padding-top: 12px;
+}
+
+.stats-overview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  text-align: center;
+  padding: 12px 8px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+.stat-number {
+  font-size: 24px;
+  font-weight: 700;
+  color: #6366f1;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: #6b7280;
+  margin-top: 4px;
+}
+
+/* 进度分布 */
+.progress-distribution {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: white;
+  border-radius: 8px;
+}
+
+.dist-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.dist-label {
+  width: 50px;
+  color: #4b5563;
+  flex-shrink: 0;
+}
+
+.dist-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.dist-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s ease;
+}
+
+.dist-未开始 { background: #d1d5db; }
+.dist-初学 { background: #93c5fd; }
+.dist-进阶 { background: #a78bfa; }
+.dist-熟练 { background: #86efac; }
+.dist-完成 { background: #34d399; }
+
+.dist-count {
+  width: 40px;
+  text-align: right;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+/* 学生列表 */
+.students-list {
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.list-header {
+  padding: 10px 14px;
+  background: #f8fafc;
+  font-weight: 600;
+  font-size: 13px;
+  color: #374151;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.student-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #f3f4f6;
+  transition: background 0.2s ease;
+}
+
+.student-row:last-child {
+  border-bottom: none;
+}
+
+.student-row:hover {
+  background: #f9fafb;
+}
+
+.student-name {
+  width: 80px;
+  font-weight: 500;
+  font-size: 13px;
+  color: #111827;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.student-progress-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mini-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.mini-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.mini-progress-fill.high { background: #10b981; }
+.mini-progress-fill.medium { background: #f59e0b; }
+.mini-progress-fill.low { background: #ef4444; }
+
+.progress-text {
+  width: 40px;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: right;
+}
+
+.understanding-badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.level-excellent { background: #d1fae5; color: #065f46; }
+.level-high { background: #dbeafe; color: #1e40af; }
+.level-medium { background: #fef3c7; color: #92400e; }
+.level-low { background: #fee2e2; color: #991b1b; }
+
+.no-students {
+  text-align: center;
+  padding: 20px;
+  color: #9ca3af;
+  font-size: 13px;
 }
 </style>

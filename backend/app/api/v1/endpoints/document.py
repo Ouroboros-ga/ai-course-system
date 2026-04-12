@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
-from sqlmodel import Session, select
+from sqlmodel import Session, select, text
 
 from app.schemas.document_schema import (
     DocumentUploadResponse,
@@ -36,6 +36,7 @@ from app.models.course_model import (
     DoclingTableCell,
     DoclingText,
     DoclingPicture,
+    StudentEnrollment,
     CourseStatus,
     ParseStatus,
     ScriptNodeType,
@@ -337,6 +338,91 @@ async def analyze_document(request: DocumentAnalyzeRequest):
         )
 
 
+# ==================== 课程列表接口 (必须在 /{document_id} 之前) ====================
+
+@router.get("/courses")
+async def get_courses_list(
+    status: Optional[str] = Query(None, description="课程状态筛选 (published/draft/archived)"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取课程列表（学生可查看已发布的课程）
+
+    需要用户登录认证
+    学生只能看到已发布的课程
+    老师可以看到自己创建的所有课程 + 其他老师的已发布课程
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        statement = select(Course)
+
+        if user_role == "student":
+            statement = statement.where(Course.status == CourseStatus.PUBLISHED)
+        else:
+            from sqlmodel import or_
+            statement = statement.where(
+                or_(
+                    Course.teacher_id == user_id,
+                    Course.status == CourseStatus.PUBLISHED
+                )
+            )
+
+        if status:
+            try:
+                status_enum = CourseStatus(status)
+                statement = statement.where(Course.status == status_enum)
+            except ValueError:
+                pass
+
+        statement = statement.order_by(Course.created_at.desc())
+        courses = session.exec(statement).all()
+
+        courses_data = []
+        for course in courses:
+            teacher_name = "未知教师"
+            teacher_record = session.execute(
+                text("SELECT username FROM users WHERE id = :uid"),
+                {"uid": course.teacher_id}
+            ).fetchone()
+            if teacher_record:
+                teacher_name = teacher_record[0]
+
+            courses_data.append({
+                "id": course.id,
+                "title": course.title,
+                "description": course.description,
+                "status": course.status.value,
+                "teacher_id": course.teacher_id,
+                "teacher_name": teacher_name,
+                "total_nodes": course.total_nodes,
+                "total_duration": course.total_duration,
+                "source_file_name": course.source_file_name,
+                "is_ai_generated": course.is_ai_generated,
+                "created_at": course.created_at.isoformat() if course.created_at else None,
+            })
+
+        return unified_response(
+            code=200,
+            message="获取课程列表成功",
+            data={
+                "courses": courses_data,
+                "total": len(courses_data),
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"获取课程列表失败: {str(e)}",
+            data=None
+        )
+
+
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
@@ -347,24 +433,24 @@ async def get_document(
     """
     if document_id not in document_cache:
         raise HTTPException(status_code=404, detail="文档不存在或已过期")
-    
+
     doc_data = document_cache[document_id]
     course_id = doc_data.get("course_id")
-    
+
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
-    
+
     script = session.exec(
         select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
     ).first()
-    
+
     nodes = []
     if script:
         nodes = session.exec(
             select(ScriptNode).where(ScriptNode.script_id == script.id).order_by(ScriptNode.node_index)
         ).all()
-    
+
     return {
         "document_id": document_id,
         "course": {
@@ -390,6 +476,62 @@ async def get_document(
             for n in nodes
         ],
     }
+
+
+@router.post("/course/{course_id}/save")
+async def save_course_nodes(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    保存老师修改后的课程节点内容到数据库
+
+    需要老师权限
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "teacher":
+            return unified_response(code=403, message="只有教师可以保存课程内容", data=None)
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权修改此课程", data=None)
+
+        body = await request.json()
+        nodes_data = body.get("nodes", [])
+
+        updated_count = 0
+        for node_data in nodes_data:
+            node_id = node_data.get("id")
+            if not node_id:
+                continue
+
+            node = session.get(ScriptNode, node_id)
+            if node and node.script_id:
+                script = session.get(CourseScript, node.script_id)
+                if script and script.course_id == course_id:
+                    if "title" in node_data:
+                        node.title = node_data["title"]
+                    if "content" in node_data:
+                        node.content = node_data["content"]
+                    session.add(node)
+                    updated_count += 1
+
+        session.commit()
+
+        return unified_response(code=200, message=f"成功保存 {updated_count} 个节点的修改", data={"updated_count": updated_count})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"保存失败: {str(e)}", data=None)
 
 
 @router.get("/course/{course_id}")
@@ -467,6 +609,177 @@ async def get_course_detail(
     )
 
 
+@router.get("/courses")
+async def get_courses_list(
+    status: Optional[str] = Query(None, description="课程状态筛选 (published/draft/archived)"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取课程列表（学生可查看已发布的课程）
+    
+    需要用户登录认证
+    学生只能看到已发布的课程
+    老师可以看到自己创建的所有课程 + 其他老师的已发布课程
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+        
+        statement = select(Course)
+        
+        if user_role == "student":
+            # 学生只能看到已发布的课程
+            statement = statement.where(Course.status == CourseStatus.PUBLISHED)
+        else:
+            # 老师可以看到自己所有课程 + 已发布的其他课程
+            from sqlmodel import or_
+            statement = statement.where(
+                or_(
+                    Course.teacher_id == user_id,
+                    Course.status == CourseStatus.PUBLISHED
+                )
+            )
+        
+        if status:
+            try:
+                status_enum = CourseStatus(status)
+                statement = statement.where(Course.status == status_enum)
+            except ValueError:
+                pass
+        
+        statement = statement.order_by(Course.created_at.desc())
+        courses = session.exec(statement).all()
+        
+        courses_data = []
+        for course in courses:
+            teacher_name = "未知教师"
+            teacher_record = session.execute(
+                text("SELECT username FROM users WHERE id = :uid"),
+                {"uid": course.teacher_id}
+            ).fetchone()
+            if teacher_record:
+                teacher_name = teacher_record[0]
+            
+            courses_data.append({
+                "id": course.id,
+                "title": course.title,
+                "description": course.description,
+                "status": course.status.value,
+                "teacher_id": course.teacher_id,
+                "teacher_name": teacher_name,
+                "total_nodes": course.total_nodes,
+                "total_duration": course.total_duration,
+                "source_file_name": course.source_file_name,
+                "is_ai_generated": course.is_ai_generated,
+                "created_at": course.created_at.isoformat() if course.created_at else None,
+            })
+        
+        return unified_response(
+            code=200,
+            message="获取课程列表成功",
+            data={
+                "courses": courses_data,
+                "total": len(courses_data),
+            }
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"获取课程列表失败: {str(e)}",
+            data=None
+        )
+
+
+@router.post("/course/{course_id}/save")
+async def save_course_nodes(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    保存老师修改后的课程节点内容到数据库
+    
+    需要老师权限
+    
+    请求体格式:
+    {
+        "nodes": [
+            {
+                "id": 1,
+                "title": "章节标题",
+                "content": "修改后的内容"
+            }
+        ]
+    }
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+        
+        if user_role != "teacher":
+            return unified_response(
+                code=403,
+                message="只有教师可以保存课程内容",
+                data=None
+            )
+        
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(
+                code=404,
+                detail="课程不存在"
+            )
+        
+        if course.teacher_id != user_id:
+            return unified_response(
+                code=403,
+                message="无权修改此课程",
+                data=None
+            )
+        
+        body = await request.json()
+        nodes_data = body.get("nodes", [])
+        
+        updated_count = 0
+        for node_data in nodes_data:
+            node_id = node_data.get("id")
+            if not node_id:
+                continue
+            
+            node = session.get(ScriptNode, node_id)
+            if node and node.script_id:
+                script = session.get(CourseScript, node.script_id)
+                if script and script.course_id == course_id:
+                    if "title" in node_data:
+                        node.title = node_data["title"]
+                    if "content" in node_data:
+                        node.content = node_data["content"]
+                    session.add(node)
+                    updated_count += 1
+        
+        session.commit()
+        
+        return unified_response(
+            code=200,
+            message=f"成功保存 {updated_count} 个节点的修改",
+            data={"updated_count": updated_count}
+        )
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"保存失败: {str(e)}",
+            data=None
+        )
+
+
 # ==================== TTS语音合成接口 ====================
 
 from app.common.tts_client import tts_client
@@ -528,3 +841,335 @@ async def synthesize_speech(
         error_detail = traceback.format_exc()
         print(f"[TTS] 错误详情:\n{error_detail}")
         raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
+
+
+# ==================== 课程发布与选课管理接口 ====================
+
+@router.post("/course/{course_id}/publish")
+async def publish_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    发布课程（老师操作）
+    
+    将课程状态从 draft 改为 published，学生可以看到并选择该课程
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "teacher":
+            return unified_response(code=403, message="只有教师可以发布课程", data=None)
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权操作此课程", data=None)
+
+        if course.status == CourseStatus.PUBLISHED:
+            return unified_response(code=200, message="课程已是发布状态", data={"status": "published"})
+
+        # 更新状态为已发布
+        course.status = CourseStatus.PUBLISHED
+        course.updated_at = datetime.utcnow()
+        session.add(course)
+        session.commit()
+
+        return unified_response(code=200, message="课程发布成功", data={"status": "published"})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"发布失败: {str(e)}", data=None)
+
+
+@router.post("/course/{course_id}/unpublish")
+async def unpublish_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    取消发布课程（老师操作）
+    
+    将课程状态从 published 改为 draft，学生无法再看到该课程
+    已选课的学生保留选课记录但标记为不活跃
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "teacher":
+            return unified_response(code=403, message="只有教师可以取消发布课程", data=None)
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权操作此课程", data=None)
+
+        # 更新状态为草稿
+        course.status = CourseStatus.DRAFT
+        course.updated_at = datetime.utcnow()
+        session.add(course)
+        session.commit()
+
+        return unified_response(code=200, message="课程已取消发布", data={"status": "draft"})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"取消发布失败: {str(e)}", data=None)
+
+
+@router.post("/course/{course_id}/enroll")
+async def enroll_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    学生选择/加入课程
+    
+    学生可以加入老师发布的课程
+    """
+    try:
+        student_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "student":
+            return unified_response(code=403, message="只有学生可以选择课程", data=None)
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.status != CourseStatus.PUBLISHED:
+            return unified_response(code=400, message="该课程尚未发布，无法选择", data=None)
+
+        # 检查是否已经选过
+        existing = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.course_id == course_id
+            )
+        ).first()
+
+        if existing and existing.is_active:
+            return unified_response(code=200, message="您已选择过此课程", data={
+                "enrollment_id": existing.id,
+                "already_enrolled": True
+            })
+
+        # 如果有历史记录但不活跃，重新激活
+        if existing and not existing.is_active:
+            existing.is_active = True
+            existing.enrolled_at = datetime.utcnow()
+            session.add(existing)
+            session.commit()
+            return unified_response(code=200, message="重新加入课程成功", data={
+                "enrollment_id": existing.id,
+                "reactivated": True
+            })
+
+        # 创建新的选课记录
+        enrollment = StudentEnrollment(
+            student_id=student_id,
+            course_id=course_id,
+            total_nodes_count=course.total_nodes or 0,
+        )
+        session.add(enrollment)
+        session.commit()
+        session.refresh(enrollment)
+
+        return unified_response(code=200, message="选课成功", data={
+            "enrollment_id": enrollment.id,
+            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"选课失败: {str(e)}", data=None)
+
+
+@router.post("/course/{course_id}/unenroll")
+async def unenroll_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    学生退出课程
+    """
+    try:
+        student_id = int(current_user["user_id"])
+
+        enrollment = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            )
+        ).first()
+
+        if not enrollment:
+            return unified_response(code=400, message="未找到选课记录", data=None)
+
+        enrollment.is_active = False
+        session.add(enrollment)
+        session.commit()
+
+        return unified_response(code=200, message="已退出课程", data=None)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"退出课程失败: {str(e)}", data=None)
+
+
+@router.get("/course/{course_id}/students")
+async def get_course_students(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取课程的学生列表及学习进度（老师查看）
+    
+    返回所有选择了该课程的活跃学生及其学习进度统计
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        # 权限检查：只有课程老师或管理员可以查看
+        if course.teacher_id != user_id and user_role != "admin":
+            return unified_response(code=403, message="无权查看此课程的学生数据", data=None)
+
+        # 查询所有活跃的选课记录
+        enrollments = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            ).order_by(StudentEnrollment.enrolled_at.desc())
+        ).all()
+
+        students_data = []
+        for enr in enrollments:
+            # 获取学生用户名
+            from sqlmodel import text
+            user_result = session.execute(
+                text("SELECT username FROM users WHERE id = :uid"),
+                {"uid": enr.student_id}
+            ).fetchone()
+            username = user_result[0] if user_result else f"学生{enr.student_id}"
+
+            students_data.append({
+                "enrollment_id": enr.id,
+                "student_id": enr.student_id,
+                "username": username,
+                "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
+                "overall_progress": round(enr.overall_progress, 1),
+                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
+                "understanding_level": enr.avg_understanding_level,
+                "total_study_minutes": enr.total_study_minutes,
+                "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
+                "nodes_completed": enr.total_nodes_completed,
+                "nodes_total": enr.total_nodes_count,
+            })
+
+        return unified_response(code=200, message="获取成功", data={
+            "course_id": course_id,
+            "course_title": course.title,
+            "total_students": len(students_data),
+            "students": students_data
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"获取学生列表失败: {str(e)}", data=None)
+
+
+@router.get("/course/{course_id}/stats")
+async def get_course_stats(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取课程统计数据（老师查看）
+    
+    返回：总选课人数、平均进度、平均理解度等统计信息
+    """
+    try:
+        user_id = int(current_user["user_id"])
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权查看此课程数据", data=None)
+
+        # 统计活跃选课数
+        active_count = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            )
+        ).count_all()
+
+        # 计算平均进度和理解度
+        all_enrollments = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            )
+        ).all()
+
+        total_students = len(all_enrollments)
+        avg_progress = 0.0
+        avg_understanding = 0.0
+        total_study_time = 0
+
+        if total_students > 0:
+            avg_progress = sum(e.overall_progress for e in all_enrollments) / total_students
+            avg_understanding = sum(e.avg_understanding_score for e in all_enrollments) / total_students
+            total_study_time = sum(e.total_study_minutes for e in all_enrollments)
+
+        # 进度分布
+        progress_distribution = {
+            "not_started": sum(1 for e in all_enrollments if e.overall_progress == 0),
+            "beginner": sum(1 for e in all_enrollments if 0 < e.overall_progress < 30),
+            "intermediate": sum(1 for e in all_enrollments if 30 <= e.overall_progress < 70),
+            "advanced": sum(1 for e in all_enrollments if 70 <= e.overall_progress < 100),
+            "completed": sum(1 for e in all_enrollments if e.overall_progress >= 100),
+        }
+
+        return unified_response(code=200, message="获取成功", data={
+            "course_id": course_id,
+            "course_title": course.title,
+            "status": course.status.value,
+            "total_students": total_students,
+            "total_nodes": course.total_nodes or 0,
+            "avg_progress": round(avg_progress, 1),
+            "avg_understanding": round(avg_understanding * 100, 1) if avg_understanding else 0,
+            "total_study_hours": round(total_study_time / 60, 1),
+            "progress_distribution": progress_distribution,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"获取统计失败: {str(e)}", data=None)
