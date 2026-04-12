@@ -17,12 +17,12 @@ const router = createRouter({
     {
       path: '/chat',
       name: 'chat',
-      component: loadView('Chat') // 简化懒加载写法
+      component: loadView('Chat')
     },
     {
       path: '/Edulib',
       name: 'Edulib',
-      component: loadView('Edulib') // 简化懒加载写法
+      component: loadView('Edulib')
     },
     {
       path: '/about',
@@ -33,6 +33,32 @@ const router = createRouter({
       path: '/profile',
       name: 'profile',
       component: loadView('Profile')
+    },
+    // 老师端路由
+    {
+      path: '/teacher',
+      name: 'teacher-dashboard',
+      component: loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    {
+      path: '/teacher/course/:courseId',
+      name: 'teacher-course',
+      component: loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    // 学生端路由
+    {
+      path: '/student',
+      name: 'student-dashboard',
+      component: loadView('StudentDashboard'),
+      meta: { requiresAuth: true, role: 'student' }
+    },
+    {
+      path: '/student/course/:courseId',
+      name: 'student-course',
+      component: loadView('StudentDashboard'),
+      meta: { requiresAuth: true, role: 'student' }
     },
   ],
   // 页面跳转时滚动到顶部（体验优化）

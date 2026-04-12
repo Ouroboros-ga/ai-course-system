@@ -57,13 +57,29 @@ const handleLoginSend = async (data) => {
     localStorage.setItem('userId', res.userInfo.id)
     localStorage.setItem('username', data.username)
 
+    // 解析token获取角色信息（JWT token的payload部分）
+    let userRole = 'student'
+    try {
+      const base64Url = res.token.split('.')[1]
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+      }).join(''))
+      const payload = JSON.parse(jsonPayload)
+      userRole = payload.role || 'student'
+    } catch (e) {
+      console.warn('解析token角色失败，默认为学生')
+    }
+    localStorage.setItem('userRole', userRole)
+
     // 更新内存状态
     counter.setAuth({
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
         username: data.username
-      }
+      },
+      role: userRole
     })
 
     showToast("登录成功", "success")
@@ -88,13 +104,29 @@ const handleRegisterSend = async (data) => {
     localStorage.setItem('userId', res.userInfo.id)
     localStorage.setItem('username', data.username)
 
+    // 解析token获取角色信息
+    let userRole = 'student'
+    try {
+      const base64Url = res.token.split('.')[1]
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+      const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+        return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+      }).join(''))
+      const payload = JSON.parse(jsonPayload)
+      userRole = payload.role || 'student'
+    } catch (e) {
+      console.warn('解析token角色失败，默认为学生')
+    }
+    localStorage.setItem('userRole', userRole)
+
     // 更新内存状态
     counter.setAuth({
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
         username: data.username
-      }
+      },
+      role: userRole
     })
 
     showToast("注册成功并自动登录", "success")

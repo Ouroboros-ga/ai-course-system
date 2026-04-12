@@ -21,6 +21,7 @@ export const useCounterStore = defineStore('counter', () => {
   const userData = ref({
     username: null,
     id: null,
+    role: null,
   })
 
   const token = ref(localStorage.getItem('token') || null)
@@ -29,14 +30,26 @@ export const useCounterStore = defineStore('counter', () => {
     return !!token.value && !!userData.value.id
   })
 
+  const isTeacher = computed(() => {
+    return userData.value.role === 'teacher'
+  })
+
+  const isStudent = computed(() => {
+    return userData.value.role === 'student'
+  })
+
   function setAuth(authData) {
     token.value = authData.token
     userData.value = {
       username: authData.username || authData.userInfo?.username || null,
       id: authData.id || authData.userInfo?.id || null,
+      role: authData.role || null,
     }
     if (authData.token) {
       localStorage.setItem('token', authData.token)
+    }
+    if (authData.role) {
+      localStorage.setItem('userRole', authData.role)
     }
   }
 
@@ -45,14 +58,20 @@ export const useCounterStore = defineStore('counter', () => {
     userData.value = {
       username: null,
       id: null,
+      role: null,
     }
     localStorage.removeItem('token')
+    localStorage.removeItem('userRole')
   }
 
   function checkAuth() {
     const savedToken = localStorage.getItem('token')
+    const savedRole = localStorage.getItem('userRole')
     if (savedToken) {
       token.value = savedToken
+    }
+    if (savedRole) {
+      userData.value.role = savedRole
     }
     return !!savedToken
   }
@@ -65,6 +84,8 @@ export const useCounterStore = defineStore('counter', () => {
     userData,
     token,
     isLoggedIn,
+    isTeacher,
+    isStudent,
     setAuth,
     clearAuth,
     checkAuth,

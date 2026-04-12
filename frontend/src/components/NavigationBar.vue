@@ -1,5 +1,45 @@
 <script setup>
-// 无需额外逻辑
+import { computed } from 'vue'
+import { useCounterStore } from '@/stores/counter.js'
+
+const counter = useCounterStore()
+
+// 根据登录状态和角色计算导航项
+const navItems = computed(() => {
+  const baseItems = [
+    { path: '/', label: 'Home' },
+    { path: '/about', label: 'About' },
+  ]
+
+  if (!counter.isLoggedIn) {
+    // 未登录状态
+    return [
+      ...baseItems,
+      { path: '/Edulib', label: 'Edulib' },
+      { path: '/profile', label: 'Profile' },
+    ]
+  }
+
+  if (counter.isTeacher) {
+    // 老师端导航
+    return [
+      ...baseItems,
+      { path: '/teacher', label: '📚 智课管理', icon: '📚', isTeacherChat: true },
+      { path: '/profile', label: 'Profile' },
+    ]
+  }
+
+  if (counter.isStudent) {
+    // 学生端导航
+    return [
+      ...baseItems,
+      { path: '/student', label: '📖 我的课程', icon: '📖' },
+      { path: '/profile', label: 'Profile' },
+    ]
+  }
+
+  return baseItems
+})
 </script>
 
 <template>
@@ -12,21 +52,22 @@
       </router-link>
 
       <div class="nav-links">
-        <router-link to="/" class="nav-item">
-          Home
+        <router-link
+          v-for="item in navItems"
+          :key="item.path"
+          :to="item.path"
+          class="nav-item"
+          :class="{ 'teacher-chat': item.isTeacherChat }"
+        >
+          <span v-if="item.icon" class="nav-icon">{{ item.icon }}</span>
+          {{ item.label }}
         </router-link>
-        <router-link to="/chat" class="nav-item">
-          Chat
-        </router-link>
-        <router-link to="/Edulib" class="nav-item">
-          Edulib
-        </router-link>
-        <router-link to="/about" class="nav-item">
-          About
-        </router-link>
-        <router-link to="/profile" class="nav-item">
-          Profile
-        </router-link>
+      </div>
+
+      <!-- 用户状态指示器（可选） -->
+      <div v-if="counter.isLoggedIn" class="user-badge">
+        <span class="role-tag">{{ counter.isTeacher ? '老师' : '学生' }}</span>
+        <span class="username">{{ counter.userData.username }}</span>
       </div>
     </nav>
 
@@ -50,7 +91,6 @@
 
 /* 🔷 导航栏样式 - 保持原有增强设计 */
 .navbar {
-  //position: sticky;
   top: 0;
   z-index: 100;
   display: flex;
@@ -173,6 +213,9 @@
   border: 1px solid transparent;
   background-clip: padding-box;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
 }
 
 .nav-item:hover {
@@ -205,6 +248,58 @@
   opacity: 0.9;
 }
 
+/* 老师端特殊按钮样式 */
+.nav-item.teacher-chat {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border-color: transparent;
+  font-weight: 600;
+}
+
+.nav-item.teacher-chat:hover {
+  background: linear-gradient(135deg, #5558e6, #7c3aed);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.nav-item.teacher-chat.router-link-active {
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
+}
+
+.nav-icon {
+  font-size: 1rem;
+}
+
+/* 用户状态徽章 */
+.user-badge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 14px;
+  background: #f1f5f9;
+  border-radius: 20px;
+  font-size: 0.85rem;
+}
+
+.role-tag {
+  padding: 3px 10px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+  border-radius: 12px;
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+.username {
+  color: #374151;
+  font-weight: 500;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* 主内容区域 */
 .main-content {
   flex: 1;
@@ -213,8 +308,6 @@
   margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
-
-  //background: red;
 }
 
 /* 路由切换淡入淡出动画 */
@@ -255,6 +348,10 @@
   .navbar::after {
     left: 10%;
     right: 10%;
+  }
+
+  .user-badge {
+    display: none;
   }
 }
 </style>
