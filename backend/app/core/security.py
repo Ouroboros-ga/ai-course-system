@@ -206,7 +206,7 @@ def role_required(allowed_roles: List[UserRole]):
 
 
 # 预定义常用权限依赖
-teacher_only = role_required([UserRole.TEACHER])
-student_only = role_required([UserRole.STUDENT])
-teacher_student_allowed = role_required([UserRole.TEACHER, UserRole.STUDENT])
+teacher_only = role_required([UserRole.TEACHER, UserRole.ADMIN])
+student_only = role_required([UserRole.STUDENT, UserRole.ADMIN])
+teacher_student_allowed = role_required([UserRole.TEACHER, UserRole.STUDENT, UserRole.ADMIN])
 admin_only = role_required([UserRole.ADMIN])

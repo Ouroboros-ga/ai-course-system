@@ -70,6 +70,12 @@ const router = createRouter({
       component: loadView('StudentDashboard'),
       meta: { requiresAuth: true, role: 'student' }
     },
+    {
+      path: '/admin',
+      name: 'admin-panel',
+      component: loadView('AdminPanel'),
+      meta: { requiresAuth: true, role: 'admin' }
+    },
   ],
   // 页面跳转时滚动到顶部（体验优化）
   scrollBehavior() {

@@ -4,47 +4,59 @@ import { useCounterStore } from '@/stores/counter.js'
 
 const counter = useCounterStore()
 
-// 根据登录状态和角色计算导航项
 const navItems = computed(() => {
   const baseItems = [
-    { path: '/', label: 'Home' },
-    { path: '/about', label: 'About' },
+    { path: '/', label: '首页' },
+    { path: '/about', label: '关于' },
   ]
 
   if (!counter.isLoggedIn) {
-    // 未登录状态
     return [
       ...baseItems,
       { path: '/Edulib', label: 'Edulib' },
-      { path: '/profile', label: 'Profile' },
+      { path: '/profile', label: '个人中心' },
+    ]
+  }
+
+  if (counter.isAdmin) {
+    return [
+      ...baseItems,
+      { path: '/admin', label: '👥 用户管理', icon: '👥' },
+      { path: '/teacher', label: '📚 智课管理', icon: '📚' },
+      { path: '/student', label: '📖 我的课程', icon: '📖' },
+      { path: '/profile', label: '个人中心' },
     ]
   }
 
   if (counter.isTeacher) {
-    // 老师端导航
     return [
       ...baseItems,
-      { path: '/teacher', label: '📚 智课管理', icon: '📚', isTeacherChat: true },
-      { path: '/profile', label: 'Profile' },
+      { path: '/teacher', label: '📚 智课管理', icon: '📚' },
+      { path: '/profile', label: '个人中心' },
     ]
   }
 
   if (counter.isStudent) {
-    // 学生端导航
     return [
       ...baseItems,
       { path: '/student', label: '📖 我的课程', icon: '📖' },
-      { path: '/profile', label: 'Profile' },
+      { path: '/profile', label: '个人中心' },
     ]
   }
 
   return baseItems
 })
+
+const roleLabel = computed(() => {
+  if (counter.isAdmin) return '管理员'
+  if (counter.isTeacher) return '教师'
+  if (counter.isStudent) return '学生'
+  return ''
+})
 </script>
 
 <template>
   <div class="app-container">
-    <!-- 顶部导航栏 -->
     <nav class="navbar">
       <router-link to="/" class="logo">
         <span class="logo-icon">🦀</span>
@@ -57,21 +69,18 @@ const navItems = computed(() => {
           :key="item.path"
           :to="item.path"
           class="nav-item"
-          :class="{ 'teacher-chat': item.isTeacherChat }"
         >
           <span v-if="item.icon" class="nav-icon">{{ item.icon }}</span>
           {{ item.label }}
         </router-link>
       </div>
 
-      <!-- 用户状态指示器（可选） -->
       <div v-if="counter.isLoggedIn" class="user-badge">
-        <span class="role-tag">{{ counter.isTeacher ? '老师' : '学生' }}</span>
+        <span class="role-tag" :class="{ 'admin-tag': counter.isAdmin }">{{ roleLabel }}</span>
         <span class="username">{{ counter.userData.username }}</span>
       </div>
     </nav>
 
-    <!-- 主内容区域 -->
     <main class="main-content">
       <router-view v-slot="{ Component }">
         <transition name="fade" mode="out-in">
@@ -83,212 +92,121 @@ const navItems = computed(() => {
 </template>
 
 <style scoped>
-/*
-  📌 提示：CSS 变量建议定义在全局样式中（如 App.vue 或 main.css）
-  为确保本组件开箱即用，此处直接使用具体颜色值
-*/
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
 
-
-/* 🔷 导航栏样式 - 保持原有增强设计 */
 .navbar {
+  position: sticky;
   top: 0;
   z-index: 100;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0.5rem 2rem;
-
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.95)),
-    linear-gradient(135deg, rgba(14, 165, 233, 0.04), transparent 60%);
-
+  padding: 0 2rem;
+  height: 56px;
+  background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid #e2e8f0;
-  position: relative;
-
-  border-radius: 0;
-
-  box-shadow:
-    0 1px 3px rgba(0, 0, 0, 0.04),
-    0 1px 2px rgba(14, 165, 233, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-
-  transition: box-shadow 0.3s ease, background 0.3s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  flex-shrink: 0;
 }
 
-/* 🌟 顶部渐变装饰线 */
 .navbar::before {
   content: '';
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(14, 165, 233, 0.6),
-    rgba(56, 189, 248, 0.4),
-    rgba(14, 165, 233, 0.6),
-    transparent
-  );
-  opacity: 0.9;
+  height: 2px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6, #0ea5e9, #6366f1);
   pointer-events: none;
 }
 
-/* 💎 底部边框高光 */
-.navbar::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 5%;
-  right: 5%;
-  height: 1px;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(14, 165, 233, 0.5),
-    rgba(14, 165, 233, 0.2),
-    transparent
-  );
-  opacity: 0.7;
-  border-radius: 2px;
-  pointer-events: none;
-}
-
-.navbar:hover {
-  box-shadow:
-    2px 6px 12px rgba(0, 0, 0, 0.05),
-    0 2px 4px rgba(14, 165, 233, 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
-}
-
-/* Logo 样式 */
 .logo {
-  font-size: 1.5rem;
+  font-size: 1.4rem;
   font-weight: 800;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.03em;
   color: #0f172a;
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  text-shadow: 0 0 20px rgba(14, 165, 233, 0.1);
-  cursor: pointer;
-
+  gap: 0.4rem;
   text-decoration: none;
+  flex-shrink: 0;
 }
 
 .logo-icon {
-  font-size: 1.2rem;
-  color: #0ea5e9;
-  filter: drop-shadow(0 0 8px rgba(14, 165, 233, 0.4));
+  font-size: 1.1rem;
+  color: #6366f1;
   transition: transform 0.3s ease;
   display: inline-block;
 }
 
 .logo:hover .logo-icon {
-  transform: scale(1.05) rotate(2deg);
+  transform: scale(1.1) rotate(5deg);
 }
 
-/* 导航链接容器 */
 .nav-links {
   display: flex;
-  gap: 0.5rem;
-  background: transparent;
-  padding: 0.25rem;
-  border-radius: 10px;
+  gap: 4px;
+  align-items: center;
 }
 
-/* 单个链接样式 */
 .nav-item {
   text-decoration: none;
   color: #64748b;
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   font-weight: 500;
-  padding: 0.5rem 1rem;
+  padding: 6px 14px;
   border-radius: 8px;
-  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-  position: relative;
-  border: 1px solid transparent;
-  background-clip: padding-box;
+  transition: all 0.2s ease;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .nav-item:hover {
-  color: #0ea5e9;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.06), rgba(14, 165, 233, 0.02));
-  border-color: rgba(14, 165, 233, 0.15);
-  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.08);
-  transform: translateY(-1px);
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.06);
 }
 
 .nav-item.router-link-active {
-  color: #0ea5e9;
-  background: linear-gradient(135deg, rgba(14, 165, 233, 0.12), rgba(14, 165, 233, 0.05));
-  border-color: rgba(14, 165, 233, 0.3);
+  color: #6366f1;
+  background: rgba(99, 102, 241, 0.1);
   font-weight: 600;
-  box-shadow:
-    0 2px 6px rgba(14, 165, 233, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
-}
-
-.nav-item.router-link-active::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 1rem;
-  right: 1rem;
-  height: 2px;
-  background: linear-gradient(90deg, #0ea5e9, #0284c7);
-  border-radius: 2px;
-  opacity: 0.9;
-}
-
-/* 老师端特殊按钮样式 */
-.nav-item.teacher-chat {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
-  border-color: transparent;
-  font-weight: 600;
-}
-
-.nav-item.teacher-chat:hover {
-  background: linear-gradient(135deg, #5558e6, #7c3aed);
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
-}
-
-.nav-item.teacher-chat.router-link-active {
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.5);
 }
 
 .nav-icon {
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
 
-/* 用户状态徽章 */
 .user-badge {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 6px 14px;
+  gap: 8px;
+  padding: 4px 12px;
   background: #f1f5f9;
   border-radius: 20px;
   font-size: 0.85rem;
+  flex-shrink: 0;
 }
 
 .role-tag {
-  padding: 3px 10px;
+  padding: 2px 10px;
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   color: white;
-  border-radius: 12px;
+  border-radius: 10px;
   font-weight: 600;
   font-size: 0.75rem;
+}
+
+.role-tag.admin-tag {
+  background: linear-gradient(135deg, #dc2626, #ef4444);
 }
 
 .username {
@@ -300,58 +218,45 @@ const navItems = computed(() => {
   white-space: nowrap;
 }
 
-/* 主内容区域 */
 .main-content {
   flex: 1;
-  padding: 0 2.5rem 0 2.5rem;
-  max-width: 1200px;
-  margin: 0 auto;
   width: 100%;
   box-sizing: border-box;
 }
 
-/* 路由切换淡入淡出动画 */
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.3s ease, transform 0.3s ease;
+  transition: opacity 0.2s ease;
 }
 
-.fade-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
-}
-
+.fade-enter-from,
 .fade-leave-to {
   opacity: 0;
-  transform: translateY(-10px);
 }
 
-/* 移动端适配 */
 @media (max-width: 768px) {
   .navbar {
-    flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
+    flex-wrap: wrap;
+    height: auto;
+    padding: 8px 12px;
+    gap: 8px;
   }
 
   .nav-links {
+    order: 3;
     width: 100%;
     justify-content: center;
     flex-wrap: wrap;
+    gap: 2px;
   }
 
   .nav-item {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.85rem;
-  }
-
-  .navbar::after {
-    left: 10%;
-    right: 10%;
+    padding: 4px 8px;
+    font-size: 0.8rem;
   }
 
   .user-badge {
-    display: none;
+    font-size: 0.75rem;
   }
 }
 </style>

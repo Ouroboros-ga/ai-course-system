@@ -235,6 +235,8 @@
         </div>
       </div>
     </div>
+
+    <DigitalHumanWindow />
   </div>
 </template>
 
@@ -248,6 +250,7 @@ import katex from 'katex'
 import { showToast } from '@/utils/toast'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
+import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 
 const counter = useCounterStore()
 

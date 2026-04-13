@@ -38,6 +38,10 @@ export const useCounterStore = defineStore('counter', () => {
     return userData.value.role === 'student'
   })
 
+  const isAdmin = computed(() => {
+    return userData.value.role === 'admin'
+  })
+
   function setAuth(authData) {
     token.value = authData.token
     userData.value = {
@@ -86,6 +90,7 @@ export const useCounterStore = defineStore('counter', () => {
     isLoggedIn,
     isTeacher,
     isStudent,
+    isAdmin,
     setAuth,
     clearAuth,
     checkAuth,

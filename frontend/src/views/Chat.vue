@@ -52,6 +52,8 @@
       </template>
     </MobileLayout>
     </div>
+
+    <DigitalHumanWindow />
   </div>
 </template>
 
@@ -64,6 +66,7 @@ import ChatTopNav from '@/components/chat/topnav/ChatTopNav.vue';
 import HistorySidebar from '@/components/chat/sidebar/HistorySidebar.vue';
 import DesktopLayout from '@/components/chat/layout/DesktopLayout.vue';
 import MobileLayout from '@/components/chat/layout/MobileLayout.vue';
+import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue';
 
 const STORAGE_KEY = 'chatCurrentData';
 

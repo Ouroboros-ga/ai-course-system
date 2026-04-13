@@ -2,11 +2,36 @@
   <div class="teacher-history">
     <div class="history-container">
       <div class="page-header">
-        <h1>📚 以往课程管理</h1>
+        <h1>📚 课程管理</h1>
         <p class="subtitle">查看和管理您创建的所有课程以及学生学习状态</p>
         <router-link to="/teacher/create" class="create-new-btn">
           ➕ 创建新课程
         </router-link>
+      </div>
+
+      <!-- 统计概览 -->
+      <div class="stats-overview">
+        <div class="stat-card">
+          <div class="stat-icon">📚</div>
+          <div class="stat-info">
+            <div class="stat-number">{{ stats.courseCount }}</div>
+            <div class="stat-label">智课数量</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">👥</div>
+          <div class="stat-info">
+            <div class="stat-number">{{ stats.studentCount }}</div>
+            <div class="stat-label">学生人数</div>
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-icon">📢</div>
+          <div class="stat-info">
+            <div class="stat-number">{{ publishedCount }}</div>
+            <div class="stat-label">已发布课程</div>
+          </div>
+        </div>
       </div>
 
       <!-- 课程列表 -->
@@ -202,7 +227,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import NavigationBar from '@/components/NavigationBar.vue'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { showToast } from '@/utils/toast'
@@ -219,6 +243,15 @@ const isPublishing = ref(false)
 const publishingId = ref(null)
 const isDeleting = ref(false)
 const deletingId = ref(null)
+
+const stats = ref({
+  courseCount: 0,
+  studentCount: 0,
+})
+
+const publishedCount = computed(() => {
+  return courses.value.filter(c => c.status === 'published').length
+})
 
 // 学生数据
 const students = ref([])
@@ -521,7 +554,22 @@ async function loadStudentsAndStats(courseId) {
 
 onMounted(() => {
   loadCourses()
+  loadStats()
 })
+
+async function loadStats() {
+  try {
+    const res = await api.user.getUserStats()
+    if (res) {
+      stats.value = {
+        courseCount: res.courseCount || 0,
+        studentCount: res.studentCount || 0,
+      }
+    }
+  } catch (error) {
+    console.error('加载统计数据失败:', error)
+  }
+}
 </script>
 
 <style scoped>
@@ -572,6 +620,56 @@ onMounted(() => {
 .create-new-btn:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.stats-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  background: white;
+  border-radius: 12px;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  transition: transform 0.2s ease;
+}
+
+.stat-card:hover {
+  transform: translateY(-2px);
+}
+
+.stat-icon {
+  font-size: 32px;
+  width: 56px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  background: #f3f4f6;
+}
+
+.stat-info {
+  flex: 1;
+}
+
+.stat-number {
+  font-size: 28px;
+  font-weight: 700;
+  color: #6366f1;
+  line-height: 1.2;
+}
+
+.stat-label {
+  font-size: 13px;
+  color: #6b7280;
+  margin-top: 2px;
 }
 
 /* 课程网格 */

@@ -1,18 +1,17 @@
 <template>
   <div class="student-home">
-    <NavigationBar />
     <div class="student-content">
       <div class="welcome-section">
         <h1>👨‍🎓 学习中心</h1>
         <p class="subtitle">选择智课开始学习，随时提问互动</p>
       </div>
-      
+
       <div class="course-list-section">
         <h2>📚 可选智课列表</h2>
         <div class="course-grid" v-if="courses.length > 0">
-          <div 
-            v-for="course in courses" 
-            :key="course.id" 
+          <div
+            v-for="course in courses"
+            :key="course.id"
             class="course-card"
             @click="selectCourse(course)"
           >
@@ -34,7 +33,7 @@
             </div>
           </div>
         </div>
-        
+
         <div v-else class="empty-state">
           <div class="empty-icon">📭</div>
           <p>暂无可学习的智课</p>
@@ -48,7 +47,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import NavigationBar from '@/components/NavigationBar.vue'
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
@@ -64,42 +62,23 @@ onMounted(() => {
 
 const loadCourses = async () => {
   try {
-    const res = await api.user.getMyInfo()
-    if (res && res.data) {
-      courses.value = res.data.courses || []
+    const response = await fetch('http://localhost:8000/api/v1/document/courses', {
+      headers: { Authorization: `Bearer ${counter.token}` }
+    })
+    if (response.ok) {
+      const data = await response.json()
+      if (data.code === 200) {
+        courses.value = data.data.courses || []
+      }
     }
   } catch (err) {
-    console.log('加载课程列表失败，使用模拟数据')
-    courses.value = [
-      {
-        id: 1,
-        title: '高等数学 - 微积分基础',
-        total_nodes: 12,
-        total_duration: 720,
-        progress: 35
-      },
-      {
-        id: 2,
-        title: '线性代数 - 矩阵运算',
-        total_nodes: 8,
-        total_duration: 480,
-        progress: 0
-      },
-      {
-        id: 3,
-        title: '概率论与数理统计',
-        total_nodes: 15,
-        total_duration: 900,
-        progress: 60
-      }
-    ]
+    console.log('加载课程列表失败')
   }
 }
 
 const selectCourse = (course) => {
   router.push({
-    path: '/student/chat',
-    query: { courseId: course.id, title: course.title }
+    path: `/student/course/${course.id}`,
   })
   showToast(`开始学习: ${course.title}`, 'success')
 }
@@ -116,12 +95,12 @@ const formatDuration = (seconds) => {
 
 <style scoped>
 .student-home {
-  min-height: 100vh;
+  min-height: calc(100vh - 56px);
   background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
 }
 
 .student-content {
-  max-width: 1200px;
+  max-width: 1000px;
   margin: 0 auto;
   padding: 60px 24px;
 }
@@ -133,38 +112,39 @@ const formatDuration = (seconds) => {
 }
 
 .welcome-section h1 {
-  font-size: 36px;
-  margin-bottom: 12px;
+  font-size: 32px;
+  margin: 0 0 12px 0;
 }
 
 .subtitle {
   font-size: 16px;
   opacity: 0.9;
+  margin: 0;
 }
 
 .course-list-section {
   background: white;
   border-radius: 20px;
-  padding: 32px;
+  padding: 28px;
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
 }
 
 .course-list-section h2 {
   font-size: 20px;
   color: #1f2937;
-  margin-bottom: 24px;
+  margin: 0 0 20px 0;
 }
 
 .course-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
 }
 
 .course-card {
   background: #f8fafc;
   border-radius: 12px;
-  padding: 20px;
+  padding: 16px;
   cursor: pointer;
   transition: all 0.3s ease;
   border: 2px solid transparent;
@@ -177,40 +157,40 @@ const formatDuration = (seconds) => {
 }
 
 .course-cover {
-  width: 60px;
-  height: 60px;
+  width: 48px;
+  height: 48px;
   background: linear-gradient(135deg, #0ea5e9, #0284c7);
-  border-radius: 12px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
 }
 
 .course-icon {
-  font-size: 28px;
+  font-size: 24px;
 }
 
 .course-info h3 {
-  font-size: 16px;
+  font-size: 15px;
   color: #1f2937;
-  margin-bottom: 8px;
+  margin: 0 0 6px 0;
 }
 
 .course-meta {
   display: flex;
-  gap: 16px;
-  font-size: 13px;
+  gap: 12px;
+  font-size: 12px;
   color: #6b7280;
-  margin-bottom: 12px;
+  margin: 0;
 }
 
 .course-progress {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 .progress-bar {
-  height: 6px;
+  height: 5px;
   background: #e5e7eb;
   border-radius: 3px;
   overflow: hidden;
@@ -225,7 +205,7 @@ const formatDuration = (seconds) => {
 }
 
 .progress-text {
-  font-size: 12px;
+  font-size: 11px;
   color: #10b981;
 }
 
@@ -235,18 +215,18 @@ const formatDuration = (seconds) => {
 }
 
 .empty-icon {
-  font-size: 64px;
-  margin-bottom: 16px;
+  font-size: 48px;
+  margin-bottom: 12px;
 }
 
 .empty-state p {
-  font-size: 16px;
+  font-size: 15px;
   color: #6b7280;
-  margin-bottom: 8px;
+  margin: 0 0 6px 0;
 }
 
 .hint {
-  font-size: 14px !important;
+  font-size: 13px !important;
   color: #9ca3af !important;
 }
 </style>

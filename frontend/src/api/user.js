@@ -40,6 +40,13 @@ export function getUserInfo() {
   })
 }
 
+export function getMyInfo() {
+  return request({
+    url: '/user/me',
+    method: 'get'
+  })
+}
+
 /**
  * 用户退出登录
  */
@@ -59,6 +66,36 @@ export function updateUserInfo(data) {
     url: '/user/update',
     method: 'put',
     data
+  })
+}
+
+export function modify(data) {
+  return request({
+    url: '/user/modify',
+    method: 'post',
+    data
+  })
+}
+
+export function getUserList() {
+  return request({
+    url: '/user/list',
+    method: 'get'
+  })
+}
+
+export function changeUserRole(data) {
+  return request({
+    url: '/user/role',
+    method: 'put',
+    data
+  })
+}
+
+export function getUserStats() {
+  return request({
+    url: '/user/stats',
+    method: 'get'
   })
 }
 
