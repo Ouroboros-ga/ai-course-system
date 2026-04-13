@@ -89,7 +89,7 @@
       </div>
 
       <!-- 右侧主内容区 -->
-      <div class="main-content">
+      <div class="content-main">
         <!-- 顶部导航栏 -->
         <div class="content-header">
           <div class="nav-info">
@@ -1298,7 +1298,7 @@ const loadStudentsList = async () => {
 }
 
 /* 右侧主内容 */
-.main-content {
+.content-main {
   flex: 1;
   display: flex;
   flex-direction: column;

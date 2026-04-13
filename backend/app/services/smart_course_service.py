@@ -38,15 +38,18 @@ class ScriptPromptBuilder:
 ### 2. 知识点讲解 (knowledge_point)
 - 每个知识点独立为一个节点
 - 时长：60-180秒
+- **content字段要求：150-300字**
 - 内容结构：
   - 概念定义（清晰、简洁）
-  - 原理讲解（深入浅出）
-  - 实例说明（贴近实际）
+  - 原理讲解（深入浅出，详细说明）
+  - 实例说明（贴近实际，具体案例）
+  - 应用场景（实际运用）
   - 过渡语（与下一个知识点的衔接）
 
 ### 3. 互动提问 (question)
 - 穿插在知识点之间
 - 时长：30-60秒
+- **content字段要求：150-300字**
 - 内容：
   - 提出思考问题
   - 引导思考方向
@@ -55,9 +58,11 @@ class ScriptPromptBuilder:
 ### 4. 总结语 (summary)
 - 每个章节结束时的回顾
 - 时长：45-90秒
+- **content字段要求：150-300字**
 - 内容：
-  - 核心要点回顾
+  - 核心要点回顾（详细总结每个要点）
   - 知识框架梳理
+  - 学习建议和方法
   - 下节预告
 
 ## 输出格式
@@ -72,7 +77,7 @@ class ScriptPromptBuilder:
         {
             "type": "opening",
             "title": "开场白",
-            "content": "讲解文本内容",
+            "content": "讲解文本内容（150-300字的详细讲解）",
             "duration": 45,
             "tone": "enthusiastic",
             "transitions": {
@@ -84,9 +89,9 @@ class ScriptPromptBuilder:
             "id": "kp_001",
             "title": "知识点标题",
             "definition": "概念定义",
-            "explanation": "原理解释",
+            "explanation": "原理解释（详细说明原理、机制）",
             "examples": ["示例1", "示例2"],
-            "content": "完整讲解文本（用于语音合成）",
+            "content": "完整讲解文本（150-300字，包含概念解释、原理说明、实例分析、应用场景等丰富内容）",
             "duration": 120,
             "difficulty": "medium",
             "is_key_point": true,
@@ -100,14 +105,14 @@ class ScriptPromptBuilder:
             "title": "互动提问",
             "question": "思考问题",
             "hint": "提示信息",
-            "content": "提问文本",
+            "content": "提问文本（150-300字，包含问题背景、引导思路、提示方向）",
             "duration": 30
         },
         {
             "type": "summary",
             "title": "章节小结",
             "key_points": ["要点1", "要点2", "要点3"],
-            "content": "总结讲解文本",
+            "content": "总结讲解文本（150-300字，详细回顾核心要点、知识框架、学习建议）",
             "duration": 60,
             "next_preview": "下节课我们将学习..."
         }
@@ -117,11 +122,13 @@ class ScriptPromptBuilder:
 ## 重要提示
 
 1. **讲解文本(content字段)** 必须是完整的口语化文本，适合直接用于语音合成(TTS)
-2. **过渡语** 要自然流畅，避免生硬的"接下来"
-3. **时长控制**：总时长控制在10-20分钟为宜
-4. **难度分级**：easy/medium/hard，根据内容复杂度标注
-5. **语气标注**：enthusiastic/calm/serious，指导语音合成
-6. **必须包含**：开场白至少1个，总结语至少1个，知识点3-8个
+2. **content字段长度要求严格控制在150-300字之间**，确保内容丰富详实
+3. **内容要充实**：包含足够的细节、例子和解释，避免过于简略
+4. **过渡语** 要自然流畅，避免生硬的"接下来"
+5. **时长控制**：总时长控制在10-20分钟为宜
+6. **难度分级**：easy/medium/hard，根据内容复杂度标注
+7. **语气标注**：enthusiastic/calm/serious，指导语音合成
+8. **必须包含**：开场白至少1个，总结语至少1个，知识点3-8个
 
 请确保返回的是有效的JSON格式。"""
 

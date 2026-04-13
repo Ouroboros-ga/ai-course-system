@@ -356,3 +356,167 @@ async def mark_node_completed(
         return unified_response(
             code=500, message=f"标记失败: {str(e)}", data=None
         )
+
+
+@router.post("/sync", response_model=UnifiedResponse)
+async def sync_learning_progress(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+    data: dict = Body(..., description="学习进度数据"),
+):
+    """
+    同步学习进度（学生端调用）
+
+    接收前端发送的学习进度数据并保存到数据库，包括：
+    - 当前节点位置
+    - 节点完成状态
+    - 理解度评分
+    - 学习时长
+
+    请求体格式：
+    {
+        "courseId": 1,
+        "nodeId": 5,
+        "nodeIndex": 2,
+        "understandingLevel": "high",
+        "understandingScore": 0.85,
+        "studyTime": 120
+    }
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        username = current_user.get("username", "user")
+
+        course_id = data.get("courseId")
+        node_id = data.get("nodeId")
+        node_index = data.get("nodeIndex", 0)
+        understanding_level = data.get("understandingLevel", "unknown")
+        understanding_score = data.get("understandingScore", 0.0)
+        study_time = data.get("studyTime", 0)
+
+        if not course_id:
+            return unified_response(code=400, message="缺少课程ID", data=None)
+
+        print(f"[进度同步] 用户 {username} 课程{course_id} 节点{node_index} 理解度:{understanding_level}")
+
+        # 查找或创建学习进度记录
+        learning_progress = session.exec(
+            select(LearningProgress).where(
+                LearningProgress.student_id == user_id,
+                LearningProgress.course_id == course_id
+            )
+        ).first()
+
+        if not learning_progress:
+            # 如果没有进度记录（理论上不应该发生，因为选课时会初始化），则创建
+            learning_progress = LearningProgress(
+                student_id=user_id,
+                course_id=course_id,
+                current_node_index=node_index,
+                overall_progress=0.0 if node_index == 0 else (node_index / max(1, data.get("totalNodes", 10))) * 100,
+                total_study_time=study_time,
+                last_access_time=datetime.utcnow(),
+            )
+            session.add(learning_progress)
+            session.commit()
+            session.refresh(learning_progress)
+            print(f"[进度同步] 创建新的LearningProgress ID={learning_progress.id}")
+        else:
+            # 更新总体进度
+            learning_progress.current_node_index = node_index
+            learning_progress.total_study_time += study_time
+            learning_progress.last_access_time = datetime.utcnow()
+
+            # 计算总体进度（基于节点完成情况）
+            total_nodes = data.get("totalNodes", 10)
+            if total_nodes > 0:
+                # 假设当前节点及之前的都已完成
+                completed_count = node_index + 1
+                learning_progress.overall_progress = (completed_count / total_nodes) * 100
+
+            session.add(learning_progress)
+            session.commit()
+
+        # 更新或创建节点级别的进度记录
+        if node_id:
+            node_progress = session.exec(
+                select(NodeProgress).where(
+                    NodeProgress.learning_progress_id == learning_progress.id,
+                    NodeProgress.node_id == node_id
+                )
+            ).first()
+
+            if not node_progress:
+                # 创建新的节点进度记录
+                node_progress = NodeProgress(
+                    learning_progress_id=learning_progress.id,
+                    node_id=node_id,
+                    node_index=node_index,
+                    is_completed=True,
+                    completion_rate=100.0 if understanding_score >= 0.7 else (understanding_score * 100),
+                    understanding_score=understanding_score,
+                    understanding_level=understanding_level,
+                    study_time=study_time,
+                    question_count=1,  # 默认至少有1次交互
+                )
+                session.add(node_progress)
+                print(f"[进度同步] 创建NodeProgress 节点{node_id}")
+            else:
+                # 更新已有记录
+                node_progress.is_completed = True
+                node_progress.completion_rate = 100.0 if understanding_score >= 0.7 else (understanding_score * 100)
+                node_progress.understanding_score = max(node_progress.understanding_score, understanding_score)
+                node_progress.understanding_level = understanding_level
+                node_progress.study_time += study_time
+                node_progress.question_count += 1
+                session.add(node_progress)
+
+            session.commit()
+
+        # 同步更新StudentEnrollment表中的统计数据
+        from app.models.course_model import StudentEnrollment
+        enrollment = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == user_id,
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            )
+        ).first()
+
+        if enrollment:
+            enrollment.overall_progress = learning_progress.overall_progress
+            enrollment.avg_understanding_score = understanding_score
+            enrollment.avg_understanding_level = understanding_level
+            enrollment.total_study_minutes += (study_time // 60) if study_time else 0
+            enrollment.last_study_time = datetime.utcnow()
+
+            # 计算完成的节点数
+            completed_nodes = session.exec(
+                select(NodeProgress).where(
+                    NodeProgress.learning_progress_id == learning_progress.id,
+                    NodeProgress.is_completed == True
+                )
+            ).count_all() or 0
+
+            enrollment.total_nodes_completed = completed_nodes
+            session.add(enrollment)
+            session.commit()
+
+        return unified_response(
+            code=200,
+            message="学习进度保存成功",
+            data={
+                "progress_id": learning_progress.id,
+                "overall_progress": round(learning_progress.overall_progress, 1),
+                "current_node": node_index,
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"进度同步失败: {str(e)}",
+            data={"error": str(e)}
+        )

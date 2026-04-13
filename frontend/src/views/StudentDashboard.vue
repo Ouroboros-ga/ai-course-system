@@ -42,8 +42,19 @@
               </div>
             </div>
             <div class="card-footer">
-              <button class="start-btn" @click.stop="enterCourse(course)">
-                开始学习 →
+              <button
+                class="start-btn"
+                @click.stop="enterCourse(course)"
+                :disabled="course.status !== 'published'"
+              >
+                {{ course.status === 'published' ? '🚀 开始学习 →' : '⏳ 未发布' }}
+              </button>
+              <button
+                v-if="course.status === 'published'"
+                class="preview-btn"
+                @click.stop="previewCourse(course)"
+              >
+                👁️ 预览
               </button>
             </div>
           </div>
@@ -451,6 +462,13 @@ async function enterCourse(course) {
   loadCourseContent(course.id)
 }
 
+// 预览课程（不选课，只查看内容）
+function previewCourse(course) {
+  selectedCourse.value = course
+  loadCourseContent(course.id)
+  showToast('预览模式：学习进度不会保存', 'info')
+}
+
 // 退出课程
 function exitCourse() {
   selectedCourse.value = null
@@ -737,9 +755,9 @@ function updateNodeUnderstanding(index, analysis) {
 async function saveProgressToServer(index, analysis) {
   try {
     const node = scriptNodes.value[index]
-    if (!node) return
+    if (!node || !selectedCourse.value) return
 
-    await fetch('http://localhost:8000/api/v1/learning/progress', {
+    const response = await fetch('http://localhost:8000/api/v1/progress/sync', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -751,19 +769,33 @@ async function saveProgressToServer(index, analysis) {
         nodeIndex: index,
         understandingLevel: analysis.level,
         understandingScore: analysis.score,
+        studyTime: 60, // 默认学习时长（秒）
+        totalNodes: scriptNodes.value.length,
       }),
     })
+
+    if (response.ok) {
+      const data = await response.json()
+      if (data.code === 200) {
+        console.log('进度保存成功:', data.data)
+      }
+    } else {
+      console.error('进度保存失败')
+    }
   } catch (error) {
-    console.error('保存进度失败:', error)
+    console.error('保存进度请求失败:', error)
   }
 }
 
 // 跳转到指定节点
 function jumpToNode(index) {
   if (index === currentNodeIndex.value) return
+  if (index < 0 || index >= scriptNodes.value.length) return
 
   currentNodeIndex.value = index
   canInput.value = false
+  isStreaming.value = false
+  streamingContent.value = ''
 
   // 清空当前聊天记录，重新开始该节点的学习
   chatMessages.value = []
@@ -772,13 +804,13 @@ function jumpToNode(index) {
   chatMessages.value.push({
     id: Date.now(),
     role: 'ai',
-    content: `## 📍 跳转至：${scriptNodes.value[index]?.title || `节点 ${index + 1}`}\n\n点击下方按钮开始学习此内容：`,
+    content: `## 📍 跳转至：${scriptNodes.value[index]?.title || `节点 ${index + 1}`}\n\n正在加载内容，请稍候...`,
   })
 
-  // 添加开始按钮消息（通过特殊标记）
+  // 延迟后开始流式输出该节点内容
   setTimeout(() => {
-    startLearning()
-  }, 500)
+    streamCurrentNode()
+  }, 300)
 }
 
 // 滚动到底部
@@ -983,6 +1015,35 @@ onMounted(() => {
 .start-btn:hover {
   transform: scale(1.02);
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.start-btn:disabled {
+  background: linear-gradient(135deg, #9ca3af, #6b7280);
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.preview-btn {
+  flex: 1;
+  padding: 10px;
+  background: #f3f4f6;
+  color: #374151;
+  border: none;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.preview-btn:hover {
+  background: #e5e7eb;
+  transform: scale(1.02);
+}
+
+.card-footer {
+  display: flex;
+  gap: 10px;
 }
 
 .loading-state, .empty-state {

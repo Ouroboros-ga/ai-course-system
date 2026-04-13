@@ -37,7 +37,17 @@ const router = createRouter({
     // 老师端路由
     {
       path: '/teacher',
-      name: 'teacher-dashboard',
+      redirect: '/teacher/history'
+    },
+    {
+      path: '/teacher/history',
+      name: 'teacher-history',
+      component: loadView('TeacherHistory'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    {
+      path: '/teacher/create',
+      name: 'teacher-create',
       component: loadView('TeacherDashboard'),
       meta: { requiresAuth: true, role: 'teacher' }
     },

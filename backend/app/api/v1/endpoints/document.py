@@ -927,6 +927,98 @@ async def unpublish_course(
         return unified_response(code=500, message=f"取消发布失败: {str(e)}", data=None)
 
 
+@router.delete("/course/{course_id}")
+async def delete_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    删除课程（老师操作）
+
+    完全删除课程及其所有关联数据（脚本、选课记录、学习进度等）
+    此操作不可恢复，需要二次确认
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "teacher":
+            return unified_response(code=403, message="只有教师可以删除课程", data=None)
+
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, detail="课程不存在")
+
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权删除此课程", data=None)
+
+        # 检查是否有学生已选课
+        enrollments_count = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.course_id == course_id,
+                StudentEnrollment.is_active == True
+            )
+        ).count_all() or 0
+
+        # 删除所有相关数据（按依赖顺序）
+        try:
+            from app.models.progress_model import LearningProgress, NodeProgress
+            from app.models.course_model import CourseScript, ScriptNode
+
+            # 1. 删除该课程的所有学习进度和节点进度
+            learning_progresses = session.exec(
+                select(LearningProgress).where(LearningProgress.course_id == course_id)
+            ).all()
+
+            for lp in learning_progresses:
+                node_progresses = session.exec(
+                    select(NodeProgress).where(NodeProgress.learning_progress_id == lp.id)
+                ).all()
+                for np in node_progresses:
+                    session.delete(np)
+                session.delete(lp)
+
+            # 2. 删除该课程的选课记录
+            all_enrollments = session.exec(
+                select(StudentEnrollment).where(StudentEnrollment.course_id == course_id)
+            ).all()
+            for enrollment in all_enrollments:
+                session.delete(enrollment)
+
+            # 3. 删除课程脚本节点
+            scripts = session.exec(
+                select(CourseScript).where(CourseScript.course_id == course_id)
+            ).all()
+            for script in scripts:
+                nodes = session.exec(
+                    select(ScriptNode).where(ScriptNode.script_id == script.id)
+                ).all()
+                for node in nodes:
+                    session.delete(node)
+                session.delete(script)
+
+            # 4. 最后删除课程本身
+            session.delete(course)
+            session.commit()
+
+            print(f"[删除课程] 教师 {current_user.get('username')} 删除了课程 {course.title} (ID:{course_id})，影响 {enrollments_count} 名学生")
+
+            return unified_response(code=200, message=f"课程《{course.title}》已成功删除", data={
+                "deleted_course_id": course_id,
+                "affected_students": enrollments_count,
+            })
+
+        except Exception as e:
+            session.rollback()
+            raise e
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"删除失败: {str(e)}", data=None)
+
+
 @router.post("/course/{course_id}/enroll")
 async def enroll_course(
     course_id: int,
@@ -935,8 +1027,9 @@ async def enroll_course(
 ):
     """
     学生选择/加入课程
-    
+
     学生可以加入老师发布的课程
+    选课成功后会自动初始化学习进度记录
     """
     try:
         student_id = int(current_user["user_id"])
@@ -961,6 +1054,8 @@ async def enroll_course(
         ).first()
 
         if existing and existing.is_active:
+            # 已选课，检查是否需要初始化进度数据
+            _ensure_learning_progress(session, student_id, course_id, course.total_nodes or 0)
             return unified_response(code=200, message="您已选择过此课程", data={
                 "enrollment_id": existing.id,
                 "already_enrolled": True
@@ -972,6 +1067,8 @@ async def enroll_course(
             existing.enrolled_at = datetime.utcnow()
             session.add(existing)
             session.commit()
+            # 初始化学习进度
+            _ensure_learning_progress(session, student_id, course_id, course.total_nodes or 0)
             return unified_response(code=200, message="重新加入课程成功", data={
                 "enrollment_id": existing.id,
                 "reactivated": True
@@ -987,15 +1084,110 @@ async def enroll_course(
         session.commit()
         session.refresh(enrollment)
 
-        return unified_response(code=200, message="选课成功", data={
+        # 初始化学习进度记录（关键：确保学生学习数据能正确保存）
+        _init_learning_progress_for_student(session, student_id, course_id, course.total_nodes or 0)
+
+        print(f"[选课] 学生 {current_user.get('username')} 成功加入课程 {course.title} (ID:{course_id})")
+
+        return unified_response(code=200, message="选课成功！您现在可以开始学习了。", data={
             "enrollment_id": enrollment.id,
-            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None
+            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrollment_at else None,
+            "total_nodes": course.total_nodes or 0,
         })
 
     except Exception as e:
         import traceback
         traceback.print_exc()
         return unified_response(code=500, message=f"选课失败: {str(e)}", data=None)
+
+
+def _init_learning_progress_for_student(session: Session, student_id: int, course_id: int, total_nodes: int):
+    """
+    为新选课的学生初始化学习进度记录
+
+    创建LearningProgress和NodeProgress记录，确保后续学习数据能正确保存到数据库
+    """
+    try:
+        from app.models.progress_model import LearningProgress, NodeProgress
+
+        # 检查是否已有进度记录
+        existing_progress = session.exec(
+            select(LearningProgress).where(
+                LearningProgress.student_id == student_id,
+                LearningProgress.course_id == course_id
+            )
+        ).first()
+
+        if existing_progress:
+            print(f"[进度初始化] 学生{student_id} 课程{course_id} 进度记录已存在")
+            return
+
+        # 创建总的学习进度记录
+        learning_progress = LearningProgress(
+            student_id=student_id,
+            course_id=course_id,
+            current_node_index=0,
+            overall_progress=0.0,
+            total_study_time=0,
+            last_access_time=datetime.utcnow(),
+        )
+        session.add(learning_progress)
+        session.commit()
+        session.refresh(learning_progress)
+
+        print(f"[进度初始化] 创建LearningProgress ID={learning_progress.id}")
+
+        # 如果有节点信息，为每个节点创建初始进度记录
+        if total_nodes > 0:
+            from sqlmodel import select as sql_select
+            script = session.exec(
+                sql_select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
+            ).first()
+
+            if script:
+                nodes = session.exec(
+                    sql_select(ScriptNode).where(ScriptNode.script_id == script.id).order_by(ScriptNode.node_index)
+                ).all()
+
+                for node in nodes:
+                    node_progress = NodeProgress(
+                        learning_progress_id=learning_progress.id,
+                        node_id=node.id,
+                        node_index=node.node_index,
+                        is_completed=False,
+                        completion_rate=0.0,
+                        understanding_score=0.0,
+                        study_time=0,
+                        question_count=0,
+                    )
+                    session.add(node_progress)
+
+                session.commit()
+                print(f"[进度初始化] 为 {len(nodes)} 个节点创建初始进度记录")
+
+    except Exception as e:
+        print(f"[进度初始化] 失败: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def _ensure_learning_progress(session: Session, student_id: int, course_id: int, total_nodes: int):
+    """确保学生的学习进度记录存在"""
+    try:
+        from app.models.progress_model import LearningProgress
+
+        existing = session.exec(
+            select(LearningProgress).where(
+                LearningProgress.student_id == student_id,
+                LearningProgress.course_id == course_id
+            )
+        ).first()
+
+        if not existing:
+            _init_learning_progress_for_student(session, student_id, course_id, total_nodes)
+
+    except Exception as e:
+        print(f"[确保进度] 检查失败: {e}")
 
 
 @router.post("/course/{course_id}/unenroll")
