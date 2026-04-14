@@ -1,20 +1,33 @@
 <template>
-  <div class="digital-human-wrapper">
+  <div class="digital-human-wrapper" :style="wrapperStyle">
     <Transition name="slide-fade">
-      <div v-if="isOpen" class="dh-panel">
-        <div class="dh-header">
+      <div
+        v-if="isOpen"
+        class="dh-panel"
+        :class="{ 'is-dragging': isDragging, 'is-minimized': isMinimized }"
+        :style="panelStyle"
+      >
+        <div
+          class="dh-header"
+          @mousedown="startDrag"
+          @touchstart="startDrag"
+        >
           <div class="dh-title">
             <span class="dh-avatar">🎬</span>
             <span>智课视频播放器</span>
+            <span v-if="isMinimized" class="minimized-badge">最小化</span>
           </div>
           <div class="dh-actions">
             <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
             <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
-            <button class="dh-btn" @click="togglePanel" title="最小化">➖</button>
+            <button class="dh-btn" @click="toggleMinimize" :title="isMinimized ? '还原' : '最小化'">
+              {{ isMinimized ? '🔲' : '➖' }}
+            </button>
+            <button class="dh-btn" @click="togglePanel" title="关闭">✕</button>
           </div>
         </div>
 
-        <div class="dh-content">
+        <div v-show="!isMinimized" class="dh-content">
           <div v-if="!videoUrl && videos.length === 0" class="dh-empty">
             <div class="dh-empty-icon">📺</div>
             <p>暂无视频</p>
@@ -82,7 +95,7 @@
                 </button>
               </div>
               <div class="controls-bottom">
-                <div class="progress-container" @click="seekVideo" @mousedown="startDrag">
+                <div class="progress-container" @click="seekVideo" @mousedown="startProgressDrag">
                   <div class="progress-buffered" :style="{ width: bufferedPercent + '%' }"></div>
                   <div class="progress-played" :style="{ width: progressPercent + '%' }"></div>
                   <div class="progress-thumb" :style="{ left: progressPercent + '%' }" v-if="duration"></div>
@@ -114,25 +127,33 @@
           </div>
         </div>
 
-        <div class="dh-input-area" v-if="!videoUrl">
+        <div v-show="!isMinimized && !videoUrl" class="dh-input-area">
           <button class="add-video-btn" @click="showUrlInput = !showUrlInput">
             {{ showUrlInput ? '取消' : '+ 添加视频链接' }}
           </button>
+        </div>
+
+        <!-- 最小化时的提示 -->
+        <div v-if="isMinimized" class="minimized-hint" @click="toggleMinimize">
+          <span>🎬 视频播放中 - 点击展开</span>
         </div>
       </div>
     </Transition>
 
     <Transition name="bounce">
-      <div v-if="!isOpen" class="dh-fab" @click="togglePanel">
+      <div v-if="!isOpen" class="dh-fab" @click="togglePanel" :style="fabStyle">
         <span class="fab-icon">🎬</span>
+        <span v-if="isPlaying" class="playing-indicator"></span>
       </div>
     </Transition>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick, onUnmounted } from 'vue'
 import api from '@/api/index.js'
+
+const STORAGE_KEY = 'videoPlayerPosition'
 
 const isOpen = ref(false)
 const videoUrl = ref('')
@@ -144,6 +165,13 @@ const currentVideoName = ref('')
 const showUrlInput = ref(false)
 const showControls = ref(true)
 const isLoading = ref(false)
+const isMinimized = ref(false)
+
+// 拖拽相关状态
+const isDragging = ref(false)
+const position = ref({ x: 0, y: 0 })
+const dragOffset = ref({ x: 0, y: 0 })
+const fabPosition = ref({ x: 20, y: 20 }) // 悬浮按钮位置
 
 // Video state
 const currentTime = ref(0)
@@ -153,19 +181,151 @@ const isPlaying = ref(false)
 const hasError = ref(false)
 const isMuted = ref(false)
 const volume = ref(1)
-const isDragging = ref(false)
+const isProgressDragging = ref(false)
 
 const progressPercent = computed(() => {
   if (!duration.value) return 0
   return (currentTime.value / duration.value) * 100
 })
 
+// 面板样式（支持拖拽定位）
+const panelStyle = computed(() => {
+  if (position.value.x === 0 && position.value.y === 0) {
+    return {} // 使用默认CSS定位
+  }
+  return {
+    position: 'fixed',
+    left: `${position.value.x}px`,
+    top: `${position.value.y}px`,
+    right: 'auto',
+    bottom: 'auto',
+  }
+})
+
+// 悬浮按钮样式
+const fabStyle = computed(() => {
+  return {
+    right: `${fabPosition.value.x}px`,
+    bottom: `${fabPosition.value.y}px`,
+  }
+})
+
+// 包装器样式
+const wrapperStyle = computed(() => {
+  if (!isOpen.value && (fabPosition.value.x !== 20 || fabPosition.value.y !== 20)) {
+    return {
+      right: `${fabPosition.value.x}px`,
+      bottom: `${fabPosition.value.y}px`,
+    }
+  }
+  return {}
+})
+
+// 从localStorage加载位置
+function loadPosition() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY)
+    if (saved) {
+      const pos = JSON.parse(saved)
+      position.value = { x: pos.x || 0, y: pos.y || 0 }
+      fabPosition.value = { x: pos.fabX || 20, y: pos.fabY || 20 }
+    }
+  } catch (e) {
+    console.error('加载位置失败:', e)
+  }
+}
+
+// 保存位置到localStorage
+function savePosition() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      x: position.value.x,
+      y: position.value.y,
+      fabX: fabPosition.value.x,
+      fabY: fabPosition.value.y,
+    }))
+  } catch (e) {
+    console.error('保存位置失败:', e)
+  }
+}
+
+// 开始拖拽
+function startDrag(event) {
+  // 只有点击头部才能拖拽
+  if (event.target.closest('.dh-btn')) return
+
+  isDragging.value = true
+  const clientX = event.type.includes('touch') ? event.touches[0].clientX : event.clientX
+  const clientY = event.type.includes('touch') ? event.touches[0].clientY : event.clientY
+
+  // 如果还没有设置位置，先获取当前位置
+  if (position.value.x === 0 && position.value.y === 0) {
+    const panel = event.currentTarget.closest('.dh-panel')
+    const rect = panel.getBoundingClientRect()
+    position.value = { x: rect.left, y: rect.top }
+  }
+
+  dragOffset.value = {
+    x: clientX - position.value.x,
+    y: clientY - position.value.y,
+  }
+
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', endDrag)
+  document.addEventListener('touchmove', onDrag)
+  document.addEventListener('touchend', endDrag)
+}
+
+// 拖拽中
+function onDrag(event) {
+  if (!isDragging.value) return
+
+  event.preventDefault()
+  const clientX = event.type.includes('touch') ? event.touches[0].clientX : event.clientX
+  const clientY = event.type.includes('touch') ? event.touches[0].clientY : event.clientY
+
+  let newX = clientX - dragOffset.value.x
+  let newY = clientY - dragOffset.value.y
+
+  // 限制在视口内
+  const panelWidth = 420
+  const panelHeight = isMinimized.value ? 60 : 580
+  const maxX = window.innerWidth - panelWidth
+  const maxY = window.innerHeight - panelHeight
+
+  newX = Math.max(0, Math.min(newX, maxX))
+  newY = Math.max(0, Math.min(newY, maxY))
+
+  position.value = { x: newX, y: newY }
+}
+
+// 结束拖拽
+function endDrag() {
+  if (isDragging.value) {
+    isDragging.value = false
+    savePosition()
+  }
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', endDrag)
+  document.removeEventListener('touchmove', onDrag)
+  document.removeEventListener('touchend', endDrag)
+}
+
 function togglePanel() {
   isOpen.value = !isOpen.value
   if (isOpen.value) {
+    isMinimized.value = false
     nextTick(() => {
       refreshVideos()
     })
+  }
+}
+
+function toggleMinimize() {
+  isMinimized.value = !isMinimized.value
+  // 最小化时保存状态
+  if (isMinimized.value) {
+    savePosition()
   }
 }
 
@@ -245,7 +405,7 @@ function setVolume(event) {
 }
 
 function onTimeUpdate() {
-  if (videoRef.value && !isDragging.value) {
+  if (videoRef.value && !isProgressDragging.value) {
     currentTime.value = videoRef.value.currentTime
   }
 }
@@ -302,14 +462,14 @@ function seekVideo(event) {
   currentTime.value = newTime
 }
 
-function startDrag(event) {
-  isDragging.value = true
-  document.addEventListener('mousemove', onDrag)
-  document.addEventListener('mouseup', endDrag)
+function startProgressDrag(event) {
+  isProgressDragging.value = true
+  document.addEventListener('mousemove', onProgressDrag)
+  document.addEventListener('mouseup', endProgressDrag)
 }
 
-function onDrag(event) {
-  if (!isDragging.value || !videoRef.value) return
+function onProgressDrag(event) {
+  if (!isProgressDragging.value || !videoRef.value) return
 
   const progressBar = document.querySelector('.progress-container')
   if (!progressBar) return
@@ -322,13 +482,13 @@ function onDrag(event) {
   currentTime.value = newTime
 }
 
-function endDrag() {
-  if (isDragging.value && videoRef.value) {
+function endProgressDrag() {
+  if (isProgressDragging.value && videoRef.value) {
     videoRef.value.currentTime = currentTime.value
   }
-  isDragging.value = false
-  document.removeEventListener('mousemove', onDrag)
-  document.removeEventListener('mouseup', endDrag)
+  isProgressDragging.value = false
+  document.removeEventListener('mousemove', onProgressDrag)
+  document.removeEventListener('mouseup', endProgressDrag)
 }
 
 function formatTime(seconds) {
@@ -351,7 +511,17 @@ function formatSize(bytes) {
 }
 
 onMounted(() => {
+  loadPosition()
   refreshVideos()
+})
+
+onUnmounted(() => {
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', endDrag)
+  document.removeEventListener('touchmove', onDrag)
+  document.removeEventListener('touchend', endDrag)
+  document.removeEventListener('mousemove', onProgressDrag)
+  document.removeEventListener('mouseup', endProgressDrag)
 })
 </script>
 
@@ -373,6 +543,18 @@ onMounted(() => {
   flex-direction: column;
   overflow: hidden;
   border: 1px solid #e5e7eb;
+  transition: transform 0.1s ease, box-shadow 0.2s ease, height 0.3s ease;
+}
+
+.dh-panel.is-dragging {
+  cursor: grabbing;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2);
+  transform: scale(1.02);
+}
+
+.dh-panel.is-minimized {
+  height: 60px;
+  min-height: 60px;
 }
 
 .dh-header {
@@ -383,6 +565,12 @@ onMounted(() => {
   background: linear-gradient(135deg, #6366f1, #8b5cf6);
   color: white;
   flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+}
+
+.dh-header:active {
+  cursor: grabbing;
 }
 
 .dh-title {
@@ -395,6 +583,14 @@ onMounted(() => {
 
 .dh-avatar {
   font-size: 18px;
+}
+
+.minimized-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 10px;
+  margin-left: 4px;
 }
 
 .dh-actions {
@@ -419,6 +615,21 @@ onMounted(() => {
 
 .dh-btn:hover {
   background: rgba(255, 255, 255, 0.3);
+}
+
+.minimized-hint {
+  padding: 12px 16px;
+  background: #1a1a1a;
+  color: #9ca3af;
+  text-align: center;
+  cursor: pointer;
+  font-size: 13px;
+  border-top: 1px solid #333;
+}
+
+.minimized-hint:hover {
+  background: #2a2a2a;
+  color: #e5e7eb;
 }
 
 .dh-content {
@@ -827,6 +1038,23 @@ onMounted(() => {
   font-size: 24px;
 }
 
+.playing-indicator {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 12px;
+  height: 12px;
+  background: #22c55e;
+  border-radius: 50%;
+  border: 2px solid white;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.2); opacity: 0.8; }
+}
+
 .slide-fade-enter-active {
   transition: all 0.3s ease-out;
 }
@@ -861,11 +1089,15 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .dh-panel {
-    width: calc(100vw - 20px);
+    width: calc(100vw - 40px);
+    max-width: 420px;
     height: 60vh;
-    right: 0;
-    bottom: 0;
-    border-radius: 16px 16px 0 0;
+    max-height: 580px;
+  }
+
+  .dh-panel.is-minimized {
+    height: 60px;
+    min-height: 60px;
   }
 
   .digital-human-wrapper {
