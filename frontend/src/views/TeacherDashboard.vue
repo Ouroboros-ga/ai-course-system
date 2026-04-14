@@ -293,7 +293,7 @@
       </div>
     </div>
 
-    <DigitalHumanWindow />
+    <DigitalHumanWindow v-if="courseId && counter.isTeacher" />
   </div>
 </template>
 
