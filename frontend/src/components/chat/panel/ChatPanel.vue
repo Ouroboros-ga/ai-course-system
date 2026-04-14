@@ -16,18 +16,13 @@
       ref="messageListRef"
     />
 
-    <ChatInput
-      :disabled="!canChat"
-      :tips="['没听懂，再讲一遍', '这页 PPT 重点是什么？']"
-      @send="handleSend"
-    />
+    <!-- QA输入框已移除，请使用右下角的数字人助手按钮 -->
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch } from 'vue';
 import MessageList from './ChatPanel/MessageList.vue';
-import ChatInput from './ChatPanel/ChatInput.vue';
 import api from '@/api/index.js';
 import { showToast } from '@/utils/toast';
 
@@ -70,40 +65,8 @@ watch(() => props.hasFile, (newVal) => {
   }
 });
 
-const handleSend = async (text) => {
-  if (!text || !canChat.value) return;
-
-  messageListRef.value?.addMessage({
-    role: 'user',
-    content: text
-  });
-
-  try {
-    const res = await api.chat.askQuestion({
-      question: text,
-      chatId: currentChatId.value,
-      courseId: props.currentData?.courseId
-    });
-
-    if (res.chatId && !currentChatId.value) {
-      currentChatId.value = res.chatId;
-    }
-
-    messageListRef.value?.addMessage({
-      role: 'ai',
-      content: res.answer,
-      showResumeBtn: true
-    });
-  } catch (err) {
-    console.error('问答失败', err);
-    showToast(err.message || '问答失败，请重试', 'error');
-    messageListRef.value?.addMessage({
-      role: 'ai',
-      content: '抱歉，我遇到了一些问题，请稍后再试。',
-      showResumeBtn: false
-    });
-  }
-};
+// QA发送功能已移至右下角的数字人助手组件
+// 如需恢复底部输入框，请取消注释ChatInput组件和相关代码
 </script>
 
 <style scoped>

@@ -224,6 +224,12 @@ service.interceptors.request.use(
   config => {
     const token = localStorage.getItem('token')
     if (token) {
+      // 检查Token是否即将过期（提前10分钟预警）
+      if (_isTokenExpiringSoon(token)) {
+        console.warn('⏰ [Auth] Token即将过期，建议保存工作后重新登录')
+        showToast('⚠️ 登录即将过期，请尽快完成操作或重新登录', 'warning')
+      }
+
       config.headers['Authorization'] = `Bearer ${token}`
     }
 
@@ -255,6 +261,31 @@ service.interceptors.request.use(
   }
 )
 
+function _isTokenExpiringSoon(token) {
+  try {
+    const base64Url = token.split('.')[1]
+    const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+    const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
+      return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+    }).join(''))
+    const payload = JSON.parse(jsonPayload)
+
+    if (payload.exp) {
+      const expirationTime = payload.exp * 1000
+      const currentTime = Date.now()
+      const timeUntilExpiration = expirationTime - currentTime
+      const tenMinutesInMs = 10 * 60 * 1000
+
+      return timeUntilExpiration > 0 && timeUntilExpiration < tenMinutesInMs
+    }
+
+    return false
+  } catch (error) {
+    console.error('[Auth] 解析Token失败:', error)
+    return false
+  }
+}
+
 // 响应拦截器
 service.interceptors.response.use(
   response => {
@@ -265,10 +296,10 @@ service.interceptors.response.use(
 
       // 特殊状态码处理：Token 过期
       if (res.code === 401) {
-        showToast('登录信息过期', 'error')
+        showToast('登录信息过期，请重新登录', 'error')
 
-        // 清除 token 并跳转登录页
-        localStorage.removeItem('token')
+        // 清除所有认证信息并跳转登录页
+        _handleUnauthorized()
       } else {
         // 普通业务错误，直接弹出后端返回的错误信息
         showToast(res.message || '请求失败', 'error')
@@ -287,10 +318,11 @@ service.interceptors.response.use(
     if (error.response) {
       switch (error.response.status) {
         case 401:
-          message = '未授权，请重新登录'
+          message = '登录已过期，请重新登录'
+          _handleUnauthorized()
           break
         case 403:
-          message = '拒绝访问'
+          message = '拒绝访问，权限不足'
           break
         case 404:
           message = '请求资源不存在'
@@ -312,5 +344,21 @@ service.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+function _handleUnauthorized() {
+  console.warn('⚠️ [Auth] Token无效或过期，清除认证信息...')
+
+  // 清除所有本地存储的认证信息
+  localStorage.removeItem('token')
+  localStorage.removeItem('userId')
+  localStorage.removeItem('username')
+  localStorage.removeItem('userRole')
+
+  // 延迟跳转，让用户看到提示
+  setTimeout(() => {
+    console.log('🔄 [Auth] 跳转到登录页...')
+    window.location.href = '/login' || window.location.reload()
+  }, 1500)
+}
 
 export default service
