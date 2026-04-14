@@ -66,16 +66,27 @@ export const useCounterStore = defineStore('counter', () => {
     }
     localStorage.removeItem('token')
     localStorage.removeItem('userRole')
+    localStorage.removeItem('userId')
+    localStorage.removeItem('username')
   }
 
   function checkAuth() {
     const savedToken = localStorage.getItem('token')
     const savedRole = localStorage.getItem('userRole')
+    const savedUserId = localStorage.getItem('userId')
+    const savedUsername = localStorage.getItem('username')
+
     if (savedToken) {
       token.value = savedToken
     }
     if (savedRole) {
       userData.value.role = savedRole
+    }
+    if (savedUserId) {
+      userData.value.id = savedUserId
+    }
+    if (savedUsername) {
+      userData.value.username = savedUsername
     }
     return !!savedToken
   }

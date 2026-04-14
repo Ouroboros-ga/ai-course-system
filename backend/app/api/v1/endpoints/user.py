@@ -58,7 +58,14 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
     return LoginResponse(
         code=200,
         message="登录成功",
-        data=LoginResponseData(token=access_token, userInfo=UserInfo(id=str(user.id))),
+        data=LoginResponseData(
+            token=access_token,
+            userInfo=UserInfo(
+                id=str(user.id),
+                username=user.username,
+                role=user.role.value if hasattr(user.role, "value") else user.role,
+            ),
+        ),
     )
 
 
@@ -95,7 +102,12 @@ async def user_register(
         code=200,
         message="注册并登录成功",
         data=LoginResponseData(
-            token=access_token, userInfo=UserInfo(id=str(new_user.id))
+            token=access_token,
+            userInfo=UserInfo(
+                id=str(new_user.id),
+                username=new_user.username,
+                role=new_user.role.value if hasattr(new_user.role, "value") else new_user.role,
+            ),
         ),
     )
 
