@@ -31,7 +31,7 @@ const navItems = computed(() => {
   if (counter.isTeacher) {
     return [
       ...baseItems,
-      { path: '/teacher', label: '智课管理', icon: '📚' },
+      { path: '/teacher', label: '智课管理', icon: '' },
       { path: '/profile', label: '个人中心' },
     ]
   }
@@ -153,7 +153,9 @@ const roleLabel = computed(() => {
   display: flex;
   gap: 4px;
   align-items: center;
+  margin-left: auto;
 }
+
 
 .nav-item {
   text-decoration: none;
