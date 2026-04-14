@@ -5,7 +5,7 @@
         <div class="dh-header">
           <div class="dh-title">
             <span class="dh-avatar">🤖</span>
-            <span>AI 数字人助教</span>
+            <span>数字人</span>
             <span class="dh-status-dot"></span>
           </div>
           <div class="dh-actions">
@@ -16,9 +16,9 @@
 
         <div class="dh-messages" ref="messagesRef">
           <div v-if="messages.length === 0" class="dh-welcome">
-            <div class="dh-welcome-icon">🎓</div>
-            <p>你好！我是 AI 数字人助教</p>
-            <p class="dh-welcome-hint">你可以向我提问课程相关的问题</p>
+<!--            <div class="dh-welcome-icon">🎓</div>-->
+            <p>数字人窗口</p>
+<!--            <p class="dh-welcome-hint">你可以向我提问课程相关的问题</p>-->
           </div>
 
           <div
@@ -44,22 +44,22 @@
           </div>
         </div>
 
-        <div class="dh-input-area">
-          <input
-            v-model="inputText"
-            @keyup.enter="sendMessage"
-            placeholder="输入你的问题..."
-            class="dh-input"
-            :disabled="isLoading"
-          />
-          <button
-            class="dh-send-btn"
-            @click="sendMessage"
-            :disabled="!inputText.trim() || isLoading"
-          >
-            发送
-          </button>
-        </div>
+<!--        <div class="dh-input-area">-->
+<!--          <input-->
+<!--            v-model="inputText"-->
+<!--            @keyup.enter="sendMessage"-->
+<!--            placeholder="输入你的问题..."-->
+<!--            class="dh-input"-->
+<!--            :disabled="isLoading"-->
+<!--          />-->
+<!--          <button-->
+<!--            class="dh-send-btn"-->
+<!--            @click="sendMessage"-->
+<!--            :disabled="!inputText.trim() || isLoading"-->
+<!--          >-->
+<!--            发送-->
+<!--          </button>-->
+<!--        </div>-->
       </div>
     </Transition>
 

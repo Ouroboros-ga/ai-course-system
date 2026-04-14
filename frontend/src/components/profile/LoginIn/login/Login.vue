@@ -20,8 +20,8 @@ const form = ref({
 const handleSubmit = () => {
   // --- 定义校验规则 ---
 
-  // 用户名规则：1-80位，允许英文字母、数字、下划线、中文
-  const usernameRegex = /^[a-zA-Z0-9_\u4e00-\u9fa5]{1,80}$/
+  // 用户名规则：1-80位，纯英文字母
+  const usernameRegex = /^[a-zA-Z]{1,80}$/
 
   // 密码规则：6-18位，仅包含英文字母和数字
   const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
@@ -32,7 +32,7 @@ const handleSubmit = () => {
     return
   }
   if (!usernameRegex.test(form.value.username)) {
-    showToast('用户名格式错误：允许英文字母、数字、下划线或中文，且不超过80个字符。')
+    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。')
     return
   }
 
@@ -46,28 +46,26 @@ const handleSubmit = () => {
     return
   }
 
-  // 3. 根据模式提交表单
+  // 3. 注册模式下的额外校验
   if (!isLoginMode.value) {
-    // 注册模式：校验确认密码
     if (form.value.password !== form.value.confirmPassword) {
       showToast('两次密码输入不一致！')
       return
     }
-    // 发送注册请求
+    // 注册：只发送 username 和 password
     const registerData = {
       username: form.value.username,
       password: form.value.password
     }
     emit('registerSend', registerData)
-    return
+  } else {
+    // 登录：发送 username 和 password
+    const loginData = {
+      username: form.value.username,
+      password: form.value.password
+    }
+    emit('loginSend', loginData)
   }
-
-  // 登录模式：发送登录请求
-  const loginData = {
-    username: form.value.username,
-    password: form.value.password
-  }
-  emit('loginSend', loginData)
 }
 </script>
 
@@ -181,8 +179,9 @@ const handleSubmit = () => {
   justify-content: center;
   align-items: center;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  pointer-events: none;
+  pointer-events: none;  /* 让非卡片区域点击穿透 */
 
+  //background-color: red;
   transform: translateY(-80px);
 }
 
