@@ -12,19 +12,25 @@ import httpx
 
 from app.core.security import teacher_student_allowed
 from app.core.exceptions import unified_response
+from app.core.config import settings
 
 router = APIRouter(tags=["视频服务"])
 
-# 视频文件根目录
-VIDEO_ROOT = Path("e:/smartcarb/videos")
-TEMP_VIDEO_ROOT = Path("e:/smartcarb/ai-course-system/backend/temp_videos")
+# 视频文件根目录 - 使用相对路径，支持跨平台
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent.parent
+VIDEO_ROOT = BASE_DIR / settings.VIDEO_STORAGE_PATH
+TEMP_VIDEO_ROOT = BASE_DIR / settings.TEMP_VIDEO_STORAGE_PATH
 
 # 确保目录存在
-VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
-TEMP_VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
+try:
+    VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
+    TEMP_VIDEO_ROOT.mkdir(parents=True, exist_ok=True)
+except OSError as e:
+    import logging
+    logging.warning(f"无法创建视频目录: {e}")
 
 
-def get_video_path(filename: str) -> Path:
+def get_video_path(filename: str) -> Optional[Path]:
     """获取视频文件的完整路径"""
     # 防止路径遍历攻击
     safe_filename = os.path.basename(filename)
@@ -125,9 +131,8 @@ async def list_videos(
             for file in root_dir.iterdir():
                 if file.suffix.lower() in ['.mp4', '.avi', '.mov', '.mkv']:
                     videos.append({
-                        "name": file.name,
+                        "filename": file.name,
                         "size": file.stat().st_size,
-                        "path": str(file.relative_to(root_dir.parent)),
                         "url": f"/api/v1/video/stream/{file.name}",
                     })
 

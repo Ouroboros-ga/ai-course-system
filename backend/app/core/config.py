@@ -103,5 +103,11 @@ class Settings(BaseSettings):
         "/",
     ]
 
+    # --------------------------
+    # 视频文件存储路径配置
+    # --------------------------
+    VIDEO_STORAGE_PATH: str = "./videos"
+    TEMP_VIDEO_STORAGE_PATH: str = "./temp_videos"
+
 
 settings = Settings()
