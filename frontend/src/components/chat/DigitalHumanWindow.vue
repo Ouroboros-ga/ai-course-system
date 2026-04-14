@@ -4,60 +4,119 @@
       <div v-if="isOpen" class="dh-panel">
         <div class="dh-header">
           <div class="dh-title">
-            <span class="dh-avatar">🤖</span>
-            <span>AI 数字人助教</span>
-            <span class="dh-status-dot"></span>
+            <span class="dh-avatar">🎬</span>
+            <span>智课视频播放器</span>
           </div>
           <div class="dh-actions">
-            <button class="dh-btn" @click="clearMessages" title="清空对话">🗑️</button>
+            <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
+            <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
             <button class="dh-btn" @click="togglePanel" title="最小化">➖</button>
           </div>
         </div>
 
-        <div class="dh-messages" ref="messagesRef">
-          <div v-if="messages.length === 0" class="dh-welcome">
-            <div class="dh-welcome-icon">🎓</div>
-            <p>你好！我是 AI 数字人助教</p>
-            <p class="dh-welcome-hint">你可以向我提问课程相关的问题</p>
-          </div>
-
-          <div
-            v-for="(msg, index) in messages"
-            :key="index"
-            :class="['dh-message', msg.role === 'user' ? 'dh-msg-user' : 'dh-msg-ai']"
-          >
-            <div class="dh-msg-avatar">
-              {{ msg.role === 'user' ? '👤' : '🤖' }}
-            </div>
-            <div class="dh-msg-bubble" :class="msg.role">
-              {{ msg.content }}
+        <div class="dh-content">
+          <div v-if="!videoUrl && videos.length === 0" class="dh-empty">
+            <div class="dh-empty-icon">📺</div>
+            <p>暂无视频</p>
+            <p class="dh-empty-hint">请先上传视频或输入视频URL</p>
+            <div class="quick-actions">
+              <button class="quick-btn primary" @click="loadSampleVideo">📡 示例视频</button>
+              <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput">🔗 手动输入</button>
             </div>
           </div>
 
-          <div v-if="isLoading" class="dh-message dh-msg-ai">
-            <div class="dh-msg-avatar">🤖</div>
-            <div class="dh-msg-bubble ai typing">
-              <span class="dot"></span>
-              <span class="dot"></span>
-              <span class="dot"></span>
+          <div v-if="videos.length > 0 && !videoUrl" class="video-list">
+            <div class="video-list-header">
+              <span>📁 本地视频 ({{ videos.length }})</span>
+            </div>
+            <div
+              v-for="video in videos"
+              :key="video.filename"
+              class="video-item"
+              @click="loadLocalVideo(video)"
+            >
+              <span class="video-icon">🎬</span>
+              <span class="video-name">{{ video.filename }}</span>
+              <span class="video-size">{{ formatSize(video.size) }}</span>
+            </div>
+          </div>
+
+          <div v-if="showUrlInput" class="url-input-section">
+            <input
+              v-model="inputUrl"
+              @keyup.enter="loadVideo"
+              placeholder="输入视频URL或MP4链接..."
+              class="url-input"
+              ref="urlInputRef"
+            />
+            <div class="url-actions">
+              <button class="action-btn cancel" @click="showUrlInput = false; inputUrl = ''">取消</button>
+              <button class="action-btn confirm" @click="loadVideo" :disabled="!inputUrl.trim()">播放</button>
+            </div>
+          </div>
+
+          <div v-if="videoUrl" class="video-wrapper">
+            <video
+              ref="videoRef"
+              class="dh-video"
+              :src="videoUrl"
+              @timeupdate="onTimeUpdate"
+              @loadedmetadata="onLoadedMetadata"
+              @ended="onEnded"
+              @error="onError"
+              @play="onPlay"
+              @pause="onPause"
+              @waiting="onWaiting"
+              @canplay="onCanPlay"
+              @progress="onProgress"
+            ></video>
+
+            <div class="video-controls-overlay" v-if="showControls">
+              <div class="controls-top">
+                <span class="video-title">{{ currentVideoName }}</span>
+                <button class="close-btn" @click="clearVideo">✕</button>
+              </div>
+              <div class="controls-center">
+                <button class="play-btn" @click="togglePlay">
+                  {{ isPlaying ? '⏸️' : '▶️' }}
+                </button>
+              </div>
+              <div class="controls-bottom">
+                <div class="progress-container" @click="seekVideo" @mousedown="startDrag">
+                  <div class="progress-buffered" :style="{ width: bufferedPercent + '%' }"></div>
+                  <div class="progress-played" :style="{ width: progressPercent + '%' }"></div>
+                  <div class="progress-thumb" :style="{ left: progressPercent + '%' }" v-if="duration"></div>
+                </div>
+                <div class="time-display">
+                  <span>{{ formatTime(currentTime) }}</span>
+                  <span>/</span>
+                  <span>{{ formatTime(duration) }}</span>
+                </div>
+                <div class="volume-control">
+                  <span @click="toggleMute">{{ isMuted ? '🔇' : '🔊' }}</span>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.1"
+                    :value="volume"
+                    @input="setVolume"
+                    class="volume-slider"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div class="loading-overlay" v-if="isLoading">
+              <div class="spinner"></div>
+              <span>加载中...</span>
             </div>
           </div>
         </div>
 
-        <div class="dh-input-area">
-          <input
-            v-model="inputText"
-            @keyup.enter="sendMessage"
-            placeholder="输入你的问题..."
-            class="dh-input"
-            :disabled="isLoading"
-          />
-          <button
-            class="dh-send-btn"
-            @click="sendMessage"
-            :disabled="!inputText.trim() || isLoading"
-          >
-            发送
+        <div class="dh-input-area" v-if="!videoUrl">
+          <button class="add-video-btn" @click="showUrlInput = !showUrlInput">
+            {{ showUrlInput ? '取消' : '+ 添加视频链接' }}
           </button>
         </div>
       </div>
@@ -65,95 +124,235 @@
 
     <Transition name="bounce">
       <div v-if="!isOpen" class="dh-fab" @click="togglePanel">
-        <span class="fab-icon">🤖</span>
-        <span v-if="unreadCount > 0" class="fab-badge">{{ unreadCount }}</span>
+        <span class="fab-icon">🎬</span>
       </div>
     </Transition>
   </div>
 </template>
 
 <script setup>
-import { ref, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import api from '@/api/index.js'
-import { useCounterStore } from '@/stores/counter.js'
-import { showToast } from '@/utils/toast'
-
-const counter = useCounterStore()
 
 const isOpen = ref(false)
-const messages = ref([])
-const inputText = ref('')
+const videoUrl = ref('')
+const inputUrl = ref('')
+const videoRef = ref(null)
+const urlInputRef = ref(null)
+const videos = ref([])
+const currentVideoName = ref('')
+const showUrlInput = ref(false)
+const showControls = ref(true)
 const isLoading = ref(false)
-const messagesRef = ref(null)
-const unreadCount = ref(0)
 
-const emit = defineEmits(['send'])
+// Video state
+const currentTime = ref(0)
+const duration = ref(0)
+const bufferedPercent = ref(0)
+const isPlaying = ref(false)
+const hasError = ref(false)
+const isMuted = ref(false)
+const volume = ref(1)
+const isDragging = ref(false)
+
+const progressPercent = computed(() => {
+  if (!duration.value) return 0
+  return (currentTime.value / duration.value) * 100
+})
 
 function togglePanel() {
   isOpen.value = !isOpen.value
   if (isOpen.value) {
-    unreadCount.value = 0
     nextTick(() => {
-      scrollToBottom()
+      refreshVideos()
     })
   }
 }
 
-function clearMessages() {
-  messages.value = []
-}
-
-function scrollToBottom() {
-  nextTick(() => {
-    if (messagesRef.value) {
-      messagesRef.value.scrollTop = messagesRef.value.scrollHeight
-    }
-  })
-}
-
-async function sendMessage() {
-  const text = inputText.value.trim()
-  if (!text || isLoading.value) return
-
-  messages.value.push({
-    role: 'user',
-    content: text,
-  })
-
-  inputText.value = ''
-  isLoading.value = true
-  scrollToBottom()
-
+async function refreshVideos() {
   try {
-    const res = await api.chat.askQuestion({
-      question: text,
-    })
-
-    messages.value.push({
-      role: 'ai',
-      content: res.answer || '抱歉，我暂时无法回答这个问题。',
-    })
-
-    if (!isOpen.value) {
-      unreadCount.value++
-    }
+    const res = await api.video.list()
+    videos.value = res.videos || []
   } catch (error) {
-    console.error('数字人问答失败:', error)
-    messages.value.push({
-      role: 'ai',
-      content: '抱歉，网络似乎出了点问题，请稍后再试。',
-    })
-  } finally {
-    isLoading.value = false
-    scrollToBottom()
+    console.error('获取视频列表失败:', error)
+    videos.value = []
   }
-
-  emit('send', text)
 }
 
-watch(messages, () => {
-  scrollToBottom()
-}, { deep: true })
+function clearVideo() {
+  videoUrl.value = ''
+  inputUrl.value = ''
+  currentVideoName.value = ''
+  currentTime.value = 0
+  duration.value = 0
+  bufferedPercent.value = 0
+  hasError.value = false
+  isPlaying.value = false
+  isLoading.value = false
+  if (videoRef.value) {
+    videoRef.value.pause()
+    videoRef.value.src = ''
+  }
+}
+
+function loadVideo() {
+  const url = inputUrl.value.trim()
+  if (!url) return
+
+  hasError.value = false
+  isLoading.value = true
+  currentVideoName.value = url.split('/').pop() || '远程视频'
+  videoUrl.value = url
+  showUrlInput.value = false
+}
+
+function loadLocalVideo(video) {
+  currentVideoName.value = video.filename
+  videoUrl.value = video.url
+  isLoading.value = true
+}
+
+function loadSampleVideo() {
+  inputUrl.value = 'https://www.w3schools.com/html/mov_bbb.mp4'
+  currentVideoName.value = '示例视频 - Big Buck Bunny'
+  videoUrl.value = inputUrl.value
+  isLoading.value = true
+}
+
+function togglePlay() {
+  if (!videoRef.value) return
+
+  if (isPlaying.value) {
+    videoRef.value.pause()
+  } else {
+    videoRef.value.play()
+  }
+}
+
+function toggleMute() {
+  if (!videoRef.value) return
+  isMuted.value = !isMuted.value
+  videoRef.value.muted = isMuted.value
+}
+
+function setVolume(event) {
+  const val = parseFloat(event.target.value)
+  volume.value = val
+  if (videoRef.value) {
+    videoRef.value.volume = val
+    isMuted.value = val === 0
+  }
+}
+
+function onTimeUpdate() {
+  if (videoRef.value && !isDragging.value) {
+    currentTime.value = videoRef.value.currentTime
+  }
+}
+
+function onLoadedMetadata() {
+  if (videoRef.value) {
+    duration.value = videoRef.value.duration
+    isLoading.value = false
+  }
+}
+
+function onProgress() {
+  if (videoRef.value && videoRef.value.buffered.length > 0) {
+    bufferedPercent.value = (videoRef.value.buffered.end(0) / duration.value) * 100
+  }
+}
+
+function onEnded() {
+  isPlaying.value = false
+}
+
+function onError() {
+  hasError.value = true
+  isLoading.value = false
+  console.error('视频加载失败')
+}
+
+function onPlay() {
+  isPlaying.value = true
+}
+
+function onPause() {
+  isPlaying.value = false
+}
+
+function onWaiting() {
+  isLoading.value = true
+}
+
+function onCanPlay() {
+  isLoading.value = false
+}
+
+function seekVideo(event) {
+  if (!videoRef.value || !duration.value) return
+
+  const progressBar = event.currentTarget
+  const rect = progressBar.getBoundingClientRect()
+  const clickX = event.clientX - rect.left
+  const percent = Math.max(0, Math.min(1, clickX / rect.width))
+  const newTime = percent * duration.value
+
+  videoRef.value.currentTime = newTime
+  currentTime.value = newTime
+}
+
+function startDrag(event) {
+  isDragging.value = true
+  document.addEventListener('mousemove', onDrag)
+  document.addEventListener('mouseup', endDrag)
+}
+
+function onDrag(event) {
+  if (!isDragging.value || !videoRef.value) return
+
+  const progressBar = document.querySelector('.progress-container')
+  if (!progressBar) return
+
+  const rect = progressBar.getBoundingClientRect()
+  const clickX = event.clientX - rect.left
+  const percent = Math.max(0, Math.min(1, clickX / rect.width))
+  const newTime = percent * duration.value
+
+  currentTime.value = newTime
+}
+
+function endDrag() {
+  if (isDragging.value && videoRef.value) {
+    videoRef.value.currentTime = currentTime.value
+  }
+  isDragging.value = false
+  document.removeEventListener('mousemove', onDrag)
+  document.removeEventListener('mouseup', endDrag)
+}
+
+function formatTime(seconds) {
+  if (!seconds || isNaN(seconds)) return '00:00'
+  const mins = Math.floor(seconds / 60)
+  const secs = Math.floor(seconds % 60)
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
+}
+
+function formatSize(bytes) {
+  if (!bytes) return '0 B'
+  const units = ['B', 'KB', 'MB', 'GB']
+  let size = bytes
+  let unitIndex = 0
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex++
+  }
+  return `${size.toFixed(1)} ${units[unitIndex]}`
+}
+
+onMounted(() => {
+  refreshVideos()
+})
 </script>
 
 <style scoped>
@@ -165,8 +364,8 @@ watch(messages, () => {
 }
 
 .dh-panel {
-  width: 360px;
-  height: 520px;
+  width: 420px;
+  height: 580px;
   background: white;
   border-radius: 16px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
@@ -198,19 +397,6 @@ watch(messages, () => {
   font-size: 18px;
 }
 
-.dh-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #22c55e;
-  animation: pulse-dot 2s infinite;
-}
-
-@keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
 .dh-actions {
   display: flex;
   gap: 4px;
@@ -235,153 +421,386 @@ watch(messages, () => {
   background: rgba(255, 255, 255, 0.3);
 }
 
-.dh-messages {
+.dh-content {
   flex: 1;
-  overflow-y: auto;
-  padding: 12px;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  background: #f9fafb;
+  background: #1a1a1a;
 }
 
-.dh-welcome {
-  text-align: center;
-  padding: 40px 16px;
-  color: #6b7280;
+.dh-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #9ca3af;
+  padding: 20px;
 }
 
-.dh-welcome-icon {
-  font-size: 40px;
+.dh-empty-icon {
+  font-size: 48px;
   margin-bottom: 12px;
 }
 
-.dh-welcome p {
+.dh-empty p {
   margin: 4px 0;
   font-size: 14px;
 }
 
-.dh-welcome-hint {
+.dh-empty-hint {
   font-size: 12px !important;
-  color: #9ca3af !important;
+  color: #6b7280 !important;
 }
 
-.dh-message {
+.quick-actions {
   display: flex;
   gap: 8px;
-  align-items: flex-start;
+  margin-top: 16px;
 }
 
-.dh-msg-user {
-  flex-direction: row-reverse;
-}
-
-.dh-msg-avatar {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 14px;
-  flex-shrink: 0;
-  background: #f3f4f6;
-}
-
-.dh-msg-bubble {
-  max-width: 75%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.5;
-  word-break: break-word;
-}
-
-.dh-msg-bubble.user {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
-  border-top-right-radius: 4px;
-}
-
-.dh-msg-bubble.ai {
-  background: white;
-  color: #374151;
-  border: 1px solid #e5e7eb;
-  border-top-left-radius: 4px;
-}
-
-.dh-msg-bubble.typing {
-  display: flex;
-  gap: 4px;
-  padding: 12px 16px;
-  align-items: center;
-}
-
-.dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #9ca3af;
-  animation: typing-bounce 1.4s infinite ease-in-out;
-}
-
-.dot:nth-child(1) { animation-delay: 0s; }
-.dot:nth-child(2) { animation-delay: 0.2s; }
-.dot:nth-child(3) { animation-delay: 0.4s; }
-
-@keyframes typing-bounce {
-  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
-  40% { transform: scale(1); opacity: 1; }
-}
-
-.dh-input-area {
-  display: flex;
-  gap: 8px;
-  padding: 12px;
-  background: white;
-  border-top: 1px solid #e5e7eb;
-  flex-shrink: 0;
-}
-
-.dh-input {
-  flex: 1;
-  padding: 8px 14px;
-  border: 1px solid #d1d5db;
-  border-radius: 20px;
-  font-size: 13px;
-  outline: none;
-  transition: border-color 0.2s ease;
-}
-
-.dh-input:focus {
-  border-color: #6366f1;
-}
-
-.dh-input:disabled {
-  background: #f9fafb;
-}
-
-.dh-send-btn {
+.quick-btn {
   padding: 8px 16px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: #374151;
   color: white;
   border: none;
   border-radius: 20px;
   font-size: 13px;
-  font-weight: 500;
   cursor: pointer;
   transition: all 0.2s ease;
+}
+
+.quick-btn:hover {
+  background: #4b5563;
+}
+
+.quick-btn.primary {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+}
+
+.quick-btn.primary:hover {
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.video-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px;
+}
+
+.video-list-header {
+  padding: 8px 12px;
+  color: #9ca3af;
+  font-size: 12px;
+  border-bottom: 1px solid #374151;
+  margin-bottom: 8px;
+}
+
+.video-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.video-item:hover {
+  background: #2a2a2a;
+}
+
+.video-icon {
+  font-size: 18px;
+}
+
+.video-name {
+  flex: 1;
+  color: #e5e7eb;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.dh-send-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+.video-size {
+  color: #6b7280;
+  font-size: 11px;
 }
 
-.dh-send-btn:disabled {
+.url-input-section {
+  padding: 16px;
+  background: #2a2a2a;
+}
+
+.url-input {
+  width: 100%;
+  padding: 10px 14px;
+  background: #1a1a1a;
+  border: 1px solid #4b5563;
+  border-radius: 8px;
+  color: white;
+  font-size: 13px;
+  outline: none;
+  box-sizing: border-box;
+}
+
+.url-input:focus {
+  border-color: #6366f1;
+}
+
+.url-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  justify-content: flex-end;
+}
+
+.action-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 16px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.action-btn.cancel {
+  background: #4b5563;
+  color: #e5e7eb;
+}
+
+.action-btn.confirm {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: white;
+}
+
+.action-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.video-wrapper {
+  flex: 1;
+  position: relative;
+  background: #000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.dh-video {
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.video-controls-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(
+    to bottom,
+    rgba(0,0,0,0.5) 0%,
+    transparent 20%,
+    transparent 80%,
+    rgba(0,0,0,0.7) 100%
+  );
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
+
+.video-wrapper:hover .video-controls-overlay {
+  opacity: 1;
+}
+
+.controls-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 14px;
+}
+
+.video-title {
+  color: white;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 280px;
+}
+
+.close-btn {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: white;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.controls-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.play-btn {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: white;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 20px;
+  transition: transform 0.2s ease;
+}
+
+.play-btn:hover {
+  transform: scale(1.1);
+  background: rgba(255,255,255,0.3);
+}
+
+.controls-bottom {
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.progress-container {
+  flex: 1;
+  height: 4px;
+  background: rgba(255,255,255,0.2);
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+}
+
+.progress-container:hover {
+  height: 6px;
+}
+
+.progress-buffered {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+}
+
+.progress-played {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-radius: 2px;
+}
+
+.progress-thumb {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  background: white;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+}
+
+.time-display {
+  display: flex;
+  gap: 4px;
+  color: white;
+  font-size: 11px;
+  font-family: monospace;
+  white-space: nowrap;
+}
+
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: white;
+  font-size: 12px;
+}
+
+.volume-slider {
+  width: 60px;
+  height: 4px;
+  -webkit-appearance: none;
+  background: rgba(255,255,255,0.3);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  background: white;
+  border-radius: 50%;
+}
+
+.loading-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  color: white;
+  font-size: 12px;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.dh-input-area {
+  padding: 12px;
+  background: #2a2a2a;
+  flex-shrink: 0;
+}
+
+.add-video-btn {
+  width: 100%;
+  padding: 10px;
+  background: #374151;
+  color: #e5e7eb;
+  border: none;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.add-video-btn:hover {
+  background: #4b5563;
 }
 
 .dh-fab {
@@ -406,23 +825,6 @@ watch(messages, () => {
 
 .fab-icon {
   font-size: 24px;
-}
-
-.fab-badge {
-  position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #ef4444;
-  color: white;
-  font-size: 11px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border: 2px solid white;
 }
 
 .slide-fade-enter-active {
