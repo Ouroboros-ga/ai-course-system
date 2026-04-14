@@ -31,7 +31,7 @@ const navItems = computed(() => {
   if (counter.isTeacher) {
     return [
       ...baseItems,
-      { path: '/teacher', label: '📚 智课管理', icon: '📚' },
+      { path: '/teacher', label: '智课管理', icon: '📚' },
       { path: '/profile', label: '个人中心' },
     ]
   }
