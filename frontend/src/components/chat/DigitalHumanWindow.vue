@@ -22,6 +22,7 @@
             <div class="quick-actions">
               <button class="quick-btn primary" @click="loadSampleVideo">📡 示例视频</button>
               <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput">🔗 手动输入</button>
+              <button class="quick-btn" @click="triggerFileSelect">📂 本地文件</button>
             </div>
           </div>
 
@@ -115,6 +116,13 @@
         </div>
 
         <div class="dh-input-area" v-if="!videoUrl">
+          <input
+            type="file"
+            ref="fileInputRef"
+            accept="video/*"
+            style="display: none"
+            @change="handleFileSelect"
+          />
           <button class="add-video-btn" @click="showUrlInput = !showUrlInput">
             {{ showUrlInput ? '取消' : '+ 添加视频链接' }}
           </button>
@@ -139,6 +147,7 @@ const videoUrl = ref('')
 const inputUrl = ref('')
 const videoRef = ref(null)
 const urlInputRef = ref(null)
+const fileInputRef = ref(null)
 const videos = ref([])
 const currentVideoName = ref('')
 const showUrlInput = ref(false)
@@ -217,6 +226,30 @@ function loadSampleVideo() {
   currentVideoName.value = '示例视频 - Big Buck Bunny'
   videoUrl.value = inputUrl.value
   isLoading.value = true
+}
+
+function triggerFileSelect() {
+  if (fileInputRef.value) {
+    fileInputRef.value.click()
+  }
+}
+
+function handleFileSelect(event) {
+  const file = event.target.files[0]
+  if (!file) return
+
+  if (!file.type.startsWith('video/')) {
+    alert('请选择有效的视频文件')
+    return
+  }
+
+  const url = URL.createObjectURL(file)
+  currentVideoName.value = file.name
+  videoUrl.value = url
+  isLoading.value = true
+  
+  // 清空input,允许重复选择同一文件
+  event.target.value = ''
 }
 
 function togglePlay() {

@@ -13,7 +13,6 @@ const navItems = computed(() => {
   if (!counter.isLoggedIn) {
     return [
       ...baseItems,
-      { path: '/Edulib', label: 'Edulib' },
       { path: '/profile', label: '个人中心' },
     ]
   }
@@ -23,7 +22,7 @@ const navItems = computed(() => {
       ...baseItems,
       { path: '/admin', label: '👥 用户管理', icon: '👥' },
       { path: '/teacher', label: '📚 智课管理', icon: '📚' },
-      { path: '/student', label: '📖 我的课程', icon: '📖' },
+      { path: '/student', label: '我的课程', icon: '' },
       { path: '/profile', label: '个人中心' },
     ]
   }
@@ -39,7 +38,7 @@ const navItems = computed(() => {
   if (counter.isStudent) {
     return [
       ...baseItems,
-      { path: '/student', label: '📖 我的课程', icon: '📖' },
+      { path: '/student', label: '课程大厅', icon: '' },
       { path: '/profile', label: '个人中心' },
     ]
   }

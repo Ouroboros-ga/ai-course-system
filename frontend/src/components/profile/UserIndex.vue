@@ -233,10 +233,6 @@ const handleLogout = () => {
           <div class="menu-icon">📚</div>
           <div>我的课程</div>
         </div>
-        <div class="menu-item" @click="handleLogout">
-          <div class="menu-icon">🚪</div>
-          <div>退出登录</div>
-        </div>
         <div class="menu-item" @click="handleOpenAvatarSetting">
           <div class="menu-icon">🤖</div>
           <div>教师数字人设置</div>
