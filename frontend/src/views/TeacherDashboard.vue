@@ -77,11 +77,13 @@
                 :key="node.id || index"
                 class="tree-node"
                 :class="{ active: currentNodeIndex === index }"
+                :style="{ paddingLeft: (12 + (node.level || 0) * 16) + 'px' }"
                 @click="selectNode(index)"
               >
                 <span class="node-icon">{{ getNodeIcon(node.node_type) }}</span>
                 <span class="node-text">{{ node.title || `章节 ${index + 1}` }}</span>
                 <span v-if="node.is_key_point" class="key-badge">重点</span>
+                <span v-if="node.has_content" class="content-badge">📝</span>
               </div>
             </div>
           </div>
@@ -490,6 +492,8 @@ function getNodeIcon(nodeType) {
     'example': '💡',
     'formula': '📐',
     'summary': '📋',
+    'lecture': '📚',
+    'question': '❓',
   }
   return iconMap[nodeType] || '📚'
 }
@@ -505,6 +509,8 @@ function getNodeTypeLabel(nodeType) {
     'example': '示例',
     'formula': '公式',
     'summary': '总结',
+    'lecture': '讲解',
+    'question': '提问',
   }
   return labelMap[nodeType] || '内容'
 }
@@ -586,22 +592,14 @@ const processFile = async (file) => {
         parseInfo.value = res.ragInfo
       }
 
-      // 如果有完整内容，设置为主内容
-      if (res.fullContent) {
-        // 创建一个虚拟的根节点包含完整内容
-        knowledgeTree.value = [{
-          id: 'root',
-          node_type: 'chapter',
-          title: res.title || file.name,
-          content: res.fullContent,
-          duration: 30,
-          is_key_point: false,
-        }]
+      // 使用mindMapJson构建层级化知识树
+      if (res.mindMapJson) {
+        buildKnowledgeTreeFromMindMap(res.mindMapJson, res.title || file.name)
       }
 
-      // 尝试获取课程的详细节点信息
+      // 从后端获取脚本节点内容，与知识树节点匹配
       if (res.courseId) {
-        await loadCourseNodes(res.courseId)
+        await loadCourseNodesAndMerge(res.courseId)
       }
 
       // 设置默认音频URL
@@ -626,8 +624,61 @@ const processFile = async (file) => {
   }
 }
 
-// 加载课程节点详情
-const loadCourseNodes = async (courseIdParam) => {
+// 从mindMapJson构建层级化知识树（展平为可导航列表）
+const buildKnowledgeTreeFromMindMap = (mindMap, title) => {
+  knowledgeTree.value = []
+  
+  if (!mindMap || !mindMap.children || mindMap.children.length === 0) {
+    if (mindMap && mindMap.text) {
+      knowledgeTree.value = [{
+        id: 'root',
+        node_type: 'chapter',
+        title: mindMap.text || title,
+        content: '',
+        duration: 30,
+        is_key_point: false,
+        level: 0,
+      }]
+    }
+    return
+  }
+  
+  const flatten = (node, level, parentPath) => {
+    const nodeTitle = node.text || node.name || node.label || ''
+    const path = parentPath ? `${parentPath}/${nodeTitle}` : nodeTitle
+    const hasContent = node.has_content || false
+    const isHighlight = node.highlight || false
+    
+    const item = {
+      id: `node_${knowledgeTree.value.length}`,
+      node_type: level === 0 ? 'chapter' : level === 1 ? 'section' : 'subsection',
+      title: nodeTitle,
+      content: '',
+      duration: level === 0 ? 30 : level === 1 ? 15 : 10,
+      is_key_point: isHighlight,
+      level: level,
+      path: path,
+      has_content: hasContent,
+    }
+    
+    knowledgeTree.value.push(item)
+    
+    if (node.children && node.children.length > 0) {
+      for (const child of node.children) {
+        flatten(child, level + 1, path)
+      }
+    }
+  }
+  
+  if (mindMap.children && mindMap.children.length > 0) {
+    for (const child of mindMap.children) {
+      flatten(child, 0, mindMap.text || title)
+    }
+  }
+}
+
+// 加载课程节点并合并内容到知识树
+const loadCourseNodesAndMerge = async (courseIdParam) => {
   try {
     const response = await fetch(`http://localhost:8000/api/v1/document/course/${courseIdParam}`, {
       headers: {
@@ -639,19 +690,36 @@ const loadCourseNodes = async (courseIdParam) => {
       const data = await response.json()
 
       if (data.code === 200 && data.data && data.data.nodes) {
-        // 使用真实的节点数据替换
-        if (data.data.nodes.length > 0) {
-          knowledgeTree.value = data.data.nodes.map((node, idx) => ({
-            id: node.id,
-            node_index: node.node_index,
-            node_type: node.node_type,
-            title: node.title || `知识点 ${idx + 1}`,
-            content: node.content || '',
-            page_start: node.page_start,
-            page_end: node.page_end,
-            duration: node.duration || 5,
-            is_key_point: node.is_key_point || false,
-          }))
+        const scriptNodes = data.data.nodes
+        
+        for (const treeNode of knowledgeTree.value) {
+          const matchedNode = scriptNodes.find(sn => 
+            sn.title && sn.title.trim() === treeNode.title.trim()
+          )
+          if (matchedNode && matchedNode.content) {
+            treeNode.content = matchedNode.content
+            treeNode.id = matchedNode.id
+            treeNode.duration = matchedNode.duration || treeNode.duration
+            treeNode.is_key_point = matchedNode.is_key_point || treeNode.is_key_point
+          }
+        }
+        
+        const nodesWithContent = knowledgeTree.value.filter(n => n.content)
+        const nodesWithoutContent = knowledgeTree.value.filter(n => !n.content)
+        
+        if (nodesWithoutContent.length > 0 && scriptNodes.length > 0) {
+          const usedIndices = new Set()
+          for (const treeNode of nodesWithoutContent) {
+            for (let i = 0; i < scriptNodes.length; i++) {
+              if (!usedIndices.has(i) && scriptNodes[i].content) {
+                treeNode.content = scriptNodes[i].content
+                treeNode.id = scriptNodes[i].id
+                treeNode.duration = scriptNodes[i].duration || treeNode.duration
+                usedIndices.add(i)
+                break
+              }
+            }
+          }
         }
       }
     }
@@ -1297,6 +1365,11 @@ const loadStudentsList = async () => {
   border-radius: 10px;
   font-size: 10px;
   font-weight: 600;
+  flex-shrink: 0;
+}
+
+.content-badge {
+  font-size: 11px;
   flex-shrink: 0;
 }
 

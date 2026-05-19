@@ -273,32 +273,42 @@ const uploadFile = async (file) => {
 const processUploadResult = (result) => {
   if (result.mindMapJson) {
     treeData.value = result.mindMapJson
+    flatNodes.value = []
     flattenTree(result.mindMapJson)
     if (flatNodes.value.length > 0) {
       selectNode(flatNodes.value[0].node_id)
     }
+    console.log('[知识结构树] 解析完成，共', flatNodes.value.length, '个知识点节点')
   }
 }
 
-const flattenTree = (node, parentPath = '') => {
+const flattenTree = (node, parentPath = '', parentLevel = 0) => {
   if (!node) return
   
   const path = parentPath ? `${parentPath}/${node.text || node.title}` : (node.text || node.title)
   const nodeId = node.node_id || node.id || `node_${flatNodes.value.length}`
+  const nodeLevel = node.level || (parentLevel + 1)
   
-  flatNodes.value.push({
-    node_id: nodeId,
-    title: node.text || node.title || '未命名',
-    level: node.level || (parentPath.split('/').length),
-    path: path,
-    content: node.content || '',
-    is_key_point: node.highlight || false,
-    children: node.children || []
-  })
+  const hasContent = node.content && node.content.trim().length > 10
+  const hasChildren = node.children && node.children.length > 0
+  
+  if (hasContent || (!hasChildren && nodeLevel >= 2)) {
+    flatNodes.value.push({
+      node_id: nodeId,
+      title: node.text || node.title || '未命名',
+      level: nodeLevel,
+      path: path,
+      content: node.content || '',
+      is_key_point: node.highlight || false,
+      duration: node.duration || 0,
+      node_type: node.node_type || 'lecture',
+      children: []
+    })
+  }
   
   if (node.children && node.children.length > 0) {
     node.children.forEach(child => {
-      flattenTree(child, path)
+      flattenTree(child, path, nodeLevel)
     })
   }
 }

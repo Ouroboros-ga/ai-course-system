@@ -28,6 +28,8 @@ class ParseResult:
     file_size: int
     parse_method: str
     error: Optional[str] = None
+    ai_formatted: Optional[List[Dict[str, Any]]] = None
+    doc_title: Optional[str] = None
 
 
 @dataclass
@@ -103,6 +105,19 @@ class DocumentParser:
             ParseResult: 解析结果
         """
         file_size = file_path.stat().st_size if file_path.exists() else 0
+        ai_formatted = None
+        doc_title = None
+        
+        json_path = file_path.parent / f"{file_path.stem}_docling.json"
+        if json_path.exists():
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    docling_json = json.load(f)
+                    ai_formatted = docling_json.get('ai_formatted', [])
+                    doc_title = docling_json.get('title', Path(filename).stem)
+                    logger.info(f"[DocumentParser] 找到docling JSON文件，加载ai_formatted数据: {len(ai_formatted)} 条")
+            except Exception as e:
+                logger.warning(f"[DocumentParser] 读取docling JSON失败: {e}")
         
         try:
             markdown_content = await DocumentParser._parse_with_docling(file_path, filename)
@@ -111,7 +126,9 @@ class DocumentParser:
                 filename=filename,
                 file_path=str(file_path),
                 file_size=file_size,
-                parse_method="docling"
+                parse_method="docling",
+                ai_formatted=ai_formatted,
+                doc_title=doc_title
             )
         except Exception as e:
             logger.warning(f"Docling解析失败，使用备用方法: {e}")
@@ -443,6 +460,191 @@ class ScriptGenerator:
     """智课脚本生成器"""
     
     @staticmethod
+    async def generate_script_from_ai_formatted(
+        ai_formatted: List[Dict[str, Any]],
+        filename: str,
+        doc_title: str = None
+    ) -> ScriptResult:
+        """
+        从ai_formatted数据生成智课脚本（保持原始标题结构）
+        直接使用docling JSON中的content，不使用AI重新生成
+        
+        Args:
+            ai_formatted: docling生成的ai_formatted数组
+            filename: 文件名
+            doc_title: 文档标题
+            
+        Returns:
+            ScriptResult: 脚本结果
+        """
+        logger.info(f"[ScriptGenerator] 从ai_formatted生成脚本: {filename}")
+        
+        if not ai_formatted:
+            return ScriptGenerator._create_empty_script(filename)
+        
+        nodes = []
+        total_duration = 0
+        
+        for idx, section in enumerate(ai_formatted):
+            title = section.get('title', f'知识点{idx+1}')
+            content = section.get('content', '')
+            label = section.get('label', 'text')
+            
+            if label in ['title_page', 'toc_page']:
+                continue
+            
+            if not content or len(content.strip()) < 10:
+                continue
+            
+            node_type = ScriptGenerator._determine_node_type(label, idx, len(ai_formatted))
+            duration = ScriptGenerator._estimate_duration(content)
+            
+            nodes.append(ScriptNode(
+                chapter_id=f"chap_{idx:03d}",
+                node_type=node_type,
+                title=title,
+                content=content,
+                page_start=section.get('slide', 1) + 1,
+                page_end=section.get('slide', 1) + 1,
+                duration=duration,
+                is_key_point=(idx % 3 == 0),
+            ))
+            total_duration += duration
+        
+        if not nodes:
+            return ScriptGenerator._create_empty_script(filename)
+        
+        title = doc_title or Path(filename).stem
+        summary = f"本课程《{title}》共包含 {len(nodes)} 个教学节点，系统讲解核心知识点。"
+        keywords = ScriptGenerator._extract_keywords_from_nodes(nodes)
+        
+        logger.info(f"[ScriptGenerator] 从ai_formatted生成完成: {len(nodes)} 个节点")
+        
+        return ScriptResult(
+            title=title,
+            summary=summary,
+            keywords=keywords,
+            total_duration=total_duration,
+            nodes=nodes,
+            script_content={
+                "title": title,
+                "summary": summary,
+                "keywords": keywords,
+                "total_duration": total_duration,
+                "nodes": [
+                    {
+                        "chapter_id": n.chapter_id,
+                        "node_type": n.node_type,
+                        "title": n.title,
+                        "content": n.content,
+                        "duration": n.duration,
+                        "is_key_point": n.is_key_point,
+                    }
+                    for n in nodes
+                ]
+            },
+            beautiful_markdown=""
+        )
+    
+    @staticmethod
+    async def _enhance_content_with_ai(
+        title: str,
+        original_content: str,
+        section_index: int
+    ) -> str:
+        """
+        使用AI增强内容（只优化content，不改变标题）
+        """
+        if len(original_content) >= 150 and len(original_content) <= 300:
+            return original_content
+        
+        if len(original_content) < 50:
+            return ScriptGenerator._expand_content(original_content, section_index, "lecture")
+        
+        try:
+            system_prompt = """你是一个专业的内容优化助手。请优化以下教学内容的表达，使其更加清晰易懂。
+
+要求：
+1. 保持内容的核心信息和专业性
+2. 优化语言表达，使其更流畅
+3. 内容长度控制在150-300字之间
+4. 不要改变内容的主题和核心观点
+5. 直接输出优化后的内容，不要添加任何额外说明"""
+
+            user_prompt = f"""标题：{title}
+
+原始内容：
+{original_content}
+
+请优化以上内容，使其更适合教学讲解："""
+
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt)
+            ]
+            
+            response = await llm_client.chat(messages)
+            enhanced = response.content.strip()
+            
+            if len(enhanced) < 100:
+                return original_content
+            
+            return enhanced
+            
+        except Exception as e:
+            logger.warning(f"[ScriptGenerator] AI增强失败: {e}，使用原始内容")
+            return original_content
+    
+    @staticmethod
+    def _determine_node_type(label: str, index: int, total: int) -> str:
+        """根据标签和位置确定节点类型"""
+        if label == 'section_title':
+            return 'lecture'
+        elif label == 'heading':
+            return 'lecture'
+        elif index == total - 1:
+            return 'summary'
+        elif index % 4 == 3:
+            return 'question'
+        else:
+            return 'lecture'
+    
+    @staticmethod
+    def _estimate_duration(content: str) -> int:
+        """根据内容长度估算时长（秒）"""
+        char_count = len(content)
+        if char_count < 100:
+            return 60
+        elif char_count < 200:
+            return 90
+        elif char_count < 300:
+            return 120
+        else:
+            return min(180, char_count // 2)
+    
+    @staticmethod
+    def _extract_keywords_from_nodes(nodes: List[ScriptNode]) -> List[str]:
+        """从节点中提取关键词"""
+        keywords = set()
+        for node in nodes[:5]:
+            title_words = [w for w in node.title if len(w) > 1]
+            keywords.update(title_words[:3])
+        return list(keywords)[:5] if keywords else ["知识点", "课程"]
+    
+    @staticmethod
+    def _create_empty_script(filename: str) -> ScriptResult:
+        """创建空脚本"""
+        return ScriptResult(
+            title=Path(filename).stem,
+            summary="课程内容解析失败",
+            keywords=["知识点"],
+            total_duration=0,
+            nodes=[],
+            script_content={},
+            beautiful_markdown=""
+        )
+    
+    @staticmethod
     async def generate_script(
         markdown_content: str,
         filename: str,
@@ -765,6 +967,158 @@ class MindMapGenerator:
             "text": title,
             "children": children
         }
+    
+    @staticmethod
+    def generate_from_ai_formatted(
+        ai_formatted: List[Dict[str, Any]],
+        doc_title: str = None
+    ) -> Dict[str, Any]:
+        """
+        从ai_formatted数据生成层级化思维导图JSON结构
+        保持docling JSON的原始层级结构
+        """
+        if not ai_formatted:
+            return {"text": doc_title or "文档", "children": []}
+        
+        root_title = doc_title or "文档"
+        root = {"text": root_title, "children": []}
+        
+        toc_ended = False
+        content_sections = []
+        
+        for section in ai_formatted:
+            title = section.get('title', '').strip()
+            content = section.get('content', '').strip()
+            label = section.get('label', 'text')
+            
+            if not title or len(title) < 2:
+                continue
+            
+            if label in ['title_page']:
+                if len(title) >= 2:
+                    root_title = title
+                    root["text"] = root_title
+                continue
+            
+            if label in ['toc_page']:
+                continue
+            
+            has_content = bool(content) and len(content) > 10
+            
+            if not toc_ended:
+                if label == 'section_title' and not has_content:
+                    continue
+                else:
+                    toc_ended = True
+            
+            content_sections.append({
+                "title": title,
+                "has_content": has_content,
+                "label": label,
+            })
+        
+        MindMapGenerator._build_tree(root, content_sections)
+        MindMapGenerator._sort_children(root)
+        MindMapGenerator._clean_empty_children(root)
+        return root
+    
+    @staticmethod
+    def _detect_level(title: str, label: str) -> int:
+        if re.match(r'^\d+\.\d+\.\d+', title):
+            return 3
+        if re.match(r'^\d+\.\d+', title):
+            return 2
+        if re.match(r'^第[一二三四五六七八九十\d]+[章节]', title):
+            return 1
+        if label == 'heading':
+            return 3
+        if label == 'section_title':
+            return 2
+        return 3
+    
+    @staticmethod
+    def _extract_section_number(title: str):
+        m = re.match(r'^(\d+\.\d+(?:\.\d+)?)', title)
+        return m.group(1) if m else None
+    
+    @staticmethod
+    def _build_tree(root: Dict, sections: List[Dict]) -> None:
+        stack = [root]
+        stack_levels = [0]
+        stack_numbers = [None]
+        
+        for sec in sections:
+            title = sec["title"]
+            level = MindMapGenerator._detect_level(title, sec["label"])
+            sec_num = MindMapGenerator._extract_section_number(title)
+            
+            while len(stack) > 1 and stack_levels[-1] >= level:
+                stack.pop()
+                stack_levels.pop()
+                stack_numbers.pop()
+            
+            if sec_num and level >= 2:
+                parent_num = sec_num.rsplit('.', 1)[0] if '.' in sec_num else None
+                if parent_num:
+                    for i in range(len(stack) - 1, 0, -1):
+                        if stack_numbers[i] == parent_num:
+                            while len(stack) > i + 1:
+                                stack.pop()
+                                stack_levels.pop()
+                                stack_numbers.pop()
+                            break
+            
+            parent = stack[-1]
+            if "children" not in parent:
+                parent["children"] = []
+            
+            existing = None
+            if sec_num:
+                for child in parent["children"]:
+                    child_num = MindMapGenerator._extract_section_number(child.get("text", ""))
+                    if child_num and child_num == sec_num:
+                        existing = child
+                        break
+            
+            if existing:
+                if sec["has_content"] and not existing.get("has_content"):
+                    existing["has_content"] = True
+                stack.append(existing)
+                stack_levels.append(level)
+                stack_numbers.append(sec_num)
+            else:
+                node = {"text": title}
+                if sec["has_content"]:
+                    node["has_content"] = True
+                parent["children"].append(node)
+                stack.append(node)
+                stack_levels.append(level)
+                stack_numbers.append(sec_num)
+    
+    @staticmethod
+    def _section_sort_key(title: str) -> tuple:
+        num = MindMapGenerator._extract_section_number(title)
+        if num:
+            parts = num.split('.')
+            return tuple(int(p) for p in parts)
+        return (999,)
+    
+    @staticmethod
+    def _sort_children(node: Dict[str, Any]):
+        if "children" not in node:
+            return
+        node["children"].sort(key=lambda c: MindMapGenerator._section_sort_key(c.get("text", "")))
+        for child in node["children"]:
+            MindMapGenerator._sort_children(child)
+    
+    @staticmethod
+    def _clean_empty_children(node: Dict[str, Any]):
+        """递归清理空的children数组"""
+        if "children" in node and not node["children"]:
+            del node["children"]
+        elif "children" in node:
+            for child in node["children"]:
+                MindMapGenerator._clean_empty_children(child)
 
 
 class RAGProcessor:
@@ -895,9 +1249,18 @@ class DocumentService:
         )
         
         if enable_script:
-            script_result = await self.script_generator.generate_script(
-                parse_result.markdown_content, filename
-            )
+            if parse_result.ai_formatted:
+                logger.info(f"[DocumentService] 使用ai_formatted数据生成脚本")
+                script_result = await self.script_generator.generate_script_from_ai_formatted(
+                    parse_result.ai_formatted,
+                    filename,
+                    parse_result.doc_title
+                )
+            else:
+                logger.info(f"[DocumentService] 使用markdown数据生成脚本")
+                script_result = await self.script_generator.generate_script(
+                    parse_result.markdown_content, filename
+                )
         else:
             script_result = ScriptResult(
                 title=Path(filename).stem,
@@ -918,7 +1281,14 @@ class DocumentService:
         else:
             rag_result = RAGProcessResult()
         
-        mind_map = self.mind_map_generator.generate(script_result)
+        if parse_result.ai_formatted:
+            logger.info(f"[DocumentService] 使用ai_formatted数据生成思维导图")
+            mind_map = self.mind_map_generator.generate_from_ai_formatted(
+                parse_result.ai_formatted,
+                parse_result.doc_title
+            )
+        else:
+            mind_map = self.mind_map_generator.generate(script_result)
         
         logger.info(f"[DocumentService] 文档处理完成: {filename}")
         

@@ -7,7 +7,7 @@ from typing import Optional
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Body
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
@@ -492,11 +492,11 @@ async def sync_learning_progress(
 
             # 计算完成的节点数
             completed_nodes = session.exec(
-                select(NodeProgress).where(
+                select(func.count()).select_from(NodeProgress).where(
                     NodeProgress.learning_progress_id == learning_progress.id,
                     NodeProgress.is_completed == True
                 )
-            ).count_all() or 0
+            ).one() or 0
 
             enrollment.total_nodes_completed = completed_nodes
             session.add(enrollment)

@@ -15,7 +15,7 @@ from datetime import datetime
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
-from sqlmodel import Session, select, text
+from sqlmodel import Session, select, text, func
 
 from app.schemas.document_schema import (
     DocumentUploadResponse,
@@ -955,11 +955,11 @@ async def delete_course(
 
         # 检查是否有学生已选课
         enrollments_count = session.exec(
-            select(StudentEnrollment).where(
+            select(func.count()).select_from(StudentEnrollment).where(
                 StudentEnrollment.course_id == course_id,
                 StudentEnrollment.is_active == True
             )
-        ).count_all() or 0
+        ).one() or 0
 
         # 删除所有相关数据（按依赖顺序）
         try:
@@ -1316,11 +1316,11 @@ async def get_course_stats(
 
         # 统计活跃选课数
         active_count = session.exec(
-            select(StudentEnrollment).where(
+            select(func.count()).select_from(StudentEnrollment).where(
                 StudentEnrollment.course_id == course_id,
                 StudentEnrollment.is_active == True
             )
-        ).count_all()
+        ).one()
 
         # 计算平均进度和理解度
         all_enrollments = session.exec(
