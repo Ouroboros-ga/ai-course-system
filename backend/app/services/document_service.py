@@ -482,8 +482,8 @@ class ScriptGenerator:
         if not ai_formatted:
             return ScriptGenerator._create_empty_script(filename)
         
-        nodes = []
-        total_duration = 0
+        merged_sections = []
+        pending_title = None
         
         for idx, section in enumerate(ai_formatted):
             title = section.get('title', f'知识点{idx+1}')
@@ -491,21 +491,57 @@ class ScriptGenerator:
             label = section.get('label', 'text')
             
             if label in ['title_page', 'toc_page']:
+                if content and len(content.strip()) >= 10:
+                    merged_sections.append({
+                        'title': title,
+                        'content': content,
+                        'label': label,
+                        'slide': section.get('slide', 1),
+                    })
                 continue
             
             if not content or len(content.strip()) < 10:
+                pending_title = title
                 continue
             
-            node_type = ScriptGenerator._determine_node_type(label, idx, len(ai_formatted))
-            duration = ScriptGenerator._estimate_duration(content)
+            if pending_title:
+                if title != pending_title:
+                    title = f"{pending_title} - {title}"
+                pending_title = None
+            
+            merged_sections.append({
+                'title': title,
+                'content': content,
+                'label': label,
+                'slide': section.get('slide', 1),
+            })
+        
+        if pending_title:
+            if merged_sections:
+                last = merged_sections[-1]
+                last['title'] = f"{last['title']} - {pending_title}"
+            else:
+                merged_sections.append({
+                    'title': pending_title,
+                    'content': '本节内容待补充。',
+                    'label': 'section_title',
+                    'slide': 1,
+                })
+        
+        nodes = []
+        total_duration = 0
+        
+        for idx, section in enumerate(merged_sections):
+            node_type = ScriptGenerator._determine_node_type(section['label'], idx, len(merged_sections))
+            duration = ScriptGenerator._estimate_duration(section['content'])
             
             nodes.append(ScriptNode(
                 chapter_id=f"chap_{idx:03d}",
                 node_type=node_type,
-                title=title,
-                content=content,
-                page_start=section.get('slide', 1) + 1,
-                page_end=section.get('slide', 1) + 1,
+                title=section['title'],
+                content=section['content'],
+                page_start=section['slide'] + 1,
+                page_end=section['slide'] + 1,
                 duration=duration,
                 is_key_point=(idx % 3 == 0),
             ))
@@ -555,7 +591,7 @@ class ScriptGenerator:
         """
         使用AI增强内容（只优化content，不改变标题）
         """
-        if len(original_content) >= 150 and len(original_content) <= 300:
+        if len(original_content) >= 300 and len(original_content) <= 800:
             return original_content
         
         if len(original_content) < 50:
@@ -567,9 +603,10 @@ class ScriptGenerator:
 要求：
 1. 保持内容的核心信息和专业性
 2. 优化语言表达，使其更流畅
-3. 内容长度控制在150-300字之间
+3. 内容长度控制在300-800字之间
 4. 不要改变内容的主题和核心观点
-5. 直接输出优化后的内容，不要添加任何额外说明"""
+5. 适当补充解释、举例和类比，使内容更加丰富
+6. 直接输出优化后的内容，不要添加任何额外说明"""
 
             user_prompt = f"""标题：{title}
 
@@ -648,7 +685,7 @@ class ScriptGenerator:
     async def generate_script(
         markdown_content: str,
         filename: str,
-        max_content_length: int = 6000
+        max_content_length: int = 20000
     ) -> ScriptResult:
         """
         调用AI生成智课脚本
@@ -674,23 +711,26 @@ class ScriptGenerator:
 ## 核心要求
 
 ### 1. 内容长度要求（严格）
-- **每个节点的content字段必须在150-300字之间（中文）**
-- 不足150字的节点必须补充更多细节和说明
-- 超过300字的节点需要精简提炼核心要点
+- **每个节点的content字段必须在300-800字之间（中文）**
+- 不足300字的节点必须补充更多细节和说明
+- 超过800字的节点需要适当精简但保留核心要点
 - 统计字数时不包括标点符号和空格
+- **生成的内容总文本量必须大于原文档的文本量**，通过补充解释、举例、类比等方式扩展内容
 
 ### 2. 结构化要求
 - **严格按照文档的层级结构组织内容**
 - 保持原文档的章节顺序和逻辑关系
-- 每个章节对应一个或多个教学节点
+- **文档中的每个章节、小节都必须对应至少一个教学节点，不得遗漏任何章节**
+- 如果原文档有N个章节/小节标题，生成的节点数量不得少于N个
 - 标题必须清晰、准确、无乱码，使用规范的中文表述
 
 ### 3. 内容质量标准
-- **概念解释**：定义清晰，通俗易懂，避免过于学术化的表述
-- **原理讲解**：深入浅出，包含"是什么→为什么→怎么用"的完整逻辑链
-- **实例说明**：至少提供1-2个贴近实际的具体案例
-- **应用场景**：说明知识点的实际应用价值和适用范围
+- **概念解释**：定义清晰，通俗易懂，避免过于学术化的表述，用类比帮助理解
+- **原理讲解**：深入浅出，包含"是什么→为什么→怎么用"的完整逻辑链，详细阐述内在机制
+- **实例说明**：至少提供2-3个贴近实际的具体案例，包含详细的分析过程
+- **应用场景**：说明知识点的实际应用价值和适用范围，给出具体应用实例
 - **过渡衔接**：自然流畅，使用"接下来""在此基础上""值得注意的是"等过渡语
+- **内容扩展**：在原文基础上补充背景知识、相关概念对比、常见误区、实际工程应用等
 
 ### 4. 标题规范
 - 使用简洁明了的中文标题（4-15个字）
@@ -703,7 +743,7 @@ class ScriptGenerator:
 请以JSON格式返回，结构如下：
 {
     "title": "课程标题（使用清晰的中文，无乱码）",
-    "summary": "课程整体摘要（50-100字）",
+    "summary": "课程整体摘要（100-200字）",
     "keywords": ["关键词1", "关键词2"],
     "total_duration": 总时长(秒),
     "nodes": [
@@ -711,7 +751,7 @@ class ScriptGenerator:
             "chapter_id": "chap_000",
             "node_type": "lecture",
             "title": "节点标题（中文，4-15字，无特殊符号）",
-            "content": "【严格150-300字的详细讲解文本】包含：概念定义+原理解释+具体案例+应用场景",
+            "content": "【严格300-800字的详细讲解文本】包含：概念定义+原理解释+具体案例+应用场景+背景补充",
             "page_start": 1,
             "page_end": 1,
             "duration": 90,
@@ -727,11 +767,13 @@ class ScriptGenerator:
 - interactive: 交互环节（引导思考）
 
 ## 重要提示
-1. **content字段是唯一最重要的字段**，必须确保150-300字
+1. **content字段是唯一最重要的字段**，必须确保300-800字
 2. **标题必须使用纯中文**，禁止任何乱码或特殊符号
 3. **保持文档原有的层级结构**，不要随意重组或打乱顺序
-4. **内容要实用**，学生能够直接理解和应用
-5. 返回的必须是有效的JSON格式"""
+4. **内容要实用且丰富**，学生能够直接理解和应用
+5. **不得遗漏原文档中的任何章节**，每个章节都必须有对应的节点
+6. **通过补充解释、举例、类比等方式，使生成内容的文本量超过原文档**
+7. 返回的必须是有效的JSON格式"""
 
         user_prompt = f"""请根据以下文档内容生成高质量的智课脚本：
 
@@ -742,10 +784,11 @@ class ScriptGenerator:
 
 生成要求：
 1. 分析文档的层级结构（# ## ### 标题）
-2. 按照原有章节顺序拆分为教学节点
-3. 每个节点的content严格控制在150-300字
+2. 按照原有章节顺序拆分为教学节点，**每个章节/小节都必须有对应节点**
+3. 每个节点的content严格控制在300-800字
 4. 标题使用清晰中文，无乱码
-5. 内容要丰富详实，包含足够的细节和例子
+5. 内容要丰富详实，包含足够的细节、例子和解释
+6. **生成内容的总文本量必须大于原文档**
 
 请立即生成JSON格式的智课脚本："""
 

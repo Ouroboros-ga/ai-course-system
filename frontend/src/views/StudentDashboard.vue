@@ -106,7 +106,7 @@
               </div>
 
               <!-- 学理解度可视化 -->
-              <div v-if="getNodeProgress(index)" class="understanding-bar">
+              <div v-if="getNodeProgress(index) && getNodeProgress(index).score !== null" class="understanding-bar">
                 <div
                   class="understanding-fill"
                   :style="{ width: getNodeProgress(index).score + '%' }"
@@ -531,7 +531,7 @@ function updateProgressFromServer(progressData) {
     progressData.nodes_progress.forEach(np => {
       nodeProgressMap.value[np.index] = {
         completed: np.is_completed,
-        score: np.understanding_score ? np.understanding_score * 100 : 0,
+        score: np.understanding_score ? np.understanding_score * 100 : null,
         level: np.understanding_level,
         questions: np.question_count || 0,
       }
@@ -608,7 +608,7 @@ function markNodeVisited(index) {
   if (!nodeProgressMap.value[index]) {
     nodeProgressMap.value[index] = {
       completed: false,
-      score: 0,
+      score: null,
       level: null,
       questions: 0,
     }
@@ -628,7 +628,7 @@ async function generateQAForNode(node) {
       },
       body: JSON.stringify({
         courseId: selectedCourse.value.id,
-        currentNodeId: node.id,
+        currentNodeId: null,
         question: `请根据以下内容生成一个检验理解的问题：\n\n${node.content.substring(0, 500)}`,
         strictMode: false,
       }),
@@ -637,12 +637,10 @@ async function generateQAForNode(node) {
     if (response.ok) {
       const data = await response.json()
       if (data.code === 200) {
-        // 添加AI问答消息
         chatMessages.value.push({
           id: Date.now() + 1,
           role: 'ai',
           content: `### ❓ 互动问答\n\n${data.data.answer}\n\n请回答以上问题以检验您的理解程度：`,
-          understandingAnalysis: data.data.understandingAnalysis,
           isQA: true,
         })
 
@@ -651,7 +649,6 @@ async function generateQAForNode(node) {
     }
   } catch (error) {
     console.error('生成问答失败:', error)
-    // 如果API调用失败，使用默认问题
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
@@ -735,7 +732,7 @@ function updateNodeUnderstanding(index, analysis) {
   if (!nodeProgressMap.value[index]) {
     nodeProgressMap.value[index] = {
       completed: false,
-      score: 0,
+      score: null,
       level: null,
       questions: 0,
     }
@@ -745,13 +742,9 @@ function updateNodeUnderstanding(index, analysis) {
   nodeProgressMap.value[index].level = analysis.level
   nodeProgressMap.value[index].questions += 1
 
-  // 如果理解度超过70%，标记为基本掌握
   if (analysis.score >= 0.7) {
     nodeProgressMap.value[index].completed = true
   }
-
-  // 保存到服务器
-  saveProgressToServer(index, analysis)
 }
 
 // 保存进度到服务器
