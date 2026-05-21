@@ -98,6 +98,7 @@ class Settings(BaseSettings):
         "/api/v1/platform/syncCourse",
         "/api/v1/platform/syncUser",
         "/api/v1/user/login",
+        "/api/v1/user/register",
         "/docs",
         "/openapi.json",
         "/",

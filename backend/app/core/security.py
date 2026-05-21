@@ -70,16 +70,10 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
 
 async def verify_request_signature(request: Request):
 
-    current_path = request.url.path  # test测试使用的签名验证白名单
+    current_path = request.url.path
     print(f"【后端签名调试】收到请求: {request.method} {current_path}")
-    
-    whitelist_paths = [
-        "/api/v1/user/login",
-        "/api/v1/user/register",
-        "/docs",
-        "/openapi.json",
-    ]
-    if any(current_path.startswith(path) for path in whitelist_paths):
+
+    if any(current_path.startswith(path) for path in settings.NO_AUTH_WHITELIST):
         print(f"【后端签名调试】白名单路径，跳过验证")
         return True
 
