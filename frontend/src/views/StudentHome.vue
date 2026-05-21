@@ -47,13 +47,10 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import api from '@/api/index.js'
+import request from '@/utils/request.js'
 import { showToast } from '@/utils/toast'
-import { useCounterStore } from '@/stores/counter.js'
 
 const router = useRouter()
-const counter = useCounterStore()
-
 const courses = ref([])
 
 onMounted(() => {
@@ -62,15 +59,8 @@ onMounted(() => {
 
 const loadCourses = async () => {
   try {
-    const response = await fetch('http://localhost:8000/api/v1/document/courses', {
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        courses.value = data.data.courses || []
-      }
-    }
+    const data = await request({ url: '/document/courses', method: 'get' })
+    courses.value = data.courses || []
   } catch (err) {
     console.log('加载课程列表失败')
   }

@@ -13,32 +13,41 @@
             <span class="icon">📁</span>
             上传文档
           </div>
-          <div
-            class="upload-area"
-            :class="{ 'is-uploading': isUploading }"
-            @click="triggerFileUpload"
-            @dragover.prevent="handleDragOver"
-            @dragleave.prevent="handleDragLeave"
-            @drop.prevent="handleDrop"
-          >
-            <input
-              type="file"
-              ref="fileInput"
-              accept=".pdf,.docx,.pptx"
-              style="display: none"
-              @change="handleFileSelect"
-            />
-            <div v-if="!isUploading" class="upload-placeholder">
-              <div class="upload-icon">📄</div>
-              <div class="upload-text">点击或拖拽上传文档</div>
-              <div class="upload-hint">支持 PDF、DOCX、PPTX（最大50MB）</div>
+          <div v-if="isFileUploaded" class="uploaded-state">
+            <div class="uploaded-info">
+              <span class="uploaded-icon">✅</span>
+              <span>文档已上传并解析</span>
             </div>
-            <div v-else class="uploading-state">
-              <div class="spinner"></div>
-              <div>正在解析文档...</div>
-              <div class="progress-hint">{{ uploadProgress }}</div>
-            </div>
+            <button class="back-btn" @click="router.back()">← 返回</button>
           </div>
+          <template v-else>
+            <div
+              class="upload-area"
+              :class="{ 'is-uploading': isUploading }"
+              @click="triggerFileUpload"
+              @dragover.prevent="handleDragOver"
+              @dragleave.prevent="handleDragLeave"
+              @drop.prevent="handleDrop"
+            >
+              <input
+                type="file"
+                ref="fileInput"
+                accept=".pdf,.docx,.pptx"
+                style="display: none"
+                @change="handleFileSelect"
+              />
+              <div v-if="!isUploading" class="upload-placeholder">
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">点击或拖拽上传文档</div>
+                <div class="upload-hint">支持 PDF、DOCX、PPTX（最大50MB）</div>
+              </div>
+              <div v-else class="uploading-state">
+                <div class="spinner"></div>
+                <div>正在解析文档...</div>
+                <div class="progress-hint">{{ uploadProgress }}</div>
+              </div>
+            </div>
+          </template>
 
           <!-- 解析信息 -->
           <div v-if="parseInfo" class="parse-info">
@@ -301,6 +310,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -309,9 +319,11 @@ import katex from 'katex'
 import { showToast } from '@/utils/toast'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
+import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 
 const counter = useCounterStore()
+const router = useRouter()
 
 // 引入KaTeX样式（非scoped）
 import 'katex/dist/katex.min.css'
@@ -326,6 +338,7 @@ const isEditMode = ref(false)
 const isUploading = ref(false)
 const uploadProgress = ref('准备上传...')
 const parseInfo = ref(null)
+const isFileUploaded = ref(false)
 const courseId = ref(null)
 
 // 发布课程相关
@@ -408,7 +421,7 @@ function extractFormulas(text) {
   })
 
   // 处理行内公式 $...$
-  processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+  processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
     const placeholder = `%%INLINE_FORMULA_${index}%%`
     formulas.push({ placeholder, formula: formula.trim(), isBlock: false })
     index++
@@ -608,6 +621,7 @@ const processFile = async (file) => {
       }
 
       currentNodeIndex.value = 0
+      isFileUploaded.value = true
       showToast(`文档解析完成: ${knowledgeTree.value.length} 个知识点`, 'success')
 
       // 加载课程统计信息（如果有课程ID）
@@ -680,17 +694,10 @@ const buildKnowledgeTreeFromMindMap = (mindMap, title) => {
 // 加载课程节点并合并内容到知识树
 const loadCourseNodesAndMerge = async (courseIdParam) => {
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${courseIdParam}`, {
-      headers: {
-        'Authorization': `Bearer ${counter.token}`
-      }
-    })
+    const data = await request({ url: `/document/course/${courseIdParam}`, method: 'get' })
 
-    if (response.ok) {
-      const data = await response.json()
-
-      if (data.code === 200 && data.data && data.data.nodes) {
-        const scriptNodes = data.data.nodes
+    if (data && data.nodes) {
+      const scriptNodes = data.nodes
         
         for (const treeNode of knowledgeTree.value) {
           const matchedNode = scriptNodes.find(sn => 
@@ -722,7 +729,6 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
           }
         }
       }
-    }
   } catch (error) {
     console.warn('加载课程节点失败:', error)
   }
@@ -881,23 +887,16 @@ const generateTTS = async () => {
     formData.append('text', currentContent.value.substring(0, 500)) // 限制文本长度
     formData.append('output_format', 'mp3')
 
-    const response = await fetch('http://localhost:8000/api/v1/document/tts/synthesize', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${counter.token}`
-      },
-      body: formData
+    const blob = await request({
+      url: '/document/tts/synthesize',
+      method: 'post',
+      data: formData,
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob'
     })
 
-    if (response.ok) {
-      // 将响应转换为Blob URL
-      const blob = await response.blob()
-      audioUrl.value = URL.createObjectURL(blob)
-      showToast('语音生成成功', 'success')
-    } else {
-      const errorData = await response.json()
-      throw new Error(errorData.detail || '语音生成失败')
-    }
+    audioUrl.value = URL.createObjectURL(blob)
+    showToast('语音生成成功', 'success')
   } catch (error) {
     console.error('TTS生成失败:', error)
     showToast(error.message || '语音生成失败，请重试', 'error')
@@ -914,22 +913,11 @@ const togglePublishCourse = async () => {
   isPublishing.value = true
   try {
     const endpoint = isPublished.value ? 'unpublish' : 'publish'
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${courseId.value}/${endpoint}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
+    await request({ url: `/document/course/${courseId.value}/${endpoint}`, method: 'post' })
+    isPublished.value = !isPublished.value
+    showToast(isPublished.value ? '课程已发布' : '课程已取消发布', 'success')
 
-    if (response.ok) {
-      const data = await response.json()
-      isPublished.value = !isPublished.value
-      showToast(data.message, 'success')
-
-      // 刷新统计数据
-      await loadCourseStats()
-    } else {
-      const errorData = await response.json()
-      throw new Error(errorData.message || '操作失败')
-    }
+    await loadCourseStats()
   } catch (error) {
     console.error('发布课程失败:', error)
     showToast(error.message || '操作失败', 'error')
@@ -979,29 +967,21 @@ const loadCourseStats = async () => {
 
   isLoadingStats.value = true
   try {
-    // 获取课程统计
-    const statsRes = await fetch(
-      `http://localhost:8000/api/v1/document/course/${courseId.value}/stats`,
-      { headers: { Authorization: `Bearer ${counter.token}` } }
-    )
+    const statsData = await request({ url: `/document/course/${courseId.value}/stats`, method: 'get' })
 
-    if (statsRes.ok) {
-      const statsData = await statsRes.json()
-      if (statsData.code === 200) {
-        courseStats.value = {
-          totalStudents: statsData.data.total_students,
-          avgProgress: statsData.data.avg_progress,
-          avgUnderstanding: statsData.data.avg_understanding,
-          totalStudyHours: statsData.data.total_study_hours,
-          progressDistribution: statsData.data.progress_distribution,
-        }
+    if (statsData) {
+      courseStats.value = {
+        totalStudents: statsData.total_students,
+        avgProgress: statsData.avg_progress,
+        avgUnderstanding: statsData.avg_understanding,
+        totalStudyHours: statsData.total_study_hours,
+        progressDistribution: statsData.progress_distribution,
+      }
 
-        // 如果有学生，获取学生列表
-        if (courseStats.value.totalStudents > 0) {
-          await loadStudentsList()
-        } else {
-          studentsList.value = []
-        }
+      if (courseStats.value.totalStudents > 0) {
+        await loadStudentsList()
+      } else {
+        studentsList.value = []
       }
     }
   } catch (error) {
@@ -1013,23 +993,17 @@ const loadCourseStats = async () => {
 
 const loadStudentsList = async () => {
   try {
-    const res = await fetch(
-      `http://localhost:8000/api/v1/document/course/${courseId.value}/students`,
-      { headers: { Authorization: `Bearer ${counter.token}` } }
-    )
+    const data = await request({ url: `/document/course/${courseId.value}/students`, method: 'get' })
 
-    if (res.ok) {
-      const data = await res.json()
-      if (data.code === 200) {
-        studentsList.value = data.data.students.map(s => ({
-          enrollmentId: s.enrollment_id,
-          username: s.username,
-          progress: s.overall_progress,
-          level: s.understanding_level,
-          understandingScore: s.avg_understanding_score,
-          studyMinutes: s.total_study_minutes,
-        }))
-      }
+    if (data) {
+      studentsList.value = data.students.map(s => ({
+        enrollmentId: s.enrollment_id,
+        username: s.username,
+        progress: s.overall_progress,
+        level: s.understanding_level,
+        understandingScore: s.avg_understanding_score,
+        studyMinutes: s.total_study_minutes,
+      }))
     }
   } catch (error) {
     console.error('加载学生列表失败:', error)
@@ -1215,6 +1189,47 @@ const loadStudentsList = async () => {
   cursor: pointer;
   transition: all 0.3s ease;
   position: relative;
+}
+
+.uploaded-state {
+  border: 2px solid #10b981;
+  border-radius: 8px;
+  padding: 20px 16px;
+  text-align: center;
+  background: linear-gradient(135deg, #ecfdf5, #f0fdf4);
+}
+
+.uploaded-info {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  color: #059669;
+  font-weight: 500;
+  font-size: 14px;
+}
+
+.uploaded-icon {
+  font-size: 18px;
+}
+
+.back-btn {
+  width: 100%;
+  padding: 10px 20px;
+  border: 1px solid #6366f1;
+  border-radius: 8px;
+  background: #6366f1;
+  color: white;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
+
+.back-btn:hover {
+  background: #4f46e5;
+  border-color: #4f46e5;
 }
 
 .upload-area:hover:not(.is-uploading) {

@@ -55,7 +55,7 @@ function md5(string) {
     const lNumberOfWordsTemp1 = lMessageLength + 8
     const lNumberOfWordsTemp2 = (lNumberOfWordsTemp1 - (lNumberOfWordsTemp1 % 64)) / 64
     const lNumberOfWords = (lNumberOfWordsTemp2 + 1) * 16
-    const lWordArray = new Array(lNumberOfWords - 1)
+    const lWordArray = Array.from({ length: lNumberOfWords - 1 })
     let lBytePosition = 0
     let lByteCount = 0
     while (lByteCount < lMessageLength) {
@@ -289,10 +289,13 @@ function _isTokenExpiringSoon(token) {
 // 响应拦截器
 service.interceptors.response.use(
   response => {
+    if (response.data instanceof Blob) {
+      return response.data
+    }
+
     const res = response.data
 
-    // 处理业务逻辑错误 (后端返回 code 非 200)
-    if (res.code != 200) {
+    if (res.code !== 200) {
 
       // 特殊状态码处理：Token 过期
       if (res.code === 401) {
@@ -357,7 +360,7 @@ function _handleUnauthorized() {
   // 延迟跳转，让用户看到提示
   setTimeout(() => {
     console.log('🔄 [Auth] 跳转到登录页...')
-    window.location.href = '/login' || window.location.reload()
+    window.location.href = '/profile'
   }, 1500)
 }
 

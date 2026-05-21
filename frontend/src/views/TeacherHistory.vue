@@ -228,11 +228,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/index.js'
-import { useCounterStore } from '@/stores/counter.js'
+import request from '@/utils/request.js'
 import { showToast } from '@/utils/toast'
 
 const router = useRouter()
-const counter = useCounterStore()
 
 // 状态变量
 const courses = ref([])
@@ -322,16 +321,8 @@ function getLevelLabel(level) {
 async function loadCourses() {
   isLoading.value = true
   try {
-    const response = await fetch('http://localhost:8000/api/v1/document/courses', {
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        courses.value = data.data.courses || []
-      }
-    }
+    const data = await request({ url: '/document/courses', method: 'get' })
+    courses.value = data.courses || []
   } catch (error) {
     console.error('加载课程失败:', error)
     showToast('加载课程失败', 'error')
@@ -370,22 +361,10 @@ async function publishCourse(course) {
   publishingId.value = course.id
 
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${course.id}/publish`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      showToast(data.message || '课程发布成功！学生现在可以选择此课程', 'success')
-      // 更新本地状态
-      course.status = 'published'
-      // 刷新课程列表以获取最新的学生数据
-      await loadCourses()
-    } else {
-      const errorData = await response.json()
-      throw new Error(errorData.message || '发布失败')
-    }
+    await request({ url: `/document/course/${course.id}/publish`, method: 'post' })
+    showToast('课程发布成功！学生现在可以选择此课程', 'success')
+    course.status = 'published'
+    await loadCourses()
   } catch (error) {
     console.error('发布课程失败:', error)
     showToast(error.message || '发布失败，请重试', 'error')
@@ -403,20 +382,9 @@ async function unpublishCourse(course) {
   publishingId.value = course.id
 
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${course.id}/unpublish`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      showToast(data.message || '已取消发布', 'success')
-      // 更新本地状态
-      course.status = 'draft'
-    } else {
-      const errorData = await response.json()
-      throw new Error(errorData.message || '操作失败')
-    }
+    await request({ url: `/document/course/${course.id}/unpublish`, method: 'post' })
+    showToast('已取消发布', 'success')
+    course.status = 'draft'
   } catch (error) {
     console.error('取消发布失败:', error)
     showToast(error.message || '操作失败，请重试', 'error')
@@ -443,23 +411,11 @@ async function deleteCourse(course) {
   deletingId.value = course.id
 
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${course.id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      showToast(data.message || '课程已成功删除', 'success')
-      // 从本地列表中移除该课程
-      courses.value = courses.value.filter(c => c.id !== course.id)
-      // 如果当前正在查看该课程的学生面板，关闭它
-      if (selectedCourse.value?.id === course.id) {
-        closeStudentPanel()
-      }
-    } else {
-      const errorData = await response.json()
-      throw new Error(errorData.message || '删除失败')
+    await request({ url: `/document/course/${course.id}`, method: 'delete' })
+    showToast('课程已成功删除', 'success')
+    courses.value = courses.value.filter(c => c.id !== course.id)
+    if (selectedCourse.value?.id === course.id) {
+      closeStudentPanel()
     }
   } catch (error) {
     console.error('删除课程失败:', error)
@@ -475,77 +431,35 @@ async function loadStudentsAndStats(courseId) {
   isLoadingStudents.value = true
 
   try {
-    console.log(`[TeacherHistory] 开始加载课程 ${courseId} 的学生数据`)
-
-    // 获取课程统计
-    const statsRes = await fetch(
-      `http://localhost:8000/api/v1/document/course/${courseId}/stats`,
-      { headers: { Authorization: `Bearer ${counter.token}` } }
-    )
-
-    if (statsRes.ok) {
-      const statsData = await statsRes.json()
-      console.log('[TeacherHistory] 统计数据响应:', statsData)
-
-      if (statsData.code === 200 && statsData.data) {
-        courseStats.value = {
-          totalStudents: statsData.data.total_students || 0,
-          avgProgress: statsData.data.avg_progress || 0,
-          avgUnderstanding: statsData.data.avg_understanding || 0,
-          totalStudyHours: statsData.data.total_study_hours || 0,
-          progressDistribution: statsData.data.progress_distribution || {},
-        }
-
-        console.log('[TeacherHistory] 更新后的统计数据:', courseStats.value)
-      } else {
-        console.warn('[TeacherHistory] 统计数据返回异常:', statsData)
-        // 即使统计失败，也尝试加载学生列表
-        courseStats.value = { totalStudents: -1, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
-      }
-    } else {
-      const errorText = await statsRes.text()
-      console.error('[TeacherHistory] 统计API错误:', statsRes.status, errorText)
-      courseStats.value = { totalStudents: -1, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
+    const statsData = await request({ url: `/document/course/${courseId}/stats`, method: 'get' })
+    courseStats.value = {
+      totalStudents: statsData.total_students || 0,
+      avgProgress: statsData.avg_progress || 0,
+      avgUnderstanding: statsData.avg_understanding || 0,
+      totalStudyHours: statsData.total_study_hours || 0,
+      progressDistribution: statsData.progress_distribution || {},
     }
+  } catch (error) {
+    console.error('[TeacherHistory] 加载统计数据失败:', error)
+    courseStats.value = { totalStudents: -1, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
+  }
 
-    // 获取学生列表（无论统计结果如何都尝试）
-    try {
-      const res = await fetch(
-        `http://localhost:8000/api/v1/document/course/${courseId}/students`,
-        { headers: { Authorization: `Bearer ${counter.token}` } }
-      )
-
-      if (res.ok) {
-        const data = await res.json()
-        console.log('[TeacherHistory] 学生列表响应:', data)
-
-        if (data.code === 200 && data.data && data.data.students) {
-          students.value = data.data.students.map(s => ({
-            enrollmentId: s.enrollment_id,
-            username: s.username || `学生${s.student_id}`,
-            progress: s.overall_progress || 0,
-            level: s.understanding_level || 'unknown',
-            understandingScore: s.avg_understanding_score || 0,
-            studyMinutes: s.total_study_minutes || 0,
-          }))
-          console.log(`[TeacherHistory] 成功加载 ${students.value.length} 名学生数据`)
-        } else {
-          students.value = []
-          console.warn('[TeacherHistory] 学生列表为空或格式异常')
-        }
-      } else {
-        const errorText = await res.text()
-        console.error('[TeacherHistory] 学生列表API错误:', res.status, errorText)
-        students.value = []
-      }
-    } catch (studentError) {
-      console.error('[TeacherHistory] 加载学生列表异常:', studentError)
+  try {
+    const data = await request({ url: `/document/course/${courseId}/students`, method: 'get' })
+    if (data.students) {
+      students.value = data.students.map(s => ({
+        enrollmentId: s.enrollment_id,
+        username: s.username || `学生${s.student_id}`,
+        progress: s.overall_progress || 0,
+        level: s.understanding_level || 'unknown',
+        understandingScore: s.avg_understanding_score || 0,
+        studyMinutes: s.total_study_minutes || 0,
+      }))
+    } else {
       students.value = []
     }
-
-  } catch (error) {
-    console.error('[TeacherHistory] 加载数据总失败:', error)
-    showToast('加载学生数据失败，请刷新重试', 'error')
+  } catch (studentError) {
+    console.error('[TeacherHistory] 加载学生列表异常:', studentError)
     students.value = []
   } finally {
     isLoadingStudents.value = false

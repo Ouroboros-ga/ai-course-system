@@ -64,7 +64,7 @@ function extractFormulas(text) {
   })
   
   // 再处理行内公式 $...$
-  processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+  processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
     const placeholder = `%%INLINE_FORMULA_${index}%%`
     formulas.push({
       placeholder,

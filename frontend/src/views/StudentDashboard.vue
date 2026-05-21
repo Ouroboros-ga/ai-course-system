@@ -49,13 +49,6 @@
               >
                 {{ course.status === 'published' ? '🚀 开始学习 →' : '⏳ 未发布' }}
               </button>
-              <button
-                v-if="course.status === 'published'"
-                class="preview-btn"
-                @click.stop="previewCourse(course)"
-              >
-                👁️ 预览
-              </button>
             </div>
           </div>
         </div>
@@ -248,8 +241,8 @@ import hljs from 'highlight.js'
 import DOMPurify from 'dompurify'
 import katex from 'katex'
 import { showToast } from '@/utils/toast'
-import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
+import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 
 const counter = useCounterStore()
@@ -370,7 +363,7 @@ function renderContent(text) {
       index++
       return placeholder
     })
-    processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+    processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
       const placeholder = `%%INLINE_${index}%%`
       formulas.push({ placeholder, formula: formula.trim(), isBlock: false })
       index++
@@ -408,18 +401,8 @@ function renderContent(text) {
 async function loadAvailableCourses() {
   isLoadingCourses.value = true
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/courses`, {
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        availableCourses.value = data.data.courses || []
-      }
-    } else {
-      console.error('加载课程失败')
-    }
+    const data = await request({ url: '/document/courses', method: 'get' })
+    availableCourses.value = data.courses || []
   } catch (error) {
     console.error('加载课程出错:', error)
     showToast('加载课程失败', 'error')
@@ -440,26 +423,13 @@ async function enterCourse(course) {
 
   // 调用选课API
   try {
-    const response = await fetch(`http://localhost:8000/api/v1/document/course/${course.id}/enroll`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${counter.token}` }
-    })
-
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        console.log('选课成功:', data.data)
-        if (!data.data.already_enrolled && !data.data.reactivated) {
-          showToast('成功加入课程！', 'success')
-        }
-      }
-    } else {
-      const errorData = await response.json()
-      showToast(errorData.message || '选课失败', 'warning')
+    const data = await request({ url: `/document/course/${course.id}/enroll`, method: 'post' })
+    console.log('选课成功:', data)
+    if (!data.already_enrolled && !data.reactivated) {
+      showToast('成功加入课程！', 'success')
     }
   } catch (error) {
     console.error('选课请求失败:', error)
-    // 即使选课API失败，也继续加载课程内容（允许离线学习）
   }
 
   loadCourseContent(course.id)
@@ -488,34 +458,26 @@ async function loadCourseContent(courseId) {
     showToast('正在加载课程内容...', 'info')
 
     // 加载课程详情和节点
-    const response = await fetch(
-      `http://localhost:8000/api/v1/document/course/${courseId}`,
-      { headers: { Authorization: `Bearer ${counter.token}` } }
-    )
+    const data = await request({ url: `/document/course/${courseId}`, method: 'get' })
 
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200 && data.data) {
-        // 设置节点数据
-        if (data.data.nodes && data.data.nodes.length > 0) {
-          scriptNodes.value = data.data.nodes.map(node => ({
-            id: node.id,
-            node_index: node.node_index,
-            node_type: node.node_type || 'lecture',
-            title: node.title || `章节 ${node.node_index + 1}`,
-            content: node.content || '',
-            duration: node.duration || 60,
-            is_key_point: node.is_key_point || false,
-          }))
-        }
-
-        // 加载学习进度
-        if (data.data.progress) {
-          updateProgressFromServer(data.data.progress)
-        }
-
-        showToast(`课程加载成功: ${scriptNodes.value.length} 个知识点`, 'success')
+    if (data) {
+      if (data.nodes && data.nodes.length > 0) {
+        scriptNodes.value = data.nodes.map(node => ({
+          id: node.id,
+          node_index: node.node_index,
+          node_type: node.node_type || 'lecture',
+          title: node.title || `章节 ${node.node_index + 1}`,
+          content: node.content || '',
+          duration: node.duration || 60,
+          is_key_point: node.is_key_point || false,
+        }))
       }
+
+      if (data.progress) {
+        updateProgressFromServer(data.progress)
+      }
+
+      showToast(`课程加载成功: ${scriptNodes.value.length} 个知识点`, 'success')
     }
   } catch (error) {
     console.error('加载课程内容失败:', error)
@@ -620,33 +582,25 @@ async function generateQAForNode(node) {
   try {
     showToast('正在生成互动问答...', 'info')
 
-    const response = await fetch('http://localhost:8000/api/v1/chat/ask', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${counter.token}`,
-      },
-      body: JSON.stringify({
+    const data = await request({
+      url: '/chat/ask',
+      method: 'post',
+      data: {
         courseId: selectedCourse.value.id,
         currentNodeId: null,
         question: `请根据以下内容生成一个检验理解的问题：\n\n${node.content.substring(0, 500)}`,
         strictMode: false,
-      }),
+      },
     })
 
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        chatMessages.value.push({
-          id: Date.now() + 1,
-          role: 'ai',
-          content: `### ❓ 互动问答\n\n${data.data.answer}\n\n请回答以上问题以检验您的理解程度：`,
-          isQA: true,
-        })
+    chatMessages.value.push({
+      id: Date.now() + 1,
+      role: 'ai',
+      content: `### ❓ 互动问答\n\n${data.answer}\n\n请回答以上问题以检验您的理解程度：`,
+      isQA: true,
+    })
 
-        scrollToBottom()
-      }
-    }
+    scrollToBottom()
   } catch (error) {
     console.error('生成问答失败:', error)
     chatMessages.value.push({
@@ -680,40 +634,30 @@ async function sendMessage() {
     // 调用AI问答接口分析回答
     const currentNode = scriptNodes.value[currentNodeIndex.value]
 
-    const response = await fetch('http://localhost:8000/api/v1/chat/ask', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${counter.token}`,
-      },
-      body: JSON.stringify({
+    const data = await request({
+      url: '/chat/ask',
+      method: 'post',
+      data: {
         courseId: selectedCourse.value.id,
         currentNodeId: currentNode?.id,
         question: message,
         strictMode: false,
-      }),
+      },
     })
 
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        // 更新学理解度
-        if (data.data.understandingAnalysis) {
-          updateNodeUnderstanding(
-            currentNodeIndex.value,
-            data.data.understandingAnalysis
-          )
-        }
-
-        // 添加AI回复
-        chatMessages.value.push({
-          id: Date.now() + 1,
-          role: 'ai',
-          content: data.data.answer,
-          understandingAnalysis: data.data.understandingAnalysis,
-        })
-      }
+    if (data.understandingAnalysis) {
+      updateNodeUnderstanding(
+        currentNodeIndex.value,
+        data.understandingAnalysis
+      )
     }
+
+    chatMessages.value.push({
+      id: Date.now() + 1,
+      role: 'ai',
+      content: data.answer,
+      understandingAnalysis: data.understandingAnalysis,
+    })
   } catch (error) {
     console.error('发送消息失败:', error)
     chatMessages.value.push({
@@ -753,31 +697,21 @@ async function saveProgressToServer(index, analysis) {
     const node = scriptNodes.value[index]
     if (!node || !selectedCourse.value) return
 
-    const response = await fetch('http://localhost:8000/api/v1/progress/sync', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${counter.token}`,
-      },
-      body: JSON.stringify({
+    const data = await request({
+      url: '/progress/sync',
+      method: 'post',
+      data: {
         courseId: selectedCourse.value.id,
         nodeId: node.id,
         nodeIndex: index,
         understandingLevel: analysis.level,
         understandingScore: analysis.score,
-        studyTime: 60, // 默认学习时长（秒）
+        studyTime: 60,
         totalNodes: scriptNodes.value.length,
-      }),
+      },
     })
 
-    if (response.ok) {
-      const data = await response.json()
-      if (data.code === 200) {
-        console.log('进度保存成功:', data.data)
-      }
-    } else {
-      console.error('进度保存失败')
-    }
+    console.log('进度保存成功:', data)
   } catch (error) {
     console.error('保存进度请求失败:', error)
   }

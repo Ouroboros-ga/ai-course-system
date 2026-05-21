@@ -142,10 +142,10 @@ async function fetchStatus() {
   isLoading.value = true
   try {
     const res = await getBindStatus(props.courseId)
-    if (res.code === 200 && res.data) {
-      bindData.value = res.data
-      if (res.data.fanyaCourseId) {
-        fanyaCourseId.value = res.data.fanyaCourseId
+    if (res) {
+      bindData.value = res
+      if (res.fanyaCourseId) {
+        fanyaCourseId.value = res.fanyaCourseId
       }
     }
   } catch (e) {

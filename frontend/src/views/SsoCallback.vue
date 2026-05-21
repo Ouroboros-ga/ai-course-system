@@ -79,16 +79,16 @@ async function handleSSO() {
     clearInterval(progressTimer)
     progress.value = 100
 
-    if (res.code === 200 && res.data) {
-      const { token, userInfo: info, redirectUrl } = res.data
+    const { token, userInfo: info, redirectUrl } = res
 
       localStorage.setItem('token', token)
-      counter.setUserInfo({
-        userId: info.fanyaId,
-        username: info.username,
+      counter.setAuth({
+        token: token,
+        userInfo: {
+          id: info.fanyaId,
+          username: info.username,
+        },
         role: info.role,
-        isLoggedIn: true,
-        fanyaVerified: true,
       })
 
       userInfo.value = info
@@ -97,9 +97,6 @@ async function handleSSO() {
       setTimeout(() => {
         router.push(redirectUrl || '/')
       }, 1500)
-    } else {
-      throw new Error(res.message || 'SSO验证失败')
-    }
   } catch (err) {
     clearInterval(progressTimer)
     status.value = 'error'

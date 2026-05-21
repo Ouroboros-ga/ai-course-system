@@ -209,7 +209,7 @@ const handleLogout = () => {
     <div v-else class="profile-content">
       <div class="user-card">
         <div class="user-info">
-          <div class="avatar">{{ counter.userData.username[0].toUpperCase() }}</div>
+          <div class="avatar">{{ (counter.userData.username || 'U')[0].toUpperCase() }}</div>
           <div>
             <div class="username">{{ counter.userData.username }}</div>
             <div class="user-id">ID: {{ counter.userData.id }}</div>

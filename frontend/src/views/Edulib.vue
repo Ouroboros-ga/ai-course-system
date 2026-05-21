@@ -1,7 +1,10 @@
 <script setup>
 import { ref, computed } from 'vue'
+import { useCounterStore } from '@/stores/counter.js'
+
+const counter = useCounterStore()
 const viewMode = ref('grid')
-const userRole = ref('student')
+const userRole = computed(() => counter.userData.role || 'student')
 
 const activePage = ref('all')
 const isTeacher = computed(() => userRole.value === 'teacher')

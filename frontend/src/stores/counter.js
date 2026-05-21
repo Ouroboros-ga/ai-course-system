@@ -55,6 +55,12 @@ export const useCounterStore = defineStore('counter', () => {
     if (authData.role) {
       localStorage.setItem('userRole', authData.role)
     }
+    if (userData.value.id) {
+      localStorage.setItem('userId', userData.value.id)
+    }
+    if (userData.value.username) {
+      localStorage.setItem('username', userData.value.username)
+    }
   }
 
   function clearAuth() {

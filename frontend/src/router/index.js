@@ -1,9 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ChatView from '../views/Home.vue'
+import { useCounterStore } from '@/stores/counter.js'
 
-// 路由懒加载时添加加载提示（可选）
 const loadView = (view) => {
-  return () => import(/* webpackChunkName: "view-[request]" */ `../views/${view}.vue`)
+  return () => import(`../views/${view}.vue`)
 }
 
 const router = createRouter({
@@ -12,7 +11,7 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: ChatView
+      component: loadView('Home')
     },
     {
       path: '/chat',
@@ -20,9 +19,13 @@ const router = createRouter({
       component: loadView('Chat')
     },
     {
-      path: '/Edulib',
+      path: '/edulib',
       name: 'Edulib',
       component: loadView('Edulib')
+    },
+    {
+      path: '/Edulib',
+      redirect: '/edulib'
     },
     {
       path: '/about',
@@ -34,7 +37,11 @@ const router = createRouter({
       name: 'profile',
       component: loadView('Profile')
     },
-    // 老师端路由
+    {
+      path: '/sso/callback',
+      name: 'sso-callback',
+      component: loadView('SsoCallback')
+    },
     {
       path: '/teacher',
       redirect: '/teacher/history'
@@ -57,7 +64,6 @@ const router = createRouter({
       component: loadView('TeacherDashboard'),
       meta: { requiresAuth: true, role: 'teacher' }
     },
-    // 学生端路由
     {
       path: '/student',
       name: 'student-dashboard',
@@ -77,9 +83,20 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'admin' }
     },
   ],
-  // 页面跳转时滚动到顶部（体验优化）
   scrollBehavior() {
     return { top: 0 }
+  }
+})
+
+router.beforeEach((to, from, next) => {
+  const counter = useCounterStore()
+
+  if (to.meta.requiresAuth && !counter.isLoggedIn) {
+    next({ path: '/profile', query: { redirect: to.fullPath } })
+  } else if (to.meta.role && counter.userData.role !== to.meta.role) {
+    next({ path: '/' })
+  } else {
+    next()
   }
 })
 
