@@ -1,4 +1,5 @@
 from app.models.user_model import User, UserRole
+from app.models.asset_model import TeacherAsset, AssetType
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -32,6 +33,8 @@ from app.models.database import get_session, create_tables, engine
 __all__ = [
     "User",
     "UserRole",
+    "TeacherAsset",
+    "AssetType",
     "Course",
     "CourseScript",
     "ScriptNode",

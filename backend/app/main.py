@@ -8,7 +8,7 @@ from app.models.database import create_tables
 
 
 # 导入路由
-from app.api.v1.endpoints import user, document, chat, progress, video
+from app.api.v1.endpoints import user, document, chat, progress, video, asset
 from app.schemas import UnifiedResponse
 
 # 创建数据库表
@@ -42,6 +42,7 @@ app.include_router(document.router, prefix="/api/v1/document", tags=["文档处�
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["聊天模块"])
 app.include_router(progress.router, prefix="/api/v1/progress", tags=["进度续接"])
 app.include_router(video.router, prefix="/api/v1/video", tags=["视频服务"])
+app.include_router(asset.router, prefix="/api/v1/assets", tags=["素材管理"])
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
 

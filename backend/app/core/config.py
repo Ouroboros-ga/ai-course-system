@@ -98,6 +98,7 @@ class Settings(BaseSettings):
         "/api/v1/platform/syncCourse",
         "/api/v1/platform/syncUser",
         "/api/v1/user/login",
+        "/api/v1/user/register",
         "/docs",
         "/openapi.json",
         "/",
@@ -108,6 +109,13 @@ class Settings(BaseSettings):
     # --------------------------
     VIDEO_STORAGE_PATH: str = "./videos"
     TEMP_VIDEO_STORAGE_PATH: str = "./temp_videos"
+
+    # --------------------------
+    # 老师素材存储路径配置
+    # --------------------------
+    ASSET_STORAGE_PATH: str = "./teacher_assets"
+    MAX_VIDEO_ASSET_SIZE_MB: int = 500
+    MAX_AUDIO_ASSET_SIZE_MB: int = 50
 
 
 settings = Settings()
