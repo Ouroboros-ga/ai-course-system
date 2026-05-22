@@ -107,7 +107,7 @@ const renderedContent = computed(() => {
   const htmlWithFormulas = renderFormulas(rawHtml, formulas)
   
   const cleanHtml = DOMPurify.sanitize(htmlWithFormulas, {
-    ADD_ATTR: ['class', 'style'],
+    ADD_ATTR: ['class'],
     ADD_TAGS: ['span', 'div']
   })
   

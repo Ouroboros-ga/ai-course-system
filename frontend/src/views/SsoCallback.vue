@@ -40,7 +40,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ssoCallback } from '@/api/platform.js'
 import { useCounterStore } from '@/stores/counter.js'
@@ -55,6 +55,7 @@ const userInfo = ref(null)
 const errorMessage = ref('')
 
 let progressTimer = null
+let redirectTimer = null
 
 onMounted(() => {
   handleSSO()
@@ -94,7 +95,7 @@ async function handleSSO() {
       userInfo.value = info
       status.value = 'success'
 
-      setTimeout(() => {
+      redirectTimer = setTimeout(() => {
         router.push(redirectUrl || '/')
       }, 1500)
   } catch (err) {
@@ -113,6 +114,17 @@ function retrySSO() {
   progress.value = 0
   handleSSO()
 }
+
+onUnmounted(() => {
+  if (progressTimer) {
+    clearInterval(progressTimer)
+    progressTimer = null
+  }
+  if (redirectTimer) {
+    clearTimeout(redirectTimer)
+    redirectTimer = null
+  }
+})
 </script>
 
 <style scoped>

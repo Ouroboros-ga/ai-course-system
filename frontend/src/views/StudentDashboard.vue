@@ -55,71 +55,76 @@
       </div>
     </div>
 
-    <!-- 学习界面（类Chat） -->
+    <!-- 学习界面 -->
     <div v-else class="learning-interface">
-      <!-- 左侧：学习进度面板 -->
-      <div class="progress-panel">
-        <div class="panel-header">
-          <h3>{{ selectedCourse.title }}</h3>
-          <button class="back-btn" @click="exitCourse">← 返回</button>
+      <!-- 左列：数字人视频 + 课程结构 -->
+      <div class="left-column">
+        <!-- 数字人视频区域 -->
+        <div class="video-section">
+          <DigitalHumanWindow />
         </div>
 
-        <!-- 章节导航树 -->
-        <div class="chapter-tree">
-          <div class="tree-header">
-            <span>📋 课程结构</span>
-            <span class="node-count">{{ scriptNodes.length }} 个节点</span>
+        <!-- 课程结构栏 -->
+        <div class="structure-section">
+          <div class="panel-header">
+            <h3>{{ selectedCourse.title }}</h3>
+            <button class="back-btn" @click="exitCourse">← 返回</button>
           </div>
 
-          <div v-if="scriptNodes.length === 0" class="tree-empty">
-            正在加载课程内容...
-          </div>
+          <div class="chapter-tree">
+            <div class="tree-header">
+              <span>📋 课程结构</span>
+              <span class="node-count">{{ scriptNodes.length }} 个节点</span>
+            </div>
 
-          <div v-else class="tree-list">
-            <div
-              v-for="(node, index) in scriptNodes"
-              :key="node.id"
-              class="tree-node"
-              :class="{
-                active: currentNodeIndex === index,
-                completed: isNodeCompleted(index),
-                current: currentNodeIndex === index
-              }"
-              @click="jumpToNode(index)"
-            >
-              <div class="node-status">
-                <span v-if="isNodeCompleted(index)" class="status-icon completed">✅</span>
-                <span v-else-if="currentNodeIndex === index" class="status-icon current">▶️</span>
-                <span v-else class="status-icon pending">⭕</span>
-              </div>
+            <div v-if="scriptNodes.length === 0" class="tree-empty">
+              正在加载课程内容...
+            </div>
 
-              <div class="node-info">
-                <span class="node-type-icon">{{ getNodeTypeIcon(node.node_type) }}</span>
-                <span class="node-title">{{ node.title || `节点 ${index + 1}` }}</span>
-              </div>
+            <div v-else class="tree-list">
+              <div
+                v-for="(node, index) in scriptNodes"
+                :key="node.id"
+                class="tree-node"
+                :class="{
+                  active: currentNodeIndex === index,
+                  completed: isNodeCompleted(index),
+                  current: currentNodeIndex === index
+                }"
+                @click="jumpToNode(index)"
+              >
+                <div class="node-status">
+                  <span v-if="isNodeCompleted(index)" class="status-icon completed">✅</span>
+                  <span v-else-if="currentNodeIndex === index" class="status-icon current">▶️</span>
+                  <span v-else class="status-icon pending">⭕</span>
+                </div>
 
-              <!-- 学理解度可视化 -->
-              <div v-if="getNodeProgress(index) && getNodeProgress(index).score !== null" class="understanding-bar">
-                <div
-                  class="understanding-fill"
-                  :style="{ width: getNodeProgress(index).score + '%' }"
-                  :class="getUnderstandingClass(getNodeProgress(index).level)"
-                ></div>
+                <div class="node-info">
+                  <span class="node-type-icon">{{ getNodeTypeIcon(node.node_type) }}</span>
+                  <span class="node-title">{{ node.title || `节点 ${index + 1}` }}</span>
+                </div>
+
+                <div v-if="getNodeProgress(index) && getNodeProgress(index).score !== null" class="understanding-bar">
+                  <div
+                    class="understanding-fill"
+                    :style="{ width: getNodeProgress(index).score + '%' }"
+                    :class="getUnderstandingClass(getNodeProgress(index).level)"
+                  ></div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
 
-        <!-- 总体学习进度 -->
-        <div class="overall-progress">
-          <div class="progress-label">总体进度</div>
-          <div class="progress-bar">
-            <div
-              class="progress-fill"
-              :style="{ width: overallProgress + '%' }"
-            ></div>
+          <div class="overall-progress">
+            <div class="progress-label">总体进度</div>
+            <div class="progress-bar">
+              <div
+                class="progress-fill"
+                :style="{ width: overallProgress + '%' }"
+              ></div>
+            </div>
+            <div class="progress-text">{{ overallProgress.toFixed(0) }}% 完成</div>
           </div>
-          <div class="progress-text">{{ overallProgress.toFixed(0) }}% 完成</div>
         </div>
       </div>
 
@@ -228,13 +233,11 @@
         </div>
       </div>
     </div>
-
-    <DigitalHumanWindow v-if="selectedCourse && counter.isStudent" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -263,6 +266,7 @@ const isStreaming = ref(false)
 const streamingContent = ref('')
 const canInput = ref(false)
 const messageListRef = ref(null)
+const isComponentMounted = ref(true)
 
 // 学习进度数据
 const nodeProgressMap = ref({})
@@ -386,13 +390,11 @@ function renderContent(text) {
           : `<span class="katex-inline">${rendered}</span>`
         result = result.replace(placeholder, wrappedHtml)
       } catch (e) {
-        console.warn('KaTeX渲染失败:', e.message)
       }
     })
 
-    return DOMPurify.sanitize(result, { ADD_ATTR: ['class', 'style'], ADD_TAGS: ['span', 'div'] })
+    return DOMPurify.sanitize(result, { ADD_ATTR: ['class'], ADD_TAGS: ['span', 'div'] })
   } catch (e) {
-    console.error('渲染失败:', e)
     return `<pre>${text}</pre>`
   }
 }
@@ -404,7 +406,6 @@ async function loadAvailableCourses() {
     const data = await request({ url: '/document/courses', method: 'get' })
     availableCourses.value = data.courses || []
   } catch (error) {
-    console.error('加载课程出错:', error)
     showToast('加载课程失败', 'error')
   } finally {
     isLoadingCourses.value = false
@@ -424,12 +425,10 @@ async function enterCourse(course) {
   // 调用选课API
   try {
     const data = await request({ url: `/document/course/${course.id}/enroll`, method: 'post' })
-    console.log('选课成功:', data)
     if (!data.already_enrolled && !data.reactivated) {
       showToast('成功加入课程！', 'success')
     }
   } catch (error) {
-    console.error('选课请求失败:', error)
   }
 
   loadCourseContent(course.id)
@@ -480,7 +479,6 @@ async function loadCourseContent(courseId) {
       showToast(`课程加载成功: ${scriptNodes.value.length} 个知识点`, 'success')
     }
   } catch (error) {
-    console.error('加载课程内容失败:', error)
     showToast('加载课程内容失败', 'error')
   }
 }
@@ -535,7 +533,7 @@ async function streamCurrentNode() {
   const chunkSize = 15
   let position = 0
 
-  while (position < fullContent.length) {
+  while (position < fullContent.length && isComponentMounted.value) {
     await new Promise(resolve => setTimeout(resolve, 30))
     position += chunkSize
     streamingContent.value = fullContent.substring(0, position)
@@ -602,7 +600,6 @@ async function generateQAForNode(node) {
 
     scrollToBottom()
   } catch (error) {
-    console.error('生成问答失败:', error)
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
@@ -646,6 +643,11 @@ async function sendMessage() {
     })
 
     if (data.understandingAnalysis) {
+      const analysis = data?.understandingAnalysis
+      if (!analysis) {
+        showToast('理解度分析暂时不可用', 'warning')
+        return
+      }
       updateNodeUnderstanding(
         currentNodeIndex.value,
         data.understandingAnalysis
@@ -659,7 +661,6 @@ async function sendMessage() {
       understandingAnalysis: data.understandingAnalysis,
     })
   } catch (error) {
-    console.error('发送消息失败:', error)
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
@@ -682,9 +683,10 @@ function updateNodeUnderstanding(index, analysis) {
     }
   }
 
-  nodeProgressMap.value[index].score = analysis.score * 100
+  nodeProgressMap.value[index].score = typeof analysis.score === 'number' ? analysis.score * 100 : 0
   nodeProgressMap.value[index].level = analysis.level
   nodeProgressMap.value[index].questions += 1
+  saveProgressToServer(index, analysis)
 
   if (analysis.score >= 0.7) {
     nodeProgressMap.value[index].completed = true
@@ -711,9 +713,7 @@ async function saveProgressToServer(index, analysis) {
       },
     })
 
-    console.log('进度保存成功:', data)
   } catch (error) {
-    console.error('保存进度请求失败:', error)
   }
 }
 
@@ -739,7 +739,9 @@ function jumpToNode(index) {
 
   // 延迟后开始流式输出该节点内容
   setTimeout(() => {
-    streamCurrentNode()
+    if (isComponentMounted.value) {
+      streamCurrentNode()
+    }
   }, 300)
 }
 
@@ -755,6 +757,10 @@ function scrollToBottom() {
 // 组件挂载时加载课程
 onMounted(() => {
   loadAvailableCourses()
+})
+
+onUnmounted(() => {
+  isComponentMounted.value = false
 })
 </script>
 
@@ -837,7 +843,7 @@ onMounted(() => {
 <style scoped>
 .student-dashboard {
   width: 100%;
-  height: calc(100vh - 80px);
+  height: calc(100vh - var(--navbar-height));
   background: #f5f7fa;
   overflow: hidden;
 }
@@ -1003,14 +1009,28 @@ onMounted(() => {
   gap: 0;
 }
 
-/* ========== 左侧进度面板 ========== */
-.progress-panel {
-  width: 320px;
-  background: white;
-  border-right: 1px solid #e5e7eb;
+/* ========== 左列：数字人 + 课程结构 ========== */
+.left-column {
+  width: 50%;
+  min-width: 300px;
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  border-right: 1px solid #e5e7eb;
+}
+
+.video-section {
+  height: 50%;
+  background: #1a1a1a;
+  overflow: hidden;
+}
+
+.structure-section {
+  height: 50%;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .panel-header {
@@ -1467,13 +1487,21 @@ onMounted(() => {
     flex-direction: column;
   }
 
-  .progress-panel {
+  .left-column {
     width: 100%;
-    max-height: 300px;
+    height: 50vh;
   }
 
-  .chapter-tree {
-    max-height: 180px;
+  .video-section {
+    height: 50%;
+  }
+
+  .structure-section {
+    height: 50%;
+  }
+
+  .chat-learning-area {
+    flex: 1;
   }
 }
 </style>

@@ -106,10 +106,10 @@ onMounted(() => activeNav.value = 'overview')
 
 <style scoped>
 /* 全局基础 */
-.about-container{display:flex;width:100%;min-height:calc(100vh - 70px);background:#f6f8fa;}
+.about-container{display:flex;width:100%;min-height:calc(100vh - var(--navbar-height));background:#f6f8fa;}
 
 /* 左侧高阶侧边栏 */
-.pro-sidebar{width:240px;background:#fff;border-radius:0 16px 16px 0;box-shadow:2px 0 10px rgba(0,0,0,0.06);position:sticky;top:70px;height:calc(100vh - 70px);padding:24px 0;border-left:none;}
+.pro-sidebar{width:240px;background:#fff;border-radius:0 16px 16px 0;box-shadow:2px 0 10px rgba(0,0,0,0.06);position:sticky;top:var(--navbar-height);height:calc(100vh - var(--navbar-height));padding:24px 0;border-left:none;}
 .sidebar-title{font-size:16px;font-weight:600;color:#2c3e50;padding:0 20px 16px;border-bottom:1px solid #eee;margin-bottom:12px;}
 .nav-list{padding:0 12px;}
 .nav-item{padding:13px 16px;border-radius:10px;margin-bottom:6px;color:#555;cursor:pointer;transition:0.3s ease;}

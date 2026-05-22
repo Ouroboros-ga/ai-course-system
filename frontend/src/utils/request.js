@@ -226,7 +226,6 @@ service.interceptors.request.use(
     if (token) {
       // 检查Token是否即将过期（提前10分钟预警）
       if (_isTokenExpiringSoon(token)) {
-        console.warn('⏰ [Auth] Token即将过期，建议保存工作后重新登录')
         showToast('⚠️ 登录即将过期，请尽快完成操作或重新登录', 'warning')
       }
 
@@ -256,7 +255,6 @@ service.interceptors.request.use(
     return config
   },
   error => {
-    console.error('Request Error:', error)
     return Promise.reject(error)
   }
 )
@@ -280,8 +278,7 @@ function _isTokenExpiringSoon(token) {
     }
 
     return false
-  } catch (error) {
-    console.error('[Auth] 解析Token失败:', error)
+  } catch {
     return false
   }
 }
@@ -343,15 +340,11 @@ service.interceptors.response.use(
     }
 
     showToast(message, 'error')
-    console.error('Response Error:', error)
     return Promise.reject(error)
   }
 )
 
 function _handleUnauthorized() {
-  console.warn('⚠️ [Auth] Token无效或过期，清除认证信息...')
-
-  // 清除所有本地存储的认证信息
   localStorage.removeItem('token')
   localStorage.removeItem('userId')
   localStorage.removeItem('username')
@@ -359,7 +352,6 @@ function _handleUnauthorized() {
 
   // 延迟跳转，让用户看到提示
   setTimeout(() => {
-    console.log('🔄 [Auth] 跳转到登录页...')
     window.location.href = '/profile'
   }, 1500)
 }

@@ -179,9 +179,8 @@ const handleSubmit = () => {
   justify-content: center;
   align-items: center;
   font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-  pointer-events: none;  /* 让非卡片区域点击穿透 */
+  pointer-events: none;
 
-  //background-color: red;
   transform: translateY(-80px);
 }
 
