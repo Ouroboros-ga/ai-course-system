@@ -174,6 +174,44 @@
           </div>
 
           <!-- 音频播放器（已禁用） -->
+<!--          <div class="audio-section">-->
+<!--            <div class="audio-controls">-->
+<!--              <button-->
+<!--                class="audio-btn play-btn"-->
+<!--                :class="{ playing: isPlaying }"-->
+<!--                @click="toggleAudioPlay"-->
+<!--                :disabled="!audioUrl"-->
+<!--              >-->
+<!--                {{ isPlaying ? '⏸' : '▶️' }}-->
+<!--              </button>-->
+<!--              <div class="audio-info">-->
+<!--                <div class="audio-progress">-->
+<!--                  <input-->
+<!--                    type="range"-->
+<!--                    min="0"-->
+<!--                    max="100"-->
+<!--                    :value="audioProgress"-->
+<!--                    @input="seekAudio"-->
+<!--                    class="progress-slider"-->
+<!--                  />-->
+<!--                </div>-->
+<!--                <div class="audio-time">-->
+<!--                  {{ formatTime(currentTime) }} / {{ formatTime(duration) }}-->
+<!--                </div>-->
+<!--              </div>-->
+<!--            </div>-->
+<!--            <audio-->
+<!--              ref="audioRef"-->
+<!--              :src="audioUrl"-->
+<!--              @timeupdate="onTimeUpdate"-->
+<!--              @loadedmetadata="onLoadedMetadata"-->
+<!--              @ended="onEnded"-->
+<!--              style="display: none;"-->
+<!--            ></audio>-->
+<!--            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || !currentContent">-->
+<!--              {{ isGeneratingTTS ? '生成中...' : '🔊 生成语音' }}-->
+<!--            </button>-->
+<!--          </div>-->
         </div>
 
         <!-- 底部操作按钮 -->
@@ -203,6 +241,78 @@
         </div>
 
         <!-- 学生统计面板（已禁用） -->
+<!--        <div v-if="courseId && showStudentStats" class="student-stats-panel">-->
+<!--          <div class="stats-header" @click="toggleStatsPanel">-->
+<!--            <span>👥 学生学习情况</span>-->
+<!--            <span class="stats-toggle">{{ showStatsDetail ? '▼' : '▶' }}</span>-->
+<!--          </div>-->
+
+<!--          <div v-if="showStatsDetail" class="stats-content">-->
+<!--            &lt;!&ndash; 统计概览 &ndash;&gt;-->
+<!--            <div class="stats-overview">-->
+<!--              <div class="stat-card">-->
+<!--                <div class="stat-number">{{ courseStats.totalStudents || 0 }}</div>-->
+<!--                <div class="stat-label">选课人数</div>-->
+<!--              </div>-->
+<!--              <div class="stat-card">-->
+<!--                <div class="stat-number">{{ courseStats.avgProgress || 0 }}%</div>-->
+<!--                <div class="stat-label">平均进度</div>-->
+<!--              </div>-->
+<!--              <div class="stat-card">-->
+<!--                <div class="stat-number">{{ courseStats.avgUnderstanding || 0 }}%</div>-->
+<!--                <div class="stat-label">平均理解度</div>-->
+<!--              </div>-->
+<!--              <div class="stat-card">-->
+<!--                <div class="stat-number">{{ courseStats.totalStudyHours || 0 }}h</div>-->
+<!--                <div class="stat-label">总学习时长</div>-->
+<!--              </div>-->
+<!--            </div>-->
+
+<!--            &lt;!&ndash; 进度分布条 &ndash;&gt;-->
+<!--            <div v-if="courseStats.progressDistribution" class="progress-distribution">-->
+<!--              <div class="dist-item" v-for="(count, label) in progressLabels" :key="label">-->
+<!--                <span class="dist-label">{{ label }}</span>-->
+<!--                <div class="dist-bar-bg">-->
+<!--                  <div-->
+<!--                    class="dist-bar-fill"-->
+<!--                    :style="{ width: getDistPercent(count) + '%' }"-->
+<!--                    :class="'dist-' + label"-->
+<!--                  ></div>-->
+<!--                </div>-->
+<!--                <span class="dist-count">{{ count }}人</span>-->
+<!--              </div>-->
+<!--            </div>-->
+
+<!--            &lt;!&ndash; 学生列表 &ndash;&gt;-->
+<!--            <div v-if="studentsList.length > 0" class="students-list">-->
+<!--              <div class="list-header">学生详情</div>-->
+<!--              <div-->
+<!--                v-for="student in studentsList"-->
+<!--                :key="student.enrollmentId"-->
+<!--                class="student-row"-->
+<!--              >-->
+<!--                <div class="student-name">{{ student.username }}</div>-->
+<!--                <div class="student-progress-wrap">-->
+<!--                  <div class="mini-progress-bar">-->
+<!--                    <div-->
+<!--                      class="mini-progress-fill"-->
+<!--                      :style="{ width: student.progress + '%' }"-->
+<!--                      :class="getProgressClass(student.progress)"-->
+<!--                    ></div>-->
+<!--                  </div>-->
+<!--                  <span class="progress-text">{{ student.progress }}%</span>-->
+<!--                </div>-->
+<!--                <span-->
+<!--                  class="understanding-badge"-->
+<!--                  :class="'level-' + student.level"-->
+<!--                >{{ getLevelLabel(student.level) }}</span>-->
+<!--              </div>-->
+<!--            </div>-->
+<!--            <div v-else-if="!isLoadingStats && courseStats.totalStudents === 0" class="no-students">-->
+<!--              暂无学生选择此课程（请先发布课程）-->
+<!--            </div>-->
+<!--          </div>-->
+<!--        </div>-->
       </div>
     </div>
 
