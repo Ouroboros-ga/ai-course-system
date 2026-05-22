@@ -216,8 +216,8 @@ async function handleUpload(event, assetType) {
   const file = event.target.files?.[0]
   if (!file) return
 
-  // 前端大小校验
-  const maxMB = assetType === 'face_video' ? 500 : 50
+  // 前端大小校验（
+  const maxMB = assetType === 'face_video' ? 200 : 50
   if (file.size > maxMB * 1024 * 1024) {
     showToast(`文件大小超过 ${maxMB}MB 限制`, 'error')
     return

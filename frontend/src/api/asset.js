@@ -34,8 +34,11 @@ export function deleteAsset(assetId) {
   return request.delete(`/assets/${assetId}`)
 }
 
-// 获取素材预览URL
+// 获取素材预览URL（使用 axios baseURL，避免硬编码）
 export function getAssetPreviewUrl(assetId) {
   const token = localStorage.getItem('token')
-  return `http://localhost:8000/api/v1/assets/${assetId}/preview?token=${token}`
+  // 从 axios 实例的 baseURL 提取协议+主机部分，拼接预览路径
+  const base = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+  const apiRoot = base.replace(/\/api\/v1\/?$/, '')
+  return `${apiRoot}/api/v1/assets/${assetId}/preview?token=${token}`
 }
