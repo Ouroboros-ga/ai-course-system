@@ -36,6 +36,6 @@ export function deleteAsset(assetId) {
 
 // 获取素材预览URL
 export function getAssetPreviewUrl(assetId) {
-  const token = localStorage.getItem('token')
-  return `http://localhost:8000/api/v1/assets/${assetId}/preview?token=${token}`
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+  return `${baseUrl}/assets/${assetId}/preview`
 }

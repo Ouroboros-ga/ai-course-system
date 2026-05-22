@@ -29,7 +29,7 @@ export function createChatRecord(params) {
   return request({
     url: '/chat/create',
     method: 'post',
-    params: {
+    data: {
       userId: params.userId,
       content: params.content
     }

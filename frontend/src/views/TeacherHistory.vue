@@ -324,7 +324,6 @@ async function loadCourses() {
     const data = await request({ url: '/document/courses', method: 'get' })
     courses.value = data.courses || []
   } catch (error) {
-    console.error('加载课程失败:', error)
     showToast('加载课程失败', 'error')
   } finally {
     isLoading.value = false
@@ -366,7 +365,6 @@ async function publishCourse(course) {
     course.status = 'published'
     await loadCourses()
   } catch (error) {
-    console.error('发布课程失败:', error)
     showToast(error.message || '发布失败，请重试', 'error')
   } finally {
     isPublishing.value = false
@@ -386,7 +384,6 @@ async function unpublishCourse(course) {
     showToast('已取消发布', 'success')
     course.status = 'draft'
   } catch (error) {
-    console.error('取消发布失败:', error)
     showToast(error.message || '操作失败，请重试', 'error')
   } finally {
     isPublishing.value = false
@@ -418,7 +415,6 @@ async function deleteCourse(course) {
       closeStudentPanel()
     }
   } catch (error) {
-    console.error('删除课程失败:', error)
     showToast(error.message || '删除失败，请重试', 'error')
   } finally {
     isDeleting.value = false
@@ -440,7 +436,6 @@ async function loadStudentsAndStats(courseId) {
       progressDistribution: statsData.progress_distribution || {},
     }
   } catch (error) {
-    console.error('[TeacherHistory] 加载统计数据失败:', error)
     courseStats.value = { totalStudents: -1, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
   }
 
@@ -459,7 +454,6 @@ async function loadStudentsAndStats(courseId) {
       students.value = []
     }
   } catch (studentError) {
-    console.error('[TeacherHistory] 加载学生列表异常:', studentError)
     students.value = []
   } finally {
     isLoadingStudents.value = false
@@ -481,7 +475,6 @@ async function loadStats() {
       }
     }
   } catch (error) {
-    console.error('加载统计数据失败:', error)
   }
 }
 </script>

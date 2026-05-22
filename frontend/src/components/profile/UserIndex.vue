@@ -67,12 +67,10 @@ const handleLoginSend = async (data) => {
     showToast("登录成功", "success")
     loadUserStats()
   } catch (error) {
-    console.error('登录失败', error)
     showToast(error || "错误", "error")
   }
 }
 
-// 2. 注册成功
 const handleRegisterSend = async (data) => {
   try {
     const registerData = {
@@ -97,12 +95,10 @@ const handleRegisterSend = async (data) => {
     showToast("注册成功并自动登录", "success")
     loadUserStats()
   } catch (error) {
-    console.error('注册失败', error)
     showToast(error || "错误", "error")
   }
 }
 
-// 3. 打开设置面板
 const handleOpenSettings = () => {
   showSettingsPanel.value = true
 }
@@ -134,7 +130,6 @@ const handleCloseMyCourses = () => {
 
 // 9. 保存学习偏好
 const handleSavePreference = (prefs) => {
-  console.log('保存学习偏好:', prefs)
   localStorage.setItem('userPreferences', JSON.stringify(prefs))
   showPreferencePanel.value = false
 }
@@ -147,7 +142,6 @@ const handleUpdateUsername = async (data) => {
       username: counter.userData.username,
       password: data.oldPassword,
       newUsername: data.username,
-      newPassword: "",
     }
     const res = await api.user.modify(params)
     localStorage.setItem('token', res.token)
@@ -156,12 +150,10 @@ const handleUpdateUsername = async (data) => {
     showToast("用户名修改成功", "success")
     showSettingsPanel.value = false
   } catch (error) {
-    console.error('更新用户名失败', error)
     showToast(error || "修改失败", "error")
   }
 }
 
-// 11. 更新密码
 const handleUpdatePassword = async (data) => {
   try {
     const params = {
@@ -169,19 +161,16 @@ const handleUpdatePassword = async (data) => {
       username: counter.userData.username,
       password: data.oldPassword,
       newPassword: data.newPassword,
-      newUsername: "",
     }
     const res = await api.user.modify(params)
     localStorage.setItem('token', res.token)
     showToast("密码修改成功", "success")
     showSettingsPanel.value = false
   } catch (error) {
-    console.error('更新密码失败', error)
     showToast(error || "修改失败", "error")
   }
 }
 
-// 12. 退出登录
 const handleLogout = () => {
   localStorage.removeItem('userId')
   localStorage.removeItem('username')

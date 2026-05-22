@@ -13,7 +13,7 @@ import UserIndex from "@/components/profile/UserIndex.vue";
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: calc(100vh - 120px);
+  min-height: calc(100vh - var(--navbar-height) - 64px);
 }
 
 /* 🔥 项目统一高级淡入动画 */

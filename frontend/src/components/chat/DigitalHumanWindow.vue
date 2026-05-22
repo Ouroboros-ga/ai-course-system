@@ -1,7 +1,146 @@
 <template>
-  <div class="digital-human-wrapper">
-    <Transition name="slide-fade">
-      <div v-if="isOpen" class="dh-panel">
+  <div :class="['digital-human-wrapper', { floating: isFloating }]">
+    <!-- 浮窗模式 -->
+    <template v-if="isFloating">
+      <Transition name="slide-fade">
+        <div v-if="isOpen" class="dh-panel floating-panel">
+          <div class="dh-header">
+            <div class="dh-title">
+              <span class="dh-avatar">🎬</span>
+              <span>智课视频播放器</span>
+            </div>
+            <div class="dh-actions">
+              <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
+              <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
+              <button class="dh-btn" @click="isOpen = false" title="最小化">➖</button>
+            </div>
+          </div>
+          <div class="dh-content">
+        <div v-if="!videoUrl && videos.length === 0" class="dh-empty">
+          <div class="dh-empty-icon">📺</div>
+          <p>暂无视频</p>
+          <p class="dh-empty-hint">请先上传视频或输入视频URL</p>
+          <div class="quick-actions">
+            <button class="quick-btn primary" @click="loadSampleVideo">📡 示例视频</button>
+            <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput">🔗 手动输入</button>
+            <button class="quick-btn" @click="triggerFileSelect">📂 本地文件</button>
+          </div>
+        </div>
+
+        <div v-if="videos.length > 0 && !videoUrl" class="video-list">
+          <div class="video-list-header">
+            <span>📁 本地视频 ({{ videos.length }})</span>
+          </div>
+          <div
+            v-for="video in videos"
+            :key="video.filename"
+            class="video-item"
+            @click="loadLocalVideo(video)"
+          >
+            <span class="video-icon">🎬</span>
+            <span class="video-name">{{ video.filename }}</span>
+            <span class="video-size">{{ formatSize(video.size) }}</span>
+          </div>
+        </div>
+
+        <div v-if="showUrlInput" class="url-input-section">
+          <input
+            v-model="inputUrl"
+            @keyup.enter="loadVideo"
+            placeholder="输入视频URL或MP4链接..."
+            class="url-input"
+            ref="urlInputRef"
+          />
+          <div class="url-actions">
+            <button class="action-btn cancel" @click="showUrlInput = false; inputUrl = ''">取消</button>
+            <button class="action-btn confirm" @click="loadVideo" :disabled="!inputUrl.trim()">播放</button>
+          </div>
+        </div>
+
+        <div v-if="videoUrl" class="video-wrapper">
+          <video
+            ref="videoRef"
+            class="dh-video"
+            :src="videoUrl"
+            @timeupdate="onTimeUpdate"
+            @loadedmetadata="onLoadedMetadata"
+            @ended="onEnded"
+            @error="onError"
+            @play="onPlay"
+            @pause="onPause"
+            @waiting="onWaiting"
+            @canplay="onCanPlay"
+            @progress="onProgress"
+          ></video>
+
+          <div class="video-controls-overlay" v-if="showControls">
+            <div class="controls-top">
+              <span class="video-title">{{ currentVideoName }}</span>
+              <button class="close-btn" @click="clearVideo">✕</button>
+            </div>
+            <div class="controls-center">
+              <button class="play-btn" @click="togglePlay">
+                {{ isPlaying ? '⏸️' : '▶️' }}
+              </button>
+            </div>
+            <div class="controls-bottom">
+              <div class="progress-container" @click="seekVideo" @mousedown="startDrag">
+                <div class="progress-buffered" :style="{ width: bufferedPercent + '%' }"></div>
+                <div class="progress-played" :style="{ width: progressPercent + '%' }"></div>
+                <div class="progress-thumb" :style="{ left: progressPercent + '%' }" v-if="duration"></div>
+              </div>
+              <div class="time-display">
+                <span>{{ formatTime(currentTime) }}</span>
+                <span>/</span>
+                <span>{{ formatTime(duration) }}</span>
+              </div>
+              <div class="volume-control">
+                <span @click="toggleMute">{{ isMuted ? '🔇' : '🔊' }}</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  :value="volume"
+                  @input="setVolume"
+                  class="volume-slider"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="loading-overlay" v-if="isLoading">
+            <div class="spinner"></div>
+            <span>加载中...</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dh-input-area" v-if="!videoUrl">
+        <input
+          type="file"
+          ref="fileInputRef"
+          accept="video/*"
+          style="display: none"
+          @change="handleFileSelect"
+        />
+        <button class="add-video-btn" @click="showUrlInput = !showUrlInput">
+          {{ showUrlInput ? '取消' : '+ 添加视频链接' }}
+        </button>
+      </div>
+    </div>
+      </Transition>
+
+      <Transition name="bounce">
+        <div v-if="!isOpen" class="dh-fab" @click="isOpen = true">
+          <span class="fab-icon">🎬</span>
+        </div>
+      </Transition>
+    </template>
+
+    <!-- 内嵌模式 -->
+    <template v-else>
+      <div class="dh-panel">
         <div class="dh-header">
           <div class="dh-title">
             <span class="dh-avatar">🎬</span>
@@ -10,7 +149,6 @@
           <div class="dh-actions">
             <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
             <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
-            <button class="dh-btn" @click="togglePanel" title="最小化">➖</button>
           </div>
         </div>
 
@@ -128,13 +266,7 @@
           </button>
         </div>
       </div>
-    </Transition>
-
-    <Transition name="bounce">
-      <div v-if="!isOpen" class="dh-fab" @click="togglePanel">
-        <span class="fab-icon">🎬</span>
-      </div>
-    </Transition>
+    </template>
   </div>
 </template>
 
@@ -142,6 +274,14 @@
 import { ref, computed, onMounted, nextTick } from 'vue'
 import api from '@/api/index.js'
 
+const props = defineProps({
+  floating: {
+    type: Boolean,
+    default: false
+  }
+})
+
+const isFloating = computed(() => props.floating)
 const isOpen = ref(false)
 const videoUrl = ref('')
 const inputUrl = ref('')
@@ -168,15 +308,6 @@ const progressPercent = computed(() => {
   if (!duration.value) return 0
   return (currentTime.value / duration.value) * 100
 })
-
-function togglePanel() {
-  isOpen.value = !isOpen.value
-  if (isOpen.value) {
-    nextTick(() => {
-      refreshVideos()
-    })
-  }
-}
 
 async function refreshVideos() {
   try {
@@ -390,21 +521,36 @@ onMounted(() => {
 
 <style scoped>
 .digital-human-wrapper {
+  width: 100%;
+  height: 100%;
+  position: relative;
+}
+
+.digital-human-wrapper.floating {
   position: fixed;
   right: 20px;
   bottom: 20px;
   z-index: 999;
+  width: auto;
+  height: auto;
 }
 
 .dh-panel {
-  width: 420px;
-  height: 580px;
+  width: 100%;
+  height: 100%;
   background: white;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.floating-panel {
+  width: 420px;
+  height: 580px;
+  max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 40px);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
   border: 1px solid #e5e7eb;
 }
 
@@ -848,7 +994,6 @@ onMounted(() => {
   cursor: pointer;
   box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
   transition: all 0.3s ease;
-  position: relative;
 }
 
 .dh-fab:hover {
@@ -890,20 +1035,5 @@ onMounted(() => {
   0% { transform: scale(0); }
   50% { transform: scale(1.1); }
   100% { transform: scale(1); }
-}
-
-@media (max-width: 768px) {
-  .dh-panel {
-    width: calc(100vw - 20px);
-    height: 60vh;
-    right: 0;
-    bottom: 0;
-    border-radius: 16px 16px 0 0;
-  }
-
-  .digital-human-wrapper {
-    right: 10px;
-    bottom: 10px;
-  }
 }
 </style>

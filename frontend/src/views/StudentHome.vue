@@ -62,7 +62,6 @@ const loadCourses = async () => {
     const data = await request({ url: '/document/courses', method: 'get' })
     courses.value = data.courses || []
   } catch (err) {
-    console.log('加载课程列表失败')
   }
 }
 

@@ -76,7 +76,8 @@ const users = ref([])
 const isLoading = ref(true)
 
 const currentUserId = computed(() => {
-  return parseInt(counter.userData.id)
+  const id = parseInt(counter.userData.id)
+  return isNaN(id) ? null : id
 })
 
 function getRoleLabel(role) {
@@ -90,7 +91,6 @@ async function loadUsers() {
     const res = await api.user.getUserList()
     users.value = res.users || []
   } catch (error) {
-    console.error('加载用户列表失败:', error)
     showToast('加载用户列表失败', 'error')
   } finally {
     isLoading.value = false
@@ -114,7 +114,6 @@ async function handleRoleChange(user, event) {
     user.role = newRole
     showToast(`用户 "${user.username}" 角色已修改为 ${getRoleLabel(newRole)}`, 'success')
   } catch (error) {
-    console.error('修改角色失败:', error)
     event.target.value = user.role
     showToast(error?.message || '修改角色失败', 'error')
   }
@@ -173,7 +172,7 @@ onMounted(() => {
   background: white;
   border-radius: 12px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
-  overflow: hidden;
+  overflow-x: auto;
 }
 
 .user-table {

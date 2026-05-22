@@ -283,7 +283,7 @@ const switchPage = (page) => {
 <style scoped>
 .warehouse-page {
   width: 100%;
-  min-height: calc(100vh - 70px);
+  min-height: calc(100vh - var(--navbar-height));
   background: #f8fafc;
   padding: 24px;
   box-sizing: border-box;

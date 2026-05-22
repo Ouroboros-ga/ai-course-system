@@ -1,7 +1,12 @@
 <template>
   <div class="teacher-dashboard">
+    <div v-if="isCourseLoading" class="course-loading">
+      <div class="spinner"></div>
+      <span>正在加载课程数据...</span>
+    </div>
+    <template v-else>
     <div class="dashboard-header">
-      <h2>基于Docling层级结构的知识点导航与学习</h2>
+      <h2>{{ isEditMode ? '编辑课程' : '基于Docling层级结构的知识点导航与学习' }}</h2>
     </div>
 
     <div class="dashboard-content">
@@ -304,13 +309,14 @@
       </div>
     </div>
 
-    <DigitalHumanWindow v-if="courseId && counter.isTeacher" />
+    <DigitalHumanWindow v-if="courseId && counter.isTeacher" :floating="true" />
+    </template>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, nextTick } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, nextTick, onMounted } from 'vue'
+import { useRouter, useRoute } from 'vue-router'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -324,6 +330,7 @@ import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 
 const counter = useCounterStore()
 const router = useRouter()
+const route = useRoute()
 
 // 引入KaTeX样式（非scoped）
 import 'katex/dist/katex.min.css'
@@ -340,6 +347,77 @@ const uploadProgress = ref('准备上传...')
 const parseInfo = ref(null)
 const isFileUploaded = ref(false)
 const courseId = ref(null)
+const isCourseLoading = ref(false)
+
+const loadExistingCourse = async (id) => {
+  isCourseLoading.value = true
+  try {
+    const data = await request({ url: `/document/course/${id}`, method: 'get' })
+
+    if (data) {
+      courseId.value = id
+      isEditMode.value = true
+      isFileUploaded.value = true
+
+      if (data.title) {
+        document.title = data.title
+      }
+
+      if (data.nodes && data.nodes.length > 0) {
+        knowledgeTree.value = data.nodes.map((node, index) => ({
+          id: node.id || `node_${index}`,
+          node_type: node.node_type || (node.level === 0 ? 'chapter' : node.level === 1 ? 'section' : 'subsection'),
+          title: node.title || `节点 ${index + 1}`,
+          content: node.content || '',
+          duration: node.duration || 15,
+          is_key_point: node.is_key_point || false,
+          level: node.level || 0,
+          path: node.path || '',
+          has_content: !!node.content,
+        }))
+      }
+
+      if (data.mindMapJson) {
+        buildKnowledgeTreeFromMindMap(data.mindMapJson, data.title || '课程')
+        if (data.nodes && data.nodes.length > 0) {
+          await loadCourseNodesAndMerge(id)
+        }
+      }
+
+      if (data.ragInfo) {
+        parseInfo.value = data.ragInfo
+      }
+
+      if (data.audioUrl) {
+        audioUrl.value = data.audioUrl
+      }
+
+      if (data.status === 'published') {
+        isPublished.value = true
+      }
+
+      currentNodeIndex.value = 0
+      if (knowledgeTree.value.length > 0) {
+        selectNode(0)
+      }
+
+      showToast(`课程加载完成: ${knowledgeTree.value.length} 个知识点`, 'success')
+
+      loadCourseStats()
+    }
+  } catch (error) {
+    showToast('加载课程失败，请重试', 'error')
+  } finally {
+    isCourseLoading.value = false
+  }
+}
+
+onMounted(() => {
+  const routeCourseId = route.params.courseId
+  if (routeCourseId) {
+    loadExistingCourse(routeCourseId)
+  }
+})
 
 // 发布课程相关
 const isPublished = ref(false)
@@ -453,7 +531,6 @@ function renderFormulas(html, formulas) {
 
       result = result.replace(placeholder, wrappedHtml)
     } catch (error) {
-      console.warn('KaTeX渲染失败:', error.message)
       const errorHtml = isBlock
         ? `<div class="katex-error">$$${formula}$$</div>`
         : `<span class="katex-error">$${formula}$</span>`
@@ -482,13 +559,12 @@ const renderedContent = computed(() => {
 
     // 步骤4: 使用DOMPurify清理
     const cleanHtml = DOMPurify.sanitize(htmlWithFormulas, {
-      ADD_ATTR: ['class', 'style'],
+      ADD_ATTR: ['class'],
       ADD_TAGS: ['span', 'div']
     })
 
     return cleanHtml
   } catch (error) {
-    console.error('内容渲染失败:', error)
     return `<pre>${currentContent.value}</pre>`
   }
 })
@@ -630,7 +706,6 @@ const processFile = async (file) => {
       }
     }
   } catch (error) {
-    console.error('文档处理失败:', error)
     showToast(error.message || '文档处理失败，请重试', 'error')
   } finally {
     isUploading.value = false
@@ -730,7 +805,6 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
         }
       }
   } catch (error) {
-    console.warn('加载课程节点失败:', error)
   }
 }
 
@@ -796,9 +870,6 @@ const saveAllNodes = () => {
     saveCurrentNode()
   }
   showToast('所有修改已保存到本地', 'success')
-
-  // TODO: 可以在这里调用后端API持久化到数据库
-  console.log('保存的数据:', JSON.stringify(knowledgeTree.value, null, 2))
 }
 
 // ==================== 音频功能 ====================
@@ -811,7 +882,6 @@ const toggleAudioPlay = () => {
     audioRef.value.pause()
   } else {
     audioRef.value.play().catch(e => {
-      console.warn('音频播放失败:', e)
       showToast('音频播放失败', 'error')
     })
   }
@@ -895,10 +965,12 @@ const generateTTS = async () => {
       responseType: 'blob'
     })
 
+    if (audioUrl.value) {
+      URL.revokeObjectURL(audioUrl.value)
+    }
     audioUrl.value = URL.createObjectURL(blob)
     showToast('语音生成成功', 'success')
   } catch (error) {
-    console.error('TTS生成失败:', error)
     showToast(error.message || '语音生成失败，请重试', 'error')
   } finally {
     isGeneratingTTS.value = false
@@ -919,7 +991,6 @@ const togglePublishCourse = async () => {
 
     await loadCourseStats()
   } catch (error) {
-    console.error('发布课程失败:', error)
     showToast(error.message || '操作失败', 'error')
   } finally {
     isPublishing.value = false
@@ -985,7 +1056,6 @@ const loadCourseStats = async () => {
       }
     }
   } catch (error) {
-    console.error('加载课程统计失败:', error)
   } finally {
     isLoadingStats.value = false
   }
@@ -1006,7 +1076,6 @@ const loadStudentsList = async () => {
       }))
     }
   } catch (error) {
-    console.error('加载学生列表失败:', error)
   }
 }
 </script>
@@ -1122,11 +1191,33 @@ const loadStudentsList = async () => {
 <style scoped>
 .teacher-dashboard {
   width: 100%;
-  min-height: calc(100vh - 80px);
+  min-height: calc(100vh - var(--navbar-height));
   background: #f5f7fa;
   padding: 20px;
   box-sizing: border-box;
 }
+
+.course-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - var(--navbar-height));
+  gap: 16px;
+  color: #6b7280;
+  font-size: 16px;
+}
+
+.course-loading .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid #e5e7eb;
+  border-top-color: #6366f1;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }
 
 .dashboard-header {
   margin-bottom: 20px;

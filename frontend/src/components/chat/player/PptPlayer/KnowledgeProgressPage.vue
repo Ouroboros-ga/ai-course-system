@@ -199,7 +199,6 @@ const loadCourses = async () => {
       courses.value = res.data.courses
     }
   } catch (err) {
-    console.log('加载课程列表失败，使用模拟数据')
     courses.value = [
       { id: 1, title: '高等数学 - 微积分基础', total_nodes: 12 },
       { id: 2, title: '线性代数 - 矩阵运算', total_nodes: 8 },
@@ -224,7 +223,6 @@ const loadCourseHierarchy = async (courseId) => {
       showToast('课程结构加载成功', 'success')
     }
   } catch (err) {
-    console.error('加载课程结构失败', err)
     showToast('加载失败，请重试', 'error')
   }
 }
@@ -265,7 +263,6 @@ const uploadFile = async (file) => {
       loadCourses()
     }
   } catch (err) {
-    console.error('上传失败', err)
     showToast(err.message || '上传失败', 'error')
   }
 }
@@ -278,7 +275,6 @@ const processUploadResult = (result) => {
     if (flatNodes.value.length > 0) {
       selectNode(flatNodes.value[0].node_id)
     }
-    console.log('[知识结构树] 解析完成，共', flatNodes.value.length, '个知识点节点')
   }
 }
 
@@ -415,7 +411,6 @@ const saveChangesToDatabase = async () => {
     hasChanges.value = false
     showToast('已保存到数据库', 'success')
   } catch (err) {
-    console.error('保存失败', err)
     showToast('保存失败: ' + (err.message || '未知错误'), 'error')
   } finally {
     isSaving.value = false
@@ -444,7 +439,6 @@ const saveAllChanges = async () => {
         successCount++
       } catch (err) {
         failCount++
-        console.error(`保存节点 ${nodeId} 失败`, err)
       }
     }
   }

@@ -82,6 +82,11 @@ const router = createRouter({
       component: loadView('AdminPanel'),
       meta: { requiresAuth: true, role: 'admin' }
     },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: loadView('Home')
+    }
   ],
   scrollBehavior() {
     return { top: 0 }
@@ -90,6 +95,7 @@ const router = createRouter({
 
 router.beforeEach((to, from, next) => {
   const counter = useCounterStore()
+  counter.checkAuth()
 
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
     next({ path: '/profile', query: { redirect: to.fullPath } })
