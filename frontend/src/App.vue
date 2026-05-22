@@ -23,8 +23,6 @@
 </template>
 
 <style>
-@import './assets/styles/variables.css';
-
 /* ========== 全局重置样式 ========== */
 * {
   margin: 0;
