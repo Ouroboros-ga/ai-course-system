@@ -5,7 +5,7 @@ import UserInfoCard from "./LoginIn/userinfo/UserInfoCard.vue"
 import StatsCard from "./LoginIn/stats/StatsCard.vue"
 import PreferenceSettings from "./LoginIn/preference/PreferenceSettings.vue"
 import MyCourses from "./LoginIn/courses/MyCourses.vue"
-import TeacherAvatarSetting from './LoginIn/menu/TeacherAvatarSetting.vue'
+import TeacherAssetManager from './LoginIn/menu/TeacherAssetManager.vue'
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
 
@@ -16,7 +16,7 @@ const counter = useCounterStore()
 const showSettingsPanel = ref(false)
 const showPreferencePanel = ref(false)
 const showMyCoursesPanel = ref(false)
-const avatarModalVisible = ref(false)
+const assetModalVisible = ref(false)
 
 // 统计数据
 const courseCount = ref(0)
@@ -113,9 +113,9 @@ const handleMyCourses = () => {
   showMyCoursesPanel.value = true
 }
 
-// 6. 打开教师数字人设置
-const handleOpenAvatarSetting = () => {
-  avatarModalVisible.value = true
+// 6. 打开教师素材管理
+const handleOpenAssetManager = () => {
+  assetModalVisible.value = true
 }
 
 // 7. 关闭偏好设置
@@ -179,7 +179,7 @@ const handleLogout = () => {
   showSettingsPanel.value = false
   showPreferencePanel.value = false
   showMyCoursesPanel.value = false
-  avatarModalVisible.value = false
+  assetModalVisible.value = false
   courseCount.value = 0
   chatCount.value = 0
   studyMinutes.value = 0
@@ -222,9 +222,9 @@ const handleLogout = () => {
           <div class="menu-icon">📚</div>
           <div>我的课程</div>
         </div>
-        <div class="menu-item" @click="handleOpenAvatarSetting">
+        <div class="menu-item" @click="handleOpenAssetManager">
           <div class="menu-icon">🤖</div>
-          <div>教师数字人设置</div>
+          <div>教师素材管理</div>
         </div>
       </div>
     </div>
@@ -255,8 +255,8 @@ const handleLogout = () => {
       </div>
     </Transition>
 
-    <TeacherAvatarSetting
-      v-model:visible="avatarModalVisible"
+    <TeacherAssetManager
+      v-model:visible="assetModalVisible"
     />
   </div>
 </template>

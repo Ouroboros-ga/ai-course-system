@@ -1,5 +1,6 @@
 from app.models.user_model import User, UserRole
 from app.models.asset_model import TeacherAsset, AssetType
+from app.models.mapping_model import KnowledgePageMap
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -35,6 +36,7 @@ __all__ = [
     "UserRole",
     "TeacherAsset",
     "AssetType",
+    "KnowledgePageMap",
     "Course",
     "CourseScript",
     "ScriptNode",

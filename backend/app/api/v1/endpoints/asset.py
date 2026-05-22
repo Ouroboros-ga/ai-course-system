@@ -6,6 +6,7 @@
 import os
 import uuid
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -13,6 +14,7 @@ from datetime import datetime
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import Session, select
+from PIL import Image
 
 from app.core.config import settings
 from app.core.exceptions import unified_response
@@ -43,6 +45,51 @@ def _get_safe_path(filename: str) -> str:
     ext = Path(filename).suffix.lower()
     safe_name = f"{uuid.uuid4().hex}{ext}"
     return safe_name
+
+
+def _extract_duration(file_path: Path) -> float:
+    """使用 ffprobe 提取音视频时长（秒），失败返回 0.0"""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(file_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:
+        pass
+    return 0.0
+
+
+def _extract_video_thumbnail(video_path: Path, output_path: Path) -> Optional[str]:
+    """使用 ffmpeg 提取视频第1秒帧作为缩略图，返回缩略图相对路径或 None"""
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-y",
+                "-i", str(video_path),
+                "-ss", "00:00:01",
+                "-vframes", "1",
+                "-q:v", "2",
+                str(output_path),
+            ],
+            capture_output=True,
+            timeout=30,
+        )
+        if result.returncode == 0 and output_path.exists():
+            return str(output_path)
+    except Exception:
+        pass
+    return None
 
 
 def _validate_file(file: UploadFile, asset_type: AssetType):
@@ -84,7 +131,7 @@ async def upload_asset(
     """
     上传老师素材（人脸视频/参考音频）
 
-    - 人脸视频：mp4/webm/mov，最大500MB
+    - 人脸视频：mp4/webm/mov，最大200MB
     - 参考音频：mp3/wav/ogg，最大50MB
     """
     _ensure_asset_dir()
@@ -94,30 +141,46 @@ async def upload_asset(
 
     user_id = int(current_user["user_id"])
 
-    # 读取文件内容并校验大小
-    content = await file.read()
-    file_size = len(content)
-
     max_size = (
         settings.MAX_VIDEO_ASSET_SIZE_MB * 1024 * 1024
         if asset_type == AssetType.FACE_VIDEO
         else settings.MAX_AUDIO_ASSET_SIZE_MB * 1024 * 1024
     )
-    if file_size > max_size:
-        max_mb = settings.MAX_VIDEO_ASSET_SIZE_MB if asset_type == AssetType.FACE_VIDEO else settings.MAX_AUDIO_ASSET_SIZE_MB
-        raise HTTPException(
-            status_code=400,
-            detail=f"文件大小超过限制，{asset_type.value}类型最大允许 {max_mb}MB",
-        )
+    max_mb = settings.MAX_VIDEO_ASSET_SIZE_MB if asset_type == AssetType.FACE_VIDEO else settings.MAX_AUDIO_ASSET_SIZE_MB
 
-    # 保存文件
+    # 流式写入文件，边读边写，避免全量读入内存
     safe_name = _get_safe_path(file.filename)
     teacher_dir = ASSET_ROOT / str(user_id)
     teacher_dir.mkdir(parents=True, exist_ok=True)
     file_path = teacher_dir / safe_name
 
+    file_size = 0
     with open(file_path, "wb") as f:
-        f.write(content)
+        while True:
+            chunk = await file.read(1024 * 1024)  # 每次读1MB
+            if not chunk:
+                break
+            file_size += len(chunk)
+            if file_size > max_size:
+                f.close()
+                file_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"文件大小超过限制，{asset_type.value}类型最大允许 {max_mb}MB",
+                )
+            f.write(chunk)
+
+    # 提取音视频时长
+    duration = _extract_duration(file_path)
+
+    # 视频素材生成缩略图
+    thumbnail_url = None
+    if asset_type == AssetType.FACE_VIDEO:
+        thumb_name = f"{safe_name.rsplit('.', 1)[0]}_thumb.jpg"
+        thumb_path = teacher_dir / thumb_name
+        thumb_result = _extract_video_thumbnail(file_path, thumb_path)
+        if thumb_result:
+            thumbnail_url = str(thumb_path)
 
     # 检查该老师同类型是否已有素材，如果没有则自动设为默认
     existing_count = session.exec(
@@ -136,6 +199,8 @@ async def upload_asset(
         file_path=str(file_path),
         file_size=file_size,
         mime_type=file.content_type or "",
+        duration=duration,
+        thumbnail_url=thumbnail_url,
         is_default=is_default,
     )
     session.add(asset)
@@ -298,6 +363,20 @@ async def delete_asset(
 
     if asset.teacher_id != user_id:
         raise HTTPException(status_code=403, detail="无权操作该素材")
+
+    # 检查素材是否被课程脚本节点引用（通过 extra_data 中的 asset_id 关联）
+    from app.models.course_model import ScriptNode
+    referenced_nodes = session.exec(
+        select(ScriptNode).where(
+            ScriptNode.extra_data.isnot(None),
+        )
+    ).all()
+    for node in referenced_nodes:
+        if node.extra_data and node.extra_data.get("asset_id") == asset_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"该素材已被课程脚本节点引用（节点ID: {node.id}），请先解除引用后再删除",
+            )
 
     # 删除物理文件
     file_path = Path(asset.file_path)

@@ -146,7 +146,12 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 async def get_current_user(
     token: Optional[str] = Depends(oauth2_scheme), request: Request = None
 ):
-    """【身份认证依赖】获取当前登录用户"""
+    """【身份认证依赖】获取当前登录用户
+
+    支持两种token传递方式：
+    1. Authorization: Bearer <token> 请求头（标准OAuth2方式）
+    2. ?token=<token> URL查询参数（用于视频/音频等浏览器直接发起的请求）
+    """
     if request and request.url.path in settings.NO_AUTH_WHITELIST:
         return None
 
@@ -155,6 +160,11 @@ async def get_current_user(
         detail="身份认证失败：无效的访问令牌",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    # 优先从Header获取，其次从Query参数获取（支持浏览器直接访问的媒体资源）
+    if not token and request:
+        token = request.query_params.get("token")
+
     if not token:
         raise credentials_exception
 

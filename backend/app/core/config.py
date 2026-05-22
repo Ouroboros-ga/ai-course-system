@@ -114,7 +114,7 @@ class Settings(BaseSettings):
     # 老师素材存储路径配置
     # --------------------------
     ASSET_STORAGE_PATH: str = "./teacher_assets"
-    MAX_VIDEO_ASSET_SIZE_MB: int = 500
+    MAX_VIDEO_ASSET_SIZE_MB: int = 200
     MAX_AUDIO_ASSET_SIZE_MB: int = 50
 
 
