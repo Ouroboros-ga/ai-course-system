@@ -56,13 +56,13 @@ class MappingService:
                 if text.strip():
                     page_map.setdefault(page_no, []).append(text.strip())
 
-            # 也从 groups 中提取标题信息
+            # 也从 groups 中提取标题信息，补充到对应页码
             if "groups" in docling_doc.raw_json:
                 for group_data in docling_doc.raw_json["groups"]:
                     name = group_data.get("name", "")
-                    if name and len(name) >= 2:
-                        # 标题信息暂不关联页码，跳过
-                        pass
+                    group_page = group_data.get("page_no", 0)
+                    if name and len(name) >= 2 and group_page > 0:
+                        page_map.setdefault(group_page, []).insert(0, f"[{name}]")
 
             pages = []
             for page_no in sorted(page_map.keys()):
@@ -70,6 +70,15 @@ class MappingService:
                     "page_no": page_no,
                     "text": "\n".join(page_map[page_no]),
                 })
+
+            # 检测是否所有文本都在第1页（旧数据问题），对PPTX文件尝试从源文件重新提取
+            if len(pages) <= 1 and docling_doc.origin_filename:
+                is_pptx = docling_doc.origin_filename.lower().endswith(('.pptx', '.ppt'))
+                if is_pptx:
+                    re_extracted = MappingService._re_extract_pptx_pages(docling_doc)
+                    if re_extracted:
+                        return re_extracted
+
             return pages
 
         # fallback: 从 docling_texts 表查询
@@ -89,13 +98,61 @@ class MappingService:
                 "page_no": page_no,
                 "text": "\n".join(page_map[page_no]),
             })
+
+        # 同样检测旧数据问题
+        if len(pages) <= 1 and docling_doc.origin_filename:
+            is_pptx = docling_doc.origin_filename.lower().endswith(('.pptx', '.ppt'))
+            if is_pptx:
+                re_extracted = MappingService._re_extract_pptx_pages(docling_doc)
+                if re_extracted:
+                    return re_extracted
+
         return pages
+
+    @staticmethod
+    def _re_extract_pptx_pages(docling_doc) -> List[Dict[str, Any]]:
+        """
+        当数据库中的page_no全部为1时，从原始PPTX文件重新提取逐页文本
+        """
+        file_path = docling_doc.source_file_path
+        if not file_path:
+            return []
+
+        import os
+        if not os.path.exists(file_path):
+            return []
+
+        try:
+            from pptx import Presentation
+            prs = Presentation(file_path)
+            pages = []
+            for slide_num, slide in enumerate(prs.slides, 1):
+                texts = []
+                title = ""
+                if slide.shapes.title and slide.shapes.title.text:
+                    title = slide.shapes.title.text.strip()
+                    texts.append(title)
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        text = shape.text.strip()
+                        if text != title:
+                            texts.append(text)
+                if texts:
+                    pages.append({
+                        "page_no": slide_num,
+                        "text": "\n".join(texts),
+                    })
+            logger.info(f"[MappingService] 从PPTX重新提取 {len(pages)} 页内容")
+            return pages
+        except Exception as e:
+            logger.warning(f"[MappingService] PPTX重新提取失败: {e}")
+            return []
 
     @staticmethod
     def auto_map_from_nodes(session: Session, course_id: int) -> List[KnowledgePageMap]:
         """
         自动生成映射：基于 ScriptNode 已有的 page_start/page_end 字段
-        这是初始映射，当文档上传解析后自动调用
+        当 page_start==page_end==1（未映射）时，尝试从 DoclingText/DoclingGroup 推断页码
         """
         script = MappingService.get_active_script(session, course_id)
         if not script:
@@ -119,9 +176,23 @@ class MappingService:
             ).order_by(ScriptNode.node_index)
         ).all()
 
+        # 获取页面文本，用于推断未映射节点的页码
+        page_texts = MappingService.get_page_texts(session, course_id)
+        total_pages = len(page_texts) if page_texts else 1
+
+        # 构建标题→页码的映射表（从页面文本中提取）
+        title_to_page = {}
+        for page in page_texts:
+            text = page.get("text", "")
+            page_no = page.get("page_no", 1)
+            # 取第一行作为标题线索
+            first_line = text.split("\n")[0].strip() if text else ""
+            if first_line and len(first_line) >= 2:
+                title_to_page[first_line] = page_no
+
         mappings = []
-        for node in nodes:
-            # 跳过 page_start=1, page_end=1 的默认值（可能是未映射的）
+        for idx, node in enumerate(nodes):
+            # 跳过已有手动映射的节点
             existing_manual = session.exec(
                 select(KnowledgePageMap).where(
                     KnowledgePageMap.node_id == node.id,
@@ -130,17 +201,41 @@ class MappingService:
             ).first()
 
             if existing_manual:
-                # 保留手动调整的映射
                 mappings.append(existing_manual)
                 continue
+
+            page_start = node.page_start
+            page_end = node.page_end
+
+            # 当页码为默认值(1,1)时，尝试推断
+            if page_start == 1 and page_end == 1 and total_pages > 1:
+                # 策略1：根据节点标题匹配页面文本
+                matched_page = None
+                for title, pno in title_to_page.items():
+                    if node.title and node.title in title:
+                        matched_page = pno
+                        break
+
+                if matched_page:
+                    page_start = matched_page
+                    page_end = matched_page
+                else:
+                    # 策略2：按节点索引均匀分配页面
+                    # 多个节点可以映射到同一页，确保 page_start <= page_end <= total_pages
+                    nodes_count = len(nodes)
+                    if nodes_count > 0 and total_pages > 0:
+                        # 每页对应多少个节点（向上取整，确保最后一页也能覆盖）
+                        nodes_per_page = max(1, (nodes_count + total_pages - 1) // total_pages)
+                        page_start = min(idx // nodes_per_page + 1, total_pages)
+                        page_end = page_start
 
             mapping = KnowledgePageMap(
                 course_id=course_id,
                 script_id=script.id,
                 node_id=node.id,
-                page_start=node.page_start,
-                page_end=node.page_end,
-                confidence=0.7,  # 基于解析结果的默认置信度
+                page_start=page_start,
+                page_end=page_end,
+                confidence=0.7 if (page_start != 1 or page_end != 1 or total_pages <= 1) else 0.3,
                 is_manual=False,
             )
             session.add(mapping)

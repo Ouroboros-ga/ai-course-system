@@ -211,6 +211,13 @@
 
         <!-- 底部操作按钮 -->
         <div class="action-bar">
+          <button
+            v-if="courseId"
+            class="action-btn mapping-btn"
+            @click="showMappingEditor = true"
+          >
+            智课PPT展示管理
+          </button>
           <button class="action-btn" @click="saveCurrentNode" :disabled="!hasChanges">
             💾 保存当前修改
           </button>
@@ -305,6 +312,11 @@
     </div>
 
     <DigitalHumanWindow v-if="courseId && counter.isTeacher" />
+    <MappingEditor
+      v-model:visible="showMappingEditor"
+      :courseId="courseId"
+      @applied="showToast('映射已应用，视频生成将使用新映射', 'success')"
+    />
   </div>
 </template>
 
@@ -321,6 +333,7 @@ import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
+import MappingEditor from '@/components/profile/LoginIn/courses/MappingEditor.vue'
 
 const counter = useCounterStore()
 const router = useRouter()
@@ -368,6 +381,9 @@ const isGeneratingTTS = ref(false)
 
 // 标记是否有未保存的修改
 const hasChanges = ref(false)
+
+// 映射编辑器
+const showMappingEditor = ref(false)
 
 // 初始化Marked实例
 const markedInstance = new Marked(
@@ -1735,6 +1751,21 @@ const loadStudentsList = async () => {
 .action-btn.primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+}
+
+.action-btn.mapping-btn {
+  background: linear-gradient(135deg, #f59e0b, #ef4444);
+  color: white;
+  border-color: transparent;
+  font-weight: 600;
+  font-size: 15px;
+  padding: 10px 28px;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3);
+}
+
+.action-btn.mapping-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(245, 158, 11, 0.45);
 }
 
 /* 响应式设计 */

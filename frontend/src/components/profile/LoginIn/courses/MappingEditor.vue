@@ -3,7 +3,7 @@
     <div v-if="visible" class="mapping-overlay" @click="handleClose">
       <div class="mapping-modal" @click.stop>
         <div class="modal-header">
-          <h3>知识点 ↔ PPT页面 映射编辑</h3>
+          <h3>智课PPT展示管理</h3>
           <button class="close-btn" @click="handleClose">✕</button>
         </div>
 
@@ -43,8 +43,8 @@
                   <span v-if="node.is_key_point" class="badge key-badge">重点</span>
                 </div>
                 <div class="node-mapping-info">
-                  <span class="page-range">
-                    PPT 第 {{ node.page_start }}-{{ node.page_end }} 页
+                  <span class="page-range" :class="{ invalid: node.page_start > node.page_end }">
+                    PPT 第 {{ Math.min(node.page_start, node.page_end) }}-{{ Math.max(node.page_start, node.page_end) }} 页
                   </span>
                   <span class="confidence" :class="getConfidenceClass(node.confidence)">
                     {{ (node.confidence * 100).toFixed(0) }}%
@@ -59,7 +59,10 @@
 
           <!-- 右侧：PPT页面内容 -->
           <div class="panel pages-panel">
-            <div class="panel-title">PPT页面内容 ({{ mappingData.total_pages }} 页)</div>
+            <div class="panel-title">
+              PPT页面内容 ({{ mappingData.total_pages }} 页)
+              <span v-if="selectedNode" class="click-hint">点击页面设置映射范围</span>
+            </div>
             <div class="page-list">
               <div
                 v-for="page in mappingData.pages"
@@ -67,7 +70,9 @@
                 class="page-item"
                 :class="{
                   highlighted: isPageInSelectedRange(page.page_no),
+                  clickable: selectedNode,
                 }"
+                @click="handlePageClick(page.page_no)"
               >
                 <div class="page-header">
                   <span class="page-no">第 {{ page.page_no }} 页</span>
@@ -108,14 +113,21 @@
               <input
                 type="number"
                 v-model.number="editPageEnd"
-                :min="editPageStart"
+                :min="1"
                 :max="mappingData.total_pages"
                 class="page-input"
+                :class="{ 'input-error': editPageEnd < editPageStart }"
               />
-              <button class="save-btn" @click="handleSaveNodeMapping">
+              <button class="save-btn" @click="handleSaveNodeMapping" :disabled="!isValidEdit">
                 保存
               </button>
             </div>
+            <span v-if="editPageEnd < editPageStart" class="error-hint">
+              结束页不能小于起始页
+            </span>
+            <span v-else-if="editPageEnd > mappingData.total_pages" class="error-hint">
+              超出总页数
+            </span>
           </div>
         </div>
       </div>
@@ -166,6 +178,22 @@ const selectedNode = computed(() =>
   mappingData.value.nodes.find((n) => n.node_id === selectedNodeId.value) || null
 )
 
+// 同步编辑值到当前选中节点
+watch(selectedNode, (node) => {
+  if (node) {
+    editPageStart.value = node.page_start
+    editPageEnd.value = node.page_end
+  }
+})
+
+// 编辑值校验
+const isValidEdit = computed(() => {
+  const s = editPageStart.value
+  const e = editPageEnd.value
+  const total = mappingData.value.total_pages
+  return s >= 1 && e >= s && e <= total && s <= total
+})
+
 // 弹窗打开时加载数据
 watch(
   () => props.visible,
@@ -178,9 +206,17 @@ watch(
 
 async function loadMapping() {
   loading.value = true
+  const prevSelectedId = selectedNodeId.value
   try {
     const data = await getMappingDetail(props.courseId)
     mappingData.value = data || mappingData.value
+    // 恢复选中状态
+    if (prevSelectedId) {
+      const stillExists = mappingData.value.nodes.find(n => n.node_id === prevSelectedId)
+      if (stillExists) {
+        selectedNodeId.value = prevSelectedId
+      }
+    }
   } catch (e) {
     showToast('加载映射数据失败', 'error')
   } finally {
@@ -194,9 +230,40 @@ function selectNode(node) {
   editPageEnd.value = node.page_end
 }
 
+function handlePageClick(pageNo) {
+  if (!selectedNode.value) return
+  const s = editPageStart.value
+  const e = editPageEnd.value
+  const total = mappingData.value.total_pages
+
+  if (pageNo < s) {
+    // 点击的页码在当前范围之前，设为新的起始页
+    editPageStart.value = pageNo
+  } else if (pageNo > e) {
+    // 点击的页码在当前范围之后，设为新的结束页
+    editPageEnd.value = pageNo
+  } else if (pageNo === s && pageNo === e) {
+    // 只有一页且点击的就是它，取消选中（重置为1-total）
+    editPageStart.value = 1
+    editPageEnd.value = total
+  } else if (pageNo === s) {
+    // 点击的是起始页，起始页后移
+    editPageStart.value = pageNo + 1
+  } else if (pageNo === e) {
+    // 点击的是结束页，结束页前移
+    editPageEnd.value = pageNo - 1
+  } else {
+    // 点击范围中间的页，缩小到点击页
+    editPageStart.value = pageNo
+    editPageEnd.value = pageNo
+  }
+}
+
 function isPageInSelectedRange(pageNo) {
   if (!selectedNode.value) return false
-  return pageNo >= selectedNode.value.page_start && pageNo <= selectedNode.value.page_end
+  const start = Math.min(editPageStart.value, editPageEnd.value)
+  const end = Math.max(editPageStart.value, editPageEnd.value)
+  return pageNo >= start && pageNo <= end
 }
 
 function getConfidenceClass(confidence) {
@@ -234,7 +301,7 @@ async function handleAiMatch() {
 }
 
 async function handleSaveNodeMapping() {
-  if (!selectedNodeId.value) return
+  if (!selectedNodeId.value || !isValidEdit.value) return
   try {
     await updateNodeMapping(
       props.courseId,
@@ -246,7 +313,7 @@ async function handleSaveNodeMapping() {
     hasChanges.value = true
     await loadMapping()
   } catch (e) {
-    showToast('更新失败', 'error')
+    showToast('更新失败: ' + (e.message || '未知错误'), 'error')
   }
 }
 
@@ -490,6 +557,11 @@ function handleClose() {
   font-weight: 500;
 }
 
+.page-range.invalid {
+  color: #ef4444;
+  font-weight: 600;
+}
+
 .confidence {
   font-size: 11px;
   padding: 1px 5px;
@@ -634,5 +706,32 @@ function handleClose() {
 
 .save-btn:hover {
   background: #4338ca;
+}
+
+.input-error {
+  border-color: #ef4444 !important;
+  background: #fef2f2;
+}
+
+.error-hint {
+  color: #ef4444;
+  font-size: 12px;
+  margin-left: 8px;
+}
+
+.click-hint {
+  font-size: 11px;
+  color: #f59e0b;
+  font-weight: 400;
+  margin-left: 8px;
+}
+
+.page-item.clickable {
+  cursor: pointer;
+}
+
+.page-item.clickable:hover {
+  background: #fef3c7;
+  border-color: #f59e0b;
 }
 </style>

@@ -145,6 +145,7 @@ class DocumentParser:
     async def _parse_with_docling(file_path: Path, filename: str) -> str:
         """
         使用Docling解析文件，返回Markdown内容（增强版，保留完整层级结构）
+        对PPTX文件，使用iterate_items提取页码信息，生成带"第N页"标记的Markdown
         """
         try:
             from docling.document_converter import DocumentConverter
@@ -165,8 +166,14 @@ class DocumentParser:
 
             result = converter.convert(str(file_path))
 
-            # 导出为Markdown并清理
-            markdown_content = result.document.export_to_markdown()
+            is_pptx = filename.lower().endswith(('.pptx', '.ppt'))
+
+            if is_pptx:
+                # PPTX文件：使用iterate_items提取页码，生成带页码标记的Markdown
+                markdown_content = DocumentParser._build_pptx_markdown_with_pages(result)
+            else:
+                # 其他格式：使用标准Markdown导出
+                markdown_content = result.document.export_to_markdown()
 
             # 后处理：确保标题层级清晰
             markdown_content = DocumentParser._post_process_markdown(markdown_content, filename)
@@ -179,6 +186,70 @@ class DocumentParser:
         except Exception as e:
             logger.error(f"[Docling] 解析失败: {e}")
             raise Exception(f"Docling解析失败: {e}")
+
+    @staticmethod
+    def _build_pptx_markdown_with_pages(result) -> str:
+        """
+        从Docling的PPTX解析结果中构建带页码标记的Markdown
+        使用iterate_items遍历文档项，根据prov中的page_no插入"第N页"标记
+        """
+        parts = []
+        current_page = 0
+
+        try:
+            for item, level in result.document.iterate_items():
+                # 从provenance中提取页码
+                page_no = 0
+                if hasattr(item, 'prov') and item.prov:
+                    page_no = item.prov[0].page_no + 1  # Docling页码从0开始
+
+                # 页码变化时插入标记
+                if page_no > 0 and page_no != current_page:
+                    current_page = page_no
+                    parts.append(f"\n## 第{current_page}页\n")
+
+                # 提取文本内容
+                if hasattr(item, 'text') and item.text:
+                    text = item.text.strip()
+                    if text:
+                        # 根据item类型决定格式
+                        label = getattr(item, 'label', None)
+                        label_val = label.value if hasattr(label, 'value') else str(label) if label else ''
+
+                        if label_val in ('title', 'section_header', 'header'):
+                            parts.append(f"\n### {text}\n")
+                        elif label_val in ('list_item',):
+                            parts.append(f"- {text}")
+                        else:
+                            parts.append(text)
+        except Exception as e:
+            logger.warning(f"[Docling] iterate_items失败，回退到标准导出: {e}")
+            return result.document.export_to_markdown()
+
+        content = "\n".join(parts)
+
+        # 如果没有提取到任何页码标记，回退到python-pptx直接解析
+        if current_page == 0:
+            logger.warning("[Docling] PPTX未提取到页码信息，回退到python-pptx")
+            try:
+                from pptx import Presentation
+                prs = Presentation(str(result.input.path) if hasattr(result, 'input') else '')
+                slide_parts = []
+                for slide_num, slide in enumerate(prs.slides, 1):
+                    title = ""
+                    if slide.shapes.title and slide.shapes.title.text:
+                        title = slide.shapes.title.text.strip()
+                    slide_parts.append(f"\n## 第{slide_num}页{': ' + title if title else ''}\n")
+                    for shape in slide.shapes:
+                        if hasattr(shape, "text") and shape.text.strip():
+                            text = shape.text.strip()
+                            if text != title:
+                                slide_parts.append(text)
+                content = "\n".join(slide_parts)
+            except Exception:
+                pass
+
+        return content
 
     @staticmethod
     def _post_process_markdown(content: str, filename: str) -> str:
@@ -355,6 +426,7 @@ class StructureParser:
         current_group = None
         current_group_idx = 0
         text_idx = 0
+        current_page_no = 1  # 跟踪当前页码（从PPTX的"第N页"标题中提取）
 
         # 清理和预处理文本
         def clean_text(text: str) -> str:
@@ -396,6 +468,11 @@ class StructureParser:
                 if not title_text or len(title_text) < 2:
                     continue
 
+                # 从"第N页"格式的标题中提取页码（PPTX解析产物）
+                page_match = re.match(r'第(\d+)页', title_text)
+                if page_match:
+                    current_page_no = int(page_match.group(1))
+
                 # 确定节点类型标签
                 if level == 1:
                     label = "chapter"
@@ -416,6 +493,7 @@ class StructureParser:
                     "label": label,
                     "content_layer": content_layer,
                     "level": level,
+                    "page_no": current_page_no,
                 }
                 groups.append(group_data)
                 current_group = group_data
@@ -428,7 +506,7 @@ class StructureParser:
                         "self_ref": f"#/texts/{text_idx}",
                         "label": "paragraph",
                         "text": cleaned_line,
-                        "page_no": 1,
+                        "page_no": current_page_no,
                         "group_id": current_group.get("self_ref") if current_group else None,
                         "group_level": current_group.get("level", 1) if current_group else 1,
                     }
