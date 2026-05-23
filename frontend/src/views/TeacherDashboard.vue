@@ -251,8 +251,15 @@
               <label>语音音色</label>
               <select v-model="nodeVoice" class="asset-select">
                 <option value="">使用默认</option>
-                <option value="zh_female_shuangkuaisisi_moon_bigtts">女声-爽快思思</option>
-                <option value="zh_male_chunhou_zhiboshuangkuai">男声-醇厚主播</option>
+                <optgroup label="克隆音色（我的声音）">
+                  <option v-for="a in clonedVoiceOptions" :key="a.clone_voice_id" :value="a.clone_voice_id">
+                    {{ a.file_name }}（克隆）
+                  </option>
+                </optgroup>
+                <optgroup label="预置音色">
+                  <option value="zh_female_shuangkuaisisi_moon_bigtts">女声-爽快思思</option>
+                  <option value="zh_male_chunhou_zhiboshuangkuai">男声-醇厚主播</option>
+                </optgroup>
               </select>
             </div>
           </div>
@@ -576,6 +583,9 @@ const showPPTGeneration = ref(false)
 // 素材选择器
 const faceVideoOptions = ref([])
 const refAudioOptions = ref([])
+const clonedVoiceOptions = computed(() =>
+  refAudioOptions.value.filter(a => a.clone_status === 'success' && a.clone_voice_id)
+)
 const nodeAssetFaceVideo = ref('')
 const nodeAssetRefAudio = ref('')
 const nodeVoice = ref('')

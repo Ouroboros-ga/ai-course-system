@@ -20,7 +20,7 @@ from app.core.config import settings
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user, teacher_only
 from app.models.database import get_session
-from app.models.asset_model import TeacherAsset, AssetType
+from app.models.asset_model import TeacherAsset, AssetType, CloneStatus
 
 router = APIRouter(tags=["素材管理"])
 
@@ -250,6 +250,8 @@ async def list_assets(
             "duration": a.duration,
             "thumbnail_url": a.thumbnail_url,
             "is_default": a.is_default,
+            "clone_voice_id": a.clone_voice_id,
+            "clone_status": a.clone_status.value if a.clone_status else "none",
             "created_at": a.created_at.isoformat() if a.created_at else None,
         })
 
@@ -404,3 +406,142 @@ async def delete_asset(
             session.commit()
 
     return unified_response(code=200, message="素材已删除", data=None)
+
+
+@router.post("/{asset_id}/clone-voice")
+async def clone_voice(
+    asset_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(teacher_only),
+):
+    """
+    对参考音频素材进行声音复刻
+
+    仅支持ref_audio类型素材。上传音频到火山引擎声音复刻API，
+    训练完成后返回speaker_id，后续TTS合成可使用该克隆音色。
+    """
+    from app.common.tts_client import voice_clone_client, TTSError
+
+    user_id = int(current_user["user_id"])
+
+    asset = session.get(TeacherAsset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="素材不存在")
+
+    if asset.teacher_id != user_id:
+        raise HTTPException(status_code=403, detail="无权操作该素材")
+
+    if asset.asset_type != AssetType.REF_AUDIO:
+        raise HTTPException(status_code=400, detail="仅支持对参考音频进行声音复刻")
+
+    # 检查是否已经复刻成功
+    if asset.clone_status == CloneStatus.SUCCESS and asset.clone_voice_id:
+        return unified_response(
+            code=200,
+            message="该音频已完成声音复刻",
+            data={"clone_voice_id": asset.clone_voice_id, "clone_status": "success"},
+        )
+
+    # 读取音频文件
+    file_path = Path(asset.file_path)
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    # 文件大小检查（最大10MB）
+    file_size = file_path.stat().st_size
+    if file_size > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="音频文件过大，声音复刻最大支持10MB")
+
+    # 更新状态为训练中
+    asset.clone_status = CloneStatus.PENDING
+    asset.updated_at = datetime.utcnow()
+    session.add(asset)
+    session.commit()
+
+    try:
+        # 读取音频二进制数据
+        audio_bytes = file_path.read_bytes()
+
+        # 推断音频格式
+        ext = file_path.suffix.lower().lstrip(".")
+        format_map = {"mp3": "mp3", "wav": "wav", "ogg": "ogg", "m4a": "m4a", "aac": "aac", "flac": "wav"}
+        audio_format = format_map.get(ext, "mp3")
+
+        # 生成唯一speaker_id
+        speaker_id = f"teacher_{user_id}_asset_{asset_id}"
+
+        # 调用声音复刻API
+        result = await voice_clone_client.upload_and_train(
+            audio_bytes=audio_bytes,
+            speaker_id=speaker_id,
+            audio_format=audio_format,
+        )
+
+        # 训练成功，更新数据库
+        clone_voice_id = result["speaker_id"]
+        asset.clone_voice_id = clone_voice_id
+        asset.clone_status = CloneStatus.SUCCESS
+        asset.updated_at = datetime.utcnow()
+        session.add(asset)
+        session.commit()
+
+        return unified_response(
+            code=200,
+            message="声音复刻成功",
+            data={
+                "clone_voice_id": clone_voice_id,
+                "clone_status": "success",
+            },
+        )
+
+    except TTSError as e:
+        # 训练失败，更新状态
+        asset.clone_status = CloneStatus.FAILED
+        asset.updated_at = datetime.utcnow()
+        session.add(asset)
+        session.commit()
+
+        return unified_response(
+            code=500,
+            message=f"声音复刻失败: {str(e)}",
+            data={"clone_status": "failed"},
+        )
+    except Exception as e:
+        asset.clone_status = CloneStatus.FAILED
+        asset.updated_at = datetime.utcnow()
+        session.add(asset)
+        session.commit()
+
+        return unified_response(
+            code=500,
+            message=f"声音复刻异常: {str(e)}",
+            data={"clone_status": "failed"},
+        )
+
+
+@router.get("/{asset_id}/clone-status")
+async def get_clone_status(
+    asset_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    查询素材的声音复刻状态
+    """
+    user_id = int(current_user["user_id"])
+
+    asset = session.get(TeacherAsset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="素材不存在")
+
+    if asset.teacher_id != user_id:
+        raise HTTPException(status_code=403, detail="无权访问该素材")
+
+    return unified_response(
+        code=200,
+        message="查询成功",
+        data={
+            "clone_voice_id": asset.clone_voice_id,
+            "clone_status": asset.clone_status.value if asset.clone_status else "none",
+        },
+    )

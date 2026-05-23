@@ -93,8 +93,33 @@
                   <span class="asset-name">{{ item.file_name }}</span>
                   <span class="asset-size">{{ formatSize(item.file_size) }}</span>
                   <span v-if="item.is_default" class="default-badge">默认</span>
+                  <span
+                    v-if="item.clone_status === 'success'"
+                    class="clone-badge success"
+                    title="声音复刻完成"
+                  >已克隆</span>
+                  <span
+                    v-else-if="item.clone_status === 'pending'"
+                    class="clone-badge pending"
+                  >复刻中...</span>
+                  <span
+                    v-else-if="item.clone_status === 'failed'"
+                    class="clone-badge failed"
+                  >复刻失败</span>
                 </div>
                 <div class="asset-actions">
+                  <button
+                    v-if="item.clone_status === 'none'"
+                    class="action-btn clone"
+                    :disabled="cloningAssetId === item.id"
+                    @click="handleCloneVoice(item.id)"
+                  >{{ cloningAssetId === item.id ? '复刻中...' : '声音复刻' }}</button>
+                  <button
+                    v-else-if="item.clone_status === 'failed'"
+                    class="action-btn clone"
+                    :disabled="cloningAssetId === item.id"
+                    @click="handleCloneVoice(item.id)"
+                  >重新复刻</button>
                   <button
                     v-if="!item.is_default"
                     class="action-btn set-default"
@@ -167,7 +192,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
-import { uploadAsset, getAssetList, setDefaultAsset, deleteAsset, getAssetPreviewUrl } from '@/api/asset.js'
+import { uploadAsset, getAssetList, setDefaultAsset, deleteAsset, getAssetPreviewUrl, cloneVoice } from '@/api/asset.js'
 import { showToast } from '@/utils/toast.js'
 
 const props = defineProps({
@@ -187,6 +212,9 @@ const refAudioList = computed(() => assets.value.filter(a => a.asset_type === 'r
 // 上传状态
 const uploading = ref({ face_video: false, ref_audio: false })
 const uploadProgress = ref({ face_video: 0, ref_audio: 0 })
+
+// 声音复刻状态
+const cloningAssetId = ref(null)
 
 // 预览
 const previewVisible = ref(false)
@@ -264,6 +292,23 @@ async function handleDelete(assetId, assetType) {
     await loadAssets()
   } catch (e) {
     showToast('删除失败', 'error')
+  }
+}
+
+async function handleCloneVoice(assetId) {
+  cloningAssetId.value = assetId
+  try {
+    const res = await cloneVoice(assetId)
+    if (res?.clone_status === 'success') {
+      showToast('声音复刻成功！可在脚本编辑中使用克隆音色', 'success')
+    } else {
+      showToast(res?.message || '声音复刻失败', 'error')
+    }
+    await loadAssets()
+  } catch (e) {
+    showToast('声音复刻失败: ' + (e.message || '未知错误'), 'error')
+  } finally {
+    cloningAssetId.value = null
   }
 }
 
@@ -441,6 +486,28 @@ function handleClose() {
   flex-shrink: 0;
 }
 
+.clone-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.clone-badge.success {
+  background: #52c41a;
+  color: #fff;
+}
+
+.clone-badge.pending {
+  background: #faad14;
+  color: #fff;
+}
+
+.clone-badge.failed {
+  background: #ff4d4f;
+  color: #fff;
+}
+
 .asset-actions {
   display: flex;
   gap: 6px;
@@ -460,6 +527,21 @@ function handleClose() {
 .action-btn.set-default:hover {
   border-color: #667eea;
   color: #667eea;
+}
+
+.action-btn.clone {
+  border-color: #722ed1;
+  color: #722ed1;
+}
+
+.action-btn.clone:hover:not(:disabled) {
+  background: #722ed1;
+  color: #fff;
+}
+
+.action-btn.clone:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .action-btn.preview:hover {

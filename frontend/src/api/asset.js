@@ -39,3 +39,13 @@ export function getAssetPreviewUrl(assetId) {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
   return `${baseUrl}/assets/${assetId}/preview`
 }
+
+// 声音复刻 - 对参考音频进行声音克隆
+export function cloneVoice(assetId) {
+  return request.post(`/assets/${assetId}/clone-voice`)
+}
+
+// 查询声音复刻状态
+export function getCloneStatus(assetId) {
+  return request.get(`/assets/${assetId}/clone-status`)
+}

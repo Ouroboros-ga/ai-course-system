@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     VOLCENGINE_TTS_ACCESS_TOKEN: str = ""
     VOLCENGINE_TTS_SECRET_KEY: str = ""
 
+    # 火山引擎声音复刻配置（豆包语音声音复刻API）
+    VOLCENGINE_VOICE_CLONE_API_KEY: str = ""  # x-api-key，用于声音复刻合成
+    VOLCENGINE_VOICE_CLONE_MODEL_TYPE: int = 4  # 1=ICL1.0, 2=DiT标准, 3=DiT还原, 4=ICL2.0(默认)
+
     # --------------------------
     # 安全白名单
     # --------------------------

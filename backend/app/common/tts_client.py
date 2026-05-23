@@ -251,12 +251,15 @@ class VolcengineTTSClient(BaseTTSClient):
     """
     火山引擎TTS客户端
     文档: https://www.volcengine.com/docs/6561/79823
+    支持预置音色合成 + 声音复刻克隆音色合成
     """
     
     def __init__(self):
         self.app_id = settings.VOLCENGINE_TTS_APP_ID
         self.access_token = settings.VOLCENGINE_TTS_ACCESS_TOKEN
         self.secret_key = settings.VOLCENGINE_TTS_SECRET_KEY
+        self.clone_api_key = settings.VOLCENGINE_VOICE_CLONE_API_KEY
+        self.clone_model_type = settings.VOLCENGINE_VOICE_CLONE_MODEL_TYPE
         self.default_voice = settings.TTS_VOICE or "zh_female_shuangkuaisisi_moon_bigtts"
         self.default_sample_rate = settings.TTS_SAMPLE_RATE
         self.default_format = settings.TTS_FORMAT
@@ -266,15 +269,16 @@ class VolcengineTTSClient(BaseTTSClient):
             logger.warning("火山引擎TTS配置不完整，请在.env中设置VOLCENGINE_TTS相关配置")
     
     def _generate_signature(self, payload: str) -> str:
-        """
-        生成火山引擎签名
-        """
         hmac_obj = hmac.new(
             self.secret_key.encode("utf-8"),
             payload.encode("utf-8"),
             hashlib.sha256
         )
         return hmac_obj.hexdigest()
+    
+    def _is_clone_voice(self, voice: str) -> bool:
+        """判断是否为克隆音色（以S_开头）"""
+        return voice and voice.startswith("S_")
     
     async def synthesize(
         self,
@@ -284,22 +288,29 @@ class VolcengineTTSClient(BaseTTSClient):
         output_format: Optional[str] = None,
         **kwargs,
     ) -> TTSResponse:
-        """
-        火山引擎语音合成
-        
-        API文档: https://www.volcengine.com/docs/6561/79823
-        """
-        url = "https://openspeech.bytedance.com/api/v1/tts"
-        
         voice = voice or self.default_voice
         sample_rate = sample_rate or self.default_sample_rate
         output_format = output_format or self.default_format
         
-        format_map = {
-            "mp3": "mp3",
-            "wav": "wav",
-            "pcm": "pcm",
-        }
+        # 克隆音色使用volcano_icl集群 + x-api-key认证
+        if self._is_clone_voice(voice):
+            return await self._synthesize_clone(text, voice, sample_rate, output_format, **kwargs)
+        
+        # 预置音色使用volcano_tts集群
+        return await self._synthesize_preset(text, voice, sample_rate, output_format, **kwargs)
+    
+    async def _synthesize_preset(
+        self,
+        text: str,
+        voice: str,
+        sample_rate: int,
+        output_format: str,
+        **kwargs,
+    ) -> TTSResponse:
+        """预置音色合成（原有逻辑）"""
+        url = "https://openspeech.bytedance.com/api/v1/tts"
+        
+        format_map = {"mp3": "mp3", "wav": "wav", "pcm": "pcm"}
         audio_format = format_map.get(output_format.lower(), "mp3")
         
         payload_dict = {
@@ -308,9 +319,7 @@ class VolcengineTTSClient(BaseTTSClient):
                 "token": self.access_token,
                 "cluster": "volcano_tts",
             },
-            "user": {
-                "uid": "user_001"
-            },
+            "user": {"uid": "user_001"},
             "audio": {
                 "voice_type": voice,
                 "encoding": audio_format,
@@ -325,8 +334,6 @@ class VolcengineTTSClient(BaseTTSClient):
             }
         }
         
-        payload = json.dumps(payload_dict, ensure_ascii=False)
-        
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer; {self.access_token}",
@@ -336,40 +343,102 @@ class VolcengineTTSClient(BaseTTSClient):
             response_data, latency_ms = await self._make_request(
                 url, headers, payload=payload_dict, timeout=self.timeout
             )
-            
             result = json.loads(response_data.decode('utf-8'))
             
             if result.get("code") != 3000:
-                error_msg = result.get("message", "未知错误")
-                raise TTSError(f"火山引擎TTS错误: {error_msg}")
+                raise TTSError(f"火山引擎TTS错误: {result.get('message', '未知错误')}")
             
             data = result.get("data")
             if not data:
                 raise TTSError("火山引擎TTS返回的数据为空")
             
-            if isinstance(data, str):
-                audio_base64 = data
-            else:
-                audio_base64 = data.get("audio", "")
-            
+            audio_base64 = data if isinstance(data, str) else data.get("audio", "")
             if not audio_base64:
                 raise TTSError("火山引擎TTS返回的音频数据为空")
             
             audio_data = base64.b64decode(audio_base64)
-            
             return TTSResponse(
                 audio_data=audio_data,
                 audio_format=output_format,
                 sample_rate=sample_rate,
                 latency_ms=latency_ms,
             )
-            
         except json.JSONDecodeError as e:
             raise TTSError(f"火山引擎TTS响应解析失败: {str(e)}")
         except Exception as e:
             if isinstance(e, TTSError):
                 raise
             raise TTSError(f"火山引擎TTS请求失败: {str(e)}")
+    
+    async def _synthesize_clone(
+        self,
+        text: str,
+        voice: str,
+        sample_rate: int,
+        output_format: str,
+        **kwargs,
+    ) -> TTSResponse:
+        """克隆音色合成（使用volcano_icl集群 + x-api-key认证）"""
+        url = "https://openspeech.bytedance.com/api/v1/tts"
+        
+        if not self.clone_api_key:
+            raise TTSError("声音复刻API Key未配置，请在.env中设置VOLCENGINE_VOICE_CLONE_API_KEY")
+        
+        format_map = {"mp3": "mp3", "wav": "wav", "pcm": "pcm"}
+        audio_format = format_map.get(output_format.lower(), "mp3")
+        
+        payload_dict = {
+            "app": {
+                "cluster": "volcano_icl",
+            },
+            "user": {"uid": "ai-course-system"},
+            "audio": {
+                "voice_type": voice,
+                "encoding": audio_format,
+                "speed_ratio": kwargs.get("speed_ratio", 1.0),
+            },
+            "request": {
+                "reqid": str(uuid.uuid4()),
+                "text": text,
+                "operation": "query",
+            }
+        }
+        
+        headers = {
+            "Content-Type": "application/json",
+            "x-api-key": self.clone_api_key,
+        }
+        
+        try:
+            response_data, latency_ms = await self._make_request(
+                url, headers, payload=payload_dict, timeout=self.timeout
+            )
+            result = json.loads(response_data.decode('utf-8'))
+            
+            if result.get("code") != 3000:
+                raise TTSError(f"声音复刻TTS错误: {result.get('message', '未知错误')}")
+            
+            data = result.get("data")
+            if not data:
+                raise TTSError("声音复刻TTS返回的数据为空")
+            
+            audio_base64 = data if isinstance(data, str) else data.get("audio", "")
+            if not audio_base64:
+                raise TTSError("声音复刻TTS返回的音频数据为空")
+            
+            audio_data = base64.b64decode(audio_base64)
+            return TTSResponse(
+                audio_data=audio_data,
+                audio_format=output_format,
+                sample_rate=sample_rate,
+                latency_ms=latency_ms,
+            )
+        except json.JSONDecodeError as e:
+            raise TTSError(f"声音复刻TTS响应解析失败: {str(e)}")
+        except Exception as e:
+            if isinstance(e, TTSError):
+                raise
+            raise TTSError(f"声音复刻TTS请求失败: {str(e)}")
 
 
 class MockTTSClient(BaseTTSClient):
@@ -455,3 +524,161 @@ class TTSClient:
 
 
 tts_client = TTSClient()
+
+
+class VoiceCloneClient:
+    """
+    火山引擎声音复刻客户端
+    文档: https://www.volcengine.com/docs/6561/1305191
+    
+    流程：上传参考音频 → 训练 → 获取speaker_id → 用于TTS合成
+    """
+
+    def __init__(self):
+        self.app_id = settings.VOLCENGINE_TTS_APP_ID
+        self.access_token = settings.VOLCENGINE_TTS_ACCESS_TOKEN
+        self.model_type = settings.VOLCENGINE_VOICE_CLONE_MODEL_TYPE
+        self.timeout = 120  # 训练可能较慢
+
+        if not self.app_id or not self.access_token:
+            logger.warning("声音复刻配置不完整，需要VOLCENGINE_TTS_APP_ID和VOLCENGINE_TTS_ACCESS_TOKEN")
+
+    def _get_resource_id(self) -> str:
+        """根据model_type返回Resource-Id"""
+        if self.model_type == 4:
+            return "seed-icl-2.0"
+        return "seed-icl-1.0"
+
+    async def upload_and_train(
+        self,
+        audio_bytes: bytes,
+        speaker_id: str,
+        audio_format: str = "mp3",
+        language: int = 0,
+    ) -> dict:
+        """
+        上传音频并训练声音复刻模型
+        
+        Args:
+            audio_bytes: 音频二进制数据
+            speaker_id: 唯一音色代号（建议用 teacher_{user_id}_{asset_id}）
+            audio_format: 音频格式（mp3/wav/ogg/m4a/aac/pcm）
+            language: 语种 0=中文 1=英文
+        
+        Returns:
+            {"speaker_id": "S_xxxxxxxxx", "status": "success"} 或抛出异常
+        """
+        url = "https://openspeech.bytedance.com/api/v1/mega_tts/audio/upload"
+
+        audio_base64 = base64.b64encode(audio_bytes).decode("utf-8")
+
+        payload = {
+            "appid": self.app_id,
+            "speaker_id": speaker_id,
+            "audios": [
+                {
+                    "audio_bytes": audio_base64,
+                    "audio_format": audio_format,
+                }
+            ],
+            "source": 2,
+            "language": language,
+            "model_type": self.model_type,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer; {self.access_token}",
+            "Resource-Id": self._get_resource_id(),
+        }
+
+        try:
+            start_time = time.time()
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.post(url, json=payload, headers=headers)
+                latency_ms = (time.time() - start_time) * 1000
+
+            result = response.json()
+            logger.info(f"[VoiceClone] 上传训练响应: code={result.get('code')}, latency={latency_ms:.0f}ms")
+
+            code = result.get("code")
+            if code == 0 or code == 3000:
+                # 训练成功，提取speaker_id
+                data = result.get("data", {})
+                resp_speaker_id = data.get("speaker_id", speaker_id)
+                return {
+                    "speaker_id": resp_speaker_id,
+                    "status": "success",
+                    "message": "声音复刻训练成功",
+                }
+            else:
+                error_msg = result.get("message", "未知错误")
+                # 常见错误码
+                error_map = {
+                    1109: "音频与文本差异过大(WER Error)",
+                    1105: "音频质量不足，请上传更清晰的录音",
+                    1101: "音频时长不足，建议至少10秒",
+                }
+                detail = error_map.get(code, error_msg)
+                raise TTSError(f"声音复刻训练失败(code={code}): {detail}")
+
+        except httpx.TimeoutException:
+            raise TTSError(f"声音复刻训练请求超时 ({self.timeout}秒)")
+        except json.JSONDecodeError:
+            raise TTSError("声音复刻训练响应解析失败")
+        except Exception as e:
+            if isinstance(e, TTSError):
+                raise
+            raise TTSError(f"声音复刻训练请求异常: {str(e)}")
+
+    async def query_status(self, speaker_id: str) -> dict:
+        """
+        查询声音复刻训练状态
+        
+        Returns:
+            {"status": "success"/"pending"/"failed", "speaker_id": "S_xxx"}
+        """
+        url = "https://openspeech.bytedance.com/api/v1/mega_tts/audio/status"
+
+        payload = {
+            "appid": self.app_id,
+            "speaker_id": speaker_id,
+            "model_type": self.model_type,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer; {self.access_token}",
+            "Resource-Id": self._get_resource_id(),
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                response = await client.post(url, json=payload, headers=headers)
+
+            result = response.json()
+            code = result.get("code")
+            data = result.get("data", {})
+
+            if code == 0 or code == 3000:
+                status = data.get("status", "unknown")
+                return {
+                    "speaker_id": speaker_id,
+                    "status": "success" if status in ("success", "trained", "online") else "pending",
+                    "detail": data,
+                }
+            else:
+                return {
+                    "speaker_id": speaker_id,
+                    "status": "failed",
+                    "message": result.get("message", "查询失败"),
+                }
+        except Exception as e:
+            return {
+                "speaker_id": speaker_id,
+                "status": "failed",
+                "message": str(e),
+            }
+
+
+voice_clone_client = VoiceCloneClient()

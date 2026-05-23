@@ -19,6 +19,14 @@ class AssetType(str, Enum):
     OTHER = "other"                # 其他素材
 
 
+class CloneStatus(str, Enum):
+    """声音复刻状态"""
+    NONE = "none"            # 未复刻
+    PENDING = "pending"      # 复刻中
+    SUCCESS = "success"      # 复刻成功
+    FAILED = "failed"        # 复刻失败
+
+
 class TeacherAsset(SQLModel, table=True):
     """
     老师素材表
@@ -48,6 +56,14 @@ class TeacherAsset(SQLModel, table=True):
 
     is_default: bool = Field(
         default=False, description="是否为该类型的默认素材(同类型只能有一个默认)"
+    )
+
+    # 声音复刻相关字段（仅ref_audio类型使用）
+    clone_voice_id: Optional[str] = Field(
+        default=None, description="声音复刻后的speaker_id（如S_xxxxxxxxx）"
+    )
+    clone_status: CloneStatus = Field(
+        default=CloneStatus.NONE, description="声音复刻状态"
     )
 
     metadata_: Optional[dict] = Field(
