@@ -8,7 +8,7 @@ from app.models.database import create_tables
 
 
 # 导入路由
-from app.api.v1.endpoints import user, document, chat, progress, video, asset, mapping, ppt_generation
+from app.api.v1.endpoints import user, document, chat, progress, video, asset, mapping, ppt_generation, video_generation
 from app.schemas import UnifiedResponse
 
 # 创建数据库表
@@ -45,6 +45,7 @@ app.include_router(video.router, prefix="/api/v1/video", tags=["视频服务"])
 app.include_router(asset.router, prefix="/api/v1/assets", tags=["素材管理"])
 app.include_router(mapping.router, prefix="/api/v1/mapping", tags=["知识点映射"])
 app.include_router(ppt_generation.router, prefix="/api/v1/ppt-generation", tags=["AI生成PPT"])
+app.include_router(video_generation.router, prefix="/api/v1/video-generation", tags=["视频生成"])
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
 
