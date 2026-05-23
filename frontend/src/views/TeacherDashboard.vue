@@ -71,6 +71,17 @@
           </div>
         </div>
 
+        <!-- AI生成PPT -->
+        <div class="ai-ppt-section">
+          <div class="section-title">
+            <span class="icon">✨</span>
+            AI生成PPT课件
+          </div>
+          <button class="ai-ppt-btn" @click="showPPTGeneration = true">
+            输入主题，AI自动生成课件
+          </button>
+        </div>
+
         <!-- 知识结构树 -->
         <div class="tree-section">
           <div class="section-title">
@@ -322,6 +333,11 @@
       :courseId="courseId"
       @applied="showToast('映射已应用，视频生成将使用新映射', 'success')"
     />
+    <PPTGenerationDialog
+      v-model:visible="showPPTGeneration"
+      :courseId="courseId"
+      @generated="handlePPTGenerated"
+    />
   </template>
   </div>
 </template>
@@ -340,6 +356,7 @@ import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 import MappingEditor from '@/components/profile/LoginIn/courses/MappingEditor.vue'
+import PPTGenerationDialog from '@/components/profile/LoginIn/courses/PPTGenerationDialog.vue'
 
 const counter = useCounterStore()
 const router = useRouter()
@@ -462,6 +479,21 @@ const hasChanges = ref(false)
 
 // 映射编辑器
 const showMappingEditor = ref(false)
+
+// AI生成PPT
+const showPPTGeneration = ref(false)
+
+// PPT生成完成后的回调
+const handlePPTGenerated = (data) => {
+  if (data?.course_id) {
+    courseId.value = data.course_id
+    showToast('PPT课件已生成，正在加载课程数据...', 'success')
+    // 重新加载课程数据
+    setTimeout(() => {
+      window.location.href = `/teacher?courseId=${data.course_id}`
+    }, 1000)
+  }
+}
 
 // 初始化Marked实例
 const markedInstance = new Marked(
@@ -1261,11 +1293,31 @@ const loadStudentsList = async () => {
 }
 
 .upload-section,
-.tree-section {
+.tree-section,
+.ai-ppt-section {
   background: white;
   border-radius: 12px;
   padding: 16px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.ai-ppt-btn {
+  width: 100%;
+  padding: 12px;
+  border: 2px dashed #6366f1;
+  border-radius: 8px;
+  background: linear-gradient(135deg, #f0f0ff, #e8e8ff);
+  color: #6366f1;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.ai-ppt-btn:hover {
+  background: linear-gradient(135deg, #e8e8ff, #d8d8ff);
+  border-color: #4f46e5;
+  box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2);
 }
 
 .section-title {

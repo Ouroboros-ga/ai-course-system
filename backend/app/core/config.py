@@ -117,5 +117,12 @@ class Settings(BaseSettings):
     MAX_VIDEO_ASSET_SIZE_MB: int = 200
     MAX_AUDIO_ASSET_SIZE_MB: int = 50
 
+    # --------------------------
+    # 科大讯飞PPT生成API配置
+    # --------------------------
+    XFYUN_PPT_APP_ID: str = ""
+    XFYUN_PPT_API_SECRET: str = ""
+    XFYUN_PPT_DEFAULT_TEMPLATE_ID: str = ""
+
 
 settings = Settings()
