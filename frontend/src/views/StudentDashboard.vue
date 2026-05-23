@@ -271,6 +271,12 @@ const isComponentMounted = ref(true)
 // 学习进度数据
 const nodeProgressMap = ref({})
 
+// 每个知识点的聊天历史隔离存储 { nodeIndex: [messages] }
+const nodeChatHistory = ref({})
+
+// 竞态条件防护：记录当前请求发起时的节点索引
+const requestNodeIndex = ref(-1)
+
 // Marked实例
 const markedInstance = new Marked(
   markedHighlight({
@@ -443,12 +449,30 @@ function previewCourse(course) {
 
 // 退出课程
 function exitCourse() {
+  saveCurrentNodeChatHistory()
   selectedCourse.value = null
   scriptNodes.value = []
   chatMessages.value = []
   currentNodeIndex.value = 0
   nodeProgressMap.value = {}
+  nodeChatHistory.value = {}
   canInput.value = false
+}
+
+// 保存当前节点的聊天历史到隔离存储
+function saveCurrentNodeChatHistory() {
+  const idx = currentNodeIndex.value
+  if (idx >= 0 && chatMessages.value.length > 0) {
+    nodeChatHistory.value[idx] = [...chatMessages.value]
+  }
+}
+
+// 将消息保存到指定节点的历史记录（用于竞态条件下响应到达时已跳转的情况）
+function saveMessageToNodeHistory(nodeIndex, message) {
+  if (!nodeChatHistory.value[nodeIndex]) {
+    nodeChatHistory.value[nodeIndex] = []
+  }
+  nodeChatHistory.value[nodeIndex].push(message)
 }
 
 // 加载课程内容和脚本节点
@@ -522,44 +546,44 @@ async function streamCurrentNode() {
   }
 
   const node = scriptNodes.value[currentNodeIndex.value]
+  const streamNodeIndex = currentNodeIndex.value
   isStreaming.value = true
   streamingContent.value = ''
   canInput.value = false
 
-  // 构建带标题的内容
   const fullContent = `## ${node.title}\n\n${node.content}`
 
-  // 模拟流式输出效果
   const chunkSize = 15
   let position = 0
 
   while (position < fullContent.length && isComponentMounted.value) {
+    if (currentNodeIndex.value !== streamNodeIndex) return
     await new Promise(resolve => setTimeout(resolve, 30))
     position += chunkSize
     streamingContent.value = fullContent.substring(0, position)
     scrollToBottom()
   }
 
-  // 输出完成，添加到消息列表
+  if (currentNodeIndex.value !== streamNodeIndex) return
+
   chatMessages.value.push({
     id: Date.now(),
     role: 'ai',
     content: fullContent,
     nodeId: node.id,
-    nodeIndex: currentNodeIndex.value,
+    nodeIndex: streamNodeIndex,
   })
 
   isStreaming.value = false
   streamingContent.value = ''
 
-  // 标记节点为已访问
-  markNodeVisited(currentNodeIndex.value)
+  markNodeVisited(streamNodeIndex)
 
-  // 生成AI问答
-  await generateQAForNode(node)
+  await generateQAForNode(node, streamNodeIndex)
 
-  // 允许用户输入
-  canInput.value = true
+  if (currentNodeIndex.value === streamNodeIndex) {
+    canInput.value = true
+  }
   scrollToBottom()
 }
 
@@ -576,7 +600,8 @@ function markNodeVisited(index) {
 }
 
 // 为当前节点生成AI问答
-async function generateQAForNode(node) {
+async function generateQAForNode(node, nodeIndex) {
+  requestNodeIndex.value = nodeIndex
   try {
     showToast('正在生成互动问答...', 'info')
 
@@ -585,26 +610,41 @@ async function generateQAForNode(node) {
       method: 'post',
       data: {
         courseId: selectedCourse.value.id,
-        currentNodeId: null,
+        currentNodeId: node.id,
         question: `请根据以下内容生成一个检验理解的问题：\n\n${node.content.substring(0, 500)}`,
         strictMode: false,
       },
     })
+
+    if (currentNodeIndex.value !== nodeIndex) {
+      saveMessageToNodeHistory(nodeIndex, {
+        id: Date.now() + 1,
+        role: 'ai',
+        content: `### ❓ 互动问答\n\n${data.answer}\n\n请回答以上问题以检验您的理解程度：`,
+        isQA: true,
+        nodeIndex: nodeIndex,
+      })
+      return
+    }
 
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
       content: `### ❓ 互动问答\n\n${data.answer}\n\n请回答以上问题以检验您的理解程度：`,
       isQA: true,
+      nodeIndex: nodeIndex,
     })
 
     scrollToBottom()
   } catch (error) {
+    if (currentNodeIndex.value !== nodeIndex) return
+
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
       content: `### ❓ 互动问答\n\n关于"${node.title}"这个知识点，您有什么疑问或需要进一步解释的地方吗？`,
       isQA: true,
+      nodeIndex: nodeIndex,
     })
     scrollToBottom()
   }
@@ -615,21 +655,21 @@ async function sendMessage() {
   if (!userInput.value.trim() || isStreaming.value || !canInput.value) return
 
   const message = userInput.value.trim()
+  const sendNodeIndex = currentNodeIndex.value
   userInput.value = ''
 
-  // 添加用户消息
   chatMessages.value.push({
     id: Date.now(),
     role: 'user',
     content: message,
+    nodeIndex: sendNodeIndex,
   })
 
   canInput.value = false
   scrollToBottom()
 
   try {
-    // 调用AI问答接口分析回答
-    const currentNode = scriptNodes.value[currentNodeIndex.value]
+    const currentNode = scriptNodes.value[sendNodeIndex]
 
     const data = await request({
       url: '/chat/ask',
@@ -642,6 +682,19 @@ async function sendMessage() {
       },
     })
 
+    const aiMessage = {
+      id: Date.now() + 1,
+      role: 'ai',
+      content: data.answer,
+      understandingAnalysis: data.understandingAnalysis,
+      nodeIndex: sendNodeIndex,
+    }
+
+    if (currentNodeIndex.value !== sendNodeIndex) {
+      saveMessageToNodeHistory(sendNodeIndex, aiMessage)
+      return
+    }
+
     if (data.understandingAnalysis) {
       const analysis = data?.understandingAnalysis
       if (!analysis) {
@@ -649,26 +702,26 @@ async function sendMessage() {
         return
       }
       updateNodeUnderstanding(
-        currentNodeIndex.value,
+        sendNodeIndex,
         data.understandingAnalysis
       )
     }
 
-    chatMessages.value.push({
-      id: Date.now() + 1,
-      role: 'ai',
-      content: data.answer,
-      understandingAnalysis: data.understandingAnalysis,
-    })
+    chatMessages.value.push(aiMessage)
   } catch (error) {
+    if (currentNodeIndex.value !== sendNodeIndex) return
+
     chatMessages.value.push({
       id: Date.now() + 1,
       role: 'ai',
       content: '抱歉，处理您的回答时出现了错误，请稍后重试。',
+      nodeIndex: sendNodeIndex,
     })
   }
 
-  canInput.value = true
+  if (currentNodeIndex.value === sendNodeIndex) {
+    canInput.value = true
+  }
   scrollToBottom()
 }
 
@@ -722,22 +775,32 @@ function jumpToNode(index) {
   if (index === currentNodeIndex.value) return
   if (index < 0 || index >= scriptNodes.value.length) return
 
+  // 保存当前节点的聊天历史
+  saveCurrentNodeChatHistory()
+
   currentNodeIndex.value = index
   canInput.value = false
   isStreaming.value = false
   streamingContent.value = ''
 
-  // 清空当前聊天记录，重新开始该节点的学习
+  // 恢复目标节点的聊天历史（如果之前访问过）
+  const savedHistory = nodeChatHistory.value[index]
+  if (savedHistory && savedHistory.length > 0) {
+    chatMessages.value = [...savedHistory]
+    canInput.value = true
+    scrollToBottom()
+    return
+  }
+
   chatMessages.value = []
 
-  // 添加跳转提示
   chatMessages.value.push({
     id: Date.now(),
     role: 'ai',
     content: `## 📍 跳转至：${scriptNodes.value[index]?.title || `节点 ${index + 1}`}\n\n正在加载内容，请稍候...`,
+    nodeIndex: index,
   })
 
-  // 延迟后开始流式输出该节点内容
   setTimeout(() => {
     if (isComponentMounted.value) {
       streamCurrentNode()
