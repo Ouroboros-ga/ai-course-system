@@ -184,45 +184,78 @@
             </div>
           </div>
 
-          <!-- 音频播放器（已禁用） -->
-<!--          <div class="audio-section">-->
-<!--            <div class="audio-controls">-->
-<!--              <button-->
-<!--                class="audio-btn play-btn"-->
-<!--                :class="{ playing: isPlaying }"-->
-<!--                @click="toggleAudioPlay"-->
-<!--                :disabled="!audioUrl"-->
-<!--              >-->
-<!--                {{ isPlaying ? '⏸' : '▶️' }}-->
-<!--              </button>-->
-<!--              <div class="audio-info">-->
-<!--                <div class="audio-progress">-->
-<!--                  <input-->
-<!--                    type="range"-->
-<!--                    min="0"-->
-<!--                    max="100"-->
-<!--                    :value="audioProgress"-->
-<!--                    @input="seekAudio"-->
-<!--                    class="progress-slider"-->
-<!--                  />-->
-<!--                </div>-->
-<!--                <div class="audio-time">-->
-<!--                  {{ formatTime(currentTime) }} / {{ formatTime(duration) }}-->
-<!--                </div>-->
-<!--              </div>-->
-<!--            </div>-->
-<!--            <audio-->
-<!--              ref="audioRef"-->
-<!--              :src="audioUrl"-->
-<!--              @timeupdate="onTimeUpdate"-->
-<!--              @loadedmetadata="onLoadedMetadata"-->
-<!--              @ended="onEnded"-->
-<!--              style="display: none;"-->
-<!--            ></audio>-->
-<!--            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || !currentContent">-->
-<!--              {{ isGeneratingTTS ? '生成中...' : '🔊 生成语音' }}-->
-<!--            </button>-->
-<!--          </div>-->
+          <!-- 音频预览区 -->
+          <div class="audio-section">
+            <div class="audio-controls">
+              <button
+                class="audio-btn play-btn"
+                :class="{ playing: isPlaying }"
+                @click="toggleAudioPlay"
+                :disabled="!audioUrl"
+              >
+                {{ isPlaying ? '⏸' : '▶️' }}
+              </button>
+              <div class="audio-info">
+                <div class="audio-progress">
+                  <input
+                    type="range"
+                    min="0"
+                    max="100"
+                    :value="audioProgress"
+                    @input="seekAudio"
+                    class="progress-slider"
+                  />
+                </div>
+                <div class="audio-time">
+                  {{ formatTime(currentTime) }} / {{ formatTime(duration) }}
+                </div>
+              </div>
+            </div>
+            <audio
+              ref="audioRef"
+              :src="audioUrl"
+              @timeupdate="onTimeUpdate"
+              @loadedmetadata="onLoadedMetadata"
+              @ended="onEnded"
+              style="display: none;"
+            ></audio>
+            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || !currentContent">
+              {{ isGeneratingTTS ? '生成中...' : '🔊 预览语音' }}
+            </button>
+          </div>
+        </div>
+
+        <!-- 素材与音色选择 -->
+        <div v-if="currentNode" class="asset-selector-section">
+          <div class="section-label">素材与音色设置</div>
+          <div class="asset-selector-grid">
+            <div class="asset-selector-item">
+              <label>人脸视频</label>
+              <select v-model="nodeAssetFaceVideo" class="asset-select">
+                <option value="">使用默认</option>
+                <option v-for="a in faceVideoOptions" :key="a.id" :value="a.id">
+                  {{ a.file_name }}{{ a.is_default ? ' (默认)' : '' }}
+                </option>
+              </select>
+            </div>
+            <div class="asset-selector-item">
+              <label>参考音频</label>
+              <select v-model="nodeAssetRefAudio" class="asset-select">
+                <option value="">使用默认</option>
+                <option v-for="a in refAudioOptions" :key="a.id" :value="a.id">
+                  {{ a.file_name }}{{ a.is_default ? ' (默认)' : '' }}
+                </option>
+              </select>
+            </div>
+            <div class="asset-selector-item">
+              <label>语音音色</label>
+              <select v-model="nodeVoice" class="asset-select">
+                <option value="">使用默认</option>
+                <option value="zh_female_shuangkuaisisi_moon_bigtts">女声-爽快思思</option>
+                <option value="zh_male_chunhou_zhiboshuangkuai">男声-醇厚主播</option>
+              </select>
+            </div>
+          </div>
         </div>
 
         <!-- 底部操作按钮 -->
@@ -242,6 +275,13 @@
           </button>
           <button
             v-if="courseId"
+            class="action-btn version-btn"
+            @click="showVersionPanel = !showVersionPanel"
+          >
+            📋 版本管理
+          </button>
+          <button
+            v-if="courseId"
             class="action-btn"
             :class="{ 'publish-btn': !isPublished, 'unpublish-btn': isPublished }"
             @click="togglePublishCourse"
@@ -249,6 +289,50 @@
           >
             {{ isPublishing ? '处理中...' : (isPublished ? '📢 已发布' : '🚀 发布课程') }}
           </button>
+        </div>
+
+        <!-- 版本管理面板 -->
+        <div v-if="showVersionPanel && courseId" class="version-panel">
+          <div class="version-header">
+            <span>📋 脚本版本管理</span>
+            <button class="version-close" @click="showVersionPanel = false">✕</button>
+          </div>
+          <div class="version-actions">
+            <input
+              v-model="newVersionName"
+              type="text"
+              class="version-input"
+              placeholder="版本名称（可选）"
+            />
+            <button class="action-btn primary" @click="handleCreateSnapshot" :disabled="isCreatingSnapshot">
+              {{ isCreatingSnapshot ? '创建中...' : '📸 创建快照' }}
+            </button>
+          </div>
+          <div v-if="versionList.length === 0" class="version-empty">暂无版本记录</div>
+          <div v-else class="version-list">
+            <div
+              v-for="v in versionList"
+              :key="v.id"
+              class="version-item"
+              :class="{ active: v.is_active }"
+            >
+              <div class="version-info">
+                <span class="version-tag">v{{ v.version }}</span>
+                <span class="version-name">{{ v.version_name || '未命名' }}</span>
+                <span v-if="v.is_active" class="version-badge">当前</span>
+              </div>
+              <div class="version-meta">
+                {{ v.node_count }}个节点 · {{ formatVersionTime(v.created_at) }}
+              </div>
+              <button
+                v-if="!v.is_active"
+                class="action-btn rollback-btn"
+                @click="handleRollback(v.id, v.version)"
+              >
+                回滚
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- 学生统计面板（已禁用） -->
@@ -357,6 +441,8 @@ import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 import MappingEditor from '@/components/profile/LoginIn/courses/MappingEditor.vue'
 import PPTGenerationDialog from '@/components/profile/LoginIn/courses/PPTGenerationDialog.vue'
+import { getAssetList } from '@/api/asset.js'
+import { createScriptSnapshot, getScriptVersions, rollbackScriptVersion, saveCourseNodes } from '@/api/script_editor.js'
 
 const counter = useCounterStore()
 const router = useRouter()
@@ -404,6 +490,9 @@ const loadExistingCourse = async (id) => {
           level: node.level || 0,
           path: node.path || '',
           has_content: !!node.content,
+          page_start: node.page_start || 1,
+          page_end: node.page_end || 1,
+          extra_data: node.extra_data || {},
         }))
       }
 
@@ -447,6 +536,7 @@ onMounted(() => {
   if (routeCourseId) {
     loadExistingCourse(routeCourseId)
   }
+  loadTeacherAssets()
 })
 
 // 发布课程相关
@@ -482,6 +572,19 @@ const showMappingEditor = ref(false)
 
 // AI生成PPT
 const showPPTGeneration = ref(false)
+
+// 素材选择器
+const faceVideoOptions = ref([])
+const refAudioOptions = ref([])
+const nodeAssetFaceVideo = ref('')
+const nodeAssetRefAudio = ref('')
+const nodeVoice = ref('')
+
+// 版本管理
+const showVersionPanel = ref(false)
+const versionList = ref([])
+const newVersionName = ref('')
+const isCreatingSnapshot = ref(false)
 
 // PPT生成完成后的回调
 const handlePPTGenerated = (data) => {
@@ -903,21 +1006,63 @@ watch(editContent, (newVal) => {
 })
 
 // 保存当前节点修改
-const saveCurrentNode = () => {
+const saveCurrentNode = async () => {
   if (currentNode.value && editContent.value) {
     knowledgeTree.value[currentNodeIndex.value].content = editContent.value
+    // 更新素材选择到extra_data
+    const extraData = currentNode.value.extra_data || {}
+    if (nodeAssetFaceVideo.value) extraData.face_video_asset_id = nodeAssetFaceVideo.value
+    else delete extraData.face_video_asset_id
+    if (nodeAssetRefAudio.value) extraData.ref_audio_asset_id = nodeAssetRefAudio.value
+    else delete extraData.ref_audio_asset_id
+    if (nodeVoice.value) extraData.voice = nodeVoice.value
+    else delete extraData.voice
+    knowledgeTree.value[currentNodeIndex.value].extra_data = extraData
     hasChanges.value = false
     isEditMode.value = false
-    showToast('当前章节已保存', 'success')
+    // 持久化到后端
+    if (courseId.value && currentNode.value.id) {
+      try {
+        await saveCourseNodes(courseId.value, [{
+          id: currentNode.value.id,
+          content: editContent.value,
+          extra_data: extraData,
+        }])
+        showToast('当前章节已保存', 'success')
+      } catch (e) {
+        showToast('保存到服务器失败', 'error')
+      }
+    } else {
+      showToast('当前章节已保存', 'success')
+    }
   }
 }
 
 // 保存所有节点
-const saveAllNodes = () => {
+const saveAllNodes = async () => {
   if (isEditMode.value) {
     saveCurrentNode()
+    return
   }
-  showToast('所有修改已保存到本地', 'success')
+  // 批量保存所有节点到后端
+  if (courseId.value) {
+    try {
+      const nodes = knowledgeTree.value.map(n => ({
+        id: n.id,
+        title: n.title,
+        content: n.content,
+        page_start: n.page_start,
+        page_end: n.page_end,
+        extra_data: n.extra_data,
+      }))
+      await saveCourseNodes(courseId.value, nodes)
+      showToast('所有修改已保存', 'success')
+    } catch (e) {
+      showToast('保存到服务器失败', 'error')
+    }
+  } else {
+    showToast('所有修改已保存到本地', 'success')
+  }
 }
 
 // ==================== 音频功能 ====================
@@ -1002,8 +1147,12 @@ const generateTTS = async () => {
   try {
     // 调用后端TTS API
     const formData = new FormData()
-    formData.append('text', currentContent.value.substring(0, 500)) // 限制文本长度
+    formData.append('text', currentContent.value)
     formData.append('output_format', 'mp3')
+    // 使用节点级别选择的音色
+    if (nodeVoice.value) {
+      formData.append('voice', nodeVoice.value)
+    }
 
     const blob = await request({
       url: '/document/tts/synthesize',
@@ -1023,6 +1172,91 @@ const generateTTS = async () => {
   } finally {
     isGeneratingTTS.value = false
   }
+}
+
+// ==================== 素材与版本管理功能 ====================
+
+// 加载老师素材列表
+const loadTeacherAssets = async () => {
+  try {
+    const res = await getAssetList()
+    const assets = res.data?.data || res.data || []
+    faceVideoOptions.value = assets.filter(a => a.asset_type === 'face_video')
+    refAudioOptions.value = assets.filter(a => a.asset_type === 'ref_audio')
+  } catch (e) {
+    // 静默失败，素材选择器显示空列表
+  }
+}
+
+// 监听当前节点变化，同步素材选择
+watch(currentNode, (node) => {
+  if (node?.extra_data) {
+    nodeAssetFaceVideo.value = node.extra_data.face_video_asset_id || ''
+    nodeAssetRefAudio.value = node.extra_data.ref_audio_asset_id || ''
+    nodeVoice.value = node.extra_data.voice || ''
+  } else {
+    nodeAssetFaceVideo.value = ''
+    nodeAssetRefAudio.value = ''
+    nodeVoice.value = ''
+  }
+})
+
+// 加载版本列表
+const loadVersionList = async () => {
+  if (!courseId.value) return
+  try {
+    const res = await getScriptVersions(courseId.value)
+    versionList.value = res.data?.data || res.data || []
+  } catch (e) {
+    versionList.value = []
+  }
+}
+
+// 监听版本面板显示
+watch(showVersionPanel, (val) => {
+  if (val) loadVersionList()
+})
+
+// 创建版本快照
+const handleCreateSnapshot = async () => {
+  if (!courseId.value) return
+  isCreatingSnapshot.value = true
+  try {
+    // 先保存当前修改
+    if (hasChanges.value) {
+      await saveAllNodes()
+    }
+    await createScriptSnapshot(courseId.value, newVersionName.value || undefined)
+    newVersionName.value = ''
+    showToast('版本快照已创建', 'success')
+    await loadVersionList()
+  } catch (e) {
+    showToast('创建快照失败', 'error')
+  } finally {
+    isCreatingSnapshot.value = false
+  }
+}
+
+// 回滚到指定版本
+const handleRollback = async (scriptId, version) => {
+  if (!confirm(`确定要回滚到 v${version} 吗？当前未保存的修改将丢失。`)) return
+  try {
+    await rollbackScriptVersion(courseId.value, scriptId)
+    showToast(`已回滚到 v${version}，正在重新加载...`, 'success')
+    // 重新加载课程数据
+    setTimeout(() => {
+      window.location.href = `/teacher?courseId=${courseId.value}`
+    }, 1000)
+  } catch (e) {
+    showToast('回滚失败', 'error')
+  }
+}
+
+// 格式化版本时间
+const formatVersionTime = (isoStr) => {
+  if (!isoStr) return ''
+  const d = new Date(isoStr)
+  return `${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`
 }
 
 // ==================== 发布课程功能 ====================
@@ -1851,6 +2085,190 @@ const loadStudentsList = async () => {
 .audio-btn.primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+/* 素材与音色选择 */
+.asset-selector-section {
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+}
+
+.section-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 12px;
+}
+
+.asset-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.asset-selector-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-selector-item label {
+  font-size: 12px;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.asset-select {
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  color: #374151;
+  background: white;
+  cursor: pointer;
+  outline: none;
+}
+
+.asset-select:focus {
+  border-color: #6366f1;
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.15);
+}
+
+/* 版本管理面板 */
+.version-panel {
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  border: 1px solid #e5e7eb;
+  margin-top: 12px;
+}
+
+.version-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.version-close {
+  background: none;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: #9ca3af;
+  padding: 4px;
+}
+
+.version-close:hover {
+  color: #374151;
+}
+
+.version-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.version-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 13px;
+  outline: none;
+}
+
+.version-input:focus {
+  border-color: #6366f1;
+}
+
+.version-empty {
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+  padding: 16px;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.version-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  background: white;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  transition: all 0.2s;
+}
+
+.version-item.active {
+  border-color: #6366f1;
+  background: #f0f0ff;
+}
+
+.version-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+}
+
+.version-tag {
+  background: #6366f1;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.version-name {
+  font-size: 13px;
+  color: #374151;
+}
+
+.version-badge {
+  background: #10b981;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.version-meta {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.rollback-btn {
+  padding: 4px 12px !important;
+  font-size: 12px !important;
+  background: #f59e0b !important;
+  color: white !important;
+  border-color: transparent !important;
+}
+
+.rollback-btn:hover {
+  background: #d97706 !important;
+}
+
+.version-btn {
+  background: #8b5cf6 !important;
+  color: white !important;
+  border-color: transparent !important;
+}
+
+.version-btn:hover {
+  background: #7c3aed !important;
 }
 
 /* 底部操作按钮 */

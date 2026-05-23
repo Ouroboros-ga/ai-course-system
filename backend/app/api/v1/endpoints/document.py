@@ -521,6 +521,12 @@ async def save_course_nodes(
                         node.title = node_data["title"]
                     if "content" in node_data:
                         node.content = node_data["content"]
+                    if "page_start" in node_data:
+                        node.page_start = node_data["page_start"]
+                    if "page_end" in node_data:
+                        node.page_end = node_data["page_end"]
+                    if "extra_data" in node_data:
+                        node.extra_data = node_data["extra_data"]
                     session.add(node)
                     updated_count += 1
 
@@ -596,6 +602,7 @@ async def get_course_detail(
                     "page_end": n.page_end,
                     "duration": n.duration,
                     "is_key_point": n.is_key_point,
+                    "extra_data": n.extra_data,
                 }
                 for n in nodes
             ],
@@ -794,12 +801,13 @@ async def synthesize_speech(
     output_format: Optional[str] = File("mp3", description="输出格式"),
 ):
     """
-    语音合成接口
+    语音合成接口（支持长文本，自动分段合成）
     
-    将文本转换为语音，返回音频文件
+    将文本转换为语音，返回音频文件。
+    长文本（>2000字）会自动分段合成后拼接。
     
     参数:
-    - text: 要合成的文本
+    - text: 要合成的文本（支持长文本）
     - voice: 音色（可选，默认使用配置中的音色）
     - sample_rate: 采样率（可选，默认16000）
     - output_format: 输出格式（可选，默认mp3）
@@ -808,16 +816,52 @@ async def synthesize_speech(
     - 音频文件（二进制数据）
     """
     try:
-        print(f"[TTS] 开始合成语音: {text[:50]}...")
+        text_length = len(text)
+        print(f"[TTS] 开始合成语音: 文本长度={text_length}字, 前50字: {text[:50]}...")
         
-        response = await tts_client.synthesize(
-            text=text,
-            voice=voice,
-            sample_rate=sample_rate,
-            output_format=output_format
-        )
+        # 长文本分段处理（每段不超过2000字，按句号分割）
+        MAX_SEGMENT_LENGTH = 2000
+        if text_length <= MAX_SEGMENT_LENGTH:
+            response = await tts_client.synthesize(
+                text=text,
+                voice=voice,
+                sample_rate=sample_rate,
+                output_format=output_format
+            )
+            audio_data = response.audio_data
+            total_latency = response.latency_ms
+        else:
+            # 按句号分段
+            segments = []
+            current_segment = ""
+            for sentence in text.replace("。", "。\n").replace("！", "！\n").replace("？", "？\n").replace("；", "；\n").split("\n"):
+                if len(current_segment) + len(sentence) > MAX_SEGMENT_LENGTH and current_segment:
+                    segments.append(current_segment.strip())
+                    current_segment = sentence
+                else:
+                    current_segment += sentence
+            if current_segment.strip():
+                segments.append(current_segment.strip())
+            
+            print(f"[TTS] 长文本分段: {len(segments)}段")
+            
+            # 逐段合成
+            audio_parts = []
+            total_latency = 0
+            for i, seg in enumerate(segments):
+                seg_response = await tts_client.synthesize(
+                    text=seg,
+                    voice=voice,
+                    sample_rate=sample_rate,
+                    output_format=output_format
+                )
+                audio_parts.append(seg_response.audio_data)
+                total_latency += seg_response.latency_ms
+                print(f"[TTS] 段{i+1}/{len(segments)}完成, {len(seg_response.audio_data)}字节")
+            
+            audio_data = b"".join(audio_parts)
         
-        print(f"[TTS] 合成成功，音频大小: {len(response.audio_data)} 字节")
+        print(f"[TTS] 合成成功，音频大小: {len(audio_data)} 字节")
         
         content_type_map = {
             "mp3": "audio/mpeg",
@@ -828,11 +872,11 @@ async def synthesize_speech(
         content_type = content_type_map.get(output_format.lower(), "audio/mpeg")
         
         return Response(
-            content=response.audio_data,
+            content=audio_data,
             media_type=content_type,
             headers={
                 "Content-Disposition": f"attachment; filename=speech.{output_format}",
-                "X-Latency-Ms": str(response.latency_ms),
+                "X-Latency-Ms": str(total_latency),
             }
         )
         
@@ -841,6 +885,192 @@ async def synthesize_speech(
         error_detail = traceback.format_exc()
         print(f"[TTS] 错误详情:\n{error_detail}")
         raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
+
+
+# ==================== 脚本版本管理接口 ====================
+
+import copy
+
+
+@router.post("/course/{course_id}/script/snapshot")
+async def create_script_snapshot(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(teacher_only),
+):
+    """
+    创建脚本版本快照
+    
+    将当前激活脚本的所有节点保存为新版本。
+    请求体: { "version_name": "可选版本名称" }
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, message="课程不存在", data=None)
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权操作此课程", data=None)
+
+        # 获取当前激活脚本
+        active_script = session.exec(
+            select(CourseScript).where(
+                CourseScript.course_id == course_id,
+                CourseScript.is_active == True,
+            )
+        ).first()
+        if not active_script:
+            return unified_response(code=404, message="未找到激活脚本", data=None)
+
+        # 获取当前所有节点
+        current_nodes = session.exec(
+            select(ScriptNode).where(ScriptNode.script_id == active_script.id).order_by(ScriptNode.node_index)
+        ).all()
+
+        body = await request.json() if request else {}
+        version_name = body.get("version_name", f"v{active_script.version + 1} 快照")
+
+        # 创建新脚本版本（深拷贝script_content）
+        new_script = CourseScript(
+            course_id=course_id,
+            version=active_script.version + 1,
+            version_name=version_name,
+            script_content=copy.deepcopy(active_script.script_content),
+            summary_text=active_script.summary_text,
+            keywords=active_script.keywords,
+            is_active=True,
+            created_by=user_id,
+        )
+        # 旧版本设为非激活
+        active_script.is_active = False
+        session.add(active_script)
+        session.add(new_script)
+        session.flush()  # 获取new_script.id
+
+        # 拷贝所有节点到新脚本
+        for node in current_nodes:
+            new_node = ScriptNode(
+                script_id=new_script.id,
+                chapter_id=node.chapter_id,
+                node_index=node.node_index,
+                node_type=node.node_type,
+                title=node.title,
+                content=node.content,
+                page_start=node.page_start,
+                page_end=node.page_end,
+                timestamp_start=node.timestamp_start,
+                timestamp_end=node.timestamp_end,
+                duration=node.duration,
+                is_key_point=node.is_key_point,
+                extra_data=copy.deepcopy(node.extra_data) if node.extra_data else None,
+            )
+            session.add(new_node)
+
+        session.commit()
+        session.refresh(new_script)
+
+        return unified_response(
+            code=200,
+            message=f"已创建版本快照: {version_name}",
+            data={
+                "version": new_script.version,
+                "version_name": new_script.version_name,
+                "script_id": new_script.id,
+                "node_count": len(current_nodes),
+            },
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"创建快照失败: {str(e)}", data=None)
+
+
+@router.get("/course/{course_id}/script/versions")
+async def get_script_versions(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取脚本版本列表
+    """
+    try:
+        scripts = session.exec(
+            select(CourseScript)
+            .where(CourseScript.course_id == course_id)
+            .order_by(CourseScript.version.desc())
+        ).all()
+
+        versions = []
+        for s in scripts:
+            node_count = len(session.exec(
+                select(ScriptNode).where(ScriptNode.script_id == s.id)
+            ).all())
+            versions.append({
+                "id": s.id,
+                "version": s.version,
+                "version_name": s.version_name,
+                "is_active": s.is_active,
+                "node_count": node_count,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            })
+
+        return unified_response(code=200, message="获取版本列表成功", data=versions)
+
+    except Exception as e:
+        return unified_response(code=500, message=f"获取版本列表失败: {str(e)}", data=None)
+
+
+@router.post("/course/{course_id}/script/rollback/{script_id}")
+async def rollback_script_version(
+    course_id: int,
+    script_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(teacher_only),
+):
+    """
+    回滚到指定脚本版本
+    
+    将指定版本设为激活，当前激活版本设为非激活。
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, message="课程不存在", data=None)
+        if course.teacher_id != user_id:
+            return unified_response(code=403, message="无权操作此课程", data=None)
+
+        target_script = session.get(CourseScript, script_id)
+        if not target_script or target_script.course_id != course_id:
+            return unified_response(code=404, message="目标版本不存在", data=None)
+
+        # 取消当前激活版本
+        current_active = session.exec(
+            select(CourseScript).where(
+                CourseScript.course_id == course_id,
+                CourseScript.is_active == True,
+            )
+        ).first()
+        if current_active:
+            current_active.is_active = False
+            session.add(current_active)
+
+        # 激活目标版本
+        target_script.is_active = True
+        session.add(target_script)
+        session.commit()
+
+        return unified_response(
+            code=200,
+            message=f"已回滚到版本 v{target_script.version}",
+            data={"version": target_script.version, "version_name": target_script.version_name},
+        )
+
+    except Exception as e:
+        return unified_response(code=500, message=f"回滚失败: {str(e)}", data=None)
 
 
 # ==================== 课程发布与选课管理接口 ====================
