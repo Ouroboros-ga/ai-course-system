@@ -321,3 +321,64 @@ Docling（结构感知，保留层级）→ python-pptx（基础提取，逐页�
 - 签名校验中间件（`SignatureMiddleware`）
 - 角色权限控制（教师/学生/管理员）
 - 文件名路径遍历防护（`os.path.basename`）
+
+---
+
+## 变更日志
+
+### 2026-05-22: 教师历史页面优化 + 学生端问答越界修复
+
+#### 一、教师历史页面优化 (`/teacher/history`)
+
+**新增功能**：
+
+1. **学习进度分布饼状图** — 使用 `chart.js` + `vue-chartjs`，在学生状态面板中展示进度分布的 Pie 图（未开始/初学/进阶/熟练/完成），与条形图并列展示
+2. **各知识点完成率环形图** — 使用 Doughnut 图展示每个课程节点的完成率，下方附带节点进度条列表（含节点类型图标、重点标记、完成率百分比）
+3. **后端 `/stats` API 增强** — 新增 `node_progress` 字段，返回每个课程节点的完成人数、完成率、平均理解度
+
+**Bug 修复**：
+
+1. **`progressLabels` 遍历错误** — 原代码返回 `[{label, count}]` 数组但模板用 `v-for="(count, label)"` 对象解构遍历，导致 `count` 为对象、`label` 为索引。修复为 `v-for="item in progressLabels"` + `item.label`/`item.count`
+2. **CSS 类名冲突** — 页面级统计和面板内统计共用 `.stats-overview`/`.stat-card` 等类名导致样式覆盖。修复为独立命名：`.page-stats-overview`/`.panel-stats-overview`
+3. **`totalStudents: -1` 异常值** — API 失败时设置 `totalStudents: -1`，修复为 `0`
+4. **`unknown` 理解度等级无样式** — 新增 `.level-unknown` 样式类
+5. **条形图 CSS 类名使用中文** — `dist-未开始` 改为 `dist-not_started`，避免编码问题
+
+**新增依赖**：
+
+- `chart.js` (^4.x)
+- `vue-chartjs` (^5.x)
+
+**新增 API 字段** (`GET /document/course/{course_id}/stats`)：
+
+```json
+{
+  "node_progress": [
+    {
+      "node_id": 1,
+      "node_index": 0,
+      "title": "频域响应法概述",
+      "node_type": "lecture",
+      "is_key_point": true,
+      "completed_count": 5,
+      "total_students": 10,
+      "completion_rate": 50.0,
+      "avg_understanding": 72.5,
+      "accessed_count": 8
+    }
+  ]
+}
+```
+
+#### 二、学生端知识点问答越界修复 (`StudentDashboard.vue`)
+
+**问题**：用户在知识点 A 问答进行中快速跳转到知识点 B，A 的 API 响应延迟到达后被推入 B 的聊天窗口。
+
+**修复**：
+
+1. **per-node 聊天历史隔离** — 新增 `nodeChatHistory` 字典，跳转时保存/恢复每个节点的聊天历史
+2. **竞态条件防护** — `streamCurrentNode`/`generateQAForNode`/`sendMessage` 中添加节点索引快照，API 响应到达时检查当前节点是否已切换
+3. **`currentNodeId` 传参修复** — `generateQAForNode` 中 `currentNodeId: null` 改为 `currentNodeId: node.id`
+4. **后端 `current_node` 传参修复** — `/chat/ask` 接口将 `currentNodeId` 对应的节点信息传入 `qa_service.ask_question_with_rag()` 的 `current_node` 参数
+
+**测试**：14 个单元测试全部通过 (`tests/test_teacher_history.py`)

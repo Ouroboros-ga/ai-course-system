@@ -10,26 +10,26 @@
       </div>
 
       <!-- 统计概览 -->
-      <div class="stats-overview">
-        <div class="stat-card">
-          <div class="stat-icon">📚</div>
-          <div class="stat-info">
-            <div class="stat-number">{{ stats.courseCount }}</div>
-            <div class="stat-label">智课数量</div>
+      <div class="page-stats-overview">
+        <div class="page-stat-card">
+          <div class="page-stat-icon">📚</div>
+          <div class="page-stat-info">
+            <div class="page-stat-number">{{ stats.courseCount }}</div>
+            <div class="page-stat-label">智课数量</div>
           </div>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon">👥</div>
-          <div class="stat-info">
-            <div class="stat-number">{{ stats.studentCount }}</div>
-            <div class="stat-label">学生人数</div>
+        <div class="page-stat-card">
+          <div class="page-stat-icon">👥</div>
+          <div class="page-stat-info">
+            <div class="page-stat-number">{{ stats.studentCount }}</div>
+            <div class="page-stat-label">学生人数</div>
           </div>
         </div>
-        <div class="stat-card">
-          <div class="stat-icon">📢</div>
-          <div class="stat-info">
-            <div class="stat-number">{{ publishedCount }}</div>
-            <div class="stat-label">已发布课程</div>
+        <div class="page-stat-card">
+          <div class="page-stat-icon">📢</div>
+          <div class="page-stat-info">
+            <div class="page-stat-number">{{ publishedCount }}</div>
+            <div class="page-stat-label">已发布课程</div>
           </div>
         </div>
       </div>
@@ -76,15 +76,14 @@
                 <span class="meta-item">👥 {{ course.student_count || 0 }} 名学生</span>
               </div>
 
-              <!-- 快速统计 -->
               <div v-if="course.stats" class="quick-stats">
-                <div class="stat-item">
-                  <span class="stat-label">平均进度</span>
-                  <span class="stat-value">{{ course.stats.avg_progress || 0 }}%</span>
+                <div class="quick-stat-item">
+                  <span class="quick-stat-label">平均进度</span>
+                  <span class="quick-stat-value">{{ course.stats.avg_progress || 0 }}%</span>
                 </div>
-                <div class="stat-item">
-                  <span class="stat-label">平均理解度</span>
-                  <span class="stat-value">{{ course.stats.avg_understanding || 0 }}%</span>
+                <div class="quick-stat-item">
+                  <span class="quick-stat-label">平均理解度</span>
+                  <span class="quick-stat-value">{{ course.stats.avg_understanding || 0 }}%</span>
                 </div>
               </div>
             </div>
@@ -145,39 +144,77 @@
 
         <div v-else class="students-content">
           <!-- 统计概览 -->
-          <div class="stats-overview">
-            <div class="stat-card">
-              <div class="stat-number">{{ courseStats.totalStudents || 0 }}</div>
-              <div class="stat-label">选课人数</div>
+          <div class="panel-stats-overview">
+            <div class="panel-stat-card">
+              <div class="panel-stat-number">{{ courseStats.totalStudents || 0 }}</div>
+              <div class="panel-stat-label">选课人数</div>
             </div>
-            <div class="stat-card">
-              <div class="stat-number">{{ courseStats.avgProgress || 0 }}%</div>
-              <div class="stat-label">平均进度</div>
+            <div class="panel-stat-card">
+              <div class="panel-stat-number">{{ courseStats.avgProgress || 0 }}%</div>
+              <div class="panel-stat-label">平均进度</div>
             </div>
-            <div class="stat-card">
-              <div class="stat-number">{{ courseStats.avgUnderstanding || 0 }}%</div>
-              <div class="stat-label">平均理解度</div>
+            <div class="panel-stat-card">
+              <div class="panel-stat-number">{{ courseStats.avgUnderstanding || 0 }}%</div>
+              <div class="panel-stat-label">平均理解度</div>
             </div>
-            <div class="stat-card">
-              <div class="stat-number">{{ courseStats.totalStudyHours || 0 }}h</div>
-              <div class="stat-label">总学习时长</div>
+            <div class="panel-stat-card">
+              <div class="panel-stat-number">{{ courseStats.totalStudyHours || 0 }}h</div>
+              <div class="panel-stat-label">总学习时长</div>
             </div>
           </div>
 
-          <!-- 进度分布 -->
+          <!-- 进度分布（饼状图 + 条形图） -->
           <div v-if="courseStats.progressDistribution" class="progress-distribution">
-            <h4>进度分布</h4>
-            <div class="dist-list">
-              <div v-for="(count, label) in progressLabels" :key="label" class="dist-item">
-                <span class="dist-label">{{ label }}</span>
-                <div class="dist-bar-bg">
-                  <div
-                    class="dist-bar-fill"
-                    :style="{ width: getDistPercent(count) + '%' }"
-                    :class="'dist-' + label"
-                  ></div>
+            <h4>📊 学习进度分布</h4>
+            <div class="chart-row">
+              <div class="pie-chart-container">
+                <Pie :data="pieChartData" :options="pieChartOptions" />
+              </div>
+              <div class="dist-list">
+                <div v-for="item in progressLabels" :key="item.label" class="dist-item">
+                  <span class="dist-color-dot" :class="'dot-' + item.key"></span>
+                  <span class="dist-label">{{ item.label }}</span>
+                  <div class="dist-bar-bg">
+                    <div
+                      class="dist-bar-fill"
+                      :style="{ width: getDistPercent(item.count) + '%' }"
+                      :class="'dist-' + item.key"
+                    ></div>
+                  </div>
+                  <span class="dist-count">{{ item.count }}人</span>
                 </div>
-                <span class="dist-count">{{ count }}人</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 按节点的学习进度饼状图 -->
+          <div v-if="nodeProgressData.length > 0" class="node-progress-section">
+            <h4>📖 各知识点完成率</h4>
+            <div class="node-chart-container">
+              <Doughnut :data="nodeChartData" :options="nodeChartOptions" />
+            </div>
+            <div class="node-progress-list">
+              <div
+                v-for="node in nodeProgressData"
+                :key="node.node_id"
+                class="node-progress-item"
+              >
+                <div class="node-info-row">
+                  <span class="node-type-icon">{{ getNodeTypeIcon(node.node_type) }}</span>
+                  <span class="node-title-text" :title="node.title">{{ node.title }}</span>
+                  <span v-if="node.is_key_point" class="key-point-badge">重点</span>
+                </div>
+                <div class="node-progress-bar-row">
+                  <div class="node-progress-bar-bg">
+                    <div
+                      class="node-progress-bar-fill"
+                      :style="{ width: node.completion_rate + '%' }"
+                      :class="getNodeProgressClass(node.completion_rate)"
+                    ></div>
+                  </div>
+                  <span class="node-progress-text">{{ node.completion_rate }}%</span>
+                  <span class="node-completed-count">{{ node.completed_count }}/{{ node.total_students }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -227,13 +264,22 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { Pie, Doughnut } from 'vue-chartjs'
+import {
+  Chart as ChartJS,
+  ArcElement,
+  Tooltip,
+  Legend,
+  CategoryScale,
+} from 'chart.js'
 import api from '@/api/index.js'
 import request from '@/utils/request.js'
 import { showToast } from '@/utils/toast'
 
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale)
+
 const router = useRouter()
 
-// 状态变量
 const courses = ref([])
 const isLoading = ref(true)
 const selectedCourse = ref(null)
@@ -252,7 +298,6 @@ const publishedCount = computed(() => {
   return courses.value.filter(c => c.status === 'published').length
 })
 
-// 学生数据
 const students = ref([])
 const isLoadingStudents = ref(false)
 const courseStats = ref({
@@ -263,19 +308,116 @@ const courseStats = ref({
   progressDistribution: null,
 })
 
-// 计算属性
+const nodeProgressData = ref([])
+
+const PROGRESS_COLORS = {
+  not_started: '#d1d5db',
+  beginner: '#93c5fd',
+  intermediate: '#a78bfa',
+  advanced: '#86efac',
+  completed: '#34d399',
+}
+
 const progressLabels = computed(() => {
   const dist = courseStats.value.progressDistribution || {}
   return [
-    { label: '未开始', count: dist.not_started || 0 },
-    { label: '初学', count: dist.beginner || 0 },
-    { label: '进阶', count: dist.intermediate || 0 },
-    { label: '熟练', count: dist.advanced || 0 },
-    { label: '完成', count: dist.completed || 0 },
+    { key: 'not_started', label: '未开始', count: dist.not_started || 0 },
+    { key: 'beginner', label: '初学', count: dist.beginner || 0 },
+    { key: 'intermediate', label: '进阶', count: dist.intermediate || 0 },
+    { key: 'advanced', label: '熟练', count: dist.advanced || 0 },
+    { key: 'completed', label: '完成', count: dist.completed || 0 },
   ]
 })
 
-// 方法
+const pieChartData = computed(() => ({
+  labels: progressLabels.value.map(i => i.label),
+  datasets: [{
+    data: progressLabels.value.map(i => i.count),
+    backgroundColor: progressLabels.value.map(i => PROGRESS_COLORS[i.key]),
+    borderWidth: 2,
+    borderColor: '#ffffff',
+  }],
+}))
+
+const pieChartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: true,
+  plugins: {
+    legend: {
+      position: 'bottom',
+      labels: {
+        padding: 12,
+        usePointStyle: true,
+        font: { size: 12 },
+      },
+    },
+    tooltip: {
+      callbacks: {
+        label(ctx) {
+          const total = ctx.dataset.data.reduce((a, b) => a + b, 0)
+          const pct = total > 0 ? Math.round(ctx.parsed / total * 100) : 0
+          return `${ctx.label}: ${ctx.parsed}人 (${pct}%)`
+        },
+      },
+    },
+  },
+}))
+
+const nodeChartData = computed(() => {
+  const nodes = nodeProgressData.value
+  if (nodes.length === 0) return { labels: [], datasets: [] }
+
+  const completedCounts = nodes.map(n => n.completed_count)
+  const remainingCounts = nodes.map(n => n.total_students - n.completed_count)
+
+  return {
+    labels: nodes.map(n => n.title),
+    datasets: [
+      {
+        label: '已完成',
+        data: completedCounts,
+        backgroundColor: '#34d399',
+        borderWidth: 1,
+        borderColor: '#ffffff',
+      },
+      {
+        label: '未完成',
+        data: remainingCounts,
+        backgroundColor: '#e5e7eb',
+        borderWidth: 1,
+        borderColor: '#ffffff',
+      },
+    ],
+  }
+})
+
+const nodeChartOptions = computed(() => ({
+  responsive: true,
+  maintainAspectRatio: true,
+  plugins: {
+    legend: {
+      position: 'bottom',
+      labels: {
+        padding: 12,
+        usePointStyle: true,
+        font: { size: 12 },
+      },
+    },
+    tooltip: {
+      callbacks: {
+        label(ctx) {
+          const node = nodeProgressData.value[ctx.dataIndex]
+          if (!node) return ''
+          if (ctx.datasetIndex === 0) {
+            return `已完成: ${node.completed_count}人 (${node.completion_rate}%)`
+          }
+          return `未完成: ${node.total_students - node.completed_count}人`
+        },
+      },
+    },
+  },
+}))
+
 function getStatusLabel(status) {
   const map = { published: '已发布', draft: '草稿', archived: '已归档' }
   return map[status] || status
@@ -313,11 +455,25 @@ function getProgressClass(progress) {
 }
 
 function getLevelLabel(level) {
-  const labels = { excellent: '优秀', high: '良好', medium: '一般', low: '需加强' }
+  const labels = { excellent: '优秀', high: '良好', medium: '一般', low: '需加强', unknown: '未知' }
   return labels[level] || level
 }
 
-// 加载课程列表
+function getNodeTypeIcon(type) {
+  const icons = {
+    lecture: '📖', question: '❓', breakpoint: '🔖',
+    summary: '📋', video: '🎬', interactive: '💬',
+  }
+  return icons[type] || '📄'
+}
+
+function getNodeProgressClass(rate) {
+  if (rate >= 80) return 'node-high'
+  if (rate >= 50) return 'node-medium'
+  if (rate > 0) return 'node-low'
+  return 'node-none'
+}
+
 async function loadCourses() {
   isLoading.value = true
   try {
@@ -330,31 +486,27 @@ async function loadCourses() {
   }
 }
 
-// 选择课程
 function selectCourse(course) {
   selectedCourse.value = course
 }
 
-// 查看课程详情
 function viewCourseDetail(course) {
   router.push(`/teacher/course/${course.id}`)
 }
 
-// 查看学生状态
 async function viewStudents(course) {
   selectedCourse.value = course
   showStudentPanel.value = true
   await loadStudentsAndStats(course.id)
 }
 
-// 关闭学生面板
 function closeStudentPanel() {
   showStudentPanel.value = false
   selectedCourse.value = null
   students.value = []
+  nodeProgressData.value = []
 }
 
-// 发布课程
 async function publishCourse(course) {
   isPublishing.value = true
   publishingId.value = course.id
@@ -372,7 +524,6 @@ async function publishCourse(course) {
   }
 }
 
-// 取消发布课程
 async function unpublishCourse(course) {
   if (!confirm('确定要取消发布吗？已选课的学生将无法继续学习。')) return
 
@@ -391,7 +542,6 @@ async function unpublishCourse(course) {
   }
 }
 
-// 删除课程
 async function deleteCourse(course) {
   const studentCount = course.student_count || 0
 
@@ -422,7 +572,6 @@ async function deleteCourse(course) {
   }
 }
 
-// 加载学生数据和统计信息
 async function loadStudentsAndStats(courseId) {
   isLoadingStudents.value = true
 
@@ -435,8 +584,10 @@ async function loadStudentsAndStats(courseId) {
       totalStudyHours: statsData.total_study_hours || 0,
       progressDistribution: statsData.progress_distribution || {},
     }
+    nodeProgressData.value = statsData.node_progress || []
   } catch (error) {
-    courseStats.value = { totalStudents: -1, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
+    courseStats.value = { totalStudents: 0, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
+    nodeProgressData.value = []
   }
 
   try {
@@ -529,14 +680,15 @@ async function loadStats() {
   box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
 }
 
-.stats-overview {
+/* 页面级统计概览 */
+.page-stats-overview {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
 
-.stat-card {
+.page-stat-card {
   background: white;
   border-radius: 12px;
   padding: 20px;
@@ -547,11 +699,11 @@ async function loadStats() {
   transition: transform 0.2s ease;
 }
 
-.stat-card:hover {
+.page-stat-card:hover {
   transform: translateY(-2px);
 }
 
-.stat-icon {
+.page-stat-icon {
   font-size: 32px;
   width: 56px;
   height: 56px;
@@ -562,18 +714,16 @@ async function loadStats() {
   background: #f3f4f6;
 }
 
-.stat-info {
-  flex: 1;
-}
+.page-stat-info { flex: 1; }
 
-.stat-number {
+.page-stat-number {
   font-size: 28px;
   font-weight: 700;
   color: #6366f1;
   line-height: 1.2;
 }
 
-.stat-label {
+.page-stat-label {
   font-size: 13px;
   color: #6b7280;
   margin-top: 2px;
@@ -669,18 +819,18 @@ async function loadStats() {
   border-radius: 8px;
 }
 
-.stat-item {
+.quick-stat-item {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.stat-label {
+.quick-stat-label {
   font-size: 11px;
   color: #6b7280;
 }
 
-.stat-value {
+.quick-stat-value {
   font-size: 16px;
   font-weight: 700;
   color: #6366f1;
@@ -703,11 +853,7 @@ async function loadStats() {
   border: none;
 }
 
-.view-btn {
-  background: #f3f4f6;
-  color: #374151;
-}
-
+.view-btn { background: #f3f4f6; color: #374151; }
 .view-btn:hover { background: #e5e7eb; }
 
 .students-btn {
@@ -730,10 +876,7 @@ async function loadStats() {
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
 }
 
-.publish-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.publish-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .unpublish-btn {
   background: linear-gradient(135deg, #f59e0b, #d97706);
@@ -745,10 +888,7 @@ async function loadStats() {
   box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
 }
 
-.unpublish-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.unpublish-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .delete-btn {
   background: linear-gradient(135deg, #ef4444, #dc2626);
@@ -760,10 +900,7 @@ async function loadStats() {
   box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
 }
 
-.delete-btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
+.delete-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* 加载和空状态 */
 .loading-state, .empty-state {
@@ -865,28 +1002,28 @@ async function loadStats() {
   padding: 24px;
 }
 
-/* 统计卡片 */
-.stats-overview {
+/* 面板内统计卡片 */
+.panel-stats-overview {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 16px;
   margin-bottom: 24px;
 }
 
-.stat-card {
+.panel-stat-card {
   text-align: center;
   padding: 16px;
   background: #f9fafb;
   border-radius: 8px;
 }
 
-.stat-number {
+.panel-stat-number {
   font-size: 28px;
   font-weight: 700;
   color: #6366f1;
 }
 
-.stat-label {
+.panel-stat-label {
   font-size: 13px;
   color: #6b7280;
   margin-top: 4px;
@@ -903,24 +1040,49 @@ async function loadStats() {
   margin: 0 0 12px 0;
 }
 
-.dist-list {
+.chart-row {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  gap: 24px;
+  align-items: center;
   padding: 16px;
   background: #f9fafb;
   border-radius: 8px;
 }
 
+.pie-chart-container {
+  width: 220px;
+  flex-shrink: 0;
+}
+
+.dist-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .dist-item {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   font-size: 14px;
 }
 
+.dist-color-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot-not_started { background: #d1d5db; }
+.dot-beginner { background: #93c5fd; }
+.dot-intermediate { background: #a78bfa; }
+.dot-advanced { background: #86efac; }
+.dot-completed { background: #34d399; }
+
 .dist-label {
-  width: 56px;
+  width: 48px;
   color: #4b5563;
   font-weight: 500;
   flex-shrink: 0;
@@ -940,17 +1102,118 @@ async function loadStats() {
   transition: width 0.5s ease;
 }
 
-.dist-未开始 { background: #d1d5db; }
-.dist-初学 { background: #93c5fd; }
-.dist-进阶 { background: #a78bfa; }
-.dist-熟练 { background: #86efac; }
-.dist-完成 { background: #34d399; }
+.dist-not_started { background: #d1d5db; }
+.dist-beginner { background: #93c5fd; }
+.dist-intermediate { background: #a78bfa; }
+.dist-advanced { background: #86efac; }
+.dist-completed { background: #34d399; }
 
 .dist-count {
   width: 48px;
   text-align: right;
   color: #6b7280;
   font-weight: 500;
+}
+
+/* 节点进度区域 */
+.node-progress-section {
+  margin-bottom: 24px;
+}
+
+.node-progress-section h4 {
+  font-size: 16px;
+  color: #374151;
+  margin: 0 0 12px 0;
+}
+
+.node-chart-container {
+  width: 280px;
+  margin: 0 auto 16px;
+}
+
+.node-progress-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.node-progress-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.node-info-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-type-icon { font-size: 13px; flex-shrink: 0; }
+
+.node-title-text {
+  font-size: 13px;
+  color: #374151;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.key-point-badge {
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: #fef3c7;
+  color: #92400e;
+  flex-shrink: 0;
+}
+
+.node-progress-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.node-progress-bar-bg {
+  flex: 1;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.node-progress-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+
+.node-high { background: #10b981; }
+.node-medium { background: #f59e0b; }
+.node-low { background: #ef4444; }
+.node-none { background: #d1d5db; }
+
+.node-progress-text {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  width: 36px;
+  text-align: right;
+}
+
+.node-completed-count {
+  font-size: 11px;
+  color: #9ca3af;
+  width: 44px;
+  text-align: right;
 }
 
 /* 学生列表 */
@@ -1033,6 +1296,7 @@ async function loadStats() {
 .level-high { background: #dbeafe; color: #1e40af; }
 .level-medium { background: #fef3c7; color: #92400e; }
 .level-low { background: #fee2e2; color: #991b1b; }
+.level-unknown { background: #f3f4f6; color: #6b7280; }
 
 .no-students {
   text-align: center;
@@ -1051,7 +1315,7 @@ async function loadStats() {
     width: 85%;
   }
 
-  .stats-overview {
+  .panel-stats-overview {
     grid-template-columns: repeat(2, 1fr);
   }
 }
@@ -1063,6 +1327,14 @@ async function loadStats() {
 
   .student-panel {
     width: 95%;
+  }
+
+  .chart-row {
+    flex-direction: column;
+  }
+
+  .pie-chart-container {
+    width: 180px;
   }
 
   .list-header-row,

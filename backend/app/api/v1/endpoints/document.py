@@ -1579,6 +1579,62 @@ async def get_course_stats(
             "completed": sum(1 for e in all_enrollments if e.overall_progress >= 100),
         }
 
+        # 按节点的学习进度统计
+        node_progress_stats = []
+        from app.models.course_model import ScriptNode, CourseScript
+        script = session.exec(
+            select(CourseScript).where(CourseScript.course_id == course_id)
+        ).first()
+        if script:
+            nodes = session.exec(
+                select(ScriptNode)
+                .where(ScriptNode.script_id == script.id)
+                .order_by(ScriptNode.node_index)
+            ).all()
+
+            for node in nodes:
+                from app.models.progress_model import LearningProgress, NodeProgress
+                completed_count = 0
+                avg_understanding = 0.0
+                total_accessed = 0
+
+                for enr in all_enrollments:
+                    lp = session.exec(
+                        select(LearningProgress).where(
+                            LearningProgress.user_id == enr.student_id,
+                            LearningProgress.course_id == course_id,
+                        )
+                    ).first()
+                    if lp:
+                        np = session.exec(
+                            select(NodeProgress).where(
+                                NodeProgress.progress_id == lp.id,
+                                NodeProgress.node_id == node.id,
+                            )
+                        ).first()
+                        if np:
+                            total_accessed += 1
+                            if np.is_completed:
+                                completed_count += 1
+                            if np.understanding_score is not None:
+                                avg_understanding += np.understanding_score
+
+                avg_understanding = (avg_understanding / total_accessed * 100) if total_accessed > 0 else 0
+                completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
+
+                node_progress_stats.append({
+                    "node_id": node.id,
+                    "node_index": node.node_index,
+                    "title": node.title or f"节点 {node.node_index + 1}",
+                    "node_type": node.node_type.value if node.node_type else "lecture",
+                    "is_key_point": node.is_key_point,
+                    "completed_count": completed_count,
+                    "total_students": total_students,
+                    "completion_rate": round(completion_rate, 1),
+                    "avg_understanding": round(avg_understanding, 1),
+                    "accessed_count": total_accessed,
+                })
+
         return unified_response(code=200, message="获取成功", data={
             "course_id": course_id,
             "course_title": course.title,
@@ -1589,6 +1645,7 @@ async def get_course_stats(
             "avg_understanding": round(avg_understanding * 100, 1) if avg_understanding else 0,
             "total_study_hours": round(total_study_time / 60, 1),
             "progress_distribution": progress_distribution,
+            "node_progress": node_progress_stats,
         })
 
     except Exception as e:
