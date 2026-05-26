@@ -72,6 +72,7 @@ class Course(SQLModel, table=True):
     source_file_name: Optional[str] = Field(default=None, description="原始文件名")
     source_file_path: Optional[str] = Field(default=None, description="原始文件存储路径")
     source_mimetype: Optional[str] = Field(default=None, description="原始文件MIME类型")
+    pdf_file_path: Optional[str] = Field(default=None, description="转换后的PDF文件路径(PPTX/PPT自动转换)")
     total_pages: int = Field(default=0, description="总页数")
 
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -138,6 +139,9 @@ class ScriptNode(SQLModel, table=True):
     timestamp_end: float = Field(default=0.0, description="音频结束时间(秒)")
 
     duration: int = Field(default=0, description="节点时长(秒)")
+
+    audio_url: Optional[str] = Field(default=None, description="节点音频文件URL")
+    audio_duration: float = Field(default=0.0, description="节点音频时长(秒)")
 
     is_key_point: bool = Field(default=False, description="是否为重点知识点")
 

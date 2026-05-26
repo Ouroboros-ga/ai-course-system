@@ -117,6 +117,15 @@ class Settings(BaseSettings):
     ]
 
     # --------------------------
+    # 媒体资源白名单（跳过签名验证，但仍需JWT认证）
+    # 用于 <img> / <audio> 等浏览器直接发起的请求
+    # --------------------------
+    MEDIA_RESOURCE_PATHS: List[str] = [
+        "/api/v1/document/course/",
+        "/api/v1/document/audio/",
+    ]
+
+    # --------------------------
     # 视频文件存储路径配置
     # --------------------------
     VIDEO_STORAGE_PATH: str = "./videos"

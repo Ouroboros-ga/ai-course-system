@@ -5,8 +5,8 @@ import { showToast } from '@/utils/toast'
 
 // 创建 axios 实例
 const service = axios.create({
-  baseURL: 'http://localhost:8000/api/v1',
-  timeout: 180000 // 3分钟，匹配后端Docling解析+AI处理的超时时间
+  baseURL: import.meta.env.DEV ? '/api/v1' : 'http://localhost:8000/api/v1',
+  timeout: 180000
 })
 
 // 静态密钥（与后端保持一致）
@@ -287,6 +287,13 @@ function _isTokenExpiringSoon(token) {
 service.interceptors.response.use(
   response => {
     if (response.data instanceof Blob) {
+      if (response.data.type && response.data.type.includes('application/json')) {
+        return response.data.text().then(text => {
+          const res = JSON.parse(text)
+          showToast(res.message || '请求失败', 'error')
+          return Promise.reject(new Error(res.message || 'Error'))
+        })
+      }
       return response.data
     }
 
@@ -328,10 +335,16 @@ service.interceptors.response.use(
           message = '请求资源不存在'
           break
         case 500:
-          message = '服务器开小差了'
+          message = error.response.data?.detail || '服务器开小差了'
+          break
+        case 503:
+          message = error.response.data?.detail || '服务暂不可用，请稍后重试'
+          break
+        case 504:
+          message = error.response.data?.detail || '请求超时，请稍后重试'
           break
         default:
-          message = error.response.data?.message || '未知错误'
+          message = error.response.data?.detail || error.response.data?.message || '未知错误'
       }
     } else if (error.message.includes('timeout')) {
       message = '请求超时，请检查网络'

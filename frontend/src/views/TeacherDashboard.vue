@@ -1155,20 +1155,18 @@ const generateTTS = async () => {
   showToast('正在生成语音...', 'info')
 
   try {
-    // 调用后端TTS API
-    const formData = new FormData()
-    formData.append('text', currentContent.value)
-    formData.append('output_format', 'mp3')
-    // 使用节点级别选择的音色
+    const data = {
+      text: currentContent.value,
+      output_format: 'mp3',
+    }
     if (nodeVoice.value) {
-      formData.append('voice', nodeVoice.value)
+      data.voice = nodeVoice.value
     }
 
     const blob = await request({
       url: '/document/tts/synthesize',
       method: 'post',
-      data: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
+      data: data,
       responseType: 'blob'
     })
 
@@ -1178,7 +1176,22 @@ const generateTTS = async () => {
     audioUrl.value = URL.createObjectURL(blob)
     showToast('语音生成成功', 'success')
   } catch (error) {
-    showToast(error.message || '语音生成失败，请重试', 'error')
+    let errorMsg = '语音生成失败，请重试'
+    if (error.response) {
+      const status = error.response.status
+      if (status === 503) {
+        errorMsg = '语音合成服务认证失败，TTS凭证可能已过期，请联系管理员更新配置'
+      } else if (status === 504) {
+        errorMsg = '语音合成服务响应超时，请稍后重试'
+      } else if (status === 500) {
+        errorMsg = '语音合成服务内部错误，请稍后重试'
+      }
+    } else if (error.message) {
+      if (error.message.includes('503') || error.message.includes('认证')) {
+        errorMsg = '语音合成服务认证失败，TTS凭证可能已过期，请联系管理员更新配置'
+      }
+    }
+    showToast(errorMsg, 'error')
   } finally {
     isGeneratingTTS.value = false
   }

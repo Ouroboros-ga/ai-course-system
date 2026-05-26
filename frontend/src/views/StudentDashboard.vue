@@ -61,7 +61,15 @@
       <div class="left-column">
         <!-- 数字人视频区域 -->
         <div class="video-section">
-          <DigitalHumanWindow />
+          <PptSlidePlayer
+            :slides="courseSlides"
+            :totalPages="courseSlidesTotal"
+            :currentPage="currentSlidePage"
+            :audioUrl="currentNodeAudioUrl"
+            :audioDuration="currentNodeAudioDuration"
+            @page-change="onSlidePageChange"
+            @audio-ended="onNodeAudioEnded"
+          />
         </div>
 
         <!-- 课程结构栏 -->
@@ -246,7 +254,7 @@ import katex from 'katex'
 import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
-import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
+import PptSlidePlayer from '@/components/chat/PptSlidePlayer.vue'
 
 const counter = useCounterStore()
 
@@ -276,6 +284,13 @@ const nodeChatHistory = ref({})
 
 // 竞态条件防护：记录当前请求发起时的节点索引
 const requestNodeIndex = ref(-1)
+
+// PPT幻灯片和音频相关
+const courseSlides = ref([])
+const courseSlidesTotal = ref(0)
+const currentSlidePage = ref(1)
+const currentNodeAudioUrl = ref('')
+const currentNodeAudioDuration = ref(0)
 
 // Marked实例
 const markedInstance = new Marked(
@@ -457,6 +472,11 @@ function exitCourse() {
   nodeProgressMap.value = {}
   nodeChatHistory.value = {}
   canInput.value = false
+  courseSlides.value = []
+  courseSlidesTotal.value = 0
+  currentSlidePage.value = 1
+  currentNodeAudioUrl.value = ''
+  currentNodeAudioDuration.value = 0
 }
 
 // 保存当前节点的聊天历史到隔离存储
@@ -480,7 +500,6 @@ async function loadCourseContent(courseId) {
   try {
     showToast('正在加载课程内容...', 'info')
 
-    // 加载课程详情和节点
     const data = await request({ url: `/document/course/${courseId}`, method: 'get' })
 
     if (data) {
@@ -493,6 +512,10 @@ async function loadCourseContent(courseId) {
           content: node.content || '',
           duration: node.duration || 60,
           is_key_point: node.is_key_point || false,
+          page_start: node.page_start || 1,
+          page_end: node.page_end || 1,
+          audio_url: node.audio_url || '',
+          audio_duration: node.audio_duration || 0,
         }))
       }
 
@@ -500,10 +523,54 @@ async function loadCourseContent(courseId) {
         updateProgressFromServer(data.progress)
       }
 
+      loadCourseSlides(courseId)
+      updateCurrentNodeMedia()
+
       showToast(`课程加载成功: ${scriptNodes.value.length} 个知识点`, 'success')
     }
   } catch (error) {
     showToast('加载课程内容失败', 'error')
+  }
+}
+
+async function loadCourseSlides(courseId) {
+  try {
+    const data = await request({ url: `/document/course/${courseId}/slides`, method: 'get' })
+    if (data && data.slides) {
+      courseSlides.value = data.slides
+      courseSlidesTotal.value = data.total_pages || 0
+    } else {
+      courseSlides.value = []
+      courseSlidesTotal.value = 0
+    }
+  } catch (error) {
+    courseSlides.value = []
+    courseSlidesTotal.value = 0
+  }
+}
+
+function updateCurrentNodeMedia() {
+  const node = scriptNodes.value[currentNodeIndex.value]
+  if (!node) {
+    currentSlidePage.value = 1
+    currentNodeAudioUrl.value = ''
+    currentNodeAudioDuration.value = 0
+    return
+  }
+
+  currentSlidePage.value = node.page_start || 1
+  currentNodeAudioUrl.value = node.audio_url || ''
+  currentNodeAudioDuration.value = node.audio_duration || 0
+}
+
+function onSlidePageChange(page) {
+  currentSlidePage.value = page
+}
+
+function onNodeAudioEnded() {
+  const node = scriptNodes.value[currentNodeIndex.value]
+  if (node) {
+    markNodeCompleted(currentNodeIndex.value)
   }
 }
 
@@ -775,7 +842,6 @@ function jumpToNode(index) {
   if (index === currentNodeIndex.value) return
   if (index < 0 || index >= scriptNodes.value.length) return
 
-  // 保存当前节点的聊天历史
   saveCurrentNodeChatHistory()
 
   currentNodeIndex.value = index
@@ -783,7 +849,8 @@ function jumpToNode(index) {
   isStreaming.value = false
   streamingContent.value = ''
 
-  // 恢复目标节点的聊天历史（如果之前访问过）
+  updateCurrentNodeMedia()
+
   const savedHistory = nodeChatHistory.value[index]
   if (savedHistory && savedHistory.length > 0) {
     chatMessages.value = [...savedHistory]
