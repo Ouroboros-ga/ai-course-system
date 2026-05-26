@@ -19,6 +19,7 @@ from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus
+from app.models.mapping_model import KnowledgePageMap
 from app.core.config import settings
 
 router = APIRouter(prefix="/player", tags=["分屏播放器"])
@@ -117,16 +118,31 @@ async def get_player_init_data(
             ).all()
             video_tasks = {task.node_id: task for task in tasks}
 
-        # 5. 构建节点数据列表
+        # 5. 查询页码映射表（优先使用F5映射引擎的精确数据）
+        page_maps = session.exec(
+            select(KnowledgePageMap)
+            .where(KnowledgePageMap.course_id == course_id)
+        ).all()
+        page_map_dict = {m.node_id: m for m in page_maps}
+
+        # 6. 构建节点数据列表
         nodes_data = []
         for node in nodes:
             task = video_tasks.get(node.id)
             video_url = None
             if task and task.dh_video_path:
-                # 从路径提取文件名，构建流式播放URL
                 import os
                 filename = os.path.basename(task.dh_video_path)
                 video_url = f"/api/v1/video/stream/{filename}"
+
+            # 优先使用KnowledgePageMap的页码（F5映射引擎数据）
+            mapping = page_map_dict.get(node.id)
+            if mapping:
+                page_start = mapping.page_start
+                page_end = mapping.page_end
+            else:
+                page_start = node.page_start
+                page_end = node.page_end
 
             node_dict = {
                 "id": node.id,
@@ -138,15 +154,15 @@ async def get_player_init_data(
                 "timestamp_start": node.timestamp_start,
                 "timestamp_end": node.timestamp_end,
                 "duration": node.duration,
-                "page_start": node.page_start,
-                "page_end": node.page_end,
+                "page_start": page_start,
+                "page_end": page_end,
                 "is_key_point": node.is_key_point,
                 "video_url": video_url,
                 "status": "completed" if task else "pending",
             }
             nodes_data.append(node_dict)
 
-        # 6. 查询已保存的学习进度
+        # 7. 查询已保存的学习进度
         saved_progress = None
         progress = session.exec(
             select(LearningProgress).where(

@@ -241,10 +241,12 @@ async def upload_document(
                 page_end=node.page_end,
                 duration=node.duration,
                 is_key_point=node.is_key_point,
+                timestamp_start=node.timestamp_start,
+                timestamp_end=node.timestamp_end,
             )
             session.add(script_node)
         session.commit()
-        print(f"  创建 {len(script_result.nodes)} 个 script_nodes 记录")
+        print(f"  创建 {len(script_result.nodes)} 个 script_nodes 记录（含时间戳数据）")
 
         course.total_nodes = len(script_result.nodes)
         course.total_duration = script_result.total_duration

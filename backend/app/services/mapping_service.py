@@ -476,6 +476,63 @@ PPT页面内容：
         return True
 
     @staticmethod
+    def calculate_timestamps_from_audio(
+        session: Session,
+        script_id: int,
+        audio_duration: float,
+    ) -> bool:
+        """
+        根据TTS合成的音频总时长，按比例重新计算各节点的精确时间戳
+        
+        在视频生成管线中，TTS合成完成后应调用此方法更新精确时间戳
+        
+        Args:
+            session: 数据库会话
+            script_id: 脚本ID
+            audio_duration: 音频实际总时长(秒)
+            
+        Returns:
+            bool: 是否成功更新
+        """
+        nodes = session.exec(
+            select(ScriptNode)
+            .where(ScriptNode.script_id == script_id)
+            .order_by(ScriptNode.node_index)
+        ).all()
+
+        if not nodes:
+            logger.warning(f"[Timestamp] 脚本 {script_id} 无节点，无法计算时间戳")
+            return False
+
+        total_duration = sum(node.duration for node in nodes)
+
+        if total_duration == 0:
+            logger.warning(f"[Timestamp] 脚本 {script_id} 节点总时长为0，使用均分策略")
+            per_node_duration = audio_duration / len(nodes)
+            current_time = 0.0
+            for node in nodes:
+                node.timestamp_start = round(current_time, 2)
+                current_time += per_node_duration
+                node.timestamp_end = round(current_time, 2)
+                session.add(node)
+        else:
+            # 按duration占比计算实际时间戳（更精确）
+            current_time = 0.0
+            for node in nodes:
+                actual_duration = (node.duration / total_duration) * audio_duration
+                node.timestamp_start = round(current_time, 2)
+                current_time += actual_duration
+                node.timestamp_end = round(current_time, 2)
+                session.add(node)
+
+        session.commit()
+        logger.info(
+            f"[Timestamp] 已为脚本 {script_id} 的 {len(nodes)} 个节点更新精确时间戳"
+            f"（基于音频时长 {audio_duration:.1f}秒）"
+        )
+        return True
+
+    @staticmethod
     def get_mapping_detail(session: Session, course_id: int) -> Dict[str, Any]:
         """获取课程完整的映射详情（含节点信息和页面信息）"""
         script = MappingService.get_active_script(session, course_id)

@@ -53,6 +53,8 @@ class ScriptNode:
     page_end: int = 1
     duration: int = 60
     is_key_point: bool = False
+    timestamp_start: float = 0.0
+    timestamp_end: float = 0.0
 
 
 @dataclass
@@ -636,7 +638,10 @@ class ScriptGenerator:
         keywords = ScriptGenerator._extract_keywords_from_nodes(nodes)
         
         logger.info(f"[ScriptGenerator] 从ai_formatted生成完成: {len(nodes)} 个节点")
-        
+
+        # 计算预估时间戳（基于duration字段按比例分配）
+        nodes = ScriptGenerator._estimate_timestamps(nodes)
+
         return ScriptResult(
             title=title,
             summary=summary,
@@ -838,6 +843,27 @@ class ScriptGenerator:
             return 120
         else:
             return min(180, char_count // 2)
+    
+    @staticmethod
+    def _estimate_timestamps(nodes: List[ScriptNode]) -> List[ScriptNode]:
+        """
+        根据节点的duration字段预估时间戳
+        按顺序累加计算每个节点的timestamp_start和timestamp_end
+        
+        Args:
+            nodes: 脚本节点列表
+            
+        Returns:
+            更新了时间戳的节点列表
+        """
+        current_time = 0.0
+        for node in nodes:
+            node.timestamp_start = round(current_time, 2)
+            current_time += node.duration
+            node.timestamp_end = round(current_time, 2)
+        
+        logger.info(f"[Timestamp] 已为 {len(nodes)} 个节点预估时间戳，总时长: {current_time:.1f}秒")
+        return nodes
     
     @staticmethod
     def _extract_keywords_from_nodes(nodes: List[ScriptNode]) -> List[str]:

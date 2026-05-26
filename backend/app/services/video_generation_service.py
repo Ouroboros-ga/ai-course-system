@@ -226,6 +226,20 @@ class VideoGenerationService:
         logger.info(
             f"[视频生成] 批量生成完成: 成功{completed}, 失败{failed}, 总计{len(tasks)}"
         )
+
+        # 更新精确时间戳（基于实际TTS音频总时长）
+        if completed > 0:
+            from app.services.mapping_service import MappingService
+            total_audio_duration = sum(
+                t.audio_duration for t in tasks 
+                if t.status == GenerationStatus.COMPLETED and t.audio_duration
+            )
+            if total_audio_duration > 0:
+                MappingService.calculate_timestamps_from_audio(
+                    session, script.id, total_audio_duration
+                )
+                logger.info(f"[视频生成] 已基于TTS音频时长({total_audio_duration:.1f}秒)更新精确时间戳")
+
         return tasks
 
     async def _synthesize_tts(
