@@ -21,10 +21,7 @@ app = FastAPI(
     version="v1",
 )
 
-# 注册签名验证中间件（必须在CORS之后，路由之前）
-app.add_middleware(SignatureMiddleware)
-
-# CORS跨域配置
+# CORS跨域配置（必须放在最前面，确保错误响应也包含CORS头）
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -32,6 +29,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 注册签名验证中间件（在CORS之后，路由之前）
+app.add_middleware(SignatureMiddleware)
 
 # 注册全局异常处理
 app.add_exception_handler(HTTPException, global_exception_handler)

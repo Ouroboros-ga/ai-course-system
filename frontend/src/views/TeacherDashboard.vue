@@ -478,7 +478,7 @@ const loadExistingCourse = async (id) => {
     const data = await request({ url: `/document/course/${id}`, method: 'get' })
 
     if (data) {
-      courseId.value = id
+      courseId.value = Number(id)
       isEditMode.value = true
       isFileUploaded.value = true
 
