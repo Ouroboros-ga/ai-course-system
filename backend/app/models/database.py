@@ -5,7 +5,14 @@ import os
 from app.models.course_model import (
     Course,
     CourseScript,
+    ScriptNode,
     DoclingDocument,
+    DoclingGroup,
+    DoclingTable,
+    DoclingTableCell,
+    DoclingText,
+    DoclingPicture,
+    StudentEnrollment,
 )
 from app.models.user_model import (
     User,
@@ -15,6 +22,7 @@ from app.models.user_model import (
 from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
+    UnderstandingAnalysis,
 )
 from app.models.knowledge_model import (
     KnowledgeBase,
@@ -22,6 +30,20 @@ from app.models.knowledge_model import (
     KnowledgeRelation,
     KnowledgeImportLog,
     KnowledgeSearchHistory,
+)
+from app.models.mapping_model import (
+    KnowledgePageMap,
+)
+from app.models.video_generation_model import (
+    VideoGenerationTask,
+)
+from app.models.asset_model import (
+    TeacherAsset,
+)
+from app.models.qa_model import (
+    QASession,
+    QAMessage,
+    QAContext,
 )
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
