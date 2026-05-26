@@ -77,6 +77,12 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'student' }
     },
     {
+      path: '/player/course/:courseId',
+      name: 'student-player',
+      component: loadView('StudentPlayer'),
+      meta: { requiresAuth: true, role: 'student' }
+    },
+    {
       path: '/admin',
       name: 'admin-panel',
       component: loadView('AdminPanel'),

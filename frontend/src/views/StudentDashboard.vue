@@ -68,7 +68,16 @@
         <div class="structure-section">
           <div class="panel-header">
             <h3>{{ selectedCourse.title }}</h3>
-            <button class="back-btn" @click="exitCourse">← 返回</button>
+            <div class="header-actions">
+              <button
+                class="player-mode-btn"
+                @click="enterPlayerMode"
+                title="进入分屏视频播放器模式"
+              >
+                🎬 分屏播放器
+              </button>
+              <button class="back-btn" @click="exitCourse">← 返回</button>
+            </div>
           </div>
 
           <div class="chapter-tree">
@@ -238,6 +247,7 @@
 
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -248,6 +258,7 @@ import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 
+const router = useRouter()
 const counter = useCounterStore()
 
 // 引入样式
@@ -445,6 +456,17 @@ function previewCourse(course) {
   selectedCourse.value = course
   loadCourseContent(course.id)
   showToast('预览模式：学习进度不会保存', 'info')
+}
+
+// 进入分屏播放器模式
+function enterPlayerMode() {
+  if (!selectedCourse.value) return
+
+  router.push({
+    name: 'student-player',
+    params: { courseId: selectedCourse.value.id },
+    query: { title: selectedCourse.value.title },
+  })
 }
 
 // 退出课程
@@ -1116,6 +1138,29 @@ onUnmounted(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.player-mode-btn {
+  padding: 6px 14px;
+  border: 1px solid #4CAF50;
+  border-radius: 6px;
+  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  color: white;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  font-weight: 600;
+}
+
+.player-mode-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
 }
 
 .back-btn {
