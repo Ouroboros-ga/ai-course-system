@@ -1,6 +1,14 @@
 <script setup>
+  import { onMounted } from 'vue'
   import NavigationBar from "./components/NavigationBar.vue"
   import GradientBackground from "./components/GradientBackground.vue"
+  import { useCounterStore } from "@/stores/counter.js"
+
+  const counter = useCounterStore()
+
+  onMounted(() => {
+    counter.checkAuth()
+  })
 </script>
 
 <template>

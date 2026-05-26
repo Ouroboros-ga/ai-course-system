@@ -91,6 +91,18 @@ class Settings(BaseSettings):
     VOLCENGINE_TTS_ACCESS_TOKEN: str = ""
     VOLCENGINE_TTS_SECRET_KEY: str = ""
 
+    # 火山引擎声音复刻配置（豆包语音声音复刻API）
+    VOLCENGINE_VOICE_CLONE_API_KEY: str = ""  # x-api-key，用于声音复刻合成
+    VOLCENGINE_VOICE_CLONE_MODEL_TYPE: int = 4  # 1=ICL1.0, 2=DiT标准, 3=DiT还原, 4=ICL2.0(默认)
+
+    # --------------------------
+    # 数字人视频生成API配置（Gradio）
+    # --------------------------
+    DIGITAL_HUMAN_API_URL: str = "http://localhost:7860/"  # 数字人Gradio服务地址
+    DIGITAL_HUMAN_MIN_RESOLUTION: int = 2  # 原比例缩小倍数
+    DIGITAL_HUMAN_IF_RES: bool = False  # 是否强制缩小分辨率
+    DIGITAL_HUMAN_STEPS: int = 4  # 处理批次，越大越快但可能爆显存
+
     # --------------------------
     # 安全白名单
     # --------------------------
@@ -98,10 +110,31 @@ class Settings(BaseSettings):
         "/api/v1/platform/syncCourse",
         "/api/v1/platform/syncUser",
         "/api/v1/user/login",
+        "/api/v1/user/register",
         "/docs",
         "/openapi.json",
         "/",
     ]
+
+    # --------------------------
+    # 视频文件存储路径配置
+    # --------------------------
+    VIDEO_STORAGE_PATH: str = "./videos"
+    TEMP_VIDEO_STORAGE_PATH: str = "./temp_videos"
+
+    # --------------------------
+    # 老师素材存储路径配置
+    # --------------------------
+    ASSET_STORAGE_PATH: str = "./teacher_assets"
+    MAX_VIDEO_ASSET_SIZE_MB: int = 200
+    MAX_AUDIO_ASSET_SIZE_MB: int = 50
+
+    # --------------------------
+    # 科大讯飞PPT生成API配置
+    # --------------------------
+    XFYUN_PPT_APP_ID: str = ""
+    XFYUN_PPT_API_SECRET: str = ""
+    XFYUN_PPT_DEFAULT_TEMPLATE_ID: str = ""
 
 
 settings = Settings()

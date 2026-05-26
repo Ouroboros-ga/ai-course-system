@@ -13,6 +13,7 @@ class UnifiedResponse(BaseModel):
 class UserInfo(BaseModel):
     id: str
     username: str = ""
+    role: str = "student"
 
 
 class LoginResponseData(BaseModel):

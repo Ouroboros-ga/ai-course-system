@@ -15,4 +15,16 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'vue-vendor': ['vue', 'vue-router', 'pinia'],
+          'markdown': ['marked', 'marked-highlight', 'highlight.js', 'katex'],
+          'ui-utils': ['axios', 'dompurify'],
+        }
+      }
+    },
+    chunkSizeWarningLimit: 1000,
+  },
 })

@@ -3,24 +3,21 @@
 负责将文档内容转换为结构化的教学脚本
 """
 
+import re
+import json
+import logging
 from typing import Optional
 from pathlib import Path
-import json
 
 from app.common.llm_client import llm_client, Message
 
+logger = logging.getLogger(__name__)
+
 
 class ScriptPromptBuilder:
-    """脚本生成Prompt构建器"""
-    
+
     @staticmethod
     def build_structured_script_prompt(markdown_content: str, filename: str) -> tuple[str, str]:
-        """
-        构建结构化智课脚本的Prompt
-        
-        Returns:
-            tuple: (system_prompt, user_prompt)
-        """
         system_prompt = """你是一位专业的课程设计师和教学专家。请根据用户提供的文档内容，生成一份**结构化智课脚本**。
 
 ## 脚本结构要求
@@ -38,26 +35,33 @@ class ScriptPromptBuilder:
 ### 2. 知识点讲解 (knowledge_point)
 - 每个知识点独立为一个节点
 - 时长：60-180秒
+- **content字段要求：300-800字**
 - 内容结构：
-  - 概念定义（清晰、简洁）
-  - 原理讲解（深入浅出）
-  - 实例说明（贴近实际）
+  - 概念定义（清晰、简洁，用类比帮助理解）
+  - 原理讲解（深入浅出，详细说明内在机制）
+  - 实例说明（2-3个贴近实际的具体案例，包含分析过程）
+  - 应用场景（实际运用，给出具体应用实例）
+  - 背景补充（相关概念对比、常见误区等）
   - 过渡语（与下一个知识点的衔接）
 
 ### 3. 互动提问 (question)
 - 穿插在知识点之间
 - 时长：30-60秒
+- **content字段要求：300-800字**
 - 内容：
   - 提出思考问题
   - 引导思考方向
   - 简要提示答案要点
+  - 补充相关背景知识
 
 ### 4. 总结语 (summary)
 - 每个章节结束时的回顾
 - 时长：45-90秒
+- **content字段要求：300-800字**
 - 内容：
-  - 核心要点回顾
+  - 核心要点回顾（详细总结每个要点）
   - 知识框架梳理
+  - 学习建议和方法
   - 下节预告
 
 ## 输出格式
@@ -65,14 +69,14 @@ class ScriptPromptBuilder:
 请以JSON格式返回，结构如下：
 {
     "title": "课程标题",
-    "summary": "课程整体摘要",
+    "summary": "课程整体摘要（100-200字）",
     "keywords": ["关键词1", "关键词2", ...],
     "total_duration": 总时长(秒),
     "sections": [
         {
             "type": "opening",
             "title": "开场白",
-            "content": "讲解文本内容",
+            "content": "讲解文本内容（300-800字的详细讲解）",
             "duration": 45,
             "tone": "enthusiastic",
             "transitions": {
@@ -84,9 +88,9 @@ class ScriptPromptBuilder:
             "id": "kp_001",
             "title": "知识点标题",
             "definition": "概念定义",
-            "explanation": "原理解释",
+            "explanation": "原理解释（详细说明原理、机制）",
             "examples": ["示例1", "示例2"],
-            "content": "完整讲解文本（用于语音合成）",
+            "content": "完整讲解文本（300-800字，包含概念解释、原理说明、实例分析、应用场景、背景补充等丰富内容）",
             "duration": 120,
             "difficulty": "medium",
             "is_key_point": true,
@@ -100,14 +104,14 @@ class ScriptPromptBuilder:
             "title": "互动提问",
             "question": "思考问题",
             "hint": "提示信息",
-            "content": "提问文本",
+            "content": "提问文本（300-800字，包含问题背景、引导思路、提示方向、相关知识补充）",
             "duration": 30
         },
         {
             "type": "summary",
             "title": "章节小结",
             "key_points": ["要点1", "要点2", "要点3"],
-            "content": "总结讲解文本",
+            "content": "总结讲解文本（300-800字，详细回顾核心要点、知识框架、学习建议）",
             "duration": 60,
             "next_preview": "下节课我们将学习..."
         }
@@ -117,11 +121,15 @@ class ScriptPromptBuilder:
 ## 重要提示
 
 1. **讲解文本(content字段)** 必须是完整的口语化文本，适合直接用于语音合成(TTS)
-2. **过渡语** 要自然流畅，避免生硬的"接下来"
-3. **时长控制**：总时长控制在10-20分钟为宜
-4. **难度分级**：easy/medium/hard，根据内容复杂度标注
-5. **语气标注**：enthusiastic/calm/serious，指导语音合成
-6. **必须包含**：开场白至少1个，总结语至少1个，知识点3-8个
+2. **content字段长度要求严格控制在300-800字之间**，确保内容丰富详实
+3. **内容要充实**：包含足够的细节、例子和解释，避免过于简略
+4. **过渡语** 要自然流畅，避免生硬的"接下来"
+5. **时长控制**：总时长控制在10-20分钟为宜
+6. **难度分级**：easy/medium/hard，根据内容复杂度标注
+7. **语气标注**：enthusiastic/calm/serious，指导语音合成
+8. **必须包含**：开场白至少1个，总结语至少1个，知识点3-8个
+9. **生成内容的总文本量必须大于原文档**，通过补充解释、举例、类比等方式扩展内容
+10. **不得遗漏原文档中的任何章节**，每个章节都必须有对应的节点
 
 请确保返回的是有效的JSON格式。"""
 
@@ -141,123 +149,84 @@ class ScriptPromptBuilder:
 - 总结语要条理清晰"""
 
         return system_prompt, user_prompt
-    
-    @staticmethod
-    def build_simple_script_prompt(markdown_content: str, filename: str) -> tuple[str, str]:
-        """
-        构建简单脚本的Prompt（用于快速生成）
-        """
-        system_prompt = """你是一位专业的课程设计师。请根据用户提供的文档内容，生成一份智课脚本。
-
-以JSON格式返回：
-{
-    "title": "课程标题",
-    "summary": "课程摘要",
-    "keywords": ["关键词1", "关键词2"],
-    "total_duration": 总时长(秒),
-    "nodes": [
-        {
-            "chapter_id": "chap_001",
-            "node_type": "lecture",
-            "title": "节点标题",
-            "content": "节点内容",
-            "duration": 60,
-            "is_key_point": false
-        }
-    ]
-}
-
-节点类型：lecture(讲解), question(问题), summary(总结)"""
-
-        user_prompt = f"""文件名: {filename}
-
-文档内容：
-{markdown_content}
-
-请生成智课脚本JSON。"""
-
-        return system_prompt, user_prompt
 
 
 class SmartCourseService:
-    """智课脚本生成服务"""
-    
+
     def __init__(self):
         self.prompt_builder = ScriptPromptBuilder()
-    
+
     async def generate_structured_script(
-        self, 
-        markdown_content: str, 
+        self,
+        markdown_content: str,
         filename: str,
-        max_content_length: int = 8000
+        max_content_length: int = 8000,
     ) -> dict:
-        """
-        生成结构化智课脚本
-        
-        Args:
-            markdown_content: 文档Markdown内容
-            filename: 文件名
-            max_content_length: 最大内容长度
-            
-        Returns:
-            dict: 包含 script_content, summary_text, keywords 的字典
-        """
-        print(f"  [SmartCourseService] 开始生成结构化智课脚本...")
-        
-        if len(markdown_content) > max_content_length:
-            truncated_content = markdown_content[:max_content_length]
-            truncated_content += f"\n\n[内容已截断，原长度: {len(markdown_content)} 字符]"
-        else:
-            truncated_content = markdown_content
-        
+        logger.info("开始生成结构化智课脚本...")
+
+        truncated_content = self._truncate_content(markdown_content, max_content_length)
+
         system_prompt, user_prompt = self.prompt_builder.build_structured_script_prompt(
             truncated_content, filename
         )
-        
+
         try:
             messages = [
                 Message(role="system", content=system_prompt),
-                Message(role="user", content=user_prompt)
+                Message(role="user", content=user_prompt),
             ]
-            
-            print(f"  [SmartCourseService] 发送请求，内容长度: {len(user_prompt)} 字符")
+
+            logger.info("发送LLM请求，内容长度: %d 字符", len(user_prompt))
             response = await llm_client.chat(messages)
-            print(f"  [SmartCourseService] 收到响应，长度: {len(response.content)} 字符")
-            
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', response.content)
-            if json_match:
-                script_content = json.loads(json_match.group())
-            else:
+            logger.info("收到LLM响应，长度: %d 字符", len(response.content))
+
+            script_content = self._parse_json_response(response.content)
+            if script_content is None:
+                logger.warning("JSON解析失败，使用默认脚本")
                 script_content = self._create_default_structured_script(filename, markdown_content)
-            
+
         except Exception as e:
-            print(f"  [SmartCourseService] 调用失败: {e}，使用默认脚本")
+            logger.error("调用LLM失败: %s，使用默认脚本", e)
             script_content = self._create_default_structured_script(filename, markdown_content)
-        
+
         summary_text = script_content.get(
-            "summary", 
+            "summary",
             f"本课程《{Path(filename).stem}》包含 {len(script_content.get('sections', []))} 个教学环节。"
         )
         keywords = script_content.get("keywords", ["知识点", "课程", Path(filename).stem])
-        
+
         section_count = len(script_content.get('sections', []))
-        print(f"  [SmartCourseService] 生成完成: {section_count} 个教学环节")
-        
+        logger.info("生成完成: %d 个教学环节", section_count)
+
         return {
             "script_content": script_content,
             "summary_text": summary_text,
             "keywords": keywords,
         }
-    
+
+    @staticmethod
+    def _truncate_content(content: str, max_length: int) -> str:
+        if len(content) <= max_length:
+            return content
+        truncated = content[:max_length]
+        truncated += f"\n\n[内容已截断，原长度: {len(content)} 字符]"
+        return truncated
+
+    @staticmethod
+    def _parse_json_response(response_text: str) -> Optional[dict]:
+        json_match = re.search(r'\{[\s\S]*\}', response_text)
+        if not json_match:
+            return None
+        try:
+            return json.loads(json_match.group())
+        except json.JSONDecodeError:
+            return None
+
     def _create_default_structured_script(self, filename: str, content: str) -> dict:
-        """
-        创建默认结构化脚本（当AI调用失败时）
-        """
         lines = [l.strip() for l in content.split("\n") if l.strip() and len(l.strip()) > 10]
-        
+
         sections = []
-        
+
         sections.append({
             "type": "opening",
             "id": "sec_000",
@@ -269,25 +238,21 @@ class SmartCourseService:
                 "next": "接下来，让我们进入今天的第一个知识点。"
             }
         })
-        
+
         for idx, line in enumerate(lines[:6]):
-            section_type = "knowledge_point"
             is_key_point = idx % 2 == 0
-            
-            prev_transition = ""
-            next_transition = ""
-            
+
             if idx == 0:
                 prev_transition = "首先，"
             elif idx == len(lines[:6]) - 1:
                 prev_transition = "最后，"
-                next_transition = "学完了这些知识点，让我们来总结一下。"
             else:
                 prev_transition = "接下来，"
-                next_transition = "理解了这个概念后，我们继续往下看。"
-            
+
+            next_transition = "理解了这个概念后，我们继续往下看。" if idx < len(lines[:6]) - 1 else "学完了这些知识点，让我们来总结一下。"
+
             sections.append({
-                "type": section_type,
+                "type": "knowledge_point",
                 "id": f"sec_{idx+1:03d}",
                 "title": line[:40] + ("..." if len(line) > 40 else ""),
                 "definition": line,
@@ -300,10 +265,10 @@ class SmartCourseService:
                 "tone": "calm",
                 "transitions": {
                     "prev": prev_transition,
-                    "next": next_transition
-                } if next_transition else {"prev": prev_transition}
+                    "next": next_transition,
+                }
             })
-        
+
         if len(sections) > 2:
             sections.insert(3, {
                 "type": "question",
@@ -314,7 +279,7 @@ class SmartCourseService:
                 "content": "学习了前面的内容，我想请大家思考一个问题：这些知识点之间有什么内在联系？试着用自己的话总结一下。",
                 "duration": 30
             })
-        
+
         key_points = [s["title"] for s in sections if s.get("type") == "knowledge_point"][:3]
         sections.append({
             "type": "summary",
@@ -325,9 +290,9 @@ class SmartCourseService:
             "duration": 60,
             "next_preview": "下节课我们将学习更深入的内容。"
         })
-        
+
         total_duration = sum(s["duration"] for s in sections)
-        
+
         return {
             "title": Path(filename).stem,
             "summary": f"本课程《{Path(filename).stem}》共包含 {len(sections)} 个教学环节，总时长约 {total_duration // 60} 分钟。",

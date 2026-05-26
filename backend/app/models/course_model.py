@@ -365,3 +365,34 @@ class DoclingPicture(SQLModel, table=True):
     sort_order: int = Field(default=0, description="排序序号")
 
     created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+
+
+class StudentEnrollment(SQLModel, table=True):
+    """
+    学生选课表：记录学生选择某门课程的信息及学习进度
+    """
+
+    __tablename__ = "student_enrollments"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    student_id: int = Field(foreign_key="users.id", index=True, description="学生用户ID")
+    course_id: int = Field(foreign_key="courses.id", index=True, description="课程ID")
+
+    enrolled_at: datetime = Field(default_factory=datetime.utcnow, description="选课时间")
+
+    # 学习进度统计
+    total_nodes_completed: int = Field(default=0, description="已完成节点数")
+    total_nodes_count: int = Field(default=0, description="课程总节点数")
+    overall_progress: float = Field(default=0.0, description="总体进度(0-100)")
+
+    # 平均理解度
+    avg_understanding_score: float = Field(default=0.0, description="平均理解度(0-1)")
+    avg_understanding_level: str = Field(default="unknown", description="理解度等级")
+
+    # 学习时长（分钟）
+    total_study_minutes: int = Field(default=0, description="累计学习时长(分钟)")
+
+    last_study_time: Optional[datetime] = Field(default=None, description="最后学习时间")
+
+    is_active: bool = Field(default=True, description="是否活跃选课")

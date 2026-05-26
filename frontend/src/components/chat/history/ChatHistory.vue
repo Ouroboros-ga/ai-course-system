@@ -26,16 +26,36 @@
 
 
 <script setup>
-import { ref } from 'vue';
-const historyList = ref([
-  { id: 1, title: 'Vue3 组件化开发', time: '今天 14:30' },
-  { id: 2, title: 'PPT 解析与知识点总结', time: '今天 10:20' },
-  { id: 3, title: '前端工程化配置', time: '昨天 16:10' },
-]);
+import { ref, onMounted } from 'vue';
+import { getChatHistory } from '@/api/chat.js'
+import { useCounterStore } from '@/stores/counter.js'
 
+const counter = useCounterStore()
+const historyList = ref([])
+const loading = ref(false)
+
+const emit = defineEmits(['select'])
+
+const loadHistory = async () => {
+  if (!counter.userData.id) return
+  loading.value = true
+  try {
+    const res = await getChatHistory({ userId: counter.userData.id })
+    if (res && res.records) {
+      historyList.value = res.records
+    }
+  } catch (e) {
+    console.error('加载历史记录失败:', e)
+  }
+  loading.value = false
+}
+
+onMounted(() => {
+  loadHistory()
+})
 
 const handleSelect = (item) => {
-  console.log('选中记录：', item);
+  emit('select', item)
 };
 </script>
 

@@ -64,7 +64,7 @@ function extractFormulas(text) {
   })
   
   // 再处理行内公式 $...$
-  processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+  processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
     const placeholder = `%%INLINE_FORMULA_${index}%%`
     formulas.push({
       placeholder,
@@ -132,7 +132,7 @@ const renderedContent = computed(() => {
   // 步骤4: 使用 DOMPurify 清理潜在的恶意脚本
   // 允许KaTeX需要的class和样式
   const cleanHtml = DOMPurify.sanitize(htmlWithFormulas, {
-    ADD_ATTR: ['class', 'style'],
+    ADD_ATTR: ['class'],
     ADD_TAGS: ['span', 'div']
   })
   

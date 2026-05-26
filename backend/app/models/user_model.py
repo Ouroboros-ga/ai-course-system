@@ -9,15 +9,9 @@ import re
 
 
 class UserRole(str, Enum):
-    """
-    用户角色枚举
-    对应赛题要求：
-    TEACHER: 负责上传课件、编辑脚本、生成智课
-    STUDENT: 负责观看智课、实时问答、进度续接
-    """
-
     TEACHER = "teacher"
     STUDENT = "student"
+    ADMIN = "admin"
 
 
 class User(SQLModel, table=True):

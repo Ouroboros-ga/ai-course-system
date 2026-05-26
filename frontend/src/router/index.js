@@ -1,9 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
-import ChatView from '../views/Home.vue'
+import { useCounterStore } from '@/stores/counter.js'
 
-// 路由懒加载时添加加载提示（可选）
 const loadView = (view) => {
-  return () => import(/* webpackChunkName: "view-[request]" */ `../views/${view}.vue`)
+  return () => import(`../views/${view}.vue`)
 }
 
 const router = createRouter({
@@ -12,17 +11,21 @@ const router = createRouter({
     {
       path: '/',
       name: 'home',
-      component: ChatView
+      component: loadView('Home')
     },
     {
       path: '/chat',
       name: 'chat',
-      component: loadView('Chat') // 简化懒加载写法
+      component: loadView('Chat')
+    },
+    {
+      path: '/edulib',
+      name: 'Edulib',
+      component: loadView('Edulib')
     },
     {
       path: '/Edulib',
-      name: 'Edulib',
-      component: loadView('Edulib') // 简化懒加载写法
+      redirect: '/edulib'
     },
     {
       path: '/about',
@@ -34,10 +37,78 @@ const router = createRouter({
       name: 'profile',
       component: loadView('Profile')
     },
+    {
+      path: '/sso/callback',
+      name: 'sso-callback',
+      component: loadView('SsoCallback')
+    },
+    {
+      path: '/teacher',
+      redirect: '/teacher/history'
+    },
+    {
+      path: '/teacher/history',
+      name: 'teacher-history',
+      component: loadView('TeacherHistory'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    {
+      path: '/teacher/create',
+      name: 'teacher-create',
+      component: loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    {
+      path: '/teacher/course/:courseId',
+      name: 'teacher-course',
+      component: loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher' }
+    },
+    {
+      path: '/student',
+      name: 'student-dashboard',
+      component: loadView('StudentDashboard'),
+      meta: { requiresAuth: true, role: 'student' }
+    },
+    {
+      path: '/student/course/:courseId',
+      name: 'student-course',
+      component: loadView('StudentDashboard'),
+      meta: { requiresAuth: true, role: 'student' }
+    },
+    {
+      path: '/player/course/:courseId',
+      name: 'student-player',
+      component: loadView('StudentPlayer'),
+      meta: { requiresAuth: true, role: 'student' }
+    },
+    {
+      path: '/admin',
+      name: 'admin-panel',
+      component: loadView('AdminPanel'),
+      meta: { requiresAuth: true, role: 'admin' }
+    },
+    {
+      path: '/:pathMatch(.*)*',
+      name: 'not-found',
+      component: loadView('Home')
+    }
   ],
-  // 页面跳转时滚动到顶部（体验优化）
   scrollBehavior() {
     return { top: 0 }
+  }
+})
+
+router.beforeEach((to, from, next) => {
+  const counter = useCounterStore()
+  counter.checkAuth()
+
+  if (to.meta.requiresAuth && !counter.isLoggedIn) {
+    next({ path: '/profile', query: { redirect: to.fullPath } })
+  } else if (to.meta.role && counter.userData.role !== to.meta.role) {
+    next({ path: '/' })
+  } else {
+    next()
   }
 })
 

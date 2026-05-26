@@ -8,7 +8,7 @@ import Footer from '@/components/home/sections/Footer.vue'
 import ScrollArrow from '@/components/home/ui/ScrollArrow.vue'
 import BackTop from '@/components/home/ui/BackTop.vue'
 
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
@@ -30,6 +30,13 @@ onMounted(() => {
   handleScroll()
 })
 
+onUnmounted(() => {
+  const container = containerRef.value
+  if (container) {
+    container.removeEventListener('scroll', handleScroll)
+  }
+})
+
 const goNext = () => {
   const container = containerRef.value
   const nextTop = container.scrollTop + window.innerHeight
@@ -41,7 +48,7 @@ const goToTop = () => {
 }
 
 const goToChat = () => {
-  router.push('/chat')
+  router.push('/profile')
 }
 </script>
 

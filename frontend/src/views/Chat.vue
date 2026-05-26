@@ -99,7 +99,6 @@ const loadFromStorage = () => {
       }
     }
   } catch (e) {
-    console.error('加载本地存储数据失败:', e);
     localStorage.removeItem(STORAGE_KEY);
   }
 };
@@ -113,7 +112,6 @@ const saveToStorage = () => {
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(dataToSave));
   } catch (e) {
-    console.error('保存到本地存储失败:', e);
   }
 };
 

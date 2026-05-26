@@ -16,13 +16,7 @@ class SignatureMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app, whitelist_paths: Optional[list] = None):
         super().__init__(app)
-        self.whitelist_paths = whitelist_paths or [
-            "/api/v1/user/login",
-            "/api/v1/user/register",
-            "/docs",
-            "/openapi.json",
-            "/",
-        ]
+        self.whitelist_paths = whitelist_paths or settings.NO_AUTH_WHITELIST
 
     async def dispatch(self, request: Request, call_next):
         current_path = request.url.path

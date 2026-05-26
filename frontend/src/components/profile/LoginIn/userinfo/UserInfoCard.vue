@@ -112,6 +112,7 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
+import { showToast } from '@/utils/toast'
 
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
@@ -145,12 +146,16 @@ const resetForm = () => {
 const handleSubmitUsername = () => {
   const usernameRegex = /^[a-zA-Z]{1,80}$/
 
+  if (!form.oldPassword) {
+    showToast('请输入当前密码！', 'error')
+    return
+  }
   if (!form.username) {
-    showToast('用户名不能为空！')
+    showToast('用户名不能为空！', 'error')
     return
   }
   if (!usernameRegex.test(form.username)) {
-    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。')
+    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。', 'error')
     return
   }
 
@@ -166,15 +171,15 @@ const handleSubmitPassword = () => {
   const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
 
   if (!form.oldPassword) {
-    showToast('请输入当前密码！')
+    showToast('请输入当前密码！', 'error')
     return
   }
   if (!passwordRegex.test(form.newPassword)) {
-    showToast('新密码格式错误：长度需在6~18位之间，且只能包含英文字母和数字。')
+    showToast('新密码格式错误：长度需在6~18位之间，且只能包含英文字母和数字。', 'error')
     return
   }
   if (form.newPassword !== form.confirmPassword) {
-    showToast('两次输入的新密码不一致！')
+    showToast('两次输入的新密码不一致！', 'error')
     return
   }
 

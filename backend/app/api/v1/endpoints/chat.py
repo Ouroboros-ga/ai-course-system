@@ -236,10 +236,24 @@ async def ask_question(
         ]
         
         print(f"[聊天] 调用QA服务生成回答...")
+        
+        current_node_info = None
+        if currentNodeId:
+            from app.models.course_model import ScriptNode
+            script_node = session.get(ScriptNode, currentNodeId)
+            if script_node:
+                current_node_info = {
+                    "title": script_node.title,
+                    "content": script_node.content,
+                    "node_type": script_node.node_type,
+                    "node_index": script_node.node_index,
+                }
+        
         qa_result = await qa_service.ask_question_with_rag(
             question=question,
             course_context=course_context,
             history_messages=history_messages,
+            current_node=current_node_info,
             use_rag=bool(courseId),
             rag_top_k=3,
             strict_mode=strictMode,
