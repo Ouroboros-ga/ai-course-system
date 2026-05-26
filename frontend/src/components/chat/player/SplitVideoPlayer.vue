@@ -222,14 +222,50 @@ const currentKnowledgePoint = computed(() => {
 })
 
 const currentPageData = computed(() => {
-  // 根据当前节点获取PPT内容
+  // 根据当前节点获取PPT内容（优先使用真实PPT页面数据）
   const currentNode = playerData.value.nodes[currentNodeIndex.value]
   if (currentNode) {
+    const pageStart = currentNode.page_start || 1
+    const pageEnd = currentNode.page_end || pageStart
+
+    // 如果有真实的PPT页面数据，优先使用
+    if (playerData.value.ppt_pages && playerData.value.ppt_pages.length > 0) {
+      // 查找当前页码范围内的PPT页面
+      const pptPage = playerData.value.ppt_pages.find(
+        p => p.page_no >= pageStart && p.page_no <= pageEnd
+      )
+      if (pptPage) {
+        return {
+          title: pptPage.title || currentNode.title,
+          content: pptPage.text || pptPage.content || '',
+          page_start: pageStart,
+          page_end: pageEnd,
+          is_real_ppt: true,
+        }
+      }
+
+      // 如果没找到精确匹配，尝试查找最接近的页面
+      const closestPage = playerData.value.ppt_pages.find(
+        p => p.page_no === pageStart
+      )
+      if (closestPage) {
+        return {
+          title: closestPage.title || currentNode.title,
+          content: closestPage.text || closestPage.content || '',
+          page_start: pageStart,
+          page_end: pageEnd,
+          is_real_ppt: true,
+        }
+      }
+    }
+
+    // 回退到节点内容（讲解文本）
     return {
       title: currentNode.title,
       content: currentNode.content,
-      page_start: currentNode.page_start,
-      page_end: currentNode.page_end,
+      page_start: pageStart,
+      page_end: pageEnd,
+      is_real_ppt: false,
     }
   }
   return null
@@ -264,10 +300,14 @@ async function initPlayer() {
     if (response && response.data) {
       playerData.value = response.data
 
-      // 计算总页数
-      if (playerData.value.nodes.length > 0) {
+      // 计算总页数（优先使用真实PPT数据）
+      if (playerData.value.ppt_pages && playerData.value.ppt_pages.length > 0) {
+        totalPages.value = playerData.value.ppt_pages.length
+        console.log(`[SplitVideoPlayer] 使用真实PPT数据，共 ${totalPages.value} 页`)
+      } else if (playerData.value.nodes.length > 0) {
         const lastNode = playerData.value.nodes[playerData.value.nodes.length - 1]
         totalPages.value = lastNode.page_end || 1
+        console.log(`[SplitVideoPlayer] 使用节点页码估算，共 ${totalPages.value} 页`)
       }
 
       // 恢复断点续播位置

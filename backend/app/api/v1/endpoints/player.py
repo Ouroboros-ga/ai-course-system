@@ -6,6 +6,7 @@
 - 学习进度保存与恢复
 """
 
+import logging
 from typing import Optional, List
 from datetime import datetime
 
@@ -24,6 +25,8 @@ from app.core.config import settings
 
 router = APIRouter(prefix="/player", tags=["分屏播放器"])
 
+logger = logging.getLogger(__name__)
+
 
 class PlayerInitData(BaseModel):
     """播放器初始化数据响应模型"""
@@ -34,6 +37,7 @@ class PlayerInitData(BaseModel):
     total_nodes: int = Field(description="总节点数")
     nodes: List[dict] = Field(description="脚本节点列表")
     video_base_url: str = Field(description="视频基础URL")
+    ppt_pages: Optional[List[dict]] = Field(default=None, description="PPT逐页内容（用于右侧显示）")
     saved_progress: Optional[dict] = Field(default=None, description="已保存的学习进度")
 
 
@@ -182,7 +186,15 @@ async def get_player_init_data(
                 "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
             }
 
-        # 7. 返回完整数据
+        # 7. 获取PPT逐页内容（用于右侧PPT显示）
+        ppt_pages = []
+        try:
+            from app.services.mapping_service import MappingService
+            ppt_pages = MappingService.get_page_texts(session, course_id)
+        except Exception as e:
+            logger.warning(f"[Player] 获取PPT页面内容失败: {e}")
+
+        # 8. 返回完整数据
         return PlayerInitData(
             course_id=course_id,
             course_title=course.title,
@@ -191,6 +203,7 @@ async def get_player_init_data(
             total_nodes=len(nodes),
             nodes=nodes_data,
             video_base_url="/api/v1/video/stream/",
+            ppt_pages=ppt_pages if ppt_pages else None,
             saved_progress=saved_progress,
         )
 
