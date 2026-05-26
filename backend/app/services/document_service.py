@@ -544,8 +544,8 @@ class ScriptGenerator:
         doc_title: str = None
     ) -> ScriptResult:
         """
-        从ai_formatted数据生成智课脚本（保持原始标题结构）
-        直接使用docling JSON中的content，不使用AI重新生成
+        从ai_formatted数据生成智课脚本
+        先提取结构，再使用AI将原始内容转为适合TTS语音讲解的文本
         
         Args:
             ai_formatted: docling生成的ai_formatted数组
@@ -606,6 +606,9 @@ class ScriptGenerator:
                     'slide': 1,
                 })
         
+        # 使用AI将原始内容转为TTS讲解文本
+        merged_sections = await ScriptGenerator._convert_to_tts_content(merged_sections, doc_title or filename)
+        
         nodes = []
         total_duration = 0
         
@@ -661,6 +664,105 @@ class ScriptGenerator:
         )
     
     @staticmethod
+    async def _convert_to_tts_content(
+        sections: List[Dict[str, Any]],
+        doc_title: str
+    ) -> List[Dict[str, Any]]:
+        """
+        使用AI批量将原始课件内容转为适合TTS语音讲解的文本
+        将所有section的内容一次性发送给AI处理，减少API调用次数
+        """
+        if not sections:
+            return sections
+        
+        # 构建待转换的内容摘要
+        sections_text = ""
+        for idx, section in enumerate(sections):
+            sections_text += f"\n---\n[节点{idx+1}] 标题：{section['title']}\n内容：{section['content']}\n"
+        
+        system_prompt = """你是一位专业的课程讲解稿撰写专家。你的任务是将PPT课件中提取的原始文本改写为适合TTS语音播报的讲解稿。
+
+## 原始文本的问题
+课件提取的原始文本通常存在以下问题，你必须全部修正：
+1. 包含文件名（如"金材-第二章 1.pptx"）—— 必须去除，替换为实际的知识点名称
+2. 包含模板标记（如【概念定义】【原理解释】）—— 必须去除，用自然过渡语替代
+3. 内容空洞泛化（如"它涉及多个要素的相互作用"）—— 必须根据标题和上下文补充具体的专业内容
+4. 编号符号（如①②③、1. 2. 3.）—— 改为自然语言过渡
+5. Markdown格式（如#、**、-）—— 去除所有格式标记
+6. 图片占位符（如[图片]）—— 去除
+
+## 讲解稿写作规范
+1. **口语化表达**：像老师在课堂上讲课一样自然，使用"我们来看""接下来""需要注意的是""简单来说"等过渡语
+2. **内容充实**：如果原文内容空洞，根据标题补充合理的专业知识和解释，不要写空话
+3. **逻辑清晰**：按"引入→定义→解释→举例→小结"的结构组织
+4. **长度适中**：每个节点300-800字，信息密度高但不冗长
+5. **直接输出**：只输出讲解稿纯文本，不要任何额外标记或说明
+
+## 输出格式
+严格按以下格式输出每个节点的讲解稿，节点之间用 === 分隔：
+
+[节点1的讲解稿文本]
+===
+[节点2的讲解稿文本]
+===
+[节点3的讲解稿文本]
+
+注意：节点数量和顺序必须与输入完全一致，不要遗漏或合并任何节点。"""
+
+        user_prompt = f"""课程：{doc_title}
+
+以下是{len(sections)}个课件节点的原始内容，请改写为适合语音播报的讲解稿：
+
+{sections_text}
+
+请按格式输出{len(sections)}个节点的讲解稿，用 === 分隔："""
+
+        try:
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt)
+            ]
+            
+            logger.info(f"[ScriptGenerator] TTS转换: 发送{len(sections)}个节点到AI")
+            response = await llm_client.chat(messages, temperature=0.7, max_tokens=8192)
+            logger.info(f"[ScriptGenerator] TTS转换: 收到AI响应，长度{len(response.content)}字符")
+            
+            # 解析AI返回的内容
+            tts_texts = response.content.strip().split('===')
+            tts_texts = [t.strip() for t in tts_texts if t.strip()]
+            
+            # 如果返回的节点数量不匹配，逐个增强
+            if len(tts_texts) != len(sections):
+                logger.warning(
+                    f"[ScriptGenerator] TTS转换: AI返回{len(tts_texts)}个节点，期望{len(sections)}个，回退到逐个增强"
+                )
+                for section in sections:
+                    section['content'] = await ScriptGenerator._enhance_content_with_ai(
+                        section['title'], section['content'], 0
+                    )
+                return sections
+            
+            # 将AI生成的讲解稿替换到sections中
+            for idx, tts_text in enumerate(tts_texts):
+                # 去除可能残留的[节点N]标记
+                cleaned = re.sub(r'^\[节点\d+\]\s*', '', tts_text)
+                if len(cleaned) >= 100:
+                    sections[idx]['content'] = cleaned
+                else:
+                    logger.warning(f"[ScriptGenerator] TTS转换: 节点{idx+1}内容过短({len(cleaned)}字)，保留原始内容")
+            
+            logger.info(f"[ScriptGenerator] TTS转换: 成功转换{len(sections)}个节点")
+            return sections
+            
+        except Exception as e:
+            logger.warning(f"[ScriptGenerator] TTS转换失败: {e}，使用逐个增强")
+            for section in sections:
+                section['content'] = await ScriptGenerator._enhance_content_with_ai(
+                    section['title'], section['content'], 0
+                )
+            return sections
+    
+    @staticmethod
     async def _enhance_content_with_ai(
         title: str,
         original_content: str,
@@ -676,22 +778,22 @@ class ScriptGenerator:
             return ScriptGenerator._expand_content(original_content, section_index, "lecture")
         
         try:
-            system_prompt = """你是一个专业的内容优化助手。请优化以下教学内容的表达，使其更加清晰易懂。
+            system_prompt = """你是一位专业的课程讲解稿撰写专家。请将以下课件内容改写为适合语音播报的讲解稿。
 
-要求：
-1. 保持内容的核心信息和专业性
-2. 优化语言表达，使其更流畅
-3. 内容长度控制在300-800字之间
-4. 不要改变内容的主题和核心观点
-5. 适当补充解释、举例和类比，使内容更加丰富
-6. 直接输出优化后的内容，不要添加任何额外说明"""
+## 核心要求
+1. 语言风格：口语化、自然流畅，像老师在课堂上讲课一样
+2. 去除所有不适合朗读的内容：文件名（如xxx.pptx）、模板标记（如【概念定义】）、编号符号（如①②③）
+3. 用自然的过渡语连接内容，如"首先""接下来""需要注意的是""简单来说"
+4. 适当补充解释和举例，让抽象概念更易懂
+5. 内容长度控制在300-800字之间
+6. 直接输出讲解稿文本，不要添加任何额外说明或格式标记"""
 
             user_prompt = f"""标题：{title}
 
-原始内容：
+原始课件内容：
 {original_content}
 
-请优化以上内容，使其更适合教学讲解："""
+请改写为适合语音播报的讲解稿："""
 
             messages = [
                 Message(role="system", content=system_prompt),
@@ -784,7 +886,7 @@ class ScriptGenerator:
         else:
             truncated_content = markdown_content
         
-        system_prompt = """你是一位专业的课程设计师和教育专家。请根据用户提供的文档内容，生成一份**高质量的结构化智课脚本**。
+        system_prompt = """你是一位专业的课程设计师和讲解稿撰写专家。请根据用户提供的文档内容，生成一份**高质量的智课脚本**，内容将用于TTS语音合成和数字人视频播报。
 
 ## 核心要求
 
@@ -795,22 +897,30 @@ class ScriptGenerator:
 - 统计字数时不包括标点符号和空格
 - **生成的内容总文本量必须大于原文档的文本量**，通过补充解释、举例、类比等方式扩展内容
 
-### 2. 结构化要求
+### 2. TTS语音播报要求（最重要）
+content字段将被TTS语音合成引擎朗读，必须符合以下规范：
+- **口语化表达**：像老师在课堂上讲课一样自然，不要写成书面论文风格
+- **去除不适合朗读的内容**：文件名（如xxx.pptx）、模板标记（如【概念定义】【原理解释】）、编号符号（如①②③）
+- **自然过渡语**：使用"我们来看""接下来""需要注意的是""简单来说""举个例子"等口语化过渡
+- **避免空洞泛化**：不要写"它涉及多个要素的相互作用"这类空话，要写具体内容
+- **纯文本输出**：content中不要包含Markdown格式（#、**、-）、特殊符号（□■◆●）、图片占位符
+
+### 3. 结构化要求
 - **严格按照文档的层级结构组织内容**
 - 保持原文档的章节顺序和逻辑关系
 - **文档中的每个章节、小节都必须对应至少一个教学节点，不得遗漏任何章节**
 - 如果原文档有N个章节/小节标题，生成的节点数量不得少于N个
 - 标题必须清晰、准确、无乱码，使用规范的中文表述
 
-### 3. 内容质量标准
+### 4. 内容质量标准
 - **概念解释**：定义清晰，通俗易懂，避免过于学术化的表述，用类比帮助理解
 - **原理讲解**：深入浅出，包含"是什么→为什么→怎么用"的完整逻辑链，详细阐述内在机制
 - **实例说明**：至少提供2-3个贴近实际的具体案例，包含详细的分析过程
 - **应用场景**：说明知识点的实际应用价值和适用范围，给出具体应用实例
-- **过渡衔接**：自然流畅，使用"接下来""在此基础上""值得注意的是"等过渡语
+- **过渡衔接**：自然流畅，使用口语化的过渡语
 - **内容扩展**：在原文基础上补充背景知识、相关概念对比、常见误区、实际工程应用等
 
-### 4. 标题规范
+### 5. 标题规范
 - 使用简洁明了的中文标题（4-15个字）
 - 避免使用特殊符号、乱码字符
 - 标题要能准确概括该节点的核心内容
@@ -821,7 +931,7 @@ class ScriptGenerator:
 请以JSON格式返回，结构如下：
 {
     "title": "课程标题（使用清晰的中文，无乱码）",
-    "summary": "课程整体摘要（100-200字）",
+    "summary": "课程整体摘要（100-200字，口语化）",
     "keywords": ["关键词1", "关键词2"],
     "total_duration": 总时长(秒),
     "nodes": [
@@ -829,7 +939,7 @@ class ScriptGenerator:
             "chapter_id": "chap_000",
             "node_type": "lecture",
             "title": "节点标题（中文，4-15字，无特殊符号）",
-            "content": "【严格300-800字的详细讲解文本】包含：概念定义+原理解释+具体案例+应用场景+背景补充",
+            "content": "口语化的讲解稿文本，300-800字，适合TTS朗读",
             "page_start": 1,
             "page_end": 1,
             "duration": 90,
@@ -845,7 +955,7 @@ class ScriptGenerator:
 - interactive: 交互环节（引导思考）
 
 ## 重要提示
-1. **content字段是唯一最重要的字段**，必须确保300-800字
+1. **content字段是唯一最重要的字段**，必须确保300-800字的口语化讲解稿
 2. **标题必须使用纯中文**，禁止任何乱码或特殊符号
 3. **保持文档原有的层级结构**，不要随意重组或打乱顺序
 4. **内容要实用且丰富**，学生能够直接理解和应用
