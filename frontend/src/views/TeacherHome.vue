@@ -49,7 +49,7 @@ const goToProfile = () => {
 
 <style scoped>
 .teacher-home {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--navbar-height));
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 

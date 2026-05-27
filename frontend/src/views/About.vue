@@ -106,7 +106,7 @@ onMounted(() => activeNav.value = 'overview')
 
 <style scoped>
 /* 全局基础 */
-.about-container{display:flex;width:100%;height:calc(100vh - 60px);background:#f6f8fa;overflow:hidden;}
+.about-container{display:flex;width:100%;height:calc(100vh - var(--navbar-height));background:#f6f8fa;overflow:hidden;}
 
 /* 左侧高阶侧边栏 */
 .pro-sidebar{width:240px;background:#fff;border-radius:0 16px 16px 0;box-shadow:2px 0 10px rgba(0,0,0,0.06);height:100%;padding:24px 0;border-left:none;overflow-y:auto;}

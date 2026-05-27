@@ -16,7 +16,7 @@ from app.core.security import create_access_token, get_password_hash, verify_pas
 from app.models.user_model import User, UserRole
 from app.models.course_model import Course, StudentEnrollment
 from app.models.database import get_session
-from app.schemas.common_schema import unified_response
+from app.core.exceptions import unified_response
 
 logger = logging.getLogger(__name__)
 

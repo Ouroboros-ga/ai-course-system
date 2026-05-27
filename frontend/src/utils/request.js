@@ -1,7 +1,7 @@
 // src/api/request.js
 import axios from 'axios'
-// 1. 引入 toast 工具
 import { showToast } from '@/utils/toast'
+import { useCounterStore } from '@/stores/counter.js'
 
 // 创建 axios 实例
 const service = axios.create({
@@ -363,7 +363,13 @@ function _handleUnauthorized() {
   localStorage.removeItem('username')
   localStorage.removeItem('userRole')
 
-  // 延迟跳转，让用户看到提示
+  try {
+    const counter = useCounterStore()
+    counter.clearAuth()
+  } catch (e) {
+    // store may not be initialized yet
+  }
+
   setTimeout(() => {
     window.location.href = '/profile'
   }, 1500)

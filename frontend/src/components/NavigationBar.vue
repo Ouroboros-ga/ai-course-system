@@ -98,8 +98,10 @@ const roleLabel = computed(() => {
 }
 
 .navbar {
-  position: sticky;
+  position: fixed;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
   display: flex;
   justify-content: space-between;
@@ -223,6 +225,7 @@ const roleLabel = computed(() => {
   flex: 1;
   width: 100%;
   box-sizing: border-box;
+  padding-top: var(--navbar-height);
 }
 
 .fade-enter-active,

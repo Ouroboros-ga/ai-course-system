@@ -550,7 +550,7 @@ const handleKeydown = (e) => {
 
 <style scoped>
 .knowledge-progress-page {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--navbar-height));
   background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
   padding: 24px;
 }

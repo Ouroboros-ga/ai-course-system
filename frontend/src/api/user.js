@@ -35,7 +35,7 @@ export function register(data) {
  */
 export function getUserInfo() {
   return request({
-    url: '/user/info',
+    url: '/user/me',
     method: 'get'
   })
 }
@@ -63,8 +63,8 @@ export function logout() {
  */
 export function updateUserInfo(data) {
   return request({
-    url: '/user/update',
-    method: 'put',
+    url: '/user/modify',
+    method: 'post',
     data
   })
 }

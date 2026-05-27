@@ -168,7 +168,7 @@ onMounted(() => {
 /* 基础结构 */
 .chat-section {
   width: 100%;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--navbar-height));
   display: flex;
   align-items: center;
   justify-content: center;

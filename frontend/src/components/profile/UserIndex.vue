@@ -52,14 +52,16 @@ const handleLoginSend = async (data) => {
     const res = await api.user.login(data)
     localStorage.setItem('token', res.token)
     localStorage.setItem('userId', res.userInfo.id)
-    localStorage.setItem('username', data.username)
+    localStorage.setItem('username', res.userInfo.username || data.username)
+    localStorage.setItem('userRole', res.userInfo.role)
 
     counter.setAuth({
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
-        username: data.username
-      }
+        username: res.userInfo.username || data.username
+      },
+      role: res.userInfo.role
     })
 
     showToast("登录成功", "success")
@@ -80,14 +82,16 @@ const handleRegisterSend = async (data) => {
     const res = await api.user.register(registerData)
     localStorage.setItem('token', res.token)
     localStorage.setItem('userId', res.userInfo.id)
-    localStorage.setItem('username', data.username)
+    localStorage.setItem('username', res.userInfo.username || data.username)
+    localStorage.setItem('userRole', res.userInfo.role)
 
     counter.setAuth({
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
-        username: data.username
-      }
+        username: res.userInfo.username || data.username
+      },
+      role: res.userInfo.role
     })
 
     showToast("注册成功并自动登录", "success")
@@ -275,7 +279,7 @@ const handleLogout = () => {
 <style scoped>
 .user-index-wrapper {
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   position: relative;
   display: flex;
   justify-content: center;

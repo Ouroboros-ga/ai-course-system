@@ -10,7 +10,7 @@ import KnowledgeProgressPage from '@/components/chat/player/PptPlayer/KnowledgeP
 
 <style scoped>
 .knowledge-view {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--navbar-height));
   background: #f5f7fa;
 }
 </style>

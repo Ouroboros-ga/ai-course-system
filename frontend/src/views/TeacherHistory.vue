@@ -632,7 +632,7 @@ async function loadStats() {
 
 <style scoped>
 .teacher-history {
-  min-height: 100vh;
+  min-height: calc(100vh - var(--navbar-height));
   background: #f5f7fa;
 }
 

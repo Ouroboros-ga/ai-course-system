@@ -45,7 +45,7 @@
 <style scoped>
 .slide {
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   scroll-snap-align: start;
   display: flex;
   align-items: center;
@@ -205,7 +205,7 @@
 }
 
 @media (max-width:768px) {
-  .slide{height:auto; min-height:100vh; padding:140px 20px 80px;}
+  .slide{height:auto; min-height:calc(100vh - var(--navbar-height)); padding:140px 20px 80px;}
   .split-content{flex-direction:column; gap:2.5rem; text-align:center;}
   .text-side{text-align:center;}
   .main-title{font-size:2.2rem; line-height:1.3;}

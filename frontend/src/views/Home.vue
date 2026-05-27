@@ -72,12 +72,15 @@ const goToChat = () => {
 /* 给每个 section 统一加顶部内边距 */
 .main-container > * {
   padding-top: 70px;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--navbar-height));
   scroll-snap-align: start;
 }
 .home-wrapper {
   position: fixed;
-  inset: 0;
+  top: var(--navbar-height);
+  left: 0;
+  right: 0;
+  bottom: 0;
   overflow: hidden;
   background: #f8fafc;
   font-family: sans-serif;

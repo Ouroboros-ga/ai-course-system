@@ -175,7 +175,7 @@ onUnmounted(() => {
   gap: 0;
   padding: 0;
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   background: #f8fafc;
   position: relative;
   font-family: system-ui, sans-serif;
@@ -215,7 +215,7 @@ onUnmounted(() => {
 
 @media (max-width: 768px) {
   .chat-page-container {
-    height: 100vh;
+    height: calc(100vh - var(--navbar-height));
     overflow: hidden;
   }
 

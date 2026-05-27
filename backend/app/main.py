@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.signature_middleware import SignatureMiddleware
 from app.core.exceptions import global_exception_handler, unified_response
 from app.models.database import create_tables
+from app.common.db_migrator import run_migrations
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -32,8 +33,8 @@ from app.api.v1.endpoints import (
 )
 from app.schemas import UnifiedResponse
 
-# 创建数据库表
 create_tables()
+run_migrations()
 
 # 创建FastAPI实例
 app = FastAPI(

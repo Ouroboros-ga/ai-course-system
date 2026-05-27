@@ -84,7 +84,7 @@ const formatDuration = (seconds) => {
 
 <style scoped>
 .student-home {
-  min-height: calc(100vh - 56px);
+  min-height: calc(100vh - var(--navbar-height));
   background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
 }
 

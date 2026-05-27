@@ -109,7 +109,7 @@ const goToChat = () => {
 /* 核心容器 */
 .feature-section {
   width: 100%;
-  min-height: 100vh;
+  min-height: calc(100vh - var(--navbar-height));
   display: flex;
   align-items: center;
   justify-content: center;

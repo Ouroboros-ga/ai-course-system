@@ -12,7 +12,7 @@ import UserIndex from "@/components/profile/UserIndex.vue";
 .profile-page {
   position: relative;
   width: 100%;
-  height: calc(100vh - 60px);
+  height: calc(100vh - var(--navbar-height));
   overflow: hidden;
 }
 

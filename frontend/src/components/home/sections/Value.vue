@@ -87,7 +87,7 @@ onMounted(() => {
 <style scoped>
 .slide {
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   scroll-snap-align: start;
   display: flex;
   align-items: flex-start;
@@ -161,7 +161,7 @@ onMounted(() => {
   .slide {
     padding: 10vh 5% 0;
     height: auto;
-    min-height: 100vh;
+    min-height: calc(100vh - var(--navbar-height));
   }
 
   .section-title {

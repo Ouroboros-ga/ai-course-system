@@ -26,7 +26,7 @@
 <style scoped>
 .slide {
   width: 100%;
-  height: 100vh;
+  height: calc(100vh - var(--navbar-height));
   scroll-snap-align: start;
   display: flex;
   align-items: center;
