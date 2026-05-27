@@ -69,16 +69,18 @@ def convert_office_to_pdf(input_path: str, output_dir: Optional[str] = None) -> 
     logger.info(f"Converting {input_file.name} to PDF: {' '.join(cmd)}")
 
     try:
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = subprocess.SW_HIDE
+        kwargs = {
+            "capture_output": True,
+            "timeout": 300,
+        }
 
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            timeout=300,
-            startupinfo=si,
-        )
+        if os.name == "nt":
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = subprocess.SW_HIDE
+            kwargs["startupinfo"] = si
+
+        result = subprocess.run(cmd, **kwargs)
 
         stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
         stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
