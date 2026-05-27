@@ -93,11 +93,13 @@ def check_external_tool(tool_info: dict) -> dict:
         "path": None,
     }
 
-    env_path = os.environ.get(tool_info.get("env_var", ""))
-    if env_path and os.path.exists(env_path):
-        result["found"] = True
-        result["path"] = env_path
-        return result
+    env_var = tool_info.get("env_var")
+    if env_var:
+        env_path = os.environ.get(env_var, "")
+        if env_path and os.path.exists(env_path):
+            result["found"] = True
+            result["path"] = env_path
+            return result
 
     for path in tool_info.get("paths", []):
         if os.path.exists(path):
