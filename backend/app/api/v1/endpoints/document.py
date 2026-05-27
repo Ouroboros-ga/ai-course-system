@@ -9,6 +9,7 @@ import os
 import uuid
 import tempfile
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -25,6 +26,7 @@ from app.schemas.document_schema import (
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user, teacher_only
+from app.core.config import settings
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -46,11 +48,102 @@ from app.services.document_service import document_service
 from app.services import smart_course_service
 
 router = APIRouter(tags=["文档处理"])
+logger = logging.getLogger(__name__)
 
 UPLOAD_DIR = Path(tempfile.gettempdir()) / "ai_course_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
+tts_generation_status = {}
+
+
+async def _background_synthesize_audio(course_id: int, script_id: int):
+    import asyncio
+    from app.models.database import engine
+    from sqlmodel import create_engine as _ce, Session as _Session
+
+    status_key = str(course_id)
+    tts_generation_status[status_key] = {
+        "status": "processing",
+        "total": 0,
+        "completed": 0,
+        "errors": [],
+    }
+
+    try:
+        with _Session(engine) as session:
+            nodes = session.exec(
+                select(ScriptNode)
+                .where(ScriptNode.script_id == script_id)
+                .order_by(ScriptNode.node_index)
+            ).all()
+
+            course_audio_dir = get_course_audio_dir(course_id)
+            total = len([n for n in nodes if n.content and len(n.content.strip()) >= 10])
+            tts_generation_status[status_key]["total"] = total
+            completed = 0
+
+            for node in nodes:
+                if not node.content or len(node.content.strip()) < 10:
+                    continue
+
+                try:
+                    from app.common.tts_client import tts_client
+
+                    cleanup_old_node_audio(node, course_audio_dir)
+
+                    content = node.content.strip()
+                    if len(content) > 2000:
+                        segments = []
+                        current = ""
+                        for char in content:
+                            current += char
+                            if char in "。！？；" and len(current) >= 500:
+                                segments.append(current)
+                                current = ""
+                        if current:
+                            segments.append(current)
+                    else:
+                        segments = [content]
+
+                    all_audio = b""
+                    voice = None
+                    if node.extra_data:
+                        voice = node.extra_data.get("voice")
+
+                    for seg in segments:
+                        response = await tts_client.synthesize(
+                            text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                        )
+                        all_audio += response.audio_data
+
+                    audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
+                    audio_path = course_audio_dir / audio_filename
+                    audio_path.write_bytes(all_audio)
+
+                    audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
+                    node.audio_url = audio_url
+                    node.audio_duration = len(all_audio) / 16000 / 2
+
+                    session.add(node)
+                    completed += 1
+                    tts_generation_status[status_key]["completed"] = completed
+
+                except Exception as e:
+                    logger.warning(f"Background TTS failed for node {node.id}: {e}")
+                    tts_generation_status[status_key]["errors"].append({
+                        "node_id": node.id, "title": node.title, "error": str(e),
+                    })
+
+            session.commit()
+
+        tts_generation_status[status_key]["status"] = "completed"
+        logger.info(f"Background TTS generation completed for course {course_id}: {completed}/{total}")
+
+    except Exception as e:
+        logger.error(f"Background TTS generation failed for course {course_id}: {e}")
+        tts_generation_status[status_key]["status"] = "failed"
+        tts_generation_status[status_key]["errors"].append({"error": str(e)})
 
 
 @router.post("/upload", response_model=UnifiedResponse)
@@ -118,6 +211,26 @@ async def upload_document(
         session.commit()
         session.refresh(course)
         print(f"  创建课程记录: ID={course.id}, 标题={course.title}")
+
+        try:
+            from app.common.slide_converter import is_office_file, is_pdf_file, get_or_create_pdf
+            if is_office_file(str(file_path)):
+                print(f"[步骤1.5] 检测到Office文件，自动转换为PDF...")
+                pdf_path = get_or_create_pdf(str(file_path))
+                if pdf_path:
+                    course.pdf_file_path = pdf_path
+                    session.add(course)
+                    session.commit()
+                    print(f"  PDF转换成功: {pdf_path}")
+                else:
+                    print(f"  PDF转换失败，将在展示时重试")
+            elif is_pdf_file(str(file_path)):
+                course.pdf_file_path = str(file_path)
+                session.add(course)
+                session.commit()
+                print(f"  PDF文件，直接存储路径")
+        except Exception as e:
+            print(f"  PDF转换异常(不影响主流程): {e}")
 
         print(f"[步骤2] 创建 docling_documents 记录 (status = PENDING)")
         docling_doc = DoclingDocument(
@@ -255,6 +368,11 @@ async def upload_document(
         session.commit()
         print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}")
 
+        print(f"[步骤6.5] 启动后台TTS音频生成任务")
+        import asyncio
+        asyncio.create_task(_background_synthesize_audio(course.id, course_script.id))
+        print(f"  后台TTS任务已启动: course_id={course.id}, script_id={course_script.id}")
+
         print(f"[步骤7] 创建聊天记录归档")
         chat_record = ChatHistory(
             user_id=user_id,
@@ -282,7 +400,7 @@ async def upload_document(
         
         return unified_response(
             code=200,
-            message="上传并解析成功",
+            message="上传并解析成功，TTS语音正在后台生成",
             data={
                 "fullContent": script_result.beautiful_markdown,
                 "rawContent": parse_result.markdown_content,
@@ -291,6 +409,7 @@ async def upload_document(
                 "mindMapJson": mind_map,
                 "chatId": chat_id,
                 "courseId": course.id,
+                "ttsStatus": "processing",
                 "ragInfo": {
                     "formulaCount": rag_result.formula_count,
                     "tableCount": rag_result.table_count,
@@ -501,7 +620,7 @@ async def save_course_nodes(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.teacher_id != user_id:
             return unified_response(code=403, message="无权修改此课程", data=None)
@@ -605,6 +724,8 @@ async def get_course_detail(
                     "duration": n.duration,
                     "is_key_point": n.is_key_point,
                     "extra_data": n.extra_data,
+                    "audio_url": n.audio_url,
+                    "audio_duration": n.audio_duration,
                 }
                 for n in nodes
             ],
@@ -797,27 +918,29 @@ from fastapi.responses import Response
 
 @router.post("/tts/synthesize")
 async def synthesize_speech(
-    text: str = File(..., description="要合成的文本"),
-    voice: Optional[str] = File(None, description="音色"),
-    sample_rate: Optional[int] = File(16000, description="采样率"),
-    output_format: Optional[str] = File("mp3", description="输出格式"),
+    request: Request,
 ):
     """
     语音合成接口（支持长文本，自动分段合成）
-    
+
     将文本转换为语音，返回音频文件。
     长文本（>2000字）会自动分段合成后拼接。
-    
-    参数:
+
+    请求体(JSON):
     - text: 要合成的文本（支持长文本）
     - voice: 音色（可选，默认使用配置中的音色）
     - sample_rate: 采样率（可选，默认16000）
     - output_format: 输出格式（可选，默认mp3）
-    
+
     返回:
     - 音频文件（二进制数据）
     """
     try:
+        body = await request.json()
+        text = body.get("text", "")
+        voice = body.get("voice")
+        sample_rate = body.get("sample_rate", 16000)
+        output_format = body.get("output_format", "mp3")
         text_length = len(text)
         print(f"[TTS] 开始合成语音: 文本长度={text_length}字, 前50字: {text[:50]}...")
         
@@ -886,7 +1009,106 @@ async def synthesize_speech(
         import traceback
         error_detail = traceback.format_exc()
         print(f"[TTS] 错误详情:\n{error_detail}")
-        raise HTTPException(status_code=500, detail=f"语音合成失败: {str(e)}")
+
+        error_msg = str(e)
+        if "401" in error_msg or "grant not found" in error_msg or "authentication" in error_msg.lower():
+            raise HTTPException(
+                status_code=503,
+                detail="语音合成服务认证失败，TTS API凭证可能已过期，请联系管理员更新配置"
+            )
+        elif "timeout" in error_msg.lower() or "超时" in error_msg:
+            raise HTTPException(
+                status_code=504,
+                detail="语音合成服务响应超时，请稍后重试"
+            )
+        else:
+            raise HTTPException(status_code=500, detail=f"语音合成失败: {error_msg}")
+
+
+# ==================== TTS健康检查接口 ====================
+
+
+@router.get("/tts/health")
+async def tts_health_check(
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        from app.common.tts_client import tts_client, TTSError
+
+        test_response = await tts_client.synthesize(
+            text="测试",
+            output_format="mp3",
+        )
+
+        return unified_response(code=200, message="TTS服务正常", data={
+            "provider": settings.TTS_PROVIDER,
+            "status": "healthy",
+            "audio_size": len(test_response.audio_data),
+        })
+
+    except TTSError as e:
+        error_msg = str(e)
+        is_auth_error = "401" in error_msg or "grant not found" in error_msg
+        return unified_response(code=200, message="TTS服务异常", data={
+            "provider": settings.TTS_PROVIDER,
+            "status": "auth_error" if is_auth_error else "error",
+            "error": error_msg,
+        })
+    except Exception as e:
+        return unified_response(code=200, message="TTS服务异常", data={
+            "provider": getattr(settings, 'TTS_PROVIDER', 'unknown'),
+            "status": "error",
+            "error": str(e),
+        })
+
+
+@router.get("/course/{course_id}/tts-status")
+async def get_tts_generation_status(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    status_key = str(course_id)
+    status_info = tts_generation_status.get(status_key, None)
+
+    if status_info is None:
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, message="课程不存在", data=None)
+
+        script = session.exec(
+            select(CourseScript).where(
+                CourseScript.course_id == course_id,
+                CourseScript.is_active == True,
+            )
+        ).first()
+
+        if not script:
+            return unified_response(code=200, message="无脚本", data={
+                "status": "no_script", "total": 0, "completed": 0, "errors": [],
+            })
+
+        nodes = session.exec(
+            select(ScriptNode).where(ScriptNode.script_id == script.id)
+        ).all()
+
+        nodes_with_audio = sum(1 for n in nodes if n.audio_url)
+        total_nodes = len(nodes)
+
+        if nodes_with_audio == total_nodes and total_nodes > 0:
+            return unified_response(code=200, message="TTS已完成", data={
+                "status": "completed", "total": total_nodes, "completed": nodes_with_audio, "errors": [],
+            })
+        elif nodes_with_audio > 0:
+            return unified_response(code=200, message="TTS部分完成", data={
+                "status": "partial", "total": total_nodes, "completed": nodes_with_audio, "errors": [],
+            })
+        else:
+            return unified_response(code=200, message="TTS未开始", data={
+                "status": "not_started", "total": total_nodes, "completed": 0, "errors": [],
+            })
+
+    return unified_response(code=200, message="获取TTS状态成功", data=status_info)
 
 
 # ==================== 脚本版本管理接口 ====================
@@ -1097,7 +1319,7 @@ async def publish_course(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.teacher_id != user_id:
             return unified_response(code=403, message="无权操作此课程", data=None)
@@ -1140,7 +1362,7 @@ async def unpublish_course(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.teacher_id != user_id:
             return unified_response(code=403, message="无权操作此课程", data=None)
@@ -1180,7 +1402,7 @@ async def delete_course(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.teacher_id != user_id:
             return unified_response(code=403, message="无权删除此课程", data=None)
@@ -1195,30 +1417,59 @@ async def delete_course(
 
         # 删除所有相关数据（按依赖顺序）
         try:
-            from app.models.progress_model import LearningProgress, NodeProgress
-            from app.models.course_model import CourseScript, ScriptNode
+            from app.models.progress_model import LearningProgress, NodeProgress, UnderstandingAnalysis
+            from app.models.course_model import CourseScript, ScriptNode, DoclingDocument, DoclingGroup, DoclingTable, DoclingTableCell, DoclingText, DoclingPicture
+            from app.models.video_generation_model import VideoGenerationTask
+            from app.models.qa_model import QASession, QAMessage
+            from app.models.user_model import ChatHistory, ChatMessage
 
-            # 1. 删除该课程的所有学习进度和节点进度
+            # 1. 删除理解度分析（依赖 learning_progress）
             learning_progresses = session.exec(
                 select(LearningProgress).where(LearningProgress.course_id == course_id)
             ).all()
+            for lp in learning_progresses:
+                analyses = session.exec(
+                    select(UnderstandingAnalysis).where(UnderstandingAnalysis.progress_id == lp.id)
+                ).all()
+                for analysis in analyses:
+                    session.delete(analysis)
 
+            # 2. 删除节点进度和学习进度
             for lp in learning_progresses:
                 node_progresses = session.exec(
-                    select(NodeProgress).where(NodeProgress.learning_progress_id == lp.id)
+                    select(NodeProgress).where(NodeProgress.progress_id == lp.id)
                 ).all()
                 for np in node_progresses:
                     session.delete(np)
                 session.delete(lp)
 
-            # 2. 删除该课程的选课记录
+            # 3. 删除问答会话和消息
+            qa_sessions = session.exec(
+                select(QASession).where(QASession.course_id == course_id)
+            ).all()
+            for qs in qa_sessions:
+                qa_messages = session.exec(
+                    select(QAMessage).where(QAMessage.session_id == qs.id)
+                ).all()
+                for qm in qa_messages:
+                    session.delete(qm)
+                session.delete(qs)
+
+            # 4. 删除视频生成任务
+            video_tasks = session.exec(
+                select(VideoGenerationTask).where(VideoGenerationTask.course_id == course_id)
+            ).all()
+            for vt in video_tasks:
+                session.delete(vt)
+
+            # 5. 删除选课记录
             all_enrollments = session.exec(
                 select(StudentEnrollment).where(StudentEnrollment.course_id == course_id)
             ).all()
             for enrollment in all_enrollments:
                 session.delete(enrollment)
 
-            # 3. 删除课程脚本节点
+            # 6. 删除课程脚本节点和脚本
             scripts = session.exec(
                 select(CourseScript).where(CourseScript.course_id == course_id)
             ).all()
@@ -1230,7 +1481,46 @@ async def delete_course(
                     session.delete(node)
                 session.delete(script)
 
-            # 4. 最后删除课程本身
+            # 7. 删除 Docling 文档及其子表
+            docling_docs = session.exec(
+                select(DoclingDocument).where(DoclingDocument.course_id == course_id)
+            ).all()
+            for doc in docling_docs:
+                for group in session.exec(
+                    select(DoclingGroup).where(DoclingGroup.doc_id == doc.id)
+                ).all():
+                    session.delete(group)
+                for tbl in session.exec(
+                    select(DoclingTable).where(DoclingTable.doc_id == doc.id)
+                ).all():
+                    for cell in session.exec(
+                        select(DoclingTableCell).where(DoclingTableCell.table_id == tbl.id)
+                    ).all():
+                        session.delete(cell)
+                    session.delete(tbl)
+                for txt in session.exec(
+                    select(DoclingText).where(DoclingText.doc_id == doc.id)
+                ).all():
+                    session.delete(txt)
+                for pic in session.exec(
+                    select(DoclingPicture).where(DoclingPicture.doc_id == doc.id)
+                ).all():
+                    session.delete(pic)
+                session.delete(doc)
+
+            # 8. 删除关联的聊天历史（通过课程标题匹配）
+            chat_histories = session.exec(
+                select(ChatHistory).where(ChatHistory.content == course.title)
+            ).all()
+            for ch in chat_histories:
+                chat_msgs = session.exec(
+                    select(ChatMessage).where(ChatMessage.chat_id == ch.id)
+                ).all()
+                for cm in chat_msgs:
+                    session.delete(cm)
+                session.delete(ch)
+
+            # 9. 最后删除课程本身
             session.delete(course)
             session.commit()
 
@@ -1272,7 +1562,7 @@ async def enroll_course(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.status != CourseStatus.PUBLISHED:
             return unified_response(code=400, message="该课程尚未发布，无法选择", data=None)
@@ -1383,13 +1673,11 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
 
                 for node in nodes:
                     node_progress = NodeProgress(
-                        learning_progress_id=learning_progress.id,
+                        progress_id=learning_progress.id,
                         node_id=node.id,
                         node_index=node.node_index,
                         is_completed=False,
-                        completion_rate=0.0,
                         understanding_score=0.0,
-                        study_time=0,
                         question_count=0,
                     )
                     session.add(node_progress)
@@ -1474,7 +1762,7 @@ async def get_course_students(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         # 权限检查：只有课程老师或管理员可以查看
         if course.teacher_id != user_id and user_role != "admin":
@@ -1541,7 +1829,7 @@ async def get_course_stats(
 
         course = session.get(Course, course_id)
         if not course:
-            return unified_response(code=404, detail="课程不存在")
+            return unified_response(code=404, message="课程不存在")
 
         if course.teacher_id != user_id:
             return unified_response(code=403, message="无权查看此课程数据", data=None)
@@ -1654,3 +1942,409 @@ async def get_course_stats(
         import traceback
         traceback.print_exc()
         return unified_response(code=500, message=f"获取统计失败: {str(e)}", data=None)
+
+
+PPT_SLIDES_DIR = Path(tempfile.gettempdir()) / "ai_course_ppt_slides"
+PPT_SLIDES_DIR.mkdir(exist_ok=True)
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+AUDIO_STORAGE_DIR = BASE_DIR / "audio_storage"
+AUDIO_STORAGE_DIR.mkdir(exist_ok=True)
+
+
+def get_course_audio_dir(course_id: int) -> Path:
+    course_dir = AUDIO_STORAGE_DIR / str(course_id)
+    course_dir.mkdir(parents=True, exist_ok=True)
+    return course_dir
+
+
+def cleanup_old_node_audio(node: ScriptNode, course_dir: Path):
+    if node.audio_url:
+        old_filename = node.audio_url.split("/")[-1]
+        if old_filename:
+            old_path = course_dir / old_filename
+            if old_path.exists():
+                try:
+                    old_path.unlink()
+                    logger.info(f"Cleaned up old audio for node {node.id}: {old_filename}")
+                except OSError as e:
+                    logger.warning(f"Failed to delete old audio {old_path}: {e}")
+
+
+@router.get("/course/{course_id}/slides")
+async def get_course_slides(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    course = session.get(Course, course_id)
+    if not course:
+        return unified_response(code=404, message="课程不存在")
+
+    source_path = course.source_file_path
+    if not source_path or not Path(source_path).exists():
+        return unified_response(code=200, message="无PPT文件", data={
+            "course_id": course_id, "total_pages": 0, "slides": [],
+        })
+
+    course_slide_dir = PPT_SLIDES_DIR / str(course_id)
+    slide_list_file = course_slide_dir / "slides_meta.json"
+
+    if slide_list_file.exists():
+        meta = json.loads(slide_list_file.read_text(encoding="utf-8"))
+        if meta.get("source_mtime"):
+            try:
+                current_mtime = Path(source_path).stat().st_mtime
+                if current_mtime <= meta["source_mtime"]:
+                    return unified_response(code=200, message="获取成功", data=meta)
+            except OSError:
+                pass
+
+    course_slide_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        from app.common.slide_converter import get_or_create_pdf, render_pdf_to_images, is_pdf_file
+
+        pdf_path = course.pdf_file_path
+        if pdf_path and Path(pdf_path).exists():
+            effective_pdf = pdf_path
+        elif is_pdf_file(source_path):
+            effective_pdf = source_path
+        else:
+            effective_pdf = get_or_create_pdf(source_path)
+            if effective_pdf:
+                course.pdf_file_path = effective_pdf
+                session.add(course)
+                session.commit()
+
+        if effective_pdf:
+            image_paths = render_pdf_to_images(effective_pdf, str(course_slide_dir), dpi=150)
+
+            if image_paths:
+                total_pages = len(image_paths)
+                slides_info = []
+                for i in range(total_pages):
+                    slides_info.append({
+                        "page": i + 1,
+                        "url": f"/api/v1/document/course/{course_id}/slide/{i + 1}",
+                    })
+
+                source_mtime = Path(source_path).stat().st_mtime
+                meta = {
+                    "course_id": course_id,
+                    "total_pages": total_pages,
+                    "slides": slides_info,
+                    "source_mtime": source_mtime,
+                }
+                slide_list_file.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+                if course.total_pages != total_pages:
+                    course.total_pages = total_pages
+                    session.add(course)
+                    session.commit()
+
+                return unified_response(code=200, message="获取成功", data=meta)
+
+        logger.warning(f"PDF conversion failed, falling back to text rendering for course {course_id}")
+        return _fallback_text_slides(source_path, course_id, course_slide_dir, slide_list_file, session, course)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"转换幻灯片失败: {str(e)}", data=None)
+
+
+def _fallback_text_slides(source_path, course_id, course_slide_dir, slide_list_file, session, course):
+    try:
+        from pptx import Presentation
+        from PIL import Image, ImageDraw
+
+        prs = Presentation(source_path)
+        slide_width = prs.slide_width
+        slide_height = prs.slide_height
+        total_pages = len(prs.slides)
+
+        slides_info = []
+        for i, slide in enumerate(prs.slides):
+            img_filename = f"slide_{i + 1}.png"
+            img_path = course_slide_dir / img_filename
+
+            if not img_path.exists():
+                scale = 2
+                img_w = int(slide_width / 914400 * 96 * scale)
+                img_h = int(slide_height / 914400 * 96 * scale)
+                img = Image.new("RGB", (img_w, img_h), (255, 255, 255))
+                draw = ImageDraw.Draw(img)
+
+                y_offset = 40
+                title_text = ""
+                if slide.shapes.title and slide.shapes.title.text.strip():
+                    title_text = slide.shapes.title.text.strip()
+                    draw.text((40, y_offset), title_text, fill=(0, 0, 0))
+                    y_offset += 60
+
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        text = shape.text.strip()
+                        if text != title_text:
+                            draw.text((40, y_offset), text, fill=(51, 51, 51))
+                            y_offset += 30
+
+                img.save(str(img_path), "PNG")
+
+            slides_info.append({
+                "page": i + 1,
+                "url": f"/api/v1/document/course/{course_id}/slide/{i + 1}",
+            })
+
+        source_mtime = Path(source_path).stat().st_mtime
+        meta = {
+            "course_id": course_id,
+            "total_pages": total_pages,
+            "slides": slides_info,
+            "source_mtime": source_mtime,
+        }
+        slide_list_file.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+
+        return unified_response(code=200, message="获取成功(文本降级模式)", data=meta)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"转换幻灯片失败: {str(e)}", data=None)
+
+
+@router.get("/course/{course_id}/slide/{page_num}")
+async def get_slide_image(
+    course_id: int,
+    page_num: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    course_slide_dir = PPT_SLIDES_DIR / str(course_id)
+    img_path = course_slide_dir / f"slide_{page_num}.png"
+
+    if not img_path.exists():
+        raise HTTPException(status_code=404, detail="幻灯片图片不存在")
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        str(img_path), media_type="image/png",
+        filename=f"slide_{page_num}.png",
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@router.post("/course/{course_id}/node/{node_id}/synthesize-audio")
+async def synthesize_node_audio(
+    course_id: int,
+    node_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    node = session.get(ScriptNode, node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="节点不存在")
+
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    if not node.content or len(node.content.strip()) < 10:
+        return unified_response(code=400, message="节点内容过短，无法合成音频", data=None)
+
+    try:
+        from app.common.tts_client import tts_client
+
+        course_audio_dir = get_course_audio_dir(course_id)
+        cleanup_old_node_audio(node, course_audio_dir)
+
+        content = node.content.strip()
+        if len(content) > 2000:
+            segments = []
+            current = ""
+            for char in content:
+                current += char
+                if char in "。！？；" and len(current) >= 500:
+                    segments.append(current)
+                    current = ""
+            if current:
+                segments.append(current)
+        else:
+            segments = [content]
+
+        all_audio = b""
+        total_latency = 0.0
+        voice = None
+        if node.extra_data:
+            voice = node.extra_data.get("voice")
+
+        for seg in segments:
+            response = await tts_client.synthesize(
+                text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+            )
+            all_audio += response.audio_data
+            total_latency += response.latency_ms
+
+        audio_filename = f"node_{node_id}_{uuid.uuid4().hex[:8]}.mp3"
+        audio_path = course_audio_dir / audio_filename
+        audio_path.write_bytes(all_audio)
+
+        audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
+        node.audio_url = audio_url
+
+        import subprocess
+        try:
+            result = subprocess.run(
+                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                 "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
+                capture_output=True, text=True, timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                node.audio_duration = float(result.stdout.strip())
+            else:
+                node.audio_duration = len(all_audio) / 16000 / 2
+        except Exception:
+            node.audio_duration = len(all_audio) / 16000 / 2
+
+        session.add(node)
+        session.commit()
+        session.refresh(node)
+
+        return unified_response(code=200, message="音频合成成功", data={
+            "node_id": node_id,
+            "audio_url": node.audio_url,
+            "audio_duration": node.audio_duration,
+            "latency_ms": total_latency,
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"音频合成失败: {str(e)}", data=None)
+
+
+@router.get("/audio/{course_id}/{filename}")
+async def stream_audio(
+    course_id: int,
+    filename: str,
+    current_user: dict = Depends(get_current_user),
+):
+    course_audio_dir = get_course_audio_dir(course_id)
+    audio_path = course_audio_dir / filename
+    if not audio_path.exists():
+        legacy_path = AUDIO_STORAGE_DIR / filename
+        if legacy_path.exists():
+            audio_path = legacy_path
+        else:
+            raise HTTPException(status_code=404, detail="音频文件不存在")
+
+    file_size = audio_path.stat().st_size
+    ext = audio_path.suffix.lower()
+    media_types = {".mp3": "audio/mpeg", ".wav": "audio/wav", ".pcm": "audio/pcm"}
+    media_type = media_types.get(ext, "audio/mpeg")
+
+    async def iterfile():
+        with open(audio_path, "rb") as f:
+            while chunk := f.read(1024 * 64):
+                yield chunk
+
+    from fastapi.responses import StreamingResponse
+    return StreamingResponse(
+        iterfile(), media_type=media_type,
+        headers={
+            "Content-Length": str(file_size),
+            "Accept-Ranges": "bytes",
+            "Cache-Control": "public, max-age=86400",
+        },
+    )
+
+
+@router.post("/course/{course_id}/synthesize-all-audio")
+async def synthesize_all_node_audio(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
+    script = session.exec(
+        select(CourseScript).where(
+            CourseScript.course_id == course_id,
+            CourseScript.is_active == True,
+        )
+    ).first()
+
+    if not script:
+        return unified_response(code=400, message="课程无激活脚本", data=None)
+
+    nodes = session.exec(
+        select(ScriptNode)
+        .where(ScriptNode.script_id == script.id)
+        .order_by(ScriptNode.node_index)
+    ).all()
+
+    course_audio_dir = get_course_audio_dir(course_id)
+
+    results = []
+    errors = []
+
+    for node in nodes:
+        if not node.content or len(node.content.strip()) < 10:
+            continue
+
+        try:
+            from app.common.tts_client import tts_client
+
+            cleanup_old_node_audio(node, course_audio_dir)
+
+            content = node.content.strip()
+            if len(content) > 2000:
+                segments = []
+                current = ""
+                for char in content:
+                    current += char
+                    if char in "。！？；" and len(current) >= 500:
+                        segments.append(current)
+                        current = ""
+                if current:
+                    segments.append(current)
+            else:
+                segments = [content]
+
+            all_audio = b""
+            voice = None
+            if node.extra_data:
+                voice = node.extra_data.get("voice")
+
+            for seg in segments:
+                response = await tts_client.synthesize(
+                    text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                )
+                all_audio += response.audio_data
+
+            audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
+            audio_path = course_audio_dir / audio_filename
+            audio_path.write_bytes(all_audio)
+
+            audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
+            node.audio_url = audio_url
+            node.audio_duration = len(all_audio) / 16000 / 2
+
+            session.add(node)
+            results.append({"node_id": node.id, "title": node.title, "audio_url": audio_url})
+
+        except Exception as e:
+            errors.append({"node_id": node.id, "title": node.title, "error": str(e)})
+
+    session.commit()
+
+    return unified_response(code=200, message=f"批量合成完成: {len(results)}成功, {len(errors)}失败", data={
+        "course_id": course_id,
+        "success_count": len(results),
+        "error_count": len(errors),
+        "results": results,
+        "errors": errors,
+    })

@@ -213,15 +213,18 @@
             </div>
             <audio
               ref="audioRef"
-              :src="audioUrl"
+              :src="audioUrlWithToken"
               @timeupdate="onTimeUpdate"
               @loadedmetadata="onLoadedMetadata"
               @ended="onEnded"
               style="display: none;"
             ></audio>
-            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || !currentContent">
-              {{ isGeneratingTTS ? '生成中...' : '🔊 预览语音' }}
+            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || isTTSGenerating || !currentContent">
+              {{ isGeneratingTTS ? '生成中...' : isTTSGenerating ? `语音生成中 ${ttsProgress.completed}/${ttsProgress.total}` : '🔊 预览语音' }}
             </button>
+            <div v-if="isTTSGenerating" class="tts-progress-hint">
+              后台正在批量生成语音 ({{ ttsProgress.completed }}/{{ ttsProgress.total }})
+            </div>
           </div>
         </div>
 
@@ -644,6 +647,14 @@ const currentContent = computed(() => {
   return ''
 })
 
+const audioUrlWithToken = computed(() => {
+  if (!audioUrl.value) return ''
+  if (audioUrl.value.startsWith('blob:')) return audioUrl.value
+  const token = localStorage.getItem('token')
+  const separator = audioUrl.value.includes('?') ? '&' : '?'
+  return token ? `${audioUrl.value}${separator}token=${token}` : audioUrl.value
+})
+
 /**
  * 提取并替换数学公式，避免被Markdown解析器处理
  */
@@ -861,9 +872,12 @@ const processFile = async (file) => {
       isFileUploaded.value = true
       showToast(`文档解析完成: ${knowledgeTree.value.length} 个知识点`, 'success')
 
-      // 加载课程统计信息（如果有课程ID）
       if (courseId.value) {
         loadCourseStats()
+      }
+
+      if (res.ttsStatus === 'processing' && courseId.value) {
+        pollTTSStatus(courseId.value)
       }
     }
   } catch (error) {
@@ -872,6 +886,74 @@ const processFile = async (file) => {
     isUploading.value = false
     uploadProgress.value = '准备上传...'
   }
+}
+
+const isTTSGenerating = ref(false)
+const ttsProgress = ref({ status: 'idle', total: 0, completed: 0 })
+
+const pollTTSStatus = async (cId) => {
+  isTTSGenerating.value = true
+  ttsProgress.value = { status: 'processing', total: 0, completed: 0 }
+  showToast('TTS语音正在后台生成中...', 'info')
+
+  const maxAttempts = 120
+  let attempt = 0
+
+  const poll = async () => {
+    try {
+      const data = await request({
+        url: `/document/course/${cId}/tts-status`,
+        method: 'get',
+      })
+
+      if (data) {
+        ttsProgress.value = {
+          status: data.status,
+          total: data.total || 0,
+          completed: data.completed || 0,
+        }
+
+        if (data.status === 'completed') {
+          isTTSGenerating.value = false
+          showToast(`TTS语音生成完成: ${data.completed}/${data.total} 个节点`, 'success')
+          await loadCourseNodesAndMerge(cId)
+          if (currentNode.value && currentNode.value.audio_url) {
+            audioUrl.value = currentNode.value.audio_url
+          }
+          return
+        }
+
+        if (data.status === 'failed') {
+          isTTSGenerating.value = false
+          const errorCount = (data.errors || []).length
+          showToast(`TTS语音生成部分失败: ${data.completed}/${data.total} 成功, ${errorCount} 失败`, 'warning')
+          await loadCourseNodesAndMerge(cId)
+          if (currentNode.value && currentNode.value.audio_url) {
+            audioUrl.value = currentNode.value.audio_url
+          }
+          return
+        }
+      }
+
+      attempt++
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 3000)
+      } else {
+        isTTSGenerating.value = false
+        showToast('TTS语音生成超时，请稍后刷新页面查看', 'warning')
+      }
+    } catch (err) {
+      attempt++
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 5000)
+      } else {
+        isTTSGenerating.value = false
+        showToast('TTS状态查询失败', 'error')
+      }
+    }
+  }
+
+  setTimeout(poll, 2000)
 }
 
 // 从mindMapJson构建层级化知识树（展平为可导航列表）
@@ -944,6 +1026,8 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
             treeNode.id = matchedNode.id
             treeNode.duration = matchedNode.duration || treeNode.duration
             treeNode.is_key_point = matchedNode.is_key_point || treeNode.is_key_point
+            treeNode.audio_url = matchedNode.audio_url || ''
+            treeNode.audio_duration = matchedNode.audio_duration || 0
           }
         }
         
@@ -971,7 +1055,6 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
 
 // 选择节点
 const selectNode = (index) => {
-  // 保存当前节点的修改（如果有）
   if (isEditMode.value && hasChanges.value) {
     if (confirm('当前有未保存的修改，是否保存？')) {
       saveCurrentNode()
@@ -983,8 +1066,16 @@ const selectNode = (index) => {
   hasChanges.value = false
   editContent.value = currentContent.value
 
-  // 重置音频状态
   stopAudio()
+  if (audioUrl.value) {
+    URL.revokeObjectURL(audioUrl.value)
+  }
+  const node = knowledgeTree.value[index]
+  if (node && node.audio_url) {
+    audioUrl.value = node.audio_url
+  } else {
+    audioUrl.value = ''
+  }
 }
 
 // 上一个节点
@@ -1151,34 +1242,49 @@ const generateTTS = async () => {
     return
   }
 
+  const node = currentNode.value
+  if (!node || !node.id || !courseId.value) {
+    showToast('请先上传文档并选择节点', 'warning')
+    return
+  }
+
   isGeneratingTTS.value = true
   showToast('正在生成语音...', 'info')
 
   try {
-    // 调用后端TTS API
-    const formData = new FormData()
-    formData.append('text', currentContent.value)
-    formData.append('output_format', 'mp3')
-    // 使用节点级别选择的音色
-    if (nodeVoice.value) {
-      formData.append('voice', nodeVoice.value)
-    }
-
-    const blob = await request({
-      url: '/document/tts/synthesize',
+    const res = await request({
+      url: `/document/course/${courseId.value}/node/${node.id}/synthesize-audio`,
       method: 'post',
-      data: formData,
-      headers: { 'Content-Type': 'multipart/form-data' },
-      responseType: 'blob'
     })
 
-    if (audioUrl.value) {
-      URL.revokeObjectURL(audioUrl.value)
+    if (res && res.audio_url) {
+      if (audioUrl.value && audioUrl.value.startsWith('blob:')) {
+        URL.revokeObjectURL(audioUrl.value)
+      }
+      audioUrl.value = res.audio_url
+      node.audio_url = res.audio_url
+      node.audio_duration = res.audio_duration || 0
+      showToast('语音生成成功', 'success')
+    } else {
+      showToast('语音生成失败', 'error')
     }
-    audioUrl.value = URL.createObjectURL(blob)
-    showToast('语音生成成功', 'success')
   } catch (error) {
-    showToast(error.message || '语音生成失败，请重试', 'error')
+    let errorMsg = '语音生成失败，请重试'
+    if (error.response) {
+      const status = error.response.status
+      if (status === 503) {
+        errorMsg = '语音合成服务认证失败，TTS凭证可能已过期，请联系管理员更新配置'
+      } else if (status === 504) {
+        errorMsg = '语音合成服务响应超时，请稍后重试'
+      } else if (status === 500) {
+        errorMsg = '语音合成服务内部错误，请稍后重试'
+      }
+    } else if (error.message) {
+      if (error.message.includes('503') || error.message.includes('认证')) {
+        errorMsg = '语音合成服务认证失败，TTS凭证可能已过期，请联系管理员更新配置'
+      }
+    }
+    showToast(errorMsg, 'error')
   } finally {
     isGeneratingTTS.value = false
   }
@@ -2095,6 +2201,18 @@ const loadStudentsList = async () => {
 .audio-btn.primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.tts-progress-hint {
+  font-size: 12px;
+  color: #6366f1;
+  margin-top: 4px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* 素材与音色选择 */

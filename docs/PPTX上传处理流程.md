@@ -382,3 +382,96 @@ Docling（结构感知，保留层级）→ python-pptx（基础提取，逐页�
 4. **后端 `current_node` 传参修复** — `/chat/ask` 接口将 `currentNodeId` 对应的节点信息传入 `qa_service.ask_question_with_rag()` 的 `current_node` 参数
 
 **测试**：14 个单元测试全部通过 (`tests/test_teacher_history.py`)
+
+### 2026-05-22: PPT幻灯片播放器替换视频播放器 + 节点级音频合成
+
+#### 一、学生端视频播放器替换为PPT幻灯片播放器
+
+**核心变更**：将学生端学习界面的 `DigitalHumanWindow`（数字人视频播放器）替换为 `PptSlidePlayer`（PPT幻灯片播放器 + 音频进度条）。
+
+**新增组件**：`PptSlidePlayer.vue`
+
+- PPT幻灯片图片展示（从后端动态加载转换后的幻灯片图片）
+- 翻页按钮（◀ ▶）+ 页码指示器
+- 内嵌音频播放器（播放/暂停、进度条拖拽、时间显示、音量控制）
+- 切换知识点节点时自动跳转到对应的PPT页面和音频
+
+**StudentDashboard.vue 集成**：
+
+- 新增状态：`courseSlides`、`courseSlidesTotal`、`currentSlidePage`、`currentNodeAudioUrl`、`currentNodeAudioDuration`
+- `loadCourseContent()` 中增加 `loadCourseSlides()` 和 `updateCurrentNodeMedia()` 调用
+- `jumpToNode()` 中增加 `updateCurrentNodeMedia()` 调用，跳转时同步切换PPT页面和音频
+- `exitCourse()` 中清理幻灯片和音频状态
+- 节点数据映射增加 `page_start`、`page_end`、`audio_url`、`audio_duration` 字段
+
+#### 二、后端新增API
+
+| API | 方法 | 功能 |
+|-----|------|------|
+| `/document/course/{course_id}/slides` | GET | 获取课程PPT幻灯片图片列表（含缓存） |
+| `/document/course/{course_id}/slide/{page_num}` | GET | 获取单张PPT幻灯片图片 |
+| `/document/course/{course_id}/node/{node_id}/synthesize-audio` | POST | 为单个节点合成TTS音频并保存 |
+| `/document/audio/{filename}` | GET | 流式播放节点音频文件 |
+| `/document/course/{course_id}/synthesize-all-audio` | POST | 批量为所有节点合成TTS音频 |
+
+#### 三、数据库模型变更
+
+`ScriptNode` 新增字段：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `audio_url` | Optional[str] | 节点音频文件URL（如 `/api/v1/document/audio/node_1_abc.mp3`） |
+| `audio_duration` | float | 节点音频时长（秒） |
+
+`/course/{course_id}` 接口节点返回数据新增 `audio_url`、`audio_duration` 字段。
+
+#### 四、PPT转图片实现
+
+- 使用 `python-pptx` 读取PPT文件，`Pillow` 生成幻灯片渲染图
+- 图片存储在系统临时目录 `ai_course_ppt_slides/{course_id}/` 下
+- 支持 `slides_meta.json` 缓存，避免重复转换
+- 基于 `source_file_path` 的 `mtime` 检测源文件变更
+
+#### 五、节点级音频合成
+
+- 每个课程节点独立生成一个 MP3 音频文件
+- 长文本（>2000字）自动按句号/问号/感叹号/分号分段合成后拼接
+- 音色从 `ScriptNode.extra_data.voice` 读取
+- 音频时长优先使用 `ffprobe` 精确获取，降级为字节估算
+- 音频文件存储在系统临时目录 `ai_course_audio/` 下
+
+**测试**：17 个单元测试全部通过 (`tests/test_ppt_slide_player.py`)
+
+### 2026-05-22: 课程删除功能修复
+
+#### 一、级联删除缺失（6个关联表未处理）
+
+原删除逻辑只处理了 4 个表（LearningProgress→NodeProgress、StudentEnrollment、CourseScript→ScriptNode），导致以下关联表成为孤儿数据：
+
+| 缺失的表 | 外键关系 | 影响 |
+|----------|----------|------|
+| `UnderstandingAnalysis` | progress_id → learning_progress.id | 理解度分析残留 |
+| `QASession` → `QAMessage` | course_id → courses.id | 问答会话和消息残留 |
+| `VideoGenerationTask` | course_id → courses.id | 视频生成任务残留 |
+| `DoclingDocument` → 5个子表 | course_id → courses.id | 文档解析数据残留 |
+| `ChatHistory` → `ChatMessage` | content == course.title | 聊天历史残留 |
+
+修复后删除顺序（9步，从叶子到根）：
+
+```
+1. UnderstandingAnalysis（依赖 LearningProgress）
+2. NodeProgress + LearningProgress
+3. QAMessage + QASession
+4. VideoGenerationTask
+5. StudentEnrollment
+6. ScriptNode + CourseScript
+7. Docling子表(Groups/Tables/TableCells/Texts/Pictures) + DoclingDocument
+8. ChatMessage + ChatHistory
+9. Course（最后删除）
+```
+
+#### 二、`unified_response` 参数错误
+
+7处 `unified_response(code=404, detail="课程不存在")` 使用了不存在的 `detail` 参数，正确参数应为 `message`。这会导致 `TypeError` 被外层 try/except 捕获，返回 500 错误而非预期的 404。
+
+**测试**：13 个单元测试全部通过 (`tests/test_course_delete.py`)

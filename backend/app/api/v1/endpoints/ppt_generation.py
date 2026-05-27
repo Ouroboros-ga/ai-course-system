@@ -231,6 +231,16 @@ async def generate_ppt_sync(
         session.commit()
         session.refresh(course)
 
+        try:
+            from app.common.slide_converter import get_or_create_pdf
+            pdf_path = get_or_create_pdf(result.ppt_file_path)
+            if pdf_path:
+                course.pdf_file_path = pdf_path
+                session.add(course)
+                session.commit()
+        except Exception as e:
+            logger.warning(f"PDF conversion failed for generated PPT: {e}")
+
         if request.auto_parse and result.ppt_file_path:
             # 步骤3: 自动进入解析管线
             parse_result_data = await _parse_generated_pptx(
@@ -317,6 +327,16 @@ async def _generate_ppt_background(
             course.source_file_path = result.ppt_file_path
             course.source_file_name = os.path.basename(result.ppt_file_path)
             session.commit()
+
+            try:
+                from app.common.slide_converter import get_or_create_pdf
+                pdf_path = get_or_create_pdf(result.ppt_file_path)
+                if pdf_path:
+                    course.pdf_file_path = pdf_path
+                    session.add(course)
+                    session.commit()
+            except Exception as e:
+                logger.warning(f"PDF conversion failed in background task: {e}")
 
             if auto_parse and result.ppt_file_path:
                 await _parse_generated_pptx(

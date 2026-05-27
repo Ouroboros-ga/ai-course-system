@@ -1,10 +1,22 @@
 # app/main.py
+import logging
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.signature_middleware import SignatureMiddleware
 from app.core.exceptions import global_exception_handler, unified_response
 from app.models.database import create_tables
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+from app.common.dependency_checker import run_dependency_check
+dep_report = run_dependency_check(auto_install=True)
+if not dep_report["python_ok"]:
+    logger.error("必需的Python依赖缺失，请手动安装后重启服务")
+if dep_report["python_installed"]:
+    logger.info(f"自动安装的Python包: {', '.join(dep_report['python_installed'])}")
 
 
 # 导入路由

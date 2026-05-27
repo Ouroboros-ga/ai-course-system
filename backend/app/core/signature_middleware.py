@@ -27,6 +27,13 @@ class SignatureMiddleware(BaseHTTPMiddleware):
             print(f"【签名中间件】白名单路径，跳过验证")
             return await call_next(request)
 
+        # GET请求的媒体资源路径跳过签名验证（仍需JWT认证）
+        if request.method == "GET" and any(
+            current_path.startswith(p) for p in getattr(settings, 'MEDIA_RESOURCE_PATHS', [])
+        ):
+            print(f"【签名中间件】媒体资源GET请求，跳过签名验证")
+            return await call_next(request)
+
         # 获取查询参数
         all_params = dict(request.query_params)
 
