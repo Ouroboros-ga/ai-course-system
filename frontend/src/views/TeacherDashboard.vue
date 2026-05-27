@@ -219,9 +219,12 @@
               @ended="onEnded"
               style="display: none;"
             ></audio>
-            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || !currentContent">
-              {{ isGeneratingTTS ? '生成中...' : '🔊 预览语音' }}
+            <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || isTTSGenerating || !currentContent">
+              {{ isGeneratingTTS ? '生成中...' : isTTSGenerating ? `语音生成中 ${ttsProgress.completed}/${ttsProgress.total}` : '🔊 预览语音' }}
             </button>
+            <div v-if="isTTSGenerating" class="tts-progress-hint">
+              后台正在批量生成语音 ({{ ttsProgress.completed }}/{{ ttsProgress.total }})
+            </div>
           </div>
         </div>
 
@@ -869,9 +872,12 @@ const processFile = async (file) => {
       isFileUploaded.value = true
       showToast(`文档解析完成: ${knowledgeTree.value.length} 个知识点`, 'success')
 
-      // 加载课程统计信息（如果有课程ID）
       if (courseId.value) {
         loadCourseStats()
+      }
+
+      if (res.ttsStatus === 'processing' && courseId.value) {
+        pollTTSStatus(courseId.value)
       }
     }
   } catch (error) {
@@ -880,6 +886,74 @@ const processFile = async (file) => {
     isUploading.value = false
     uploadProgress.value = '准备上传...'
   }
+}
+
+const isTTSGenerating = ref(false)
+const ttsProgress = ref({ status: 'idle', total: 0, completed: 0 })
+
+const pollTTSStatus = async (cId) => {
+  isTTSGenerating.value = true
+  ttsProgress.value = { status: 'processing', total: 0, completed: 0 }
+  showToast('TTS语音正在后台生成中...', 'info')
+
+  const maxAttempts = 120
+  let attempt = 0
+
+  const poll = async () => {
+    try {
+      const data = await request({
+        url: `/document/course/${cId}/tts-status`,
+        method: 'get',
+      })
+
+      if (data) {
+        ttsProgress.value = {
+          status: data.status,
+          total: data.total || 0,
+          completed: data.completed || 0,
+        }
+
+        if (data.status === 'completed') {
+          isTTSGenerating.value = false
+          showToast(`TTS语音生成完成: ${data.completed}/${data.total} 个节点`, 'success')
+          await loadCourseNodesAndMerge(cId)
+          if (currentNode.value && currentNode.value.audio_url) {
+            audioUrl.value = currentNode.value.audio_url
+          }
+          return
+        }
+
+        if (data.status === 'failed') {
+          isTTSGenerating.value = false
+          const errorCount = (data.errors || []).length
+          showToast(`TTS语音生成部分失败: ${data.completed}/${data.total} 成功, ${errorCount} 失败`, 'warning')
+          await loadCourseNodesAndMerge(cId)
+          if (currentNode.value && currentNode.value.audio_url) {
+            audioUrl.value = currentNode.value.audio_url
+          }
+          return
+        }
+      }
+
+      attempt++
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 3000)
+      } else {
+        isTTSGenerating.value = false
+        showToast('TTS语音生成超时，请稍后刷新页面查看', 'warning')
+      }
+    } catch (err) {
+      attempt++
+      if (attempt < maxAttempts) {
+        setTimeout(poll, 5000)
+      } else {
+        isTTSGenerating.value = false
+        showToast('TTS状态查询失败', 'error')
+      }
+    }
+  }
+
+  setTimeout(poll, 2000)
 }
 
 // 从mindMapJson构建层级化知识树（展平为可导航列表）
@@ -2127,6 +2201,18 @@ const loadStudentsList = async () => {
 .audio-btn.primary:hover:not(:disabled) {
   transform: translateY(-1px);
   box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+}
+
+.tts-progress-hint {
+  font-size: 12px;
+  color: #6366f1;
+  margin-top: 4px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* 素材与音色选择 */

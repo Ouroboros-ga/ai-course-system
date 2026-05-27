@@ -54,6 +54,96 @@ UPLOAD_DIR = Path(tempfile.gettempdir()) / "ai_course_uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
+tts_generation_status = {}
+
+
+async def _background_synthesize_audio(course_id: int, script_id: int):
+    import asyncio
+    from app.models.database import engine
+    from sqlmodel import create_engine as _ce, Session as _Session
+
+    status_key = str(course_id)
+    tts_generation_status[status_key] = {
+        "status": "processing",
+        "total": 0,
+        "completed": 0,
+        "errors": [],
+    }
+
+    try:
+        with _Session(engine) as session:
+            nodes = session.exec(
+                select(ScriptNode)
+                .where(ScriptNode.script_id == script_id)
+                .order_by(ScriptNode.node_index)
+            ).all()
+
+            course_audio_dir = get_course_audio_dir(course_id)
+            total = len([n for n in nodes if n.content and len(n.content.strip()) >= 10])
+            tts_generation_status[status_key]["total"] = total
+            completed = 0
+
+            for node in nodes:
+                if not node.content or len(node.content.strip()) < 10:
+                    continue
+
+                try:
+                    from app.common.tts_client import tts_client
+
+                    cleanup_old_node_audio(node, course_audio_dir)
+
+                    content = node.content.strip()
+                    if len(content) > 2000:
+                        segments = []
+                        current = ""
+                        for char in content:
+                            current += char
+                            if char in "。！？；" and len(current) >= 500:
+                                segments.append(current)
+                                current = ""
+                        if current:
+                            segments.append(current)
+                    else:
+                        segments = [content]
+
+                    all_audio = b""
+                    voice = None
+                    if node.extra_data:
+                        voice = node.extra_data.get("voice")
+
+                    for seg in segments:
+                        response = await tts_client.synthesize(
+                            text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                        )
+                        all_audio += response.audio_data
+
+                    audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
+                    audio_path = course_audio_dir / audio_filename
+                    audio_path.write_bytes(all_audio)
+
+                    audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
+                    node.audio_url = audio_url
+                    node.audio_duration = len(all_audio) / 16000 / 2
+
+                    session.add(node)
+                    completed += 1
+                    tts_generation_status[status_key]["completed"] = completed
+
+                except Exception as e:
+                    logger.warning(f"Background TTS failed for node {node.id}: {e}")
+                    tts_generation_status[status_key]["errors"].append({
+                        "node_id": node.id, "title": node.title, "error": str(e),
+                    })
+
+            session.commit()
+
+        tts_generation_status[status_key]["status"] = "completed"
+        logger.info(f"Background TTS generation completed for course {course_id}: {completed}/{total}")
+
+    except Exception as e:
+        logger.error(f"Background TTS generation failed for course {course_id}: {e}")
+        tts_generation_status[status_key]["status"] = "failed"
+        tts_generation_status[status_key]["errors"].append({"error": str(e)})
 
 
 @router.post("/upload", response_model=UnifiedResponse)
@@ -276,6 +366,11 @@ async def upload_document(
         session.commit()
         print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}")
 
+        print(f"[步骤6.5] 启动后台TTS音频生成任务")
+        import asyncio
+        asyncio.create_task(_background_synthesize_audio(course.id, course_script.id))
+        print(f"  后台TTS任务已启动: course_id={course.id}, script_id={course_script.id}")
+
         print(f"[步骤7] 创建聊天记录归档")
         chat_record = ChatHistory(
             user_id=user_id,
@@ -303,7 +398,7 @@ async def upload_document(
         
         return unified_response(
             code=200,
-            message="上传并解析成功",
+            message="上传并解析成功，TTS语音正在后台生成",
             data={
                 "fullContent": script_result.beautiful_markdown,
                 "rawContent": parse_result.markdown_content,
@@ -312,6 +407,7 @@ async def upload_document(
                 "mindMapJson": mind_map,
                 "chatId": chat_id,
                 "courseId": course.id,
+                "ttsStatus": "processing",
                 "ragInfo": {
                     "formulaCount": rag_result.formula_count,
                     "tableCount": rag_result.table_count,
@@ -962,6 +1058,55 @@ async def tts_health_check(
             "status": "error",
             "error": str(e),
         })
+
+
+@router.get("/course/{course_id}/tts-status")
+async def get_tts_generation_status(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    status_key = str(course_id)
+    status_info = tts_generation_status.get(status_key, None)
+
+    if status_info is None:
+        course = session.get(Course, course_id)
+        if not course:
+            return unified_response(code=404, message="课程不存在", data=None)
+
+        script = session.exec(
+            select(CourseScript).where(
+                CourseScript.course_id == course_id,
+                CourseScript.is_active == True,
+            )
+        ).first()
+
+        if not script:
+            return unified_response(code=200, message="无脚本", data={
+                "status": "no_script", "total": 0, "completed": 0, "errors": [],
+            })
+
+        nodes = session.exec(
+            select(ScriptNode).where(ScriptNode.script_id == script.id)
+        ).all()
+
+        nodes_with_audio = sum(1 for n in nodes if n.audio_url)
+        total_nodes = len(nodes)
+
+        if nodes_with_audio == total_nodes and total_nodes > 0:
+            return unified_response(code=200, message="TTS已完成", data={
+                "status": "completed", "total": total_nodes, "completed": nodes_with_audio, "errors": [],
+            })
+        elif nodes_with_audio > 0:
+            return unified_response(code=200, message="TTS部分完成", data={
+                "status": "partial", "total": total_nodes, "completed": nodes_with_audio, "errors": [],
+            })
+        else:
+            return unified_response(code=200, message="TTS未开始", data={
+                "status": "not_started", "total": total_nodes, "completed": 0, "errors": [],
+            })
+
+    return unified_response(code=200, message="获取TTS状态成功", data=status_info)
 
 
 # ==================== 脚本版本管理接口 ====================
