@@ -213,7 +213,7 @@
             </div>
             <audio
               ref="audioRef"
-              :src="audioUrl"
+              :src="audioUrlWithToken"
               @timeupdate="onTimeUpdate"
               @loadedmetadata="onLoadedMetadata"
               @ended="onEnded"
@@ -644,6 +644,14 @@ const currentContent = computed(() => {
   return ''
 })
 
+const audioUrlWithToken = computed(() => {
+  if (!audioUrl.value) return ''
+  if (audioUrl.value.startsWith('blob:')) return audioUrl.value
+  const token = localStorage.getItem('token')
+  const separator = audioUrl.value.includes('?') ? '&' : '?'
+  return token ? `${audioUrl.value}${separator}token=${token}` : audioUrl.value
+})
+
 /**
  * 提取并替换数学公式，避免被Markdown解析器处理
  */
@@ -944,6 +952,8 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
             treeNode.id = matchedNode.id
             treeNode.duration = matchedNode.duration || treeNode.duration
             treeNode.is_key_point = matchedNode.is_key_point || treeNode.is_key_point
+            treeNode.audio_url = matchedNode.audio_url || ''
+            treeNode.audio_duration = matchedNode.audio_duration || 0
           }
         }
         
@@ -971,7 +981,6 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
 
 // 选择节点
 const selectNode = (index) => {
-  // 保存当前节点的修改（如果有）
   if (isEditMode.value && hasChanges.value) {
     if (confirm('当前有未保存的修改，是否保存？')) {
       saveCurrentNode()
@@ -983,8 +992,16 @@ const selectNode = (index) => {
   hasChanges.value = false
   editContent.value = currentContent.value
 
-  // 重置音频状态
   stopAudio()
+  if (audioUrl.value) {
+    URL.revokeObjectURL(audioUrl.value)
+  }
+  const node = knowledgeTree.value[index]
+  if (node && node.audio_url) {
+    audioUrl.value = node.audio_url
+  } else {
+    audioUrl.value = ''
+  }
 }
 
 // 上一个节点
@@ -1151,30 +1168,32 @@ const generateTTS = async () => {
     return
   }
 
+  const node = currentNode.value
+  if (!node || !node.id || !courseId.value) {
+    showToast('请先上传文档并选择节点', 'warning')
+    return
+  }
+
   isGeneratingTTS.value = true
   showToast('正在生成语音...', 'info')
 
   try {
-    const data = {
-      text: currentContent.value,
-      output_format: 'mp3',
-    }
-    if (nodeVoice.value) {
-      data.voice = nodeVoice.value
-    }
-
-    const blob = await request({
-      url: '/document/tts/synthesize',
+    const res = await request({
+      url: `/document/course/${courseId.value}/node/${node.id}/synthesize-audio`,
       method: 'post',
-      data: data,
-      responseType: 'blob'
     })
 
-    if (audioUrl.value) {
-      URL.revokeObjectURL(audioUrl.value)
+    if (res && res.audio_url) {
+      if (audioUrl.value && audioUrl.value.startsWith('blob:')) {
+        URL.revokeObjectURL(audioUrl.value)
+      }
+      audioUrl.value = res.audio_url
+      node.audio_url = res.audio_url
+      node.audio_duration = res.audio_duration || 0
+      showToast('语音生成成功', 'success')
+    } else {
+      showToast('语音生成失败', 'error')
     }
-    audioUrl.value = URL.createObjectURL(blob)
-    showToast('语音生成成功', 'success')
   } catch (error) {
     let errorMsg = '语音生成失败，请重试'
     if (error.response) {

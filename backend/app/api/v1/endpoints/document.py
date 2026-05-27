@@ -1800,8 +1800,28 @@ async def get_course_stats(
 PPT_SLIDES_DIR = Path(tempfile.gettempdir()) / "ai_course_ppt_slides"
 PPT_SLIDES_DIR.mkdir(exist_ok=True)
 
-AUDIO_STORAGE_DIR = Path(tempfile.gettempdir()) / "ai_course_audio"
+BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent
+AUDIO_STORAGE_DIR = BASE_DIR / "audio_storage"
 AUDIO_STORAGE_DIR.mkdir(exist_ok=True)
+
+
+def get_course_audio_dir(course_id: int) -> Path:
+    course_dir = AUDIO_STORAGE_DIR / str(course_id)
+    course_dir.mkdir(parents=True, exist_ok=True)
+    return course_dir
+
+
+def cleanup_old_node_audio(node: ScriptNode, course_dir: Path):
+    if node.audio_url:
+        old_filename = node.audio_url.split("/")[-1]
+        if old_filename:
+            old_path = course_dir / old_filename
+            if old_path.exists():
+                try:
+                    old_path.unlink()
+                    logger.info(f"Cleaned up old audio for node {node.id}: {old_filename}")
+                except OSError as e:
+                    logger.warning(f"Failed to delete old audio {old_path}: {e}")
 
 
 @router.get("/course/{course_id}/slides")
@@ -1979,11 +1999,18 @@ async def synthesize_node_audio(
     if not node:
         raise HTTPException(status_code=404, detail="节点不存在")
 
+    course = session.get(Course, course_id)
+    if not course:
+        raise HTTPException(status_code=404, detail="课程不存在")
+
     if not node.content or len(node.content.strip()) < 10:
         return unified_response(code=400, message="节点内容过短，无法合成音频", data=None)
 
     try:
         from app.common.tts_client import tts_client
+
+        course_audio_dir = get_course_audio_dir(course_id)
+        cleanup_old_node_audio(node, course_audio_dir)
 
         content = node.content.strip()
         if len(content) > 2000:
@@ -2013,10 +2040,10 @@ async def synthesize_node_audio(
             total_latency += response.latency_ms
 
         audio_filename = f"node_{node_id}_{uuid.uuid4().hex[:8]}.mp3"
-        audio_path = AUDIO_STORAGE_DIR / audio_filename
+        audio_path = course_audio_dir / audio_filename
         audio_path.write_bytes(all_audio)
 
-        audio_url = f"/api/v1/document/audio/{audio_filename}"
+        audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
         node.audio_url = audio_url
 
         import subprocess
@@ -2050,14 +2077,20 @@ async def synthesize_node_audio(
         return unified_response(code=500, message=f"音频合成失败: {str(e)}", data=None)
 
 
-@router.get("/audio/{filename}")
+@router.get("/audio/{course_id}/{filename}")
 async def stream_audio(
+    course_id: int,
     filename: str,
     current_user: dict = Depends(get_current_user),
 ):
-    audio_path = AUDIO_STORAGE_DIR / filename
+    course_audio_dir = get_course_audio_dir(course_id)
+    audio_path = course_audio_dir / filename
     if not audio_path.exists():
-        raise HTTPException(status_code=404, detail="音频文件不存在")
+        legacy_path = AUDIO_STORAGE_DIR / filename
+        if legacy_path.exists():
+            audio_path = legacy_path
+        else:
+            raise HTTPException(status_code=404, detail="音频文件不存在")
 
     file_size = audio_path.stat().st_size
     ext = audio_path.suffix.lower()
@@ -2106,17 +2139,19 @@ async def synthesize_all_node_audio(
         .order_by(ScriptNode.node_index)
     ).all()
 
+    course_audio_dir = get_course_audio_dir(course_id)
+
     results = []
     errors = []
 
     for node in nodes:
-        if node.node_type.value not in ("lecture", "summary", "interactive"):
-            continue
         if not node.content or len(node.content.strip()) < 10:
             continue
 
         try:
             from app.common.tts_client import tts_client
+
+            cleanup_old_node_audio(node, course_audio_dir)
 
             content = node.content.strip()
             if len(content) > 2000:
@@ -2144,10 +2179,10 @@ async def synthesize_all_node_audio(
                 all_audio += response.audio_data
 
             audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
-            audio_path = AUDIO_STORAGE_DIR / audio_filename
+            audio_path = course_audio_dir / audio_filename
             audio_path.write_bytes(all_audio)
 
-            audio_url = f"/api/v1/document/audio/{audio_filename}"
+            audio_url = f"/api/v1/document/audio/{course_id}/{audio_filename}"
             node.audio_url = audio_url
             node.audio_duration = len(all_audio) / 16000 / 2
 

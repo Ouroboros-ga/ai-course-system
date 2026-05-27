@@ -135,7 +135,7 @@
               <div class="audio-player" v-if="currentAudioUrl">
                 <audio
                   ref="audioRef"
-                  :src="currentAudioUrl"
+                  :src="currentAudioUrlWithToken"
                   controls
                   @ended="onAudioEnded"
                 ></audio>
@@ -298,6 +298,8 @@ const flattenTree = (node, parentPath = '', parentLevel = 0) => {
       is_key_point: node.highlight || false,
       duration: node.duration || 0,
       node_type: node.node_type || 'lecture',
+      audio_url: node.audio_url || '',
+      audio_duration: node.audio_duration || 0,
       children: []
     })
   }
@@ -325,6 +327,15 @@ const selectNode = (nodeId) => {
     const node = flatNodes.value[index]
     editedContent.value = node.content || ''
     hasChanges.value = false
+
+    if (currentAudioUrl.value && currentAudioUrl.value.startsWith('blob:')) {
+      URL.revokeObjectURL(currentAudioUrl.value)
+    }
+    if (node.audio_url) {
+      currentAudioUrl.value = node.audio_url
+    } else {
+      currentAudioUrl.value = ''
+    }
   }
 }
 
@@ -344,6 +355,14 @@ const currentNode = computed(() => {
 const currentNodePath = computed(() => {
   if (!currentNode.value) return []
   return currentNode.value.path.split('/').filter(p => p)
+})
+
+const currentAudioUrlWithToken = computed(() => {
+  if (!currentAudioUrl.value) return ''
+  if (currentAudioUrl.value.startsWith('blob:')) return currentAudioUrl.value
+  const token = localStorage.getItem('token')
+  const separator = currentAudioUrl.value.includes('?') ? '&' : '?'
+  return token ? `${currentAudioUrl.value}${separator}token=${token}` : currentAudioUrl.value
 })
 
 const totalNodes = computed(() => flatNodes.value.length)
@@ -459,27 +478,46 @@ const generateAudioForNode = async () => {
     showToast('请先输入文本内容', 'warning')
     return
   }
-  
+
+  const node = flatNodes.value[currentNodeIndex.value]
+  if (!node || !selectedCourseId.value) {
+    showToast('请先选择课程和节点', 'warning')
+    return
+  }
+
+  const nodeId = node.node_id
+  if (!nodeId || typeof nodeId === 'string' && nodeId.startsWith('node_')) {
+    showToast('该节点尚未同步到数据库，请先保存内容', 'warning')
+    return
+  }
+
   isGeneratingAudio.value = true
-  
+
   try {
-    const response = await fetch('/api/v1/document/tts/synthesize', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        text: editedContent.value
-      })
-    })
-    
-    if (!response.ok) {
-      throw new Error('语音生成失败')
+    const response = await fetch(
+      `/api/v1/document/course/${selectedCourseId.value}/node/${nodeId}/synthesize-audio`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('token') || ''}`,
+        },
+      }
+    )
+
+    const result = await response.json()
+
+    if (result.code === 200 && result.data && result.data.audio_url) {
+      if (currentAudioUrl.value && currentAudioUrl.value.startsWith('blob:')) {
+        URL.revokeObjectURL(currentAudioUrl.value)
+      }
+      currentAudioUrl.value = result.data.audio_url
+      node.audio_url = result.data.audio_url
+      node.audio_duration = result.data.audio_duration || 0
+      showToast('语音生成成功', 'success')
+    } else {
+      throw new Error(result.message || '语音生成失败')
     }
-    
-    const blob = await response.blob()
-    currentAudioUrl.value = URL.createObjectURL(blob)
-    showToast('语音生成成功', 'success')
   } catch (err) {
     showToast('语音生成失败: ' + err.message, 'error')
   } finally {
