@@ -45,7 +45,19 @@ venv/
 ENV/
 backend/.env
 .venv
-database/smart_class.db
-.gitignore
-database/smart_class.db
-database/smart_class.db
+
+# 数据库文件（重要：不要提交到版本控制）
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+*.db
+*.sqlite
+*.sqlite3
+
+# 环境变量和敏感配置
+backend/.env
+.env
+.env.local
+.env.development.local
+.env.production.local
+*.env.*.local
