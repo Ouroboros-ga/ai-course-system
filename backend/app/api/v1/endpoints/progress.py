@@ -23,7 +23,7 @@ from app.common.prompts.progress import (
     build_progress_continuation_prompt
 )
 
-router = APIRouter(prefix="/progress", tags=["进度续接"])
+router = APIRouter(tags=["进度续接"])
 
 
 @router.post("/analyze", response_model=UnifiedResponse)

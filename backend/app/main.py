@@ -82,3 +82,10 @@ app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模
 @app.get("/", tags=["健康检查"], response_model=UnifiedResponse)
 async def health_check():
     return unified_response(200, "服务运行正常", {"version": "v1"})
+
+
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def catch_all(path: str):
+    if path.startswith("@vite/") or path.startswith("src/") or path.endswith((".js", ".css", ".html", ".ico", ".png", ".svg")):
+        return unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None)
+    return unified_response(404, f"接口不存在: /{path}", None)

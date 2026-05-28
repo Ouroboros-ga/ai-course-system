@@ -62,13 +62,16 @@
         <!-- 数字人视频区域 -->
         <div class="video-section">
           <PptSlidePlayer
+            ref="pptSlidePlayerRef"
             :slides="courseSlides"
             :totalPages="courseSlidesTotal"
             :currentPage="currentSlidePage"
             :audioUrl="currentNodeAudioUrl"
             :audioDuration="currentNodeAudioDuration"
+            :autoPlay="true"
             @page-change="onSlidePageChange"
             @audio-ended="onNodeAudioEnded"
+            @auto-play-blocked="onAutoPlayBlocked"
           />
         </div>
 
@@ -182,6 +185,38 @@
               <!-- 用户消息 -->
               <div v-else class="user-content">{{ msg.content }}</div>
 
+              <!-- 选择题卡片 -->
+              <div v-if="msg.quiz" class="quiz-card">
+                <div class="quiz-question">{{ msg.quiz.question }}</div>
+                <div class="quiz-options">
+                  <button
+                    v-for="(optText, optKey) in msg.quiz.options"
+                    :key="optKey"
+                    class="quiz-option-btn"
+                    :class="{
+                      'selected': msg.selectedAnswer === optKey,
+                      'correct': msg.answerRevealed && optKey === msg.quiz.correct_answer,
+                      'wrong': msg.answerRevealed && msg.selectedAnswer === optKey && optKey !== msg.quiz.correct_answer,
+                      'disabled': msg.answerRevealed
+                    }"
+                    :disabled="msg.answerRevealed"
+                    @click="selectQuizOption(msg, optKey)"
+                  >
+                    <span class="option-key">{{ optKey }}</span>
+                    <span class="option-text">{{ optText }}</span>
+                  </button>
+                </div>
+                <div v-if="msg.answerRevealed" class="quiz-result">
+                  <div class="result-indicator" :class="msg.selectedAnswer === msg.quiz.correct_answer ? 'is-correct' : 'is-wrong'">
+                    {{ msg.selectedAnswer === msg.quiz.correct_answer ? '✅ 回答正确！' : '❌ 回答错误' }}
+                  </div>
+                  <div class="result-explanation">
+                    <span class="explanation-label">📝 解析：</span>
+                    {{ msg.quiz.explanation }}
+                  </div>
+                </div>
+              </div>
+
               <!-- 学理解度分析结果（仅AI问答后显示） -->
               <div v-if="msg.understandingAnalysis" class="analysis-card">
                 <div class="analysis-header">
@@ -286,6 +321,7 @@ const streamingContent = ref('')
 const canInput = ref(false)
 const messageListRef = ref(null)
 const isComponentMounted = ref(true)
+const pptSlidePlayerRef = ref(null)
 
 // 学习进度数据
 const nodeProgressMap = ref({})
@@ -596,6 +632,10 @@ function onNodeAudioEnded() {
   }
 }
 
+function onAutoPlayBlocked() {
+  showToast('请点击播放按钮开始收听音频', 'info')
+}
+
 // 更新进度数据
 function updateProgressFromServer(progressData) {
   if (!progressData) return
@@ -622,7 +662,14 @@ async function startLearning() {
   currentNodeIndex.value = 0
   canInput.value = false
 
-  // 从第一个节点开始流式输出
+  updateCurrentNodeMedia()
+
+  nextTick(() => {
+    if (pptSlidePlayerRef.value) {
+      pptSlidePlayerRef.value.playAudio()
+    }
+  })
+
   await streamCurrentNode()
 }
 
@@ -688,42 +735,53 @@ function markNodeVisited(index) {
   }
 }
 
-// 为当前节点生成AI问答
+// 为当前节点生成选择题
 async function generateQAForNode(node, nodeIndex) {
   requestNodeIndex.value = nodeIndex
   try {
     showToast('正在生成互动问答...', 'info')
 
     const data = await request({
-      url: '/chat/ask',
+      url: '/chat/quiz',
       method: 'post',
       data: {
         courseId: selectedCourse.value.id,
-        currentNodeId: node.id,
-        question: `请根据以下内容生成一个检验理解的问题：\n\n${node.content.substring(0, 500)}`,
-        strictMode: false,
+        nodeId: node.id,
+        nodeTitle: node.title,
       },
     })
 
-    if (currentNodeIndex.value !== nodeIndex) {
-      saveMessageToNodeHistory(nodeIndex, {
-        id: Date.now() + 1,
-        role: 'ai',
-        content: `### ❓ 互动问答\n\n${data.answer}\n\n请回答以上问题以检验您的理解程度：`,
-        isQA: true,
-        nodeIndex: nodeIndex,
-      })
+    if (!data || !data.quiz) {
+      if (currentNodeIndex.value === nodeIndex) {
+        chatMessages.value.push({
+          id: Date.now() + 1,
+          role: 'ai',
+          content: `### ❓ 互动问答\n\n关于"${node.title}"这个知识点，您有什么疑问或需要进一步解释的地方吗？`,
+          isQA: true,
+          nodeIndex: nodeIndex,
+        })
+        canInput.value = true
+      }
       return
     }
 
-    chatMessages.value.push({
+    const quizMessage = {
       id: Date.now() + 1,
       role: 'ai',
-      content: `### ❓ 互动问答\n\n${data.answer}\n\n请回答以上问题以检验您的理解程度：`,
+      content: `### ❓ 互动问答`,
+      quiz: data.quiz,
+      selectedAnswer: null,
+      answerRevealed: false,
       isQA: true,
       nodeIndex: nodeIndex,
-    })
+    }
 
+    if (currentNodeIndex.value !== nodeIndex) {
+      saveMessageToNodeHistory(nodeIndex, quizMessage)
+      return
+    }
+
+    chatMessages.value.push(quizMessage)
     scrollToBottom()
   } catch (error) {
     if (currentNodeIndex.value !== nodeIndex) return
@@ -737,6 +795,27 @@ async function generateQAForNode(node, nodeIndex) {
     })
     scrollToBottom()
   }
+}
+
+// 选择题选项点击
+function selectQuizOption(msg, optionKey) {
+  if (msg.answerRevealed) return
+
+  msg.selectedAnswer = optionKey
+  msg.answerRevealed = true
+
+  const isCorrect = optionKey === msg.quiz.correct_answer
+
+  const analysis = {
+    level: isCorrect ? 'high' : 'low',
+    score: isCorrect ? 0.9 : 0.3,
+    keywordsWeak: isCorrect ? [] : [msg.quiz.question.substring(0, 20)],
+    suggestions: isCorrect ? '掌握良好，继续学习' : msg.quiz.explanation,
+  }
+
+  updateNodeUnderstanding(currentNodeIndex.value, analysis)
+
+  scrollToBottom()
 }
 
 // 发送用户消息
@@ -1485,6 +1564,141 @@ onUnmounted(() => {
 }
 
 .user-content { color: white; }
+
+/* 选择题卡片 */
+.quiz-card {
+  margin-top: 12px;
+  padding: 16px;
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+}
+
+.quiz-question {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1f2937;
+  margin-bottom: 14px;
+  line-height: 1.6;
+}
+
+.quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.quiz-option-btn {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 14px;
+  background: white;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.2s ease;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #374151;
+}
+
+.quiz-option-btn:hover:not(.disabled) {
+  border-color: #6366f1;
+  background: #f5f3ff;
+}
+
+.quiz-option-btn.selected {
+  border-color: #6366f1;
+  background: #eef2ff;
+}
+
+.quiz-option-btn.correct {
+  border-color: #10b981;
+  background: #ecfdf5;
+  color: #065f46;
+}
+
+.quiz-option-btn.wrong {
+  border-color: #ef4444;
+  background: #fef2f2;
+  color: #991b1b;
+}
+
+.quiz-option-btn.disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+.option-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #e5e7eb;
+  color: #374151;
+  font-weight: 700;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.quiz-option-btn.selected .option-key {
+  background: #6366f1;
+  color: white;
+}
+
+.quiz-option-btn.correct .option-key {
+  background: #10b981;
+  color: white;
+}
+
+.quiz-option-btn.wrong .option-key {
+  background: #ef4444;
+  color: white;
+}
+
+.option-text {
+  flex: 1;
+  padding-top: 2px;
+}
+
+.quiz-result {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.result-indicator {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.result-indicator.is-correct {
+  color: #059669;
+}
+
+.result-indicator.is-wrong {
+  color: #dc2626;
+}
+
+.result-explanation {
+  font-size: 13px;
+  color: #4b5563;
+  line-height: 1.7;
+  background: white;
+  padding: 10px 14px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+}
+
+.explanation-label {
+  font-weight: 600;
+  color: #374151;
+}
 
 /* 分析卡片 */
 .analysis-card {

@@ -119,3 +119,148 @@ frontend/
 3. **单元测试**: 添加Vue Test Utils测试
 4. **性能监控**: 集成性能监控工具
 5. **文档完善**: 使用VuePress生成API文档
+
+## 8. 学生端音频自动播放机制
+
+### 8.1 功能概述
+
+在学生学习界面（`/student`），当用户点击课程结构中的节点时，对应节点的音频会自动开始播放，无需手动点击播放按钮。
+
+### 8.2 实现架构
+
+```
+用户点击课程结构节点
+       │
+       ▼
+StudentDashboard.jumpToNode(index)
+       │
+       ├── 更新 currentNodeIndex
+       ├── 调用 updateCurrentNodeMedia()
+       │       │
+       │       ▼
+       │   更新 currentNodeAudioUrl（触发 PptSlidePlayer 的 audioUrl watcher）
+       │
+       ▼
+PptSlidePlayer audioUrl watcher 检测到 URL 变化
+       │
+       ├── 暂停当前音频、重置状态
+       ├── 调用 audioRef.load() 加载新音频
+       │
+       ├── if (autoPlay && newUrl)
+       │       │
+       │       ▼
+       │   tryAutoPlay()
+       │       │
+       │       ├── readyState >= 3 → 立即播放
+       │       └── readyState < 3  → 监听 canplaythrough 事件后播放
+       │
+       ▼
+audioRef.play()
+       │
+       ├── 成功 → isPlaying = true
+       └── 失败（浏览器策略限制）→ emit('auto-play-blocked')
+```
+
+### 8.3 关键组件接口
+
+#### PptSlidePlayer Props
+
+| Prop | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `autoPlay` | Boolean | `false` | 当 audioUrl 变化时是否自动播放音频 |
+| `audioUrl` | String | `''` | 音频资源URL |
+| `audioDuration` | Number | `0` | 音频时长（秒） |
+
+#### PptSlidePlayer Events
+
+| Event | 参数 | 说明 |
+|-------|------|------|
+| `auto-play-blocked` | 无 | 浏览器自动播放策略阻止了音频播放 |
+| `audio-ended` | 无 | 音频播放结束 |
+
+#### PptSlidePlayer Exposed Methods
+
+| 方法 | 说明 |
+|------|------|
+| `playAudio()` | 手动触发音频播放（供父组件通过 ref 调用） |
+
+### 8.4 浏览器自动播放策略处理
+
+现代浏览器对自动播放有严格限制，本实现采用以下策略：
+
+1. **用户交互触发**：点击课程结构节点属于用户交互行为，浏览器通常允许在交互回调中播放音频
+2. **Promise 捕获**：`play()` 返回的 Promise 如果被拒绝，会触发 `auto-play-blocked` 事件
+3. **友好提示**：父组件监听 `auto-play-blocked` 事件，通过 Toast 提示用户手动点击播放按钮
+4. **事件监听器清理**：使用 `pendingCanPlayHandler` 变量跟踪待处理的 `canplaythrough` 监听器，防止快速切换节点时监听器累积
+
+## 9. 选择题互动问答机制
+
+### 9.1 功能概述
+
+在学生学习界面（`/student`），每个知识点讲解完毕后，系统自动生成一道单项选择题，学生通过点击选项作答，系统即时反馈对错并展示解析。
+
+### 9.2 数据流
+
+```
+节点讲解完成 → generateQAForNode()
+       │
+       ▼
+POST /chat/quiz { courseId, nodeId, nodeTitle }
+       │
+       ▼
+后端 QAService.generate_quiz()
+  ├── QUIZ_SYSTEM_PROMPT（选择题专用prompt）
+  ├── build_quiz_prompt()（构建用户提示词）
+  └── LLM 生成 JSON 格式选择题
+       │
+       ▼
+前端渲染选择题卡片
+  ├── 题目 + 4个选项按钮
+  ├── 学生点击选项
+  │       │
+  │       ▼
+  │   selectQuizOption()
+  │   ├── 标记选中项 + 揭示答案
+  │   ├── 正确：绿色高亮正确选项
+  │   ├── 错误：红色高亮选中项 + 绿色高亮正确选项
+  │   ├── 显示解析
+  │   └── 更新理解度分析
+  └── 降级处理：选择题生成失败时回退为自由问答
+```
+
+### 9.3 选择题消息数据结构
+
+```javascript
+{
+  id: Date.now(),
+  role: 'ai',
+  content: '### ❓ 互动问答',
+  quiz: {
+    question: '题目内容',
+    options: { A: '选项A', B: '选项B', C: '选项C', D: '选项D' },
+    correct_answer: 'B',
+    explanation: '解析内容'
+  },
+  selectedAnswer: null,      // 学生选中的选项 key
+  answerRevealed: false,     // 是否已揭示答案
+  isQA: true,
+  nodeIndex: 0
+}
+```
+
+### 9.4 后端接口
+
+| 接口 | 方法 | 说明 |
+|------|------|------|
+| `/chat/quiz` | POST | 根据节点内容生成选择题 |
+
+请求参数：`courseId`（可选）、`nodeId`（可选）、`nodeContent`（可选）、`nodeTitle`（可选）
+
+### 9.5 理解度评估策略
+
+选择题的回答结果直接映射为理解度评估：
+
+| 回答结果 | 理解等级 | 分数 | 说明 |
+|---------|---------|------|------|
+| 正确 | high | 0.9 | 掌握良好 |
+| 错误 | low | 0.3 | 需要加强，解析作为建议展示 |

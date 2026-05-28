@@ -13,6 +13,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlmodel import Session, select, func
 from pydantic import BaseModel, Field
+from pathlib import Path
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user, teacher_student_allowed
@@ -23,7 +24,7 @@ from app.models.progress_model import LearningProgress, LearningStatus
 from app.models.mapping_model import KnowledgePageMap
 from app.core.config import settings
 
-router = APIRouter(prefix="/player", tags=["分屏播放器"])
+router = APIRouter(tags=["分屏播放器"])
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,7 @@ class PlayerInitData(BaseModel):
     nodes: List[dict] = Field(description="脚本节点列表")
     video_base_url: str = Field(description="视频基础URL")
     ppt_pages: Optional[List[dict]] = Field(default=None, description="PPT逐页内容（用于右侧显示）")
+    slide_images: Optional[List[dict]] = Field(default=None, description="PPT逐页图片URL列表")
     saved_progress: Optional[dict] = Field(default=None, description="已保存的学习进度")
 
 
@@ -194,7 +196,45 @@ async def get_player_init_data(
         except Exception as e:
             logger.warning(f"[Player] 获取PPT页面内容失败: {e}")
 
-        # 8. 返回完整数据
+        # 8. 构建PPT逐页图片URL列表
+        slide_images = None
+        if course.pdf_file_path or course.source_file_path:
+            from app.common.slide_converter import is_pdf_file, get_or_create_pdf
+            source_path = course.source_file_path
+            pdf_path = course.pdf_file_path
+
+            if pdf_path and Path(pdf_path).exists():
+                effective_pdf = pdf_path
+            elif source_path and Path(source_path).exists():
+                if is_pdf_file(source_path):
+                    effective_pdf = source_path
+                else:
+                    effective_pdf = get_or_create_pdf(source_path)
+                    if effective_pdf:
+                        course.pdf_file_path = effective_pdf
+                        session.add(course)
+                        session.commit()
+            else:
+                effective_pdf = None
+
+            if effective_pdf:
+                try:
+                    import fitz
+                    doc = fitz.open(str(effective_pdf))
+                    total_slide_pages = len(doc)
+                    doc.close()
+
+                    slide_images = []
+                    for i in range(total_slide_pages):
+                        slide_images.append({
+                            "page": i + 1,
+                            "url": f"/api/v1/document/course/{course_id}/slide/{i + 1}",
+                        })
+                    logger.info(f"[Player] 课程 {course_id} 共 {total_slide_pages} 页PPT图片")
+                except Exception as e:
+                    logger.warning(f"[Player] 获取PDF页数失败: {e}")
+
+        # 9. 返回完整数据
         return PlayerInitData(
             course_id=course_id,
             course_title=course.title,
@@ -204,6 +244,7 @@ async def get_player_init_data(
             nodes=nodes_data,
             video_base_url="/api/v1/video/stream/",
             ppt_pages=ppt_pages if ppt_pages else None,
+            slide_images=slide_images,
             saved_progress=saved_progress,
         )
 

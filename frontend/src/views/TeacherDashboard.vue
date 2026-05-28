@@ -220,7 +220,7 @@
               style="display: none;"
             ></audio>
             <button class="audio-btn primary" @click="generateTTS" :disabled="isGeneratingTTS || isTTSGenerating || !currentContent">
-              {{ isGeneratingTTS ? '生成中...' : isTTSGenerating ? `语音生成中 ${ttsProgress.completed}/${ttsProgress.total}` : '🔊 预览语音' }}
+              {{ isGeneratingTTS ? '生成中...': isTTSGenerating ? `语音生成中 $ {ttsProgress.completed}/${ttsProgress.total}` : '🔊 预览语音' }}
             </button>
             <div v-if="isTTSGenerating" class="tts-progress-hint">
               后台正在批量生成语音 ({{ ttsProgress.completed }}/{{ ttsProgress.total }})

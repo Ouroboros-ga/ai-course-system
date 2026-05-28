@@ -20,7 +20,7 @@ from app.core.exceptions import unified_response
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/platform", tags=["泛雅平台对接"])
+router = APIRouter(tags=["泛雅平台对接"])
 
 
 class FanyaSSOCallbackRequest(BaseModel):

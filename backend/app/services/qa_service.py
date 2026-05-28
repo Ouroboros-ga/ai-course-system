@@ -10,7 +10,7 @@ from typing import Optional, List, Tuple, Dict, Any
 
 from app.common.llm_client import llm_client, Message
 from app.common.RAG import rag_pipeline
-from app.common.prompts.qa import QA_SYSTEM_PROMPT, build_qa_prompt
+from app.common.prompts.qa import QA_SYSTEM_PROMPT, build_qa_prompt, QUIZ_SYSTEM_PROMPT, build_quiz_prompt
 
 
 class QAPromptBuilder:
@@ -565,6 +565,62 @@ class QAService:
             return "", []
         finally:
             session.close()
+
+    async def generate_quiz(
+        self,
+        node_content: str,
+        node_title: str = "",
+        course_context: str = "",
+    ) -> Dict[str, Any]:
+        """
+        根据课程节点内容生成选择题
+
+        Args:
+            node_content: 节点讲解内容
+            node_title: 节点标题
+            course_context: 课程文档上下文（可选，用于增强出题质量）
+
+        Returns:
+            dict: {
+                "quiz": {
+                    "question": "...",
+                    "options": {"A": "...", "B": "...", "C": "...", "D": "..."},
+                    "correct_answer": "A",
+                    "explanation": "..."
+                }
+            }
+        """
+        full_content = node_content
+        if course_context:
+            full_content = f"{course_context[:3000]}\n\n{node_content}"
+
+        user_prompt = build_quiz_prompt(full_content, node_title)
+
+        messages = [
+            Message(role="system", content=QUIZ_SYSTEM_PROMPT),
+            Message(role="user", content=user_prompt),
+        ]
+
+        try:
+            response = await llm_client.chat(messages, temperature=0.7, max_tokens=1000)
+            json_match = re.search(r'\{[\s\S]*\}', response.content)
+            if json_match:
+                quiz_data = json.loads(json_match.group())
+                required_keys = {"question", "options", "correct_answer", "explanation"}
+                if required_keys.issubset(quiz_data.keys()):
+                    if isinstance(quiz_data["options"], dict) and len(quiz_data["options"]) >= 2:
+                        valid_answers = {"A", "B", "C", "D"}
+                        if quiz_data["correct_answer"] in valid_answers:
+                            return {"quiz": quiz_data}
+
+            print(f"[QAService] 选择题JSON解析失败或格式不合法: {response.content[:200]}")
+            return {"quiz": None, "error": "生成格式异常"}
+        except json.JSONDecodeError as e:
+            print(f"[QAService] 选择题JSON解析错误: {str(e)}")
+            return {"quiz": None, "error": "JSON解析失败"}
+        except Exception as e:
+            print(f"[QAService] 选择题生成失败: {str(e)}")
+            return {"quiz": None, "error": str(e)}
 
 
 qa_service = QAService()

@@ -94,9 +94,10 @@ const props = defineProps({
   currentPage: { type: Number, default: 1 },
   audioUrl: { type: String, default: '' },
   audioDuration: { type: Number, default: 0 },
+  autoPlay: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['page-change', 'audio-ended'])
+const emit = defineEmits(['page-change', 'audio-ended', 'auto-play-blocked'])
 
 const isLoading = ref(false)
 const audioRef = ref(null)
@@ -218,8 +219,39 @@ watch(() => props.audioUrl, (newUrl, oldUrl) => {
       audioRef.value.pause()
       audioRef.value.load()
     }
+    if (props.autoPlay && newUrl) {
+      tryAutoPlay()
+    }
   }
 })
+
+let pendingCanPlayHandler = null
+
+function tryAutoPlay() {
+  if (!audioRef.value) return
+  if (pendingCanPlayHandler) {
+    audioRef.value.removeEventListener('canplaythrough', pendingCanPlayHandler)
+    pendingCanPlayHandler = null
+  }
+  const attemptPlay = () => {
+    if (!audioRef.value || !props.audioUrl) return
+    audioRef.value.play().then(() => {
+      isPlaying.value = true
+    }).catch(() => {
+      isPlaying.value = false
+      emit('auto-play-blocked')
+    })
+  }
+  if (audioRef.value.readyState >= 3) {
+    attemptPlay()
+  } else {
+    pendingCanPlayHandler = () => {
+      attemptPlay()
+      pendingCanPlayHandler = null
+    }
+    audioRef.value.addEventListener('canplaythrough', pendingCanPlayHandler)
+  }
+}
 
 watch(() => props.audioDuration, (val) => {
   if (val > 0 && audioDuration.value === 0) {
@@ -228,10 +260,18 @@ watch(() => props.audioDuration, (val) => {
 })
 
 onBeforeUnmount(() => {
+  if (pendingCanPlayHandler && audioRef.value) {
+    audioRef.value.removeEventListener('canplaythrough', pendingCanPlayHandler)
+    pendingCanPlayHandler = null
+  }
   if (audioRef.value) {
     audioRef.value.pause()
     audioRef.value.src = ''
   }
+})
+
+defineExpose({
+  playAudio: tryAutoPlay,
 })
 </script>
 

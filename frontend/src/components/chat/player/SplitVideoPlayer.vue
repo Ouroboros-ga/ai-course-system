@@ -54,8 +54,36 @@
         <!-- 右侧：PPT幻灯片 (60%) -->
         <div class="ppt-section">
           <div class="ppt-container">
-            <!-- PPT页面内容展示 -->
-            <div v-if="currentPageData" class="ppt-content">
+            <!-- PPT图片展示（优先使用PDF渲染的图片） -->
+            <div v-if="currentSlideImages.length > 0" class="ppt-image-viewer">
+              <div class="slide-image-wrapper">
+                <img
+                  :src="currentSlideImages[currentSlideImageIndex]?.url"
+                  :alt="'幻灯片 ' + currentSlideImages[currentSlideImageIndex]?.page"
+                  class="slide-image"
+                  @error="onSlideImageError"
+                />
+              </div>
+              <!-- 多页时显示翻页控制 -->
+              <div v-if="currentSlideImages.length > 1" class="slide-nav">
+                <button
+                  class="slide-nav-btn"
+                  :disabled="currentSlideImageIndex <= 0"
+                  @click="currentSlideImageIndex--"
+                >‹</button>
+                <span class="slide-page-info">
+                  {{ currentSlideImageIndex + 1 }} / {{ currentSlideImages.length }}
+                </span>
+                <button
+                  class="slide-nav-btn"
+                  :disabled="currentSlideImageIndex >= currentSlideImages.length - 1"
+                  @click="currentSlideImageIndex++"
+                >›</button>
+              </div>
+            </div>
+
+            <!-- 回退：PPT文本内容展示 -->
+            <div v-else-if="currentPageData" class="ppt-content">
               <h3 class="ppt-title">{{ currentPageData.title || currentKnowledgePoint?.title }}</h3>
               <div class="ppt-body" v-html="formatContent(currentPageData.content)"></div>
             </div>
@@ -69,8 +97,16 @@
           </div>
 
           <!-- PPT页码指示器 -->
-          <div class="ppt-page-indicator" v-if="currentPageData">
-            第 {{ currentPage }} / {{ totalPages }} 页
+          <div class="ppt-page-indicator" v-if="currentSlideImages.length > 0 || currentPageData">
+            <template v-if="currentSlideImages.length > 0">
+              第 {{ currentSlideImages[currentSlideImageIndex]?.page || '-' }} 页
+              <span v-if="currentSlideImages.length > 1">
+                (共 {{ currentSlideImages.length }} 页)
+              </span>
+            </template>
+            <template v-else>
+              第 {{ currentPage }} / {{ totalPages }} 页
+            </template>
           </div>
         </div>
       </div>
@@ -174,6 +210,8 @@ const playerData = ref({
   total_nodes: 0,
   nodes: [],
   video_base_url: '',
+  ppt_pages: [],
+  slide_images: [],
   saved_progress: null,
 })
 
@@ -191,9 +229,18 @@ const currentNodeIndex = ref(0)
 const currentPage = ref(1)
 const totalPages = ref(1)
 const completedNodes = ref([])
+const currentSlideImageIndex = ref(0)
 
 // 自动保存定时器
 let autoSaveTimer = null
+
+watch(currentNodeIndex, () => {
+  if (hasAccuratePageMapping.value) {
+    currentSlideImageIndex.value = 0
+  } else {
+    currentSlideImageIndex.value = autoSlideIndex.value
+  }
+})
 
 // 计算属性
 const knowledgePoints = computed(() => {
@@ -219,6 +266,43 @@ const currentKnowledgePoint = computed(() => {
     return knowledgePoints.value[currentNodeIndex.value]
   }
   return null
+})
+
+const hasAccuratePageMapping = computed(() => {
+  const nodes = playerData.value.nodes
+  if (!nodes || nodes.length === 0) return false
+  return nodes.some(n => (n.page_start || 1) > 1 || (n.page_end || 1) > 1 || (n.page_start || 1) !== (n.page_end || 1))
+})
+
+const currentSlideImages = computed(() => {
+  const currentNode = playerData.value.nodes[currentNodeIndex.value]
+  if (!currentNode || !playerData.value.slide_images || playerData.value.slide_images.length === 0) {
+    return []
+  }
+  const token = localStorage.getItem('token') || ''
+  const addToken = (s) => ({
+    ...s,
+    url: s.url + (s.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token),
+  })
+
+  if (hasAccuratePageMapping.value) {
+    const pageStart = currentNode.page_start || 1
+    const pageEnd = currentNode.page_end || pageStart
+    return playerData.value.slide_images
+      .filter(s => s.page >= pageStart && s.page <= pageEnd)
+      .map(addToken)
+  }
+
+  return playerData.value.slide_images.map(addToken)
+})
+
+const autoSlideIndex = computed(() => {
+  if (hasAccuratePageMapping.value) return 0
+  const nodes = playerData.value.nodes
+  const totalSlides = playerData.value.slide_images?.length || 1
+  if (nodes.length === 0 || totalSlides <= 1) return 0
+  const ratio = currentNodeIndex.value / nodes.length
+  return Math.min(Math.floor(ratio * totalSlides), totalSlides - 1)
 })
 
 const currentPageData = computed(() => {
@@ -321,6 +405,11 @@ async function initPlayer() {
           page: currentPage.value,
           nodeIndex: currentNodeIndex.value,
         })
+      }
+
+      // 初始化幻灯片位置
+      if (playerData.value.slide_images && playerData.value.slide_images.length > 0) {
+        currentSlideImageIndex.value = autoSlideIndex.value
       }
 
       console.log('[SplitVideoPlayer] 数据加载完成:', {
@@ -473,6 +562,10 @@ function toggleFullscreen() {
   } else if (container.webkitRequestFullscreen) {
     container.webkitRequestFullscreen()
   }
+}
+
+function onSlideImageError(e) {
+  e.target.style.display = 'none'
 }
 
 // 知识点跳转
@@ -730,7 +823,74 @@ onUnmounted(() => {
 .ppt-container {
   flex: 1;
   overflow-y: auto;
-  padding: 30px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.ppt-image-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.slide-image-wrapper {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  width: 100%;
+}
+
+.slide-image {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  border-radius: 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.slide-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 8px 0;
+}
+
+.slide-nav-btn {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.slide-nav-btn:hover:not(:disabled) {
+  background: #4CAF50;
+  color: #fff;
+  border-color: #4CAF50;
+}
+
+.slide-nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.slide-page-info {
+  font-size: 14px;
+  color: #666;
+  min-width: 60px;
+  text-align: center;
 }
 
 .ppt-content {

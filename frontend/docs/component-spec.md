@@ -20,6 +20,7 @@
 - **PptControlBar**: PPT控制面板组件
 - **PptHeader**: PPT头部组件
 - **PptAnalyzing**: PPT分析状态组件
+- **PptSlidePlayer**: PPT幻灯片+音频播放器组件（支持autoPlay自动播放）
 
 ### 1.3 首页相关组件
 - **Hero**: 首页英雄区域组件

@@ -405,3 +405,82 @@ async def create_chat_record(
             message=f"创建聊天记录失败: {str(e)}",
             data=None
         )
+
+
+@router.post("/quiz", response_model=UnifiedResponse)
+async def generate_quiz(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+    courseId: Optional[int] = Body(None, description="课程ID"),
+    nodeId: Optional[int] = Body(None, description="节点ID"),
+    nodeContent: Optional[str] = Body(None, description="节点内容（若不传nodeId则使用此内容）"),
+    nodeTitle: Optional[str] = Body("", description="节点标题"),
+):
+    """
+    根据课程节点内容生成选择题
+
+    需要用户登录认证
+
+    功能：
+    1. 传入nodeId，自动从数据库获取节点内容和标题
+    2. 传入nodeContent，直接使用提供的内容
+    3. 传入courseId，会附加课程上下文增强出题质量
+    """
+    try:
+        user_id = int(current_user["user_id"])
+        username = current_user.get("username", "user")
+
+        content = nodeContent or ""
+        title = nodeTitle or ""
+
+        if nodeId:
+            from app.models.course_model import ScriptNode
+            script_node = session.get(ScriptNode, nodeId)
+            if script_node:
+                content = script_node.content or ""
+                title = script_node.title or ""
+
+        if not content.strip():
+            return unified_response(
+                code=400,
+                message="节点内容为空，无法生成选择题",
+                data=None
+            )
+
+        course_context = ""
+        if courseId:
+            course_context = await _get_course_context(session, courseId)
+
+        print(f"[选择题] 用户 {username} (ID: {user_id}) 请求生成选择题，节点: {title}")
+
+        result = await qa_service.generate_quiz(
+            node_content=content,
+            node_title=title,
+            course_context=course_context,
+        )
+
+        if result.get("quiz"):
+            print(f"[选择题] 生成成功: {result['quiz']['question'][:50]}...")
+            return unified_response(
+                code=200,
+                message="选择题生成成功",
+                data=result,
+            )
+        else:
+            error_msg = result.get("error", "生成失败")
+            print(f"[选择题] 生成失败: {error_msg}")
+            return unified_response(
+                code=500,
+                message=f"选择题生成失败: {error_msg}",
+                data=None,
+            )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"选择题生成失败: {str(e)}",
+            data=None,
+        )
