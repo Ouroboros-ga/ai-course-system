@@ -47,10 +47,10 @@ backend/.env
 .venv
 
 # 数据库文件（重要：不要提交到版本控制）
-database/*.db
+
 database/*.sqlite
 database/*.sqlite3
-*.db
+
 *.sqlite
 *.sqlite3
 
