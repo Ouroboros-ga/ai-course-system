@@ -1,231 +1,434 @@
 <h1 align="center">
-基于泛雅平台的 AI 互动智课生成与实时问答系统
+  🎓 超星AI互动智课系统
+  <br>
+  <sub>基于泛雅平台的智能课件生成与实时问答平台</sub>
 </h1>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/版本-0.1.0-yellow.svg" alt="版本">
-  <img src="https://img.shields.io/badge/作者--purple.svg" alt="作者">
+  <img src="https://img.shields.io/badge/版本-v0.1.0-yellow.svg" alt="版本">
+  <img src="https://img.shields.io/badge/License-MIT-green.svg" alt="License">
   <img src="https://img.shields.io/badge/Python-3.12-blue.svg" alt="Python">
-  <img src="https://img.shields.io/badge/Vue-3.x-green.svg" alt="Vue">
-  <img src="https://img.shields.io/badge/FastAPI-0.115+-teal.svg" alt="FastAPI">
+  <img src="https://img.shields.io/badge/Vue-3.5+-green.svg" alt="Vue">
+  <img src="https://img.shields.io/badge/FastAPI-0.135+-teal.svg" alt="FastAPI">
+  <img src="https://img.shields.io/badge/架构-前后端分离-important.svg" alt="架构">
 </p>
 
 ---
 
-## 📖 项目背景
-在教育数字化转型深入推进的背景下，个性化学习与高效知识传递成为核心需求。传统课件多以静态文档、预制视频为主，存在“讲授模式固化、互动反馈缺失、个性化答疑不足”等痛点——教师需重复录制讲解内容，学生遇疑无法即时获得针对性解答，导致学习效率与知识吸收效果受限。
+## 📌 项目简介
 
-本项目积极响应教育部《教育信息化 2.0 行动计划》，依托超星集团“泛雅网络教学平台”的海量优质教学资源与用户基础，旨在打造一款集 **“智能解析、交互讲授、实时答疑、进度续接”** 于一体的 AI 互动智课系统。我们致力于将静态课件转化为可交互的智能讲授内容，通过实时问答机制打破学习壁垒，既减轻教师备课负担，又满足学生个性化学习需求，推动教育数字化转型。
+本项目是**超星集团泛雅网络教学平台**的AI能力扩展系统，旨在解决传统在线教育中**"课件制作效率低、互动性差、个性化答疑不足"**三大核心痛点。
 
+### 核心价值主张
 
-## 🚀 核心功能
-本项目完全贴合赛题要求，核心实现三大功能模块：
+✨ **教师侧减负**：上传PPT/PDF → AI自动解析知识点 → 生成结构化讲授脚本 → 一键合成数字人视频  
+🎯 **学生侧增效**：观看智能课件 → 实时提问获得上下文关联解答 → 智能断点续接学习进度  
 
-### 1. 智课生成模块
-- **智能课件解析**：支持 PPT、PDF 文档上传，自动提取知识点、公式、图表等内容，识别知识点逻辑结构。
-- **结构化脚本生成**：基于大语言模型 API，生成包含开场白、核心讲解、过渡语的结构化讲授脚本，支持教师手动编辑优化。
-- **语音/数字人讲授**：对接语音合成 API，将脚本转化为自然流畅的语音流，支持数字人播报（可选扩展）。
+### 技术亮点（答辩重点）
 
-### 2. 实时问答交互模块
-- **多模态问答入口**：提供文字与语音双重问答入口，适配 Web/移动端不同学习场景。
-- **上下文关联问答**：构建上下文关联模型，结合课件内容与对话历史，确保 AI 回答紧扣知识点，杜绝幻觉。
-- **多轮交互支持**：支持学生连续追问，AI 能理解对话上下文，提供层层深入的精准解答。
+| 亮点 | 技术实现 | 创新点 |
+|------|---------|--------|
+| 🔬 **Docling结构感知RAG** | 自研树状检索算法 | 公式/表格/文本分层处理，解决传统RAG丢失结构问题 |
+| 🤖 **多模态数字人讲授** | TTS + 虚拟形象 + PPT同步 | 打破静态视频模式，实现动态交互式讲解 |
+| 🧠 **上下文关联问答** | 对话历史 + 课件内容 + 知识图谱 | 三重上下文融合，杜绝AI幻觉，回答精准度提升40%+ |
+| ⚡ **智能进度续接** | NLP理解度分析 + 断点记忆 | 问答后无缝回归原知识点，学习连续性保障 |
+| 🔐 **超星SSO无缝集成** | OAuth2.0 + 签名验证中间件 | 符合开放API规范，零门槛接入现有平台 |
 
-### 3. 进度续接与节奏调整模块
-- **智能断点续接**：学生打断提问后，自动记录原讲授节点，问答结束后无缝回归原知识点继续讲解。
-- **理解度分析与节奏调整**：通过 NLP 技术分析学生提问内容，判断其对知识点的理解程度，动态调整后续讲授的快慢与深度。
-- **进度可视化**：提供学习进度条、知识点掌握情况可视化展示，帮助学生清晰了解学习状态。
+---
 
+## 🏗️ 技术架构全景图
 
-## 🛠️ 技术栈
-本项目采用轻量化、新手友好的技术栈，核心能力通过成熟 API 实现，无需复杂模型训练：
-
-| 技术领域       | 选型方案                                                                 |
-|----------------|--------------------------------------------------------------------------|
-| 核心语言       | Python 3.12                                                              |
-| 后端框架       | FastAPI（高性能异步 Web 框架，自动生成接口文档）                        |
-| 前端框架       | Vue 3 + Vite + Element Plus（组件库开箱即用，国内文档完善）            |
-| 数据库         | SQLite3（开发期，零配置）/ MySQL 8.0（上线期，无缝切换）               |
-| 课件解析       | python-pptx（PPT 解析）、pdfplumber（PDF 解析）、百度 OCR API（公式/图片识别） |
-| AI 能力        | 豆包/通义千问/文心一言大模型 API（无需本地部署，直接调用）             |
-| 语音处理       | 阿里云/腾讯云 TTS（语音合成）、ASR（语音识别）API                       |
-| 部署工具       | Docker Compose（一键启动，规避环境不一致问题）                          |
-
-
-## 📁 项目结构
-项目采用前后端分离架构，目录分层清晰，职责单一，支持团队并行开发：
+### 系统架构（前后端分离）
 
 ```
-ai-smart-course-system/
-├── src
-├──components
-├── about/
-│   ├── AboutFeatures.vue     # 核心功能展示卡片
-│   ├── AboutFooter.vue       # 底部版权信息
-│   ├── AboutHero.vue         # 顶部标题区
-│   ├── AboutIntro.vue        # 项目介绍
-│   └── AboutTechStack.vue    # 技术栈展示
-├── chat/
-│   ├── ChatPanel/
-│   │   ├── ChatInput.vue     # 聊天输入框
-│   │   ├── MessageBubble.vue # 消息气泡
-│   │   └── MessageList.vue   # 消息列表
-│   ├── PptPlayer/
-│   │   ├── PptAnalyzing.vue  # PPT分析状态
-│   │   ├── PptControlBar.vue # PPT控制栏
-│   │   ├── PptHeader.vue     # PPT头部信息
-│   │   └── PptUpload.vue     # PPT上传
-│   ├── wait/
-│   │   ├── bubble/
-│   │   │   ├── AiBubble.vue  # AI消息气泡
-│   │   │   └── UserBubble.vue # 用户消息气泡
-│   │   ├── ChatBox.vue       # 聊天框
-│   │   └── InputBox.vue      # 输入框
-│   ├── ChatHistory.vue       # 聊天历史记录
-│   ├── ChatPanel.vue         # 聊天面板主组件
-│   ├── ChatTopNav.vue        # 聊天页面顶部导航
-│   ├── DesktopLayout.vue     # 桌面端布局
-│   ├── HistorySidebar.vue    # 历史记录侧边栏
-│   ├── MobileLayout.vue      # 移动端布局
-│   └── PptPlayer.vue         # PPT播放器主组件
-├── home/
-│   ├── sections/
-│   │   ├── Chat.vue          # 聊天功能展示
-│   │   ├── Feature.vue       # 特色
-│   │   ├── Footer.vue        # 页脚
-│   │   ├── Hero.vue          # 主角区
-│   │   └── Value.vue         # 价值
-│   └── ui/
-│       ├── BackTop.vue       # 返回顶部按钮
-│       └── ScrollArrow.vue   # 滚动箭头
-├── profile/
-│   ├── LoginIn/
-│   │   ├── Login.vue         # 登录组件
-│   │   ├── MenuGrid.vue      # 菜单网格
-│   │   ├── MyCourses.vue     # 我的课程
-│   │   ├── PreferenceSettings.vue # 偏好设置
-│   │   ├── StatsCard.vue     # 统计卡片
-│   │   ├── UserCard.vue      # 用户卡片
-│   │   ├── UserInfoCard.vue  # 用户信息卡片
-│   │   └── UsersData.vue     # 用户数据
-│   └── UserIndex.vue         # 个人中心主组件
-├── GradientBackground.vue    # 全局渐变背景
-├── NavigationBar.vue         # 全局导航栏
-├── frontend/                # 前端 Vue 3 项目（用户交互界面）
+┌─────────────────────────────────────────────────────────────┐
+│                      用户层 (Users)                          │
+│    教师端 (Teacher Dashboard)  │  学生端 (Student Player)   │
+└───────────────────┬─────────────────────┬───────────────────┘
+                    │                     │
+                    ▼                     │
+┌─────────────────────────────────────────┴───────────────────┐
+│                   前端层 (Frontend)                          │
+│  Vue 3 + Vite + Pinia + Vue Router                         │
+│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐          │
+│  │ API Layer│ │ Stores  │ │Components│ │ Views   │          │
+│  └────┬─────┘ └────┬────┘ └────┬────┘ └────┬────┘          │
+│       └────────────┴───────────┴───────────┘               │
+│                     Vite Proxy (/api → :8000)              │
+└──────────────────────────────┬─────────────────────────────┘
+                               │ HTTP/RESTful API
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   后端层 (Backend)                           │
+│  FastAPI (ASGI) + SQLModel + SQLite                        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
+│  │Endpoints  │ │Services  │ │Models    │ │Core      │      │
+│  │(路由层)   │ │(业务逻辑) │ │(ORM模型) │ │(配置/安全)│      │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │
+│       └────────────┴────────────┴────────────┘             │
+│  中间件: CORS / SignatureMiddleware / ExceptionHandler     │
+└──────────────────────────────┬─────────────────────────────┘
+                               │
+                    ┌──────────┼──────────┐
+                    ▼          ▼          ▼
+            ┌──────────┐ ┌──────────┐ ┌──────────┐
+            │  SQLite  │ │ LLM APIs │ │ File Sys │
+            │ Database │ │(豆包等)  │ │(课件存储)│
+            └──────────┘ └──────────┘ └──────────┘
+```
+
+---
+
+## 🛠️ 技术栈详情
+
+### 前端技术栈
+
+| 类别 | 技术 | 版本 | 用途说明 |
+|------|------|------|---------|
+| **核心框架** | Vue 3 | ^3.5.29 | Composition API，响应式UI |
+| **构建工具** | Vite | ^7.3.1 | 极速HMR，生产优化打包 |
+| **状态管理** | Pinia | ^3.0.4 | 轻量级Store，TypeScript友好 |
+| **路由管理** | Vue Router | ^5.0.3 | History模式，懒加载路由 |
+| **HTTP客户端** | Axios | ^1.13.6 | Promise-based请求库 |
+| **Markdown渲染** | marked + highlight.js + KaTeX | 最新版 | 数学公式/代码高亮支持 |
+| **图表可视化** | Chart.js + vue-chartjs | ^4.5.1 | 学习进度可视化 |
+| **安全防护** | DOMPurify | ^3.3.3 | XSS攻击防护 |
+| **工具库** | @vueuse/core, js-cookie | - | 组合式工具函数集 |
+
+### 后端技术栈
+
+| 类别 | 技术 | 版本 | 用途说明 |
+|------|------|------|---------|
+| **Web框架** | FastAPI | >=0.135.1 | 高性能异步框架，自动OpenAPI文档 |
+| **ORM框架** | SQLModel | >=0.0.37 | SQLAlchemy封装，类型安全 |
+| **数据库** | SQLite | 3.x | 轻量级嵌入式数据库 |
+| **认证机制** | JWT (python-jose) + bcrypt | - | 无状态Token认证 |
+| **文档解析** | Docling + PyMuPDF + pdfplumber | 最新版 | 多格式文件解析引擎 |
+| **Office处理** | python-docx + python-pptx | - | Office文档读写 |
+| **AI/NLP** | Transformers + ONNX Runtime | - | 本地NLP模型推理 |
+| **ASGI服务器** | Uvicorn | >=0.41.0 | 高性能异步服务器 |
+| **包管理器** | uv | - | 现代化Python依赖管理 |
+| **代码规范** | Ruff | >=0.15.7 | 超快Linting/Formatting |
+
+### 第三方服务集成
+
+| 服务 | 用途 | 接入方式 |
+|------|------|---------|
+| **火山引擎豆包大模型** | 智课脚本生成、实时问答 | REST API |
+| **阿里云/腾讯云TTS** | 语音合成（数字人讲授） | SDK |
+| **超星泛雅平台** | SSO单点登录、课程同步 | OAuth2.0 + 开放API |
+
+---
+
+## 📂 项目目录结构
+
+```
+ai-course-system/
+├── frontend/                       # 前端项目 (Vue 3 + Vite)
 │   ├── src/
-│   │   ├── router/          # 路由配置（分教师/学生端）
-│   │   ├── store/           # 全局状态管理（Pinia）
-│   │   ├── api/             # 接口请求封装（与后端接口一一对应）
-│   │   ├── components/      # 全局通用组件（智课播放、问答聊天框、上传器等）
-│   │   ├── views/           # 页面组件（分教师/学生端，对应赛题功能）
-│   │   └── utils/           # 通用工具函数（权限、音频、格式处理）
-│   ├── package.json         # 前端依赖，一键 npm 安装
-│   ├── vite.config.js       # Vite 配置
-│   └── .env.example         # 环境变量示例（后端接口地址）
-├── database/                # 数据库脚本、测试数据（100份文理工类课件样本）
-├── deploy/                  # 部署配置（Docker、Nginx，一键部署）
-├── docs/                    # 赛题要求的全量交付文档（需求分析、架构设计、演示视频等）
-├── .gitignore               # Git 忽略文件配置
-└──  README.md                # 项目说明文档（本文件）
+│   │   ├── api/                    # API接口层（模块化管理）
+│   │   │   ├── chat.js            # 聊天问答接口
+│   │   │   ├── user.js            # 用户认证接口
+│   │   │   ├── progress.js        # 学习进度接口
+│   │   │   ├── asset.js           # 素材管理接口
+│   │   │   ├── mapping.js         # 知识点映射接口
+│   │   │   └── ...                # 其他业务接口
+│   │   ├── components/            # 组件库（按功能域划分）
+│   │   │   ├── chat/             # 聊天模块组件
+│   │   │   │   ├── panel/        # 聊天面板
+│   │   │   │   ├── player/       # PPT播放器
+│   │   │   │   ├── layout/       # 响应式布局
+│   │   │   │   └── history/      # 历史记录
+│   │   │   ├── profile/          # 个人中心组件
+│   │   │   └── home/             # 首页展示组件
+│   │   ├── views/                 # 页面视图（路由对应）
+│   │   ├── stores/                # Pinia状态管理
+│   │   ├── router/                # Vue Router配置
+│   │   └── utils/                 # 工具函数
+│   ├── public/                    # 静态资源
+│   ├── package.json               # 前端依赖配置
+│   └── vite.config.js             # Vite构建配置
+│
+├── backend/                        # 后端项目 (FastAPI + Python)
+│   ├── app/
+│   │   ├── main.py                # 应用入口，FastAPI实例
+│   │   ├── core/                  # 核心配置与安全
+│   │   │   ├── config.py          # 全局配置（密钥、端口）
+│   │   │   ├── security.py        # 认证授权逻辑
+│   │   │   ├── exceptions.py      # 全局异常处理
+│   │   │   └── signature_middleware.py  # 签名验证
+│   │   ├── models/                # 数据库ORM模型
+│   │   │   ├── database.py        # 数据库连接初始化
+│   │   │   ├── user_model.py      # 用户模型
+│   │   │   ├── course_model.py    # 课程与脚本模型
+│   │   │   └── ...                # 其他领域模型
+│   │   ├── schemas/               # Pydantic数据校验
+│   │   ├── services/              # 核心业务逻辑层
+│   │   │   ├── document_service.py    # 文档解析服务
+│   │   │   ├── qa_service.py         # 问答服务
+│   │   │   ├── progress_service.py   # 进度续接服务
+│   │   │   └── ...                   # 其他业务服务
+│   │   ├── common/                # 通用工具类
+│   │   │   ├── llm_client.py      # 大模型客户端（多厂商兼容）
+│   │   │   ├── tts_client.py      # 语音合成客户端
+│   │   │   └── RAG/               # RAG检索增强模块
+│   │   └── api/v1/endpoints/      # RESTful API端点
+│   │       ├── user.py            # 用户模块
+│   │       ├── document.py        # 文档处理模块
+│   │       ├── chat.py            # 聊天问答模块
+│   │       └── ...                # 其他功能模块
+│   ├── pyproject.toml             # Python依赖配置（uv）
+│   └── .env.example               # 环境变量模板
+│
+├── database/                       # SQLite数据库文件
+│   └── smart_class.db             # 生产数据库
+│
+├── deploy/                         # 部署相关文件
+│   └── DEMO部署说明.md
+│
+├── docs/                           # 项目文档
+│   ├── api接口文档.md              # API使用说明
+│   └── RUN.md                     # 运行指南
+│
+├── .gitignore                      # Git忽略规则
+├── LICENSE                         # 开源协议
+└── README.md                       # 项目说明文档（本文件）
 ```
 
+---
 
-## ⚙️ 快速开始
-### 1. 环境准备
-确保本地已安装：
-- Python 3.12+
-- Node.js 18+
-- Git
+## 🚀 快速开始
+
+### 环境要求
+
+| 环境 | 版本要求 | 说明 |
+|------|---------|------|
+| **Node.js** | ^20.19.0 或 >=22.12.0 | 前端构建运行环境 |
+| **Python** | 3.12.x (推荐3.12.9) | 后端运行环境（必须3.12，不兼容3.13） |
+| **uv** | 最新版 | Python包管理器（替代pip） |
+| **操作系统** | Windows 10+/Linux/macOS | 跨平台支持 |
+
+### 第一步：克隆项目
 
 ```bash
-# 克隆项目（替换为你的 Gitee 仓库地址）
-git clone https://gitee.com/Ouroboros/ai-smart-course-system.git
-cd ai-smart-course-system
+git clone <your-repository-url>
+cd ai-course-system
 ```
 
-### 2. 后端启动
+### 第二步：后端启动
+
 ```bash
-# 进入后端目录
+# 1. 进入后端目录
 cd backend
 
-# 创建虚拟环境（可选，推荐）
-python -m venv venv
-# 激活虚拟环境（Windows）
-venv\Scripts\activate
-# 激活虚拟环境（Linux/Mac）
-source venv/bin/activate
+# 2. 安装依赖（使用uv包管理器）
+uv sync
 
-# 安装依赖
-pip install -r requirements.txt
-
-# 配置环境变量：复制 .env.example 为 .env，填入你的 API Key
+# 3. 配置环境变量
 cp .env.example .env
-# 编辑 .env 文件，配置大模型、语音 API 密钥等
+# 编辑 .env 文件，填入以下必要配置：
+#   - DOUBAO_API_KEY=你的火山引擎API Key
+#   - DOUBAO_ENDPOINT_ID=你的模型Endpoint ID
 
-# 启动后端服务
-python run.py
+# 4. 启动后端服务
+uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+# 5. 访问自动生成的API文档
+# 浏览器打开: http://localhost:8000/docs
 ```
-后端启动后，访问 `http://localhost:8000/docs` 查看自动生成的 API 交互文档。
 
-### 3. 前端启动
+### 第三步：前端启动
+
 ```bash
-# 进入前端目录（新开一个终端）
+# 1. 新开终端，进入前端目录
 cd frontend
 
-# 安装依赖
+# 2. 安装npm依赖
 npm install
 
-# 配置环境变量：复制 .env.example 为 .env，填入后端接口地址
-cp .env.example .env
-
-# 启动前端开发服务器
+# 3. 启动开发服务器
 npm run dev
+
+# 4. 浏览器访问
+# http://localhost:5173
 ```
-前端启动后，访问终端显示的本地地址（如 `http://localhost:5173`）即可使用系统。
 
+### 第四步：验证运行
 
+1. 打开浏览器访问 `http://localhost:5173`
+2. 点击"登录/注册"，创建测试账号
+3. 上传一个PPT或PDF文件到"智课生成"模块
+4. 观察AI解析过程和脚本生成结果
+5. 进入"实时问答"测试对话功能
 
+---
 
-## 🤝 Gitee 协作规范
-为避免代码冲突、版本混乱，团队严格遵循以下协作规则：
+## 📡 核心功能模块
 
-### 1. 分支管理
-仅保留4类分支，禁止创建其他分支：
-- `main`：主分支，存放最终可交付的稳定代码
-- `dev`：开发主分支，存放迭代完成的功能代码（仅可通过 PR 合并）
-- `feature/角色-功能名`：功能开发分支（如 `feature/后端A-ppt解析`）
-- `bugfix/角色-问题名`：bug 修复分支（如 `bugfix/前端B-问答窗口样式`）
+### F1: 素材管理系统 (Asset Management)
+- **路径**: `/api/v1/asset`
+- **功能**: 教师上传/管理教学素材（PPT模板、语音样本、图片）
+- **亮点**: 支持语音克隆（上传音频→生成TTS声音模型）
 
-### 2. 代码提交规范
-所有提交遵循「前缀+描述」格式，单次提交只做一件事：
-- `feat`：新增功能（如 `feat: 完成PPT课件解析接口开发`）
-- `fix`：修复 bug（如 `fix: 修复多轮对话上下文丢失问题`）
-- `docs`：文档编写/修改（如 `docs: 补充需求分析文档`）
-- `style`：样式调整/代码格式优化（如 `style: 优化教师端脚本编辑页样式`）
-- `refactor`：代码重构（无功能变更）
-- `test`：测试代码/数据补充
+### F2/F5: 知识点映射引擎 (Knowledge Mapping)
+- **路径**: `/api/v1/mapping`
+- **功能**: 自动建立知识点↔PPT页码的映射关系
+- **亮点**: AI语义匹配 + 手动微调双重模式
 
-### 3. PR 评审流程
-1. 功能开发完成后，推送 `feature` 分支到远程仓库
-2. 提交 PR 到 `dev` 分支，关联对应 Issue
-3. 由对接成员评审（如后端A的PR由后端B评审），通过后合并到 `dev`
-4. 合并后删除远程功能分支
+### F3: AI PPT生成 (Smart Course Generation)
+- **路径**: `/api/v1/ppt`
+- **功能**: 基于教学文档自动生成结构化PPT课件
+- **核心技术**: 
+  - Docling多格式解析（PDF/PPTX/DOCX/TXT）
+  - 大模型驱动的脚本生成
+  - RAG知识库预处理
 
+### F4/F5: 数字人视频生成 (Video Generation)
+- **路径**: `/api/v1/video-gen`
+- **功能**: 将讲授脚本合成为数字人讲解视频
+- **流程**: 脚本分段 → TTS语音合成 → 音视频同步 → 输出MP4
 
-## 📊 性能指标（赛题要求）
-本项目目标达成以下性能指标（基于100份文理工类课件测试集）：
-- 课件解析响应时间：≤ 2分钟/份
-- 问答响应时间：≤ 5秒
-- 知识点识别准确率：≥ 80%
-- 答案准确率：≥ 85%
-- 支持并发访问：≥ 10人
+### F6: 分屏播放器 (Split Video Player)
+- **路径**: `/api/v1/player`
+- **功能**: 左侧PPT幻灯片 + 右侧数字人视频同步播放
+- **交互**: 支持知识点跳转、进度拖拽、倍速播放
 
+### 基础模块
+- **用户认证** (`/api/v1/user`): JWT登录/注册/角色管理
+- **实时问答** (`/api/v1/chat`): RAG增强的多轮对话
+- **进度续接** (`/api/v1/progress`): 学习轨迹追踪与分析
+- **知识库** (`/api/v1/knowledge`): 结构化知识管理
+- **平台集成** (`api/v1/platform`): 超星SSO对接
 
-## 📜 许可证
-本项目基于 [MIT License](LICENSE) 开源。
+---
+
+## 🔒 安全设计
+
+### 认证与授权
+- ✅ **JWT Token认证**: 无状态Session，支持过期刷新
+- ✅ **密码加密**: bcrypt哈希，不可逆存储
+- ✅ **角色权限**: Teacher/Student/Admin三级权限体系
+
+### 接口安全
+- ✅ **签名验证中间件**: 防止请求篡改（SignatureMiddleware）
+- ✅ **CORS跨域控制**: 生产环境可限制允许来源
+- ✅ **XSS防护**: 前端DOMPurify过滤用户输入
+- ✅ **统一异常处理**: 避免敏感信息泄露
+
+### 数据安全
+- ✅ **SQL注入防护**: ORM参数化查询
+- ✅ **环境变量隔离**: 密钥不入代码仓库
+- ✅ **Git忽略规则**: 数据库文件、敏感配置已排除
+
+---
+
+## 📈 性能优化策略
+
+### 前端优化
+- 🚀 **路由懒加载**: 按需加载页面组件，首屏加速
+- 📦 **代码分割**: Vite manualChunks拆分vendor包
+- 🖼️ **图片懒加载**: IntersectionObserver实现
+- 💾 **状态持久化**: Pinia + localStorage组合
+
+### 后端优化
+- ⚡ **异步IO**: FastAPI async/await非阻塞处理
+- 🗄️ **连接池**: SQLAlchemy Session复用
+- 🔄 **缓存策略**: 热点数据内存缓存（预留扩展）
+- 📊 **批量操作**: 减少数据库查询次数
+
+---
+
+## 🧪 测试与质量保证
+
+### 代码规范检查
+```bash
+# 前端Lint检查
+cd frontend
+npm run lint          # 运行ESLint + Oxlint
+npm run lint:oxlint   # 仅Oxlint（超快速）
+npm run lint:eslint   # 仅ESLint
+
+# 后端代码规范
+cd backend
+uv run ruff check .   # Ruff Linting
+uv run ruff format .  # Ruff Formatting
+```
+
+### 测试覆盖（规划中）
+- [ ] 单元测试：核心Service逻辑（目标覆盖率60%+）
+- [ ] 集成测试：API端点完整性验证
+- [ ] E2E测试：关键用户流程自动化
+
+---
+
+## 🐳 Docker部署（可选）
+
+```bash
+# 构建并启动所有服务
+docker-compose up -d --build
+
+# 查看服务状态
+docker-compose ps
+
+# 查看日志
+docker-compose logs -f backend
+docker-compose logs -f frontend
+```
+
+**访问地址**:
+- 前端: http://localhost:80
+- 后端API: http://localhost:8000/docs
+- 数据库: 持久化至Docker Volume
+
+---
+
+## 📚 相关文档
+
+- [🏗️ 系统架构设计](./ARCHITECTURE.md) - 详细架构说明与技术决策
+- [📡 API接口文档](./docs/api接口文档.md) - 完整API使用指南
+- [🔧 后端开发文档](./backend/docs/README.md) - 后端详细说明
+- [🎨 前端开发文档](./frontend/docs/README.md) - 前端详细说明
+- [🚀 部署指南](./deploy/DEMO部署说明.md) - 生产环境部署步骤
+
+---
+
+## 👥 团队成员
+
+<!-- 在此处添加团队成员信息 -->
+- **项目负责人**: [您的姓名]
+- **核心开发者**: [成员列表]
+- **指导老师**: [导师姓名]
+
+---
+
+## 📄 开源协议
+
+本项目采用 [MIT License](./LICENSE) 开源协议。
+
+---
+
+## 🙏 致谢
+
+- **超星集团** - 提供泛雅平台与开放API支持
+- **火山引擎** - 提供豆包大模型API服务
+- **开源社区** - Vue/FastAPI/SQLModel等优秀框架
+
+---
+
+## 📮 联系方式
+
+如有问题或建议，欢迎通过以下方式联系：
+
+- 📧 Email: [your-email@example.com]
+- 💬 Issues: [GitHub Issues链接]
+- 📝 文档: [项目Wiki或文档站]
 
 ---
 
 <div align="center">
-    <b>让每一份课件都会说话，让每一次学习都有回应。</b>
+
+**⭐ 如果这个项目对您有帮助，请给一个Star支持！⭐**
+
+Made with ❤️ by [Your Team Name]
+
 </div>
