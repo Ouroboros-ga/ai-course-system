@@ -158,7 +158,7 @@
               <div class="avatar ai-avatar">
                 <img :src="crabAvatar" alt="agent" class="avatar-img" />
               </div>
-              <span class="agent-label">agent</span>
+              <span class="agent-label">{{ agentLabel }}</span>
             </div>
             <div class="bubble ai-bubble">
               <div class="welcome-content">
@@ -185,7 +185,7 @@
               <div class="avatar ai-avatar">
                 <img :src="crabAvatar" alt="agent" class="avatar-img" />
               </div>
-              <span class="agent-label">agent</span>
+              <span class="agent-label">{{ agentLabel }}</span>
             </div>
             <div class="avatar user-avatar" v-else>👤</div>
             <div class="bubble" :class="msg.role === 'user' ? 'user-bubble' : 'ai-bubble'">
@@ -263,7 +263,7 @@
               <div class="avatar ai-avatar">
                 <img :src="crabAvatar" alt="agent" class="avatar-img" />
               </div>
-              <span class="agent-label">agent</span>
+              <span class="agent-label">{{ agentLabel }}</span>
             </div>
             <div class="bubble ai-bubble">
               <div class="streaming-content markdown-body" v-html="renderContent(streamingContent)"></div>
@@ -337,6 +337,8 @@ const canInput = ref(false)
 const messageListRef = ref(null)
 const isComponentMounted = ref(true)
 const pptSlidePlayerRef = ref(null)
+
+const agentLabel = ref('智能体')
 
 // 学习进度数据
 const nodeProgressMap = ref({})
