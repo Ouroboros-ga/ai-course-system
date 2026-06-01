@@ -13,7 +13,7 @@ from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.database import get_session
-from app.models.progress_model import LearningProgress, NodeProgress, LearningStatus
+from app.models.progress_model import LearningProgress, NodeProgress, LearningStatus, UnderstandingLevel
 from app.models.course_model import Course, ScriptNode, CourseScript
 from app.models.user_model import ChatMessage
 from app.services.progress_service import progress_service
@@ -131,9 +131,14 @@ async def sync_learning_progress(
     current_user: dict = Depends(get_current_user),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="当前节点ID"),
-    timestamp: float = Body(..., description="当前播放时间点(秒)"),
+    timestamp: float = Body(0.0, description="当前播放时间点(秒)"),
     isCompleted: bool = Body(False, description="当前节点是否已完成"),
     timeSpent: int = Body(0, description="本次学习时长(秒)"),
+    nodeIndex: Optional[int] = Body(None, description="节点索引"),
+    understandingLevel: Optional[str] = Body(None, description="理解程度等级"),
+    understandingScore: Optional[float] = Body(None, ge=0.0, le=1.0, description="理解分数(0-1)"),
+    studyTime: Optional[int] = Body(None, description="学习时长(秒)"),
+    totalNodes: Optional[int] = Body(None, description="总节点数"),
 ):
     """
     同步学习进度
@@ -156,6 +161,7 @@ async def sync_learning_progress(
                 course_id=courseId,
                 status=LearningStatus.IN_PROGRESS,
                 started_at=datetime.utcnow(),
+                total_nodes=totalNodes or 0,
             )
             session.add(progress)
             session.commit()
@@ -164,7 +170,16 @@ async def sync_learning_progress(
         progress.current_node_id = nodeId
         progress.current_timestamp = timestamp
         progress.last_accessed_at = datetime.utcnow()
-        progress.total_learning_time += timeSpent
+        if timeSpent > 0:
+            progress.total_learning_time += timeSpent
+        elif studyTime and studyTime > 0:
+            progress.total_learning_time += studyTime
+
+        if totalNodes and totalNodes > 0:
+            progress.total_nodes = totalNodes
+
+        if nodeIndex is not None:
+            progress.current_node_index = nodeIndex
 
         node_progress = session.exec(
             select(NodeProgress).where(
@@ -177,7 +192,7 @@ async def sync_learning_progress(
             node_progress = NodeProgress(
                 progress_id=progress.id,
                 node_id=nodeId,
-                node_index=script.node_index if script else 0,
+                node_index=nodeIndex if nodeIndex is not None else (script.node_index if script else 0),
                 first_accessed_at=datetime.utcnow(),
             )
             session.add(node_progress)
@@ -185,8 +200,19 @@ async def sync_learning_progress(
             session.refresh(node_progress)
 
         node_progress.last_timestamp = timestamp
-        node_progress.time_spent += timeSpent
+        if timeSpent > 0:
+            node_progress.time_spent += timeSpent
+        elif studyTime and studyTime > 0:
+            node_progress.time_spent += studyTime
         node_progress.last_accessed_at = datetime.utcnow()
+
+        if understandingLevel:
+            try:
+                node_progress.understanding_level = UnderstandingLevel(understandingLevel)
+            except ValueError:
+                pass
+        if understandingScore is not None:
+            node_progress.understanding_score = understandingScore
 
         if isCompleted and not node_progress.is_completed:
             node_progress.is_completed = True

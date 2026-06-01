@@ -844,7 +844,8 @@ class ScriptGenerator:
                     'slide': 1,
                 })
         
-        # 使用AI将原始内容转为TTS讲解文本
+        merged_sections = await ScriptGenerator._analyze_and_filter_sections(merged_sections, doc_title or filename)
+        
         merged_sections = await ScriptGenerator._convert_to_tts_content(merged_sections, doc_title or filename)
         
         nodes = []
@@ -853,6 +854,7 @@ class ScriptGenerator:
         for idx, section in enumerate(merged_sections):
             node_type = ScriptGenerator._determine_node_type(section['label'], idx, len(merged_sections))
             duration = ScriptGenerator._estimate_duration(section['content'])
+            is_key = section.get('is_key_point', idx % 3 == 0)
             
             nodes.append(ScriptNode(
                 chapter_id=f"chap_{idx:03d}",
@@ -862,7 +864,7 @@ class ScriptGenerator:
                 page_start=section['slide'] + 1,
                 page_end=section['slide'] + 1,
                 duration=duration,
-                is_key_point=(idx % 3 == 0),
+                is_key_point=is_key,
             ))
             total_duration += duration
         
@@ -904,6 +906,154 @@ class ScriptGenerator:
             beautiful_markdown=""
         )
     
+    @staticmethod
+    async def _analyze_and_filter_sections(
+        sections: List[Dict[str, Any]],
+        doc_title: str
+    ) -> List[Dict[str, Any]]:
+        """
+        使用AI分析课件section列表，过滤非知识内容，合并相关section，
+        识别知识点层级关系，标记重点节点
+        """
+        if not sections or len(sections) <= 2:
+            return sections
+        
+        sections_summary = ""
+        for idx, section in enumerate(sections):
+            title = section.get('title', f'节点{idx+1}')
+            content = section.get('content', '')[:100]
+            sections_summary += f"\n[{idx+1}] 标题：{title}\n    内容：{content}...\n"
+        
+        system_prompt = """你是一位专业的课程结构分析专家。你的任务是分析PPT课件提取的节点列表，识别哪些是真正的知识点，哪些是非知识内容。
+
+## 需要过滤的非知识内容（标记为 "skip"）
+1. 教室/地点信息（如"工程综合训练中心巡天405A"）
+2. 学时/课时信息（如"40学时（理论课36学时+实践课4学时）"）
+3. 考核/评分标准（如"总成绩 = 平时成绩(30%)+期末考试"）
+4. 文件名/课程代码（如"1 电路概念定律.pptx"）
+5. 纯目录页（无实质内容的章节列表）
+6. 重复的章节标题（与前一节点内容高度重复）
+
+## 需要保留的知识内容
+1. 具体的概念定义和原理解释
+2. 公式推导和计算方法
+3. 案例分析和应用示例
+4. 章节概览（包含学习目标的）
+5. 习题和问答内容
+
+## 需要合并的情况
+- 如果相邻的2-3个section内容都很短（<50字），且属于同一主题，合并为一个节点
+- 章节标题 + 紧跟的概述内容 → 合并
+
+## 重点标记（is_key_point）
+- 核心概念/定义 → true
+- 重要公式/定理 → true
+- 一般性描述 → false
+- 习题/问答 → false
+
+## 输出格式
+严格按JSON数组格式输出，每个元素对应一个处理后的节点：
+
+```json
+[
+  {"action": "skip", "reason": "教室地点信息"},
+  {"action": "skip", "reason": "学时信息"},
+  {"action": "skip", "reason": "评分标准"},
+  {"action": "keep", "is_key_point": true, "suggested_title": "电路的基本概念"},
+  {"action": "merge", "merge_with": 4, "is_key_point": true, "suggested_title": "电路的作用与组成部分"},
+  {"action": "keep", "is_key_point": false, "suggested_title": "电压和电流的参考方向"}
+]
+```
+
+注意：
+- 数组长度必须与输入节点数量完全一致
+- merge_with 表示合并到第几个节点（从1开始计数）
+- suggested_title 是优化后的节点标题
+- 只输出JSON数组，不要其他内容"""
+
+        user_prompt = f"""课程：{doc_title}
+
+以下是{len(sections)}个课件节点的标题和内容摘要：
+
+{sections_summary}
+
+请分析每个节点，输出处理建议的JSON数组："""
+
+        try:
+            messages = [
+                Message(role="system", content=system_prompt),
+                Message(role="user", content=user_prompt)
+            ]
+            
+            logger.info(f"[ScriptGenerator] 知识结构分析: 发送{len(sections)}个节点到AI")
+            response = await llm_client.chat(messages, temperature=0.3, max_tokens=4096)
+            logger.info(f"[ScriptGenerator] 知识结构分析: 收到AI响应")
+            
+            import json as json_module
+            import re
+            
+            content = response.content.strip()
+            json_match = re.search(r'\[.*\]', content, re.DOTALL)
+            if not json_match:
+                logger.warning("[ScriptGenerator] 知识结构分析: AI返回非JSON格式，跳过过滤")
+                return sections
+            
+            actions = json_module.loads(json_match.group())
+            
+            if len(actions) != len(sections):
+                logger.warning(
+                    f"[ScriptGenerator] 知识结构分析: AI返回{len(actions)}项，期望{len(sections)}项，跳过过滤"
+                )
+                return sections
+            
+            result = []
+            merge_targets = {}
+            
+            for idx, action in enumerate(actions):
+                act = action.get('action', 'keep')
+                
+                if act == 'skip':
+                    logger.info(f"[ScriptGenerator] 过滤节点[{idx+1}]: {sections[idx]['title']} - {action.get('reason', '')}")
+                    continue
+                
+                section = sections[idx].copy()
+                
+                suggested_title = action.get('suggested_title')
+                if suggested_title and len(suggested_title.strip()) > 0:
+                    section['title'] = suggested_title
+                
+                section['is_key_point'] = action.get('is_key_point', False)
+                
+                if act == 'merge':
+                    merge_to = action.get('merge_with', idx + 1) - 1
+                    if 0 <= merge_to < len(sections):
+                        if merge_to not in merge_targets:
+                            merge_targets[merge_to] = []
+                        merge_targets[merge_to].append(section)
+                        continue
+                
+                result.append(section)
+            
+            for target_idx, merged_sections in merge_targets.items():
+                for r_section in result:
+                    target_title = sections[target_idx]['title']
+                    if r_section['title'] == target_title or target_title in r_section['title']:
+                        merged_content = "\n".join([ms['content'] for ms in merged_sections if ms.get('content')])
+                        if merged_content:
+                            r_section['content'] = r_section.get('content', '') + "\n" + merged_content
+                        break
+            
+            if not result:
+                logger.warning("[ScriptGenerator] 知识结构分析: 过滤后无节点，保留原始数据")
+                return sections
+            
+            logger.info(f"[ScriptGenerator] 知识结构分析: {len(sections)} → {len(result)} 个节点（过滤{len(sections)-len(result)}个）")
+            return result
+            
+        except Exception as e:
+            logger.warning(f"[ScriptGenerator] 知识结构分析失败: {e}，跳过过滤")
+            return sections
+
     @staticmethod
     async def _convert_to_tts_content(
         sections: List[Dict[str, Any]],
