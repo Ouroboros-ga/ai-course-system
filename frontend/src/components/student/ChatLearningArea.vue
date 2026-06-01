@@ -57,6 +57,14 @@
         ⏳ 请等待当前内容讲解完成...
       </div>
     </div>
+
+    <PrerequisiteJumpDialog
+      v-if="prerequisiteJump.state.showJumpDialog.value"
+      :visible="prerequisiteJump.state.showJumpDialog.value"
+      :analysisData="prerequisiteJump.state.jumpAnalysisResult.value"
+      @confirm="handleConfirmJump"
+      @cancel="handleCancelJump"
+    />
   </div>
 </template>
 
@@ -66,6 +74,7 @@ import { inject } from 'vue'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
 import AgentAvatar from './AgentAvatar.vue'
 import ChatMessage from './ChatMessage.vue'
+import PrerequisiteJumpDialog from './PrerequisiteJumpDialog.vue'
 
 const {
   chatMessages,
@@ -79,6 +88,7 @@ const {
   renderContent,
   startLearning,
   sendMessage,
+  prerequisiteJump,
 } = inject(STUDENT_LEARNING_KEY)
 
 const messageListRef = ref(null)
@@ -94,6 +104,31 @@ function scrollToBottom() {
 watch(scrollTrigger, () => {
   scrollToBottom()
 })
+
+async function handleConfirmJump(prereqData) {
+  const result = await prerequisiteJump.actions.executeJumpToPrerequisite({
+    courseId: selectedCourse.value.id,
+    fromNodeId: currentNodeIndex.value?.id,
+    fromNodeTitle: currentNodeIndex.value?.title,
+    fromNodeIndex: currentNodeIndex.value?.node_index,
+    toPrerequisiteId: prereqData.prerequisiteId,
+    toNodeTitle: prereqData.title,
+    toNodeIndex: prereqData.targetNodeIndex || 0,
+    triggerQuestion: '',
+    analysisResult: prerequisiteJump.state.jumpAnalysisResult.value,
+    gapDescription: prereqData.reason || '',
+    confidenceScore: prereqData.confidence || 0.8,
+    urgencyLevel: prereqData.urgencyLevel || 'medium',
+  })
+
+  if (result.success) {
+    console.log('[前置知识跳转] 成功跳转到', result.targetNodeId)
+  }
+}
+
+function handleCancelJump() {
+  prerequisiteJump.actions.dismissDialog()
+}
 </script>
 
 <style scoped>

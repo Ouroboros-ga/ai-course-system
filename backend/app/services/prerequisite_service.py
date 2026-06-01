@@ -20,7 +20,6 @@ from app.models.progress_model import (
     UnderstandingLevel,
 )
 from app.models.course_model import Course, CourseScript, ScriptNode
-from app.models.knowledge_model import KnowledgePoint, KnowledgeRelation
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -135,58 +134,40 @@ class PrerequisiteAnalyzer:
     ) -> List[Dict]:
         """
         获取当前节点的所有前置知识点
-        
-        通过两种方式查找：
-        1. 知识点的 prerequisites 字段（直接依赖）
-        2. knowledge_relations 表中的 prerequisite 关系
+
+        基于ScriptNode的层级关系查找前置节点：
+        1. 查找当前节点之前的同章节关键节点
+        2. 查找父级章节的概览/概念类节点
         """
         results = []
         
-        # 方式1：通过 KnowledgePoint.prerequisites 字段
-        kps = session.exec(
-            select(KnowledgePoint).where(
-                KnowledgePoint.course_id == course_id,
-                KnowledgePoint.is_active == True
-            )
+        current_node = session.get(ScriptNode, node_id)
+        if not current_node:
+            return results
+        
+        script_id = current_node.script_id
+        current_index = current_node.node_index
+        
+        prerequisite_nodes = session.exec(
+            select(ScriptNode).where(
+                ScriptNode.script_id == script_id,
+                ScriptNode.node_index < current_index,
+                ScriptNode.is_key_point == True
+            ).order_by(
+                ScriptNode.node_index.desc()
+            ).limit(5)
         ).all()
         
-        for kp in kps:
-            if kp.prerequisites:
-                prereq_ids = [int(x.strip()) for x in kp.prerequisites.split(",") if x.strip()]
-                if prereq_ids:
-                    for prereq_id in prereq_ids:
-                        prereq_kp = session.get(KnowledgePoint, prereq_id)
-                        if prereq_kp and prereq_kp.is_active:
-                            results.append({
-                                "id": prereq_kp.id,
-                                "title": prereq_kp.title,
-                                "description": prereq_kp.description[:200] if prereq_kp.description else "",
-                                "difficulty": prereq_kp.difficulty,
-                                "relation_type": "prerequisite_direct"
-                            })
-        
-        # 方式2：通过 knowledge_relations 表
-        relations = session.exec(
-            select(KnowledgeRelation).where(
-                KnowledgeRelation.target_id.in_([kp.id for kp in kps]),
-                KnowledgeRelation.relation_type == "prerequisite"
-            )
-        ).all()
-        
-        for rel in relations:
-            source_kp = session.get(KnowledgePoint, rel.source_id)
-            if source_kp and source_kp.is_active:
-                exists = any(r["id"] == source_kp.id for r in results)
-                if not exists:
-                    results.append({
-                        "id": source_kp.id,
-                        "title": source_kp.title,
-                        "description": source_kp.description[:200] if source_kp.description else "",
-                        "difficulty": source_kp.difficulty,
-                        "relation_type": "prerequisite_relation",
-                        "weight": rel.weight,
-                        "description_rel": rel.description
-                    })
+        for node in prerequisite_nodes:
+            if node.title and node.title.strip():
+                results.append({
+                    "id": node.id,
+                    "title": node.title,
+                    "description": (node.content[:200] if node.content else ""),
+                    "difficulty": 3,
+                    "relation_type": "prerequisite_direct",
+                    "target_node_index": node.node_index
+                })
         
         return results
 
@@ -195,7 +176,7 @@ class PrerequisiteAnalyzer:
         session: Session,
         user_id: int,
         course_id: int,
-        prereq_kp_ids: List[int]
+        prereq_node_ids: List[int]
     ) -> Dict[int, Dict]:
         """
         查询学生对各前置知识点的学习进度和理解度
@@ -212,21 +193,22 @@ class PrerequisiteAnalyzer:
         if not learning_progress:
             return progress_map
         
-        # 查询所有节点的进度
         node_progresses = session.exec(
             select(NodeProgress).where(
-                NodeProgress.progress_id == learning_progress.id
+                NodeProgress.progress_id == learning_progress.id,
+                NodeProgress.node_id.in_(prereq_node_ids)
             )
         ).all()
         
-        # 按知识点聚合理解度数据
         for np in node_progresses:
-            if np.understanding_score is not None:
-                # 假设节点通过某种方式关联到知识点（这里简化处理）
-                # 实际项目中应该有明确的 node -> knowledge_point 映射
-                pass
+            if np.node_id not in progress_map:
+                progress_map[np.node_id] = {
+                    "avg_score": np.understanding_score or 0,
+                    "analysis_count": 1 if np.understanding_score else 0,
+                    "last_level": np.understanding_level.value if np.understanding_level else "unknown",
+                    "weak_keywords": []
+                }
         
-        # 查询历史理解度分析记录
         analyses = session.exec(
             select(UnderstandingAnalysis).where(
                 UnderstandingAnalysis.progress_id == learning_progress.id
@@ -238,19 +220,18 @@ class PrerequisiteAnalyzer:
                 try:
                     weak_keywords = json.loads(analysis.keywords_weak)
                     for kw in weak_keywords:
-                        # 匹配关键词到知识点标题
-                        for kp_id in prereq_kp_ids:
-                            kp = session.get(KnowledgePoint, kp_id)
-                            if kp and kw.lower() in kp.title.lower():
-                                if kp_id not in progress_map:
-                                    progress_map[kp_id] = {
+                        for node_id in prereq_node_ids:
+                            node = session.get(ScriptNode, node_id)
+                            if node and kw.lower() in (node.title or "").lower():
+                                if node_id not in progress_map:
+                                    progress_map[node_id] = {
                                         "avg_score": analysis.understanding_score,
                                         "analysis_count": 1,
                                         "last_level": analysis.understanding_level.value,
                                         "weak_keywords": [kw]
                                     }
                                 else:
-                                    existing = progress_map[kp_id]
+                                    existing = progress_map[node_id]
                                     existing["avg_score"] = (
                                         existing["avg_score"] * existing["analysis_count"] + 
                                         analysis.understanding_score
@@ -355,7 +336,7 @@ class PrerequisiteAnalyzer:
 ## 当前学习内容
 **节点**: {current_node.title}
 **类型**: {current_node.node_type}
-**内容摘要**: {current_node.content_text[:500] if current_node.content_text else ''}
+**内容摘要**: {current_node.content[:500] if current_node.content else ''}
 
 ## 该知识点的前置要求
 {prereq_info}
