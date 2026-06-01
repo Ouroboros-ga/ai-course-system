@@ -1878,7 +1878,7 @@ async def get_course_students(
                 lp = session.exec(
                     select(LearningProgress).where(
                         LearningProgress.user_id == enr.student_id,
-                        LearningProgress.course_id = course_id,
+                        LearningProgress.course_id == course_id,
                     )
                 ).first()
                 
