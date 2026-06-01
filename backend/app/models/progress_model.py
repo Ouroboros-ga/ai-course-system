@@ -174,8 +174,7 @@ class LearningJumpHistory(SQLModel, table=True):
     trigger_question: str = Field(default="", description="触发跳转的学生问题内容")
     analysis_result: Optional[str] = Field(
         default=None,
-        sa_column=Column(JSON),
-        description="AI分析结果JSON"
+        description="AI分析结果JSON字符串"
     )
 
     prerequisite_ids: str = Field(

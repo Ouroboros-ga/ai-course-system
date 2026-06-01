@@ -597,33 +597,34 @@ class JumpHistoryManager:
             ).order_by(ScriptNode.node_index)
         ).all()
         
-        # 2. 构建节点数据
-        for node in script_nodes:
-            # 查询学生的进度
-            lp = session.exec(
-                select(LearningProgress).where(
-                    LearningProgress.user_id == user_id,
-                    LearningProgress.course_id == course_id
+        # 2. 构建节点数据（优化：批量查询避免N+1问题）
+        lp = session.exec(
+            select(LearningProgress).where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.course_id == course_id
+            )
+        ).first()
+        
+        node_progress_map = {}
+        if lp:
+            all_node_progresses = session.exec(
+                select(NodeProgress).where(
+                    NodeProgress.progress_id == lp.id
                 )
-            ).first()
-            
+            ).all()
+            node_progress_map = {np.node_id: np for np in all_node_progresses}
+        
+        for node in script_nodes:
             node_status = "pending"
             understanding_score = None
             
-            if lp:
-                np = session.exec(
-                    select(NodeProgress).where(
-                        NodeProgress.progress_id == lp.id,
-                        NodeProgress.node_id == node.id
-                    )
-                ).first()
-                
-                if np:
-                    if np.is_completed:
-                        node_status = "completed"
-                    elif np.understanding_score is not None:
-                        node_status = "current"
-                        understanding_score = np.understanding_score
+            np = node_progress_map.get(node.id)
+            if np:
+                if np.is_completed:
+                    node_status = "completed"
+                elif np.understanding_score is not None:
+                    node_status = "current"
+                    understanding_score = np.understanding_score
             
             nodes_data.append({
                 "id": node.id,

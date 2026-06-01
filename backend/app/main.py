@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     video_generation,   # F4/F5 数字人视频生成管线
     video,              # 视频相关功能
     platform,           # 平台管理功能
+    prerequisite,       # 前置知识智能跳转
 )
 from app.schemas import UnifiedResponse
 
@@ -64,8 +65,7 @@ app.include_router(document.router, prefix="/api/v1/document", tags=["文档处�
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["聊天模块"])
 app.include_router(progress.router, prefix="/api/v1/progress", tags=["进度续接"])
 app.include_router(knowledge.router, prefix="/api/v1/knowledge", tags=["知识库管理"])
-from app.api.v1.endpoints.prerequisite import router as prerequisite_router
-app.include_router(prerequisite_router, tags=["前置知识智能跳转"])
+app.include_router(prerequisite.router, tags=["前置知识智能跳转"])
 
 # F1-F7 功能模块路由（2026-05-26 补全）
 app.include_router(asset.router, prefix="/api/v1/asset", tags=["F1-素材管理"])

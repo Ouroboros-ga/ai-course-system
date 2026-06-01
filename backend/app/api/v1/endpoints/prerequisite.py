@@ -4,6 +4,7 @@
 """
 
 import logging
+import traceback
 from typing import Optional
 from datetime import datetime
 
@@ -115,9 +116,7 @@ async def analyze_prerequisite_gap(
         )
         
     except Exception as e:
-        logger.error(f"[前置知识缺陷检测失败] {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"[前置知识缺陷检测失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(
             code=500,
             message=f"分析失败: {str(e)}",
@@ -242,9 +241,7 @@ async def execute_jump_to_prerequisite(
         )
         
     except Exception as e:
-        logger.error(f"[执行跳转失败] {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"[执行跳转失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(
             code=500,
             message=f"跳转失败: {str(e)}",
@@ -311,10 +308,8 @@ async def return_to_original_position(
                 message="跳转记录不存在",
                 data=None
             )
-        
+
         # 获取原节点信息
-        jump_record = session.get(jump_history_manager.LearningJumpHistory.__class__, jumpId)
-        # 注意：这里需要导入正确的模型类
         from app.models.progress_model import LearningJumpHistory
         jump_record = session.get(LearningJumpHistory, jumpId)
         
@@ -343,9 +338,7 @@ async def return_to_original_position(
         )
         
     except Exception as e:
-        logger.error(f"[返回原位置失败] {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"[返回原位置失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(
             code=500,
             message=f"返回失败: {str(e)}",
@@ -621,9 +614,7 @@ async def get_learning_path_visualization(
         )
         
     except Exception as e:
-        logger.error(f"[获取学习路径失败] {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"[获取学习路径失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(
             code=500,
             message=f"获取失败: {str(e)}",
