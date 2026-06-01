@@ -511,6 +511,13 @@ async def get_courses_list(
             if teacher_record:
                 teacher_name = teacher_record[0]
 
+            student_count = session.exec(
+                select(func.count()).select_from(StudentEnrollment).where(
+                    StudentEnrollment.course_id == course.id,
+                    StudentEnrollment.is_active == True
+                )
+            ).one()
+
             courses_data.append({
                 "id": course.id,
                 "title": course.title,
@@ -522,6 +529,7 @@ async def get_courses_list(
                 "total_duration": course.total_duration,
                 "source_file_name": course.source_file_name,
                 "is_ai_generated": course.is_ai_generated,
+                "student_count": student_count,
                 "created_at": course.created_at.isoformat() if course.created_at else None,
             })
 
@@ -1632,10 +1640,10 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
     try:
         from app.models.progress_model import LearningProgress, NodeProgress
 
-        # 检查是否已有进度记录
+        # 检查是否已有进度记录（使用正确的字段名 user_id）
         existing_progress = session.exec(
             select(LearningProgress).where(
-                LearningProgress.student_id == student_id,
+                LearningProgress.user_id == student_id,
                 LearningProgress.course_id == course_id
             )
         ).first()
@@ -1644,14 +1652,17 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
             print(f"[进度初始化] 学生{student_id} 课程{course_id} 进度记录已存在")
             return
 
-        # 创建总的学习进度记录
+        # 创建总的学习进度记录（使用正确的字段名）
         learning_progress = LearningProgress(
-            student_id=student_id,
+            user_id=student_id,
             course_id=course_id,
             current_node_index=0,
-            overall_progress=0.0,
-            total_study_time=0,
-            last_access_time=datetime.utcnow(),
+            completion_rate=0.0,
+            total_learning_time=0,
+            total_nodes=total_nodes,
+            completed_nodes=0,
+            status="not_started",
+            last_accessed_at=datetime.utcnow(),
         )
         session.add(learning_progress)
         session.commit()
@@ -1698,7 +1709,7 @@ def _ensure_learning_progress(session: Session, student_id: int, course_id: int,
 
         existing = session.exec(
             select(LearningProgress).where(
-                LearningProgress.student_id == student_id,
+                LearningProgress.user_id == student_id,
                 LearningProgress.course_id == course_id
             )
         ).first()
@@ -1745,6 +1756,76 @@ async def unenroll_course(
         return unified_response(code=500, message=f"退出课程失败: {str(e)}", data=None)
 
 
+@router.get("/my-courses")
+async def get_my_courses(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取当前学生的选课列表
+
+    返回学生已选的课程及学习进度，用于学生端"我的课程"展示
+    """
+    try:
+        student_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "student":
+            return unified_response(code=403, message="只有学生可以查看选课列表", data=None)
+
+        enrollments = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.is_active == True
+            ).order_by(StudentEnrollment.enrolled_at.desc())
+        ).all()
+
+        my_courses = []
+        for enr in enrollments:
+            course = session.get(Course, enr.course_id)
+            if not course or course.status != CourseStatus.PUBLISHED:
+                continue
+
+            my_courses.append({
+                "enrollment_id": enr.id,
+                "course_id": course.id,
+                "title": course.title,
+                "description": course.description,
+                "teacher_name": _get_teacher_name(session, course.teacher_id),
+                "total_nodes": course.total_nodes,
+                "total_duration": course.total_duration,
+                "overall_progress": round(enr.overall_progress, 1),
+                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
+                "total_study_minutes": enr.total_study_minutes,
+                "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
+                "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
+            })
+
+        return unified_response(
+            code=200,
+            message="获取我的课程成功",
+            data={
+                "courses": my_courses,
+                "total": len(my_courses),
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"获取课程失败: {str(e)}", data=None)
+
+
+def _get_teacher_name(session: Session, teacher_id: int) -> str:
+    """获取教师姓名"""
+    from sqlmodel import text
+    result = session.execute(
+        text("SELECT username FROM users WHERE id = :uid"),
+        {"uid": teacher_id}
+    ).fetchone()
+    return result[0] if result else "未知教师"
+
+
 @router.get("/course/{course_id}/students")
 async def get_course_students(
     course_id: int,
@@ -1786,18 +1867,63 @@ async def get_course_students(
             ).fetchone()
             username = user_result[0] if user_result else f"学生{enr.student_id}"
 
+            # 动态计算该学生的理解度（从NodeProgress表）
+            student_avg_score = None
+            student_level = "unknown"
+            
+            try:
+                from app.models.progress_model import LearningProgress, NodeProgress
+                
+                # 获取学生的学习进度记录
+                lp = session.exec(
+                    select(LearningProgress).where(
+                        LearningProgress.user_id == enr.student_id,
+                        LearningProgress.course_id == course_id,
+                    )
+                ).first()
+                
+                if lp:
+                    # 获取该学生所有节点的进度
+                    node_progress_list = session.exec(
+                        select(NodeProgress).where(
+                            NodeProgress.progress_id == lp.id,
+                            NodeProgress.understanding_score.isnot(None)
+                        )
+                    ).all()
+                    
+                    if node_progress_list:
+                        # 计算平均理解度分数（0-1）
+                        total_score = sum(np.understanding_score for np in node_progress_list)
+                        avg_score = total_score / len(node_progress_list)
+                        
+                        # 转换为百分比（0-100）用于显示
+                        student_avg_score = round(avg_score * 100, 1)
+                        
+                        # 确定理解度等级
+                        if avg_score >= 0.9:
+                            student_level = "excellent"
+                        elif avg_score >= 0.75:
+                            student_level = "high"
+                        elif avg_score >= 0.5:
+                            student_level = "medium"
+                        elif avg_score > 0:
+                            student_level = "low"
+            except Exception as calc_error:
+                print(f"[警告] 计算学生{enr.student_id}理解度失败: {calc_error}")
+
             students_data.append({
                 "enrollment_id": enr.id,
                 "student_id": enr.student_id,
                 "username": username,
                 "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
                 "overall_progress": round(enr.overall_progress, 1),
-                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
-                "understanding_level": enr.avg_understanding_level,
-                "total_study_minutes": enr.total_study_minutes,
+                # 使用动态计算的理解度，而非可能过时的汇总字段
+                "avg_understanding_score": student_avg_score if student_avg_score is not None else 0,
+                "understanding_level": student_level if student_level != "unknown" else None,
+                "total_study_minutes": enr.total_study_minutes or 0,
                 "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
-                "nodes_completed": enr.total_nodes_completed,
-                "nodes_total": enr.total_nodes_count,
+                "nodes_completed": enr.total_nodes_completed or 0,
+                "nodes_total": enr.total_nodes_count or 0,
             })
 
         return unified_response(code=200, message="获取成功", data={
@@ -1857,8 +1983,10 @@ async def get_course_stats(
 
         if total_students > 0:
             avg_progress = sum(e.overall_progress for e in all_enrollments) / total_students
-            avg_understanding = sum(e.avg_understanding_score for e in all_enrollments) / total_students
-            total_study_time = sum(e.total_study_minutes for e in all_enrollments)
+            # avg_understanding_score 是0-1的值，转为百分比显示
+            avg_understanding = sum(e.avg_understanding_score or 0 for e in all_enrollments) / total_students * 100
+            # 计算总学习时长（分钟），后续会转为小时并计算平均值
+            total_study_minutes_all = sum(e.total_study_minutes or 0 for e in all_enrollments)
 
         # 进度分布
         progress_distribution = {
@@ -1885,7 +2013,7 @@ async def get_course_stats(
             for node in nodes:
                 from app.models.progress_model import LearningProgress, NodeProgress
                 completed_count = 0
-                avg_understanding = 0.0
+                node_avg_understanding = 0.0
                 total_accessed = 0
 
                 for enr in all_enrollments:
@@ -1907,9 +2035,10 @@ async def get_course_stats(
                             if np.is_completed:
                                 completed_count += 1
                             if np.understanding_score is not None:
-                                avg_understanding += np.understanding_score
+                                node_avg_understanding += np.understanding_score
 
-                avg_understanding = (avg_understanding / total_accessed * 100) if total_accessed > 0 else 0
+                # 节点理解度：understanding_score是0-1，转为百分比
+                node_avg_understanding = (node_avg_understanding / total_accessed * 100) if total_accessed > 0 else 0
                 completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
 
                 node_progress_stats.append({
@@ -1921,7 +2050,7 @@ async def get_course_stats(
                     "completed_count": completed_count,
                     "total_students": total_students,
                     "completion_rate": round(completion_rate, 1),
-                    "avg_understanding": round(avg_understanding, 1),
+                    "avg_understanding": round(node_avg_understanding, 1),
                     "accessed_count": total_accessed,
                 })
 
@@ -1932,8 +2061,10 @@ async def get_course_stats(
             "total_students": total_students,
             "total_nodes": course.total_nodes or 0,
             "avg_progress": round(avg_progress, 1),
-            "avg_understanding": round(avg_understanding * 100, 1) if avg_understanding else 0,
-            "total_study_hours": round(total_study_time / 60, 1),
+            # avg_understanding 已经在计算时转为百分比（0-100）
+            "avg_understanding": round(avg_understanding, 1),
+            # 改为学生平均学习时长（小时）
+            "avg_study_hours_per_student": round(total_study_minutes_all / total_students / 60, 1) if total_students > 0 else 0,
             "progress_distribution": progress_distribution,
             "node_progress": node_progress_stats,
         })

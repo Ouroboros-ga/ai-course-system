@@ -559,7 +559,7 @@ const courseStats = ref({
   totalStudents: 0,
   avgProgress: 0,
   avgUnderstanding: 0,
-  totalStudyHours: 0,
+  avgStudyHoursPerStudent: 0,
   progressDistribution: null,
 })
 const studentsList = ref([])
@@ -1441,7 +1441,7 @@ const loadCourseStats = async () => {
         totalStudents: statsData.total_students,
         avgProgress: statsData.avg_progress,
         avgUnderstanding: statsData.avg_understanding,
-        totalStudyHours: statsData.total_study_hours,
+        avgStudyHoursPerStudent: statsData.avg_study_hours_per_student,
         progressDistribution: statsData.progress_distribution,
       }
 

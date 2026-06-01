@@ -288,6 +288,93 @@ async def get_resume_point(
         )
 
 
+@router.get("/detail/{course_id}", response_model=UnifiedResponse)
+async def get_progress_detail(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取学生学习进度详情
+
+    返回完整的进度信息，包括：
+    - 总体学习统计
+    - 每个节点的完成状态、理解度、学习时长
+    - 用于学生进入课程时加载历史进度
+    """
+    try:
+        user_id = int(current_user["user_id"])
+
+        progress = session.exec(
+            select(LearningProgress).where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.course_id == course_id,
+            )
+        ).first()
+
+        if not progress:
+            return unified_response(
+                code=200,
+                message="暂无学习记录",
+                data={
+                    "has_progress": False,
+                    "overall": None,
+                    "nodes_progress": [],
+                }
+            )
+
+        nodes_progress = session.exec(
+            select(NodeProgress).where(
+                NodeProgress.progress_id == progress.id
+            ).order_by(NodeProgress.node_index)
+        ).all()
+
+        nodes_data = []
+        for np in nodes_progress:
+            node_data = {
+                "node_id": np.node_id,
+                "node_index": np.node_index,
+                "is_completed": np.is_completed,
+                "understanding_score": round(np.understanding_score * 100, 1) if np.understanding_score else 0,
+                "understanding_level": np.understanding_level.value if np.understanding_level else None,
+                "question_count": np.question_count,
+                "time_spent": np.time_spent,
+                "completion_count": np.completion_count,
+                "last_accessed_at": np.last_accessed_at.isoformat() if np.last_accessed_at else None,
+            }
+            nodes_data.append(node_data)
+
+        overall_data = {
+            "progress_id": progress.id,
+            "completion_rate": round(progress.completion_rate * 100, 1),
+            "status": progress.status.value,
+            "total_nodes": progress.total_nodes,
+            "completed_nodes": progress.completed_nodes,
+            "current_node_index": progress.current_node_index,
+            "total_learning_time": progress.total_learning_time,
+            "session_count": progress.session_count,
+            "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
+            "started_at": progress.started_at.isoformat() if progress.started_at else None,
+        }
+
+        return unified_response(
+            code=200,
+            message="获取进度详情成功",
+            data={
+                "has_progress": True,
+                "overall": overall_data,
+                "nodes_progress": nodes_data,
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500, message=f"获取进度详情失败: {str(e)}", data=None
+        )
+
+
 @router.post("/node/complete", response_model=UnifiedResponse)
 async def mark_node_completed(
     session: Session = Depends(get_session),

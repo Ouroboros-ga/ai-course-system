@@ -144,3 +144,74 @@ class UnderstandingAnalysis(SQLModel, table=True):
     )
 
     created_at: datetime = Field(default_factory=datetime.utcnow, description="分析时间")
+
+
+class LearningJumpHistory(SQLModel, table=True):
+    """
+    学习跳转历史表
+    记录学生因前置知识缺陷而触发的知识点跳转，支持多层跳转和返回原位置
+    """
+    __tablename__ = "learning_jump_history"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+
+    user_id: int = Field(index=True, description="学生ID")
+    course_id: int = Field(index=True, description="课程ID")
+    session_id: str = Field(description="学习会话ID（用于关联一次学习会话）")
+
+    from_node_id: int = Field(description="跳出的源节点ID")
+    from_node_title: str = Field(default="", description="跳出节点标题")
+    from_node_index: int = Field(default=0, description="跳出节点索引位置")
+    
+    to_node_id: int = Field(description="跳转到的目标节点ID")
+    to_node_title: str = Field(default="", description="目标节点标题")
+    to_node_index: int = Field(default=0, description="目标节点索引位置")
+
+    trigger_type: str = Field(
+        default="prerequisite_gap",
+        description="触发类型: prerequisite_gap/weak_understanding/manual/recommendation"
+    )
+    trigger_question: str = Field(default="", description="触发跳转的学生问题内容")
+    analysis_result: Optional[str] = Field(
+        default=None,
+        sa_column=Column(JSON),
+        description="AI分析结果JSON"
+    )
+
+    prerequisite_ids: str = Field(
+        default="",
+        description="涉及的前置知识点ID列表，逗号分隔"
+    )
+    prerequisite_titles: str = Field(
+        default="",
+        description="涉及的前置知识点标题列表，逗号分隔"
+    )
+    gap_description: str = Field(
+        default="",
+        description="知识缺陷描述（如'需要掌握极限定义才能理解洛必达法则'）"
+    )
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="AI判断的置信度(0-1)"
+    )
+    urgency_level: str = Field(
+        default="medium",
+        description="紧急程度: high/medium/low"
+    )
+
+    is_returned: bool = Field(default=False, description="是否已返回原位置")
+    returned_at: Optional[datetime] = Field(default=None, description="返回原位置的时间")
+    review_completed: bool = Field(default=False, description="是否完成复习")
+    review_duration_seconds: int = Field(default=0, description="复习耗时（秒）")
+
+    parent_jump_id: Optional[int] = Field(
+        default=None,
+        foreign_key="learning_jump_history.id",
+        description="父级跳转ID（用于支持多层嵌套跳转）"
+    )
+    jump_depth: int = Field(default=1, ge=1, le=10, description="当前跳转层级深度")
+
+    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")

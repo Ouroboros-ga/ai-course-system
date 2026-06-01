@@ -4,6 +4,7 @@ import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
+import { usePrerequisiteJump } from './usePrerequisiteJump.js'
 
 export const STUDENT_LEARNING_KEY = Symbol('studentLearning')
 
@@ -33,6 +34,8 @@ export function useStudentLearning() {
   const scrollTrigger = ref(0)
   const pendingAutoPlay = ref(false)
   const agentLabel = ref('智能体')
+
+  const prerequisiteJump = usePrerequisiteJump()
 
   const overallProgress = computed(() => {
     if (scriptNodes.value.length === 0) return 0
@@ -190,9 +193,7 @@ export function useStudentLearning() {
           }))
         }
 
-        if (data.progress) {
-          updateProgressFromServer(data.progress)
-        }
+        await loadProgressFromServer(courseId)
 
         loadCourseSlides(courseId)
         updateCurrentNodeMedia()
@@ -201,6 +202,28 @@ export function useStudentLearning() {
       }
     } catch (error) {
       showToast('加载课程内容失败', 'error')
+    }
+  }
+
+  async function loadProgressFromServer(courseId) {
+    try {
+      const progressData = await request({
+        url: `/progress/detail/${courseId}`,
+        method: 'get',
+      })
+
+      if (progressData && progressData.has_progress) {
+        updateProgressFromServer(progressData)
+
+        if (progressData.overall && progressData.overall.current_node_index > 0) {
+          showToast(
+            `已恢复学习进度: ${progressData.overall.completion_rate}% 完成`,
+            'info'
+          )
+        }
+      }
+    } catch (error) {
+      console.warn('加载历史进度失败:', error)
     }
   }
 
@@ -340,6 +363,29 @@ export function useStudentLearning() {
         level: null,
         questions: 0,
       }
+    }
+
+    saveNodeAccessToServer(index)
+  }
+
+  async function saveNodeAccessToServer(index) {
+    try {
+      const node = scriptNodes.value[index]
+      if (!node || !selectedCourse.value) return
+
+      await request({
+        url: '/progress/sync',
+        method: 'post',
+        data: {
+          courseId: selectedCourse.value.id,
+          nodeId: node.id,
+          timestamp: 0,
+          isCompleted: false,
+          timeSpent: 0,
+        },
+      })
+    } catch (error) {
+      console.warn('保存节点访问记录失败:', error)
     }
   }
 
@@ -493,6 +539,25 @@ export function useStudentLearning() {
       }
 
       chatMessages.value.push(aiMessage)
+
+      // ✨ 新增：前置知识缺陷检测
+      try {
+        const prereqResult = await prerequisiteJump.actions.analyzePrerequisiteGaps({
+          courseId: selectedCourse.value.id,
+          currentNodeId: currentNode?.id,
+          question: message,
+          conversationHistory: chatMessages.value.slice(-6),
+        })
+
+        if (prereqResult.shouldShowDialog) {
+          showToast('检测到可能的前置知识薄弱点，请查看建议', 'info', 3000)
+          // 弹窗会通过 prerequisiteJump.state.showJumpDialog 控制
+        }
+      } catch (prereqError) {
+        console.warn('[前置知识检测跳过]', prereqError)
+        // 检测失败不影响正常学习流程
+      }
+
     } catch (error) {
       if (currentNodeIndex.value !== sendNodeIndex) return
 
@@ -618,6 +683,7 @@ export function useStudentLearning() {
     pendingAutoPlay,
     agentLabel,
     overallProgress,
+    prerequisiteJump,
     renderContent,
     getStatusLabel,
     formatDuration,
