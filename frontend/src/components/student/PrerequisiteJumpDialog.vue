@@ -135,8 +135,16 @@ function getUrgencyIcon(level) {
 }
 
 function handleConfirm() {
+  if (weakPrerequisites.value.length === 0) return
+  
+  const firstPrereq = weakPrerequisites.value[0]
   emit('confirm', {
-    prerequisites: weakPrerequisites.value,
+    prerequisiteId: firstPrereq.prerequisite_id || firstPrereq.id,
+    title: firstPrereq.title,
+    reason: firstPrereq.reason || firstPrereq.description || '',
+    confidence: firstPrereq.confidence || 0.8,
+    urgencyLevel: firstPrereq.urgency_level || firstPrereq.urgencyLevel || 'medium',
+    targetNodeIndex: firstPrereq.target_node_index || firstPrereq.targetNodeIndex || 0,
     analysisData: props.analysisData,
   })
 }

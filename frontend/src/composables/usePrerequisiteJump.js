@@ -54,13 +54,15 @@ export function usePrerequisiteJump() {
         data: {
           courseId: params.courseId,
           fromNodeId: params.fromNodeId,
-          fromNodeTitle: params.fromNodeTitle,
-          fromNodeIndex: params.fromNodeIndex,
+          fromNodeTitle: params.fromNodeTitle || '',
+          fromNodeIndex: params.fromNodeIndex || 0,
           toPrerequisiteId: params.toPrerequisiteId,
-          toNodeTitle: params.toNodeTitle,
-          toNodeIndex: params.toNodeIndex,
+          toNodeTitle: params.toNodeTitle || '',
+          toNodeIndex: params.toNodeIndex || 0,
           triggerQuestion: params.triggerQuestion || '',
-          analysisResult: params.analysisResult || null,
+          analysisResult: typeof params.analysisResult === 'object' 
+            ? JSON.stringify(params.analysisResult) 
+            : (params.analysisResult || null),
           gapDescription: params.gapDescription || '',
           confidenceScore: params.confidenceScore || 0.8,
           urgencyLevel: params.urgencyLevel || 'medium',

@@ -134,7 +134,7 @@ async def execute_jump_to_prerequisite(
     toNodeTitle: str = Body("", description="目标节点标题"),
     toNodeIndex: int = Body(0, description="目标节点索引位置"),
     triggerQuestion: str = Body("", description="触发跳转的问题"),
-    analysisResult: dict = Body(default=None, description="AI分析结果"),
+    analysisResult: Optional[str] = Body(default=None, description="AI分析结果JSON字符串"),
     gapDescription: str = Body("", description="知识缺陷描述"),
     confidenceScore: float = Body(0.8, ge=0.0, le=1.0, description="置信度"),
     urgencyLevel: str = Body("medium", description="紧急程度: high/medium/low"),

@@ -83,6 +83,7 @@ const {
   canInput,
   selectedCourse,
   currentNodeIndex,
+  scriptNodes,
   userInput,
   scrollTrigger,
   renderContent,
@@ -106,11 +107,12 @@ watch(scrollTrigger, () => {
 })
 
 async function handleConfirmJump(prereqData) {
+  const currentNode = scriptNodes.value[currentNodeIndex.value]
   const result = await prerequisiteJump.actions.executeJumpToPrerequisite({
     courseId: selectedCourse.value.id,
-    fromNodeId: currentNodeIndex.value?.id,
-    fromNodeTitle: currentNodeIndex.value?.title,
-    fromNodeIndex: currentNodeIndex.value?.node_index,
+    fromNodeId: currentNode?.id || currentNodeIndex.value,
+    fromNodeTitle: currentNode?.title || '',
+    fromNodeIndex: currentNode?.node_index || currentNodeIndex.value,
     toPrerequisiteId: prereqData.prerequisiteId,
     toNodeTitle: prereqData.title,
     toNodeIndex: prereqData.targetNodeIndex || 0,
