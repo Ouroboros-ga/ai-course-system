@@ -4,6 +4,7 @@ import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
+import { usePrerequisiteJump } from './usePrerequisiteJump.js'
 
 export const STUDENT_LEARNING_KEY = Symbol('studentLearning')
 
@@ -33,6 +34,8 @@ export function useStudentLearning() {
   const scrollTrigger = ref(0)
   const pendingAutoPlay = ref(false)
   const agentLabel = ref('智能体')
+
+  const prerequisiteJump = usePrerequisiteJump()
 
   const overallProgress = computed(() => {
     if (scriptNodes.value.length === 0) return 0
@@ -536,6 +539,25 @@ export function useStudentLearning() {
       }
 
       chatMessages.value.push(aiMessage)
+
+      // ✨ 新增：前置知识缺陷检测
+      try {
+        const prereqResult = await prerequisiteJump.actions.analyzePrerequisiteGaps({
+          courseId: selectedCourse.value.id,
+          currentNodeId: currentNode?.id,
+          question: message,
+          conversationHistory: chatMessages.value.slice(-6),
+        })
+
+        if (prereqResult.shouldShowDialog) {
+          showToast('检测到可能的前置知识薄弱点，请查看建议', 'info', 3000)
+          // 弹窗会通过 prerequisiteJump.state.showJumpDialog 控制
+        }
+      } catch (prereqError) {
+        console.warn('[前置知识检测跳过]', prereqError)
+        // 检测失败不影响正常学习流程
+      }
+
     } catch (error) {
       if (currentNodeIndex.value !== sendNodeIndex) return
 
@@ -661,6 +683,7 @@ export function useStudentLearning() {
     pendingAutoPlay,
     agentLabel,
     overallProgress,
+    prerequisiteJump,
     renderContent,
     getStatusLabel,
     formatDuration,
