@@ -1938,8 +1938,10 @@ async def get_course_stats(
 
         if total_students > 0:
             avg_progress = sum(e.overall_progress for e in all_enrollments) / total_students
-            avg_understanding = sum(e.avg_understanding_score for e in all_enrollments) / total_students
-            total_study_time = sum(e.total_study_minutes for e in all_enrollments)
+            # avg_understanding_score 是0-1的值，转为百分比显示
+            avg_understanding = sum(e.avg_understanding_score or 0 for e in all_enrollments) / total_students * 100
+            # 计算总学习时长（分钟），后续会转为小时并计算平均值
+            total_study_minutes_all = sum(e.total_study_minutes or 0 for e in all_enrollments)
 
         # 进度分布
         progress_distribution = {
@@ -1966,7 +1968,7 @@ async def get_course_stats(
             for node in nodes:
                 from app.models.progress_model import LearningProgress, NodeProgress
                 completed_count = 0
-                avg_understanding = 0.0
+                node_avg_understanding = 0.0
                 total_accessed = 0
 
                 for enr in all_enrollments:
@@ -1988,9 +1990,10 @@ async def get_course_stats(
                             if np.is_completed:
                                 completed_count += 1
                             if np.understanding_score is not None:
-                                avg_understanding += np.understanding_score
+                                node_avg_understanding += np.understanding_score
 
-                avg_understanding = (avg_understanding / total_accessed * 100) if total_accessed > 0 else 0
+                # 节点理解度：understanding_score是0-1，转为百分比
+                node_avg_understanding = (node_avg_understanding / total_accessed * 100) if total_accessed > 0 else 0
                 completion_rate = (completed_count / total_students * 100) if total_students > 0 else 0
 
                 node_progress_stats.append({
@@ -2002,7 +2005,7 @@ async def get_course_stats(
                     "completed_count": completed_count,
                     "total_students": total_students,
                     "completion_rate": round(completion_rate, 1),
-                    "avg_understanding": round(avg_understanding, 1),
+                    "avg_understanding": round(node_avg_understanding, 1),
                     "accessed_count": total_accessed,
                 })
 
@@ -2013,8 +2016,10 @@ async def get_course_stats(
             "total_students": total_students,
             "total_nodes": course.total_nodes or 0,
             "avg_progress": round(avg_progress, 1),
-            "avg_understanding": round(avg_understanding * 100, 1) if avg_understanding else 0,
-            "total_study_hours": round(total_study_time / 60, 1),
+            # avg_understanding 已经在计算时转为百分比（0-100）
+            "avg_understanding": round(avg_understanding, 1),
+            # 改为学生平均学习时长（小时）
+            "avg_study_hours_per_student": round(total_study_minutes_all / total_students / 60, 1) if total_students > 0 else 0,
             "progress_distribution": progress_distribution,
             "node_progress": node_progress_stats,
         })

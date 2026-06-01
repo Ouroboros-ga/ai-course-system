@@ -158,8 +158,8 @@
               <div class="panel-stat-label">平均理解度</div>
             </div>
             <div class="panel-stat-card">
-              <div class="panel-stat-number">{{ courseStats.totalStudyHours || 0 }}h</div>
-              <div class="panel-stat-label">总学习时长</div>
+              <div class="panel-stat-number">{{ courseStats.avgStudyHoursPerStudent || 0 }}h</div>
+              <div class="panel-stat-label">学生平均学习时长</div>
             </div>
           </div>
 
@@ -304,7 +304,7 @@ const courseStats = ref({
   totalStudents: 0,
   avgProgress: 0,
   avgUnderstanding: 0,
-  totalStudyHours: 0,
+  avgStudyHoursPerStudent: 0,
   progressDistribution: null,
 })
 
@@ -581,12 +581,12 @@ async function loadStudentsAndStats(courseId) {
       totalStudents: statsData.total_students || 0,
       avgProgress: statsData.avg_progress || 0,
       avgUnderstanding: statsData.avg_understanding || 0,
-      totalStudyHours: statsData.total_study_hours || 0,
+      avgStudyHoursPerStudent: statsData.avg_study_hours_per_student || 0,
       progressDistribution: statsData.progress_distribution || {},
     }
     nodeProgressData.value = statsData.node_progress || []
   } catch (error) {
-    courseStats.value = { totalStudents: 0, avgProgress: 0, avgUnderstanding: 0, totalStudyHours: 0, progressDistribution: {} }
+    courseStats.value = { totalStudents: 0, avgProgress: 0, avgUnderstanding: 0, avgStudyHoursPerStudent: 0, progressDistribution: {} }
     nodeProgressData.value = []
   }
 
