@@ -421,7 +421,6 @@
       </div>
     </div>
 
-    <DigitalHumanWindow v-if="courseId && counter.isTeacher" />
     <MappingEditor
       v-model:visible="showMappingEditor"
       :courseId="courseId"
@@ -448,7 +447,6 @@ import { showToast } from '@/utils/toast'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
-import DigitalHumanWindow from '@/components/chat/DigitalHumanWindow.vue'
 import MappingEditor from '@/components/profile/LoginIn/courses/MappingEditor.vue'
 import PPTGenerationDialog from '@/components/profile/LoginIn/courses/PPTGenerationDialog.vue'
 import { getAssetList } from '@/api/asset.js'

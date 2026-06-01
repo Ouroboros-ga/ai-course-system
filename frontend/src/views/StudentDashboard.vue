@@ -154,7 +154,12 @@
         <div class="message-list" ref="messageListRef">
           <!-- 欢迎消息 -->
           <div class="message-row ai-message">
-            <div class="avatar ai-avatar">AI</div>
+            <div class="avatar-group">
+              <div class="avatar ai-avatar">
+                <img :src="crabAvatar" alt="agent" class="avatar-img" />
+              </div>
+              <span class="agent-label">agent</span>
+            </div>
             <div class="bubble ai-bubble">
               <div class="welcome-content">
                 <h4>🎓 欢迎来到《{{ selectedCourse.title }}》</h4>
@@ -176,9 +181,13 @@
             :key="msg.id || index"
             :class="['message-row', msg.role === 'user' ? 'user-message' : 'ai-message']"
           >
-            <div class="avatar" :class="msg.role === 'user' ? 'user-avatar' : 'ai-avatar'">
-              {{ msg.role === 'user' ? '👤' : 'AI' }}
+            <div class="avatar-group" v-if="msg.role === 'ai'">
+              <div class="avatar ai-avatar">
+                <img :src="crabAvatar" alt="agent" class="avatar-img" />
+              </div>
+              <span class="agent-label">agent</span>
             </div>
+            <div class="avatar user-avatar" v-else>👤</div>
             <div class="bubble" :class="msg.role === 'user' ? 'user-bubble' : 'ai-bubble'">
               <!-- AI消息：Markdown+KaTeX渲染 -->
               <div v-if="msg.role === 'ai'" class="ai-content markdown-body" v-html="renderContent(msg.content)"></div>
@@ -250,7 +259,12 @@
 
           <!-- 流式输出中的消息 -->
           <div v-if="isStreaming" class="message-row ai-message streaming">
-            <div class="avatar ai-avatar">AI</div>
+            <div class="avatar-group">
+              <div class="avatar ai-avatar">
+                <img :src="crabAvatar" alt="agent" class="avatar-img" />
+              </div>
+              <span class="agent-label">agent</span>
+            </div>
             <div class="bubble ai-bubble">
               <div class="streaming-content markdown-body" v-html="renderContent(streamingContent)"></div>
               <div class="typing-indicator">
@@ -300,6 +314,7 @@ import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
 import PptSlidePlayer from '@/components/chat/PptSlidePlayer.vue'
+import crabAvatar from '@/assets/卡通螃蟹头像2.png'
 
 const router = useRouter()
 const counter = useCounterStore()
@@ -1499,6 +1514,29 @@ onUnmounted(() => {
   font-size: 14px;
   font-weight: bold;
   flex-shrink: 0;
+  overflow: hidden;
+}
+
+.avatar-group {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.agent-label {
+  font-size: 11px;
+  color: #6b7280;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .ai-avatar {
@@ -1891,6 +1929,21 @@ onUnmounted(() => {
 
   .chat-learning-area {
     flex: 1;
+  }
+}
+
+@media (max-width: 640px) {
+  .avatar {
+    width: 30px;
+    height: 30px;
+  }
+
+  .agent-label {
+    font-size: 10px;
+  }
+
+  .avatar-group {
+    gap: 2px;
   }
 }
 </style>
