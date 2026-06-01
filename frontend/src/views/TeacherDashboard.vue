@@ -78,7 +78,7 @@
             AI生成PPT课件
           </div>
           <button class="ai-ppt-btn" @click="showPPTGeneration = true">
-            输入主题，AI自动生成课件
+            输入主题，AI自动生成课件与视频
           </button>
         </div>
 
@@ -957,7 +957,7 @@ const pollTTSStatus = async (cId) => {
 // 从mindMapJson构建层级化知识树（展平为可导航列表）
 const buildKnowledgeTreeFromMindMap = (mindMap, title) => {
   knowledgeTree.value = []
-  
+
   if (!mindMap || !mindMap.children || mindMap.children.length === 0) {
     if (mindMap && mindMap.text) {
       knowledgeTree.value = [{
@@ -972,13 +972,13 @@ const buildKnowledgeTreeFromMindMap = (mindMap, title) => {
     }
     return
   }
-  
+
   const flatten = (node, level, parentPath) => {
     const nodeTitle = node.text || node.name || node.label || ''
     const path = parentPath ? `${parentPath}/${nodeTitle}` : nodeTitle
     const hasContent = node.has_content || false
     const isHighlight = node.highlight || false
-    
+
     const item = {
       id: `node_${knowledgeTree.value.length}`,
       node_type: level === 0 ? 'chapter' : level === 1 ? 'section' : 'subsection',
@@ -990,16 +990,16 @@ const buildKnowledgeTreeFromMindMap = (mindMap, title) => {
       path: path,
       has_content: hasContent,
     }
-    
+
     knowledgeTree.value.push(item)
-    
+
     if (node.children && node.children.length > 0) {
       for (const child of node.children) {
         flatten(child, level + 1, path)
       }
     }
   }
-  
+
   if (mindMap.children && mindMap.children.length > 0) {
     for (const child of mindMap.children) {
       flatten(child, 0, mindMap.text || title)
@@ -1014,9 +1014,9 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
 
     if (data && data.nodes) {
       const scriptNodes = data.nodes
-        
+
         for (const treeNode of knowledgeTree.value) {
-          const matchedNode = scriptNodes.find(sn => 
+          const matchedNode = scriptNodes.find(sn =>
             sn.title && sn.title.trim() === treeNode.title.trim()
           )
           if (matchedNode && matchedNode.content) {
@@ -1028,10 +1028,10 @@ const loadCourseNodesAndMerge = async (courseIdParam) => {
             treeNode.audio_duration = matchedNode.audio_duration || 0
           }
         }
-        
+
         const nodesWithContent = knowledgeTree.value.filter(n => n.content)
         const nodesWithoutContent = knowledgeTree.value.filter(n => !n.content)
-        
+
         if (nodesWithoutContent.length > 0 && scriptNodes.length > 0) {
           const usedIndices = new Set()
           for (const treeNode of nodesWithoutContent) {
@@ -2422,6 +2422,7 @@ const loadStudentsList = async () => {
 .action-btn:hover:not(:disabled) {
   background: #f3f4f6;
   transform: translateY(-1px);
+  color: #505050;
 }
 
 .action-btn:disabled {
