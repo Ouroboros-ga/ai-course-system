@@ -364,9 +364,10 @@ async def upload_document(
         course.total_nodes = len(script_result.nodes)
         course.total_duration = script_result.total_duration
         course.is_ai_generated = True
+        course.status = CourseStatus.PUBLISHED
         course.updated_at = datetime.utcnow()
         session.commit()
-        print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}")
+        print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}, status=PUBLISHED")
 
         print(f"[步骤6.5] 启动后台TTS音频生成任务")
         import asyncio
