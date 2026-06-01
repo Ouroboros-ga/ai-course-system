@@ -1867,18 +1867,63 @@ async def get_course_students(
             ).fetchone()
             username = user_result[0] if user_result else f"学生{enr.student_id}"
 
+            # 动态计算该学生的理解度（从NodeProgress表）
+            student_avg_score = None
+            student_level = "unknown"
+            
+            try:
+                from app.models.progress_model import LearningProgress, NodeProgress
+                
+                # 获取学生的学习进度记录
+                lp = session.exec(
+                    select(LearningProgress).where(
+                        LearningProgress.user_id == enr.student_id,
+                        LearningProgress.course_id = course_id,
+                    )
+                ).first()
+                
+                if lp:
+                    # 获取该学生所有节点的进度
+                    node_progress_list = session.exec(
+                        select(NodeProgress).where(
+                            NodeProgress.progress_id == lp.id,
+                            NodeProgress.understanding_score.isnot(None)
+                        )
+                    ).all()
+                    
+                    if node_progress_list:
+                        # 计算平均理解度分数（0-1）
+                        total_score = sum(np.understanding_score for np in node_progress_list)
+                        avg_score = total_score / len(node_progress_list)
+                        
+                        # 转换为百分比（0-100）用于显示
+                        student_avg_score = round(avg_score * 100, 1)
+                        
+                        # 确定理解度等级
+                        if avg_score >= 0.9:
+                            student_level = "excellent"
+                        elif avg_score >= 0.75:
+                            student_level = "high"
+                        elif avg_score >= 0.5:
+                            student_level = "medium"
+                        elif avg_score > 0:
+                            student_level = "low"
+            except Exception as calc_error:
+                print(f"[警告] 计算学生{enr.student_id}理解度失败: {calc_error}")
+
             students_data.append({
                 "enrollment_id": enr.id,
                 "student_id": enr.student_id,
                 "username": username,
                 "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
                 "overall_progress": round(enr.overall_progress, 1),
-                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
-                "understanding_level": enr.avg_understanding_level,
-                "total_study_minutes": enr.total_study_minutes,
+                # 使用动态计算的理解度，而非可能过时的汇总字段
+                "avg_understanding_score": student_avg_score if student_avg_score is not None else 0,
+                "understanding_level": student_level if student_level != "unknown" else None,
+                "total_study_minutes": enr.total_study_minutes or 0,
                 "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
-                "nodes_completed": enr.total_nodes_completed,
-                "nodes_total": enr.total_nodes_count,
+                "nodes_completed": enr.total_nodes_completed or 0,
+                "nodes_total": enr.total_nodes_count or 0,
             })
 
         return unified_response(code=200, message="获取成功", data={
