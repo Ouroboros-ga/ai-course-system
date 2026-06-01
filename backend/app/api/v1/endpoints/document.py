@@ -511,6 +511,13 @@ async def get_courses_list(
             if teacher_record:
                 teacher_name = teacher_record[0]
 
+            student_count = session.exec(
+                select(func.count()).select_from(StudentEnrollment).where(
+                    StudentEnrollment.course_id == course.id,
+                    StudentEnrollment.is_active == True
+                )
+            ).one()
+
             courses_data.append({
                 "id": course.id,
                 "title": course.title,
@@ -522,6 +529,7 @@ async def get_courses_list(
                 "total_duration": course.total_duration,
                 "source_file_name": course.source_file_name,
                 "is_ai_generated": course.is_ai_generated,
+                "student_count": student_count,
                 "created_at": course.created_at.isoformat() if course.created_at else None,
             })
 
@@ -1632,10 +1640,10 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
     try:
         from app.models.progress_model import LearningProgress, NodeProgress
 
-        # 检查是否已有进度记录
+        # 检查是否已有进度记录（使用正确的字段名 user_id）
         existing_progress = session.exec(
             select(LearningProgress).where(
-                LearningProgress.student_id == student_id,
+                LearningProgress.user_id == student_id,
                 LearningProgress.course_id == course_id
             )
         ).first()
@@ -1644,14 +1652,17 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
             print(f"[进度初始化] 学生{student_id} 课程{course_id} 进度记录已存在")
             return
 
-        # 创建总的学习进度记录
+        # 创建总的学习进度记录（使用正确的字段名）
         learning_progress = LearningProgress(
-            student_id=student_id,
+            user_id=student_id,
             course_id=course_id,
             current_node_index=0,
-            overall_progress=0.0,
-            total_study_time=0,
-            last_access_time=datetime.utcnow(),
+            completion_rate=0.0,
+            total_learning_time=0,
+            total_nodes=total_nodes,
+            completed_nodes=0,
+            status="not_started",
+            last_accessed_at=datetime.utcnow(),
         )
         session.add(learning_progress)
         session.commit()
@@ -1698,7 +1709,7 @@ def _ensure_learning_progress(session: Session, student_id: int, course_id: int,
 
         existing = session.exec(
             select(LearningProgress).where(
-                LearningProgress.student_id == student_id,
+                LearningProgress.user_id == student_id,
                 LearningProgress.course_id == course_id
             )
         ).first()
@@ -1743,6 +1754,76 @@ async def unenroll_course(
         import traceback
         traceback.print_exc()
         return unified_response(code=500, message=f"退出课程失败: {str(e)}", data=None)
+
+
+@router.get("/my-courses")
+async def get_my_courses(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取当前学生的选课列表
+
+    返回学生已选的课程及学习进度，用于学生端"我的课程"展示
+    """
+    try:
+        student_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "student":
+            return unified_response(code=403, message="只有学生可以查看选课列表", data=None)
+
+        enrollments = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.is_active == True
+            ).order_by(StudentEnrollment.enrolled_at.desc())
+        ).all()
+
+        my_courses = []
+        for enr in enrollments:
+            course = session.get(Course, enr.course_id)
+            if not course or course.status != CourseStatus.PUBLISHED:
+                continue
+
+            my_courses.append({
+                "enrollment_id": enr.id,
+                "course_id": course.id,
+                "title": course.title,
+                "description": course.description,
+                "teacher_name": _get_teacher_name(session, course.teacher_id),
+                "total_nodes": course.total_nodes,
+                "total_duration": course.total_duration,
+                "overall_progress": round(enr.overall_progress, 1),
+                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
+                "total_study_minutes": enr.total_study_minutes,
+                "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
+                "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
+            })
+
+        return unified_response(
+            code=200,
+            message="获取我的课程成功",
+            data={
+                "courses": my_courses,
+                "total": len(my_courses),
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"获取课程失败: {str(e)}", data=None)
+
+
+def _get_teacher_name(session: Session, teacher_id: int) -> str:
+    """获取教师姓名"""
+    from sqlmodel import text
+    result = session.execute(
+        text("SELECT username FROM users WHERE id = :uid"),
+        {"uid": teacher_id}
+    ).fetchone()
+    return result[0] if result else "未知教师"
 
 
 @router.get("/course/{course_id}/students")

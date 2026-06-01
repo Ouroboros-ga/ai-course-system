@@ -190,9 +190,7 @@ export function useStudentLearning() {
           }))
         }
 
-        if (data.progress) {
-          updateProgressFromServer(data.progress)
-        }
+        await loadProgressFromServer(courseId)
 
         loadCourseSlides(courseId)
         updateCurrentNodeMedia()
@@ -201,6 +199,28 @@ export function useStudentLearning() {
       }
     } catch (error) {
       showToast('加载课程内容失败', 'error')
+    }
+  }
+
+  async function loadProgressFromServer(courseId) {
+    try {
+      const progressData = await request({
+        url: `/progress/detail/${courseId}`,
+        method: 'get',
+      })
+
+      if (progressData && progressData.has_progress) {
+        updateProgressFromServer(progressData)
+
+        if (progressData.overall && progressData.overall.current_node_index > 0) {
+          showToast(
+            `已恢复学习进度: ${progressData.overall.completion_rate}% 完成`,
+            'info'
+          )
+        }
+      }
+    } catch (error) {
+      console.warn('加载历史进度失败:', error)
     }
   }
 
@@ -340,6 +360,29 @@ export function useStudentLearning() {
         level: null,
         questions: 0,
       }
+    }
+
+    saveNodeAccessToServer(index)
+  }
+
+  async function saveNodeAccessToServer(index) {
+    try {
+      const node = scriptNodes.value[index]
+      if (!node || !selectedCourse.value) return
+
+      await request({
+        url: '/progress/sync',
+        method: 'post',
+        data: {
+          courseId: selectedCourse.value.id,
+          nodeId: node.id,
+          timestamp: 0,
+          isCompleted: false,
+          timeSpent: 0,
+        },
+      })
+    } catch (error) {
+      console.warn('保存节点访问记录失败:', error)
     }
   }
 
