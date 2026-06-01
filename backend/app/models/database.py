@@ -23,6 +23,7 @@ from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
     UnderstandingAnalysis,
+    LearningJumpHistory,
 )
 from app.models.knowledge_model import (
     KnowledgeBase,

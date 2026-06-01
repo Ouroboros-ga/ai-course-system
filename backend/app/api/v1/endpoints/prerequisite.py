@@ -11,10 +11,10 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Body, Query
 from sqlmodel import Session
 
-from app.database import get_session
-from app.models.user_model import User
-from app.utils.auth import get_current_user
-from app.utils.response import unified_response
+from app.models.database import get_session
+from app.core.security import get_current_user
+from app.core.exceptions import unified_response
+from app.models.progress_model import LearningJumpHistory
 from app.services.prerequisite_service import (
     prerequisite_analyzer,
     jump_history_manager,
@@ -310,7 +310,6 @@ async def return_to_original_position(
             )
 
         # 获取原节点信息
-        from app.models.progress_model import LearningJumpHistory
         jump_record = session.get(LearningJumpHistory, jumpId)
         
         original_node = None
@@ -476,7 +475,6 @@ async def mark_prerequisite_reviewed(
                 data=None
             )
         
-        from app.models.progress_model import LearningJumpHistory
         jump_record = session.get(LearningJumpHistory, jumpId)
         
         next_recommendation = ""
@@ -580,7 +578,6 @@ async def get_learning_path_visualization(
         completed_jumps = [e for e in all_jumps if e.get("isReturned")]
         
         total_review_time = 0
-        from app.models.progress_model import LearningJumpHistory
         jumps_records = session.exec(
             select(LearningJumpHistory).where(
                 LearningJumpHistory.user_id == user_id,

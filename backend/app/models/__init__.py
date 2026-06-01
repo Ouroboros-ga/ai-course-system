@@ -26,6 +26,7 @@ from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
     UnderstandingAnalysis,
+    LearningJumpHistory,
     LearningStatus,
     UnderstandingLevel,
 )
@@ -57,6 +58,7 @@ __all__ = [
     "LearningProgress",
     "NodeProgress",
     "UnderstandingAnalysis",
+    "LearningJumpHistory",
     "LearningStatus",
     "UnderstandingLevel",
     "get_session",
