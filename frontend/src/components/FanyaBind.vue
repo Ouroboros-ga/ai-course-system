@@ -253,8 +253,6 @@ async function handleUnbind() {
   animation: spin 0.6s linear infinite;
 }
 
-@keyframes spin { to { transform: rotate(360deg); } }
-
 .form-row {
   margin-bottom: 14px;
 }

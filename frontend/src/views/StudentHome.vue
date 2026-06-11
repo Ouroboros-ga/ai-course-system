@@ -27,10 +27,7 @@
         <!-- 我的课程（已选） -->
         <div v-if="activeTab === 'my'">
           <h2>📖 我正在学习的课程</h2>
-          <div v-if="isLoadingMy" class="loading-state">
-            <div class="spinner"></div>
-            <span>正在加载...</span>
-          </div>
+          <LoadingSpinner v-if="isLoadingMy" text="正在加载..." />
           <div v-else-if="myCourses.length === 0" class="empty-state">
             <div class="empty-icon">📭</div>
             <p>您还没有选择任何课程</p>
@@ -87,10 +84,7 @@
         <!-- 可选课程（未选） -->
         <div v-if="activeTab === 'available'">
           <h2>🎯 课程广场 - 选择你感兴趣的课程</h2>
-          <div v-if="isLoadingAvailable" class="loading-state">
-            <div class="spinner"></div>
-            <span>正在加载...</span>
-          </div>
+          <LoadingSpinner v-if="isLoadingAvailable" text="正在加载..." />
           <div v-else-if="availableCourses.length === 0" class="empty-state">
             <div class="empty-icon">📭</div>
             <p>暂无可选课程</p>
@@ -143,6 +137,7 @@
 <script setup>
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import request from '@/utils/request.js'
 import { showToast } from '@/utils/toast'
 
@@ -536,20 +531,6 @@ const formatTime = (timeStr) => {
   text-align: center;
   padding: 40px;
   color: #6b7280;
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #0ea5e9;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-  margin: 0 auto 12px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .empty-state {

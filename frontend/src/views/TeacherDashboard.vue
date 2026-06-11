@@ -1,9 +1,6 @@
 <template>
   <div class="teacher-dashboard">
-    <div v-if="isCourseLoading" class="course-loading">
-      <div class="spinner"></div>
-      <span>正在加载课程数据...</span>
-    </div>
+    <LoadingSpinner v-if="isCourseLoading" text="正在加载课程数据..." full-page />
     <template v-else>
     <div class="dashboard-header">
       <h2>{{ isEditMode ? '编辑课程' : '基于Docling层级结构的知识点导航与学习' }}</h2>
@@ -438,6 +435,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { Marked } from 'marked'
 import { markedHighlight } from 'marked-highlight'
 import hljs from 'highlight.js'
@@ -1592,28 +1590,6 @@ const loadStudentsList = async () => {
   padding: 20px;
   box-sizing: border-box;
 }
-
-.course-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: calc(100vh - var(--navbar-height));
-  gap: 16px;
-  color: #6b7280;
-  font-size: 16px;
-}
-
-.course-loading .spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .dashboard-header {
   margin-bottom: 20px;

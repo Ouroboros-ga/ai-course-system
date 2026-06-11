@@ -109,10 +109,7 @@
             </div>
           </div>
 
-          <div class="loading-overlay" v-if="isLoading">
-            <div class="spinner"></div>
-            <span>加载中...</span>
-          </div>
+          <LoadingSpinner v-if="isLoading" text="加载中..." />
         </div>
       </div>
 
@@ -246,10 +243,7 @@
               </div>
             </div>
 
-            <div class="loading-overlay" v-if="isLoading">
-              <div class="spinner"></div>
-              <span>加载中...</span>
-            </div>
+            <LoadingSpinner v-if="isLoading" text="加载中..." />
           </div>
         </div>
 
@@ -272,6 +266,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import api from '@/api/index.js'
 
 const props = defineProps({
@@ -945,19 +940,6 @@ onMounted(() => {
   gap: 10px;
   color: white;
   font-size: 12px;
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid rgba(255,255,255,0.3);
-  border-top-color: white;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .dh-input-area {

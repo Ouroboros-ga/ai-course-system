@@ -6,10 +6,7 @@
     </div>
 
     <div class="courses-container">
-      <div v-if="isLoadingCourses" class="loading-state">
-        <div class="spinner"></div>
-        <span>正在加载课程...</span>
-      </div>
+      <LoadingSpinner v-if="isLoadingCourses" text="正在加载课程..." />
 
       <div v-else-if="availableCourses.length === 0" class="empty-state">
         <div class="empty-icon">📖</div>
@@ -56,6 +53,7 @@
 
 <script setup>
 import { inject } from 'vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
 
 const {
@@ -189,18 +187,6 @@ const {
   padding: 60px 20px;
   color: #6b7280;
 }
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .empty-icon { font-size: 64px; margin-bottom: 16px; }
 </style>

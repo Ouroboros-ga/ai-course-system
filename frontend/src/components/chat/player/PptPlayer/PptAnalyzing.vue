@@ -22,12 +22,6 @@
   margin: 0 auto 20px;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .progress-bar {
   width: 200px;
   height: 6px;

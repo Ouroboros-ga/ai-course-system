@@ -5,10 +5,7 @@
       <p class="subtitle">管理系统中的所有用户及其角色</p>
     </div>
 
-    <div v-if="isLoading" class="loading-state">
-      <div class="spinner"></div>
-      <span>正在加载用户列表...</span>
-    </div>
+    <LoadingSpinner v-if="isLoading" text="正在加载用户列表..." />
 
     <div v-else class="user-table-wrapper">
       <table class="user-table">
@@ -66,6 +63,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { showToast } from '@/utils/toast'
@@ -152,20 +150,6 @@ onMounted(() => {
   text-align: center;
   padding: 60px 20px;
   color: #6b7280;
-}
-
-.spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .user-table-wrapper {

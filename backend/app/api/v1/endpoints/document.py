@@ -25,7 +25,7 @@ from app.schemas.document_schema import (
 )
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only
+from app.core.security import get_current_user, teacher_only, _get_user_id, _get_user_identity
 from app.core.config import settings
 from app.models.database import get_session
 from app.models.course_model import (

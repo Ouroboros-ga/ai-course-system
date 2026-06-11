@@ -212,5 +212,23 @@ def role_required(allowed_roles: List[UserRole]):
 # 预定义常用权限依赖
 teacher_only = role_required([UserRole.TEACHER, UserRole.ADMIN])
 student_only = role_required([UserRole.STUDENT, UserRole.ADMIN])
+
+
+# --------------------------
+# 便捷身份提取依赖（消除样板代码）
+# --------------------------
+async def _get_user_id(current_user: dict = Depends(get_current_user)) -> int:
+    """直接返回当前用户 ID（int），替代重复的 int(current_user["user_id"])"""
+    return int(current_user["user_id"])
+
+
+async def _get_username(current_user: dict = Depends(get_current_user)) -> str:
+    """直接返回当前用户名，替代重复的 current_user.get("username", "user")"""
+    return current_user.get("username", "user")
+
+
+async def _get_user_identity(current_user: dict = Depends(get_current_user)) -> tuple[int, str]:
+    """同时返回 (user_id, username) 元组"""
+    return int(current_user["user_id"]), current_user.get("username", "user")
 teacher_student_allowed = role_required([UserRole.TEACHER, UserRole.STUDENT, UserRole.ADMIN])
 admin_only = role_required([UserRole.ADMIN])

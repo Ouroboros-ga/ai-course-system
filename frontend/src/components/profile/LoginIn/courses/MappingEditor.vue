@@ -87,11 +87,7 @@
           </div>
         </div>
 
-        <!-- 加载状态 -->
-        <div v-else class="loading-state">
-          <div class="spinner"></div>
-          <span>加载映射数据中...</span>
-        </div>
+        <LoadingSpinner v-else text="加载映射数据中..." />
 
         <!-- 底部：选中节点的映射编辑 -->
         <div v-if="selectedNode" class="modal-footer">
@@ -137,6 +133,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import {
   getMappingDetail,
   autoGenerateMapping,
@@ -642,21 +639,6 @@ function handleClose() {
   padding: 60px;
   color: #6b7280;
   gap: 12px;
-}
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #4f46e5;
-  border-radius: 50%;
-  animation: spin 0.8s linear infinite;
-}
-
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .modal-footer {

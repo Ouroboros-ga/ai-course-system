@@ -197,10 +197,6 @@ onUnmounted(() => {
   margin: 0 auto 20px;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .status-icon {
   font-size: 56px;
   margin-bottom: 16px;

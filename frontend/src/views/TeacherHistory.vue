@@ -36,10 +36,7 @@
 
       <!-- 课程列表 -->
       <div class="courses-section">
-        <div v-if="isLoading" class="loading-state">
-          <div class="spinner"></div>
-          <span>正在加载课程...</span>
-        </div>
+        <LoadingSpinner v-if="isLoading" text="正在加载课程..." />
 
         <div v-else-if="courses.length === 0" class="empty-state">
           <div class="empty-icon">📖</div>
@@ -264,6 +261,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { Pie, Doughnut } from 'vue-chartjs'
 import {
   Chart as ChartJS,
@@ -908,24 +906,6 @@ async function loadStats() {
   padding: 80px 20px;
   color: #6b7280;
 }
-
-.spinner {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #e5e7eb;
-  border-top-color: #6366f1;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin: 0 auto 16px;
-}
-
-.spinner.small {
-  width: 32px;
-  height: 32px;
-  border-width: 3px;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .empty-icon { font-size: 64px; margin-bottom: 16px; }
 

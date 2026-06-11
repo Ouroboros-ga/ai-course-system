@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user
+from app.core.security import get_current_user, _get_user_id, _get_username, _get_user_identity
 from app.models.database import get_session
 from app.models.progress_model import LearningProgress, NodeProgress, LearningStatus, UnderstandingLevel
 from app.models.course_model import Course, ScriptNode, CourseScript
@@ -29,7 +29,8 @@ router = APIRouter(tags=["进度续接"])
 @router.post("/analyze", response_model=UnifiedResponse)
 async def analyze_understanding(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
+    username: str = Depends(_get_username),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="当前节点ID"),
     question: str = Body(..., description="学生提问内容"),
@@ -51,9 +52,7 @@ async def analyze_understanding(
     - 节奏调整建议
     """
     try:
-        user_id = int(current_user["user_id"])
-        username = current_user.get("username", "user")
-        print(f"[进度分析] 用户 {username} (ID: {user_id}) 提问分析请求")
+        print(f"[进度分析] 用户 {username} (ID: {user_id}) 提交分析请求")
 
         course = session.get(Course, courseId)
         if not course:
@@ -94,7 +93,7 @@ async def analyze_understanding(
 async def get_progress_visualization(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
 ):
     """
     获取学习进度可视化数据
@@ -105,8 +104,6 @@ async def get_progress_visualization(
     - 最近的理解度分析记录
     """
     try:
-        user_id = int(current_user["user_id"])
-
         result = await progress_service.get_progress_visualization(
             session=session, user_id=user_id, course_id=course_id
         )
@@ -128,7 +125,7 @@ async def get_progress_visualization(
 @router.post("/sync", response_model=UnifiedResponse)
 async def sync_learning_progress(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="当前节点ID"),
     timestamp: float = Body(0.0, description="当前播放时间点(秒)"),
@@ -146,8 +143,6 @@ async def sync_learning_progress(
     用于前端定期同步播放进度，支持断点续接
     """
     try:
-        user_id = int(current_user["user_id"])
-
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -254,7 +249,7 @@ async def sync_learning_progress(
 async def get_resume_point(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
 ):
     """
     获取断点续接信息
@@ -262,8 +257,6 @@ async def get_resume_point(
     返回上次学习的位置，用于学生重新进入课程时恢复进度
     """
     try:
-        user_id = int(current_user["user_id"])
-
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -318,7 +311,7 @@ async def get_resume_point(
 async def get_progress_detail(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
 ):
     """
     获取学生学习进度详情
@@ -329,8 +322,6 @@ async def get_progress_detail(
     - 用于学生进入课程时加载历史进度
     """
     try:
-        user_id = int(current_user["user_id"])
-
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -404,7 +395,7 @@ async def get_progress_detail(
 @router.post("/node/complete", response_model=UnifiedResponse)
 async def mark_node_completed(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="节点ID"),
 ):
@@ -412,8 +403,6 @@ async def mark_node_completed(
     标记节点为已完成
     """
     try:
-        user_id = int(current_user["user_id"])
-
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -479,7 +468,8 @@ async def mark_node_completed(
 @router.post("/continuation", response_model=UnifiedResponse)
 async def get_progress_continuation(
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    user_id: int = Depends(_get_user_id),
+    username: str = Depends(_get_username),
     courseId: int = Body(..., description="课程ID"),
     chatId: Optional[int] = Body(None, description="会话ID，用于获取历史对话"),
 ):
@@ -501,8 +491,6 @@ async def get_progress_continuation(
         import json
         import re
 
-        user_id = int(current_user["user_id"])
-        username = current_user.get("username", "user")
         print(f"[进度续接] 用户 {username} (ID: {user_id}) 请求进度续接分析")
 
         # 获取课程信息

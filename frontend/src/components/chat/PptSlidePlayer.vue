@@ -1,10 +1,7 @@
 <template>
   <div class="ppt-slide-player">
     <div class="slide-viewport">
-      <div v-if="isLoading" class="slide-loading">
-        <div class="spinner"></div>
-        <span>加载幻灯片...</span>
-      </div>
+      <LoadingSpinner v-if="isLoading" text="加载幻灯片..." />
 
       <div v-else-if="slides.length === 0" class="slide-empty">
         <span class="empty-icon">📄</span>
@@ -87,6 +84,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const props = defineProps({
   slides: { type: Array, default: () => [] },
@@ -305,17 +303,6 @@ defineExpose({
   color: #9ca3af;
   font-size: 14px;
 }
-
-.spinner {
-  width: 32px;
-  height: 32px;
-  border: 3px solid #374151;
-  border-top-color: #8b5cf6;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin { to { transform: rotate(360deg); } }
 
 .empty-icon { font-size: 48px; }
 

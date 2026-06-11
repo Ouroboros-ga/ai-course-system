@@ -1,10 +1,7 @@
 <template>
   <div class="split-video-player">
     <!-- 加载状态 -->
-    <div v-if="loading" class="player-loading">
-      <div class="loading-spinner"></div>
-      <p>正在加载课程数据...</p>
-    </div>
+    <LoadingSpinner v-if="loading" text="正在加载课程数据..." full-page />
 
     <!-- 错误状态 -->
     <div v-else-if="error" class="player-error">
@@ -184,6 +181,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import KnowledgeNavBar from './KnowledgeNavBar.vue'
 
@@ -684,19 +682,6 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 20px;
-}
-
-.loading-spinner {
-  width: 50px;
-  height: 50px;
-  border: 4px solid #333;
-  border-top-color: #4CAF50;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  to { transform: rotate(360deg); }
 }
 
 .retry-btn {

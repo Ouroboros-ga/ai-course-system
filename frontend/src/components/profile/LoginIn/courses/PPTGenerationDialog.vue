@@ -523,10 +523,6 @@ function handleClose() {
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to { transform: rotate(360deg); }
-}
-
 .generating-text h4 {
   margin: 0 0 8px;
   font-size: 18px;
