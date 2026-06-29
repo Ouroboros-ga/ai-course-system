@@ -43,37 +43,37 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                      用户层 (Users)                          │
-│    教师端 (Teacher Dashboard)  │  学生端 (Student Player)   │
+│    教师端 (Teacher Dashboard)  │  学生端 (Student Player)     │
 └───────────────────┬─────────────────────┬───────────────────┘
                     │                     │
                     ▼                     │
-┌─────────────────────────────────────────┴───────────────────┐
-│                   前端层 (Frontend)                          │
+┌─────────────────────────────────────────┴──────────────────┐
+│                   前端层 (Frontend)                         │
 │  Vue 3 + Vite + Pinia + Vue Router                         │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐          │
-│  │ API Layer│ │ Stores  │ │Components│ │ Views   │          │
-│  └────┬─────┘ └────┬────┘ └────┬────┘ └────┬────┘          │
+│  ┌──────────┐ ┌─────────┐ ┌──────────┐ ┌────────┐          │
+│  │ API Layer│ │ Stores  │ │Components│ │ Views  │          │
+│  └────┬─────┘ └────┬────┘ └────┬─────┘ └───┬────┘          │
 │       └────────────┴───────────┴───────────┘               │
 │                     Vite Proxy (/api → :8000)              │
 └──────────────────────────────┬─────────────────────────────┘
                                │ HTTP/RESTful API
                                ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   后端层 (Backend)                           │
+┌────────────────────────────────────────────────────────────┐
+│                   后端层 (Backend)                          │
 │  FastAPI (ASGI) + SQLModel + SQLite                        │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐      │
-│  │Endpoints  │ │Services  │ │Models    │ │Core      │      │
-│  │(路由层)   │ │(业务逻辑) │ │(ORM模型) │ │(配置/安全)│      │
-│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘      │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐       │
+│  │Endpoints │ │Services  │ │Models    │ │Core      │       │
+│  │(路由层)   │ │(业务逻辑) │ │(ORM模型)  │ │（配置/安全）│       │
+│  └────┬─────┘ └────┬─────┘ └────┬─────┘ └────┬─────┘       │
 │       └────────────┴────────────┴────────────┘             │
-│  中间件: CORS / SignatureMiddleware / ExceptionHandler     │
+│  中间件: CORS / SignatureMiddleware / ExceptionHandler      │
 └──────────────────────────────┬─────────────────────────────┘
                                │
                     ┌──────────┼──────────┐
                     ▼          ▼          ▼
             ┌──────────┐ ┌──────────┐ ┌──────────┐
             │  SQLite  │ │ LLM APIs │ │ File Sys │
-            │ Database │ │(豆包等)  │ │(课件存储)│
+            │ Database │ │(豆包等)   │ │(课件存储） │
             └──────────┘ └──────────┘ └──────────┘
 ```
 
@@ -354,31 +354,11 @@ uv run ruff check .   # Ruff Linting
 uv run ruff format .  # Ruff Formatting
 ```
 
-### 测试覆盖（规划中）
-- [ ] 单元测试：核心Service逻辑（目标覆盖率60%+）
-- [ ] 集成测试：API端点完整性验证
-- [ ] E2E测试：关键用户流程自动化
-
 ---
 
 ## 🐳 Docker部署（可选）
 
-```bash
-# 构建并启动所有服务
-docker-compose up -d --build
-
-# 查看服务状态
-docker-compose ps
-
-# 查看日志
-docker-compose logs -f backend
-docker-compose logs -f frontend
-```
-
-**访问地址**:
-- 前端: http://localhost:80
-- 后端API: http://localhost:8000/docs
-- 数据库: 持久化至Docker Volume
+**规划中**
 
 ---
 
@@ -394,10 +374,9 @@ docker-compose logs -f frontend
 
 ## 👥 团队成员
 
-<!-- 在此处添加团队成员信息 -->
-- **项目负责人**: [您的姓名]
-- **核心开发者**: [成员列表]
-- **指导老师**: [导师姓名]
+- **项目负责人**: 刘家良
+- **核心开发者**: 马骢恺，WILL_Moxyz, 王敏，王子墨
+- **指导老师**: 唐晓平
 
 ---
 
@@ -419,9 +398,9 @@ docker-compose logs -f frontend
 
 如有问题或建议，欢迎通过以下方式联系：
 
-- 📧 Email: [your-email@example.com]
-- 💬 Issues: [GitHub Issues链接]
-- 📝 文档: [项目Wiki或文档站]
+- 📧 Email: 335288103@qq.com
+- 💬 Issues: https://gitee.com/ljlouroboros/ai-course-system/issues
+- 📝 文档: [here](./docs)
 
 ---
 
@@ -429,6 +408,6 @@ docker-compose logs -f frontend
 
 **⭐ 如果这个项目对您有帮助，请给一个Star支持！⭐**
 
-Made with ❤️ by [Your Team Name]
+Made with ❤️ by SITACM
 
 </div>
