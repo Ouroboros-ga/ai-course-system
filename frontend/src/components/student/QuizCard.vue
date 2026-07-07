@@ -21,10 +21,12 @@
     </div>
     <div v-if="answerRevealed" class="quiz-result">
       <div class="result-indicator" :class="selectedAnswer === quiz.correct_answer ? 'is-correct' : 'is-wrong'">
-        {{ selectedAnswer === quiz.correct_answer ? '✅ 回答正确！' : '❌ 回答错误' }}
+        <CheckCircle v-if="selectedAnswer === quiz.correct_answer" :size="16" />
+        <XCircle v-else :size="16" />
+        {{ selectedAnswer === quiz.correct_answer ? '回答正确！' : '回答错误' }}
       </div>
       <div class="result-explanation">
-        <span class="explanation-label">📝 解析：</span>
+        <span class="explanation-label"><PenLine :size="14" /> 解析：</span>
         {{ quiz.explanation }}
       </div>
     </div>
@@ -32,6 +34,8 @@
 </template>
 
 <script setup>
+import { CheckCircle, XCircle, PenLine } from 'lucide-vue-next'
+
 defineProps({
   quiz: {
     type: Object,
@@ -51,17 +55,17 @@ defineEmits(['select-option'])
 
 <style scoped>
 .quiz-card {
-  margin-top: 12px;
-  padding: 16px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
+  margin-top: var(--space-3);
+  padding: var(--space-4);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
 }
 
 .quiz-question {
   font-size: 15px;
-  font-weight: 600;
-  color: #1f2937;
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
   margin-bottom: 14px;
   line-height: 1.6;
 }
@@ -69,7 +73,7 @@ defineEmits(['select-option'])
 .quiz-options {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .quiz-option-btn {
@@ -77,37 +81,37 @@ defineEmits(['select-option'])
   align-items: flex-start;
   gap: 10px;
   padding: 10px 14px;
-  background: white;
-  border: 2px solid #e5e7eb;
-  border-radius: 8px;
+  background: var(--color-surface);
+  border: 2px solid var(--color-border);
+  border-radius: var(--radius-md);
   cursor: pointer;
   text-align: left;
-  transition: all 0.2s ease;
-  font-size: 14px;
+  transition: all var(--duration-normal) var(--ease);
+  font-size: var(--text-sm);
   line-height: 1.5;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .quiz-option-btn:hover:not(.disabled) {
-  border-color: #6366f1;
-  background: #f5f3ff;
+  border-color: var(--color-primary);
+  background: var(--color-secondary-light);
 }
 
 .quiz-option-btn.selected {
-  border-color: #6366f1;
-  background: #eef2ff;
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .quiz-option-btn.correct {
-  border-color: #10b981;
-  background: #ecfdf5;
-  color: #065f46;
+  border-color: var(--color-success);
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .quiz-option-btn.wrong {
-  border-color: #ef4444;
-  background: #fef2f2;
-  color: #991b1b;
+  border-color: var(--color-danger);
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 
 .quiz-option-btn.disabled {
@@ -121,27 +125,27 @@ defineEmits(['select-option'])
   justify-content: center;
   min-width: 26px;
   height: 26px;
-  border-radius: 50%;
-  background: #e5e7eb;
-  color: #374151;
-  font-weight: 700;
+  border-radius: var(--radius-full);
+  background: var(--color-border);
+  color: var(--color-text-secondary);
+  font-weight: var(--font-bold);
   font-size: 13px;
   flex-shrink: 0;
 }
 
 .quiz-option-btn.selected .option-key {
-  background: #6366f1;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
 }
 
 .quiz-option-btn.correct .option-key {
-  background: #10b981;
-  color: white;
+  background: var(--color-success);
+  color: var(--color-text-inverse);
 }
 
 .quiz-option-btn.wrong .option-key {
-  background: #ef4444;
-  color: white;
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
 }
 
 .option-text {
@@ -152,35 +156,41 @@ defineEmits(['select-option'])
 .quiz-result {
   margin-top: 14px;
   padding-top: 14px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
 }
 
 .result-indicator {
   font-size: 15px;
-  font-weight: 600;
+  font-weight: var(--font-semibold);
   margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .result-indicator.is-correct {
-  color: #059669;
+  color: var(--color-success);
 }
 
 .result-indicator.is-wrong {
-  color: #dc2626;
+  color: var(--color-danger);
 }
 
 .result-explanation {
   font-size: 13px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   line-height: 1.7;
-  background: white;
+  background: var(--color-surface);
   padding: 10px 14px;
-  border-radius: 6px;
-  border: 1px solid #e5e7eb;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
 }
 
 .explanation-label {
-  font-weight: 600;
-  color: #374151;
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 </style>

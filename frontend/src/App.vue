@@ -16,17 +16,12 @@
     <NavigationBar />
     <GradientBackground
       :animated="true"
-      :interactive="true"
-      :parallax="true"
     />
   </div>
 </template>
 
 <style>
-/* ========== 全局重置样式 ========== */
-:root {
-  --navbar-height: 56px;
-}
+/* ========== 全局重置样式（基于设计令牌） ========== */
 
 * {
   margin: 0;
@@ -37,10 +32,15 @@
 html, body {
   width: 100%;
   height: 100%;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   overflow-x: hidden;
+  transition: background-color var(--duration-slow) var(--ease), color var(--duration-slow) var(--ease);
 }
 
 #app {
@@ -51,7 +51,12 @@ html, body {
 
 a {
   text-decoration: none;
-  color: inherit;
+  color: var(--color-primary);
+  transition: color var(--duration-fast) var(--ease);
+}
+
+a:hover {
+  color: var(--color-primary-hover);
 }
 
 button {
@@ -60,6 +65,7 @@ button {
   cursor: pointer;
   font-family: inherit;
   font-size: inherit;
+  color: inherit;
 }
 
 img {
@@ -71,11 +77,29 @@ ul, ol {
   list-style: none;
 }
 
-input, textarea {
+input, textarea, select {
   border: none;
   outline: none;
   font-family: inherit;
   font-size: inherit;
+  color: inherit;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+/* 可访问性：尊重减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* 滚动条美化 */
@@ -85,15 +109,21 @@ input, textarea {
 }
 
 ::-webkit-scrollbar-track {
-  background: rgba(0, 0, 0, 0.05);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 4px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--color-border-hover);
+}
+
+/* 选中文本 */
+::selection {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 </style>

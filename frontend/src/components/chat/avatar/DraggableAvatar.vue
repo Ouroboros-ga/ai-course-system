@@ -10,7 +10,7 @@
       <slot name="video">
         <!-- 外部传入视频组件，这里留空壳 -->
         <div class="avatar-placeholder-content">
-          <span class="avatar-icon">🎙️</span>
+          <span class="avatar-icon"><Mic :size="48" /></span>
           <span class="avatar-text">数字人</span>
         </div>
       </slot>
@@ -20,6 +20,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue';
+import { Mic } from 'lucide-vue-next';
 
 const avatarRef = ref(null);
 const x = ref(window.innerWidth - 320); // 初始位置：右侧
@@ -79,28 +80,28 @@ onUnmounted(() => {
 <style scoped>
 .draggable-avatar {
   position: fixed;
-  z-index: 99999; /* 最高层级，永远在最上层 */
+  z-index: var(--z-modal); /* 最高层级，永远在最上层 */
   width: 280px;
   height: 360px;
   cursor: grab;
   user-select: none;
-  transition: box-shadow 0.2s ease;
+  transition: box-shadow var(--duration-normal) var(--ease);
 }
 
 .draggable-avatar:active {
   cursor: grabbing;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+  box-shadow: var(--shadow-lg);
 }
 
 .avatar-video-placeholder {
   width: 100%;
   height: 100%;
-  border-radius: 20px;
+  border-radius: var(--radius-xl);
   /* 浅色清新渐变 */
-  background: linear-gradient(135deg, #f0f4ff 0%, #f8f0ff 100%);
-  box-shadow: 0 4px 16px rgba(129, 140, 248, 0.1);
+  background: var(--color-primary-light);
+  box-shadow: var(--shadow-md);
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--color-border);
 }
 
 .avatar-placeholder-content {
@@ -110,15 +111,16 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  color: #6b7280; /* 浅灰色文字，更柔和 */
-  font-size: 16px;
+  gap: var(--space-3);
+  color: var(--color-text-muted); /* 浅灰色文字，更柔和 */
+  font-size: var(--text-base);
   font-weight: 500;
 }
 
 .avatar-icon {
-  font-size: 48px;
-  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.05));
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
 }
 
 /* 移动端适配：缩小尺寸 */
@@ -128,10 +130,7 @@ onUnmounted(() => {
     height: 260px;
   }
   .avatar-placeholder-content {
-    font-size: 14px;
-  }
-  .avatar-icon {
-    font-size: 36px;
+    font-size: var(--text-sm);
   }
 }
 </style>

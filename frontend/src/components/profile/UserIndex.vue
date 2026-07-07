@@ -8,6 +8,7 @@ import MyCourses from "./LoginIn/courses/MyCourses.vue"
 import TeacherAvatarSetting from './LoginIn/menu/TeacherAvatarSetting.vue'
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
+import { Settings, Palette, BookOpen, LogOut, Bot } from 'lucide-vue-next'
 
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
@@ -215,30 +216,43 @@ const handleLogout = () => {
             <div class="user-id">ID: {{ counter.userData.id }}</div>
           </div>
         </div>
-        <button class="logout-btn" @click="handleLogout">退出登录</button>
+        <button class="logout-btn" @click="handleLogout">
+          <LogOut :size="18" />
+          退出登录
+        </button>
       </div>
 
       <StatsCard :userStats="{ courseCount, chatCount, studyMinutes }" />
 
       <div class="menu-grid">
         <div class="menu-item" @click="handleOpenSettings">
-          <div class="menu-icon">⚙️</div>
+          <div class="menu-icon menu-icon--primary">
+            <Settings :size="28" />
+          </div>
           <div>账户设置</div>
         </div>
         <div class="menu-item" @click="handleOpenPreference">
-          <div class="menu-icon">🎨</div>
+          <div class="menu-icon menu-icon--secondary">
+            <Palette :size="28" />
+          </div>
           <div>学习偏好</div>
         </div>
         <div class="menu-item" @click="handleMyCourses">
-          <div class="menu-icon">📚</div>
+          <div class="menu-icon menu-icon--info">
+            <BookOpen :size="28" />
+          </div>
           <div>我的课程</div>
         </div>
         <div class="menu-item" @click="handleLogout">
-          <div class="menu-icon">🚪</div>
+          <div class="menu-icon menu-icon--danger">
+            <LogOut :size="28" />
+          </div>
           <div>退出登录</div>
         </div>
         <div class="menu-item" @click="handleOpenAvatarSetting">
-          <div class="menu-icon">🤖</div>
+          <div class="menu-icon menu-icon--warning">
+            <Bot :size="28" />
+          </div>
           <div>教师数字人设置</div>
         </div>
       </div>
@@ -291,80 +305,145 @@ const handleLogout = () => {
   width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding: 40px 20px;
+  gap: var(--space-5);
+  padding: var(--space-7) var(--space-5);
   box-sizing: border-box;
 }
 
 .user-card {
-  background: white;
-  padding: 24px;
-  border-radius: 16px;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+  background: var(--color-surface);
+  padding: var(--space-6);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border);
 }
+
 .user-info {
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
 }
+
 .avatar {
   width: 60px;
   height: 60px;
-  border-radius: 50%;
-  background: #6366f1;
-  color: white;
+  border-radius: var(--radius-full);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 24px;
-  font-weight: bold;
+  font-size: var(--text-2xl);
+  font-weight: var(--font-bold);
+  flex-shrink: 0;
 }
+
 .username {
-  font-size: 20px;
-  font-weight: 600;
+  font-size: var(--text-xl);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
 }
+
 .user-id {
-  font-size: 14px;
-  color: #666;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
 }
+
 .logout-btn {
   width: 100%;
-  padding: 12px;
-  border: 1px solid #f43f5e;
-  border-radius: 12px;
-  background: white;
-  color: #f43f5e;
-  font-size: 16px;
+  padding: var(--space-3);
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  color: var(--color-danger);
+  font-size: var(--text-base);
+  font-family: var(--font-sans);
+  font-weight: var(--font-medium);
   cursor: pointer;
+  transition: background-color var(--duration-normal) var(--ease),
+              border-color var(--duration-normal) var(--ease),
+              color var(--duration-normal) var(--ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.logout-btn:hover {
+  background: var(--color-danger-light);
+  border-color: var(--color-danger-hover);
+  color: var(--color-danger-hover);
 }
 
 .menu-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   grid-template-rows: repeat(3, 1fr);
-  gap: 16px;
+  gap: var(--space-4);
 }
+
 .menu-item {
-  background: white;
-  padding: 24px 16px;
-  border-radius: 16px;
+  background: var(--color-surface);
+  padding: var(--space-6) var(--space-4);
+  border-radius: var(--radius-xl);
   text-align: center;
   cursor: pointer;
-  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-  transition: transform 0.2s;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border);
+  transition: transform var(--duration-normal) var(--ease),
+              box-shadow var(--duration-normal) var(--ease);
 }
+
+.menu-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
 .menu-item:active {
-  transform: scale(0.97);
+  transform: translateY(0);
 }
+
 .menu-icon {
-  font-size: 28px;
-  margin-bottom: 8px;
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto var(--space-2);
 }
+
+.menu-icon--primary {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+}
+
+.menu-icon--secondary {
+  background: var(--color-secondary-light);
+  color: var(--color-secondary);
+}
+
+.menu-icon--info {
+  background: var(--color-info-light);
+  color: var(--color-info);
+}
+
+.menu-icon--danger {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
+}
+
+.menu-icon--warning {
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+}
+
 .menu-item div:last-child {
-  font-size: 15px;
-  font-weight: 500;
-  color: #333;
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
+  color: var(--color-text);
 }
 
 .settings-overlay {
@@ -375,16 +454,33 @@ const handleLogout = () => {
   height: 100%;
   background: rgba(0, 0, 0, 0.4);
   backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
   display: flex;
   justify-content: center;
   align-items: center;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 
 .fade-enter-active, .fade-leave-active {
-  transition: opacity 0.3s ease;
+  transition: opacity var(--duration-normal) var(--ease);
 }
 .fade-enter-from, .fade-leave-to {
   opacity: 0;
+}
+
+/* --- 响应式 --- */
+@media (max-width: 768px) {
+  .profile-content {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  .menu-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .user-card {
+    padding: var(--space-5);
+  }
 }
 </style>

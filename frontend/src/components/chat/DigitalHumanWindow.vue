@@ -6,30 +6,30 @@
         <div v-if="isOpen" class="dh-panel floating-panel">
           <div class="dh-header">
             <div class="dh-title">
-              <span class="dh-avatar">🎬</span>
+              <span class="dh-avatar"><Clapperboard :size="18" /></span>
               <span>智课视频播放器</span>
             </div>
             <div class="dh-actions">
-              <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
-              <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
-              <button class="dh-btn" @click="isOpen = false" title="最小化">➖</button>
+              <button class="dh-btn" @click="refreshVideos" title="刷新视频列表"><RefreshCw :size="14" /></button>
+              <button class="dh-btn" @click="clearVideo" title="清空"><Trash2 :size="14" /></button>
+              <button class="dh-btn" @click="isOpen = false" title="最小化"><Minus :size="14" /></button>
             </div>
           </div>
           <div class="dh-content">
         <div v-if="!videoUrl && videos.length === 0" class="dh-empty">
-          <div class="dh-empty-icon">📺</div>
+          <div class="dh-empty-icon"><MonitorPlay :size="48" /></div>
           <p>暂无视频</p>
           <p class="dh-empty-hint">请先上传视频或输入视频URL</p>
           <div class="quick-actions">
-            <button class="quick-btn primary" @click="loadSampleVideo">📡 示例视频</button>
-            <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput">🔗 手动输入</button>
-            <button class="quick-btn" @click="triggerFileSelect">📂 本地文件</button>
+            <button class="quick-btn primary" @click="loadSampleVideo"><Radio :size="14" /> 示例视频</button>
+            <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput"><Link :size="14" /> 手动输入</button>
+            <button class="quick-btn" @click="triggerFileSelect"><FolderOpen :size="14" /> 本地文件</button>
           </div>
         </div>
 
         <div v-if="videos.length > 0 && !videoUrl" class="video-list">
           <div class="video-list-header">
-            <span>📁 本地视频 ({{ videos.length }})</span>
+            <span><Folder :size="14" /> 本地视频 ({{ videos.length }})</span>
           </div>
           <div
             v-for="video in videos"
@@ -37,7 +37,7 @@
             class="video-item"
             @click="loadLocalVideo(video)"
           >
-            <span class="video-icon">🎬</span>
+            <span class="video-icon"><Clapperboard :size="18" /></span>
             <span class="video-name">{{ video.filename }}</span>
             <span class="video-size">{{ formatSize(video.size) }}</span>
           </div>
@@ -76,11 +76,12 @@
           <div class="video-controls-overlay" v-if="showControls">
             <div class="controls-top">
               <span class="video-title">{{ currentVideoName }}</span>
-              <button class="close-btn" @click="clearVideo">✕</button>
+              <button class="close-btn" @click="clearVideo"><X :size="12" /></button>
             </div>
             <div class="controls-center">
               <button class="play-btn" @click="togglePlay">
-                {{ isPlaying ? '⏸️' : '▶️' }}
+                <Pause v-if="isPlaying" :size="20" />
+                <Play v-else :size="20" />
               </button>
             </div>
             <div class="controls-bottom">
@@ -95,7 +96,10 @@
                 <span>{{ formatTime(duration) }}</span>
               </div>
               <div class="volume-control">
-                <span @click="toggleMute">{{ isMuted ? '🔇' : '🔊' }}</span>
+                <span @click="toggleMute" class="volume-icon">
+                  <VolumeX v-if="isMuted" :size="16" />
+                  <Volume2 v-else :size="16" />
+                </span>
                 <input
                   type="range"
                   min="0"
@@ -130,7 +134,7 @@
 
       <Transition name="bounce">
         <div v-if="!isOpen" class="dh-fab" @click="isOpen = true">
-          <span class="fab-icon">🎬</span>
+          <span class="fab-icon"><Clapperboard :size="24" /></span>
         </div>
       </Transition>
     </template>
@@ -140,30 +144,30 @@
       <div class="dh-panel">
         <div class="dh-header">
           <div class="dh-title">
-            <span class="dh-avatar">🎬</span>
+            <span class="dh-avatar"><Clapperboard :size="18" /></span>
             <span>智课视频播放器</span>
           </div>
           <div class="dh-actions">
-            <button class="dh-btn" @click="refreshVideos" title="刷新视频列表">🔄</button>
-            <button class="dh-btn" @click="clearVideo" title="清空">🗑️</button>
+            <button class="dh-btn" @click="refreshVideos" title="刷新视频列表"><RefreshCw :size="14" /></button>
+            <button class="dh-btn" @click="clearVideo" title="清空"><Trash2 :size="14" /></button>
           </div>
         </div>
 
         <div class="dh-content">
           <div v-if="!videoUrl && videos.length === 0" class="dh-empty">
-            <div class="dh-empty-icon">📺</div>
+            <div class="dh-empty-icon"><MonitorPlay :size="48" /></div>
             <p>暂无视频</p>
             <p class="dh-empty-hint">请先上传视频或输入视频URL</p>
             <div class="quick-actions">
-              <button class="quick-btn primary" @click="loadSampleVideo">📡 示例视频</button>
-              <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput">🔗 手动输入</button>
-              <button class="quick-btn" @click="triggerFileSelect">📂 本地文件</button>
+              <button class="quick-btn primary" @click="loadSampleVideo"><Radio :size="14" /> 示例视频</button>
+              <button class="quick-btn" @click="showUrlInput = true" v-if="!showUrlInput"><Link :size="14" /> 手动输入</button>
+              <button class="quick-btn" @click="triggerFileSelect"><FolderOpen :size="14" /> 本地文件</button>
             </div>
           </div>
 
           <div v-if="videos.length > 0 && !videoUrl" class="video-list">
             <div class="video-list-header">
-              <span>📁 本地视频 ({{ videos.length }})</span>
+              <span><Folder :size="14" /> 本地视频 ({{ videos.length }})</span>
             </div>
             <div
               v-for="video in videos"
@@ -171,7 +175,7 @@
               class="video-item"
               @click="loadLocalVideo(video)"
             >
-              <span class="video-icon">🎬</span>
+              <span class="video-icon"><Clapperboard :size="18" /></span>
               <span class="video-name">{{ video.filename }}</span>
               <span class="video-size">{{ formatSize(video.size) }}</span>
             </div>
@@ -210,11 +214,12 @@
             <div class="video-controls-overlay" v-if="showControls">
               <div class="controls-top">
                 <span class="video-title">{{ currentVideoName }}</span>
-                <button class="close-btn" @click="clearVideo">✕</button>
+                <button class="close-btn" @click="clearVideo"><X :size="12" /></button>
               </div>
               <div class="controls-center">
                 <button class="play-btn" @click="togglePlay">
-                  {{ isPlaying ? '⏸️' : '▶️' }}
+                  <Pause v-if="isPlaying" :size="20" />
+                  <Play v-else :size="20" />
                 </button>
               </div>
               <div class="controls-bottom">
@@ -229,7 +234,10 @@
                   <span>{{ formatTime(duration) }}</span>
                 </div>
                 <div class="volume-control">
-                  <span @click="toggleMute">{{ isMuted ? '🔇' : '🔊' }}</span>
+                  <span @click="toggleMute" class="volume-icon">
+                    <VolumeX v-if="isMuted" :size="16" />
+                    <Volume2 v-else :size="16" />
+                  </span>
                   <input
                     type="range"
                     min="0"
@@ -266,6 +274,7 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick } from 'vue'
+import { Clapperboard, RefreshCw, Trash2, Minus, MonitorPlay, Radio, Link, FolderOpen, Folder, VolumeX, Volume2, X, Play, Pause } from 'lucide-vue-next'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import api from '@/api/index.js'
 
@@ -523,9 +532,9 @@ onMounted(() => {
 
 .digital-human-wrapper.floating {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
-  z-index: 999;
+  right: var(--space-5);
+  bottom: var(--space-5);
+  z-index: var(--z-overlay);
   width: auto;
   height: auto;
 }
@@ -533,7 +542,7 @@ onMounted(() => {
 .dh-panel {
   width: 100%;
   height: 100%;
-  background: white;
+  background: var(--color-surface);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -544,51 +553,51 @@ onMounted(() => {
   height: 580px;
   max-width: calc(100vw - 40px);
   max-height: calc(100vh - 40px);
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15), 0 2px 8px rgba(0, 0, 0, 0.08);
-  border: 1px solid #e5e7eb;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  border: 1px solid var(--color-border);
 }
 
 .dh-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  padding: var(--space-3) var(--space-4);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   flex-shrink: 0;
 }
 
 .dh-title {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   font-weight: 600;
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 .dh-avatar {
-  font-size: 18px;
+  display: flex;
+  align-items: center;
 }
 
 .dh-actions {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .dh-btn {
   width: 28px;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   border: none;
   background: rgba(255, 255, 255, 0.2);
-  color: white;
-  font-size: 12px;
+  color: var(--color-text-inverse);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: background 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .dh-btn:hover {
@@ -600,7 +609,7 @@ onMounted(() => {
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: #1a1a1a;
+  background: var(--color-surface-2);
 }
 
 .dh-empty {
@@ -609,145 +618,159 @@ onMounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  color: #9ca3af;
-  padding: 20px;
+  color: var(--color-text-muted);
+  padding: var(--space-5);
 }
 
 .dh-empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
+  color: var(--color-text-muted);
 }
 
 .dh-empty p {
-  margin: 4px 0;
-  font-size: 14px;
+  margin: var(--space-1) 0;
+  font-size: var(--text-sm);
 }
 
 .dh-empty-hint {
-  font-size: 12px !important;
-  color: #6b7280 !important;
+  font-size: var(--text-xs) !important;
+  color: var(--color-text-muted) !important;
 }
 
 .quick-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
 }
 
 .quick-btn {
-  padding: 8px 16px;
-  background: #374151;
-  color: white;
-  border: none;
-  border-radius: 20px;
-  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-3);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background var(--duration-normal) var(--ease), border-color var(--duration-normal) var(--ease);
 }
 
 .quick-btn:hover {
-  background: #4b5563;
+  background: var(--color-border-hover);
 }
 
 .quick-btn.primary {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  border: none;
 }
 
 .quick-btn.primary:hover {
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  box-shadow: var(--shadow-primary);
 }
 
 .video-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: var(--space-2);
 }
 
 .video-list-header {
-  padding: 8px 12px;
-  color: #9ca3af;
-  font-size: 12px;
-  border-bottom: 1px solid #374151;
-  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-2);
 }
 
 .video-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 8px;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .video-item:hover {
-  background: #2a2a2a;
+  background: var(--color-surface-3);
 }
 
 .video-icon {
-  font-size: 18px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-secondary);
 }
 
 .video-name {
   flex: 1;
-  color: #e5e7eb;
-  font-size: 13px;
+  color: var(--color-text);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .video-size {
-  color: #6b7280;
-  font-size: 11px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
 
 .url-input-section {
-  padding: 16px;
-  background: #2a2a2a;
+  padding: var(--space-4);
+  background: var(--color-surface-2);
 }
 
 .url-input {
   width: 100%;
-  padding: 10px 14px;
-  background: #1a1a1a;
-  border: 1px solid #4b5563;
-  border-radius: 8px;
-  color: white;
-  font-size: 13px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: var(--text-xs);
   outline: none;
   box-sizing: border-box;
 }
 
 .url-input:focus {
-  border-color: #6366f1;
+  border-color: var(--color-primary);
 }
 
 .url-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
   justify-content: flex-end;
 }
 
 .action-btn {
-  padding: 6px 16px;
+  padding: var(--space-1) var(--space-4);
   border: none;
-  border-radius: 16px;
-  font-size: 12px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .action-btn.cancel {
-  background: #4b5563;
-  color: #e5e7eb;
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+}
+
+.action-btn.cancel:hover {
+  background: var(--color-border-hover);
 }
 
 .action-btn.confirm {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
 }
 
 .action-btn:disabled {
@@ -758,7 +781,7 @@ onMounted(() => {
 .video-wrapper {
   flex: 1;
   position: relative;
-  background: #000;
+  background: var(--color-text);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -789,7 +812,7 @@ onMounted(() => {
     rgba(0,0,0,0.7) 100%
   );
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition: opacity var(--duration-slow) var(--ease);
 }
 
 .video-wrapper:hover .video-controls-overlay {
@@ -800,12 +823,12 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-3);
 }
 
 .video-title {
-  color: white;
-  font-size: 12px;
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -815,12 +838,14 @@ onMounted(() => {
 .close-btn {
   background: rgba(255,255,255,0.2);
   border: none;
-  color: white;
+  color: var(--color-text-inverse);
   width: 24px;
   height: 24px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   cursor: pointer;
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .controls-center {
@@ -832,32 +857,33 @@ onMounted(() => {
 .play-btn {
   background: rgba(255,255,255,0.2);
   border: none;
-  color: white;
+  color: var(--color-text-inverse);
   width: 48px;
   height: 48px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   cursor: pointer;
-  font-size: 20px;
-  transition: transform 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .play-btn:hover {
-  transform: scale(1.1);
   background: rgba(255,255,255,0.3);
 }
 
 .controls-bottom {
-  padding: 10px 14px;
+  padding: var(--space-2) var(--space-3);
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .progress-container {
   flex: 1;
   height: 4px;
   background: rgba(255,255,255,0.2);
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   cursor: pointer;
   position: relative;
 }
@@ -872,7 +898,7 @@ onMounted(() => {
   left: 0;
   height: 100%;
   background: rgba(255,255,255,0.3);
-  border-radius: 2px;
+  border-radius: var(--radius-full);
 }
 
 .progress-played {
@@ -880,8 +906,8 @@ onMounted(() => {
   top: 0;
   left: 0;
   height: 100%;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  border-radius: 2px;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-full);
 }
 
 .progress-thumb {
@@ -889,27 +915,32 @@ onMounted(() => {
   top: 50%;
   width: 12px;
   height: 12px;
-  background: white;
-  border-radius: 50%;
+  background: var(--color-text-inverse);
+  border-radius: var(--radius-full);
   transform: translate(-50%, -50%);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  box-shadow: var(--shadow-sm);
 }
 
 .time-display {
   display: flex;
-  gap: 4px;
-  color: white;
-  font-size: 11px;
-  font-family: monospace;
+  gap: var(--space-1);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
   white-space: nowrap;
 }
 
 .volume-control {
   display: flex;
   align-items: center;
-  gap: 4px;
-  color: white;
-  font-size: 12px;
+  gap: var(--space-1);
+  color: var(--color-text-inverse);
+}
+
+.volume-icon {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
 }
 
 .volume-slider {
@@ -917,7 +948,7 @@ onMounted(() => {
   height: 4px;
   -webkit-appearance: none;
   background: rgba(255,255,255,0.3);
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   cursor: pointer;
 }
 
@@ -925,8 +956,8 @@ onMounted(() => {
   -webkit-appearance: none;
   width: 10px;
   height: 10px;
-  background: white;
-  border-radius: 50%;
+  background: var(--color-text-inverse);
+  border-radius: var(--radius-full);
 }
 
 .loading-overlay {
@@ -937,54 +968,54 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  color: white;
-  font-size: 12px;
+  gap: var(--space-2);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
 }
 
 .dh-input-area {
-  padding: 12px;
-  background: #2a2a2a;
+  padding: var(--space-3);
+  background: var(--color-surface-2);
   flex-shrink: 0;
 }
 
 .add-video-btn {
   width: 100%;
-  padding: 10px;
-  background: #374151;
-  color: #e5e7eb;
-  border: none;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: var(--space-2);
+  background: var(--color-surface-3);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .add-video-btn:hover {
-  background: #4b5563;
+  background: var(--color-border-hover);
 }
 
 .dh-fab {
   width: 56px;
   height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  border-radius: var(--radius-full);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4);
-  transition: all 0.3s ease;
+  box-shadow: var(--shadow-primary);
+  transition: box-shadow var(--duration-slow) var(--ease);
 }
 
 .dh-fab:hover {
-  transform: scale(1.1);
-  box-shadow: 0 6px 24px rgba(99, 102, 241, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 
 .fab-icon {
-  font-size: 24px;
+  display: flex;
+  align-items: center;
 }
 
 .slide-fade-enter-active {

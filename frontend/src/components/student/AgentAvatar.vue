@@ -38,8 +38,8 @@ const { agentLabel } = inject(STUDENT_LEARNING_KEY)
 }
 
 .ai-avatar {
-  background: linear-gradient(135deg, #dbeafe, #bfdbfe);
-  color: #2563eb;
+  background: linear-gradient(135deg, var(--color-primary-light), var(--color-info-light));
+  color: var(--color-primary);
 }
 
 .avatar-img {
@@ -51,7 +51,7 @@ const { agentLabel } = inject(STUDENT_LEARNING_KEY)
 
 .agent-label {
   font-size: 11px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   font-weight: 500;
   white-space: nowrap;
 }

@@ -4,7 +4,7 @@
       <div class="ppt-gen-modal" @click.stop>
         <div class="modal-header">
           <h3>AI生成PPT课件</h3>
-          <button class="close-btn" @click="handleClose">✕</button>
+          <button class="close-btn" @click="handleClose"><X :size="20" /></button>
         </div>
 
         <div class="modal-body">
@@ -41,9 +41,14 @@
                     class="form-input kp-input"
                     :placeholder="`知识点 ${idx + 1}`"
                   />
-                  <button class="kp-remove" @click="removeKnowledgePoint(idx)" v-if="form.knowledgePoints.length > 1">✕</button>
+                  <button class="kp-remove" @click="removeKnowledgePoint(idx)" v-if="form.knowledgePoints.length > 1">
+                    <X :size="16" />
+                  </button>
                 </div>
-                <button class="kp-add" @click="addKnowledgePoint">+ 添加知识点</button>
+                <button class="kp-add" @click="addKnowledgePoint">
+                  <Plus :size="14" />
+                  添加知识点
+                </button>
               </div>
             </div>
 
@@ -92,7 +97,7 @@
 
           <!-- 步骤3: 完成 -->
           <div v-if="step === 3" class="step-content result">
-            <div class="result-icon success">✅</div>
+            <div class="result-icon success"><CheckCircle :size="48" /></div>
             <h4>PPT课件生成完成！</h4>
             <div class="result-info">
               <div class="info-item">
@@ -112,7 +117,7 @@
 
           <!-- 步骤4: 失败 -->
           <div v-if="step === 4" class="step-content result">
-            <div class="result-icon error">❌</div>
+            <div class="result-icon error"><XCircle :size="48" /></div>
             <h4>PPT生成失败</h4>
             <p class="error-message">{{ errorMessage }}</p>
             <button class="action-btn" @click="step = 1">重新尝试</button>
@@ -127,7 +132,7 @@
             @click="handleGenerate"
             :disabled="!form.topic.trim() || isGenerating"
           >
-            {{ isGenerating ? '生成中...' : '🚀 生成PPT课件' }}
+            {{ isGenerating ? '生成中...' : '生成PPT课件' }}
           </button>
           <button v-if="step === 2" class="cancel-btn" @click="handleCancelGenerate">取消生成</button>
           <button v-if="step === 3" class="generate-btn" @click="handleOpenCourse">打开课程</button>
@@ -141,6 +146,7 @@
 <script setup>
 import { ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { X, CheckCircle, XCircle, Plus } from 'lucide-vue-next'
 import { generatePPTSync, getPPTThemes } from '@/api/ppt_generation.js'
 import { showToast } from '@/utils/toast'
 
@@ -298,51 +304,53 @@ function handleClose() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--z-modal);
 }
 
 .ppt-gen-modal {
-  background: #fff;
-  border-radius: 12px;
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
   width: 600px;
   max-width: 90vw;
   max-height: 85vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 24px;
-  border-bottom: 1px solid #e8e8e8;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 18px;
-  color: #1a1a1a;
+  font-size: var(--text-lg);
+  color: var(--color-text);
 }
 
 .close-btn {
   background: none;
   border: none;
-  font-size: 20px;
+  color: var(--color-text-muted);
   cursor: pointer;
-  color: #999;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .close-btn:hover {
-  background: #f5f5f5;
-  color: #333;
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .modal-body {
-  padding: 24px;
+  padding: var(--space-5);
   overflow-y: auto;
   flex: 1;
 }
@@ -350,14 +358,14 @@ function handleClose() {
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 24px;
-  border-top: 1px solid #e8e8e8;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
 }
 
 /* 表单样式 */
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .form-group.half {
@@ -366,71 +374,71 @@ function handleClose() {
 
 .form-label {
   display: block;
-  font-size: 14px;
-  font-weight: 500;
-  color: #333;
-  margin-bottom: 6px;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--color-text);
+  margin-bottom: var(--space-1);
 }
 
 .required {
-  color: #ff4d4f;
+  color: var(--color-danger);
 }
 
 .form-input {
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
-  transition: border-color 0.3s;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  transition: border-color var(--duration-slow) var(--ease);
   box-sizing: border-box;
 }
 
 .form-input:focus {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
   outline: none;
-  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.1);
+  box-shadow: 0 0 0 2px var(--color-primary-light);
 }
 
 .form-textarea {
   width: 100%;
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
   resize: vertical;
   min-height: 80px;
   box-sizing: border-box;
 }
 
 .form-textarea:focus {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
   outline: none;
 }
 
 .form-select {
   flex: 1;
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  font-size: 14px;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
 }
 
 .form-row {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 /* 知识点输入 */
 .knowledge-points-input {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .kp-row {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 
@@ -441,45 +449,50 @@ function handleClose() {
 .kp-remove {
   background: none;
   border: none;
-  color: #ff4d4f;
+  color: var(--color-danger);
   cursor: pointer;
-  font-size: 16px;
-  padding: 4px;
+  padding: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .kp-add {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   background: none;
-  border: 1px dashed #d9d9d9;
-  padding: 6px 12px;
-  border-radius: 6px;
+  border: 1px dashed var(--color-border);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  color: #1890ff;
+  color: var(--color-primary);
   font-size: 13px;
-  transition: border-color 0.3s;
+  transition: border-color var(--duration-slow) var(--ease);
 }
 
 .kp-add:hover {
-  border-color: #1890ff;
+  border-color: var(--color-primary);
 }
 
 /* 模板选择 */
 .template-select {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .refresh-btn {
-  padding: 8px 12px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  background: #fafafa;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
   cursor: pointer;
   font-size: 13px;
   white-space: nowrap;
 }
 
 .refresh-btn:hover {
-  background: #f0f0f0;
+  background: var(--color-surface-3);
 }
 
 .refresh-btn:disabled {
@@ -490,15 +503,17 @@ function handleClose() {
 .checkbox-label {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 14px;
-  color: #333;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text);
   padding-top: 28px;
+  cursor: pointer;
 }
 
 .checkbox-label input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
+  width: var(--space-4);
+  height: var(--space-4);
+  cursor: pointer;
 }
 
 /* 生成中 */
@@ -506,50 +521,50 @@ function handleClose() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 40px 20px;
+  padding: var(--space-7) var(--space-5);
   text-align: center;
 }
 
 .generating-animation {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .spinner.large {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #e8e8e8;
-  border-top-color: #1890ff;
-  border-radius: 50%;
+  width: var(--space-8);
+  height: var(--space-8);
+  border: 4px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-full);
   animation: spin 1s linear infinite;
 }
 
 .generating-text h4 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  color: #1a1a1a;
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-lg);
+  color: var(--color-text);
 }
 
 .generating-text p {
   margin: 0;
-  color: #666;
-  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
 }
 
 .progress-bar-container {
   width: 100%;
   max-width: 400px;
   height: 6px;
-  background: #e8e8e8;
-  border-radius: 3px;
-  margin-top: 20px;
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-top: var(--space-5);
   overflow: hidden;
 }
 
 .progress-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #1890ff, #36cfc9);
-  border-radius: 3px;
-  transition: width 0.5s ease;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-sm);
+  transition: width var(--duration-slow) var(--ease);
 }
 
 /* 结果 */
@@ -557,25 +572,32 @@ function handleClose() {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 30px 20px;
+  padding: 30px var(--space-5);
   text-align: center;
 }
 
 .result-icon {
-  font-size: 48px;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
+}
+
+.result-icon.success {
+  color: var(--color-success);
+}
+
+.result-icon.error {
+  color: var(--color-danger);
 }
 
 .result h4 {
-  margin: 0 0 16px;
-  font-size: 18px;
-  color: #1a1a1a;
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-lg);
+  color: var(--color-text);
 }
 
 .result-info {
-  background: #f6f8fa;
-  border-radius: 8px;
-  padding: 16px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
   width: 100%;
   max-width: 400px;
 }
@@ -583,55 +605,57 @@ function handleClose() {
 .info-item {
   display: flex;
   justify-content: space-between;
-  padding: 6px 0;
-  font-size: 14px;
+  padding: var(--space-1) 0;
+  font-size: var(--text-sm);
 }
 
 .info-label {
-  color: #666;
+  color: var(--color-text-secondary);
 }
 
 .info-value {
-  color: #1a1a1a;
-  font-weight: 500;
+  color: var(--color-text);
+  font-weight: var(--font-medium);
 }
 
 .error-message {
-  color: #ff4d4f;
-  font-size: 14px;
-  margin: 12px 0;
+  color: var(--color-danger);
+  font-size: var(--text-sm);
+  margin: var(--space-3) 0;
   max-width: 400px;
 }
 
 /* 按钮 */
 .cancel-btn {
-  padding: 8px 20px;
-  border: 1px solid #d9d9d9;
-  border-radius: 6px;
-  background: #fff;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   cursor: pointer;
-  font-size: 14px;
-  color: #333;
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .cancel-btn:hover {
-  border-color: #1890ff;
-  color: #1890ff;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .generate-btn {
-  padding: 8px 20px;
+  padding: var(--space-2) var(--space-5);
   border: none;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #1890ff, #36cfc9);
-  color: #fff;
+  border-radius: var(--radius-sm);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  transition: all var(--duration-normal) var(--ease);
 }
 
-.generate-btn:hover {
-  opacity: 0.9;
+.generate-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
 }
 
 .generate-btn:disabled {
@@ -640,17 +664,42 @@ function handleClose() {
 }
 
 .action-btn {
-  padding: 8px 20px;
-  border: 1px solid #1890ff;
-  border-radius: 6px;
-  background: #fff;
-  color: #1890ff;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-primary);
   cursor: pointer;
-  font-size: 14px;
-  margin-top: 12px;
+  font-size: var(--text-sm);
+  margin-top: var(--space-3);
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .action-btn:hover {
-  background: #e6f7ff;
+  background: var(--color-primary-light);
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 768px) {
+  .ppt-gen-modal {
+    width: 95vw;
+    max-height: 90vh;
+  }
+
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .checkbox-label {
+    padding-top: 0;
+  }
+
+  .template-select {
+    flex-direction: column;
+  }
 }
 </style>

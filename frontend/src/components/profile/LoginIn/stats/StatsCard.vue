@@ -30,36 +30,35 @@ const props = defineProps({
 
 <style scoped>
 .stats-card {
-  background: #ffffff;
-  border-radius: 20px;
-  padding: 28px 30px; /* 整体内边距缩小，更紧凑 */
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: 28px 30px;
   display: flex;
   align-items: center;
   justify-content: space-around;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--color-border);
 }
 .stats-item {
   text-align: center;
 }
 .stats-number {
-  /* 原 52px → 改为 36px，数字字体缩小 */
   font-size: 36px;
-  font-weight: 800;
-  color: #667eea;
+  font-weight: var(--font-bold);
+  color: var(--color-primary);
   line-height: 1.1;
 }
 .stats-label {
-  /* 原 16px → 改为 14px，文字字体缩小 */
-  font-size: 14px;
-  color: #666;
-  margin-top: 6px; /* 文字和数字间距略缩小 */
-  font-weight: 500;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-1);
+  font-weight: var(--font-medium);
 }
 
 /* 移动端适配也同步缩小 */
 @media (max-width: 768px) {
-  .stats-card { padding: 20px 20px; }
+  .stats-card { padding: var(--space-5) var(--space-5); }
   .stats-number { font-size: 28px; }
-  .stats-label { font-size: 12px; }
+  .stats-label { font-size: var(--text-xs); }
 }
 </style>

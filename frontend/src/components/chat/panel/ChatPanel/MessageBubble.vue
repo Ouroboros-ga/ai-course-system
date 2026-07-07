@@ -126,15 +126,15 @@ const renderedContent = computed(() => {
 }
 
 .bubble-ai {
-  background: white;
-  color: #374151;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   border-top-left-radius: 4px;
-  border-color: #f3f4f6;
+  border-color: var(--color-surface-2);
 }
 
 .bubble-user {
-  background: #2563eb;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   border-top-right-radius: 4px;
 }
 
@@ -146,13 +146,13 @@ const renderedContent = computed(() => {
 .resume-action {
   margin-top: 12px;
   padding-top: 12px;
-  border-top: 1px solid #eff6ff;
+  border-top: 1px solid var(--color-primary-light);
 }
 
 .btn-resume {
   width: 100%;
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   border: none;
   padding: 8px;
   border-radius: 8px;
@@ -173,11 +173,11 @@ const renderedContent = computed(() => {
 
 .tag-item {
   font-size: 10px;
-  background: #eff6ff;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   padding: 2px 6px;
   border-radius: 4px;
-  border: 1px solid #dbeafe;
+  border: 1px solid var(--color-primary-light);
 }
 
 /* ===== Markdown 样式 ===== */
@@ -212,14 +212,14 @@ const renderedContent = computed(() => {
 }
 
 .message-bubble :deep(a) {
-  color: #2563eb;
+  color: var(--color-primary);
   text-decoration: none;
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s;
 }
 
 .bubble-user :deep(a) {
-  color: #bfdbfe;
+  color: var(--color-info-light);
 }
 
 .message-bubble :deep(a:hover) {
@@ -228,8 +228,8 @@ const renderedContent = computed(() => {
 
 /* 行内代码 */
 .message-bubble :deep(code:not(pre code)) {
-  background: #f1f5f9;
-  color: #e11d48;
+  background: var(--color-surface-2);
+  color: var(--color-danger);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.9em;
@@ -238,7 +238,7 @@ const renderedContent = computed(() => {
 
 .bubble-user :deep(code:not(pre code)) {
   background: rgba(255, 255, 255, 0.2);
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 /* 代码块 */
@@ -246,7 +246,7 @@ const renderedContent = computed(() => {
   margin: 0.8em 0;
   border-radius: 8px;
   overflow: hidden;
-  background: #1e293b;
+  background: var(--color-surface-2);
 }
 
 .message-bubble :deep(pre code) {
@@ -257,23 +257,23 @@ const renderedContent = computed(() => {
   line-height: 1.5;
   font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
   background: transparent !important;
-  color: #e2e8f0;
+  color: var(--color-border);
 }
 
 /* 引用块 */
 .message-bubble :deep(blockquote) {
   margin: 0.8em 0;
   padding: 8px 16px;
-  border-left: 3px solid #2563eb;
-  background: #f0f9ff;
+  border-left: 3px solid var(--color-primary);
+  background: var(--color-info-light);
   border-radius: 0 6px 6px 0;
-  color: #475569;
+  color: var(--color-text-secondary);
 }
 
 .bubble-user :deep(blockquote) {
   border-left-color: rgba(255, 255, 255, 0.5);
   background: rgba(255, 255, 255, 0.1);
-  color: #e0e7ff;
+  color: var(--color-primary-light);
 }
 
 .message-bubble :deep(blockquote p:last-child) {
@@ -306,13 +306,13 @@ const renderedContent = computed(() => {
 
 .message-bubble :deep(th),
 .message-bubble :deep(td) {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   padding: 6px 10px;
   text-align: left;
 }
 
 .message-bubble :deep(th) {
-  background: #f8fafc;
+  background: var(--color-bg);
   font-weight: 600;
 }
 
@@ -321,7 +321,7 @@ const renderedContent = computed(() => {
 }
 
 .message-bubble :deep(tr:nth-child(even) td) {
-  background: #fafbfc;
+  background: var(--color-surface-2);
 }
 
 .bubble-user :deep(tr:nth-child(even) td) {
@@ -332,7 +332,7 @@ const renderedContent = computed(() => {
 .message-bubble :deep(hr) {
   border: none;
   height: 1px;
-  background: #e5e7eb;
+  background: var(--color-border);
   margin: 1em 0;
 }
 
@@ -368,7 +368,7 @@ const renderedContent = computed(() => {
   text-align: center;
   margin: 1em 0;
   padding: 0.8em;
-  background: #f8fafc;
+  background: var(--color-bg);
   border-radius: 6px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -390,8 +390,8 @@ const renderedContent = computed(() => {
 
 /* 公式错误 */
 .message-bubble :deep(.katex-error) {
-  color: #dc2626;
-  background: #fee2e2;
+  color: var(--color-danger-hover);
+  background: var(--color-danger-light);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
@@ -400,6 +400,6 @@ const renderedContent = computed(() => {
 
 .bubble-user :deep(.katex-error) {
   background: rgba(220, 38, 38, 0.2);
-  color: #fca5a5;
+  color: var(--color-danger);
 }
 </style>

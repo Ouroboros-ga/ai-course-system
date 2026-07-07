@@ -28,7 +28,7 @@ const { selectedCourse } = learning
 .markdown-body {
   font-size: 15px;
   line-height: 1.8;
-  color: #374151;
+  color: var(--color-text);
 }
 
 .markdown-body h1, .markdown-body h2, .markdown-body h3,
@@ -36,45 +36,45 @@ const { selectedCourse } = learning
   margin-top: 1em;
   margin-bottom: 0.5em;
   font-weight: 600;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .markdown-body h2 {
   font-size: 1.4em;
-  border-bottom: 2px solid #e5e7eb;
+  border-bottom: 2px solid var(--color-border);
   padding-bottom: 0.3em;
 }
 
 .markdown-body p { margin: 0.8em 0; }
 
 .markdown-body code:not(pre code) {
-  background: #f1f5f9;
-  color: #dc2626;
+  background: var(--color-surface-2);
+  color: var(--color-danger);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.9em;
 }
 
 .markdown-body pre {
-  background: #1e293b;
-  border-radius: 8px;
-  padding: 12px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
   overflow-x: auto;
   margin: 1em 0;
 }
 
 .markdown-body pre code {
   background: transparent;
-  color: #e2e8f0;
+  color: var(--color-border);
 }
 
 .markdown-body blockquote {
-  border-left: 4px solid #6366f1;
-  background: #f8fafc;
-  padding: 8px 16px;
+  border-left: 4px solid var(--color-primary);
+  background: var(--color-bg);
+  padding: var(--space-2) var(--space-4);
   margin: 1em 0;
-  border-radius: 0 8px 8px 0;
-  color: #4b5563;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+  color: var(--color-text-secondary);
 }
 
 .markdown-body ul, .markdown-body ol {
@@ -91,8 +91,8 @@ const { selectedCourse } = learning
   text-align: center;
   margin: 1em 0;
   padding: 1em;
-  background: #f8fafc;
-  border-radius: 8px;
+  background: var(--color-bg);
+  border-radius: var(--radius-md);
   overflow-x: auto;
 }
 </style>
@@ -101,7 +101,7 @@ const { selectedCourse } = learning
 .student-dashboard {
   width: 100%;
   height: calc(100vh - var(--navbar-height));
-  background: #f5f7fa;
+  background: var(--color-bg);
   overflow: hidden;
 }
 

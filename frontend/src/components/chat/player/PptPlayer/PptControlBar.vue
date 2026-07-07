@@ -2,7 +2,7 @@
   <div class="ai-control-bar">
     <!-- 左侧：循环 + 倍速 + 音量 -->
     <div class="control-left">
-      <button class="btn-icon" @click="emit('loop')" title="循环播放">↺</button>
+      <button class="btn-icon" @click="emit('loop')" title="循环播放"><RotateCcw :size="16" /></button>
 
       <div class="speed-wrapper">
         <button class="speed-tag" @click="toggleSpeedMenu">
@@ -23,7 +23,7 @@
       <!-- 音量控制区域 -->
       <div class="volume-wrapper">
         <button class="btn-icon" @click="toggleVolumeMenu" title="音量">
-          {{ volumeIcon }}
+          <component :is="volumeIcon" :size="16" />
         </button>
 
         <!-- 音量弹出层 -->
@@ -51,8 +51,8 @@
     <!-- 右侧代码保持不变 -->
     <div class="control-right">
       <button class="btn-play" @click="$emit('toggle')">
-        <span v-if="isPlaying">⏸</span>
-        <span v-else>▶</span>
+        <Pause v-if="isPlaying" :size="16" />
+        <Play v-else :size="16" />
       </button>
       <span class="time-display">{{ formatTime(currentTime) }}</span>
       <div class="progress-container" @click="handleSeek">
@@ -67,6 +67,7 @@
 
 <script setup>
 import { ref, computed, onUnmounted } from 'vue';
+import { RotateCcw, Pause, Play, VolumeX, Volume1, Volume2 } from 'lucide-vue-next';
 
 // Props 定义
 const props = defineProps({
@@ -90,9 +91,9 @@ const volumeTrack = ref(null); // 获取 DOM 引用
 const progressPercent = computed(() => props.duration ? (props.currentTime / props.duration) * 100 : 0);
 const volumePercent = computed(() => props.volume * 100);
 const volumeIcon = computed(() => {
-  if (props.volume === 0) return '🔇';
-  if (props.volume < 0.5) return '🔈';
-  return '🔊';
+  if (props.volume === 0) return VolumeX;
+  if (props.volume < 0.5) return Volume1;
+  return Volume2;
 });
 const isMuted = computed(() => props.volume === 0);
 
@@ -180,84 +181,87 @@ const handleSeek = (e) => {
 
 .ai-control-bar {
   position: absolute;
-  bottom: 16px;
+  bottom: var(--space-4);
   left: 50%;
   transform: translateX(-50%);
   width: 90%;
   background: rgba(255, 255, 255, 0.95);
   backdrop-filter: blur(8px);
-  border-radius: 16px;
-  padding: 10px 20px;
+  border-radius: var(--radius-xl);
+  padding: var(--space-2) var(--space-5);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 10px 25px -5px rgba(37, 99, 235, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.5);
+  box-shadow: var(--shadow-primary);
+  border: 1px solid var(--color-border);
 }
 
 .control-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .control-right {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 16px;
-  margin-left: 24px;
+  gap: var(--space-4);
+  margin-left: var(--space-6);
 }
 
 .btn-icon {
   background: none;
   border: none;
   cursor: pointer;
-  font-size: 16px;
-  color: #6b7280;
-  padding: 4px;
-  transition: color 0.2s;
+  color: var(--color-text-muted);
+  padding: var(--space-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-normal) var(--ease);
 }
-.btn-icon:hover { color: #2563eb; }
+.btn-icon:hover { color: var(--color-primary); }
 
 /* 倍速菜单样式 */
 .speed-wrapper { position: relative; }
 .speed-tag {
-  font-size: 12px;
-  font-family: monospace;
-  background: #f3f4f6;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  background: var(--color-surface-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .speed-menu {
   position: absolute;
   bottom: 30px;
   left: 0;
-  background: white;
-  border-radius: 8px;
-  padding: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-1);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  z-index: 10;
+  gap: var(--space-1);
+  z-index: var(--z-overlay);
 }
 .speed-menu button {
   background: none;
   border: none;
-  padding: 4px 8px;
-  border-radius: 4px;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--text-xs);
   text-align: left;
+  color: var(--color-text-secondary);
 }
 .speed-menu button.active {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   font-weight: bold;
 }
 
@@ -269,23 +273,23 @@ const handleSeek = (e) => {
   bottom: 30px;
   left: 50%;
   transform: translateX(-50%);
-  background: white;
-  border-radius: 8px;
-  padding: 12px 8px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-2);
+  box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  z-index: 10;
+  gap: var(--space-2);
+  z-index: var(--z-overlay);
   height: 120px;
 }
 
 .volume-slider-track {
   width: 6px;
   height: 70px;
-  background: #e5e7eb;
-  border-radius: 3px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
   position: relative;
   cursor: pointer;
 }
@@ -295,60 +299,59 @@ const handleSeek = (e) => {
   bottom: 0;
   left: 0;
   width: 100%;
-  background: #2563eb;
-  border-radius: 3px;
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
   pointer-events: none;
 }
 
-/* 👇 修改点：使用 transform 进行中心对齐 */
+/* 使用 transform 进行中心对齐 */
 .volume-slider-thumb {
   position: absolute;
   left: 50%;
-  /*
-    关键修改：
-    translate(-50%, 50%) 意味着：
-    1. X轴左移自身宽度的50%（水平居中）
-    2. Y轴下移自身高度的50%（让中心点对齐进度条位置，而不是底边对齐）
-  */
   transform: translate(-50%, 50%);
   width: 12px;
   height: 12px;
-  background: #2563eb;
-  border-radius: 50%;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-sm);
   pointer-events: none;
 }
 
 .mute-btn {
-  font-size: 10px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   background: none;
   border: none;
   cursor: pointer;
   white-space: nowrap;
+  transition: color var(--duration-normal) var(--ease);
 }
-.mute-btn:hover { color: #2563eb; }
+.mute-btn:hover { color: var(--color-primary); }
 
 .btn-play {
   width: 40px;
   height: 40px;
-  border-radius: 50%;
-  background: #2563eb;
-  color: white;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   border: none;
-  font-size: 16px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.3);
+  box-shadow: var(--shadow-primary);
+  transition: background var(--duration-normal) var(--ease);
+}
+
+.btn-play:hover {
+  background: var(--color-primary-hover);
 }
 
 .time-display {
-  font-size: 12px;
-  font-family: monospace;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
   min-width: 40px;
   text-align: center;
 }
@@ -364,16 +367,16 @@ const handleSeek = (e) => {
 .progress-track {
   width: 100%;
   height: 6px;
-  background: #e5e7eb;
-  border-radius: 99px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
   overflow: hidden;
   position: relative;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #60a5fa);
-  border-radius: 99px;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-full);
   transition: width 0.1s linear;
 }
 </style>

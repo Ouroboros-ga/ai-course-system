@@ -2,19 +2,19 @@
   <div class="menu-grid-card">
     <div class="menu-grid">
       <div class="menu-item" @click="handleOpenSettings">
-        <span class="icon">⚙️</span>
+        <span class="icon"><Settings :size="24" /></span>
         <span class="text">账户设置</span>
       </div>
       <div class="menu-item" @click="handleOpenPreference">
-        <span class="icon">🎨</span>
+        <span class="icon"><Palette :size="24" /></span>
         <span class="text">学习偏好</span>
       </div>
       <div class="menu-item" @click="handleMyCourses">
-        <span class="icon">📚</span>
+        <span class="icon"><BookOpen :size="24" /></span>
         <span class="text">我的课程</span>
       </div>
       <div class="menu-item" @click="handleLogout">
-        <span class="icon">🚪</span>
+        <span class="icon"><LogOut :size="24" /></span>
         <span class="text">退出登录</span>
       </div>
     </div>
@@ -22,6 +22,8 @@
 </template>
 
 <script setup>
+import { Settings, Palette, BookOpen, LogOut } from 'lucide-vue-next'
+
 const emit = defineEmits(['openSettings', 'openPreference', 'myCourses', 'logout'])
 
 const handleOpenSettings = () => emit('openSettings')
@@ -34,17 +36,17 @@ const handleLogout = () => emit('logout')
 .menu-grid-card {
   width: 100%;
   padding: 30px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   grid-template-rows: repeat(2, 1fr);
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .menu-item {
@@ -52,26 +54,39 @@ const handleLogout = () => emit('logout')
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 24px 20px;
-  background: rgba(0, 0, 0, 0.02);
-  border-radius: 12px;
+  padding: var(--space-5) var(--space-5);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .menu-item:hover {
-  background: rgba(102, 126, 234, 0.08);
-  transform: translateY(-4px);
+  background: var(--color-primary-light);
+  transform: translateY(-2px);
 }
 
 .menu-item .icon {
-  font-size: 24px;
-  color: #667eea;
-  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
 }
 
 .menu-item .text {
-  font-size: 14px;
-  color: #444;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 768px) {
+  .menu-grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .menu-grid-card {
+    padding: var(--space-5);
+  }
 }
 </style>

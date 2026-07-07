@@ -10,17 +10,18 @@
         class="expand-icon"
         @click.stop="handleToggle"
       >
-        {{ isExpanded ? '▼' : '▶' }}
+        <ChevronDown v-if="isExpanded" :size="14" />
+        <ChevronRight v-else :size="14" />
       </span>
       <span v-else class="expand-placeholder"></span>
       
-      <span class="node-icon">{{ getNodeIcon() }}</span>
+      <span class="node-icon"><component :is="getNodeIcon()" :size="14" /></span>
       
       <span class="node-title" :title="nodeTitle">
         {{ nodeTitle }}
       </span>
       
-      <span v-if="node.highlight" class="highlight-badge">⭐</span>
+      <span v-if="node.highlight" class="highlight-badge"><Star :size="12" /></span>
     </div>
     
     <div v-if="hasChildren && isExpanded" class="node-children">
@@ -40,6 +41,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { BookOpen, Folder, Star, FileText, ChevronDown, ChevronRight } from 'lucide-vue-next'
 
 const props = defineProps({
   node: {
@@ -89,10 +91,10 @@ const isSelected = computed(() => {
 })
 
 const getNodeIcon = () => {
-  if (isRoot.value) return '📚'
-  if (hasChildren.value) return '📁'
-  if (props.node.highlight) return '⭐'
-  return '📄'
+  if (isRoot.value) return BookOpen
+  if (hasChildren.value) return Folder
+  if (props.node.highlight) return Star
+  return FileText
 }
 
 const handleSelect = () => {
@@ -112,26 +114,26 @@ const handleToggle = () => {
 .node-header {
   display: flex;
   align-items: center;
-  padding: 8px 12px;
-  border-radius: 8px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s ease;
-  gap: 8px;
+  transition: background var(--duration-normal) var(--ease);
+  gap: var(--space-2);
 }
 
 .node-header:hover {
-  background: #f3f4f6;
+  background: var(--color-surface-2);
 }
 
 .is-root > .node-header {
   font-weight: 600;
-  color: #4f46e5;
-  background: #f5f3ff;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .is-selected > .node-header {
-  background: #e0e7ff;
-  color: #4f46e5;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .expand-icon {
@@ -140,14 +142,13 @@ const handleToggle = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: color var(--duration-normal) var(--ease);
 }
 
 .expand-icon:hover {
-  color: #4f46e5;
+  color: var(--color-primary);
 }
 
 .expand-placeholder {
@@ -156,28 +157,41 @@ const handleToggle = () => {
 }
 
 .node-icon {
-  font-size: 14px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-secondary);
+}
+
+.is-root .node-icon,
+.is-selected .node-icon {
+  color: var(--color-primary);
 }
 
 .node-title {
   flex: 1;
-  font-size: 13px;
-  color: #374151;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .is-selected .node-title {
-  color: #4f46e5;
+  color: var(--color-primary);
   font-weight: 500;
 }
 
+.is-root .node-title {
+  color: var(--color-primary);
+}
+
 .highlight-badge {
-  font-size: 12px;
+  display: flex;
+  align-items: center;
+  color: var(--color-warning);
 }
 
 .node-children {
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 </style>

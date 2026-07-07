@@ -1,9 +1,14 @@
 <script setup>
 import { ref } from 'vue'
 import { showToast } from '@/utils/toast.js'
+import { LogIn, UserPlus, User, Lock, Eye, EyeOff } from 'lucide-vue-next'
 
 // 状态管理：当前是否为登录模式
 const isLoginMode = ref(true)
+
+// 密码显示切换
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
 
 // 自定义信号
 const emit = defineEmits(['loginSend', 'registerSend']);
@@ -79,12 +84,14 @@ const handleSubmit = () => {
           :class="{ active: isLoginMode }"
           @click="isLoginMode = true"
         >
+          <LogIn :size="18" />
           登录
         </button>
         <button
           :class="{ active: !isLoginMode }"
           @click="isLoginMode = false"
         >
+          <UserPlus :size="18" />
           注册
         </button>
         <!-- 滑块背景 -->
@@ -100,23 +107,38 @@ const handleSubmit = () => {
           <div v-if="isLoginMode" key="login" class="form-content">
             <div class="input-group">
               <label>用户名</label>
-              <input
-                type="text"
-                v-model="form.username"
-                placeholder="请输入用户名 (仅英文字母)"
-                maxlength="80"
-                required
-              />
+              <div class="input-wrapper">
+                <User class="input-icon" :size="20" />
+                <input
+                  type="text"
+                  v-model="form.username"
+                  placeholder="请输入用户名 (仅英文字母)"
+                  maxlength="80"
+                  required
+                />
+              </div>
             </div>
             <div class="input-group">
               <label>密码</label>
-              <input
-                type="password"
-                v-model="form.password"
-                placeholder="请输入密码 (6-18位字母或数字)"
-                maxlength="18"
-                required
-              />
+              <div class="input-wrapper has-toggle">
+                <Lock class="input-icon" :size="20" />
+                <input
+                  :type="showPassword ? 'text' : 'password'"
+                  v-model="form.password"
+                  placeholder="请输入密码 (6-18位字母或数字)"
+                  maxlength="18"
+                  required
+                />
+                <button
+                  type="button"
+                  class="password-toggle"
+                  @click="showPassword = !showPassword"
+                  :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                >
+                  <Eye v-if="showPassword" :size="20" />
+                  <EyeOff v-else :size="20" />
+                </button>
+              </div>
             </div>
             <div class="options">
               <label class="remember">
@@ -130,33 +152,60 @@ const handleSubmit = () => {
           <div v-else key="register" class="form-content">
             <div class="input-group">
               <label>用户名</label>
-              <input
-                type="text"
-                v-model="form.username"
-                placeholder="请输入用户名 (仅英文字母)"
-                maxlength="80"
-                required
-              />
+              <div class="input-wrapper">
+                <User class="input-icon" :size="20" />
+                <input
+                  type="text"
+                  v-model="form.username"
+                  placeholder="请输入用户名 (仅英文字母)"
+                  maxlength="80"
+                  required
+                />
+              </div>
             </div>
             <div class="input-group">
               <label>密码</label>
-              <input
-                type="password"
-                v-model="form.password"
-                placeholder="请输入密码 (6-18位字母或数字)"
-                maxlength="18"
-                required
-              />
+              <div class="input-wrapper has-toggle">
+                <Lock class="input-icon" :size="20" />
+                <input
+                  :type="showPassword ? 'text' : 'password'"
+                  v-model="form.password"
+                  placeholder="请输入密码 (6-18位字母或数字)"
+                  maxlength="18"
+                  required
+                />
+                <button
+                  type="button"
+                  class="password-toggle"
+                  @click="showPassword = !showPassword"
+                  :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                >
+                  <Eye v-if="showPassword" :size="20" />
+                  <EyeOff v-else :size="20" />
+                </button>
+              </div>
             </div>
             <div class="input-group">
               <label>确认密码</label>
-              <input
-                type="password"
-                v-model="form.confirmPassword"
-                placeholder="再次输入密码"
-                maxlength="18"
-                required
-              />
+              <div class="input-wrapper has-toggle">
+                <Lock class="input-icon" :size="20" />
+                <input
+                  :type="showConfirmPassword ? 'text' : 'password'"
+                  v-model="form.confirmPassword"
+                  placeholder="再次输入密码"
+                  maxlength="18"
+                  required
+                />
+                <button
+                  type="button"
+                  class="password-toggle"
+                  @click="showConfirmPassword = !showConfirmPassword"
+                  :aria-label="showConfirmPassword ? '隐藏密码' : '显示密码'"
+                >
+                  <Eye v-if="showConfirmPassword" :size="20" />
+                  <EyeOff v-else :size="20" />
+                </button>
+              </div>
             </div>
           </div>
 
@@ -164,6 +213,8 @@ const handleSubmit = () => {
 
         <!-- 提交按钮 -->
         <button type="submit" class="submit-btn">
+          <LogIn v-if="isLoginMode" :size="20" />
+          <UserPlus v-else :size="20" />
           {{ isLoginMode ? '登 录' : '创 建 账 户' }}
         </button>
       </form>
@@ -178,23 +229,22 @@ const handleSubmit = () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   pointer-events: none;
-
-  transform: translateY(-80px);
+  transform: translateY(calc(-1 * var(--space-12)));
 }
 
 /* --- 毛玻璃卡片 --- */
 .glass-card {
   position: relative;
   width: 420px;
-  padding: 40px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
-  z-index: 10;
-  color: #555;
+  padding: var(--space-7);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
+  z-index: var(--z-overlay);
+  color: var(--color-text-secondary);
   pointer-events: auto;
 }
 
@@ -202,39 +252,44 @@ const handleSubmit = () => {
 .tab-header {
   display: flex;
   position: relative;
-  margin-bottom: 35px;
-  background: rgba(0, 0, 0, 0.03);
-  border-radius: 12px;
-  padding: 4px;
+  margin-bottom: var(--space-7);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-1);
 }
 
 .tab-header button {
   flex: 1;
-  padding: 12px 0;
+  padding: var(--space-3) 0;
   background: transparent;
   border: none;
-  color: #888;
-  font-size: 16px;
-  font-weight: 500;
+  color: var(--color-text-muted);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
+  font-family: var(--font-sans);
   cursor: pointer;
-  transition: color 0.3s ease;
+  transition: color var(--duration-slow) var(--ease);
   z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .tab-header button.active {
-  color: #333;
+  color: var(--color-text);
 }
 
 .tab-header .slider {
   position: absolute;
-  top: 4px;
-  left: 4px;
-  width: calc(50% - 4px);
-  height: calc(100% - 8px);
-  background: #fff;
-  border-radius: 8px;
-  transition: transform 0.35s ease-in-out;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  top: var(--space-1);
+  left: var(--space-1);
+  width: calc(50% - var(--space-1));
+  height: calc(100% - var(--space-2));
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  transition: transform var(--duration-slow) var(--ease-spring);
+  box-shadow: var(--shadow-sm);
   z-index: 1;
 }
 
@@ -249,38 +304,85 @@ const handleSubmit = () => {
 }
 
 .input-group {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-6);
 }
 
 .input-group label {
   display: block;
-  margin-bottom: 8px;
-  font-size: 13px;
-  font-weight: 500;
-  color: #666;
+  margin-bottom: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  color: var(--color-text-secondary);
 }
 
-.input-group input {
+.input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: var(--space-4);
+  color: var(--color-text-muted);
+  pointer-events: none;
+  transition: color var(--duration-normal) var(--ease);
+  flex-shrink: 0;
+}
+
+.input-wrapper:focus-within .input-icon {
+  color: var(--color-primary);
+}
+
+.input-wrapper input {
   width: 100%;
-  padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.5);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
-  color: #333;
-  font-size: 15px;
+  padding: var(--space-4);
+  padding-left: calc(var(--space-5) + var(--space-5));
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-family: var(--font-sans);
   outline: none;
-  transition: all 0.3s ease;
+  transition: border-color var(--duration-normal) var(--ease),
+              box-shadow var(--duration-normal) var(--ease);
   box-sizing: border-box;
 }
 
-.input-group input::placeholder {
-  color: #a0a0a0;
+.input-wrapper input::placeholder {
+  color: var(--color-text-muted);
 }
 
-.input-group input:focus {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: #a8c0ff;
-  box-shadow: 0 0 0 3px rgba(168, 192, 255, 0.15);
+.input-wrapper input:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
+}
+
+/* 有密码切换按钮时，输入框右侧留空间 */
+.input-wrapper.has-toggle input {
+  padding-right: calc(var(--space-5) + var(--space-5));
+}
+
+/* 密码切换按钮 */
+.password-toggle {
+  position: absolute;
+  right: var(--space-4);
+  background: transparent;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-1);
+  border-radius: var(--radius-sm);
+  transition: color var(--duration-normal) var(--ease);
+  flex-shrink: 0;
+}
+
+.password-toggle:hover {
+  color: var(--color-primary);
 }
 
 /* 辅助选项 */
@@ -288,57 +390,60 @@ const handleSubmit = () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 30px;
-  font-size: 13px;
+  margin-bottom: var(--space-7);
+  font-size: var(--text-sm);
 }
 
 .options .remember {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   cursor: pointer;
-  color: #666;
+  color: var(--color-text-secondary);
 }
 
-.options .forgot {
-  color: #888;
-  text-decoration: none;
-  transition: color 0.3s;
-}
-
-.options .forgot:hover {
-  color: #333;
+.options .remember input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
 }
 
 /* --- 提交按钮 --- */
 .submit-btn {
   width: 100%;
-  padding: 14px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: var(--space-4);
+  background: var(--gradient-primary);
   border: none;
-  border-radius: 12px;
-  color: #fff;
-  font-size: 16px;
-  font-weight: 500;
+  border-radius: var(--radius-lg);
+  color: var(--color-primary-foreground);
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  font-family: var(--font-sans);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+  transition: transform var(--duration-normal) var(--ease),
+              box-shadow var(--duration-normal) var(--ease);
+  box-shadow: var(--shadow-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .submit-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
 }
 
 .submit-btn:active {
   transform: translateY(0);
-  box-shadow: 0 2px 10px rgba(102, 126, 234, 0.4);
+  box-shadow: var(--shadow-primary);
 }
 
 /* --- 动画定义 --- */
 .soft-transition-enter-active,
 .soft-transition-leave-active {
-  transition: all 0.35s ease;
+  transition: all var(--duration-slow) var(--ease);
 }
 
 .soft-transition-enter-from {
@@ -361,5 +466,14 @@ const handleSubmit = () => {
 .form-wrapper {
   position: relative;
   width: 100%;
+}
+
+/* --- 响应式 --- */
+@media (max-width: 768px) {
+  .glass-card {
+    width: calc(100% - var(--space-6));
+    max-width: 420px;
+    padding: var(--space-5);
+  }
 }
 </style>

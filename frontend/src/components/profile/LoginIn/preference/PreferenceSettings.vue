@@ -2,7 +2,7 @@
   <div class="preferences-modal">
     <!-- 顶部导航 -->
     <div class="modal-header">
-      <button class="back-btn" @click="goBack">← 返回</button>
+      <button class="back-btn" @click="goBack"><ArrowLeft :size="16" /> 返回</button>
       <h2 class="modal-title">学习偏好设置</h2>
     </div>
 
@@ -11,31 +11,31 @@
       <!-- 界面主题 -->
       <div class="preference-item" @click="toggleTheme">
         <div class="item-left">
-          <span class="icon">🎨</span>
+          <span class="icon"><Palette :size="20" /></span>
           <span class="label">界面主题</span>
         </div>
         <div class="item-right">
           <span class="value">跟随系统</span>
-          <span class="arrow">›</span>
+          <span class="arrow"><ChevronRight :size="18" /></span>
         </div>
       </div>
 
       <!-- AI 答疑模式 -->
       <div class="preference-item" @click="toggleAnswerMode">
         <div class="item-left">
-          <span class="icon">🤖</span>
+          <span class="icon"><Bot :size="20" /></span>
           <span class="label">AI 答疑模式</span>
         </div>
         <div class="item-right">
           <span class="value">{{ answerMode === 'concise' ? '简洁模式' : '详细模式' }}</span>
-          <span class="arrow">›</span>
+          <span class="arrow"><ChevronRight :size="18" /></span>
         </div>
       </div>
 
       <!-- 消息通知 -->
       <div class="preference-item">
         <div class="item-left">
-          <span class="icon">🔔</span>
+          <span class="icon"><Bell :size="20" /></span>
           <span class="label">消息通知</span>
         </div>
         <div class="notification-options">
@@ -53,14 +53,14 @@
       <!-- 学习提醒频率 -->
       <div class="preference-item" @click="toggleRemindFreq">
         <div class="item-left">
-          <span class="icon">📅</span>
+          <span class="icon"><Calendar :size="20" /></span>
           <span class="label">学习提醒频率</span>
         </div>
         <div class="item-right">
           <span class="value">
             {{ remindFreq === 'daily' ? '每日提醒' : remindFreq === 'weekly' ? '每周提醒' : '不提醒' }}
           </span>
-          <span class="arrow">›</span>
+          <span class="arrow"><ChevronRight :size="18" /></span>
         </div>
       </div>
     </div>
@@ -72,6 +72,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { ArrowLeft, Palette, Bot, Bell, Calendar, ChevronRight } from 'lucide-vue-next'
 
 // 状态
 const answerMode = ref('concise')
@@ -106,104 +107,122 @@ const toggleRemindFreq = () => {
 
 <style scoped>
 .preferences-modal {
-  background: #fff;
-  border-radius: 20px;
-  padding: 20px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
   max-width: 420px;
   margin: 0 auto;
-  box-shadow: 0 8px 30px rgba(0,0,0,0.1);
-  font-family: 'Segoe UI', Roboto, sans-serif;
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
 }
 
 .modal-header {
   display: flex;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 .back-btn {
   background: none;
   border: none;
-  font-size: 16px;
-  color: #4f46e5;
+  font-size: var(--text-base);
+  color: var(--color-primary);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 .modal-title {
-  font-size: 20px;
-  font-weight: 600;
-  margin-left: 12px;
-  color: #0f172a;
+  font-size: var(--text-xl);
+  font-weight: var(--font-semibold);
+  margin-left: var(--space-3);
+  color: var(--color-text);
 }
 
 .preferences-list {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .preference-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 12px;
-  border-radius: 12px;
-  margin-bottom: 8px;
+  padding: 14px var(--space-3);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-2);
   cursor: pointer;
-  transition: background 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 .preference-item:hover {
-  background: #f8fafc;
+  background: var(--color-surface-2);
 }
 
 .item-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .icon {
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
 }
 .label {
-  font-size: 16px;
-  color: #0f172a;
+  font-size: var(--text-base);
+  color: var(--color-text);
 }
 
 .item-right {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #64748b;
+  gap: var(--space-2);
+  color: var(--color-text-secondary);
 }
 .value {
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 .arrow {
-  font-size: 18px;
-  color: #94a3b8;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted);
 }
 
 .notification-options {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .notification-option {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: #64748b;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
 }
 
 .save-btn {
   width: 100%;
   padding: 14px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   border: none;
-  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
-  color: #fff;
-  font-size: 16px;
-  font-weight: 500;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: transform 0.2s ease;
+  transition: transform var(--duration-normal) var(--ease);
 }
 .save-btn:hover {
   transform: translateY(-2px);
+}
+
+@media (max-width: 768px) {
+  .preferences-modal {
+    max-width: 100%;
+  }
+
+  .notification-options {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 }
 </style>

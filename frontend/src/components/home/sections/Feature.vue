@@ -1,302 +1,278 @@
+<script setup>
+import { ref } from 'vue'
+import {
+  FileText,
+  MessageCircle,
+  Network,
+  Video,
+  TrendingUp,
+  Brain,
+  Heart,
+  ArrowRight,
+} from 'lucide-vue-next'
+
+const features = [
+  {
+    icon: FileText,
+    title: 'AI 课件生成',
+    desc: '上传文档自动生成结构化课件，信息完整、排版规范。',
+  },
+  {
+    icon: MessageCircle,
+    title: '实时问答',
+    desc: '随时提问，AI 结合课件精准回答，支持语音交互。',
+  },
+  {
+    icon: Network,
+    title: '知识图谱',
+    desc: '自动构建学科知识网络，可视化呈现知识点关联。',
+  },
+  {
+    icon: Video,
+    title: '数字人视频',
+    desc: 'AI 数字人逐页讲解课件，打造沉浸式学习体验。',
+  },
+  {
+    icon: TrendingUp,
+    title: '学习进度',
+    desc: '清晰记录学习轨迹，智能续接上次进度不停顿。',
+  },
+  {
+    icon: Brain,
+    title: '认知分析',
+    desc: '多维度分析学习行为，精准定位薄弱知识点。',
+  },
+]
+
+const liked = ref(features.map(() => true))
+
+const toggleLike = (index) => {
+  liked.value[index] = !liked.value[index]
+}
+
+const goToChat = () => {
+  window.location.href = 'http://localhost:5173/chat#/chat'
+}
+</script>
+
 <template>
   <div class="feature-section slide">
     <!-- 标题区 -->
     <div class="feature-header">
+      <span class="eyebrow">核心功能</span>
       <h2 class="section-title">开启智能学习时代</h2>
-      <p class="section-subtitle">
-        AI 伴学，让每一次学习<br />
-        都更高效
-      </p>
+      <p class="section-subtitle">AI 伴学，让每一次学习都更高效</p>
     </div>
 
-    <!-- 卡片区域 -->
-    <div class="card-wrapper">
-      <div class="feature-grid">
-        <!-- 第一行 -->
-        <div class="feature-card row-1 col-2">
-          <div class="card-inner">
-            <div class="card-icon blue-bg">📄</div>
-            <h3>课件智能生成</h3>
-            <p>上传文档自动生成结构化课件，规范信息完整展示。</p>
-            <div class="card-actions">
-              <button class="action-btn heart-btn" @click="toggleLike(0)">
-                {{ liked[0] ? '❤️' : '♡' }}
-              </button>
-              <button class="action-btn" @click="goToChat">→</button>
-            </div>
-          </div>
+    <!-- 卡片网格 -->
+    <div class="feature-grid">
+      <div
+        v-for="(item, index) in features"
+        :key="index"
+        class="feature-card"
+      >
+        <div class="card-icon">
+          <component :is="item.icon" :size="26" />
         </div>
-
-        <div class="feature-card row-1 col-3">
-          <div class="card-inner">
-            <div class="card-icon yellow-bg">✏️</div>
-            <h3>随堂习题产出</h3>
-            <p>随时随地，自动生成练习与互动任务，沟通协作很便捷。</p>
-            <div class="card-actions">
-              <button class="action-btn heart-btn" @click="toggleLike(1)">
-                {{ liked[1] ? '❤️' : '♡' }}
-              </button>
-              <button class="action-btn" @click="goToChat">→</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- 第二行 -->
-        <div class="feature-card row-2 col-1">
-          <div class="card-inner">
-            <div class="card-icon circle-blue">🔗</div>
-            <h3>进度智能续接</h3>
-            <p>清晰备注记录学习轨迹，团队合作更顺畅。</p>
-            <div class="card-actions">
-              <button class="action-btn heart-btn" @click="toggleLike(2)">
-                {{ liked[2] ? '❤️' : '♡' }}
-              </button>
-              <button class="action-btn" @click="goToChat">→</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="feature-card row-2 col-2">
-          <div class="card-inner">
-            <div class="card-icon orange-bg">🗣️</div>
-            <h3>AI 实时讲解</h3>
-            <p>上传课件后，AI 自动朗读页面内容，逐页讲解知识点。</p>
-            <div class="card-actions">
-              <button class="action-btn heart-btn" @click="toggleLike(3)">
-                {{ liked[3] ? '❤️' : '♡' }}
-              </button>
-              <button class="action-btn" @click="goToChat">→</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="feature-card row-2 col-3">
-          <div class="card-inner">
-            <div class="card-icon chat-blue">💬</div>
-            <h3>智能问答互动</h3>
-            <p>随时提问，AI 结合课件精准回答，支持语音交互。</p>
-            <div class="card-actions">
-              <button class="action-btn heart-btn" @click="toggleLike(4)">
-                {{ liked[4] ? '❤️' : '♡' }}
-              </button>
-              <button class="action-btn" @click="goToChat">→</button>
-            </div>
-          </div>
+        <h3 class="card-title">{{ item.title }}</h3>
+        <p class="card-desc">{{ item.desc }}</p>
+        <div class="card-actions">
+          <button
+            class="action-btn heart-btn"
+            :aria-label="liked[index] ? '取消收藏' : '收藏'"
+            @click="toggleLike(index)"
+          >
+            <Heart
+              :size="18"
+              :fill="liked[index] ? 'currentColor' : 'none'"
+            />
+          </button>
+          <button
+            class="action-btn"
+            aria-label="前往体验"
+            @click="goToChat"
+          >
+            <ArrowRight :size="18" />
+          </button>
         </div>
       </div>
     </div>
   </div>
 </template>
 
-<script setup>
-import { ref } from 'vue'
-
-// ✅ 默认全部都是红心
-const liked = ref([true, true, true, true, true])
-
-// 切换爱心（带动画）
-const toggleLike = (index) => {
-  liked.value[index] = !liked.value[index]
-}
-
-// 跳转到聊天界面
-const goToChat = () => {
-  window.location.href = 'http://localhost:5173/chat#/chat'
-}
-</script>
-
 <style scoped>
-/* 核心容器 */
 .feature-section {
   width: 100%;
   min-height: calc(100vh - var(--navbar-height));
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 60px 5%;
-  background: #ffffff;
-  overflow-x: hidden;
-  gap: 80px;
-  transition: all 0.5s ease;
+  padding: var(--space-10) var(--space-8);
+  background: var(--color-surface);
+  gap: var(--space-10);
 }
 
-/* 标题区样式 */
+/* ── 标题区 ── */
 .feature-header {
-  flex: 0 0 auto;
-  text-align: left;
+  text-align: center;
+  max-width: 600px;
+}
+
+.eyebrow {
+  display: inline-block;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-primary);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: var(--space-3);
 }
 
 .section-title {
-  font-size: 3.5rem;
-  font-weight: 800;
-  color: #1a1a1a;
-  line-height: 1.2;
-  margin: 0;
+  font-size: var(--text-4xl);
+  font-weight: var(--font-extrabold);
+  color: var(--color-text);
+  line-height: var(--leading-tight);
+  margin: 0 0 var(--space-4);
 }
 
 .section-subtitle {
-  margin-top: 24px;
-  color: #6b7280;
-  font-size: 1.4rem;
-  line-height: 1.7;
+  font-size: var(--text-xl);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+  margin: 0;
 }
 
-/* 卡片阵列容器 */
-.card-wrapper {
-  flex: 0 1 auto;
-  display: flex;
-  justify-content: center;
-}
-
+/* ── 卡片网格 ── */
 .feature-grid {
   display: grid;
-  grid-template-columns: repeat(3, 280px);
-  grid-auto-rows: 320px;
-  gap: 25px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-5);
+  width: 100%;
+  max-width: 1024px;
 }
 
-/* 卡片斜度与正向修正 */
 .feature-card {
-  background: #f7f9fc;
-  border-radius: 20px;
-  transform: skewX(-10deg);
-  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
-}
-
-.card-inner {
-  transform: skewX(10deg);
-  padding: 40px 30px;
-  height: 100%;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-7) var(--space-6);
   display: flex;
   flex-direction: column;
+  transition: var(--transition-all);
+  cursor: default;
 }
 
 .feature-card:hover {
-  background: #fff;
-  box-shadow: 0 20px 40px rgba(0,0,0,0.08);
-  transform: skewX(-10deg) translateY(-10px);
-  z-index: 10;
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  border-color: var(--color-primary-light);
 }
 
-/* 错位排版控制 */
-.col-1 { grid-column: 1; }
-.col-2 { grid-column: 2; }
-.col-3 { grid-column: 3; }
-.row-1 { grid-row: 1; }
-.row-2 { grid-row: 2; }
-
-/* 图标与文字 */
 .card-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  background: var(--color-primary-light);
+  color: var(--color-primary);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 30px;
-  margin-bottom: 25px;
+  margin-bottom: var(--space-5);
+  transition: var(--transition-all);
 }
 
-.blue-bg { background: #e6f7ff; color: #1890ff; }
-.yellow-bg { background: #fffbe6; color: #faad14; }
-.orange-bg { background: #fff7e6; color: #ffa940; }
-.circle-blue { background: #e6f4ff; color: #1677ff; border-radius: 50%; }
-.chat-blue { background: #e6faff; color: #13c2c2; }
-
-.feature-card h3 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  color: #111827;
-  margin-bottom: 15px;
+.feature-card:hover .card-icon {
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
 }
 
-.feature-card p {
-  font-size: 1.05rem;
-  color: #4b5563;
-  line-height: 1.6;
+.card-title {
+  font-size: var(--text-xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text);
+  margin: 0 0 var(--space-3);
+}
+
+.card-desc {
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+  margin: 0;
   flex: 1;
 }
 
+/* ── 卡片操作按钮 ── */
 .card-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
 }
 
 .action-btn {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
-  border: 1px solid #e5e7eb;
-  background: #fff;
-  color: #9ca3af;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 16px;
-  transition: all 0.25s ease;
+  transition: var(--transition-all);
 }
 
-/* ✅ 爱心动画：缩放 + 弹跳 */
-.heart-btn {
-  transition: transform 0.3s cubic-bezier(0.25, 1, 0.5, 1);
+.action-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
 }
+
 .heart-btn:active {
-  transform: scale(0.7);
+  transform: scale(0.85);
 }
 
-/* 箭头悬浮 */
-.action-btn:last-child:hover {
-  background: #f0f4ff;
-  color: #3b82f6;
-  transform: translateX(3px);
-}
-
-/* ============================================================
-   响应式
-   ============================================================ */
-@media (max-width: 1350px) {
-  .feature-section {
-    flex-direction: column;
-    align-items: center;
-    padding-top: 100px;
-    gap: 60px;
-  }
-  .feature-header {
-    text-align: center;
-  }
-  .section-title {
-    font-size: 3.2rem;
-  }
-}
-
-@media (max-width: 950px) {
+/* ── 响应式 ── */
+@media (max-width: 1024px) {
   .feature-grid {
-    grid-template-columns: repeat(3, 240px);
-    grid-auto-rows: 280px;
+    grid-template-columns: repeat(2, 1fr);
+    max-width: 680px;
   }
 }
 
 @media (max-width: 768px) {
   .feature-section {
-    padding: 60px 20px;
+    padding: var(--space-10) var(--space-5);
+    min-height: auto;
+  }
+  .section-title {
+    font-size: var(--text-3xl);
+  }
+  .section-subtitle {
+    font-size: var(--text-base);
   }
   .feature-grid {
     grid-template-columns: 1fr;
-    grid-auto-rows: auto;
-    max-width: 450px;
+    max-width: 420px;
   }
-  .feature-card, .card-inner {
-    transform: none;
-    height: auto;
-  }
-  .row-1, .row-2, .col-1, .col-2, .col-3 {
-    grid-column: auto !important;
-    grid-row: auto !important;
+}
+
+@media (max-width: 375px) {
+  .feature-card {
+    padding: var(--space-5) var(--space-4);
   }
   .section-title {
-    font-size: 2.2rem;
+    font-size: var(--text-2xl);
+  }
+}
+
+/* 无障碍 */
+@media (prefers-reduced-motion: reduce) {
+  .feature-card:hover {
+    transform: none;
   }
 }
 </style>

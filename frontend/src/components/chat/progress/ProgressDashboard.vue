@@ -1,7 +1,7 @@
 <template>
   <div class="progress-dashboard">
     <div class="progress-header">
-      <h3>📊 学习进度</h3>
+      <h3 class="section-title"><BarChart3 :size="18" /> 学习进度</h3>
       <div class="completion-badge" :class="completionClass">
         {{ Math.round(completionRate * 100) }}%
       </div>
@@ -28,7 +28,7 @@
     </div>
 
     <div class="nodes-progress" v-if="nodesProgress.length > 0">
-      <h4>📖 知识点掌握情况</h4>
+      <h4 class="section-title"><BookOpen :size="18" /> 知识点掌握情况</h4>
       <div class="node-list">
         <div
           v-for="node in nodesProgress"
@@ -48,7 +48,7 @@
           </div>
           
           <div class="node-status">
-            <span v-if="node.isCompleted" class="status completed">✓ 已完成</span>
+            <span v-if="node.isCompleted" class="status completed"><CheckCircle :size="14" /> 已完成</span>
             <span v-else class="status pending">○ 未完成</span>
             
             <div v-if="node.understandingLevel" class="understanding-indicator">
@@ -61,14 +61,14 @@
           </div>
 
           <div v-if="node.questionCount > 0" class="node-meta">
-            <span class="question-count">💬 {{ node.questionCount }} 次提问</span>
+            <span class="question-count"><MessageCircle :size="14" /> {{ node.questionCount }} 次提问</span>
           </div>
         </div>
       </div>
     </div>
 
     <div class="understanding-analysis" v-if="latestAnalysis">
-      <h4>🎯 最近理解度分析</h4>
+      <h4 class="section-title"><Target :size="18" /> 最近理解度分析</h4>
       <div class="analysis-card">
         <div class="analysis-header">
           <span class="analysis-level" :class="latestAnalysis.level">
@@ -78,14 +78,14 @@
         </div>
         <p class="analysis-reason">{{ latestAnalysis.reason }}</p>
         <div v-if="latestAnalysis.suggestions" class="analysis-suggestions">
-          <strong>💡 学习建议：</strong>
+          <strong class="suggestion-title"><Lightbulb :size="16" /> 学习建议：</strong>
           <p>{{ latestAnalysis.suggestions }}</p>
         </div>
       </div>
     </div>
 
     <div class="pace-recommendation" v-if="paceAdjustment">
-      <h4>⚡ 讲授节奏建议</h4>
+      <h4 class="section-title"><Zap :size="18" /> 讲授节奏建议</h4>
       <div class="pace-card">
         <div class="pace-strategy">
           <span class="strategy-label">推荐策略：</span>
@@ -107,6 +107,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { BarChart3, BookOpen, CheckCircle, MessageCircle, Target, Lightbulb, Zap } from 'lucide-vue-next'
 import api from '@/api/index.js'
 
 const props = defineProps({
@@ -213,7 +214,7 @@ defineExpose({
 
 <style scoped>
 .progress-dashboard {
-  background: white;
+  background: var(--color-surface);
   border-radius: 16px;
   padding: 24px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
@@ -229,7 +230,13 @@ defineExpose({
 .progress-header h3 {
   margin: 0;
   font-size: 20px;
-  color: #1f2937;
+  color: var(--color-text);
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .completion-badge {
@@ -240,18 +247,18 @@ defineExpose({
 }
 
 .completion-badge.started {
-  background: #fef3c7;
-  color: #d97706;
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
 }
 
 .completion-badge.halfway {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .completion-badge.complete {
-  background: #d1fae5;
-  color: #059669;
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
 }
 
 .progress-overview {
@@ -261,7 +268,7 @@ defineExpose({
 .progress-bar-container {
   width: 100%;
   height: 12px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 6px;
   overflow: hidden;
   margin-bottom: 16px;
@@ -269,7 +276,7 @@ defineExpose({
 
 .progress-bar {
   height: 100%;
-  background: linear-gradient(90deg, #3b82f6, #2563eb);
+  background: var(--gradient-primary);
   border-radius: 6px;
   transition: width 0.3s ease;
 }
@@ -288,13 +295,13 @@ defineExpose({
 
 .stat-label {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .stat-value {
   font-size: 16px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .nodes-progress {
@@ -304,7 +311,7 @@ defineExpose({
 .nodes-progress h4 {
   margin: 0 0 12px 0;
   font-size: 16px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .node-list {
@@ -317,28 +324,28 @@ defineExpose({
 
 .node-item {
   padding: 12px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .node-item:hover {
-  border-color: #3b82f6;
-  background: #f9fafb;
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
 }
 
 .node-item.current {
-  border-color: #3b82f6;
-  background: #eff6ff;
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .node-item.completed {
-  border-left: 3px solid #10b981;
+  border-left: 3px solid var(--color-success);
 }
 
 .node-item.key-point {
-  background: #fffbeb;
+  background: var(--color-warning-light);
 }
 
 .node-header {
@@ -354,18 +361,18 @@ defineExpose({
   justify-content: center;
   width: 24px;
   height: 24px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 50%;
   font-size: 12px;
   font-weight: 600;
-  color: #4b5563;
+  color: var(--color-text-secondary);
 }
 
 .node-title {
   flex: 1;
   font-size: 14px;
   font-weight: 500;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .key-point-badge {
@@ -381,20 +388,23 @@ defineExpose({
 
 .status {
   font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .status.completed {
-  color: #059669;
+  color: var(--color-success-hover);
 }
 
 .status.pending {
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 .understanding-indicator {
   flex: 1;
   height: 6px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 3px;
   overflow: hidden;
 }
@@ -405,26 +415,32 @@ defineExpose({
 }
 
 .understanding-bar.excellent {
-  background: #10b981;
+  background: var(--color-success);
 }
 
 .understanding-bar.high {
-  background: #3b82f6;
+  background: var(--color-primary);
 }
 
 .understanding-bar.medium {
-  background: #f59e0b;
+  background: var(--color-warning);
 }
 
 .understanding-bar.low {
-  background: #ef4444;
+  background: var(--color-danger);
 }
 
 .node-meta {
   display: flex;
   gap: 12px;
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-muted);
+}
+
+.question-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .understanding-analysis,
@@ -436,15 +452,15 @@ defineExpose({
 .pace-recommendation h4 {
   margin: 0 0 12px 0;
   font-size: 16px;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 
 .analysis-card,
 .pace-card {
   padding: 16px;
-  background: #f9fafb;
+  background: var(--color-surface-2);
   border-radius: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
 }
 
 .analysis-header {
@@ -462,53 +478,61 @@ defineExpose({
 }
 
 .analysis-level.excellent {
-  background: #d1fae5;
-  color: #059669;
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
 }
 
 .analysis-level.high {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .analysis-level.medium {
-  background: #fef3c7;
-  color: #d97706;
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
 }
 
 .analysis-level.low {
-  background: #fee2e2;
-  color: #dc2626;
+  background: var(--color-danger-light);
+  color: var(--color-danger-hover);
 }
 
 .analysis-score {
   font-size: 18px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .analysis-reason {
   margin: 0 0 12px 0;
   font-size: 14px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   line-height: 1.6;
 }
 
 .analysis-suggestions {
   padding-top: 12px;
-  border-top: 1px solid #e5e7eb;
+  border-top: 1px solid var(--color-border);
 }
 
 .analysis-suggestions strong {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
-  color: #374151;
+  color: var(--color-text-secondary);
+}
+
+.suggestion-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .analysis-suggestions p {
   margin: 0;
   font-size: 14px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   line-height: 1.6;
 }
 
@@ -522,14 +546,14 @@ defineExpose({
 .strategy-label,
 .speed-label {
   font-size: 14px;
-  color: #6b7280;
+  color: var(--color-text-muted);
 }
 
 .strategy-value,
 .speed-value {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .pace-actions {
@@ -540,7 +564,7 @@ defineExpose({
 .pace-actions li {
   margin-bottom: 4px;
   font-size: 14px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
 }
 
 @media (max-width: 768px) {

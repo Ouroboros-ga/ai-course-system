@@ -23,14 +23,14 @@
           <div v-if="activePanel === 'menu'" key="menu" class="panel-content">
             <div class="menu-list">
               <div class="menu-item" @click="activePanel = 'username'">
-                <div class="icon">✏️</div>
+                <div class="icon"><Pencil :size="18" /></div>
                 <span>修改用户名</span>
-                <div class="arrow">›</div>
+                <div class="arrow"><ChevronRight :size="18" /></div>
               </div>
               <div class="menu-item" @click="activePanel = 'password'">
-                <div class="icon">🔒</div>
+                <div class="icon"><Lock :size="18" /></div>
                 <span>修改密码</span>
-                <div class="arrow">›</div>
+                <div class="arrow"><ChevronRight :size="18" /></div>
               </div>
             </div>
 
@@ -42,7 +42,7 @@
           <!-- 修改用户名视图 -->
           <div v-else-if="activePanel === 'username'" key="username" class="panel-content">
             <div class="panel-header">
-              <button class="back-btn" @click="resetForm">‹ 返回</button>
+              <button class="back-btn" @click="resetForm"><ArrowLeft :size="18" /> 返回</button>
               <h4>修改用户名</h4>
             </div>
             <form @submit.prevent="handleSubmitUsername" class="edit-form">
@@ -70,7 +70,7 @@
           <!-- 修改密码视图 -->
           <div v-else-if="activePanel === 'password'" key="password" class="panel-content">
             <div class="panel-header">
-              <button class="back-btn" @click="resetForm">‹ 返回</button>
+              <button class="back-btn" @click="resetForm"><ArrowLeft :size="18" /> 返回</button>
               <h4>修改密码</h4>
             </div>
             <form @submit.prevent="handleSubmitPassword" class="edit-form">
@@ -112,6 +112,7 @@
 
 <script setup>
 import { ref, reactive } from 'vue'
+import { Pencil, Lock, ArrowLeft, ChevronRight } from 'lucide-vue-next'
 import { showToast } from '@/utils/toast'
 
 import { useCounterStore } from '@/stores/counter.js'
@@ -204,53 +205,53 @@ const handleLogout = () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  font-family: var(--font-sans);
   pointer-events: none;
 }
 .glass-card {
   position: relative;
   width: 420px;
   padding: 30px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
   z-index: 10;
-  color: #555;
+  color: var(--color-text-secondary);
   pointer-events: auto;
   overflow: hidden;
 }
 .user-header {
   display: flex;
   align-items: center;
-  padding-bottom: 20px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.05);
-  margin-bottom: 20px;
+  padding-bottom: var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-5);
 }
 .avatar {
   width: 56px;
   height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: var(--radius-full);
+  background: var(--gradient-primary);
   display: flex;
   justify-content: center;
   align-items: center;
-  color: #fff;
-  font-size: 24px;
-  font-weight: 600;
-  margin-right: 16px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  color: var(--color-text-inverse);
+  font-size: var(--text-2xl);
+  font-weight: var(--font-semibold);
+  margin-right: var(--space-4);
+  box-shadow: var(--shadow-primary);
 }
 .user-info .username {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
 }
 .user-info .user-id {
-  margin: 4px 0 0 0;
-  font-size: 12px;
-  color: #999;
+  margin: var(--space-1) 0 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 .card-body {
   position: relative;
@@ -263,124 +264,130 @@ const handleLogout = () => {
 .menu-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 .menu-item {
   display: flex;
   align-items: center;
-  padding: 14px 16px;
-  background: rgba(0, 0, 0, 0.02);
-  border-radius: 12px;
+  padding: 14px var(--space-4);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 .menu-item:hover {
-  background: rgba(102, 126, 234, 0.08);
-  transform: translateX(4px);
+  background: var(--color-primary-light);
+  transform: translateY(-2px);
 }
 .menu-item .icon {
-  font-size: 18px;
-  margin-right: 12px;
+  display: flex;
+  align-items: center;
+  margin-right: var(--space-3);
+  color: var(--color-primary);
 }
 .menu-item span {
   flex: 1;
   font-size: 15px;
-  color: #444;
+  color: var(--color-text-secondary);
 }
 .menu-item .arrow {
-  font-size: 18px;
-  color: #ccc;
-  font-weight: 300;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
 }
 .logout-btn {
   width: 100%;
   margin-top: 30px;
-  padding: 12px;
+  padding: var(--space-3);
   background: transparent;
-  border: 1px solid rgba(255, 100, 100, 0.3);
-  border-radius: 12px;
-  color: #ff6b6b;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-lg);
+  color: var(--color-danger);
   font-size: 15px;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all var(--duration-slow) var(--ease);
 }
 .logout-btn:hover {
-  background: rgba(255, 100, 100, 0.1);
-  border-color: rgba(255, 100, 100, 0.5);
+  background: var(--color-danger-light);
+  border-color: var(--color-danger-hover);
+  color: var(--color-danger-hover);
 }
 .panel-header {
   display: flex;
   align-items: center;
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 .back-btn {
   background: none;
   border: none;
-  font-size: 18px;
-  color: #888;
+  font-size: var(--text-lg);
+  color: var(--color-text-muted);
   cursor: pointer;
-  padding-right: 12px;
-  transition: color 0.2s;
+  padding-right: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  transition: color var(--duration-normal) var(--ease);
 }
-.back-btn:hover { color: #333; }
+.back-btn:hover { color: var(--color-text); }
 .panel-header h4 {
   margin: 0;
-  font-size: 16px;
-  color: #333;
-  font-weight: 500;
+  font-size: var(--text-base);
+  color: var(--color-text);
+  font-weight: var(--font-medium);
 }
 .edit-form {
   display: flex;
   flex-direction: column;
 }
 .input-group {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 .input-group label {
   display: block;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
   font-size: 13px;
-  font-weight: 500;
-  color: #666;
+  font-weight: var(--font-medium);
+  color: var(--color-text-secondary);
 }
 .input-group input {
   width: 100%;
-  padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.5);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  border-radius: 10px;
-  color: #333;
+  padding: 14px var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
   font-size: 15px;
   outline: none;
-  transition: all 0.3s ease;
+  transition: all var(--duration-slow) var(--ease);
   box-sizing: border-box;
 }
 .input-group input:focus {
-  background: rgba(255, 255, 255, 0.9);
-  border-color: #a8c0ff;
-  box-shadow: 0 0 0 3px rgba(168, 192, 255, 0.15);
+  background: var(--color-surface);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 .submit-btn {
   width: 100%;
   padding: 14px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: var(--gradient-primary);
   border: none;
-  border-radius: 12px;
-  color: #fff;
-  font-size: 16px;
-  font-weight: 500;
+  border-radius: var(--radius-lg);
+  color: var(--color-text-inverse);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+  transition: transform var(--duration-normal) var(--ease), box-shadow var(--duration-normal) var(--ease);
+  box-shadow: var(--shadow-primary);
   margin-top: 10px;
 }
 .submit-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(102, 126, 234, 0.5);
+  box-shadow: var(--shadow-lg);
 }
 .soft-transition-enter-active,
 .soft-transition-leave-active {
-  transition: all 0.35s ease;
+  transition: all 0.35s var(--ease);
 }
 .soft-transition-enter-from {
   opacity: 0;
@@ -395,5 +402,12 @@ const handleLogout = () => {
   width: 100%;
   top: 0;
   left: 0;
+}
+
+@media (max-width: 768px) {
+  .glass-card {
+    width: 100%;
+    padding: var(--space-5);
+  }
 }
 </style>

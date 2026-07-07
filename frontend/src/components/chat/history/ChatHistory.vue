@@ -66,7 +66,7 @@ const handleSelect = (item) => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 16px;
   padding: 18px;
   box-sizing: border-box;
@@ -76,7 +76,7 @@ const handleSelect = (item) => {
 .history-header {
   margin-bottom: 14px;
   padding-bottom: 10px;
-  border-bottom: 1px solid #f1f3f5;
+  border-bottom: 1px solid var(--color-border);
 }
 
 
@@ -84,7 +84,7 @@ const handleSelect = (item) => {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 
@@ -99,7 +99,7 @@ const handleSelect = (item) => {
 
 .history-item {
   padding: 12px 14px;
-  background: #f9fafb;
+  background: var(--color-surface-2);
   border-radius: 10px;
   cursor: pointer;
   transition: all 0.2s ease;
@@ -107,13 +107,13 @@ const handleSelect = (item) => {
 
 
 .history-item:hover {
-  background: #eff6ff;
+  background: var(--color-primary-light);
 }
 
 
 .item-title {
   font-size: 14px;
-  color: #1f2937;
+  color: var(--color-text);
   font-weight: 500;
   margin-bottom: 4px;
   white-space: nowrap;
@@ -124,14 +124,14 @@ const handleSelect = (item) => {
 
 .item-time {
   font-size: 12px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
 }
 
 
 .empty {
   text-align: center;
   padding: 40px 0;
-  color: #ccc;
+  color: var(--color-border);
   font-size: 14px;
 }
 </style>

@@ -30,54 +30,55 @@ const handleLogout = () => {
 .base-user-card {
   width: 100%;
   padding: 30px;
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 24px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-lg);
 }
 .user-header {
   display: flex;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 .avatar {
   width: 56px;
   height: 56px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: var(--radius-full);
+  background: var(--gradient-primary);
   display: flex;
   justify-content: center;
   align-items: center;
-  color: #fff;
-  font-size: 24px;
-  font-weight: 600;
-  margin-right: 16px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+  color: var(--color-text-inverse);
+  font-size: var(--text-2xl);
+  font-weight: var(--font-semibold);
+  margin-right: var(--space-4);
+  box-shadow: var(--shadow-primary);
 }
 .user-info .username {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
 }
 .user-info .user-id {
-  margin: 4px 0 0 0;
-  font-size: 12px;
-  color: #999;
+  margin: var(--space-1) 0 0 0;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 .logout-btn {
   width: 100%;
-  padding: 12px;
+  padding: var(--space-3);
   background: transparent;
-  border: 1px solid rgba(255, 100, 100, 0.3);
-  border-radius: 12px;
-  color: #ff6b6b;
+  border: 1px solid var(--color-danger);
+  border-radius: var(--radius-lg);
+  color: var(--color-danger);
   font-size: 15px;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all var(--duration-slow) var(--ease);
 }
 .logout-btn:hover {
-  background: rgba(255, 100, 100, 0.1);
-  border-color: rgba(255, 100, 100, 0.5);
+  background: var(--color-danger-light);
+  border-color: var(--color-danger-hover);
+  color: var(--color-danger-hover);
 }
 </style>

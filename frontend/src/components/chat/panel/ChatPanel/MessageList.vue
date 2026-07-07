@@ -8,7 +8,7 @@
       <div class="bubble-container">
         <MessageBubble
           role="ai"
-          content="👋 你好，请上传课件！"
+          content="你好，请上传课件！"
         />
       </div>
     </div>
@@ -21,7 +21,7 @@
       <div class="bubble-container">
         <MessageBubble
           role="ai"
-          content="👋 你好！请向我提问吧！"
+          content="你好！请向我提问吧！"
         />
       </div>
     </div>
@@ -130,16 +130,16 @@ defineExpose({
 .message-list {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-  background: #fafafa;
+  padding: var(--space-4);
+  background: var(--color-surface-2);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
   min-height: 0;
 }
 .message-row {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
 }
 .row-user {
   flex-direction: row-reverse;
@@ -147,21 +147,21 @@ defineExpose({
 .avatar {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: bold;
 }
 .avatar-ai {
-  background: #dbeafe;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 .avatar-user {
-  background: #e5e7eb;
+  background: var(--color-border);
 }
 .avatar-user img {
   width: 100%;
@@ -170,7 +170,7 @@ defineExpose({
 .bubble-container {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   max-width: 85%;
 }
 .row-user .bubble-container {
@@ -180,19 +180,19 @@ defineExpose({
 /* 新增：跳转按钮样式 */
 .jump-btn {
   align-self: flex-start;
-  margin-top: 4px;
-  padding: 6px 12px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  background: #ffffff;
-  color: #6b7280;
-  font-size: 12px;
+  margin-top: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: background var(--duration-normal) var(--ease), color var(--duration-normal) var(--ease), border-color var(--duration-normal) var(--ease);
 }
 .jump-btn:hover {
-  background: #f3f4f6;
-  color: #2563eb;
-  border-color: #2563eb;
+  background: var(--color-surface-2);
+  color: var(--color-primary);
+  border-color: var(--color-primary);
 }
 </style>

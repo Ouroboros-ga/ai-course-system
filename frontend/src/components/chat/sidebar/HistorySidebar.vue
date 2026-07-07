@@ -33,7 +33,7 @@ defineProps({
   z-index: 21;
   transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
   transform-origin: top left;
-  background: white;
+  background: var(--color-surface);
 }
 
 .history-sidebar-wrapper.open {
@@ -51,7 +51,7 @@ defineProps({
   overflow-y: auto;
   opacity: 0;
   transition: opacity 0.3s ease;
-  background: white;
+  background: var(--color-surface);
   box-sizing: border-box;
 }
 
@@ -61,13 +61,13 @@ defineProps({
 
 .history-header {
   padding: 20px 20px 12px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-border);
 }
 .history-header h3 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
-  color: #111;
+  color: var(--color-text);
 }
 
 .mobile-profile {
@@ -90,7 +90,7 @@ defineProps({
     height: 0 !important;
     border-radius: 16px !important;
     transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1) !important;
-    background: white !important;
+    background: var(--color-surface) !important;
     z-index: 21 !important;
   }
   .history-sidebar-wrapper.open {

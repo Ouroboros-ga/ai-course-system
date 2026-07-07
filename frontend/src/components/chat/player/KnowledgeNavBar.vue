@@ -1,7 +1,7 @@
 <template>
   <div class="knowledge-nav-bar">
     <div class="nav-header">
-      <span class="nav-title">📚 知识点导航</span>
+      <span class="nav-title"><BookOpen :size="14" /> 知识点导航</span>
       <span class="nav-count">({{ currentPointIndex + 1 }}/{{ knowledgePoints.length }})</span>
     </div>
 
@@ -18,8 +18,8 @@
         :title="`${point.title}\n${formatDuration(point.timestamp_start)} - ${formatDuration(point.timestamp_end)}`"
       >
         <div class="point-status">
-          <span v-if="point.is_completed" class="status-icon completed">✓</span>
-          <span v-else-if="index === currentPointIndex" class="status-icon active">▶</span>
+          <span v-if="point.is_completed" class="status-icon completed"><Check :size="12" /></span>
+          <span v-else-if="index === currentPointIndex" class="status-icon active"><Play :size="10" /></span>
           <span v-else class="number">{{ index + 1 }}</span>
         </div>
 
@@ -48,17 +48,18 @@
       v-if="showScrollLeft"
       @click="scrollLeft"
       class="scroll-btn scroll-left"
-    >◀</button>
+    ><ChevronLeft :size="16" /></button>
     <button
       v-if="showScrollRight"
       @click="scrollRight"
       class="scroll-btn scroll-right"
-    >▶</button>
+    ><ChevronRight :size="16" /></button>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, watch, onMounted, nextTick } from 'vue'
+import { BookOpen, Check, Play, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 
 const props = defineProps({
   knowledgePoints: {
@@ -181,41 +182,44 @@ onMounted(() => {
 <style scoped>
 .knowledge-nav-bar {
   position: relative;
-  background: #252525;
-  border-top: 2px solid #3a3a3a;
-  border-bottom: 2px solid #3a3a3a;
-  padding: 12px 0;
+  background: var(--color-text);
+  border-top: 2px solid var(--color-border);
+  border-bottom: 2px solid var(--color-border);
+  padding: var(--space-3) 0;
 }
 
 .nav-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 20px 8px;
-  font-size: 13px;
-  color: #aaa;
+  padding: 0 var(--space-5) var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 .nav-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
   font-weight: 600;
-  color: #4CAF50;
+  color: var(--color-success);
 }
 
 .nav-count {
-  color: #888;
+  color: var(--color-text-muted);
 }
 
 .nav-content {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 0 20px 8px;
+  padding: 0 var(--space-5) var(--space-2);
   scroll-behavior: smooth;
 
   /* 隐藏滚动条但保持可滚动 */
   scrollbar-width: thin;
-  scrollbar-color: #4CAF50 #333;
+  scrollbar-color: var(--color-success) var(--color-border);
 }
 
 .nav-content::-webkit-scrollbar {
@@ -223,13 +227,13 @@ onMounted(() => {
 }
 
 .nav-content::-webkit-scrollbar-track {
-  background: #333;
-  border-radius: 3px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
 }
 
 .nav-content::-webkit-scrollbar-thumb {
-  background: #4CAF50;
-  border-radius: 3px;
+  background: var(--color-success);
+  border-radius: var(--radius-full);
 }
 
 .knowledge-point {
@@ -237,41 +241,41 @@ onMounted(() => {
   flex-shrink: 0;
   min-width: 140px;
   max-width: 180px;
-  padding: 10px 14px;
-  background: #333;
+  padding: var(--space-2) var(--space-3);
+  background: rgba(255, 255, 255, 0.05);
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: background var(--duration-slow) var(--ease), border-color var(--duration-slow) var(--ease), transform var(--duration-slow) var(--ease);
   overflow: hidden;
 }
 
 .knowledge-point:hover {
-  background: #3a3a3a;
-  border-color: #555;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: var(--color-border-hover);
   transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
 }
 
 .knowledge-point.active {
-  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-  border-color: #66BB6A;
-  box-shadow: 0 0 15px rgba(76, 175, 80, 0.4);
+  background: var(--gradient-success);
+  border-color: var(--color-success-hover);
+  box-shadow: var(--shadow-primary);
 }
 
 .knowledge-point.completed:not(.active) {
-  background: #2d4a2e;
-  border-color: #4a7c4e;
+  background: rgba(16, 185, 129, 0.15);
+  border-color: var(--color-success);
 }
 
 .knowledge-point.completed:not(.active):hover {
-  background: #365a38;
+  background: rgba(16, 185, 129, 0.25);
 }
 
 .point-status {
   display: flex;
   align-items: center;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-1);
 }
 
 .status-icon {
@@ -280,19 +284,17 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  font-size: 12px;
-  font-weight: bold;
+  border-radius: var(--radius-full);
 }
 
 .status-icon.completed {
-  background: #4CAF50;
-  color: white;
+  background: var(--color-success);
+  color: var(--color-text-inverse);
 }
 
 .status-icon.active {
   background: rgba(255, 255, 255, 0.9);
-  color: #4CAF50;
+  color: var(--color-success);
   animation: pulse 1.5s infinite;
 }
 
@@ -302,9 +304,15 @@ onMounted(() => {
 }
 
 .number {
-  background: #555;
-  color: #ccc;
-  font-size: 11px;
+  background: var(--color-border);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
+  width: 22px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
 }
 
 .point-info {
@@ -313,26 +321,26 @@ onMounted(() => {
 }
 
 .point-title {
-  font-size: 13px;
+  font-size: var(--text-xs);
   font-weight: 600;
-  color: #fff;
+  color: var(--color-text-inverse);
   line-height: 1.3;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
   word-break: break-word;
 }
 
 .active .point-title {
-  color: #fff;
+  color: var(--color-text-inverse);
 }
 
 .completed .point-title {
-  color: #a5d6a7;
+  color: var(--color-success-light);
 }
 
 .point-time {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: rgba(255, 255, 255, 0.9);
-  font-family: monospace;
+  font-family: var(--font-mono);
 }
 
 /* 进度条 */
@@ -348,8 +356,8 @@ onMounted(() => {
 
 .progress-fill {
   height: 100%;
-  background: #fff;
-  transition: width 0.3s ease;
+  background: var(--color-text-inverse);
+  transition: width var(--duration-slow) var(--ease);
 }
 
 /* 滚动按钮 */
@@ -357,29 +365,30 @@ onMounted(() => {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 10;
-  background: rgba(76, 175, 80, 0.9);
-  color: white;
+  z-index: var(--z-overlay);
+  background: var(--color-success);
+  color: var(--color-text-inverse);
   border: none;
   width: 28px;
   height: 32px;
   cursor: pointer;
-  font-size: 12px;
-  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .scroll-btn:hover {
-  background: rgba(76, 175, 80, 1);
-  transform: translateY(-50%) scale(1.05);
+  background: var(--color-success-hover);
 }
 
 .scroll-left {
-  left: 4px;
-  border-radius: 0 4px 4px 0;
+  left: var(--space-1);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 }
 
 .scroll-right {
-  right: 4px;
-  border-radius: 4px 0 0 4px;
+  right: var(--space-1);
+  border-radius: var(--radius-sm) 0 0 var(--radius-sm);
 }
 </style>

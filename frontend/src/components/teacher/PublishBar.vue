@@ -2,13 +2,16 @@
   <div class="publish-bar">
     <div class="publish-actions">
       <button class="action-btn save" @click="$emit('save')" :disabled="isSaving">
-        {{ isSaving ? '保存中...' : '💾 保存草稿' }}
+        <Save v-if="!isSaving" :size="16" />
+        {{ isSaving ? '保存中...' : '保存草稿' }}
       </button>
       <button class="action-btn publish" @click="$emit('publish')" :disabled="isPublishing || !canPublish">
-        {{ isPublishing ? '发布中...' : (courseStatus === 'published' ? '✅ 已发布' : '🚀 发布课程') }}
+        <CheckCircle v-if="!isPublishing && courseStatus === 'published'" :size="16" />
+        <Rocket v-else-if="!isPublishing" :size="16" />
+        {{ isPublishing ? '发布中...' : (courseStatus === 'published' ? '已发布' : '发布课程') }}
       </button>
       <button v-if="courseStatus === 'published'" class="action-btn unpublish" @click="$emit('unpublish')">
-        📥 下架课程
+        <Download :size="16" /> 下架课程
       </button>
     </div>
     <div class="status-info">
@@ -19,6 +22,8 @@
 </template>
 
 <script setup>
+import { Save, CheckCircle, Rocket, Download } from 'lucide-vue-next'
+
 defineProps({
   isSaving: Boolean,
   isPublishing: Boolean,
@@ -38,17 +43,18 @@ function formatTime(date) {
 </script>
 
 <style scoped>
-.publish-bar { position: sticky; bottom: 0; background: white; border-top: 1px solid #e5e7eb; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 10; }
-.publish-actions { display: flex; gap: 10px; }
-.action-btn { padding: 8px 20px; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500; transition: all 0.2s; }
+.publish-bar { position: sticky; bottom: 0; background: var(--color-surface); border-top: 1px solid var(--color-border); padding: var(--space-3) var(--space-5); display: flex; justify-content: space-between; align-items: center; z-index: var(--z-sticky); }
+.publish-actions { display: flex; gap: var(--space-2); }
+.action-btn { display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-2) var(--space-5); border: none; border-radius: var(--radius-md); cursor: pointer; font-size: var(--text-sm); font-weight: var(--font-medium); transition: var(--transition-all); }
 .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-.action-btn.save { background: #f3f4f6; color: #374151; }
-.action-btn.save:hover:not(:disabled) { background: #e5e7eb; }
-.action-btn.publish { background: linear-gradient(135deg, #059669, #10b981); color: white; }
-.action-btn.publish:hover:not(:disabled) { box-shadow: 0 4px 12px rgba(5,150,105,0.3); }
-.action-btn.unpublish { background: #fef3c7; color: #92400e; }
-.status-info { display: flex; align-items: center; gap: 12px; font-size: 13px; color: #6b7280; }
-.status-badge { padding: 3px 10px; border-radius: 99px; font-size: 12px; font-weight: 500; }
-.status-badge.draft { background: #fef3c7; color: #92400e; }
-.status-badge.published { background: #d1fae5; color: #065f46; }
+.action-btn.save { background: var(--color-surface-2); color: var(--color-text-secondary); }
+.action-btn.save:hover:not(:disabled) { background: var(--color-surface-3); }
+.action-btn.publish { background: var(--gradient-success); color: var(--color-primary-foreground); }
+.action-btn.publish:hover:not(:disabled) { transform: translateY(-2px); box-shadow: var(--shadow-success); }
+.action-btn.unpublish { background: var(--color-warning-light); color: var(--color-warning-hover); }
+.action-btn.unpublish:hover:not(:disabled) { transform: translateY(-2px); }
+.status-info { display: flex; align-items: center; gap: var(--space-3); font-size: var(--text-sm); color: var(--color-text-secondary); }
+.status-badge { padding: var(--space-1) var(--space-2); border-radius: var(--radius-full); font-size: var(--text-xs); font-weight: var(--font-medium); }
+.status-badge.draft { background: var(--color-warning-light); color: var(--color-warning-hover); }
+.status-badge.published { background: var(--color-success-light); color: var(--color-success-hover); }
 </style>

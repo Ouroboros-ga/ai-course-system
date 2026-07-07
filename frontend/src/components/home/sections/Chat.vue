@@ -1,77 +1,6 @@
-<template>
-  <!-- 动画容器 p2 -->
-  <div class="chat-section slide" id="p2">
-    <div class="chat-container">
-      <!-- 左侧：聊天预览框 -->
-      <div class="chat-preview">
-        <div class="chat-window">
-          <div class="chat-header">Smartrab</div>
-
-          <!-- 聊天内容区 -->
-          <div class="chat-body">
-            <!-- 用户：气泡 + 头像（一起弹出） -->
-            <div class="chat-row user" :class="{ show: msgUserShow }">
-              <div class="chat-message user">
-                如何理解这个物理概念？
-                <span class="chat-time">23:31</span>
-              </div>
-              <div class="avatar user-avatar">我</div>
-            </div>
-
-            <!-- AI 1：气泡 + 头像（一起弹出） -->
-            <div class="chat-row bot" :class="{ show: msgBotShow1 }">
-              <div class="avatar bot-avatar">AI</div>
-              <div class="chat-message bot">
-                同学你好，我们可以从这几个方面理解这个物理概念👇
-                <span class="chat-time">23:31</span>
-              </div>
-            </div>
-
-            <!-- AI 2 -->
-            <div class="chat-row bot" :class="{ show: msgBotShow2 }">
-              <div class="avatar bot-avatar">AI</div>
-              <div class="chat-message bot">
-                核心要点在于：物体本身就有保持运动或静止的惯性，不需要力来维持运动。
-                <span class="chat-time">23:31</span>
-              </div>
-            </div>
-
-            <!-- AI 3 -->
-            <div class="chat-row bot" :class="{ show: msgBotShow3 }">
-              <div class="avatar bot-avatar">AI</div>
-              <div class="chat-message bot">
-                简单说：力是改变物体运动状态的原因，而不是维持物体运动的原因。
-                <span class="chat-time">23:31</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- 底部输入框 -->
-          <div class="chat-input-bar">
-            <div class="input-typing">{{ inputText }}</div>
-            <div class="send-btn">发送</div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 右侧：文字说明 -->
-      <div class="chat-text">
-        <h2 class="chat-title">
-          7×24 小时
-          <br />
-          AI 实时答疑
-        </h2>
-        <p class="chat-desc">
-          基于 RAG 精准检索泛雅平台知识库，回答可靠无幻觉。<br />
-          支持知识点讲解、作业辅导、课堂即时答疑。
-        </p>
-      </div>
-    </div>
-  </div>
-</template>
-
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { Bot, User, Send, Sparkles, ArrowRight } from 'lucide-vue-next'
 
 // ==============================================
 // 打字内容
@@ -106,12 +35,10 @@ const resetChatAnimation = () => {
 
 // 打字：拼音 → 文字
 const typeInputAnimation = async () => {
-  // 先打拼音
   for (let i = 0; i < pinyin.length; i++) {
     inputText.value = pinyin.slice(0, i + 1)
     await new Promise(r => timeouts.push(setTimeout(r, 30)))
   }
-  // 停顿 → 变中文
   await new Promise(r => timeouts.push(setTimeout(r, 400)))
   inputText.value = ''
   for (let i = 0; i < chinese.length; i++) {
@@ -120,13 +47,11 @@ const typeInputAnimation = async () => {
   }
 }
 
-// 发送 + 多轮AI回复（头像+气泡一起出）
+// 发送 + 多轮 AI 回复
 const sendAnimation = async () => {
   inputText.value = ''
-  // 用户消息
   msgUserShow.value = true
 
-  // AI 依次回复
   await new Promise(r => timeouts.push(setTimeout(r, 800)))
   msgBotShow1.value = true
 
@@ -159,182 +84,418 @@ onMounted(() => {
     },
     { threshold: 0.3 }
   )
-  observer.observe(document.getElementById('p2'))
+  const el = document.getElementById('p2')
+  if (el) observer.observe(el)
   onUnmounted(() => observer.disconnect())
 })
 </script>
 
+<template>
+  <div class="chat-section slide" id="p2">
+    <div class="chat-container">
+      <!-- 左侧：文字说明 + CTA -->
+      <div class="chat-text">
+        <div class="eyebrow">
+          <Sparkles :size="16" />
+          <span>AI 实时答疑</span>
+        </div>
+        <h2 class="chat-title">
+          7×24 小时
+          <br />
+          <span class="gradient-text">AI 实时答疑</span>
+        </h2>
+        <p class="chat-desc">
+          基于 RAG 精准检索泛雅平台知识库，回答可靠无幻觉。
+          支持知识点讲解、作业辅导、课堂即时答疑。
+        </p>
+        <button class="cta-btn" @click="$emit('go-chat')">
+          立即体验
+          <ArrowRight :size="18" class="btn-icon" />
+        </button>
+      </div>
+
+      <!-- 右侧：模拟聊天卡片 -->
+      <div class="chat-preview">
+        <div class="chat-window">
+          <!-- 聊天头部 -->
+          <div class="chat-header">
+            <div class="header-avatar">
+              <Bot :size="18" />
+            </div>
+            <span class="header-name">Smartrab AI</span>
+            <span class="header-status">在线</span>
+          </div>
+
+          <!-- 聊天内容区 -->
+          <div class="chat-body">
+            <!-- 用户消息 -->
+            <div class="chat-row user" :class="{ show: msgUserShow }">
+              <div class="chat-message user">
+                如何理解这个物理概念？
+                <span class="chat-time">23:31</span>
+              </div>
+              <div class="avatar user-avatar">
+                <User :size="16" />
+              </div>
+            </div>
+
+            <!-- AI 回复 -->
+            <div class="chat-row bot" :class="{ show: msgBotShow1 }">
+              <div class="avatar bot-avatar">
+                <Bot :size="16" />
+              </div>
+              <div class="chat-message bot">
+                同学你好，我们可以从这几个方面理解这个物理概念。
+                <span class="chat-time">23:31</span>
+              </div>
+            </div>
+
+            <div class="chat-row bot" :class="{ show: msgBotShow2 }">
+              <div class="avatar bot-avatar">
+                <Bot :size="16" />
+              </div>
+              <div class="chat-message bot">
+                核心要点在于：物体本身就有保持运动或静止的惯性，不需要力来维持运动。
+                <span class="chat-time">23:31</span>
+              </div>
+            </div>
+
+            <div class="chat-row bot" :class="{ show: msgBotShow3 }">
+              <div class="avatar bot-avatar">
+                <Bot :size="16" />
+              </div>
+              <div class="chat-message bot">
+                简单说：力是改变物体运动状态的原因，而不是维持运动的原因。
+                <span class="chat-time">23:31</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 底部输入框 -->
+          <div class="chat-input-bar">
+            <div class="input-typing">{{ inputText }}</div>
+            <button class="send-btn" aria-label="发送消息">
+              <Send :size="16" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
 <style scoped>
-/* 基础结构 */
 .chat-section {
   width: 100%;
   min-height: calc(100vh - var(--navbar-height));
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 10%;
-  background: #f8fafc;
+  padding: 0 var(--space-12);
+  background: var(--color-bg);
 }
 
 .chat-container {
   display: flex;
   align-items: center;
-  gap: 4rem;
+  gap: var(--space-12);
   width: 100%;
   max-width: 1200px;
 }
 
-/* 聊天预览框 */
+/* ── 左侧文字 ── */
+.chat-text {
+  flex: 1;
+  text-align: left;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-primary);
+  margin-bottom: var(--space-4);
+}
+
+.eyebrow svg {
+  color: var(--color-primary);
+}
+
+.chat-title {
+  font-size: var(--text-4xl);
+  font-weight: var(--font-extrabold);
+  line-height: var(--leading-tight);
+  margin-bottom: var(--space-6);
+  color: var(--color-text);
+}
+
+.gradient-text {
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.chat-desc {
+  font-size: var(--text-lg);
+  color: var(--color-text-secondary);
+  line-height: var(--leading-relaxed);
+  margin-bottom: var(--space-8);
+}
+
+.cta-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-8);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  border: none;
+  border-radius: var(--radius-xl);
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  cursor: pointer;
+  box-shadow: var(--shadow-primary);
+  transition: var(--transition-all);
+}
+
+.cta-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+  background: var(--gradient-primary-hover);
+}
+
+.btn-icon {
+  transition: transform var(--duration-normal) var(--ease);
+}
+
+.cta-btn:hover .btn-icon {
+  transform: translateX(4px);
+}
+
+/* ── 右侧聊天卡片 ── */
 .chat-preview {
   flex: 1;
   display: flex;
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .chat-window {
   width: 100%;
-  max-width: 380px;
-  background: white;
-  border-radius: 16px;
+  max-width: 400px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
   overflow: hidden;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
-  position: relative;
+  box-shadow: var(--shadow-lg);
 }
 
 .chat-header {
-  background: #3b82f6;
-  color: white;
-  padding: 12px 16px;
-  font-size: 1.2rem;
-  font-weight: 600;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  padding: var(--space-4) var(--space-5);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.header-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-full);
+  background: rgba(255, 255, 255, 0.2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.header-name {
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  flex: 1;
+}
+
+.header-status {
+  font-size: var(--text-xs);
+  padding: var(--space-1) var(--space-2);
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-full);
 }
 
 .chat-body {
-  padding: 16px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  min-height: 380px;
+  gap: var(--space-3);
+  min-height: 360px;
 }
 
-/* 头像 + 气泡 行布局（一起动画） */
+/* 头像 + 气泡 */
 .chat-row {
   display: flex;
-  gap: 10px;
+  gap: var(--space-2);
   align-items: flex-end;
   opacity: 0;
-  transform: translateY(20px);
-  transition: all 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+  transform: translateY(16px);
+  transition: all var(--duration-slow) var(--ease-spring);
 }
+
 .chat-row.show {
   opacity: 1;
   transform: translateY(0);
 }
+
 .chat-row.user {
   justify-content: flex-end;
 }
+
 .chat-row.bot {
   justify-content: flex-start;
 }
 
-/* 头像 */
 .avatar {
   width: 32px;
   height: 32px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.75rem;
-  font-weight: bold;
-  color: #fff;
+  color: var(--color-text-inverse);
   flex-shrink: 0;
 }
+
 .user-avatar {
-  background: #3b82f6;
+  background: var(--color-primary);
 }
+
 .bot-avatar {
-  background: #10b981;
+  background: var(--color-success);
 }
 
-/* 气泡 */
 .chat-message {
-  padding: 10px 14px;
-  border-radius: 12px;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
   max-width: 75%;
-  font-size: 0.95rem;
+  font-size: var(--text-sm);
   position: relative;
-  padding-bottom: 20px;
-}
-.chat-message.user {
-  background: #f1f5f9;
-  color: #1e293b;
-}
-.chat-message.bot {
-  background: #eff6ff;
-  color: #3b82f6;
+  padding-bottom: var(--space-6);
+  line-height: var(--leading-relaxed);
 }
 
-/* 时间 */
+.chat-message.user {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  border-radius: var(--radius-lg) var(--radius-sm) var(--radius-lg) var(--radius-lg);
+}
+
+.chat-message.bot {
+  background: var(--color-primary-light);
+  color: var(--color-text);
+  border-radius: var(--radius-sm) var(--radius-lg) var(--radius-lg) var(--radius-lg);
+}
+
 .chat-time {
   position: absolute;
-  right: 10px;
-  bottom: 6px;
-  font-size: 0.6rem;
-  color: #94a3b8;
+  right: var(--space-3);
+  bottom: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 /* 输入框 */
 .chat-input-bar {
   display: flex;
   align-items: center;
-  padding: 10px 14px;
-  border-top: 1px solid #e2e8f0;
-  gap: 10px;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border);
+  gap: var(--space-3);
 }
+
 .input-typing {
   flex: 1;
-  padding: 8px 12px;
-  border-radius: 20px;
-  background: #f8fafc;
-  font-size: 0.9rem;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg);
+  font-size: var(--text-sm);
   min-height: 20px;
-  color: #334155;
+  color: var(--color-text);
 }
+
 .send-btn {
-  padding: 8px 16px;
-  background: #3b82f6;
-  color: white;
-  border-radius: 20px;
-  font-size: 0.85rem;
-  font-weight: 500;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: var(--transition-all);
 }
 
-/* 右侧文字 */
-.chat-text {
-  flex: 1;
-  text-align: left;
-}
-.chat-title {
-  font-size: 2.8rem;
-  font-weight: 800;
-  line-height: 1.2;
-  margin-bottom: 1.5rem;
-  color: #0f172a;
-}
-.chat-desc {
-  font-size: 1.1rem;
-  color: #64748b;
-  line-height: 1.7;
+.send-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-primary);
 }
 
-/* 手机端 */
+/* ── 响应式 ── */
+@media (max-width: 1024px) {
+  .chat-container {
+    gap: var(--space-8);
+  }
+  .chat-title {
+    font-size: var(--text-3xl);
+  }
+}
+
 @media (max-width: 768px) {
-  .chat-section { padding: 100px 20px 60px; min-height: auto; }
-  .chat-container { flex-direction: column; gap: 2.5rem; text-align: center; }
-  .chat-text { order: 1; text-align: center; }
-  .chat-preview { order: 2; width: 100%; justify-content: center; }
-  .chat-title { font-size: 2rem; line-height: 1.3; }
-  .chat-desc { font-size: 1rem; line-height: 1.7; }
+  .chat-section {
+    padding: var(--space-10) var(--space-5);
+    min-height: auto;
+  }
+  .chat-container {
+    flex-direction: column;
+    gap: var(--space-8);
+    text-align: center;
+  }
+  .chat-text {
+    text-align: center;
+  }
+  .chat-title {
+    font-size: var(--text-2xl);
+  }
+  .chat-desc {
+    font-size: var(--text-base);
+  }
+  .chat-preview {
+    width: 100%;
+  }
+}
+
+@media (max-width: 375px) {
+  .chat-window {
+    max-width: 100%;
+  }
+  .chat-body {
+    min-height: 300px;
+  }
+}
+
+/* 无障碍 */
+@media (prefers-reduced-motion: reduce) {
+  .chat-row {
+    transition: none;
+    opacity: 1;
+    transform: none;
+  }
+  .cta-btn:hover,
+  .send-btn:hover {
+    transform: none;
+  }
 }
 </style>

@@ -51,7 +51,7 @@ const switchTab = (tab) => {
   overflow-y: auto;
   width: 100%;
   box-sizing: border-box;
-  background: white;
+  background: var(--color-surface);
   border-radius: 16px;
   padding: 12px;
   margin: 0;
@@ -63,7 +63,7 @@ const switchTab = (tab) => {
   left: 0;
   width: 100%;
   height: 60px;
-  background: white;
+  background: var(--color-surface);
   display: flex;
   box-shadow: 0 -2px 10px rgba(0,0,0,0.1);
   z-index: 20;
@@ -73,10 +73,10 @@ const switchTab = (tab) => {
   border: none;
   background: none;
   font-size: 15px;
-  color: #666;
+  color: var(--color-text-secondary);
 }
 .mobile-tab button.active {
-  color: #4f46e5;
+  color: var(--color-primary-hover);
   font-weight: bold;
 }
 </style>

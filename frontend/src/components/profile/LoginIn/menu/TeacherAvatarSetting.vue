@@ -4,7 +4,7 @@
       <div class="avatar-modal" @click.stop>
         <div class="modal-header">
           <h3>教师数字人设置</h3>
-          <button class="close-btn" @click="handleClose">✕</button>
+          <button class="close-btn" @click="handleClose"><X :size="20" /></button>
         </div>
 
         <div class="modal-content">
@@ -42,7 +42,7 @@
                 <span>点击上传音频文件</span>
               </div>
               <div v-else class="ref-audio-preview">
-                <span class="audio-icon">🎵</span>
+                <Music :size="32" class="audio-icon" />
                 <span class="file-name">{{ audioFile.name }}</span>
               </div>
             </div>
@@ -81,6 +81,7 @@
 
 <script setup>
 import { ref, defineProps, defineEmits } from 'vue'
+import { X, Music } from 'lucide-vue-next'
 
 const props = defineProps({
   visible: {
@@ -155,19 +156,19 @@ const handleConfirm = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
-  animation: fadeIn 0.2s ease;
+  z-index: var(--z-modal);
+  animation: fadeIn var(--duration-normal) var(--ease);
   box-sizing: border-box;
 }
 
 .avatar-modal {
   width: 90%;
   max-width: 520px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
-  animation: slideUp 0.3s cubic-bezier(0.24, 1, 0.32, 1);
+  animation: slideUp var(--duration-slow) cubic-bezier(0.24, 1, 0.32, 1);
   display: flex;
   flex-direction: column;
   max-height: 85vh;
@@ -177,53 +178,52 @@ const handleConfirm = () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
 }
 
 .close-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--space-6);
+  height: var(--space-6);
   border: none;
   background: transparent;
-  font-size: 20px;
-  color: #999;
+  color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .close-btn:hover {
-  background: #f5f5f5;
-  color: #333;
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .modal-content {
-  padding: 20px;
+  padding: var(--space-5);
   overflow-y: auto;
   flex: 1;
 }
 
 .ref-section {
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
 }
 
 .ref-title {
-  margin: 0 0 12px 0;
+  margin: 0 0 var(--space-3) 0;
   font-size: 15px;
-  color: #333;
-  font-weight: 500;
+  color: var(--color-text);
+  font-weight: var(--font-medium);
 }
 
 .ref-upload {
@@ -235,46 +235,46 @@ const handleConfirm = () => {
 .ref-placeholder {
   width: 100%;
   height: 100px;
-  border: 2px dashed #ddd;
-  border-radius: 8px;
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
-  font-size: 14px;
-  transition: all 0.2s ease;
-  background: #fafafa;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  transition: all var(--duration-normal) var(--ease);
+  background: var(--color-surface-2);
 }
 
 .ref-placeholder:hover {
-  border-color: #667eea;
-  color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .ref-preview {
   width: 100%;
   height: 100px;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  background: #fafafa;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-2);
 }
 
 .ref-preview img {
   height: 80px;
   width: auto;
   max-width: 120px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   object-fit: cover;
 }
 
 .ref-preview .file-name {
-  font-size: 14px;
-  color: #666;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -283,23 +283,23 @@ const handleConfirm = () => {
 .ref-audio-preview {
   width: 100%;
   height: 100px;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 0 12px;
-  background: #fafafa;
+  gap: var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--color-surface-2);
 }
 
 .audio-icon {
-  font-size: 32px;
-  color: #667eea;
+  color: var(--color-primary);
+  flex-shrink: 0;
 }
 
 .ref-audio-preview .file-name {
-  font-size: 14px;
-  color: #666;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -307,67 +307,67 @@ const handleConfirm = () => {
 
 .default-option {
   display: flex;
-  gap: 24px;
-  margin-top: 8px;
+  gap: var(--space-5);
+  margin-top: var(--space-2);
 }
 
 .radio-label {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  color: #444;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   cursor: pointer;
 }
 
 .radio-label input[type="radio"] {
-  width: 16px;
-  height: 16px;
-  accent-color: #667eea;
+  width: var(--space-4);
+  height: var(--space-4);
+  accent-color: var(--color-primary);
   cursor: pointer;
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 20px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2);
   flex-shrink: 0;
 }
 
 .btn-cancel {
-  padding: 8px 20px;
-  border: 1px solid #ddd;
-  background: #fff;
-  border-radius: 8px;
-  font-size: 14px;
-  color: #666;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .btn-cancel:hover {
-  border-color: #999;
-  color: #333;
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
 }
 
 .btn-confirm {
-  padding: 8px 20px;
+  padding: var(--space-2) var(--space-5);
   border: none;
-  background: #667eea;
-  color: #fff;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .btn-confirm:hover {
-  background: #5568d3;
-  transform: translateY(-1px);
+  background: var(--color-primary-hover);
+  transform: translateY(-2px);
 }
 
 @keyframes fadeIn {
@@ -391,11 +391,23 @@ const handleConfirm = () => {
 }
 
 .modal-content::-webkit-scrollbar-thumb {
-  background: #ddd;
-  border-radius: 3px;
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
 }
 
 .modal-content::-webkit-scrollbar-thumb:hover {
-  background: #bbb;
+  background: var(--color-text-muted);
+}
+
+@media (max-width: 768px) {
+  .avatar-modal {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .default-option {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
 }
 </style>

@@ -1,7 +1,7 @@
 <template>
   <div class="analysis-card">
     <div class="analysis-header">
-      <span>🧠 理解度分析</span>
+      <span class="header-label"><Brain :size="16" /> 理解度分析</span>
       <span
         class="level-badge"
         :class="analysis.level"
@@ -23,13 +23,14 @@
       >{{ kw }}</span>
     </div>
     <div v-if="analysis.suggestions" class="suggestions">
-      💡 {{ analysis.suggestions }}
+      <Lightbulb :size="14" /> {{ analysis.suggestions }}
     </div>
   </div>
 </template>
 
 <script setup>
 import { inject } from 'vue'
+import { Brain, Lightbulb } from 'lucide-vue-next'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
 
 defineProps({
@@ -44,11 +45,11 @@ const { getLevelLabel } = inject(STUDENT_LEARNING_KEY)
 
 <style scoped>
 .analysis-card {
-  margin-top: 12px;
-  padding: 12px;
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  margin-top: var(--space-3);
+  padding: var(--space-3);
+  background: var(--color-bg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   font-size: 13px;
 }
 
@@ -56,67 +57,76 @@ const { getLevelLabel } = inject(STUDENT_LEARNING_KEY)
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 8px;
-  font-weight: 600;
-  color: #374151;
+  margin-bottom: var(--space-2);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+}
+
+.header-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .level-badge {
   padding: 2px 10px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   font-size: 11px;
-  font-weight: 600;
+  font-weight: var(--font-semibold);
 }
 
-.level-badge.excellent { background: #d1fae5; color: #065f46; }
-.level-badge.high { background: #dbeafe; color: #1e40af; }
-.level-badge.medium { background: #fef3c7; color: #92400e; }
-.level-badge.low { background: #fee2e2; color: #991b1b; }
+.level-badge.excellent { background: var(--color-success-light); color: var(--color-success); }
+.level-badge.high { background: var(--color-info-light); color: var(--color-primary-hover); }
+.level-badge.medium { background: var(--color-warning-light); color: var(--color-warning-hover); }
+.level-badge.low { background: var(--color-danger-light); color: var(--color-danger); }
 
 .analysis-score {
   display: flex;
   justify-content: center;
-  margin: 8px 0;
+  margin: var(--space-2) 0;
 }
 
 .score-circle {
-  width: 48px;
-  height: 48px;
-  border-radius: 50%;
+  width: var(--space-8);
+  height: var(--space-8);
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 14px;
-  background: conic-gradient(#6366f1 calc(var(--score) * 3.6deg), #e5e7eb 0);
-  color: #374151;
+  font-weight: var(--font-bold);
+  font-size: var(--text-sm);
+  background: conic-gradient(var(--color-primary) calc(var(--score) * 3.6deg), var(--color-border) 0);
+  color: var(--color-text-secondary);
 }
 
 .keywords-weak {
-  margin: 8px 0;
+  margin: var(--space-2) 0;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: center;
 }
 
-.label { font-weight: 500; color: #6b7280; margin-right: 4px; }
+.label { font-weight: var(--font-medium); color: var(--color-text-secondary); margin-right: var(--space-1); }
 
 .keyword-tag {
-  padding: 2px 8px;
-  border-radius: 4px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
   font-size: 11px;
-  font-weight: 500;
+  font-weight: var(--font-medium);
 }
 
-.keyword-tag.weak { background: #fee2e2; color: #991b1b; }
+.keyword-tag.weak { background: var(--color-danger-light); color: var(--color-danger); }
 
 .suggestions {
-  margin-top: 8px;
-  padding: 8px;
-  background: #fffbeb;
-  border-radius: 4px;
+  margin-top: var(--space-2);
+  padding: var(--space-2);
+  background: var(--color-warning-light);
+  border-radius: var(--radius-sm);
   font-size: 12px;
-  color: #92400e;
+  color: var(--color-warning-hover);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1);
 }
 </style>

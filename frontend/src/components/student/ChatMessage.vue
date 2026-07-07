@@ -1,7 +1,7 @@
 <template>
   <div :class="['message-row', msg.role === 'user' ? 'user-message' : 'ai-message']">
     <AgentAvatar v-if="msg.role === 'ai'" />
-    <div class="avatar user-avatar" v-else>👤</div>
+    <div class="avatar user-avatar" v-else><User :size="16" /></div>
     <div class="bubble" :class="msg.role === 'user' ? 'user-bubble' : 'ai-bubble'">
       <div v-if="msg.role === 'ai'" class="ai-content markdown-body" v-html="renderContent(msg.content)"></div>
       <div v-else class="user-content">{{ msg.content }}</div>
@@ -24,6 +24,7 @@
 
 <script setup>
 import { inject } from 'vue'
+import { User } from 'lucide-vue-next'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
 import AgentAvatar from './AgentAvatar.vue'
 import QuizCard from './QuizCard.vue'
@@ -42,7 +43,7 @@ const { renderContent, selectQuizOption } = inject(STUDENT_LEARNING_KEY)
 <style scoped>
 .message-row {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
@@ -53,37 +54,37 @@ const { renderContent, selectQuizOption } = inject(STUDENT_LEARNING_KEY)
 .avatar {
   width: 36px;
   height: 36px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
-  font-weight: bold;
+  font-size: var(--text-sm);
+  font-weight: var(--font-bold);
   flex-shrink: 0;
 }
 
 .user-avatar {
-  background: #e5e7eb;
-  color: #374151;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
 }
 
 .bubble {
   max-width: 85%;
   padding: 14px 18px;
-  border-radius: 12px;
+  border-radius: var(--radius-lg);
   line-height: 1.6;
 }
 
 .ai-bubble {
-  background: white;
-  border: 1px solid #e5e7eb;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
   border-top-left-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .user-bubble {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border-top-right-radius: 4px;
 }
 
@@ -91,7 +92,7 @@ const { renderContent, selectQuizOption } = inject(STUDENT_LEARNING_KEY)
   word-wrap: break-word;
 }
 
-.user-content { color: white; }
+.user-content { color: var(--color-text-inverse); }
 
 @media (max-width: 640px) {
   .avatar {

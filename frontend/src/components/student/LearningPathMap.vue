@@ -1,16 +1,16 @@
 <template>
   <div class="learning-path-map" v-if="visible">
     <div class="map-header">
-      <h3 class="map-title">🗺️ 学习路径</h3>
+      <h3 class="map-title"><Map :size="20" /> 学习路径</h3>
       <div class="map-actions">
-        <button 
-          class="toggle-btn" 
-          :class="{ active: showDetails }" 
+        <button
+          class="toggle-btn"
+          :class="{ active: showDetails }"
           @click="showDetails = !showDetails"
         >
           {{ showDetails ? '简化视图' : '详细视图' }}
         </button>
-        <button class="close-btn" @click="$emit('close')" title="关闭">×</button>
+        <button class="close-btn" @click="$emit('close')" title="关闭"><X :size="20" /></button>
       </div>
     </div>
 
@@ -34,7 +34,7 @@
     </div>
 
     <div class="map-canvas-container">
-      <svg 
+      <svg
         ref="canvasRef"
         :viewBox="`0 0 ${canvasWidth} ${canvasHeight}`"
         class="map-canvas"
@@ -45,26 +45,26 @@
         @mouseleave="endDrag"
       >
         <defs>
-          <marker 
-            id="arrowhead" 
-            markerWidth="10" 
-            markerHeight="7" 
-            refX="9" 
-            refY="3.5" 
+          <marker
+            id="arrowhead"
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#6b7280" />
+            <polygon points="0 0, 10 3.5, 0 7" class="marker-arrow-default" />
           </marker>
-          
-          <marker 
-            id="arrowhead-jump" 
-            markerWidth="10" 
-            markerHeight="7" 
-            refX="9" 
-            refY="3.5" 
+
+          <marker
+            id="arrowhead-jump"
+            markerWidth="10"
+            markerHeight="7"
+            refX="9"
+            refY="3.5"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#8b5cf6" />
+            <polygon points="0 0, 10 3.5, 0 7" class="marker-arrow-jump" />
           </marker>
 
           <filter id="shadow">
@@ -73,7 +73,7 @@
 
           <filter id="glow-jump">
             <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
-            <feMerge> 
+            <feMerge>
               <feMergeNode in="coloredBlur"/>
               <feMergeNode in="SourceGraphic"/>
             </feMerge>
@@ -90,7 +90,7 @@
               :y1="getNodePosition(edge.from).y"
               :x2="getNodePosition(edge.to).y ? getNodePosition(edge.to).x : 1000"
               :y2="getNodePosition(edge.to).y || 100"
-              stroke="#d1d5db"
+              class="learning-edge"
               stroke-width="2"
               marker-end="url(#arrowhead)"
               stroke-dasharray="5,5"
@@ -100,7 +100,7 @@
             <g v-else-if="edge.type === 'prerequisite_jump'">
               <path
                 :d="getJumpEdgePath(edge)"
-                :stroke="edge.isReturned ? '#10b981' : '#8b5cf6'"
+                :style="{ stroke: edge.isReturned ? 'var(--color-success)' : 'var(--color-secondary)' }"
                 stroke-width="3"
                 fill="none"
                 :marker-end="edge.isReturned ? '' : 'url(#arrowhead-jump)'"
@@ -115,7 +115,7 @@
                 :y="getJumpEdgeMidpoint(edge).y - 8"
                 text-anchor="middle"
                 font-size="11"
-                :fill="edge.isReturned ? '#059669' : '#7c3aed'"
+                :style="{ fill: edge.isReturned ? 'var(--color-success)' : 'var(--color-secondary)' }"
                 class="edge-label"
                 v-if="showDetails && zoom > 0.8"
               >
@@ -125,8 +125,8 @@
           </g>
 
           <!-- 节点 -->
-          <g 
-            v-for="node in nodes" 
+          <g
+            v-for="node in nodes"
             :key="'node-' + node.id"
             :transform="`translate(${getNodePosition(node.id).x}, ${getNodePosition(node.id).y})`"
             class="node-group"
@@ -136,8 +136,7 @@
             <!-- 节点圆圈 -->
             <circle
               r="24"
-              :fill="getNodeColor(node)"
-              stroke="#fff"
+              :style="{ fill: getNodeColor(node), stroke: 'var(--color-text-inverse)' }"
               stroke-width="3"
               filter="url(#shadow)"
               class="node-circle"
@@ -148,14 +147,14 @@
               v-if="node.status === 'current' && node.understandingScore !== null"
               r="27"
               fill="none"
-              stroke="#e5e7eb"
+              style="stroke: var(--color-border)"
               stroke-width="4"
             />
             <circle
               v-if="node.status === 'current' && node.understandingScore !== null"
               r="27"
               fill="none"
-              stroke="#3b82f6"
+              style="stroke: var(--color-primary)"
               stroke-width="4"
               :stroke-dasharray="`${node.understandingScore * 169} 169`"
               transform="rotate(-90)"
@@ -168,25 +167,23 @@
               dominant-baseline="central"
               :font-size="node.status === 'current' ? '16' : '14'"
               :font-weight="node.status === 'current' ? '700' : '600'"
-              :fill="getTextColor(node.status)"
+              :style="{ fill: getTextColor(node.status) }"
             >
               {{ node.index + 1 }}
             </text>
 
             <!-- 完成标记 -->
-            <text
-              v-if="node.status === 'completed'"
-              x="12"
-              y="-12"
-              font-size="18"
-            >✓</text>
+            <g v-if="node.status === 'completed'" transform="translate(12, -12)">
+              <circle r="7" style="fill: var(--color-success)" />
+              <path d="M-3 0l2 2l4-4" style="stroke: var(--color-text-inverse)" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" />
+            </g>
 
             <!-- 当前位置指示器 -->
             <circle
               v-if="node.status === 'current'"
               r="30"
               fill="none"
-              stroke="#3b82f6"
+              style="stroke: var(--color-primary)"
               stroke-width="2"
               opacity="0.5"
               class="pulse-ring"
@@ -198,7 +195,7 @@
               y="38"
               text-anchor="middle"
               font-size="11"
-              fill="#374151"
+              style="fill: var(--color-text-secondary)"
               font-weight="500"
               class="node-title"
             >
@@ -211,7 +208,7 @@
               y="52"
               text-anchor="middle"
               font-size="10"
-              :fill="getUnderstandingColor(node.understandingScore)"
+              :style="{ fill: getUnderstandingColor(node.understandingScore) }"
             >
               {{ (node.understandingScore * 100).toFixed(0) }}%
             </text>
@@ -221,22 +218,22 @@
 
       <!-- 缩放控制 -->
       <div class="zoom-controls">
-        <button @click="zoomIn" title="放大">+</button>
+        <button @click="zoomIn" title="放大"><Plus :size="18" /></button>
         <span class="zoom-level">{{ Math.round(zoom * 100) }}%</span>
-        <button @click="zoomOut" title="缩小">−</button>
-        <button @click="resetView" title="重置视图" class="reset-btn">⟲</button>
+        <button @click="zoomOut" title="缩小"><Minus :size="18" /></button>
+        <button @click="resetView" title="重置视图" class="reset-btn"><RotateCcw :size="16" /></button>
       </div>
     </div>
 
     <!-- 当前路径说明 -->
     <div class="current-path-info" v-if="pathData.currentPath?.length > 0">
-      <h4 class="path-title">📍 当前跳转链</h4>
+      <h4 class="path-title"><MapPin :size="16" /> 当前跳转链</h4>
       <div class="path-chain">
         <template v-for="(step, idx) in pathData.currentPath" :key="idx">
-          <div class="path-step" v-if="idx > 0">→</div>
+          <div class="path-step" v-if="idx > 0"><ArrowRight :size="16" /></div>
           <div class="path-node" :class="{ returned: step.isReturned }">
             <span class="step-from">{{ step.fromNode }}</span>
-            <span class="step-arrow">→</span>
+            <span class="step-arrow"><ArrowRight :size="14" /></span>
             <span class="step-to">{{ step.toNode }}</span>
           </div>
         </template>
@@ -247,6 +244,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
+import { Map, X, MapPin, ArrowRight, Plus, Minus, RotateCcw } from 'lucide-vue-next'
 
 const props = defineProps({
   visible: {
@@ -283,14 +281,14 @@ const edges = computed(() => props.pathData.edges || [])
 function getNodePosition(nodeId) {
   const node = nodes.value.find(n => n.id === nodeId)
   if (!node) return { x: 0, y: 0 }
-  
+
   const cols = 5
   const spacingX = 140
   const spacingY = 120
-  
+
   const col = (node.index || 0) % cols
   const row = Math.floor((node.index || 0) / cols)
-  
+
   return {
     x: 80 + col * spacingX,
     y: 80 + row * spacingY,
@@ -300,41 +298,41 @@ function getNodePosition(nodeId) {
 function getNodeColor(node) {
   switch (node.status) {
     case 'completed':
-      return '#10b981'
+      return 'var(--color-success)'
     case 'current':
-      return '#3b82f6'
+      return 'var(--color-primary)'
     default:
-      return '#e5e7eb'
+      return 'var(--color-border)'
   }
 }
 
 function getTextColor(status) {
-  return status === 'current' || status === 'completed' ? '#fff' : '#6b7280'
+  return status === 'current' || status === 'completed' ? 'var(--color-text-inverse)' : 'var(--color-text-secondary)'
 }
 
 function getUnderstandingColor(score) {
-  if (score >= 0.85) return '#059669'
-  if (score >= 0.7) return '#2563eb'
-  if (score >= 0.5) return '#d97706'
-  return '#dc2626'
+  if (score >= 0.85) return 'var(--color-success)'
+  if (score >= 0.7) return 'var(--color-primary)'
+  if (score >= 0.5) return 'var(--color-warning)'
+  return 'var(--color-danger)'
 }
 
 function getJumpEdgePath(edge) {
   const fromPos = getNodePosition(edge.from)
   const toPos = getNodePosition(edge.to)
-  
+
   if (!fromPos.x || !toPos.x) return ''
-  
+
   const midX = (fromPos.x + toPos.x) / 2
   const midY = (fromPos.y + toPos.y) / 2 - 40
-  
+
   return `M ${fromPos.x} ${fromPos.y} Q ${midX} ${midY} ${toPos.x} ${toPos.y}`
 }
 
 function getJumpEdgeMidpoint(edge) {
   const fromPos = getNodePosition(edge.from)
   const toPos = getNodePosition(edge.to)
-  
+
   return {
     x: (fromPos.x + toPos.x) / 2,
     y: (fromPos.y + toPos.y) / 2 - 40,
@@ -414,7 +412,7 @@ onMounted(() => {
   z-index: 9998;
   display: flex;
   flex-direction: column;
-  animation: fadeInMap 0.3s ease-out;
+  animation: fadeInMap var(--duration-slow) var(--ease);
 }
 
 @keyframes fadeInMap {
@@ -423,20 +421,23 @@ onMounted(() => {
 }
 
 .map-header {
-  padding: 20px 24px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: 20px var(--space-5);
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  background: white;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
 }
 
 .map-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 700;
-  color: #111827;
+  font-size: var(--text-xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .map-actions {
@@ -446,82 +447,81 @@ onMounted(() => {
 }
 
 .toggle-btn {
-  padding: 8px 16px;
-  border: 1px solid #d1d5db;
-  background: white;
-  border-radius: 8px;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s;
-  color: #374151;
+  transition: all var(--duration-normal) var(--ease);
+  color: var(--color-text-secondary);
 }
 
 .toggle-btn:hover {
-  background: #f9fafb;
+  background: var(--color-bg);
 }
 
 .toggle-btn.active {
-  background: #eff6ff;
-  border-color: #3b82f6;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .close-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--space-6);
+  height: var(--space-6);
   border: none;
-  background: #f3f4f6;
-  border-radius: 8px;
-  font-size: 22px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  color: #6b7280;
+  transition: all var(--duration-normal) var(--ease);
+  color: var(--color-text-secondary);
 }
 
 .close-btn:hover {
-  background: #e5e7eb;
-  transform: scale(1.05);
+  background: var(--color-border);
+  transform: translateY(-2px);
 }
 
 .statistics-bar {
   display: flex;
   gap: 20px;
-  padding: 16px 24px;
-  background: #f9fafb;
-  border-bottom: 1px solid #e5e7eb;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-bg);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .stat-item {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .stat-number {
-  font-size: 20px;
-  font-weight: 700;
-  color: #111827;
+  font-size: var(--text-xl);
+  font-weight: var(--font-bold);
+  color: var(--color-text);
 }
 
 .stat-label {
   font-size: 11px;
-  color: #6b7280;
-  font-weight: 500;
+  color: var(--color-text-secondary);
+  font-weight: var(--font-medium);
 }
 
-.stat-item.success .stat-number { color: #059669; }
-.stat-item.warning .stat-number { color: #d97706; }
-.stat-item.info .stat-number { color: #2563eb; }
+.stat-item.success .stat-number { color: var(--color-success); }
+.stat-item.warning .stat-number { color: var(--color-warning); }
+.stat-item.info .stat-number { color: var(--color-primary); }
 
 .map-canvas-container {
   flex: 1;
   position: relative;
   overflow: hidden;
-  background: #fafafa;
+  background: var(--color-bg);
   cursor: grab;
 }
 
@@ -534,17 +534,21 @@ onMounted(() => {
   height: 100%;
 }
 
+.marker-arrow-default { fill: var(--color-text-secondary); }
+.marker-arrow-jump { fill: var(--color-secondary); }
+.learning-edge { stroke: var(--color-border); }
+
 .node-group {
   cursor: pointer;
-  transition: transform 0.2s;
+  transition: transform var(--duration-normal) var(--ease);
 }
 
 .node-group:hover {
-  transform: scale(1.08);
+  transform: translateY(-2px);
 }
 
 .node-circle {
-  transition: all 0.3s;
+  transition: all var(--duration-slow) var(--ease);
 }
 
 .pulse-ring {
@@ -565,7 +569,7 @@ onMounted(() => {
 }
 
 .edge-label {
-  font-weight: 500;
+  font-weight: var(--font-medium);
 }
 
 .zoom-controls {
@@ -574,100 +578,105 @@ onMounted(() => {
   right: 20px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: white;
-  padding: 8px 12px;
+  gap: var(--space-2);
+  background: var(--color-surface);
+  padding: var(--space-2) var(--space-3);
   border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-md);
 }
 
 .zoom-controls button {
-  width: 32px;
-  height: 32px;
-  border: 1px solid #d1d5db;
-  background: white;
-  border-radius: 6px;
-  font-size: 18px;
+  width: var(--space-6);
+  height: var(--space-6);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .zoom-controls button:hover {
-  background: #f3f4f6;
+  background: var(--color-surface-2);
 }
 
 .reset-btn {
-  margin-left: 8px;
-  font-size: 16px !important;
+  margin-left: var(--space-2);
   width: auto !important;
   padding: 0 10px !important;
 }
 
 .zoom-level {
   font-size: 12px;
-  font-weight: 600;
-  color: #374151;
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
   min-width: 45px;
   text-align: center;
 }
 
 .current-path-info {
-  padding: 16px 24px;
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
 }
 
 .path-title {
-  margin: 0 0 12px;
+  margin: 0 0 var(--space-3);
   font-size: 15px;
-  font-weight: 600;
-  color: #111827;
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .path-chain {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-wrap: wrap;
 }
 
 .path-step {
-  color: #9ca3af;
-  font-weight: 700;
-  font-size: 16px;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted);
+  font-weight: var(--font-bold);
+  font-size: var(--text-base);
 }
 
 .path-node {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 14px;
-  background: #f3f4f6;
-  border-radius: 8px;
+  padding: var(--space-2) 14px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
   font-size: 13px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
 }
 
 .path-node.returned {
-  background: #f0fdf4;
-  border-color: #bbf7d0;
-  color: #166534;
+  background: var(--color-success-light);
+  border-color: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .step-from {
-  font-weight: 500;
+  font-weight: var(--font-medium);
 }
 
 .step-arrow {
-  color: #8b5cf6;
-  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-secondary);
+  font-weight: var(--font-bold);
 }
 
 .step-to {
-  font-weight: 600;
-  color: #7c3aed;
+  font-weight: var(--font-semibold);
+  color: var(--color-secondary);
 }
 </style>

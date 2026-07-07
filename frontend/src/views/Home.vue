@@ -57,24 +57,18 @@ const goToChat = () => {
     <div class="main-container" ref="containerRef">
       <Hero @go-chat="goToChat" />
       <Feature />
-      <Chat />
+      <Chat @go-chat="goToChat" />
       <Value />
       <Footer @go-chat="goToChat" />
     </div>
 
     <!-- 正常显示，最后一页自动隐藏 -->
-    <ScrollArrow @go-next="goNext" v-if="showScrollArrow" />
+    <ScrollArrow v-if="showScrollArrow" @go-next="goNext" />
     <BackTop @go-top="goToTop" />
   </div>
 </template>
 
 <style scoped>
-/* 给每个 section 统一加顶部内边距 */
-.main-container > * {
-  padding-top: 70px;
-  min-height: calc(100vh - var(--navbar-height));
-  scroll-snap-align: start;
-}
 .home-wrapper {
   position: fixed;
   top: var(--navbar-height);
@@ -82,9 +76,10 @@ const goToChat = () => {
   right: 0;
   bottom: 0;
   overflow: hidden;
-  background: #f8fafc;
-  font-family: sans-serif;
+  background: var(--color-bg);
+  font-family: var(--font-sans);
 }
+
 .main-container {
   width: 100%;
   height: 100%;
@@ -93,9 +88,18 @@ const goToChat = () => {
   scroll-snap-type: y mandatory;
   scrollbar-width: none;
 }
+
 .main-container::-webkit-scrollbar {
   display: none;
 }
+
+/* 给每个 section 统一加顶部内边距 */
+.main-container > * {
+  padding-top: var(--space-10);
+  min-height: calc(100vh - var(--navbar-height));
+  scroll-snap-align: start;
+}
+
 /* 手机端适配（≤768px） */
 @media (max-width: 768px) {
   .main-container {
@@ -103,22 +107,7 @@ const goToChat = () => {
   }
   .main-container > * {
     min-height: auto;
-    padding: 80px 20px 40px;
-  }
-  .feature-grid {
-    grid-template-columns: 1fr !important;
-    gap: 20px;
-  }
-  .chat-section {
-    flex-direction: column !important;
-    gap: 30px;
-  }
-  .chat-preview {
-    width: 100% !important;
-  }
-  .chat-text {
-    width: 100% !important;
-    text-align: left;
+    padding: var(--space-10) var(--space-5) var(--space-8);
   }
 }
 </style>

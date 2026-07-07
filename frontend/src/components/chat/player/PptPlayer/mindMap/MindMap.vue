@@ -221,10 +221,10 @@ watch(() => props.data, (newData) => {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #ffffff;
+  background: var(--color-surface);
   /* 点阵背景 */
   background-image:
-    radial-gradient(#e5e7eb 1px, transparent 1px);
+    radial-gradient(var(--color-border) 1px, transparent 1px);
   background-size: 20px 20px;
   cursor: grab; /* 默认抓手图标 */
   user-select: none; /* 防止拖拽时选中文字 */
@@ -254,7 +254,7 @@ watch(() => props.data, (newData) => {
 
 .link-path {
   fill: none;
-  stroke: #a5b4fc;
+  stroke: var(--color-primary-light);
   stroke-width: 2px;
   stroke-linecap: round;
 }
@@ -266,9 +266,9 @@ watch(() => props.data, (newData) => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
+  background: var(--color-surface);
   border-radius: 8px;
-  border: 2px solid #e0e7ff;
+  border: 2px solid var(--color-primary-light);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
   transition: all 0.2s ease;
   /* 防止拖拽时选中节点文字 */
@@ -276,7 +276,7 @@ watch(() => props.data, (newData) => {
 }
 
 .node-item:hover {
-  border-color: #818cf8;
+  border-color: var(--color-primary);
   box-shadow: 0 4px 12px rgba(79, 70, 229, 0.15);
   transform: translateY(-2px);
   z-index: 10;
@@ -285,9 +285,9 @@ watch(() => props.data, (newData) => {
 .node-item.is-root {
   width: 140px;
   height: 50px;
-  background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+  background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
   border: none;
-  color: white;
+  color: var(--color-text-inverse);
   font-weight: bold;
   font-size: 15px;
   box-shadow: 0 4px 15px rgba(99, 102, 241, 0.3);
@@ -301,21 +301,21 @@ watch(() => props.data, (newData) => {
   padding: 0 10px;
   text-align: center;
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .is-root .node-content {
-  color: white;
+  color: var(--color-text-inverse);
 }
 
 .zoom-controls {
   position: absolute;
   bottom: 20px;
   right: 20px;
-  background: white;
+  background: var(--color-surface);
   padding: 6px 12px;
   border-radius: 20px;
   box-shadow: 0 2px 10px rgba(0,0,0,0.1);
@@ -323,26 +323,26 @@ watch(() => props.data, (newData) => {
   align-items: center;
   gap: 10px;
   font-size: 13px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   user-select: none;
   z-index: 100;
 }
 
 .zoom-controls button {
-  background: #f3f4f6;
+  background: var(--color-surface-2);
   border: none;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   cursor: pointer;
   font-weight: bold;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
 }
 
 .zoom-controls button:hover {
-  background: #e5e7eb;
+  background: var(--color-border);
 }
 </style>

@@ -1,14 +1,14 @@
 <template>
   <div class="knowledge-progress-page">
     <div class="page-header">
-      <h1>📚 知识图谱管理</h1>
+      <h1><BookOpen :size="24" /> 知识图谱管理</h1>
       <p class="subtitle">教师工作台 - 管理智课内容与知识点脚本</p>
     </div>
 
     <div class="main-content">
       <div class="sidebar">
         <div class="course-list-section">
-          <h3>📁 我的课程</h3>
+          <h3><Folder :size="16" /> 我的课程</h3>
           <div class="course-list" v-if="courses.length > 0">
             <div 
               v-for="course in courses" 
@@ -17,7 +17,7 @@
               :class="{ active: selectedCourseId === course.id }"
               @click="loadCourseHierarchy(course.id)"
             >
-              <span class="course-icon">📖</span>
+              <span class="course-icon"><BookOpen :size="16" /></span>
               <div class="course-info">
                 <div class="course-title">{{ course.title }}</div>
                 <div class="course-meta">{{ course.total_nodes || 0 }} 个知识点</div>
@@ -36,7 +36,7 @@
               @dragover.prevent
               @drop.prevent="handleDrop"
             >
-              <div class="upload-icon">📄</div>
+              <div class="upload-icon"><FileText :size="32" /></div>
               <p>点击或拖拽上传</p>
               <p class="supported-formats">PDF, DOCX, PPTX</p>
             </div>
@@ -51,7 +51,7 @@
         </div>
 
         <div class="tree-section" v-if="treeData">
-          <h3>🌳 知识结构树</h3>
+          <h3><Network :size="16" /> 知识结构树</h3>
           <div class="tree-container">
             <KnowledgeTreeNode
               :node="treeData"
@@ -66,7 +66,7 @@
 
       <div class="content-area">
         <div v-if="!treeData" class="empty-state">
-          <div class="empty-icon">📖</div>
+          <div class="empty-icon"><BookOpen :size="48" /></div>
           <h3>请选择课程或上传文档</h3>
           <p>选择已有课程或上传新文档开始编辑</p>
         </div>
@@ -86,7 +86,7 @@
                 :disabled="!canNavigatePrev"
                 title="上一个节点 (←)"
               >
-                ◀ 上一个
+                <ChevronLeft :size="12" /> 上一个
               </button>
               <span class="node-counter">{{ currentNodeIndex + 1 }} / {{ totalNodes }}</span>
               <button
@@ -95,7 +95,7 @@
                 :disabled="!canNavigateNext"
                 title="下一个节点 (→)"
               >
-                下一个 ▶
+                下一个 <ChevronRight :size="12" />
               </button>
             </div>
           </div>
@@ -107,7 +107,7 @@
                 <span class="level-badge" :class="'level-' + currentNode?.level">
                   {{ getLevelLabel(currentNode?.level) }}
                 </span>
-                <span v-if="currentNode?.is_key_point" class="key-point-badge">⭐ 重点</span>
+                <span v-if="currentNode?.is_key_point" class="key-point-badge"><Star :size="12" /> 重点</span>
               </div>
             </div>
 
@@ -123,7 +123,7 @@
 
             <div class="audio-section" v-if="currentNode">
               <div class="audio-header">
-                <h4>🔊 语音播放</h4>
+                <h4><Volume2 :size="14" /> 语音播放</h4>
                 <button
                   class="generate-audio-btn"
                   @click="generateAudioForNode"
@@ -145,10 +145,10 @@
 
           <div class="action-bar">
             <button class="save-btn" @click="saveChangesToDatabase" :disabled="!hasChanges || isSaving">
-              {{ isSaving ? '保存中...' : '💾 保存到数据库' }}
+              <Save :size="14" v-if="!isSaving" /> {{ isSaving ? '保存中...' : '保存到数据库' }}
             </button>
             <button class="save-all-btn" @click="saveAllChanges" :disabled="isSavingAll">
-              {{ isSavingAll ? '保存中...' : '💾 保存全部修改' }}
+              <Save :size="14" v-if="!isSavingAll" /> {{ isSavingAll ? '保存中...' : '保存全部修改' }}
             </button>
           </div>
         </div>
@@ -160,6 +160,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import KnowledgeTreeNode from './KnowledgeTreeNode.vue'
+import { BookOpen, Folder, FileText, Network, Star, Volume2, Save, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
@@ -551,29 +552,33 @@ const handleKeydown = (e) => {
 <style scoped>
 .knowledge-progress-page {
   min-height: calc(100vh - var(--navbar-height));
-  background: linear-gradient(135deg, #f5f7fa 0%, #e4e8ec 100%);
-  padding: 24px;
+  background: var(--color-bg);
+  padding: var(--space-5);
 }
 
 .page-header {
   text-align: center;
-  margin-bottom: 32px;
+  margin-bottom: var(--space-6);
 }
 
 .page-header h1 {
-  font-size: 28px;
-  color: #1f2937;
-  margin-bottom: 8px;
+  font-size: var(--text-2xl);
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .subtitle {
-  color: #6b7280;
-  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
 }
 
 .main-content {
   display: flex;
-  gap: 24px;
+  gap: var(--space-5);
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -584,47 +589,52 @@ const handleKeydown = (e) => {
 }
 
 .course-list-section {
-  background: white;
-  border-radius: 16px;
-  padding: 20px;
-  margin-bottom: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  box-shadow: var(--shadow-sm);
 }
 
 .course-list-section h3 {
-  font-size: 16px;
-  color: #374151;
-  margin-bottom: 16px;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .course-list {
   max-height: 200px;
   overflow-y: auto;
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 
 .course-item {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 8px;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  transition: all 0.2s ease;
-  margin-bottom: 8px;
+  transition: all var(--duration-normal) var(--ease);
+  margin-bottom: var(--space-2);
 }
 
 .course-item:hover {
-  background: #f3f4f6;
+  background: var(--color-surface-2);
 }
 
 .course-item.active {
-  background: #e0e7ff;
-  border: 1px solid #818cf8;
+  background: var(--color-primary-light);
+  border: 1px solid var(--color-primary);
 }
 
 .course-icon {
-  font-size: 24px;
+  display: flex;
+  align-items: center;
+  color: var(--color-primary);
 }
 
 .course-info {
@@ -632,80 +642,86 @@ const handleKeydown = (e) => {
 }
 
 .course-title {
-  font-size: 14px;
+  font-size: var(--text-sm);
   font-weight: 500;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .course-meta {
-  font-size: 12px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
 }
 
 .no-courses {
   text-align: center;
-  padding: 20px;
-  color: #9ca3af;
+  padding: var(--space-4);
+  color: var(--color-text-muted);
 }
 
 .upload-section {
-  border-top: 1px solid #e5e7eb;
-  padding-top: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-4);
 }
 
 .upload-section h4 {
-  font-size: 14px;
-  color: #374151;
-  margin-bottom: 12px;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
 }
 
 .upload-area {
-  border: 2px dashed #d1d5db;
-  border-radius: 12px;
-  padding: 24px 16px;
+  border: 2px dashed var(--color-border-hover);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5) var(--space-4);
   text-align: center;
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: all var(--duration-slow) var(--ease);
 }
 
 .upload-area:hover {
-  border-color: #4f46e5;
-  background: #f5f3ff;
+  border-color: var(--color-primary-hover);
+  background: var(--color-primary-light);
 }
 
 .upload-icon {
-  font-size: 32px;
-  margin-bottom: 8px;
+  margin-bottom: var(--space-2);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--color-text-muted);
 }
 
 .upload-area p {
-  color: #6b7280;
-  font-size: 13px;
-  margin: 4px 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-xs);
+  margin: var(--space-1) 0;
 }
 
 .supported-formats {
-  font-size: 11px !important;
-  color: #9ca3af !important;
+  font-size: var(--text-xs) !important;
+  color: var(--color-text-muted) !important;
 }
 
 .tree-section {
-  background: white;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
   max-height: calc(100vh - 450px);
   overflow-y: auto;
 }
 
 .tree-section h3 {
-  font-size: 16px;
-  color: #374151;
-  margin-bottom: 16px;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .tree-container {
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 .content-area {
@@ -714,33 +730,36 @@ const handleKeydown = (e) => {
 }
 
 .empty-state {
-  background: white;
-  border-radius: 16px;
-  padding: 80px 40px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: 80px var(--space-7);
   text-align: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  box-shadow: var(--shadow-sm);
 }
 
 .empty-icon {
-  font-size: 64px;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-4);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  color: var(--color-text-muted);
 }
 
 .empty-state h3 {
-  font-size: 20px;
-  color: #374151;
-  margin-bottom: 8px;
+  font-size: var(--text-xl);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .empty-state p {
-  color: #6b7280;
-  font-size: 14px;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
 }
 
 .node-editor {
-  background: white;
-  border-radius: 16px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
   height: calc(100vh - 150px);
@@ -750,60 +769,63 @@ const handleKeydown = (e) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 16px 24px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #f9fafb;
-  border-radius: 16px 16px 0 0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 }
 
 .node-path {
-  font-size: 13px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
 }
 
 .path-separator {
-  margin: 0 6px;
-  color: #d1d5db;
+  margin: 0 var(--space-1);
+  color: var(--color-border-hover);
 }
 
 .node-nav {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .nav-btn {
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
-  color: white;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .nav-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-primary);
 }
 
 .nav-btn:disabled {
-  background: #e5e7eb;
-  color: #9ca3af;
+  background: var(--color-border);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .node-counter {
-  font-size: 13px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
   min-width: 80px;
   text-align: center;
 }
 
 .node-content {
   flex: 1;
-  padding: 24px;
+  padding: var(--space-5);
   overflow-y: auto;
 }
 
@@ -811,137 +833,143 @@ const handleKeydown = (e) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-4);
 }
 
 .content-header h2 {
-  font-size: 20px;
-  color: #1f2937;
+  font-size: var(--text-xl);
+  color: var(--color-text);
   margin: 0;
 }
 
 .node-meta {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .level-badge {
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
   font-weight: 500;
 }
 
 .level-1 {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
 }
 
 .level-2 {
-  background: #dbeafe;
-  color: #1e40af;
+  background: var(--color-info-light);
+  color: var(--color-info);
 }
 
 .level-3 {
-  background: #dcfce7;
-  color: #166534;
+  background: var(--color-success-light);
+  color: var(--color-success);
 }
 
 .level-4, .level-5 {
-  background: #f3e8ff;
-  color: #7c3aed;
+  background: var(--color-primary-light);
+  color: var(--color-secondary);
 }
 
 .key-point-badge {
-  background: #fef3c7;
-  color: #d97706;
-  padding: 4px 12px;
-  border-radius: 20px;
-  font-size: 12px;
+  background: var(--color-warning-light);
+  color: var(--color-warning);
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .editor-section {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .editor-section label {
   display: block;
-  font-size: 14px;
+  font-size: var(--text-sm);
   font-weight: 500;
-  color: #374151;
-  margin-bottom: 8px;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .editor-section .hint {
-  font-size: 12px;
-  color: #9ca3af;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   font-weight: normal;
 }
 
 .content-editor {
   width: 100%;
   min-height: 200px;
-  padding: 16px;
-  border: 1px solid #e5e7eb;
-  border-radius: 12px;
-  font-size: 14px;
+  padding: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
   line-height: 1.6;
   resize: vertical;
-  transition: border-color 0.2s ease;
+  transition: border-color var(--duration-normal) var(--ease);
   box-sizing: border-box;
 }
 
 .content-editor:focus {
   outline: none;
-  border-color: #4f46e5;
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-primary);
 }
 
 .audio-section {
-  background: #f9fafb;
-  border-radius: 12px;
-  padding: 16px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
 }
 
 .audio-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 
 .audio-header h4 {
-  font-size: 14px;
-  color: #374151;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .generate-audio-btn {
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: white;
+  background: var(--gradient-success);
+  color: var(--color-text-inverse);
   border: none;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .generate-audio-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-primary);
 }
 
 .generate-audio-btn:disabled {
-  background: #e5e7eb;
-  color: #9ca3af;
+  background: var(--color-border);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .audio-player {
-  background: white;
-  border-radius: 8px;
-  padding: 12px;
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
 }
 
 .audio-player audio {
@@ -952,51 +980,54 @@ const handleKeydown = (e) => {
 .action-bar {
   display: flex;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 24px;
-  border-top: 1px solid #e5e7eb;
-  background: #f9fafb;
-  border-radius: 0 0 16px 16px;
+  gap: var(--space-3);
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 }
 
 .save-btn, .save-all-btn {
-  padding: 10px 20px;
-  border-radius: 8px;
-  font-size: 14px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .save-btn {
-  background: white;
-  border: 1px solid #d1d5db;
-  color: #374151;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-hover);
+  color: var(--color-text-secondary);
 }
 
 .save-btn:hover:not(:disabled) {
-  border-color: #4f46e5;
-  color: #4f46e5;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .save-btn:disabled {
-  background: #f3f4f6;
-  color: #9ca3af;
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .save-all-btn {
-  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background: var(--gradient-primary);
   border: none;
-  color: white;
+  color: var(--color-text-inverse);
 }
 
 .save-all-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-primary);
 }
 
 .save-all-btn:disabled {
-  background: #e5e7eb;
+  background: var(--color-border);
   cursor: not-allowed;
 }
 
@@ -1004,15 +1035,15 @@ const handleKeydown = (e) => {
   .main-content {
     flex-direction: column;
   }
-  
+
   .sidebar {
     width: 100%;
   }
-  
+
   .tree-section {
     max-height: 300px;
   }
-  
+
   .node-editor {
     height: auto;
     min-height: 500px;

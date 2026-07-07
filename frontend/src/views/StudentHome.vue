@@ -2,7 +2,7 @@
   <div class="student-home">
     <div class="student-content">
       <div class="welcome-section">
-        <h1>👨‍🎓 学习中心</h1>
+        <h1><GraduationCap :size="32" /> 学习中心</h1>
         <p class="subtitle">选择智课开始学习，随时提问互动</p>
       </div>
 
@@ -12,27 +12,27 @@
           :class="{ active: activeTab === 'my' }"
           @click="activeTab = 'my'"
         >
-          📚 我的课程 ({{ myCourses.length }})
+          <BookOpen :size="18" /> 我的课程 ({{ myCourses.length }})
         </button>
         <button
           class="tab-btn"
           :class="{ active: activeTab === 'available' }"
           @click="activeTab = 'available'"
         >
-          🔍 课程广场 ({{ availableCourses.length }})
+          <Search :size="18" /> 课程广场 ({{ availableCourses.length }})
         </button>
       </div>
 
       <div class="course-list-section">
         <!-- 我的课程（已选） -->
         <div v-if="activeTab === 'my'">
-          <h2>📖 我正在学习的课程</h2>
+          <h2><BookOpen :size="20" /> 我正在学习的课程</h2>
           <LoadingSpinner v-if="isLoadingMy" text="正在加载..." />
           <div v-else-if="myCourses.length === 0" class="empty-state">
-            <div class="empty-icon">📭</div>
+            <div class="empty-icon"><Inbox :size="48" :stroke-width="1.5" /></div>
             <p>您还没有选择任何课程</p>
-            <p class="hint">去"课程广场"看看有什么有趣的课程吧</p>
-            <button class="action-link" @click="activeTab = 'available'">浏览课程 →</button>
+            <p class="hint">去“课程广场”看看有什么有趣的课程吧</p>
+            <button class="action-link" @click="activeTab = 'available'">浏览课程 <ArrowRight :size="14" /></button>
           </div>
           <div v-else class="course-grid">
             <div
@@ -42,16 +42,16 @@
             >
               <div class="card-header">
                 <div class="course-cover">
-                  <span class="course-icon">✅</span>
+                  <CheckCircle :size="24" />
                 </div>
                 <span class="enrolled-badge">已选课</span>
               </div>
               <div class="course-info">
                 <h3>{{ course.title }}</h3>
-                <p class="teacher-name">👨‍🏫 {{ course.teacher_name }}</p>
+                <p class="teacher-name"><Presentation :size="14" /> {{ course.teacher_name }}</p>
                 <p class="course-meta">
-                  <span>📊 {{ course.total_nodes || 0 }} 个知识点</span>
-                  <span>⏱️ {{ formatDuration(course.total_duration) }}</span>
+                  <span><BarChart3 :size="14" /> {{ course.total_nodes || 0 }} 个知识点</span>
+                  <span><Clock :size="14" /> {{ formatDuration(course.total_duration) }}</span>
                 </p>
                 <div class="course-progress">
                   <div class="progress-bar">
@@ -63,7 +63,7 @@
                   <span class="progress-text">{{ course.overall_progress }}% 已学习</span>
                 </div>
                 <div class="study-info" v-if="course.total_study_minutes > 0">
-                  <span>📚 累计学习 {{ formatStudyTime(course.total_study_minutes) }}</span>
+                  <span><BookOpen :size="14" /> 累计学习 {{ formatStudyTime(course.total_study_minutes) }}</span>
                   <span v-if="course.last_study_time">
                     上次学习: {{ formatTime(course.last_study_time) }}
                   </span>
@@ -71,7 +71,7 @@
               </div>
               <div class="card-actions">
                 <button class="primary-btn" @click="enterCourse(course)">
-                  🚀 继续学习
+                  <Rocket :size="16" /> 继续学习
                 </button>
                 <button class="danger-btn" @click="confirmUnenroll(course)">
                   退出课程
@@ -83,10 +83,10 @@
 
         <!-- 可选课程（未选） -->
         <div v-if="activeTab === 'available'">
-          <h2>🎯 课程广场 - 选择你感兴趣的课程</h2>
+          <h2><Target :size="20" /> 课程广场 - 选择你感兴趣的课程</h2>
           <LoadingSpinner v-if="isLoadingAvailable" text="正在加载..." />
           <div v-else-if="availableCourses.length === 0" class="empty-state">
-            <div class="empty-icon">📭</div>
+            <div class="empty-icon"><Inbox :size="48" :stroke-width="1.5" /></div>
             <p>暂无可选课程</p>
             <p class="hint">请等待老师发布新课程</p>
           </div>
@@ -98,19 +98,19 @@
             >
               <div class="card-header">
                 <div class="course-cover">
-                  <span class="course-icon">📖</span>
+                  <BookOpen :size="24" />
                 </div>
                 <span class="status-badge">
-                  👥 {{ course.student_count || 0 }} 人在学
+                  <Users :size="14" /> {{ course.student_count || 0 }} 人在学
                 </span>
               </div>
               <div class="course-info">
                 <h3>{{ course.title }}</h3>
                 <p class="course-desc">{{ course.description || '暂无描述' }}</p>
-                <p class="teacher-name">👨‍🏫 {{ course.teacher_name }}</p>
+                <p class="teacher-name"><Presentation :size="14" /> {{ course.teacher_name }}</p>
                 <p class="course-meta">
-                  <span>📊 {{ course.total_nodes || 0 }} 个知识点</span>
-                  <span>⏱️ {{ formatDuration(course.total_duration) }}</span>
+                  <span><BarChart3 :size="14" /> {{ course.total_nodes || 0 }} 个知识点</span>
+                  <span><Clock :size="14" /> {{ formatDuration(course.total_duration) }}</span>
                 </p>
               </div>
               <div class="card-actions">
@@ -119,10 +119,11 @@
                   @click="enrollCourse(course)"
                   :disabled="isEnrolling && enrollingId === course.id"
                 >
+                  <Sparkles :size="16" />
                   {{
                     isEnrolling && enrollingId === course.id
                       ? '选课中...'
-                      : '✨ 选择此课程'
+                      : '选择此课程'
                   }}
                 </button>
               </div>
@@ -140,6 +141,21 @@ import { useRouter } from 'vue-router'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import request from '@/utils/request.js'
 import { showToast } from '@/utils/toast'
+import {
+  GraduationCap,
+  BookOpen,
+  Search,
+  Inbox,
+  ArrowRight,
+  CheckCircle,
+  Presentation,
+  BarChart3,
+  Clock,
+  Rocket,
+  Target,
+  Users,
+  Sparkles,
+} from 'lucide-vue-next'
 
 const router = useRouter()
 
@@ -277,49 +293,56 @@ const formatTime = (timeStr) => {
 <style scoped>
 .student-home {
   min-height: calc(100vh - var(--navbar-height));
-  background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  background: var(--gradient-primary);
 }
 
 .student-content {
   max-width: 1200px;
   margin: 0 auto;
-  padding: 40px 24px;
+  padding: var(--space-7) var(--space-5);
 }
 
 .welcome-section {
   text-align: center;
-  color: white;
-  margin-bottom: 32px;
+  color: var(--color-text-inverse);
+  margin-bottom: var(--space-6);
 }
 
 .welcome-section h1 {
-  font-size: 32px;
-  margin: 0 0 12px 0;
+  font-size: var(--text-3xl);
+  margin: 0 0 var(--space-3) 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .subtitle {
-  font-size: 16px;
+  font-size: var(--text-base);
   opacity: 0.9;
   margin: 0;
 }
 
 .tabs-section {
   display: flex;
-  gap: 16px;
-  margin-bottom: 24px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
   justify-content: center;
 }
 
 .tab-btn {
-  padding: 12px 32px;
+  padding: var(--space-3) var(--space-6);
   border: 2px solid rgba(255, 255, 255, 0.3);
   background: rgba(255, 255, 255, 0.1);
-  color: white;
-  border-radius: 25px;
+  color: var(--color-text-inverse);
+  border-radius: var(--radius-2xl);
   font-size: 15px;
-  font-weight: 500;
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .tab-btn:hover {
@@ -328,50 +351,53 @@ const formatTime = (timeStr) => {
 }
 
 .tab-btn.active {
-  background: white;
-  color: #0ea5e9;
-  border-color: white;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  border-color: var(--color-surface);
+  box-shadow: var(--shadow-md);
 }
 
 .course-list-section {
-  background: white;
-  border-radius: 20px;
-  padding: 28px;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-xl);
 }
 
 .course-list-section h2 {
-  font-size: 20px;
-  color: #1f2937;
-  margin: 0 0 20px 0;
+  font-size: var(--text-xl);
+  color: var(--color-text);
+  margin: 0 0 var(--space-5) 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .course-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
-  gap: 20px;
+  gap: var(--space-5);
 }
 
 .course-card {
-  background: #f8fafc;
-  border-radius: 12px;
-  padding: 20px;
+  background: var(--color-bg);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
   border: 2px solid transparent;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .course-card:hover {
-  border-color: #0ea5e9;
+  border-color: var(--color-primary);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.15);
+  box-shadow: var(--shadow-primary);
 }
 
 .course-card.enrolled {
-  border-left: 4px solid #10b981;
+  border-left: 4px solid var(--color-success);
 }
 
 .card-header {
@@ -381,52 +407,56 @@ const formatTime = (timeStr) => {
 }
 
 .course-cover {
-  width: 48px;
-  height: 48px;
-  background: linear-gradient(135deg, #0ea5e9, #0284c7);
-  border-radius: 10px;
+  width: var(--space-8);
+  height: var(--space-8);
+  background: var(--gradient-primary);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
+  color: var(--color-text-inverse);
 }
 
 .course-card.enrolled .course-cover {
-  background: linear-gradient(135deg, #10b981, #059669);
+  background: var(--gradient-success);
 }
 
 .course-icon {
-  font-size: 24px;
+  font-size: var(--text-2xl);
 }
 
 .enrolled-badge,
 .status-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .enrolled-badge {
-  background: #d1fae5;
-  color: #065f46;
+  background: var(--color-success-light);
+  color: var(--color-success-hover);
 }
 
 .status-badge {
-  background: #dbeafe;
-  color: #1e40af;
+  background: var(--color-info-light);
+  color: var(--color-info);
 }
 
 .course-info h3 {
-  font-size: 16px;
-  color: #1f2937;
-  margin: 0 0 6px 0;
+  font-size: var(--text-base);
+  color: var(--color-text);
+  margin: 0 0 var(--space-2) 0;
 }
 
 .course-desc {
   font-size: 13px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   line-height: 1.4;
-  margin: 0 0 6px 0;
+  margin: 0 0 var(--space-2) 0;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -435,80 +465,99 @@ const formatTime = (timeStr) => {
 
 .teacher-name {
   font-size: 13px;
-  color: #6366f1;
-  margin: 0 0 6px 0;
-  font-weight: 500;
+  color: var(--color-primary);
+  margin: 0 0 var(--space-2) 0;
+  font-weight: var(--font-medium);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .course-meta {
   display: flex;
-  gap: 12px;
-  font-size: 12px;
-  color: #9ca3af;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   margin: 0;
 }
 
+.course-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 .course-progress {
-  margin-top: 4px;
+  margin-top: var(--space-1);
 }
 
 .progress-bar {
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 3px;
+  height: var(--space-2);
+  background: var(--color-border);
+  border-radius: var(--space-1);
   overflow: hidden;
-  margin-bottom: 4px;
+  margin-bottom: var(--space-1);
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #10b981, #059669);
-  border-radius: 3px;
-  transition: width 0.3s ease;
+  background: var(--gradient-success);
+  border-radius: var(--space-1);
+  transition: width var(--duration-slow) var(--ease);
 }
 
 .progress-text {
   font-size: 11px;
-  color: #10b981;
-  font-weight: 500;
+  color: var(--color-success);
+  font-weight: var(--font-medium);
 }
 
 .study-info {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
   font-size: 11px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
+}
+
+.study-info span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .card-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   margin-top: auto;
-  padding-top: 12px;
-  border-top: 1px solid #e5e7eb;
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
 }
 
 .primary-btn,
 .danger-btn {
   flex: 1;
-  padding: 10px 16px;
+  padding: var(--space-3) var(--space-4);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 500;
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .primary-btn {
-  background: linear-gradient(135deg, #0ea5e9, #0284c7);
-  color: white;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
 }
 
 .primary-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(14, 165, 233, 0.3);
+  box-shadow: var(--shadow-primary);
 }
 
 .primary-btn:disabled {
@@ -517,57 +566,60 @@ const formatTime = (timeStr) => {
 }
 
 .danger-btn {
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
+  background: var(--color-danger-light);
+  color: var(--color-danger-hover);
+  border: 1px solid var(--color-danger-light);
 }
 
 .danger-btn:hover {
-  background: #fee2e2;
-  border-color: #fca5a5;
+  background: var(--color-danger-light);
+  border-color: var(--color-danger);
 }
 
 .loading-state {
   text-align: center;
-  padding: 40px;
-  color: #6b7280;
+  padding: var(--space-7);
+  color: var(--color-text-secondary);
 }
 
 .empty-state {
   text-align: center;
-  padding: 60px 20px;
+  padding: var(--space-10) var(--space-5);
 }
 
 .empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
+  color: var(--color-text-muted);
 }
 
 .empty-state p {
   font-size: 15px;
-  color: #6b7280;
-  margin: 0 0 6px 0;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--space-2) 0;
 }
 
 .hint {
   font-size: 13px !important;
-  color: #9ca3af !important;
+  color: var(--color-text-muted) !important;
 }
 
 .action-link {
-  margin-top: 16px;
-  padding: 10px 24px;
-  background: linear-gradient(135deg, #0ea5e9, #0284c7);
-  color: white;
+  margin-top: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .action-link:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3);
+  box-shadow: var(--shadow-primary);
 }
 </style>

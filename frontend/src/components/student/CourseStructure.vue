@@ -24,15 +24,15 @@
             @click="enterPlayerMode"
             title="进入分屏视频播放器模式"
           >
-            🎬 分屏播放器
+            <Clapperboard :size="14" /> 分屏播放器
           </button>
-          <button class="back-btn" @click="exitCourse">← 返回</button>
+          <button class="back-btn" @click="exitCourse"><ArrowLeft :size="14" /> 返回</button>
         </div>
       </div>
 
       <div class="chapter-tree">
         <div class="tree-header">
-          <span>📋 课程结构</span>
+          <span class="tree-header-title"><ClipboardList :size="14" /> 课程结构</span>
           <span class="node-count">{{ scriptNodes.length }} 个节点</span>
         </div>
 
@@ -53,9 +53,9 @@
             @click="jumpToNode(index)"
           >
             <div class="node-status">
-              <span v-if="isNodeCompleted(index)" class="status-icon completed">✅</span>
-              <span v-else-if="currentNodeIndex === index" class="status-icon current">▶️</span>
-              <span v-else class="status-icon pending">⭕</span>
+              <CheckCircle v-if="isNodeCompleted(index)" :size="16" class="status-icon completed" />
+              <Play v-else-if="currentNodeIndex === index" :size="16" class="status-icon current" />
+              <Circle v-else :size="16" class="status-icon pending" />
             </div>
 
             <div class="node-info">
@@ -93,6 +93,14 @@ import { ref, watch, nextTick } from 'vue'
 import { inject } from 'vue'
 import PptSlidePlayer from '@/components/chat/PptSlidePlayer.vue'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
+import {
+  Clapperboard,
+  ArrowLeft,
+  ClipboardList,
+  CheckCircle,
+  Play,
+  Circle,
+} from 'lucide-vue-next'
 
 const {
   selectedCourse,
@@ -139,37 +147,37 @@ watch(pendingAutoPlay, (val) => {
   display: flex;
   flex-direction: column;
   flex-shrink: 1;
-  border-right: 1px solid #e5e7eb;
+  border-right: 1px solid var(--color-border);
 }
 
 .video-section {
   height: 50%;
-  background: #1a1a1a;
+  background: var(--color-surface-2);
   overflow: hidden;
 }
 
 .structure-section {
   height: 50%;
-  background: white;
+  background: var(--color-surface);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 .panel-header {
-  padding: 16px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .panel-header h3 {
-  font-size: 16px;
-  font-weight: 600;
-  color: #111827;
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
   margin: 0;
   flex: 1;
   min-width: 0;
@@ -180,44 +188,50 @@ watch(pendingAutoPlay, (val) => {
 
 .header-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   align-items: center;
 }
 
 .player-mode-btn {
-  padding: 6px 14px;
-  border: 1px solid #4CAF50;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-  color: white;
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--color-success);
+  border-radius: var(--radius-sm);
+  background: var(--gradient-success);
+  color: var(--color-text-inverse);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  font-weight: 600;
+  transition: var(--transition-all);
+  font-weight: var(--font-semibold);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .player-mode-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 4px 8px rgba(76, 175, 80, 0.3);
+  box-shadow: var(--shadow-success);
 }
 
 .back-btn {
-  padding: 6px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  background: white;
-  color: #374151;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
-.back-btn:hover { background: #f3f4f6; }
+.back-btn:hover { background: var(--color-surface-2); }
 
 .chapter-tree {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: var(--space-3);
 }
 
 .tree-header {
@@ -225,57 +239,65 @@ watch(pendingAutoPlay, (val) => {
   justify-content: space-between;
   align-items: center;
   font-size: 13px;
-  font-weight: 600;
-  color: #374151;
-  margin-bottom: 12px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid #e5e7eb;
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
 }
 
-.node-count { color: #6366f1; font-weight: normal; }
+.tree-header-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.node-count { color: var(--color-primary); font-weight: var(--font-normal); }
 
 .tree-empty {
   text-align: center;
-  color: #9ca3af;
-  padding: 40px 20px;
+  color: var(--color-text-muted);
+  padding: var(--space-7) var(--space-5);
   font-size: 13px;
 }
 
 .tree-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 
 .tree-node {
-  padding: 10px 12px;
-  border-radius: 8px;
+  padding: var(--space-3) var(--space-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 8px;
-  transition: all 0.2s ease;
+  gap: var(--space-2);
+  transition: var(--transition-all);
   position: relative;
 }
 
-.tree-node:hover { background: #f3f4f6; }
+.tree-node:hover { background: var(--color-surface-2); }
 
 .tree-node.active {
-  background: linear-gradient(135deg, #eef2ff, #f5f3ff);
+  background: linear-gradient(135deg, var(--color-primary-light), var(--color-secondary-light));
   box-shadow: 0 2px 8px rgba(99, 102, 241, 0.15);
 }
 
 .tree-node.completed { opacity: 0.75; }
 
-.node-status { flex-shrink: 0; }
+.node-status { flex-shrink: 0; display: flex; align-items: center; }
 
-.status-icon { font-size: 14px; }
+.status-icon.completed { color: var(--color-success); }
+.status-icon.current { color: var(--color-primary); }
+.status-icon.pending { color: var(--color-text-muted); }
 
 .node-info {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -283,70 +305,70 @@ watch(pendingAutoPlay, (val) => {
 
 .node-title {
   font-size: 13px;
-  color: #374151;
+  color: var(--color-text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .tree-node.active .node-title {
-  color: #4f46e5;
-  font-weight: 500;
+  color: var(--color-primary-hover);
+  font-weight: var(--font-medium);
 }
 
 .understanding-bar {
   position: absolute;
   bottom: 0;
   left: 38px;
-  right: 8px;
+  right: var(--space-2);
   height: 3px;
-  background: #e5e7eb;
-  border-radius: 2px;
+  background: var(--color-border);
+  border-radius: var(--space-1);
   overflow: hidden;
 }
 
 .understanding-fill {
   height: 100%;
-  border-radius: 2px;
-  transition: width 0.5s ease;
+  border-radius: var(--space-1);
+  transition: width var(--duration-slow) var(--ease);
 }
 
-.understanding-fill.level-excellent { background: #10b981; }
-.understanding-fill.level-high { background: #6366f1; }
-.understanding-fill.level-medium { background: #f59e0b; }
-.understanding-fill.level-low { background: #ef4444; }
+.understanding-fill.level-excellent { background: var(--color-success); }
+.understanding-fill.level-high { background: var(--color-primary); }
+.understanding-fill.level-medium { background: var(--color-warning); }
+.understanding-fill.level-low { background: var(--color-danger); }
 
 .overall-progress {
-  padding: 16px;
-  border-top: 1px solid #e5e7eb;
-  background: #fafbfc;
+  padding: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2);
 }
 
 .progress-label {
   font-size: 13px;
-  font-weight: 500;
-  color: #374151;
-  margin-bottom: 8px;
+  font-weight: var(--font-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
 }
 
 .progress-bar {
-  height: 8px;
-  background: #e5e7eb;
-  border-radius: 4px;
+  height: var(--space-2);
+  background: var(--color-border);
+  border-radius: var(--space-1);
   overflow: hidden;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  border-radius: 4px;
-  transition: width 0.5s ease;
+  background: var(--gradient-primary);
+  border-radius: var(--space-1);
+  transition: width var(--duration-slow) var(--ease);
 }
 
 .progress-text {
-  font-size: 12px;
-  color: #6b7280;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
   text-align: right;
 }
 

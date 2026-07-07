@@ -1,10 +1,14 @@
 <template>
   <div v-if="visible" class="jump-source-badge" :class="badgeClass">
     <div class="badge-content">
-      <div class="badge-icon">🔖</div>
-      
+      <div class="badge-icon"><Bookmark :size="24" /></div>
+
       <div class="badge-info">
-        <div class="badge-title">{{ title }}</div>
+        <div class="badge-title">
+          <AlertTriangle v-if="urgencyLevel === 'high'" :size="14" />
+          <BookOpen v-else :size="14" />
+          {{ title }}
+        </div>
         <div class="badge-detail" v-if="fromNodeTitle">
           从「{{ fromNodeTitle }}」跳转而来
           <span class="depth-indicator" v-if="depth > 1">
@@ -14,28 +18,28 @@
       </div>
 
       <div class="badge-actions">
-        <button 
+        <button
           class="return-btn"
           @click="handleReturn"
           :disabled="isReturning"
           title="返回原位置继续学习"
         >
-          <span v-if="!isReturning" class="btn-text">← 返回</span>
+          <span v-if="!isReturning" class="btn-text"><ArrowLeft :size="14" /> 返回</span>
           <span v-else class="loading-dots">返回中...</span>
         </button>
 
-        <button 
+        <button
           class="dismiss-btn"
           @click="handleDismiss"
           title="关闭提示"
         >
-          ×
+          <X :size="18" />
         </button>
       </div>
     </div>
 
     <div class="progress-bar" v-if="showProgress && reviewStartTime">
-      <div 
+      <div
         class="progress-fill"
         :style="{ width: progressPercent + '%' }"
       ></div>
@@ -46,6 +50,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { Bookmark, ArrowLeft, X, AlertTriangle, BookOpen } from 'lucide-vue-next'
 
 const props = defineProps({
   visible: {
@@ -87,14 +92,14 @@ let timerInterval = null
 
 const title = computed(() => {
   if (props.depth > 1) return `复习中（嵌套跳转）`
-  
+
   switch (props.urgencyLevel) {
     case 'high':
-      return '⚠️ 关键知识点复习'
+      return '关键知识点复习'
     case 'medium':
-      return '📚 前置知识复习'
+      return '前置知识复习'
     default:
-      return '📖 知识点回顾'
+      return '知识点回顾'
   }
 })
 
@@ -138,18 +143,18 @@ function stopTimer() {
 
 async function handleReturn() {
   isReturning.value = true
-  
+
   try {
     const duration = elapsedSeconds.value
-    
+
     emit('return', {
       jumpId: props.jumpId,
       reviewDurationSeconds: duration,
       fromNodeIndex: props.fromNodeIndex,
     })
-    
+
     stopTimer()
-    
+
   } catch (error) {
     console.error('[返回操作失败]', error)
     isReturning.value = false
@@ -164,11 +169,11 @@ function handleDismiss() {
 <style scoped>
 .jump-source-badge {
   position: fixed;
-  top: 20px;
+  top: var(--space-5);
   left: 50%;
   transform: translateX(-50%);
   z-index: 998;
-  animation: slideDownBadge 0.3s ease-out;
+  animation: slideDownBadge var(--duration-slow) var(--ease);
   max-width: 90vw;
   width: 500px;
 }
@@ -187,31 +192,32 @@ function handleDismiss() {
 .badge-content {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
   border: 2px solid transparent;
 }
 
 .jump-source-badge.urgency-high .badge-content {
-  border-color: #fecaca;
-  background: linear-gradient(135deg, #fff1f2 0%, white 100%);
+  border-color: var(--color-danger-light);
+  background: var(--color-danger-light);
 }
 
 .jump-source-badge.urgency-medium .badge-content {
-  border-color: #fed7aa;
-  background: linear-gradient(135deg, #fffbeb 0%, white 100%);
+  border-color: var(--color-warning-light);
+  background: var(--color-warning-light);
 }
 
 .jump-source-badge.urgency-low .badge-content {
-  border-color: #bbf7d0;
-  background: linear-gradient(135deg, #f0fdf4 0%, white 100%);
+  border-color: var(--color-success-light);
+  background: var(--color-success-light);
 }
 
 .badge-icon {
-  font-size: 24px;
+  display: flex;
+  align-items: center;
   flex-shrink: 0;
 }
 
@@ -221,47 +227,50 @@ function handleDismiss() {
 }
 
 .badge-title {
-  font-weight: 700;
-  font-size: 14px;
-  color: #111827;
+  font-weight: var(--font-bold);
+  font-size: var(--text-sm);
+  color: var(--color-text);
   margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .badge-detail {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-secondary);
   line-height: 1.4;
 }
 
 .depth-indicator {
-  color: #dc2626;
-  font-weight: 600;
-  margin-left: 4px;
+  color: var(--color-danger);
+  font-weight: var(--font-semibold);
+  margin-left: var(--space-1);
 }
 
 .badge-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 
 .return-btn {
-  padding: 8px 18px;
+  padding: var(--space-2) 18px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: var(--font-semibold);
   cursor: pointer;
-  transition: all 0.25s;
-  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-  color: white;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+  transition: all var(--duration-normal) var(--ease);
+  background: var(--gradient-success);
+  color: var(--color-text-inverse);
+  box-shadow: var(--shadow-success);
 }
 
 .return-btn:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.4);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .return-btn:disabled {
@@ -270,6 +279,9 @@ function handleDismiss() {
 }
 
 .btn-text {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   white-space: nowrap;
 }
 
@@ -288,28 +300,27 @@ function handleDismiss() {
   width: 28px;
   height: 28px;
   border: none;
-  background: #f3f4f6;
-  border-radius: 6px;
-  font-size: 18px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  color: #6b7280;
+  transition: all var(--duration-normal) var(--ease);
+  color: var(--color-text-secondary);
 }
 
 .dismiss-btn:hover {
-  background: #e5e7eb;
-  transform: scale(1.05);
+  background: var(--color-border);
+  transform: translateY(-2px);
 }
 
 .progress-bar {
   margin-top: -8px;
-  margin-left: 16px;
-  margin-right: 16px;
+  margin-left: var(--space-4);
+  margin-right: var(--space-4);
   height: 6px;
-  background: #e5e7eb;
+  background: var(--color-border);
   border-radius: 3px;
   position: relative;
   overflow: hidden;
@@ -317,18 +328,18 @@ function handleDismiss() {
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #10b981, #34d399);
+  background: var(--gradient-success);
   border-radius: 3px;
   transition: width 1s linear;
 }
 
 .progress-text {
   position: absolute;
-  right: 8px;
+  right: var(--space-2);
   top: 50%;
   transform: translateY(-50%);
   font-size: 9px;
-  color: #6b7280;
-  font-weight: 600;
+  color: var(--color-text-secondary);
+  font-weight: var(--font-semibold);
 }
 </style>

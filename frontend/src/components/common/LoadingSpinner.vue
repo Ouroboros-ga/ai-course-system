@@ -25,7 +25,7 @@ defineProps({
   align-items: center;
   justify-content: center;
   gap: 16px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   font-size: 16px;
 }
 
@@ -36,14 +36,14 @@ defineProps({
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid #e5e7eb;
-  border-top-color: #6366f1;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
 
 .loading-text {
-  color: #6b7280;
+  color: var(--color-text-muted);
   font-size: 14px;
 }
 

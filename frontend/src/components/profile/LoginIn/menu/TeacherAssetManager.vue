@@ -4,14 +4,14 @@
       <div class="avatar-modal" @click.stop>
         <div class="modal-header">
           <h3>教师数字人素材管理</h3>
-          <button class="close-btn" @click="handleClose">✕</button>
+          <button class="close-btn" @click="handleClose"><X :size="20" /></button>
         </div>
 
         <div class="modal-content">
           <!-- 人脸视频区域 -->
           <div class="asset-section">
             <div class="section-title">
-              <span class="section-icon">🎬</span>
+              <Clapperboard :size="18" class="section-icon" />
               人脸视频素材
               <span class="section-hint">（用于生成数字人讲课视频，支持 mp4/webm/mov）</span>
             </div>
@@ -65,7 +65,8 @@
                 :disabled="uploading.face_video"
                 @click="faceVideoInput?.click()"
               >
-                {{ uploading.face_video ? '上传中...' : '+ 上传人脸视频' }}
+                <Plus :size="14" />
+                {{ uploading.face_video ? '上传中...' : '上传人脸视频' }}
               </button>
               <span v-if="uploadProgress.face_video" class="upload-progress">
                 {{ uploadProgress.face_video }}%
@@ -76,7 +77,7 @@
           <!-- 参考音频区域 -->
           <div class="asset-section">
             <div class="section-title">
-              <span class="section-icon">🎵</span>
+              <Music :size="18" class="section-icon" />
               参考音频素材
               <span class="section-hint">（用于TTS语音克隆，支持 mp3/wav/ogg）</span>
             </div>
@@ -152,7 +153,8 @@
                 :disabled="uploading.ref_audio"
                 @click="refAudioInput?.click()"
               >
-                {{ uploading.ref_audio ? '上传中...' : '+ 上传参考音频' }}
+                <Plus :size="14" />
+                {{ uploading.ref_audio ? '上传中...' : '上传参考音频' }}
               </button>
               <span v-if="uploadProgress.ref_audio" class="upload-progress">
                 {{ uploadProgress.ref_audio }}%
@@ -169,7 +171,7 @@
         <Teleport to="body">
           <div v-if="previewVisible" class="preview-overlay" @click="previewVisible = false">
             <div class="preview-container" @click.stop>
-              <button class="preview-close" @click="previewVisible = false">✕</button>
+              <button class="preview-close" @click="previewVisible = false"><X :size="18" /></button>
               <video
                 v-if="previewItem?.asset_type === 'face_video'"
                 :src="getPreviewUrl(previewItem.id)"
@@ -192,6 +194,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { X, Clapperboard, Music, Plus } from 'lucide-vue-next'
 import { uploadAsset, getAssetList, setDefaultAsset, deleteAsset, getAssetPreviewUrl, cloneVoice } from '@/api/asset.js'
 import { showToast } from '@/utils/toast.js'
 
@@ -349,18 +352,18 @@ function handleClose() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
-  animation: fadeIn 0.2s ease;
+  z-index: var(--z-modal);
+  animation: fadeIn var(--duration-normal) var(--ease);
 }
 
 .avatar-modal {
   width: 90%;
   max-width: 600px;
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
-  animation: slideUp 0.3s cubic-bezier(0.24, 1, 0.32, 1);
+  animation: slideUp var(--duration-slow) cubic-bezier(0.24, 1, 0.32, 1);
   display: flex;
   flex-direction: column;
   max-height: 85vh;
@@ -370,173 +373,173 @@ function handleClose() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 16px 20px;
-  border-bottom: 1px solid #f0f0f0;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-  color: #333;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
 }
 
 .close-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--space-6);
+  height: var(--space-6);
   border: none;
   background: transparent;
-  font-size: 20px;
-  color: #999;
+  color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .close-btn:hover {
-  background: #f5f5f5;
-  color: #333;
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .modal-content {
-  padding: 20px;
+  padding: var(--space-5);
   overflow-y: auto;
   flex: 1;
 }
 
 .asset-section {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .section-title {
   font-size: 15px;
-  font-weight: 600;
-  color: #333;
-  margin-bottom: 12px;
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-3);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
 }
 
 .section-icon {
-  font-size: 18px;
+  flex-shrink: 0;
+  color: var(--color-primary);
 }
 
 .section-hint {
-  font-size: 12px;
-  color: #999;
-  font-weight: 400;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-weight: var(--font-normal);
 }
 
 .asset-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 12px;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .asset-item {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
-  border: 1px solid #eee;
-  border-radius: 8px;
-  background: #fafafa;
-  transition: all 0.2s ease;
+  padding: 10px var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .asset-item.is-default {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .asset-info {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
   flex: 1;
   min-width: 0;
 }
 
 .asset-name {
-  font-size: 14px;
-  color: #333;
+  font-size: var(--text-sm);
+  color: var(--color-text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .asset-size {
-  font-size: 12px;
-  color: #999;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   flex-shrink: 0;
 }
 
 .default-badge {
   font-size: 11px;
-  padding: 2px 8px;
-  background: #667eea;
-  color: #fff;
-  border-radius: 10px;
+  padding: 2px var(--space-2);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
 .clone-badge {
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-full);
   flex-shrink: 0;
 }
 
 .clone-badge.success {
-  background: #52c41a;
-  color: #fff;
+  background: var(--color-success);
+  color: var(--color-text-inverse);
 }
 
 .clone-badge.pending {
-  background: #faad14;
-  color: #fff;
+  background: var(--color-warning);
+  color: var(--color-text-inverse);
 }
 
 .clone-badge.failed {
-  background: #ff4d4f;
-  color: #fff;
+  background: var(--color-danger);
+  color: var(--color-text-inverse);
 }
 
 .asset-actions {
   display: flex;
-  gap: 6px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
 .action-btn {
-  padding: 4px 10px;
-  border: 1px solid #ddd;
-  background: #fff;
-  border-radius: 6px;
-  font-size: 12px;
+  padding: var(--space-1) 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .action-btn.set-default:hover {
-  border-color: #667eea;
-  color: #667eea;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .action-btn.clone {
-  border-color: #722ed1;
-  color: #722ed1;
+  border-color: var(--color-secondary);
+  color: var(--color-secondary);
 }
 
 .action-btn.clone:hover:not(:disabled) {
-  background: #722ed1;
-  color: #fff;
+  background: var(--color-secondary);
+  color: var(--color-text-inverse);
 }
 
 .action-btn.clone:disabled {
@@ -545,81 +548,84 @@ function handleClose() {
 }
 
 .action-btn.preview:hover {
-  border-color: #52c41a;
-  color: #52c41a;
+  border-color: var(--color-success);
+  color: var(--color-success);
 }
 
 .action-btn.delete:hover {
-  border-color: #ff4d4f;
-  color: #ff4d4f;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
 }
 
 .empty-hint {
   font-size: 13px;
-  color: #bbb;
+  color: var(--color-text-muted);
   text-align: center;
-  padding: 16px 0;
-  margin-bottom: 12px;
-  border: 1px dashed #eee;
-  border-radius: 8px;
+  padding: var(--space-4) 0;
+  margin-bottom: var(--space-3);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-md);
 }
 
 .upload-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .upload-btn {
-  padding: 8px 16px;
-  border: 2px dashed #ddd;
-  background: #fafafa;
-  border-radius: 8px;
-  font-size: 14px;
-  color: #667eea;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  border: 2px dashed var(--color-border);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-primary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .upload-btn:hover:not(:disabled) {
-  border-color: #667eea;
-  background: rgba(102, 126, 234, 0.05);
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .upload-btn:disabled {
-  color: #999;
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
 .upload-progress {
   font-size: 13px;
-  color: #667eea;
-  font-weight: 500;
+  color: var(--color-primary);
+  font-weight: var(--font-medium);
 }
 
 .modal-footer {
   display: flex;
   justify-content: flex-end;
-  padding: 16px 20px;
-  border-top: 1px solid #f0f0f0;
-  background: #fafafa;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface-2);
   flex-shrink: 0;
 }
 
 .btn-cancel {
-  padding: 8px 20px;
-  border: 1px solid #ddd;
-  background: #fff;
-  border-radius: 8px;
-  font-size: 14px;
-  color: #666;
+  padding: var(--space-2) var(--space-5);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: all var(--duration-normal) var(--ease);
 }
 
 .btn-cancel:hover {
-  border-color: #999;
-  color: #333;
+  border-color: var(--color-text-muted);
+  color: var(--color-text);
 }
 
 /* 预览弹窗 */
@@ -633,7 +639,7 @@ function handleClose() {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 10001;
+  z-index: var(--z-modal);
 }
 
 .preview-container {
@@ -646,21 +652,24 @@ function handleClose() {
   position: absolute;
   top: -12px;
   right: -12px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
+  width: var(--space-6);
+  height: var(--space-6);
+  border-radius: var(--radius-full);
   border: none;
-  background: #fff;
-  font-size: 18px;
+  background: var(--color-surface);
+  color: var(--color-text);
   cursor: pointer;
   z-index: 1;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  box-shadow: var(--shadow-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .preview-media {
   max-width: 100%;
   max-height: 80vh;
-  border-radius: 8px;
+  border-radius: var(--radius-md);
 }
 
 @keyframes fadeIn {
@@ -678,7 +687,25 @@ function handleClose() {
 }
 
 .modal-content::-webkit-scrollbar-thumb {
-  background: #ddd;
-  border-radius: 3px;
+  background: var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+@media (max-width: 768px) {
+  .avatar-modal {
+    width: 95%;
+    max-height: 90vh;
+  }
+
+  .asset-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+
+  .asset-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
 }
 </style>

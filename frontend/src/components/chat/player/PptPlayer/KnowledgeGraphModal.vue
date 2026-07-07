@@ -6,8 +6,8 @@
   >
     <div class="modal-container">
       <div class="modal-header">
-        <h3>🧠 知识图谱</h3>
-        <button class="close-btn" @click="close">✕</button>
+        <h3 class="modal-title"><Brain :size="18" /> 知识图谱</h3>
+        <button class="close-btn" @click="close"><X :size="18" /></button>
       </div>
 
       <div class="modal-body">
@@ -27,6 +27,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { Brain, X } from 'lucide-vue-next'
 // 引入新创建的思维导图组件
 import MindMap from './mindMap/MindMap.vue'
 
@@ -62,7 +63,7 @@ const close = () => {
   width: 90%;
   max-width: 800px; /* 稍微加宽以容纳树状图 */
   max-height: 80vh; /* 限制最大高度 */
-  background: #fff;
+  background: var(--color-surface);
   border-radius: 18px;
   overflow: hidden;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.2);
@@ -72,7 +73,7 @@ const close = () => {
 
 .modal-header {
   padding: 16px 20px;
-  border-bottom: 1px solid #eee;
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -82,15 +83,23 @@ const close = () => {
 .modal-header h3 {
   margin: 0;
   font-size: 16px;
-  color: #1f2937;
+  color: var(--color-text);
+}
+
+.modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .close-btn {
   background: none;
   border: none;
-  font-size: 18px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .modal-body {
@@ -101,15 +110,15 @@ const close = () => {
 .tip {
   text-align: center;
   font-size: 13px;
-  color: #4f46e5;
+  color: var(--color-primary);
   margin-bottom: 16px;
 }
 
 .graph-box {
   height: 500px; /* 调整为足够的高度 */
-  background: #ffffff;
+  background: var(--color-surface);
   border-radius: 14px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   overflow: hidden; /* 必须hidden配合内部absolute */
   position: relative;
 }

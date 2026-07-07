@@ -2,7 +2,7 @@
   <div class="sso-callback-page">
     <div class="sso-container">
       <div class="sso-logo">
-        <span class="logo-icon">🦀</span>
+        <GraduationCap class="logo-icon" :size="48" />
         <h1>Smartrab 智课</h1>
       </div>
 
@@ -16,18 +16,18 @@
       </div>
 
       <div v-else-if="status === 'success'" class="sso-status success">
-        <div class="status-icon">✅</div>
+        <CheckCircle class="status-icon" :size="56" />
         <h2>登录成功</h2>
         <p class="user-info">
           欢迎，{{ userInfo?.username }}
           <span v-if="userInfo?.isNewUser" class="new-user-badge">新用户</span>
         </p>
         <p v-if="userInfo?.fanyaId" class="fanya-info">泛雅ID: {{ userInfo.fanyaId }}</p>
-        <button class="btn-enter" @click="enterSystem">进入智课系统 →</button>
+        <button class="btn-enter" @click="enterSystem">进入智课系统 <ArrowRight :size="16" /></button>
       </div>
 
       <div v-else-if="status === 'error'" class="sso-status error">
-        <div class="status-icon">❌</div>
+        <XCircle class="status-icon" :size="56" />
         <h2>连接失败</h2>
         <p>{{ errorMessage }}</p>
         <div class="error-actions">
@@ -42,6 +42,7 @@
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { GraduationCap, CheckCircle, XCircle, ArrowRight } from 'lucide-vue-next'
 import { ssoCallback } from '@/api/platform.js'
 import { useCounterStore } from '@/stores/counter.js'
 
@@ -133,140 +134,140 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  background: var(--color-surface-2);
 }
 
 .sso-container {
-  background: rgba(255, 255, 255, 0.95);
-  border-radius: 20px;
-  padding: 48px 56px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-8);
   text-align: center;
-  box-shadow: 0 25px 80px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-xl);
   max-width: 440px;
   width: 90%;
 }
 
 .sso-logo {
-  margin-bottom: 32px;
+  margin-bottom: var(--space-6);
 }
 
 .logo-icon {
-  font-size: 48px;
+  font-size: var(--space-8);
 }
 
 .sso-logo h1 {
-  margin-top: 8px;
-  font-size: 24px;
-  color: #1a1a2e;
-  font-weight: 700;
+  margin-top: var(--space-2);
+  font-size: var(--text-2xl);
+  color: var(--color-text);
+  font-weight: var(--font-bold);
 }
 
 .sso-status h2 {
-  font-size: 20px;
-  margin-bottom: 12px;
-  color: #333;
+  font-size: var(--text-xl);
+  margin-bottom: var(--space-3);
+  color: var(--color-text);
 }
 
 .sso-hint {
-  color: #888;
-  font-size: 14px;
-  margin-bottom: 24px;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-6);
 }
 
 .progress-bar {
   height: 6px;
-  background: #eee;
-  border-radius: 3px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-sm);
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #667eea, #764ba2);
-  border-radius: 3px;
-  transition: width 0.3s ease;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-sm);
+  transition: width var(--duration-slow) var(--ease);
 }
 
 .spinner-ring {
-  width: 48px;
-  height: 48px;
-  border: 4px solid #e0e0e0;
-  border-top-color: #667eea;
-  border-radius: 50%;
+  width: var(--space-8);
+  height: var(--space-8);
+  border: 4px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-full);
   animation: spin 0.8s linear infinite;
-  margin: 0 auto 20px;
+  margin: 0 auto var(--space-5);
 }
 
 .status-icon {
-  font-size: 56px;
-  margin-bottom: 16px;
+  font-size: var(--space-8);
+  margin-bottom: var(--space-4);
 }
 
 .user-info {
-  font-size: 18px;
-  color: #333;
-  margin-bottom: 8px;
+  font-size: var(--text-lg);
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
 }
 
 .new-user-badge {
   display: inline-block;
-  background: #667eea;
-  color: white;
-  font-size: 12px;
-  padding: 2px 8px;
-  border-radius: 10px;
-  margin-left: 8px;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-md);
+  margin-left: var(--space-2);
   vertical-align: middle;
 }
 
 .fanya-info {
-  color: #999;
-  font-size: 13px;
-  margin-bottom: 24px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  margin-bottom: var(--space-6);
 }
 
 .btn-enter {
-  background: linear-gradient(135deg, #667eea, #764ba2);
-  color: white;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  padding: 14px 36px;
-  border-radius: 12px;
-  font-size: 16px;
+  padding: var(--space-3) var(--space-8);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-base);
   cursor: pointer;
-  transition: all 0.3s;
+  transition: var(--transition-all);
 }
 
 .btn-enter:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 25px rgba(102, 126, 234, 0.4);
+  box-shadow: var(--shadow-primary);
 }
 
 .error-actions {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   justify-content: center;
-  margin-top: 20px;
+  margin-top: var(--space-5);
 }
 
 .btn-retry,
 .btn-home {
-  padding: 10px 24px;
-  border-radius: 8px;
-  font-size: 14px;
+  padding: var(--space-2) var(--space-6);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
   cursor: pointer;
   text-decoration: none;
   display: inline-block;
 }
 
 .btn-retry {
-  background: #667eea;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   border: none;
 }
 
 .btn-home {
   background: transparent;
-  color: #667eea;
-  border: 1px solid #667eea;
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
 }
 </style>

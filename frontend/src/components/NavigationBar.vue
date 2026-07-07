@@ -1,45 +1,56 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useCounterStore } from '@/stores/counter.js'
+import {
+  GraduationCap,
+  Users,
+  BookOpen,
+  Home as HomeIcon,
+  Info,
+  User,
+  Menu,
+  X,
+} from 'lucide-vue-next'
 
 const counter = useCounterStore()
+const mobileMenuOpen = ref(false)
 
 const navItems = computed(() => {
   const baseItems = [
-    { path: '/', label: '首页' },
-    { path: '/about', label: '关于' },
+    { path: '/', label: '首页', icon: HomeIcon },
+    { path: '/about', label: '关于', icon: Info },
   ]
 
   if (!counter.isLoggedIn) {
     return [
       ...baseItems,
-      { path: '/profile', label: '个人中心' },
+      { path: '/profile', label: '个人中心', icon: User },
     ]
   }
 
   if (counter.isAdmin) {
     return [
       ...baseItems,
-      { path: '/admin', label: '👥 用户管理', icon: '👥' },
-      { path: '/teacher', label: '📚 智课管理', icon: '📚' },
-      { path: '/student', label: '我的课程', icon: '' },
-      { path: '/profile', label: '个人中心' },
+      { path: '/admin', label: '用户管理', icon: Users },
+      { path: '/teacher', label: '智课管理', icon: BookOpen },
+      { path: '/student', label: '我的课程', icon: BookOpen },
+      { path: '/profile', label: '个人中心', icon: User },
     ]
   }
 
   if (counter.isTeacher) {
     return [
       ...baseItems,
-      { path: '/teacher', label: '智课管理', icon: '' },
-      { path: '/profile', label: '个人中心' },
+      { path: '/teacher', label: '智课管理', icon: BookOpen },
+      { path: '/profile', label: '个人中心', icon: User },
     ]
   }
 
   if (counter.isStudent) {
     return [
       ...baseItems,
-      { path: '/student', label: '课程大厅', icon: '' },
-      { path: '/profile', label: '个人中心' },
+      { path: '/student', label: '课程大厅', icon: BookOpen },
+      { path: '/profile', label: '个人中心', icon: User },
     ]
   }
 
@@ -52,16 +63,25 @@ const roleLabel = computed(() => {
   if (counter.isStudent) return '学生'
   return ''
 })
+
+const toggleMobileMenu = () => {
+  mobileMenuOpen.value = !mobileMenuOpen.value
+}
+
+const closeMobileMenu = () => {
+  mobileMenuOpen.value = false
+}
 </script>
 
 <template>
   <div class="app-container">
     <nav class="navbar">
-      <router-link to="/" class="logo">
-        <span class="logo-icon">🦀</span>
-        Smartrab
+      <router-link to="/" class="logo" @click="closeMobileMenu">
+        <GraduationCap class="logo-icon" :size="24" />
+        <span class="logo-text">Smartrab</span>
       </router-link>
 
+      <!-- 桌面导航 -->
       <div class="nav-links">
         <router-link
           v-for="item in navItems"
@@ -69,16 +89,42 @@ const roleLabel = computed(() => {
           :to="item.path"
           class="nav-item"
         >
-          <span v-if="item.icon" class="nav-icon">{{ item.icon }}</span>
-          {{ item.label }}
+          <component :is="item.icon" :size="18" class="nav-icon" />
+          <span>{{ item.label }}</span>
         </router-link>
       </div>
 
+      <!-- 移动端汉堡按钮 -->
+      <button
+        class="menu-toggle"
+        :aria-label="mobileMenuOpen ? '关闭菜单' : '打开菜单'"
+        @click="toggleMobileMenu"
+      >
+        <component :is="mobileMenuOpen ? X : Menu" :size="22" />
+      </button>
+
+      <!-- 用户徽章 -->
       <div v-if="counter.isLoggedIn" class="user-badge">
         <span class="role-tag" :class="{ 'admin-tag': counter.isAdmin }">{{ roleLabel }}</span>
         <span class="username">{{ counter.userData.username }}</span>
       </div>
     </nav>
+
+    <!-- 移动端抽屉菜单 -->
+    <Transition name="mobile-menu">
+      <div v-if="mobileMenuOpen" class="mobile-menu">
+        <router-link
+          v-for="item in navItems"
+          :key="item.path"
+          :to="item.path"
+          class="mobile-nav-item"
+          @click="closeMobileMenu"
+        >
+          <component :is="item.icon" :size="20" class="mobile-nav-icon" />
+          <span>{{ item.label }}</span>
+        </router-link>
+      </div>
+    </Transition>
 
     <main class="main-content">
       <router-view v-slot="{ Component }">
@@ -99,122 +145,134 @@ const roleLabel = computed(() => {
 
 .navbar {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
+  top: var(--space-2);
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: var(--z-fixed);
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 2rem;
-  height: 56px;
-  background: rgba(255, 255, 255, 0.95);
+  padding: 0 var(--space-5);
+  height: var(--navbar-height);
+  background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border-bottom: 1px solid #e2e8f0;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
   flex-shrink: 0;
+  transition: box-shadow var(--duration-normal) var(--ease);
 }
 
-.navbar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #0ea5e9, #6366f1);
-  pointer-events: none;
+.navbar:hover {
+  box-shadow: var(--shadow-md);
 }
 
 .logo {
-  font-size: 1.4rem;
-  font-weight: 800;
+  font-size: var(--text-xl);
+  font-weight: var(--font-extrabold);
   letter-spacing: -0.03em;
-  color: #0f172a;
+  color: var(--color-text);
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: var(--space-2);
   text-decoration: none;
   flex-shrink: 0;
+  cursor: pointer;
 }
 
 .logo-icon {
-  font-size: 1.1rem;
-  color: #6366f1;
-  transition: transform 0.3s ease;
-  display: inline-block;
+  color: var(--color-primary);
+  transition: transform var(--duration-normal) var(--ease-spring);
 }
 
 .logo:hover .logo-icon {
-  transform: scale(1.1) rotate(5deg);
+  transform: scale(1.1) rotate(-5deg);
+}
+
+.logo:hover {
+  color: var(--color-text);
 }
 
 .nav-links {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   align-items: center;
   margin-left: auto;
 }
 
-
 .nav-item {
   text-decoration: none;
-  color: #64748b;
-  font-size: 0.9rem;
-  font-weight: 500;
-  padding: 6px 14px;
-  border-radius: 8px;
-  transition: all 0.2s ease;
+  color: var(--color-text-secondary);
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  transition: var(--transition-color);
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-2);
   white-space: nowrap;
 }
 
 .nav-item:hover {
-  color: #6366f1;
-  background: rgba(99, 102, 241, 0.06);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 
 .nav-item.router-link-active {
-  color: #6366f1;
-  background: rgba(99, 102, 241, 0.1);
-  font-weight: 600;
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+  font-weight: var(--font-semibold);
 }
 
 .nav-icon {
-  font-size: 0.95rem;
+  flex-shrink: 0;
+}
+
+.menu-toggle {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: var(--transition-color);
+}
+
+.menu-toggle:hover {
+  background: var(--color-surface-2);
 }
 
 .user-badge {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 12px;
-  background: #f1f5f9;
-  border-radius: 20px;
-  font-size: 0.85rem;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3);
+  background: var(--color-surface-2);
+  border-radius: var(--radius-full);
+  font-size: var(--text-sm);
   flex-shrink: 0;
 }
 
 .role-tag {
-  padding: 2px 10px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
-  border-radius: 10px;
-  font-weight: 600;
-  font-size: 0.75rem;
+  padding: 2px var(--space-2);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  border-radius: var(--radius-full);
+  font-weight: var(--font-semibold);
+  font-size: var(--text-xs);
 }
 
 .role-tag.admin-tag {
-  background: linear-gradient(135deg, #dc2626, #ef4444);
+  background: var(--gradient-danger);
 }
 
 .username {
-  color: #374151;
-  font-weight: 500;
+  color: var(--color-text-secondary);
+  font-weight: var(--font-medium);
   max-width: 100px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -225,12 +283,65 @@ const roleLabel = computed(() => {
   flex: 1;
   width: 100%;
   box-sizing: border-box;
-  padding-top: var(--navbar-height);
+  padding-top: calc(var(--navbar-height) + var(--space-4));
+}
+
+/* 移动端菜单 */
+.mobile-menu {
+  position: fixed;
+  top: calc(var(--navbar-height) + var(--space-4));
+  left: var(--space-2);
+  right: var(--space-2);
+  z-index: var(--z-fixed);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.mobile-nav-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
+  text-decoration: none;
+  transition: var(--transition-color);
+  cursor: pointer;
+}
+
+.mobile-nav-item:hover,
+.mobile-nav-item.router-link-active {
+  color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.mobile-nav-icon {
+  flex-shrink: 0;
+}
+
+/* 过渡动画 */
+.mobile-menu-enter-active,
+.mobile-menu-leave-active {
+  transition: opacity var(--duration-normal) var(--ease), transform var(--duration-normal) var(--ease);
+}
+
+.mobile-menu-enter-from,
+.mobile-menu-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
 }
 
 .fade-enter-active,
 .fade-leave-active {
-  transition: opacity 0.2s ease;
+  transition: opacity var(--duration-fast) var(--ease);
 }
 
 .fade-enter-from,
@@ -238,29 +349,41 @@ const roleLabel = computed(() => {
   opacity: 0;
 }
 
+/* 响应式 */
 @media (max-width: 768px) {
   .navbar {
-    flex-wrap: wrap;
-    height: auto;
-    padding: 8px 12px;
-    gap: 8px;
+    padding: 0 var(--space-3);
+    height: 48px;
   }
 
   .nav-links {
-    order: 3;
-    width: 100%;
-    justify-content: center;
-    flex-wrap: wrap;
-    gap: 2px;
+    display: none;
   }
 
-  .nav-item {
-    padding: 4px 8px;
-    font-size: 0.8rem;
+  .menu-toggle {
+    display: flex;
+  }
+
+  .logo-text {
+    font-size: var(--text-base);
   }
 
   .user-badge {
-    font-size: 0.75rem;
+    font-size: var(--text-xs);
+    padding: 2px var(--space-2);
   }
+
+  .username {
+    max-width: 60px;
+  }
+
+  .main-content {
+    padding-top: calc(48px + var(--space-3));
+  }
+}
+
+/* 暗色模式导航栏 */
+[data-theme="dark"] .navbar {
+  background: rgba(30, 41, 59, 0.85);
 }
 </style>

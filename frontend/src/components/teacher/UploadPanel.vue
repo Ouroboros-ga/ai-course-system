@@ -2,20 +2,20 @@
   <div class="sidebar">
     <!-- 文档上传区域 -->
     <div class="upload-section">
-      <div class="section-title"><span class="icon">📁</span>上传文档</div>
+      <div class="section-title"><Folder class="title-icon" :size="16" />上传文档</div>
 
       <div v-if="isFileUploaded" class="uploaded-state">
-        <div class="uploaded-info"><span class="uploaded-icon">✅</span><span>文档已上传并解析</span></div>
-        <button class="back-btn" @click="$emit('back')">← 返回</button>
+        <div class="uploaded-info"><CheckCircle class="uploaded-icon" :size="18" /><span>文档已上传并解析</span></div>
+        <button class="back-btn" @click="$emit('back')"><ArrowLeft :size="14" /> 返回</button>
       </div>
 
       <template v-else>
-        <div class="upload-area" :class="{ 'is-uploading': isUploading }"
+        <div class="upload-area" :class="{ 'is-uploading': isUploading, 'is-dragging': isDragging }"
           @click="$emit('upload-click')" @dragover.prevent="isDragging = true"
           @dragleave.prevent="isDragging = false" @drop.prevent="handleDrop"
         >
           <div v-if="!isUploading" class="upload-placeholder">
-            <div class="upload-icon">📄</div>
+            <FileText class="upload-icon" :size="32" />
             <div class="upload-text">点击或拖拽上传文档</div>
             <div class="upload-hint">支持 PDF、DOCX、PPTX（最大50MB）</div>
           </div>
@@ -36,13 +36,13 @@
 
     <!-- AI 生成 PPT -->
     <div class="ai-ppt-section">
-      <div class="section-title"><span class="icon">✨</span>AI 生成 PPT</div>
+      <div class="section-title"><Sparkles class="title-icon" :size="16" />AI 生成 PPT</div>
       <button class="ai-ppt-btn" @click="$emit('show-ppt')">生成课程幻灯片</button>
     </div>
 
     <!-- 知识结构树 -->
     <div class="tree-section">
-      <div class="section-title"><span class="icon">🌳</span>知识结构
+      <div class="section-title"><Network class="title-icon" :size="16" />知识结构
         <span v-if="knowledgeTree.length > 0" class="node-count">({{ knowledgeTree.length }})</span>
       </div>
       <div class="tree-container">
@@ -52,7 +52,7 @@
           <div v-for="(node, index) in knowledgeTree" :key="node.id || index"
             class="tree-node" :class="{ active: selectedNodeId === node.id }"
             @click="$emit('select-node', node)">
-            <span class="node-type-icon">{{ getNodeIcon(node.node_type) }}</span>
+            <component :is="getNodeIcon(node.node_type)" class="node-type-icon" :size="14" />
             <span class="node-title">{{ node.title || `节点 ${index + 1}` }}</span>
           </div>
         </div>
@@ -64,6 +64,10 @@
 <script setup>
 import { ref } from 'vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
+import {
+  Folder, CheckCircle, ArrowLeft, FileText, Sparkles, Network,
+  BookOpen, ClipboardList, Star, HelpCircle, PenLine,
+} from 'lucide-vue-next'
 
 defineProps({
   isCourseLoading: Boolean,
@@ -75,7 +79,7 @@ defineProps({
   selectedNodeId: [Number, String],
 })
 
-defineEmits(['upload-click', 'back', 'show-ppt', 'select-node', 'file-selected'])
+const emit = defineEmits(['upload-click', 'back', 'show-ppt', 'select-node', 'file-selected'])
 
 const isDragging = ref(false)
 const fileInput = ref(null)
@@ -96,37 +100,216 @@ function handleFileSelect(e) {
 
 function triggerUpload() { fileInput.value?.click() }
 
-const emit = defineEmits(['upload-click', 'back', 'show-ppt', 'select-node', 'file-selected'])
-
 function getNodeIcon(type) {
-  const icons = { chapter: '📖', section: '📑', key_point: '⭐', quiz: '❓', summary: '📝' }
-  return icons[type] || '📄'
+  const icons = {
+    chapter: BookOpen,
+    section: ClipboardList,
+    key_point: Star,
+    quiz: HelpCircle,
+    summary: PenLine,
+  }
+  return icons[type] || FileText
 }
 </script>
 
 <style scoped>
-.sidebar { width: 280px; flex-shrink: 0; display: flex; flex-direction: column; gap: 16px; }
-.upload-section, .ai-ppt-section, .tree-section { background: white; border-radius: 12px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-.section-title { font-size: 14px; font-weight: 600; color: #333; margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
-.section-title .icon { font-size: 16px; }
-.upload-area { border: 2px dashed #d1d5db; border-radius: 8px; padding: 24px; text-align: center; cursor: pointer; transition: all 0.2s; }
-.upload-area:hover, .upload-area.is-dragging { border-color: #6366f1; background: #eef2ff; }
-.upload-icon { font-size: 32px; margin-bottom: 8px; }
-.upload-text { font-size: 14px; color: #374151; margin-bottom: 4px; }
-.upload-hint { font-size: 12px; color: #9ca3af; }
-.uploaded-state { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-.uploaded-info { display: flex; align-items: center; gap: 8px; color: #059669; font-size: 14px; }
-.back-btn { padding: 6px 16px; background: #f3f4f6; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
-.parse-info { margin-top: 12px; padding-top: 12px; border-top: 1px solid #e5e7eb; }
-.info-item { display: flex; justify-content: space-between; font-size: 13px; color: #6b7280; margin-bottom: 4px; }
-.ai-ppt-btn { width: 100%; padding: 10px; background: linear-gradient(135deg, #6366f1, #8b5cf6); color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 500; }
-.tree-container { max-height: 400px; overflow-y: auto; }
-.empty-tree { text-align: center; color: #9ca3af; padding: 20px; font-size: 13px; }
-.tree-list { display: flex; flex-direction: column; gap: 2px; }
-.tree-node { padding: 8px 10px; border-radius: 6px; cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 13px; color: #374151; transition: background 0.15s; }
-.tree-node:hover { background: #f3f4f6; }
-.tree-node.active { background: #eef2ff; color: #4f46e5; font-weight: 500; }
-.node-count { font-size: 12px; color: #9ca3af; font-weight: normal; }
-.node-type-icon { font-size: 14px; flex-shrink: 0; }
-.node-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar {
+  width: var(--sidebar-width);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.upload-section,
+.ai-ppt-section,
+.tree-section {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.section-title {
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
+  margin-bottom: var(--space-3);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.title-icon {
+  color: var(--color-primary);
+  flex-shrink: 0;
+}
+
+.upload-area {
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-6);
+  text-align: center;
+  cursor: pointer;
+  transition: var(--transition-color);
+}
+
+.upload-area:hover,
+.upload-area.is-dragging {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.upload-icon {
+  color: var(--color-primary);
+  margin-bottom: var(--space-2);
+}
+
+.upload-text {
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.upload-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.uploaded-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.uploaded-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-success-hover);
+  font-size: var(--text-sm);
+}
+
+.uploaded-icon {
+  color: var(--color-success);
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  transition: var(--transition-color);
+}
+
+.back-btn:hover {
+  background: var(--color-surface-3);
+  color: var(--color-text);
+}
+
+.parse-info {
+  margin-top: var(--space-3);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--color-border);
+}
+
+.info-item {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-1);
+}
+
+.info-item .value {
+  color: var(--color-text);
+  font-weight: var(--font-semibold);
+}
+
+.ai-ppt-btn {
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--gradient-primary);
+  color: var(--color-primary-foreground);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  font-size: var(--text-sm);
+  font-weight: var(--font-medium);
+  transition: var(--duration-normal) var(--ease);
+}
+
+.ai-ppt-btn:hover {
+  background: var(--gradient-primary-hover);
+  box-shadow: var(--shadow-primary);
+}
+
+.tree-container {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.empty-tree {
+  text-align: center;
+  color: var(--color-text-muted);
+  padding: var(--space-5);
+  font-size: var(--text-sm);
+}
+
+.tree-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.tree-node {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  transition: var(--transition-color);
+}
+
+.tree-node:hover {
+  background: var(--color-surface-2);
+}
+
+.tree-node.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary-hover);
+  font-weight: var(--font-medium);
+}
+
+.tree-node.active .node-type-icon {
+  color: var(--color-primary);
+}
+
+.node-count {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  font-weight: var(--font-normal);
+}
+
+.node-type-icon {
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+
+.node-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 </style>

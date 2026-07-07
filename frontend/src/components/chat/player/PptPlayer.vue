@@ -262,10 +262,10 @@ const toggleLoop = () => {
 
 .ppt-display-area {
   flex: 1;
-  background: white;
+  background: var(--color-surface);
   border-radius: 16px;
   box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
-  border: 1px solid #f3f4f6;
+  border: 1px solid var(--color-surface-2);
   position: relative;
   overflow: hidden;
   display: flex;
@@ -290,7 +290,7 @@ const toggleLoop = () => {
 .page-title {
   font-size: 24px;
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
   margin-bottom: 20px;
 }
 

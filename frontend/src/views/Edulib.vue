@@ -1,5 +1,9 @@
 <script setup>
 import { ref, computed } from 'vue'
+import {
+  BookOpen, User, Presentation, Clock, FileText, Plus,
+  Ruler, Code, GraduationCap, FolderOpen, Brain
+} from 'lucide-vue-next'
 const viewMode = ref('grid')
 const userRole = ref('student')
 
@@ -17,32 +21,32 @@ const switchPage = (page) => {
     <div class="main-layout">
       <div class="left-sidebar">
         <div class="side-item" :class="{ active: activePage === 'all' }" @click="switchPage('all')">
-          <span class="side-icon">📚</span> 全部课程
+          <BookOpen class="side-icon" :size="16" /> 全部课程
         </div>
         <div class="side-item" :class="{ active: activePage === 'myCourse' }" @click="switchPage('myCourse')">
-          <span class="side-icon">👤</span> 我的选课
+          <User class="side-icon" :size="16" /> 我的选课
         </div>
 
         <div class="side-item" :class="{ active: activePage === 'tea1' }" @click="switchPage('tea1')" v-if="isStudent">
-          <span class="side-icon">👨‍🏫</span> 高数课程
+          <Presentation class="side-icon" :size="16" /> 高数课程
         </div>
         <div class="side-item" :class="{ active: activePage === 'tea2' }" @click="switchPage('tea2')" v-if="isStudent">
-          <span class="side-icon">👩‍🏫</span> 计算机课程
+          <Presentation class="side-icon" :size="16" /> 计算机课程
         </div>
         <div class="side-item" :class="{ active: activePage === 'tea3' }" @click="switchPage('tea3')" v-if="isStudent">
-          <span class="side-icon">👨‍🏫</span> 英语课程
+          <Presentation class="side-icon" :size="16" /> 英语课程
         </div>
 
         <div class="side-item" :class="{ active: activePage === 'recent' }" @click="switchPage('recent')">
-          <span class="side-icon">⏱️</span> 最近学习
+          <Clock class="side-icon" :size="16" /> 最近学习
         </div>
 
         <template v-if="isTeacher">
           <div class="side-item" :class="{ active: activePage === 'doc' }" @click="switchPage('doc')">
-            <span class="side-icon">📄</span> 已解析文档
+            <FileText class="side-icon" :size="16" /> 已解析文档
           </div>
           <button class="create-btn">
-            <span class="btn-icon">➕</span> 新建课件
+            <Plus class="btn-icon" :size="16" /> 新建课件
           </button>
         </template>
       </div>
@@ -60,8 +64,8 @@ const switchPage = (page) => {
             <span v-if="activePage==='recent'">最近学习</span>
           </div>
           <div class="tools-right">
-            <div class="role-tag" v-if="isTeacher">👨‍🏫 教师</div>
-            <div class="role-tag student" v-else>👨‍🎓 学生</div>
+            <div class="role-tag" v-if="isTeacher"><Presentation :size="12" /> 教师</div>
+            <div class="role-tag student" v-else><GraduationCap :size="12" /> 学生</div>
             <input type="text" placeholder="搜索课程/课件..." class="search" />
             <button @click="viewMode = 'grid'" class="view-btn" :class="{active: viewMode === 'grid'}">网格</button>
             <button @click="viewMode = 'list'" class="view-btn" :class="{active: viewMode === 'list'}">列表</button>
@@ -74,7 +78,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'all'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 4">
-                  <div class="card-icon">📖</div>
+                  <BookOpen class="card-icon" :size="36" />
                   <div class="card-title">公共基础课 {{ i }}</div>
                   <div class="card-tea">多位任课老师</div>
                 </div>
@@ -86,7 +90,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 4">
-                  <div class="list-col">📖 公共基础课 {{ i }}</div>
+                  <div class="list-col"><BookOpen :size="16" /> 公共基础课 {{ i }}</div>
                   <div class="list-col">多位教师</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -97,7 +101,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'myCourse'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 3">
-                  <div class="card-icon">📗</div>
+                  <BookOpen class="card-icon" :size="36" />
                   <div class="card-title">我已选课程 {{ i }}</div>
                   <div class="card-tea">个人专属选课</div>
                 </div>
@@ -109,7 +113,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 3">
-                  <div class="list-col">📗 我已选课程 {{ i }}</div>
+                  <div class="list-col"><BookOpen :size="16" /> 我已选课程 {{ i }}</div>
                   <div class="list-col">已选</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -120,7 +124,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'tea1'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 2">
-                  <div class="card-icon">📐</div>
+                  <Ruler class="card-icon" :size="36" />
                   <div class="card-title">高数课件 {{ i }}</div>
                   <div class="card-tea">张建国 老师</div>
                 </div>
@@ -132,7 +136,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 2">
-                  <div class="list-col">📐 高数课件 {{ i }}</div>
+                  <div class="list-col"><Ruler :size="16" /> 高数课件 {{ i }}</div>
                   <div class="list-col">张建国</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -143,7 +147,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'tea2'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 2">
-                  <div class="card-icon">💻</div>
+                  <Code class="card-icon" :size="36" />
                   <div class="card-title">编程课件 {{ i }}</div>
                   <div class="card-tea">李美玲 老师</div>
                 </div>
@@ -155,7 +159,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 2">
-                  <div class="list-col">💻 编程课件 {{ i }}</div>
+                  <div class="list-col"><Code :size="16" /> 编程课件 {{ i }}</div>
                   <div class="list-col">李美玲</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -166,7 +170,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'tea3'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 2">
-                  <div class="card-icon">📖</div>
+                  <BookOpen class="card-icon" :size="36" />
                   <div class="card-title">英语课件 {{ i }}</div>
                   <div class="card-tea">王浩 老师</div>
                 </div>
@@ -178,7 +182,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 2">
-                  <div class="list-col">📖 英语课件 {{ i }}</div>
+                  <div class="list-col"><BookOpen :size="16" /> 英语课件 {{ i }}</div>
                   <div class="list-col">王浩</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -189,7 +193,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'recent'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 3">
-                  <div class="card-icon">⏰</div>
+                  <Clock class="card-icon" :size="36" />
                   <div class="card-title">最近学习课件 {{ i }}</div>
                   <div class="card-tea">历史浏览记录</div>
                 </div>
@@ -201,7 +205,7 @@ const switchPage = (page) => {
                   <div class="list-col">最后学习</div>
                 </div>
                 <div class="list-row" v-for="i in 3">
-                  <div class="list-col">⏰ 最近学习课件 {{ i }}</div>
+                  <div class="list-col"><Clock :size="16" /> 最近学习课件 {{ i }}</div>
                   <div class="list-col">学习中</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -213,7 +217,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'all'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 8">
-                  <div class="card-icon">📄</div>
+                  <FileText class="card-icon" :size="36" />
                   <div class="card-title">通用课件 {{ i }}</div>
                 </div>
               </div>
@@ -224,7 +228,7 @@ const switchPage = (page) => {
                   <div class="list-col">修改时间</div>
                 </div>
                 <div class="list-row" v-for="i in 8">
-                  <div class="list-col">📄 通用课件 {{ i }}</div>
+                  <div class="list-col"><FileText :size="16" /> 通用课件 {{ i }}</div>
                   <div class="list-col">AI生成课件</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -234,7 +238,7 @@ const switchPage = (page) => {
             <div v-if="activePage === 'myCourse'">
               <div v-if="viewMode === 'grid'" class="grid-view">
                 <div class="grid-card" v-for="i in 4">
-                  <div class="card-icon">📚</div>
+                  <BookOpen class="card-icon" :size="36" />
                   <div class="card-title">我的授课课件 {{ i }}</div>
                 </div>
               </div>
@@ -245,7 +249,7 @@ const switchPage = (page) => {
                   <div class="list-col">更新时间</div>
                 </div>
                 <div class="list-row" v-for="i in 4">
-                  <div class="list-col">📚 我的授课课件 {{ i }}</div>
+                  <div class="list-col"><BookOpen :size="16" /> 我的授课课件 {{ i }}</div>
                   <div class="list-col">主讲课程</div>
                   <div class="list-col">2026-04-0{{ i }}</div>
                 </div>
@@ -254,19 +258,19 @@ const switchPage = (page) => {
 
             <div v-if="activePage === 'doc'">
               <div class="empty-box">
-                <div class="empty-icon">📂</div>
+                <FolderOpen class="empty-icon" :size="40" />
                 <div class="empty-text">暂无上传文档</div>
               </div>
             </div>
             <div v-if="activePage === 'kb'">
               <div class="empty-box">
-                <div class="empty-icon">🧠</div>
+                <Brain class="empty-icon" :size="40" />
                 <div class="empty-text">知识库内容制作中</div>
               </div>
             </div>
             <div v-if="activePage === 'recent'">
               <div class="empty-box">
-                <div class="empty-icon">🕒</div>
+                <Clock class="empty-icon" :size="40" />
                 <div class="empty-text">暂无最近编辑记录</div>
               </div>
             </div>
@@ -281,61 +285,61 @@ const switchPage = (page) => {
 .warehouse-page {
   width: 100%;
   height: calc(100vh - var(--navbar-height));
-  background: #f8fafc;
-  padding: 24px;
+  background: var(--color-bg);
+  padding: var(--space-5);
   box-sizing: border-box;
   overflow: hidden;
 }
-.fade-normal { animation: fadeNormal 0.3s ease; }
+.fade-normal { animation: fadeNormal var(--duration-slow) var(--ease); }
 @keyframes fadeNormal { from { opacity: 0.8; } to { opacity: 1; } }
-.main-layout { display: flex; gap: 20px; height: 100%; }
+.main-layout { display: flex; gap: var(--space-5); height: 100%; }
 .left-sidebar {
   width: 200px;
   flex-shrink: 0;
-  background: #fff;
-  border-radius: 16px;
-  padding: 16px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--space-1);
 }
 .side-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 8px;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
-  color: #475569;
-  transition: background 0.2s ease;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  transition: background var(--duration-normal) var(--ease);
 }
-.side-item:hover { background: #f1f5f9; }
-.side-item.active { background: #eff6ff; color: #2563eb; font-weight: 500; }
-.side-icon { font-size: 16px; }
+.side-item:hover { background: var(--color-surface-2); }
+.side-item.active { background: var(--color-primary-light); color: var(--color-primary); font-weight: var(--font-medium); }
+.side-icon { flex-shrink: 0; }
 .create-btn {
-  margin-top: 12px;
-  background: #2563eb;
-  color: #fff;
+  margin-top: var(--space-3);
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   border: none;
-  padding: 12px;
-  border-radius: 10px;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  transition: background 0.2s ease;
+  gap: var(--space-2);
+  transition: background var(--duration-normal) var(--ease);
 }
-.create-btn:hover { background: #1d4ed8; }
+.create-btn:hover { background: var(--color-primary-hover); }
 .right-content {
   flex: 1;
-  background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
   overflow-y: auto;
   min-height: 0;
 }
@@ -343,116 +347,120 @@ const switchPage = (page) => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 20px;
+  margin-bottom: var(--space-5);
   flex-wrap: wrap;
-  gap: 12px;
+  gap: var(--space-3);
 }
-.breadcrumb { font-size: 14px; color: #64748b; }
-.tools-right { display: flex; gap: 8px; align-items: center; }
+.breadcrumb { font-size: var(--text-sm); color: var(--color-text-secondary); }
+.tools-right { display: flex; gap: var(--space-2); align-items: center; }
 
-/* 新加：身份标签 */
+/* 身份标签 */
 .role-tag {
-  padding: 4px 10px;
-  background: #e0f2fe;
-  color: #0369a1;
-  border-radius: 6px;
-  font-size: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2);
+  background: var(--color-info-light);
+  color: var(--color-info);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
 }
 .role-tag.student {
-  background: #f0f9ff;
-  color: #2563eb;
+  background: var(--color-primary-light);
+  color: var(--color-primary);
 }
 
 .search {
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  font-size: 14px;
-  transition: border 0.2s;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  transition: border var(--duration-normal) var(--ease);
 }
-.search:focus { outline: none; border-color: #2563eb; }
+.search:focus { outline: none; border-color: var(--color-primary); }
 .view-btn {
-  padding: 8px 12px;
-  border: 1px solid #e2e8f0;
-  border-radius: 8px;
-  background: #fff;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-all);
 }
-.view-btn.active { background: #eff6ff; border-color: #2563eb; color: #2563eb; }
+.view-btn.active { background: var(--color-primary-light); border-color: var(--color-primary); color: var(--color-primary); }
 
 /* 网格 */
-.grid-view { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.grid-view { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-4); }
 .grid-card {
-  padding: 20px;
-  border: 1px solid #f1f5f9;
-  border-radius: 12px;
+  padding: var(--space-5);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   text-align: center;
   cursor: pointer;
-  transition: all 0.2s ease;
-  background: #fff;
+  transition: var(--transition-all);
+  background: var(--color-surface);
 }
 .grid-card:hover {
-  border-color: #2563eb;
-  background: #f9fafb;
+  border-color: var(--color-primary);
+  background: var(--color-surface-2);
   transform: translateY(-2px);
 }
-.card-icon { font-size: 36px; margin-bottom: 8px; color: #2563eb; }
-.card-title { font-size: 14px; font-weight: 500; color: #1e293b; }
-.card-tea { font-size: 12px; color: #64748b; margin-top: 4px; }
+.card-icon { margin-bottom: var(--space-2); color: var(--color-primary); }
+.card-title { font-size: var(--text-sm); font-weight: var(--font-medium); color: var(--color-text); }
+.card-tea { font-size: var(--text-xs); color: var(--color-text-secondary); margin-top: var(--space-1); }
 
 /* 列表 */
 .list-view {
-  border: 1px solid #f1f5f9;
-  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
   overflow: hidden;
 }
 .list-header,
 .list-row {
   display: grid;
   grid-template-columns: 2fr 1fr 1fr;
-  padding: 14px 20px;
-  font-size: 14px;
+  padding: var(--space-3) var(--space-5);
+  font-size: var(--text-sm);
 }
 .list-header {
-  background: #f8fafc;
-  font-weight: 600;
-  color: #64748b;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--color-bg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
 }
 .list-row {
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid var(--color-border);
   cursor: pointer;
 }
+.list-row:last-child { border-bottom: none; }
 .list-row:hover {
-  background: #f9fafb;
+  background: var(--color-surface-2);
 }
 .list-col {
   display: flex;
   align-items: center;
+  gap: var(--space-2);
 }
 
 /* 空状态美化 */
 .empty-box {
   text-align: center;
-  padding: 60px 0;
-  color: #64748b;
+  padding: var(--space-8) 0;
+  color: var(--color-text-secondary);
 }
 .empty-icon {
-  font-size: 40px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
 }
 .empty-text {
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 @media (max-width: 768px) {
-  .warehouse-page { padding: 12px; }
-  .main-layout { flex-direction: column; gap: 12px; }
+  .warehouse-page { padding: var(--space-3); }
+  .main-layout { flex-direction: column; gap: var(--space-3); }
   .left-sidebar { width: 100%; flex-direction: row; overflow-x: auto; }
   .grid-view { grid-template-columns: repeat(2, 1fr); }
 }
-@media (max-width: 480px) {
+@media (max-width: 640px) {
   .grid-view { grid-template-columns: 1fr; }
 }
 </style>

@@ -5,7 +5,7 @@
 
     <!-- 错误状态 -->
     <div v-else-if="error" class="player-error">
-      <div class="error-icon">⚠️</div>
+      <div class="error-icon"><AlertTriangle :size="48" /></div>
       <p>{{ error }}</p>
       <button @click="initPlayer" class="retry-btn">重试</button>
     </div>
@@ -39,7 +39,7 @@
 
           <!-- 视频覆盖层控制按钮 -->
           <div class="video-overlay" v-show="!isPlaying && !isLoadingVideo">
-            <button @click="togglePlay" class="play-btn-large">▶</button>
+            <button @click="togglePlay" class="play-btn-large"><Play :size="32" /></button>
           </div>
 
           <!-- 视频加载指示器 -->
@@ -67,7 +67,7 @@
                   class="slide-nav-btn"
                   :disabled="currentSlideImageIndex <= 0"
                   @click="currentSlideImageIndex--"
-                >‹</button>
+                ><ChevronLeft :size="18" /></button>
                 <span class="slide-page-info">
                   {{ currentSlideImageIndex + 1 }} / {{ currentSlideImages.length }}
                 </span>
@@ -75,7 +75,7 @@
                   class="slide-nav-btn"
                   :disabled="currentSlideImageIndex >= currentSlideImages.length - 1"
                   @click="currentSlideImageIndex++"
-                >›</button>
+                ><ChevronRight :size="18" /></button>
               </div>
             </div>
 
@@ -87,7 +87,7 @@
 
             <!-- 无内容占位 -->
             <div v-else class="ppt-placeholder">
-              <div class="placeholder-icon">📊</div>
+              <div class="placeholder-icon"><BarChart3 :size="64" /></div>
               <p>等待视频播放...</p>
               <p class="hint">PPT将根据视频进度自动同步显示</p>
             </div>
@@ -120,7 +120,8 @@
       <div class="control-bar">
         <!-- 播放/暂停 -->
         <button @click="togglePlay" class="ctrl-btn" :title="isPlaying ? '暂停' : '播放'">
-          {{ isPlaying ? '⏸' : '▶' }}
+          <Pause v-if="isPlaying" :size="20" />
+          <Play v-else :size="20" />
         </button>
 
         <!-- 进度条 -->
@@ -156,7 +157,8 @@
         <!-- 音量控制 -->
         <div class="volume-control">
           <button @click="toggleMute" class="ctrl-btn" :title="isMuted ? '取消静音' : '静音'">
-            {{ isMuted ? '🔇' : '🔊' }}
+            <VolumeX v-if="isMuted" :size="20" />
+            <Volume2 v-else :size="20" />
           </button>
           <input
             type="range"
@@ -171,7 +173,7 @@
 
         <!-- 全屏按钮 -->
         <button @click="toggleFullscreen" class="ctrl-btn" title="全屏">
-          ⛶
+          <Maximize :size="20" />
         </button>
       </div>
     </div>
@@ -181,6 +183,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
+import { Play, Pause, VolumeX, Volume2, Maximize, AlertTriangle, BarChart3, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import KnowledgeNavBar from './KnowledgeNavBar.vue'
@@ -666,8 +669,8 @@ onUnmounted(() => {
 .split-video-player {
   width: 100%;
   height: 100vh;
-  background: #1a1a1a;
-  color: #fff;
+  background: var(--color-text);
+  color: var(--color-text-inverse);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -681,21 +684,26 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 20px;
+  gap: var(--space-5);
+}
+
+.error-icon {
+  color: var(--color-danger);
 }
 
 .retry-btn {
-  padding: 12px 30px;
-  background: #4CAF50;
-  color: white;
+  padding: var(--space-3) var(--space-8);
+  background: var(--color-success);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 16px;
+  font-size: var(--text-base);
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .retry-btn:hover {
-  background: #45a049;
+  background: var(--color-success-hover);
 }
 
 /* 顶部标题栏 */
@@ -703,22 +711,22 @@ onUnmounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 15px 20px;
-  background: #2d2d2d;
-  border-bottom: 1px solid #444;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-text);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .course-title {
   margin: 0;
-  font-size: 18px;
+  font-size: var(--text-lg);
   font-weight: 600;
 }
 
 .header-info {
   display: flex;
-  gap: 20px;
-  font-size: 14px;
-  color: #aaa;
+  gap: var(--space-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
 
 /* 分屏区域 */
@@ -732,11 +740,11 @@ onUnmounted(() => {
 .video-section {
   width: 40%;
   position: relative;
-  background: #000;
+  background: var(--color-text);
   display: flex;
   align-items: center;
   justify-content: center;
-  border-right: 2px solid #444;
+  border-right: 2px solid var(--color-border);
 }
 
 .digital-human-video {
@@ -756,7 +764,7 @@ onUnmounted(() => {
   justify-content: center;
   background: rgba(0, 0, 0, 0.3);
   cursor: pointer;
-  transition: background 0.3s;
+  transition: background var(--duration-slow) var(--ease);
 }
 
 .video-overlay:hover {
@@ -766,18 +774,19 @@ onUnmounted(() => {
 .play-btn-large {
   width: 80px;
   height: 80px;
-  border-radius: 50%;
-  background: rgba(76, 175, 80, 0.9);
-  color: white;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  color: var(--color-text-inverse);
   border: none;
-  font-size: 32px;
   cursor: pointer;
-  transition: all 0.3s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--duration-slow) var(--ease);
 }
 
 .play-btn-large:hover {
-  background: rgba(76, 175, 80, 1);
-  transform: scale(1.1);
+  background: var(--color-success-hover);
 }
 
 .video-loading {
@@ -790,9 +799,9 @@ onUnmounted(() => {
 .loading-spinner-small {
   width: 40px;
   height: 40px;
-  border: 3px solid #333;
-  border-top-color: #4CAF50;
-  border-radius: 50%;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-success);
+  border-radius: var(--radius-full);
   animation: spin 1s linear infinite;
 }
 
@@ -801,14 +810,14 @@ onUnmounted(() => {
   width: 60%;
   display: flex;
   flex-direction: column;
-  background: #f5f5f5;
-  color: #333;
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .ppt-container {
   flex: 1;
   overflow-y: auto;
-  padding: 10px;
+  padding: var(--space-2);
   display: flex;
   flex-direction: column;
 }
@@ -834,36 +843,36 @@ onUnmounted(() => {
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
-  border-radius: 4px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-sm);
 }
 
 .slide-nav {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
-  padding: 8px 0;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
 }
 
 .slide-nav-btn {
   width: 32px;
   height: 32px;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
   cursor: pointer;
-  font-size: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  color: var(--color-text-secondary);
+  transition: background var(--duration-normal) var(--ease), color var(--duration-normal) var(--ease);
 }
 
 .slide-nav-btn:hover:not(:disabled) {
-  background: #4CAF50;
-  color: #fff;
-  border-color: #4CAF50;
+  background: var(--color-success);
+  color: var(--color-text-inverse);
+  border-color: var(--color-success);
 }
 
 .slide-nav-btn:disabled {
@@ -872,8 +881,8 @@ onUnmounted(() => {
 }
 
 .slide-page-info {
-  font-size: 14px;
-  color: #666;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   min-width: 60px;
   text-align: center;
 }
@@ -883,18 +892,18 @@ onUnmounted(() => {
 }
 
 .ppt-title {
-  font-size: 24px;
+  font-size: var(--text-xl);
   font-weight: bold;
-  margin-bottom: 20px;
-  color: #222;
-  border-bottom: 2px solid #4CAF50;
-  padding-bottom: 10px;
+  margin-bottom: var(--space-5);
+  color: var(--color-text);
+  border-bottom: 2px solid var(--color-success);
+  padding-bottom: var(--space-2);
 }
 
 .ppt-body {
-  font-size: 16px;
+  font-size: var(--text-base);
   line-height: 1.8;
-  color: #444;
+  color: var(--color-text-secondary);
 }
 
 .ppt-placeholder {
@@ -903,58 +912,59 @@ onUnmounted(() => {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 15px;
-  color: #888;
+  gap: var(--space-4);
+  color: var(--color-text-muted);
 }
 
 .placeholder-icon {
-  font-size: 64px;
+  color: var(--color-text-muted);
 }
 
 .hint {
-  font-size: 14px;
-  color: #aaa;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
 }
 
 .ppt-page-indicator {
-  padding: 10px 20px;
-  background: #e0e0e0;
+  padding: var(--space-2) var(--space-5);
+  background: var(--color-surface-3);
   text-align: center;
-  font-size: 14px;
-  color: #666;
-  border-top: 1px solid #ccc;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  border-top: 1px solid var(--color-border);
 }
 
 /* 控制栏 */
 .control-bar {
   display: flex;
   align-items: center;
-  gap: 15px;
-  padding: 12px 20px;
-  background: #2d2d2d;
-  border-top: 1px solid #444;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  background: var(--color-text);
+  border-top: 1px solid var(--color-border);
 }
 
 .ctrl-btn {
   background: transparent;
-  color: #fff;
+  color: var(--color-text-inverse);
   border: none;
-  font-size: 20px;
   cursor: pointer;
-  padding: 8px;
-  transition: all 0.2s;
+  padding: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--duration-normal) var(--ease);
 }
 
 .ctrl-btn:hover {
-  color: #4CAF50;
-  transform: scale(1.1);
+  color: var(--color-success);
 }
 
 .progress-bar-container {
   flex: 1;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .progress-bar {
@@ -962,9 +972,9 @@ onUnmounted(() => {
   height: 6px;
   -webkit-appearance: none;
   appearance: none;
-  background: #555;
+  background: var(--color-border);
   outline: none;
-  border-radius: 3px;
+  border-radius: var(--radius-full);
   cursor: pointer;
 }
 
@@ -973,41 +983,42 @@ onUnmounted(() => {
   appearance: none;
   width: 16px;
   height: 16px;
-  background: #4CAF50;
+  background: var(--color-success);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
 }
 
 .progress-bar::-moz-range-thumb {
   width: 16px;
   height: 16px;
-  background: #4CAF50;
+  background: var(--color-success);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   border: none;
 }
 
 .time-display {
-  font-size: 13px;
-  color: #aaa;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   white-space: nowrap;
   min-width: 90px;
+  font-family: var(--font-mono);
 }
 
 .speed-control select {
-  background: #444;
-  color: #fff;
-  border: 1px solid #666;
-  padding: 6px 10px;
-  border-radius: 4px;
+  background: var(--color-border);
+  color: var(--color-text-inverse);
+  border: 1px solid var(--color-border-hover);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--text-sm);
 }
 
 .volume-control {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .volume-slider {
@@ -1015,9 +1026,9 @@ onUnmounted(() => {
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: #555;
+  background: var(--color-border);
   outline: none;
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   cursor: pointer;
 }
 
@@ -1026,17 +1037,21 @@ onUnmounted(() => {
   appearance: none;
   width: 12px;
   height: 12px;
-  background: #4CAF50;
+  background: var(--color-success);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
 }
 
 .volume-slider::-moz-range-thumb {
   width: 12px;
   height: 12px;
-  background: #4CAF50;
+  background: var(--color-success);
   cursor: pointer;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   border: none;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 </style>

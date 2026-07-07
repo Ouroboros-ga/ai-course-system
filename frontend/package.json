@@ -19,6 +19,7 @@
     "highlight.js": "^11.11.1",
     "js-cookie": "^3.0.5",
     "katex": "^0.16.45",
+    "lucide-vue-next": "^0.577.0",
     "marked": "^17.0.5",
     "marked-highlight": "^2.2.3",
     "pinia": "^3.0.4",

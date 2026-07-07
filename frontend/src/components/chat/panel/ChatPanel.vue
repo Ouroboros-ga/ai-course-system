@@ -72,9 +72,9 @@ watch(() => props.hasFile, (newVal) => {
 <style scoped>
 .chat-section {
   flex: 3.5;
-  background: white;
+  background: var(--color-surface);
   border-radius: 16px;
-  border: 1px solid #f3f4f6;
+  border: 1px solid var(--color-surface-2);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -85,8 +85,8 @@ watch(() => props.hasFile, (newVal) => {
 }
 .chat-header {
   padding: 16px;
-  border-bottom: 1px solid #f9fafb;
-  background: #f9fafb;
+  border-bottom: 1px solid var(--color-surface-2);
+  background: var(--color-surface-2);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -97,17 +97,17 @@ watch(() => props.hasFile, (newVal) => {
   align-items: center;
   gap: 8px;
   font-weight: 600;
-  color: #374151;
+  color: var(--color-text-secondary);
 }
 .status-dot {
   width: 8px;
   height: 8px;
-  background: #22c55e;
+  background: var(--color-success);
   border-radius: 50%;
   animation: pulse 2s infinite;
 }
 .status-dot.status-disabled {
-  background: #9ca3af;
+  background: var(--color-text-muted);
   animation: none;
 }
 .status-text {
@@ -117,12 +117,12 @@ watch(() => props.hasFile, (newVal) => {
   border-radius: 12px;
 }
 .status-text.analyzing {
-  background: #fef3c7;
-  color: #d97706;
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
 }
 .status-text.waiting {
-  background: #e5e7eb;
-  color: #6b7280;
+  background: var(--color-border);
+  color: var(--color-text-secondary);
 }
 @keyframes pulse {
   0% { opacity: 1; }
@@ -133,13 +133,13 @@ watch(() => props.hasFile, (newVal) => {
   background: none;
   border: none;
   font-size: 18px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   cursor: pointer;
   padding: 4px;
   border-radius: 4px;
 }
 .btn-more:hover {
-  background: #e5e7eb;
+  background: var(--color-border);
 }
 
 @media (max-width: 768px) {

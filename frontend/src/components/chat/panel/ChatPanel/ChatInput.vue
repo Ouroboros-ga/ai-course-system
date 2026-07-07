@@ -30,7 +30,7 @@
         class="btn-mic"
         @click="handleMic"
       >
-        🎤
+        <Mic :size="18" />
       </button>
     </div>
   </div>
@@ -38,6 +38,7 @@
 
 <script setup>
 import { ref } from 'vue';
+import { Mic } from 'lucide-vue-next';
 const props = defineProps(['disabled', 'tips']);
 const emit = defineEmits(['send']);
 
@@ -63,8 +64,8 @@ const handleMic = () => {
 <style scoped>
 .input-area {
   padding: 16px;
-  background: white;
-  border-top: 1px solid #f3f4f6;
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
   transition: opacity 0.3s;
 }
 .quick-tips {
@@ -76,19 +77,19 @@ const handleMic = () => {
 }
 .tip-chip {
   white-space: nowrap;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
   padding: 6px 12px;
   border-radius: 99px;
   font-size: 12px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   cursor: pointer;
   transition: all 0.2s;
 }
 .tip-chip:hover {
-  border-color: #93c5fd;
-  color: #2563eb;
-  background: #eff6ff;
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-primary-light);
 }
 .input-box-wrapper {
   position: relative;
@@ -96,16 +97,16 @@ const handleMic = () => {
 .input-box-wrapper input {
   width: 100%;
   padding: 12px 48px 12px 16px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
   border-radius: 12px;
   font-size: 14px;
   box-sizing: border-box;
   outline: none;
 }
 .input-box-wrapper input:focus {
-  border-color: #3b82f6;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 .btn-mic {
   position: absolute;
@@ -114,17 +115,19 @@ const handleMic = () => {
   transform: translateY(-50%);
   background: none;
   border: none;
-  font-size: 18px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .btn-send {
   position: absolute;
   right: 8px;
   top: 50%;
   transform: translateY(-50%);
-  background: #2563eb;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   border: none;
   width: 32px;
   height: 32px;

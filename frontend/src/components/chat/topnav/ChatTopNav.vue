@@ -1,12 +1,12 @@
 <template>
   <header class="top-nav">
     <button class="new-session-btn" @click="createNewSession">
-      <span class="icon">+</span>
+      <span class="icon"><Plus :size="18" /></span>
       <span class="text">新建会话</span>
     </button>
     <button class="history-btn" @click="toggleHistory">
-      <span v-if="showHistory">←</span>
-      <span v-else>三</span>
+      <ArrowLeft v-if="showHistory" :size="16" />
+      <Menu v-else :size="16" />
     </button>
     <div class="nav-title">Smartrab 课堂</div>
     <button class="upload-btn" @click="handleUpload">
@@ -16,6 +16,8 @@
 </template>
 
 <script setup>
+import { Plus, ArrowLeft, Menu } from 'lucide-vue-next'
+
 defineProps({
   showHistory: {
     type: Boolean,
@@ -42,93 +44,90 @@ const handleUpload = () => {
 .top-nav {
   position: relative;
   height: 48px;
-  background: white;
+  background: var(--color-surface);
   display: flex;
   align-items: center;
-  padding: 0 12px;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.06);
-  z-index: 9999;
-  gap: 8px;
+  padding: 0 var(--space-3);
+  box-shadow: var(--shadow-sm);
+  z-index: var(--z-fixed);
+  gap: var(--space-2);
 }
 .history-btn {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   border: none;
-  background: #f1f5f9;
-  font-size: 16px;
-  font-weight: bold;
-  color: #333;
+  background: var(--color-surface-2);
+  color: var(--color-text);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s ease;
+  transition: background var(--duration-normal) var(--ease);
 }
 .history-btn:hover {
-  background: #e2e8f0;
+  background: var(--color-border);
 }
 .nav-title {
   flex: 1;
   text-align: center;
-  font-size: 16px;
+  font-size: var(--text-base);
   font-weight: 600;
-  color: #111;
+  color: var(--color-text);
 }
 .new-session-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  border-radius: 10px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
   border: none;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  font-size: 13px;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(102, 126, 234, 0.3);
+  transition: box-shadow var(--duration-normal) var(--ease), transform var(--duration-normal) var(--ease);
+  box-shadow: var(--shadow-primary);
 }
 .new-session-btn:hover {
-  background: linear-gradient(135deg, #5a6fd6 0%, #6a4190 100%);
-  box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+  box-shadow: var(--shadow-lg);
   transform: translateY(-1px);
 }
 .new-session-btn:active {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(102, 126, 234, 0.3);
+  box-shadow: var(--shadow-sm);
 }
 .new-session-btn .icon {
-  font-size: 18px;
-  font-weight: bold;
+  display: flex;
+  align-items: center;
   line-height: 1;
 }
 .new-session-btn .text {
-  font-size: 13px;
+  font-size: var(--text-xs);
 }
 
 /* 上传按钮 */
 .upload-btn {
-  padding: 8px 18px;
-  border-radius: 10px;
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
   border: none;
-  background: #2563eb;
-  color: white;
-  font-size: 14px;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+  font-size: var(--text-sm);
   font-weight: 500;
   cursor: pointer;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
+  transition: background var(--duration-normal) var(--ease), box-shadow var(--duration-normal) var(--ease), transform var(--duration-normal) var(--ease);
+  box-shadow: var(--shadow-primary);
 }
 .upload-btn:hover {
-  background: #1d4ed8;
-  box-shadow: 0 4px 8px rgba(37, 99, 235, 0.4);
+  background: var(--color-primary-hover);
+  box-shadow: var(--shadow-lg);
   transform: translateY(-1px);
 }
 .upload-btn:active {
   transform: translateY(0);
-  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.3);
+  box-shadow: var(--shadow-sm);
 }
 
 /* 移动端适配 */
@@ -137,11 +136,11 @@ const handleUpload = () => {
     display: none;
   }
   .new-session-btn {
-    padding: 8px 10px;
+    padding: var(--space-2) var(--space-2);
   }
   .upload-btn {
-    padding: 8px 12px;
-    font-size: 13px;
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--text-xs);
   }
 }
 </style>

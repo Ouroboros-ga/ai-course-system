@@ -1,7 +1,7 @@
 <template>
   <div class="admin-panel">
     <div class="panel-header">
-      <h2>👥 用户管理</h2>
+      <h2><Users class="header-icon" :size="24" /> 用户管理</h2>
       <p class="subtitle">管理系统中的所有用户及其角色</p>
     </div>
 
@@ -54,7 +54,7 @@
       </table>
 
       <div v-if="users.length === 0" class="empty-state">
-        <div class="empty-icon">📭</div>
+        <Inbox class="empty-icon" :size="48" />
         <p>暂无用户数据</p>
       </div>
     </div>
@@ -63,6 +63,7 @@
 
 <script setup>
 import { ref, onMounted, computed } from 'vue'
+import { Users, Inbox } from 'lucide-vue-next'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
@@ -126,36 +127,43 @@ onMounted(() => {
 .admin-panel {
   max-width: 1000px;
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--space-5);
 }
 
 .panel-header {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .panel-header h2 {
-  font-size: 24px;
-  color: #111827;
-  margin: 0 0 8px 0;
-  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-2xl);
+  color: var(--color-text);
+  margin: 0 0 var(--space-2) 0;
+  font-weight: var(--font-bold);
+}
+
+.header-icon {
+  color: var(--color-primary);
 }
 
 .subtitle {
-  font-size: 14px;
-  color: #6b7280;
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
   margin: 0;
 }
 
 .loading-state {
   text-align: center;
-  padding: 60px 20px;
-  color: #6b7280;
+  padding: var(--space-8) var(--space-5);
+  color: var(--color-text-secondary);
 }
 
 .user-table-wrapper {
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
   overflow-x: auto;
 }
 
@@ -165,146 +173,146 @@ onMounted(() => {
 }
 
 .user-table thead {
-  background: #f8fafc;
+  background: var(--color-bg);
 }
 
 .user-table th {
-  padding: 14px 16px;
+  padding: var(--space-3) var(--space-4);
   text-align: left;
-  font-size: 13px;
-  font-weight: 600;
-  color: #6b7280;
-  border-bottom: 1px solid #e5e7eb;
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .user-table td {
-  padding: 14px 16px;
-  font-size: 14px;
-  color: #374151;
-  border-bottom: 1px solid #f3f4f6;
+  padding: var(--space-3) var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  border-bottom: 1px solid var(--color-border);
 }
 
 .user-table tbody tr:hover {
-  background: #f9fafb;
+  background: var(--color-surface-2);
 }
 
 .user-table tbody tr.is-self {
-  background: #eff6ff;
+  background: var(--color-primary-light);
 }
 
 .user-table tbody tr.is-self:hover {
-  background: #dbeafe;
+  background: var(--color-primary-light);
 }
 
 .td-id {
-  color: #9ca3af;
-  font-size: 13px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
   width: 60px;
 }
 
 .td-username {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .username-text {
-  font-weight: 500;
-  color: #111827;
+  font-weight: var(--font-medium);
+  color: var(--color-text);
 }
 
 .self-badge {
-  padding: 2px 8px;
-  background: #dbeafe;
-  color: #1e40af;
-  border-radius: 10px;
-  font-size: 11px;
-  font-weight: 600;
+  padding: 2px var(--space-2);
+  background: var(--color-primary-light);
+  color: var(--color-primary-hover);
+  border-radius: var(--radius-md);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
 }
 
 .role-badge {
   display: inline-block;
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
 }
 
 .role-student {
-  background: #dbeafe;
-  color: #1e40af;
+  background: var(--color-primary-light);
+  color: var(--color-primary-hover);
 }
 
 .role-teacher {
-  background: #fef3c7;
-  color: #92400e;
+  background: var(--color-warning-light);
+  color: var(--color-warning-hover);
 }
 
 .role-admin {
-  background: #ede9fe;
-  color: #5b21b6;
+  background: var(--color-secondary-light);
+  color: var(--color-secondary-hover);
 }
 
 .status-dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #d1d5db;
-  margin-right: 6px;
+  width: var(--space-2);
+  height: var(--space-2);
+  border-radius: var(--radius-full);
+  background: var(--color-border-hover);
+  margin-right: var(--space-2);
 }
 
 .status-dot.active {
-  background: #22c55e;
+  background: var(--color-success);
 }
 
 .role-select {
-  padding: 6px 12px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
-  font-size: 13px;
-  color: #374151;
-  background: white;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: var(--transition-all);
   outline: none;
 }
 
 .role-select:hover:not(.disabled) {
-  border-color: #6366f1;
+  border-color: var(--color-primary);
 }
 
 .role-select:focus:not(.disabled) {
-  border-color: #6366f1;
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px var(--color-primary-light);
 }
 
 .role-select.disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #f9fafb;
+  background: var(--color-surface-2);
 }
 
 .empty-state {
   text-align: center;
-  padding: 60px 20px;
-  color: #9ca3af;
+  padding: var(--space-8) var(--space-5);
+  color: var(--color-text-muted);
 }
 
 .empty-icon {
-  font-size: 48px;
-  margin-bottom: 12px;
+  margin-bottom: var(--space-3);
+  color: var(--color-text-muted);
 }
 
 @media (max-width: 768px) {
   .admin-panel {
-    padding: 16px;
+    padding: var(--space-4);
   }
 
   .user-table th,
   .user-table td {
-    padding: 10px 8px;
-    font-size: 12px;
+    padding: var(--space-2);
+    font-size: var(--text-xs);
   }
 
   .td-id {

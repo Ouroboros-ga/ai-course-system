@@ -11,7 +11,7 @@
       class="btn-knowledge"
       @click="openModal"
     >
-      🗺️ 知识图谱
+      <Map :size="18" /> 知识图谱
     </button>
 
     <!-- 知识图谱弹窗组件 -->
@@ -25,6 +25,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { Map } from 'lucide-vue-next'
 import KnowledgeGraphModal from './KnowledgeGraphModal.vue'
 
 const props = defineProps({
@@ -53,20 +54,20 @@ const openModal = () => {
 
 .header-info h2 {
   font-size: 18px;
-  color: #1f2937;
+  color: var(--color-text);
   margin: 0 0 4px 0;
 }
 
 .header-info p {
   font-size: 12px;
-  color: #6b7280;
+  color: var(--color-text-muted);
   margin: 0;
 }
 
 /* 知识图谱按钮（更美观） */
 .btn-knowledge {
-  background: linear-gradient(90deg, #4f46e5, #7c3aed);
-  color: #fff;
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
   padding: 7px 14px;
   border-radius: 99px;

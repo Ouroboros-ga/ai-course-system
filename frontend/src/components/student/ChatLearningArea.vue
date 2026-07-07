@@ -5,14 +5,14 @@
         <AgentAvatar />
         <div class="bubble ai-bubble">
           <div class="welcome-content">
-            <h4>🎓 欢迎来到《{{ selectedCourse.title }}》</h4>
+            <h4><GraduationCap :size="18" /> 欢迎来到《{{ selectedCourse.title }}》</h4>
             <p>我将按照文档结构为您讲解课程内容，每讲完一个小节会进行互动问答来检验您的理解程度。</p>
             <button
               v-if="!isStreaming && currentNodeIndex === 0"
               class="start-learning-btn"
               @click="startLearning"
             >
-              🚀 开始学习
+              <Rocket :size="16" /> 开始学习
             </button>
           </div>
         </div>
@@ -54,7 +54,7 @@
         </button>
       </div>
       <div class="input-hint" v-if="!canInput">
-        ⏳ 请等待当前内容讲解完成...
+        <Hourglass :size="14" /> 请等待当前内容讲解完成...
       </div>
     </div>
 
@@ -75,6 +75,7 @@ import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
 import AgentAvatar from './AgentAvatar.vue'
 import ChatMessage from './ChatMessage.vue'
 import PrerequisiteJumpDialog from './PrerequisiteJumpDialog.vue'
+import { GraduationCap, Rocket, Hourglass } from 'lucide-vue-next'
 
 const {
   chatMessages,
@@ -139,21 +140,21 @@ function handleCancelJump() {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  background: #fafbfc;
+  background: var(--color-surface-2);
 }
 
 .message-list {
   flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .message-row {
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   max-width: 900px;
   width: 100%;
   margin: 0 auto;
@@ -163,62 +164,68 @@ function handleCancelJump() {
 
 .bubble {
   max-width: 85%;
-  padding: 14px 18px;
-  border-radius: 12px;
-  line-height: 1.6;
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-lg);
+  line-height: var(--leading-relaxed);
 }
 
 .ai-bubble {
-  background: white;
-  border: 1px solid #e5e7eb;
-  border-top-left-radius: 4px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-top-left-radius: var(--space-1);
+  box-shadow: var(--shadow-sm);
 }
 
 .welcome-content h4 {
-  margin: 0 0 8px 0;
-  color: #111827;
+  margin: 0 0 var(--space-2) 0;
+  color: var(--color-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .welcome-content p {
-  margin: 0 0 12px 0;
-  color: #6b7280;
-  font-size: 14px;
+  margin: 0 0 var(--space-3) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
 }
 
 .start-learning-btn {
-  padding: 10px 24px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  padding: var(--space-3) var(--space-5);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .start-learning-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  box-shadow: var(--shadow-primary);
 }
 
 .streaming .ai-bubble {
-  border-color: #93c5fd;
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.1);
 }
 
 .typing-indicator {
   display: flex;
-  gap: 4px;
-  padding: 8px 0 0 0;
+  gap: var(--space-1);
+  padding: var(--space-2) 0 0 0;
   justify-content: flex-start;
 }
 
 .typing-indicator span {
-  width: 8px;
-  height: 8px;
-  background: #6366f1;
+  width: var(--space-2);
+  height: var(--space-2);
+  background: var(--color-primary);
   border-radius: 50%;
   animation: bounce 1.4s ease-in-out infinite;
 }
@@ -232,53 +239,53 @@ function handleCancelJump() {
 }
 
 .input-area {
-  padding: 16px 20px;
-  background: white;
-  border-top: 1px solid #e5e7eb;
+  padding: var(--space-4) var(--space-5);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
 }
 
 .input-wrapper {
   display: flex;
-  gap: 8px;
+  gap: var(--space-2);
   max-width: 900px;
   margin: 0 auto;
 }
 
 .chat-input {
   flex: 1;
-  padding: 12px 16px;
-  border: 1px solid #d1d5db;
-  border-radius: 24px;
-  font-size: 14px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border-hover);
+  border-radius: var(--radius-2xl);
+  font-size: var(--text-base);
   outline: none;
-  transition: all 0.2s ease;
+  transition: var(--transition-all);
 }
 
 .chat-input:focus {
-  border-color: #6366f1;
+  border-color: var(--color-primary);
   box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
 }
 
 .chat-input:disabled {
-  background: #f9fafb;
+  background: var(--color-surface-2);
   cursor: not-allowed;
 }
 
 .send-btn {
-  padding: 12px 24px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  padding: var(--space-3) var(--space-5);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 24px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: var(--radius-2xl);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.2s ease;
+  transition: var(--transition-all);
 }
 
 .send-btn:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  box-shadow: var(--shadow-primary);
 }
 
 .send-btn:disabled {
@@ -288,9 +295,13 @@ function handleCancelJump() {
 
 .input-hint {
   text-align: center;
-  font-size: 12px;
-  color: #9ca3af;
-  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
 }
 
 @media (max-width: 1024px) {

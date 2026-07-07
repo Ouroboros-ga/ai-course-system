@@ -176,7 +176,7 @@ onUnmounted(() => {
   padding: 0;
   width: 100%;
   height: calc(100vh - var(--navbar-height));
-  background: #f8fafc;
+  background: var(--color-bg);
   position: relative;
   font-family: system-ui, sans-serif;
   overflow: hidden;

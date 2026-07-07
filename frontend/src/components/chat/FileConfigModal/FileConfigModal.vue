@@ -1,5 +1,6 @@
 <script setup>
 import { ref } from 'vue'
+import { Target, X, MessageCircle, BookOpen, Lightbulb, Backpack, PenLine, Trophy, Ban, Zap, Brain, AlertTriangle, Handshake, Rocket, User, Presentation, CheckCircle, MessagesSquare, GraduationCap, Settings } from 'lucide-vue-next'
 
 const props = defineProps({
   visible: {
@@ -33,26 +34,26 @@ const handleClose = () => {
   <div v-if="visible" class="modal-overlay" @click="handleClose">
     <div class="modal-content" @click.stop>
       <div class="modal-header">
-        <h3>课件上传配置 🎯</h3>
-        <span class="close-btn" @click="handleClose">✕</span>
+        <h3>课件上传配置 <Target :size="20" /></h3>
+        <span class="close-btn" @click="handleClose"><X :size="20" /></span>
       </div>
 
       <div class="modal-body">
         <!-- 1. AI回答风格 -->
         <div class="config-item">
-          <label class="config-label">💬AI回答风格</label>
+          <label class="config-label"><MessageCircle :size="16" /> AI回答风格</label>
           <div class="option-group">
             <label class="radio-option">
               <input type="radio" v-model="config.answerStyle" value="theory" />
-              <span>📚 理论优先</span>
+              <span><BookOpen :size="16" /> 理论优先</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.answerStyle" value="example" />
-              <span>💡 举例优先</span>
+              <span><Lightbulb :size="16" /> 举例优先</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.answerStyle" value="popular" />
-              <span>🤣 唠嗑式讲解</span>
+              <span><MessagesSquare :size="16" /> 唠嗑式讲解</span>
             </label>
           </div>
         </div>
@@ -63,34 +64,34 @@ const handleClose = () => {
           <div class="option-group">
             <label class="radio-option">
               <input type="radio" v-model="config.knowledgeDepth" value="basic" />
-              <span>🎒 基础入门</span>
+              <span><Backpack :size="16" /> 基础入门</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.knowledgeDepth" value="advanced" />
-              <span>📝 考研拔高</span>
+              <span><PenLine :size="16" /> 考研拔高</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.knowledgeDepth" value="competition" />
-              <span>🏆 竞赛拓展</span>
+              <span><Trophy :size="16" /> 竞赛拓展</span>
             </label>
           </div>
         </div>
 
         <!-- 精简规则 -->
         <div class="config-item">
-          <label class="config-label">🚫 内容输出规则</label>
+          <label class="config-label"><Ban :size="16" /> 内容输出规则</label>
           <div class="option-group">
             <label class="radio-option">
               <input type="radio" v-model="config.replyMode" value="direct" />
-              <span>⚡ 不废话直答</span>
+              <span><Zap :size="16" /> 不废话直答</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.replyMode" value="idea" />
-              <span>🧠 带解题思路</span>
+              <span><Brain :size="16" /> 带解题思路</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.replyMode" value="warn" />
-              <span>⚠️ 带易错提醒</span>
+              <span><AlertTriangle :size="16" /> 带易错提醒</span>
             </label>
           </div>
         </div>
@@ -101,41 +102,41 @@ const handleClose = () => {
           <div class="option-group">
             <label class="radio-option">
               <input type="radio" v-model="config.interactionMode" value="passive" />
-              <span>🤝 被动答疑</span>
+              <span><Handshake :size="16" /> 被动答疑</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.interactionMode" value="active" />
-              <span>🚀 主动引导提问</span>
+              <span><Rocket :size="16" /> 主动引导提问</span>
             </label>
           </div>
         </div>
 
-        <!-- 🔥 新增：数字人形象选择 -->
+        <!-- 新增：数字人形象选择 -->
         <div class="config-item">
-          <label class="config-label">👤 数字人形象</label>
+          <label class="config-label"><User :size="16" /> 数字人形象</label>
           <div class="option-group">
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="xiaoshuai" />
-              <span>🧑‍ 小帅</span>
+              <span><User :size="16" /> 小帅</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="xiaomei" />
-              <span>👩‍🏫 小美</span>
+              <span><GraduationCap :size="16" /> 小美</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="laoshi" />
-              <span>👧 小王</span>
+              <span><User :size="16" /> 小王</span>
             </label>
             <label class="radio-option">
               <input type="radio" v-model="config.avatar" value="xiaohong" />
-              <span>💻 自定义</span>
+              <span><Settings :size="16" /> 自定义</span>
             </label>
           </div>
         </div>
 
         <!-- 自定义提示词输入框 -->
         <div class="config-item">
-          <label class="config-label">✏️ 自定义提示词</label>
+          <label class="config-label"><PenLine :size="16" /> 自定义提示词</label>
           <textarea
             v-model="config.prompt"
             class="prompt-input"
@@ -147,7 +148,7 @@ const handleClose = () => {
 
       <div class="modal-footer">
         <button class="cancel-btn" @click="handleClose">取消</button>
-        <button class="confirm-btn" @click="handleConfirm">确认并选择文件 ✅</button>
+        <button class="confirm-btn" @click="handleConfirm"><CheckCircle :size="16" /> 确认并选择文件</button>
       </div>
     </div>
   </div>
@@ -164,16 +165,16 @@ const handleClose = () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 9999;
+  z-index: var(--z-modal);
   backdrop-filter: blur(4px);
 }
 
 .modal-content {
-  background: #fff;
-  border-radius: 20px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
   width: 580px;
   max-width: 90vw;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.15);
+  box-shadow: var(--shadow-lg);
   overflow: hidden;
   animation: modalPop 0.3s cubic-bezier(0.24, 1, 0.32, 1) forwards;
 }
@@ -185,73 +186,78 @@ const handleClose = () => {
 
 .modal-header {
   display: flex;align-items: center;justify-content: space-between;
-  padding: 20px 24px;border-bottom: 1px solid #f1f5f9;background: #f8fafc;
+  padding: var(--space-5) var(--space-6);border-bottom: 1px solid var(--color-surface-2);background: var(--color-bg);
 }
-.modal-header h3 {margin:0;font-size:20px;color:#1e293b;font-weight:600;}
-.close-btn {font-size:24px;color:#64748b;cursor:pointer;line-height:1;}
-.close-btn:hover {color:#2563eb;}
+.modal-header h3 {margin:0;font-size:var(--text-xl);color:var(--color-text);font-weight:600;}
+.close-btn {font-size:var(--text-2xl);color:var(--color-text-secondary);cursor:pointer;line-height:1;display:flex;align-items:center;}
+.close-btn:hover {color:var(--color-primary);}
 
 .modal-body {
-  padding:28px 24px;max-height:70vh;overflow-y:auto;
+  padding:var(--space-7) var(--space-6);max-height:70vh;overflow-y:auto;
 }
-.config-item {margin-bottom:24px;}
-.config-label {display:block;font-size:15px;font-weight:500;color:#334155;margin-bottom:10px;}
-.option-group {display:flex;gap:12px;flex-wrap:wrap;}
+.config-item {margin-bottom:var(--space-6);}
+.config-label {display:flex;align-items:center;gap:var(--space-1);font-size:var(--text-base);font-weight:500;color:var(--color-text);margin-bottom:var(--space-2);}
+.option-group {display:flex;gap:var(--space-3);flex-wrap:wrap;}
 
 .radio-option {
-  display:flex;align-items:center;gap:6px;padding:10px 14px;
-  border:1px solid #e2e8f0;border-radius:12px;cursor:pointer;
-  font-size:14px;color:#475569;background:#fafafa;
+  display:flex;align-items:center;gap:var(--space-1);padding:var(--space-2) var(--space-3);
+  border:1px solid var(--color-border);border-radius:var(--radius-lg);cursor:pointer;
+  font-size:var(--text-sm);color:var(--color-text-secondary);background:var(--color-surface-2);
 }
 .radio-option:has(input:checked) {
-  border-color:#2563eb;background:#eff6ff;color:#2563eb;
-  font-weight:500;transform:translateY(-1px);box-shadow:0 4px 12px rgba(37,99,235,0.1);
+  border-color:var(--color-primary);background:var(--color-primary-light);color:var(--color-primary);
+  font-weight:500;box-shadow:var(--shadow-primary);
 }
-.radio-option input {margin:0;accent-color:#2563eb;transform:scale(1.1);}
+.radio-option input {margin:0;accent-color:var(--color-primary);transform:scale(1.1);}
 
 .modal-footer {
-  display:flex;justify-content:flex-end;gap:12px;padding:20px 24px;
-  border-top:1px solid #f1f5f9;background:#f8fafc;
+  display:flex;justify-content:flex-end;gap:var(--space-3);padding:var(--space-5) var(--space-6);
+  border-top:1px solid var(--color-surface-2);background:var(--color-bg);
 }
 .cancel-btn {
-  padding:10px 20px;border:1px solid #e2e8f0;background:#fff;
-  border-radius:12px;cursor:pointer;font-size:14px;color:#64748b;font-weight:500;
+  padding:var(--space-2) var(--space-5);border:1px solid var(--color-border);background:var(--color-surface);
+  border-radius:var(--radius-lg);cursor:pointer;font-size:var(--text-sm);color:var(--color-text-secondary);font-weight:500;
+  transition: border-color var(--duration-normal) var(--ease), color var(--duration-normal) var(--ease);
 }
+.cancel-btn:hover {border-color:var(--color-border-hover);color:var(--color-text);}
 .confirm-btn {
-  padding:10px 24px;border:none;background:#2563eb;color:#fff;
-  border-radius:12px;cursor:pointer;font-size:14px;font-weight:500;
+  display:flex;align-items:center;gap:var(--space-1);padding:var(--space-2) var(--space-6);border:none;background:var(--color-primary);color:var(--color-text-inverse);
+  border-radius:var(--radius-lg);cursor:pointer;font-size:var(--text-sm);font-weight:500;
+  transition: background var(--duration-normal) var(--ease);
 }
+.confirm-btn:hover {background:var(--color-primary-hover);}
 
 .prompt-input {
   width: 100%;
-  padding: 12px 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  font-size: 14px;
-  color: #334155;
-  background: #fff;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--text-sm);
+  color: var(--color-text);
+  background: var(--color-surface);
   resize: vertical;
   outline: none;
-  transition: all 0.2s ease;
+  transition: border-color var(--duration-normal) var(--ease), box-shadow var(--duration-normal) var(--ease);
   font-family: inherit;
+  box-sizing: border-box;
 }
 .prompt-input:focus {
-  border-color: #2563eb;
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  border-color: var(--color-primary);
+  box-shadow: var(--shadow-primary);
 }
 .prompt-input::placeholder {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 @media (max-width:768px){
-  .modal-content{width:95vw;border-radius:16px;}
-  .option-group{gap:8px;}
-  .radio-option{padding:8px 10px;font-size:12px;}
-  .modal-body{padding:20px 16px;}
-  .modal-header h3{font-size:17px;}
+  .modal-content{width:95vw;border-radius:var(--radius-xl);}
+  .option-group{gap:var(--space-2);}
+  .radio-option{padding:var(--space-2) var(--space-2);font-size:var(--text-xs);}
+  .modal-body{padding:var(--space-5) var(--space-4);}
+  .modal-header h3{font-size:var(--text-lg);}
   .prompt-input {
-    font-size: 13px;
-    padding: 10px 12px;
+    font-size: var(--text-xs);
+    padding: var(--space-2) var(--space-3);
   }
 }
 </style>

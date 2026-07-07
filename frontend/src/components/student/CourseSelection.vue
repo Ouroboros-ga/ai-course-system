@@ -1,7 +1,7 @@
 <template>
   <div class="course-selection">
     <div class="selection-header">
-      <h2>📚 我的课程</h2>
+      <h2><BookOpen :size="28" /> 我的课程</h2>
       <p class="subtitle">选择老师制作的智课开始学习</p>
     </div>
 
@@ -9,7 +9,7 @@
       <LoadingSpinner v-if="isLoadingCourses" text="正在加载课程..." />
 
       <div v-else-if="availableCourses.length === 0" class="empty-state">
-        <div class="empty-icon">📖</div>
+        <div class="empty-icon"><BookOpen :size="64" :stroke-width="1.5" /></div>
         <h3>暂无可用课程</h3>
         <p>老师还没有发布任何智课</p>
       </div>
@@ -22,7 +22,7 @@
           @click="selectCourse(course)"
         >
           <div class="card-header">
-            <span class="course-icon">📐</span>
+            <span class="course-icon"><Ruler :size="32" /></span>
             <span class="status-badge" :class="course.status">
               {{ getStatusLabel(course.status) }}
             </span>
@@ -31,9 +31,9 @@
             <h3 class="course-title">{{ course.title }}</h3>
             <p class="course-desc">{{ course.description || '暂无描述' }}</p>
             <div class="course-meta">
-              <span class="meta-item">👨‍🏫 {{ course.teacher_name || '未知教师' }}</span>
-              <span class="meta-item">📖 {{ course.total_nodes || 0 }} 个知识点</span>
-              <span class="meta-item">⏱️ {{ formatDuration(course.total_duration) }}</span>
+              <span class="meta-item"><Presentation :size="14" /> {{ course.teacher_name || '未知教师' }}</span>
+              <span class="meta-item"><BookOpen :size="14" /> {{ course.total_nodes || 0 }} 个知识点</span>
+              <span class="meta-item"><Hourglass :size="14" /> {{ formatDuration(course.total_duration) }}</span>
             </div>
           </div>
           <div class="card-footer">
@@ -42,7 +42,12 @@
               @click.stop="enterCourse(course)"
               :disabled="course.status !== 'published'"
             >
-              {{ course.status === 'published' ? '🚀 开始学习 →' : '⏳ 未发布' }}
+              <template v-if="course.status === 'published'">
+                <Rocket :size="16" /> 开始学习 <ArrowRight :size="16" />
+              </template>
+              <template v-else>
+                <Hourglass :size="16" /> 未发布
+              </template>
             </button>
           </div>
         </div>
@@ -55,6 +60,14 @@
 import { inject } from 'vue'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 import { STUDENT_LEARNING_KEY } from '@/composables/useStudentLearning.js'
+import {
+  BookOpen,
+  Ruler,
+  Presentation,
+  Hourglass,
+  Rocket,
+  ArrowRight,
+} from 'lucide-vue-next'
 
 const {
   availableCourses,
@@ -69,47 +82,50 @@ const {
 <style scoped>
 .course-selection {
   height: 100%;
-  padding: 24px;
+  padding: var(--space-5);
   overflow-y: auto;
 }
 
 .selection-header {
-  margin-bottom: 24px;
+  margin-bottom: var(--space-5);
 }
 
 .selection-header h2 {
-  font-size: 28px;
-  color: #111827;
-  margin-bottom: 8px;
+  font-size: var(--text-3xl);
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 
 .subtitle {
-  font-size: 16px;
-  color: #6b7280;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
 }
 
 .courses-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
-  gap: 20px;
+  gap: var(--space-5);
   max-width: 1400px;
 }
 
 .course-card {
-  background: white;
-  border-radius: 12px;
-  padding: 20px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  box-shadow: var(--shadow-sm);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4);
 }
 
 .course-card:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
 }
 
 .card-header {
@@ -118,75 +134,93 @@ const {
   align-items: center;
 }
 
-.course-icon { font-size: 32px; }
-
-.status-badge {
-  padding: 4px 12px;
-  border-radius: 12px;
-  font-size: 12px;
-  font-weight: 600;
+.course-icon {
+  color: var(--color-primary);
+  display: inline-flex;
 }
 
-.status-badge.published { background: #d1fae5; color: #065f46; }
-.status-badge.draft { background: #fef3c7; color: #92400e; }
-.status-badge.archived { background: #f3f4f6; color: #6b7280; }
+.status-badge {
+  padding: var(--space-1) var(--space-3);
+  border-radius: var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--font-semibold);
+}
+
+.status-badge.published { background: var(--color-success-light); color: var(--color-success-hover); }
+.status-badge.draft { background: var(--color-warning-light); color: var(--color-warning-hover); }
+.status-badge.archived { background: var(--color-surface-2); color: var(--color-text-secondary); }
 
 .course-title {
-  font-size: 18px;
-  font-weight: 600;
-  color: #111827;
+  font-size: var(--text-lg);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
   margin: 0;
 }
 
 .course-desc {
-  font-size: 14px;
-  color: #6b7280;
+  font-size: var(--text-base);
+  color: var(--color-text-secondary);
   line-height: 1.5;
   margin: 0;
 }
 
 .course-meta {
   display: flex;
-  gap: 16px;
+  gap: var(--space-4);
   flex-wrap: wrap;
   font-size: 13px;
-  color: #9ca3af;
+  color: var(--color-text-muted);
+}
+
+.meta-item {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 .start-btn {
   width: 100%;
-  padding: 10px;
-  background: linear-gradient(135deg, #6366f1, #8b5cf6);
-  color: white;
+  padding: var(--space-3);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 500;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
   cursor: pointer;
-  transition: all 0.3s ease;
+  transition: var(--transition-all);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
 }
 
 .start-btn:hover {
-  transform: scale(1.02);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-primary);
 }
 
 .start-btn:disabled {
-  background: linear-gradient(135deg, #9ca3af, #6b7280);
+  background: linear-gradient(135deg, var(--color-text-muted), var(--color-text-secondary));
   cursor: not-allowed;
   opacity: 0.6;
 }
 
 .card-footer {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
 }
 
 .loading-state, .empty-state {
   text-align: center;
-  padding: 60px 20px;
-  color: #6b7280;
+  padding: var(--space-10) var(--space-5);
+  color: var(--color-text-secondary);
 }
 
-.empty-icon { font-size: 64px; margin-bottom: 16px; }
+.empty-icon {
+  margin-bottom: var(--space-4);
+  color: var(--color-text-muted);
+  display: flex;
+  justify-content: center;
+}
 </style>

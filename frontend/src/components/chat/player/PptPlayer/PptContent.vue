@@ -150,21 +150,21 @@ const renderedContent = computed(() => {
 .page-content {
   font-size: 18px;
   line-height: 1.8;
-  color: #4b5565;
+  color: var(--color-text-secondary);
   max-height: 70vh;
   overflow-y: auto;
   word-wrap: break-word;
   padding: 24px;
   border-radius: 8px;
-  background: #fff;
+  background: var(--color-surface);
   /* 兼容 Firefox 滚动条 */
   scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
+  scrollbar-color: var(--color-border-hover) transparent;
 }
 
 /* 占位提示 */
 .placeholder {
-  color: #9ca3af;
+  color: var(--color-text-muted);
   text-align: center;
   padding: 60px 0;
 }
@@ -182,11 +182,11 @@ const renderedContent = computed(() => {
   margin-bottom: 0.8em;
   font-weight: 600;
   line-height: 1.4;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
-.markdown-body :deep(h1) { font-size: 1.8em; border-bottom: 2px solid #e5e7eb; padding-bottom: 0.3em; }
-.markdown-body :deep(h2) { font-size: 1.5em; border-bottom: 1px solid #e5e7eb; padding-bottom: 0.25em; }
+.markdown-body :deep(h1) { font-size: 1.8em; border-bottom: 2px solid var(--color-border); padding-bottom: 0.3em; }
+.markdown-body :deep(h2) { font-size: 1.5em; border-bottom: 1px solid var(--color-border); padding-bottom: 0.25em; }
 .markdown-body :deep(h3) { font-size: 1.25em; }
 .markdown-body :deep(h4) { font-size: 1.1em; }
 
@@ -202,19 +202,19 @@ const renderedContent = computed(() => {
 }
 
 .markdown-body :deep(a) {
-  color: #0ea5e9;
+  color: var(--color-info);
   text-decoration: none;
   border-bottom: 1px solid transparent;
   transition: border-color 0.2s;
 }
 .markdown-body :deep(a:hover) {
-  border-bottom-color: #0ea5e9;
+  border-bottom-color: var(--color-info);
 }
 
 /* 行内代码 */
 .markdown-body :deep(code:not(pre code)) {
-  background: #f1f5f9;
-  color: #e11d48;
+  background: var(--color-surface-2);
+  color: var(--color-danger);
   padding: 2px 6px;
   border-radius: 4px;
   font-size: 0.9em;
@@ -227,7 +227,7 @@ const renderedContent = computed(() => {
   border-radius: 8px;
   overflow: hidden;
   position: relative;
-  background: #1e293b;
+  background: var(--color-surface-2);
 }
 
 .markdown-body :deep(pre code) {
@@ -238,10 +238,10 @@ const renderedContent = computed(() => {
   line-height: 1.6;
   font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
   background: transparent !important;
-  color: #e2e8f0;
+  color: var(--color-border);
   /* 美化代码块内部的横向滚动条 */
   scrollbar-width: thin;
-  scrollbar-color: #475569 transparent;
+  scrollbar-color: var(--color-text-secondary) transparent;
 }
 
 .markdown-body :deep(pre code::-webkit-scrollbar) {
@@ -251,7 +251,7 @@ const renderedContent = computed(() => {
   background: transparent;
 }
 .markdown-body :deep(pre code::-webkit-scrollbar-thumb) {
-  background: #475569;
+  background: var(--color-text-secondary);
   border-radius: 3px;
 }
 
@@ -259,10 +259,10 @@ const renderedContent = computed(() => {
 .markdown-body :deep(blockquote) {
   margin: 1em 0;
   padding: 12px 20px;
-  border-left: 4px solid #0ea5e9;
-  background: #f0f9ff;
+  border-left: 4px solid var(--color-info);
+  background: var(--color-info-light);
   border-radius: 0 6px 6px 0;
-  color: #475569;
+  color: var(--color-text-secondary);
 }
 .markdown-body :deep(blockquote p:last-child) {
   margin-bottom: 0;
@@ -285,7 +285,7 @@ const renderedContent = computed(() => {
 
 .markdown-body :deep(ul li input[type="checkbox"]) {
   margin-right: 6px;
-  accent-color: #0ea5e9;
+  accent-color: var(--color-info);
 }
 
 /* 表格 */
@@ -298,25 +298,25 @@ const renderedContent = computed(() => {
 
 .markdown-body :deep(th),
 .markdown-body :deep(td) {
-  border: 1px solid #e5e7eb;
+  border: 1px solid var(--color-border);
   padding: 10px 14px;
   text-align: left;
 }
 
 .markdown-body :deep(th) {
-  background: #f8fafc;
+  background: var(--color-bg);
   font-weight: 600;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .markdown-body :deep(tr:nth-child(even) td) {
-  background: #fafbfc;
+  background: var(--color-surface-2);
 }
 
 .markdown-body :deep(hr) {
   border: none;
   height: 1px;
-  background: #e5e7eb;
+  background: var(--color-border);
   margin: 2em 0;
 }
 
@@ -327,16 +327,16 @@ const renderedContent = computed(() => {
 }
 
 .markdown-body :deep(strong) {
-  color: #1f2937;
+  color: var(--color-text);
   font-weight: 600;
 }
 
 .markdown-body :deep(em) {
-  color: #64748b;
+  color: var(--color-text-secondary);
 }
 
 .markdown-body :deep(del) {
-  color: #94a3b8;
+  color: var(--color-text-muted);
 }
 
 /* ===== KaTeX 数学公式样式 ===== */
@@ -353,7 +353,7 @@ const renderedContent = computed(() => {
   text-align: center;
   margin: 1.5em 0;
   padding: 1em;
-  background: #f8fafc;
+  background: var(--color-bg);
   border-radius: 8px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -362,7 +362,7 @@ const renderedContent = computed(() => {
 /* KaTeX容器样式 */
 .markdown-body :deep(.katex) {
   font-size: 1.1em;
-  color: #1f2937;
+  color: var(--color-text);
 }
 
 .markdown-body :deep(.katex-block .katex) {
@@ -379,14 +379,14 @@ const renderedContent = computed(() => {
 }
 
 .markdown-body :deep(.katex-block::-webkit-scrollbar-thumb) {
-  background: #cbd5e1;
+  background: var(--color-border-hover);
   border-radius: 3px;
 }
 
 /* 公式错误提示 */
 .markdown-body :deep(.katex-error) {
-  color: #dc2626;
-  background: #fee2e2;
+  color: var(--color-danger-hover);
+  background: var(--color-danger-light);
   padding: 2px 6px;
   border-radius: 4px;
   font-family: 'Menlo', 'Monaco', 'Consolas', monospace;
@@ -401,10 +401,10 @@ const renderedContent = computed(() => {
   background: transparent;
 }
 .page-content::-webkit-scrollbar-thumb {
-  background: #cbd5e1;
+  background: var(--color-border-hover);
   border-radius: 3px;
 }
 .page-content::-webkit-scrollbar-thumb:hover {
-  background: #94a3b8;
+  background: var(--color-text-muted);
 }
 </style>

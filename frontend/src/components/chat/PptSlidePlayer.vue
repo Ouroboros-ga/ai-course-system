@@ -4,7 +4,7 @@
       <LoadingSpinner v-if="isLoading" text="加载幻灯片..." />
 
       <div v-else-if="slides.length === 0" class="slide-empty">
-        <span class="empty-icon">📄</span>
+        <span class="empty-icon"><FileText :size="48" /></span>
         <span>暂无课件幻灯片</span>
       </div>
 
@@ -21,13 +21,13 @@
     <div class="slide-controls">
       <div class="page-nav">
         <button class="nav-btn" @click="prevPage" :disabled="currentPage <= 1">
-          ◀
+          <ChevronLeft :size="16" />
         </button>
         <span class="page-indicator">
           {{ currentPage }} / {{ totalPages }}
         </span>
         <button class="nav-btn" @click="nextPage" :disabled="currentPage >= totalPages">
-          ▶
+          <ChevronRight :size="16" />
         </button>
       </div>
 
@@ -43,7 +43,8 @@
         ></audio>
 
         <button class="audio-btn" @click="togglePlay">
-          {{ isPlaying ? '⏸' : '▶️' }}
+          <Pause v-if="isPlaying" :size="12" />
+          <Play v-else :size="12" />
         </button>
 
         <div class="audio-progress-wrap" @click="seekAudio" ref="progressBarRef">
@@ -61,7 +62,9 @@
 
         <div class="volume-wrap">
           <button class="volume-btn" @click="toggleMute">
-            {{ isMuted ? '🔇' : volume >= 0.5 ? '🔊' : '🔉' }}
+            <VolumeX v-if="isMuted || volume === 0" :size="14" />
+            <Volume1 v-else-if="volume < 0.5" :size="14" />
+            <Volume2 v-else :size="14" />
           </button>
           <input
             type="range"
@@ -76,7 +79,7 @@
       </div>
 
       <div class="audio-player audio-unavailable" v-else>
-        <span class="no-audio-hint">🔇 当前节点暂无音频</span>
+        <span class="no-audio-hint"><VolumeX :size="14" /> 当前节点暂无音频</span>
       </div>
     </div>
   </div>
@@ -84,6 +87,7 @@
 
 <script setup>
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
+import { FileText, Play, Pause, VolumeX, Volume1, Volume2, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
 
 const props = defineProps({
@@ -278,8 +282,8 @@ defineExpose({
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #1a1a2e;
-  border-radius: 8px;
+  background: var(--color-text);
+  border-radius: var(--radius-md);
   overflow: hidden;
 }
 
@@ -288,7 +292,7 @@ defineExpose({
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #0f0f1a;
+  background: var(--color-text);
   overflow: hidden;
   position: relative;
   min-height: 0;
@@ -299,12 +303,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  color: #9ca3af;
-  font-size: 14px;
+  gap: var(--space-3);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
 }
 
-.empty-icon { font-size: 48px; }
+.empty-icon { color: var(--color-text-muted); }
 
 .slide-image {
   max-width: 100%;
@@ -314,39 +318,39 @@ defineExpose({
 }
 
 .slide-controls {
-  background: #16162a;
-  padding: 8px 12px;
+  background: var(--color-text);
+  padding: var(--space-2) var(--space-3);
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  border-top: 1px solid #2d2d4a;
+  gap: var(--space-1);
+  border-top: 1px solid var(--color-border);
 }
 
 .page-nav {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .nav-btn {
   width: 32px;
   height: 32px;
-  border-radius: 6px;
-  border: 1px solid #3b3b5c;
-  background: #1e1e38;
-  color: #e5e7eb;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border);
+  background: var(--color-text);
+  color: var(--color-border);
   cursor: pointer;
-  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: background var(--duration-normal) var(--ease), border-color var(--duration-normal) var(--ease), color var(--duration-normal) var(--ease);
 }
 
 .nav-btn:hover:not(:disabled) {
-  background: #2d2d4a;
-  border-color: #6366f1;
+  background: var(--color-border);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
 }
 
 .nav-btn:disabled {
@@ -355,8 +359,8 @@ defineExpose({
 }
 
 .page-indicator {
-  font-size: 13px;
-  color: #9ca3af;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   font-weight: 500;
   min-width: 60px;
   text-align: center;
@@ -365,38 +369,39 @@ defineExpose({
 .audio-player {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .audio-unavailable {
   justify-content: center;
-  padding: 2px 0;
+  padding: var(--space-1) 0;
 }
 
 .no-audio-hint {
-  font-size: 12px;
-  color: #6b7280;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
 }
 
 .audio-btn {
   width: 28px;
   height: 28px;
-  border-radius: 50%;
+  border-radius: var(--radius-full);
   border: none;
-  background: #6366f1;
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
   cursor: pointer;
-  font-size: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: all 0.2s;
+  transition: background var(--duration-normal) var(--ease);
 }
 
 .audio-btn:hover {
-  background: #8b5cf6;
-  transform: scale(1.05);
+  background: var(--color-secondary);
 }
 
 .audio-progress-wrap {
@@ -410,31 +415,32 @@ defineExpose({
 .audio-progress-bg {
   width: 100%;
   height: 4px;
-  background: #374151;
-  border-radius: 2px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
   overflow: hidden;
 }
 
 .audio-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6);
-  border-radius: 2px;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-full);
   transition: width 0.1s linear;
 }
 
 .audio-time {
-  font-size: 11px;
-  color: #9ca3af;
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
   min-width: 72px;
   text-align: center;
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
+  font-family: var(--font-mono);
 }
 
 .volume-wrap {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--space-1);
   flex-shrink: 0;
 }
 
@@ -442,9 +448,16 @@ defineExpose({
   border: none;
   background: none;
   cursor: pointer;
-  font-size: 14px;
   padding: 0;
   line-height: 1;
+  color: var(--color-text-muted);
+  display: flex;
+  align-items: center;
+  transition: color var(--duration-normal) var(--ease);
+}
+
+.volume-btn:hover {
+  color: var(--color-primary);
 }
 
 .volume-slider {
@@ -452,17 +465,27 @@ defineExpose({
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
-  background: #374151;
-  border-radius: 2px;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
   outline: none;
+  cursor: pointer;
 }
 
 .volume-slider::-webkit-slider-thumb {
   -webkit-appearance: none;
   width: 10px;
   height: 10px;
-  border-radius: 50%;
-  background: #8b5cf6;
+  border-radius: var(--radius-full);
+  background: var(--color-secondary);
   cursor: pointer;
+}
+
+.volume-slider::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: var(--radius-full);
+  background: var(--color-secondary);
+  cursor: pointer;
+  border: none;
 }
 </style>

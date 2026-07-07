@@ -1,11 +1,66 @@
+<script setup>
+import { ChevronDown } from 'lucide-vue-next'
+</script>
+
 <template>
-  <div class="scroll-arrow" @click="$emit('go-next')">
-    <div class="mouse"><div class="wheel"></div></div>
-  </div>
+  <button
+    class="scroll-arrow"
+    aria-label="向下滚动"
+    @click="$emit('go-next')"
+  >
+    <ChevronDown class="arrow-icon" :size="28" />
+  </button>
 </template>
+
 <style scoped>
-.scroll-arrow { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%); cursor: pointer; opacity: 0.6; }
-.mouse { width: 24px; height: 38px; border: 2px solid #64748b; border-radius: 12px; display: flex; justify-content: center; padding-top: 6px; }
-.wheel { width: 4px; height: 8px; background: #3b82f6; border-radius: 2px; animation: scroll-v 2s infinite; }
-@keyframes scroll-v { 0% { opacity: 1; transform: translateY(0); } 100% { opacity: 0; transform: translateY(15px); } }
+.scroll-arrow {
+  position: fixed;
+  bottom: var(--space-8);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-full);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  z-index: var(--z-fixed);
+  transition: var(--transition-all);
+}
+
+.scroll-arrow:hover {
+  color: var(--color-primary-hover);
+  box-shadow: var(--shadow-lg);
+  transform: translateX(-50%) translateY(-2px);
+}
+
+.arrow-icon {
+  animation: bounce 2s var(--ease) infinite;
+}
+
+@keyframes bounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+  50% {
+    transform: translateY(6px);
+    opacity: 0.5;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow-icon {
+    animation: none;
+  }
+  .scroll-arrow:hover {
+    transform: translateX(-50%);
+  }
+}
 </style>

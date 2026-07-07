@@ -2,9 +2,9 @@
   <div v-if="visible" class="jump-dialog-overlay" @click.self="handleCancel">
     <div class="jump-dialog-container" :class="{ 'urgency-high': isHighUrgency }">
       <div class="dialog-header">
-        <div class="header-icon">🔍</div>
+        <div class="header-icon"><Search :size="28" /></div>
         <h3 class="dialog-title">{{ title }}</h3>
-        <button class="close-btn" @click="handleCancel" aria-label="关闭">×</button>
+        <button class="close-btn" @click="handleCancel" aria-label="关闭"><X :size="18" /></button>
       </div>
 
       <div class="dialog-body">
@@ -21,7 +21,7 @@
           >
             <div class="prerequisite-header">
               <span class="prerequisite-icon">
-                {{ getUrgencyIcon(prereq.urgencyLevel) }}
+                <Circle :size="14" :class="'urgency-dot-' + getUrgencyIcon(prereq.urgencyLevel)" />
               </span>
               <span class="prerequisite-title">{{ prereq.title }}</span>
               <span class="confidence-badge">
@@ -45,7 +45,7 @@
         </div>
 
         <div class="ai-suggestion" v-if="suggestedAction === 'jump_to_review'">
-          <div class="suggestion-icon">💡</div>
+          <div class="suggestion-icon"><Lightbulb :size="20" /></div>
           <p>建议先复习上述前置知识，有助于更好地理解当前内容</p>
         </div>
       </div>
@@ -78,6 +78,7 @@
 
 <script setup>
 import { computed } from 'vue'
+import { Search, Lightbulb, Circle, X } from 'lucide-vue-next'
 
 const props = defineProps({
   visible: {
@@ -126,12 +127,12 @@ const isHighUrgency = computed(() => {
 })
 
 function getUrgencyIcon(level) {
-  const icons = {
-    high: '🔴',
-    medium: '🟡',
-    low: '🟢',
+  const levels = {
+    high: 'high',
+    medium: 'medium',
+    low: 'low',
   }
-  return icons[level] || '⚪'
+  return levels[level] || 'none'
 }
 
 function handleConfirm() {
@@ -175,13 +176,13 @@ function handleCancel() {
 }
 
 .jump-dialog-container {
-  background: white;
-  border-radius: 16px;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
   width: 90%;
   max-width: 600px;
   max-height: 85vh;
   overflow-y: auto;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-xl);
   animation: slideUp 0.3s ease-out;
 }
 
@@ -197,137 +198,146 @@ function handleCancel() {
 }
 
 .jump-dialog-container.urgency-high {
-  border: 2px solid #ef4444;
+  border: 2px solid var(--color-danger);
 }
 
 .dialog-header {
-  padding: 24px 24px 16px;
-  border-bottom: 1px solid #e5e7eb;
+  padding: var(--space-5) var(--space-5) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .header-icon {
-  font-size: 28px;
+  color: var(--color-primary);
+  display: flex;
+  align-items: center;
 }
 
 .dialog-title {
   flex: 1;
-  font-size: 20px;
-  font-weight: 600;
-  color: #111827;
+  font-size: var(--text-xl);
+  font-weight: var(--font-semibold);
+  color: var(--color-text);
   margin: 0;
 }
 
 .close-btn {
-  width: 32px;
-  height: 32px;
+  width: var(--space-6);
+  height: var(--space-6);
   border: none;
-  background: #f3f4f6;
-  border-radius: 8px;
-  font-size: 24px;
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
+  transition: var(--transition-all);
+  color: var(--color-text-secondary);
 }
 
 .close-btn:hover {
-  background: #e5e7eb;
-  transform: scale(1.05);
+  background: var(--color-border);
+  transform: translateY(-2px);
 }
 
 .dialog-body {
-  padding: 20px 24px;
+  padding: var(--space-5) var(--space-5);
 }
 
 .analysis-summary {
-  background: #fef3c7;
-  border-left: 4px solid #f59e0b;
-  padding: 12px 16px;
-  margin-bottom: 20px;
-  border-radius: 8px;
+  background: var(--color-warning-light);
+  border-left: 4px solid var(--color-warning);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-5);
+  border-radius: var(--radius-md);
 }
 
 .analysis-summary p {
   margin: 0;
-  color: #92400e;
-  font-size: 14px;
+  color: var(--color-warning-hover);
+  font-size: var(--text-base);
   line-height: 1.5;
 }
 
 .weak-prerequisites-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--space-3);
 }
 
 .prerequisite-item {
-  border: 1px solid #e5e7eb;
-  border-radius: 10px;
-  padding: 14px 16px;
-  transition: all 0.2s;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4) var(--space-4);
+  transition: var(--transition-all);
 }
 
 .prerequisite-item.urgency-high {
-  border-color: #fecaca;
-  background: #fff1f2;
+  border-color: var(--color-danger-light);
+  background: var(--color-danger-light);
 }
 
 .prerequisite-item.urgency-medium {
-  border-color: #fed7aa;
-  background: #fffbeb;
+  border-color: var(--color-warning-light);
+  background: var(--color-warning-light);
 }
 
 .prerequisite-item.urgency-low {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
+  border-color: var(--color-success-light);
+  background: var(--color-success-light);
 }
 
 .prerequisite-header {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
 }
 
 .prerequisite-icon {
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }
+
+.urgency-dot-high { color: var(--color-danger); }
+.urgency-dot-medium { color: var(--color-warning); }
+.urgency-dot-low { color: var(--color-success); }
+.urgency-dot-none { color: var(--color-text-muted); }
 
 .prerequisite-title {
   flex: 1;
-  font-weight: 600;
+  font-weight: var(--font-semibold);
   font-size: 15px;
-  color: #111827;
+  color: var(--color-text);
 }
 
 .confidence-badge {
-  font-size: 12px;
-  color: #6b7280;
-  background: #f3f4f6;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-weight: 500;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  background: var(--color-surface-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  font-weight: var(--font-medium);
 }
 
 .prerequisite-reason {
   font-size: 13px;
-  color: #4b5563;
+  color: var(--color-text-secondary);
   line-height: 1.5;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-2);
 }
 
 .prerequisite-evidence {
-  font-size: 12px;
-  color: #6b7280;
-  margin-top: 8px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-2);
 }
 
 .prerequisite-evidence ul {
-  margin: 4px 0 0 16px;
+  margin: var(--space-1) 0 0 var(--space-4);
   padding: 0;
 }
 
@@ -339,45 +349,47 @@ function handleCancel() {
 .ai-suggestion {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  margin-top: 20px;
-  padding: 14px;
-  background: #eff6ff;
-  border-radius: 10px;
-  border: 1px solid #bfdbfe;
+  gap: var(--space-3);
+  margin-top: var(--space-5);
+  padding: var(--space-4);
+  background: var(--color-info-light);
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--color-info-light);
 }
 
 .suggestion-icon {
-  font-size: 20px;
+  color: var(--color-info);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
 }
 
 .ai-suggestion p {
   margin: 0;
   font-size: 13px;
-  color: #1e40af;
+  color: var(--color-info);
   line-height: 1.5;
 }
 
 .dialog-footer {
-  padding: 16px 24px;
-  border-top: 1px solid #e5e7eb;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
   display: flex;
-  gap: 12px;
+  gap: var(--space-3);
   justify-content: flex-end;
 }
 
 .btn {
-  padding: 11px 24px;
+  padding: var(--space-3) var(--space-5);
   border: none;
-  border-radius: 8px;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: var(--radius-md);
+  font-size: var(--text-base);
+  font-weight: var(--font-semibold);
   cursor: pointer;
-  transition: all 0.2s;
+  transition: var(--transition-all);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 .btn:disabled {
@@ -386,32 +398,32 @@ function handleCancel() {
 }
 
 .btn-secondary {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--color-surface-2);
+  color: var(--color-text-secondary);
 }
 
 .btn-secondary:hover:not(:disabled) {
-  background: #e5e7eb;
+  background: var(--color-border);
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  color: white;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.35);
+  background: var(--gradient-primary);
+  color: var(--color-text-inverse);
+  box-shadow: var(--shadow-primary);
 }
 
 .btn-primary:hover:not(:disabled) {
   transform: translateY(-1px);
-  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.45);
+  box-shadow: var(--shadow-primary);
 }
 
 .dialog-footer-note {
-  padding: 10px 24px 16px;
+  padding: var(--space-3) var(--space-5) var(--space-4);
   text-align: center;
 }
 
 .dialog-footer-note small {
-  color: #9ca3af;
-  font-size: 12px;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
 }
 </style>

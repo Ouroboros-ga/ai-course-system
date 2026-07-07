@@ -15,26 +15,30 @@
 .loader {
   width: 40px;
   height: 40px;
-  border: 4px solid #e2e8f0;
-  border-top-color: #3b82f6;
-  border-radius: 50%;
+  border: 4px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-full);
   animation: spin 1s linear infinite;
-  margin: 0 auto 20px;
+  margin: 0 auto var(--space-5);
 }
 
 .progress-bar {
   width: 200px;
   height: 6px;
-  background: #e2e8f0;
-  border-radius: 99px;
-  margin: 20px auto 0;
+  background: var(--color-border);
+  border-radius: var(--radius-full);
+  margin: var(--space-5) auto 0;
   overflow: hidden;
 }
 
 .progress-fill {
   height: 100%;
-  background: #3b82f6;
+  background: var(--color-primary);
   animation: loading 2s infinite ease-in-out;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 @keyframes loading {
