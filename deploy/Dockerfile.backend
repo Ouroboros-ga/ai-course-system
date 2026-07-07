@@ -1,0 +1,2 @@
+# Python 3.11 后端镜像构建文件
+FROM python:3.11-slim
