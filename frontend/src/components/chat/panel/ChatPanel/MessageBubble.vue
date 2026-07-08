@@ -53,7 +53,7 @@ function extractFormulas(text) {
     return placeholder
   })
 
-  processedText = processedText.replace(/\$([^\$\n]+?)\$/g, (match, formula) => {
+  processedText = processedText.replace(/\$([^$\n]+?)\$/g, (match, formula) => {
     const placeholder = `%%INLINE_FORMULA_${index}%%`
     formulas.push({
       placeholder,

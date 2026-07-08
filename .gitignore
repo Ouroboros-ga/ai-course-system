@@ -61,3 +61,23 @@ backend/.env
 .env.development.local
 .env.production.local
 *.env.*.local
+
+# Codex / local agent runtime
+.agents/
+
+# Local databases
+database/*.db
+database/*.sqlite
+database/*.sqlite3
+backend/database/*.db
+backend/database/*.sqlite
+backend/database/*.sqlite3
+
+# Runtime/generated files
+logs/
+temp/
+tmp/
+uploads/
+videos/
+audios/
+generated/
