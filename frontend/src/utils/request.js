@@ -299,6 +299,10 @@ service.interceptors.response.use(
 
     const res = response.data
 
+    if (response.config?.allowFlatResponse && (res === null || typeof res !== 'object' || !Object.prototype.hasOwnProperty.call(res, 'code'))) {
+      return res
+    }
+
     if (res.code !== 200) {
 
       // 特殊状态码处理：Token 过期

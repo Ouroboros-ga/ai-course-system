@@ -11,7 +11,8 @@ import request from '@/utils/request.js'
  * @returns {Promise<Object>} 播放器初始化数据（课程信息、节点列表、视频URL等）
  */
 export async function getPlayerInitData(courseId) {
-  return request.get(`/player/init/${courseId}`)
+  const data = await request.get(`/player/init/${courseId}`, { allowFlatResponse: true })
+  return { data }
 }
 
 /**

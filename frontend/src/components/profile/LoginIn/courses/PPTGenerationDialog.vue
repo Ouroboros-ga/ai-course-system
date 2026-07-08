@@ -198,8 +198,10 @@ async function loadTemplates() {
   loadingTemplates.value = true
   try {
     const res = await getPPTThemes({ pay_type: 'free', page_size: 20 })
-    if (res.data?.code === 200 && res.data?.data?.templateList) {
-      templates.value = res.data.data.templateList.map(t => ({
+    const themePayload = res?.data?.data || res?.data || res
+    const templateList = themePayload?.templateList || themePayload?.templates || []
+    if (Array.isArray(templateList)) {
+      templates.value = templateList.map(t => ({
         id: t.id || t.templateId,
         name: t.name || t.title,
         style: t.style,
@@ -251,19 +253,20 @@ async function handleGenerate() {
 
     clearInterval(progressTimer)
 
-    if (res.data?.code === 200) {
+    const payload = res?.data?.data || res?.data || res
+    if (payload?.course_id) {
       progressPercent.value = 100
       statusMessage.value = '步骤3/3: 解析完成！'
 
-      result.courseId = res.data.data.course_id
-      result.totalNodes = res.data.data.total_nodes
-      result.totalDuration = res.data.data.total_duration
+      result.courseId = payload.course_id
+      result.totalNodes = payload.total_nodes
+      result.totalDuration = payload.total_duration
 
       step.value = 3
       showToast('PPT课件生成完成！', 'success')
-      emit('generated', res.data.data)
+      emit('generated', payload)
     } else {
-      errorMessage.value = res.data?.message || '生成失败'
+      errorMessage.value = payload?.error || res?.data?.message || res?.message || '生成失败'
       step.value = 4
       showToast(errorMessage.value, 'error')
     }
