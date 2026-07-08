@@ -9,6 +9,7 @@ import re
 from typing import Optional, List, Tuple, Dict, Any
 
 from app.common.llm_client import llm_client, Message
+from app.platform.adapters.llm import LLMAdapter
 from app.common.RAG import rag_pipeline
 from app.common.prompts.qa import QA_SYSTEM_PROMPT, build_qa_prompt, QUIZ_SYSTEM_PROMPT, build_quiz_prompt
 
@@ -312,7 +313,10 @@ class QAService:
                     ))
             
             messages.append(Message(role="user", content=user_prompt))
-            response = await llm_client.chat(messages, temperature=0.7)
+            llm_result = await LLMAdapter(llm_client).chat(messages, temperature=0.7)
+            if not llm_result.success:
+                raise RuntimeError(llm_result.error_message or "LLM chat failed")
+            response = llm_result.data
         
         return {
             "answer": response.content,

@@ -2286,6 +2286,7 @@ async def synthesize_node_audio(
 
     try:
         from app.common.tts_client import tts_client
+        from app.platform.adapters.tts import TTSAdapter
 
         course_audio_dir = get_course_audio_dir(course_id)
         cleanup_old_node_audio(node, course_audio_dir)
@@ -2311,9 +2312,12 @@ async def synthesize_node_audio(
             voice = node.extra_data.get("voice")
 
         for seg in segments:
-            response = await tts_client.synthesize(
+            tts_result = await TTSAdapter(tts_client).synthesize(
                 text=seg, voice=voice, sample_rate=16000, output_format="mp3",
             )
+            if not tts_result.success:
+                raise RuntimeError(tts_result.error_message or "TTS synthesis failed")
+            response = tts_result.data
             all_audio += response.audio_data
             total_latency += response.latency_ms
 

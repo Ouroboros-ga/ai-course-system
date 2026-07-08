@@ -20,6 +20,7 @@ import httpx
 
 from app.core.config import settings
 from app.common.llm_client import llm_client, Message
+from app.platform.adapters.ppt import PPTAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -381,7 +382,10 @@ class PPTGenerationService:
         if not template_id:
             # 尝试获取免费模板
             try:
-                themes = await self.xfyun_client.get_theme_list(pay_type="free", page_size=1)
+                theme_result = await PPTAdapter(self.xfyun_client).get_theme_list(pay_type="free", page_size=1)
+                if not theme_result.success:
+                    return PPTTaskResult(status="failed", error=theme_result.error_message or "Failed to fetch PPT themes")
+                themes = theme_result.data
                 if themes.get("data", {}).get("templateList"):
                     template_id = themes["data"]["templateList"][0]["id"]
                     logger.info(f"[PPTGeneration] 自动选择模板: {template_id}")
@@ -393,12 +397,15 @@ class PPTGenerationService:
 
         logger.info(f"[PPTGeneration] 步骤2: 创建PPT生成任务, 模板={template_id}")
         try:
-            create_result = await self.xfyun_client.create_ppt_task(
+            create_adapter_result = await PPTAdapter(self.xfyun_client).create_ppt_task(
                 query=teaching_script,
                 template_id=template_id,
                 author=author,
                 search=search,
             )
+            if not create_adapter_result.success:
+                return PPTTaskResult(status="failed", error=create_adapter_result.error_message or "Failed to create PPT task")
+            create_result = create_adapter_result.data
         except Exception as e:
             logger.error(f"[PPTGeneration] 创建PPT任务失败: {e}")
             return PPTTaskResult(status="failed", error=f"创建PPT任务失败: {e}")
@@ -415,7 +422,13 @@ class PPTGenerationService:
         logger.info(f"[PPTGeneration] 步骤3: 等待PPT生成完成, sid={sid}")
 
         # 步骤3: 轮询等待
-        task_result = await self.xfyun_client.wait_for_completion(sid)
+        wait_adapter_result = await PPTAdapter(self.xfyun_client).wait_for_completion(sid)
+        if not wait_adapter_result.success:
+            raw_task_result = wait_adapter_result.raw
+            if isinstance(raw_task_result, PPTTaskResult):
+                return raw_task_result
+            return PPTTaskResult(sid=sid, status="failed", error=wait_adapter_result.error_message or "PPT generation failed")
+        task_result = wait_adapter_result.data
 
         if task_result.status != "done":
             return task_result
@@ -429,8 +442,10 @@ class PPTGenerationService:
 
             logger.info(f"[PPTGeneration] 步骤4: 下载PPT文件 -> {save_path}")
             try:
-                await self.xfyun_client.download_ppt(task_result.ppt_url, save_path)
-                task_result.ppt_file_path = save_path
+                download_adapter_result = await PPTAdapter(self.xfyun_client).download_ppt(task_result.ppt_url, save_path)
+                if not download_adapter_result.success:
+                    raise RuntimeError(download_adapter_result.error_message or "PPT download failed")
+                task_result.ppt_file_path = download_adapter_result.data
             except Exception as e:
                 logger.error(f"[PPTGeneration] 下载PPT失败: {e}")
                 task_result.error = f"下载PPT失败: {e}"

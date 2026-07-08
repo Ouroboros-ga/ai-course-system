@@ -25,6 +25,9 @@ from app.models.asset_model import TeacherAsset, AssetType
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.common.tts_client import tts_client, TTSError
 from app.common.digital_human_client import digital_human_client, DigitalHumanError
+from app.platform.adapters.digital_human import DigitalHumanAdapter
+from app.platform.adapters.errors import AdapterErrorCode
+from app.platform.adapters.tts import TTSAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -137,10 +140,22 @@ class VideoGenerationService:
         session.commit()
 
         try:
-            dh_response = await digital_human_client.generate_video(
+            dh_result = await DigitalHumanAdapter(digital_human_client).generate_video(
                 audio_path=audio_path,
                 video_path=face_video_path,
             )
+            if not dh_result.success:
+                task.status = GenerationStatus.FAILED
+                task.error_message = f"Digital human generation failed: {dh_result.error_message}"
+                task.updated_at = datetime.utcnow()
+                session.add(task)
+                session.commit()
+                session.refresh(task)
+                if dh_result.error_code == AdapterErrorCode.BUSINESS_FAILURE.value:
+                    return task
+                raise DigitalHumanError(dh_result.error_message or "Digital human generation failed")
+
+            dh_response = dh_result.data
             dh_status = getattr(dh_response, "status", None)
             dh_error = getattr(dh_response, "error", None) or getattr(dh_response, "message", None)
             if dh_status and str(dh_status).lower() not in {"success", "succeeded", "done", "completed"}:
@@ -286,12 +301,15 @@ class VideoGenerationService:
         logger.info(f"[TTS] 合成节点{node.id}的语音: {len(text)}字, voice={voice}")
 
         # 调用TTS合成
-        response = await tts_client.synthesize(
+        tts_result = await TTSAdapter(tts_client).synthesize(
             text=text,
             voice=voice,
-            output_format="wav",  # 数字人API需要wav格式
+            output_format="wav",  # Digital human API requires wav.
         )
+        if not tts_result.success:
+            raise TTSError(tts_result.error_message or "TTS synthesis failed")
 
+        response = tts_result.data
         # 保存音频文件
         audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.wav"
         audio_path = AUDIO_ROOT / audio_filename
