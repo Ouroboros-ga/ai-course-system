@@ -1,5 +1,5 @@
-import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { showToast } from '@/utils/toast'
 import { useCounterStore } from '@/stores/counter.js'
 import request from '@/utils/request.js'
@@ -10,6 +10,7 @@ export const STUDENT_LEARNING_KEY = Symbol('studentLearning')
 
 export function useStudentLearning() {
   const router = useRouter()
+  const route = useRoute()
   const counter = useCounterStore()
 
   const selectedCourse = ref(null)
@@ -113,11 +114,13 @@ export function useStudentLearning() {
 
   function selectCourse(course) {
     selectedCourse.value = course
+    router.push({ name: 'student-course', params: { courseId: course.id } })
     loadCourseContent(course.id)
   }
 
   async function enterCourse(course) {
     selectedCourse.value = course
+    router.push({ name: 'student-course', params: { courseId: course.id } })
 
     try {
       const data = await request({ url: `/document/course/${course.id}/enroll`, method: 'post' })
@@ -154,6 +157,7 @@ export function useStudentLearning() {
     currentSlidePage.value = 1
     currentNodeAudioUrl.value = ''
     currentNodeAudioDuration.value = 0
+    router.push({ name: 'student-dashboard' })
   }
 
   function saveCurrentNodeChatHistory() {
@@ -177,6 +181,12 @@ export function useStudentLearning() {
       const data = await request({ url: `/document/course/${courseId}`, method: 'get' })
 
       if (data) {
+        // 直链/刷新进入时 selectedCourse 可能为空，用接口返回的 course 信息补齐
+        // 点击进入时 selectedCourse 已是列表项（含 teacher_name 等），id 一致则不覆盖
+        if (data.course && (!selectedCourse.value || Number(selectedCourse.value.id) !== Number(courseId))) {
+          selectedCourse.value = data.course
+        }
+
         if (data.nodes && data.nodes.length > 0) {
           scriptNodes.value = data.nodes.map(node => ({
             id: node.id,
@@ -653,6 +663,30 @@ export function useStudentLearning() {
       }
     }, 300)
   }
+
+  // 路由 ↔ 选中课程同步：支持直链/刷新进入、浏览器后退/前进、返回大厅
+  watch(
+    () => route.params.courseId,
+    (newId) => {
+      const id = newId ? Number(newId) : null
+      if (id === null) {
+        // 回到课程大厅 /student：清理当前选课（exitCourse 已清则此处为空操作）
+        if (selectedCourse.value) {
+          selectedCourse.value = null
+          scriptNodes.value = []
+          chatMessages.value = []
+          currentNodeIndex.value = 0
+          canInput.value = false
+        }
+        return
+      }
+      // 点击进入时 selectedCourse 已由 enterCourse/selectCourse 设置并加载，跳过避免重复
+      if (selectedCourse.value && Number(selectedCourse.value.id) === id) return
+      // 直链 / 刷新 / 前进到其他课程：按 URL 加载
+      loadCourseContent(id)
+    },
+    { immediate: true }
+  )
 
   onMounted(() => {
     loadAvailableCourses()
