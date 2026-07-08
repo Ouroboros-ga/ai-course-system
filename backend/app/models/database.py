@@ -51,7 +51,9 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(o
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
 os.makedirs(DATABASE_DIR, exist_ok=True)
 
-DATABASE_URL = f"sqlite:///{os.path.join(DATABASE_DIR, 'smart_class.db')}"
+PRODUCTION_DATABASE_PATH = os.path.join(DATABASE_DIR, "smart_class.db")
+DEFAULT_DATABASE_URL = f"sqlite:///{PRODUCTION_DATABASE_PATH}"
+DATABASE_URL = os.environ.get("AI_COURSE_DATABASE_URL", DEFAULT_DATABASE_URL)
 
 engine = create_engine(
     DATABASE_URL,

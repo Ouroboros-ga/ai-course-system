@@ -553,6 +553,65 @@ async def get_courses_list(
         )
 
 
+@router.get("/my-courses")
+async def get_my_courses(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取当前学生的选课列表
+
+    返回学生已选的课程及学习进度，用于学生端"我的课程"展示
+    """
+    try:
+        student_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
+        if user_role != "student":
+            return unified_response(code=403, message="只有学生可以查看选课列表", data=None)
+
+        enrollments = session.exec(
+            select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.is_active == True
+            ).order_by(StudentEnrollment.enrolled_at.desc())
+        ).all()
+
+        my_courses = []
+        for enr in enrollments:
+            course = session.get(Course, enr.course_id)
+            if not course or course.status != CourseStatus.PUBLISHED:
+                continue
+
+            my_courses.append({
+                "enrollment_id": enr.id,
+                "course_id": course.id,
+                "title": course.title,
+                "description": course.description,
+                "teacher_name": _get_teacher_name(session, course.teacher_id),
+                "total_nodes": course.total_nodes,
+                "total_duration": course.total_duration,
+                "overall_progress": round(enr.overall_progress, 1),
+                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
+                "total_study_minutes": enr.total_study_minutes,
+                "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
+                "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
+            })
+
+        return unified_response(
+            code=200,
+            message="获取我的课程成功",
+            data={
+                "courses": my_courses,
+                "total": len(my_courses),
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(code=500, message=f"获取课程失败: {str(e)}", data=None)
+
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
@@ -1622,7 +1681,7 @@ async def enroll_course(
 
         return unified_response(code=200, message="选课成功！您现在可以开始学习了。", data={
             "enrollment_id": enrollment.id,
-            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrollment_at else None,
+            "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None,
             "total_nodes": course.total_nodes or 0,
         })
 
@@ -1755,66 +1814,6 @@ async def unenroll_course(
         import traceback
         traceback.print_exc()
         return unified_response(code=500, message=f"退出课程失败: {str(e)}", data=None)
-
-
-@router.get("/my-courses")
-async def get_my_courses(
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    获取当前学生的选课列表
-
-    返回学生已选的课程及学习进度，用于学生端"我的课程"展示
-    """
-    try:
-        student_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "student":
-            return unified_response(code=403, message="只有学生可以查看选课列表", data=None)
-
-        enrollments = session.exec(
-            select(StudentEnrollment).where(
-                StudentEnrollment.student_id == student_id,
-                StudentEnrollment.is_active == True
-            ).order_by(StudentEnrollment.enrolled_at.desc())
-        ).all()
-
-        my_courses = []
-        for enr in enrollments:
-            course = session.get(Course, enr.course_id)
-            if not course or course.status != CourseStatus.PUBLISHED:
-                continue
-
-            my_courses.append({
-                "enrollment_id": enr.id,
-                "course_id": course.id,
-                "title": course.title,
-                "description": course.description,
-                "teacher_name": _get_teacher_name(session, course.teacher_id),
-                "total_nodes": course.total_nodes,
-                "total_duration": course.total_duration,
-                "overall_progress": round(enr.overall_progress, 1),
-                "avg_understanding_score": round(enr.avg_understanding_score * 100, 1) if enr.avg_understanding_score else 0,
-                "total_study_minutes": enr.total_study_minutes,
-                "enrolled_at": enr.enrolled_at.isoformat() if enr.enrolled_at else None,
-                "last_study_time": enr.last_study_time.isoformat() if enr.last_study_time else None,
-            })
-
-        return unified_response(
-            code=200,
-            message="获取我的课程成功",
-            data={
-                "courses": my_courses,
-                "total": len(my_courses),
-            }
-        )
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(code=500, message=f"获取课程失败: {str(e)}", data=None)
 
 
 def _get_teacher_name(session: Session, teacher_id: int) -> str:

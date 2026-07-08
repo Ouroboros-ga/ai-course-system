@@ -1,5 +1,6 @@
 # app/main.py
 import logging
+import os
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,11 +14,30 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 from app.common.dependency_checker import run_dependency_check
-dep_report = run_dependency_check(auto_install=True)
-if not dep_report["python_ok"]:
-    logger.error("必需的Python依赖缺失，请手动安装后重启服务")
-if dep_report["python_installed"]:
-    logger.info(f"自动安装的Python包: {', '.join(dep_report['python_installed'])}")
+
+
+def _env_flag(name: str) -> bool:
+    return os.getenv(name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _startup_side_effects_disabled() -> bool:
+    return _env_flag("AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS")
+
+
+def run_startup_side_effects():
+    dep_report = run_dependency_check(auto_install=True)
+    if not dep_report["python_ok"]:
+        logger.error("必需的Python依赖缺失，请手动安装后重启服务")
+    if dep_report["python_installed"]:
+        logger.info(f"自动安装的Python包: {', '.join(dep_report['python_installed'])}")
+
+    create_tables()
+    run_migrations()
+    return dep_report
+
+
+startup_side_effects_skipped = _startup_side_effects_disabled()
+startup_dependency_report = None
 
 
 # 导入路由
@@ -34,8 +54,10 @@ from app.api.v1.endpoints import (
 )
 from app.schemas import UnifiedResponse
 
-create_tables()
-run_migrations()
+if startup_side_effects_skipped:
+    logger.info("AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS enabled; startup dependency checks, table creation and migrations are skipped.")
+else:
+    startup_dependency_report = run_startup_side_effects()
 
 # 创建FastAPI实例
 app = FastAPI(
@@ -43,6 +65,8 @@ app = FastAPI(
     description="符合超星开放API设计规范的后端服务",
     version="v1",
 )
+app.state.startup_side_effects_skipped = startup_side_effects_skipped
+app.state.startup_dependency_report = startup_dependency_report
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）
 app.add_middleware(SignatureMiddleware)

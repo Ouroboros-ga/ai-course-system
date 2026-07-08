@@ -141,16 +141,40 @@ class VideoGenerationService:
                 audio_path=audio_path,
                 video_path=face_video_path,
             )
+            dh_status = getattr(dh_response, "status", None)
+            dh_error = getattr(dh_response, "error", None) or getattr(dh_response, "message", None)
+            if dh_status and str(dh_status).lower() not in {"success", "succeeded", "done", "completed"}:
+                task.status = GenerationStatus.FAILED
+                task.error_message = f"Digital human generation failed: {dh_error or dh_status}"
+                task.updated_at = datetime.utcnow()
+                session.add(task)
+                session.commit()
+                session.refresh(task)
+                return task
+            if not getattr(dh_response, "video_path", None):
+                task.status = GenerationStatus.FAILED
+                task.error_message = f"Digital human generation failed: {dh_error or 'video_path is empty'}"
+                task.updated_at = datetime.utcnow()
+                session.add(task)
+                session.commit()
+                session.refresh(task)
+                return task
             task.dh_video_path = dh_response.video_path
             task.dh_generation_time = dh_response.generation_time
         except DigitalHumanError as e:
             task.status = GenerationStatus.FAILED
-            task.error_message = f"数字人生成失败: {str(e)}"
+            task.error_message = f"Digital human generation failed: {str(e)}"
             task.updated_at = datetime.utcnow()
             session.add(task)
             session.commit()
             raise
-
+        except Exception as e:
+            task.status = GenerationStatus.FAILED
+            task.error_message = f"Digital human generation failed: {str(e)}"
+            task.updated_at = datetime.utcnow()
+            session.add(task)
+            session.commit()
+            raise
         # 9. 完成
         task.status = GenerationStatus.COMPLETED
         task.updated_at = datetime.utcnow()
