@@ -99,6 +99,8 @@ class Settings(BaseSettings):
     # 数字人视频生成API配置（Gradio）
     # --------------------------
     DIGITAL_HUMAN_API_URL: str = "http://localhost:7860/"  # 数字人Gradio服务地址
+    DIGITAL_HUMAN_PROVIDER: str = "digital_human"  # digital_human | duix
+    DUIX_BASE_URL: str = "http://127.0.0.1:8383"
     DIGITAL_HUMAN_MIN_RESOLUTION: int = 2  # 原比例缩小倍数
     DIGITAL_HUMAN_IF_RES: bool = False  # 是否强制缩小分辨率
     DIGITAL_HUMAN_STEPS: int = 4  # 处理批次，越大越快但可能爆显存

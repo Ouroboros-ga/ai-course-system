@@ -25,7 +25,7 @@ from app.models.asset_model import TeacherAsset, AssetType
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.common.tts_client import tts_client, TTSError
 from app.common.digital_human_client import digital_human_client, DigitalHumanError
-from app.platform.adapters.digital_human import DigitalHumanAdapter
+from app.platform.adapters.registry import get_digital_human_adapter
 from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.adapters.tts import TTSAdapter
 from app.platform.tasks import TaskContext, TaskRunner, TaskType
@@ -141,16 +141,17 @@ class VideoGenerationService:
         session.commit()
 
         try:
+            dh_adapter = get_digital_human_adapter(digital_human_client)
             task_context = TaskContext(
                 task_id=task.id,
                 task_type=TaskType.DIGITAL_HUMAN_VIDEO,
                 course_id=course_id,
                 node_id=node_id,
-                provider="digital_human",
+                provider=dh_adapter.provider,
             )
             dh_result = await TaskRunner().run(
                 task_context,
-                lambda: DigitalHumanAdapter(digital_human_client).generate_video(
+                lambda: dh_adapter.generate_video(
                     audio_path=audio_path,
                     video_path=face_video_path,
                 ),

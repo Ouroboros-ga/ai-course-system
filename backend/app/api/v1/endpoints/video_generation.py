@@ -17,6 +17,7 @@ from app.models.course_model import Course, CourseScript, ScriptNode
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.services.video_generation_service import video_generation_service
 from app.common.digital_human_client import digital_human_client, DigitalHumanError
+from app.platform.adapters.registry import get_digital_human_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +53,8 @@ async def generate_course_videos(
         raise HTTPException(status_code=403, detail="无权操作此课程")
 
     # 检查数字人服务可用性
-    if not await digital_human_client.check_health():
+    health_result = await get_digital_human_adapter(digital_human_client).check_health()
+    if not health_result.success:
         raise HTTPException(
             status_code=503,
             detail="数字人服务不可用，请确认服务已启动"
@@ -135,7 +137,8 @@ async def generate_node_video(
         raise HTTPException(status_code=403, detail="无权操作此课程")
 
     # 检查数字人服务
-    if not await digital_human_client.check_health():
+    health_result = await get_digital_human_adapter(digital_human_client).check_health()
+    if not health_result.success:
         raise HTTPException(
             status_code=503,
             detail="数字人服务不可用，请确认服务已启动"
@@ -208,11 +211,14 @@ async def get_course_tasks(
 @router.get("/health")
 async def check_digital_human_health():
     """检查数字人服务健康状态"""
-    available = await digital_human_client.check_health()
+    adapter = get_digital_human_adapter(digital_human_client)
+    health_result = await adapter.check_health()
+    available = health_result.success
+    api_url = getattr(adapter.client, "api_url", None) or getattr(adapter.client, "base_url", "")
     return unified_response(
         code=200 if available else 503,
         message="数字人服务可用" if available else "数字人服务不可用",
-        data={"available": available, "api_url": digital_human_client.api_url},
+        data={"available": available, "api_url": api_url},
     )
 
 
