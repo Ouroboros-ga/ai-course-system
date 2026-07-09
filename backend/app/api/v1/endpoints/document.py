@@ -46,6 +46,8 @@ from app.models.course_model import (
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
 from app.services import smart_course_service
+from app.platform.adapters.tts import TTSAdapter
+from app.platform.tasks import TaskContext, TaskResult, TaskRunner, TaskStatus, TaskType
 
 router = APIRouter(tags=["文档处理"])
 logger = logging.getLogger(__name__)
@@ -55,6 +57,54 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
 tts_generation_status = {}
+
+
+def _tts_batch_task_status(total: int, completed: int, errors: list[dict]) -> TaskStatus:
+    if total == 0:
+        return TaskStatus.SUCCEEDED
+    if completed == total and not errors:
+        return TaskStatus.SUCCEEDED
+    if completed > 0 and errors:
+        return TaskStatus.PARTIAL_SUCCESS
+    if errors:
+        return TaskStatus.FAILED
+    return TaskStatus.RUNNING
+
+
+def _tts_public_status(task_status: TaskStatus) -> str:
+    if task_status == TaskStatus.PARTIAL_SUCCESS:
+        return "partial"
+    if task_status == TaskStatus.FAILED:
+        return "failed"
+    if task_status == TaskStatus.SUCCEEDED:
+        return "completed"
+    return "processing"
+
+
+def _tts_batch_task_result(course_id: int, total: int, completed: int, errors: list[dict]) -> TaskResult:
+    task_status = _tts_batch_task_status(total, completed, errors)
+    context = TaskContext(
+        task_id=str(course_id),
+        task_type=TaskType.TTS_BATCH,
+        course_id=course_id,
+        provider="tts",
+        metadata={"total": total, "completed": completed, "error_count": len(errors)},
+    )
+    data = {"total": total, "completed": completed, "errors": errors}
+    if task_status in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL_SUCCESS}:
+        return TaskResult.ok(data=data, status=task_status, context=context)
+    return TaskResult.fail(
+        "tts_batch_failed",
+        f"TTS batch failed for {len(errors)} node(s)",
+        status=task_status,
+        raw=data,
+        context=context,
+    )
+
+
+def _raise_for_tts_task_failure(result: TaskResult) -> None:
+    if not result.success:
+        raise RuntimeError(result.error_message or "TTS synthesis failed")
 
 
 async def _background_synthesize_audio(course_id: int, script_id: int):
@@ -112,9 +162,22 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
                         voice = node.extra_data.get("voice")
 
                     for seg in segments:
-                        response = await tts_client.synthesize(
-                            text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                        tts_result = await TaskRunner().run(
+                            TaskContext(
+                                task_id=f"{course_id}:{node.id}",
+                                task_type=TaskType.TTS_BATCH,
+                                course_id=course_id,
+                                node_id=node.id,
+                                provider="tts",
+                                input_summary=seg[:120],
+                                metadata={"stage": "background_batch"},
+                            ),
+                            lambda seg=seg: TTSAdapter(tts_client).synthesize(
+                                text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                            ),
                         )
+                        _raise_for_tts_task_failure(tts_result)
+                        response = tts_result.data
                         all_audio += response.audio_data
 
                     audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
@@ -137,7 +200,8 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
 
             session.commit()
 
-        tts_generation_status[status_key]["status"] = "completed"
+        batch_task_result = _tts_batch_task_result(course_id, total, completed, tts_generation_status[status_key]["errors"])
+        tts_generation_status[status_key]["status"] = _tts_public_status(batch_task_result.status)
         logger.info(f"Background TTS generation completed for course {course_id}: {completed}/{total}")
 
     except Exception as e:
@@ -2312,8 +2376,19 @@ async def synthesize_node_audio(
             voice = node.extra_data.get("voice")
 
         for seg in segments:
-            tts_result = await TTSAdapter(tts_client).synthesize(
-                text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+            tts_result = await TaskRunner().run(
+                TaskContext(
+                    task_id=f"{course_id}:{node.id}",
+                    task_type=TaskType.TTS_NODE,
+                    course_id=course_id,
+                    node_id=node.id,
+                    provider="tts",
+                    input_summary=seg[:120],
+                    metadata={"stage": "single_node"},
+                ),
+                lambda seg=seg: TTSAdapter(tts_client).synthesize(
+                    text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                ),
             )
             if not tts_result.success:
                 raise RuntimeError(tts_result.error_message or "TTS synthesis failed")
@@ -2455,9 +2530,22 @@ async def synthesize_all_node_audio(
                 voice = node.extra_data.get("voice")
 
             for seg in segments:
-                response = await tts_client.synthesize(
-                    text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                tts_result = await TaskRunner().run(
+                    TaskContext(
+                        task_id=f"{course_id}:{node.id}",
+                        task_type=TaskType.TTS_BATCH,
+                        course_id=course_id,
+                        node_id=node.id,
+                        provider="tts",
+                        input_summary=seg[:120],
+                        metadata={"stage": "sync_batch"},
+                    ),
+                    lambda seg=seg: TTSAdapter(tts_client).synthesize(
+                        text=seg, voice=voice, sample_rate=16000, output_format="mp3",
+                    ),
                 )
+                _raise_for_tts_task_failure(tts_result)
+                response = tts_result.data
                 all_audio += response.audio_data
 
             audio_filename = f"node_{node.id}_{uuid.uuid4().hex[:8]}.mp3"
