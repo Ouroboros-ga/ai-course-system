@@ -28,6 +28,7 @@ from app.common.digital_human_client import digital_human_client, DigitalHumanEr
 from app.platform.adapters.digital_human import DigitalHumanAdapter
 from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.adapters.tts import TTSAdapter
+from app.platform.tasks import TaskContext, TaskRunner, TaskType
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +141,19 @@ class VideoGenerationService:
         session.commit()
 
         try:
-            dh_result = await DigitalHumanAdapter(digital_human_client).generate_video(
-                audio_path=audio_path,
-                video_path=face_video_path,
+            task_context = TaskContext(
+                task_id=task.id,
+                task_type=TaskType.DIGITAL_HUMAN_VIDEO,
+                course_id=course_id,
+                node_id=node_id,
+                provider="digital_human",
+            )
+            dh_result = await TaskRunner().run(
+                task_context,
+                lambda: DigitalHumanAdapter(digital_human_client).generate_video(
+                    audio_path=audio_path,
+                    video_path=face_video_path,
+                ),
             )
             if not dh_result.success:
                 task.status = GenerationStatus.FAILED
