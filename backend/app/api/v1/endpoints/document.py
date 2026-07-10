@@ -10,6 +10,7 @@ import uuid
 import tempfile
 import json
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -46,6 +47,8 @@ from app.models.course_model import (
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
 from app.services import smart_course_service
+from app.platform.adapters.base import classify_exception
+from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.adapters.tts import TTSAdapter
 from app.platform.tasks import TaskContext, TaskResult, TaskRunner, TaskStatus, TaskType
 
@@ -59,14 +62,21 @@ document_cache = {}
 tts_generation_status = {}
 
 
-def _tts_batch_task_status(total: int, completed: int, errors: list[dict]) -> TaskStatus:
-    if total == 0:
+def _tts_batch_task_status(
+    total_count: int,
+    success_count: int,
+    failed_count: int,
+    task_level_status: TaskStatus | None = None,
+) -> TaskStatus:
+    if task_level_status in {TaskStatus.TIMEOUT, TaskStatus.FAILED}:
+        return task_level_status
+    if total_count == 0:
         return TaskStatus.SUCCEEDED
-    if completed == total and not errors:
+    if success_count == total_count and failed_count == 0:
         return TaskStatus.SUCCEEDED
-    if completed > 0 and errors:
+    if success_count > 0 and failed_count > 0:
         return TaskStatus.PARTIAL_SUCCESS
-    if errors:
+    if failed_count == total_count:
         return TaskStatus.FAILED
     return TaskStatus.RUNNING
 
@@ -74,38 +84,135 @@ def _tts_batch_task_status(total: int, completed: int, errors: list[dict]) -> Ta
 def _tts_public_status(task_status: TaskStatus) -> str:
     if task_status == TaskStatus.PARTIAL_SUCCESS:
         return "partial"
-    if task_status == TaskStatus.FAILED:
+    if task_status in {TaskStatus.FAILED, TaskStatus.TIMEOUT}:
         return "failed"
     if task_status == TaskStatus.SUCCEEDED:
         return "completed"
     return "processing"
 
 
-def _tts_batch_task_result(course_id: int, total: int, completed: int, errors: list[dict]) -> TaskResult:
-    task_status = _tts_batch_task_status(total, completed, errors)
+def _tts_node_failure_result(
+    context: TaskContext,
+    exc: Exception,
+    prior_result: TaskResult | None,
+    duration_ms: float,
+) -> TaskResult:
+    if prior_result is not None:
+        return TaskResult.fail(
+            prior_result.error_code or AdapterErrorCode.UNKNOWN_ERROR,
+            prior_result.error_message or str(exc),
+            status=prior_result.status,
+            provider=prior_result.provider,
+            raw=prior_result.raw,
+            duration_ms=duration_ms,
+            context=context,
+        )
+
+    error_code = classify_exception(exc)
+    return TaskResult.fail(
+        error_code,
+        str(exc),
+        status=TaskStatus.TIMEOUT if error_code == AdapterErrorCode.TIMEOUT else TaskStatus.FAILED,
+        duration_ms=duration_ms,
+        context=context,
+    )
+
+
+def _tts_batch_task_result(
+    course_id: int,
+    total_count: int,
+    node_results: list[TaskResult],
+    errors: list[dict],
+    duration_ms: float,
+    task_level_result: TaskResult | None = None,
+) -> TaskResult:
+    success_count = sum(1 for result in node_results if result.success)
+    failed_results = [result for result in node_results if not result.success]
+    failed_count = len(failed_results)
+    task_status = _tts_batch_task_status(
+        total_count,
+        success_count,
+        failed_count,
+        task_level_result.status if task_level_result else None,
+    )
+    failed_nodes = [
+        {
+            "node_id": result.context.node_id if result.context else None,
+            "status": result.status.value,
+            "error_code": result.error_code,
+            "error": result.error_message,
+        }
+        for result in failed_results
+    ]
     context = TaskContext(
         task_id=str(course_id),
         task_type=TaskType.TTS_BATCH,
         course_id=course_id,
         provider="tts",
-        metadata={"total": total, "completed": completed, "error_count": len(errors)},
+        metadata={
+            "total_count": total_count,
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "completed_count": len(node_results),
+        },
     )
-    data = {"total": total, "completed": completed, "errors": errors}
+    data = {
+        "total_count": total_count,
+        "success_count": success_count,
+        "failed_count": failed_count,
+        "completed_count": len(node_results),
+        "failed_nodes": failed_nodes,
+        "errors": errors,
+        "duration_ms": duration_ms,
+        "status": task_status.value,
+    }
     if task_status in {TaskStatus.SUCCEEDED, TaskStatus.PARTIAL_SUCCESS}:
-        return TaskResult.ok(data=data, status=task_status, context=context)
-    return TaskResult.fail(
-        "tts_batch_failed",
-        f"TTS batch failed for {len(errors)} node(s)",
+        return TaskResult.ok(
+            data=data,
+            status=task_status,
+            duration_ms=duration_ms,
+            context=context,
+        )
+
+    error_codes = {result.error_code for result in failed_results if result.error_code}
+    error_code = (
+        task_level_result.error_code
+        if task_level_result
+        else next(iter(error_codes)) if len(error_codes) == 1 else "tts_batch_failed"
+    )
+    error_message = (
+        task_level_result.error_message
+        if task_level_result
+        else f"TTS batch failed for {failed_count} node(s)"
+    )
+    result = TaskResult.fail(
+        error_code,
+        error_message or "TTS batch failed",
         status=task_status,
         raw=data,
+        duration_ms=duration_ms,
         context=context,
     )
+    result.data = data
+    return result
+
+
+def _update_tts_generation_status(status_info: dict, task_result: TaskResult) -> None:
+    data = task_result.data or {}
+    status_info.update({
+        "status": _tts_public_status(task_result.status),
+        "success_count": data.get("success_count", 0),
+        "failed_count": data.get("failed_count", 0),
+        "completed_count": data.get("completed_count", 0),
+        "failed_nodes": data.get("failed_nodes", []),
+        "error_code": task_result.error_code,
+        "duration_ms": data.get("duration_ms", task_result.duration_ms),
+    })
 
 
 def _raise_for_tts_task_failure(result: TaskResult) -> None:
     if not result.success:
         raise RuntimeError(result.error_message or "TTS synthesis failed")
-
 
 async def _background_synthesize_audio(course_id: int, script_id: int):
     import asyncio
@@ -113,6 +220,10 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
     from sqlmodel import create_engine as _ce, Session as _Session
 
     status_key = str(course_id)
+    batch_started = time.perf_counter()
+    node_results: list[TaskResult] = []
+    total = 0
+    completed = 0
     tts_generation_status[status_key] = {
         "status": "processing",
         "total": 0,
@@ -131,12 +242,22 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
             course_audio_dir = get_course_audio_dir(course_id)
             total = len([n for n in nodes if n.content and len(n.content.strip()) >= 10])
             tts_generation_status[status_key]["total"] = total
-            completed = 0
 
             for node in nodes:
                 if not node.content or len(node.content.strip()) < 10:
                     continue
 
+                node_started = time.perf_counter()
+                node_context = TaskContext(
+                    task_id=f"{course_id}:{node.id}",
+                    task_type=TaskType.TTS_BATCH,
+                    course_id=course_id,
+                    node_id=node.id,
+                    provider="tts",
+                    input_summary=node.content.strip()[:120],
+                    metadata={"stage": "background_batch"},
+                )
+                failed_task_result = None
                 try:
                     from app.common.tts_client import tts_client
 
@@ -163,19 +284,13 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
 
                     for seg in segments:
                         tts_result = await TaskRunner().run(
-                            TaskContext(
-                                task_id=f"{course_id}:{node.id}",
-                                task_type=TaskType.TTS_BATCH,
-                                course_id=course_id,
-                                node_id=node.id,
-                                provider="tts",
-                                input_summary=seg[:120],
-                                metadata={"stage": "background_batch"},
-                            ),
+                            node_context,
                             lambda seg=seg: TTSAdapter(tts_client).synthesize(
                                 text=seg, voice=voice, sample_rate=16000, output_format="mp3",
                             ),
                         )
+                        if not tts_result.success:
+                            failed_task_result = tts_result
                         _raise_for_tts_task_failure(tts_result)
                         response = tts_result.data
                         all_audio += response.audio_data
@@ -191,24 +306,59 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
                     session.add(node)
                     completed += 1
                     tts_generation_status[status_key]["completed"] = completed
+                    node_results.append(TaskResult.ok(
+                        data={
+                            "node_id": node.id,
+                            "audio_url": node.audio_url,
+                            "audio_duration": node.audio_duration,
+                        },
+                        provider="tts",
+                        duration_ms=(time.perf_counter() - node_started) * 1000,
+                        context=node_context,
+                    ))
 
                 except Exception as e:
                     logger.warning(f"Background TTS failed for node {node.id}: {e}")
+                    node_results.append(_tts_node_failure_result(
+                        node_context,
+                        e,
+                        failed_task_result,
+                        (time.perf_counter() - node_started) * 1000,
+                    ))
                     tts_generation_status[status_key]["errors"].append({
                         "node_id": node.id, "title": node.title, "error": str(e),
                     })
 
             session.commit()
 
-        batch_task_result = _tts_batch_task_result(course_id, total, completed, tts_generation_status[status_key]["errors"])
-        tts_generation_status[status_key]["status"] = _tts_public_status(batch_task_result.status)
+        batch_task_result = _tts_batch_task_result(
+            course_id,
+            total,
+            node_results,
+            tts_generation_status[status_key]["errors"],
+            (time.perf_counter() - batch_started) * 1000,
+        )
+        _update_tts_generation_status(tts_generation_status[status_key], batch_task_result)
         logger.info(f"Background TTS generation completed for course {course_id}: {completed}/{total}")
 
     except Exception as e:
         logger.error(f"Background TTS generation failed for course {course_id}: {e}")
-        tts_generation_status[status_key]["status"] = "failed"
         tts_generation_status[status_key]["errors"].append({"error": str(e)})
-
+        error_code = classify_exception(e)
+        task_level_result = TaskResult.fail(
+            error_code,
+            str(e),
+            status=TaskStatus.TIMEOUT if error_code == AdapterErrorCode.TIMEOUT else TaskStatus.FAILED,
+        )
+        batch_task_result = _tts_batch_task_result(
+            course_id,
+            total,
+            node_results,
+            tts_generation_status[status_key]["errors"],
+            (time.perf_counter() - batch_started) * 1000,
+            task_level_result=task_level_result,
+        )
+        _update_tts_generation_status(tts_generation_status[status_key], batch_task_result)
 
 @router.post("/upload", response_model=UnifiedResponse)
 async def upload_document(
@@ -2497,7 +2647,9 @@ async def synthesize_all_node_audio(
     ).all()
 
     course_audio_dir = get_course_audio_dir(course_id)
-
+    batch_started = time.perf_counter()
+    total_count = len([n for n in nodes if n.content and len(n.content.strip()) >= 10])
+    node_results: list[TaskResult] = []
     results = []
     errors = []
 
@@ -2505,6 +2657,17 @@ async def synthesize_all_node_audio(
         if not node.content or len(node.content.strip()) < 10:
             continue
 
+        node_started = time.perf_counter()
+        node_context = TaskContext(
+            task_id=f"{course_id}:{node.id}",
+            task_type=TaskType.TTS_BATCH,
+            course_id=course_id,
+            node_id=node.id,
+            provider="tts",
+            input_summary=node.content.strip()[:120],
+            metadata={"stage": "sync_batch"},
+        )
+        failed_task_result = None
         try:
             from app.common.tts_client import tts_client
 
@@ -2531,19 +2694,13 @@ async def synthesize_all_node_audio(
 
             for seg in segments:
                 tts_result = await TaskRunner().run(
-                    TaskContext(
-                        task_id=f"{course_id}:{node.id}",
-                        task_type=TaskType.TTS_BATCH,
-                        course_id=course_id,
-                        node_id=node.id,
-                        provider="tts",
-                        input_summary=seg[:120],
-                        metadata={"stage": "sync_batch"},
-                    ),
+                    node_context,
                     lambda seg=seg: TTSAdapter(tts_client).synthesize(
                         text=seg, voice=voice, sample_rate=16000, output_format="mp3",
                     ),
                 )
+                if not tts_result.success:
+                    failed_task_result = tts_result
                 _raise_for_tts_task_failure(tts_result)
                 response = tts_result.data
                 all_audio += response.audio_data
@@ -2558,11 +2715,40 @@ async def synthesize_all_node_audio(
 
             session.add(node)
             results.append({"node_id": node.id, "title": node.title, "audio_url": audio_url})
+            node_results.append(TaskResult.ok(
+                data={
+                    "node_id": node.id,
+                    "audio_url": node.audio_url,
+                    "audio_duration": node.audio_duration,
+                },
+                provider="tts",
+                duration_ms=(time.perf_counter() - node_started) * 1000,
+                context=node_context,
+            ))
 
         except Exception as e:
+            node_results.append(_tts_node_failure_result(
+                node_context,
+                e,
+                failed_task_result,
+                (time.perf_counter() - node_started) * 1000,
+            ))
             errors.append({"node_id": node.id, "title": node.title, "error": str(e)})
 
     session.commit()
+
+    batch_task_result = _tts_batch_task_result(
+        course_id,
+        total_count,
+        node_results,
+        errors,
+        (time.perf_counter() - batch_started) * 1000,
+    )
+    logger.info(
+        "Synchronous TTS batch completed for course %s with internal status %s",
+        course_id,
+        batch_task_result.status.value,
+    )
 
     return unified_response(code=200, message=f"批量合成完成: {len(results)}成功, {len(errors)}失败", data={
         "course_id": course_id,
