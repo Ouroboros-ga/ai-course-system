@@ -81,3 +81,12 @@ uploads/
 videos/
 audios/
 generated/
+
+# Local Codex and test scratch directories
+.codex_tmp/
+.pytest_tmp/
+
+# Local presentation inspection artifacts
+/presentation.pptx
+/presentation_modified.pptx
+/presentation_modified.pptx.inspect.ndjson
