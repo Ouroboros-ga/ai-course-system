@@ -257,6 +257,7 @@ async def ask_question(
             use_rag=bool(courseId),
             rag_top_k=3,
             strict_mode=strictMode,
+            course_id=courseId,
         )
         
         ai_answer = qa_result["answer"]

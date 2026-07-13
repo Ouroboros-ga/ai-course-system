@@ -21,6 +21,7 @@ RAG 工具入口与集成
 """
 
 import logging
+import warnings
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -34,9 +35,13 @@ from app.common.RAG.tree_rag import (
     TreeNode,
     RetrievalResult,
 )
+from app.platform.retrieval import RetrievalScope, retrieval_gateway
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# 无作用域（裸全局）检索的弃用提示，每进程只告警一次，避免测试噪声。
+_legacy_no_scope_warned = False
 
 
 @dataclass
@@ -90,18 +95,25 @@ class RAGPipeline:
         self._table_flattener = TableFlattener(max_row_desc=table_max_rows)
         self._tokenizer = IKTokenizer()
         self._tree_builder = DoclingTreeBuilder()
+        self._rag_top_k = rag_top_k
+        self._rag_context_window = rag_context_window
         self._retriever = TreeRAGRetriever(
             top_k=rag_top_k,
             context_window=rag_context_window,
         )
 
         self._processed_docs: Dict[str, DocumentProcessResult] = {}
+        # 统一检索网关：课程 / 知识库作用域隔离的注册表由 gateway 持有。
+        # 本兼容层通过 gateway.index / gateway.get_raw_retriever 委托，
+        # 不再自维护 _course_retrievers 裸字符串注册表（避免 course/kb ID 冲突）。
+        self._gateway = retrieval_gateway
 
     def process_document(
         self,
         markdown_text: str,
         doc_name: str = "",
         doc_id: Optional[str] = None,
+        scope: Optional[RetrievalScope] = None,
     ) -> DocumentProcessResult:
         """
         处理单个文档，执行完整的 RAG 预处理流水线
@@ -111,7 +123,15 @@ class RAGPipeline:
         2. 表格展平
         3. IK 分词
         4. 构建知识树
-        5. 建立检索索引
+        5. 建立检索索引（作用域隔离）
+
+        Args:
+            scope: 显式检索作用域。传入时按 ``scope.key`` 注册到统一网关，
+                课程与知识库作用域互不冲突。推荐上传主链传
+                ``RetrievalScope.course(course_id)``、知识库导入传
+                ``RetrievalScope.knowledge_base(kb_id)``。
+            doc_id: 遗留参数。``scope`` 未传时，按 P0 行为视为课程作用域
+                ``course:<doc_id>``（会产生一次性弃用告警）。新代码应传 ``scope``。
         """
         logger.info(f"开始处理文档: {doc_name or '未命名'}")
 
@@ -150,7 +170,31 @@ class RAGPipeline:
         )
 
         # Step 5: 建立检索索引
+        # 5a. 旧全局树（保留无作用域 retrieve 的兼容行为；已弃用，见 retrieve）
         self._retriever.build_index(tree_result)
+        # 5b. 作用域隔离注册：course:<id> 与 knowledge_base:<id> 互不冲突。
+        register_scope: Optional[RetrievalScope]
+        if scope is not None:
+            register_scope = scope
+        elif doc_id is not None:
+            # 遗留调用：仅传 doc_id，按 P0 行为视为课程作用域。
+            global _legacy_no_scope_warned
+            if not _legacy_no_scope_warned:
+                warnings.warn(
+                    "rag_pipeline.process_document called with doc_id but no explicit "
+                    "scope; defaulting to course scope. Pass RetrievalScope explicitly. "
+                    "Legacy doc_id-only indexing is deprecated.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                _legacy_no_scope_warned = True
+            register_scope = RetrievalScope.course(str(doc_id))
+        else:
+            register_scope = None
+
+        if register_scope is not None:
+            self._gateway.index(register_scope, tree_result)
+            logger.info(f"  [Step 5] 作用域检索器已注册: {register_scope.key}")
         logger.info("  [Step 5] 检索索引构建完成")
 
         # 保存处理结果
@@ -185,6 +229,7 @@ class RAGPipeline:
         query: str,
         strategy: str = "hybrid",
         top_k: int = 5,
+        course_id: Optional[Any] = None,
     ) -> List[RetrievalResult]:
         """
         执行 RAG 检索
@@ -193,13 +238,85 @@ class RAGPipeline:
             query: 查询文本
             strategy: 检索策略 (keyword/path/hybrid)
             top_k: 返回结果数
+            course_id: 课程 ID。传入时只检索该课程的知识树；
+                若当前进程未为该课程构建过树（例如进程重启后、或课程在本修复前上传），
+                返回空列表，**不回退**到最后一次构建的全局树，以避免跨课程污染。
+                不传时保留旧行为：检索最后一次 process_document 构建的全局树。
         """
-        results = self._retriever.retrieve(query, strategy=strategy, top_k=top_k)
+        if course_id is not None and str(course_id) != "":
+            scope = RetrievalScope.course(course_id)
+            retriever = self._gateway.get_raw_retriever(scope)
+            if retriever is None:
+                logger.info(
+                    f"检索跳过: 当前进程未为课程 {scope.key} 构建知识树，"
+                    f"返回空结果（避免跨课程污染，问答将回退到课程文档上下文）"
+                )
+                return []
+            results = retriever.retrieve(query, strategy=strategy, top_k=top_k)
+        else:
+            # 无作用域检索：使用“最后一次构建”的全局树。该路径已弃用，
+            # 生产问答主链应通过 RetrievalGateway + 显式 scope 检索。
+            global _legacy_no_scope_warned
+            if not _legacy_no_scope_warned:
+                import inspect
+
+                caller = inspect.stack()[1]
+                caller_loc = (
+                    f"{caller.filename}:{caller.lineno} ({caller.function})"
+                    if caller
+                    else "unknown"
+                )
+                warnings.warn(
+                    "rag_pipeline.retrieve called without course_id/scope; using the "
+                    "legacy last-built global tree. This is deprecated; use "
+                    "RetrievalGateway.retrieve with an explicit RetrievalScope. "
+                    f"Called from: {caller_loc}",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                _legacy_no_scope_warned = True
+            results = self._retriever.retrieve(query, strategy=strategy, top_k=top_k)
         logger.info(
             f"检索完成: query='{query}', strategy={strategy}, "
-            f"返回{len(results)}个结果"
+            f"course_id={course_id}, 返回{len(results)}个结果"
         )
         return results
+
+    def get_context_for_result(
+        self, result: RetrievalResult, window: Optional[int] = None
+    ) -> str:
+        """
+        获取检索结果的上下文文本。
+
+        委托给检索器实现。该方法仅依赖 result.node 自身结构，
+        与具体检索器实例无关，因此无论结果来自全局树还是课程范围树均可使用。
+        """
+        return self._retriever.get_context_for_result(result, window=window)
+
+    def has_course_index(self, course_id: Any) -> bool:
+        """当前进程是否已为指定课程构建过知识树。"""
+        if course_id is None:
+            return False
+        return self._gateway.has_scope(RetrievalScope.course(course_id))
+
+    def clear_course_index(self, course_id: Any) -> bool:
+        """
+        清除指定课程的内存检索器。
+
+        用于课程删除/重新上传场景，以及测试隔离。返回是否确实存在并清除。
+        注意：仅清除进程内索引，不影响数据库中已持久化的文档内容。
+        """
+        if course_id is None:
+            return False
+        return self._gateway.clear_scope(RetrievalScope.course(course_id))
+
+    def clear_all_scopes(self) -> int:
+        """
+        清除所有作用域（课程与知识库）的内存检索器。
+
+        主要用于测试隔离。返回清除数量。仅影响进程内索引。
+        """
+        return self._gateway.clear_all()
 
     async def generate_answer(
         self,
@@ -207,13 +324,16 @@ class RAGPipeline:
         top_k: int = 5,
         strategy: str = "hybrid",
         system_prompt: Optional[str] = None,
+        course_id: Optional[Any] = None,
     ) -> RAGAnswer:
         """
         生成 RAG 回答
 
         结合检索结果和商业 LLM API 生成最终回答
         """
-        retrieval_results = self.retrieve(question, strategy=strategy, top_k=top_k)
+        retrieval_results = self.retrieve(
+            question, strategy=strategy, top_k=top_k, course_id=course_id
+        )
 
         context_parts = []
         sources = []

@@ -473,6 +473,7 @@ async def upload_document(
             filename=file.filename,
             enable_rag=True,
             enable_script=True,
+            course_id=course.id,
         )
         
         parse_result = process_result.parse_result
@@ -1805,6 +1806,13 @@ async def delete_course(
             # 9. 最后删除课程本身
             session.delete(course)
             session.commit()
+
+            # 10. 清理该课程的进程内 RAG 检索作用域（best-effort，不影响事务）
+            try:
+                from app.common.RAG import rag_pipeline
+                rag_pipeline.clear_course_index(course_id)
+            except Exception as clear_err:
+                print(f"[删除课程] 清理课程 RAG 索引失败（可忽略）: {clear_err}")
 
             print(f"[删除课程] 教师 {current_user.get('username')} 删除了课程 {course.title} (ID:{course_id})，影响 {enrollments_count} 名学生")
 

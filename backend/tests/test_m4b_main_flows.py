@@ -231,7 +231,7 @@ def test_m4b_teacher_upload_document_fake_success_and_failure(client, session, m
 
     monkeypatch.setattr(document_endpoint, "_background_synthesize_audio", no_background_audio)
 
-    async def fake_process_document(file_path, filename, enable_rag=True, enable_script=True):
+    async def fake_process_document(file_path, filename, enable_rag=True, enable_script=True, course_id=None):
         return _fake_document_result(filename)
 
     monkeypatch.setattr(document_endpoint.document_service, "process_document", fake_process_document)
@@ -258,7 +258,7 @@ def test_m4b_teacher_upload_document_fake_success_and_failure(client, session, m
     assert doc.status == ParseStatus.COMPLETED
     assert doc.total_texts == 1
 
-    async def failing_process_document(file_path, filename, enable_rag=True, enable_script=True):
+    async def failing_process_document(file_path, filename, enable_rag=True, enable_script=True, course_id=None):
         raise RuntimeError("fake document parse business failure")
 
     monkeypatch.setattr(document_endpoint.document_service, "process_document", failing_process_document)

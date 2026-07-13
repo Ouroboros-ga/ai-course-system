@@ -91,7 +91,7 @@ def test_m7_complete_demo_flow_uses_only_controlled_external_fakes(
     async def no_background_audio(course_id: int, script_id: int):
         return None
 
-    async def fake_process_document(file_path, filename, enable_rag=True, enable_script=True):
+    async def fake_process_document(file_path, filename, enable_rag=True, enable_script=True, course_id=None):
         return _m7_document_result(filename)
 
     monkeypatch.setattr(document_endpoint, "_background_synthesize_audio", no_background_audio)

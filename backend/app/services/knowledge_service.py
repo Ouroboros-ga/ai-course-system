@@ -24,6 +24,7 @@ from app.models.knowledge_model import (
     KnowledgePointType,
 )
 from app.common.RAG import rag_pipeline
+from app.platform.retrieval import RetrievalScope
 from app.common.RAG.tree_rag import TreeNode, TreeBuildResult
 
 logging.basicConfig(level=logging.INFO)
@@ -643,10 +644,13 @@ class KnowledgeImportService:
         session.refresh(import_log)
         
         try:
+            # 知识库导入使用显式 knowledge_base 作用域，与课程作用域隔离，
+            # 避免 kb_id 与 course_id 同值时在注册表中冲突。
             rag_result = rag_pipeline.process_document(
                 markdown_text=markdown_content,
                 doc_name=doc_name,
                 doc_id=str(kb_id),
+                scope=RetrievalScope.knowledge_base(kb_id),
             )
             
             knowledge_points = KnowledgeImportService._extract_points_from_tree(

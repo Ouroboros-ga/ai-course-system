@@ -11,6 +11,7 @@ from typing import Optional, List, Tuple, Dict, Any
 from app.common.llm_client import llm_client, Message
 from app.platform.adapters.llm import LLMAdapter
 from app.common.RAG import rag_pipeline
+from app.platform.retrieval import RetrievalScope, retrieval_gateway
 from app.common.prompts.qa import QA_SYSTEM_PROMPT, build_qa_prompt, QUIZ_SYSTEM_PROMPT, build_quiz_prompt
 
 
@@ -204,32 +205,60 @@ class QAService:
         self,
         question: str,
         top_k: int = 3,
-        strategy: str = "hybrid"
+        strategy: str = "hybrid",
+        course_id: Optional[Any] = None,
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         使用RAG检索获取与问题相关的上下文
-        
+
         Args:
             question: 用户问题
             top_k: 返回的相关文档数量
             strategy: 检索策略 (keyword/path/hybrid)
-            
+            course_id: 课程ID。传入时经统一 RetrievalGateway 按课程作用域检索，
+                避免跨课程上下文污染；不传时走遗留全局树路径（已弃用，
+                生产主链始终传入 course_id）。
+
         Returns:
             tuple: (上下文文本, 来源列表)
         """
         try:
+            if course_id is not None:
+                # 生产路径：显式课程作用域 -> 统一 Gateway -> Tree Provider
+                chunks = retrieval_gateway.retrieve(
+                    question,
+                    scope=RetrievalScope.course(course_id),
+                    top_k=top_k,
+                )
+                if not chunks:
+                    return "", []
+                context_parts: List[str] = []
+                sources: List[Dict[str, Any]] = []
+                for i, chunk in enumerate(chunks):
+                    context_path = "/".join(chunk.path)
+                    context_parts.append(
+                        f"【来源{i+1}: {context_path}】\n{chunk.content}"
+                    )
+                    sources.append({
+                        "path": context_path,
+                        "score": chunk.retrieval_score,
+                        "match_type": chunk.match_type,
+                        "content_preview": chunk.metadata.get(
+                            "matched_content_preview", ""
+                        ),
+                    })
+                return "\n\n---\n\n".join(context_parts), sources
+
+            # 遗留无作用域路径（已弃用，生产主链不触发）：委托 rag_pipeline 全局树
             retrieval_results = rag_pipeline.retrieve(
                 question, strategy=strategy, top_k=top_k
             )
-            
             if not retrieval_results:
                 return "", []
-            
             context_parts = []
             sources = []
-            
             for i, result in enumerate(retrieval_results):
-                context = rag_pipeline._retriever.get_context_for_result(result)
+                context = rag_pipeline.get_context_for_result(result)
                 context_parts.append(f"【来源{i+1}: {result.context_path}】\n{context}")
                 sources.append({
                     "path": result.context_path,
@@ -237,7 +266,6 @@ class QAService:
                     "match_type": result.match_type,
                     "content_preview": result.matched_content[:200] if result.matched_content else "",
                 })
-            
             return "\n\n---\n\n".join(context_parts), sources
         except Exception as e:
             print(f"[QAService] RAG检索失败: {str(e)}")
@@ -251,11 +279,12 @@ class QAService:
         current_node: dict = None,
         use_rag: bool = True,
         rag_top_k: int = 3,
-        strict_mode: bool = False
+        strict_mode: bool = False,
+        course_id: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         基于RAG检索增强的问答
-        
+
         Args:
             question: 用户问题
             course_context: 课程文档上下文
@@ -264,7 +293,8 @@ class QAService:
             use_rag: 是否使用RAG检索
             rag_top_k: RAG检索返回数量
             strict_mode: 是否使用严格知识库模式（带引用标注）
-            
+            course_id: 课程ID，用于RAG按课程隔离检索，避免跨课程污染
+
         Returns:
             dict: {
                 "answer": "回答内容",
@@ -274,10 +304,10 @@ class QAService:
         """
         rag_context = ""
         rag_sources = []
-        
+
         if use_rag:
             rag_context, rag_sources = self.retrieve_rag_context(
-                question, top_k=rag_top_k
+                question, top_k=rag_top_k, course_id=course_id
             )
         
         full_context = course_context

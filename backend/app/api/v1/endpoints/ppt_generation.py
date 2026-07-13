@@ -377,6 +377,7 @@ async def _parse_generated_pptx(
             filename=os.path.basename(ppt_file_path),
             enable_rag=True,
             enable_script=True,
+            course_id=course.id,
         )
 
         parse_result = process_result.parse_result

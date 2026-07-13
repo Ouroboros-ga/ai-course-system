@@ -14,6 +14,7 @@ from datetime import datetime
 
 from app.common.llm_client import llm_client, Message
 from app.common.RAG import rag_pipeline
+from app.platform.retrieval import RetrievalScope
 from app.common.prompts.document_analysis import (
     KNOWLEDGE_EXTRACTION_PROMPT,
     build_knowledge_extraction_prompt
@@ -1771,26 +1772,37 @@ class RAGProcessor:
     def process(
         markdown_content: str,
         doc_name: str,
-        doc_id: str
+        doc_id: str,
+        course_id: Any = None,
     ) -> RAGProcessResult:
         """
         执行RAG预处理流水线
-        
+
         Args:
             markdown_content: Markdown内容
             doc_name: 文档名称
-            doc_id: 文档ID
-            
+            doc_id: 文档ID（历史值为文件路径哈希，仅用于 _processed_docs 元数据）
+            course_id: 课程ID。传入时以 ``RetrievalScope.course(course_id)`` 显式注册
+                到统一检索网关，使问答按课程隔离，避免跨课程上下文污染，并与知识库
+                作用域（``knowledge_base:<id>``）区分，杜绝裸 ID 冲突；
+                不传时保留旧行为（仅更新全局最新树，已弃用）。
+
         Returns:
             RAGProcessResult: RAG处理结果
         """
         logger.info(f"[RAGProcessor] 开始RAG预处理: {doc_name}")
-        
+
         try:
+            # 显式课程作用域：course:<id> 与 knowledge_base:<id> 互不冲突。
+            # doc_id 仅保留用于 _processed_docs 元数据（generate_answer 兼容）。
+            rag_scope = (
+                RetrievalScope.course(course_id) if course_id is not None else None
+            )
             rag_result = rag_pipeline.process_document(
                 markdown_text=markdown_content,
                 doc_name=doc_name,
                 doc_id=doc_id,
+                scope=rag_scope,
             )
             
             knowledge_points = RAGProcessor._extract_knowledge_points(rag_result)
@@ -1870,17 +1882,20 @@ class DocumentService:
         file_path: Path,
         filename: str,
         enable_rag: bool = True,
-        enable_script: bool = True
+        enable_script: bool = True,
+        course_id: Any = None,
     ) -> DocumentProcessResult:
         """
         完整的文档处理流程
-        
+
         Args:
             file_path: 文件路径
             filename: 文件名
             enable_rag: 是否启用RAG预处理
             enable_script: 是否生成智课脚本
-            
+            course_id: 课程ID。传入时RAG知识树按课程隔离注册，
+                供问答按课程检索；不传时保持旧行为。
+
         Returns:
             DocumentProcessResult: 完整处理结果
         """
@@ -1920,7 +1935,8 @@ class DocumentService:
             rag_result = self.rag_processor.process(
                 parse_result.markdown_content,
                 filename,
-                str(hash(file_path))
+                str(hash(file_path)),
+                course_id=course_id,
             )
         else:
             rag_result = RAGProcessResult()

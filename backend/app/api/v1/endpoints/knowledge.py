@@ -201,7 +201,16 @@ async def delete_knowledge_base(
         
         kb.is_active = False
         session.commit()
-        
+
+        # 软删除成功后，清理该知识库的进程内 RAG 检索作用域（best-effort）。
+        # 知识库导入时按 knowledge_base scope 建树用于知识点抽取；
+        # 删除后清理避免残留内存索引被未来 KB 检索误读。
+        try:
+            from app.platform.retrieval import RetrievalScope, retrieval_gateway
+            retrieval_gateway.clear_scope(RetrievalScope.knowledge_base(kb_id))
+        except Exception as clear_err:
+            print(f"[删除知识库] 清理知识库 RAG 索引失败（可忽略）: {clear_err}")
+
         return unified_response(
             code=200,
             message="删除成功",
