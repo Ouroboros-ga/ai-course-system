@@ -1,0 +1,40 @@
+{
+  "worktree": {
+    "baseRef": "head",
+    "bgIsolation": "worktree"
+  },
+  "permissions": {
+    "defaultMode": "default",
+    "disableBypassPermissionsMode": "disable",
+    "ask": [
+      "Bash(git commit *)",
+      "Bash(git merge *)",
+      "Bash(git rebase *)",
+      "Bash(git cherry-pick *)",
+      "PowerShell(git commit *)",
+      "PowerShell(git merge *)",
+      "PowerShell(git rebase *)",
+      "PowerShell(git cherry-pick *)"
+    ],
+    "deny": [
+      "Bash(git push *)",
+      "Bash(git stash pop *)",
+      "Bash(git stash apply *)",
+      "Bash(git stash drop *)",
+      "Bash(git stash clear *)",
+      "Bash(git reset --hard *)",
+      "Bash(git clean *)",
+      "Bash(git restore *)",
+      "Bash(gh pr create *)",
+      "PowerShell(git push *)",
+      "PowerShell(git stash pop *)",
+      "PowerShell(git stash apply *)",
+      "PowerShell(git stash drop *)",
+      "PowerShell(git stash clear *)",
+      "PowerShell(git reset --hard *)",
+      "PowerShell(git clean *)",
+      "PowerShell(git restore *)",
+      "PowerShell(gh pr create *)"
+    ]
+  }
+}
