@@ -15,13 +15,15 @@ Design rules (per plan §5):
 Consumes P1-01 stable IDs:
   - ``block_id`` from ContentBlock / TableBlock / FormulaBlock
 
-Contract version: ``text-transform/1.0`` (major=1).
+Contract version: ``text-transform/1.0`` (major=1, registered in registry).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
+TEXT_TRANSFORM_VERSION = "text-transform/1.0"
 
 
 @dataclass(frozen=True)
