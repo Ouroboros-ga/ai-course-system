@@ -264,3 +264,5 @@ class MasteryProviderResult:
                 details=details or {},
             ),
         )
+
+MASTERY_PROVIDER_VERSION = "1.0"
