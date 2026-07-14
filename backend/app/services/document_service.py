@@ -1951,7 +1951,27 @@ class DocumentService:
             mind_map = self.mind_map_generator.generate(script_result)
         
         logger.info(f"[DocumentService] 文档处理完成: {filename}")
-        
+
+        # ---- P1-09 G3B: V2 document-parse shadow (commit-then-trigger) ----
+        # Triggered AFTER V1 parsing succeeded. Shadow writes only to an
+        # isolated artifact store; V1 tables/behavior are never modified.
+        # trigger_doc_shadow catches ALL errors internally (business-level
+        # fail-closed) so V1 is never affected. The outer try/except is a
+        # second safety net. Only runs when DOCUMENT_PIPELINE_VERSION is
+        # effectively v2_shadow (flag-gated, conflict-aware); default
+        # v1_only makes this a near-no-op.
+        try:
+            from app.platform.shadow import trigger_doc_shadow
+            trigger_doc_shadow(
+                file_path=file_path,
+                filename=filename,
+                parse_result=parse_result,
+                course_key=str(course_id) if course_id is not None else None,
+                sync=True,
+            )
+        except Exception as shadow_err:  # noqa: BLE001 - shadow must never break V1
+            logger.warning(f"[G3B shadow] suppressed error (V1 unaffected): {shadow_err}")
+
         return DocumentProcessResult(
             parse_result=parse_result,
             structure_result=structure_result,
