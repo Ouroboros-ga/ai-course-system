@@ -21,37 +21,37 @@ from app.platform.document_intelligence.contracts import (
 
 class TestSchemaVersion:
     def test_parse_valid(self) -> None:
-        sv = SchemaVersion.parse("document-ir/1.2.3")
+        sv = SchemaVersion.parse("document-ir/1.2")
         assert sv.major == 1
         assert sv.minor == 2
-        assert sv.patch == 3
 
     def test_serialize_round_trip(self) -> None:
-        assert SchemaVersion.parse("document-ir/1.0.0").serialize() == "document-ir/1.0.0"
+        assert SchemaVersion.parse("document-ir/1.0").serialize() == "document-ir/1.0"
 
     def test_unknown_major_parsed_but_incompatible(self) -> None:
         """SchemaVersion parses any major; fail-closed happens at deserialization."""
-        sv = SchemaVersion.parse("document-ir/99.0.0")
+        sv = SchemaVersion.parse("document-ir/99.0")
         assert sv.major == 99
         assert not sv.is_compatible_with(1)
 
     def test_malformed_rejected(self) -> None:
-        for bad in ["", "doc/1.0", "document-ir/abc", "document-ir/1.x.0"]:
+        for bad in ["", "doc/1.0", "document-ir/abc", "document-ir/1.x",
+                     "document-ir/1.0.0", "document-ir/1"]:
             with pytest.raises(ValueError):
                 SchemaVersion.parse(bad)
 
     def test_is_compatible(self) -> None:
-        sv = SchemaVersion.parse("document-ir/1.0.0")
+        sv = SchemaVersion.parse("document-ir/1.0")
         assert sv.is_compatible_with(1)
         assert sv.is_compatible_with(2)
         assert not sv.is_compatible_with(0)
 
     def test_current_version(self) -> None:
         assert CURRENT_SCHEMA_VERSION.major == 1
-        assert CURRENT_SCHEMA_VERSION.serialize() == "document-ir/1.0.0"
+        assert CURRENT_SCHEMA_VERSION.serialize() == "document-ir/1.0"
 
     def test_str(self) -> None:
-        assert str(CURRENT_SCHEMA_VERSION) == "document-ir/1.0.0"
+        assert str(CURRENT_SCHEMA_VERSION) == "document-ir/1.0"
 
 
 # ---------------------------------------------------------------------------

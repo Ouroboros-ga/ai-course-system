@@ -17,43 +17,46 @@ from typing import List, Optional, Tuple
 # ---------------------------------------------------------------------------
 
 _SCHEMA_VERSION_PATTERN = re.compile(
-    r"^document-ir/(\d+)\.(\d+)\.(\d+)$"
+    r"^document-ir/(\d+)\.(\d+)$"
 )
 
 
 @dataclass(frozen=True)
 class SchemaVersion:
-    """Parsed schema version following semver.
+    """Parsed schema version following the Product 1 major.minor convention.
 
-    Format: ``document-ir/major.minor.patch``.
+    Format: ``document-ir/major.minor``.
 
-    Unknown major versions must be rejected (fail-closed).
+    Contracts do not use a patch component: implementation-only fixes that
+    do not change contract semantics do not bump the contract version, and
+    any semantic change is either minor (additive) or major (breaking).
+
+    Unknown major versions must be rejected (fail-closed) at deserialization.
     """
 
     major: int
     minor: int
-    patch: int
 
     @classmethod
     def parse(cls, raw: str) -> "SchemaVersion":
         """Parse a ``document-ir/`` version string.
 
-        Raises ``ValueError`` for unknown major (fail-closed) or malformed input.
+        Raises ``ValueError`` for malformed input. Unknown major versions
+        are parsed here but rejected (fail-closed) at deserialization.
         """
         m = _SCHEMA_VERSION_PATTERN.match(raw)
         if not m:
             raise ValueError(
                 f"Invalid schema version format: {raw!r}. "
-                f"Expected 'document-ir/major.minor.patch'"
+                f"Expected 'document-ir/major.minor'"
             )
         return cls(
             major=int(m.group(1)),
             minor=int(m.group(2)),
-            patch=int(m.group(3)),
         )
 
     def serialize(self) -> str:
-        return f"document-ir/{self.major}.{self.minor}.{self.patch}"
+        return f"document-ir/{self.major}.{self.minor}"
 
     def is_compatible_with(self, consumer_supports_up_to_major: int) -> bool:
         """Return True if the consumer's supported major >= self.major."""
@@ -64,7 +67,7 @@ class SchemaVersion:
 
 
 # Known current version
-CURRENT_SCHEMA_VERSION = SchemaVersion(major=1, minor=0, patch=0)
+CURRENT_SCHEMA_VERSION = SchemaVersion(major=1, minor=0)
 
 
 # ---------------------------------------------------------------------------

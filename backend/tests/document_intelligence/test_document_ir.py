@@ -144,18 +144,18 @@ def sample_doc(sample_source: SourceArtifact) -> DocumentIR:
 
 class TestStableIDs:
     def test_document_id_deterministic(self) -> None:
-        id1 = compute_document_id("art_abc", "document-ir/1.0.0")
-        id2 = compute_document_id("art_abc", "document-ir/1.0.0")
+        id1 = compute_document_id("art_abc", "document-ir/1.0")
+        id2 = compute_document_id("art_abc", "document-ir/1.0")
         assert id1 == id2
 
     def test_document_id_changes_with_artifact(self) -> None:
-        id1 = compute_document_id("art_abc", "document-ir/1.0.0")
-        id2 = compute_document_id("art_def", "document-ir/1.0.0")
+        id1 = compute_document_id("art_abc", "document-ir/1.0")
+        id2 = compute_document_id("art_def", "document-ir/1.0")
         assert id1 != id2
 
     def test_document_id_changes_with_schema_version(self) -> None:
-        id1 = compute_document_id("art_abc", "document-ir/1.0.0")
-        id2 = compute_document_id("art_abc", "document-ir/2.0.0")
+        id1 = compute_document_id("art_abc", "document-ir/1.0")
+        id2 = compute_document_id("art_abc", "document-ir/2.0")
         assert id1 != id2
 
     def test_unit_id_deterministic(self) -> None:
@@ -288,7 +288,7 @@ class TestJsonRoundTrip:
 class TestSchemaVersionHandling:
     def test_unknown_major_rejected(self) -> None:
         data = {
-            "schema_version": "document-ir/99.0.0",
+            "schema_version": "document-ir/99.0",
             "document_id": "doc_test",
             "units": [],
             "blocks": [],
@@ -299,7 +299,7 @@ class TestSchemaVersionHandling:
 
     def test_known_major_with_extra_minor_ok(self) -> None:
         data = {
-            "schema_version": "document-ir/1.99.0",
+            "schema_version": "document-ir/1.99",
             "document_id": "doc_test",
             "units": [],
             "blocks": [],
@@ -480,15 +480,15 @@ class TestRuntimeIdExclusion:
     def test_run_id_not_in_document_id(self) -> None:
         """Verify that different run_ids produce the same document_id."""
         src = SourceArtifact.from_bytes(b"fixed", "f.pptx", "application/octet-stream")
-        doc_id = compute_document_id(src.artifact_id, "document-ir/1.0.0")
+        doc_id = compute_document_id(src.artifact_id, "document-ir/1.0")
         # The doc_id should not contain any run_id pattern
         assert "run_" not in doc_id
         assert "prun_" not in doc_id
 
     def test_parser_run_fields_independent_from_stable_ids(self) -> None:
         """ParserRun fields like duration_ms, status don't affect stable IDs."""
-        id_a = compute_document_id("art_1", "document-ir/1.0.0")
-        id_b = compute_document_id("art_1", "document-ir/1.0.0")
+        id_a = compute_document_id("art_1", "document-ir/1.0")
+        id_b = compute_document_id("art_1", "document-ir/1.0")
         assert id_a == id_b
 
 
