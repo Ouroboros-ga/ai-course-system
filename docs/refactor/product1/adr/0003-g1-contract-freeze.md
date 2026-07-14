@@ -26,7 +26,7 @@ P1-03（Evidence/Retrieval/Citation）、P1-05（EducationalUnit/GraphEvidence�
 
 ## 冻结 SHA
 
-G1 冻结 SHA = 本 ADR 所在 coordination 提交后的 `feature/product1-integration` HEAD。该 SHA 包含：
+G1 冻结 SHA = `657bfe5`（`feature/product1-integration`，2026-07-14）。该 SHA 包含：
 - ADR-0001/0002 协调基线（`2c743f7`）
 - P1-01 DocumentIR 契约（`3bb8224` + 版本号统一 `99c1137`）
 - P1-07 LearningEvent 契约（`9d37644`）
