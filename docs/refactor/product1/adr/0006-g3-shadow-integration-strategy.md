@@ -1,10 +1,11 @@
 # ADR-0006: Product 1 V2 Shadow 集成顺序、隔离边界与回滚策略
 
-- 状态: **Proposed (Revision 1)** — 依人工审阅 9 项意见修订，待二次审批。P1-09 未启动。
-- 日期: 2026-07-14（初版）/ 2026-07-14（Rev 1）
+- 状态: **Accepted (G3A only)** - Rev 1 经人工二次审批通过；G2.1 契约规范化已完成并通过 P1-10 独立验证（见 reviews/p1-10-g21-verification.md），新冻结 SHA = `d4894da`。仅授权启动 G3A；G3B 及以后仍逐批人工放行。P1-09 worktree 须从 `d4894da` 创建。
+- 日期: 2026-07-14（初版）/ 2026-07-14（Rev 1）/ 2026-07-14（Accepted-G3A）
 - 决策者: P1-00（起草），P1-09（执行），人工审批（启动前）
 - 影响范围: G2.1 契约规范化 + G3 Shadow Integration 全程；P1-09 独占的共享生产文件
 - 性质: **方案文档，不修改任何 ORM、Migration、公开 API、生产 endpoint、公共配置或前端共享文件**。审批通过后 P1-09 方可按本 ADR 执行。
+- G2.1 冻结 SHA: `d4894da`（G3A 基线；P1-09 由此创建 worktree）
 
 ## 0. 修订说明（Rev 1，回应人工审阅 9 项）
 
