@@ -31,7 +31,7 @@ G1（ADR-0003）冻结了 P1-01/07/08/10 的契约。第二批 P1-02、P1-03、P
 
 ## G2 冻结 SHA
 
-本 ADR + registry 更新提交后的 `feature/product1-integration` HEAD。包含：
+G2 冻结 SHA = `da57995`（`feature/product1-integration`，2026-07-14）。包含：
 - G1 冻结点 `657bfe5`
 - P1-02 `cd7b0f1` + merge `adb08e9`
 - P1-03 `c0462f5` + merge `376ec68`
