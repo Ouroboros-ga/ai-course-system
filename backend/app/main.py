@@ -51,6 +51,7 @@ from app.api.v1.endpoints import (
     video,              # 视频相关功能
     platform,           # 平台管理功能
     prerequisite,       # 前置知识智能跳转
+    document_v2,        # P1-09 G3B V2 shadow (independent router, ADR-0006)
 )
 from app.schemas import UnifiedResponse
 
@@ -102,6 +103,11 @@ app.include_router(platform.router, prefix="/api/v1/platform", tags=["平台管�
 
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
+
+# P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
+# only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1
+# document.py routes. Default flag v1_only -> endpoints return 503.
+app.include_router(document_v2.router, prefix="/api/v1/document-v2", tags=["Product1-V2-shadow"])
 
 
 # 根路径健康检查
