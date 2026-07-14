@@ -20,10 +20,13 @@ import hashlib
 import re
 import unicodedata
 from dataclasses import dataclass, field
-from typing import Any, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, List, Literal, Optional
+
+if TYPE_CHECKING:
+    from app.platform.evidence.contracts import EvidenceSpan
 
 
-ScopeType = Literal["course", "knowledge_base"]
+ScopeType = Literal["course", "knowledge_base", "document"]
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,14 @@ class RetrievalScope:
     def knowledge_base(kb_id: Any) -> "RetrievalScope":
         return RetrievalScope(scope_type="knowledge_base", scope_id=kb_id)
 
+    @staticmethod
+    def document(document_id: Any) -> "RetrievalScope":
+        """A single-document scope for per-document retrieval.
+
+        Missing document scope MUST return empty (no fallback to course/global).
+        """
+        return RetrievalScope(scope_type="document", scope_id=document_id)
+
 
 @dataclass
 class RetrievedChunk:
@@ -63,6 +74,12 @@ class RetrievedChunk:
 
     当前树式关键词检索仅能填充部分字段；未具备的字段保持 ``None``，
     不得用路径字符串冒充数据库章节 ID，不得凭空生成页码。
+
+    Evidence fields (optional first, per P1-03 contract):
+      ``artifact_id`` / ``document_id`` / ``unit_id`` / ``block_id`` reference
+      P1-01 stable IDs when available.  Currently None for tree-keyword provider;
+      populated when a DocumentIR-backed provider is used.
+      ``evidence_spans`` carries ``EvidenceSpan`` objects when available.
     """
 
     chunk_id: str
@@ -80,6 +97,14 @@ class RetrievedChunk:
     match_type: Optional[str] = None
     path: List[str] = field(default_factory=list)
     metadata: dict = field(default_factory=dict)
+
+    # ---- P1-03 evidence-preserving fields (optional, added in minor update) ----
+
+    artifact_id: Optional[str] = None
+    document_id: Optional[str] = None
+    unit_id: Optional[str] = None
+    block_id: Optional[str] = None
+    evidence_spans: List["EvidenceSpan"] = field(default_factory=list)
 
 
 def _normalize_for_id(text: str) -> str:
