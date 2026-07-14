@@ -1,6 +1,9 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import model_validator
 from enum import Enum
 from typing import List, Optional
+
+from app.core.feature_flags import LEGAL_VALUES, ALL_FLAGS
 
 
 class UserRole(str, Enum):
@@ -146,6 +149,45 @@ class Settings(BaseSettings):
     XFYUN_PPT_APP_ID: str = ""
     XFYUN_PPT_API_SECRET: str = ""
     XFYUN_PPT_DEFAULT_TEMPLATE_ID: str = ""
+
+    # --------------------------
+    # Product 1 V2 Shadow Feature Flags (G3A, ADR-0006)
+    # --------------------------
+    # All flags default to V1/disabled. G3 accepts ONLY v1_only/v2_shadow
+    # (pipeline flags) or disabled/shadow (toggle flags). Any other value
+    # (including G6-reserved v2_preferred_with_v1_fallback / v2_only, and
+    # typos like v2_shdaow) is a CONFIGURATION ERROR and fails fast at
+    # Settings construction (startup fail-fast) via _validate_feature_flags.
+    # Shadow RUNTIME errors (valid config, V2 execution fails) are handled
+    # separately as business-level fail-closed in app.core.feature_flags.
+    DOCUMENT_PIPELINE_VERSION: str = "v1_only"
+    KNOWLEDGE_GRAPH_PIPELINE_VERSION: str = "v1_only"
+    DOCUMENT_KG_RUNTIME_MODE: str = "v1_only"
+    EVIDENCE_CITATION_MODE: str = "v1_only"
+    LEARNING_EVENT_MODE: str = "v1_only"
+    STUDENT_MEMORY_MODE: str = "disabled"
+    SAFETY_GOVERNANCE_MODE: str = "disabled"
+
+    @model_validator(mode="after")
+    def _validate_feature_flags(self):
+        """Startup fail-fast: every Product 1 flag must be a legal G3 value.
+
+        Raises ValueError (-> pydantic ValidationError -> Settings() raises)
+        for any illegal value, so the application refuses to start. This
+        intentionally does NOT silently fall back, so misconfiguration is
+        surfaced immediately rather than masked as a running-but-no-shadow
+        state.
+        """
+        for flag in ALL_FLAGS:
+            legal = LEGAL_VALUES[flag]
+            value = getattr(self, flag)
+            if value not in legal:
+                raise ValueError(
+                    f"Invalid {flag}={value!r}; legal G3 values: {list(legal)}. "
+                    f"v2_preferred_with_v1_fallback and v2_only are reserved for G6 "
+                    f"and not legal in G3."
+                )
+        return self
 
 
 settings = Settings()
