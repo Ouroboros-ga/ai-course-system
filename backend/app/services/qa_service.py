@@ -309,7 +309,27 @@ class QAService:
             rag_context, rag_sources = self.retrieve_rag_context(
                 question, top_k=rag_top_k, course_id=course_id
             )
-        
+
+        # ---- P1-09 G3C: V2 evidence/retrieval/citation shadow ----
+        # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.
+        # HARD CONSTRAINT (ADR-0006 §G3C): shadow does NOT call the
+        # generation model (no second LLM call, no second answer). It only
+        # runs V2 retrieval + evidence binding + Citation validation, writing
+        # a V1-ragSources-vs-V2-candidates trace. Shadow results are NOT
+        # returned to the user. trigger_evidence_shadow catches ALL errors
+        # (business fail-closed) so V1 is never affected; outer try/except
+        # is a second safety net. Default flag v1_only = no-op.
+        if use_rag and rag_sources:
+            try:
+                from app.platform.shadow.evidence_shadow import trigger_evidence_shadow
+                trigger_evidence_shadow(
+                    question=question,
+                    course_id=course_id,
+                    v1_sources=rag_sources,
+                )
+            except Exception as evidence_shadow_err:  # noqa: BLE001
+                print(f"[G3C evidence shadow] suppressed (V1 unaffected): {evidence_shadow_err}")
+
         full_context = course_context
         if rag_context:
             full_context = f"{course_context}\n\n【RAG检索相关内容】\n{rag_context}"
