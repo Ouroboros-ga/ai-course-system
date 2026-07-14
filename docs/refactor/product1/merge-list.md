@@ -17,7 +17,7 @@
 ## 当前 Gate 状态
 
 - **G0**: ✅ 完成（2026-07-13）。冻结 SHA `f98ce19`，M7 tag `m7-baseline-20260713`，integration 分支 `feature/product1-integration` 已建。见 ADR-0001。
-- **G1**: 🔄 进行中。第一批 P1-01/P1-07/P1-08/P1-10 已启动，目标产出契约 + contract test。见 ADR-0002。
+- **G1**: ✅ 完成（2026-07-14）。P1-01 DocumentIR (`document-ir/1.0`)、P1-07 LearningEvent (`learning/1.0`)、P1-08 SafetyDecision (`safety/1.0`) 契约 + P1-10 测试基建已合流到 `feature/product1-integration`。4 个契约登记为 `frozen-major`。验证：327 product1 契约测试 + 116 现有回归测试全过，零回归。见 ADR-0003。G1 冻结 SHA = 本轮 coordination 提交后的 integration HEAD（见 ADR-0003）。
 - G2–G6: 未开始。
 
 ## 合流顺序（依赖驱动）

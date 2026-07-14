@@ -8,18 +8,18 @@
 
 | 契约 | Owner | 消费方 | 向后兼容要求 | 变更审批 | 当前版本 | 状态 | 冻结 Gate |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| `DocumentIR` / block union | P1-01 | P1-02、P1-03、P1-05、P1-09、P1-10 | stable ID 不受 run/time/status 影响；旧 minor 可读 | P1-00 + 所有直接消费者 | — | draft | G1 |
-| `Geometry` / `Polygon` | P1-01 | P1-02、P1-03、P1-04、P1-10 | 明确坐标空间、原点、页尺寸、旋转；不得静默换单位 | P1-00 + P1-04 | — | draft | G1 |
+| `DocumentIR` / block union | P1-01 | P1-02、P1-03、P1-05、P1-09、P1-10 | stable ID 不受 run/time/status 影响；旧 minor 可读 | P1-00 + 所有直接消费者 | `document-ir/1.0` | frozen-major | G1 ✅ |
+| `Geometry` / `Polygon` | P1-01 | P1-02、P1-03、P1-04、P1-10 | 明确坐标空间、原点、页尺寸、旋转；不得静默换单位 | P1-00 + P1-04 | `document-ir/1.0` | frozen-major | G1 ✅ |
 | `EvidenceSpan` / `EvidenceBundle` | P1-03 | P1-04、P1-05、P1-08、P1-09、P1-10 | 必须引用存在的 artifact/version/block；失效显式返回 | P1-00 + P1-01 | — | draft | G1 |
 | `TextTransformMap` / `ChunkSegment` / `SemanticChunk` | P1-03 | 检索、Citation Validator、评测 | chunk 变更不能丢原字符映射 | P1-00 + P1-10 | — | draft | G1 |
 | `RetrievedChunk` | P1-03 | QA、图检索、评测 | 保留现有内部字段；新增 evidence/source 为 optional 后再逐步必填 | P1-00 + P1-09 | 现有过渡版 | consumed（过渡） | G1 |
 | `Citation` / `CitationValidationResult` | P1-03 | P1-04、P1-08、P1-09、P1-10 | citation key 稳定；无证据不能生成伪 key | P1-00 + P1-04/P1-08 | — | draft | G1 |
 | `EducationalUnit` | P1-05 | 图谱、脚本兼容投影、学情映射 | 只引用 DocumentIR stable IDs；层级调整有版本 | P1-00 + P1-01 | — | draft | G1 |
 | `GraphEvidence` / `GraphSnapshot` | P1-05 | 检索、审核、P1-09 存储 | snapshot 不可变；active pointer 可回退 | P1-00 + P1-03/P1-09 | — | draft | G1 |
-| `LearningEvent` | P1-07 | P1-06、报告、推荐、评测 | append-only 事实；更正用新事件；幂等键稳定 | P1-00 + P1-06/P1-09 | — | draft | G1 |
-| `LearningEvidence` / `MasteryState` | P1-07 | P1-06、教师报告、推荐 | 结论必须保留 event refs、provider/version | P1-00 + P1-10 | — | draft | G1 |
+| `LearningEvent` | P1-07 | P1-06、报告、推荐、评测 | append-only 事实；更正用新事件；幂等键稳定 | P1-00 + P1-06/P1-09 | `learning/1.0` | frozen-major | G1 ✅ |
+| `LearningEvidence` / `MasteryState` | P1-07 | P1-06、教师报告、推荐 | 结论必须保留 event refs、provider/version | P1-00 + P1-10 | `learning/1.0` | frozen-major | G1 ✅ |
 | `StudentMemory` / `MemoryEntry` | P1-06 | QA 上下文、学生/教师视图、审计 | 删除/关闭语义不可弱化；跨课程默认不共享 | P1-00 + P1-08/P1-09 | — | draft | G1 |
-| `SafetyDecision` / `AuditEvent` | P1-08 | QA、检索、前端、审计 | reason code 稳定；平台底线不能被课程策略覆盖 | P1-00 + P1-09/P1-10 | — | draft | G1 |
+| `SafetyDecision` / `AuditEvent` | P1-08 | QA、检索、前端、审计 | reason code 稳定；平台底线不能被课程策略覆盖 | P1-00 + P1-09/P1-10 | `safety/1.0` | frozen-major | G1 ✅ |
 | `TaskResult` / `TaskStatus` | P1-09（维护现有契约） | 所有异步/外部任务 | 不改变 R2B/R2C 现有映射；只增 optional metadata | P1-00 + P1-10 | 现有版 | consumed | — |
 | 公开 V2 API DTO | P1-09 | 前端、P1-10 | 旧路径和原字段不删改；新字段可选；旧前端可工作 | P1-00 + 前端 contract review | — | draft | G4 |
 
