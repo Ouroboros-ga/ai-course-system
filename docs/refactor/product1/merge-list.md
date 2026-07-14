@@ -18,8 +18,9 @@
 
 - **G0**: ✅ 完成（2026-07-13）。冻结 SHA `f98ce19`，M7 tag `m7-baseline-20260713`，integration 分支 `feature/product1-integration` 已建。见 ADR-0001。
 - **G1**: ✅ 完成（2026-07-14）。P1-01 DocumentIR (`document-ir/1.0`)、P1-07 LearningEvent (`learning/1.0`)、P1-08 SafetyDecision (`safety/1.0`) 契约 + P1-10 测试基建已合流到 `feature/product1-integration`。4 个契约登记为 `frozen-major`。验证：327 product1 契约测试 + 116 现有回归测试全过，零回归。见 ADR-0003。G1 冻结 SHA = `657bfe5`（feature/product1-integration，2026-07-14）。
-- **G2**: ✅ 完成（2026-07-14）。P1-02 parser Provider/质量路由、P1-03 Evidence/检索/Citation、P1-06 学生记忆已合流到 `feature/product1-integration`。7 个契约登记为 `frozen-major`（evidence/text-transform/citation/retrieval-provider/student-memory/parser-provider + RetrievedChunk minor 增量）。验证：584 product1 测试 + 116 现有回归全过，零回归。见 ADR-0004。G2 冻结 SHA = `da57995`（feature/product1-integration，2026-07-14）。
-- G3–G6: 未开始。
+- **G2**: ✅ 完成（2026-07-14）。P1-02 parser Provider/质量路由、P1-03 Evidence/检索/Citation、P1-06 学生记忆已合流到 `feature/product1-integration`。7 个契约登记为 `frozen-major`（evidence/text-transform/citation/retrieval-provider/student-memory/parser-provider + RetrievedChunk minor 增量）。验证：584 product1 测试 + 116 现有回归全过，零回归。见 ADR-0004。G2 冻结 SHA = `da57995`（feature/product1-integration，2026-07-14）。 第三批 P1-04 Evidence Viewer + P1-05 教育图谱（含验证层）已合流，EducationalUnit/GraphEvidence 登记 `frozen-major`（`edu-graph/1.0`）。至此除公开 V2 API DTO 外全部跨域契约已冻结。见 ADR-0005。
+- **G3 Shadow Integration**: 前置已满足（全部上游契约冻结）。⚠️ 首次触及共享生产文件（P1-09 独占 main.py/config.py/document.py/qa_service.py/chat.py/ORM/migration/router/request.js）。启动前 P1-00 须与用户确认集成策略与迁移方案。默认 `v1_only`，shadow 不覆盖 V1。
+- G4–G6: 未开始（依赖 G3）。
 
 ## 合流顺序（依赖驱动）
 

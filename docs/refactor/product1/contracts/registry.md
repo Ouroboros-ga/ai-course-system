@@ -14,8 +14,8 @@
 | `TextTransformMap` / `ChunkSegment` / `SemanticChunk` | P1-03 | 检索、Citation Validator、评测 | chunk 变更不能丢原字符映射 | P1-00 + P1-10 | `text-transform/1.0` | frozen-major | G2 ✅ |
 | `RetrievedChunk` | P1-03 | QA、图检索、评测 | 保留现有内部字段；evidence 字段 optional 增量后逐步必填 | P1-00 + P1-09 | 过渡版+evidence optional | frozen-major（minor 增量） | G2 ✅ |
 | `Citation` / `CitationValidationResult` | P1-03 | P1-04、P1-08、P1-09、P1-10 | citation key 稳定；无证据不能生成伪 key | P1-00 + P1-04/P1-08 | `citation/1.0` | frozen-major | G2 ✅ |
-| `EducationalUnit` | P1-05 | 图谱、脚本兼容投影、学情映射 | 只引用 DocumentIR stable IDs；层级调整有版本 | P1-00 + P1-01 | — | draft | G1 |
-| `GraphEvidence` / `GraphSnapshot` | P1-05 | 检索、审核、P1-09 存储 | snapshot 不可变；active pointer 可回退 | P1-00 + P1-03/P1-09 | — | draft | G1 |
+| `EducationalUnit` | P1-05 | 图谱、脚本兼容投影、学情映射 | 只引用 DocumentIR stable IDs；层级调整有版本 | P1-00 + P1-01 | `edu-graph/1.0` | frozen-major | G2 ✅ |
+| `GraphEvidence` / `GraphSnapshot` | P1-05 | 检索、审核、P1-09 存储 | snapshot 不可变；active pointer 可回退；accepted 必有 Evidence | P1-00 + P1-03/P1-09 | `edu-graph/1.0` | frozen-major | G2 ✅ |
 | `LearningEvent` | P1-07 | P1-06、报告、推荐、评测 | append-only 事实；更正用新事件；幂等键稳定 | P1-00 + P1-06/P1-09 | `learning/1.0` | frozen-major | G1 ✅ |
 | `LearningEvidence` / `MasteryState` | P1-07 | P1-06、教师报告、推荐 | 结论必须保留 event refs、provider/version | P1-00 + P1-10 | `learning/1.0` | frozen-major | G1 ✅ |
 | `StudentMemory` / `MemoryEntry` | P1-06 | QA 上下文、学生/教师视图、审计 | 删除/关闭语义不可弱化；跨课程默认不共享 | P1-00 + P1-08/P1-09 | `student-memory/1.0` | frozen-major | G2 ✅ |
