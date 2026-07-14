@@ -4,7 +4,7 @@
 > 日期: 2026-07-14
 > 复核对象: `feature/product1-integration` @ `1cf0269`（第三批冻结点，G3 起点）
 > 复核性质: 只读。未修改任何生产代码、ORM、Migration、公开 API、生产 endpoint、公共配置或前端共享文件。
-> 结论: **复核通过**，可起草 ADR-0006。发现 3 项 minor 瑕疵（不阻断 G3，建议 G3A 前补齐）。
+> 结论: **有条件通过**。初版误用了不存在的播放器路径 `frontend/src/components/SplitVideoPlayer.vue`（该路径在 f98ce19 中不存在，`git diff --quiet` 因两侧皆空返回 0，给出虚假 UNCHANGED），且 main.py router 数量误记为 11。已按真实路径重新核验：播放器共享文件实际路径为 `frontend/src/components/chat/player/SplitVideoPlayer.vue`，连同 16 个播放器/composable 共享文件逐个核验均 UNCHANGED；main.py 实际 14 个 `include_router` 调用（13 distinct，document.router 注册两次）。修正后结论成立。发现 3 项 minor 契约版本瑕疵（不阻断，建议 G2.1 规范化补齐，见 ADR-0006）。
 
 ## 1. 工作区状态
 
@@ -41,7 +41,7 @@
 | `frontend/src/views/TeacherDashboard.vue` | UNCHANGED ✓ |
 | `frontend/src/views/StudentDashboard.vue` | UNCHANGED ✓ |
 | `frontend/src/components/SplitVideoPlayer.vue` | UNCHANGED ✓ |
-| `backend/pyproject.toml` / `uv.lock` | UNCHANGED ✓ |
+| `frontend/src/components/chat/player/SplitVideoPlayer.vue` + `PptPlayer.vue` + `PptPlayer/*`(8) + `KnowledgeNavBar.vue` + `chat/PptSlidePlayer.vue` + `composables/useStudentLearning.js` + `views/StudentPlayer.vue` + `api/player.js`（共 16 个播放器/composable 共享文件） | UNCHANGED ✓（已按真实路径逐个核验） |
 | `frontend/package.json` / `package-lock.json` | UNCHANGED ✓ |
 
 仅 2 个文件变更，均为 P1-10 合法所有权范围：
@@ -120,16 +120,19 @@ registry.md 登记的 13 个 frozen-major 契约 + 代码内声明对照：
 
 ## 7. 复核结论
 
-**通过**。`1cf0269` 满足 G3 启动前置：
+**有条件通过**（路径修正后成立）。`1cf0269` 满足 G3 启动前置：
 - 工作区干净，9 agent 分支全合流
-- P1-09 共享生产文件零触及，P1-10 测试基建改动纯增量
+- P1-09 共享生产文件零触及（含 16 个播放器/composable 共享文件，已按真实路径逐个核验），P1-10 测试基建改动纯增量
 - 13 契约 frozen-major，跨域依赖无循环
 - 663 + 116 测试可重现，零回归
+- main.py 实际 14 个 `include_router`（13 distinct，document.router 注册两次，是规划 §2.3 标记的重复路由危险点）
 
-**3 项 minor 瑕疵**（建议 G3A 前补齐，不阻断 ADR-0006 起草）：
-1. P1-03 Evidence 版本字符串统一（`evidence/1` -> `evidence/1.0`）
-2. P1-03/P1-08/P1-02 补版本常量（便于 G3 fail-closed 校验）
-3. P1-07 mastery provider_version 统一（两段 vs 三段）
+**3 项 minor 契约版本瑕疵**（不阻断 ADR-0006 起草；建议由各领域 owner 在 G2.1 规范化补齐，形成新冻结 SHA 后 P1-09 再起步）：
+1. P1-03 Evidence 版本字符串统一（代码 docstring `evidence/1` -> `evidence/1.0`，与 registry 一致）
+2. P1-02/P1-03/P1-08 补版本常量（目前仅 docstring，无 `*_VERSION` 常量；便于 G3A fail-closed 校验）
+3. P1-07 mastery `provider_version` 统一（`contracts.py` 默认 `1.0` 两段 vs `rule_baseline.py` `1.0.0` 三段）
+
+这些是版本声明/常量问题，不涉及契约语义变更，属各领域 owner 职责，不应由 P1-09 顺手修改（见 ADR-0006 §G2.1）。
 
 建议在 ADR-0006 中将这 3 项列为 G3A 进入门禁的前置小任务。
 

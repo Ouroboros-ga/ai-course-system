@@ -1,247 +1,338 @@
 # ADR-0006: Product 1 V2 Shadow 集成顺序、隔离边界与回滚策略
 
-- 状态: Proposed（草案，待人工审批）
-- 日期: 2026-07-14
+- 状态: **Proposed (Revision 1)** — 依人工审阅 9 项意见修订，待二次审批。P1-09 未启动。
+- 日期: 2026-07-14（初版）/ 2026-07-14（Rev 1）
 - 决策者: P1-00（起草），P1-09（执行），人工审批（启动前）
-- 影响范围: G3 Shadow Integration 全程；P1-09 独占的共享生产文件
+- 影响范围: G2.1 契约规范化 + G3 Shadow Integration 全程；P1-09 独占的共享生产文件
 - 性质: **方案文档，不修改任何 ORM、Migration、公开 API、生产 endpoint、公共配置或前端共享文件**。审批通过后 P1-09 方可按本 ADR 执行。
 
-## 0. 前置：复核结论
+## 0. 修订说明（Rev 1，回应人工审阅 9 项）
 
-冻结点 `1cf0269` 已通过 P1-00 只读整体复核（见 `docs/refactor/product1/reviews/review-1cf0269-pre-g3.md`）：
+初版 ADR-0006 经人工逐段审阅，发现 4 个实质性阻断项 + 5 个边界/措辞问题。Rev 1 修订：
+1. **G3D Memory Shadow 注入 QA 会改变 V1 回答** -> G3D 拆为 G3D1/G3D2/G3D3；Memory Candidate Shadow **不得注入正式 QA Prompt**。
+2. **G3E 前端挂载与"公开 API DTO 留 G4"冲突** -> G3E 拆为 G3E1/G3E2；**正式前端挂载延后至 G4**（G4A DTO 冻结 / G4B Viewer 挂载）；G3 阶段 P1-04 仅用 fixture/mock/dev page。
+3. **Flag 合法值含 `v2_preferred_with_v1_fallback` 与"G3 不启用 preferred"冲突** -> G3 仅允许 `v1_only`/`v2_shadow`；`v2_preferred_with_v1_fallback` 移至 G6。**配置非法 = 启动级 fail-fast（拒绝启动）；shadow 运行错误 = 业务级 fail-closed（V1 继续 + fallback_reason）**。
+4. **G3A 由 P1-09 修领域契约越权** -> 新增 **G2.1 Contract Normalization**，由 P1-02/03/07/08 各领域 owner 补版本常量，形成新冻结 SHA；P1-09 从新 SHA 起步。
+5. G3B：明确 **commit-then-trigger**（V1 commit 成功后提交 V2 任务）+ 资源规则（单课程单任务/幂等/队列满跳过/超时/abandoned/不占 M7 GPU 端口/磁盘配额）。
+6. G3C：**禁止第二次 LLM 调用**；对比 V1 ragSources vs V2 candidates，不比较两份生成答案。
+7. V2 Router：增加权限（管理员/内部）、课程隔离、去敏、统一 503 + `SHADOW_FEATURE_DISABLED`、shadow 数据保留期。
+8. 措辞：citation "正确率" -> "完整性/可解析性/作用域隔离/证据链存活率"；V1 vs V2 diff -> "contract/integration diff"（非质量对比）。
+9. 复核报告路径修正：播放器真实路径 `frontend/src/components/chat/player/SplitVideoPlayer.vue`，16 个播放器共享文件已逐个核验；main.py 实际 14 个 `include_router`。
+
+## 1. 前置：复核结论（已修正）
+
+冻结点 `1cf0269` 复核**有条件通过**（见 `docs/refactor/product1/reviews/review-1cf0269-pre-g3.md`，路径修正后成立）：
 - 工作区干净，9 agent 分支全合流，13 契约 frozen-major，跨域依赖无循环，663+116 测试可重现零回归。
-- P1-09 共享生产文件零触及；P1-10 测试基建改动纯增量。
-- 3 项 minor 瑕疵（P1-03 evidence 版本字符串 `evidence/1` vs `evidence/1.0`、P1-02/03/08 缺版本常量、P1-07 mastery provider_version 两段/三段不一致）→ 列为 G3A 进入门禁前置。
+- P1-09 共享生产文件零触及（含 16 个播放器/composable 共享文件，按真实路径核验）；P1-10 测试基建改动纯增量。
+- main.py 实际 14 个 `include_router`（13 distinct，document.router 注册两次 = 规划 §2.3 重复路由危险点）。
+- 3 项 minor 契约版本瑕疵 -> **G2.1 规范化补齐**（不由 P1-09 修）。
 
-## 1. 背景与约束
+## 2. 硬约束（贯穿 G2.1 + G3 全程）
 
-G3 是 Product 1 V2 集成的**首次触及共享生产文件**的 Gate。此前 G1/G2/第三批所有工作都在各 agent 私有目录，未碰主链。G3 由 P1-09 独占执行（角色卡 + CLAUDE.md §文件所有权）。
+1. **默认 `v1_only`/`disabled`**：所有 V2 能力默认关闭或 shadow-only。
+2. **配置非法 = 启动级 fail-fast**：feature flag 取未列出值时，**应用拒绝启动**，明确报错（不静默回退，不掩盖配置错误）。例如 `DOCUMENT_PIPELINE_VERSION=v2_shdaow`（拼写错）-> 启动失败，提示合法值。
+3. **Shadow 运行错误 = 业务级 fail-closed**：配置合法但 V2 shadow 执行失败（超时/异常/不可用）-> V1 继续运行，记 `fallback_reason`，不伪装 V2 success，不影响用户。
+4. **Shadow 不改变 V1 用户可见行为**：shadow 不得注入正式 QA Prompt、不得阻断 V1、不得改 V1 响应、不得写 V1 表/索引/任务状态。Memory 注入正式回答属 G6 preferred，非 G3。
+5. **旧字段/路径/endpoint 不删**：新字段 optional；旧前端/旧客户端可工作。
+6. **Migration 独立可回滚**：独立 PR，空库 + 旧库副本测试，down/逻辑回滚。
+7. **新增 endpoint 独立 router**：独立文件 + 独立 prefix，不进 document.py/chat.py 大文件。
+8. **关闭 flag 即恢复 V1**：任何 V2 阶段失败，关 flag 后系统与 M7 基线等价。
+9. **不启用 preferred/V2-only**：除非 P1-00 + P1-10 + 人工批准（G6）。
+10. **不改私有算法**：P1-01~P1-08 实现不改；P1-10 测试不弱化。
 
-### 1.1 共享文件现状（复核确认）
+## 3. Feature Flag 设计（G3 仅 v1_only/v2_shadow）
 
-| 文件 | 现状 | 风险 |
-| --- | --- | --- |
-| `backend/app/main.py` | `app.include_router(...)` 注册 11 个 router；`document.router` 注册两次（`/api/v1/document` + `/api/v1/chat/file`） | 路由顺序敏感；新增 router 须独立 prefix |
-| `backend/app/core/config.py` | pydantic-settings `Settings`，`extra="ignore"`；**无任何 V2 feature flag** | G3 须新增 flag，默认 `v1_only` |
-| `backend/app/api/v1/endpoints/document.py` | ~2768 行，27 路由；**重复 `/courses`(680/1025) 与 `/course/{id}/save`(885/1110)** | 多人改会破坏路由顺序与 M7 回归 |
-| `backend/app/services/document_service.py` | ~2072 行，解析/Markdown/LLM 脚本/RAG 编排集中 | Provider 与业务编排耦合 |
-| `backend/app/models/database.py` | 导入所有 ORM，全局 `engine`，`AI_COURSE_DATABASE_URL` 覆盖默认 sqlite | 新模型/循环依赖/初始化风险集中 |
-| `backend/app/common/db_migrator.py` | 固定 `smart_class.db`，sqlite3 直连，**无版本化** | 不可作 V2 大规模迁移机制 |
+新增到 `config.py` `Settings`（P1-09 在 G3A 实施）。**G3 阶段合法值仅 `v1_only`/`v2_shadow`**（记忆/安全为 `disabled`/`shadow`）。`v2_preferred_with_v1_fallback` 与 `v2_only` **不在 G3 合法枚举内**，移至 G6。
 
-### 1.2 硬约束（来自 CLAUDE.md + P1-09 角色卡 + 规划 §8.3）
-
-1. **默认 `v1_only`**：所有 V2 能力默认关闭或 shadow-only。
-2. **非法配置 fail-closed**：feature flag 取非法值时回退 V1 并记 `fallback_reason`，不伪装 V2 success。
-3. **Shadow 不写 V1**：shadow 只写独立 run/artifact/table，不覆盖 `Course/ScriptNode/KnowledgePageMap`、V1 RAG registry、V1 任务状态、用户可见行为。
-4. **旧字段/路径不删**：新字段 optional；旧前端/旧客户端可工作。
-5. **Migration 独立可回滚**：独立 PR，空库 + 旧库副本测试，down/逻辑回滚方案。
-6. **新增 endpoint 独立 router**：不塞进 document.py 大文件。
-7. **关闭 flag 即恢复 V1**：任何 V2 阶段失败，关 flag 后系统与 M7 基线等价。
-8. **不启用 preferred/V2-only**：除非 P1-00 + P1-10 + 人工批准。
-9. **不改私有算法**：P1-01~P1-08 的实现不改；P1-10 测试不弱化。
-
-## 2. Feature Flag 设计
-
-新增到 `config.py` `Settings`（P1-09 实施），全部默认 `v1_only`，非法值 fail-closed：
-
-| Flag | 合法值 | 默认 | 作用域 |
+| Flag | G3 合法值 | 默认 | 作用域 |
 | --- | --- | --- | --- |
-| `DOCUMENT_PIPELINE_VERSION` | `v1_only` / `v2_shadow` / `v2_preferred_with_v1_fallback` | `v1_only` | P1-01/02 解析链 |
-| `KNOWLEDGE_GRAPH_PIPELINE_VERSION` | 同上 | `v1_only` | P1-05 图谱 |
-| `DOCUMENT_KG_RUNTIME_MODE` | 同上 | `v1_only` | 检索+图谱运行时 |
+| `DOCUMENT_PIPELINE_VERSION` | `v1_only` / `v2_shadow` | `v1_only` | P1-01/02 解析链 |
+| `KNOWLEDGE_GRAPH_PIPELINE_VERSION` | `v1_only` / `v2_shadow` | `v1_only` | P1-05 图谱 |
+| `DOCUMENT_KG_RUNTIME_MODE` | `v1_only` / `v2_shadow` | `v1_only` | 检索+图谱运行时 |
 | `EVIDENCE_CITATION_MODE` | `v1_only` / `v2_shadow` | `v1_only` | P1-03 Evidence/Citation 接 QA |
-| `STUDENT_MEMORY_MODE` | `disabled` / `shadow` | `disabled` | P1-06 记忆（独立 flag，不与文档总开关捆绑） |
+| `STUDENT_MEMORY_MODE` | `disabled` / `shadow` | `disabled` | P1-06 记忆（独立 flag） |
 | `LEARNING_EVENT_MODE` | `v1_only` / `v2_shadow` | `v1_only` | P1-07 事件 mapper |
 | `SAFETY_GOVERNANCE_MODE` | `disabled` / `shadow` | `disabled` | P1-08 安全 hook |
 
-**fail-closed 规则**：任何 flag 取未列出值 → 视为 `v1_only`/`disabled`，记 `fallback_reason="invalid_flag_value:<flag>=<value>"`，日志告警。**不得**因非法值启用任何 V2 路径。
+**两层错误处理（关键）**：
+- **配置错误（启动级 fail-fast）**：flag 值不在合法枚举 -> `Settings` 校验失败，应用拒绝启动，错误信息列出合法值。不回退、不告警后继续。
+- **Shadow 运行错误（业务级 fail-closed）**：配置合法但 V2 执行失败 -> 视为该批未运行，记 `fallback_reason="shadow_runtime_error:<flag>:<reason>"`，V1 不受影响。
 
-**独立 flag 原则**：记忆/学情/安全各有独立 flag，不与 `DOCUMENT_PIPELINE_VERSION` 总开关捆绑（规划 §8.3.2）。任一独立 flag 关闭不影响其他。
+**独立 flag 原则**：记忆/学情/安全各有独立 flag，不与 `DOCUMENT_PIPELINE_VERSION` 总开关捆绑。任一关闭不影响其他。
 
-## 3. G3 分批顺序（G3A ~ G3E）
+## 4. 执行顺序总览
 
-依赖驱动，每批独立可回滚。每批进入前须满足其门禁，退出前须满足退出门禁。**任何一批不满足退出门禁，不进入下一批。**
+```
+G2.1 契约版本规范化（领域 owner）-> 新冻结 SHA
+  -> ADR-0006 二次审批 Accepted
+  -> G3A Flag 与 fail-fast/fail-closed 机制 -> 人工放行
+  -> G3B Document Shadow（commit-then-trigger）-> 人工放行
+  -> G3C Evidence Retrieval Shadow（不二次调用 LLM）-> 人工放行
+  -> G3D1 LearningEvent Shadow -> G3D2 Memory Candidate Shadow（不注入 QA）-> G3D3 Safety Dry-run
+  -> G3E1 Graph Shadow -> G3E2 Shadow Diff Report
+  -> G4A Evidence API DTO 冻结 -> G4B Evidence Viewer 正式挂载
+  -> G5 Canary -> G6 Preferred
+```
 
-### G3A：Feature Flag 基础设施 + 契约版本常量补齐
+每批进入前须满足进入门禁，退出前须满足退出门禁。**任何一批不满足退出门禁，不进入下一批。** 每批人工放行。
 
-**目标**：建立 flag 读取与 fail-closed 机制，不接任何业务路径；补齐复核发现的 3 项契约版本瑕疵。
+## 5. G2.1 Contract Normalization（G3 前置，领域 owner 执行）
 
-**改动范围（P1-09）**：
-- `config.py`：新增上述 7 个 flag（默认 v1_only/disabled）。
-- 新增 `backend/app/core/feature_flags.py`（P1-09 新文件）：flag 读取 + 合法值校验 + fail-closed helper + `fallback_reason` 记录。**不导入任何 V2 业务模块**。
-- 契约版本常量补齐（各 owner minor，经 P1-00 批准）：P1-03 `EVIDENCE_VERSION`/`CITATION_VERSION` 常量 + `evidence/1`→`evidence/1.0` 统一；P1-02 `PARSER_PROVIDER_VERSION`；P1-08 `SAFETY_VERSION`；P1-07 mastery `provider_version` 统一。
+**目标**：补齐 3 项契约版本瑕疵，形成新冻结 SHA。**不由 P1-09 执行**（领域契约属各 owner）。
 
-**进入门禁**：
-- 复核报告通过（已满足）。
-- 3 项契约版本瑕疵的补齐方案经 P1-00 批准（minor，不改语义）。
+**分工**：
+- **P1-02**：新增 `PARSER_PROVIDER_VERSION = "parser-provider/1.0"` 常量（quality.py/registry.py）。
+- **P1-03**：新增 `EVIDENCE_VERSION="evidence/1.0"`、`CITATION_VERSION="citation/1.0"`、`TEXT_TRANSFORM_VERSION="text-transform/1.0"` 常量；docstring `evidence/1` -> `evidence/1.0` 统一。
+- **P1-07**：统一 mastery `provider_version`（`contracts.py` 默认与 `rule_baseline.py` 一致，两段或三段取其一，建议两段 `1.0` 与 learning/1.0 风格一致）。
+- **P1-08**：新增 `SAFETY_VERSION = "safety/1.0"` 常量。
+- **P1-00**：更新 registry.md（版本常量已补齐，状态不变仍 frozen-major）。
+- **P1-10**：独立验证各 owner 改动为纯常量新增/字符串统一，无契约语义变更，对应测试不回归。
 
+**进入门禁**：复核报告通过（已满足）。
 **退出门禁**：
-- `feature_flags.py` 单元测试：合法值返回正确 mode；非法值返回 `v1_only`/`disabled` + `fallback_reason`；所有 flag 默认值断言。
-- `config.py` 改动不破坏现有 settings 加载（M7 回归通过）。
-- 契约版本常量补齐后，对应 agent 测试全过（663 不回归）。
-- P1-10 独立验证 flag fail-closed 行为。
-- **默认全 V1**：关闭所有 flag 后系统与 M7 基线 `f98ce19` 行为等价（M7 smoke + 回归通过）。
+- 各 owner 分支测试全过（无回归）。
+- P1-10 确认无语义变更。
+- 合流到 integration，**新冻结 SHA**（记为 G2.1 冻结点）。
+- P1-09 worktree 从**新冻结 SHA**创建（不从 `1cf0269`）。
 
-**回滚**：删 `feature_flags.py` + 还原 `config.py` flag 行。无数据影响。
+**回滚**：各 owner revert 常量 commit。无数据影响。
 
-### G3B：Document 解析 Shadow（P1-01/02 接入上传旁路）
+## 6. G3 批次详述
 
-**目标**：上传文档时，`DOCUMENT_PIPELINE_VERSION=v2_shadow` 下并行运行 V2 解析（P1-02 Provider → P1-01 DocumentIR），结果写入**独立 shadow artifact store**（P1-01 json_artifact_store），V1 主链不变。
+### G3A：Feature Flag 基础设施
+
+**目标**：建立 flag 读取 + 启动级 fail-fast + 业务级 fail-closed 机制，不接任何业务路径。
 
 **改动范围（P1-09）**：
-- `document_service.py`：加 adapter seam（不重写解析逻辑），在 V1 解析后**异步/并行**触发 V2 shadow 解析，写 shadow store，记 trace/diff。V2 失败记 `fallback_reason`，不影响 V1。
-- `document.py`：**不改现有 27 路由**；如需新 endpoint（如查询 shadow artifact），用**独立 router**（`/api/v1/document-v2/...`）注册到 main.py，不进 document.py。
+- `config.py`：新增 7 个 flag（G3 合法值仅 v1_only/v2_shadow/disabled/shadow），用 pydantic 枚举校验实现**启动级 fail-fast**（非法值拒绝启动）。
+- 新增 `backend/app/core/feature_flags.py`（P1-09 新文件）：flag 读取 + 合法值校验 + 业务级 fail-closed helper（`fallback_reason` 记录）。**不导入任何 V2 业务模块**。
+
+**进入门禁**：G2.1 退出通过（新冻结 SHA 存在）。
+**退出门禁**：
+- `feature_flags.py` 单元测试：合法值返回正确 mode；**非法值触发启动失败**（fail-fast）；shadow 运行错误返回 v1_only + `fallback_reason`（fail-closed）；所有 flag 默认值断言。
+- `config.py` 改动不破坏现有 settings 加载（M7 回归通过）。
+- **默认全 V1**：关闭所有 flag 后系统与 M7 基线 `f98ce19` 行为等价（M7 smoke + 回归通过）。
+- P1-10 独立验证 fail-fast 与 fail-closed 两种路径。
+
+**回滚**：删 `feature_flags.py` + 还原 `config.py`。无数据影响。
+
+### G3B：Document 解析 Shadow（commit-then-trigger）
+
+**目标**：`DOCUMENT_PIPELINE_VERSION=v2_shadow` 下，V1 上传成功后并行运行 V2 解析（P1-02 Provider -> P1-01 DocumentIR），结果写**独立 shadow artifact store**，V1 主链不变。
+
+**触发时机（commit-then-trigger，硬约束）**：
+```
+V1 文件已稳定落盘
+  -> V1 数据库事务 commit 成功
+  -> V1 主流程成功状态已确定
+  -> 提交 V2 Shadow 任务（异步）
+```
+**禁止**：在 V1 数据库事务内部执行 V2；让上传接口同步等待完整 V2 解析结束。
+
+**资源规则（V2 不得拖垮 V1）**：
+- 单课程最多 1 个运行中 shadow 任务；同 artifact+config 幂等（重复提交跳过）。
+- 队列满时跳过并记 `fallback_reason="shadow_queue_full"`，**不阻塞 V1**。
+- 每任务最大超时；进程中断后任务标记 `abandoned`。
+- **Shadow 不得占用 M7 必须的 GPU/端口**（Duix/数字人/TTS 资源）。
+- Shadow 磁盘配额 + 清理周期（过期 shadow artifact 清理）。
+
+**改动范围（P1-09）**：
+- `document_service.py`：加 adapter seam（不重写解析逻辑），V1 commit 成功后异步触发 V2 shadow，写 shadow store + trace/diff。V2 失败记 `fallback_reason`。
+- `document.py`：**不改现有 27 路由**；新 endpoint 用独立 router（`/api/v1/document-v2/...`）。
 - 不写 V1 表；shadow artifact 路径与 V1 `Course/ScriptNode/KnowledgePageMap` 隔离。
 
-**进入门禁**：
-- G3A 退出通过。
-- P1-01 DocumentIR + P1-02 Provider 契约 frozen（已满足）。
-- shadow store 原子写/路径穿越/校验和测试通过（P1-01 已有 111 测试）。
-
+**进入门禁**：G3A 退出通过；P1-01/02 契约 frozen（已满足）；shadow store 原子写/路径穿越/校验和测试通过。
 **退出门禁**：
-- shadow 模式下：V1 主链行为与 M7 等价（上传/课程/脚本/发布/M7 smoke 通过）；V2 shadow artifact 生成且可回放；V2 失败 → `fallback_reason` 记录，V1 不受影响。
-- shadow diff 报告：V1 vs V2 解析结果对比（不要求一致，要求可追溯）。
-- 关闭 flag → 无 shadow 副作用，V1 完全不变。
-- P1-10 独立验证：无 V1 表写入、无用户可见行为变化。
+- shadow 模式：V1 主链与 M7 等价（上传/课程/脚本/发布/M7 smoke 通过）；V2 shadow artifact 生成且可回放；V2 失败 -> `fallback_reason`，V1 不受影响。
+- **contract/integration diff**（非质量对比）：V1 vs V2 解析产物结构对比，证明 shadow 链路可运行、产物可追踪、diff 格式可生成。**不证明 V2 解析质量优于 V1**（真实 Docling/PaddleOCR 对比留 G5 canary）。
+- 关闭 flag -> 无 shadow 副作用，V1 完全不变。
+- P1-10 独立验证：无 V1 表写入、无用户可见行为变化、资源规则生效。
 - 无真实 Docling/PaddleOCR 调用（fake/离线）。
 
-**回滚**：关 `DOCUMENT_PIPELINE_VERSION` flag → V2 shadow 停止；shadow artifact 保留只读审计；V1 不变。
+**回滚**：关 flag -> V2 shadow 停止；shadow artifact 保留只读审计；V1 不变。
 
-### G3C：Evidence/检索/Citation Shadow（P1-03 接 QA）
+### G3C：Evidence/检索/Citation Shadow（不二次调用 LLM）
 
-**目标**：`EVIDENCE_CITATION_MODE=v2_shadow` 下，QA 检索并行运行 V2 Evidence-aware RetrievalGateway（P1-03），产出 Citation + EvidenceSpan，与 V1 `ragSources` 对比。V1 QA 响应不变。
+**目标**：`EVIDENCE_CITATION_MODE=v2_shadow` 下，V1 QA 检索后并行运行 V2 Evidence-aware RetrievalGateway（P1-03）+ Citation 校验，记 shadow trace。**V1 QA 响应不变**。
+
+**硬约束（关键）**：
+> G3C 只运行 V2 检索、证据绑定、Citation 校验。**不再次调用生成模型，不产生第二份用户答案。**
+
+否则一次学生提问会变成 V1 调 LLM + V2 调 LLM，增加成本/延迟/数据外发/不稳定。
+
+**对比对象**：V1 `ragSources` vs V2 `RetrievedChunk`/`Evidence`/`Citation` candidates（检索与证据层对比），**不比较两份生成答案**。
 
 **改动范围（P1-09）**：
-- `qa_service.py`：加 hook seam，V1 检索后并行触发 V2 检索 + Citation 校验，记 shadow trace。V2 结果**不返回给用户**（除非 G6 preferred）。
+- `qa_service.py`：加 hook seam，V1 检索后并行触发 V2 检索 + Citation 校验（**不调 LLM**），记 shadow trace。V2 结果**不返回给用户**。
 - `chat.py`：不改现有路由；CitationValidator 作为 seam 注入，不导入具体 Provider。
-- V1 `ragSources` 响应结构不变；V2 evidence 字段为 shadow-only，不入 V1 响应。
+- V1 `ragSources` 响应结构不变；V2 evidence 字段 shadow-only。
 
-**进入门禁**：
-- G3B 退出通过（DocumentIR shadow 可用，Evidence 依赖 stable block IDs）。
-- P1-03 Evidence/Citation/Retrieval 契约 frozen（已满足）。
-- RISK-03 跨课程污染测试通过（missing scope 返回空，已验证）。
-
+**进入门禁**：G3B 退出通过；P1-03 契约 frozen（已满足）；RISK-03 跨课程污染测试通过。
 **退出门禁**：
 - shadow 模式：V1 QA 响应与 M7 等价；V2 检索 trace 可追溯到 stable evidence/block；无证据时 `should_abstain` 不伪造 citation。
 - 跨课程/跨文档隔离：V2 检索不泄漏其他课程数据（对抗测试）。
-- 关闭 flag → V1 QA 完全不变。
-- P1-10 独立验证 citation 正确率（contract 级，非模型质量）。
+- **无第二次 LLM 调用**（P1-10 验证 shadow trace 不含生成模型调用）。
+- 关闭 flag -> V1 QA 完全不变。
+- P1-10 独立验证 **citation 完整性、可解析性、作用域隔离和证据链存活率**（contract 级，非语义"正确率"；语义正确率留金标 QA 评测 G5）。
 
-**回滚**：关 flag → V2 检索停止；V1 `ragSources` 不变。
+**回滚**：关 flag -> V2 检索停止；V1 `ragSources` 不变。
 
-### G3D：学情/记忆/安全 Shadow（P1-06/07/08 接入）
+### G3D1：LearningEvent Shadow
 
-**目标**：三个独立 flag 分别控制。`LEARNING_EVENT_MODE=v2_shadow` 下，进度/测验/问答/跳转映射为 LearningEvent（P1-07）写 shadow event store。`STUDENT_MEMORY_MODE=shadow` 下，记忆 Repository（P1-06）以只读/shadow 上下文注入 QA。`SAFETY_GOVERNANCE_MODE=shadow` 下，SafetyEvaluator（P1-08）作为 hook 评估但不阻断（shadow 仅记录决策）。
+**目标**：`LEARNING_EVENT_MODE=v2_shadow` 下，进度/测验/问答/跳转映射为 LearningEvent（P1-07）写**独立 shadow event store**，不改变正式业务。
 
-**改动范围（P1-09）**：
-- `progress_service.py` / `prerequisite_service.py`：加 event mapper seam（shadow，不双写无幂等事件）。
-- `qa_service.py`：记忆上下文注入 seam（token 预算）；安全 hook seam（shadow 记录 SafetyDecision，不阻断）。
-- 三者均独立 flag，互不捆绑。
+```
+真实学习行为 -> 映射为 LearningEvent -> 写独立 Shadow Store -> 不改变正式业务
+```
 
-**进入门禁**：
-- G3C 退出通过。
-- P1-06/07/08 契约 frozen（已满足）。
-- RISK-05（记忆隐私/删除）+ RISK-06（学情可解释）测试通过（已验证）。
+**改动范围（P1-09）**：`progress_service.py`/`prerequisite_service.py` 加 event mapper seam（shadow，不双写无幂等事件，不写 V1 表）。
+**进入门禁**：G3C 退出通过；P1-07 契约 frozen。
+**退出门禁**：V1 进度/跳转与 M7 等价；shadow event store 可回放；事件幂等键正确；关 flag -> V1 不变。
+**回滚**：关 flag -> shadow 停止。
 
-**退出门禁**：
-- shadow 模式：V1 进度/问答/跳转行为与 M7 等价；V2 event/memory/safety shadow 可追溯；记忆关闭时不读不写；安全 shadow 不阻断 V1。
-- 跨学生/课程越权对抗测试通过（P1-06/P1-10）。
-- 学情结论可列出 LearningEvidence refs（P1-07）。
-- 关闭任一 flag → 该 V2 路径停止，V1 不变。
-- P1-10 独立验证隐私/删除/审计边界。
+### G3D2：Memory Candidate Shadow（不注入正式 QA）
 
-**回滚**：分别关三个 flag；shadow 数据保留只读审计；V1 不变。
+**目标**：`STUDENT_MEMORY_MODE=shadow` 下，从 LearningEvent -> LearningEvidence -> 候选 MasteryState -> 候选 StudentMemory Context，**保存并比较，但不注入正式 QA Prompt**。
 
-### G3E：图谱 Shadow + 前端挂载 + Shadow Diff 报告（P1-05/04）
+```
+LearningEvent -> LearningEvidence -> 候选 MasteryState -> 候选 StudentMemory Context -> 保存并比较
+```
 
-**目标**：`KNOWLEDGE_GRAPH_PIPELINE_VERSION=v2_shadow` 下，从 Evidence 支撑的 EducationalUnit 生成图谱候选（P1-05）写 shadow graph store，不接 V1 `KnowledgePoint/KnowledgeRelation`。前端 Evidence Viewer（P1-04）以独立路由挂载（只读，不进现有 dashboard/player）。
+**硬约束（关键）**：
+> Memory Candidate Shadow **不得注入正式 QA Prompt**。可离线记录"如果使用该记忆，将给模型提供哪些上下文"，但不真正影响学生得到的回答。
 
-**改动范围（P1-09）**：
-- 图谱：shadow graph store（P1-05 GraphStore fake 基础上 P1-09 实现 Repository），不写 V1 知识表。
-- 前端：`router/index.js` 加独立路由挂载 `EvidenceViewerWithPanel`（P1-04），**不修改** `SplitVideoPlayer/TeacherDashboard/StudentDashboard`。`utils/request.js` 不改；新 API 用独立 `api/evidence.js`。
-- Shadow diff 报告：汇总 G3B~G3E 的 V1 vs V2 对比，machine-readable（P1-10 quality_gate_report）。
+只要把学生记忆加入正式 QA Prompt，即使只读/不写库/不展示，大模型最终回答也可能改变，违反"V1 QA 响应和用户可见行为不变"。正式注入属 G6 preferred。
 
-**进入门禁**：
-- G3D 退出通过。
-- P1-04/05 契约 frozen（已满足）。
-- P1-04 前端 `npm run build` 通过（G3 首次需 node_modules，P1-09 在 worktree 装）。
+**改动范围（P1-09）**：记忆候选生成 seam（写 shadow candidate store）；**不接 qa_service Prompt 构造**。
+**进入门禁**：G3D1 退出通过；P1-06 契约 frozen；RISK-05 隐私/删除测试通过。
+**退出门禁**：候选 memory 可追溯 evidence refs + generation reason；跨学生/课程隔离；记忆关闭时不读不写；**正式 QA 回答与 M7 等价（P1-10 对抗验证 memory 未影响 Prompt）**。
+**回滚**：关 flag -> 候选生成停止。
 
-**退出门禁**：
-- shadow 模式：V1 知识 CRUD 与 M7 等价；V2 图谱 shadow 可回溯 Evidence；图谱失败不影响文档检索。
-- 前端 Viewer 独立路由可访问，不影响现有页面；坐标高亮 fail-closed（RISK-02）。
-- 关闭 flag → 图谱 shadow 停止，前端路由可保留（只读）或移除。
-- P1-10 独立验证图谱 accepted 可回溯 Evidence、前端不影响主链。
-- Shadow diff 报告完整（G3B~G3E）。
+### G3D3：Safety Dry Run
 
-**回滚**：关 `KNOWLEDGE_GRAPH_PIPELINE_VERSION` flag → 图谱 shadow 停止；前端路由移除或保留只读；V1 不变。
+**目标**：`SAFETY_GOVERNANCE_MODE=shadow` 下，SafetyEvaluator（P1-08）评估用户请求，记录 `would_allow`/`would_refuse`，**不阻断 V1**。
 
-## 4. 最小 Migration 策略
+```
+用户请求 -> SafetyEvaluator -> 记录 would_allow / would_refuse -> 不阻断 V1
+```
 
-G3 各批 shadow 数据**优先用独立 artifact store（JSON/文件）**，不新增 ORM 表。仅当 shadow 数据需查询/索引时，P1-09 才设计 migration，且：
+**改动范围（P1-09）**：安全 hook seam（shadow 记录 SafetyDecision，不阻断 V1 流程）。
+**进入门禁**：G3D1 退出通过；P1-08 契约 frozen。
+**退出门禁**：V1 问答/上传与 M7 等价（safety 不阻断）；shadow 决策可追溯 reason code；平台底线测试；关 flag -> V1 不变。
+**回滚**：关 flag -> safety shadow 停止。
 
-1. **独立 PR**：每个 migration 单独 PR，不与业务接线混提交。
-2. **新增表 only**：只加 V2 shadow 表（如 `p1_shadow_*`），不改 V1 表结构。
-3. **空库 + 旧库副本测试**：在空库和 `smart_class.db` 副本上各跑一次，验证 schema 应用 + down 回滚。
-4. **down/逻辑回滚方案**：每个 migration 须有 down（drop shadow 表）+ 逻辑回滚（关 flag + 清 shadow 数据）。
-5. **不依赖 `db_migrator.py`**：该机制无版本化，G3 migration 用独立版本化脚本（P1-09 设计）。
-6. **G3 阶段不迁移 V1 数据**：V2 shadow 表为新生成数据，不搬运 V1 历史数据（留 G4/G5）。
+### G3E1：Graph Shadow
 
-**G3A~G3E 预期 migration 量**：最小化。G3A 无 migration（仅 flag）；G3B shadow artifact 用文件 store（无 migration）；G3C/D/E 视查询需求决定是否加 shadow 表。**默认不加 ORM 表**，除非 shadow 报告需要查询。
+**目标**：`KNOWLEDGE_GRAPH_PIPELINE_VERSION=v2_shadow` 下，从 Evidence 支撑的 EducationalUnit 生成图谱候选（P1-05）写**独立 shadow graph store**，不接 V1 `KnowledgePoint/KnowledgeRelation`。
 
-## 5. 独立 Router 策略
+**改动范围（P1-09）**：shadow graph store（P1-05 GraphStore fake 基础上 P1-09 实现 Repository）；不写 V1 知识表；图谱失败不影响文档检索。
+**进入门禁**：G3D3 退出通过；P1-05 契约 frozen。
+**退出门禁**：V1 知识 CRUD 与 M7 等价；V2 图谱 shadow 可回溯 Evidence；accepted 节点/边必有 Evidence；关 flag -> 图谱 shadow 停止。
+**回滚**：关 flag + active snapshot pointer 回退。
 
-- 所有 V2 新 endpoint 用**独立 router 文件**（如 `backend/app/api/v1/endpoints/document_v2.py`、`evidence_v2.py`），独立 prefix（`/api/v1/document-v2/`、`/api/v1/evidence-v2/`）。
-- 在 `main.py` 用 `app.include_router(v2_router, prefix=..., tags=["Product1-V2-shadow"])` 注册，**不进 document.py/chat.py 大文件**。
-- V2 endpoint 默认 shadow/只读，需 flag 开启；未开 flag 时返回 503 或空。
-- 旧 endpoint 路径/字段/响应**完全不变**。
+### G3E2：Shadow Diff Report
 
-## 6. 回滚总策略
+**目标**：汇总 G3B~G3E1 的 V1 vs V2 对比，machine-readable（P1-10 quality_gate_report）。**contract/integration diff**（非质量对比）。
+**进入门禁**：G3E1 退出通过。
+**退出门禁**：diff 报告覆盖 G3B~G3E1 全部 shadow 路径；P1-10 独立出具。
 
-**任意批次任意时刻回滚**：
-1. 关对应 flag（`v2_shadow` → `v1_only` / `shadow` → `disabled`）。
-2. 停止新 V2 run（进行中的 shadow run 可完成或中止，不写 V1）。
+## 7. G3 阶段前端策略（不正式挂载）
+
+**G3 阶段 P1-04 Evidence Viewer 不接入正式 Router**。可用：
+- 固定 JSON fixture；
+- Mock API；
+- Story/独立开发页面（dev page，不进 router）；
+- 本地演示数据。
+
+**正式前端挂载延后至 G4**（见 §8），因前端调用后端会形成跨前后端 DTO，与"公开 V2 API DTO 留 G4"冲突。
+
+## 8. G4：API DTO 冻结 + 前端正式挂载（G3 后）
+
+### G4A：Evidence API DTO 冻结
+**目标**：冻结 `internal-evidence-api/1.0`（后端 Evidence API 响应 ↔ 前端 Viewer 输入的 DTO）。
+**进入门禁**：G3E2 退出通过。
+**退出门禁**：DTO 契约 + contract test 冻结；P1-00 + 前端 contract review。
+
+### G4B：Evidence Viewer 正式挂载
+**目标**：`router/index.js` 加独立路由挂载 `EvidenceViewerWithPanel`（P1-04）。**不改** `SplitVideoPlayer/TeacherDashboard/StudentDashboard`。`utils/request.js` 不改；新 API 用独立 `api/evidence.js`。
+**进入门禁**：G4A 退出通过；P1-04 `npm run build` 通过。
+**退出门禁**：独立路由可访问，不影响现有页面；坐标高亮 fail-closed（RISK-02）。
+
+## 9. 独立 V2 Router 权限与隐私约束
+
+所有 V2 shadow endpoint（`/api/v1/document-v2/`、`/api/v1/evidence-v2/` 等）须遵守：
+- **访问控制**：仅管理员或内部测试身份；必须校验 course 权限；**不得允许学生读取其他课程 Evidence**。
+- **去敏**：不得公开原始本地文件路径；不得返回 Provider 原始敏感配置；**默认不记录完整 Memory 和学生输入**（审计去敏）。
+- **Shadow 数据保留**：明确保留期（过期清理）；仅用于 diff/审计，不用于 V1 业务。
+- **未启用响应统一**：flag 未开时返回 **503 + 结构化 `SHADOW_FEATURE_DISABLED`**（不返回空结果，避免被调用方误判为成功）。
+
+## 10. 最小 Migration 策略
+
+G3 各批 shadow 数据**优先用独立 artifact store（JSON/文件）**，不新增 ORM 表。仅当需查询/索引时 P1-09 才设计 migration：
+1. 独立 PR；只加 V2 shadow 表（`p1_shadow_*`），不改 V1 表。
+2. 空库 + 旧库副本测试 + down 回滚。
+3. 不依赖无版本化的 `db_migrator.py`；用独立版本化脚本。
+4. G3 阶段不迁移 V1 历史数据（留 G4/G5）。
+
+**G3A~G3E 预期 migration 量**：最小化。G3A 无 migration；G3B shadow artifact 用文件 store；G3C/D/E 视查询需求。默认不加 ORM 表。
+
+## 11. 回滚总策略
+
+任意批次任意时刻：
+1. 关对应 flag（`v2_shadow`->`v1_only` / `shadow`->`disabled`）。
+2. 停止新 V2 run（进行中 shadow run 可完成或中止，不写 V1）。
 3. V2 shadow 数据保留只读审计（不立即删，除非用户要求）。
-4. 验证 M7 smoke + 回归通过 → 系统与 M7 基线等价。
-5. 图谱通过 active snapshot pointer 回退（P1-05 设计）。
+4. 验证 M7 smoke + 回归 -> 与 M7 基线等价。
+5. 图谱通过 active snapshot pointer 回退。
 6. Migration 回滚：drop shadow 表（down），V1 表未动。
 
-**关 flag 即恢复 V1** 是每批退出门禁的硬性验证项。
+**关 flag 即恢复 V1** 是每批退出门禁硬验证项。
 
-## 7. P1-09 执行约束
+## 12. P1-09 执行约束
 
-- 每批开始前 P1-09 须报告：身份、分支、HEAD、worktree、批准契约、计划改动的共享文件、migration 影响、flag、fallback、回滚、测试。
-- 每批结束 P1-09 须报告：回归结果、migration 证据、flag 与默认值、fallback 行为、回滚指令、外部服务使用、git checks。
+- 每批开始前报告：身份、分支、HEAD、worktree、批准契约、计划改动共享文件、migration 影响、flag、fallback、回滚、测试。
+- 每批结束报告：回归结果、migration 证据、flag 与默认值、fallback 行为、回滚指令、外部服务、git checks。
 - **不 commit/push/merge/rebase/装依赖**，除非用户明确授权。
-- P1-10 独立门禁：每批退出前 P1-10 出具独立验证（不替业务 agent 宣布通过）。
+- P1-10 独立门禁：每批退出前 P1-10 出具独立验证。
 - P1-00 审批每批进入/退出。
 
-## 8. G3 不做的事
+## 13. G3 不做的事
 
 - 不启用 `v2_preferred_with_v1_fallback`（G6）或 `v2_only`。
+- 不把 Memory 注入正式 QA Prompt（G6）。
+- 不二次调用生成模型（G3C）。
+- 不正式挂载前端 Viewer（G4）。
 - 不删旧字段/路径/endpoint。
 - 不把 V2 结果写入 V1 表/索引/任务状态。
-- 不改 P1-01~P1-08 私有算法。
-- 不弱化 P1-10 测试。
-- 不调用真实 Docling/PaddleOCR/向量模型/LLM（shadow 用 fake/离线；真实服务对比留 G5 canary）。
-- 不迁移 V1 历史数据到 V2（留 G4/G5）。
+- 不改 P1-01~P1-08 私有算法；不弱化 P1-10 测试。
+- 不调用真实 Docling/PaddleOCR/向量模型/LLM（shadow 用 fake/离线；真实对比留 G5）。
+- 不迁移 V1 历史数据（G4/G5）。
 - 不修改 M7 维护分支 `refactor/codemind-v3`。
+- 不由 P1-09 修领域契约版本（G2.1 各 owner 修）。
 
-## 9. 审批与启动
+## 14. 审批与启动
 
 本 ADR 为方案，**不修改任何生产代码**。审批流程：
-1. 人工审批本 ADR + 复核报告 `review-1cf0269-pre-g3.md`。
-2. 审批通过后，P1-09 worktree 从 `1cf0269` 创建（`agent/p1-09-integration` 分支）。
-3. P1-09 按 G3A → G3E 顺序执行，每批进入/退出经 P1-00 + P1-10 + 人工确认。
-4. 任一批次不满足退出门禁，停止，不进入下一批。
+1. 人工审批本 ADR（Rev 1）+ 修正后复核报告。
+2. **G2.1**：P1-02/03/07/08 各自补版本常量 -> P1-00 更新 registry -> P1-10 验证 -> 新冻结 SHA。
+3. ADR-0006 标记 Accepted。
+4. P1-09 worktree 从 G2.1 新冻结 SHA 创建。
+5. P1-09 按 G3A -> G3E2 顺序执行，每批人工放行。
+6. G4（DTO 冻结 + 前端挂载）在 G3 全部退出后。
 
-## 10. 风险与缓解
+## 15. 风险与缓解
 
 | 风险 | 缓解 |
 | --- | --- |
-| document.py/document_service.py 改动破坏 M7 | G3B 仅加 adapter seam，不改现有路由/逻辑；独立 router 承载新 endpoint |
-| Migration 误伤 V1 | 只加 shadow 表，不改 V1 表；空库+旧库副本+down 回滚 |
-| Flag 非法值启用 V2 | fail-closed：非法值→v1_only，记 fallback_reason |
+| document.py/document_service.py 改动破坏 M7 | G3B 仅加 adapter seam，不改现有路由；独立 router 承载新 endpoint |
+| Memory 注入改变 V1 回答 | G3D2 硬约束不注入 QA Prompt；正式注入留 G6 |
+| 前端挂载形成未冻结 DTO | G3 不挂载；G4A 先冻结 DTO 再 G4B 挂载 |
+| Flag 非法值误开 V2 | 启动级 fail-fast（拒绝启动） |
+| 配置错误被掩盖 | fail-fast 明确报错，不静默回退 |
 | Shadow 写 V1 表 | 退出门禁硬验证无 V1 表写入（P1-10） |
-| 前端挂载破坏现有页面 | 独立路由，不改 dashboard/player/request.js |
-| 图谱双事实源 | V2 图谱独立 shadow store，不写 V1 KnowledgePoint/KnowledgeRelation |
-| 跨课程/学生污染 | RISK-03/05 对抗测试每批退出验证 |
+| V2 拖垮 V1（CPU/内存/磁盘/延迟） | G3B 资源规则：单课程单任务/幂等/队列满跳过/超时/不占 M7 GPU/磁盘配额 |
+| G3C 二次调 LLM | 硬约束不调；P1-10 验证 trace 无生成模型调用 |
+| V2 Router 越权/泄漏 | 管理员only + course 隔离 + 去敏 + 503 SHADOW_FEATURE_DISABLED |
+| Migration 误伤 V1 | 只加 shadow 表；空库+旧库副本+down |
+| 图谱双事实源 | V2 独立 shadow store，不写 V1 KnowledgePoint |
+| 跨课程/学生污染 | RISK-03/05 对抗测试每批验证 |
