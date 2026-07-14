@@ -291,3 +291,245 @@ class FakeHTTPXClient:
             text="fake httpx success",
             content=b"FAKE_HTTPX_CONTENT",
         )
+
+# ===========================================================================
+# P1-10 NEW fake capabilities for Product 1 contract tests
+# ===========================================================================
+# These fakes follow the same 5+2 mode pattern (success / timeout / service
+# unavailable / malformed / business_failure / partial / conflict) used by
+# the existing fakes above.  They extend the shared test infrastructure so
+# other agents' contract tests can reference them.
+#
+# STRICT SEPARATION: These fakes prove control flow and failure semantics
+# ONLY.  They must NOT be presented as evidence of real model quality.
+# ===========================================================================
+
+
+class FakeParserProvider:
+    """Fake parser provider for DocumentIR contract tests.
+
+    Modes: success, timeout, service_unavailable, malformed,
+           business_failure, partial, conflict.
+    """
+
+    def __init__(self, mode: str = "success"):
+        self.mode = mode
+        self.calls = []
+
+    async def parse(self, source: bytes, **kwargs):
+        self.calls.append({"source_len": len(source), "kwargs": kwargs})
+        malformed = _handle_mode(self.mode)
+        if malformed is not None:
+            return malformed
+        if _is_business_failure(self.mode):
+            return {"status": "business_failure", "reason": BUSINESS_FAILURE_MESSAGE, "blocks": []}
+        if self.mode == "partial":
+            return {
+                "status": "partial",
+                "blocks": [{"id": "b1", "text": "parsed block"}],
+                "errors": ["page 2: unsupported format"],
+            }
+        if self.mode == "conflict":
+            return {"status": "conflict", "reason": "concurrent modification detected", "blocks": []}
+        return {
+            "status": "success",
+            "document_id": "doc-fake-001",
+            "blocks": [
+                {"id": "b1", "type": "text", "text": "Hello world", "page": 1},
+                {"id": "b2", "type": "heading", "text": "Section 1", "page": 1, "level": 1},
+            ],
+            "metadata": {"page_count": 1, "provenance": {"parser": "fake-parser", "version": "1.0"}},
+        }
+
+
+class FakeRetrieverProvider:
+    """Fake retriever provider for Evidence/retrieval contract tests.
+
+    Modes: success, timeout, service_unavailable, malformed,
+           business_failure, partial.
+    """
+
+    def __init__(self, mode: str = "success"):
+        self.mode = mode
+        self.calls = []
+
+    async def retrieve(self, query: str, scope: dict | None = None, **kwargs):
+        self.calls.append({"query": query, "scope": scope, "kwargs": kwargs})
+        malformed = _handle_mode(self.mode)
+        if malformed is not None:
+            return malformed
+        if _is_business_failure(self.mode):
+            return {"status": "business_failure", "reason": BUSINESS_FAILURE_MESSAGE, "chunks": []}
+        if self.mode == "partial":
+            return {
+                "status": "partial",
+                "chunks": [{"id": "c1", "text": "relevant chunk", "score": 0.85}],
+                "errors": ["index shard 2 unavailable"],
+            }
+        return {
+            "status": "success",
+            "chunks": [
+                {"id": "c1", "text": "retrieved chunk 1", "score": 0.95, "source": "doc-001"},
+                {"id": "c2", "text": "retrieved chunk 2", "score": 0.82, "source": "doc-001"},
+            ],
+            "total_hits": 2,
+        }
+
+
+class FakeMasteryProvider:
+    """Fake mastery/cognition provider for LearningEvent contract tests.
+
+    Modes: success, timeout, service_unavailable, malformed,
+           business_failure.
+    """
+
+    def __init__(self, mode: str = "success"):
+        self.mode = mode
+        self.calls = []
+
+    async def estimate(self, student_id: str, course_id: str, events: list | None = None, **kwargs):
+        self.calls.append({
+            "student_id": student_id,
+            "course_id": course_id,
+            "events": events,
+            "kwargs": kwargs,
+        })
+        malformed = _handle_mode(self.mode)
+        if malformed is not None:
+            return malformed
+        if _is_business_failure(self.mode):
+            return {"status": "business_failure", "reason": BUSINESS_FAILURE_MESSAGE, "mastery": {}}
+        return {
+            "status": "success",
+            "mastery": {"concept_1": 0.85, "concept_2": 0.60, "concept_3": 0.45},
+            "evidence_refs": ["evt-001", "evt-002", "evt-003"],
+            "provider": "fake-mastery",
+            "version": "1.0",
+        }
+
+
+class FakeSafetyProvider:
+    """Fake safety evaluator for SafetyPolicy contract tests.
+
+    Modes: success, timeout, service_unavailable, malformed,
+           business_failure.
+    """
+
+    def __init__(self, mode: str = "success"):
+        self.mode = mode
+        self.calls = []
+
+    async def evaluate(self, query: str, context: dict | None = None, **kwargs):
+        self.calls.append({"query": query, "context": context, "kwargs": kwargs})
+        malformed = _handle_mode(self.mode)
+        if malformed is not None:
+            return malformed
+        if _is_business_failure(self.mode):
+            return {"status": "business_failure", "reason": BUSINESS_FAILURE_MESSAGE, "decision": "deny"}
+        return {
+            "status": "success",
+            "decision": "allow" if "forbidden" not in query.lower() else "deny",
+            "reason_code": "ok",
+            "matched_rules": [],
+        }
+
+
+class FakeMemoryStore:
+    """Fake memory store for StudentMemory contract tests.
+
+    Supports create, read, update, delete, and scope isolation.
+    Not a real database -- in-memory dict only.
+    """
+
+    def __init__(self):
+        self._store: dict[str, dict] = {}
+        self.calls = []
+
+    def _key(self, student_id: str, course_id: str, memory_id: str) -> str:
+        return f"{student_id}:{course_id}:{memory_id}"
+
+    def add(self, student_id: str, course_id: str, memory_id: str, data: dict) -> dict:
+        self.calls.append({"action": "add", "student_id": student_id, "course_id": course_id, "memory_id": memory_id})
+        k = self._key(student_id, course_id, memory_id)
+        if k in self._store:
+            raise ValueError(f"Memory already exists: {memory_id}")
+        entry = {"student_id": student_id, "course_id": course_id, "memory_id": memory_id, **data}
+        self._store[k] = entry
+        return entry
+
+    def get(self, student_id: str, course_id: str, memory_id: str) -> dict | None:
+        self.calls.append({"action": "get", "student_id": student_id, "course_id": course_id, "memory_id": memory_id})
+        k = self._key(student_id, course_id, memory_id)
+        entry = self._store.get(k)
+        if entry is None:
+            return None
+        if entry["student_id"] != student_id or entry["course_id"] != course_id:
+            return None
+        return dict(entry)
+
+    def delete(self, student_id: str, course_id: str, memory_id: str) -> bool:
+        self.calls.append({"action": "delete", "student_id": student_id, "course_id": course_id, "memory_id": memory_id})
+        k = self._key(student_id, course_id, memory_id)
+        if k not in self._store:
+            return False
+        del self._store[k]
+        return True
+
+    def list_for_student(self, student_id: str, course_id: str) -> list[dict]:
+        self.calls.append({"action": "list", "student_id": student_id, "course_id": course_id})
+        return [
+            dict(v) for v in self._store.values()
+            if v["student_id"] == student_id and v["course_id"] == course_id
+        ]
+
+    def clear_all(self) -> None:
+        self._store.clear()
+        self.calls.clear()
+
+
+class FakeLearningEventStore:
+    """Fake append-only event store for LearningEvent contract tests."""
+
+    def __init__(self):
+        self._events: list[dict] = []
+        self.calls = []
+
+    def append(self, event: dict) -> dict:
+        self.calls.append({"action": "append", "event": event})
+        event = dict(event)
+        event["_index"] = len(self._events)
+        self._events.append(event)
+        return event
+
+    def get_events(self, student_id: str, course_id: str) -> list[dict]:
+        self.calls.append({"action": "get_events", "student_id": student_id, "course_id": course_id})
+        return [
+            dict(e) for e in self._events
+            if e.get("student_id") == student_id and e.get("course_id") == course_id
+        ]
+
+    def get_by_idempotency_key(self, key: str) -> dict | None:
+        for e in self._events:
+            if e.get("idempotency_key") == key:
+                return dict(e)
+        return None
+
+
+class FakeCitationValidator:
+    """Fake citation validator for Citation contract tests."""
+
+    def __init__(self, mode: str = "success"):
+        self.mode = mode
+        self.calls = []
+
+    def validate(self, citation_key: str, evidence_ids: list[str]) -> dict:
+        self.calls.append({"citation_key": citation_key, "evidence_ids": evidence_ids})
+        if self.mode == "business_failure":
+            return {"valid": False, "reason": BUSINESS_FAILURE_MESSAGE}
+        missing = [eid for eid in evidence_ids if not eid.startswith("evt-")]
+        return {
+            "valid": len(missing) == 0,
+            "citation_key": citation_key,
+            "evidence_ids": evidence_ids,
+            "missing_ids": missing,
+        }
