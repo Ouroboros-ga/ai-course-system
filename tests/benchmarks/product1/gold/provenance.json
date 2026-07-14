@@ -1,0 +1,84 @@
+{
+  "schema_version": "1.0",
+  "owner": "P1-10",
+  "updated_at": "2026-07-13T00:00:00+00:00",
+  "categories": {
+    "parser": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Parsing quality gold data (block/page/bbox/order/table/formula)"
+    },
+    "coordinate": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Coordinate geometry precision gold data"
+    },
+    "citation": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Citation accuracy gold data"
+    },
+    "retrieval": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Retrieval relevance gold data"
+    },
+    "memory_privacy": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Memory isolation gold scenarios"
+    },
+    "memory_deletion": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Deletion completeness gold scenarios"
+    },
+    "learning_event": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Learning event integrity gold data"
+    },
+    "rule_baseline": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Rule-based baseline gold mastery"
+    },
+    "safety_policy": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Safety policy enforcement gold scenarios"
+    },
+    "migration": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Migration forward gold tests"
+    },
+    "rollback": {
+      "source": "TBD",
+      "license": "",
+      "owner": "",
+      "usage_restriction": "",
+      "description": "Rollback integrity gold tests"
+    }
+  }
+}

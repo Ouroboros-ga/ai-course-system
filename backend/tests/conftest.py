@@ -285,6 +285,56 @@ def temp_media_dir(test_artifact_dir):
     return path
 
 
+# ---------------------------------------------------------------------------
+# P1-10 Product 1 new fake fixtures
+# ---------------------------------------------------------------------------
+
+from fakes import (  # noqa: E402
+    FakeParserProvider,
+    FakeRetrieverProvider,
+    FakeMasteryProvider,
+    FakeSafetyProvider,
+    FakeMemoryStore,
+    FakeLearningEventStore,
+    FakeCitationValidator,
+)
+
+
+@pytest.fixture
+def fake_parser_provider():
+    return FakeParserProvider()
+
+
+@pytest.fixture
+def fake_retriever_provider():
+    return FakeRetrieverProvider()
+
+
+@pytest.fixture
+def fake_mastery_provider():
+    return FakeMasteryProvider()
+
+
+@pytest.fixture
+def fake_safety_provider():
+    return FakeSafetyProvider()
+
+
+@pytest.fixture
+def fake_memory_store():
+    return FakeMemoryStore()
+
+
+@pytest.fixture
+def fake_learning_event_store():
+    return FakeLearningEventStore()
+
+
+@pytest.fixture
+def fake_citation_validator():
+    return FakeCitationValidator()
+
+
 def pytest_sessionfinish(session, exitstatus):
     shutil.rmtree(_TEST_ROOT, ignore_errors=True)
     try:
