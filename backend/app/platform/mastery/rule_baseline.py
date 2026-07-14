@@ -13,7 +13,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .contracts import MasteryProviderResult
+from .contracts import MASTERY_PROVIDER_VERSION, MasteryProviderResult
 from .provider import AbstractMasteryProvider, ProviderCapability
 
 
@@ -205,7 +205,7 @@ def _compute_course_mastery(
 
     return MasteryProviderResult(
         provider_name="rule_based",
-        provider_version="1.0.0",
+        provider_version=MASTERY_PROVIDER_VERSION,
         student_id=0,  # Filled by caller
         course_id=0,  # Filled by caller
         mastery_score=round(weighted_score, 4),
