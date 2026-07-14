@@ -18,7 +18,8 @@
 
 - **G0**: ✅ 完成（2026-07-13）。冻结 SHA `f98ce19`，M7 tag `m7-baseline-20260713`，integration 分支 `feature/product1-integration` 已建。见 ADR-0001。
 - **G1**: ✅ 完成（2026-07-14）。P1-01 DocumentIR (`document-ir/1.0`)、P1-07 LearningEvent (`learning/1.0`)、P1-08 SafetyDecision (`safety/1.0`) 契约 + P1-10 测试基建已合流到 `feature/product1-integration`。4 个契约登记为 `frozen-major`。验证：327 product1 契约测试 + 116 现有回归测试全过，零回归。见 ADR-0003。G1 冻结 SHA = `657bfe5`（feature/product1-integration，2026-07-14）。
-- G2–G6: 未开始。
+- **G2**: ✅ 完成（2026-07-14）。P1-02 parser Provider/质量路由、P1-03 Evidence/检索/Citation、P1-06 学生记忆已合流到 `feature/product1-integration`。7 个契约登记为 `frozen-major`（evidence/text-transform/citation/retrieval-provider/student-memory/parser-provider + RetrievedChunk minor 增量）。验证：584 product1 测试 + 116 现有回归全过，零回归。见 ADR-0004。G2 冻结 SHA = 本轮 coordination 提交后的 integration HEAD。
+- G3–G6: 未开始。
 
 ## 合流顺序（依赖驱动）
 
