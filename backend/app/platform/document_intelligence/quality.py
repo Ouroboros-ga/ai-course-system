@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple
 
 from .document_ir.models import DocumentIR, QualityReport, WarningSeverity
+from .registry import PARSER_PROVIDER_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +260,7 @@ class QualityScorer:
             overall_score=round(overall, 4),
             reasons=tuple(reasons),
             details={
+                "parser_provider_version": PARSER_PROVIDER_VERSION,
                 "scorer_version": self._scorer_version,
                 "thresholds": dict(self._thresholds),
             },

@@ -2,6 +2,13 @@
 
 Defines the ``ParserProvider`` protocol that all parsing providers must satisfy,
 and the ``ParserRegistry`` that manages available providers and their capabilities.
+
+Contract version
+----------------
+The parser-provider contract is versioned as ``parser-provider/X.Y``, registered
+in ``docs/refactor/product1/contracts/registry.md``.  The module-level constant
+``PARSER_PROVIDER_VERSION`` is the single canonical source of truth for this
+contract identifier.
 """
 
 from __future__ import annotations
@@ -13,6 +20,15 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 from ..document_intelligence.source_artifact import SourceArtifact
 from .probe import ProbeResult
 from .planner import ParsePlan
+
+# ---------------------------------------------------------------------------
+# Contract version
+# ---------------------------------------------------------------------------
+
+PARSER_PROVIDER_VERSION: str = "parser-provider/1.0"
+"""Canonical contract version for the ParserProvider / QualityDecision / ParsePlan
+interface bundle, matching the registry entry in
+``docs/refactor/product1/contracts/registry.md``."""
 
 
 # ---------------------------------------------------------------------------
