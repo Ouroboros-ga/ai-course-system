@@ -9,7 +9,7 @@ Design rules (per plan §5):
   fabricating a citation.
 - Reranking and prompt construction MUST NOT discard evidence IDs.
 
-Contract version: ``citation/1.0`` (major=1).
+Contract version: ``citation/1.0`` (major=1, registered in registry).
 
 Key semantics:
 - ``citation_key()`` produces a deterministic key from (artifact_id, block_id,
@@ -23,6 +23,8 @@ import hashlib
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+CITATION_VERSION = "citation/1.0"
 
 
 class CitationStatus(str, Enum):

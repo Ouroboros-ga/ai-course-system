@@ -10,7 +10,7 @@ Design rules (per plan §5 and RISK-10):
 - Reranking/prompt construction must NOT discard evidence IDs.
 - Fusion (RRF) must work with mixed sparse+dense inputs.
 
-Contract version: ``retrieval-provider/1.0`` (major=1).
+Contract version: ``retrieval-provider/1.0`` (major=1, registered in registry).
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Protocol, runtime_checkable
 
 from app.platform.retrieval.schemas import RetrievedChunk, RetrievalScope
+
+RETRIEVAL_PROVIDER_VERSION = "retrieval-provider/1.0"
 
 logger = logging.getLogger(__name__)
 

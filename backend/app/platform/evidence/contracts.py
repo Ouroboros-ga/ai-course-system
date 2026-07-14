@@ -13,7 +13,7 @@ Design rules (per plan §5 and ADR-0003):
 - Evidence must not fabricate source locations or citation keys.
 
 Version semantics (P1-03 contract, major=1):
-- ``evidence/1``: current contract version.
+- ``evidence/1.0``: current contract version (registered in registry).
 - Changes: adding optional fields is minor; changing block_id semantics is major.
 """
 
@@ -23,6 +23,8 @@ import datetime
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
+
+EVIDENCE_VERSION = "evidence/1.0"
 
 
 class EvidenceStatus(str, Enum):
