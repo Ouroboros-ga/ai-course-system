@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>P1-04 Evidence Viewer - Dev Page</title>
+  <style>
+    /* Reset / minimal base styles */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #f8fafc;
+      color: #1f2937;
+      -webkit-font-smoothing: antialiased;
+    }
+    #app { min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <noscript>
+      <p>This page requires JavaScript to render the evidence viewer.</p>
+    </noscript>
+  </div>
+
+  <!--
+    P1-04 Standalone Dev Page
+    -------------------------
+    This page mounts the DevPage component for isolated fixture-based
+    verification of the evidence viewer feature.
+
+    To run:
+      1. Ensure frontend dependencies are installed (npm install).
+      2. Start Vite dev server: npm run dev
+      3. Navigate to /src/features/evidence-viewer/dev/index.html
+         OR use a dedicated route added by P1-09 during integration.
+
+    For G2 isolated testing, a minimal Vite entry can be created by
+    symlinking or adding this file as a Vite entry point.
+  -->
+
+  <script type="module">
+    import { createApp } from 'vue'
+    import DevPage from './DevPage.vue'
+
+    const app = createApp(DevPage)
+    app.mount('#app')
+  </script>
+</body>
+</html>
