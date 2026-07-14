@@ -1,6 +1,8 @@
 """
 SafetyDecision, SourceAccessDecision, and stable ReasonCode definitions.
 
+Contract version: safety/1.0
+
 Reason codes are guaranteed stable across versions: once assigned, a reason
 code's semantics never change. New codes may be added (minor), but existing
 codes are never removed or redefined (major change).
@@ -13,6 +15,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+# Canonical contract version registered with the safety registry.
+SAFETY_VERSION: str = "safety/1.0"
 
 # ---------------------------------------------------------------------------
 # DecisionStage
