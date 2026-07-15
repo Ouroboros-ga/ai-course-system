@@ -472,6 +472,30 @@ class JumpHistoryManager:
             f"[跳转记录创建] 用户{user_id}: {from_node_title} -> {to_node_title}, "
             f"深度={jump_depth}, 触发原因={trigger_type}"
         )
+
+        # ---- P1-09 G3D1: V2 learning-event shadow (after V1 commit) ----
+        # Triggered AFTER the V1 jump record is committed. Maps the V1
+        # jump into a P1-07 LearningEvent in an isolated shadow store.
+        # trigger_learning_event_shadow catches ALL errors (business
+        # fail-closed) so V1 is never affected; outer try/except is a
+        # second safety net. Default flag v1_only = no-op.
+        try:
+            from app.platform.shadow.learning_shadow import trigger_learning_event_shadow
+            trigger_learning_event_shadow(
+                event_type="prerequisite_jump",
+                student_id=user_id,
+                course_id=course_id,
+                sequence_number=jump_record.id,
+                payload={
+                    "from_node_id": from_node_id,
+                    "to_node_id": to_node_id,
+                    "trigger_type": trigger_type,
+                    "urgency_level": urgency_level,
+                    "confidence_score": confidence_score,
+                },
+            )
+        except Exception as learning_shadow_err:  # noqa: BLE001
+            logger.warning(f"[G3D1 learning shadow] suppressed (V1 unaffected): {learning_shadow_err}")
         
         return jump_record
     

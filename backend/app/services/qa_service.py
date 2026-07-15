@@ -281,6 +281,7 @@ class QAService:
         rag_top_k: int = 3,
         strict_mode: bool = False,
         course_id: Optional[Any] = None,
+        student_id: Optional[Any] = None,
     ) -> Dict[str, Any]:
         """
         基于RAG检索增强的问答
@@ -329,6 +330,34 @@ class QAService:
                 )
             except Exception as evidence_shadow_err:  # noqa: BLE001
                 print(f"[G3C evidence shadow] suppressed (V1 unaffected): {evidence_shadow_err}")
+
+        # ---- P1-09 G3D2: V2 memory-candidate shadow (NOT injected into QA) ----
+        # HARD CONSTRAINT (ADR-0006 §G3D2): candidate memory is NOT injected
+        # into the formal QA prompt. The V1 answer is unchanged. This only
+        # records "what memory context WOULD be provided". Default flag
+        # disabled = no-op. Business fail-closed; V1 never affected.
+        try:
+            from app.platform.shadow.memory_candidate_shadow import trigger_memory_candidate_shadow
+            trigger_memory_candidate_shadow(
+                question=question,
+                student_id=student_id,
+                course_id=course_id,
+                v1_context={"rag_sources": rag_sources} if use_rag else {},
+            )
+        except Exception as memory_shadow_err:  # noqa: BLE001
+            print(f"[G3D2 memory shadow] suppressed (V1 unaffected): {memory_shadow_err}")
+
+        # ---- P1-09 G3D3: V2 safety dry-run (does NOT block V1) ----
+        # Records would_allow / would_refuse; V1 is never blocked.
+        # Default flag disabled = no-op. Business fail-closed.
+        try:
+            from app.platform.shadow.safety_dryrun_shadow import trigger_safety_dryrun
+            trigger_safety_dryrun(
+                question=question,
+                course_id=course_id,
+            )
+        except Exception as safety_shadow_err:  # noqa: BLE001
+            print(f"[G3D3 safety dry-run] suppressed (V1 unaffected): {safety_shadow_err}")
 
         full_context = course_context
         if rag_context:
