@@ -22,7 +22,7 @@
 | `ParserProvider` / `QualityDecision` / `ParsePlan` | P1-02 | P1-09（接线）、P1-10（评测） | 消费 document-ir/1.0；质量失败与运行时失败分离；不编造结构 | P1-00 + P1-01 | `parser-provider/1.0` | frozen-major | G2 ✅ |
 | `SafetyDecision` / `AuditEvent` | P1-08 | QA、检索、前端、审计 | reason code 稳定；平台底线不能被课程策略覆盖 | P1-00 + P1-09/P1-10 | `safety/1.0` | frozen-major | G1 ✅ |
 | `TaskResult` / `TaskStatus` | P1-09（维护现有契约） | 所有异步/外部任务 | 不改变 R2B/R2C 现有映射；只增 optional metadata | P1-00 + P1-10 | 现有版 | consumed | — |
-| 公开 V2 API DTO | P1-09 | 前端、P1-10 | 旧路径和原字段不删改；新字段可选；旧前端可工作 | P1-00 + 前端 contract review | — | draft | G4 |
+| 公开 V2 Evidence API DTO | P1-09 | 前端、P1-10 | 旧路径和原字段不删改；新字段可选；旧前端可工作 | P1-00 + 前端 contract review | `internal-evidence-api/1.0` | frozen-major | G4 ✅ |
 
 ## 2. 冻结规则
 

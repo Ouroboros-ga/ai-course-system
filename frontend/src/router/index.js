@@ -89,6 +89,16 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'admin' }
     },
     {
+      // P1-09 G4B: formal mount of the P1-04 Evidence Viewer.
+      // Independent route; does not touch SplitVideoPlayer/TeacherDashboard/
+      // StudentDashboard. Admin-only (matches ADR-0006 §9 V2 endpoint
+      // admin-only). Wired to the V2 Evidence API via api/evidence.js.
+      path: '/evidence-viewer/:documentId?',
+      name: 'evidence-viewer',
+      component: loadView('EvidenceViewerPage'),
+      meta: { requiresAuth: true, role: 'admin' }
+    },
+    {
       path: '/:pathMatch(.*)*',
       name: 'not-found',
       component: loadView('Home')

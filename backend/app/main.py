@@ -52,6 +52,7 @@ from app.api.v1.endpoints import (
     platform,           # 平台管理功能
     prerequisite,       # 前置知识智能跳转
     document_v2,        # P1-09 G3B V2 shadow (independent router, ADR-0006)
+    evidence_v2,        # P1-09 G4A V2 Evidence API DTO (internal-evidence-api/1.0, ADR-0006)
 )
 from app.schemas import UnifiedResponse
 
@@ -108,6 +109,12 @@ app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1
 # document.py routes. Default flag v1_only -> endpoints return 503.
 app.include_router(document_v2.router, prefix="/api/v1/document-v2", tags=["Product1-V2-shadow"])
+
+# P1-09 G4A: independent V2 Evidence API router (internal-evidence-api/1.0).
+# Admin-only (Depends(admin_only)); 503 SHADOW_FEATURE_DISABLED when
+# EVIDENCE_CITATION_MODE not v2_shadow. Serves the frozen Evidence API DTO
+# to the P1-04 Evidence Viewer. Does NOT touch V1 routes.
+app.include_router(evidence_v2.router, prefix="/api/v1/evidence-v2", tags=["Product1-V2-shadow"])
 
 
 # 根路径健康检查

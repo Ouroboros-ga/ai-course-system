@@ -50,8 +50,8 @@ import {
 // API base URL configuration
 // ---------------------------------------------------------------------------
 
-/** Base URL for evidence API endpoints. P1-09 will configure this. */
-let API_BASE = '/api/v2/evidence'
+/** Base URL for evidence API endpoints (frozen internal-evidence-api/1.0). */
+let API_BASE = '/api/v1/evidence-v2'
 
 /**
  * Set the API base URL (called by P1-09 during integration).
