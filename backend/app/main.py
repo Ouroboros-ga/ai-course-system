@@ -53,6 +53,7 @@ from app.api.v1.endpoints import (
     prerequisite,       # 前置知识智能跳转
     document_v2,        # P1-09 G3B V2 shadow (independent router, ADR-0006)
     evidence_v2,        # P1-09 G4A V2 Evidence API DTO (internal-evidence-api/1.0, ADR-0006)
+    canary_v2,          # P1-09 G5A V2 Canary quality-gate (no real services, ADR-0006)
 )
 from app.schemas import UnifiedResponse
 
@@ -115,6 +116,12 @@ app.include_router(document_v2.router, prefix="/api/v1/document-v2", tags=["Prod
 # EVIDENCE_CITATION_MODE not v2_shadow. Serves the frozen Evidence API DTO
 # to the P1-04 Evidence Viewer. Does NOT touch V1 routes.
 app.include_router(evidence_v2.router, prefix="/api/v1/evidence-v2", tags=["Product1-V2-shadow"])
+
+# P1-09 G5A: independent V2 Canary quality-gate router. Admin-only; 503
+# SHADOW_FEATURE_DISABLED when EVIDENCE_CITATION_MODE not v2_shadow. Runs
+# end-to-end shadow canary WITHOUT real services (no LLM/Docling/OCR/vector);
+# real-provider canary (G5B) deferred. Does NOT touch V1 routes.
+app.include_router(canary_v2.router, prefix="/api/v1/canary-v2", tags=["Product1-V2-shadow"])
 
 
 # 根路径健康检查

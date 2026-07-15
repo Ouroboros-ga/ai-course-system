@@ -259,6 +259,34 @@ LearningEvent -> LearningEvidence -> 候选 MasteryState -> 候选 StudentMemory
 **进入门禁**：G4A 退出通过；P1-04 `npm run build` 通过。
 **退出门禁**：独立路由可访问，不影响现有页面；坐标高亮 fail-closed（RISK-02）。
 
+## 8A. G5A：质量门禁框架（Canary，不接真实服务）
+
+**背景**：G5 Canary 原意为"真实 V2 数据流 + 质量对比"（真实 Docling/PaddleOCR/向量模型/LLM 对比 V1，金标 QA 语义正确率）。但 G2 阶段 P1-02/P1-03 只实现了 Protocol 接口 + Fake 实现（真实 provider 需装依赖/下模型/接真实服务），V1 本身亦离线/本地（TreeRAG + 统计 keyword + 自有 DocumentParser，无向量模型）。真实 canary 与 CLAUDE.md「不装依赖/不接真实付费服务」冲突。经人工决策，G5 拆为 G5A（质量门禁框架，不接真实服务）+ G5B（真实 provider canary，待约束解除）。
+
+### G5A：质量门禁框架
+**目标**：把 G3/G4 deferred 的"质量层"从静态描述（g3e2-shadow-diff-report.json，手工撰写）升级为运行时计算的结构化质量指标 + 端到端 canary 可运行性 + canary 范围控制。**不接真实服务**（不调 `process_document`、不调 `llm_client`、不调真实 Docling/OCR/向量）。
+
+**改动范围（P1-09）**：
+- 新增 `platform/canary/quality_gate.py`：运行时聚合 G3B~G3E1 shadow trace JSON，计算质量指标 + PASS/FAIL 判定（硬约束：`llm_calls_total==0`、`would_inject_any==False`、`v1_blocked_any==False`、`v1_tables_touched_any==False`、`accepted_traces_evidence_all==True`、`scope_isolation_rate==1.0`；informational：`citation_abstain_rate`）。
+- 新增 `platform/canary/canary_runner.py`：all-flags-on（patch 各 shadow 模块 flag 读取函数，非改真实 settings）下用 fake/fixture V1 输入调 6 个 trigger，证明全链路端到端可运行 + trace 生成 + 质量门禁可计算；canary 范围控制（`course_ids` allowlist，非全局）。
+- 新增 `api/v1/endpoints/canary_v2.py`：admin-only `/api/v1/canary-v2/run` + `/report`（503 SHADOW_FEATURE_DISABLED when flag off，遵 §9）。
+- `main.py` +1 import +1 include_router。
+- 测试 + 本节 ADR。
+
+**进入门禁**：G4B 退出通过。
+**退出门禁**：
+- 质量门禁聚合从 trace 正确计算指标；verdict 逻辑正确（全健康 PASS，任一硬约束违反 FAIL）。
+- all-flags-on canary 端到端：6 路径 triggered、trace 生成、质量门禁 PASS；范围控制（allowlist 外课程跳过）；**无真实服务调用**（`llm_client.chat` 不被调用，`real_services_called==False`）。
+- P1-10 独立验证：scope（canary/ 新增 + main.py +1/+1 + 本节）、V1/共享文件 UNCHANGED、无真实服务、回归 +新测试 0 新失败。
+- 关 flag -> canary 503（flag-gated）。
+
+**回滚**：关 flag -> canary endpoint 503；canary 模块独立，不影响 V1。
+
+### G5B：真实 provider canary（待约束解除）
+**目标**：实现真实 V2 provider（Docling/PaddleOCR/向量模型/reranker）+ 真实质量对比（金标 QA 评测、真实解析质量）。
+**前置**：人工解除 CLAUDE.md「不装依赖/不接真实付费服务」约束；真实 provider 实现（P1-02/P1-03）；金标评测集。
+**状态**：未放行，待约束解除 + 人工 go。
+
 ## 9. 独立 V2 Router 权限与隐私约束
 
 所有 V2 shadow endpoint（`/api/v1/document-v2/`、`/api/v1/evidence-v2/` 等）须遵守：
