@@ -1972,6 +1972,26 @@ class DocumentService:
         except Exception as shadow_err:  # noqa: BLE001 - shadow must never break V1
             logger.warning(f"[G3B shadow] suppressed error (V1 unaffected): {shadow_err}")
 
+        # ---- P1-09 G3E1: V2 knowledge-graph shadow (after V1 retrieval) ----
+        # Triggered AFTER V1 RAG retrieval succeeded. Shadow generates P1-05
+        # EducationalUnit/GraphNode/GraphRelation candidates from the V1
+        # RAG knowledge points (offline, no LLM) and writes them to an
+        # isolated shadow graph store. It NEVER touches V1
+        # KnowledgePoint/KnowledgeRelation. trigger_graph_shadow catches
+        # ALL errors internally (business-level fail-closed) so V1 is never
+        # affected; the outer try/except is a second safety net. Only runs
+        # when KNOWLEDGE_GRAPH_PIPELINE_VERSION is effectively v2_shadow
+        # (flag-gated, conflict-aware); default v1_only makes this a no-op.
+        if enable_rag:
+            try:
+                from app.platform.shadow.graph_shadow import trigger_graph_shadow
+                trigger_graph_shadow(
+                    knowledge_points=getattr(rag_result, "knowledge_points", []) or [],
+                    course_id=course_id,
+                )
+            except Exception as shadow_err:  # noqa: BLE001 - shadow must never break V1
+                logger.warning(f"[G3E1 shadow] suppressed error (V1 unaffected): {shadow_err}")
+
         return DocumentProcessResult(
             parse_result=parse_result,
             structure_result=structure_result,
