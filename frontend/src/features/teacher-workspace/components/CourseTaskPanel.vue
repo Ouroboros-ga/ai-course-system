@@ -34,14 +34,17 @@ const tasks = ref([]); const loading = ref(false); const loadError = ref(''); co
 function ttsTask(payload) {
   const status = String(payload?.status || 'not_started').toLowerCase()
   const errors = Array.isArray(payload?.errors) ? payload.errors : []
+  const total = Number(payload?.total || 0)
+  const completed = Number(payload?.completed || 0)
+  const error = errors.map(item => item.error || item.message || String(item)).filter(Boolean).join('；')
   return normalizeLongTask({
-    id: `tts-${props.courseId}`,
+    id: 'tts-' + props.courseId,
     title: '课程 TTS 语音',
     status,
-    total: payload?.total || 0,
-    completed: payload?.completed || 0,
-    error: errors.map(item => item.error || item.message || String(item)).filter(Boolean).join('；'),
-    message: payload?.message,
+    total,
+    completed,
+    error,
+    message: ttsMessage(status, completed, total, error, payload?.message),
     requires_confirmation: ['completed', 'partial'].includes(status),
   })
 }
@@ -50,10 +53,31 @@ function videoTasks(payload) {
   const rawTasks = Array.isArray(payload?.tasks) ? payload.tasks : []
   return rawTasks.map(item => normalizeLongTask({
     ...item,
-    id: `video-${item.id}`,
-    title: item.node_id ? `知识点 ${item.node_id} 的数字人视频` : '课程数字人视频',
+    id: 'video-' + item.id,
+    title: item.node_id ? '知识点 ' + item.node_id + ' 的数字人视频' : '课程数字人视频',
+    message: videoMessage(item),
     requires_confirmation: ['completed', 'succeeded'].includes(String(item.status).toLowerCase()),
   }))
+}
+
+function ttsMessage(status, completed, total, error, fallback) {
+  if (error) return error
+  if (status === 'partial') return '已完成 ' + completed + '/' + total + ' 个知识点；其余内容请在原编辑器重新发起。'
+  if (status === 'completed') return total ? '已完成 ' + completed + '/' + total + ' 个知识点，仍待教师确认。' : '语音已生成，仍待教师确认。'
+  if (status === 'no_script') return '尚未找到可生成语音的脚本。'
+  if (status === 'not_started') return total ? '尚未开始，待生成 ' + total + ' 个知识点的语音。' : '尚未开始生成。'
+  return fallback || ''
+}
+
+function videoMessage(task) {
+  const status = String(task?.status || '').toLowerCase()
+  if (task?.error_message) return task.error_message
+  if (status === 'tts_synthesizing') return '正在合成该知识点的音频。'
+  if (status === 'tts_completed') return '音频已完成，正在准备数字人生成。'
+  if (status === 'dh_generating') return '正在生成数字人视频。'
+  if (status === 'pending') return '任务已排队，后台将继续处理。'
+  if (status === 'completed') return '视频已生成，仍待教师确认。'
+  return ''
 }
 
 const summary = computed(() => ({
