@@ -6,6 +6,7 @@ import router from './router'
 
 import './styles/tokens.css'
 import './styles/dark.css'
+import './styles/teacher-workspace.css'
 
 const app = createApp(App)
 

@@ -1,0 +1,19 @@
+/* Shared visual contract for the teacher production and knowledge-governance workspaces. */
+.production-workspace,
+.mapping-workspace {
+  --color-primary: #1769aa;
+  --color-primary-hover: #0b5f97;
+  --color-primary-light: #e8f1f8;
+  --color-primary-foreground: #ffffff;
+  --color-success: #15803d;
+  --color-success-hover: #166534;
+  --color-success-light: #dcfce7;
+  --color-warning: #a16207;
+  --color-warning-hover: #854d0e;
+  --color-warning-light: #fffbeb;
+  --color-danger: #b91c1c;
+  --color-danger-hover: #991b1b;
+  --color-danger-light: #fef2f2;
+  --color-info: #1769aa;
+  --color-info-light: #eff6ff;
+}
