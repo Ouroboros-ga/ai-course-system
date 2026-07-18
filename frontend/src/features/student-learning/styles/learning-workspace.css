@@ -1135,6 +1135,12 @@
   border: 0;
 }
 
+.sl-drawer__body > .sl-outline > .sl-panel-heading,
+.sl-drawer__body > .sl-assistant > .sl-panel-heading,
+.sl-drawer__body > .sl-notes > .sl-panel-heading {
+  display: none;
+}
+
 body.sl-drawer-open {
   overflow: hidden;
 }
