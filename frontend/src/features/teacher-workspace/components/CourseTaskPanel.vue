@@ -71,9 +71,10 @@ async function refresh() {
     if (tts) newTasks.push(ttsTask(tts))
     newTasks.push(...videoTasks(video))
     tasks.value = newTasks
-    emit('summary', summary.value)
+    emit('summary', { ...summary.value, known: true })
   } catch {
     loadError.value = '课程任务暂时无法读取。不会隐藏已有失败；请检查网络、课程权限或相关服务后重试。'
+    emit('summary', { ...summary.value, known: false })
   } finally { loading.value = false }
 }
 
@@ -101,7 +102,7 @@ async function retry(task) {
   } catch { showToast('重新提交失败，请检查数字人服务后重试。', 'error') } finally { const next = new Set(retryingIds.value); next.delete(task.id); retryingIds.value = next }
 }
 
-function confirm(task) { const next = new Set(confirmedIds.value); next.add(task.id); confirmedIds.value = next; showToast('已标记为本次会话已检查。当前后端尚未提供教师确认的持久化接口。', 'info'); emit('summary', summary.value) }
+function confirm(task) { const next = new Set(confirmedIds.value); next.add(task.id); confirmedIds.value = next; showToast('已标记为本次会话已检查。当前后端尚未提供教师确认的持久化接口。', 'info'); emit('summary', { ...summary.value, known: true }) }
 onMounted(() => { refresh(); timerId = window.setInterval(refresh, 10000) })
 onBeforeUnmount(() => { if (timerId) window.clearInterval(timerId) })
 </script>
