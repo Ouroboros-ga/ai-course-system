@@ -1,14 +1,12 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
+import { featureFlags } from '@/config/featureFlags.js'
 
 const loadView = (view) => {
   return () => import(`../views/${view}.vue`)
 }
 
-const prototypeRoutes = (
-  import.meta.env.DEV ||
-  import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'true'
-) ? [
+const prototypeRoutes = import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'true' ? [
     {
       path: '/prototype/student-learning/:courseId?',
       name: 'prototype-student-learning',
@@ -97,8 +95,16 @@ const router = createRouter({
     {
       path: '/player/course/:courseId',
       name: 'student-player',
-      component: loadView('StudentPlayer'),
-      meta: { requiresAuth: true, role: 'student' }
+      component: featureFlags.studentLearningWorkspace
+        ? loadView('StudentLearningWorkspace')
+        : loadView('StudentPlayer'),
+      meta: {
+        requiresAuth: true,
+        role: 'student',
+        feature: featureFlags.studentLearningWorkspace
+          ? 'student-learning-workspace'
+          : 'legacy-student-player'
+      }
     },
     ...prototypeRoutes,
     {
