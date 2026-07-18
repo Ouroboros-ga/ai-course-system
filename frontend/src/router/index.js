@@ -21,6 +21,21 @@ const prototypeRoutes = import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'tru
     }
   ] : []
 
+const teacherQaRoutes = import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'true' &&
+  import.meta.env.VITE_ENABLE_TEACHER_WORKSPACE_QA === 'true' ? [
+    {
+      path: '/prototype/teacher-production/:courseId?',
+      name: 'prototype-teacher-production-workspace',
+      component: loadView('TeacherProductionWorkspace'),
+      meta: { prototype: true }
+    },
+    {
+      path: '/prototype/teacher-mapping/:courseId?',
+      name: 'prototype-teacher-mapping-workspace',
+      component: loadView('KnowledgeMappingWorkspace'),
+      meta: { prototype: true }
+    }
+  ] : []
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -123,6 +138,7 @@ const router = createRouter({
       }
     },
     ...prototypeRoutes,
+    ...teacherQaRoutes,
     {
       path: '/admin',
       name: 'admin-panel',
