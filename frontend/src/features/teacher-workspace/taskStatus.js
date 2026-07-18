@@ -4,8 +4,17 @@
  */
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled', 'timeout', 'partial_success'])
 
+const STATUS_ALIASES = {
+  completed: 'succeeded', done: 'succeeded', success: 'succeeded',
+  processing: 'running', generating: 'running', tts_synthesizing: 'running',
+  tts_completed: 'running', dh_generating: 'running', queued: 'pending',
+  not_started: 'pending', no_script: 'pending', partial: 'partial_success',
+  error: 'failed',
+}
+
 export function normalizeLongTask(payload = {}) {
-  const rawStatus = String(payload.status || payload.state || 'pending').toLowerCase()
+  const incomingStatus = String(payload.status || payload.state || 'pending').toLowerCase()
+  const rawStatus = STATUS_ALIASES[incomingStatus] || incomingStatus
   const status = ['pending', 'running', 'succeeded', 'failed', 'cancelled', 'timeout', 'partial_success'].includes(rawStatus)
     ? rawStatus
     : 'pending'
@@ -26,6 +35,7 @@ export function normalizeLongTask(payload = {}) {
     canRetry: ['failed', 'timeout', 'partial_success'].includes(status),
     isTerminal: TERMINAL.has(status),
     requiresReview: status === 'succeeded' && payload.requires_confirmation === true,
+    source: payload,
   }
 }
 
