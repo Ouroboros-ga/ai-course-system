@@ -81,6 +81,22 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'teacher' }
     },
     {
+      path: '/teacher/course/:courseId/production',
+      name: 'teacher-production-workspace',
+      component: featureFlags.teacherProductionWorkspace
+        ? loadView('TeacherProductionWorkspace')
+        : loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher', feature: 'teacher-production-workspace' }
+    },
+    {
+      path: '/teacher/course/:courseId/mapping',
+      name: 'teacher-knowledge-mapping',
+      component: featureFlags.knowledgeMappingWorkspace
+        ? loadView('KnowledgeMappingWorkspace')
+        : loadView('TeacherDashboard'),
+      meta: { requiresAuth: true, role: 'teacher', feature: 'knowledge-mapping-workspace' }
+    },
+    {
       path: '/student',
       name: 'student-dashboard',
       component: loadView('StudentDashboard'),
