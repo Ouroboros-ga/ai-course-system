@@ -1,0 +1,419 @@
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+
+import { askQuestion } from '@/api/chat.js'
+import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
+import {
+  buildProgressPayload,
+  clamp,
+  findNodeIndexAtTime,
+  normalizePlayerData,
+  resolvePageAtTime,
+  withAccessToken,
+} from '../adapters/playerWorkspaceAdapter.js'
+
+export const LEARNING_MODES = Object.freeze({
+  GUIDED: 'guided',
+  STUDY: 'study',
+})
+
+const readJson = (key, fallback) => {
+  try {
+    const value = window.localStorage.getItem(key)
+    return value ? JSON.parse(value) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+const writeJson = (key, value) => {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Local persistence is a convenience. A blocked storage quota must not stop learning.
+  }
+}
+
+export function useLearningWorkspace(courseId) {
+  const status = ref('loading')
+  const error = ref('')
+  const course = ref(null)
+  const mode = ref(LEARNING_MODES.GUIDED)
+  const currentNodeIndex = ref(0)
+  const currentTime = ref(0)
+  const currentPage = ref(1)
+  const completedNodes = ref([])
+  const isPlaying = ref(false)
+  const playbackRate = ref(1)
+  const volume = ref(0.85)
+  const isMuted = ref(false)
+  const captionsEnabled = ref(true)
+  const outlineOpen = ref(true)
+  const assistantOpen = ref(true)
+  const notesOpen = ref(false)
+  const mobilePanel = ref(null)
+  const questionDraft = ref('')
+  const messages = ref([])
+  const isAsking = ref(false)
+  const notes = ref({})
+  const saveState = ref('saved')
+  const mediaError = ref('')
+  const returnAnchor = ref(null)
+
+  const storagePrefix = 'student-learning-workspace:' + courseId
+  const viewStorageKey = storagePrefix + ':view'
+  const notesStorageKey = storagePrefix + ':notes'
+  let viewPersistTimer = null
+  let progressTimer = null
+
+  const nodes = computed(() => course.value?.nodes ?? [])
+  const slides = computed(() => course.value?.slides ?? [])
+  const pptPages = computed(() => course.value?.pptPages ?? [])
+  const currentNode = computed(() => nodes.value[currentNodeIndex.value] ?? null)
+  const currentNodeId = computed(() => currentNode.value?.id ?? null)
+  const currentSlide = computed(() => {
+    const slide = slides.value.find(item => item.page === currentPage.value)
+    if (!slide) return null
+    return {
+      ...slide,
+      url: withAccessToken(slide.url, window.localStorage.getItem('token')),
+    }
+  })
+  const currentPptPage = computed(() => {
+    return pptPages.value.find(item => item.page === currentPage.value) ?? null
+  })
+  const totalPages = computed(() => {
+    const slideMax = slides.value.at(-1)?.page ?? 0
+    const textMax = pptPages.value.at(-1)?.page ?? 0
+    const nodeMax = nodes.value.reduce((max, node) => Math.max(max, node.pageEnd), 0)
+    return Math.max(1, slideMax, textMax, nodeMax)
+  })
+  const currentVideoUrl = computed(() => {
+    return withAccessToken(
+      currentNode.value?.videoUrl ?? '',
+      window.localStorage.getItem('token')
+    )
+  })
+  const progressPercent = computed(() => {
+    if (!course.value) return 0
+    const restored = course.value.savedProgress.completionRate
+    const timeProgress = course.value.totalDuration > 0
+      ? (currentTime.value / course.value.totalDuration) * 100
+      : 0
+    return clamp(Math.max(restored, timeProgress), 0, 100)
+  })
+  const noteAnchorKey = computed(() => {
+    return String(currentNodeId.value ?? 'course') + ':page-' + currentPage.value
+  })
+  const currentNote = computed({
+    get: () => notes.value[noteAnchorKey.value] ?? '',
+    set: value => {
+      notes.value = {
+        ...notes.value,
+        [noteAnchorKey.value]: String(value),
+      }
+      writeJson(notesStorageKey, notes.value)
+    },
+  })
+
+  function restoreViewState() {
+    const saved = readJson(viewStorageKey, {})
+    mode.value = Object.values(LEARNING_MODES).includes(saved.mode)
+      ? saved.mode
+      : LEARNING_MODES.GUIDED
+    playbackRate.value = clamp(Number(saved.playbackRate) || 1, 0.5, 2)
+    volume.value = clamp(Number(saved.volume) || 0.85, 0, 1)
+    isMuted.value = Boolean(saved.isMuted)
+    captionsEnabled.value = saved.captionsEnabled !== false
+    outlineOpen.value = saved.outlineOpen !== false
+    assistantOpen.value = saved.assistantOpen !== false
+    notesOpen.value = Boolean(saved.notesOpen)
+    questionDraft.value = String(saved.questionDraft || '')
+    notes.value = readJson(notesStorageKey, {})
+  }
+
+  function persistViewState() {
+    window.clearTimeout(viewPersistTimer)
+    viewPersistTimer = window.setTimeout(() => {
+      writeJson(viewStorageKey, {
+        mode: mode.value,
+        playbackRate: playbackRate.value,
+        volume: volume.value,
+        isMuted: isMuted.value,
+        captionsEnabled: captionsEnabled.value,
+        outlineOpen: outlineOpen.value,
+        assistantOpen: assistantOpen.value,
+        notesOpen: notesOpen.value,
+        questionDraft: questionDraft.value,
+      })
+    }, 120)
+  }
+
+  async function load() {
+    status.value = 'loading'
+    error.value = ''
+    mediaError.value = ''
+
+    try {
+      const response = await getPlayerInitData(courseId)
+      const normalized = normalizePlayerData(response)
+      if (!normalized.nodes.length) {
+        throw new Error('课程暂无可学习的讲解节点')
+      }
+
+      course.value = normalized
+      currentNodeIndex.value = normalized.savedProgress.currentNodeIndex
+      currentTime.value = normalized.savedProgress.currentTime
+      currentPage.value = normalized.savedProgress.currentPage
+      restoreViewState()
+      status.value = 'ready'
+      startProgressTimer()
+    } catch (loadError) {
+      error.value = loadError?.message || '课程内容加载失败，请稍后重试'
+      status.value = 'error'
+    }
+  }
+
+  function switchMode(nextMode) {
+    if (!Object.values(LEARNING_MODES).includes(nextMode)) return
+    mode.value = nextMode
+  }
+
+  function selectNode(index, options = {}) {
+    if (!nodes.value.length) return
+    const nextIndex = clamp(Number(index) || 0, 0, nodes.value.length - 1)
+    currentNodeIndex.value = nextIndex
+    const node = nodes.value[nextIndex]
+    if (!options.preserveTime) {
+      currentTime.value = node.timestampStart
+    }
+    currentPage.value = options.page ?? resolvePageAtTime(node, currentTime.value)
+    mediaError.value = ''
+    if (options.play === true) isPlaying.value = true
+  }
+
+  function seekTo(globalTime) {
+    if (!course.value) return
+    const nextTime = clamp(
+      Number(globalTime) || 0,
+      0,
+      course.value.totalDuration || Number.MAX_SAFE_INTEGER
+    )
+    const nextIndex = findNodeIndexAtTime(nodes.value, nextTime)
+    if (nextIndex !== currentNodeIndex.value) {
+      currentNodeIndex.value = nextIndex
+    }
+    currentTime.value = nextTime
+    currentPage.value = resolvePageAtTime(nodes.value[nextIndex], nextTime)
+    mediaError.value = ''
+  }
+
+  function updatePlayback(payload) {
+    const globalTime = Number(payload?.globalTime)
+    if (Number.isFinite(globalTime)) {
+      const previousIndex = currentNodeIndex.value
+      seekTo(globalTime)
+      if (currentNodeIndex.value > previousIndex) {
+        const completedId = nodes.value[previousIndex]?.id
+        if (completedId && !completedNodes.value.includes(completedId)) {
+          completedNodes.value = [...completedNodes.value, completedId]
+        }
+      }
+    }
+    if (typeof payload?.isPlaying === 'boolean') {
+      isPlaying.value = payload.isPlaying
+      if (!payload.isPlaying) saveProgress()
+    }
+  }
+
+  function setPage(page) {
+    currentPage.value = clamp(Number(page) || 1, 1, totalPages.value)
+  }
+
+  function setPanel(panel, open) {
+    const value = Boolean(open)
+    if (panel === 'outline') outlineOpen.value = value
+    if (panel === 'assistant') assistantOpen.value = value
+    if (panel === 'notes') notesOpen.value = value
+  }
+
+  function openMobilePanel(panel) {
+    mobilePanel.value = panel
+  }
+
+  function closeMobilePanel() {
+    mobilePanel.value = null
+  }
+
+  function captureReturnAnchor(reason = 'prerequisite') {
+    returnAnchor.value = {
+      reason,
+      nodeIndex: currentNodeIndex.value,
+      currentTime: currentTime.value,
+      currentPage: currentPage.value,
+      mode: mode.value,
+      questionDraft: questionDraft.value,
+    }
+    return returnAnchor.value
+  }
+
+  function restoreReturnAnchor() {
+    if (!returnAnchor.value) return false
+    const anchor = returnAnchor.value
+    currentNodeIndex.value = anchor.nodeIndex
+    currentTime.value = anchor.currentTime
+    currentPage.value = anchor.currentPage
+    mode.value = anchor.mode
+    questionDraft.value = anchor.questionDraft
+    returnAnchor.value = null
+    return true
+  }
+
+  async function sendQuestion(explicitQuestion) {
+    const question = String(explicitQuestion ?? questionDraft.value).trim()
+    if (!question || isAsking.value || !currentNode.value) return
+
+    const userMessage = {
+      id: 'user-' + Date.now(),
+      role: 'user',
+      content: question,
+      nodeId: currentNodeId.value,
+      page: currentPage.value,
+      time: currentTime.value,
+    }
+    messages.value = [...messages.value, userMessage]
+    questionDraft.value = ''
+    isAsking.value = true
+
+    try {
+      const result = await askQuestion({
+        question,
+        courseId: course.value.courseId,
+        currentNodeId: currentNodeId.value,
+      })
+      messages.value = [
+        ...messages.value,
+        {
+          id: 'assistant-' + Date.now(),
+          role: 'assistant',
+          content: String(result?.answer || '暂时没有可用回答。'),
+          citations: Array.isArray(result?.citations) ? result.citations : [],
+          lowConfidence: result?.confidence !== undefined && Number(result.confidence) < 0.5,
+          nodeId: currentNodeId.value,
+          page: currentPage.value,
+        },
+      ]
+    } catch {
+      messages.value = [
+        ...messages.value,
+        {
+          id: 'assistant-error-' + Date.now(),
+          role: 'assistant',
+          content: '回答请求失败，请检查网络后重试。',
+          error: true,
+          retryQuestion: question,
+        },
+      ]
+    } finally {
+      isAsking.value = false
+    }
+  }
+
+  async function saveProgress(options = {}) {
+    if (!course.value || status.value !== 'ready') return
+    if (!options.silent) saveState.value = 'saving'
+
+    try {
+      await savePlayerProgress(
+        buildProgressPayload({
+          courseId: course.value.courseId,
+          currentNodeId: currentNodeId.value,
+          currentTime: currentTime.value,
+          currentPage: currentPage.value,
+          completedNodes: completedNodes.value,
+        })
+      )
+      saveState.value = 'saved'
+    } catch {
+      saveState.value = 'error'
+    }
+  }
+
+  function startProgressTimer() {
+    window.clearInterval(progressTimer)
+    progressTimer = window.setInterval(() => {
+      if (isPlaying.value) saveProgress({ silent: true })
+    }, 10000)
+  }
+
+  watch(
+    [
+      mode,
+      playbackRate,
+      volume,
+      isMuted,
+      captionsEnabled,
+      outlineOpen,
+      assistantOpen,
+      notesOpen,
+      questionDraft,
+    ],
+    persistViewState
+  )
+
+  onBeforeUnmount(() => {
+    window.clearTimeout(viewPersistTimer)
+    window.clearInterval(progressTimer)
+    persistViewState()
+    saveProgress({ silent: true })
+  })
+
+  return {
+    status,
+    error,
+    course,
+    mode,
+    nodes,
+    slides,
+    pptPages,
+    currentNode,
+    currentNodeIndex,
+    currentTime,
+    currentPage,
+    currentSlide,
+    currentPptPage,
+    totalPages,
+    currentVideoUrl,
+    completedNodes,
+    progressPercent,
+    isPlaying,
+    playbackRate,
+    volume,
+    isMuted,
+    captionsEnabled,
+    outlineOpen,
+    assistantOpen,
+    notesOpen,
+    mobilePanel,
+    questionDraft,
+    messages,
+    isAsking,
+    currentNote,
+    noteAnchorKey,
+    saveState,
+    mediaError,
+    returnAnchor,
+    load,
+    switchMode,
+    selectNode,
+    seekTo,
+    updatePlayback,
+    setPage,
+    setPanel,
+    openMobilePanel,
+    closeMobilePanel,
+    captureReturnAnchor,
+    restoreReturnAnchor,
+    sendQuestion,
+    saveProgress,
+  }
+}
