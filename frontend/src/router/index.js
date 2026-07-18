@@ -5,6 +5,24 @@ const loadView = (view) => {
   return () => import(`../views/${view}.vue`)
 }
 
+const prototypeRoutes = (
+  import.meta.env.DEV ||
+  import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'true'
+) ? [
+    {
+      path: '/prototype/student-learning/:courseId?',
+      name: 'prototype-student-learning',
+      component: () => import('../prototypes/pages/StudentLearningPrototype.vue'),
+      meta: { requiresAuth: true, role: 'student', prototype: true }
+    },
+    {
+      path: '/prototype/teacher-pipeline/:courseId?',
+      name: 'prototype-teacher-pipeline',
+      component: () => import('../prototypes/pages/TeacherPipelinePrototype.vue'),
+      meta: { requiresAuth: true, role: 'teacher', prototype: true }
+    }
+  ] : []
+
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
@@ -82,6 +100,7 @@ const router = createRouter({
       component: loadView('StudentPlayer'),
       meta: { requiresAuth: true, role: 'student' }
     },
+    ...prototypeRoutes,
     {
       path: '/admin',
       name: 'admin-panel',
