@@ -246,8 +246,7 @@ function handleTaskSummary(summary) {
   saveState.value = summary.running ? `有 ${summary.running} 个后台任务正在执行` : summary.blocking ? `${summary.blocking} 个后台任务需要恢复` : summary.known ? '课程任务已同步' : '课程任务未同步'
 }
 function onPptGenerated(payload) {
-  showPptDialog.value = false
-  saveState.value = payload?.course_id && String(payload.course_id) !== String(courseId.value) ? `PPT 已生成到新课程 #${payload.course_id}，请在对话框结果中打开该课程。` : 'PPT 已生成，建议进入映射检查'
+  saveState.value = payload?.course_id && String(payload.course_id) !== String(courseId.value) ? `PPT 已生成到新课程 #${payload.course_id}，请通过对话框继续打开该课程。` : 'PPT 已生成，建议进入映射检查'
 }
 
 onMounted(() => { loadCourseContext(); loadVersions() })
