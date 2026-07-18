@@ -1,10 +1,10 @@
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="ppt-gen-overlay" @click="handleClose">
-      <div class="ppt-gen-modal" @click.stop>
+    <div v-if="visible" class="ppt-gen-overlay" @click.self="handleClose">
+      <div ref="dialogRef" class="ppt-gen-modal" role="dialog" aria-modal="true" aria-labelledby="ppt-generation-dialog-title" @keydown="handleDialogKeydown">
         <div class="modal-header">
-          <h3>AI生成PPT课件</h3>
-          <button class="close-btn" @click="handleClose"><X :size="20" /></button>
+          <h3 id="ppt-generation-dialog-title">AI生成PPT课件</h3>
+          <button ref="closeButtonRef" type="button" class="close-btn" aria-label="关闭 PPT 生成对话框" @click="handleClose"><X :size="20" /></button>
         </div>
 
         <div class="modal-body">
@@ -45,7 +45,7 @@
                     <X :size="16" />
                   </button>
                 </div>
-                <button class="kp-add" @click="addKnowledgePoint">
+                <button type="button" class="kp-add" @click="addKnowledgePoint">
                   <Plus :size="14" />
                   添加知识点
                 </button>
@@ -144,7 +144,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, watch } from 'vue'
+import { nextTick, ref, reactive, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { X, CheckCircle, XCircle, Plus } from 'lucide-vue-next'
 import { generatePPTSync, getPPTThemes } from '@/api/ppt_generation.js'
@@ -166,6 +166,9 @@ const templates = ref([])
 const errorMessage = ref('')
 const statusMessage = ref('')
 const progressPercent = ref(0)
+const dialogRef = ref(null)
+const closeButtonRef = ref(null)
+let lastFocusedElement = null
 const result = reactive({
   courseId: null,
   totalNodes: null,
@@ -183,6 +186,7 @@ const form = reactive({
 
 watch(() => props.visible, (val) => {
   if (val) {
+    lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
     step.value = 1
     progressPercent.value = 0
     statusMessage.value = ''
@@ -191,9 +195,11 @@ watch(() => props.visible, (val) => {
     result.totalNodes = null
     result.totalDuration = null
     loadTemplates()
+    nextTick(() => closeButtonRef.value?.focus())
+  } else if (lastFocusedElement) {
+    nextTick(() => lastFocusedElement?.focus?.())
   }
 })
-
 async function loadTemplates() {
   loadingTemplates.value = true
   try {
@@ -291,10 +297,29 @@ function handleOpenCourse() {
   }
 }
 
+function handleDialogKeydown(event) {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    handleClose()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const focusable = [...(dialogRef.value?.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled])') || [])]
+  if (!focusable.length) return
+  const first = focusable[0]
+  const last = focusable[focusable.length - 1]
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
 function handleClose() {
   emit('update:visible', false)
-}
-</script>
+}</script>
 
 <style scoped>
 .ppt-gen-overlay {
@@ -335,7 +360,14 @@ function handleClose() {
   color: var(--color-text);
 }
 
+.ppt-gen-modal :focus-visible {
+  outline: 3px solid var(--color-primary-light);
+  outline-offset: 2px;
+}
+
 .close-btn {
+  min-width: 44px;
+  min-height: 44px;
   background: none;
   border: none;
   color: var(--color-text-muted);
