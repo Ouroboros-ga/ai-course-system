@@ -22,7 +22,7 @@
     <div class="workbench-grid">
       <nav class="pipeline" aria-label="课程生产步骤">
         <p class="pipeline-label">生产流程</p>
-        <button v-for="step in steps" :key="step.id" type="button" :class="['pipeline-step', { active: activeStep === step.id }]" :aria-current="activeStep === step.id ? 'step' : undefined" @click="activeStep = step.id">
+        <button v-for="step in steps" :key="step.id" type="button" :class="['pipeline-step', { active: activeStep === step.id }]" :aria-current="activeStep === step.id ? 'step' : undefined" @click="selectStep(step.id)">
           <component :is="step.icon" :size="17" /><span>{{ step.label }}</span><small :class="`state-${step.state}`">{{ step.stateLabel }}</small>
         </button>
       </nav>
@@ -100,6 +100,7 @@ const route = useRoute()
 const router = useRouter()
 const courseId = computed(() => route.params.courseId)
 const activeStep = ref('materials')
+const stepChosenByTeacher = ref(false)
 const showPptDialog = ref(false)
 const versions = ref([])
 const versionsLoading = ref(false)
@@ -171,7 +172,17 @@ function deriveParseStage(parseInfo) {
   return { state: 'running', label: raw ? '解析中' : '处理中', note: '解析服务仍在处理资料' }
 }
 function goLegacy() { router.push(`/teacher/course/${courseId.value}`) }
-function goMapping() { router.push(`/teacher/course/${courseId.value}/mapping`) }
+function goMapping() { router.push('/teacher/course/' + courseId.value + '/mapping') }
+function selectStep(stepId) { activeStep.value = stepId; stepChosenByTeacher.value = true }
+function selectRecommendedStep() {
+  if (stepChosenByTeacher.value) return
+  if (taskSummary.value.known && taskSummary.value.blocking) { activeStep.value = 'avatar'; return }
+  if (parseStage.value.state !== 'complete') { activeStep.value = 'materials'; return }
+  if (!nodeCount.value) { activeStep.value = 'structure'; return }
+  if (!script.value) { activeStep.value = 'script'; return }
+  if (!mappingReady.value || !mappingReviewed.value) { activeStep.value = 'mapping'; return }
+  activeStep.value = 'audio'
+}
 function confirmMappingReview() { mappingReviewed.value = true; saveState.value = '映射已在本次会话确认，等待发布操作'; showToast('已记录本次会话的映射检查。发布后端尚未提供持久化确认字段。', 'info') }
 
 async function loadVersions() {
@@ -210,6 +221,7 @@ async function loadCourseContext() {
     courseLoading.value = false
   }
   await loadMappingInspection()
+  selectRecommendedStep()
 }
 async function createSnapshot() {
   snapshotLoading.value = true
@@ -243,7 +255,8 @@ async function togglePublication() {
 }
 function handleTaskSummary(summary) {
   taskSummary.value = { ...taskSummary.value, ...summary }
-  saveState.value = summary.running ? `有 ${summary.running} 个后台任务正在执行` : summary.blocking ? `${summary.blocking} 个后台任务需要恢复` : summary.known ? '课程任务已同步' : '课程任务未同步'
+  saveState.value = summary.running ? '有 ' + summary.running + ' 个后台任务正在执行' : summary.blocking ? summary.blocking + ' 个后台任务需要恢复' : summary.known ? '课程任务已同步' : '课程任务未同步'
+  selectRecommendedStep()
 }
 function onPptGenerated(payload) {
   saveState.value = payload?.course_id && String(payload.course_id) !== String(courseId.value) ? `PPT 已生成到新课程 #${payload.course_id}，请通过对话框继续打开该课程。` : 'PPT 已生成，建议进入映射检查'
