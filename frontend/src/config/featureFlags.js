@@ -8,6 +8,16 @@ export const featureFlags = Object.freeze({
   studentLearningWorkspace: readBooleanFlag(
     viteEnv.VITE_ENABLE_STUDENT_LEARNING_WORKSPACE
   ),
+  // Keep the established teacher Dashboard as the production fallback while
+  // the course production workspace is rolled out and verified separately.
+  teacherProductionWorkspace: readBooleanFlag(
+    viteEnv.VITE_ENABLE_TEACHER_PRODUCTION_WORKSPACE
+  ),
+  // Mapping governance is independently gated because it depends on the
+  // existing Mapping API but deliberately excludes future Evidence/Graph UI.
+  knowledgeMappingWorkspace: readBooleanFlag(
+    viteEnv.VITE_ENABLE_KNOWLEDGE_MAPPING_WORKSPACE
+  ),
 })
 
 export { readBooleanFlag }
