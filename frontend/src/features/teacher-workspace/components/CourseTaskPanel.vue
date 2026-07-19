@@ -9,7 +9,7 @@
     <div v-else-if="loading && !tasks.length" class="task-empty"><LoaderCircle class="spin" :size="17" />正在读取课程任务…</div>
     <div v-else-if="!tasks.length" class="task-empty">当前没有可追踪的后台任务。生成任务开始后，这里会持续显示最新状态。</div>
     <div v-else class="task-list">
-      <LongTaskCard v-for="task in tasks" :key="task.id" :task="task" :loading="retryingIds.has(task.id)" @refresh="refresh" @retry="retry(task)" @confirm="confirm(task)" />
+      <LongTaskCard v-for="task in tasks" :key="task.id" :task="task" :loading="retryingIds.has(task.id)" :confirmed="confirmedIds.has(task.id)" @refresh="refresh" @retry="retry(task)" @confirm="confirm(task)" />
     </div>
 
     <div class="task-footer">

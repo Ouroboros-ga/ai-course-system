@@ -147,10 +147,17 @@ const steps = computed(() => [
   { id: 'script', label: '教学脚本', icon: FileCheck2, state: script.value ? 'review' : 'pending', stateLabel: script.value ? '待确认' : '待生成', description: '以版本快照保护教师修改。', legacyTitle: '教学脚本', legacyDescription: '当前可查询、创建快照；脚本正文仍由现有编辑器管理。' },
   { id: 'ppt', label: 'PPT 课件', icon: Presentation, state: 'ready', stateLabel: '可生成', description: '生成并检查课程 PPT。', legacyTitle: 'PPT 课件', legacyDescription: '请通过原编辑器访问更多模板设置。' },
   { id: 'mapping', label: '知识映射', icon: Waypoints, state: mappingReady.value ? (mappingReviewed.value ? 'complete' : 'review') : mappingInspection.value.loading ? 'pending' : 'blocked', stateLabel: mappingReady.value ? (mappingReviewed.value ? '已检查' : '待确认') : mappingInspection.value.loading ? '读取中' : '待治理', description: '审核知识点与 PPT 页面范围。', legacyTitle: '知识映射', legacyDescription: '映射治理已迁移到独立工作区。' },
-  { id: 'audio', label: '音频生成', icon: Volume2, state: taskSummary.value.blocking ? 'failed' : taskSummary.value.running ? 'running' : 'pending', stateLabel: taskSummary.value.blocking ? '需恢复' : taskSummary.value.running ? '处理中' : '查看状态', description: '在脚本确认后生成音频。', legacyTitle: '音频生成', legacyDescription: '批量 TTS 任务仍由现有编辑器发起。' },
-  { id: 'avatar', label: '数字人生成', icon: Video, state: taskSummary.value.blocking ? 'failed' : taskSummary.value.running ? 'running' : 'pending', stateLabel: taskSummary.value.blocking ? '需恢复' : taskSummary.value.running ? '处理中' : '查看状态', description: '在音频与映射确认后生成数字人内容。', legacyTitle: '数字人生成', legacyDescription: '数字人生成与资产配置仍在原编辑器。' },
+  { id: 'audio', label: '音频生成', icon: Volume2, state: taskSummary.value.blocking ? 'failed' : taskSummary.value.review ? 'review' : taskSummary.value.running ? 'running' : 'pending', stateLabel: taskSummary.value.blocking ? '需恢复' : taskSummary.value.review ? '待确认' : taskSummary.value.running ? '处理中' : '查看状态', description: '在脚本确认后生成音频。', legacyTitle: '音频生成', legacyDescription: '批量 TTS 任务仍由现有编辑器发起。' },
+  { id: 'avatar', label: '数字人生成', icon: Video, state: taskSummary.value.blocking ? 'failed' : taskSummary.value.review ? 'review' : taskSummary.value.running ? 'running' : 'pending', stateLabel: taskSummary.value.blocking ? '需恢复' : taskSummary.value.review ? '待确认' : taskSummary.value.running ? '处理中' : '查看状态', description: '在音频与映射确认后生成数字人内容。', legacyTitle: '数字人生成', legacyDescription: '数字人生成与资产配置仍在原编辑器。' },
 ])
 const currentStep = computed(() => steps.value.find(step => step.id === activeStep.value) || steps.value[0])
+const taskGate = computed(() => {
+  if (!taskSummary.value.known) return { state: 'pending', note: '任务状态正在同步或暂时不可读', blocker: '' }
+  if (taskSummary.value.blocking) return { state: 'blocked', note: `${taskSummary.value.blocking} 个失败或部分成功任务需要恢复`, blocker: '生成任务恢复' }
+  if (taskSummary.value.review) return { state: 'pending', note: `${taskSummary.value.review} 个生成结果待教师确认`, blocker: '生成结果教师确认' }
+  if (taskSummary.value.running) return { state: 'pending', note: `${taskSummary.value.running} 个任务仍在执行，不自动阻止发布`, blocker: '' }
+  return { state: 'complete', note: '暂无阻断任务', blocker: '' }
+})
 const checks = computed(() => {
   const material = parseStage.value
   const mapping = mappingInspection.value
@@ -158,10 +165,16 @@ const checks = computed(() => {
     { label: '教学资料已解析', note: material.note, state: material.state === 'complete' ? 'complete' : material.state === 'failed' ? 'blocked' : 'pending' },
     { label: '课程结构与脚本', note: script.value ? `${nodeCount.value} 个知识点，${versions.value.length || 1} 个脚本版本` : '尚未读取到可用脚本', state: script.value && nodeCount.value ? 'complete' : 'blocked' },
     { label: '知识点与 PPT 映射', note: mapping.loading ? '正在读取映射状态' : !mapping.available ? '映射状态无法读取' : !mappingReady.value ? `${mapping.mapped}/${mapping.total} 个知识点已有页面范围` : mappingReviewed.value ? '教师已在本次会话确认' : '页面范围已齐全，待教师确认', state: mappingReady.value && mappingReviewed.value ? 'complete' : !mapping.loading && (!mapping.available || !mappingReady.value) ? 'blocked' : 'pending' },
-    { label: '生成任务状态', note: !taskSummary.value.known ? '任务状态正在同步或暂时不可读' : taskSummary.value.blocking ? `${taskSummary.value.blocking} 个任务可在下方恢复` : taskSummary.value.running ? `${taskSummary.value.running} 个任务仍在执行，不自动阻止发布` : '暂无阻断任务', state: taskSummary.value.blocking ? 'blocked' : taskSummary.value.known && !taskSummary.value.running ? 'complete' : 'pending' },
+    { label: '生成任务状态', ...taskGate.value },
   ]
 })
-const publishBlockers = computed(() => checks.value.filter(item => ['教学资料已解析', '课程结构与脚本', '知识点与 PPT 映射'].includes(item.label) && item.state !== 'complete').map(item => item.label))
+const publishBlockers = computed(() => {
+  const blockers = checks.value
+    .filter(item => ['教学资料已解析', '课程结构与脚本', '知识点与 PPT 映射'].includes(item.label) && item.state !== 'complete')
+    .map(item => item.label)
+  if (taskGate.value.blocker) blockers.push(taskGate.value.blocker)
+  return blockers
+})
 const canPublish = computed(() => publishBlockers.value.length === 0)
 
 function deriveParseStage(parseInfo) {
