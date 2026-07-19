@@ -65,9 +65,10 @@ class TestEndToEnd:
         # Traces written for each path.
         for pid in ("G3B", "G3C", "G3D1", "G3D2", "G3D3", "G3E1"):
             assert len(cr.trace_paths_by_path[pid]) == 1, f"{pid} no trace"
-        # Quality gate PASS.
+        # Quality gate PASS (execution_safety + contract_integrity pass;
+        # model_quality not_evaluated).
         assert result.quality_gate is not None
-        assert result.quality_gate.verdict == "PASS"
+        assert result.quality_gate.verdict.value == "pass"
         assert result.overall_passed is True
 
     def test_hard_constraints_hold(self, config):
@@ -80,9 +81,29 @@ class TestEndToEnd:
         assert qg.aggregate_invariants["accepted_traces_evidence"] is True
         assert qg.aggregate_invariants["evidence_scope_isolated"] is True
 
-    def test_real_services_not_called(self, config):
+    def test_model_quality_not_evaluated(self, config):
         result = run_canary(config)
-        assert result.real_services_called is False
+        qg = result.quality_gate
+        assert qg.aggregate_invariants["model_quality"] == "not_evaluated"
+        assert qg.model_quality_not_evaluated is True
+
+    def test_real_services_called_log_derived_empty(self, config):
+        """G5A.1: real_services_called derived from provider_call_log.
+        Empty log (no real providers in G5A) -> False."""
+        result = run_canary(config)
+        assert result.provider_call_log == []  # no real providers in G5A
+        assert result.real_services_called is False  # derived from empty log
+
+    def test_real_services_called_log_derived_with_real_call(self, config):
+        """Prove derivation (not hardcoded): a log with invoked_real=True -> True."""
+        from app.platform.canary.canary_runner import (
+            ProviderCallRecord,
+            derive_real_services_called,
+        )
+        log = [ProviderCallRecord(provider_name="docling", invoked_real=True,
+                                  stage="parse", detail="real")]
+        assert derive_real_services_called(log) is True
+        assert derive_real_services_called([]) is False
 
 
 # ---------------------------------------------------------------------------
@@ -104,8 +125,10 @@ class TestScopeControl:
         )
         result = run_canary(config)
         assert result.course_results == []
-        # overall_passed False because no courses ran (no global canary).
+        # No courses ran -> no traces -> quality gate not pass (insufficient/
+        # not_evaluated), so overall_passed False. NOT a FAIL (no violation).
         assert result.overall_passed is False
+        assert result.quality_gate.verdict.value != "pass"
 
     def test_only_allowlisted_courses_run(self, tmp_path):
         config = CanaryConfig(
