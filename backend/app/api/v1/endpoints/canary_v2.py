@@ -48,17 +48,26 @@ class CanaryRunRequest(BaseModel):
     course_ids: List[Any] = Field(default_factory=list)
 
 
+class DimensionStatus(BaseModel):
+    dimension: str
+    status: str
+
+
 class CanaryRunResponse(BaseModel):
     overall_passed: bool
     real_services_called: bool
     verdict: str
+    model_quality_status: str = "not_evaluated"
+    dimensions: List[DimensionStatus] = Field(default_factory=list)
     course_count: int
     courses: List[CanaryCourseSummary] = Field(default_factory=list)
 
 
 class QualityGateResponse(BaseModel):
     verdict: str
-    aggregate_invariants: Dict[str, bool]
+    model_quality_status: str = "not_evaluated"
+    dimensions: List[DimensionStatus] = Field(default_factory=list)
+    aggregate_invariants: Dict[str, Any]
     path_count: int
 
 
@@ -140,7 +149,9 @@ async def run_canary_endpoint(
     return CanaryRunResponse(
         overall_passed=result.overall_passed,
         real_services_called=result.real_services_called,
-        verdict=qg.verdict if qg else "N/A",
+        verdict=qg.verdict.value if qg else "N/A",
+        model_quality_status=qg.aggregate_invariants.get("model_quality", "not_evaluated") if qg else "not_evaluated",
+        dimensions=[DimensionStatus(dimension=d.dimension, status=d.status.value) for d in (qg.dimensions if qg else [])],
         course_count=len(courses),
         courses=courses,
     )
@@ -182,7 +193,9 @@ async def canary_report(
     }
     report = compute_quality(roots, generated_at=_time.time())
     return QualityGateResponse(
-        verdict=report.verdict,
+        verdict=report.verdict.value,
+        model_quality_status=report.aggregate_invariants.get("model_quality", "not_evaluated"),
+        dimensions=[DimensionStatus(dimension=d.dimension, status=d.status.value) for d in report.dimensions],
         aggregate_invariants=report.aggregate_invariants,
         path_count=len(report.paths),
     )

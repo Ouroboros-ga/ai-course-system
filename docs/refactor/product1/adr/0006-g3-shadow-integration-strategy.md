@@ -282,9 +282,28 @@ LearningEvent -> LearningEvidence -> 候选 MasteryState -> 候选 StudentMemory
 
 **回滚**：关 flag -> canary endpoint 503；canary 模块独立，不影响 V1。
 
+### G5A.1：质量门禁语义修订（G5A 冻结前修订）
+**目标**：修正 G5A 的语义缺陷：(1) 空输入/缺失字段/零样本/零分母由"空真 PASS"改为 `NOT_EVALUATED`/`INSUFFICIENT_DATA`（"无数据"不得读为"通过"）；(2) 区分三维度 `execution_safety`（V1 隔离保证）/ `contract_integrity`（契约/引用不变式）/ `model_quality`（真实模型质量），G5A 阶段 `model_quality` 强制 `NOT_EVALUATED`（无真实模型）；(3) `real_services_called` 由可审计 Provider 调用记录（`ProviderCallLog`）推导，不再硬编码。
+
+**改动范围（P1-09）**：
+- `quality_gate.py`：`MetricStatus` 枚举（pass/fail/not_evaluated/insufficient_data）；`QualityMetric` 加 `dimension` 字段；`DimensionVerdict` 三维度聚合；空/零分母 -> INSUFFICIENT_DATA；`model_quality` 维度恒 NOT_EVALUATED；verdict 四态。
+- `canary_runner.py`：`ProviderCallRecord` + `derive_real_services_called(log)`；`CanaryRunResult.provider_call_log`；`real_services_called` 由 log 推导（G5A 空 log -> False）。
+- `canary_v2.py`：响应加 `dimensions` + `model_quality_status`。
+- 测试重写（31 tests）。
+
+**退出门禁**：三维度区分；空/零/缺 -> NOT_EVALUATED/INSUFFICIENT_DATA（非 PASS）；model_quality 恒 NOT_EVALUATED；real_services_called log 推导；P1-10 验证 -> **冻结 G5A**。
+
+### G5A 状态：**FROZEN**（G5A + G5A.1 完成，P1-10 验证通过）
+
+### G5B-0：真实 canary 准备（仅方案，不执行）
+**目标**：准备金标集规范、指标阈值、Provider 兼容矩阵、隔离环境方案、放行顺序，**不安装到生产、不接生产主链、不调用真实付费服务**。
+**产出**：`docs/refactor/product1/canary/` 下 5 份 spec（gold-standard-dataset-spec / metric-thresholds / provider-compatibility-matrix / isolation-environment-plan / g5b-rollout-order）。
+**状态**：G5B-0 完成（文档就绪）。G5B-N（N≥1，真实 provider 接入）**未放行**。
+
 ### G5B：真实 provider canary（待约束解除）
 **目标**：实现真实 V2 provider（Docling/PaddleOCR/向量模型/reranker）+ 真实质量对比（金标 QA 评测、真实解析质量）。
 **前置**：人工解除 CLAUDE.md「不装依赖/不接真实付费服务」约束；真实 provider 实现（P1-02/P1-03）；金标评测集。
+**放行顺序（固定）**：Docling -> PaddleOCR -> Embedding -> Reranker -> LLM，逐项人工放行，不跳序不并行。
 **状态**：未放行，待约束解除 + 人工 go。
 
 ## 9. 独立 V2 Router 权限与隐私约束

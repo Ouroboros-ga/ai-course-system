@@ -100,6 +100,23 @@ class CourseCanaryResult:
 
 
 @dataclass(frozen=True)
+class ProviderCallRecord:
+    """Auditable record of one provider call attempt during a canary run.
+
+    ``invoked_real`` is True only when a REAL external provider was actually
+    called (real Docling/OCR/vector/LLM). In G5A no real providers exist, so
+    every record has ``invoked_real=False`` (or the log is empty).
+    ``real_services_called`` is DERIVED from this log (see
+    ``derive_real_services_called``), never hardcoded.
+    """
+
+    provider_name: str
+    invoked_real: bool
+    stage: str
+    detail: str = ""
+
+
+@dataclass(frozen=True)
 class CanaryRunResult:
     """Overall canary outcome."""
 
@@ -108,7 +125,19 @@ class CanaryRunResult:
     skipped_courses: List[Any] = field(default_factory=list)
     quality_gate: Optional[QualityGateReport] = None
     overall_passed: bool = False
-    real_services_called: bool = False  # invariant: always False (G5A)
+    provider_call_log: List[ProviderCallRecord] = field(default_factory=list)
+    real_services_called: bool = False  # derived from provider_call_log (G5A.1)
+
+
+def derive_real_services_called(call_log: List[ProviderCallRecord]) -> bool:
+    """Derive whether any REAL external provider was called, from the audit log.
+
+    G5A.1: ``real_services_called`` is NOT a hardcoded literal. It is derived
+    from the auditable provider call log: True iff at least one record has
+    ``invoked_real=True``. In G5A the log is empty (no real providers), so
+    this returns False. (G5B will populate the log with real-provider calls.)
+    """
+    return any(c.invoked_real for c in call_log)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +323,12 @@ def run_canary(config: CanaryConfig) -> CanaryRunResult:
 
     quality = compute_quality(agg_traces, generated_at=start)
 
-    overall_passed = quality.verdict == "PASS" and bool(course_results)
+    overall_passed = quality.verdict.value == "pass" and bool(course_results)
+
+    # G5A.1: real_services_called is DERIVED from the auditable provider call
+    # log, not hardcoded. In G5A no real providers exist -> empty log -> False.
+    provider_call_log: List[ProviderCallRecord] = []  # no real providers in G5A
+    real_called = derive_real_services_called(provider_call_log)
 
     return CanaryRunResult(
         generated_at=start,
@@ -302,5 +336,6 @@ def run_canary(config: CanaryConfig) -> CanaryRunResult:
         skipped_courses=skipped,
         quality_gate=quality,
         overall_passed=overall_passed,
-        real_services_called=False,  # G5A invariant: no real services
+        provider_call_log=provider_call_log,
+        real_services_called=real_called,
     )

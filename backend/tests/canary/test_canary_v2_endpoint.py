@@ -141,7 +141,10 @@ class TestRun:
         assert r.status_code == 200
         body = r.json()
         assert body["real_services_called"] is False
-        assert body["verdict"] == "PASS"
+        assert body["verdict"] == "pass"  # lowercase MetricStatus value
+        assert body["model_quality_status"] == "not_evaluated"
+        dims = {d["dimension"]: d["status"] for d in body["dimensions"]}
+        assert dims["model_quality"] == "not_evaluated"
         assert body["course_count"] == 1
 
 
@@ -152,8 +155,8 @@ class TestReport:
                 r = c.get("/api/v1/canary-v2/report")
         assert r.status_code == 200
         body = r.json()
-        assert body["verdict"] in ("PASS", "FAIL")
-        assert "aggregate_invariants" in body
+        assert body["verdict"] in ("pass", "fail", "not_evaluated", "insufficient_data")
+        assert body["model_quality_status"] == "not_evaluated"
         assert body["path_count"] == 6
 
 
