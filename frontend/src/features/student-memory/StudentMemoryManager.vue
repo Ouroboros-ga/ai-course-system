@@ -176,9 +176,9 @@ export default {
   },
   methods: {
     confidenceColor(confidence) {
-      if (confidence >= 0.8) return '#22c55e'
-      if (confidence >= 0.5) return '#eab308'
-      return '#ef4444'
+      if (confidence >= 0.8) return 'var(--color-success)'
+      if (confidence >= 0.5) return 'var(--color-warning)'
+      return 'var(--color-danger)'
     },
     toggleMemory(event) {
       this.memoryEnabled = event.target.checked

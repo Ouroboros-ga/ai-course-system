@@ -23,7 +23,7 @@
         class="btn-send"
         @click="handleSend"
       >
-        ↑
+        <ArrowUp :size="18" />
       </button>
       <button
         v-else
@@ -38,7 +38,7 @@
 
 <script setup>
 import { ref } from 'vue';
-import { Mic } from 'lucide-vue-next';
+import { Mic, ArrowUp } from 'lucide-vue-next';
 const props = defineProps(['disabled', 'tips']);
 const emit = defineEmits(['send']);
 

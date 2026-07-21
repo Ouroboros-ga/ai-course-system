@@ -44,7 +44,7 @@
           <div class="node-header">
             <span class="node-index">{{ node.index + 1 }}</span>
             <span class="node-title">{{ node.title }}</span>
-            <span v-if="node.isKeyPoint" class="key-point-badge">⭐</span>
+            <span v-if="node.isKeyPoint" class="key-point-badge"><Star :size="14" /></span>
           </div>
           
           <div class="node-status">
@@ -107,7 +107,7 @@
 
 <script setup>
 import { ref, computed, onMounted, watch } from 'vue'
-import { BarChart3, BookOpen, CheckCircle, MessageCircle, Target, Lightbulb, Zap } from 'lucide-vue-next'
+import { BarChart3, BookOpen, CheckCircle, MessageCircle, Target, Lightbulb, Zap, Star } from 'lucide-vue-next'
 import api from '@/api/index.js'
 
 const props = defineProps({
@@ -377,6 +377,9 @@ defineExpose({
 
 .key-point-badge {
   font-size: 14px;
+  color: var(--color-warning);
+  display: inline-flex;
+  align-items: center;
 }
 
 .node-status {

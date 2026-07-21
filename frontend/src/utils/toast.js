@@ -38,9 +38,9 @@ export function showToast(message, type = 'warning') {
 
   // 根据类型设置背景色
   const colors = {
-    warning: 'linear-gradient(135deg, #f59e0b, #d97706)',
-    error: 'linear-gradient(135deg, #ef4444, #dc2626)',
-    success: 'linear-gradient(135deg, #10b981, #059669)',
+    warning: 'var(--gradient-warning)',
+    error: 'var(--gradient-danger)',
+    success: 'var(--gradient-success)',
     info: 'linear-gradient(135deg, #3b82f6, #2563eb)'
   }
   toast.style.background = colors[type] || colors.warning
