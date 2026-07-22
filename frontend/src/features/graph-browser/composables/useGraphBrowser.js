@@ -43,6 +43,15 @@ export function useGraphBrowser() {
     rawEdges.value = []
     evidenceNodes.value = []
 
+    // The graph is course-scoped.  Do not issue a malformed request such as
+    // `/document/course/undefined` when the optional route parameter is absent.
+    const normalizedCourseId = String(courseId ?? '').trim()
+    if (!/^\d+$/.test(normalizedCourseId) || Number(normalizedCourseId) <= 0) {
+      error.value = '请选择课程后再查看图谱：从“知识点映射”进入，或访问 /graph-browser/<课程ID>。'
+      loading.value = false
+      return
+    }
+
     // validate our own frozen schema (fail-closed on unknown major)
     try {
       assertGraphBrowserSchema(GRAPH_BROWSER_SCHEMA_VERSION)
@@ -54,15 +63,15 @@ export function useGraphBrowser() {
 
     try {
       const [mapping, context] = await Promise.all([
-        getMappingDetail(courseId),
-        getCourseWorkspaceContext(courseId).catch(() => null),
+        getMappingDetail(normalizedCourseId),
+        getCourseWorkspaceContext(normalizedCourseId).catch(() => null),
       ])
 
       const nodeList = mapping?.nodes || []
       courseTitle.value = context?.course?.title || `课程 #${courseId}`
       documentId.value = context?.course?.document_id || context?.document?.document_id || null
 
-      const courseNodeId = `course:${courseId}`
+      const courseNodeId = `course:${normalizedCourseId}`
       const nextNodes = []
       const nextEdges = []
 
