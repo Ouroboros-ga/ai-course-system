@@ -31,9 +31,10 @@ const navItems = computed(() => {
   if (counter.isAdmin) {
     return [
       ...baseItems,
-      { path: '/admin', label: '用户管理', icon: Users },
-      { path: '/teacher', label: '智课管理', icon: BookOpen },
-      { path: '/student', label: '我的课程', icon: BookOpen },
+      // Teacher and student workspaces enforce their respective roles, and
+      // their backing APIs do the same. Do not surface links that always
+      // redirect an administrator away from the intended destination.
+      { path: '/admin', label: '系统管理', icon: Users },
       { path: '/profile', label: '个人中心', icon: User },
     ]
   }
