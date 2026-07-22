@@ -146,14 +146,34 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'admin' }
     },
     {
-      // P1-09 G4B: formal mount of the P1-04 Evidence Viewer.
-      // Independent route; does not touch SplitVideoPlayer/TeacherDashboard/
-      // StudentDashboard. Admin-only (matches ADR-0006 §9 V2 endpoint
-      // admin-only). Wired to the V2 Evidence API via api/evidence.js.
+      // Evidence Viewer (admin-only). Mounted route; does not touch
+      // SplitVideoPlayer/TeacherDashboard/StudentDashboard. Wired to the
+      // real V2 Evidence API (/api/v1/evidence-v2) via api/evidence.js.
       path: '/evidence-viewer/:documentId?',
       name: 'evidence-viewer',
       component: loadView('EvidenceViewerPage'),
       meta: { requiresAuth: true, role: 'admin' }
+    },
+    {
+      // Graph browser (P1-09 follow-up): visualizes ONLY real-endpoint-provable
+      // structure (mapping course→knowledge-point→evidence). Retrieval trace is
+      // not fabricated while the V2 shadow is unwired. Admin-only, flag-gated
+      // (matches the V2 evidence endpoint admin-only discipline).
+      path: '/graph-browser/:courseId?',
+      name: 'graph-browser',
+      component: featureFlags.graphBrowser
+        ? () => import('../features/graph-browser/GraphBrowser.vue')
+        : loadView('KnowledgeMappingWorkspace'),
+      meta: { requiresAuth: true, role: 'admin', feature: 'graph-browser' }
+    },
+    {
+      // Shadow-1 is a standalone local demo route. It is deliberately not
+      // mounted inside Chat/StudentPlayer and always reports its disabled
+      // state when the frontend/backend flags are off.
+      path: '/demo/retrieval',
+      name: 'retrieval-demo',
+      component: loadView('RetrievalDemoPage'),
+      meta: { requiresAuth: true, role: 'admin', feature: 'retrieval-demo' }
     },
     {
       path: '/:pathMatch(.*)*',

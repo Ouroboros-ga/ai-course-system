@@ -18,6 +18,17 @@ export const featureFlags = Object.freeze({
   knowledgeMappingWorkspace: readBooleanFlag(
     viteEnv.VITE_ENABLE_KNOWLEDGE_MAPPING_WORKSPACE
   ),
+  // Graph browser is independently gated. It only renders data provable by
+  // real endpoints (mapping + evidence-v2); the retrieval-trace layer is not
+  // fabricated while the V2 shadow is unwired/unreleased.
+  graphBrowser: readBooleanFlag(
+    viteEnv.VITE_ENABLE_GRAPH_BROWSER
+  ),
+  // Shadow-1 is a separate local demonstration surface. It never changes the
+  // default student/chat route and remains visibly disabled unless opt-in.
+  retrievalDemo: readBooleanFlag(
+    viteEnv.VITE_ENABLE_RETRIEVAL_DEMO
+  ),
 })
 
 export { readBooleanFlag }
