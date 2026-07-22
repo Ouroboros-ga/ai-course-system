@@ -24,8 +24,8 @@ export function assertGraphBrowserSchema(version) {
   if (typeof version !== 'string') {
     throw new Error(`Graph browser schema version must be a string, got ${typeof version}`)
   }
-  const major = version.split('/')[1]?.split('.')[0]
-  if (version.split('/')[0] !== 'graph-browser' || major !== FROZEN_MAJOR) {
+  const [namespace, frozenVersion, ...suffix] = version.split('/')
+  if (namespace !== 'graph-browser' || frozenVersion !== FROZEN_MAJOR || suffix.length > 0) {
     throw new Error(
       `Unknown graph browser schema version "${version}". ` +
       `Frozen major is ${FROZEN_MAJOR}; fail-closed.`
