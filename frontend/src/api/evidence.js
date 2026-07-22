@@ -2,13 +2,11 @@
  * P1-04 Evidence API module.
  *
  * Provides functions to fetch document page images, citations, and evidence
- * data from the backend. This module is consumed by P1-04 components only.
- * P1-09 owns the actual mounting of these API calls into the production
- * request pipeline.
- *
- * For G2 isolated development, this module returns fixture data when
- * the backend is unavailable. P1-09 replaces this with real API calls
- * at G3 integration.
+ * data from the backend. This module calls the REAL V2 endpoint
+ * ``/api/v1/evidence-v2`` (frozen contract ``internal-evidence-api/1.0``);
+ * it does NOT fall back to fixture data — a failed fetch throws. It is
+ * consumed by the production Evidence Viewer (admin-only route) and the
+ * graph-browser evidence layer.
  *
  * RISK-02: All API responses are validated through the contracts module
  * before being passed to viewer components. Invalid or stale data is
@@ -19,7 +17,6 @@ import {
   parseCitation,
   parseEvidenceSpan,
   parseCitationValidationResult,
-  CitationStatus,
   EvidenceStatus,
 } from '../features/evidence-viewer/contracts.js'
 
