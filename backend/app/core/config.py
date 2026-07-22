@@ -4,6 +4,7 @@ from enum import Enum
 from typing import List, Optional
 
 from app.core.feature_flags import LEGAL_VALUES, ALL_FLAGS
+from app.platform.retrieval_demo.mode import DEMO_RETRIEVAL_MODES
 
 
 class UserRole(str, Enum):
@@ -168,6 +169,13 @@ class Settings(BaseSettings):
     STUDENT_MEMORY_MODE: str = "disabled"
     SAFETY_GOVERNANCE_MODE: str = "disabled"
 
+    # Shadow-1 user-visible retrieval demonstration.  This is intentionally
+    # separate from all Product-1 V1/V2 pipeline flags: it never promotes or
+    # reroutes the V1 request path.  Visible modes are additionally restricted
+    # at runtime to development/demo/test environments by DemoModeState.
+    DEMO_RETRIEVAL_MODE: str = "v1_only"
+    DEMO_RETRIEVAL_ENVIRONMENT: str = "development"
+
     @model_validator(mode="after")
     def _validate_feature_flags(self):
         """Startup fail-fast: every Product 1 flag must be a legal G3 value.
@@ -187,6 +195,11 @@ class Settings(BaseSettings):
                     f"v2_preferred_with_v1_fallback and v2_only are reserved for G6 "
                     f"and not legal in G3."
                 )
+        if self.DEMO_RETRIEVAL_MODE not in DEMO_RETRIEVAL_MODES:
+            raise ValueError(
+                f"Invalid DEMO_RETRIEVAL_MODE={self.DEMO_RETRIEVAL_MODE!r}; "
+                f"legal values: {list(DEMO_RETRIEVAL_MODES)}"
+            )
         return self
 
 

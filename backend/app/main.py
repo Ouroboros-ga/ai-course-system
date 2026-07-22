@@ -54,6 +54,7 @@ from app.api.v1.endpoints import (
     document_v2,        # P1-09 G3B V2 shadow (independent router, ADR-0006)
     evidence_v2,        # P1-09 G4A V2 Evidence API DTO (internal-evidence-api/1.0, ADR-0006)
     canary_v2,          # P1-09 G5A V2 Canary quality-gate (no real services, ADR-0006)
+    retrieval_demo,     # Shadow-1 local retrieval demo (isolated from V1)
 )
 from app.schemas import UnifiedResponse
 
@@ -122,6 +123,10 @@ app.include_router(evidence_v2.router, prefix="/api/v1/evidence-v2", tags=["Prod
 # end-to-end shadow canary WITHOUT real services (no LLM/Docling/OCR/vector);
 # real-provider canary (G5B) deferred. Does NOT touch V1 routes.
 app.include_router(canary_v2.router, prefix="/api/v1/canary-v2", tags=["Product1-V2-shadow"])
+
+# Shadow-1: local-only, admin-visible R2 retrieval demonstration.  Default
+# mode is v1_only; this independent router never touches chat.py/document.py.
+app.include_router(retrieval_demo.router, prefix="/api/v1/retrieval-demo", tags=["Shadow-1-retrieval-demo"])
 
 
 # 根路径健康检查
