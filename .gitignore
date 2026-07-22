@@ -98,3 +98,28 @@ p1_shadow_graph/
 /presentation.pptx
 /presentation_modified.pptx
 /presentation_modified.pptx.inspect.ndjson
+
+# Python virtual environments (named variants like .venv-paddlenlp)
+.venv-*/
+
+# PaddleNLP downloaded model weights and taskflow cache
+.paddlenlp/
+
+# Local human gold source materials (authorization/privacy controlled)
+/research/product1_graph_retrieval/human_gold/
+
+# Local Dense experiment runtime and downloaded model weights
+/research/product1_graph_retrieval/runtime/
+
+# Independent local Shadow-1 demo logs (not ORM/production records)
+/research/product1_graph_retrieval/demo_runs/
+
+# Trained model binary weights (large, regenerable via scripts)
+# Metadata files (JSON, MD, manifests) inside artifacts/ are explicitly kept.
+/research/**/artifacts/**/*.pdparams
+/research/**/artifacts/**/*.safetensors
+/research/**/artifacts/**/*.bin
+/research/**/artifacts/**/*.onnx
+/research/**/artifacts/**/*.pth
+/research/**/artifacts/**/*.ckpt
+/research/**/artifacts/**/cache/
