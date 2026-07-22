@@ -253,6 +253,40 @@ npm run dev
 # http://localhost:5173
 ```
 
+### Shadow-1：本地可信检索与课程图谱 Demo（实验功能）
+
+> 此功能仅用于本地答辩录屏、交互调试和 V1/V2 观察。它独立运行冻结的 R2
+> `BM25 + 本地 BGE Dense + RRF`，不覆盖 V1 问答链路、不调用 R3 GraphRAG，且
+> `Reviewed Silver` 不是 Human Gold。默认关闭。
+
+请分别打开两个 PowerShell 终端。后端终端：
+
+```powershell
+Set-Location E:\smartcarb\ai-course-system\backend
+$env:AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS = '1'
+$env:DEMO_RETRIEVAL_ENVIRONMENT = 'development'
+$env:DEMO_RETRIEVAL_MODE = 'demo_compare' # 也可设为 demo_shadow_visible
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+前端终端：
+
+```powershell
+Set-Location E:\smartcarb\ai-course-system\frontend
+$env:VITE_ENABLE_RETRIEVAL_DEMO = 'true'
+npm.cmd run dev -- --host 127.0.0.1 --port 5173
+```
+
+以管理员身份登录后，访问 `http://127.0.0.1:5173/demo/retrieval`。页面会显示
+“实验模式”和“实验回答，拒答校准尚未完成”；Citation 只定位真实的 PPT 页码与
+Block，不伪造课件图像。`demo_compare` 的 V1 对照由操作者粘贴既有 V1 输出，页面
+不会自动调用 V1。
+
+关闭方式：在两个终端分别按 `Ctrl+C`。若只需立即关闭后端 Demo，重启后端前设置
+`$env:DEMO_RETRIEVAL_MODE = 'v1_only'`，或在页面点击“一键回退 v1_only”。完整录屏
+检查清单与风险说明见
+[`docs/research/graph_retrieval/Shadow-1_Demo_操作与回滚手册.md`](docs/research/graph_retrieval/Shadow-1_Demo_操作与回滚手册.md)。
+
 ### 第四步：验证运行
 
 1. 打开浏览器访问 `http://localhost:5173`
