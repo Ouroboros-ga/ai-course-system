@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-authorized-sources/1.0",
+  "title": "Authorized raw real-course input manifest for B-G0b",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source_manifest_schema_version", "candidate_id", "source_contracts", "repository_storage_authorized", "contains_student_records", "courses"],
+  "properties": {
+    "source_manifest_schema_version": {"const": "product1-graph-retrieval-authorized-sources/1.0"},
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "source_contracts": {"$ref": "#/$defs/sourceContracts"},
+    "repository_storage_authorized": {"const": true},
+    "contains_student_records": {"const": false},
+    "courses": {
+      "type": "array", "minItems": 3, "maxItems": 5,
+      "items": {"$ref": "#/$defs/course"}
+    }
+  },
+  "$defs": {
+    "sourceContracts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["document_ir", "evidence", "citation", "education_graph"],
+      "properties": {
+        "document_ir": {"const": "document-ir/1.0"},
+        "evidence": {"const": "evidence/1.0"},
+        "citation": {"const": "citation/1.0"},
+        "education_graph": {"const": "edu-graph/1.0"}
+      }
+    },
+    "approval": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "authorized_by", "purpose", "evidence_ref", "valid_from"],
+      "properties": {
+        "status": {"const": "approved"},
+        "authorized_by": {"type": "string", "minLength": 1},
+        "purpose": {"const": "human_gold_research_evaluation"},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "valid_from": {"type": "string", "format": "date-time"},
+        "expires_at": {"type": "string", "format": "date-time"},
+        "no_expiry": {"type": "boolean"}
+      },
+      "anyOf": [{"required": ["expires_at"]}, {"properties": {"no_expiry": {"const": true}}, "required": ["no_expiry"]}]
+    },
+    "privacy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewed_by", "evidence_ref", "raw_material_access_approved", "candidate_must_be_deidentified", "known_direct_identifiers_present", "sanitization_plan_ref"],
+      "properties": {
+        "status": {"const": "approved"},
+        "reviewed_by": {"type": "string", "minLength": 1},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "raw_material_access_approved": {"const": true},
+        "candidate_must_be_deidentified": {"const": true},
+        "known_direct_identifiers_present": {"type": "boolean"},
+        "sanitization_plan_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "pagePairReview": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewed_by", "evidence_ref", "pptx_pdf_same_page_count"],
+      "properties": {
+        "status": {"const": "approved"},
+        "reviewed_by": {"type": "string", "minLength": 1},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "pptx_pdf_same_page_count": {"const": true}
+      }
+    },
+    "file": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "sha256"],
+      "properties": {
+        "role": {"enum": ["pptx_source", "pdf_reference"]},
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "course": {
+      "type": "object", "additionalProperties": false,
+      "required": ["course_id", "page_count", "page_pair_review", "authorization", "privacy_review", "files"],
+      "properties": {
+        "course_id": {"type": "string", "minLength": 1},
+        "page_count": {"type": "integer", "minimum": 1},
+        "page_pair_review": {"$ref": "#/$defs/pagePairReview"},
+        "authorization": {"$ref": "#/$defs/approval"},
+        "privacy_review": {"$ref": "#/$defs/privacy"},
+        "files": {
+          "type": "array", "minItems": 2, "maxItems": 2,
+          "items": {"$ref": "#/$defs/file"}
+        }
+      }
+    }
+  }
+}

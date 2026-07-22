@@ -1,0 +1,18 @@
+{
+  "protocol_version": "graph-retrieval-eval/1.2",
+  "run_name": "r0_bm25_reviewed_silver_v0_2",
+  "seed": 0,
+  "candidate_k": 50,
+  "report_top_k": [1, 3, 5, 10],
+  "tokenizer": {
+    "version": "mixed-script-ngram/1.0",
+    "unicode": "NFKC",
+    "case_normalization": "casefold",
+    "latin_pattern": "[a-z0-9]+(?:[._:/#+-][a-z0-9]+)*",
+    "cjk_ngrams": [1, 2],
+    "query_term_frequency": "unique_terms_first_occurrence_order"
+  },
+  "bm25": {"idf": "lucene-positive", "k1": 1.2, "b": 0.75},
+  "tie_break": ["score_desc", "research_chunk_id_asc"],
+  "float_serialization_digits": 12
+}

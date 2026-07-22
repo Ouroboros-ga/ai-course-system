@@ -1,0 +1,11 @@
+{
+  "protocol_version": "graph-retrieval-eval/1.2",
+  "run_name": "m0_title_bm25_chapter_reviewed_silver_v0_2",
+  "seed": 0,
+  "candidate_k": 10,
+  "tokenizer": {"version": "mixed-script-ngram/1.0"},
+  "bm25": {"idf": "lucene-positive", "k1": 1.2, "b": 0.75},
+  "features": {"title_match": 0.45, "normalized_bm25": 0.4, "chapter_proximity": 0.15},
+  "tie_break": ["score_desc", "research_slide_id_asc"],
+  "float_serialization_digits": 12
+}

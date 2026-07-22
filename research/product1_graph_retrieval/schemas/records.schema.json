@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-records/1.1",
+  "title": "B-G0 JSONL record definitions",
+  "$defs": {
+    "researchMarker": {
+      "type": "object",
+      "required": ["research_sidecar", "not_a_production_contract_field"],
+      "properties": {
+        "research_sidecar": {"const": true},
+        "not_a_production_contract_field": {"const": true}
+      }
+    },
+    "query": {
+      "allOf": [{"$ref": "#/$defs/researchMarker"}],
+      "type": "object",
+      "required": ["research_query_id", "course_id", "text", "query_type", "query_stratum", "tags"],
+      "not": {"anyOf": [{"required": ["answerable"]}, {"required": ["answerability"]}, {"required": ["expected_behavior"]}]},
+      "properties": {
+        "research_query_id": {"type": "string", "pattern": "^rq_[0-9a-f]{24}$"},
+        "query_stratum": {"enum": ["exact_term", "definition", "formula_or_code", "paraphrase", "cross_language_alias", "multi_hop_relation", "no_answer"]}
+      }
+    },
+    "queryLabel": {
+      "type": "object",
+      "required": ["research_query_id", "answerability"],
+      "properties": {
+        "answerability": {"enum": ["answerable", "unanswerable_in_course", "scope_not_available", "evidence_stale_only"]}
+      }
+    },
+    "retrievalQrel": {
+      "type": "object",
+      "required": ["research_query_id", "research_evidence_id", "relevance", "judgment"],
+      "properties": {
+        "research_query_id": {"type": "string", "pattern": "^rq_[0-9a-f]{24}$"},
+        "research_evidence_id": {"type": "string", "pattern": "^rev_[0-9a-f]{24}$"},
+        "relevance": {"enum": [0, 1, 2]},
+        "judgment": {"enum": ["not_relevant", "partial_support", "direct_support"]}
+      }
+    },
+    "mappingQrel": {
+      "type": "object",
+      "required": ["research_knowledge_point_id", "research_slide_id", "relevance", "judgment", "research_evidence_ids"],
+      "properties": {
+        "research_knowledge_point_id": {"type": "string", "pattern": "^rkp_[0-9a-f]{24}$"},
+        "research_slide_id": {"type": "string", "pattern": "^rsl_[0-9a-f]{24}$"},
+        "relevance": {"enum": [0, 1, 2]},
+        "judgment": {"enum": ["irrelevant_hard_negative", "supporting_slide", "primary_slide"]},
+        "research_evidence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^rev_[0-9a-f]{24}$"}}
+      }
+    }
+  }
+}

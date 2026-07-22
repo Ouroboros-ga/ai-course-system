@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-fixture-manifest/1.1",
+  "title": "Product 1 graph retrieval research fixture manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "fixture_schema_version",
+    "research_sidecar_schema_version",
+    "fixture_id",
+    "dataset_level",
+    "created_at",
+    "source_contracts",
+    "course_ids",
+    "files",
+    "fixture_content_sha256",
+    "access_policy",
+    "gold",
+    "governance",
+    "contains_production_data",
+    "contains_personal_data"
+  ],
+  "properties": {
+    "fixture_schema_version": {"const": "product1-graph-retrieval-fixture/1.1"},
+    "research_sidecar_schema_version": {"const": "product1-graph-retrieval-research-sidecar/1.0"},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "dataset_level": {"enum": ["micro_contract", "human_gold"]},
+    "created_at": {"type": "string", "format": "date-time"},
+    "source_contracts": {"type": "object"},
+    "course_ids": {"type": "array", "minItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "files": {"type": "object", "minProperties": 10, "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}},
+    "fixture_content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "access_policy": {
+      "type": "object",
+      "required": ["index_inputs", "gold_only", "test_qrels_forbidden_before_run"],
+      "properties": {
+        "index_inputs": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "gold_only": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "test_qrels_forbidden_before_run": {"const": true}
+      }
+    },
+    "gold": {
+      "type": "object",
+      "required": ["status", "eligible_for_algorithm_comparison"],
+      "properties": {
+        "status": {"enum": ["synthetic_contract_oracle", "human_adjudicated"]},
+        "eligible_for_algorithm_comparison": {"type": "boolean"}
+      }
+    },
+    "annotation": {"type": "object"},
+    "governance": {"type": "object"},
+    "normalization": {"type": "object"},
+    "identity_fields": {"type": "object"},
+    "contains_production_data": {"const": false},
+    "contains_personal_data": {"const": false}
+  }
+}

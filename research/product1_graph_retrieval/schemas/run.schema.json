@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-offline-run/1.0",
+  "title": "Offline run header used by B-G0 evaluators",
+  "type": "object",
+  "required": ["record_type", "run_schema_version", "task", "fixture_manifest_sha256", "split", "configuration_sha256", "gold_access_attestation"],
+  "properties": {
+    "record_type": {"const": "run_header"},
+    "run_schema_version": {"const": "product1-graph-retrieval-offline-run/1.0"},
+    "task": {"enum": ["retrieval", "mapping"]},
+    "split": {"enum": ["validation", "test"]},
+    "gold_access_attestation": {
+      "type": "object",
+      "required": ["qrels_accessed_during_run", "query_labels_accessed_during_run"],
+      "properties": {
+        "qrels_accessed_during_run": {"const": false},
+        "query_labels_accessed_during_run": {"const": false}
+      }
+    }
+  }
+}

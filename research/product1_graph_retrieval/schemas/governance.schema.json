@@ -1,0 +1,74 @@
+﻿{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-human-gold-governance/1.0",
+  "title": "B-G0b human governance record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidate_id", "annotation", "governance"],
+  "properties": {
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "annotation": {"$ref": "#/$defs/annotation"},
+    "governance": {"$ref": "#/$defs/governance"}
+  },
+  "$defs": {
+    "calibration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["completed", "record_ref"],
+      "properties": {
+        "completed": {"type": "boolean"},
+        "record_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "annotator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_id", "role", "task_coverage", "bundle_sha256", "identity_record_ref", "independence_attestation_sha256"],
+      "properties": {
+        "member_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["A", "B"]},
+        "task_coverage": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"enum": ["retrieval", "mapping"]}},
+        "bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "identity_record_ref": {"type": "string", "minLength": 1},
+        "independence_attestation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "adjudication": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_id", "identity_record_ref", "complete", "total_disagreements", "resolved_disagreements", "record_sha256"],
+      "properties": {
+        "member_id": {"type": "string", "minLength": 1},
+        "identity_record_ref": {"type": "string", "minLength": 1},
+        "complete": {"type": "boolean"},
+        "total_disagreements": {"type": "integer", "minimum": 0},
+        "resolved_disagreements": {"type": "integer", "minimum": 0},
+        "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "annotation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["calibration", "independent_annotators", "adjudication"],
+      "properties": {
+        "calibration": {"$ref": "#/$defs/calibration"},
+        "independent_annotators": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/annotator"}},
+        "adjudication": {"$ref": "#/$defs/adjudication"}
+      }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewer_id", "decision_ref", "reviewed_at"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "rejected"]},
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "decision_ref": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "governance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["p1_00", "p1_10"],
+      "properties": {
+        "p1_00": {"$ref": "#/$defs/decision"},
+        "p1_10": {"$ref": "#/$defs/decision"}
+      }
+    }
+  }
+}

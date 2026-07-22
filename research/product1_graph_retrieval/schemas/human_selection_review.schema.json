@@ -1,0 +1,246 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-human-selection-review/0.1",
+  "title": "Private pending review packet for human query and knowledge-point selection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "review_schema_version", "candidate_id", "status", "internal_use_policy",
+    "source_seed_files", "sampling", "source_governance", "courses",
+    "query_candidates", "knowledge_point_candidates", "chapter_candidates",
+    "ocr_review_tasks", "scope_query_candidates", "human_finalization"
+  ],
+  "properties": {
+    "review_schema_version": {"const": "product1-graph-retrieval-human-selection-review/0.1"},
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "status": {"enum": ["pending_human_review", "human_review_complete"]},
+    "internal_use_policy": {"const": "smart_course_system_internal_offline_evaluation_no_external_distribution"},
+    "source_seed_files": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/sourceSeed"}},
+    "sampling": {"$ref": "#/$defs/sampling"},
+    "source_governance": {"$ref": "#/$defs/sourceGovernance"},
+    "courses": {"type": "array", "minItems": 3, "maxItems": 5, "items": {"$ref": "#/$defs/course"}},
+    "query_candidates": {"type": "array", "minItems": 60, "maxItems": 100, "items": {"$ref": "#/$defs/queryCandidate"}},
+    "knowledge_point_candidates": {"type": "array", "minItems": 40, "maxItems": 80, "items": {"$ref": "#/$defs/kpCandidate"}},
+    "chapter_candidates": {"type": "array", "minItems": 3, "items": {"$ref": "#/$defs/chapterCandidate"}},
+    "ocr_review_tasks": {"type": "array", "items": {"$ref": "#/$defs/ocrTask"}},
+    "scope_query_candidates": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/scopeCandidate"}},
+    "human_finalization": {"$ref": "#/$defs/finalization"}
+  },
+  "$defs": {
+    "nullableString": {"type": ["string", "null"]},
+    "review": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "selected", "reviewed_by", "review_note"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "rejected"]},
+        "selected": {"type": ["boolean", "null"]},
+        "reviewed_by": {"$ref": "#/$defs/nullableString"},
+        "review_note": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "sourceSeed": {
+      "type": "object", "additionalProperties": false,
+      "required": ["file", "role", "encoding", "sha256"],
+      "properties": {
+        "file": {"type": "string", "minLength": 1},
+        "role": {"enum": ["query_seed_export", "knowledge_point_export", "page_index_export"]},
+        "encoding": {"enum": ["utf-8-sig", "gb18030"]},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "sampling": {
+      "type": "object", "additionalProperties": false,
+      "required": ["method", "query_target", "seed_hints_excluded", "suggestions_are_not_gold"],
+      "properties": {
+        "method": {"const": "course_variant_even_coverage_v1"},
+        "query_target": {"type": "integer", "minimum": 60, "maximum": 100},
+        "seed_hints_excluded": {"const": true},
+        "suggestions_are_not_gold": {"const": true}
+      }
+    },
+    "approvalRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewed_by", "evidence_ref"],
+      "properties": {
+        "status": {"enum": ["pending_record_completion", "approved"]},
+        "reviewed_by": {"$ref": "#/$defs/nullableString"},
+        "evidence_ref": {"$ref": "#/$defs/nullableString"}
+      }
+    },
+    "sourceGovernance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authorization", "privacy", "repository_storage_authorized"],
+      "properties": {
+        "authorization": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "authorized_by", "evidence_ref", "valid_from", "expires_at", "no_expiry"],
+          "properties": {
+            "status": {"enum": ["pending_record_completion", "approved"]},
+            "authorized_by": {"$ref": "#/$defs/nullableString"},
+            "evidence_ref": {"$ref": "#/$defs/nullableString"},
+            "valid_from": {"$ref": "#/$defs/nullableString"},
+            "expires_at": {"$ref": "#/$defs/nullableString"},
+            "no_expiry": {"type": ["boolean", "null"]}
+          }
+        },
+        "privacy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "reviewed_by", "evidence_ref", "known_direct_identifiers_present", "sanitization_plan_ref"],
+          "properties": {
+            "status": {"enum": ["pending_record_completion", "approved"]},
+            "reviewed_by": {"$ref": "#/$defs/nullableString"},
+            "evidence_ref": {"$ref": "#/$defs/nullableString"},
+            "known_direct_identifiers_present": {"type": ["boolean", "null"]},
+            "sanitization_plan_ref": {"$ref": "#/$defs/nullableString"}
+          }
+        },
+        "repository_storage_authorized": {"type": ["boolean", "null"]}
+      }
+    },
+    "course": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "course_id", "course_name", "workbook_source_file", "actual_pptx", "actual_pdf",
+        "page_count", "pptx_sha256", "pdf_sha256", "file_mapping_review",
+        "redaction_terms", "redaction_review", "ocr_provenance"
+      ],
+      "properties": {
+        "course_id": {"type": "string", "minLength": 1},
+        "course_name": {"type": "string", "minLength": 1},
+        "workbook_source_file": {"type": "string", "minLength": 1},
+        "actual_pptx": {"type": "string", "minLength": 1},
+        "actual_pdf": {"type": "string", "minLength": 1},
+        "page_count": {"type": "integer", "minimum": 1},
+        "pptx_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "pdf_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "file_mapping_review": {"$ref": "#/$defs/approvalRecord"},
+        "redaction_terms": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "redaction_review": {"$ref": "#/$defs/approvalRecord"},
+        "ocr_provenance": {
+          "type": ["object", "null"], "additionalProperties": false,
+          "properties": {
+            "engine": {"type": "string", "minLength": 1},
+            "engine_version": {"type": "string", "minLength": 1},
+            "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+          },
+          "required": ["engine", "engine_version", "config_sha256"]
+        }
+      }
+    },
+    "queryCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "candidate_query_id", "seed_id", "course_id", "knowledge_point_seed_id",
+        "knowledge_point_label", "source_page_range_for_author_review_only", "text",
+        "source_variant", "suggested_query_type_not_gold", "suggested_query_stratum_not_gold",
+        "suggested_split_not_gold", "final_query_type", "final_query_stratum",
+        "final_split", "tags", "human_review"
+      ],
+      "properties": {
+        "candidate_query_id": {"type": "string", "minLength": 1},
+        "seed_id": {"type": "string", "minLength": 1},
+        "course_id": {"type": "string", "minLength": 1},
+        "knowledge_point_seed_id": {"type": "string", "minLength": 1},
+        "knowledge_point_label": {"type": "string", "minLength": 1},
+        "source_page_range_for_author_review_only": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "source_variant": {"type": "string", "minLength": 1},
+        "suggested_query_type_not_gold": {"type": "string", "minLength": 1},
+        "suggested_query_stratum_not_gold": {"enum": ["exact_term", "definition", "formula_or_code", "paraphrase", "cross_language_alias", "multi_hop_relation", "no_answer"]},
+        "suggested_split_not_gold": {"enum": ["train", "validation", "test"]},
+        "final_query_type": {"$ref": "#/$defs/nullableString"},
+        "final_query_stratum": {"type": ["string", "null"], "enum": ["exact_term", "definition", "formula_or_code", "paraphrase", "cross_language_alias", "multi_hop_relation", "no_answer", null]},
+        "final_split": {"type": ["string", "null"], "enum": ["train", "validation", "test", null]},
+        "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "human_review": {"$ref": "#/$defs/review"}
+      }
+    },
+    "kpCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "candidate_knowledge_point_id", "seed_knowledge_point_id", "course_id", "canonical_label",
+        "source_chapter_for_author_review_only", "source_page_range_for_author_review_only",
+        "suggested_split_not_gold", "aliases", "final_chapter_id", "final_chapter_path",
+        "final_split", "human_review"
+      ],
+      "properties": {
+        "candidate_knowledge_point_id": {"type": "string", "minLength": 1},
+        "seed_knowledge_point_id": {"type": "string", "minLength": 1},
+        "course_id": {"type": "string", "minLength": 1},
+        "canonical_label": {"type": "string", "minLength": 1},
+        "source_chapter_for_author_review_only": {"type": "string", "minLength": 1},
+        "source_page_range_for_author_review_only": {"type": "string", "minLength": 1},
+        "suggested_split_not_gold": {"enum": ["validation", "test"]},
+        "aliases": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "final_chapter_id": {"$ref": "#/$defs/nullableString"},
+        "final_chapter_path": {"type": ["array", "null"], "items": {"type": "string", "minLength": 1}},
+        "final_split": {"type": ["string", "null"], "enum": ["validation", "test", null]},
+        "human_review": {"$ref": "#/$defs/review"}
+      }
+    },
+    "chapterCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_chapter_id", "course_id", "source_chapter_label", "suggested_start_slide_not_gold", "suggested_end_slide_not_gold", "final_start_slide", "final_end_slide", "final_chapter_id", "final_chapter_path", "human_review"],
+      "properties": {
+        "candidate_chapter_id": {"type": "string", "minLength": 1},
+        "course_id": {"type": "string", "minLength": 1},
+        "source_chapter_label": {"type": "string", "minLength": 1},
+        "suggested_start_slide_not_gold": {"type": "integer", "minimum": 1},
+        "suggested_end_slide_not_gold": {"type": "integer", "minimum": 1},
+        "final_start_slide": {"type": ["integer", "null"], "minimum": 1},
+        "final_end_slide": {"type": ["integer", "null"], "minimum": 1},
+        "final_chapter_id": {"$ref": "#/$defs/nullableString"},
+        "final_chapter_path": {"type": ["array", "null"], "items": {"type": "string", "minLength": 1}},
+        "human_review": {"$ref": "#/$defs/review"}
+      }
+    },
+    "ocrBlock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["order", "text", "bbox", "confidence"],
+      "properties": {
+        "order": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1},
+        "bbox": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "ocrTask": {
+      "type": "object", "additionalProperties": false,
+      "required": ["task_id", "course_id", "slide_number", "native_text_chars", "picture_count", "controlled_source_ref", "decision", "blocks", "human_review"],
+      "properties": {
+        "task_id": {"type": "string", "minLength": 1},
+        "course_id": {"type": "string", "minLength": 1},
+        "slide_number": {"type": "integer", "minimum": 1},
+        "native_text_chars": {"type": "integer", "minimum": 0},
+        "picture_count": {"type": "integer", "minimum": 1},
+        "controlled_source_ref": {"type": "string", "minLength": 1},
+        "decision": {"type": ["string", "null"], "enum": ["use_reviewed_ocr", "no_relevant_text", null]},
+        "blocks": {"type": "array", "items": {"$ref": "#/$defs/ocrBlock"}},
+        "human_review": {"$ref": "#/$defs/review"}
+      }
+    },
+    "scopeCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_scope_query_id", "unavailable_course_id", "text", "final_query_type", "final_split", "tags", "human_review"],
+      "properties": {
+        "candidate_scope_query_id": {"type": "string", "minLength": 1},
+        "unavailable_course_id": {"$ref": "#/$defs/nullableString"},
+        "text": {"$ref": "#/$defs/nullableString"},
+        "final_query_type": {"$ref": "#/$defs/nullableString"},
+        "final_split": {"type": ["string", "null"], "enum": ["train", "validation", "test", null]},
+        "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "human_review": {"$ref": "#/$defs/review"}
+      }
+    },
+    "finalization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "finalized_by", "finalized_at", "attestation"],
+      "properties": {
+        "status": {"enum": ["pending", "approved"]},
+        "finalized_by": {"$ref": "#/$defs/nullableString"},
+        "finalized_at": {"$ref": "#/$defs/nullableString"},
+        "attestation": {"type": ["string", "null"], "enum": ["human_selected_without_gold_labels_or_model_rankings", null]}
+      }
+    }
+  }
+}

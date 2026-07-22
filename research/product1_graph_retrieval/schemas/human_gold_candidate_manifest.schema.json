@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-human-gold-candidate/0.1",
+  "title": "B-G0b human gold candidate manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "candidate_schema_version", "candidate_id", "fixture_id",
+    "research_sidecar_schema_version", "created_at", "dataset_level",
+    "course_ids", "files", "candidate_content_sha256", "source_contracts", "access_policy",
+    "source_authorization", "contains_personal_data", "gold",
+    "annotation", "governance"
+  ],
+  "properties": {
+    "candidate_schema_version": {"const": "product1-graph-retrieval-human-gold-candidate/0.1"},
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "fixture_id": {"const": "human_gold_candidate_v0_1"},
+    "research_sidecar_schema_version": {"const": "product1-graph-retrieval-research-sidecar/1.0"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "dataset_level": {"const": "human_gold_candidate"},
+    "course_ids": {"type": "array", "minItems": 3, "maxItems": 5, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "files": {
+      "type": "object",
+      "required": ["source_blocks.jsonl", "evidence.jsonl", "corpus.jsonl", "queries.jsonl", "knowledge_points.jsonl", "slides.jsonl", "splits.json"],
+      "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "candidate_content_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "normalization": {"type": "object"},
+    "identity_fields": {"type": "object"},
+    "contains_production_data": {"type": "boolean"},
+    "contains_personal_data": {"const": false},
+    "source_contracts": {"$ref": "#/$defs/sourceContracts"},
+    "access_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["public_index_inputs", "gold_only", "gold_access"],
+      "properties": {
+        "public_index_inputs": {"type": "array", "minItems": 7, "maxItems": 7, "uniqueItems": true, "items": {"enum": ["source_blocks.jsonl", "evidence.jsonl", "corpus.jsonl", "queries.jsonl", "knowledge_points.jsonl", "slides.jsonl", "splits.json"]}},
+        "gold_only": {"type": "array", "minItems": 9, "maxItems": 9, "uniqueItems": true, "items": {"enum": ["retrieval_query_labels.jsonl", "retrieval_qrels.jsonl", "mapping_qrels.jsonl", "annotation/retrieval_A.json", "annotation/retrieval_B.json", "annotation/mapping_A.json", "annotation/mapping_B.json", "annotation/retrieval_adjudication.json", "annotation/mapping_adjudication.json"]}},
+        "gold_access": {"const": "evaluation_only_after_frozen_run"}
+      }
+    },
+    "source_authorization": {
+      "type": "object", "additionalProperties": false,
+      "required": ["source_manifest_sha256", "authorization_record_ref", "privacy_review_ref"],
+      "properties": {
+        "source_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "authorization_record_ref": {"type": "string", "minLength": 1},
+        "privacy_review_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "gold": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "eligible_for_algorithm_comparison"],
+      "properties": {
+        "status": {"enum": ["pending_human_annotation", "pending_adjudication", "pending_governance", "human_adjudicated_candidate"]},
+        "eligible_for_algorithm_comparison": {"const": false}
+      }
+    },
+    "annotation": {"$ref": "#/$defs/annotationState"},
+    "governance": {"$ref": "#/$defs/governanceState"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"gold": {"properties": {"status": {"const": "pending_human_annotation"}}}}},
+      "then": {
+        "properties": {
+          "files": {
+            "not": {
+              "anyOf": [
+                {"required": ["retrieval_query_labels.jsonl"]},
+                {"required": ["retrieval_qrels.jsonl"]},
+                {"required": ["mapping_qrels.jsonl"]}
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {"properties": {"gold": {"properties": {"status": {"const": "human_adjudicated_candidate"}}}}},
+      "then": {
+        "properties": {
+          "annotation": {"required": ["calibration", "independent_annotators", "adjudication"]},
+          "governance": {"required": ["p1_00", "p1_10"]}
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sourceContracts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["document_ir", "evidence", "citation", "education_graph"],
+      "properties": {
+        "document_ir": {"const": "document-ir/1.0"}, "evidence": {"const": "evidence/1.0"},
+        "citation": {"const": "citation/1.0"}, "education_graph": {"const": "edu-graph/1.0"}
+      }
+    },
+    "calibration": {
+      "type": "object", "additionalProperties": false,
+      "required": ["completed", "record_ref"],
+      "properties": {"completed": {"type": "boolean"}, "record_ref": {"type": "string", "minLength": 1}}
+    },
+    "annotator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_id", "role", "task_coverage", "bundle_sha256", "identity_record_ref", "independence_attestation_sha256"],
+      "properties": {
+        "member_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["A", "B"]},
+        "task_coverage": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"enum": ["retrieval", "mapping"]}},
+        "bundle_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "identity_record_ref": {"type": "string", "minLength": 1},
+        "independence_attestation_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "adjudication": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_id", "identity_record_ref", "complete", "total_disagreements", "resolved_disagreements", "record_sha256"],
+      "properties": {
+        "member_id": {"type": "string", "minLength": 1},
+        "identity_record_ref": {"type": "string", "minLength": 1},
+        "complete": {"type": "boolean"},
+        "total_disagreements": {"type": "integer", "minimum": 0},
+        "resolved_disagreements": {"type": "integer", "minimum": 0},
+        "record_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "annotationState": {
+      "type": "object", "additionalProperties": false,
+      "properties": {
+        "calibration": {"$ref": "#/$defs/calibration"},
+        "independent_annotators": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/annotator"}},
+        "adjudication": {"$ref": "#/$defs/adjudication"}
+      }
+    },
+    "decision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewer_id", "decision_ref", "reviewed_at"],
+      "properties": {
+        "status": {"enum": ["pending", "approved", "rejected"]},
+        "reviewer_id": {"type": "string", "minLength": 1},
+        "decision_ref": {"type": "string", "minLength": 1},
+        "reviewed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "governanceState": {
+      "type": "object", "additionalProperties": false,
+      "properties": {"p1_00": {"$ref": "#/$defs/decision"}, "p1_10": {"$ref": "#/$defs/decision"}}
+    }
+  }
+}

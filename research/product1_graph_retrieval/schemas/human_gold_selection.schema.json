@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-human-selection/0.1",
+  "title": "Human-prepared, pre-gold query and knowledge-point selection",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["selection_schema_version", "candidate_id", "source_manifest_sha256", "created_at", "created_by_member_id", "attestation", "candidate_privacy_plan", "courses", "scope_queries"],
+  "properties": {
+    "selection_schema_version": {"const": "product1-graph-retrieval-human-selection/0.1"},
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "source_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by_member_id": {"type": "string", "minLength": 1},
+    "attestation": {"const": "human_selected_without_gold_labels_or_model_rankings"},
+    "candidate_privacy_plan": {"$ref": "#/$defs/privacyPlan"},
+    "courses": {"type": "array", "minItems": 3, "maxItems": 5, "items": {"$ref": "#/$defs/course"}},
+    "scope_queries": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/scopeQuery"}}
+  },
+  "$defs": {
+    "privacyPlan": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reviewed_by", "evidence_ref", "candidate_must_be_deidentified"],
+      "properties": {
+        "status": {"const": "approved"},
+        "reviewed_by": {"type": "string", "minLength": 1},
+        "evidence_ref": {"type": "string", "minLength": 1},
+        "candidate_must_be_deidentified": {"const": true}
+      }
+    },
+    "chapterRange": {
+      "type": "object", "additionalProperties": false,
+      "required": ["start_slide", "end_slide", "chapter_id", "chapter_path"],
+      "properties": {
+        "start_slide": {"type": "integer", "minimum": 1},
+        "end_slide": {"type": "integer", "minimum": 1},
+        "chapter_id": {"type": "string", "minLength": 1},
+        "chapter_path": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "ocrBlock": {
+      "type": "object", "additionalProperties": false,
+      "required": ["order", "text", "bbox", "confidence"],
+      "properties": {
+        "order": {"type": "integer", "minimum": 1},
+        "text": {"type": "string", "minLength": 1},
+        "bbox": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "ocrProvenance": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": {"type": "string", "minLength": 1},
+        "engine_version": {"type": "string", "minLength": 1},
+        "config_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      },
+      "required": ["engine", "engine_version", "config_sha256"]
+    },
+    "ocrRecord": {
+      "type": "object", "additionalProperties": false,
+      "required": ["slide_number", "review_status", "blocks"],
+      "properties": {
+        "slide_number": {"type": "integer", "minimum": 1},
+        "review_status": {"enum": ["human_reviewed_for_candidate", "human_reviewed_no_relevant_text"]},
+        "blocks": {"type": "array", "items": {"$ref": "#/$defs/ocrBlock"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"review_status": {"const": "human_reviewed_no_relevant_text"}}},
+         "then": {"properties": {"blocks": {"maxItems": 0}}}}
+      ]
+    },
+    "query": {
+      "type": "object", "additionalProperties": false,
+      "required": ["text", "query_type", "query_stratum", "split", "tags"],
+      "properties": {
+        "text": {"type": "string", "minLength": 1},
+        "query_type": {"type": "string", "minLength": 1},
+        "query_stratum": {"enum": ["exact_term", "definition", "formula_or_code", "paraphrase", "cross_language_alias", "multi_hop_relation", "no_answer"]},
+        "split": {"enum": ["train", "validation", "test"]},
+        "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "scopeQuery": {
+      "type": "object", "additionalProperties": false,
+      "required": ["course_id", "text", "query_type", "query_stratum", "split", "tags"],
+      "properties": {
+        "course_id": {"type": "string", "minLength": 1},
+        "text": {"type": "string", "minLength": 1},
+        "query_type": {"type": "string", "minLength": 1},
+        "query_stratum": {"const": "no_answer"},
+        "split": {"enum": ["train", "validation", "test"]},
+        "tags": {"type": "array", "uniqueItems": true, "items": {"type": "string"}}
+      }
+    },
+    "knowledgePoint": {
+      "type": "object", "additionalProperties": false,
+      "required": ["canonical_label", "aliases", "chapter_id", "chapter_path", "split"],
+      "properties": {
+        "canonical_label": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "chapter_id": {"type": "string", "minLength": 1},
+        "chapter_path": {"type": "array", "minItems": 2, "items": {"type": "string", "minLength": 1}},
+        "split": {"enum": ["validation", "test"]}
+      }
+    },
+    "course": {
+      "type": "object", "additionalProperties": false,
+      "required": ["course_id", "redaction_terms", "redaction_terms_reviewed_by", "redaction_evidence_ref", "slide_chapter_ranges", "ocr_records", "queries", "knowledge_points"],
+      "properties": {
+        "course_id": {"type": "string", "minLength": 1},
+        "redaction_terms": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "redaction_terms_reviewed_by": {"type": "string", "minLength": 1},
+        "redaction_evidence_ref": {"type": "string", "minLength": 1},
+        "slide_chapter_ranges": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/chapterRange"}},
+        "ocr_provenance": {"$ref": "#/$defs/ocrProvenance"},
+        "ocr_records": {"type": "array", "items": {"$ref": "#/$defs/ocrRecord"}},
+        "queries": {"type": "array", "items": {"$ref": "#/$defs/query"}},
+        "knowledge_points": {"type": "array", "items": {"$ref": "#/$defs/knowledgePoint"}}
+      }
+    }
+  }
+}

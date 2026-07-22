@@ -1,0 +1,91 @@
+{
+  "reconciliation_schema_version": "reviewed-silver-reconciliation/0.2",
+  "source_workbook": "RAG素材审核_LLM任务已完成(2).xlsx",
+  "purpose": "Resolve rows marked 改写 where the reviewer corrected the target knowledge point or supplied a rationale but left the replacement-query cell blank. These are LLM-assisted learning-data resolutions, not human Gold labels.",
+  "query_resolutions": [
+    {
+      "course_id": "CTRL202",
+      "source_text": "这里的负载效应是否只指电动机负载转矩？",
+      "final_text": "建立控制系统数学模型时，负载效应通常如何体现在微分方程的建立过程中？",
+      "resolution_reason": "The reviewer identified an out-of-course comparison and redirected the question to mathematical modelling."
+    },
+    {
+      "course_id": "CTRL202",
+      "source_text": "建立控制系统微分方程通常分哪几个步骤？",
+      "final_text": "建立控制系统微分方程通常分哪几个步骤？",
+      "resolution_reason": "The original wording is retained; the reviewer corrected the knowledge-point label only."
+    },
+    {
+      "course_id": "CTRL202",
+      "source_text": "非线性系统的全局线性化算法是什么？",
+      "final_text": "建立非线性控制系统数学模型时，通常需要说明哪些变量、关系和近似条件？",
+      "resolution_reason": "Replace an unsupported global-algorithm request with a course-scoped modelling question."
+    },
+    {
+      "course_id": "CTRL202",
+      "source_text": "为什么要考虑负载效应和必要的线性化？",
+      "final_text": "建立控制系统微分方程时，为什么需要考虑负载效应和必要的线性化？",
+      "resolution_reason": "Make the course modelling context explicit."
+    },
+    {
+      "course_id": "EE101",
+      "source_text": "非正弦交流波形如何自动跟踪瞬时方向？",
+      "final_text": "电路分析中怎样约定电流和电压的参考方向？",
+      "resolution_reason": "Replace an unsupported automatic-tracking request with the reviewed circuit-concepts topic."
+    },
+    {
+      "course_id": "EE101",
+      "source_text": "电流参考方向是否等同于电动机旋转磁场方向？",
+      "final_text": "电流参考方向在电路分析中有什么作用？",
+      "resolution_reason": "Remove the cross-course motor comparison."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "矢量控制的磁链观测器参数如何整定？",
+      "final_text": "变频调速通过改变什么量来调节三相异步电动机的转速？",
+      "resolution_reason": "Reviewer redirected the question to 变频调速."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "绕线型转子的绕组怎样连接并引出？",
+      "final_text": "绕线型异步电动机的转子绕组怎样连接并引出？",
+      "resolution_reason": "Retain the intended question and make the motor context explicit."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "电动机可以按哪些维度分类？",
+      "final_text": "三相异步电动机的定子和转子分别由哪些主要部分构成？",
+      "resolution_reason": "Reviewer noted that broad motor classification is outside this chapter."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "Y-Δ起动有哪些适用条件和限制？",
+      "final_text": "Y-Δ降压起动适用于哪些类型和接法条件下的三相异步电动机？",
+      "resolution_reason": "Keep the supported applicability part and remove unsupported limitations."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "绕线型转子侧矢量控制的参数如何整定？",
+      "final_text": "绕线型异步电动机的转子结构有什么特点？",
+      "resolution_reason": "Replace an unsupported control-parameter request with the reviewed rotor topic."
+    },
+    {
+      "course_id": "EE207",
+      "source_text": "本章对笼型异步电动机主要讲哪些内容？",
+      "final_text": "本章围绕笼型三相异步电动机主要介绍哪些结构、原理和运行特性？",
+      "resolution_reason": "Clarify the chapter-scope question."
+    },
+    {
+      "course_id": "VEH101",
+      "source_text": "课件列举了哪些发动机燃料类型？",
+      "final_text": "课件列举了哪些发动机燃料类型？",
+      "resolution_reason": "The original wording is retained; the reviewer corrected the knowledge-point label only."
+    },
+    {
+      "course_id": "VEH101",
+      "source_text": "汽油机燃料供给系统的主要功用是什么？",
+      "final_text": "汽油机燃料供给系统的主要功用是什么？",
+      "resolution_reason": "The original wording is retained; the reviewer corrected the knowledge-point label only."
+    }
+  ]
+}

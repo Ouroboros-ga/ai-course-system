@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "product1-graph-retrieval-human-annotation/1.0",
+  "title": "Independent human annotation and adjudication bundle",
+  "type": "object", "additionalProperties": false,
+  "required": ["annotation_schema_version", "fixture_id", "task", "annotator", "independent", "items"],
+  "properties": {
+    "annotation_schema_version": {"const": "product1-graph-retrieval-human-annotation/1.0"},
+    "fixture_id": {"type": "string", "minLength": 1},
+    "candidate_id": {"const": "human_gold_candidate_v0_1"},
+    "protocol_version": {"const": "product1-graph-retrieval-human-annotation/1.0"},
+    "source_manifest_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "source_contracts": {"$ref": "#/$defs/sourceContracts"},
+    "task": {"enum": ["retrieval", "mapping", "adjudication"]},
+    "source_task": {"enum": ["retrieval", "mapping"]},
+    "candidate_order": {"type": "string", "minLength": 1},
+    "source_annotator_ids": {"type": "array", "minItems": 2, "maxItems": 2, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "agreement": {"type": "object"},
+    "annotator": {"$ref": "#/$defs/annotator"},
+    "independent": {"type": "boolean"},
+    "items": {"type": "array"}
+  },
+  "allOf": [
+    {
+      "if": {"required": ["candidate_id"]},
+      "then": {
+        "required": ["protocol_version", "source_manifest_sha256", "source_contracts", "candidate_order"],
+        "properties": {"annotator": {"required": ["role", "identity_not_verified_by_tool"], "properties": {"identity_not_verified_by_tool": {"const": true}}}}
+      }
+    },
+    {
+      "if": {"required": ["candidate_id", "task"], "properties": {"task": {"const": "retrieval"}}},
+      "then": {"properties": {"independent": {"const": true}, "annotator": {"properties": {"role": {"enum": ["A", "B"]}}}, "items": {"items": {"$ref": "#/$defs/retrievalItem"}}}}
+    },
+    {
+      "if": {"required": ["candidate_id", "task"], "properties": {"task": {"const": "mapping"}}},
+      "then": {"properties": {"independent": {"const": true}, "annotator": {"properties": {"role": {"enum": ["A", "B"]}}}, "items": {"items": {"$ref": "#/$defs/mappingItem"}}}}
+    },
+    {
+      "if": {"required": ["candidate_id", "task"], "properties": {"task": {"const": "adjudication"}}},
+      "then": {"required": ["source_task", "source_annotator_ids", "agreement"], "properties": {"independent": {"const": false}, "annotator": {"properties": {"role": {"const": "adjudicator"}}}, "items": {"items": {"$ref": "#/$defs/adjudicationItem"}}}}
+    }
+  ],
+  "$defs": {    "sourceContracts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["document_ir", "evidence", "citation", "education_graph"],
+      "properties": {"document_ir": {"const": "document-ir/1.0"}, "evidence": {"const": "evidence/1.0"}, "citation": {"const": "citation/1.0"}, "education_graph": {"const": "edu-graph/1.0"}}
+    },
+    "annotator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["member_id", "kind", "attestation"],
+      "properties": {
+        "member_id": {"type": "string", "minLength": 1},
+        "role": {"enum": ["A", "B", "adjudicator"]},
+        "kind": {"const": "human_team_member"},
+        "attestation": {"enum": ["PENDING_HUMAN_COMPLETION", "completed_independently_without_algorithm_rankings"]},
+        "identity_not_verified_by_tool": {"type": "boolean"}
+      }
+    },
+    "nullableRelevance": {"enum": [null, 0, 1, 2]},
+    "nullableAnswerability": {"enum": [null, "answerable", "unanswerable_in_course", "scope_not_available", "evidence_stale_only"]},
+    "nullableRetrievalJudgment": {"enum": [null, "not_relevant", "partial_support", "direct_support"]},
+    "nullableMappingJudgment": {"enum": [null, "irrelevant_hard_negative", "supporting_slide", "primary_slide"]},
+    "retrievalCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["research_evidence_id", "course_id", "artifact_id", "document_id", "unit_id", "block_id", "page_or_slide", "text_snippet", "status", "relevance", "judgment", "needs_adjudication"],
+      "properties": {
+        "research_evidence_id": {"type": "string", "pattern": "^rev_[0-9a-f]{24}$"},
+        "course_id": {"type": "string", "minLength": 1}, "artifact_id": {"type": "string", "minLength": 1},
+        "document_id": {"type": "string", "minLength": 1}, "unit_id": {"type": "string", "minLength": 1},
+        "block_id": {"type": "string", "minLength": 1}, "page_or_slide": {"type": "integer", "minimum": 1},
+        "text_snippet": {"type": "string"}, "status": {"enum": ["active", "stale"]},
+        "relevance": {"$ref": "#/$defs/nullableRelevance"}, "judgment": {"$ref": "#/$defs/nullableRetrievalJudgment"},
+        "needs_adjudication": {"type": ["boolean", "null"]}
+      }
+    },
+    "retrievalItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["research_query_id", "course_id", "query_text", "query_stratum", "answerability", "needs_adjudication", "candidates", "annotation_note"],
+      "properties": {
+        "research_query_id": {"type": "string", "pattern": "^rq_[0-9a-f]{24}$"},
+        "course_id": {"type": "string", "minLength": 1}, "query_text": {"type": "string", "minLength": 1},
+        "query_stratum": {"enum": ["exact_term", "definition", "formula_or_code", "paraphrase", "cross_language_alias", "multi_hop_relation", "no_answer"]},
+        "answerability": {"$ref": "#/$defs/nullableAnswerability"}, "needs_adjudication": {"type": ["boolean", "null"]},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/retrievalCandidate"}}, "annotation_note": {"type": "string"}
+      }
+    },
+    "mappingCandidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["research_slide_id", "course_id", "slide_number", "title", "body_text", "research_evidence_ids", "controlled_source_ref", "requires_visual_review", "source_text_is_not_visual_ground_truth", "relevance", "judgment", "needs_adjudication"],
+      "properties": {
+        "research_slide_id": {"type": "string", "pattern": "^rsl_[0-9a-f]{24}$"}, "course_id": {"type": "string", "minLength": 1},
+        "slide_number": {"type": "integer", "minimum": 1}, "title": {"type": "string"}, "body_text": {"type": "string"},
+        "research_evidence_ids": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^rev_[0-9a-f]{24}$"}},
+        "controlled_source_ref": {"type": "string", "pattern": "^controlled-source://"},
+        "requires_visual_review": {"const": true}, "source_text_is_not_visual_ground_truth": {"const": true},
+        "relevance": {"$ref": "#/$defs/nullableRelevance"}, "judgment": {"$ref": "#/$defs/nullableMappingJudgment"},
+        "needs_adjudication": {"type": ["boolean", "null"]}
+      }
+    },
+    "mappingItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["research_knowledge_point_id", "course_id", "canonical_label", "aliases", "candidates", "annotation_note"],
+      "properties": {
+        "research_knowledge_point_id": {"type": "string", "pattern": "^rkp_[0-9a-f]{24}$"},
+        "course_id": {"type": "string", "minLength": 1}, "canonical_label": {"type": "string", "minLength": 1},
+        "aliases": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "candidates": {"type": "array", "items": {"$ref": "#/$defs/mappingCandidate"}}, "annotation_note": {"type": "string"}
+      }
+    },
+    "adjudicationItem": {
+      "type": "object", "additionalProperties": false,
+      "required": ["key", "left_value", "right_value", "final_value"],
+      "properties": {
+        "key": {"type": "string", "pattern": "^(answerability|retrieval|mapping)\\|"},
+        "left_value": {}, "right_value": {},
+        "final_value": {"enum": [null, 0, 1, 2, "answerable", "unanswerable_in_course", "scope_not_available", "evidence_stale_only"]},
+        "reason": {"enum": ["uncertainty_escalation"]}
+      }
+    }
+  }
+}
