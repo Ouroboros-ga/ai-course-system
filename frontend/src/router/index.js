@@ -1,6 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
 import { featureFlags } from '@/config/featureFlags.js'
+import { shadowAppRoutes } from '@/app/router.js'
 
 const loadView = (view) => {
   return () => import(`../views/${view}.vue`)
@@ -139,6 +140,9 @@ const router = createRouter({
     },
     ...prototypeRoutes,
     ...teacherQaRoutes,
+    // Shadow frontend (/app/**). Flag-gated; legacy routes above stay the
+    // default until the cutover phase flips the flag default.
+    ...shadowAppRoutes,
     {
       path: '/admin',
       name: 'admin-panel',

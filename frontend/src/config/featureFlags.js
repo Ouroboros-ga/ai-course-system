@@ -29,6 +29,13 @@ export const featureFlags = Object.freeze({
   retrievalDemo: readBooleanFlag(
     viteEnv.VITE_ENABLE_RETRIEVAL_DEMO
   ),
+  // Shadow frontend (Vertical Slice 0.1, design.md/page-design.md): gates the
+  // whole /app/** tree. Off => /app/** redirects to the legacy home. Every
+  // shadow surface renders only real-endpoint-provable data; capabilities the
+  // backend does not offer degrade to explicit empty/disabled states.
+  shadowFrontend: readBooleanFlag(
+    viteEnv.VITE_ENABLE_SHADOW_FRONTEND
+  ),
 })
 
 export { readBooleanFlag }

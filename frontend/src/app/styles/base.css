@@ -1,0 +1,58 @@
+/* Shadow Frontend 基础样式 — 只作用于 .sfx 作用域（design.md） */
+
+.sfx {
+  font-family: var(--font-sans);
+  font-size: var(--ui-md-size);
+  line-height: var(--ui-md-line);
+  color: var(--text-primary);
+  background: var(--surface-page);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+.sfx h1, .sfx h2, .sfx h3, .sfx h4, .sfx p {
+  margin: 0;
+}
+
+.sfx a {
+  color: var(--text-link);
+  text-decoration: none;
+}
+
+.sfx a:hover {
+  color: var(--color-brand-hover);
+}
+
+/* 焦点：2px 墨蓝外轮廓（design.md 4.3/4.4） */
+.sfx :focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-xs);
+}
+
+.sfx ::selection {
+  background: var(--ink-100);
+  color: var(--ink-900);
+}
+
+/* 排版工具类（同一区域标题层级不超过三级） */
+.sfx-t-title1 { font-size: var(--title-1-size); line-height: var(--title-1-line); font-weight: var(--title-1-weight); }
+.sfx-t-title2 { font-size: var(--title-2-size); line-height: var(--title-2-line); font-weight: var(--title-2-weight); }
+.sfx-t-title3 { font-size: var(--title-3-size); line-height: var(--title-3-line); font-weight: var(--title-3-weight); }
+.sfx-t-body-lg { font-size: var(--body-lg-size); line-height: var(--body-lg-line); }
+.sfx-t-body { font-size: var(--body-md-size); line-height: var(--body-md-line); }
+.sfx-t-ui { font-size: var(--ui-md-size); line-height: var(--ui-md-line); font-weight: var(--ui-md-weight); }
+.sfx-t-sm { font-size: var(--ui-sm-size); line-height: var(--ui-sm-line); font-weight: var(--ui-sm-weight); }
+.sfx-t-caption { font-size: var(--caption-size); line-height: var(--caption-line); font-weight: var(--caption-weight); color: var(--text-muted); }
+.sfx-t-muted { color: var(--text-muted); }
+.sfx-t-secondary { color: var(--text-secondary); }
+.sfx-mono { font-family: var(--font-mono); }
+
+/* 减少动态效果（page-design §25） */
+@media (prefers-reduced-motion: reduce) {
+  .sfx *, .sfx *::before, .sfx *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

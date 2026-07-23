@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
-    "lint:eslint": "eslint . --fix --cache"
+    "lint:eslint": "eslint . --fix --cache",
+    "test:unit": "node --test src/app/lib/__tests__/learnMachine.test.js src/app/lib/__tests__/citationStatus.test.js",
+    "smoke:app": "node scripts/smoke-shadow-app.mjs"
   },
   "dependencies": {
     "@vueuse/core": "^14.2.1",

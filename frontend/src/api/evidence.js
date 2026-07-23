@@ -58,6 +58,30 @@ export function setEvidenceApiBase(baseUrl) {
   API_BASE = baseUrl
 }
 
+/**
+ * 构建带鉴权的请求头。evidence-v2 端点 admin-only（ADR-0006 §9），
+ * 裸 fetch 不带 token 会被鉴权依赖拒绝（401/403）。统一注入 Bearer token，
+ * 与 request.js 行为一致；无 token 时返回空 headers（端点仍可能公开可读时可用）。
+ */
+function authHeaders() {
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null
+  return token ? { Authorization: `Bearer ${token}` } : {}
+}
+
+/**
+ * 统一 fetch 包装：注入鉴权头，失败抛带状态码的 Error（便于上层按 403/503 分类）。
+ */
+async function evidenceFetch(url, options = {}) {
+  const response = await fetch(url, {
+    ...options,
+    headers: { ...authHeaders(), ...options.headers },
+  })
+  if (!response.ok) {
+    throw new Error(`evidence request failed: ${response.status}`)
+  }
+  return response
+}
+
 // ---------------------------------------------------------------------------
 // Document page images
 // ---------------------------------------------------------------------------
@@ -71,10 +95,7 @@ export function setEvidenceApiBase(baseUrl) {
  */
 export async function fetchPageImage(documentId, pageNumber) {
   const url = `${API_BASE}/documents/${encodeURIComponent(documentId)}/pages/${pageNumber}/image`
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch page image: ${response.status}`)
-  }
+  const response = await evidenceFetch(url)
   const data = await response.json()
   return {
     documentId: data.document_id ?? data.documentId ?? documentId,
@@ -93,10 +114,7 @@ export async function fetchPageImage(documentId, pageNumber) {
  */
 export async function fetchDocumentPages(documentId) {
   const url = `${API_BASE}/documents/${encodeURIComponent(documentId)}/pages`
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch document pages: ${response.status}`)
-  }
+  const response = await evidenceFetch(url)
   const data = await response.json()
   return Array.isArray(data) ? data : (data.pages ?? [])
 }
@@ -118,10 +136,7 @@ export async function fetchCitations(documentId, options = {}) {
   if (options.page != null) {
     url += `?page=${options.page}`
   }
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch citations: ${response.status}`)
-  }
+  const response = await evidenceFetch(url)
   const data = await response.json()
   const items = Array.isArray(data) ? data : (data.citations ?? [])
   return items.map(item => parseCitation(item)).filter(Boolean)
@@ -144,10 +159,7 @@ export async function fetchEvidenceSpans(documentId, options = {}) {
   if (options.page != null) {
     url += `?page=${options.page}`
   }
-  const response = await fetch(url)
-  if (!response.ok) {
-    throw new Error(`Failed to fetch evidence spans: ${response.status}`)
-  }
+  const response = await evidenceFetch(url)
   const data = await response.json()
   const items = Array.isArray(data) ? data : (data.evidence_spans ?? [])
   return items.map(item => parseEvidenceSpan(item)).filter(Boolean)
@@ -166,14 +178,11 @@ export async function fetchEvidenceSpans(documentId, options = {}) {
  */
 export async function validateCitations(documentId, citations) {
   const url = `${API_BASE}/documents/${encodeURIComponent(documentId)}/citations/validate`
-  const response = await fetch(url, {
+  const response = await evidenceFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ citations }),
   })
-  if (!response.ok) {
-    throw new Error(`Failed to validate citations: ${response.status}`)
-  }
   const data = await response.json()
   return parseCitationValidationResult(data)
 }

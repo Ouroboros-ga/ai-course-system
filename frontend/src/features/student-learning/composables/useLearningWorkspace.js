@@ -33,7 +33,10 @@ const writeJson = (key, value) => {
   }
 }
 
-export function useLearningWorkspace(courseId) {
+export function useLearningWorkspace(courseId, options = {}) {
+  // page-design §1.4：教师「学生视角预览」不写入正式学习进度。
+  // previewMode 下所有进度持久化调用直接短路（读取照常）。
+  const previewMode = options?.previewMode === true
   const status = ref('loading')
   const error = ref('')
   const course = ref(null)
@@ -319,6 +322,7 @@ export function useLearningWorkspace(courseId) {
   }
 
   async function saveProgress(options = {}) {
+    if (previewMode) return
     if (!course.value || status.value !== 'ready') return
     if (!options.silent) saveState.value = 'saving'
 

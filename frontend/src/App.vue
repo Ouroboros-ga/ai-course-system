@@ -1,10 +1,17 @@
 <script setup>
-  import { onMounted } from 'vue'
+  import { computed, onMounted } from 'vue'
+  import { useRoute } from 'vue-router'
   import NavigationBar from "./components/NavigationBar.vue"
   import GradientBackground from "./components/GradientBackground.vue"
   import { useCounterStore } from "@/stores/counter.js"
 
   const counter = useCounterStore()
+  const route = useRoute()
+
+  // Shadow frontend (/app/**) renders its own AppShell. The legacy
+  // NavigationBar/GradientBackground shell is bypassed for those routes so
+  // the two visual systems never mix.
+  const isShadowApp = computed(() => route.path === '/app' || route.path.startsWith('/app/'))
 
   onMounted(() => {
     counter.checkAuth()
@@ -13,10 +20,13 @@
 
 <template>
   <div id="app">
-    <NavigationBar />
-    <GradientBackground
-      :animated="true"
-    />
+    <router-view v-if="isShadowApp" />
+    <template v-else>
+      <NavigationBar />
+      <GradientBackground
+        :animated="true"
+      />
+    </template>
   </div>
 </template>
 
