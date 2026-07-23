@@ -66,6 +66,17 @@ TOGGLE_MODES: tuple = ("disabled", "shadow")
 G6_RESERVED: tuple = ("v2_preferred_with_v1_fallback", "v2_only")
 
 
+# TeachingAgent enable flag (independent of the 7-flag Product 1 DAG).
+# ADR-0006 §3: the controlled LangGraph teaching workflow is intentionally
+# NOT bundled with DOCUMENT_PIPELINE_VERSION. It has its own opt-in toggle
+# and is deliberately excluded from FLAG_KINDS / LEGAL_VALUES / ALL_FLAGS so
+# the 7-flag dependency resolver (resolve_effective_modes) never touches it.
+TEACHING_AGENT_MODE = "TEACHING_AGENT_MODE"
+TEACHING_AGENT_MODES: tuple = ("disabled", "enabled")
+"""Legal values for the TeachingAgent enable flag. Default ``disabled`` keeps
+the ``/api/v1/teaching-agent/respond`` endpoint at 503 (runtime not injected)."""
+
+
 # ---------------------------------------------------------------------------
 # Flag names and kinds
 # ---------------------------------------------------------------------------

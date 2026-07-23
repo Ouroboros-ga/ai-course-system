@@ -3,7 +3,7 @@ from pydantic import model_validator
 from enum import Enum
 from typing import List, Optional
 
-from app.core.feature_flags import LEGAL_VALUES, ALL_FLAGS
+from app.core.feature_flags import LEGAL_VALUES, ALL_FLAGS, TEACHING_AGENT_MODES
 from app.platform.retrieval_demo.mode import DEMO_RETRIEVAL_MODES
 
 
@@ -174,6 +174,11 @@ class Settings(BaseSettings):
     # reroutes the V1 request path.  Visible modes are additionally restricted
     # at runtime to development/demo/test environments by DemoModeState.
     DEMO_RETRIEVAL_MODE: str = "v1_only"
+
+    # TeachingAgent enable flag (independent of the 7-flag Product 1 DAG;
+    # see feature_flags.TEACHING_AGENT_MODES). Default disabled = the
+    # /api/v1/teaching-agent/respond endpoint stays 503 (runtime not injected).
+    TEACHING_AGENT_MODE: str = "disabled"
     DEMO_RETRIEVAL_ENVIRONMENT: str = "development"
 
     @model_validator(mode="after")
@@ -199,6 +204,11 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"Invalid DEMO_RETRIEVAL_MODE={self.DEMO_RETRIEVAL_MODE!r}; "
                 f"legal values: {list(DEMO_RETRIEVAL_MODES)}"
+            )
+        if self.TEACHING_AGENT_MODE not in TEACHING_AGENT_MODES:
+            raise ValueError(
+                f"Invalid TEACHING_AGENT_MODE={self.TEACHING_AGENT_MODE!r}; "
+                f"legal values: {list(TEACHING_AGENT_MODES)}"
             )
         return self
 

@@ -73,6 +73,13 @@ app = FastAPI(
 app.state.startup_side_effects_skipped = startup_side_effects_skipped
 app.state.startup_dependency_report = startup_dependency_report
 
+# P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
+# disabled -> no injection -> /api/v1/teaching-agent/respond stays 503. Only
+# injects when enabled AND an approved KG-MEST Shadow report is present AND
+# LLM is configured. Never blocks startup; see bootstrap.py.
+from app.platform.agents.bootstrap import bootstrap_teaching_agent
+bootstrap_teaching_agent(app)
+
 # 注册签名验证中间件（必须在CORS之后，路由之前）
 app.add_middleware(SignatureMiddleware)
 
