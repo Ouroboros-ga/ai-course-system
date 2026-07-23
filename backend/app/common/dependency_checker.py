@@ -16,6 +16,7 @@ PYTHON_DEPENDENCIES = [
     {"package": "python-multipart", "import_name": "multipart", "required": True},
     {"package": "uvicorn", "import_name": "uvicorn", "required": True},
     {"package": "httpx", "import_name": "httpx", "required": True},
+    {"package": "langgraph", "import_name": "langgraph", "required": True},
     {"package": "bcrypt", "import_name": "bcrypt", "required": True},
     {"package": "pillow", "import_name": "PIL", "required": True},
     {"package": "pymupdf", "import_name": "fitz", "required": True},
