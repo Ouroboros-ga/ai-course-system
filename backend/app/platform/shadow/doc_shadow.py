@@ -277,6 +277,7 @@ def trigger_doc_shadow(
     parse_result: Any,
     course_key: Optional[str] = None,
     store: Optional[ShadowArtifactStore] = None,
+    sidecar_store: Optional[Any] = None,
     sync: bool = True,
 ) -> ShadowTriggerResult:
     """Trigger a V2 document-parse shadow run after V1 success.
@@ -358,7 +359,11 @@ def trigger_doc_shadow(
 
     # 5. Single-in-flight per course.
     run_id = str(uuid.uuid4())
-    ckey = course_key or f"file:{source_sha[:16]}"
+    # ``ckey`` may be a synthetic file key for concurrency only.  It must
+    # never be used as an Evidence course scope; sidecars are emitted only
+    # for an explicit, real course_id supplied by the document workflow.
+    sidecar_course_key = str(course_key) if course_key is not None else None
+    ckey = sidecar_course_key or f"file:{source_sha[:16]}"
     if not _tracker.try_acquire(ckey, run_id):
         if QUEUE_FULL_SKIP:
             return ShadowTriggerResult(
@@ -373,7 +378,7 @@ def trigger_doc_shadow(
     try:
         if sync:
             _run_shadow_sync(
-                store, artifact_key, file_path, filename, parse_result, source_sha, run_id
+                store, artifact_key, file_path, filename, parse_result, source_sha, run_id, sidecar_course_key, sidecar_store
             )
             artifact_path = str(store._safe_rel(artifact_key))
             triggered = True
@@ -384,6 +389,8 @@ def trigger_doc_shadow(
                 None,
                 _run_shadow_sync,
                 store, artifact_key, file_path, filename, parse_result, source_sha, run_id,
+                sidecar_course_key,
+                sidecar_store,
             )
             artifact_path = None
             triggered = True
@@ -426,6 +433,8 @@ def _run_shadow_sync(
     parse_result: Any,
     source_sha: str,
     run_id: str,
+    course_key: Optional[str] = None,
+    sidecar_store: Optional[Any] = None,
 ) -> None:
     """Run the (fake/offline) V2 shadow parse and write the artifact.
 
@@ -450,3 +459,19 @@ def _run_shadow_sync(
         },
     }
     store.write(artifact_key, payload)
+
+    # Test-environment retrieval consumes this independently stored sidecar,
+    # never the research fixture or V1 RAG state.  A course scope is required
+    # so an unscoped upload cannot become visible to course retrieval.
+    if course_key:
+        from app.platform.shadow.course_evidence_sidecar import (
+            CourseEvidenceSidecarStore,
+            build_sidecar,
+        )
+
+        sidecar = build_sidecar(
+            course_id=course_key,
+            document_ir=ir_payload,
+            markdown=getattr(parse_result, "markdown_content", "") or "",
+        )
+        (sidecar_store or CourseEvidenceSidecarStore()).write(sidecar)

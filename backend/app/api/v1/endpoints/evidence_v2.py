@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 
 from app.core.feature_flags import EVIDENCE_CITATION_MODE, resolve_effective_modes
 from app.core.security import admin_only
+from app.platform.shadow.course_evidence_sidecar import CourseEvidenceSidecarStore
 
 router = APIRouter()
 
@@ -150,10 +151,24 @@ async def list_evidence_spans(
     page: Optional[int] = Query(default=None, ge=1),
     _admin: Any = Depends(admin_only),
 ) -> Any:
-    """G4A: DTO-conformant evidence spans. G4 serves empty (real
-    per-document evidence = G5/G6). 503 when flag off."""
+    """Return active sidecar Evidence for one parsed test-course document."""
     _require_shadow_enabled()
-    return EvidenceListResponse(evidence_spans=[])
+    snapshot = CourseEvidenceSidecarStore().find_document(document_id)
+    if not snapshot:
+        return EvidenceListResponse(evidence_spans=[])
+    spans = []
+    for row in snapshot.get("evidence", []):
+        if row.get("status") != "active" or (page is not None and row.get("page_or_slide") != page):
+            continue
+        spans.append(EvidenceSpanDTO(
+            artifact_id=row["artifact_id"], document_id=row["document_id"],
+            unit_id=row["unit_id"], block_id=row["block_id"],
+            version_ref=str(snapshot.get("content_sha256") or ""),
+            page_or_slide=row["page_or_slide"], char_start=row["char_start"],
+            char_end=row["char_end"], text_snippet=row["text_snippet"],
+            status="active", metadata={"evidence_id": row["evidence_id"], "citation_key": row["citation_key"]},
+        ))
+    return EvidenceListResponse(evidence_spans=spans)
 
 
 @router.get(
@@ -166,7 +181,7 @@ async def list_citations(
     page: Optional[int] = Query(default=None, ge=1),
     _admin: Any = Depends(admin_only),
 ) -> Any:
-    """G4A: DTO-conformant citations. G4 serves empty. 503 when flag off."""
+    """There is no answer generator here, therefore no fabricated citations."""
     _require_shadow_enabled()
     return CitationListResponse(citations=[])
 
@@ -181,10 +196,29 @@ async def validate_citations(
     body: ValidateCitationsRequest,
     _admin: Any = Depends(admin_only),
 ) -> Any:
-    """G4A: validate citations. No evidence available in G4 -> abstain
-    (status no_evidence, no fake citation keys). 503 when flag off."""
+    """Validate submitted citation closures against this document sidecar."""
     _require_shadow_enabled()
     total = len(body.citations)
+    snapshot = CourseEvidenceSidecarStore().find_document(document_id)
+    if snapshot:
+        by_id = {row["evidence_id"]: row for row in snapshot.get("evidence", []) if row.get("status") == "active"}
+        details = []
+        for citation in body.citations:
+            evidence_ref = citation.get("evidence_ref") or citation.get("evidence_id")
+            row = by_id.get(evidence_ref)
+            valid = bool(row and citation.get("key") == row["citation_key"])
+            details.append({"evidence_ref": evidence_ref, "valid": valid})
+        verified = sum(1 for row in details if row["valid"])
+        if total and verified == total:
+            return CitationValidationResultDTO(
+                status="valid", abstain=False, details=details,
+                verified_count=verified, total_count=total,
+            )
+        return CitationValidationResultDTO(
+            status="invalid_citation_closure", abstain=True,
+            abstain_reason="missing_or_mismatched_sidecar_evidence", details=details,
+            verified_count=verified, total_count=total,
+        )
     return CitationValidationResultDTO(
         status="no_evidence",
         abstain=True,

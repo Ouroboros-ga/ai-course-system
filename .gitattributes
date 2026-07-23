@@ -1,0 +1,4 @@
+# Frozen retrieval fixtures are content-addressed byte artifacts.  Git must
+# never rewrite their line endings, otherwise the manifest SHA-256 gate fails
+# on Windows checkouts with core.autocrlf enabled.
+/research/product1_graph_retrieval/datasets/** -text

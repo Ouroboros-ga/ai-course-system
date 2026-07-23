@@ -193,3 +193,40 @@ def test_rollback_endpoint_disables_visible_demo_before_any_future_query(tmp_pat
     assert rollback.json()["effective_mode"] == "v1_only"
     assert query.status_code == 503
     assert provider.called is False
+
+
+def test_sidecar_rollback_to_fixture_is_explicit_and_source_labeled(tmp_path: Path) -> None:
+    sidecar = FakeR2Provider()
+    fixture = FakeR2Provider()
+    service = DemoService(
+        configured_mode="demo_compare", environment="test", provider=sidecar,
+        fallback_provider=fixture, store=DemoRunStore(tmp_path / "runs"),
+    )
+    assert service.query(course_id="COURSE_A", question="before")["data_source"] == "course_sidecar"
+    assert sidecar.called is True and fixture.called is False
+    service.rollback_to_fixture()
+    after = service.query(course_id="COURSE_A", question="after")
+    assert after["data_source"] == "research_fixture_rollback"
+    assert fixture.called is True
+
+
+def test_fixture_rollback_endpoint_switches_future_queries(tmp_path: Path) -> None:
+    app = FastAPI()
+    app.include_router(router, prefix="/api/v1/retrieval-demo")
+    app.dependency_overrides[admin_only] = lambda: {"role": "admin"}
+    primary, fallback = FakeR2Provider(), FakeR2Provider()
+    app.state.retrieval_demo_service = DemoService(
+        configured_mode="demo_compare", environment="test", provider=primary,
+        fallback_provider=fallback, store=DemoRunStore(tmp_path / "runs"),
+    )
+    client = TestClient(app)
+    rollback = client.post("/api/v1/retrieval-demo/rollback-to-fixture", json={})
+    query = client.post(
+        "/api/v1/retrieval-demo/query",
+        json={"course_id": "COURSE_A", "question": "question"},
+    )
+    assert rollback.status_code == 200
+    assert rollback.json()["data_source"] == "research_fixture_rollback"
+    assert query.status_code == 200
+    assert query.json()["data_source"] == "research_fixture_rollback"
+    assert primary.called is False and fallback.called is True

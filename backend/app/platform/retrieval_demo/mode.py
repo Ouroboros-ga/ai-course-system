@@ -7,6 +7,10 @@ from dataclasses import dataclass
 
 DEMO_RETRIEVAL_MODES = ("v1_only", "demo_shadow_visible", "demo_compare")
 DEMO_VISIBLE_ENVIRONMENTS = ("development", "demo", "test")
+# R3 was evaluated offline and did not improve R2.  It is deliberately not
+# configurable in the test/production candidate path; graph visualization may
+# remain available, but graph expansion may not influence retrieval.
+GRAPH_EXPANSION_PRODUCTION_CANDIDATE_ENABLED = False
 
 
 @dataclass(frozen=True)

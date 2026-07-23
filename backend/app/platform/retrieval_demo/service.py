@@ -8,8 +8,9 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .mode import DemoModeState, resolve_demo_mode
-from .provider import RESEARCH_ROOT, ResearchR2Provider
+from .mode import GRAPH_EXPANSION_PRODUCTION_CANDIDATE_ENABLED, DemoModeState, resolve_demo_mode
+from .course_provider import CourseSidecarR2Provider
+from .provider import ResearchR2Provider
 from .store import DemoRunStore
 
 
@@ -23,14 +24,26 @@ def _percentile(values: list[float], percentile: float) -> float:
 
 
 class DemoService:
-    def __init__(self, *, configured_mode: str, environment: str, provider: Any | None = None, store: DemoRunStore | None = None) -> None:
+    def __init__(self, *, configured_mode: str, environment: str, provider: Any | None = None, store: DemoRunStore | None = None, fallback_provider: Any | None = None) -> None:
         self.configured_mode = configured_mode
         self.environment = environment
-        self.provider = provider or ResearchR2Provider()
+        self.provider = provider or CourseSidecarR2Provider()
+        self._fallback_provider = fallback_provider
+        self.runtime_source = "course_sidecar"
         self.store = store or DemoRunStore(RESEARCH_ROOT / "demo_runs")
         self.runtime_override: str | None = None
         self._latencies: list[float] = []
         self._lock = threading.Lock()
+
+    @property
+    def active_provider(self) -> Any:
+        if self.runtime_source == "course_sidecar":
+            return self.provider
+        if self._fallback_provider is None:
+            # This legacy provider is instantiated only after an explicit
+            # operator rollback. It is never consulted by the normal path.
+            self._fallback_provider = ResearchR2Provider()
+        return self._fallback_provider
 
     def mode_state(self) -> DemoModeState:
         return resolve_demo_mode(configured_mode=self.configured_mode, environment=self.environment, runtime_override=self.runtime_override)
@@ -38,6 +51,14 @@ class DemoService:
     def rollback_to_v1_only(self) -> DemoModeState:
         self.runtime_override = "v1_only"
         return self.mode_state()
+
+    def rollback_to_fixture(self) -> None:
+        """Immediate process-local rollback for a broken sidecar path.
+
+        The response exposes its source as ``research_fixture_rollback`` so
+        callers cannot mistake it for parsed-course retrieval.
+        """
+        self.runtime_source = "research_fixture_rollback"
 
     def status(self) -> dict[str, Any]:
         mode = self.mode_state()
@@ -48,7 +69,9 @@ class DemoService:
             "reason": mode.reason,
             "experimental": True,
             "provider": "R2 BM25 + local BGE Dense + RRF" if mode.enabled else None,
-            "metadata": self.provider.metadata if mode.enabled else None,
+            "data_source": self.runtime_source,
+            "graph_expansion_production_candidate_enabled": GRAPH_EXPANSION_PRODUCTION_CANDIDATE_ENABLED,
+            "metadata": self.active_provider.metadata if mode.enabled else None,
         }
 
     def _latency_summary(self) -> dict[str, float | int]:
@@ -82,13 +105,17 @@ class DemoService:
 
     def query(self, *, course_id: str, question: str, v1_reference: str | None = None) -> dict[str, Any]:
         started = time.perf_counter()
-        warnings = ["Reviewed Silver 仅用于离线研究演示，不是正式 Human Gold。", "R3 图扩展未被调用，也未声称提升检索指标。"]
-        if course_id not in self.provider.course_ids:
+        warnings = [
+            "检索仅消费当前课程的 DocumentIR→Evidence sidecar；不读取 qrels、Reviewed Silver 或生产 ORM。",
+            "R3 图扩展已从候选检索链路停用。",
+        ]
+        provider = self.active_provider
+        if course_id not in provider.course_ids:
             result = {"status": "abstain", "abstain_reason": "course_not_available", "hits": []}
             warnings.append("course_id 不在冻结演示课程范围内；检索在建索引前已拒绝。")
         else:
             try:
-                result = self.provider.retrieve(course_id=course_id, question=question)
+                result = provider.retrieve(course_id=course_id, question=question)
             except Exception as error:  # Provider failures must not touch V1.
                 result = {"status": "abstain", "abstain_reason": "demo_provider_unavailable", "hits": []}
                 warnings.append(f"本地 R2 Provider 不可用：{type(error).__name__}；V1 未被调用。")
@@ -101,6 +128,7 @@ class DemoService:
             "experimental": True,
             "mode": self.mode_state().effective_mode,
             "course_id": course_id,
+            "data_source": self.runtime_source,
             "question": question,
             "result": result,
             "experimental_answer": answer,
@@ -111,7 +139,7 @@ class DemoService:
                 "trace_schema_version": "demo-shadow-retrieval-trace/1.0",
                 "stages": [
                     {"name": "course_scope_filter", "detail": "course_id validated before BM25/Dense retrieval"},
-                    {"name": "bm25_course_local", "detail": "frozen R0 tokenizer and course-local BM25"},
+                    {"name": "bm25_course_local", "detail": "frozen R0 tokenizer and course-local BM25 over sidecar evidence"},
                     {"name": "dense_local_exact_cosine", "detail": "fixed local BGE revision; no vector service"},
                     {"name": "rrf", "detail": "frozen R2 reciprocal-rank fusion"},
                     {"name": "evidence_citation_closure", "detail": "hits retain Evidence ID, page, block, and citation key"},
@@ -119,7 +147,7 @@ class DemoService:
                 "elapsed_ms": round(elapsed * 1000, 3),
                 "r3_graph_expansion_called": False,
             },
-            "runtime": {"request_ms": round(elapsed * 1000, 3), **self._latency_summary(), **self.provider.metadata},
+            "runtime": {"request_ms": round(elapsed * 1000, 3), **self._latency_summary(), **provider.metadata},
         }
         response["demo_run_id"] = self.store.save(response)
         return response

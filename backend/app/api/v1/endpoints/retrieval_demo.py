@@ -68,7 +68,7 @@ async def demo_courses(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return {"course_ids": list(service.provider.course_ids)}
+    return {"course_ids": list(service.active_provider.course_ids), "data_source": service.runtime_source}
 
 
 @router.get("/courses/{course_id}/presets", summary="Public-fixture preset questions for a visible demo")
@@ -79,7 +79,7 @@ async def demo_presets(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return {"course_id": course_id, "presets": await run_in_threadpool(service.provider.presets, course_id)}
+    return {"course_id": course_id, "data_source": service.runtime_source, "presets": await run_in_threadpool(service.active_provider.presets, course_id)}
 
 
 @router.get("/courses/{course_id}/graph", summary="Accepted deterministic graph snapshot for a visible demo")
@@ -90,7 +90,7 @@ async def demo_graph(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return await run_in_threadpool(service.provider.graph_snapshot, course_id)
+    return await run_in_threadpool(service.active_provider.graph_snapshot, course_id)
 
 
 @router.post("/query", summary="Run isolated R2 retrieval and persist an independent demo run")
@@ -121,4 +121,18 @@ async def demo_rollback(
         "enabled": state.enabled,
         "reason": state.reason,
         "message": "Demo route is now disabled. V1 was never modified.",
+    }
+
+
+@router.post("/rollback-to-fixture", summary="Emergency rollback to the isolated legacy fixture provider")
+async def demo_rollback_to_fixture(
+    request: Request,
+    _admin: Any = Depends(admin_only),
+) -> dict[str, Any]:
+    service = get_demo_service(request)
+    require_demo_visible(service)
+    service.rollback_to_fixture()
+    return {
+        "data_source": service.runtime_source,
+        "message": "Sidecar path disabled for this demo process; legacy fixture provider is explicitly active.",
     }
