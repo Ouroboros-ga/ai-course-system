@@ -5,6 +5,7 @@
 > **分析时间**：2026-07-23
 > **核实方式**：逐文件读 `main.py` 路由注册、`router/index.js`、`featureFlags.js`、契约 `registry.md`、各端点 handler 与响应模型；不臆断。
 > **前置审计**：`research-report-frontend-verification.md`、`knowledge-graph-rag-implementation-audit.md`、`graph-browser-implementation.md` 三份均聚焦图谱/RAG，**未覆盖全局路由覆盖度**——本报告补此空白。
+> **后续更新**：见 §7（c25172e0 R2 sidecar 真实化 + 主链接入）。
 
 ---
 
@@ -164,7 +165,7 @@
 | 能力域 | 稳定版 V1 | 影子版 V2-shadow | 实验版 canary/demo |
 |---|---|---|---|
 | 文档解析 | ✅ document.py upload/analyze（真解析） | ✅ doc_shadow（fake，映射 V1->document-ir/1.0，默认 off） | ✅ canary 框架跑（fake 输入） |
-| 证据/引用 | ❌（chat 仅返回 ragSources 路径+content） | ✅ evidence_v2（**空列表/abstain**，admin-only，flag-off） | ✅ canary 框架（无真数据） |
+| 证据/引用 | ❌（chat 仅返回 ragSources 路径+content） | ✅ evidence_v2（c25172e0 后：有 sidecar 课程可返回**非空** Evidence + Citation 校验；无 sidecar 仍空） | ✅ canary 框架（无真数据） |
 | 引用校验 | ❌ | ✅ citations/validate（abstain/no_evidence） | ✅ canary 框架 |
 | 页面图像渲染 | ✅ document.py /slide/{page_num}（V1 有） | ⚠️ evidence_v2 /pages/{n}/image 返回 503 `PAGE_RENDERING_NOT_AVAILABLE_IN_G4` | - |
 | 知识图谱 | ⚠️ knowledge.py 知识点/关系 CRUD（无图谱浏览） | ✅ graph_shadow（fake，InMemoryGraphStore，PROPOSED 状态，默认 off） | ✅ canary 框架 |
@@ -179,6 +180,7 @@
 
 **关键版本差异结论**：
 - **影子版已支持但稳定版未上线**：证据/引用、引用校验、知识图谱候选、学生记忆、安全治理、学习事件结构化——这 6 块在 V1 稳定版完全不存在，仅以影子形式（默认 off + fake）存在于 V2。
+- **R2 检索主链接入（本次新增）**：`qa_service.ask_question_with_rag` 现在在 V1 检索后、LLM 前插入 R2 sidecar 影子 seam；`DOCUMENT_KG_RUNTIME_MODE=v2_shadow` 且课程有 sidecar 时，R2（BM25+BGE Dense+RRF+Citation 闭环）替换 V1 检索喂给 LLM；默认 v1_only = 纯 V1 不变，fail-closed 回落。学生提问主链从"V1 TreeRAG 独占"变为"旗控可选 R2"。
 - **三版全无**：代码实验台、Coding Agent、认知模型、可视化（独立）——这四个 page-design 核心域连影子都没有，是真正的"零实现"。
 - **影子版的"已支持"是契约级而非数据级**：evidence-v2 端点存在且契约冻结，但 G4 返回空/abstain，真数据要等 G5B 解锁真 provider。
 
@@ -227,6 +229,52 @@
 11. **G5B 解锁真 provider（P2-4）**：按 canary 文档固定顺序 Docling->PaddleOCR->Embedding->Reranker->LLM 逐项人工 gate，解除 CLAUDE.md 约束后接真模型，让 evidence/graph/检索 trace 有真数据，graph-browser 的 RetrievalTracePanel 才能从"显式空态"变为真实轨迹。
 
 12. **SSE 流式 + RetrievalTrace 回放（P2-1）**：G5B 之后补 `trace_schema_version=1` + `/graph/replay` + `StreamingResponse`，完成 audit 报告 V1 最低闭环。
+
+---
+
+## 7. 后续进展：c25172e0 R2 sidecar 真实化 + 主链接入（2026-07-23）
+
+提交 `c25172e0`（`feat(shadow): retrieve test-course evidence sidecars with R2`）后，本报告 §0/§4 中"影子版全是空壳数据"的判定需要部分修正。
+
+### 7.1 RAG 检索：从演示面真实化到主链接入
+
+**c25172e0 做了什么**（演示面真实化）：
+- retrieval-demo 的 provider 从退役 fixture 升级为 `CourseSidecarR2Provider`（`platform/retrieval_demo/course_provider.py`），是**真实**实现：本地 BM25（`src.bm25`）+ 本地 BGE Dense（`src.dense.BgeSmallZhEmbedder`，带模型权重 sha256 校验）+ RRF 融合（`src.rrf.fuse`），命中带 Evidence ID/页码/块 ID/Citation key 并做 citation 闭环校验。
+- 成功解析后自动生成 `DocumentIR -> 课程隔离 Evidence sidecar`；R2 仅消费该 sidecar，不读 qrels/Reviewed Silver/生产 ORM。
+- `evidence_v2` 端点可返回**非空** sidecar Evidence 并校验 Citation（修正 §4"Evidence 返回空列表/abstain"）。
+- R3 图扩展永久关闭（`GRAPH_EXPANSION_PRODUCTION_CANDIDATE_ENABLED=false`），不参与检索（见 `docs/research/graph_retrieval/生产检索基线决议_R2_RRF.md`）。
+- 边界：retrieval-demo 全部 `admin_only`，前端"deliberately not mounted inside Chat/StudentPlayer"，**V1 主链未变**。
+
+**本次（c25172e0 之上）做了什么**（主链接入）：
+- 新增 `platform/shadow/r2_retrieval_shadow.py`：`trigger_r2_retrieval_shadow` 在 `qa_service.ask_question_with_rag` 的 V1 检索后、LLM 前 seam 触发，沿用 G3C evidence_shadow 纪律。
+- `DOCUMENT_KG_RUNTIME_MODE=v2_shadow` 且课程有 sidecar 且 R2 返回 citation-closed 命中时，R2 检索结果**替换**喂给（唯一一次、仍 V1 的）LLM 调用的 `rag_context`/`rag_sources`；无 second LLM call。
+- 默认 `v1_only` = 纯 V1 TreeRAG，行为与接入前**完全一致**；无 sidecar/R2 abstain/运行时异常一律 `triggered=False` 回落 V1（business fail-closed）。RISK-03：无 course_id 不全局检索。
+- `qa_service` 返回新增 `retrieval_source`（`none`/`v1_treerag`/`v2_r2_sidecar`）元信息，向后兼容。
+- 测试：`backend/tests/demo_shadow/test_r2_retrieval_shadow_mainline.py`（8）+ `test_smoke_mainline_default.py`（1）= 9 passed，覆盖旗 off/上游冲突/无 sidecar/R2 ok/R2 abstain/provider 异常 fail-closed/无 scope/llm_calls==0/默认 V1 不变。
+
+### 7.2 判定更新
+
+| 维度 | §0/§4 原判定 | c25172e0 + 主链接入后 |
+|---|---|---|
+| RAG 检索（BM25+Dense+RRF） | retrieval-demo 用 fake fixture | **演示面 + 主链均已真实接入**（主链旗控，默认 V1） |
+| Evidence/Citation | evidence-v2 返回空/abstain | 有 sidecar 课程可返回非空 + Citation 校验 |
+| 图谱接入检索 | graph_shadow 影子 | **决议排除**（R3 永久关闭，非生产候选） |
+| 学生提问主链 | V1 TreeRAG 独占 | 旗控可选 R2；默认仍 V1（行为不变） |
+| page-design §12.5 提问拿带 Citation 的 RAG 回答 | ❌ | ⚠️ **后端链路通**（旗开+有 sidecar 时），但前端 `/chat/ask` 仍按 V1 渲染、未消费 `retrieval_source`；学生端默认 flag off |
+
+### 7.3 仍未解决（沿用 §2/§5 编号）
+
+- **图谱 + RAG 整体仍不算"工程接入"**：图谱被决议排除出检索，R2 未含图谱扩展。page-design §7.C/§15 的图谱浏览交互仍无真实图谱检索端点支撑。
+- **P0-1 路由代差未动**：`/chat/ask` 主链虽接入 R2，但前端 router 仍是 `/teacher`/`/student` 扁平结构，page-design 的 `/app/course/:id/learn` 不存在。
+- **R-1/R-2 旗不一致未解**：主链接入复用 `DOCUMENT_KG_RUNTIME_MODE`，但前端无对应旗同步；学生端默认 flag off，R2 主链在学生提问路径上默认不生效（符合影子纪律，但意味着学生当前拿不到 R2 回答）。
+- **G5B 真模型 canary 仍阻塞**：R2 用的是本地真 BGE 模型（非 fake），但 canary 的 `model_quality` 维度仍恒 `NOT_EVALUATED`，回答质量/abstain 校准未做。
+
+### 7.4 证据
+
+- 提交：`c25172e0`（R2 sidecar 演示面）+ 本次主链接入提交
+- 核心：`backend/app/platform/shadow/course_evidence_sidecar.py`、`backend/app/platform/retrieval_demo/course_provider.py`、`backend/app/platform/shadow/r2_retrieval_shadow.py`（新）、`backend/app/services/qa_service.py`（seam）
+- 决议：`docs/research/graph_retrieval/生产检索基线决议_R2_RRF.md`
+- 测试：`backend/tests/demo_shadow/test_r2_retrieval_shadow_mainline.py`、`test_smoke_mainline_default.py`（9 passed）
 
 ---
 
