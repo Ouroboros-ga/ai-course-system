@@ -311,6 +311,34 @@ class QAService:
                 question, top_k=rag_top_k, course_id=course_id
             )
 
+        # ---- P1-09 R2 sidecar retrieval shadow (mainline wiring) ----
+        # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.
+        # When DOCUMENT_KG_RUNTIME_MODE is effectively v2_shadow AND the
+        # course has an Evidence sidecar AND R2 returns citation-closed
+        # hits, R2 retrieval REPLACES rag_context/rag_sources that feed the
+        # single (still-V1) LLM call. No second LLM call. When the flag is
+        # off, the course has no sidecar, R2 abstains, or any runtime error
+        # occurs, triggered=False and V1 retrieval is left untouched
+        # (business fail-closed). Default flag v1_only = no-op = pure V1.
+        retrieval_source = "none"
+        if use_rag and rag_sources:
+            retrieval_source = "v1_treerag"
+            try:
+                from app.platform.shadow.r2_retrieval_shadow import (
+                    trigger_r2_retrieval_shadow,
+                )
+                r2 = trigger_r2_retrieval_shadow(
+                    question=question,
+                    course_id=course_id,
+                    v1_context=rag_context,
+                    v1_sources=rag_sources,
+                )
+                if r2.triggered:
+                    rag_context, rag_sources = r2.rag_context, r2.rag_sources
+                    retrieval_source = "v2_r2_sidecar"
+            except Exception as r2_err:  # noqa: BLE001
+                print(f"[R2 retrieval shadow] suppressed (V1 unaffected): {r2_err}")
+
         # ---- P1-09 G3C: V2 evidence/retrieval/citation shadow ----
         # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.
         # HARD CONSTRAINT (ADR-0006 §G3C): shadow does NOT call the
@@ -401,6 +429,7 @@ class QAService:
             "answer": response.content,
             "rag_sources": rag_sources if rag_sources else None,
             "rag_context": rag_context if rag_context else None,
+            "retrieval_source": retrieval_source,
         }
     
     async def ask_question_with_knowledge_base(
