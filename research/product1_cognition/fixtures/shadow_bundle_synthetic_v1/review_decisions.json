@@ -1,0 +1,5 @@
+[
+  {"decision_id": "review-prerequisite-1", "target_id": "prerequisite-1", "target_type": "relation", "decision": "accepted", "evidence_bundle_id": "bundle-prerequisite-1"},
+  {"decision_id": "review-tests-pre", "target_id": "tests-pre", "target_type": "relation", "decision": "accepted", "evidence_bundle_id": "bundle-tests-pre"},
+  {"decision_id": "review-tests-target", "target_id": "tests-target", "target_type": "relation", "decision": "accepted", "evidence_bundle_id": "bundle-tests-target"}
+]

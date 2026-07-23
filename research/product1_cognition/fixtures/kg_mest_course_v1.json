@@ -1,0 +1,96 @@
+{
+  "data_version": "synthetic-course-v1",
+  "course_key": "course-algorithms",
+  "graph": {
+    "graph_version": "synthetic-graph-v1",
+    "prerequisites": {
+      "binary-search-boundary": ["loop-invariant"]
+    },
+    "resources": {
+      "loop-invariant": ["lesson-loop-invariant", "exercise-loop-invariant"]
+    },
+    "task_q_matrix": {
+      "exercise-binary-boundary": ["binary-search-boundary"],
+      "exercise-loop-invariant": ["loop-invariant"]
+    },
+    "task_discrimination": {
+      "exercise-binary-boundary": 0.9,
+      "exercise-loop-invariant": 0.8
+    }
+  },
+  "events": [
+    {
+      "event_id": "loop-attempt-1",
+      "source_event_id": "loop-attempt-1",
+      "attempt_group_key": "loop-attempt-1",
+      "student_key": "student-synthetic-01",
+      "course_key": "course-algorithms",
+      "sequence_number": 1,
+      "occurred_at": "2026-07-01T10:00:00+00:00",
+      "event_type": "assessment",
+      "concept_ids": [],
+      "measurement_role": "explicit_performance",
+      "payload": {"task_id": "exercise-loop-invariant", "observed_score": 0.0}
+    },
+    {
+      "event_id": "loop-attempt-2",
+      "source_event_id": "loop-attempt-2",
+      "attempt_group_key": "loop-attempt-2",
+      "student_key": "student-synthetic-01",
+      "course_key": "course-algorithms",
+      "sequence_number": 2,
+      "occurred_at": "2026-07-02T10:00:00+00:00",
+      "event_type": "assessment",
+      "concept_ids": [],
+      "measurement_role": "explicit_performance",
+      "payload": {"task_id": "exercise-loop-invariant", "observed_score": 0.1}
+    },
+    {
+      "event_id": "boundary-code-1",
+      "source_event_id": "boundary-submission-1",
+      "attempt_group_key": "boundary-submission-1",
+      "student_key": "student-synthetic-01",
+      "course_key": "course-algorithms",
+      "sequence_number": 3,
+      "occurred_at": "2026-07-03T10:00:00+00:00",
+      "event_type": "code_submission",
+      "concept_ids": [],
+      "measurement_role": "explicit_performance",
+      "payload": {
+        "task_id": "exercise-binary-boundary",
+        "test_case_results": [{"passed": true}, {"passed": false}],
+        "repeated_error_ratio": 0.8,
+        "hint_level": 0.2
+      }
+    },
+    {
+      "event_id": "boundary-assessment-2",
+      "source_event_id": "boundary-attempt-2",
+      "attempt_group_key": "boundary-attempt-2",
+      "student_key": "student-synthetic-01",
+      "course_key": "course-algorithms",
+      "sequence_number": 4,
+      "occurred_at": "2026-07-04T10:00:00+00:00",
+      "event_type": "assessment",
+      "concept_ids": [],
+      "measurement_role": "explicit_performance",
+      "payload": {"task_id": "exercise-binary-boundary", "observed_score": 0.5}
+    },
+    {
+      "event_id": "boundary-dialogue-1",
+      "source_event_id": "conversation-1",
+      "attempt_group_key": "conversation-1",
+      "student_key": "student-synthetic-01",
+      "course_key": "course-algorithms",
+      "sequence_number": 5,
+      "occurred_at": "2026-07-04T10:05:00+00:00",
+      "event_type": "dialogue",
+      "concept_ids": ["binary-search-boundary"],
+      "measurement_role": "interaction_semantic",
+      "payload": {
+        "classification_confidence": 0.92,
+        "interaction_labels": {"confusion_risk": true, "explanation_need": true}
+      }
+    }
+  ]
+}

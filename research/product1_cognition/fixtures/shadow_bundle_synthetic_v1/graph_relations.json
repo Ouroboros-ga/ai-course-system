@@ -1,0 +1,5 @@
+[
+  {"relation_id": "prerequisite-1", "source_id": "pre", "target_id": "target", "relation_type": "prerequisite_of", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["edge-evidence-pre"]},
+  {"relation_id": "tests-pre", "source_id": "task-pre", "target_id": "pre", "relation_type": "tests", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["edge-evidence-tests-pre"]},
+  {"relation_id": "tests-target", "source_id": "task-target", "target_id": "target", "relation_type": "tests", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["edge-evidence-tests-target"]}
+]

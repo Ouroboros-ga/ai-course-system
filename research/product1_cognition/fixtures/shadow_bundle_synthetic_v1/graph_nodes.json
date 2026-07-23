@@ -1,0 +1,6 @@
+[
+  {"node_id": "pre", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["node-evidence-pre"]},
+  {"node_id": "target", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["node-evidence-target"]},
+  {"node_id": "task-pre", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["node-evidence-task-pre"]},
+  {"node_id": "task-target", "course_id": "synthetic-course-a", "status": "accepted", "evidence_ids": ["node-evidence-task-target"]}
+]

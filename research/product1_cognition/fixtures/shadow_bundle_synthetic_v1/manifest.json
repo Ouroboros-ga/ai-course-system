@@ -1,0 +1,26 @@
+{
+  "schema_version": "kg-mest-read-only-shadow-bundle/1.0",
+  "data_classification": "protected_pseudonymized",
+  "course_key": "synthetic-course-a",
+  "graph_snapshot_id": "synthetic-approved-snapshot-v1",
+  "student_key": "synthetic-student-pseudonym-a",
+  "data_version": "synthetic-shadow-export-v1",
+  "source_scope": {"student_id": 1, "course_id": 2},
+  "artifact_sha256": {
+    "graph_nodes": "sha256:afe2a72815a253891daec9e6eaffe49c22f32c48e622841a9dcc40e517d96621",
+    "graph_relations": "sha256:223356e10a2be07515671986cfe1869695afe0531ab528ebf598dd30b1f9dd4d",
+    "review_decisions": "sha256:8ed68c1c0ecde1a1a369e3542ff622b7bd636fae3604adb86adebffcc77ba580",
+    "learning_events": "sha256:fc1d029777f937c2063aeaa93df7a881ca97f004a34d79916c00abf03588d8d8"
+  },
+  "shadow_gate": {
+    "research_tests_passed": true,
+    "contract_ablation_passed": true,
+    "graph_snapshot_status": "accepted",
+    "graph_course_isolation_verified": true,
+    "interaction_gold_status": "approved_protected_gold",
+    "privacy_review_status": "approved",
+    "provider_contract_tests_passed": true,
+    "append_only_audit_verified": true,
+    "no_production_write_verified": true
+  }
+}

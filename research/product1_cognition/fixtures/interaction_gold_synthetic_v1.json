@@ -1,0 +1,12 @@
+{
+  "dataset_version": "interaction-gold-synthetic-v1",
+  "data_classification": "synthetic-only",
+  "records": [
+    {"source_event_id": "synthetic-01", "text": "我还是不明白为什么 right 要减一。", "labels": {"confusion_risk": true, "inquiry_depth": false, "hint_dependency": false, "explanation_need": true}},
+    {"source_event_id": "synthetic-02", "text": "能不能直接告诉我这道题的完整代码？", "labels": {"confusion_risk": false, "inquiry_depth": false, "hint_dependency": true, "explanation_need": false}},
+    {"source_event_id": "synthetic-03", "text": "如果数组允许重复元素，循环不变式应该怎样修改？", "labels": {"confusion_risk": false, "inquiry_depth": true, "hint_dependency": false, "explanation_need": false}},
+    {"source_event_id": "synthetic-04", "text": "我看懂了定义，但不知道它怎样保证边界不会漏掉。", "labels": {"confusion_risk": true, "inquiry_depth": false, "hint_dependency": false, "explanation_need": true}},
+    {"source_event_id": "synthetic-05", "text": "给我一个下一步提示，不要直接给答案。", "labels": {"confusion_risk": false, "inquiry_depth": false, "hint_dependency": true, "explanation_need": false}},
+    {"source_event_id": "synthetic-06", "text": "这一节的练习我已经完成，接下来做什么？", "labels": {"confusion_risk": false, "inquiry_depth": false, "hint_dependency": false, "explanation_need": false}}
+  ]
+}

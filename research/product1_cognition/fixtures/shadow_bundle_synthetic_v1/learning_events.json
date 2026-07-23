@@ -1,0 +1,6 @@
+[
+  {"event_id": "pre-attempt-1", "event_type": "quiz_answered", "student_id": 1, "course_id": 2, "sequence_number": 1, "timestamp": "2026-07-23T10:00:00+00:00", "metadata": {"quiz_id": "task-pre", "is_correct": false, "attempt_group_key": "pre-attempt-1"}},
+  {"event_id": "pre-attempt-2", "event_type": "quiz_answered", "student_id": 1, "course_id": 2, "sequence_number": 2, "timestamp": "2026-07-23T10:01:00+00:00", "metadata": {"quiz_id": "task-pre", "is_correct": false, "attempt_group_key": "pre-attempt-2"}},
+  {"event_id": "target-attempt-1", "event_type": "quiz_answered", "student_id": 1, "course_id": 2, "sequence_number": 3, "timestamp": "2026-07-23T10:02:00+00:00", "metadata": {"quiz_id": "task-target", "is_correct": true, "attempt_group_key": "target-attempt-1"}},
+  {"event_id": "target-attempt-2", "event_type": "quiz_answered", "student_id": 1, "course_id": 2, "sequence_number": 4, "timestamp": "2026-07-23T10:03:00+00:00", "metadata": {"quiz_id": "task-target", "is_correct": true, "attempt_group_key": "target-attempt-2"}}
+]
