@@ -62,6 +62,8 @@ from app.api.v1.endpoints import (
     citation,           # 引用稳定定位
     feedback,           # 向教师反馈通道
     course_access,
+    question_bank,      # Phase B 题库管理
+    question_source_mapping,  # Phase B 题源映射
 )
 from app.schemas import UnifiedResponse
 
@@ -128,6 +130,10 @@ app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["学生反�
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(course_access.router, prefix="/api/v1/course-access", tags=["课程权限"])
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
+
+# Phase B: 题库管理与题源映射
+app.include_router(question_bank.router, prefix="/api/v1/question-bank", tags=["Phase B 题库管理"])
+app.include_router(question_source_mapping.router, prefix="/api/v1/question-mapping", tags=["Phase B 题源映射"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1

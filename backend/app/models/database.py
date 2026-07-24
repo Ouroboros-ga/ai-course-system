@@ -55,6 +55,11 @@ from app.models.document_artifact_model import DocumentArtifact
 from app.models.note_model import Note
 from app.models.confirmation_model import CourseConfirmation
 from app.models.feedback_model import Feedback
+from app.models.question_bank_model import (
+    QuestionBankItem,
+    QuestionSourceMapping,
+    QuestionAttempt,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

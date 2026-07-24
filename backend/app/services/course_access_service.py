@@ -34,12 +34,14 @@ ALL_PERMISSIONS = frozenset({
     "experiment.assign", "submission.review", "sandbox.policy.view", "sandbox.policy.configure",
     "agent.policy.view", "agent.policy.configure", "analytics.view_course",
     "analytics.view_member", "analytics.export", "learning_signal.review", "question.answer",
+    "question_bank.read", "question_bank.manage", "question_bank.publish",
+    "question_mapping.manage", "question_mapping.generate",
 })
 
 LEARNER_PERMISSIONS = frozenset({
     "course.view", "course.learn", "course.content.read", "course.progress.read_self",
     "course.question.ask", "course.citation.read", "course.feedback.create", "knowledge.view", "experiment.view",
-    "experiment.run", "note.write_local",
+    "experiment.run", "note.write_local", "question_bank.read",
 })
 
 TEACHER_PERMISSIONS = LEARNER_PERMISSIONS | frozenset({
@@ -52,6 +54,8 @@ TEACHER_PERMISSIONS = LEARNER_PERMISSIONS | frozenset({
     "sandbox.policy.view", "sandbox.policy.configure", "agent.policy.view",
     "agent.policy.configure", "analytics.view_course", "analytics.view_member", "analytics.export",
     "learning_signal.review", "question.answer",
+    "question_bank.manage", "question_bank.publish",
+    "question_mapping.manage", "question_mapping.generate",
 })
 
 ROLE_PERMISSIONS = {
@@ -80,6 +84,8 @@ CAPABILITY_FOR_PERMISSION = {
     "analytics.view_course": "cognitive_analysis", "analytics.view_member": "cognitive_analysis",
     "analytics.export": "cognitive_analysis", "learning_signal.review": "cognitive_analysis",
     "agent.policy.view": "safety_policy", "agent.policy.configure": "safety_policy",
+    "question_bank.manage": "course_building", "question_bank.publish": "course_building",
+    "question_mapping.manage": "course_building", "question_mapping.generate": "course_building",
 }
 
 CAPABILITY_NAMES = frozenset({"learning", "course_building", "knowledge_graph", "evidence", "experiment", "coding_sandbox", "cognitive_analysis", "safety_policy"})
