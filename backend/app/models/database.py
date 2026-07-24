@@ -66,6 +66,11 @@ from app.models.cognitive_state_model import (
     RecommendationRecord,
 )
 from app.models.visualization_model import VisualizationPlanRecord
+from app.models.safety_policy_model import (
+    CourseSafetyPolicy,
+    CourseSandboxPolicy,
+    SafetyAuditLog,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
