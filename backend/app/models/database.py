@@ -65,6 +65,7 @@ from app.models.cognitive_state_model import (
     LearningEvidenceRecord,
     RecommendationRecord,
 )
+from app.models.visualization_model import VisualizationPlanRecord
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
