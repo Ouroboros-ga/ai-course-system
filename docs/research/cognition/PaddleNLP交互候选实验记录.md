@@ -1,10 +1,17 @@
-# PaddleNLP 交互候选实验记录
+# PaddleNLP 交互候选实验记录（已退役）
+
+> 状态：RETIRED。该候选实验已从研究可执行路径移除，不安装、不接入
+> Paddle/PaddleNLP，也不作为任何正式或 Shadow 算法的依赖。
+>
+> 退役原因：Python 版本与运行时兼容成本不合理，且本地 `uie-mini` 对
+> 教学语义样例没有产生可用召回。以下内容仅保留审计价值，不能作为
+> 当前能力或未来接入依据。
 
 ## 结论
 
-PaddleNLP 可以用于本项目，但正确位置是：**离线、研究专用的对话结构化候选标签器**。它不提供现成的“八维学生认知诊断 + 知识图谱学习路径推荐”产品算法，也不能直接给正式 `mastery` 或推荐排序。
+历史结论曾将 PaddleNLP 定位为离线候选标签器；该结论已退役。它不提供现成的“八维学生认知诊断 + 知识图谱学习路径推荐”产品算法，也不能直接给正式 `mastery` 或推荐排序。
 
-已新增研究适配器：
+历史上曾新增研究适配器（现已删除）：
 
 ```text
 research/product1_cognition/experimental_providers/
@@ -33,7 +40,7 @@ PaddleNLP   3.0.0b4
 
 ## 硬门禁
 
-1. 适配器仅在 `research/product1_cognition` 内；主应用依赖清单不安装 Paddle/PaddleNLP。
+1. 适配器已删除；主应用和研究依赖清单均不安装 Paddle/PaddleNLP。
 2. 本地模型目录不存在时适配器明确拒绝，禁止静默下载。
 3. 任一标签低于 `0.70` 不进入交互状态；高置信标签不能替低置信标签背书。
 4. 所有 UIE 标签都不能改变 `observed_performance_score`。

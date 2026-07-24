@@ -55,7 +55,7 @@ class KGMESTTests(unittest.TestCase):
                                       "confusion_risk": True, "explanation_need": True,
                                   }, "candidate_evidence_spans": {"confusion_risk": ["不明白"]},
                                   "candidate_model_version": "uie-mini", "candidate_prompt_version": "none",
-                                  "candidate_policy_version": "paddlenlp-uie-interaction-candidate/1.0"})
+                                  "candidate_policy_version": "external-interaction-candidate/1.0"})
         baseline = self._state([score_event])
         with_interaction = self._state([score_event, interaction_event])
         _, interactions = self.engine.extract([score_event, interaction_event])

@@ -62,7 +62,7 @@ class LearningEventReleaseAdapterTests(unittest.TestCase):
                 "interaction_label_confidences": {"confusion_risk": 0.95},
                 "candidate_evidence_spans": {"confusion_risk": ["我不明白"]},
                 "candidate_model_version": "uie-mini", "candidate_prompt_version": "none",
-                "candidate_policy_version": "paddlenlp-uie-interaction-candidate/1.0",
+                "candidate_policy_version": "external-interaction-candidate/1.0",
             },
         }
         result = self._adapt([question])

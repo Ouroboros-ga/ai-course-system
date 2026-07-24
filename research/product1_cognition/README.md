@@ -7,8 +7,14 @@ existing mastery scores or user-facing recommendations.
 Run its tests with:
 
 ```powershell
+$env:PYTHONPATH = "research\product1_cognition"
 backend\.venv\Scripts\python.exe -m unittest discover -s research\product1_cognition\tests -p "test_kg_mest.py" -v
 ```
+
+The full research suite uses the same `PYTHONPATH` setting with
+`-p "test_*.py"`. This project intentionally has no Paddle/PaddleNLP runtime
+dependency: the retired UIE experiment was not sufficiently effective and
+would make the Python 3.12 research environment harder to reproduce.
 
 The source, fixture and test files are the current research baseline.  Old
 bytecode-only artefacts are historical remnants and are not implementation
