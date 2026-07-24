@@ -321,6 +321,12 @@ class QAService:
         # occurs, triggered=False and V1 retrieval is left untouched
         # (business fail-closed). Default flag v1_only = no-op = pure V1.
         retrieval_source = "none"
+        retrieval_metadata = {
+            "policy_version": "r2-retrieval-v1.0",
+            "evidence_ids": [],
+            "fallback_reason": None,
+            "hit_count": 0,
+        }
         if use_rag and rag_sources:
             retrieval_source = "v1_treerag"
             try:
@@ -336,8 +342,15 @@ class QAService:
                 if r2.triggered:
                     rag_context, rag_sources = r2.rag_context, r2.rag_sources
                     retrieval_source = "v2_r2_sidecar"
+                    retrieval_metadata["hit_count"] = r2.hit_count
+                    retrieval_metadata["evidence_ids"] = [
+                        s.get("path", "") for s in (r2.rag_sources or [])
+                    ]
+                else:
+                    retrieval_metadata["fallback_reason"] = r2.fallback_reason
             except Exception as r2_err:  # noqa: BLE001
                 print(f"[R2 retrieval shadow] suppressed (V1 unaffected): {r2_err}")
+                retrieval_metadata["fallback_reason"] = f"r2_exception: {str(r2_err)[:200]}"
 
         # ---- P1-09 G3C: V2 evidence/retrieval/citation shadow ----
         # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.
@@ -430,6 +443,7 @@ class QAService:
             "rag_sources": rag_sources if rag_sources else None,
             "rag_context": rag_context if rag_context else None,
             "retrieval_source": retrieval_source,
+            "retrieval_metadata": retrieval_metadata,
         }
     
     async def ask_question_with_knowledge_base(

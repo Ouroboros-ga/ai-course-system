@@ -264,11 +264,13 @@ async def ask_question(
         
         ai_answer = qa_result["answer"]
         rag_sources = qa_result.get("rag_sources")
-        
+        retrieval_source = qa_result.get("retrieval_source", "none")
+        retrieval_metadata = qa_result.get("retrieval_metadata", {})
+
         print(f"[聊天] QA回答: {ai_answer[:100]}...")
         if rag_sources:
-            print(f"[聊天] RAG检索到 {len(rag_sources)} 个相关片段")
-        
+            print(f"[聊天] RAG检索到 {len(rag_sources)} 个相关片段 (source={retrieval_source})")
+
         assistant_message = ChatMessage(
             chat_id=chatId,
             role=MessageRole.ASSISTANT,
@@ -300,7 +302,7 @@ async def ask_question(
                 print(f"[聊天] 理解度: {understanding_analysis['level']}, 分数: {understanding_analysis['score']}")
             except Exception as e:
                 print(f"[聊天] 理解度分析失败: {str(e)}")
-        
+
         return unified_response(
             code=200,
             message="回答成功",
@@ -310,6 +312,8 @@ async def ask_question(
                 "messageId": assistant_message.id,
                 "understandingAnalysis": understanding_analysis,
                 "ragSources": rag_sources,
+                "retrievalSource": retrieval_source,
+                "retrievalMetadata": retrieval_metadata,
             }
         )
         

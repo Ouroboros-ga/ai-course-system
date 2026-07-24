@@ -265,3 +265,68 @@ def _serialize_quiz_item(q: QuestionBankItem) -> dict[str, Any]:
             "label": q.category or "",
         },
     }
+
+
+# ==================== R2 检索能力检查 ====================
+
+@router.get("/course/{course_id}/retrieval-capability")
+async def get_retrieval_capability(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """检查课程的 R2 检索能力
+
+    前端通过此端点识别是否可显示引用与检索轨迹。
+    采用课程白名单/能力开关，支持一键回退。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.view")
+
+    # 检查课程能力开关
+    evidence_capable = context.capabilities.get("evidence", False)
+
+    # 检查 Feature Flag
+    r2_enabled = False
+    r2_mode = "v1_only"
+    try:
+        from app.core.feature_flags import (
+            DOCUMENT_KG_RUNTIME_MODE,
+            resolve_effective_modes,
+        )
+        from app.core.config import settings
+        configured = {
+            DOCUMENT_KG_RUNTIME_MODE: getattr(settings, DOCUMENT_KG_RUNTIME_MODE, "v1_only"),
+        }
+        effective = resolve_effective_modes(configured)
+        r2_mode = effective[DOCUMENT_KG_RUNTIME_MODE].effective
+        r2_enabled = r2_mode == "v2_shadow"
+    except Exception:
+        pass
+
+    # 检查课程侧车是否存在
+    sidecar_exists = False
+    try:
+        from app.platform.shadow.course_evidence_sidecar import CourseEvidenceSidecarStore
+        store = CourseEvidenceSidecarStore()
+        sidecar_exists = store.read_course(str(course_id)) is not None
+    except Exception:
+        pass
+
+    # 综合判定
+    retrieval_available = evidence_capable and r2_enabled and sidecar_exists
+
+    return unified_response(
+        code=200,
+        message="获取检索能力成功",
+        data={
+            "course_id": course_id,
+            "retrieval_available": retrieval_available,
+            "evidence_capability": evidence_capable,
+            "r2_mode": r2_mode,
+            "r2_enabled": r2_enabled,
+            "sidecar_exists": sidecar_exists,
+            "can_show_citations": retrieval_available,
+            "policy_version": "r2-retrieval-v1.0",
+            "fallback_to_v1": not retrieval_available,
+        },
+    )
