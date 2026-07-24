@@ -27,6 +27,7 @@ from app.models.course_model import (
 )
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
+from app.services.course_access_service import establish_course_access_baseline
 from .document_utils import UPLOAD_DIR, document_cache, _background_synthesize_audio
 
 router = APIRouter(prefix="/document", tags=["文档上传"])
@@ -78,6 +79,8 @@ async def upload_document(
         session.add(course)
         session.commit()
         session.refresh(course)
+        establish_course_access_baseline(session, course.id, user_id)
+        session.commit()
 
         # PDF 转换
         try:

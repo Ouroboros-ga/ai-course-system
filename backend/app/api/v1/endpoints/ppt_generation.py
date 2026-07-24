@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -29,6 +29,8 @@ from app.models.course_model import (
 )
 from app.services.ppt_generation_service import ppt_generation_service
 from app.services.document_service import document_service
+from app.models.access_control_model import PlatformPermission
+from app.services.course_access_service import establish_course_access_baseline, require_platform_permission
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +104,7 @@ async def generate_ppt(
     request: GeneratePPTRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     AI生成PPT课件（异步）
@@ -118,6 +120,7 @@ async def generate_ppt(
     user_id = int(current_user["user_id"])
 
     try:
+        require_platform_permission(session, current_user, PlatformPermission.COURSE_CREATE)
         # 创建课程记录（状态为生成中）
         document_id = str(uuid.uuid4())
         course = Course(
@@ -134,6 +137,8 @@ async def generate_ppt(
         session.add(course)
         session.commit()
         session.refresh(course)
+        establish_course_access_baseline(session, course.id, user_id)
+        session.commit()
 
         # 创建Docling文档记录
         docling_doc = DoclingDocument(
@@ -184,7 +189,7 @@ async def generate_ppt(
 async def generate_ppt_sync(
     request: GeneratePPTRequest,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     AI生成PPT课件（同步，等待完成）
@@ -195,6 +200,7 @@ async def generate_ppt_sync(
     user_id = int(current_user["user_id"])
 
     try:
+        require_platform_permission(session, current_user, PlatformPermission.COURSE_CREATE)
         # 步骤1: 生成PPT
         result = await ppt_generation_service.generate_ppt(
             topic=request.topic,
@@ -230,6 +236,8 @@ async def generate_ppt_sync(
         session.add(course)
         session.commit()
         session.refresh(course)
+        establish_course_access_baseline(session, course.id, user_id)
+        session.commit()
 
         try:
             from app.common.slide_converter import get_or_create_pdf

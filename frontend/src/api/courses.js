@@ -23,6 +23,10 @@ export function getCourseDetail(courseId) {
   return request.get(`/document/course/${courseId}`)
 }
 
+export function getCourseAccess(courseId) {
+  return request.get(`/course-access/courses/${courseId}/access`)
+}
+
 /**
  * 课程大厅（已发布课程列表）。
  * GET /document/courses

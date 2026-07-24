@@ -1,6 +1,15 @@
 from app.models.user_model import User, UserRole
 from app.models.asset_model import TeacherAsset, AssetType
 from app.models.mapping_model import KnowledgePageMap
+from app.models.access_control_model import (
+    CourseCapability,
+    CourseMembership,
+    CourseRole,
+    MembershipStatus,
+    ParticipationMode,
+    PlatformPermission,
+    PlatformPermissionAssignment,
+)
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -38,6 +47,13 @@ __all__ = [
     "TeacherAsset",
     "AssetType",
     "KnowledgePageMap",
+    "CourseCapability",
+    "CourseMembership",
+    "CourseRole",
+    "MembershipStatus",
+    "ParticipationMode",
+    "PlatformPermission",
+    "PlatformPermissionAssignment",
     "Course",
     "CourseScript",
     "ScriptNode",

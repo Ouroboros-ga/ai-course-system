@@ -14,6 +14,11 @@ from app.models.course_model import (
     DoclingPicture,
     StudentEnrollment,
 )
+from app.models.access_control_model import (
+    CourseCapability,
+    CourseMembership,
+    PlatformPermissionAssignment,
+)
 from app.models.user_model import (
     User,
     ChatHistory,

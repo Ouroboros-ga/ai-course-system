@@ -1,57 +1,34 @@
-"""
-引用稳定定位 API
-根据课程和节点定位原文位置，使用已有的 DoclingDocument / ScriptNode 数据。
-不依赖 admin-only evidence-v2 影子端点。
-"""
+"""Stable course-scoped source-location API."""
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
-from typing import Optional
 
-from app.core.security import get_current_user
 from app.core.exceptions import unified_response
+from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText, ScriptNode
 from app.models.database import get_session
-from app.models.course_model import Course, CourseScript, ScriptNode, DoclingDocument, DoclingText, StudentEnrollment
+from app.services.course_access_service import CourseAccessContext, course_permission
 
 router = APIRouter()
 
 
 @router.get("/locate")
 async def locate_citation(
-    course_id: int = Query(..., description="课程ID"),
-    node_id: Optional[int] = Query(None, description="节点ID"),
+    course_id: int = Query(..., description="课程 ID"),
+    node_id: Optional[int] = Query(None, description="节点 ID"),
     query: Optional[str] = Query(None, description="搜索关键词"),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.citation.read")),
 ):
-    """根据课程+节点定位原文位置"""
-    user_id = int(current_user["user_id"])
-    user_role = current_user.get("role", "student")
-
+    """Locate a source passage after one course-scoped permission decision."""
     course = session.get(Course, course_id)
-    if not course:
+    if course is None:
         return unified_response(code=404, message="课程不存在", data=None)
 
-    # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
-    if user_role != "admin":
-        if user_role == "teacher" and str(course.teacher_id) != str(user_id):
-            return unified_response(code=403, message="无权访问此课程", data=None)
-        if user_role == "student":
-            enrollment = session.exec(
-                select(StudentEnrollment).where(
-                    StudentEnrollment.course_id == course_id,
-                    StudentEnrollment.student_id == user_id,
-                )
-            ).first()
-            if not enrollment:
-                return unified_response(code=403, message="您尚未选修此课程", data=None)
-
-    # 查询关联的 DoclingDocument
-    docling_doc = session.exec(
+    document = session.exec(
         select(DoclingDocument).where(DoclingDocument.course_id == course_id)
     ).first()
-
-    if not docling_doc:
+    if document is None:
         return unified_response(
             code=200,
             message="课程暂未关联原文文档",
@@ -67,57 +44,52 @@ async def locate_citation(
             },
         )
 
-    document_id = str(docling_doc.id)
-    source_file = docling_doc.origin_filename or ""
-
     page_start = None
     page_end = None
     snippet = None
     match_type = "none"
-
-    if node_id:
+    if node_id is not None:
         node = session.get(ScriptNode, node_id)
-        if node:
+        # A node from another script must not be used to locate an unrelated
+        # course document.
+        script = session.get(CourseScript, node.script_id) if node is not None else None
+        if node is not None and script is not None and script.course_id == course_id:
             page_start = node.page_start
             page_end = node.page_end
-            if page_start is not None:
-                match_type = "exact"
-
-            # 尝试获取原文片段
+            match_type = "exact" if page_start is not None else "none"
             if page_start is not None:
                 texts = session.exec(
                     select(DoclingText)
-                    .where(DoclingText.doc_id == docling_doc.id)
+                    .where(DoclingText.doc_id == document.id)
                     .where(DoclingText.page_no == page_start)
                     .order_by(DoclingText.sort_order)
                 ).all()
                 if texts:
-                    snippet = " ".join([t.text for t in texts[:5]])[:500]
+                    snippet = " ".join(text.text for text in texts[:5])[:500]
 
-    # 如果有 query 参数，尝试文本匹配
     if query and not snippet:
         texts = session.exec(
             select(DoclingText)
-            .where(DoclingText.doc_id == docling_doc.id)
+            .where(DoclingText.doc_id == document.id)
             .where(DoclingText.text.contains(query))
+            .order_by(DoclingText.page_no, DoclingText.sort_order)
         ).all()
         if texts:
             snippet = texts[0].text[:500]
+            page_start = texts[0].page_no
             match_type = "approximate"
-            if texts[0].page_no:
-                page_start = texts[0].page_no
 
     return unified_response(
         code=200,
         message="定位成功",
         data={
-            "document_id": document_id,
+            "document_id": str(document.id),
             "course_id": course_id,
             "node_id": node_id,
             "page_start": page_start,
             "page_end": page_end,
             "snippet": snippet,
             "match_type": match_type,
-            "source_file": source_file,
+            "source_file": document.origin_filename or "",
         },
     )

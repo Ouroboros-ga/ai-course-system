@@ -10,9 +10,13 @@ from fastapi import APIRouter, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
 import httpx
 
-from app.core.security import teacher_student_allowed
+from app.core.security import get_current_user
 from app.core.exceptions import unified_response
 from app.core.config import settings
+from sqlmodel import Session, select
+from app.models.database import get_session
+from app.models.video_generation_model import VideoGenerationTask
+from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["视频服务"])
 
@@ -50,10 +54,21 @@ def get_video_path(filename: str) -> Optional[Path]:
     return None
 
 
+def _require_video_course_access(session: Session, current_user: dict, filename: str) -> None:
+    task = session.exec(select(VideoGenerationTask).where(
+        VideoGenerationTask.dh_video_path.is_not(None)
+    )).all()
+    matching = next((item for item in task if item.dh_video_path and os.path.basename(item.dh_video_path) == filename), None)
+    if matching is None:
+        raise HTTPException(status_code=404, detail="Video is not bound to a course task")
+    require_course_permission(session, current_user, matching.course_id, "course.content.read")
+
+
 @router.get("/stream/{filename}")
 async def stream_video(
     filename: str,
-    current_user: dict = Depends(teacher_student_allowed),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     流式播放视频文件
@@ -64,6 +79,7 @@ async def stream_video(
     Returns:
         视频文件流
     """
+    _require_video_course_access(session, current_user, filename)
     video_path = get_video_path(filename)
 
     if not video_path or not video_path.exists():
@@ -91,7 +107,8 @@ async def stream_video(
 @router.get("/file/{filename}")
 async def get_video_file(
     filename: str,
-    current_user: dict = Depends(teacher_student_allowed),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取视频文件（完整下载）
@@ -102,6 +119,7 @@ async def get_video_file(
     Returns:
         视频文件
     """
+    _require_video_course_access(session, current_user, filename)
     video_path = get_video_path(filename)
 
     if not video_path or not video_path.exists():
@@ -116,7 +134,7 @@ async def get_video_file(
 
 @router.get("/list")
 async def list_videos(
-    current_user: dict = Depends(teacher_student_allowed),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     列出所有可用的本地视频文件
@@ -142,7 +160,7 @@ async def list_videos(
 @router.get("/remote")
 async def play_remote_video(
     url: str = Query(..., description="远程视频URL"),
-    current_user: dict = Depends(teacher_student_allowed),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     播放远程视频（代理转发）
@@ -184,7 +202,7 @@ async def play_remote_video(
 @router.post("/upload")
 async def upload_video(
     file_url: str = Query(..., description="视频文件的URL或路径"),
-    current_user: dict = Depends(teacher_student_allowed),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     添加视频到本地目录（通过URL或路径）
@@ -249,7 +267,8 @@ async def upload_video(
 @router.get("/info/{filename}")
 async def get_video_info(
     filename: str,
-    current_user: dict = Depends(teacher_student_allowed),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取视频文件信息
@@ -260,6 +279,7 @@ async def get_video_info(
     Returns:
         视频信息
     """
+    _require_video_course_access(session, current_user, filename)
     video_path = get_video_path(filename)
 
     if not video_path or not video_path.exists():

@@ -16,13 +16,14 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_student_allowed
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus
 from app.models.mapping_model import KnowledgePageMap
 from app.core.config import settings
+from app.services.course_access_service import CourseAccessContext, course_permission, require_course_permission
 
 router = APIRouter(tags=["分屏播放器"])
 
@@ -67,7 +68,7 @@ class ProgressSaveRequest(BaseModel):
 async def get_player_init_data(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_student_allowed),
+    access: CourseAccessContext = Depends(course_permission("course.learn")),
 ):
     """
     获取分屏播放器初始化数据
@@ -81,7 +82,7 @@ async def get_player_init_data(
     前端收到此数据后即可渲染完整的分屏播放界面
     """
     try:
-        user_id = int(current_user["user_id"])
+        user_id = access.user_id
 
         # 1. 查询课程信息
         course = session.get(Course, course_id)
@@ -260,7 +261,7 @@ async def get_player_init_data(
 async def get_knowledge_points(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_student_allowed),
+    access: CourseAccessContext = Depends(course_permission("knowledge.view")),
 ):
     """
     获取知识点导航条数据
@@ -291,7 +292,7 @@ async def get_knowledge_points(
         ).all()
 
         # 查询学习进度（获取已完成节点）
-        user_id = int(current_user["user_id"])
+        user_id = access.user_id
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -352,7 +353,10 @@ async def save_player_progress(
     - 记录当前播放位置、当前节点、已完成节点列表
     """
     try:
-        user_id = int(current_user["user_id"])
+        access = require_course_permission(session, current_user, request.course_id, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation can write learning progress")
+        user_id = access.user_id
 
         # 查询或创建学习进度记录
         progress = session.exec(
@@ -424,7 +428,7 @@ async def save_player_progress(
 async def get_player_progress(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("course.progress.read_self")),
 ):
     """
     获取播放器学习进度
@@ -432,7 +436,9 @@ async def get_player_progress(
     用于断点续播：进入播放器页面时调用此接口恢复上次的播放位置
     """
     try:
-        user_id = int(current_user["user_id"])
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation has personal progress")
+        user_id = access.user_id
 
         progress = session.exec(
             select(LearningProgress).where(

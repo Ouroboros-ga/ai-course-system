@@ -20,6 +20,7 @@ from app.models.course_model import (
 from app.models.mapping_model import KnowledgePageMap
 from app.models.progress_model import LearningJumpHistory, LearningProgress, NodeProgress
 from app.models.user_model import ChatHistory, ChatMessage, User, UserRole
+from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 from app.models.video_generation_model import GenerationStatus, VideoGenerationTask
 from app.services.document_service import (
     DocumentProcessResult,
@@ -29,6 +30,7 @@ from app.services.document_service import (
     ScriptResult,
     StructureResult,
 )
+from app.services.course_access_service import establish_course_access_baseline
 from fakes import BUSINESS_FAILURE_MESSAGE, FakeDigitalHumanClient, FakePPTClient
 
 
@@ -48,6 +50,13 @@ def _create_user(session: Session, role: UserRole, prefix: str) -> User:
     session.add(user)
     session.commit()
     session.refresh(user)
+    if role == UserRole.TEACHER:
+        session.add(PlatformPermissionAssignment(
+            user_id=user.id,
+            permission=PlatformPermission.COURSE_CREATE,
+            granted_by_user_id=user.id,
+        ))
+        session.commit()
     return user
 
 
@@ -81,6 +90,8 @@ def _create_course_graph(session: Session, teacher: User, status: CourseStatus =
     session.add(course)
     session.commit()
     session.refresh(course)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    session.commit()
 
     doc = DoclingDocument(
         course_id=course.id,
@@ -289,7 +300,7 @@ def test_m4b_teacher_script_mapping_publish_enrollment_and_course_lifecycle(clie
     session.expire_all()
     assert session.get(ScriptNode, nodes[0].id).title == "Updated Binary Search"
 
-    detail_response = client.get(f"/api/v1/document/course/{course.id}")
+    detail_response = client.get(f"/api/v1/document/course/{course.id}", headers=_headers(teacher))
     assert detail_response.status_code == 200
     assert detail_response.json()["code"] == 200
 
@@ -398,6 +409,9 @@ def test_m4b_student_player_progress_chat_quiz_and_prerequisite_flows(client, se
     course, _, nodes, _ = _create_course_graph(session, teacher, status=CourseStatus.PUBLISHED)
 
     student_headers = _headers(student)
+
+    enroll_response = client.post(f"/api/v1/document/course/{course.id}/enroll", headers=student_headers)
+    assert enroll_response.status_code == 200
 
     player_init_response = client.get(f"/api/v1/player/init/{course.id}", headers=student_headers)
     assert player_init_response.status_code == 200

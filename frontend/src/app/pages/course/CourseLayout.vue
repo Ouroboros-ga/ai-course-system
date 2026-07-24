@@ -2,27 +2,27 @@
 import { computed, onMounted, provide, reactive, toRefs } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft } from 'lucide-vue-next'
-import { getCourseDetail } from '@/api/courses.js'
-import { useCounterStore } from '@/stores/counter.js'
+import { getCourseAccess, getCourseDetail } from '@/api/courses.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
 const route = useRoute()
 const router = useRouter()
-const counter = useCounterStore()
-
 const courseId = computed(() => Number(route.params.courseId))
 
 const state = reactive({
   status: 'loading', // loading | ready | error | notfound
   detail: null,
+  access: null,
 })
 
 // 课程角色（page-design §1.3：角色属于「用户与课程的关系」）。
 // 当前课程详情端点不返回 teacher_id，切片内用全局角色近似：教师/管理员
 // 看到教师导航（其「学习」为学生视角预览，§10.3），学生看到学生导航。
-const courseRole = computed(() => (counter.isTeacher || counter.isAdmin ? 'teacher' : 'student'))
+const courseRole = computed(() => state.access?.course_role ?? null)
+const allowed = computed(() => state.access?.allowed ?? {})
+const capabilities = computed(() => state.access?.capabilities ?? {})
 
 const course = computed(() => state.detail?.course ?? null)
 
@@ -35,7 +35,7 @@ const navItems = computed(() => {
     { key: 'knowledge', label: '知识', enabled: false, reason: '知识空间将在后续切片上线' },
     { key: 'experiments', label: '实验任务', enabled: false, reason: '课程实验将在后续切片上线' },
   ]
-  if (courseRole.value === 'teacher') {
+  if (allowed.value['course.edit']) {
     base.push(
       { key: 'build', label: '建设', enabled: false, reason: '课程建设将在后续切片上线' },
       { key: 'members', label: '成员', enabled: false, reason: '成员管理将在后续切片上线' },
@@ -53,7 +53,12 @@ const activeKey = computed(() => {
 async function load() {
   state.status = 'loading'
   try {
-    state.detail = await getCourseDetail(courseId.value)
+    const [detail, access] = await Promise.all([
+      getCourseDetail(courseId.value),
+      getCourseAccess(courseId.value),
+    ])
+    state.detail = detail
+    state.access = access
     state.status = 'ready'
   } catch (e) {
     state.status = /404|不存在/.test(String(e?.message || '')) ? 'notfound' : 'error'
@@ -66,6 +71,8 @@ provide('courseContext', {
   courseId,
   course,
   courseRole,
+  allowed,
+  capabilities,
   reload: load,
 })
 
@@ -83,8 +90,8 @@ onMounted(load)
           </button>
           <div class="sfx-l2nav-course">
             <span class="sfx-l2nav-title sfx-t-ui">{{ course.title }}</span>
-            <SfxBadge :tone="courseRole === 'teacher' ? 'ink' : 'green'">
-              {{ courseRole === 'teacher' ? '教师' : '学生' }}
+            <SfxBadge :tone="courseRole === 'owner' || courseRole === 'teacher' ? 'ink' : 'green'">
+              {{ courseRole === 'owner' ? '课程所有者' : courseRole === 'teacher' ? '教师' : courseRole === 'teaching_assistant' ? '助教' : courseRole === 'observer' ? '观察者' : '学员' }}
             </SfxBadge>
             <SfxBadge v-if="course.status !== 'published'" tone="amber">
               {{ course.status === 'draft' ? '草稿' : course.status }}

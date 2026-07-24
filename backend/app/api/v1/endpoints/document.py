@@ -26,7 +26,7 @@ from app.schemas.document_schema import (
 )
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only, _get_user_id, _get_user_identity
+from app.core.security import get_current_user, _get_user_id, _get_user_identity
 from app.core.config import settings
 from app.models.database import get_session
 from app.models.course_model import (
@@ -45,8 +45,16 @@ from app.models.course_model import (
     ScriptNodeType,
 )
 from app.models.document_artifact_model import DocumentArtifact
+from app.models.access_control_model import CourseMembership, CourseRole, MembershipStatus
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
+from app.services.course_access_service import (
+    CourseAccessContext,
+    activate_student_membership,
+    course_permission,
+    establish_course_access_baseline,
+    require_course_permission,
+)
 from app.services import smart_course_service
 from app.platform.adapters.base import classify_exception
 from app.platform.adapters.errors import AdapterErrorCode
@@ -425,6 +433,8 @@ async def upload_document(
         session.add(course)
         session.commit()
         session.refresh(course)
+        establish_course_access_baseline(session, course.id, user_id)
+        session.commit()
         print(f"  创建课程记录: ID={course.id}, 标题={course.title}")
 
         try:
@@ -677,9 +687,6 @@ async def analyze_document(
     对已有文档进行AI分析
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
         if request.document_id not in document_cache:
             # 尝试从数据库回填
             artifact = session.exec(
@@ -697,22 +704,10 @@ async def analyze_document(
         doc_data = document_cache[request.document_id]
         course_id = doc_data.get("course_id")
 
-        # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
         course = session.get(Course, course_id)
         if not course:
             raise HTTPException(status_code=404, detail="课程不存在")
-        if user_role != "admin":
-            if user_role == "teacher" and str(course.teacher_id) != str(user_id):
-                raise HTTPException(status_code=403, detail="无权访问此课程")
-            if user_role == "student":
-                enrollment = session.exec(
-                    select(StudentEnrollment).where(
-                        StudentEnrollment.course_id == course_id,
-                        StudentEnrollment.student_id == user_id,
-                    )
-                ).first()
-                if not enrollment:
-                    raise HTTPException(status_code=403, detail="您尚未选修此课程")
+        require_course_permission(session, current_user, course_id, "course.content.read")
 
         # 优先从内存缓存取 script_content；重启后从 CourseScript 表重建
         script_content = doc_data.get("script_content")
@@ -759,20 +754,15 @@ async def get_courses_list(
     """
     try:
         user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        statement = select(Course)
-
-        if user_role == "student":
-            statement = statement.where(Course.status == CourseStatus.PUBLISHED)
-        else:
-            from sqlmodel import or_
-            statement = statement.where(
-                or_(
-                    Course.teacher_id == user_id,
-                    Course.status == CourseStatus.PUBLISHED
-                )
-            )
+        visible_memberships = session.exec(select(CourseMembership.course_id).where(
+            CourseMembership.user_id == user_id,
+            CourseMembership.status == MembershipStatus.ACTIVE,
+        )).all()
+        from sqlmodel import or_
+        statement = select(Course).where(or_(
+            Course.status == CourseStatus.PUBLISHED,
+            Course.id.in_(list(visible_memberships) or [-1]),
+        ))
 
         if status:
             try:
@@ -786,11 +776,16 @@ async def get_courses_list(
 
         courses_data = []
         for course in courses:
+            owner = session.exec(select(CourseMembership).where(
+                CourseMembership.course_id == course.id,
+                CourseMembership.role == CourseRole.OWNER,
+                CourseMembership.status == MembershipStatus.ACTIVE,
+            )).first()
             teacher_name = "未知教师"
             teacher_record = session.execute(
                 text("SELECT username FROM users WHERE id = :uid"),
-                {"uid": course.teacher_id}
-            ).fetchone()
+                {"uid": owner.user_id}
+            ).fetchone() if owner else None
             if teacher_record:
                 teacher_name = teacher_record[0]
 
@@ -806,7 +801,7 @@ async def get_courses_list(
                 "title": course.title,
                 "description": course.description,
                 "status": course.status.value,
-                "teacher_id": course.teacher_id,
+                "teacher_id": owner.user_id if owner else None,
                 "teacher_name": teacher_name,
                 "total_nodes": course.total_nodes,
                 "total_duration": course.total_duration,
@@ -847,30 +842,31 @@ async def get_my_courses(
     """
     try:
         student_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "student":
-            return unified_response(code=403, message="只有学生可以查看选课列表", data=None)
-
-        enrollments = session.exec(
-            select(StudentEnrollment).where(
-                StudentEnrollment.student_id == student_id,
-                StudentEnrollment.is_active == True
-            ).order_by(StudentEnrollment.enrolled_at.desc())
+        memberships = session.exec(
+            select(CourseMembership).where(
+                CourseMembership.user_id == student_id,
+                CourseMembership.role == CourseRole.STUDENT,
+                CourseMembership.status == MembershipStatus.ACTIVE,
+            ).order_by(CourseMembership.joined_at.desc())
         ).all()
 
         my_courses = []
-        for enr in enrollments:
-            course = session.get(Course, enr.course_id)
-            if not course or course.status != CourseStatus.PUBLISHED:
+        for membership in memberships:
+            course = session.get(Course, membership.course_id)
+            if not course:
                 continue
+            enr = session.exec(select(StudentEnrollment).where(
+                StudentEnrollment.student_id == student_id,
+                StudentEnrollment.course_id == course.id,
+                StudentEnrollment.is_active == True,
+            )).first()
 
             my_courses.append({
                 "enrollment_id": enr.id,
                 "course_id": course.id,
                 "title": course.title,
                 "description": course.description,
-                "teacher_name": _get_teacher_name(session, course.teacher_id),
+                "teacher_name": _get_teacher_name(session, next((m.user_id for m in session.exec(select(CourseMembership).where(CourseMembership.course_id == course.id, CourseMembership.role == CourseRole.OWNER, CourseMembership.status == MembershipStatus.ACTIVE)).all()), None)),
                 "total_nodes": course.total_nodes,
                 "total_duration": course.total_duration,
                 "overall_progress": round(enr.overall_progress, 1),
@@ -903,9 +899,6 @@ async def get_document(
     """
     获取文档信息（从数据库读取）
     """
-    user_id = int(current_user["user_id"])
-    user_role = current_user.get("role", "student")
-
     if document_id not in document_cache:
         # 尝试从数据库回填
         artifact = session.exec(
@@ -927,19 +920,7 @@ async def get_document(
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
 
-    # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
-    if user_role != "admin":
-        if user_role == "teacher" and str(course.teacher_id) != str(user_id):
-            raise HTTPException(status_code=403, detail="无权访问此课程文档")
-        if user_role == "student":
-            enrollment = session.exec(
-                select(StudentEnrollment).where(
-                    StudentEnrollment.course_id == course_id,
-                    StudentEnrollment.student_id == user_id,
-                )
-            ).first()
-            if not enrollment:
-                raise HTTPException(status_code=403, detail="您尚未选修此课程")
+    require_course_permission(session, current_user, course_id, "course.content.read")
 
     script = session.exec(
         select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
@@ -983,7 +964,7 @@ async def save_course_nodes(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("course.script.edit")),
 ):
     """
     保存老师修改后的课程节点内容到数据库
@@ -991,18 +972,9 @@ async def save_course_nodes(
     需要老师权限
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "teacher":
-            return unified_response(code=403, message="只有教师可以保存课程内容", data=None)
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权修改此课程", data=None)
 
         body = await request.json()
         nodes_data = body.get("nodes", [])
@@ -1044,32 +1016,15 @@ async def save_course_nodes(
 async def get_course_detail(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.view")),
 ):
     """
     获取课程完整详情（包括脚本和节点）
     """
-    user_id = int(current_user["user_id"])
-    user_role = current_user.get("role", "student")
-
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
 
-    # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
-    if user_role != "admin":
-        if user_role == "teacher" and str(course.teacher_id) != str(user_id):
-            raise HTTPException(status_code=403, detail="无权访问此课程")
-        if user_role == "student":
-            enrollment = session.exec(
-                select(StudentEnrollment).where(
-                    StudentEnrollment.course_id == course_id,
-                    StudentEnrollment.student_id == user_id,
-                )
-            ).first()
-            if not enrollment:
-                raise HTTPException(status_code=403, detail="您尚未选修此课程")
-    
     script = session.exec(
         select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
     ).first()
@@ -1299,7 +1254,7 @@ async def tts_health_check(
 async def get_tts_generation_status(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.content.read")),
 ):
     status_key = str(course_id)
     status_info = tts_generation_status.get(status_key, None)
@@ -1354,7 +1309,7 @@ async def create_script_snapshot(
     course_id: int,
     request: Request,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.script.edit")),
 ):
     """
     创建脚本版本快照
@@ -1363,13 +1318,9 @@ async def create_script_snapshot(
     请求体: { "version_name": "可选版本名称" }
     """
     try:
-        user_id = int(current_user["user_id"])
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权操作此课程", data=None)
-
         # 获取当前激活脚本
         active_script = session.exec(
             select(CourseScript).where(
@@ -1397,7 +1348,7 @@ async def create_script_snapshot(
             summary_text=active_script.summary_text,
             keywords=active_script.keywords,
             is_active=True,
-            created_by=user_id,
+            created_by=access.user_id,
         )
         # 旧版本设为非激活
         active_script.is_active = False
@@ -1448,7 +1399,7 @@ async def create_script_snapshot(
 async def get_script_versions(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.script.edit")),
 ):
     """
     获取脚本版本列表
@@ -1485,7 +1436,7 @@ async def rollback_script_version(
     course_id: int,
     script_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    _access: CourseAccessContext = Depends(course_permission("course.rollback")),
 ):
     """
     回滚到指定脚本版本
@@ -1493,13 +1444,9 @@ async def rollback_script_version(
     将指定版本设为激活，当前激活版本设为非激活。
     """
     try:
-        user_id = int(current_user["user_id"])
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权操作此课程", data=None)
-
         target_script = session.get(CourseScript, script_id)
         if not target_script or target_script.course_id != course_id:
             return unified_response(code=404, message="目标版本不存在", data=None)
@@ -1536,7 +1483,7 @@ async def rollback_script_version(
 async def publish_course(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.publish")),
 ):
     """
     发布课程（老师操作）
@@ -1544,18 +1491,9 @@ async def publish_course(
     将课程状态从 draft 改为 published，学生可以看到并选择该课程
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "teacher":
-            return unified_response(code=403, message="只有教师可以发布课程", data=None)
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权操作此课程", data=None)
 
         if course.status == CourseStatus.PUBLISHED:
             return unified_response(code=200, message="课程已是发布状态", data={"status": "published"})
@@ -1578,7 +1516,7 @@ async def publish_course(
 async def unpublish_course(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.unpublish")),
 ):
     """
     取消发布课程（老师操作）
@@ -1587,18 +1525,9 @@ async def unpublish_course(
     已选课的学生保留选课记录但标记为不活跃
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "teacher":
-            return unified_response(code=403, message="只有教师可以取消发布课程", data=None)
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权操作此课程", data=None)
 
         # 更新状态为草稿
         course.status = CourseStatus.DRAFT
@@ -1618,7 +1547,7 @@ async def unpublish_course(
 async def delete_course(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.delete")),
 ):
     """
     删除课程（老师操作）
@@ -1627,18 +1556,9 @@ async def delete_course(
     此操作不可恢复，需要二次确认
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "teacher":
-            return unified_response(code=403, message="只有教师可以删除课程", data=None)
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权删除此课程", data=None)
 
         # 检查是否有学生已选课
         enrollments_count = session.exec(
@@ -1764,7 +1684,7 @@ async def delete_course(
             except Exception as clear_err:
                 print(f"[删除课程] 清理课程 RAG 索引失败（可忽略）: {clear_err}")
 
-            print(f"[删除课程] 教师 {current_user.get('username')} 删除了课程 {course.title} (ID:{course_id})，影响 {enrollments_count} 名学生")
+            print(f"[删除课程] actor={_access.user_id} deleted course {course_id}; affected enrollments={enrollments_count}")
 
             return unified_response(code=200, message=f"课程《{course.title}》已成功删除", data={
                 "deleted_course_id": course_id,
@@ -1795,10 +1715,6 @@ async def enroll_course(
     """
     try:
         student_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
-        if user_role != "student":
-            return unified_response(code=403, message="只有学生可以选择课程", data=None)
 
         course = session.get(Course, course_id)
         if not course:
@@ -1816,6 +1732,8 @@ async def enroll_course(
         ).first()
 
         if existing and existing.is_active:
+            activate_student_membership(session, course_id, student_id)
+            session.commit()
             # 已选课，检查是否需要初始化进度数据
             _ensure_learning_progress(session, student_id, course_id, course.total_nodes or 0)
             return unified_response(code=200, message="您已选择过此课程", data={
@@ -1828,6 +1746,7 @@ async def enroll_course(
             existing.is_active = True
             existing.enrolled_at = datetime.utcnow()
             session.add(existing)
+            activate_student_membership(session, course_id, student_id)
             session.commit()
             # 初始化学习进度
             _ensure_learning_progress(session, student_id, course_id, course.total_nodes or 0)
@@ -1843,6 +1762,7 @@ async def enroll_course(
             total_nodes_count=course.total_nodes or 0,
         )
         session.add(enrollment)
+        activate_student_membership(session, course_id, student_id)
         session.commit()
         session.refresh(enrollment)
 
@@ -1957,13 +1877,15 @@ def _ensure_learning_progress(session: Session, student_id: int, course_id: int,
 async def unenroll_course(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("course.learn")),
 ):
     """
     学生退出课程
     """
     try:
-        student_id = int(current_user["user_id"])
+        if access.role is None or access.role.value != "student":
+            return unified_response(code=403, message="只有学生成员可以退出课程", data=None)
+        student_id = access.user_id
 
         enrollment = session.exec(
             select(StudentEnrollment).where(
@@ -1978,6 +1900,17 @@ async def unenroll_course(
 
         enrollment.is_active = False
         session.add(enrollment)
+        membership = session.exec(
+            select(CourseMembership).where(
+                CourseMembership.course_id == course_id,
+                CourseMembership.user_id == student_id,
+            )
+        ).first()
+        if membership is not None and membership.role.value == "student":
+            membership.status = MembershipStatus.WITHDRAWN
+            membership.left_at = datetime.utcnow()
+            membership.updated_at = datetime.utcnow()
+            session.add(membership)
         session.commit()
 
         return unified_response(code=200, message="已退出课程", data=None)
@@ -2002,7 +1935,7 @@ def _get_teacher_name(session: Session, teacher_id: int) -> str:
 async def get_course_students(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("analytics.view_member")),
 ):
     """
     获取课程的学生列表及学习进度（老师查看）
@@ -2010,16 +1943,9 @@ async def get_course_students(
     返回所有选择了该课程的活跃学生及其学习进度统计
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        # 权限检查：只有课程老师或管理员可以查看
-        if course.teacher_id != user_id and user_role != "admin":
-            return unified_response(code=403, message="无权查看此课程的学生数据", data=None)
 
         # 查询所有活跃的选课记录
         enrollments = session.exec(
@@ -2115,7 +2041,7 @@ async def get_course_students(
 async def get_course_stats(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("analytics.view_course")),
 ):
     """
     获取课程统计数据（老师查看）
@@ -2123,14 +2049,9 @@ async def get_course_stats(
     返回：总选课人数、平均进度、平均理解度等统计信息
     """
     try:
-        user_id = int(current_user["user_id"])
-
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
-
-        if course.teacher_id != user_id:
-            return unified_response(code=403, message="无权查看此课程数据", data=None)
 
         # 统计活跃选课数
         active_count = session.exec(
@@ -2278,7 +2199,7 @@ def cleanup_old_node_audio(node: ScriptNode, course_dir: Path):
 async def get_course_slides(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.content.read")),
 ):
     course = session.get(Course, course_id)
     if not course:
@@ -2422,7 +2343,7 @@ async def get_slide_image(
     course_id: int,
     page_num: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.content.read")),
 ):
     course_slide_dir = PPT_SLIDES_DIR / str(course_id)
     img_path = course_slide_dir / f"slide_{page_num}.png"
@@ -2443,7 +2364,7 @@ async def synthesize_node_audio(
     course_id: int,
     node_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.media.generate")),
 ):
     node = session.get(ScriptNode, node_id)
     if not node:
@@ -2452,6 +2373,10 @@ async def synthesize_node_audio(
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+
+    script = session.get(CourseScript, node.script_id)
+    if script is None or script.course_id != course_id:
+        raise HTTPException(status_code=400, detail="Node does not belong to course")
 
     if not node.content or len(node.content.strip()) < 10:
         return unified_response(code=400, message="节点内容过短，无法合成音频", data=None)
@@ -2546,7 +2471,8 @@ async def synthesize_node_audio(
 async def stream_audio(
     course_id: int,
     filename: str,
-    current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
+    _access: CourseAccessContext = Depends(course_permission("course.content.read")),
 ):
     course_audio_dir = get_course_audio_dir(course_id)
     audio_path = course_audio_dir / filename
@@ -2582,7 +2508,7 @@ async def stream_audio(
 async def synthesize_all_node_audio(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    _access: CourseAccessContext = Depends(course_permission("course.media.generate")),
 ):
     course = session.get(Course, course_id)
     if not course:
@@ -2715,3 +2641,6 @@ async def synthesize_all_node_audio(
         "results": results,
         "errors": errors,
     })
+    script = session.get(CourseScript, node.script_id)
+    if script is None or script.course_id != course_id:
+        raise HTTPException(status_code=400, detail="Node does not belong to course")

@@ -22,6 +22,7 @@ from app.common.prompts.progress import (
     PROGRESS_CONTINUATION_PROMPT,
     build_progress_continuation_prompt
 )
+from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["进度续接"])
 
@@ -31,6 +32,7 @@ async def analyze_understanding(
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
     username: str = Depends(_get_username),
+    current_user: dict = Depends(get_current_user),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="当前节点ID"),
     question: str = Body(..., description="学生提问内容"),
@@ -52,6 +54,9 @@ async def analyze_understanding(
     - 节奏调整建议
     """
     try:
+        access = require_course_permission(session, current_user, courseId, "course.learn")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation can record progress")
         print(f"[进度分析] 用户 {username} (ID: {user_id}) 提交分析请求")
 
         course = session.get(Course, courseId)
@@ -94,6 +99,7 @@ async def get_progress_visualization(
     course_id: int,
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取学习进度可视化数据
@@ -104,6 +110,9 @@ async def get_progress_visualization(
     - 最近的理解度分析记录
     """
     try:
+        access = require_course_permission(session, current_user, course_id, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation has personal progress")
         result = await progress_service.get_progress_visualization(
             session=session, user_id=user_id, course_id=course_id
         )
@@ -126,6 +135,7 @@ async def get_progress_visualization(
 async def sync_learning_progress(
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
+    current_user: dict = Depends(get_current_user),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="当前节点ID"),
     timestamp: float = Body(0.0, description="当前播放时间点(秒)"),
@@ -143,6 +153,9 @@ async def sync_learning_progress(
     用于前端定期同步播放进度，支持断点续接
     """
     try:
+        access = require_course_permission(session, current_user, courseId, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation can record progress")
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -250,6 +263,7 @@ async def get_resume_point(
     course_id: int,
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取断点续接信息
@@ -257,6 +271,9 @@ async def get_resume_point(
     返回上次学习的位置，用于学生重新进入课程时恢复进度
     """
     try:
+        access = require_course_permission(session, current_user, course_id, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation has personal progress")
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -312,6 +329,7 @@ async def get_progress_detail(
     course_id: int,
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取学生学习进度详情
@@ -322,6 +340,9 @@ async def get_progress_detail(
     - 用于学生进入课程时加载历史进度
     """
     try:
+        access = require_course_permission(session, current_user, course_id, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation has personal progress")
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -396,6 +417,7 @@ async def get_progress_detail(
 async def mark_node_completed(
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
+    current_user: dict = Depends(get_current_user),
     courseId: int = Body(..., description="课程ID"),
     nodeId: int = Body(..., description="节点ID"),
 ):
@@ -403,6 +425,9 @@ async def mark_node_completed(
     标记节点为已完成
     """
     try:
+        access = require_course_permission(session, current_user, courseId, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation can record progress")
         progress = session.exec(
             select(LearningProgress).where(
                 LearningProgress.user_id == user_id,
@@ -470,6 +495,7 @@ async def get_progress_continuation(
     session: Session = Depends(get_session),
     user_id: int = Depends(_get_user_id),
     username: str = Depends(_get_username),
+    current_user: dict = Depends(get_current_user),
     courseId: int = Body(..., description="课程ID"),
     chatId: Optional[int] = Body(None, description="会话ID，用于获取历史对话"),
 ):
@@ -488,6 +514,9 @@ async def get_progress_continuation(
     - 续接脚本（欢迎语、进度回顾、下一步介绍、鼓励语）
     """
     try:
+        access = require_course_permission(session, current_user, courseId, "course.progress.read_self")
+        if not access.analytics_eligible:
+            raise HTTPException(status_code=403, detail="Only learner participation has personal progress")
         import json
         import re
 

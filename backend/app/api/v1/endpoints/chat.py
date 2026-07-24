@@ -12,12 +12,13 @@ from sqlmodel import Session, select
 
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_student_allowed
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
 from app.services.qa_service import qa_service
 from app.services.progress_service import progress_service
+from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -187,6 +188,7 @@ async def ask_question(
         
         course_context = ""
         if courseId:
+            require_course_permission(session, current_user, courseId, "course.question.ask")
             print(f"[聊天] 基于课程 {courseId} 的文档内容回答")
             course_context = await _get_course_context(session, courseId)
         
@@ -432,6 +434,9 @@ async def generate_quiz(
         user_id = int(current_user["user_id"])
         username = current_user.get("username", "user")
 
+        if courseId:
+            require_course_permission(session, current_user, courseId, "course.learn")
+
         content = nodeContent or ""
         title = nodeTitle or ""
 
@@ -439,6 +444,10 @@ async def generate_quiz(
             from app.models.course_model import ScriptNode
             script_node = session.get(ScriptNode, nodeId)
             if script_node:
+                if courseId:
+                    script = session.get(CourseScript, script_node.script_id)
+                    if script is None or script.course_id != courseId:
+                        return unified_response(code=400, message="Node does not belong to course", data=None)
                 content = script_node.content or ""
                 title = script_node.title or ""
 

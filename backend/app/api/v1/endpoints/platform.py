@@ -12,15 +12,33 @@ from sqlmodel import Session, select
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.security import create_access_token, get_password_hash, verify_password
+from app.core.security import create_access_token, get_current_user, get_password_hash, verify_password
 from app.models.user_model import User, UserRole
+from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 from app.models.course_model import Course, StudentEnrollment
 from app.models.database import get_session
 from app.core.exceptions import unified_response
+from app.services.course_access_service import CourseAccessContext, course_permission
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["泛雅平台对接"])
+
+
+def _sync_platform_permissions(session: Session, user: User) -> None:
+    """Persist platform abilities granted by the trusted upstream sync policy."""
+    if user.role != UserRole.TEACHER:
+        return
+    assignment = session.exec(select(PlatformPermissionAssignment).where(
+        PlatformPermissionAssignment.user_id == user.id,
+        PlatformPermissionAssignment.permission == PlatformPermission.COURSE_CREATE,
+    )).first()
+    if assignment is None:
+        session.add(PlatformPermissionAssignment(
+            user_id=user.id,
+            permission=PlatformPermission.COURSE_CREATE,
+            granted_by_user_id=user.id,
+        ))
 
 
 class FanyaSSOCallbackRequest(BaseModel):
@@ -168,6 +186,7 @@ async def sync_user(
             if request.role and request.role in ["teacher", "student"]:
                 existing_user.role = UserRole(request.role)
             existing_user.is_fanya_verified = True
+            _sync_platform_permissions(session, existing_user)
             session.add(existing_user)
             session.commit()
             session.refresh(existing_user)
@@ -199,6 +218,8 @@ async def sync_user(
         session.add(new_user)
         session.commit()
         session.refresh(new_user)
+        _sync_platform_permissions(session, new_user)
+        session.commit()
 
         return unified_response(
             code=200,
@@ -272,6 +293,9 @@ async def sync_course(
         session.add(new_course)
         session.commit()
         session.refresh(new_course)
+        from app.services.course_access_service import establish_course_access_baseline
+        establish_course_access_baseline(session, new_course.id, teacher.id)
+        session.commit()
 
         if request.student_list:
             _sync_enrollments(session, new_course.id, request.student_list)
@@ -348,6 +372,8 @@ def _sync_enrollments(
             course_id=course_id,
         )
         session.add(enrollment)
+        from app.services.course_access_service import activate_student_membership
+        activate_student_membership(session, course_id, student.id)
         count += 1
 
     if count > 0:
@@ -429,7 +455,7 @@ async def _async_push_to_fanya(progress_data: dict):
 @router.get("/bind/status/{course_id}")
 async def get_bind_status(
     course_id: int,
-    current_user: dict = Depends(lambda: {"user_id": 1}),
+    _access: CourseAccessContext = Depends(course_permission("course.edit")),
     session: Session = Depends(get_session),
 ):
     """查询课程的泛雅绑定状态"""
@@ -472,7 +498,7 @@ async def get_bind_status(
 @router.delete("/unbind/{course_id}")
 async def unbind_course(
     course_id: int,
-    current_user: dict = Depends(lambda: {"user_id": 1}),
+    _access: CourseAccessContext = Depends(course_permission("course.edit")),
     session: Session = Depends(get_session),
 ):
     """解除课程的泛雅绑定"""

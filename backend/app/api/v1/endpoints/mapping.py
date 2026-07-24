@@ -11,11 +11,12 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode
 from app.models.mapping_model import KnowledgePageMap
 from app.services.mapping_service import mapping_service
+from app.services.course_access_service import CourseAccessContext, course_permission
 
 router = APIRouter(tags=["知识点映射"])
 
@@ -40,7 +41,7 @@ class BatchMappingUpdate(BaseModel):
 async def get_mapping(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("knowledge.view")),
 ):
     """
     获取课程的完整映射详情
@@ -58,7 +59,7 @@ async def get_mapping(
 async def get_page_texts(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("knowledge.view")),
 ):
     """
     获取PPT逐页文本内容（用于前端展示）
@@ -79,7 +80,7 @@ async def get_page_texts(
 async def auto_generate_mapping(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.mapping.edit")),
 ):
     """
     自动生成映射关系（基于ScriptNode已有的page_start/page_end）
@@ -115,7 +116,7 @@ async def auto_generate_mapping(
 async def ai_match_mapping(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.mapping.edit")),
 ):
     """
     AI语义匹配：使用LLM分析知识点与PPT页面的语义相似度
@@ -153,7 +154,7 @@ async def update_node_mapping(
     node_id: int,
     update: NodeMappingUpdate,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.mapping.edit")),
 ):
     """
     手动调整单个知识点的映射关系
@@ -191,7 +192,7 @@ async def batch_update_mapping(
     course_id: int,
     batch: BatchMappingUpdate,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.mapping.edit")),
 ):
     """
     批量更新映射关系
@@ -217,7 +218,7 @@ async def batch_update_mapping(
 async def apply_mapping_to_script(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.mapping.edit")),
 ):
     """
     将映射关系应用到脚本节点

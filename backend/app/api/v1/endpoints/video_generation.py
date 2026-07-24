@@ -11,13 +11,14 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.services.video_generation_service import video_generation_service
 from app.common.digital_human_client import digital_human_client, DigitalHumanError
 from app.platform.adapters.registry import get_digital_human_adapter
+from app.services.course_access_service import CourseAccessContext, course_permission, require_course_permission
 
 logger = logging.getLogger(__name__)
 
@@ -36,22 +37,16 @@ async def generate_course_videos(
     request: GenerateRequest,
     background_tasks: BackgroundTasks,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    access: CourseAccessContext = Depends(course_permission("course.media.generate")),
 ):
     """
     批量生成课程视频（异步后台任务）
 
     流程：遍历脚本节点 → TTS合成语音 → 数字人视频生成
     """
-    user_id = int(current_user["user_id"])
-
-    # 校验课程归属
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
-    if course.teacher_id != user_id:
-        raise HTTPException(status_code=403, detail="无权操作此课程")
-
     # 检查数字人服务可用性
     health_result = await get_digital_human_adapter(digital_human_client).check_health()
     if not health_result.success:
@@ -113,28 +108,23 @@ async def generate_node_video(
     node_id: int,
     force: bool = Query(False, description="是否强制重新生成"),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     为单个脚本节点生成数字人视频（同步）
 
     流程：TTS合成语音 → 数字人视频生成
     """
-    user_id = int(current_user["user_id"])
-
     # 查询节点
     node = session.get(ScriptNode, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="脚本节点不存在")
 
-    # 校验课程归属
     script = session.get(CourseScript, node.script_id)
     if not script:
         raise HTTPException(status_code=404, detail="脚本不存在")
 
-    course = session.get(Course, script.course_id)
-    if not course or course.teacher_id != user_id:
-        raise HTTPException(status_code=403, detail="无权操作此课程")
+    require_course_permission(session, current_user, script.course_id, "course.media.generate")
 
     # 检查数字人服务
     health_result = await get_digital_human_adapter(digital_human_client).check_health()
@@ -172,6 +162,7 @@ async def get_task_status(
     task = session.get(VideoGenerationTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="生成任务不存在")
+    require_course_permission(session, current_user, task.course_id, "course.content.read")
 
     return unified_response(
         code=200,
@@ -184,7 +175,7 @@ async def get_task_status(
 async def get_course_tasks(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    access: CourseAccessContext = Depends(course_permission("course.content.read")),
 ):
     """查询课程所有视频生成任务"""
     tasks = video_generation_service.get_course_tasks(course_id, session)

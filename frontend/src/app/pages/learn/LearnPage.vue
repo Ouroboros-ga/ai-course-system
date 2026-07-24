@@ -17,7 +17,7 @@ const router = useRouter()
 const { courseRole, detail } = inject('courseContext')
 
 const courseId = Number(route.params.courseId)
-const previewMode = computed(() => courseRole.value === 'teacher')
+const previewMode = computed(() => ['owner', 'teacher', 'teaching_assistant'].includes(courseRole.value))
 
 const ws = useLearningWorkspace(courseId, { previewMode: previewMode.value })
 

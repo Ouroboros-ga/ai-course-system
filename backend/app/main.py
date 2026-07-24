@@ -61,6 +61,7 @@ from app.api.v1.endpoints import (
     confirmation,       # 教师确认持久化
     citation,           # 引用稳定定位
     feedback,           # 向教师反馈通道
+    course_access,
 )
 from app.schemas import UnifiedResponse
 
@@ -125,6 +126,7 @@ app.include_router(citation.router, prefix="/api/v1/citations", tags=["引用定
 app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["学生反馈"])
 
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
+app.include_router(course_access.router, prefix="/api/v1/course-access", tags=["课程权限"])
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal

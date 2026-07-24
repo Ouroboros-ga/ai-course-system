@@ -19,6 +19,7 @@ from app.services.prerequisite_service import (
     prerequisite_analyzer,
     jump_history_manager,
 )
+from app.services.course_access_service import require_course_permission
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +84,9 @@ async def analyze_prerequisite_gap(
     """
     try:
         user_id = int(current_user["user_id"])
+        access = require_course_permission(session, current_user, courseId, "course.learn")
+        if not access.analytics_eligible:
+            return unified_response(code=403, message="Only learner participation can create prerequisite signals", data=None)
         
         from app.models.course_model import ScriptNode
         
@@ -187,6 +191,9 @@ async def execute_jump_to_prerequisite(
     """
     try:
         user_id = int(current_user["user_id"])
+        access = require_course_permission(session, current_user, courseId, "course.learn")
+        if not access.analytics_eligible:
+            return unified_response(code=403, message="Only learner participation can create prerequisite jumps", data=None)
         
         jump_record = jump_history_manager.create_jump_record(
             session=session,
@@ -296,6 +303,11 @@ async def return_to_original_position(
     ```
     """
     try:
+        user_id = int(current_user["user_id"])
+        jump = session.get(LearningJumpHistory, jumpId)
+        if jump is None or jump.user_id != user_id:
+            return unified_response(code=404, message="Jump record does not exist", data=None)
+        require_course_permission(session, current_user, jump.course_id, "course.progress.read_self")
         success = jump_history_manager.mark_as_returned(
             session=session,
             jump_id=jumpId,
@@ -389,6 +401,7 @@ async def get_current_jump_stack(
     """
     try:
         user_id = int(current_user["user_id"])
+        require_course_permission(session, current_user, courseId, "course.progress.read_self")
         
         jump_stack = jump_history_manager.get_jump_stack(
             session=session,
@@ -463,6 +476,11 @@ async def mark_prerequisite_reviewed(
     ```
     """
     try:
+        user_id = int(current_user["user_id"])
+        jump = session.get(LearningJumpHistory, jumpId)
+        if jump is None or jump.user_id != user_id:
+            return unified_response(code=404, message="Jump record does not exist", data=None)
+        require_course_permission(session, current_user, jump.course_id, "course.progress.read_self")
         success = jump_history_manager.mark_review_completed(
             session=session,
             jump_id=jumpId,
@@ -566,6 +584,7 @@ async def get_learning_path_visualization(
     """
     try:
         user_id = int(current_user["user_id"])
+        require_course_permission(session, current_user, courseId, "course.progress.read_self")
         
         path_data = jump_history_manager.get_learning_path_data(
             session=session,

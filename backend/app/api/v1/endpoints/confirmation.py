@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
-from app.core.security import teacher_only
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.confirmation_model import (
     CourseConfirmation,
@@ -20,6 +20,8 @@ from app.models.confirmation_model import (
 )
 from app.models.course_model import Course
 from app.models.user_model import User
+from app.models.access_control_model import CourseMembership, CourseRole, MembershipStatus
+from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["教师确认"])
 
@@ -48,34 +50,24 @@ async def list_confirmations(
     type: Optional[str] = Query(None, description="按确认类型筛选(structure/mapping/citation)"),
     status: Optional[str] = Query(None, description="按状态筛选(pending/confirmed/rejected/deferred)"),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     列出确认记录，支持按课程、类型、状态筛选
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
-        # 如果指定了 course_id，校验课程归属（管理员跳过）
         if course_id is not None:
             course = session.get(Course, course_id)
             if not course:
                 return unified_response(code=404, message="课程不存在", data=None)
-            if user_role != "admin" and str(course.teacher_id) != str(user_id):
-                return unified_response(code=403, message="无权查看此课程确认记录", data=None)
+            require_course_permission(session, current_user, course_id, "course.validate")
 
-        # 查询范围：管理员查全部，教师限定自己的课程
-        if user_role == "admin":
-            statement = select(CourseConfirmation)
-        else:
-            owned_courses = session.exec(
-                select(Course.id).where(Course.teacher_id == user_id)
-            ).all()
-            owned_course_ids = list(owned_courses)
-            statement = select(CourseConfirmation).where(
-                CourseConfirmation.course_id.in_(owned_course_ids)
-            )
+        member_course_ids = session.exec(select(CourseMembership.course_id).where(
+            CourseMembership.user_id == int(current_user["user_id"]),
+            CourseMembership.status == MembershipStatus.ACTIVE,
+            CourseMembership.role.in_([CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT]),
+        )).all()
+        statement = select(CourseConfirmation).where(CourseConfirmation.course_id.in_(list(member_course_ids) or [-1]))
 
         if course_id is not None:
             statement = statement.where(CourseConfirmation.course_id == course_id)
@@ -110,21 +102,16 @@ async def list_confirmations(
 async def create_confirmation(
     body: ConfirmationCreate,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     创建确认记录
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
-        # 校验课程归属（管理员跳过）
         course = session.get(Course, body.course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if user_role != "admin" and str(course.teacher_id) != str(user_id):
-            return unified_response(code=403, message="无权操作此课程", data=None)
+        require_course_permission(session, current_user, body.course_id, "course.validate")
 
         try:
             conf_type = ConfirmationType(body.confirmation_type)
@@ -166,26 +153,21 @@ async def update_confirmation(
     confirmation_id: int,
     body: ConfirmationUpdate,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     更新确认状态
     自动记录确认人与确认时间
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
         confirmation = session.get(CourseConfirmation, confirmation_id)
         if not confirmation:
             raise HTTPException(status_code=404, detail="确认记录不存在")
 
-        # 校验课程归属（管理员跳过）
         course = session.get(Course, confirmation.course_id)
         if not course:
             raise HTTPException(status_code=404, detail="课程不存在")
-        if user_role != "admin" and str(course.teacher_id) != str(user_id):
-            raise HTTPException(status_code=403, detail="无权操作此课程的确认记录")
+        require_course_permission(session, current_user, confirmation.course_id, "course.validate")
 
         try:
             new_status = ConfirmationStatus(body.status)
@@ -226,22 +208,17 @@ async def update_confirmation(
 async def get_course_confirmation_status(
     course_id: int,
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取课程全部确认状态汇总
     返回各确认类型(structure/mapping/citation)的最新状态
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
-        # 校验课程归属（管理员跳过）
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if user_role != "admin" and str(course.teacher_id) != str(user_id):
-            return unified_response(code=403, message="无权查看此课程确认状态", data=None)
+        require_course_permission(session, current_user, course_id, "course.validate")
 
         statement = (
             select(CourseConfirmation)

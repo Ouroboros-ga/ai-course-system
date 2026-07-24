@@ -11,11 +11,13 @@ from sqlmodel import Session, select
 
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user, teacher_only
+from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.feedback_model import Feedback, FeedbackType, FeedbackStatus
 from app.models.course_model import Course, StudentEnrollment, ScriptNode, CourseScript
 from app.models.user_model import User
+from app.models.access_control_model import CourseMembership, CourseRole, MembershipStatus
+from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["学生反馈通道"])
 
@@ -55,21 +57,7 @@ async def create_feedback(
                 data=None
             )
 
-        # 校验学生已选课（教师和管理员可跳过）
-        user_role = current_user.get("role", "student")
-        if user_role == "student":
-            enrollment = session.exec(
-                select(StudentEnrollment).where(
-                    StudentEnrollment.course_id == course_id,
-                    StudentEnrollment.student_id == user_id,
-                )
-            ).first()
-            if not enrollment:
-                return unified_response(
-                    code=403,
-                    message="您尚未选修此课程，无法提交反馈",
-                    data=None
-                )
+        require_course_permission(session, current_user, course_id, "course.feedback.create")
 
         # 校验 node_id 属于该课程
         if node_id is not None:
@@ -93,9 +81,19 @@ async def create_feedback(
                     data=None
                 )
 
+        owner = session.exec(
+            select(CourseMembership).where(
+                CourseMembership.course_id == course_id,
+                CourseMembership.role == CourseRole.OWNER,
+                CourseMembership.status == MembershipStatus.ACTIVE,
+            )
+        ).first()
+        if owner is None:
+            return unified_response(code=409, message="Course owner membership is not available", data=None)
+
         feedback = Feedback(
             from_user_id=user_id,
-            to_user_id=course.teacher_id,
+            to_user_id=owner.user_id,
             course_id=course_id,
             node_id=node_id,
             feedback_type=feedback_type,
@@ -137,7 +135,7 @@ async def list_feedbacks(
     course_id: int = Query(..., description="课程ID"),
     status: Optional[FeedbackStatus] = Query(None, description="反馈状态过滤"),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     教师查看课程反馈列表
@@ -146,15 +144,10 @@ async def list_feedbacks(
     返回反馈列表并包含 from_user 的 username
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
-        # 校验当前教师为该课程教师（管理员跳过）
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if user_role != "admin" and str(course.teacher_id) != str(user_id):
-            return unified_response(code=403, message="无权查看此课程反馈", data=None)
+        require_course_permission(session, current_user, course_id, "course.feedback.manage")
 
         stmt = select(Feedback).where(Feedback.course_id == course_id)
         if status is not None:
@@ -220,7 +213,6 @@ async def get_feedback(
     """
     try:
         user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
 
         feedback = session.get(Feedback, feedback_id)
         if not feedback:
@@ -230,20 +222,10 @@ async def get_feedback(
                 data=None
             )
 
-        # 权限校验: 管理员放行，否则仅创建者或课程教师可查看
-        if user_role != "admin":
-            is_creator = feedback.from_user_id == user_id
-            is_teacher = False
-            course = session.get(Course, feedback.course_id)
-            if course and str(course.teacher_id) == str(user_id):
-                is_teacher = True
-
-            if not is_creator and not is_teacher:
-                return unified_response(
-                    code=403,
-                    message="无权查看该反馈",
-                    data=None
-                )
+        context = require_course_permission(session, current_user, feedback.course_id, "course.feedback.create")
+        is_creator = feedback.from_user_id == user_id
+        if not is_creator and not context.allows("course.feedback.manage"):
+            return unified_response(code=403, message="无权查看该反馈", data=None)
 
         # 查发起人用户名
         from_username = ""
@@ -287,7 +269,7 @@ async def update_feedback_status(
     status: FeedbackStatus = Body(..., description="反馈状态: addressed/closed"),
     teacher_reply: Optional[str] = Body(None, description="教师回复(可选)"),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(teacher_only),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     教师更新反馈状态/回复
@@ -297,9 +279,6 @@ async def update_feedback_status(
     - teacher_reply: 教师回复内容(可选)
     """
     try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "teacher")
-
         feedback = session.get(Feedback, feedback_id)
         if not feedback:
             return unified_response(
@@ -308,16 +287,10 @@ async def update_feedback_status(
                 data=None
             )
 
-        # 校验当前教师为该课程教师（管理员跳过）
         course = session.get(Course, feedback.course_id)
         if not course:
             return unified_response(code=404, message="课程不存在", data=None)
-        if user_role != "admin" and str(course.teacher_id) != str(user_id):
-            return unified_response(
-                code=403,
-                message="无权更新该反馈",
-                data=None
-            )
+        require_course_permission(session, current_user, feedback.course_id, "course.feedback.manage")
 
         # 仅允许更新为 addressed 或 closed
         if status not in (FeedbackStatus.ADDRESSED, FeedbackStatus.CLOSED):
