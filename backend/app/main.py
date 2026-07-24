@@ -64,6 +64,7 @@ from app.api.v1.endpoints import (
     course_access,
     question_bank,      # Phase B 题库管理
     question_source_mapping,  # Phase B 题源映射
+    cognitive_recommendation,  # G2 六维认知与推荐
 )
 from app.schemas import UnifiedResponse
 
@@ -134,6 +135,9 @@ app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模
 # Phase B: 题库管理与题源映射
 app.include_router(question_bank.router, prefix="/api/v1/question-bank", tags=["Phase B 题库管理"])
 app.include_router(question_source_mapping.router, prefix="/api/v1/question-mapping", tags=["Phase B 题源映射"])
+
+# G2: 六维认知与推荐
+app.include_router(cognitive_recommendation.router, prefix="/api/v1/cognitive", tags=["G2 六维认知与推荐"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1

@@ -60,6 +60,11 @@ from app.models.question_bank_model import (
     QuestionSourceMapping,
     QuestionAttempt,
 )
+from app.models.cognitive_state_model import (
+    CognitiveState,
+    LearningEvidenceRecord,
+    RecommendationRecord,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
