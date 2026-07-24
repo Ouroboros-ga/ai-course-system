@@ -80,6 +80,11 @@ from app.models.media_timeline_model import (
     MediaAsset,
     MediaTimelineCue,
 )
+from app.models.graph_production_model import (
+    CourseEvidenceRecord,
+    GraphSnapshotRecord,
+    GraphNodeReview,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

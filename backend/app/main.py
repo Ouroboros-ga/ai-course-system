@@ -71,6 +71,7 @@ from app.api.v1.endpoints import (
     safety,             # G6 安全围栏与沙箱治理
     web_research,       # G7 WebResearchTool
     media_timeline,     # G8 媒体时间轴
+    graph_production,   # G9 Evidence与图谱
 )
 from app.schemas import UnifiedResponse
 
@@ -162,6 +163,9 @@ app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7
 
 # G8: 媒体时间轴与数字人
 app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒体时间轴"])
+
+# G9: Evidence与课程知识图谱生产化
+app.include_router(graph_production.router, prefix="/api/v1/graph", tags=["G9 Evidence与图谱"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1
