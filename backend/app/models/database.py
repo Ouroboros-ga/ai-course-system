@@ -46,6 +46,10 @@ from app.models.qa_model import (
     QAMessage,
     QAContext,
 )
+from app.models.document_artifact_model import DocumentArtifact
+from app.models.note_model import Note
+from app.models.confirmation_model import CourseConfirmation
+from app.models.feedback_model import Feedback
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

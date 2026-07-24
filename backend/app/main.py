@@ -56,6 +56,11 @@ from app.api.v1.endpoints import (
     canary_v2,          # P1-09 G5A V2 Canary quality-gate (no real services, ADR-0006)
     retrieval_demo,     # Shadow-1 local retrieval demo (isolated from V1)
     teaching_agent,     # Controlled LangGraph single-agent workflow; runtime injected explicitly
+    note,               # 笔记模块
+    dashboard,          # 首页与课程概览聚合
+    confirmation,       # 教师确认持久化
+    citation,           # 引用稳定定位
+    feedback,           # 向教师反馈通道
 )
 from app.schemas import UnifiedResponse
 
@@ -111,6 +116,13 @@ app.include_router(ppt_generation.router, prefix="/api/v1/ppt", tags=["F3-PPT生
 app.include_router(video_generation.router, prefix="/api/v1/video-gen", tags=["F4/F5-视频生成"])
 app.include_router(video.router, prefix="/api/v1/video", tags=["视频功能"])
 app.include_router(platform.router, prefix="/api/v1/platform", tags=["平台管理"])
+
+# P0 新增功能模块路由
+app.include_router(note.router, prefix="/api/v1/notes", tags=["笔记模块"])
+app.include_router(dashboard.router, prefix="/api/v1/dashboard", tags=["仪表盘"])
+app.include_router(confirmation.router, prefix="/api/v1/confirmations", tags=["教师确认"])
+app.include_router(citation.router, prefix="/api/v1/citations", tags=["引用定位"])
+app.include_router(feedback.router, prefix="/api/v1/feedback", tags=["学生反馈"])
 
 # 按照接口文档规范，/chat/file/upload 也映射到文档上传处理
 app.include_router(document.router, prefix="/api/v1/chat/file", tags=["聊天模块"])

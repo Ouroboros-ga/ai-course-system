@@ -44,6 +44,7 @@ from app.models.course_model import (
     ParseStatus,
     ScriptNodeType,
 )
+from app.models.document_artifact_model import DocumentArtifact
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
 from app.services import smart_course_service
@@ -612,6 +613,24 @@ async def upload_document(
             "rag_knowledge_points": rag_result.knowledge_points,
         }
 
+        # 持久化到数据库
+        try:
+            existing = session.exec(
+                select(DocumentArtifact).where(DocumentArtifact.document_id == document_id)
+            ).first()
+            if not existing:
+                artifact = DocumentArtifact(
+                    document_id=document_id,
+                    course_id=course.id if course else 0,
+                    file_name=file.filename if file else "",
+                    mime_type=file.content_type if file else "",
+                    parse_info={"status": "uploaded"},
+                )
+                session.add(artifact)
+                session.commit()
+        except Exception:
+            pass  # 持久化失败不影响主流程
+
         print(f"[步骤8] 返回结果给前端")
         
         return unified_response(
@@ -649,20 +668,68 @@ async def upload_document(
 
 
 @router.post("/analyze", response_model=DocumentAnalyzeResponse)
-async def analyze_document(request: DocumentAnalyzeRequest):
+async def analyze_document(
+    request: DocumentAnalyzeRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
     """
     对已有文档进行AI分析
     """
     try:
+        user_id = int(current_user["user_id"])
+        user_role = current_user.get("role", "student")
+
         if request.document_id not in document_cache:
-            raise HTTPException(status_code=404, detail="文档不存在或已过期")
-        
+            # 尝试从数据库回填
+            artifact = session.exec(
+                select(DocumentArtifact).where(DocumentArtifact.document_id == request.document_id)
+            ).first()
+            if artifact:
+                document_cache[request.document_id] = {
+                    "course_id": artifact.course_id,
+                    "file_name": artifact.file_name,
+                    "parse_info": artifact.parse_info,
+                }
+            else:
+                raise HTTPException(status_code=404, detail="文档不存在或已过期")
+
         doc_data = document_cache[request.document_id]
-        
+        course_id = doc_data.get("course_id")
+
+        # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
+        course = session.get(Course, course_id)
+        if not course:
+            raise HTTPException(status_code=404, detail="课程不存在")
+        if user_role != "admin":
+            if user_role == "teacher" and str(course.teacher_id) != str(user_id):
+                raise HTTPException(status_code=403, detail="无权访问此课程")
+            if user_role == "student":
+                enrollment = session.exec(
+                    select(StudentEnrollment).where(
+                        StudentEnrollment.course_id == course_id,
+                        StudentEnrollment.student_id == user_id,
+                    )
+                ).first()
+                if not enrollment:
+                    raise HTTPException(status_code=403, detail="您尚未选修此课程")
+
+        # 优先从内存缓存取 script_content；重启后从 CourseScript 表重建
+        script_content = doc_data.get("script_content")
+        if not script_content:
+            script = session.exec(
+                select(CourseScript).where(
+                    CourseScript.course_id == course_id,
+                    CourseScript.is_active == True,
+                )
+            ).first()
+            if script:
+                script_content = {"summary": script.summary_text or "无摘要"}
+
         return DocumentAnalyzeResponse(
             success=True,
             message="分析完成",
-            analysis=doc_data.get("script_content", {}).get("summary", "无摘要")
+            analysis=(script_content or {}).get("summary", "无摘要")
         )
         
     except HTTPException:
@@ -831,12 +898,27 @@ async def get_my_courses(
 async def get_document(
     document_id: str,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取文档信息（从数据库读取）
     """
+    user_id = int(current_user["user_id"])
+    user_role = current_user.get("role", "student")
+
     if document_id not in document_cache:
-        raise HTTPException(status_code=404, detail="文档不存在或已过期")
+        # 尝试从数据库回填
+        artifact = session.exec(
+            select(DocumentArtifact).where(DocumentArtifact.document_id == document_id)
+        ).first()
+        if artifact:
+            document_cache[document_id] = {
+                "course_id": artifact.course_id,
+                "file_name": artifact.file_name,
+                "parse_info": artifact.parse_info,
+            }
+        else:
+            raise HTTPException(status_code=404, detail="文档不存在或已过期")
 
     doc_data = document_cache[document_id]
     course_id = doc_data.get("course_id")
@@ -844,6 +926,20 @@ async def get_document(
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
+    if user_role != "admin":
+        if user_role == "teacher" and str(course.teacher_id) != str(user_id):
+            raise HTTPException(status_code=403, detail="无权访问此课程文档")
+        if user_role == "student":
+            enrollment = session.exec(
+                select(StudentEnrollment).where(
+                    StudentEnrollment.course_id == course_id,
+                    StudentEnrollment.student_id == user_id,
+                )
+            ).first()
+            if not enrollment:
+                raise HTTPException(status_code=403, detail="您尚未选修此课程")
 
     script = session.exec(
         select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
@@ -948,13 +1044,31 @@ async def save_course_nodes(
 async def get_course_detail(
     course_id: int,
     session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
 ):
     """
     获取课程完整详情（包括脚本和节点）
     """
+    user_id = int(current_user["user_id"])
+    user_role = current_user.get("role", "student")
+
     course = session.get(Course, course_id)
     if not course:
         raise HTTPException(status_code=404, detail="课程不存在")
+
+    # 权限校验：教师须为课程归属者，学生须已选课，管理员放行
+    if user_role != "admin":
+        if user_role == "teacher" and str(course.teacher_id) != str(user_id):
+            raise HTTPException(status_code=403, detail="无权访问此课程")
+        if user_role == "student":
+            enrollment = session.exec(
+                select(StudentEnrollment).where(
+                    StudentEnrollment.course_id == course_id,
+                    StudentEnrollment.student_id == user_id,
+                )
+            ).first()
+            if not enrollment:
+                raise HTTPException(status_code=403, detail="您尚未选修此课程")
     
     script = session.exec(
         select(CourseScript).where(CourseScript.course_id == course_id).where(CourseScript.is_active == True)
@@ -969,11 +1083,18 @@ async def get_course_detail(
     docling_doc = session.exec(
         select(DoclingDocument).where(DoclingDocument.course_id == course_id)
     ).first()
+
+    # 查询持久化的 document_id（上传 UUID），与 GET /{document_id} 端点契约一致
+    artifact = session.exec(
+        select(DocumentArtifact).where(DocumentArtifact.course_id == course_id)
+    ).first()
+    document_id = artifact.document_id if artifact else None
     
     return unified_response(
         code=200,
         message="获取课程详情成功",
         data={
+            "document_id": document_id,
             "course": {
                 "id": course.id,
                 "title": course.title,
@@ -1020,177 +1141,6 @@ async def get_course_detail(
             } if docling_doc else None,
         }
     )
-
-
-@router.get("/courses")
-async def get_courses_list(
-    status: Optional[str] = Query(None, description="课程状态筛选 (published/draft/archived)"),
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    获取课程列表（学生可查看已发布的课程）
-    
-    需要用户登录认证
-    学生只能看到已发布的课程
-    老师可以看到自己创建的所有课程 + 其他老师的已发布课程
-    """
-    try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-        
-        statement = select(Course)
-        
-        if user_role == "student":
-            # 学生只能看到已发布的课程
-            statement = statement.where(Course.status == CourseStatus.PUBLISHED)
-        else:
-            # 老师可以看到自己所有课程 + 已发布的其他课程
-            from sqlmodel import or_
-            statement = statement.where(
-                or_(
-                    Course.teacher_id == user_id,
-                    Course.status == CourseStatus.PUBLISHED
-                )
-            )
-        
-        if status:
-            try:
-                status_enum = CourseStatus(status)
-                statement = statement.where(Course.status == status_enum)
-            except ValueError:
-                pass
-        
-        statement = statement.order_by(Course.created_at.desc())
-        courses = session.exec(statement).all()
-        
-        courses_data = []
-        for course in courses:
-            teacher_name = "未知教师"
-            teacher_record = session.execute(
-                text("SELECT username FROM users WHERE id = :uid"),
-                {"uid": course.teacher_id}
-            ).fetchone()
-            if teacher_record:
-                teacher_name = teacher_record[0]
-            
-            courses_data.append({
-                "id": course.id,
-                "title": course.title,
-                "description": course.description,
-                "status": course.status.value,
-                "teacher_id": course.teacher_id,
-                "teacher_name": teacher_name,
-                "total_nodes": course.total_nodes,
-                "total_duration": course.total_duration,
-                "source_file_name": course.source_file_name,
-                "is_ai_generated": course.is_ai_generated,
-                "created_at": course.created_at.isoformat() if course.created_at else None,
-            })
-        
-        return unified_response(
-            code=200,
-            message="获取课程列表成功",
-            data={
-                "courses": courses_data,
-                "total": len(courses_data),
-            }
-        )
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(
-            code=500,
-            message=f"获取课程列表失败: {str(e)}",
-            data=None
-        )
-
-
-@router.post("/course/{course_id}/save")
-async def save_course_nodes(
-    course_id: int,
-    request: Request,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """
-    保存老师修改后的课程节点内容到数据库
-    
-    需要老师权限
-    
-    请求体格式:
-    {
-        "nodes": [
-            {
-                "id": 1,
-                "title": "章节标题",
-                "content": "修改后的内容"
-            }
-        ]
-    }
-    """
-    try:
-        user_id = int(current_user["user_id"])
-        user_role = current_user.get("role", "student")
-        
-        if user_role != "teacher":
-            return unified_response(
-                code=403,
-                message="只有教师可以保存课程内容",
-                data=None
-            )
-        
-        course = session.get(Course, course_id)
-        if not course:
-            return unified_response(
-                code=404,
-                detail="课程不存在"
-            )
-        
-        if course.teacher_id != user_id:
-            return unified_response(
-                code=403,
-                message="无权修改此课程",
-                data=None
-            )
-        
-        body = await request.json()
-        nodes_data = body.get("nodes", [])
-        
-        updated_count = 0
-        for node_data in nodes_data:
-            node_id = node_data.get("id")
-            if not node_id:
-                continue
-            
-            node = session.get(ScriptNode, node_id)
-            if node and node.script_id:
-                script = session.get(CourseScript, node.script_id)
-                if script and script.course_id == course_id:
-                    if "title" in node_data:
-                        node.title = node_data["title"]
-                    if "content" in node_data:
-                        node.content = node_data["content"]
-                    session.add(node)
-                    updated_count += 1
-        
-        session.commit()
-        
-        return unified_response(
-            code=200,
-            message=f"成功保存 {updated_count} 个节点的修改",
-            data={"updated_count": updated_count}
-        )
-        
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(
-            code=500,
-            message=f"保存失败: {str(e)}",
-            data=None
-        )
 
 
 # ==================== TTS语音合成接口 ====================
