@@ -71,6 +71,11 @@ from app.models.safety_policy_model import (
     CourseSandboxPolicy,
     SafetyAuditLog,
 )
+from app.models.web_research_model import (
+    WebResearchConfig,
+    WebResearchResult,
+    ExternalReference,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

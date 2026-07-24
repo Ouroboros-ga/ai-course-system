@@ -69,6 +69,7 @@ from app.api.v1.endpoints import (
     visualization,      # G4 算法可视化
     facade,             # Phase A 门面层
     safety,             # G6 安全围栏与沙箱治理
+    web_research,       # G7 WebResearchTool
 )
 from app.schemas import UnifiedResponse
 
@@ -154,6 +155,9 @@ app.include_router(facade.router, prefix="/api/v1/facade", tags=["Phase A 门面
 
 # G6: 安全围栏与沙箱治理
 app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围栏与沙箱治理"])
+
+# G7: WebResearchTool 受控研究
+app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1
