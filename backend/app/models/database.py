@@ -76,6 +76,10 @@ from app.models.web_research_model import (
     WebResearchResult,
     ExternalReference,
 )
+from app.models.media_timeline_model import (
+    MediaAsset,
+    MediaTimelineCue,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")
