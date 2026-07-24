@@ -6,6 +6,7 @@ from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText, ScriptNode
+from app.models.document_artifact_model import DocumentArtifact
 from app.models.database import get_session
 from app.services.course_access_service import CourseAccessContext, course_permission
 
@@ -28,6 +29,12 @@ async def locate_citation(
     document = session.exec(
         select(DoclingDocument).where(DoclingDocument.course_id == course_id)
     ).first()
+
+    # 查询 DocumentArtifact 以获取统一的上传 UUID document_id
+    artifact = session.exec(
+        select(DocumentArtifact).where(DocumentArtifact.course_id == course_id)
+    ).first() if document is not None else None
+
     if document is None:
         return unified_response(
             code=200,
@@ -43,6 +50,9 @@ async def locate_citation(
                 "source_file": None,
             },
         )
+
+    # 统一使用 DocumentArtifact.document_id (UUID)，与 GET /document/{document_id} 契约一致
+    stable_document_id = artifact.document_id if artifact else None
 
     page_start = None
     page_end = None
@@ -83,7 +93,7 @@ async def locate_citation(
         code=200,
         message="定位成功",
         data={
-            "document_id": str(document.id),
+            "document_id": stable_document_id,
             "course_id": course_id,
             "node_id": node_id,
             "page_start": page_start,

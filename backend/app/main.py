@@ -67,6 +67,7 @@ from app.api.v1.endpoints import (
     cognitive_recommendation,  # G2 六维认知与推荐
     sandbox,            # G3 代码沙箱
     visualization,      # G4 算法可视化
+    facade,             # Phase A 门面层
 )
 from app.schemas import UnifiedResponse
 
@@ -146,6 +147,9 @@ app.include_router(sandbox.router, prefix="/api/v1/sandbox", tags=["G3 代码沙
 
 # G4: 算法可视化
 app.include_router(visualization.router, prefix="/api/v1/visualization", tags=["G4 算法可视化"])
+
+# Phase A: 前后端契约对齐门面层
+app.include_router(facade.router, prefix="/api/v1/facade", tags=["Phase A 门面层"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1
