@@ -181,6 +181,19 @@ class Settings(BaseSettings):
     TEACHING_AGENT_MODE: str = "disabled"
     DEMO_RETRIEVAL_ENVIRONMENT: str = "development"
 
+    # --------------------------
+    # G3: Judge0 代码沙箱配置
+    # --------------------------
+    JUDGE0_ENABLED: bool = False
+    JUDGE0_API_URL: str = "http://127.0.0.1:2358"
+    JUDGE0_AUTHN_TOKEN: str = ""
+    JUDGE0_DEFAULT_CPU_TIME_LIMIT: int = 5
+    JUDGE0_DEFAULT_MEMORY_LIMIT: int = 128000
+    JUDGE0_DEFAULT_WALL_TIME_LIMIT: int = 10
+    JUDGE0_DEFAULT_MAX_PROCESSES: int = 30
+    JUDGE0_DEFAULT_MAX_FILE_SIZE: int = 1024
+    JUDGE0_QUEUE_TIMEOUT: int = 30
+
     @model_validator(mode="after")
     def _validate_feature_flags(self):
         """Startup fail-fast: every Product 1 flag must be a legal G3 value.

@@ -41,7 +41,7 @@ Evidence 生产化工作；不授权无关的 V3.1 全量重构。
 11. Phase C/D：接入经课程隔离、版本化、可回滚的 LearningEvent、
     评分证据、GraphSnapshot、认知推荐和图谱治理能力。未隔离的学生
     代码不得在主应用进程执行；代码执行必须经独立沙箱服务。
-12. Phase E：在获得材料授权、隐私处理、人工校对和可回滚方案后，接入
+12. Phase E：
     真实 DocumentIR/Evidence Shadow 与逐步 Canary；不得通过删除
     admin-only/503 保护直接把 Shadow 暴露给学生。
 
@@ -122,3 +122,83 @@ Evidence 生产化工作；不授权无关的 V3.1 全量重构。
 
 ```text
 docs/phase1/功能现状审计表.md
+```
+
+---
+
+## 5. Course-access architecture (effective immediately)
+
+The Course Access v1 architecture is the sole authorization model for any
+runtime operation that reads, changes, generates, publishes, or delivers
+course-scoped data.
+
+### 5.1 Authoritative runtime sources
+
+Authorization decisions must be resolved from the following models and the
+shared resolver in `backend/app/services/course_access_service.py`:
+
+1. `CourseMembership`: a user's effective role, membership status, and
+   per-course overrides.
+2. `CourseCapability`: whether a course capability is available, experimental,
+   shadow-only, or disabled.
+3. `PlatformPermissionAssignment`: explicit, auditable cross-course platform
+   powers.
+4. `CourseAccessContext`, `course_permission`, and
+   `require_course_permission`: the shared request-time enforcement path.
+
+`User.role`, `Course.teacher_id`, and `StudentEnrollment` are legacy
+compatibility/migration inputs only. They must not be used as a fallback
+authorization source, and a request must never silently acquire a course role
+because of one of those fields.
+
+### 5.2 Required behavior
+
+1. Every registered endpoint that accepts or derives a `course_id` must
+   establish course scope before accessing course data, then enforce the
+   relevant course permission and capability.
+2. Missing, inactive, suspended, or mismatched membership must fail closed
+   with the stable authorization error; do not return filtered or partial
+   course data.
+3. A new course must establish its owner membership, default capabilities, and
+   necessary creator platform assignment through
+   `establish_course_access_baseline` in the same unit of work.
+4. Enrollment, re-enrollment, withdrawal, and removal must update
+   `CourseMembership` via the shared lifecycle helpers, not only the legacy
+   enrollment table.
+5. Cross-course administration must require an explicit
+   `PlatformPermissionAssignment`; a global role is not enough.
+6. Platform-wide or account-owned operations that are not course-scoped must
+   use an explicit platform permission. Do not disguise them as a course-owner
+   shortcut.
+7. Frontend code must consume the course access/capability view model. It must
+   not infer "current-course teacher" from the global user role or from UI
+   state.
+
+### 5.3 Migration and rollback gate
+
+1. Before any access-control migration, run
+   `access_control_preflight` against the target database and stop on orphaned
+   course owners, orphaned enrollments, or ambiguous mappings.
+2. The backfill is idempotent and marked by `access-control-v1`; it may not
+   overwrite an existing explicit membership, capability, or platform grant.
+3. Every created access-control row carries the migration batch identity.
+   `rollback_access_control_backfill` may remove only rows from that batch.
+4. Database rollback is a deployment companion to application rollback, not a
+   runtime recovery mechanism. Never run it on a live system while the new
+   application version is serving traffic.
+5. Do not use production data as a test fixture. Test migrations use an
+   isolated temporary database and must verify both idempotency and rollback
+   scope.
+
+### 5.4 Compatibility and verification
+
+1. Existing public paths and response fields remain compatible unless an
+   explicitly versioned contract changes them. New access information is added
+   through the public course-access view model.
+2. Changes to course authorization require regression coverage in
+   `backend/tests/test_course_access.py`, including cross-course denial,
+   capability denial, lifecycle transitions, migration preflight, and rollback.
+3. Frontend changes require both unit coverage and a production build check.
+4. When legacy behavior and the new model conflict, record the compatibility
+   decision and its evidence in `docs/phase1/`; do not introduce an untracked
+   role-check exception.
