@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, BookOpenCheck, FileText, Layers3, Timer, CheckCircle2, ListTodo, MessageSquareText } from 'lucide-vue-next'
+import { ArrowRight, BookOpenCheck, FileText, Layers3, Timer, CheckCircle2, ListTodo, MessageSquareText, Network } from 'lucide-vue-next'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { getCourseDashboard } from '@/api/dashboard.js'
@@ -20,6 +20,8 @@ const continueInfo = computed(() => dashboard.value?.continue ?? null)
 const progressInfo = computed(() => dashboard.value?.progress ?? null)
 const pendingItems = computed(() => dashboard.value?.pending ?? [])
 const recentResponses = computed(() => dashboard.value?.recent_responses ?? [])
+// P2 §三.3：E「课程结构摘要」——展示当前章前后位置，不加载完整知识图谱（page-design §11.1 E）
+const structureSummary = computed(() => dashboard.value?.structure_summary ?? null)
 
 async function loadDashboard() {
   dashboardLoading.value = true
@@ -137,7 +139,30 @@ function formatPercent(rate) {
       <p v-else class="sfx-t-caption">尚无课程回应记录，学习中提问后将显示。</p>
     </section>
 
-    <!-- E. 课程信息 -->
+    <!-- E. 课程结构摘要（page-design §11.1 E：展示当前章前后位置，不加载完整知识图谱） -->
+    <section class="sfx-overview-section">
+      <h2 class="sfx-t-title2 sfx-overview-section-title">
+        <Network :size="20" /> 课程结构摘要
+      </h2>
+      <div v-if="dashboardLoading" class="sfx-t-caption">加载中…</div>
+      <div v-else-if="structureSummary && structureSummary.current_chapter" class="sfx-overview-structure">
+        <div class="sfx-overview-structure-node sfx-overview-structure-prev">
+          <span class="sfx-t-caption">上一节</span>
+          <span class="sfx-t-ui">{{ structureSummary.prev_chapter || '—' }}</span>
+        </div>
+        <div class="sfx-overview-structure-node sfx-overview-structure-current">
+          <span class="sfx-t-caption">当前知识点</span>
+          <span class="sfx-t-ui sfx-overview-structure-current-title">{{ structureSummary.current_chapter }}</span>
+        </div>
+        <div class="sfx-overview-structure-node sfx-overview-structure-next">
+          <span class="sfx-t-caption">下一节</span>
+          <span class="sfx-t-ui">{{ structureSummary.next_chapter || '—' }}</span>
+        </div>
+      </div>
+      <p v-else class="sfx-t-caption">尚未开始学习，无当前章节位置。开始学习后将展示章节上下文。</p>
+    </section>
+
+    <!-- F. 课程信息 -->
     <section class="sfx-overview-section">
       <h2 class="sfx-t-title2 sfx-overview-section-title">
         <BookOpenCheck :size="20" /> 课程信息
@@ -304,5 +329,41 @@ function formatPercent(rate) {
 .sfx-overview-response-sug {
   margin: 0;
   color: var(--text-secondary, #666);
+}
+
+/* P2 §三.3：E 课程结构摘要样式 */
+.sfx-overview-structure {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr 1fr;
+  gap: var(--space-3);
+  align-items: stretch;
+}
+.sfx-overview-structure-node {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm, 6px);
+  background: var(--surface-muted, #fafafa);
+  border: 1px solid var(--border-default, #eee);
+  min-width: 0;
+}
+.sfx-overview-structure-current {
+  background: var(--accent-bg, #e8f0fe);
+  border-color: var(--accent-primary, #4f8cf7);
+}
+.sfx-overview-structure-current-title {
+  font-weight: 600;
+  color: var(--accent-primary, #1565c0);
+  word-break: break-word;
+}
+.sfx-overview-structure-prev,
+.sfx-overview-structure-next {
+  color: var(--text-secondary, #666);
+}
+@media (max-width: 640px) {
+  .sfx-overview-structure {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

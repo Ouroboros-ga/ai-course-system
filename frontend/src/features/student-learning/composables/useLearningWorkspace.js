@@ -65,6 +65,10 @@ export function useLearningWorkspace(courseId, options = {}) {
   const saveState = ref('saved')
   const mediaError = ref('')
   const returnAnchor = ref(null)
+  // P2 §三.2：笔记同步错误消息（保存失败时提示用户，不再静默吞错）
+  const noteSyncError = ref('')
+  // P2 §三.2：「完成笔记」成功标记，前端可据此显示笔记入口（不弹庆祝页）
+  const lastFinishedNoteAnchor = ref('')
 
   const storagePrefix = 'student-learning-workspace:' + courseId
   const viewStorageKey = storagePrefix + ':view'
@@ -161,9 +165,37 @@ export function useLearningWorkspace(courseId, options = {}) {
           noteIdMap.value = { ...noteIdMap.value, [anchorKey]: res.id }
         }
       }
-    } catch {
-      // 后端同步失败时保留 localStorage 草稿，下次加载时重试
+      // P2 §三.2：保存成功清空错误，并允许 finishNote 复用此状态
+      noteSyncError.value = ''
+    } catch (e) {
+      // P2 §三.2：保存失败必须提示（page-design §12.8），不再静默吞错
+      // 同时保留 localStorage 草稿，下次加载时重试
+      noteSyncError.value = '笔记保存失败：' + (e?.message || '网络或服务异常，已暂存到本地草稿')
     }
+  }
+
+  // P2 §三.2：「完成笔记」动作（page-design §12.8）
+  // 取消待同步定时器，立即同步当前 anchorKey，成功后标记可返回课程；失败时阻止返回并提示。
+  // 返回 { ok, error } 供调用方决定是否返回课程。
+  async function finishNote() {
+    window.clearTimeout(noteSyncTimer)
+    const anchorKey = noteAnchorKey.value
+    if (!notes.value[anchorKey]) {
+      // 空笔记直接视为完成（无需持久化）
+      lastFinishedNoteAnchor.value = anchorKey
+      return { ok: true, error: '' }
+    }
+    await syncNoteToBackend(anchorKey)
+    if (noteSyncError.value) {
+      return { ok: false, error: noteSyncError.value }
+    }
+    lastFinishedNoteAnchor.value = anchorKey
+    return { ok: true, error: '' }
+  }
+
+  // P2 §三.2：清空笔记同步错误提示（用户确认后调用）
+  function clearNoteSyncError() {
+    noteSyncError.value = ''
   }
 
   // 批次1：从后端加载笔记
@@ -484,6 +516,11 @@ export function useLearningWorkspace(courseId, options = {}) {
     saveState,
     mediaError,
     returnAnchor,
+    // P2 §三.2：笔记保存失败提示与「完成笔记」动作
+    noteSyncError,
+    lastFinishedNoteAnchor,
+    finishNote,
+    clearNoteSyncError,
     load,
     switchMode,
     selectNode,

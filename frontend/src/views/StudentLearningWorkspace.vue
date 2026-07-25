@@ -82,6 +82,12 @@
             :node-title="currentNode?.title"
             :page="currentPage"
             :time="currentTime"
+            :sync-error="noteSyncError"
+            :finishing="noteFinishing"
+            :finished-anchor="lastFinishedNoteAnchor"
+            :current-anchor="noteAnchorKey"
+            @finish="handleFinishNote"
+            @dismiss-error="clearNoteSyncError"
           />
         </section>
 
@@ -129,6 +135,12 @@
           :node-title="currentNode?.title"
           :page="currentPage"
           :time="currentTime"
+          :sync-error="noteSyncError"
+          :finishing="noteFinishing"
+          :finished-anchor="lastFinishedNoteAnchor"
+          :current-anchor="noteAnchorKey"
+          @finish="handleFinishNote"
+          @dismiss-error="clearNoteSyncError"
         />
         <LearningAssistantPanel
           v-else-if="mobilePanel === 'assistant'"
@@ -145,7 +157,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useMediaQuery } from '@vueuse/core'
 import { useRoute, useRouter } from 'vue-router'
 import {
@@ -199,8 +211,14 @@ const {
   messages,
   isAsking,
   currentNote,
+  noteAnchorKey,
   saveState,
   mediaError,
+  // P2 §三.2：笔记保存失败提示与「完成笔记」动作
+  noteSyncError,
+  lastFinishedNoteAnchor,
+  finishNote,
+  clearNoteSyncError,
   load,
   switchMode,
   selectNode,
@@ -221,6 +239,19 @@ const drawerTitle = computed(() => {
 
 function goBack() {
   router.push('/student')
+}
+
+// P2 §三.2：「完成笔记」处理器——成功后返回课程主视图（关闭笔记面板）
+const noteFinishing = ref(false)
+async function handleFinishNote() {
+  noteFinishing.value = true
+  const result = await finishNote()
+  noteFinishing.value = false
+  if (result.ok) {
+    // 保存成功后返回课程（page-design §12.8：手动「完成笔记」后返回课程）
+    setPanel('notes', false)
+  }
+  // 失败时不关闭面板，由 syncError 提示用户重试
 }
 
 function handlePanelToggle(panel) {

@@ -401,6 +401,16 @@ def record_scored_evidence(
         )
     ).first()
     if existing is not None:
+        # 教师改分/重新评判时更新可变字段，确保认知状态计算基于最新评判而非首次值。
+        existing.value = score
+        existing.confidence = confidence
+        existing.label = f"答题正确率 {score:.0%}"
+        existing.description = f"来自答题记录 #{attempt.id} (评判方式: {attempt.judged_by})"
+        existing.source = f"question_attempt:{attempt.judged_by}"
+        existing.timestamp = datetime.now(timezone.utc).isoformat()
+        existing.question_attempt_id = attempt.id
+        existing.event_refs = event_refs
+        session.add(existing)
         return existing
 
     record = LearningEvidenceRecord(

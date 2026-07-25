@@ -1,6 +1,7 @@
 """Course access and capability View Models used by the rebuilt frontend."""
 from __future__ import annotations
 
+import logging
 import secrets
 import string
 from datetime import datetime
@@ -28,6 +29,11 @@ from app.services.course_access_service import (
 )
 
 router = APIRouter()
+
+# P3 §四.3：课程状态变更审计日志器
+# 课程关闭/重开是重要的状态变更，需要可追溯。采用结构化日志记录，
+# 字段：actor_user_id / course_id / action / previous_status / new_status / timestamp
+audit_logger = logging.getLogger("course_access_audit")
 
 
 def _generate_invite_code() -> str:
@@ -331,10 +337,26 @@ async def close_course(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
     if course.status == CourseStatus.CLOSED:
         return unified_response(code=200, message="课程已处于关闭状态", data={"course_id": course_id, "status": "closed"})
+    previous_status = course.status.value
     course.status = CourseStatus.CLOSED
     course.updated_at = datetime.utcnow()
     session.add(course)
     session.commit()
+    # P3 §四.3：课程关闭审计日志
+    audit_logger.warning(
+        "course_status_change actor_user_id=%s course_id=%s action=close previous_status=%s new_status=closed timestamp=%s",
+        int(current_user["user_id"]),
+        course_id,
+        previous_status,
+        datetime.utcnow().isoformat(),
+        extra={
+            "actor_user_id": int(current_user["user_id"]),
+            "course_id": course_id,
+            "action": "close",
+            "previous_status": previous_status,
+            "new_status": "closed",
+        },
+    )
     return unified_response(code=200, message="课程已关闭，不再接受新成员", data={"course_id": course_id, "status": "closed"})
 
 
@@ -351,8 +373,24 @@ async def reopen_course(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
     if course.status != CourseStatus.CLOSED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"课程当前状态为 {course.status.value}，仅 CLOSED 状态可重新开放")
+    previous_status = course.status.value
     course.status = CourseStatus.PUBLISHED
     course.updated_at = datetime.utcnow()
     session.add(course)
     session.commit()
+    # P3 §四.3：课程重开审计日志
+    audit_logger.warning(
+        "course_status_change actor_user_id=%s course_id=%s action=reopen previous_status=%s new_status=published timestamp=%s",
+        int(current_user["user_id"]),
+        course_id,
+        previous_status,
+        datetime.utcnow().isoformat(),
+        extra={
+            "actor_user_id": int(current_user["user_id"]),
+            "course_id": course_id,
+            "action": "reopen",
+            "previous_status": previous_status,
+            "new_status": "published",
+        },
+    )
     return unified_response(code=200, message="课程已重新开放", data={"course_id": course_id, "status": "published"})

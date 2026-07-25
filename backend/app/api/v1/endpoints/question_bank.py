@@ -569,7 +569,11 @@ async def submit_attempt(
         judged_at=datetime.utcnow() if automatically_judged else None,
     )
     session.add(attempt)
-    session.commit()
+    # P3 §四.4：attempt 与评分型证据同事务提交。
+    # 旧实现先 commit attempt 再写证据，证据失败时 attempt 已落库导致证据缺失。
+    # 改为 flush 让 attempt 获得 id（供 record_scored_evidence 查询使用），
+    # 但不提交事务；证据写入后一次性 commit，任一失败则整体回滚保证一致性。
+    session.flush()
     session.refresh(attempt)
 
     record_scored_evidence(session, attempt)
@@ -611,7 +615,11 @@ async def grade_attempt(
     attempt.judge_feedback = payload.feedback
     attempt.judged_at = datetime.utcnow()
     session.add(attempt)
-    session.commit()
+    # P3 §四.4：attempt 与评分型证据同事务提交。
+    # 旧实现先 commit attempt 再写证据，证据失败时 attempt 已落库导致证据缺失。
+    # 改为 flush 让 attempt 获得 id（供 record_scored_evidence 查询使用），
+    # 但不提交事务；证据写入后一次性 commit，任一失败则整体回滚保证一致性。
+    session.flush()
     session.refresh(attempt)
 
     record_scored_evidence(session, attempt)

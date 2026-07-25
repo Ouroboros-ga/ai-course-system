@@ -435,6 +435,67 @@ def test_record_scored_evidence_rejects_non_scored_role(session):
     assert _evidence_for_student(session, student.id, course.id) == []
 
 
+def test_record_scored_evidence_updates_on_regrade(session):
+    """教师改分/重新评判时更新已存在证据的可变字段。
+
+    回归 Bug-3：旧实现命中 existing 后直接 return，导致改分后
+    LearningEvidenceRecord.value 仍是旧值，污染认知状态计算。
+    """
+    teacher = _user(session, "le_regrade_teacher", UserRole.TEACHER)
+    course = _course(session, teacher.id)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    student = _user(session, "le_regrade_student")
+    activate_student_membership(session, course.id, student.id)
+    session.commit()
+
+    question = _question(
+        session,
+        question_text="改分回归题",
+        answer="答案",
+        course_id=course.id,
+        status=QuestionStatus.PUBLISHED,
+        question_type=QuestionType.SHORT_ANSWER,
+    )
+
+    attempt = QuestionAttempt(
+        question_id=question.id,
+        course_id=course.id,
+        student_id=student.id,
+        measurement_role="scored_performance",
+        student_answer="学生回答",
+        is_correct=False,
+        score=0.2,
+        judged_by="auto",
+    )
+    session.add(attempt)
+    session.commit()
+    session.refresh(attempt)
+
+    first = record_scored_evidence(session, attempt)
+    session.commit()
+    assert first is not None
+    assert first.value == 0.2
+    assert first.confidence == 0.8
+
+    # 教师改分：0.2 -> 0.9，judged_by auto -> teacher
+    attempt.score = 0.9
+    attempt.is_correct = True
+    attempt.judged_by = "teacher"
+    session.add(attempt)
+    session.commit()
+
+    second = record_scored_evidence(session, attempt)
+    session.commit()
+    assert second is not None
+    assert second.id == first.id  # 同一条记录，不重复
+    assert second.value == 0.9  # 已更新为新分
+    assert second.confidence == 1.0  # 教师评分置信度
+    assert "teacher" in second.source
+
+    count = len(_evidence_for_student(session, student.id, course.id))
+    assert count == 1
+
+
 def test_evidence_node_id_from_question_knowledge_nodes(session):
     """证据的 node_id 从题目的 knowledge_node_ids 解析。"""
     teacher = _user(session, "le_node_teacher", UserRole.TEACHER)

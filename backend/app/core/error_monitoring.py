@@ -113,6 +113,31 @@ async def _read_body(response: Response) -> bytes:
     return body
 
 
+# P3 §四.1：流式响应 Content-Type 白名单。
+# 这些类型的响应体不能一次性读取（会破坏 SSE / NDJSON / chunked 流式语义），
+# 中间件遇到它们时只按状态码粗略分类计数，不消费 body，直接放行原始响应。
+_STREAMING_CONTENT_TYPES = frozenset({
+    "text/event-stream",
+    "application/x-ndjson",
+    "application/streaming",
+    "text/plain; charset=utf-8 streaming",
+})
+
+
+def _is_streaming_response(response: Response) -> bool:
+    """Detect SSE / NDJSON / streaming responses whose body must not be buffered."""
+    content_type = response.headers.get("content-type", "")
+    # 取主类型（忽略参数），小写比较
+    main_type = content_type.split(";")[0].strip().lower()
+    if main_type in _STREAMING_CONTENT_TYPES:
+        return True
+    # StreamingResponse 且未设置 media_type 时，headers 可能没有 content-type，
+    # 但 starlette 会注入 transfer-encoding: chunked；此时也按流式处理。
+    if isinstance(response, StreamingResponse) and "text/event-stream" in content_type:
+        return True
+    return False
+
+
 class ErrorMonitoringMiddleware(BaseHTTPMiddleware):
     """Logs and counts error responses (status >= 400) with structured context."""
 
@@ -123,6 +148,28 @@ class ErrorMonitoringMiddleware(BaseHTTPMiddleware):
     ) -> Response:
         response = await call_next(request)
         if response.status_code < 400:
+            return response
+
+        # P3 §四.1：流式响应（SSE / NDJSON 等）不能一次性读取 body，
+        # 否则会破坏流式语义。只按状态码粗略分类计数，放行原始响应。
+        if _is_streaming_response(response):
+            category = _classify(response.status_code, None)
+            monitor.record(category)
+            logger.warning(
+                "error_monitor status=%s category=%s method=%s path=%s streaming=true",
+                response.status_code,
+                category,
+                request.method,
+                request.url.path,
+                extra={
+                    "status_code": response.status_code,
+                    "category": category,
+                    "method": request.method,
+                    "path": request.url.path,
+                    "error_code": "",
+                    "streaming": True,
+                },
+            )
             return response
 
         # Read the response body to extract structured error_code (only for errors).
