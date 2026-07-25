@@ -23,6 +23,11 @@ const state = reactive({
 const courseRole = computed(() => state.access?.course_role ?? null)
 const allowed = computed(() => state.access?.allowed ?? {})
 const capabilities = computed(() => state.access?.capabilities ?? {})
+// analytics_eligible 来自后端 CourseAccessContext：仅「学生且未 excluded」为 true。
+// owner/teacher/teaching_assistant/observer 均为 false（course_access_service.py
+// _participation_mode：TEACHER_PREVIEW/STAFF_TEST/OBSERVER → analytics_eligible=False）。
+// 子页面据此决定是否加载学生私有认知/推荐，避免教师预览触发 422。
+const analyticsEligible = computed(() => Boolean(state.access?.analytics_eligible))
 
 const course = computed(() => state.detail?.course ?? null)
 
@@ -75,6 +80,7 @@ provide('courseContext', {
   courseRole,
   allowed,
   capabilities,
+  analyticsEligible,
   reload: load,
 })
 

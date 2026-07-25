@@ -356,7 +356,11 @@ service.interceptors.response.use(
       message = '网络断开，请检查连接'
     }
 
-    showToast(message, 'error')
+    // skipErrorToast：调用方声明本次请求失败由自身处理（如 Agent 503 回退 V1），
+    // 不向用户弹错误提示，避免降级场景造成「先报错再成功」的误导。
+    if (!error.config?.skipErrorToast) {
+      showToast(message, 'error')
+    }
     return Promise.reject(error)
   }
 )

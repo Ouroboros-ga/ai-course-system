@@ -1,6 +1,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { askQuestion } from '@/api/chat.js'
+import { respondTeachingAgent } from '@/api/teaching_agent.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import { listNotes, createNote, updateNote } from '@/api/note.js'
 import {
@@ -38,6 +39,17 @@ export function useLearningWorkspace(courseId, options = {}) {
   // page-design §1.4：教师「学生视角预览」不写入正式学习进度。
   // previewMode 下所有进度持久化调用直接短路（读取照常）。
   const previewMode = options?.previewMode === true
+  // TeachingAgent 受控接入（P1）：getStudentId/getAnalyticsEligible/getCapabilities
+  // 由 LearnPage 从 courseContext 注入（ref/getter）。仅在 cognitive_analysis 能力
+  // 开关开启、且当前用户为 analytics_eligible（真实学生）时尝试 TeachingAgent；
+  // 503/失败时静默回退 V1 /chat/ask，不影响正常 Q&A（AGENTS.md 硬约束）。
+  const getStudentId = options?.getStudentId ?? (() => null)
+  const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
+  const getCapabilities = options?.getCapabilities ?? (() => ({}))
+  // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
+  const teachingSessionId =
+    (typeof crypto !== 'undefined' && crypto?.randomUUID?.()) ||
+    'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
   const status = ref('loading')
   const error = ref('')
   const course = ref(null)
@@ -381,6 +393,40 @@ export function useLearningWorkspace(courseId, options = {}) {
     return true
   }
 
+  // TeachingAgent 受控接入（P1）：调用 /teaching-agent/respond 并归一化响应。
+  // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
+  // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
+  async function askTeachingAgent(question, studentId) {
+    const result = await respondTeachingAgent({
+      student_id: String(studentId),
+      course_id: String(course.value.courseId),
+      session_id: teachingSessionId,
+      message: question,
+      resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
+    })
+    return {
+      answer: String(result?.answer || '暂时没有可用回答。'),
+      citations: Array.isArray(result?.citations) ? result.citations : [],
+      // TeachingAgent 不返回 confidence 数值；有 warnings/degraded_services 时标低置信。
+      lowConfidence:
+        Boolean(result?.warnings?.length) || Boolean(result?.degraded_services?.length),
+    }
+  }
+
+  // V1 问答（/chat/ask）：始终可用的回退路径，不受 Agent 能力开关影响。
+  async function askV1(question) {
+    const result = await askQuestion({
+      question,
+      courseId: course.value.courseId,
+      currentNodeId: currentNodeId.value,
+    })
+    return {
+      answer: String(result?.answer || '暂时没有可用回答。'),
+      citations: Array.isArray(result?.citations) ? result.citations : [],
+      lowConfidence: result?.confidence !== undefined && Number(result.confidence) < 0.5,
+    }
+  }
+
   async function sendQuestion(explicitQuestion) {
     const question = String(explicitQuestion ?? questionDraft.value).trim()
     if (!question || isAsking.value || !currentNode.value) return
@@ -397,20 +443,35 @@ export function useLearningWorkspace(courseId, options = {}) {
     questionDraft.value = ''
     isAsking.value = true
 
+    // TeachingAgent 受控接入：能力开关（cognitive_analysis）+ analytics_eligible
+    // （真实学生）+ studentId 三重校验。任一不满足则直接走 V1，不尝试 Agent。
+    const studentId = getStudentId()
+    const analyticsEligible = getAnalyticsEligible()
+    const capabilities = getCapabilities()
+    const canUseTeachingAgent = Boolean(
+      capabilities?.cognitive_analysis && analyticsEligible && studentId != null,
+    )
+
     try {
-      const result = await askQuestion({
-        question,
-        courseId: course.value.courseId,
-        currentNodeId: currentNodeId.value,
-      })
+      let result
+      if (canUseTeachingAgent) {
+        // Agent 503/失败属预期降级场景（skipErrorToast 已静默），回退 V1 不影响 Q&A。
+        try {
+          result = await askTeachingAgent(question, studentId)
+        } catch (agentError) {
+          result = await askV1(question)
+        }
+      } else {
+        result = await askV1(question)
+      }
       messages.value = [
         ...messages.value,
         {
           id: 'assistant-' + Date.now(),
           role: 'assistant',
-          content: String(result?.answer || '暂时没有可用回答。'),
-          citations: Array.isArray(result?.citations) ? result.citations : [],
-          lowConfidence: result?.confidence !== undefined && Number(result.confidence) < 0.5,
+          content: result.answer,
+          citations: result.citations,
+          lowConfidence: result.lowConfidence,
           nodeId: currentNodeId.value,
           page: currentPage.value,
         },

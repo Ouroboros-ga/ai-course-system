@@ -4,8 +4,11 @@ import { BookMarked, Lightbulb, ListChecks, RefreshCw, SendHorizonal, TriangleAl
 
 /**
  * 课程智能体面板（page-design §12.5 UNDERSTAND / §13.1 统一人格 / §6.7 SystemResponsePanel）。
- * 默认链路：POST /chat/ask（V1 真实 RAG，带 courseId 与 currentNodeId）。
- * teaching-agent 旁路属实验能力，本切片不接入（默认不改变 V1 行为）。
+ *
+ * 受控接入（P1）：useLearningWorkspace.sendQuestion 现在在 cognitive_analysis 能力开关
+ * 开启 + analyticsEligible（真实学生）+ studentId 三者齐备时优先调用 TeachingAgent
+ * (/teaching-agent/respond)；503/失败时静默回退 V1 /chat/ask，不影响正常 Q&A。
+ * 教师/助教预览视角（analyticsEligible=false）直接走 V1。
  *
  * 结构（§6.7）：①系统观察 ②依据（原文引用）③回答 ④建议下一步教学行动。
  * 回答失败 → 显式错误 + 重试；低置信 → 提示核对原文引用；无引用不伪造。

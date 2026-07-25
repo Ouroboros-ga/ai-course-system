@@ -3,6 +3,7 @@ import { computed, inject, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
+import { useCounterStore } from '@/stores/counter.js'
 import LearnContextBar from '@/app/components/learn/LearnContextBar.vue'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
 import LectureStage from '@/app/components/learn/LectureStage.vue'
@@ -16,12 +17,22 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
 const route = useRoute()
 const router = useRouter()
-const { courseRole, detail } = inject('courseContext')
+const counter = useCounterStore()
+const { courseRole, detail, analyticsEligible, capabilities } = inject('courseContext')
 
 const courseId = Number(route.params.courseId)
 const previewMode = computed(() => ['owner', 'teacher', 'teaching_assistant'].includes(courseRole.value))
 
-const ws = useLearningWorkspace(courseId, { previewMode: previewMode.value })
+// TeachingAgent 受控接入（P1）：将 courseContext 的 analyticsEligible/capabilities
+// 与当前用户 ID 以 getter 形式注入 workspace。workspace 在 sendQuestion 时读取最新值，
+// 仅当 cognitive_analysis 能力开关开启 + analyticsEligible（真实学生）+ studentId
+// 三者齐备时尝试 TeachingAgent，否则直接走 V1 /chat/ask（AGENTS.md 硬约束）。
+const ws = useLearningWorkspace(courseId, {
+  previewMode: previewMode.value,
+  getStudentId: () => counter.userData?.id ?? null,
+  getAnalyticsEligible: () => analyticsEligible.value,
+  getCapabilities: () => capabilities.value,
+})
 
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({

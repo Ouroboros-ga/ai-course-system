@@ -85,6 +85,10 @@ from app.models.graph_production_model import (
     GraphSnapshotRecord,
     GraphNodeReview,
 )
+from app.models.agent_log import (
+    AgentLearningEvent,
+    AgentTraceRecord,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

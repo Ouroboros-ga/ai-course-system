@@ -11,12 +11,16 @@
  * - courseId 必填；
  * - nodeId 可选，存在时聚焦到该知识点并拉取相邻关系。
  *
- * 权限：依赖 CourseLayout 提供的 courseContext（allowed/capabilities）。
- * 学生查看自己；教师/助教预览时不强制写入学习证据。
+ * 权限：依赖 CourseLayout 提供的 courseContext（allowed/capabilities/analyticsEligible）。
+ * 角色分流（P1 修复）：
+ * - 学生（analytics_eligible=true）：显示自己的认知仪表盘 + 推荐卡 + 采纳操作；
+ * - 教师/助教/观察者（analytics_eligible=false）：仅查看已发布图谱快照，
+ *   隐藏学生私有认知与「采纳推荐」操作（后端 owner analytics_excluded=True，
+ *   查询非学生身份会 422）。如需查看某位学生的认知，应走专门的「学生认知查看」流程。
  */
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Lightbulb, LoaderCircle, TriangleAlert } from 'lucide-vue-next'
+import { ArrowLeft, Eye, Lightbulb, LoaderCircle, TriangleAlert } from 'lucide-vue-next'
 import StudentGraphPanel from '@/features/student-graph/StudentGraphPanel.vue'
 import CognitiveDashboard from '@/components/cognitive/CognitiveDashboard.vue'
 import RecommendationCard from '@/features/student-learning/components/RecommendationCard.vue'
@@ -30,19 +34,35 @@ import {
 const route = useRoute()
 const router = useRouter()
 const counter = useCounterStore()
-const { courseId, courseRole } = inject('courseContext')
+const { courseId, courseRole, analyticsEligible } = inject('courseContext')
 
 const nodeId = computed(() =>
   route.params.nodeId != null ? Number(route.params.nodeId) : null,
 )
 
-// 学生 ID：学生视角下使用当前用户 ID；教师预览时仍使用当前用户 ID
-// （后端会基于 JWT 解析学生身份，教师预览仅查看图谱与推荐，不写入证据）。
-const studentId = computed(() => counter.userData?.id ?? null)
+// 角色分流：仅 analytics_eligible=true（学生且未 excluded）才加载学生私有认知/推荐。
+// owner/teacher/teaching_assistant/observer 的 analytics_eligible 均为 false，
+// 传自己的 user_id 给 /state?student_id= 会触发 422（course_access_service.py:192）。
+const isPreview = computed(() => !analyticsEligible.value)
 
-const isPreview = computed(() =>
-  ['owner', 'teacher', 'teaching_assistant'].includes(courseRole.value),
+// 学生视角下才解析当前用户 ID 作为 studentId；预览视角下保持 null，避免误传。
+const studentId = computed(() =>
+  analyticsEligible.value ? (counter.userData?.id ?? null) : null,
 )
+
+// 预览视角的角色标签（用于占位提示文案）
+const previewRoleLabel = computed(() => {
+  switch (courseRole.value) {
+    case 'owner': return '课程所有者'
+    case 'teacher': return '教师'
+    case 'teaching_assistant': return '助教'
+    case 'observer': return '观察者'
+    default: return '教师'
+  }
+})
+
+// 学生视角下 studentId 缺失才算异常（未登录或身份解析失败）；预览视角不需要 studentId。
+const missingStudentIdentity = computed(() => !isPreview.value && studentId.value == null)
 
 // 推荐列表
 const recommendations = ref([])
@@ -52,8 +72,11 @@ const consumingId = ref('')
 const consumedIds = ref(new Set())
 
 async function loadRecommendations() {
-  if (studentId.value == null) {
-    recommendationsStatus.value = 'empty'
+  // 预览视角（教师/助教/观察者）不加载学生私有推荐：后端 analytics_excluded
+  // 会拒绝，且预览不应消费学生专属行动。
+  if (isPreview.value || studentId.value == null) {
+    recommendationsStatus.value = 'idle'
+    recommendations.value = []
     return
   }
   recommendationsStatus.value = 'loading'
@@ -121,14 +144,14 @@ onMounted(() => {
       <div class="sfx-knowledge__title-block">
         <h1 class="sfx-knowledge__title">课程知识空间</h1>
         <p class="sfx-knowledge__subtitle">
-          <span v-if="isPreview">教师预览视角（不写入学习证据）</span>
+          <span v-if="isPreview">{{ previewRoleLabel }}预览视角（仅查看已发布图谱）</span>
           <span v-else>基于已发布图谱快照与六维认知状态</span>
         </p>
       </div>
     </header>
 
     <SfxError
-      v-if="studentId == null"
+      v-if="missingStudentIdentity"
       variant="error"
       title="无法加载知识空间"
       description="未识别到当前学生身份，请重新登录后再访问。"
@@ -146,68 +169,85 @@ onMounted(() => {
         />
       </section>
 
-      <!-- 侧栏：认知仪表盘 + 推荐卡 -->
+      <!-- 侧栏：认知仪表盘 + 推荐卡（仅学生视角；教师预览隐藏学生私有数据） -->
       <aside class="sfx-knowledge__aside">
-        <CognitiveDashboard
-          :course-id="courseId"
-          :student-id="studentId"
-        />
+        <template v-if="isPreview">
+          <!-- 教师预览模式：不加载学生私有认知与推荐，避免 422 与越权消费 -->
+          <section class="sfx-knowledge__preview-notice" role="note">
+            <Eye :size="20" />
+            <h2 class="sfx-knowledge__preview-title">教师预览模式</h2>
+            <p class="sfx-knowledge__preview-text">
+              当前为{{ previewRoleLabel }}预览视角，仅查看已发布图谱快照。
+              学生私有认知状态与学习推荐属于学生个人数据，不在预览中展示。
+            </p>
+            <p class="sfx-knowledge__preview-hint">
+              如需查看某位学生的认知状态，请走「学生认知查看」流程（后续切片上线）。
+            </p>
+          </section>
+        </template>
 
-        <section class="sfx-knowledge__recs" aria-label="学习推荐">
-          <header class="sfx-knowledge__recs-head">
-            <Lightbulb :size="16" />
-            <h2 class="sfx-knowledge__recs-title">学习推荐</h2>
-          </header>
+        <template v-else>
+          <CognitiveDashboard
+            :course-id="courseId"
+            :student-id="studentId"
+          />
 
-          <div
-            v-if="recommendationsStatus === 'loading'"
-            class="sfx-knowledge__recs-state"
-            role="status"
-          >
-            <LoaderCircle :size="18" class="sfx-knowledge__spinner" />
-            <p>正在加载推荐…</p>
-          </div>
+          <section class="sfx-knowledge__recs" aria-label="学习推荐">
+            <header class="sfx-knowledge__recs-head">
+              <Lightbulb :size="16" />
+              <h2 class="sfx-knowledge__recs-title">学习推荐</h2>
+            </header>
 
-          <div
-            v-else-if="recommendationsStatus === 'error'"
-            class="sfx-knowledge__recs-state sfx-knowledge__recs-state--error"
-            role="alert"
-          >
-            <TriangleAlert :size="18" />
-            <p>{{ recommendationsError || '推荐暂时不可读' }}</p>
-            <button
-              type="button"
-              class="sfx-knowledge__retry"
-              @click="loadRecommendations"
+            <div
+              v-if="recommendationsStatus === 'loading'"
+              class="sfx-knowledge__recs-state"
+              role="status"
             >
-              重试
-            </button>
-          </div>
+              <LoaderCircle :size="18" class="sfx-knowledge__spinner" />
+              <p>正在加载推荐…</p>
+            </div>
 
-          <div
-            v-else-if="recommendationsStatus === 'empty'"
-            class="sfx-knowledge__recs-state sfx-knowledge__recs-state--empty"
-          >
-            <Lightbulb :size="22" :stroke-width="1.6" />
-            <strong>暂无学习推荐</strong>
-            <p>完成更多练习后，系统会基于真实证据生成定向推荐。</p>
-          </div>
-
-          <ul v-else class="sfx-knowledge__recs-list">
-            <li
-              v-for="rec in recommendations"
-              :key="rec.recommendation_id"
-              class="sfx-knowledge__recs-item"
+            <div
+              v-else-if="recommendationsStatus === 'error'"
+              class="sfx-knowledge__recs-state sfx-knowledge__recs-state--error"
+              role="alert"
             >
-              <RecommendationCard
-                :recommendation="rec"
-                :consuming="consumingId === rec.recommendation_id"
-                :consumed="consumedIds.has(rec.recommendation_id)"
-                @consume="handleConsume"
-              />
-            </li>
-          </ul>
-        </section>
+              <TriangleAlert :size="18" />
+              <p>{{ recommendationsError || '推荐暂时不可读' }}</p>
+              <button
+                type="button"
+                class="sfx-knowledge__retry"
+                @click="loadRecommendations"
+              >
+                重试
+              </button>
+            </div>
+
+            <div
+              v-else-if="recommendationsStatus === 'empty'"
+              class="sfx-knowledge__recs-state sfx-knowledge__recs-state--empty"
+            >
+              <Lightbulb :size="22" :stroke-width="1.6" />
+              <strong>暂无学习推荐</strong>
+              <p>完成更多练习后，系统会基于真实证据生成定向推荐。</p>
+            </div>
+
+            <ul v-else class="sfx-knowledge__recs-list">
+              <li
+                v-for="rec in recommendations"
+                :key="rec.recommendation_id"
+                class="sfx-knowledge__recs-item"
+              >
+                <RecommendationCard
+                  :recommendation="rec"
+                  :consuming="consumingId === rec.recommendation_id"
+                  :consumed="consumedIds.has(rec.recommendation_id)"
+                  @consume="handleConsume"
+                />
+              </li>
+            </ul>
+          </section>
+        </template>
       </aside>
     </div>
   </div>
@@ -290,6 +330,38 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
+}
+
+/* 教师预览占位提示 */
+.sfx-knowledge__preview-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 20px 16px;
+  background: var(--surface-cool, #f5f7fa);
+  border: 1px dashed var(--border-default, #d1d5db);
+  border-radius: 10px;
+  color: var(--text-secondary, #6b7280);
+}
+
+.sfx-knowledge__preview-title {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary, #1f2937);
+}
+
+.sfx-knowledge__preview-text {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.sfx-knowledge__preview-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-muted, #9ca3af);
 }
 
 /* 推荐卡区 */

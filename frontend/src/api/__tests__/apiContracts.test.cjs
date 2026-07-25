@@ -336,3 +336,136 @@ test('KnowledgeSpacePage.vue: 集成 StudentGraphPanel + CognitiveDashboard + Re
   // StudentGraphPanel 必须传入 courseId 与 nodeId
   assert.match(src, /:course-id="courseId"[\s\S]*?:node-id="nodeId"/)
 })
+
+// ============================================================================
+// P1: 知识空间角色分流契约（教师预览不请求学生私有认知/推荐）
+// ============================================================================
+
+test('KnowledgeSpacePage.vue: 基于 analyticsEligible 分流，预览视角 studentId=null', () => {
+  const src = read('frontend/src/app/pages/course/KnowledgeSpacePage.vue')
+  // 必须注入 analyticsEligible
+  assert.match(src, /inject\(['"]courseContext['"]\)/)
+  assert.match(src, /analyticsEligible/)
+  // isPreview 必须基于 analyticsEligible（不是全局 role）
+  assert.match(src, /isPreview\s*=\s*computed\(\(\)\s*=>\s*!analyticsEligible\.value\)/)
+  // 预览视角下 studentId 必须为 null（不传自己的 user_id 给认知面板）
+  assert.match(src, /analyticsEligible\.value\s*\?\s*\(counter\.userData\?\.id\s*\?\?\s*null\)\s*:\s*null/)
+  // loadRecommendations 必须在预览视角短路
+  assert.match(src, /if\s*\(isPreview\.value\s*\|\|\s*studentId\.value\s*==\s*null\)/)
+  // 模板必须有 v-if="isPreview" 分支（隐藏学生私有数据）
+  assert.match(src, /v-if="isPreview"/)
+  assert.match(src, /v-else/)
+})
+
+test('backend: course_access_service.py owner analytics_excluded=True', () => {
+  const src = read('backend/app/services/course_access_service.py')
+  // owner 建为 analytics_excluded=True（预览视角不能查自己的认知状态）
+  assert.match(src, /role=CourseRole\.OWNER[\s\S]*?analytics_excluded=True/)
+  // _participation_mode 中非学生角色均返回 analytics_eligible=False
+  assert.match(src, /def _participation_mode[\s\S]*?if role == CourseRole\.STUDENT and not analytics_excluded/)
+})
+
+// ============================================================================
+// P1: 可视化页面 Course Access 契约（不再用全局 User.role）
+// ============================================================================
+
+test('VisualizationView.vue: 使用 allowed[course.mapping.edit] 而非全局 User.role', () => {
+  const src = read('frontend/src/views/VisualizationView.vue')
+  // 必须从 courseContext 注入 allowed
+  assert.match(src, /inject\(['"]courseContext['"]\)/)
+  assert.match(src, /const\s*\{\s*allowed\s*\}\s*=\s*inject\(['"]courseContext['"]\)/)
+  // canEditVisualisation 必须基于 allowed['course.mapping.edit']（允许多行与尾逗号）
+  assert.match(src, /canEditVisualisation\s*=\s*computed\([\s\S]*?Boolean\(allowed\.value\?\.\[['"]course\.mapping\.edit['"]\]\)[\s\S]*?\)/)
+  // 禁止使用全局 counter.userData.role 判断可视化权限
+  assert.doesNotMatch(src, /counter\.userData\.role.*mapping|mapping.*counter\.userData\.role/)
+  assert.doesNotMatch(src, /isTeacher.*canEdit|canEdit.*isTeacher/)
+})
+
+// ============================================================================
+// P1: TeachingAgent 受控接入契约（能力开关 + analyticsEligible + V1 回退）
+// ============================================================================
+
+test('teaching_agent.js: respondTeachingAgent 调用 POST /teaching-agent/respond', () => {
+  const src = read('frontend/src/api/teaching_agent.js')
+  // 必须调用 /teaching-agent/respond（不是 /chat/ask 或其他路径）
+  assert.match(src, /url:\s*['"]\/teaching-agent\/respond['"]/)
+  assert.match(src, /method:\s*['"]post['"]/)
+  // 必须传递 student_id/course_id/session_id/message 四个必填字段
+  assert.match(src, /student_id:\s*payload\.student_id/)
+  assert.match(src, /course_id:\s*payload\.course_id/)
+  assert.match(src, /session_id:\s*payload\.session_id/)
+  assert.match(src, /message:\s*payload\.message/)
+  // 必须使用 allowFlatResponse（后端返回扁平结构，无 code/message 包裹）
+  assert.match(src, /allowFlatResponse:\s*true/)
+  // 必须默认 skipErrorToast（503 回退 V1 时不弹错误提示）
+  assert.match(src, /skipErrorToast:\s*payload\.skipErrorToast\s*\?\?\s*true/)
+})
+
+test('backend: teaching_agent.py 注册 POST /respond 路由', () => {
+  const src = read('backend/app/api/v1/endpoints/teaching_agent.py')
+  assert.match(src, /@router\.post\(["']\/respond["']/)
+  // 必须校验 course.question.ask 权限（学生自问）
+  assert.match(src, /course\.question\.ask/)
+  // 必须校验 analytics_eligible（非学生不能请求个人教学响应）
+  assert.match(src, /analytics_eligible/)
+  // 无运行时时必须返回 503（TEACHING_AGENT_NOT_CONFIGURED）
+  assert.match(src, /status_code=503/)
+  assert.match(src, /TEACHING_AGENT_NOT_CONFIGURED/)
+})
+
+test('backend: main.py 注册 teaching-agent 路由前缀', () => {
+  const src = read('backend/app/main.py')
+  assert.match(src, /include_router\(teaching_agent\.router,\s*prefix=["']\/api\/v1\/teaching-agent["']/)
+})
+
+test('useLearningWorkspace.js: 导入 respondTeachingAgent 并在能力开关保护下调用', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  // 必须导入 TeachingAgent API 客户端
+  assert.match(src, /import\s+\{\s*respondTeachingAgent\s*\}\s+from\s+['"]@\/api\/teaching_agent\.js['"]/)
+  // 必须保留 V1 askQuestion 作为回退
+  assert.match(src, /import\s+\{\s*askQuestion\s*\}\s+from\s+['"]@\/api\/chat\.js['"]/)
+  // 必须检查 cognitive_analysis 能力开关
+  assert.match(src, /capabilities\?\.cognitive_analysis/)
+  // 必须检查 analyticsEligible
+  assert.match(src, /analyticsEligible/)
+  // 必须检查 studentId != null
+  assert.match(src, /studentId\s*!=\s*null/)
+  // canUseTeachingAgent 必须三重校验
+  assert.match(src, /canUseTeachingAgent\s*=\s*Boolean\([\s\S]*?cognitive_analysis[\s\S]*?analyticsEligible[\s\S]*?studentId\s*!=\s*null[\s\S]*?\)/)
+  // 失败时必须回退到 askV1
+  assert.match(src, /catch\s*\(agentError\)[\s\S]*?askV1/)
+  // 不满足条件时直接走 V1
+  assert.match(src, /canUseTeachingAgent[\s\S]*?else[\s\S]*?askV1/)
+})
+
+test('useLearningWorkspace.js: TeachingAgent 调用传递 student_id/course_id/session_id', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  // askTeachingAgent 必须传递四个必填字段
+  assert.match(src, /respondTeachingAgent\(\{[\s\S]*?student_id:\s*String\(studentId\)/)
+  assert.match(src, /course_id:\s*String\(course\.value\.courseId\)/)
+  assert.match(src, /session_id:\s*teachingSessionId/)
+  assert.match(src, /message:\s*question/)
+  // teachingSessionId 必须在 workspace 创建时生成
+  assert.match(src, /teachingSessionId\s*=/)
+})
+
+test('LearnPage.vue: 从 courseContext 注入 analyticsEligible/capabilities 传入 workspace', () => {
+  const src = read('frontend/src/app/pages/learn/LearnPage.vue')
+  // 必须注入 analyticsEligible 和 capabilities
+  assert.match(src, /inject\(['"]courseContext['"]\)/)
+  assert.match(src, /analyticsEligible/)
+  assert.match(src, /capabilities/)
+  // 必须以 getter 形式传入 workspace（不是静态值，因为 courseContext 异步加载）
+  assert.match(src, /getStudentId:\s*\(\)\s*=>\s*counter\.userData\?\.id\s*\?\?\s*null/)
+  assert.match(src, /getAnalyticsEligible:\s*\(\)\s*=>\s*analyticsEligible\.value/)
+  assert.match(src, /getCapabilities:\s*\(\)\s*=>\s*capabilities\.value/)
+  // 禁止直接用全局 role 判断是否使用 Agent
+  assert.doesNotMatch(src, /isTeacher.*teachingAgent|teachingAgent.*isTeacher/)
+})
+
+test('request.js: 支持 skipErrorToast 配置（Agent 503 回退时不弹错误提示）', () => {
+  const src = read('frontend/src/utils/request.js')
+  // 错误拦截器必须检查 skipErrorToast
+  assert.match(src, /skipErrorToast/)
+  assert.match(src, /if\s*\(!error\.config\?\.skipErrorToast\)/)
+})

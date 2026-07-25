@@ -25,29 +25,31 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.feature_flags import TEACHING_AGENT_MODES
+from app.models.database import engine
 from app.platform.agents.composition import build_kg_mest_shadow_sidecar_runtime
 from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
-from app.platform.agents.tools.integration import (
-    CallableLearningEventPort,
-    CallableRecommendationPort,
-    UnavailableSandboxPort,
-)
+from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
+from app.platform.agents.tools.integration import UnavailableSandboxPort
+from app.platform.agents.tools.learning_event import make_session_scoped_learning_event_port
 from app.platform.agents.tools.openai_compatible import OpenAICompatibleTeachingLLM
+from app.platform.agents.tools.question_bank import make_session_scoped_question_bank_port
+from app.platform.agents.tools.recommendation import make_session_scoped_recommendation_port
 from app.platform.retrieval_demo.service import DemoService
+from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
 
 
-def _noop_event(*_: Any, **__: Any) -> None:  # pragma: no cover - trivial
+def _noop_event(*_: Any, **__: Any) -> None:  # pragma: no cover - 保留以兼容旧测试
     return None
 
 
-async def _noop_event_async(*_: Any, **__: Any) -> None:  # pragma: no cover - trivial
+async def _noop_event_async(*_: Any, **__: Any) -> None:  # pragma: no cover - 保留以兼容旧测试
     return None
 
 
-async def _empty_recommendation(**kwargs: Any) -> dict[str, Any]:
+async def _empty_recommendation(**kwargs: Any) -> dict[str, Any]:  # pragma: no cover - 保留以兼容旧测试
     return {"resource_ids": [], "reason": "teaching_agent_recommendation_not_configured"}
 
 
@@ -88,16 +90,30 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             return False
         llm = OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model)
 
+        # P1 修复：接通真实、具备课程作用域校验的 Tool ports。
+        # - cognition：读取六维认知状态 + 最新推荐记录（只读，session-scoped）
+        # - question_bank：读取课程题库（只读，按 course_id 隔离）
+        # - recommendation：调用真实 generate_recommendation（会生成推荐记录）
+        # - learning_events：写入 AgentLearningEvent / AgentTraceRecord 表（持久化）
+        # - sandbox：保持 UnavailableSandboxPort（沙箱未配置，诚实降级）
+        session_factory = lambda: Session(engine)
+        cognition_port = make_session_scoped_cognition_port(session_factory)
+        question_bank_port = make_session_scoped_question_bank_port(session_factory)
+        recommendation_port = make_session_scoped_recommendation_port(session_factory)
+        learning_event_port = make_session_scoped_learning_event_port(session_factory)
+
         # 批次4：注入 registry，按 (student_id, course_id) 动态构建运行时。
         # 多报告场景下，每个 (student, course) 报告对应一个独立运行时；
         # 无报告的请求 fail-closed 返回 None，端点保持 503。
         registry = TeachingAgentRuntimeRegistry(
             demo_service=service,
             llm=llm,
-            recommendation=CallableRecommendationPort(_empty_recommendation),
+            recommendation=recommendation_port,
             sandbox=UnavailableSandboxPort(),
-            learning_events=CallableLearningEventPort(_noop_event_async, _noop_event_async),
+            learning_events=learning_event_port,
             store=store,
+            cognition=cognition_port,
+            question_bank=question_bank_port,
         )
         app.state.teaching_agent_runtime_registry = registry
 
@@ -113,10 +129,12 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             shadow_report=report,
             expected_student_id=student_id,
             expected_course_id=course_id,
-            recommendation=CallableRecommendationPort(_empty_recommendation),
+            recommendation=recommendation_port,
             sandbox=UnavailableSandboxPort(),
-            learning_events=CallableLearningEventPort(_noop_event_async, _noop_event_async),
+            learning_events=learning_event_port,
             llm=llm,
+            cognition=cognition_port,
+            question_bank=question_bank_port,
         )
         app.state.teaching_agent_runtime = runtime
         app.state.teaching_agent_scope = {"student_id": student_id, "course_id": course_id}

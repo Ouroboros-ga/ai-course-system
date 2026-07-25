@@ -4,14 +4,16 @@
  *
  * 接收路由参数 courseId 与可选 nodeId：
  * - 调用 listPlans(courseId, { node_id, status }) 获取计划列表；
- * - 学生只看 published 计划；教师可看全部并可 createPlan/publishPlan；
+ * - 学生只看 published 计划；具备 course.mapping.edit 权限者可看全部并可 createPlan/publishPlan；
  * - 点击「播放」通过 getPlan(planId) 获取 plan_data 后嵌入 JSAVPlayer；
  * - 白名单算法来自 listAlgorithms()；
  * - 播放完成后通过「返回锚点」回到学习页（路由回退或显式跳转）。
  *
+ * 权限（P1 修复）：从 CourseLayout 提供的 courseContext.allowed['course.mapping.edit']
+ * 判断当前用户在本课程内的建设权限，不再用全局 User.role 近似（AGENTS.md Course Access v1）。
  * 数据契约：所有 API 失败均显示友好状态，不阻塞页面其他计划。
  */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowLeft,
@@ -25,7 +27,6 @@ import {
   Send,
   TriangleAlert,
 } from 'lucide-vue-next'
-import { useCounterStore } from '@/stores/counter.js'
 import {
   createPlan,
   getPlan,
@@ -37,15 +38,18 @@ import JSAVPlayer from '@/components/visualization/JSAVPlayer.vue'
 
 const route = useRoute()
 const router = useRouter()
-const counter = useCounterStore()
+const { allowed } = inject('courseContext')
 
 const courseId = computed(() => Number(route.params.courseId))
 const nodeId = computed(() =>
   route.params.nodeId != null ? Number(route.params.nodeId) : null,
 )
 
-const isTeacher = computed(
-  () => counter.userData?.role === 'teacher' || counter.userData?.role === 'admin',
+// 课程建设权限：course.mapping.edit 属于 course_building capability，
+// 教师/owner 在 capability 开启时拥有；学生/观察者无此权限。
+// 不再用全局 counter.userData.role 近似当前课程权限。
+const canEditVisualisation = computed(
+  () => Boolean(allowed.value?.['course.mapping.edit']),
 )
 
 // 计划列表
@@ -79,7 +83,7 @@ const createError = ref('')
 const publishingId = ref('')
 
 const filteredPlans = computed(() => {
-  if (isTeacher.value) return plans.value
+  if (canEditVisualisation.value) return plans.value
   // 学生只看 published
   return plans.value.filter(
     (p) => p.status === 'published' || p.is_published === true,
@@ -104,7 +108,7 @@ async function loadPlans() {
     const params = {}
     if (nodeId.value != null) params.node_id = nodeId.value
     // 学生视角强制只看 published
-    if (!isTeacher.value) params.status = 'published'
+    if (!canEditVisualisation.value) params.status = 'published'
     const res = await listPlans(courseId.value, params)
     const items = Array.isArray(res)
       ? res
@@ -270,7 +274,7 @@ watch(
 
 onMounted(() => {
   loadPlans()
-  if (isTeacher.value) loadAlgorithms()
+  if (canEditVisualisation.value) loadAlgorithms()
 })
 </script>
 
@@ -290,7 +294,7 @@ onMounted(() => {
           <template v-if="nodeId != null"> · 知识点 #{{ nodeId }}</template>
         </p>
       </div>
-      <div v-if="isTeacher" class="sfx-vis__actions">
+      <div v-if="canEditVisualisation" class="sfx-vis__actions">
         <button
           type="button"
           class="sfx-vis__create-btn"
@@ -451,7 +455,7 @@ onMounted(() => {
         <strong>暂无可视化内容</strong>
         <p>
           当前知识点暂无已发布的可视化计划。
-          <template v-if="isTeacher">教师可在右上角「新建计划」创建。</template>
+          <template v-if="canEditVisualisation">教师可在右上角「新建计划」创建。</template>
         </p>
       </div>
 
@@ -498,7 +502,7 @@ onMounted(() => {
               播放
             </button>
             <button
-              v-if="isTeacher && planStatusTone(plan) !== 'published'"
+              v-if="canEditVisualisation && planStatusTone(plan) !== 'published'"
               type="button"
               class="sfx-vis__publish-btn"
               :disabled="publishingId === plan.plan_id"
