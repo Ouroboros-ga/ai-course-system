@@ -1,4 +1,4 @@
-from collections import Counter, defaultdict
+from collections import Counter
 
 from fastapi.routing import APIRoute
 
@@ -40,35 +40,37 @@ def test_route_contract_locks_known_non_openapi_catch_all(fastapi_app):
     rows = _route_rows(fastapi_app)
     hidden_rows = [row for row in rows if not row["in_openapi"]]
 
-    assert {(row["method"], row["path"], row["endpoint"], row["module"]) for row in hidden_rows} == {
+    expected_hidden = {
         ("DELETE", "/{path:path}", "catch_all", "app.main"),
         ("GET", "/{path:path}", "catch_all", "app.main"),
         ("PATCH", "/{path:path}", "catch_all", "app.main"),
         ("POST", "/{path:path}", "catch_all", "app.main"),
         ("PUT", "/{path:path}", "catch_all", "app.main"),
     }
+    # Media assets deliberately remain out of OpenAPI because the path
+    # converter accepts slash-containing object keys; access is still checked
+    # by the endpoint before any metadata or content is returned.
+    expected_hidden.update({
+        ("GET", "/api/v1/media/assets/{object_key:path}/content", "get_asset_content", "app.api.v1.endpoints.media_timeline"),
+        ("GET", "/api/v1/media/assets/{object_key:path}", "get_asset", "app.api.v1.endpoints.media_timeline"),
+    })
+    assert {(row["method"], row["path"], row["endpoint"], row["module"]) for row in hidden_rows} == expected_hidden
 
 
 def test_route_contract_locks_known_duplicate_document_routes(fastapi_app):
     rows = _route_rows(fastapi_app)
     counts = Counter((row["method"], row["path"]) for row in rows)
 
-    assert counts[("GET", "/api/v1/document/courses")] == 2
-    assert counts[("POST", "/api/v1/document/course/{course_id}/save")] == 2
+    assert counts[("GET", "/api/v1/document/courses")] == 1
+    # The compatibility route is registered once.  A duplicate registration
+    # produces ambiguous OpenAPI operation IDs and must not return.
+    assert counts[("POST", "/api/v1/document/course/{course_id}/save")] == 1
 
-    duplicate_rows = defaultdict(list)
-    for row in rows:
-        if counts[(row["method"], row["path"])] > 1:
-            duplicate_rows[(row["method"], row["path"])].append(row)
-
-    assert [row["endpoint"] for row in duplicate_rows[("GET", "/api/v1/document/courses")]] == [
-        "get_courses_list",
-        "get_courses_list",
-    ]
-    assert [row["endpoint"] for row in duplicate_rows[("POST", "/api/v1/document/course/{course_id}/save")]] == [
-        "save_course_nodes",
-        "save_course_nodes",
-    ]
+    assert not any(
+        key == ("POST", "/api/v1/document/course/{course_id}/save")
+        and count > 1
+        for key, count in counts.items()
+    )
 
 
 def test_route_contract_locks_document_router_double_mount(fastapi_app):

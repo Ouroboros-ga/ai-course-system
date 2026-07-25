@@ -25,6 +25,7 @@ from app.models.graph_production_model import (
     CourseEvidenceRecord, GraphSnapshotRecord, GraphNodeReview,
     EvidenceStatus, SnapshotStatus,
 )
+from app.models.document_artifact_model import DocumentArtifact
 from app.services.course_access_service import (
     establish_course_access_baseline, activate_student_membership,
 )
@@ -140,6 +141,28 @@ class TestGraphProductionService:
         refreshed = session.get(CourseEvidenceRecord, ev.id)
         assert refreshed.status == EvidenceStatus.STALE
         assert refreshed.stale_reason == "courseware_reparse"
+
+    def test_mark_evidence_stale_can_join_caller_transaction(self, session):
+        """A document lifecycle transaction controls its own commit boundary."""
+        teacher = _user(session, "g9_stale_tx_t")
+        course = _setup(session, teacher)
+        evidence = create_evidence(
+            session,
+            course_id=course.id,
+            document_id="doc-transaction",
+            text_snippet="事务中的原文",
+        )
+
+        assert mark_evidence_stale(
+            session,
+            course.id,
+            "doc-transaction",
+            commit=False,
+        ) == 1
+        session.flush()
+        session.refresh(evidence)
+        assert evidence.status == EvidenceStatus.STALE
+        assert evidence.stale_reason == "courseware_reparse"
 
     def test_evidence_with_page_and_text_position(self, session):
         """证据包含页码/文本定位"""

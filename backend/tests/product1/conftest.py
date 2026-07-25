@@ -1,16 +1,6 @@
+"""Product 1 test configuration.
+
+The parent ``backend/tests/conftest.py`` is discovered automatically by
+pytest.  Keeping this file empty avoids the pytest 9 error caused by declaring
+``pytest_plugins`` below the test root.
 """
-Product 1 test configuration.
-
-Re-exports shared fixtures from the parent conftest and adds P1-specific
-fixtures as needed.
-"""
-
-from __future__ import annotations
-
-import pytest
-
-# Re-export shared fixtures so product1/ tests can use them.
-# These fixtures are defined in backend/tests/conftest.py.
-pytest_plugins = [
-    "backend.tests.conftest",
-]

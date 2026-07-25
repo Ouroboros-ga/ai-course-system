@@ -1575,6 +1575,65 @@ async def delete_course(
             from app.models.video_generation_model import VideoGenerationTask
             from app.models.qa_model import QASession, QAMessage
             from app.models.user_model import ChatHistory, ChatMessage
+            from app.models.access_control_model import CourseCapability, CourseMembership
+            from app.models.question_bank_model import QuestionAttempt, QuestionBankItem, QuestionSourceMapping
+            from app.models.cognitive_state_model import CognitiveState, LearningEvidenceRecord, RecommendationRecord
+            from app.models.visualization_model import VisualizationPlanRecord
+            from app.models.safety_policy_model import CourseSafetyPolicy, CourseSandboxPolicy, SafetyAuditLog
+            from app.models.web_research_model import WebResearchConfig, WebResearchResult, ExternalReference
+            from app.models.media_timeline_model import MediaAsset, MediaTimelineCue
+            from app.models.graph_production_model import CourseEvidenceRecord, GraphSnapshotRecord, GraphNodeReview
+            from app.models.mapping_model import KnowledgePageMap
+            from app.models.note_model import Note
+            from app.models.confirmation_model import CourseConfirmation
+            from app.models.feedback_model import Feedback
+            from app.models.progress_model import LearningJumpHistory
+            from app.models.qa_model import QAContext
+            from app.services.graph_production_service import mark_evidence_stale
+
+            # Remove Phase B--E course-scoped records before their legacy
+            # parents (scripts and nodes).  SQLite test databases do not
+            # always enforce FKs; production databases do.
+            artifacts = session.exec(
+                select(DocumentArtifact).where(DocumentArtifact.course_id == course_id)
+            ).all()
+            for artifact in artifacts:
+                # Keep the lifecycle operation atomic.  The rows are then
+                # deleted with the course, so inaccessible citations cannot
+                # resolve to a replacement document.
+                mark_evidence_stale(
+                    session,
+                    course_id,
+                    artifact.document_id,
+                    reason="course_deleted",
+                    commit=False,
+                )
+
+            for model in (GraphNodeReview, GraphSnapshotRecord, CourseEvidenceRecord):
+                for record in session.exec(select(model).where(model.course_id == course_id)).all():
+                    session.delete(record)
+
+            for model in (ExternalReference, WebResearchResult, WebResearchConfig,
+                          MediaTimelineCue, MediaAsset, VisualizationPlanRecord,
+                          SafetyAuditLog, CourseSafetyPolicy, CourseSandboxPolicy,
+                          RecommendationRecord, LearningEvidenceRecord, CognitiveState,
+                          QuestionAttempt, QuestionSourceMapping, KnowledgePageMap,
+                          Note, CourseConfirmation, Feedback, LearningJumpHistory,
+                          QAContext):
+                for record in session.exec(select(model).where(model.course_id == course_id)).all():
+                    session.delete(record)
+
+            for item in session.exec(
+                select(QuestionBankItem).where(QuestionBankItem.course_id == course_id)
+            ).all():
+                session.delete(item)
+
+            for artifact in artifacts:
+                session.delete(artifact)
+
+            for model in (CourseCapability, CourseMembership):
+                for record in session.exec(select(model).where(model.course_id == course_id)).all():
+                    session.delete(record)
 
             # 1. 删除理解度分析（依赖 learning_progress）
             learning_progresses = session.exec(

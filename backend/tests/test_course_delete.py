@@ -7,6 +7,17 @@ import pytest
 import sys
 from pathlib import Path
 
+from sqlmodel import select
+
+from app.core.security import create_access_token, get_password_hash
+from app.models.access_control_model import CourseCapability, CourseMembership
+from app.models.course_model import Course, CourseStatus
+from app.models.document_artifact_model import DocumentArtifact
+from app.models.graph_production_model import CourseEvidenceRecord
+from app.models.question_bank_model import QuestionBankItem, QuestionStatus
+from app.models.user_model import User, UserRole
+from app.services.course_access_service import establish_course_access_baseline
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
@@ -153,6 +164,84 @@ class TestDeleteCourseDataIntegrity:
 
         for table, fk_col in chat_subtables.items():
             assert fk_col == "chat_id"
+
+
+def test_delete_course_removes_phase_b_to_e_course_rows(client, session):
+    """Course deletion must not leave new scoped records behind on FK DBs."""
+    teacher = User(
+        username="delete_phase_teacher",
+        hashed_password=get_password_hash("test"),
+        role=UserRole.TEACHER,
+        is_active=True,
+    )
+    session.add(teacher)
+    session.commit()
+    session.refresh(teacher)
+
+    course = Course(
+        fanya_course_id="delete-phase-course",
+        fanya_course_name="delete-phase-course",
+        title="Delete phase data",
+        teacher_id=teacher.id,
+        status=CourseStatus.DRAFT,
+    )
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    establish_course_access_baseline(session, course.id, teacher.id)
+
+    artifact = DocumentArtifact(
+        document_id="delete-phase-document",
+        course_id=course.id,
+        file_name="course.pptx",
+    )
+    evidence = CourseEvidenceRecord(
+        evidence_id="delete-phase-evidence",
+        course_id=course.id,
+        document_id=artifact.document_id,
+        text_snippet="历史引用",
+    )
+    question = QuestionBankItem(
+        question_text="删除课程后的题目不应保留",
+        answer="答案",
+        course_id=course.id,
+        status=QuestionStatus.PUBLISHED,
+    )
+    session.add(artifact)
+    session.add(evidence)
+    session.add(question)
+    session.commit()
+    course_id = course.id
+
+    token = create_access_token({
+        "sub": str(teacher.id),
+        "username": teacher.username,
+        "role": teacher.role.value,
+    })
+    response = client.delete(
+        f"/api/v1/document/course/{course_id}",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert response.status_code == 200
+    assert response.json()["code"] == 200
+
+    session.expire_all()
+    assert session.get(Course, course_id) is None
+    assert not session.exec(
+        select(DocumentArtifact).where(DocumentArtifact.course_id == course_id)
+    ).all()
+    assert not session.exec(
+        select(CourseEvidenceRecord).where(CourseEvidenceRecord.course_id == course_id)
+    ).all()
+    assert not session.exec(
+        select(QuestionBankItem).where(QuestionBankItem.course_id == course_id)
+    ).all()
+    assert not session.exec(
+        select(CourseMembership).where(CourseMembership.course_id == course_id)
+    ).all()
+    assert not session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course_id)
+    ).all()
 
 
 class TestFrontendDeleteHandling:

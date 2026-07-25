@@ -123,7 +123,7 @@ def test_actual_app_requires_admin_then_returns_disabled_before_provider(tmp_pat
 
     assert unauthenticated.status_code == 401
     assert response.status_code == 503
-    assert response.json()["message"]["code"] == "DEMO_SHADOW_DISABLED"
+    assert response.json()["data"]["code"] == "DEMO_SHADOW_DISABLED"
     assert provider.called is False
 
 

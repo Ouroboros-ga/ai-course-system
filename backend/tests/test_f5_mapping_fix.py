@@ -229,7 +229,9 @@ class TestPlayerAPIMappingPriority:
         mock_node = Mock()
         mock_node.id = 1
         mock_node.node_index = 0
-        mock_node.node_type = ScriptNodeType.KNOWLEDGE_POINT
+        # Script nodes use the teaching-content enum; graph knowledge-point
+        # types are a separate domain model.
+        mock_node.node_type = ScriptNodeType.LECTURE
         mock_node.title = "知识点1"
         mock_node.content = "这是第一个知识点的详细讲解..."
         mock_node.chapter_id = "chap_001"

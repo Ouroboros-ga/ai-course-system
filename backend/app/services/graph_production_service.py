@@ -309,7 +309,9 @@ def mark_evidence_stale(
     course_id: int,
     document_id: str,
     reason: str = "courseware_reparse",
-):
+    *,
+    commit: bool = True,
+) -> int:
     """课件重新解析时标记相关 Evidence 为 stale
 
     课件重新解析或删除时，历史引用不会静默指向错误内容。
@@ -326,7 +328,10 @@ def mark_evidence_stale(
         ev.stale_reason = reason
         ev.stale_at = datetime.now(timezone.utc)
         session.add(ev)
-    session.commit()
+    # A document lifecycle operation may need this change to be part of its
+    # larger transaction.  The public graph endpoint keeps the default.
+    if commit:
+        session.commit()
     return len(evidences)
 
 

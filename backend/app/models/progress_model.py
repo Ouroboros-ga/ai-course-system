@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sqlmodel import SQLModel, Field
 from typing import Optional
+import uuid
 from datetime import datetime
 from enum import Enum
 
@@ -157,7 +158,10 @@ class LearningJumpHistory(SQLModel, table=True):
 
     user_id: int = Field(index=True, description="学生ID")
     course_id: int = Field(index=True, description="课程ID")
-    session_id: str = Field(description="学习会话ID（用于关联一次学习会话）")
+    session_id: str = Field(
+        default_factory=lambda: f"jump-{uuid.uuid4().hex}",
+        description="学习会话ID（用于关联一次学习会话）",
+    )
 
     from_node_id: int = Field(description="跳出的源节点ID")
     from_node_title: str = Field(default="", description="跳出节点标题")
