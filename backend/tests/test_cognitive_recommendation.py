@@ -50,7 +50,12 @@ from app.services.cognitive_service import (
     compute_cognitive_state,
     get_latest_cognitive_state,
 )
-from app.services.recommendation_service import generate_recommendation
+from app.services.recommendation_service import (
+    generate_recommendation,
+    lock_recommendation,
+    mark_recommendation_consumed,
+    unlock_recommendation,
+)
 
 CR = "/api/v1/cognitive"
 
@@ -761,3 +766,487 @@ def test_scored_performance_uses_scores_and_node_scope(session):
     assert node_state.observed_performance_score == pytest.approx(0.6)
     assert node_state.sample_size == 3
     assert node_state.evidence_refs
+
+
+# ==================== 批次4：教师安全阀 - 锁定推荐项测试 ====================
+
+
+def test_lock_recommendation_prevents_overwrite(session):
+    """教师锁定推荐项后，generate_recommendation 不应覆盖该锁定项。
+
+    场景：先生成低表现推荐（practice_quiz, high），教师锁定后，再次调用
+    generate_recommendation（即使 force_recompute=True）应直接返回锁定的
+    推荐记录，不创建新记录，且字段保持锁定时的快照。
+    """
+    teacher = _user(session, "cr_lock_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_lock_student")
+    course = _setup_course(session, teacher, student)
+
+    # 7次答题：3正确4错误 -> 低表现+高置信度 -> practice_quiz, high
+    for i in range(7):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 3))
+
+    original_rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    assert original_rec.recommendation_type == "practice_quiz"
+    assert original_rec.priority == "high"
+    assert original_rec.is_locked is False
+
+    # 教师锁定该推荐
+    locked = lock_recommendation(session, original_rec.recommendation_id, teacher.id)
+    assert locked is not None
+    assert locked.is_locked is True
+    assert locked.locked_by == teacher.id
+    assert locked.locked_at is not None
+    assert locked.recommendation_id == original_rec.recommendation_id
+
+    # 再次生成推荐（即使 force_recompute=True）应返回锁定的推荐，不创建新记录
+    rerun = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    assert rerun.recommendation_id == original_rec.recommendation_id
+    assert rerun.is_locked is True
+    assert rerun.locked_by == teacher.id
+
+    # 数据库中只有一条推荐记录（未生成新记录覆盖锁定项）
+    all_records = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.student_id == student.id,
+            RecommendationRecord.course_id == course.id,
+        )
+    ).all()
+    assert len(all_records) == 1
+    assert all_records[0].is_locked is True
+
+
+def test_unlock_recommendation_allows_recompute(session):
+    """教师解锁后，generate_recommendation 可重新生成推荐覆盖旧记录。
+
+    场景：锁定推荐后解锁，再次调用 generate_recommendation(force_recompute=True)
+    应生成新的推荐记录，旧锁定记录保留但不再阻止重新生成。
+    """
+    teacher = _user(session, "cr_unlock_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_unlock_student")
+    course = _setup_course(session, teacher, student)
+
+    # 低表现 -> practice_quiz, high
+    for i in range(7):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 3))
+
+    original_rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    lock_recommendation(session, original_rec.recommendation_id, teacher.id)
+
+    # 解锁
+    unlocked = unlock_recommendation(session, original_rec.recommendation_id)
+    assert unlocked is not None
+    assert unlocked.is_locked is False
+    assert unlocked.locked_by is None
+    assert unlocked.locked_at is None
+
+    # 解锁后可重新生成（创建新记录）
+    rerun = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    assert rerun.recommendation_id != original_rec.recommendation_id
+    assert rerun.is_locked is False
+
+    # 数据库中存在两条推荐记录（旧解锁 + 新生成）
+    all_records = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.student_id == student.id,
+            RecommendationRecord.course_id == course.id,
+        )
+    ).all()
+    assert len(all_records) == 2
+
+
+def test_lock_recommendation_unknown_id_returns_none(session):
+    """锁定不存在的推荐ID时返回 None（fail-closed，不抛异常）。"""
+    teacher = _user(session, "cr_lock_unknown_teacher", UserRole.TEACHER)
+    result = lock_recommendation(session, "non-existent-id", teacher.id)
+    assert result is None
+
+    result = unlock_recommendation(session, "non-existent-id")
+    assert result is None
+
+
+def test_lock_recommendation_scoped_to_node(session):
+    """锁定推荐按 node_id 隔离：锁定节点A的推荐不影响节点B的重新生成。
+
+    场景：在节点A生成并锁定推荐后，在节点B调用 generate_recommendation
+    应能正常生成节点B的推荐（不受节点A锁定影响）。
+    """
+    teacher = _user(session, "cr_lock_node_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_lock_node_student")
+    course = _setup_course(session, teacher, student)
+
+    # 在节点101创建答题数据
+    for i in range(5):
+        q = _create_published_question(session, course.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=False)
+
+    # 节点101生成推荐并锁定
+    rec_node_a = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+    lock_recommendation(session, rec_node_a.recommendation_id, teacher.id)
+
+    # 节点202生成推荐（不应被节点101的锁定阻止）
+    rec_node_b = generate_recommendation(
+        session, student.id, course.id, node_id=202, force_recompute=True,
+    )
+    assert rec_node_b.recommendation_id != rec_node_a.recommendation_id
+    assert rec_node_b.is_locked is False
+    assert rec_node_b.node_id == 202
+
+    # 节点101再次生成应返回锁定项
+    rerun_a = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+    assert rerun_a.recommendation_id == rec_node_a.recommendation_id
+    assert rerun_a.is_locked is True
+
+
+def test_lock_recommendation_api_requires_permission(client, session):
+    """锁定推荐API需 analytics.view_member 或 agent.policy.configure 权限。
+
+    场景：无课程成员关系的用户调用锁定接口应返回 403；
+    具备 owner 角色的教师（默认拥有 analytics.view_member）可成功锁定。
+    """
+    teacher = _user(session, "cr_lock_api_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_lock_api_student")
+    course = _setup_course(session, teacher, student)
+
+    # 学生生成推荐
+    for i in range(5):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 3))
+    rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+
+    # 无课程成员关系的用户调用锁定 -> 403
+    outsider = _user(session, "cr_lock_api_outsider", UserRole.TEACHER)
+    outsider_token = _token(outsider)
+    resp = client.post(
+        f"{CR}/recommendation/{rec.recommendation_id}/lock",
+        headers=_auth(outsider_token),
+    )
+    assert resp.status_code == 403
+
+    # 课程教师（owner，具备 analytics.view_member）调用锁定 -> 200
+    teacher_token = _token(teacher)
+    resp = client.post(
+        f"{CR}/recommendation/{rec.recommendation_id}/lock",
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["is_locked"] is True
+    assert body["locked_by"] == teacher.id
+    assert body["locked_at"] is not None
+
+
+def test_unlock_recommendation_api_requires_permission(client, session):
+    """解锁推荐API需 analytics.view_member 或 agent.policy.configure 权限。"""
+    teacher = _user(session, "cr_unlock_api_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_unlock_api_student")
+    course = _setup_course(session, teacher, student)
+
+    for i in range(5):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 3))
+    rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    lock_recommendation(session, rec.recommendation_id, teacher.id)
+
+    # 无成员关系用户调用解锁 -> 403
+    outsider = _user(session, "cr_unlock_api_outsider", UserRole.TEACHER)
+    outsider_token = _token(outsider)
+    resp = client.post(
+        f"{CR}/recommendation/{rec.recommendation_id}/unlock",
+        headers=_auth(outsider_token),
+    )
+    assert resp.status_code == 403
+    # 推荐仍处于锁定状态
+    refreshed = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.recommendation_id == rec.recommendation_id,
+        )
+    ).first()
+    assert refreshed.is_locked is True
+
+    # 课程教师调用解锁 -> 200
+    teacher_token = _token(teacher)
+    resp = client.post(
+        f"{CR}/recommendation/{rec.recommendation_id}/unlock",
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 200
+    body = resp.json()["data"]
+    assert body["is_locked"] is False
+    assert body["locked_by"] is None
+
+
+def test_lock_api_returns_404_for_unknown_recommendation(client, session):
+    """锁定/解锁不存在的推荐ID时返回 404。"""
+    teacher = _user(session, "cr_lock_404_teacher", UserRole.TEACHER)
+    teacher_token = _token(teacher)
+
+    resp = client.post(
+        f"{CR}/recommendation/non-existent-id/lock",
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 404
+
+    resp = client.post(
+        f"{CR}/recommendation/non-existent-id/unlock",
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 404
+
+
+def test_lock_recommendation_does_not_block_consumed(session):
+    """已消费的锁定推荐不再阻止重新生成（仅未消费的锁定项阻止覆盖）。
+
+    场景：锁定推荐后学生消费该推荐，再次调用 generate_recommendation
+    应能生成新推荐（_find_locked_unconsumed 只匹配 consumed=False 的锁定项）。
+    """
+    teacher = _user(session, "cr_lock_consumed_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_lock_consumed_student")
+    course = _setup_course(session, teacher, student)
+
+    for i in range(5):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 3))
+    rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    lock_recommendation(session, rec.recommendation_id, teacher.id)
+
+    # 学生消费该推荐
+    mark_recommendation_consumed(session, rec.recommendation_id, student.id)
+    refreshed = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.recommendation_id == rec.recommendation_id,
+        )
+    ).first()
+    assert refreshed.consumed is True
+    assert refreshed.is_locked is True
+
+    # 已消费的锁定推荐不再阻止重新生成
+    rerun = generate_recommendation(session, student.id, course.id, force_recompute=True)
+    assert rerun.recommendation_id != rec.recommendation_id
+    assert rerun.is_locked is False
+
+
+# ==================== 批次3：已确认薄弱前置集合推荐测试 ====================
+
+
+def test_prereq_review_recommendation_for_confirmed_weak_prerequisite(session):
+    """批次3：当当前知识点的先修节点被确认为薄弱（低表现+高置信度）时，
+    生成 PREREQ_REVIEW 推荐而非普通补弱练习。
+
+    验收：低置信度只进入"需要更多证据"，不直接断言薄弱。
+    """
+    from app.services.graph_production_service import (
+        create_evidence as create_graph_evidence,
+        publish_snapshot,
+    )
+    from app.models.access_control_model import CourseCapability
+
+    teacher = _user(session, "cr_prereq_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_prereq_student")
+    course = _setup_course(session, teacher, student)
+    # 开启 knowledge_graph capability
+    cap = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course.id)
+    ).first()
+    if cap:
+        cap.knowledge_graph = True
+        session.add(cap)
+        session.commit()
+
+    # 发布图谱快照：n2(先修) -> n1(当前)
+    evidence = create_graph_evidence(
+        session, course_id=course.id, text_snippet="前置知识证据"
+    )
+    publish_snapshot(
+        session, course_id=course.id,
+        nodes=[
+            {"node_id": "101", "label": "当前知识点", "type": "knowledge_point"},
+            {"node_id": "202", "label": "前置知识点", "type": "knowledge_point"},
+        ],
+        relations=[{
+            "relation_id": "r1", "source": "202", "target": "101",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }],
+        user_id=teacher.id,
+    )
+
+    # 在先修节点 202 上制造低表现+高置信度的认知状态（5次全错）
+    for _ in range(5):
+        q = _create_published_question(session, course.id, QuestionDifficulty.EASY)
+        q.knowledge_node_ids = [202]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=False)
+    prereq_state = compute_cognitive_state(session, student.id, course.id, node_id=202)
+    assert prereq_state.observed_performance_score is not None
+    assert prereq_state.observed_performance_score < 0.5
+    assert prereq_state.evidence_confidence is not None
+    assert prereq_state.evidence_confidence >= 0.6
+
+    # 在当前节点 101 上也有一些答题数据
+    for i in range(3):
+        q = _create_published_question(session, course.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 2))
+
+    # 生成当前节点 101 的推荐 -> 应为 PREREQ_REVIEW
+    rec = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+    assert rec.recommendation_type == "prereq_review"
+    assert rec.priority == "high"
+    assert "confirmed_weak_prerequisite" in rec.reason_codes
+    assert "prerequisite_review" in rec.reason_codes
+    assert any("weak_prerequisite_node=202" in rc for rc in rec.reason_codes)
+    assert rec.policy_version == COGNITIVE_POLICY_VERSION
+    assert rec.evidence_refs  # 携带证据引用
+
+
+def test_prereq_review_not_triggered_for_low_confidence_prerequisite(session):
+    """批次3：先修节点置信度不足时不触发 PREREQ_REVIEW（低置信度只进入需要更多证据）。
+
+    验收：低置信度只进入"需要更多证据"，不直接断言薄弱。
+    """
+    from app.services.graph_production_service import (
+        create_evidence as create_graph_evidence,
+        publish_snapshot,
+    )
+    from app.models.access_control_model import CourseCapability
+
+    teacher = _user(session, "cr_prereq_lc_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_prereq_lc_student")
+    course = _setup_course(session, teacher, student)
+    cap = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course.id)
+    ).first()
+    if cap:
+        cap.knowledge_graph = True
+        session.add(cap)
+        session.commit()
+
+    evidence = create_graph_evidence(
+        session, course_id=course.id, text_snippet="前置知识证据"
+    )
+    publish_snapshot(
+        session, course_id=course.id,
+        nodes=[
+            {"node_id": "101", "label": "当前知识点"},
+            {"node_id": "202", "label": "前置知识点"},
+        ],
+        relations=[{
+            "relation_id": "r1", "source": "202", "target": "101",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }],
+        user_id=teacher.id,
+    )
+
+    # 先修节点 202 仅 1 次答题（样本不足，置信度低）-> 不应断言薄弱
+    q = _create_published_question(session, course.id, QuestionDifficulty.EASY)
+    q.knowledge_node_ids = [202]
+    session.add(q)
+    session.commit()
+    _create_attempt(session, student.id, course.id, q.id, is_correct=False)
+    prereq_state = compute_cognitive_state(session, student.id, course.id, node_id=202)
+    # 样本不足时置信度低
+    assert prereq_state.evidence_confidence is None or prereq_state.evidence_confidence < 0.6
+
+    # 当前节点 101 答题
+    for i in range(3):
+        q = _create_published_question(session, course.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 2))
+
+    # 生成推荐 -> 不应为 PREREQ_REVIEW（因先修复置信度不足）
+    rec = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+    assert rec.recommendation_type != "prereq_review"
+
+
+def test_prereq_review_not_triggered_without_graph_snapshot(session):
+    """批次3：无已发布图谱快照时不触发 PREREQ_REVIEW（回退到普通推荐）。"""
+    teacher = _user(session, "cr_prereq_nograph_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_prereq_nograph_student")
+    course = _setup_course(session, teacher, student)
+
+    # 不发布图谱快照，直接在节点上答题
+    for i in range(5):
+        q = _create_published_question(session, course.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=False)
+
+    rec = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+    assert rec.recommendation_type != "prereq_review"
+
+
+def test_prereq_recommendation_cross_course_isolation(session):
+    """批次3：课程A的图谱先修关系不影响课程B的推荐（课程隔离验收）。"""
+    from app.services.graph_production_service import (
+        create_evidence as create_graph_evidence,
+        publish_snapshot,
+    )
+    from app.models.access_control_model import CourseCapability
+
+    teacher_a = _user(session, "cr_prereq_iso_ta", UserRole.TEACHER)
+    teacher_b = _user(session, "cr_prereq_iso_tb", UserRole.TEACHER)
+    student = _user(session, "cr_prereq_iso_student")
+    course_a = _setup_course(session, teacher_a, student)
+    course_b = _setup_course(session, teacher_b, student)
+
+    for c in (course_a, course_b):
+        cap = session.exec(
+            select(CourseCapability).where(CourseCapability.course_id == c.id)
+        ).first()
+        if cap:
+            cap.knowledge_graph = True
+            session.add(cap)
+    session.commit()
+
+    # 仅在课程A发布图谱快照
+    evidence = create_graph_evidence(
+        session, course_id=course_a.id, text_snippet="课程A前置证据"
+    )
+    publish_snapshot(
+        session, course_id=course_a.id,
+        nodes=[
+            {"node_id": "101", "label": "当前"},
+            {"node_id": "202", "label": "前置"},
+        ],
+        relations=[{
+            "relation_id": "r1", "source": "202", "target": "101",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }],
+        user_id=teacher_a.id,
+    )
+
+    # 课程B无图谱快照，在节点101答题
+    for i in range(5):
+        q = _create_published_question(session, course_b.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course_b.id, q.id, is_correct=False)
+
+    # 课程B的推荐不应是 PREREQ_REVIEW（无图谱快照）
+    rec_b = generate_recommendation(
+        session, student.id, course_b.id, node_id=101, force_recompute=True,
+    )
+    assert rec_b.recommendation_type != "prereq_review"
+    assert rec_b.course_id == course_b.id

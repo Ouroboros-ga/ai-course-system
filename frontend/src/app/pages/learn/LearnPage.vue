@@ -10,6 +10,7 @@ import LearningActionDock from '@/app/components/learn/LearningActionDock.vue'
 import CourseAgentPanel from '@/app/components/learn/CourseAgentPanel.vue'
 import CitationStage from '@/app/components/learn/CitationStage.vue'
 import PracticePanel from '@/app/components/learn/PracticePanel.vue'
+import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
@@ -22,9 +23,9 @@ const previewMode = computed(() => ['owner', 'teacher', 'teaching_assistant'].in
 
 const ws = useLearningWorkspace(courseId, { previewMode: previewMode.value })
 
-// 批次1：启用 PRACTICE（试一试）切片
+// 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
-  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE],
+  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE],
 })
 const learnState = ref(machine.state)
 const branchContext = ref(null)
@@ -141,7 +142,7 @@ onMounted(() => {
 
         <main class="sfx-learn-stage">
           <LectureStage
-            v-if="learnState !== LEARN_STATES.CITATION"
+            v-if="learnState !== LEARN_STATES.CITATION && learnState !== LEARN_STATES.VISUALIZE"
             :current-node="ws.currentNode.value"
             :current-video-url="ws.currentVideoUrl.value"
             :current-slide="ws.currentSlide.value"
@@ -154,8 +155,16 @@ onMounted(() => {
           />
 
           <CitationStage
-            v-else
+            v-else-if="learnState === LEARN_STATES.CITATION"
             :document-id="evidenceDocumentId"
+            @exit="exitBranch"
+          />
+
+          <VisualizationStage
+            v-else-if="learnState === LEARN_STATES.VISUALIZE"
+            :course-id="courseId"
+            :node-id="ws.currentNodeId.value"
+            :node-title="ws.currentNode.value?.title || ''"
             @exit="exitBranch"
           />
         </main>

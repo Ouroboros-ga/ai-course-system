@@ -13,10 +13,10 @@ Hard constraints:
 - Any bootstrap error is caught and logged; the app still starts with the
   endpoint at 503. Bootstrap never blocks startup.
 
-Single-report limit: the current TeachingAgent runtime is bound to one
-(student, course) report. If the store holds multiple reports, the first
-sorted pair is injected and a warning is logged; multi-report session routing
-is a follow-up (see TODO).
+批次4：注入一个 ``TeachingAgentRuntimeRegistry``，按 (student_id, course_id)
+动态构建/缓存运行时。为兼容旧测试，仍把首份报告对应的运行时写入
+``app.state.teaching_agent_runtime`` 和 ``app.state.teaching_agent_scope``，
+但端点优先使用 ``teaching_agent_runtime_registry`` 进行多报告路由。
 """
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ from app.core.config import settings
 from app.core.feature_flags import TEACHING_AGENT_MODES
 from app.platform.agents.composition import build_kg_mest_shadow_sidecar_runtime
 from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
+from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.tools.integration import (
     CallableLearningEventPort,
     CallableRecommendationPort,
     UnavailableSandboxPort,
 )
-from app.platform.agents.tools.kg_mest_shadow import KGMetShadowReportStudentModelingPort
 from app.platform.agents.tools.openai_compatible import OpenAICompatibleTeachingLLM
 from app.platform.retrieval_demo.service import DemoService
 
@@ -68,16 +68,6 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         if not reports:
             logger.info("TeachingAgent enabled but no KG-MEST Shadow report in store; endpoint stays 503.")
             return False
-        if len(reports) > 1:
-            logger.warning(
-                "TeachingAgent store has %d reports; injecting the first (%s). Multi-report routing is not yet supported.",
-                len(reports), reports[0],
-            )
-        student_id, course_id = reports[0]
-        report = store.read(student_id, course_id)
-        if report is None:
-            logger.warning("TeachingAgent report vanished between list and read; endpoint stays 503.")
-            return False
 
         # Course-scoped retrieval / KG / scope come from the isolated R2
         # DemoService (the same one the retrieval-demo endpoint uses).
@@ -98,6 +88,26 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             return False
         llm = OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model)
 
+        # 批次4：注入 registry，按 (student_id, course_id) 动态构建运行时。
+        # 多报告场景下，每个 (student, course) 报告对应一个独立运行时；
+        # 无报告的请求 fail-closed 返回 None，端点保持 503。
+        registry = TeachingAgentRuntimeRegistry(
+            demo_service=service,
+            llm=llm,
+            recommendation=CallableRecommendationPort(_empty_recommendation),
+            sandbox=UnavailableSandboxPort(),
+            learning_events=CallableLearningEventPort(_noop_event_async, _noop_event_async),
+            store=store,
+        )
+        app.state.teaching_agent_runtime_registry = registry
+
+        # 兼容旧测试/旧端点：仍注入首个报告对应的运行时和 scope。
+        # 端点优先使用 registry；若 registry 缺失则回退到该单运行时。
+        student_id, course_id = reports[0]
+        report = store.read(student_id, course_id)
+        if report is None:
+            logger.warning("TeachingAgent report vanished between list and read; endpoint stays 503.")
+            return False
         runtime = build_kg_mest_shadow_sidecar_runtime(
             demo_service=service,
             shadow_report=report,
@@ -111,8 +121,8 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         app.state.teaching_agent_runtime = runtime
         app.state.teaching_agent_scope = {"student_id": student_id, "course_id": course_id}
         logger.info(
-            "TeachingAgent runtime injected for student=%s course=%s; /api/v1/teaching-agent/respond is live.",
-            student_id, course_id,
+            "TeachingAgent registry injected with %d report(s); first scope student=%s course=%s; /api/v1/teaching-agent/respond is live.",
+            len(reports), student_id, course_id,
         )
         return True
     except Exception as error:  # noqa: BLE001 -- bootstrap must never block startup

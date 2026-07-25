@@ -34,6 +34,8 @@ from app.services.graph_production_service import (
     list_snapshots, rollback_snapshot, mark_evidence_stale,
     get_evidence_for_node, serialize_snapshot, serialize_evidence,
     graph_target_hash,
+    list_review_candidates, transition_review, diff_snapshots,
+    get_prerequisite_nodes,
 )
 
 
@@ -417,3 +419,223 @@ class TestGraphProductionAPI:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 403
+
+
+class TestBatch3ReviewStateMachine:
+    """批次3：候选审核状态机、冲突列表、版本对比"""
+
+    def test_list_review_candidates_returns_proposed_and_needs_review(self, session):
+        """候选列表默认返回 proposed 与 needs_review"""
+        teacher = _user(session, "b3_cand_t")
+        course = _setup(session, teacher)
+        r1 = GraphNodeReview(
+            course_id=course.id, target_id="n1", target_type="node",
+            decision="proposed", reviewer=teacher.id,
+        )
+        r2 = GraphNodeReview(
+            course_id=course.id, target_id="n2", target_type="node",
+            decision="needs_review", reviewer=teacher.id,
+        )
+        r3 = GraphNodeReview(
+            course_id=course.id, target_id="n3", target_type="node",
+            decision="accepted", reviewer=teacher.id,
+        )
+        session.add_all([r1, r2, r3]); session.commit()
+        candidates = list_review_candidates(session, course.id)
+        ids = {c.target_id for c in candidates}
+        assert ids == {"n1", "n2"}  # accepted 不在默认候选列表
+
+    def test_list_review_candidates_filter_by_decision(self, session):
+        """按状态筛选候选"""
+        teacher = _user(session, "b3_filt_t")
+        course = _setup(session, teacher)
+        r1 = GraphNodeReview(
+            course_id=course.id, target_id="n1", target_type="node",
+            decision="accepted", reviewer=teacher.id,
+        )
+        session.add(r1); session.commit()
+        candidates = list_review_candidates(session, course.id, decision="accepted")
+        assert len(candidates) == 1
+        assert candidates[0].target_id == "n1"
+
+    def test_transition_proposed_to_accepted(self, session):
+        """proposed -> accepted 状态推进"""
+        teacher = _user(session, "b3_trans_t")
+        course = _setup(session, teacher)
+        ev = create_evidence(session, course_id=course.id, text_snippet="证据内容")
+        review = GraphNodeReview(
+            course_id=course.id, target_id="n1", target_type="node",
+            decision="proposed", reviewer=teacher.id,
+        )
+        session.add(review); session.commit(); session.refresh(review)
+        updated = transition_review(
+            session, course.id, review.id,
+            new_decision="accepted", reviewer_id=teacher.id,
+            evidence_ids=[ev.evidence_id],
+        )
+        assert updated.decision == "accepted"
+        assert updated.evidence_ids == [ev.evidence_id]
+
+    def test_transition_rejects_invalid_evidence(self, session):
+        """推进到 accepted 时拒绝跨课程/无效 Evidence"""
+        teacher = _user(session, "b3_invev_t")
+        course = _setup(session, teacher)
+        review = GraphNodeReview(
+            course_id=course.id, target_id="n1", target_type="node",
+            decision="proposed", reviewer=teacher.id,
+        )
+        session.add(review); session.commit(); session.refresh(review)
+        with pytest.raises(ValueError, match="无效或跨课程"):
+            transition_review(
+                session, course.id, review.id,
+                new_decision="accepted", reviewer_id=teacher.id,
+                evidence_ids=["fake-evidence-id"],
+            )
+
+    def test_transition_terminal_state_cannot_revert(self, session):
+        """终态不可回退（accepted 不能回到 proposed）"""
+        teacher = _user(session, "b3_term_t")
+        course = _setup(session, teacher)
+        review = GraphNodeReview(
+            course_id=course.id, target_id="n1", target_type="node",
+            decision="accepted", reviewer=teacher.id,
+        )
+        session.add(review); session.commit(); session.refresh(review)
+        with pytest.raises(ValueError, match="终态不可回退"):
+            transition_review(
+                session, course.id, review.id,
+                new_decision="proposed", reviewer_id=teacher.id,
+            )
+
+    def test_transition_cross_course_review_rejected(self, session):
+        """跨课程审核记录不可推进"""
+        t1 = _user(session, "b3_xc_t1")
+        t2 = _user(session, "b3_xc_t2")
+        c1 = _setup(session, t1)
+        c2 = _setup(session, t2)
+        review = GraphNodeReview(
+            course_id=c1.id, target_id="n1", target_type="node",
+            decision="proposed", reviewer=t1.id,
+        )
+        session.add(review); session.commit(); session.refresh(review)
+        with pytest.raises(ValueError, match="不存在或不属于本课程"):
+            transition_review(
+                session, c2.id, review.id,
+                new_decision="accepted", reviewer_id=t2.id,
+            )
+
+
+class TestBatch3SnapshotDiff:
+    """批次3：版本对比"""
+
+    def test_diff_detects_added_and_removed_nodes(self, session):
+        """版本对比检测新增/删除节点"""
+        teacher = _user(session, "b3_diff_t")
+        course = _setup(session, teacher)
+        s1 = publish_snapshot(
+            session, course_id=course.id,
+            nodes=[{"node_id": "n1"}, {"node_id": "n2"}], relations=[],
+            user_id=teacher.id,
+        )
+        s2 = publish_snapshot(
+            session, course_id=course.id,
+            nodes=[{"node_id": "n2"}, {"node_id": "n3"}], relations=[],
+            user_id=teacher.id,
+        )
+        diff = diff_snapshots(session, course.id, s1.snapshot_id, s2.snapshot_id)
+        added_ids = {n["node_id"] for n in diff["nodes"]["added"]}
+        removed_ids = {n["node_id"] for n in diff["nodes"]["removed"]}
+        assert added_ids == {"n3"}
+        assert removed_ids == {"n1"}
+
+    def test_diff_detects_modified_nodes(self, session):
+        """版本对比检测节点内容变更"""
+        teacher = _user(session, "b3_mod_t")
+        course = _setup(session, teacher)
+        s1 = publish_snapshot(
+            session, course_id=course.id,
+            nodes=[{"node_id": "n1", "label": "旧标签"}], relations=[],
+            user_id=teacher.id,
+        )
+        s2 = publish_snapshot(
+            session, course_id=course.id,
+            nodes=[{"node_id": "n1", "label": "新标签"}], relations=[],
+            user_id=teacher.id,
+        )
+        diff = diff_snapshots(session, course.id, s1.snapshot_id, s2.snapshot_id)
+        assert len(diff["nodes"]["modified"]) == 1
+        assert diff["nodes"]["modified"][0]["from"]["label"] == "旧标签"
+        assert diff["nodes"]["modified"][0]["to"]["label"] == "新标签"
+
+    def test_diff_cross_course_rejected(self, session):
+        """跨课程快照对比被拒绝"""
+        t1 = _user(session, "b3_diff_xc_t1")
+        t2 = _user(session, "b3_diff_xc_t2")
+        c1 = _setup(session, t1)
+        c2 = _setup(session, t2)
+        s1 = publish_snapshot(
+            session, course_id=c1.id, nodes=[{"node_id": "n1"}], relations=[],
+            user_id=t1.id,
+        )
+        s2 = publish_snapshot(
+            session, course_id=c2.id, nodes=[{"node_id": "n1"}], relations=[],
+            user_id=t2.id,
+        )
+        with pytest.raises(ValueError, match="不存在或不属于本课程"):
+            diff_snapshots(session, c1.id, s1.snapshot_id, s2.snapshot_id)
+
+
+class TestBatch3PrerequisiteNodes:
+    """批次3：一跳先修/后继节点查询"""
+
+    def test_get_prerequisite_nodes_incoming(self, session):
+        """获取先修节点（incoming）"""
+        teacher = _user(session, "b3_prereq_t")
+        course = _setup(session, teacher)
+        evidence = create_evidence(
+            session, course_id=course.id, text_snippet="前置知识证据"
+        )
+        nodes = [
+            {"node_id": "n1", "label": "当前知识点"},
+            {"node_id": "n2", "label": "前置知识点"},
+        ]
+        relations = [{
+            "relation_id": "r1", "source": "n2", "target": "n1",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }]
+        publish_snapshot(
+            session, course_id=course.id, nodes=nodes, relations=relations,
+            user_id=teacher.id,
+        )
+        prereqs = get_prerequisite_nodes(session, course.id, "n1", direction="incoming")
+        assert len(prereqs) == 1
+        assert prereqs[0]["node_id"] == "n2"
+
+    def test_get_prerequisite_nodes_outgoing(self, session):
+        """获取后继节点（outgoing）"""
+        teacher = _user(session, "b3_succ_t")
+        course = _setup(session, teacher)
+        evidence = create_evidence(
+            session, course_id=course.id, text_snippet="后继关系证据"
+        )
+        nodes = [
+            {"node_id": "n1", "label": "当前知识点"},
+            {"node_id": "n2", "label": "后继知识点"},
+        ]
+        relations = [{
+            "relation_id": "r1", "source": "n1", "target": "n2",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }]
+        publish_snapshot(
+            session, course_id=course.id, nodes=nodes, relations=relations,
+            user_id=teacher.id,
+        )
+        successors = get_prerequisite_nodes(session, course.id, "n1", direction="outgoing")
+        assert len(successors) == 1
+        assert successors[0]["node_id"] == "n2"
+
+    def test_get_prerequisite_nodes_no_snapshot(self, session):
+        """无已发布快照时返回空列表"""
+        teacher = _user(session, "b3_nosnap_t")
+        course = _setup(session, teacher)
+        assert get_prerequisite_nodes(session, course.id, "n1") == []

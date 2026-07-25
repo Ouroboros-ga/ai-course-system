@@ -46,6 +46,12 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 name: 'app-course-learn',
                 component: () => import('./pages/learn/LearnPage.vue'),
               },
+              {
+                // 批次4：算法可视化页（接收 courseId 与可选 nodeId）
+                path: 'visualize/:nodeId?',
+                name: 'app-course-visualize',
+                component: () => import('@/views/VisualizationView.vue'),
+              },
             ],
           },
         ],

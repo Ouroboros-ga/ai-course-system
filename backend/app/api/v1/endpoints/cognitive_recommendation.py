@@ -33,9 +33,14 @@ from app.services.cognitive_service import compute_cognitive_state, get_latest_c
 from app.services.recommendation_service import (
     generate_recommendation,
     get_recommendation_history,
+    lock_recommendation,
     mark_recommendation_consumed,
+    unlock_recommendation,
 )
-from app.services.course_access_service import require_course_permission
+from app.services.course_access_service import (
+    require_course_permission,
+    resolve_course_access,
+)
 
 router = APIRouter(tags=["G2 六维认知与推荐"])
 
@@ -211,6 +216,89 @@ async def consume_recommendation(
     )
 
 
+@router.post("/recommendation/{recommendation_id}/lock")
+async def lock_recommendation_endpoint(
+    recommendation_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师锁定推荐项（安全阀）。
+
+    权限：``analytics.view_member`` 或 ``agent.policy.configure``（满足其一即可）。
+    锁定后，``generate_recommendation`` 在同 student+course+node 下若存在
+    未消费的锁定推荐，将直接返回该锁定推荐而不重新生成。
+    """
+    teacher_id = int(current_user["user_id"])
+    record = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.recommendation_id == recommendation_id,
+        )
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="推荐记录不存在")
+
+    # 课程级权限校验：教师需具备 analytics.view_member 或 agent.policy.configure 之一
+    context = resolve_course_access(session, current_user, record.course_id)
+    if not (
+        context.allows("analytics.view_member")
+        or context.allows("agent.policy.configure")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="需要 analytics.view_member 或 agent.policy.configure 权限才能锁定推荐",
+        )
+
+    updated = lock_recommendation(session, recommendation_id, teacher_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="推荐记录不存在")
+
+    return unified_response(
+        code=200,
+        message="推荐已锁定",
+        data=_serialize_recommendation(updated),
+    )
+
+
+@router.post("/recommendation/{recommendation_id}/unlock")
+async def unlock_recommendation_endpoint(
+    recommendation_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师解锁推荐项。
+
+    权限：``analytics.view_member`` 或 ``agent.policy.configure``（满足其一即可）。
+    解锁后，``generate_recommendation`` 可重新生成同 student+course+node 的推荐。
+    """
+    record = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.recommendation_id == recommendation_id,
+        )
+    ).first()
+    if record is None:
+        raise HTTPException(status_code=404, detail="推荐记录不存在")
+
+    context = resolve_course_access(session, current_user, record.course_id)
+    if not (
+        context.allows("analytics.view_member")
+        or context.allows("agent.policy.configure")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="需要 analytics.view_member 或 agent.policy.configure 权限才能解锁推荐",
+        )
+
+    updated = unlock_recommendation(session, recommendation_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="推荐记录不存在")
+
+    return unified_response(
+        code=200,
+        message="推荐已解锁",
+        data=_serialize_recommendation(updated),
+    )
+
+
 # ==================== 学习证据接口 ====================
 
 @router.get("/course/{course_id}/evidence")
@@ -298,6 +386,9 @@ def _serialize_recommendation(record: RecommendationRecord) -> dict[str, Any]:
         "consumed": record.consumed,
         "consumed_at": record.consumed_at.isoformat() if record.consumed_at else None,
         "created_at": record.created_at.isoformat() if record.created_at else None,
+        "is_locked": record.is_locked,
+        "locked_by": record.locked_by,
+        "locked_at": record.locked_at.isoformat() if record.locked_at else None,
     }
 
 

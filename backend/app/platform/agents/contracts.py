@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Protocol
+from typing import Any, Mapping, Optional, Protocol
 
 
 class ScopePort(Protocol):
@@ -43,6 +43,31 @@ class TeachingLLMPort(Protocol):
     async def generate_teaching_response(self, *, context: Mapping[str, Any]) -> Mapping[str, Any]: ...
 
 
+# 批次4：可选工具端口（默认 None，未注入时 workflow 节点跳过执行）
+
+
+class WebResearchPort(Protocol):
+    """补充性网络检索端口。
+
+    返回结果必须始终标记 ``is_supplementary=true``，禁止修改掌握度/推荐/图谱。
+    """
+
+    async def research(self, *, course_id: str, query: str, student_id: str | None = None) -> Mapping[str, Any]: ...
+
+
+class CognitionPort(Protocol):
+    """六维认知状态读取端口（只读）。"""
+
+    async def get_state(self, *, student_id: str, course_id: str, node_id: str | None = None) -> Mapping[str, Any] | None: ...
+    async def get_recommendation(self, *, student_id: str, course_id: str, node_id: str | None = None) -> Mapping[str, Any] | None: ...
+
+
+class QuestionBankPort(Protocol):
+    """课程题库读取端口（仅 published 题目，按 course_id 隔离）。"""
+
+    async def list_questions(self, *, course_id: str, node_id: str | None = None, limit: int = 10) -> list[Mapping[str, Any]]: ...
+
+
 @dataclass(frozen=True)
 class TeachingTools:
     scope: ScopePort
@@ -53,3 +78,7 @@ class TeachingTools:
     sandbox: SandboxPort
     learning_events: LearningEventPort
     llm: TeachingLLMPort
+    # 批次4新增可选工具：未注入时 workflow 节点跳过执行，不影响现有流程
+    web_research: Optional[WebResearchPort] = None
+    cognition: Optional[CognitionPort] = None
+    question_bank: Optional[QuestionBankPort] = None

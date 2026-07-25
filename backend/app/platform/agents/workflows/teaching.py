@@ -64,6 +64,28 @@ def build_teaching_workflow(tools: TeachingTools):
             payload.update({"student_concept_state": {}, "weak_concepts": [], "trace": _trace(state, "load_student_state", error=type(error).__name__)})
             return payload
 
+    async def load_cognitive_state(state: TeachingState) -> dict[str, Any]:
+        # 批次4可选节点：未注入 CognitionPort 时直接跳过，不影响现有流程
+        if tools.cognition is None:
+            return {"trace": _trace(state, "load_cognitive_state", skipped=True)}
+        try:
+            node_id = state.get("current_concept_id")
+            cognitive_state = await tools.cognition.get_state(
+                student_id=state["student_id"], course_id=state["course_id"], node_id=node_id,
+            )
+            cognitive_rec = await tools.cognition.get_recommendation(
+                student_id=state["student_id"], course_id=state["course_id"], node_id=node_id,
+            )
+            return {
+                "cognitive_state": dict(cognitive_state) if cognitive_state else None,
+                "cognitive_recommendation": dict(cognitive_rec) if cognitive_rec else None,
+                "trace": _trace(state, "load_cognitive_state", available=cognitive_state is not None),
+            }
+        except Exception as error:
+            payload = _degrade(state, "cognition", "COGNITION_PORT_UNAVAILABLE")
+            payload.update({"trace": _trace(state, "load_cognitive_state", error=type(error).__name__)})
+            return payload
+
     async def load_graph_context(state: TeachingState) -> dict[str, Any]:
         try:
             graph = dict(await tools.knowledge_graph.get_context(course_id=state["course_id"], concept_id=str(state["current_concept_id"])))
@@ -73,6 +95,24 @@ def build_teaching_workflow(tools: TeachingTools):
             payload.update({"graph_context": {}, "prerequisites": [], "successors": [], "trace": _trace(state, "load_graph_context", error=type(error).__name__)})
             return payload
 
+    async def load_question_bank(state: TeachingState) -> dict[str, Any]:
+        # 批次4可选节点：未注入 QuestionBankPort 时直接跳过
+        if tools.question_bank is None:
+            return {"trace": _trace(state, "load_question_bank", skipped=True)}
+        try:
+            node_id = state.get("current_concept_id")
+            items = await tools.question_bank.list_questions(
+                course_id=state["course_id"], node_id=node_id, limit=10,
+            )
+            return {
+                "question_bank_items": [dict(item) for item in items],
+                "trace": _trace(state, "load_question_bank", count=len(items)),
+            }
+        except Exception as error:
+            payload = _degrade(state, "question_bank", "QUESTION_BANK_PORT_UNAVAILABLE")
+            payload.update({"question_bank_items": [], "trace": _trace(state, "load_question_bank", error=type(error).__name__)})
+            return payload
+
     async def retrieve_evidence(state: TeachingState) -> dict[str, Any]:
         try:
             evidence = await tools.retrieval.retrieve_course_evidence(course_id=state["course_id"], message=state["user_message"], concept_id=state.get("current_concept_id"), resource_id=state.get("current_resource_id"))
@@ -80,6 +120,26 @@ def build_teaching_workflow(tools: TeachingTools):
         except Exception as error:
             payload = _degrade(state, "retrieval", "COURSE_RETRIEVAL_UNAVAILABLE")
             payload.update({"retrieved_evidence": [], "trace": _trace(state, "retrieve_course_evidence", error=type(error).__name__)})
+            return payload
+
+    async def research_web(state: TeachingState) -> dict[str, Any]:
+        # 批次4可选节点：未注入 WebResearchPort 时直接跳过。
+        # WebResearch 结果始终标记 is_supplementary=true，不修改掌握度/推荐/图谱。
+        if tools.web_research is None:
+            return {"trace": _trace(state, "research_web", skipped=True)}
+        try:
+            result = await tools.web_research.research(
+                course_id=state["course_id"],
+                query=state["user_message"],
+                student_id=state["student_id"],
+            )
+            return {
+                "web_research_results": dict(result) if result else None,
+                "trace": _trace(state, "research_web", available=bool(result)),
+            }
+        except Exception as error:
+            payload = _degrade(state, "web_research", "WEB_RESEARCH_PORT_UNAVAILABLE")
+            payload.update({"web_research_results": None, "trace": _trace(state, "research_web", error=type(error).__name__)})
             return payload
 
     async def load_sandbox_context(state: TeachingState) -> dict[str, Any]:
@@ -107,7 +167,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     async def generate_response(state: TeachingState) -> dict[str, Any]:
         try:
-            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services")})
+            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results")})
             return {"final_answer": str(generated.get("answer", "")), "citations": [dict(item) for item in generated.get("citations", [])], "trace": _trace(state, "generate_response", answer_present=bool(generated.get("answer")))}
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "generate_response", error=type(error).__name__)}
@@ -133,6 +193,8 @@ def build_teaching_workflow(tools: TeachingTools):
             "teaching_action_reason": state.get("teaching_action_reason"), "final_answer": state.get("final_answer"),
             "citations": state.get("citations", []), "warnings": state.get("warnings", []),
             "errors": state.get("errors", []), "degraded_services": state.get("degraded_services", []), "nodes": state.get("trace", []),
+            "cognitive_state": state.get("cognitive_state"), "cognitive_recommendation": state.get("cognitive_recommendation"),
+            "question_bank_items": state.get("question_bank_items", []), "web_research_results": state.get("web_research_results"),
         }
         try:
             await tools.learning_events.record_learning_event(event=event)
@@ -160,8 +222,11 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("detect_intent", detect_intent)
     graph.add_node("resolve_concept", resolve_concept)
     graph.add_node("load_student_state", load_student_state)
+    graph.add_node("load_cognitive_state", load_cognitive_state)
     graph.add_node("load_graph_context", load_graph_context)
+    graph.add_node("load_question_bank", load_question_bank)
     graph.add_node("retrieve_evidence", retrieve_evidence)
+    graph.add_node("research_web", research_web)
     graph.add_node("load_sandbox_context", load_sandbox_context)
     graph.add_node("decide_teaching_action", decide_action)
     graph.add_node("generate_response", generate_response)
@@ -171,9 +236,13 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_conditional_edges("validate_request", after_validation)
     graph.add_conditional_edges("detect_intent", after_intent)
     graph.add_conditional_edges("resolve_concept", after_resolution)
-    graph.add_edge("load_student_state", "load_graph_context")
-    graph.add_edge("load_graph_context", "retrieve_evidence")
-    graph.add_edge("retrieve_evidence", "load_sandbox_context")
+    # 批次4：在现有链路中插入三个可选节点；端口未注入时为 no-op
+    graph.add_edge("load_student_state", "load_cognitive_state")
+    graph.add_edge("load_cognitive_state", "load_graph_context")
+    graph.add_edge("load_graph_context", "load_question_bank")
+    graph.add_edge("load_question_bank", "retrieve_evidence")
+    graph.add_edge("retrieve_evidence", "research_web")
+    graph.add_edge("research_web", "load_sandbox_context")
     graph.add_edge("load_sandbox_context", "decide_teaching_action")
     graph.add_edge("decide_teaching_action", "generate_response")
     graph.add_conditional_edges("generate_response", after_generation)

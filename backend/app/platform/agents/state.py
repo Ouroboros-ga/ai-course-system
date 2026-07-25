@@ -37,3 +37,8 @@ class TeachingState(TypedDict, total=False):
     degraded_services: list[str]
     trace: list[dict[str, Any]]
     status: NotRequired[str]
+    # 批次4新增可选工具产出字段（仅在对应端口注入时填充）
+    cognitive_state: dict[str, Any] | None
+    cognitive_recommendation: dict[str, Any] | None
+    question_bank_items: list[dict[str, Any]]
+    web_research_results: dict[str, Any] | None

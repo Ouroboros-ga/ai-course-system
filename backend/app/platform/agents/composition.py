@@ -2,16 +2,21 @@
 
 from __future__ import annotations
 
+from typing import Optional
+
 from .contracts import (
+    CognitionPort,
     CourseRetrievalPort,
     KnowledgeGraphPort,
     LearningEventPort,
+    QuestionBankPort,
     RecommendationPort,
     SandboxPort,
     ScopePort,
     StudentModelingPort,
     TeachingLLMPort,
     TeachingTools,
+    WebResearchPort,
 )
 from .runtime import TeachingAgentRuntime
 from .tools.integration import RetrievalDemoEvidencePort, RetrievalDemoKnowledgeGraphPort, RetrievalDemoScopePort
@@ -28,12 +33,16 @@ def build_teaching_runtime(
     sandbox: SandboxPort,
     learning_events: LearningEventPort,
     llm: TeachingLLMPort,
+    web_research: Optional[WebResearchPort] = None,
+    cognition: Optional[CognitionPort] = None,
+    question_bank: Optional[QuestionBankPort] = None,
 ) -> TeachingAgentRuntime:
     """Build an enabled runtime only after the composition root supplies every Port."""
     return TeachingAgentRuntime(TeachingTools(
         scope=scope, knowledge_graph=knowledge_graph, retrieval=retrieval,
         student_modeling=student_modeling, recommendation=recommendation,
         sandbox=sandbox, learning_events=learning_events, llm=llm,
+        web_research=web_research, cognition=cognition, question_bank=question_bank,
     ))
 
 
@@ -45,6 +54,9 @@ def build_course_sidecar_runtime(
     sandbox: SandboxPort,
     learning_events: LearningEventPort,
     llm: TeachingLLMPort,
+    web_research: Optional[WebResearchPort] = None,
+    cognition: Optional[CognitionPort] = None,
+    question_bank: Optional[QuestionBankPort] = None,
 ) -> TeachingAgentRuntime:
     """Use the existing isolated course-sidecar R2 provider for KG/evidence only.
 
@@ -61,6 +73,9 @@ def build_course_sidecar_runtime(
         sandbox=sandbox,
         learning_events=learning_events,
         llm=llm,
+        web_research=web_research,
+        cognition=cognition,
+        question_bank=question_bank,
     )
 
 
@@ -74,6 +89,9 @@ def build_kg_mest_shadow_sidecar_runtime(
     sandbox: SandboxPort,
     learning_events: LearningEventPort,
     llm: TeachingLLMPort,
+    web_research: Optional[WebResearchPort] = None,
+    cognition: Optional[CognitionPort] = None,
+    question_bank: Optional[QuestionBankPort] = None,
 ) -> TeachingAgentRuntime:
     """Explicitly inject one approved KG-MEST Shadow report into TeachingAgent."""
     return build_course_sidecar_runtime(
@@ -87,4 +105,7 @@ def build_kg_mest_shadow_sidecar_runtime(
         sandbox=sandbox,
         learning_events=learning_events,
         llm=llm,
+        web_research=web_research,
+        cognition=cognition,
+        question_bank=question_bank,
     )

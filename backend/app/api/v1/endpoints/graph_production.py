@@ -33,7 +33,12 @@ from app.services.graph_production_service import (
     get_evidence_for_node,
     serialize_snapshot,
     serialize_evidence,
+    serialize_review,
     graph_target_hash,
+    list_review_candidates,
+    transition_review,
+    diff_snapshots,
+    get_prerequisite_nodes,
 )
 
 router = APIRouter(tags=["G9 Evidence与图谱"])
@@ -62,6 +67,13 @@ class GraphReviewCreateRequest(BaseModel):
     review_comment: str = Field(default="", max_length=5000)
     evidence_ids: list[str] = Field(default_factory=list, max_length=100)
     target_content: Optional[dict] = None
+
+
+class ReviewTransitionRequest(BaseModel):
+    """批次3：候选审核状态推进。"""
+    new_decision: str = Field(pattern="^(accepted|rejected|needs_review)$")
+    review_comment: str = Field(default="", max_length=5000)
+    evidence_ids: Optional[list[str]] = Field(None, max_length=100)
 
 
 @router.post("/course/{course_id}/evidence")
@@ -317,4 +329,111 @@ async def mark_stale(
     return unified_response(
         code=200, message=f"已标记 {count} 条证据为 stale",
         data={"stale_count": count, "document_id": document_id},
+    )
+
+
+# ---------------------------------------------------------------------------
+# 批次3：候选审核状态机、冲突列表、版本对比、一跳先修/后继
+# ---------------------------------------------------------------------------
+
+
+@router.get("/course/{course_id}/candidates")
+async def list_candidates(
+    course_id: int,
+    decision: Optional[str] = Query(
+        None, description="按状态筛选(proposed/needs_review/accepted/rejected)；不传则返回待治理候选"
+    ),
+    target_type: Optional[str] = Query(None, description="按目标类型筛选(node/relation)"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出待治理候选节点/关系（教师审核入口）。
+
+    默认返回 proposed 与 needs_review 的记录（冲突处理待办）。
+    教师可在此界面逐条确认或驳回后，再发布不可变快照。
+    """
+    require_course_permission(session, current_user, course_id, "knowledge.review")
+    reviews = list_review_candidates(
+        session, course_id, decision=decision, target_type=target_type
+    )
+    return unified_response(
+        code=200, message="获取候选审核列表成功",
+        data={
+            "items": [serialize_review(r) for r in reviews],
+            "total": len(reviews),
+        },
+    )
+
+
+@router.post("/course/{course_id}/reviews/{review_id}/transition")
+async def transition_review_endpoint(
+    course_id: int,
+    review_id: int,
+    payload: ReviewTransitionRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """推进候选审核状态机（proposed/needs_review -> accepted/rejected/needs_review）。
+
+    accepted/rejected 为终态，不可回退，保持审核可追溯。
+    推进到 accepted 时若提供 evidence_ids 会校验属于本课程且 ACTIVE。
+    """
+    require_course_permission(session, current_user, course_id, "knowledge.review")
+    try:
+        review = transition_review(
+            session,
+            course_id,
+            review_id,
+            new_decision=payload.new_decision,
+            reviewer_id=int(current_user["user_id"]),
+            review_comment=payload.review_comment,
+            evidence_ids=payload.evidence_ids,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return unified_response(
+        code=200, message="审核状态已更新", data=serialize_review(review)
+    )
+
+
+@router.get("/course/{course_id}/snapshots/diff")
+async def diff_snapshots_endpoint(
+    course_id: int,
+    a: str = Query(..., description="基线快照 snapshot_id"),
+    b: str = Query(..., description="对比快照 snapshot_id"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """版本对比：计算快照 B 相对于快照 A 的节点/关系差异。"""
+    require_course_permission(session, current_user, course_id, "knowledge.review")
+    try:
+        diff = diff_snapshots(session, course_id, a, b)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return unified_response(code=200, message="版本对比成功", data=diff)
+
+
+@router.get("/course/{course_id}/nodes/{node_id}/prerequisites")
+async def get_node_prerequisites(
+    course_id: int,
+    node_id: str,
+    direction: str = Query("incoming", description="incoming=先修, outgoing=后继"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生侧只读：展示当前知识点的一跳先修/后继节点（来自已发布快照）。
+
+    用于学习页"推荐理由、跳转与返回锚点"：学生可跳转到先修节点补学，
+    学完后通过返回锚点回到当前知识点。
+    """
+    require_course_permission(session, current_user, course_id, "knowledge.view")
+    nodes = get_prerequisite_nodes(session, course_id, node_id, direction=direction)
+    return unified_response(
+        code=200, message="获取先修/后继节点成功",
+        data={
+            "node_id": node_id,
+            "direction": direction,
+            "items": nodes,
+            "total": len(nodes),
+        },
     )

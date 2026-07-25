@@ -401,3 +401,222 @@ def serialize_evidence(evidence: CourseEvidenceRecord) -> dict[str, Any]:
         "stale_at": evidence.stale_at.isoformat() if evidence.stale_at else None,
         "created_at": evidence.created_at.isoformat() if evidence.created_at else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# 批次3：候选审核状态机、冲突列表、版本对比
+# ---------------------------------------------------------------------------
+
+# 允许的状态转换（proposed/needs_review 可推进到 accepted/rejected/needs_review；
+# accepted/rejected 为终态，不可回退以保持审核可追溯性）
+_REVIEW_TRANSITIONS: dict[str, set[str]] = {
+    "proposed": {"accepted", "rejected", "needs_review"},
+    "needs_review": {"accepted", "rejected"},
+    "accepted": set(),
+    "rejected": set(),
+}
+
+
+def list_review_candidates(
+    session: Session,
+    course_id: int,
+    *,
+    decision: Optional[str] = None,
+    target_type: Optional[str] = None,
+) -> list[GraphNodeReview]:
+    """列出待治理的候选节点/关系（proposed/needs_review）或按 decision 过滤。
+
+    冲突处理：默认返回所有 proposed 与 needs_review 的记录，供教师在发布前
+    逐条确认或驳回。每条记录携带 target_content_hash，便于检测内容漂移。
+    """
+    stmt = select(GraphNodeReview).where(
+        GraphNodeReview.course_id == course_id,
+    )
+    if decision:
+        stmt = stmt.where(GraphNodeReview.decision == decision)
+    else:
+        stmt = stmt.where(
+            GraphNodeReview.decision.in_(["proposed", "needs_review"])
+        )
+    if target_type:
+        stmt = stmt.where(GraphNodeReview.target_type == target_type)
+    return list(session.exec(stmt.order_by(GraphNodeReview.created_at.desc())).all())
+
+
+def transition_review(
+    session: Session,
+    course_id: int,
+    review_id: int,
+    *,
+    new_decision: str,
+    reviewer_id: int,
+    review_comment: str = "",
+    evidence_ids: Optional[list[str]] = None,
+) -> GraphNodeReview:
+    """推进候选审核状态机。
+
+    - proposed/needs_review -> accepted/rejected/needs_review
+    - accepted/rejected 为终态，不可再变更（保持审核可追溯）
+    - 推进到 accepted 时，若提供 evidence_ids 则校验属于本课程且 ACTIVE
+    - 推进到 accepted 时会重新计算 target_content_hash 以绑定当前内容
+    """
+    if new_decision not in _REVIEW_TRANSITIONS:
+        raise ValueError(f"未知审核状态: {new_decision}")
+    review = session.exec(
+        select(GraphNodeReview).where(
+            GraphNodeReview.id == review_id,
+            GraphNodeReview.course_id == course_id,
+        )
+    ).first()
+    if review is None:
+        raise ValueError(f"审核记录 {review_id} 不存在或不属于本课程")
+    if new_decision == review.decision:
+        return review
+    allowed = _REVIEW_TRANSITIONS.get(review.decision, set())
+    if new_decision not in allowed:
+        raise ValueError(
+            f"审核状态 {review.decision} 不可转换为 {new_decision}（终态不可回退）"
+        )
+    if new_decision == "accepted" and evidence_ids is not None:
+        valid = set(session.exec(
+            select(CourseEvidenceRecord.evidence_id).where(
+                CourseEvidenceRecord.course_id == course_id,
+                CourseEvidenceRecord.evidence_id.in_(evidence_ids),
+                CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+            )
+        ).all())
+        if set(evidence_ids) - valid:
+            raise ValueError("包含无效或跨课程 Evidence")
+        review.evidence_ids = sorted(set(evidence_ids))
+    if review_comment:
+        review.review_comment = review_comment
+    review.decision = new_decision
+    review.reviewer = reviewer_id
+    session.add(review)
+    session.commit()
+    session.refresh(review)
+    return review
+
+
+def diff_snapshots(
+    session: Session,
+    course_id: int,
+    snapshot_a_id: str,
+    snapshot_b_id: str,
+) -> dict[str, Any]:
+    """对比两个快照的节点与关系差异。
+
+    返回:
+      - added_nodes / removed_nodes / modified_nodes
+      - added_relations / removed_relations / modified_relations
+    以快照 B 相对于快照 A 的视角计算。
+    """
+    snap_a = session.exec(
+        select(GraphSnapshotRecord).where(
+            GraphSnapshotRecord.course_id == course_id,
+            GraphSnapshotRecord.snapshot_id == snapshot_a_id,
+        )
+    ).first()
+    if snap_a is None:
+        raise ValueError(f"快照 {snapshot_a_id} 不存在或不属于本课程")
+    snap_b = session.exec(
+        select(GraphSnapshotRecord).where(
+            GraphSnapshotRecord.course_id == course_id,
+            GraphSnapshotRecord.snapshot_id == snapshot_b_id,
+        )
+    ).first()
+    if snap_b is None:
+        raise ValueError(f"快照 {snapshot_b_id} 不存在或不属于本课程")
+
+    return {
+        "snapshot_a": {
+            "snapshot_id": snap_a.snapshot_id,
+            "version": snap_a.version,
+            "label": snap_a.label,
+        },
+        "snapshot_b": {
+            "snapshot_id": snap_b.snapshot_id,
+            "version": snap_b.version,
+            "label": snap_b.label,
+        },
+        "nodes": _diff_collection(snap_a.nodes, snap_b.nodes),
+        "relations": _diff_collection(snap_a.relations, snap_b.relations),
+    }
+
+
+def _diff_collection(items_a: list[dict], items_b: list[dict]) -> dict[str, Any]:
+    """计算两个节点/关系集合的差异（基于稳定 ID + 内容哈希）。"""
+    def _key(item: dict) -> str:
+        return str(item.get("id") or item.get("node_id") or item.get("relation_id") or "")
+
+    map_a = {_key(i): i for i in items_a if isinstance(i, dict)}
+    map_b = {_key(i): i for i in items_b if isinstance(i, dict)}
+
+    added = [map_b[k] for k in map_b.keys() - map_a.keys()]
+    removed = [map_a[k] for k in map_a.keys() - map_b.keys()]
+    modified = [
+        {"id": k, "from": map_a[k], "to": map_b[k]}
+        for k in (map_a.keys() & map_b.keys())
+        if graph_target_hash(map_a[k]) != graph_target_hash(map_b[k])
+    ]
+    return {
+        "added": added,
+        "removed": removed,
+        "modified": modified,
+        "unchanged_count": len(map_a.keys() & map_b.keys()) - len(modified),
+    }
+
+
+def get_prerequisite_nodes(
+    session: Session,
+    course_id: int,
+    node_id: str,
+    *,
+    direction: str = "incoming",
+) -> list[dict]:
+    """从当前活跃快照读取一跳先修/后继节点。
+
+    direction="incoming" 返回指向 node_id 的先修节点（PREREQUISITE_OF 的 source）。
+    direction="outgoing" 返回 node_id 的后继节点（PREREQUISITE_OF 的 target）。
+    学生侧只读已发布快照，不暴露草稿。
+    """
+    snapshot = get_active_snapshot(session, course_id)
+    if snapshot is None:
+        return []
+    prerequisite_types = {"prerequisite", "prerequisite_of", "requires"}
+    node_ids: set[str] = set()
+    for relation in snapshot.relations or []:
+        if not isinstance(relation, dict):
+            continue
+        if str(relation.get("type") or "").casefold() not in prerequisite_types:
+            continue
+        source = str(relation.get("source") or relation.get("source_id") or "")
+        target = str(relation.get("target") or relation.get("target_id") or "")
+        if direction == "incoming" and target == node_id and source:
+            node_ids.add(source)
+        elif direction == "outgoing" and source == node_id and target:
+            node_ids.add(target)
+    if not node_ids:
+        return []
+    return [
+        node for node in (snapshot.nodes or [])
+        if isinstance(node, dict)
+        and str(node.get("id") or node.get("node_id") or "") in node_ids
+    ]
+
+
+def serialize_review(review: GraphNodeReview) -> dict[str, Any]:
+    """序列化审核记录。"""
+    return {
+        "id": review.id,
+        "course_id": review.course_id,
+        "snapshot_id": review.snapshot_id,
+        "target_id": review.target_id,
+        "target_type": review.target_type,
+        "target_content_hash": review.target_content_hash,
+        "decision": review.decision,
+        "reviewer": review.reviewer,
+        "review_comment": review.review_comment,
+        "evidence_ids": review.evidence_ids or [],
+        "created_at": review.created_at.isoformat() if review.created_at else None,
+    }

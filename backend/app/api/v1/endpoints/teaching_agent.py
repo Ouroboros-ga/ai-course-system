@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -10,6 +10,7 @@ from sqlmodel import Session
 
 from app.core.security import get_current_user
 from app.models.database import get_session
+from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime import TeachingAgentRuntime
 from app.services.course_access_service import (
     require_course_permission,
@@ -30,18 +31,59 @@ class TeachingAgentRequest(BaseModel):
     code_submission_id: str | None = Field(default=None, max_length=128)
 
 
-def get_runtime(request: Request) -> TeachingAgentRuntime:
+def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry]:
+    """Resolve the TeachingAgent runtime source for the request.
+
+    批次4：优先返回 ``teaching_agent_runtime_registry``（按 student_id+course_id
+    动态路由）；若 registry 缺失则回退到旧的单运行时注入（``teaching_agent_runtime``）。
+    两者都缺失时返回 503（``TEACHING_AGENT_NOT_CONFIGURED``）。
+
+    依赖顺序：本依赖在 ``get_current_user`` 之前解析，因此未注入运行时时
+    503 优先于 401 返回（保持现有测试行为）。
+    """
+    registry = getattr(request.app.state, "teaching_agent_runtime_registry", None)
+    if registry is not None:
+        return registry
     runtime = getattr(request.app.state, "teaching_agent_runtime", None)
     if runtime is None:
-        raise HTTPException(status_code=503, detail={"code": "TEACHING_AGENT_NOT_CONFIGURED", "message": "TeachingAgent runtime has not been injected."})
+        raise HTTPException(
+            status_code=503,
+            detail={"code": "TEACHING_AGENT_NOT_CONFIGURED", "message": "TeachingAgent runtime has not been injected."},
+        )
     return runtime
+
+
+def _resolve_runtime(
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry],
+    student_id: str,
+    course_id: str,
+) -> TeachingAgentRuntime:
+    """Resolve a concrete ``TeachingAgentRuntime`` for (student_id, course_id).
+
+    When a registry is present, look up the runtime by (student_id, course_id);
+    fail-closed 503 if no report is bound to that scope. When only the legacy
+    single-runtime is injected, return it directly (preserves backward compat
+    with the existing injected-runtime tests).
+    """
+    if isinstance(runtime_source, TeachingAgentRuntimeRegistry):
+        runtime = runtime_source.get_or_create(student_id, course_id)
+        if runtime is None:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "TEACHING_AGENT_SCOPE_NOT_CONFIGURED",
+                    "message": "当前学生/课程没有可用的 KG-MEST Shadow 报告",
+                },
+            )
+        return runtime
+    return runtime_source
 
 
 @router.post("/respond", summary="Controlled LangGraph teaching response")
 async def respond(
     body: TeachingAgentRequest,
     request: Request,
-    runtime: TeachingAgentRuntime = Depends(get_runtime),
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry] = Depends(get_runtime),
     session: Session = Depends(get_session),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> dict[str, Any]:
@@ -51,6 +93,10 @@ async def respond(
     for their own state; staff may inspect another active learner only through
     the existing course analytics permission. This protects the ports even
     when an experimental runtime happens to be injected.
+
+    批次4：移除原有的 ``teaching_agent_scope`` 单一作用域校验。运行时由
+    ``teaching_agent_runtime_registry`` 按 (student_id, course_id) 动态解析；
+    无对应报告时返回 503。权限校验仍要求 ``course.question.ask``。
     """
     try:
         student_id = int(body.student_id)
@@ -84,20 +130,9 @@ async def respond(
                 detail={"code": "TEACHING_AGENT_TARGET_NOT_LEARNER", "message": "目标不是本课程的有效学习者"},
             )
 
-    # The current bootstrap deliberately injects one report-bound runtime.
-    # Do not let a request body switch that runtime to another learner/course.
-    runtime_scope = getattr(request.app.state, "teaching_agent_scope", None)
-    if runtime_scope and (
-        str(runtime_scope.get("student_id")) != body.student_id
-        or str(runtime_scope.get("course_id")) != body.course_id
-    ):
-        raise HTTPException(
-            status_code=403,
-            detail={
-                "code": "TEACHING_AGENT_RUNTIME_SCOPE_MISMATCH",
-                "message": "当前教学智能体运行时未绑定到该学生或课程",
-            },
-        )
+    # 批次4：通过 registry 按 (student_id, course_id) 解析运行时。
+    # 无对应报告时 fail-closed 503；不再做单一 scope 校验。
+    runtime = _resolve_runtime(runtime_source, body.student_id, body.course_id)
 
     state = await runtime.respond(student_id=body.student_id, course_id=body.course_id, session_id=body.session_id, message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id, code_submission_id=body.code_submission_id)
     if state.get("status") == "rejected":

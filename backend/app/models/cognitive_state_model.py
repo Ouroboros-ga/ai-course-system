@@ -153,3 +153,8 @@ class RecommendationRecord(SQLModel, table=True):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     consumed: bool = Field(default=False, description="学生是否已消费(答题/查看)")
     consumed_at: Optional[datetime] = Field(default=None)
+
+    # 批次4：教师安全阀 - 锁定推荐项，防止 generate_recommendation 覆盖
+    is_locked: bool = Field(default=False, index=True, description="教师锁定推荐项")
+    locked_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    locked_at: Optional[datetime] = Field(default=None)
