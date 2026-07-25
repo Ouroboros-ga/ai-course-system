@@ -1,6 +1,7 @@
 # 编辑器/IDE
 .idea/
 .vscode/
+.vs/
 *.swp
 *.swo
 *~
@@ -85,6 +86,7 @@ generated/
 # Local Codex and test scratch directories
 .codex_tmp/
 .pytest_tmp/
+.pytest-*/
 
 # P1 shadow trace stores (G3 shadow / G5A canary runtime artifacts)
 p1_shadow_artifacts/
@@ -93,6 +95,11 @@ p1_shadow_learning_events/
 p1_shadow_memory_candidates/
 p1_shadow_safety_dryrun/
 p1_shadow_graph/
+p1_shadow_course_evidence/
+backend/p1_shadow_course_evidence/
+
+# Local Judge0 source checkout used only for container deployment.
+deploy/judge0-source/
 
 # Local presentation inspection artifacts
 /presentation.pptx
