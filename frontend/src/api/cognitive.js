@@ -20,7 +20,10 @@ import request from '@/utils/request.js'
 
 /**
  * 获取学生当前六维认知状态（最近一次计算结果）。
- * GET /cognitive/course/{courseId}/students/{studentId}/state
+ * GET /cognitive/course/{courseId}/state?student_id={studentId}
+ *
+ * 后端使用 Query 参数 student_id 接收学生 ID（教师查看他人时必须指定）；
+ * 学生查看自己时由后端从 JWT 中提取 user_id。
  *
  * @param {number|string} courseId - 课程 ID
  * @param {number|string} studentId - 学生 ID
@@ -28,21 +31,25 @@ import request from '@/utils/request.js'
  */
 export function getCognitiveState(courseId, studentId) {
   return request.get(
-    `/cognitive/course/${courseId}/students/${studentId}/state`,
+    `/cognitive/course/${courseId}/state`,
+    { params: { student_id: studentId } },
   )
 }
 
 /**
  * 触发后端重新计算认知状态（基于已有学习证据）。
- * POST /cognitive/course/{courseId}/students/{studentId}/compute
+ * POST /cognitive/course/{courseId}/compute
+ *
+ * 仅课程学习者可生成个人认知状态（后端通过 analytics_eligible 校验）。
+ * 学生 ID 由后端从 JWT 中提取，不接受前端传入。
  *
  * @param {number|string} courseId
- * @param {number|string} studentId
+ * @param {number|string} [_studentId] - 仅为对齐签名，后端忽略（保留以兼容旧调用）
  * @returns {Promise<Object>} 计算后的认知状态
  */
-export function computeCognitiveState(courseId, studentId) {
+export function computeCognitiveState(courseId, _studentId) {
   return request.post(
-    `/cognitive/course/${courseId}/students/${studentId}/compute`,
+    `/cognitive/course/${courseId}/compute`,
   )
 }
 
@@ -52,15 +59,18 @@ export function computeCognitiveState(courseId, studentId) {
 
 /**
  * 生成学习推荐（基于当前认知状态与策略版本）。
- * POST /cognitive/course/{courseId}/recommendations/generate
+ * POST /cognitive/course/{courseId}/recommend
+ *
+ * 后端使用 Body 接收 { node_id?, force_recompute? }；
+ * 学生 ID 由后端从 JWT 中提取，不接受前端传入。
  *
  * @param {number|string} courseId
- * @param {Object} payload - { student_id, focus_node_id?, max_count?, ... }
- * @returns {Promise<Object>} { items: [...] }
+ * @param {Object} [payload] - { node_id?, force_recompute? }
+ * @returns {Promise<Object>} 推荐对象（含 policy_version/reason_codes/evidence_refs）
  */
-export function generateRecommendation(courseId, payload) {
+export function generateRecommendation(courseId, payload = {}) {
   return request.post(
-    `/cognitive/course/${courseId}/recommendations/generate`,
+    `/cognitive/course/${courseId}/recommend`,
     payload,
   )
 }
@@ -78,15 +88,15 @@ export function getRecommendations(courseId) {
 
 /**
  * 消费一条推荐（标记为已采用/已忽略）。
- * POST /cognitive/recommendations/{recommendationId}/consume
+ * POST /cognitive/recommendation/{recommendationId}/consume
  *
- * @param {string} recommendationId - 推荐 ID
+ * @param {string} recommendationId - 推荐 ID (UUID)
  * @param {Object} [payload] - 可选 { action: 'accepted'|'dismissed', ... }
  * @returns {Promise<Object>} 消费后的状态
  */
 export function consumeRecommendation(recommendationId, payload = {}) {
   return request.post(
-    `/cognitive/recommendations/${recommendationId}/consume`,
+    `/cognitive/recommendation/${recommendationId}/consume`,
     payload,
   )
 }
@@ -112,26 +122,30 @@ export function getLearningEvidence(courseId) {
 
 /**
  * 教师锁定某条推荐（防止学生消费/忽略，常用于定向干预）。
- * POST /cognitive/recommendations/{recommendationId}/lock
+ * POST /cognitive/recommendation/{recommendationId}/lock
  *
- * @param {string} recommendationId
+ * 权限：analytics.view_member 或 agent.policy.configure（满足其一即可）。
+ *
+ * @param {string} recommendationId - 推荐 ID (UUID)
  * @returns {Promise<Object>} 锁定后的状态
  */
 export function lockRecommendation(recommendationId) {
   return request.post(
-    `/cognitive/recommendations/${recommendationId}/lock`,
+    `/cognitive/recommendation/${recommendationId}/lock`,
   )
 }
 
 /**
  * 教师解锁某条推荐。
- * POST /cognitive/recommendations/{recommendationId}/unlock
+ * POST /cognitive/recommendation/{recommendationId}/unlock
  *
- * @param {string} recommendationId
+ * 权限：analytics.view_member 或 agent.policy.configure（满足其一即可）。
+ *
+ * @param {string} recommendationId - 推荐 ID (UUID)
  * @returns {Promise<Object>} 解锁后的状态
  */
 export function unlockRecommendation(recommendationId) {
   return request.post(
-    `/cognitive/recommendations/${recommendationId}/unlock`,
+    `/cognitive/recommendation/${recommendationId}/unlock`,
   )
 }

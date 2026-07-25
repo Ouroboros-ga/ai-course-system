@@ -47,6 +47,13 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 component: () => import('./pages/learn/LearnPage.vue'),
               },
               {
+                // 批次3：课程知识空间（page-design §15）
+                // 学生视角：知识结构（图谱） + 认知仪表盘 + 推荐卡
+                path: 'knowledge/:nodeId?',
+                name: 'app-course-knowledge',
+                component: () => import('./pages/course/KnowledgeSpacePage.vue'),
+              },
+              {
                 // 批次4：算法可视化页（接收 courseId 与可选 nodeId）
                 path: 'visualize/:nodeId?',
                 name: 'app-course-visualize',

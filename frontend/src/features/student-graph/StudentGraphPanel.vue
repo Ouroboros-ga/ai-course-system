@@ -67,12 +67,23 @@ const LOW_CONFIDENCE_THRESHOLD = 0.5
 
 const snapshotMeta = computed(() => {
   if (!snapshot.value) return null
+  // P1-2: 修正字段契约——后端 GraphSnapshot 序列化为 relations / relation_count，
+  //   并包含 version / ontology_version；不存在 edges 与 policy_version。
+  //   policy_version 属于推荐上下文（recommendationContext），不属于快照。
+  const relations = snapshot.value.relations
   return {
     snapshotId: snapshot.value.snapshot_id ?? snapshot.value.id ?? null,
-    policyVersion: snapshot.value.policy_version ?? '',
+    // 快照版本（int，递增）与本体版本（str，如 "edu-graph/1.0"）
+    snapshotVersion: snapshot.value.version ?? null,
+    ontologyVersion: snapshot.value.ontology_version ?? '',
     publishedAt: snapshot.value.published_at ?? snapshot.value.created_at ?? '',
-    nodeCount: Array.isArray(snapshot.value.nodes) ? snapshot.value.nodes.length : 0,
-    edgeCount: Array.isArray(snapshot.value.edges) ? snapshot.value.edges.length : 0,
+    nodeCount:
+      Array.isArray(snapshot.value.nodes)
+        ? snapshot.value.nodes.length
+        : (snapshot.value.node_count ?? 0),
+    relationCount: Array.isArray(relations)
+      ? relations.length
+      : (snapshot.value.relation_count ?? 0),
   }
 })
 
@@ -214,10 +225,16 @@ onMounted(async () => {
             <span v-if="nodeTitle">{{ nodeTitle }}</span>
             <span v-else>当前课程已发布快照</span>
             <span
-              v-if="snapshotMeta?.policyVersion"
+              v-if="snapshotMeta?.snapshotVersion != null"
               class="sfx-student-graph__policy"
             >
-              · 策略 v{{ snapshotMeta.policyVersion }}
+              · 快照 v{{ snapshotMeta.snapshotVersion }}
+            </span>
+            <span
+              v-if="snapshotMeta?.ontologyVersion"
+              class="sfx-student-graph__policy"
+            >
+              · 本体 {{ snapshotMeta.ontologyVersion }}
             </span>
           </p>
         </div>
@@ -308,8 +325,8 @@ onMounted(async () => {
         <span v-if="snapshotMeta?.nodeCount != null" class="sfx-student-graph__metric">
           <strong>{{ snapshotMeta.nodeCount }}</strong> 节点
         </span>
-        <span v-if="snapshotMeta?.edgeCount != null" class="sfx-student-graph__metric">
-          <strong>{{ snapshotMeta.edgeCount }}</strong> 关系
+        <span v-if="snapshotMeta?.relationCount != null" class="sfx-student-graph__metric">
+          <strong>{{ snapshotMeta.relationCount }}</strong> 关系
         </span>
         <span
           v-if="snapshotMeta?.publishedAt"

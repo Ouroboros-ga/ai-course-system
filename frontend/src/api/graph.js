@@ -32,16 +32,16 @@ export function getCourseSnapshot(courseId) {
 
 /**
  * 获取某个知识点的一跳先修/后继节点。
- * GET /graph/course/{courseId}/nodes/{nodeId}/neighbors?direction=incoming|outgoing
+ * GET /graph/course/{courseId}/nodes/{nodeId}/prerequisites?direction=incoming|outgoing
  *
  * @param {number|string} courseId - 课程 ID
  * @param {number|string} nodeId - 知识点节点 ID
  * @param {'incoming'|'outgoing'} [direction='incoming'] - incoming=先修，outgoing=后继
- * @returns {Promise<Object>} 包含 nodes 数组与可选 reason_codes
+ * @returns {Promise<Object>} 包含 items 数组（来自后端 prerequisites 端点）
  */
 export function getNodePrerequisites(courseId, nodeId, direction = 'incoming') {
   return request.get(
-    `/graph/course/${courseId}/nodes/${nodeId}/neighbors`,
+    `/graph/course/${courseId}/nodes/${nodeId}/prerequisites`,
     { params: { direction } },
   )
 }
@@ -64,16 +64,18 @@ export function listCandidates(courseId, params = {}) {
 
 /**
  * 教师评审流转：通过/驳回/挂起候选变更。
- * POST /graph/course/{courseId}/candidates/{reviewId}/transition
+ * POST /graph/course/{courseId}/reviews/{reviewId}/transition
+ *
+ * 后端 ReviewTransitionRequest 接受 new_decision、review_comment、evidence_ids。
  *
  * @param {number|string} courseId - 课程 ID
- * @param {string} reviewId - 评审单 ID
- * @param {Object} payload - { action, comment, ... }
+ * @param {number|string} reviewId - 评审单 ID（数据库行 id）
+ * @param {Object} payload - { new_decision, review_comment?, evidence_ids? }
  * @returns {Promise<Object>} 评审后的最新状态
  */
 export function transitionReview(courseId, reviewId, payload) {
   return request.post(
-    `/graph/course/${courseId}/candidates/${reviewId}/transition`,
+    `/graph/course/${courseId}/reviews/${reviewId}/transition`,
     payload,
   )
 }
@@ -106,27 +108,30 @@ export function diffSnapshots(courseId, snapshotAId, snapshotBId) {
 
 /**
  * 发布快照（学生可见）。
- * POST /graph/course/{courseId}/snapshots/publish
+ * POST /graph/course/{courseId}/publish
+ *
+ * 后端 PublishSnapshotRequest 接受 nodes、relations、label；
+ * 调用此接口会创建新的不可变 GraphSnapshot 并将旧快照置为 SUPERSEDED。
  *
  * @param {number|string} courseId
- * @param {Object} payload - { snapshot_id, note, ... }
+ * @param {Object} payload - { nodes, relations, label? }
  * @returns {Promise<Object>} 发布后的快照元信息
  */
 export function publishSnapshot(courseId, payload) {
-  return request.post(`/graph/course/${courseId}/snapshots/publish`, payload)
+  return request.post(`/graph/course/${courseId}/publish`, payload)
 }
 
 /**
  * 回滚到指定快照。
- * POST /graph/course/{courseId}/snapshots/{snapshotId}/rollback
+ * POST /graph/course/{courseId}/rollback/{snapshotId}
  *
  * @param {number|string} courseId
- * @param {string} snapshotId - 目标快照 ID
+ * @param {string} snapshotId - 目标快照 ID (UUID)
  * @returns {Promise<Object>} 回滚结果
  */
 export function rollbackSnapshot(courseId, snapshotId) {
   return request.post(
-    `/graph/course/${courseId}/snapshots/${snapshotId}/rollback`,
+    `/graph/course/${courseId}/rollback/${snapshotId}`,
   )
 }
 
@@ -156,14 +161,19 @@ export function addEvidence(courseId, payload) {
 
 /**
  * 标记某条证据为已失效（来源文档已变更）。
- * POST /graph/course/{courseId}/evidence/{documentId}/stale
+ * POST /graph/course/{courseId}/mark-stale?document_id=...
+ *
+ * 后端使用 Query 参数 document_id 接收课件文档 UUID；
+ * 课件重新解析或删除时历史引用不会静默指向错误内容。
  *
  * @param {number|string} courseId
- * @param {string} documentId - 关联文档 ID
- * @returns {Promise<Object>} 操作结果
+ * @param {string} documentId - 关联文档 UUID
+ * @returns {Promise<Object>} 操作结果 { stale_count, document_id }
  */
 export function markEvidenceStale(courseId, documentId) {
   return request.post(
-    `/graph/course/${courseId}/evidence/${documentId}/stale`,
+    `/graph/course/${courseId}/mark-stale`,
+    {},
+    { params: { document_id: documentId } },
   )
 }

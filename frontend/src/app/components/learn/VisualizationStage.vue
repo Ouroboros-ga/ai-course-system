@@ -77,12 +77,12 @@ async function loadPlans() {
 }
 
 async function playPlan(plan) {
-  if (!plan?.id || activePlanLoading.value) return
+  if (!plan?.plan_id || activePlanLoading.value) return
   activePlanLoading.value = true
   activePlanError.value = ''
   activePlan.value = null
   try {
-    const full = await getPlan(plan.id)
+    const full = await getPlan(plan.plan_id)
     activePlan.value = full?.plan_data ? full : { ...full, plan_data: full }
   } catch (err) {
     activePlanError.value = err?.message || '计划详情加载失败'
@@ -211,7 +211,7 @@ onMounted(loadPlans)
     <ul v-else class="sfx-vis-stage-list">
       <li
         v-for="plan in publishedPlans"
-        :key="plan.id"
+        :key="plan.plan_id"
         class="sfx-vis-stage-item"
       >
         <div class="sfx-vis-stage-item-main">
@@ -224,7 +224,7 @@ onMounted(loadPlans)
             </span>
           </header>
           <h3 class="sfx-vis-stage-item-title">
-            {{ plan.title || plan.name || `计划 ${plan.id}` }}
+            {{ plan.title || plan.name || `计划 ${plan.plan_id}` }}
           </h3>
           <p v-if="plan.description" class="sfx-vis-stage-item-desc">
             {{ plan.description }}

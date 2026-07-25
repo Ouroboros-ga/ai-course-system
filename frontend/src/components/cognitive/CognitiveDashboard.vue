@@ -82,10 +82,27 @@ const dimensions = computed(() => {
   if (!state.value) return []
   const dims = state.value.dimensions ?? state.value
   return DIMENSIONS.map((def) => {
-    const raw = dims?.[def.key]
-    const value = Number(raw?.value ?? raw)
-    const confidence = Number(raw?.confidence ?? raw?.confidence_score ?? 1)
+    const raw = dims?.[def.key] ?? null
+    // P1-1: 保留 null 语义——后端以 null 表示「数据不足/unknown」，
+    // 禁止 Number(null)=0 与默认 confidence=1 把「未知」误报成「0 分、100% 置信」。
+    const rawValue = raw?.value ?? raw
+    const value =
+      rawValue == null || rawValue === '' ? null : Number(rawValue)
+    const rawConfidence = raw?.confidence ?? raw?.confidence_score
+    const confidence =
+      rawConfidence == null || rawConfidence === ''
+        ? null
+        : Number(rawConfidence)
     const abstain = Boolean(raw?.abstain)
+    // 数据不足判定：abstain / value 缺失 / confidence 缺失 / confidence 低于阈值
+    // 任一成立即视为「需要更多证据」，绝不武断判弱。
+    const insufficient =
+      abstain ||
+      value == null ||
+      !Number.isFinite(value) ||
+      confidence == null ||
+      !Number.isFinite(confidence) ||
+      confidence < LOW_CONFIDENCE_THRESHOLD
     return {
       key: def.key,
       label: def.label,
@@ -94,9 +111,7 @@ const dimensions = computed(() => {
       value: Number.isFinite(value) ? value : null,
       confidence: Number.isFinite(confidence) ? confidence : null,
       abstain,
-      insufficient:
-        abstain ||
-        (Number.isFinite(confidence) && confidence < LOW_CONFIDENCE_THRESHOLD),
+      insufficient,
     }
   })
 })

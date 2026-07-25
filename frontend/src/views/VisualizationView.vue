@@ -132,12 +132,12 @@ async function loadAlgorithms() {
 }
 
 async function playPlan(plan) {
-  if (!plan?.id) return
+  if (!plan?.plan_id) return
   activePlanLoading.value = true
   activePlanError.value = ''
   activePlan.value = null
   try {
-    const full = await getPlan(plan.id)
+    const full = await getPlan(plan.plan_id)
     // 后端可能返回完整 plan 或仅 plan_data
     activePlan.value = full?.plan_data ? full : { ...full, plan_data: full }
   } catch (err) {
@@ -153,10 +153,10 @@ function closePlayer() {
 }
 
 async function publishOne(plan) {
-  if (!plan?.id || publishingId.value) return
-  publishingId.value = plan.id
+  if (!plan?.plan_id || publishingId.value) return
+  publishingId.value = plan.plan_id
   try {
-    await publishPlan(courseId.value, plan.id)
+    await publishPlan(courseId.value, plan.plan_id)
     // 本地标记为已发布，避免再次拉取
     plan.status = 'published'
     plan.is_published = true
@@ -221,7 +221,7 @@ async function submitCreate() {
       payload.node_id = Number(createForm.value.node_id)
     }
     const created = await createPlan(courseId.value, payload)
-    if (created?.id) {
+    if (created?.plan_id) {
       plans.value = [created, ...plans.value]
     }
     showCreatePanel.value = false
@@ -458,7 +458,7 @@ onMounted(() => {
       <ul v-else class="sfx-vis__list">
         <li
           v-for="plan in filteredPlans"
-          :key="plan.id"
+          :key="plan.plan_id"
           class="sfx-vis__plan"
         >
           <div class="sfx-vis__plan-main">
@@ -477,7 +477,7 @@ onMounted(() => {
               </span>
             </header>
             <h3 class="sfx-vis__plan-title">
-              {{ plan.title || plan.name || `计划 ${plan.id}` }}
+              {{ plan.title || plan.name || `计划 ${plan.plan_id}` }}
             </h3>
             <p v-if="plan.description" class="sfx-vis__plan-desc">
               {{ plan.description }}
@@ -501,11 +501,11 @@ onMounted(() => {
               v-if="isTeacher && planStatusTone(plan) !== 'published'"
               type="button"
               class="sfx-vis__publish-btn"
-              :disabled="publishingId === plan.id"
+              :disabled="publishingId === plan.plan_id"
               @click="publishOne(plan)"
             >
               <CheckCircle2 :size="14" />
-              {{ publishingId === plan.id ? '发布中…' : '发布' }}
+              {{ publishingId === plan.plan_id ? '发布中…' : '发布' }}
             </button>
           </div>
         </li>

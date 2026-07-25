@@ -26,13 +26,13 @@ const capabilities = computed(() => state.access?.capabilities ?? {})
 
 const course = computed(() => state.detail?.course ?? null)
 
-// L2 导航（§10.2/§10.3）。本切片只有 概览/学习 是真实页面；其余按
+// L2 导航（§10.2/§10.3）。批次3：概览/学习/知识 均为真实页面；其余按
 // §1.5「暂时不可用但用户需要知道的可以禁用并说明」渲染为禁用态。
 const navItems = computed(() => {
   const base = [
     { key: 'overview', label: '概览', to: `/app/course/${courseId.value}/overview`, enabled: true },
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
-    { key: 'knowledge', label: '知识', enabled: false, reason: '知识空间将在后续切片上线' },
+    { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
     { key: 'experiments', label: '实验任务', enabled: false, reason: '课程实验将在后续切片上线' },
   ]
   if (allowed.value['course.edit']) {
@@ -47,6 +47,8 @@ const navItems = computed(() => {
 
 const activeKey = computed(() => {
   if (route.path.endsWith('/learn')) return 'learn'
+  if (route.path.includes('/knowledge')) return 'knowledge'
+  if (route.path.includes('/visualize')) return 'learn'
   return 'overview'
 })
 
