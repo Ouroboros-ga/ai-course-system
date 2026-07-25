@@ -6,6 +6,7 @@ from typing import Optional
 
 from .contracts import (
     CognitionPort,
+    ConversationContextPort,
     CourseRetrievalPort,
     KnowledgeGraphPort,
     LearningEventPort,
@@ -36,6 +37,7 @@ def build_teaching_runtime(
     web_research: Optional[WebResearchPort] = None,
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
+    conversation_context: Optional[ConversationContextPort] = None,
 ) -> TeachingAgentRuntime:
     """Build an enabled runtime only after the composition root supplies every Port."""
     return TeachingAgentRuntime(TeachingTools(
@@ -43,6 +45,7 @@ def build_teaching_runtime(
         student_modeling=student_modeling, recommendation=recommendation,
         sandbox=sandbox, learning_events=learning_events, llm=llm,
         web_research=web_research, cognition=cognition, question_bank=question_bank,
+        conversation_context=conversation_context,
     ))
 
 
@@ -57,6 +60,7 @@ def build_course_sidecar_runtime(
     web_research: Optional[WebResearchPort] = None,
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
+    conversation_context: Optional[ConversationContextPort] = None,
 ) -> TeachingAgentRuntime:
     """Use the existing isolated course-sidecar R2 provider for KG/evidence only.
 
@@ -76,6 +80,7 @@ def build_course_sidecar_runtime(
         web_research=web_research,
         cognition=cognition,
         question_bank=question_bank,
+        conversation_context=conversation_context,
     )
 
 
@@ -92,6 +97,7 @@ def build_kg_mest_shadow_sidecar_runtime(
     web_research: Optional[WebResearchPort] = None,
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
+    conversation_context: Optional[ConversationContextPort] = None,
 ) -> TeachingAgentRuntime:
     """Explicitly inject one approved KG-MEST Shadow report into TeachingAgent."""
     return build_course_sidecar_runtime(
@@ -108,4 +114,5 @@ def build_kg_mest_shadow_sidecar_runtime(
         web_research=web_research,
         cognition=cognition,
         question_bank=question_bank,
+        conversation_context=conversation_context,
     )

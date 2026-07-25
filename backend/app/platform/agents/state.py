@@ -42,3 +42,4 @@ class TeachingState(TypedDict, total=False):
     cognitive_recommendation: dict[str, Any] | None
     question_bank_items: list[dict[str, Any]]
     web_research_results: dict[str, Any] | None
+    session_context: dict[str, Any] | None

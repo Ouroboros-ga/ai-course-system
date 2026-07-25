@@ -1,11 +1,9 @@
-"""LearningEvent port for the TeachingAgent.
+"""Sanitized audit adapter for TeachingAgent.
 
-接通真实的 DB 持久化，使 workflow 末尾的 ``record_learning_event`` 与
-``record_agent_trace`` 写入 ``AgentLearningEvent`` / ``AgentTraceRecord`` 表。
-
-课程作用域：写入时强制 ``student_id`` + ``course_id`` 来自 event/trace dict，
-且必须为有效整数（与端点 ``teaching_agent.respond`` 的 scope 校验一致）。
-port 本身不做权限校验（那是端点职责），但拒绝写入缺失作用域的事件。
+Despite their legacy names, ``AgentLearningEvent`` and ``AgentTraceRecord``
+are not formal ``LearningEvent`` or scoring ``LearningEvidence``. They never
+change mastery or cognition. Raw messages, answers, prompts and model traces
+are excluded before persistence.
 """
 from __future__ import annotations
 
@@ -52,7 +50,8 @@ def make_session_scoped_learning_event_port(
             return
         trace_id = str(event.get("trace_id", ""))
         session_id = str(event.get("session_id", ""))
-        event_type = str(event.get("event_type", "teaching_agent_response"))
+        event_type = str(event.get("event_type", "teaching_agent_response"))[:64]
+        sanitized = _sanitize_event(event)
 
         def _write() -> None:
             from app.models.agent_log import AgentLearningEvent
@@ -63,7 +62,7 @@ def make_session_scoped_learning_event_port(
                     course_id=course_id,
                     session_id=session_id,
                     event_type=event_type,
-                    event_data=json.dumps(dict(event), ensure_ascii=False, default=str),
+                    event_data=json.dumps(sanitized, ensure_ascii=False, sort_keys=True),
                 ))
                 session.commit()
 
@@ -80,6 +79,8 @@ def make_session_scoped_learning_event_port(
             logger.warning("record_agent_trace: missing student_id/course_id, skipped.")
             return
         trace_id = str(trace.get("trace_id", ""))
+        session_id = str(trace.get("session_id", ""))[:128]
+        sanitized = _sanitize_trace(trace)
 
         def _write() -> None:
             from app.models.agent_log import AgentTraceRecord
@@ -88,7 +89,8 @@ def make_session_scoped_learning_event_port(
                     trace_id=trace_id,
                     student_id=student_id,
                     course_id=course_id,
-                    trace_data=json.dumps(dict(trace), ensure_ascii=False, default=str),
+                    session_id=session_id,
+                    trace_data=json.dumps(sanitized, ensure_ascii=False, sort_keys=True),
                 ))
                 session.commit()
 
@@ -106,3 +108,42 @@ def _safe_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _codes(value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return sorted({str(item)[:64] for item in value})[:20]
+
+
+def _sanitize_event(event: Mapping[str, Any]) -> dict[str, Any]:
+    """Persist only deterministic identifiers and operational outcome codes."""
+    return {
+        "concept_id": str(event.get("concept_id", ""))[:128],
+        "event_type": str(event.get("event_type", "teaching_agent_response"))[:64],
+        "reason_codes": _codes(event.get("reason_codes", [])),
+        "teaching_action": str(event.get("teaching_action", ""))[:64],
+        "warnings": _codes(event.get("warnings", [])),
+        "errors": _codes(event.get("errors", [])),
+    }
+
+
+def _sanitize_trace(trace: Mapping[str, Any]) -> dict[str, Any]:
+    """Store node names and codes, never message/answer/evidence text."""
+    nodes = []
+    for item in trace.get("nodes", []):
+        if isinstance(item, Mapping) and item.get("node"):
+            nodes.append(str(item["node"])[:64])
+    evidence_ids = []
+    for item in trace.get("retrieved_evidence", []):
+        if isinstance(item, Mapping) and item.get("evidence_id"):
+            evidence_ids.append(str(item["evidence_id"])[:128])
+    return {
+        "concept_id": str(trace.get("concept_id", ""))[:128],
+        "degraded_services": _codes(trace.get("degraded_services", [])),
+        "evidence_ids": sorted(set(evidence_ids))[:20],
+        "errors": _codes(trace.get("errors", [])),
+        "intent": str(trace.get("intent", ""))[:64],
+        "nodes": nodes[:30],
+        "warnings": _codes(trace.get("warnings", [])),
+    }

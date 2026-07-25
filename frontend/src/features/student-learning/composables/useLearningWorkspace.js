@@ -47,9 +47,15 @@ export function useLearningWorkspace(courseId, options = {}) {
   const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
   const getCapabilities = options?.getCapabilities ?? (() => ({}))
   // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
-  const teachingSessionId =
-    (typeof crypto !== 'undefined' && crypto?.randomUUID?.()) ||
-    'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+  // Reuse a per-learner/course ID. The server keeps only a bounded structured
+  // summary and expires it after 30 minutes; no transcript is persisted.
+  const teachingSessionStorageKey = `teaching-agent-session:${courseId}:${getStudentId() ?? 'anonymous'}`
+  let teachingSessionId = window.localStorage.getItem(teachingSessionStorageKey)
+  if (!teachingSessionId) {
+    teachingSessionId = (typeof crypto !== 'undefined' && crypto?.randomUUID?.()) ||
+      'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8)
+    window.localStorage.setItem(teachingSessionStorageKey, teachingSessionId)
+  }
   const status = ref('loading')
   const error = ref('')
   const course = ref(null)
@@ -407,6 +413,10 @@ export function useLearningWorkspace(courseId, options = {}) {
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
       citations: Array.isArray(result?.citations) ? result.citations : [],
+      fallbackRequired: result?.status === 'fallback_required',
+      fallbackNotice: result?.fallback_reason === 'COURSE_KNOWLEDGE_GRAPH_PENDING'
+        ? '课程知识图谱正在解析或暂不可用，本次已使用普通课程问答。'
+        : '',
       // TeachingAgent 不返回 confidence 数值；有 warnings/degraded_services 时标低置信。
       lowConfidence:
         Boolean(result?.warnings?.length) || Boolean(result?.degraded_services?.length),
@@ -458,6 +468,10 @@ export function useLearningWorkspace(courseId, options = {}) {
         // Agent 503/失败属预期降级场景（skipErrorToast 已静默），回退 V1 不影响 Q&A。
         try {
           result = await askTeachingAgent(question, studentId)
+          if (result.fallbackRequired) {
+            const fallback = await askV1(question)
+            result = { ...fallback, fallbackNotice: result.fallbackNotice }
+          }
         } catch (agentError) {
           result = await askV1(question)
         }
@@ -472,6 +486,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           content: result.answer,
           citations: result.citations,
           lowConfidence: result.lowConfidence,
+          fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,
           page: currentPage.value,
         },

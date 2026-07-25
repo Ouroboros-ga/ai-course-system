@@ -117,6 +117,9 @@ function formatTime(seconds) {
             <div v-if="message.lowConfidence" class="sfx-agent-lowconf sfx-t-caption">
               <TriangleAlert :size="13" /> 本次回答置信度较低，建议核对下方原文引用。
             </div>
+            <div v-if="message.fallbackNotice" class="sfx-agent-lowconf sfx-t-caption">
+              <TriangleAlert :size="13" /> {{ message.fallbackNotice }}
+            </div>
 
             <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
             <ul v-if="message.citations?.length" class="sfx-agent-citations">

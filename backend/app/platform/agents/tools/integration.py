@@ -8,15 +8,21 @@ from ..errors import ScopeRejectedError, ServiceUnavailableError
 
 
 class RetrievalDemoScopePort:
-    """Course-first scope adapter for the isolated R2 course-sidecar provider."""
+    """Validate input identity only; endpoint Course Access is authoritative.
+
+    Course-sidecar availability is an optional enhancement signal, never an
+    authorization decision. A missing sidecar must not turn ordinary course
+    Q&A into a scope rejection.
+    """
 
     def __init__(self, demo_service: Any) -> None:
         self._service = demo_service
 
     async def validate_scope(self, *, student_id: str, course_id: str, resource_id: str | None) -> Mapping[str, Any]:
-        if not student_id.strip() or course_id not in self._service.active_provider.course_ids:
-            return {"allowed": False, "reason": "course_not_available"}
-        return {"allowed": True, "source": "retrieval_demo_course_sidecar"}
+        if not student_id.strip() or not course_id.strip():
+            return {"allowed": False, "reason": "scope_invalid"}
+        available = course_id in self._service.active_provider.course_ids
+        return {"allowed": True, "course_sidecar_available": available, "source": "retrieval_demo_course_sidecar" if available else "course_sidecar_pending"}
 
 
 class RetrievalDemoKnowledgeGraphPort:
@@ -24,12 +30,16 @@ class RetrievalDemoKnowledgeGraphPort:
         self._service = demo_service
 
     async def resolve_concepts(self, *, course_id: str, message: str, candidates: list[Mapping[str, Any]], resource_id: str | None) -> list[Mapping[str, Any]]:
+        if course_id not in self._service.active_provider.course_ids:
+            raise ServiceUnavailableError("course knowledge graph pending")
         snapshot = self._service.active_provider.graph_snapshot(course_id)
         lowered = message.lower()
         matches = [node for node in snapshot.get("nodes", []) if str(node.get("label", "")).lower() in lowered or any(str(candidate.get("name", "")).lower() == str(node.get("label", "")).lower() for candidate in candidates)]
         return [{"concept_id": str(node["id"]), "name": node.get("label", node["id"]), "confidence": 0.8} for node in matches]
 
     async def get_context(self, *, course_id: str, concept_id: str) -> Mapping[str, Any]:
+        if course_id not in self._service.active_provider.course_ids:
+            raise ServiceUnavailableError("course knowledge graph pending")
         snapshot = self._service.active_provider.graph_snapshot(course_id)
         edges = snapshot.get("edges", [])
         prerequisites = [{"concept_id": edge["source"]} for edge in edges if str(edge.get("target")) == concept_id and edge.get("relation") == "REQUIRES"]
@@ -42,6 +52,8 @@ class RetrievalDemoEvidencePort:
         self._service = demo_service
 
     async def retrieve_course_evidence(self, *, course_id: str, message: str, concept_id: str | None, resource_id: str | None) -> list[Mapping[str, Any]]:
+        if course_id not in self._service.active_provider.course_ids:
+            raise ServiceUnavailableError("course retrieval pending")
         result = self._service.query(course_id=course_id, question=message)
         if result.get("result", {}).get("status") != "ok":
             return []

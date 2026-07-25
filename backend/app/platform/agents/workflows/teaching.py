@@ -21,6 +21,19 @@ def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any
 
 
 def build_teaching_workflow(tools: TeachingTools):
+    async def load_session_context(state: TeachingState) -> dict[str, Any]:
+        if tools.conversation_context is None:
+            return {"trace": _trace(state, "load_session_context", skipped=True)}
+        try:
+            context = await tools.conversation_context.load_context(
+                student_id=state["student_id"], course_id=state["course_id"], session_id=state["session_id"],
+            )
+            return {"session_context": dict(context) if context else None, "trace": _trace(state, "load_session_context", available=context is not None)}
+        except Exception as error:
+            payload = _degrade(state, "conversation_context", "SESSION_CONTEXT_UNAVAILABLE")
+            payload.update({"trace": _trace(state, "load_session_context", error=type(error).__name__)})
+            return payload
+
     async def validate_request(state: TeachingState) -> dict[str, Any]:
         try:
             if not all(str(state.get(field, "")).strip() for field in ("student_id", "course_id", "session_id", "user_message")):
@@ -167,7 +180,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     async def generate_response(state: TeachingState) -> dict[str, Any]:
         try:
-            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results")})
+            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results", "session_context")})
             return {"final_answer": str(generated.get("answer", "")), "citations": [dict(item) for item in generated.get("citations", [])], "trace": _trace(state, "generate_response", answer_present=bool(generated.get("answer")))}
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "generate_response", error=type(error).__name__)}
@@ -184,21 +197,22 @@ def build_teaching_workflow(tools: TeachingTools):
         return {"citations": citations, "warnings": warnings, "trace": _trace(state, "validate_response", citation_count=len(citations))}
 
     async def record_event(state: TeachingState) -> dict[str, Any]:
-        event = {"event_type": "teaching_agent_response", "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"], "concept_id": state.get("current_concept_id"), "teaching_action": state.get("teaching_action"), "warnings": state.get("warnings", []), "errors": state.get("errors", []), "final_answer": state.get("final_answer")}
+        # Audit/context records never carry raw question text, answer text, prompt or full trace.
+        event = {"event_type": "teaching_agent_response", "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"], "concept_id": state.get("current_concept_id"), "teaching_action": state.get("teaching_action"), "warnings": state.get("warnings", []), "errors": state.get("errors", [])}
         replay = {
-            "trace_id": state["trace_id"], "input": {"student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"], "message": state["user_message"], "resource_id": state.get("current_resource_id")},
+            "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"],
             "intent": state.get("intent"), "concept_id": state.get("current_concept_id"),
-            "student_concept_state": state.get("student_concept_state", {}), "graph_context": state.get("graph_context", {}),
-            "retrieved_evidence": state.get("retrieved_evidence", []), "teaching_action": state.get("teaching_action"),
-            "teaching_action_reason": state.get("teaching_action_reason"), "final_answer": state.get("final_answer"),
-            "citations": state.get("citations", []), "warnings": state.get("warnings", []),
+            "retrieved_evidence": state.get("retrieved_evidence", []), "warnings": state.get("warnings", []),
             "errors": state.get("errors", []), "degraded_services": state.get("degraded_services", []), "nodes": state.get("trace", []),
-            "cognitive_state": state.get("cognitive_state"), "cognitive_recommendation": state.get("cognitive_recommendation"),
-            "question_bank_items": state.get("question_bank_items", []), "web_research_results": state.get("web_research_results"),
         }
         try:
             await tools.learning_events.record_learning_event(event=event)
             await tools.learning_events.record_agent_trace(trace=replay)
+            if tools.conversation_context is not None:
+                await tools.conversation_context.save_context(
+                    student_id=state["student_id"], course_id=state["course_id"], session_id=state["session_id"],
+                    context={"current_concept_id": state.get("current_concept_id"), "last_intent": state.get("intent"), "last_teaching_action": state.get("teaching_action"), "warnings": state.get("warnings", []), "reason_codes": state.get("errors", [])},
+                )
             return {"trace": _trace(state, "record_learning_event", recorded=True)}
         except Exception as error:
             payload = _degrade(state, "learning_events", "LEARNING_EVENT_RECORDING_UNAVAILABLE")
@@ -206,7 +220,7 @@ def build_teaching_workflow(tools: TeachingTools):
             return payload
 
     def after_validation(state: TeachingState) -> str:
-        return "record_learning_event" if state.get("status") == "rejected" else "detect_intent"
+        return "record_learning_event" if state.get("status") == "rejected" else "load_session_context"
 
     def after_intent(state: TeachingState) -> str:
         return "record_learning_event" if state.get("status") == "llm_unavailable" else "resolve_concept"
@@ -219,6 +233,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     graph = StateGraph(TeachingState)
     graph.add_node("validate_request", validate_request)
+    graph.add_node("load_session_context", load_session_context)
     graph.add_node("detect_intent", detect_intent)
     graph.add_node("resolve_concept", resolve_concept)
     graph.add_node("load_student_state", load_student_state)
@@ -234,6 +249,7 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("record_learning_event", record_event)
     graph.add_edge(START, "validate_request")
     graph.add_conditional_edges("validate_request", after_validation)
+    graph.add_edge("load_session_context", "detect_intent")
     graph.add_conditional_edges("detect_intent", after_intent)
     graph.add_conditional_edges("resolve_concept", after_resolution)
     # 批次4：在现有链路中插入三个可选节点；端口未注入时为 no-op

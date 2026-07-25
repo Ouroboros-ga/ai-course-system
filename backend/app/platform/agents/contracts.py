@@ -37,6 +37,13 @@ class LearningEventPort(Protocol):
     async def record_agent_trace(self, *, trace: Mapping[str, Any]) -> None: ...
 
 
+class ConversationContextPort(Protocol):
+    """Read/write bounded structured continuity state, never a transcript."""
+
+    async def load_context(self, *, student_id: str, course_id: str, session_id: str) -> Mapping[str, Any] | None: ...
+    async def save_context(self, *, student_id: str, course_id: str, session_id: str, context: Mapping[str, Any]) -> None: ...
+
+
 class TeachingLLMPort(Protocol):
     async def detect_intent(self, *, message: str, course_id: str) -> Mapping[str, Any]: ...
     async def extract_concept_candidates(self, *, message: str, course_id: str) -> list[Mapping[str, Any]]: ...
@@ -82,3 +89,4 @@ class TeachingTools:
     web_research: Optional[WebResearchPort] = None
     cognition: Optional[CognitionPort] = None
     question_bank: Optional[QuestionBankPort] = None
+    conversation_context: Optional[ConversationContextPort] = None

@@ -1,12 +1,9 @@
-"""TeachingAgent 运行时日志模型。
+"""Minimal, course-scoped TeachingAgent audit and session records.
 
-持久化两类数据：
-- ``AgentLearningEvent``：workflow 末尾记录的教学响应事件（teaching_agent_response），
-  对齐 ``workflows/teaching.py`` 中 ``record_learning_event(event=...)`` 的 shape。
-- ``AgentTraceRecord``：workflow 的完整执行 trace（replay），用于审计与回放，
-  对齐 ``workflows/teaching.py`` 中 ``record_agent_trace(trace=...)`` 的 shape。
-
-课程作用域：两张表都带 ``student_id`` + ``course_id`` 列，便于按课程隔离查询。
+These records deliberately exclude raw learner messages, generated answers,
+prompts, and full model traces.  They are operational audit/context data only:
+they never create ``LearningEvent`` / ``LearningEvidence`` and never update a
+formal cognition or mastery result.
 """
 from __future__ import annotations
 
@@ -17,7 +14,7 @@ from sqlmodel import Field, SQLModel
 
 
 class AgentLearningEvent(SQLModel, table=True):
-    """TeachingAgent 教学响应事件（一条 respond 请求对应一条事件）。"""
+    """Sanitized teaching-agent audit event, not a formal learning event."""
 
     __tablename__ = "agent_learning_events"
 
@@ -27,13 +24,15 @@ class AgentLearningEvent(SQLModel, table=True):
     course_id: int = Field(index=True)
     session_id: str = Field(max_length=128)
     event_type: str = Field(default="teaching_agent_response", max_length=64)
-    # 完整 event dict（含 teaching_action/warnings/errors/final_answer 等）
-    event_data: str = Field(default="{}", description="JSON: 完整事件负载")
+    # Only structured action/error metadata; never raw message or answer text.
+    event_data: str = Field(default="{}", description="JSON: sanitized audit metadata")
+    data_policy_version: str = Field(default="agent-log-minimization/1", max_length=64)
+    migration_batch_id: str | None = Field(default=None, max_length=64)
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 
 class AgentTraceRecord(SQLModel, table=True):
-    """TeachingAgent workflow 执行 trace（用于审计与回放）。"""
+    """Sanitized workflow metadata, not a raw replay transcript."""
 
     __tablename__ = "agent_trace_records"
 
@@ -41,6 +40,35 @@ class AgentTraceRecord(SQLModel, table=True):
     trace_id: str = Field(index=True, max_length=128)
     student_id: int = Field(index=True)
     course_id: int = Field(index=True)
-    # 完整 trace dict（含 input/intent/concept_id/evidence/answer/citations/...）
-    trace_data: str = Field(default="{}", description="JSON: 完整 trace 负载")
+    session_id: str = Field(default="", max_length=128)
+    # Node names, error codes and evidence identifiers only.
+    trace_data: str = Field(default="{}", description="JSON: sanitized trace metadata")
+    data_policy_version: str = Field(default="agent-log-minimization/1", max_length=64)
+    migration_batch_id: str | None = Field(default=None, max_length=64)
     created_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class AgentConversationSession(SQLModel, table=True):
+    """Bounded structured continuity state; it is never a chat transcript."""
+
+    __tablename__ = "agent_conversation_sessions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    student_id: int = Field(index=True)
+    course_id: int = Field(index=True)
+    session_id: str = Field(index=True, max_length=128)
+    context_data: str = Field(default="{}", description="JSON: structured, non-content continuity state")
+    data_policy_version: str = Field(default="agent-session-context/1", max_length=64)
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+
+
+class AgentLogMigrationRecord(SQLModel, table=True):
+    """Idempotency ledger for the privacy-preserving Agent log migration."""
+
+    __tablename__ = "agent_log_migration_records"
+
+    batch_id: str = Field(primary_key=True, max_length=64)
+    applied_at: datetime = Field(default_factory=datetime.utcnow)
+    redacted_event_rows: int = Field(default=0)
+    redacted_trace_rows: int = Field(default=0)

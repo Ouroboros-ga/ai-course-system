@@ -21,5 +21,6 @@ class TeachingAgentRuntime:
             "current_exercise_id": exercise_id, "current_code_submission_id": code_submission_id,
             "warnings": [], "errors": [], "degraded_services": [], "trace": [], "citations": [],
             "retrieved_evidence": [], "selected_resource_ids": [],
+            "session_context": None,
         }
         return await self._graph.ainvoke(initial)

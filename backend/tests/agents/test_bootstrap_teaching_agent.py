@@ -64,7 +64,7 @@ def test_default_disabled_does_not_inject(tmp_path):
     assert resp.status_code == 503
 
 
-def test_enabled_but_no_report_does_not_inject(tmp_path):
+def test_enabled_without_report_injects_registry(tmp_path):
     app = _app()
     store_root = tmp_path / "reports"  # empty
     with patch("app.platform.agents.bootstrap.settings") as mock_settings, \
@@ -77,8 +77,8 @@ def test_enabled_but_no_report_does_not_inject(tmp_path):
         mock_settings.LLM_MODEL_NAME = "m"
         mock_store_cls.return_value = KGMestShadowReportStore(store_root)
         injected = bootstrap_teaching_agent(app, demo_service=_demo_service(tmp_path))
-    assert injected is False
-    assert getattr(app.state, "teaching_agent_runtime", None) is None
+    assert injected is True
+    assert app.state.teaching_agent_runtime_registry is not None
 
 
 def test_enabled_but_llm_not_configured_does_not_inject(tmp_path):
@@ -129,8 +129,7 @@ def test_enabled_with_report_and_llm_injects_and_endpoint_is_live(tmp_path):
         injected = bootstrap_teaching_agent(app, demo_service=_demo_service(tmp_path))
 
     assert injected is True
-    assert app.state.teaching_agent_runtime is not None
-    assert app.state.teaching_agent_scope == {"student_id": "s-1", "course_id": "c-1"}
+    assert app.state.teaching_agent_runtime_registry is not None
     resp = TestClient(app).post("/api/v1/teaching-agent/respond", json={"student_id": "s-1", "course_id": "c-1", "session_id": "x", "message": "为什么二分查找需要有序？"})
     # The runtime is injected (endpoint is live, NOT 503-not-configured). The
     # demo_service here has no real course sidecar, so the scope gate rejects

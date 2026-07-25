@@ -57,7 +57,8 @@ def test_normal_question_uses_evidence_citations_and_records_trace():
     assert state["citations"] == [{"evidence_id": "ev-1", "resource_id": "ppt-1", "page_start": 12, "page_end": 13}]
     assert len(events.events) == len(events.traces) == 1
     assert state["trace_id"] == events.events[0]["trace_id"]
-    assert events.traces[0]["final_answer"] == state["final_answer"]
+    assert "final_answer" not in events.traces[0]
+    assert "user_message" not in events.traces[0]
     assert events.traces[0]["retrieved_evidence"][0]["evidence_id"] == "ev-1"
 
 

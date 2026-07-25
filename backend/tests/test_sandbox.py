@@ -339,13 +339,14 @@ class TestSandboxAPI:
         )
         assert response.status_code == 403
 
-    def test_execute_with_student_membership(self, client, session):
+    def test_execute_with_student_membership(self, client, session, monkeypatch):
         """有 membership 的学生可以执行代码"""
         teacher = _user(session, "sb_teacher_ok", UserRole.TEACHER)
         student = _user(session, "sb_student_ok")
         course = _setup_course(session, teacher, student)
 
-        # 沙箱默认禁用，返回 SANDBOX_UNAVAILABLE
+        # Keep this unit test independent from a developer's enabled local Judge0.
+        monkeypatch.setattr(sandbox_client, "_enabled", False)
         token = _token(student)
         response = client.post(
             f"/api/v1/sandbox/course/{course.id}/execute",

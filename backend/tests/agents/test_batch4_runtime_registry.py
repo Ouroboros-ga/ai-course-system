@@ -94,10 +94,10 @@ def test_get_or_create_returns_runtime_when_report_exists(tmp_path):
     assert isinstance(runtime, TeachingAgentRuntime)
 
 
-def test_get_or_create_returns_none_when_no_report(tmp_path):
-    """无报告时返回 None（fail-closed，不抛异常）。"""
+def test_get_or_create_builds_runtime_when_no_report(tmp_path):
+    """KG-MEST report is optional; no report must not block normal Q&A."""
     registry = _make_registry(tmp_path)
-    assert registry.get_or_create("s-1", "c-1") is None
+    assert isinstance(registry.get_or_create("s-1", "c-1"), TeachingAgentRuntime)
 
 
 def test_get_or_create_caches_runtime_per_scope(tmp_path):
@@ -150,8 +150,8 @@ def test_get_or_create_normalizes_string_types(tmp_path):
 # ==================== fail-closed 契约 ====================
 
 
-def test_get_or_create_returns_none_when_store_read_raises(tmp_path):
-    """报告存储读取异常时返回 None（fail-closed，不抛异常）。"""
+def test_get_or_create_builds_runtime_when_optional_store_read_raises(tmp_path):
+    """An optional report read failure must not block normal Q&A."""
     registry = _make_registry(tmp_path)
     registry._store.write(student_id="s-1", course_id="c-1", report=_approved_report("c-1"))
 
@@ -160,7 +160,7 @@ def test_get_or_create_returns_none_when_store_read_raises(tmp_path):
 
     with patch.object(registry._store, "read", side_effect=_boom):
         runtime = registry.get_or_create("s-1", "c-1")
-    assert runtime is None
+    assert isinstance(runtime, TeachingAgentRuntime)
 
 
 def test_get_or_create_returns_none_when_runtime_build_raises(tmp_path):
@@ -302,14 +302,11 @@ def test_resolve_runtime_returns_runtime_from_registry_for_known_scope(tmp_path)
     assert isinstance(runtime, TeachingAgentRuntime)
 
 
-def test_resolve_runtime_raises_503_for_unknown_scope_in_registry(tmp_path):
-    """registry 场景下 _resolve_runtime 对未知 scope 返回 503。"""
+def test_resolve_runtime_builds_for_unknown_report_scope(tmp_path):
+    """Registry resolves a runtime even without a KG-MEST report."""
     registry = _make_registry(tmp_path)  # 空存储
 
-    with pytest.raises(HTTPException) as exc:
-        _resolve_runtime(registry, "s-1", "c-1")
-    assert exc.value.status_code == 503
-    assert exc.value.detail["code"] == "TEACHING_AGENT_SCOPE_NOT_CONFIGURED"
+    assert isinstance(_resolve_runtime(registry, "s-1", "c-1"), TeachingAgentRuntime)
 
 
 def test_resolve_runtime_returns_runtime_directly_when_legacy_single_runtime_injected(tmp_path):
@@ -421,12 +418,12 @@ class TeachingAgentRuntimeRegistryTests(unittest.TestCase):
         self._tmp.cleanup()
 
     def test_known_scope(self): test_get_or_create_returns_runtime_when_report_exists(self.tmp_path)
-    def test_no_report(self): test_get_or_create_returns_none_when_no_report(self.tmp_path)
+    def test_no_report(self): test_get_or_create_builds_runtime_when_no_report(self.tmp_path)
     def test_cache_hit(self): test_get_or_create_caches_runtime_per_scope(self.tmp_path)
     def test_scope_isolation(self): test_get_or_create_isolates_different_scopes(self.tmp_path)
     def test_student_isolation(self): test_get_or_create_isolates_student_within_same_course(self.tmp_path)
     def test_string_normalization(self): test_get_or_create_normalizes_string_types(self.tmp_path)
-    def test_store_read_fail_closed(self): test_get_or_create_returns_none_when_store_read_raises(self.tmp_path)
+    def test_store_read_fail_closed(self): test_get_or_create_builds_runtime_when_optional_store_read_raises(self.tmp_path)
     def test_build_fail_closed(self): test_get_or_create_returns_none_when_runtime_build_raises(self.tmp_path)
     def test_list_cached_empty(self): test_list_cached_scopes_returns_empty_initially(self.tmp_path)
     def test_list_cached_pairs(self): test_list_cached_scopes_returns_cached_pairs(self.tmp_path)
@@ -435,7 +432,7 @@ class TeachingAgentRuntimeRegistryTests(unittest.TestCase):
     def test_optional_ports_propagate(self): test_optional_ports_propagate_to_built_runtime(self.tmp_path)
     def test_optional_ports_default_none(self): test_registry_defaults_optional_ports_to_none_when_not_injected(self.tmp_path)
     def test_resolve_runtime_known(self): test_resolve_runtime_returns_runtime_from_registry_for_known_scope(self.tmp_path)
-    def test_resolve_runtime_unknown(self): test_resolve_runtime_raises_503_for_unknown_scope_in_registry(self.tmp_path)
+    def test_resolve_runtime_unknown(self): test_resolve_runtime_builds_for_unknown_report_scope(self.tmp_path)
     def test_resolve_runtime_legacy(self): test_resolve_runtime_returns_runtime_directly_when_legacy_single_runtime_injected(self.tmp_path)
     def test_get_runtime_prefers_registry(self): test_get_runtime_returns_registry_when_both_injected(self.tmp_path)
     def test_get_runtime_legacy_fallback(self): test_get_runtime_returns_legacy_when_registry_absent(self.tmp_path)

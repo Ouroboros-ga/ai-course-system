@@ -14,9 +14,10 @@ from __future__ import annotations
 import logging
 from typing import Any, Optional
 
-from .composition import build_kg_mest_shadow_sidecar_runtime
+from .composition import build_course_sidecar_runtime, build_kg_mest_shadow_sidecar_runtime
 from .contracts import (
     CognitionPort,
+    ConversationContextPort,
     LearningEventPort,
     QuestionBankPort,
     RecommendationPort,
@@ -26,6 +27,7 @@ from .contracts import (
 )
 from .kg_mest_report_store import KGMestShadowReportStore
 from .runtime import TeachingAgentRuntime
+from .tools.cognition_student_modeling import CognitionStudentModelingPort, UnknownStudentModelingPort
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +54,7 @@ class TeachingAgentRuntimeRegistry:
         web_research: Optional[WebResearchPort] = None,
         cognition: Optional[CognitionPort] = None,
         question_bank: Optional[QuestionBankPort] = None,
+        conversation_context: Optional[ConversationContextPort] = None,
     ) -> None:
         self._demo_service = demo_service
         self._llm = llm
@@ -62,6 +65,7 @@ class TeachingAgentRuntimeRegistry:
         self._web_research = web_research
         self._cognition = cognition
         self._question_bank = question_bank
+        self._conversation_context = conversation_context
         self._cache: dict[tuple[str, str], TeachingAgentRuntime] = {}
 
     def get_or_create(
@@ -69,40 +73,46 @@ class TeachingAgentRuntimeRegistry:
         student_id: str,
         course_id: str,
     ) -> Optional[TeachingAgentRuntime]:
-        """Return the runtime for ``(student_id, course_id)``, or ``None``.
-
-        Returns ``None`` when:
-        - the report store has no approved report for this pair, or
-        - building the runtime raises (fail-closed; logged but not raised).
-        """
+        """Build for every valid scope; an optional report only enriches it."""
         key = (str(student_id), str(course_id))
         cached = self._cache.get(key)
         if cached is not None:
             return cached
+        report = None
         try:
             report = self._store.read(key[0], key[1])
-        except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
+        except Exception as error:  # noqa: BLE001 -- report is optional, do not block Q&A
             logger.warning(
-                "TeachingAgent registry: report read failed for student=%s course=%s: %s: %s",
+                "TeachingAgent registry: optional report read failed for student=%s course=%s: %s: %s",
                 key[0], key[1], type(error).__name__, error,
             )
-            return None
-        if report is None:
-            return None
         try:
-            runtime = build_kg_mest_shadow_sidecar_runtime(
-                demo_service=self._demo_service,
-                shadow_report=report,
-                expected_student_id=key[0],
-                expected_course_id=key[1],
-                recommendation=self._recommendation,
-                sandbox=self._sandbox,
-                learning_events=self._learning_events,
-                llm=self._llm,
-                web_research=self._web_research,
-                cognition=self._cognition,
-                question_bank=self._question_bank,
-            )
+            if report is not None:
+                try:
+                    runtime = build_kg_mest_shadow_sidecar_runtime(
+                        demo_service=self._demo_service, shadow_report=report, expected_student_id=key[0], expected_course_id=key[1],
+                        recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
+                        web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
+                        conversation_context=self._conversation_context,
+                    )
+                except (TypeError, ValueError) as error:
+                    # A stale/malformed optional report must not deny normal Q&A.
+                    logger.warning("TeachingAgent registry: ignored optional report for student=%s course=%s: %s", key[0], key[1], error)
+                    report = None
+            if report is None and self._cognition is not None:
+                runtime = build_course_sidecar_runtime(
+                    demo_service=self._demo_service, student_modeling=CognitionStudentModelingPort(self._cognition),
+                    recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
+                    web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
+                    conversation_context=self._conversation_context,
+                )
+            elif report is None:
+                runtime = build_course_sidecar_runtime(
+                    demo_service=self._demo_service, student_modeling=UnknownStudentModelingPort(),
+                    recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
+                    web_research=self._web_research, cognition=None, question_bank=self._question_bank,
+                    conversation_context=self._conversation_context,
+                )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
             logger.warning(
                 "TeachingAgent registry: runtime build failed for student=%s course=%s: %s: %s",

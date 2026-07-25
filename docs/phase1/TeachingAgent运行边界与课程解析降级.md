@@ -1,0 +1,42 @@
+# TeachingAgent 运行边界与课程解析降级
+
+## 生效语义
+
+- Agent 的课程权限仍由 Course Access v1 在请求入口校验。
+- R2 课程侧车、Evidence、GraphSnapshot 是**课程/文档版本级**产物；一次解析可供该课程的多个学生使用。
+- KG-MEST Shadow 报告是可选的学生级增强输入，不再是 Agent 可用性的前置条件。
+- 没有正式认知状态时，Agent 只获得 `unknown` 读模型；不会自行补写认知结论。
+
+## 旧课件与解析失败
+
+未建立或暂时失效的课程侧车不会返回“学生/课程未配置”503。Agent 返回
+`fallback_required / COURSE_KNOWLEDGE_GRAPH_PENDING`；前端随后调用既有 V1
+`/chat/ask` 并显示：
+
+> 课程知识图谱正在解析或暂不可用，本次已使用普通课程问答。
+
+这不是授权绕过：课程访问校验仍先执行。后续可按课程和文档版本批量生成
+Evidence/图谱，但不需要为每名学生重复执行 KG-MEST。
+
+## 最小化记录与连续性
+
+`AgentLearningEvent`、`AgentTraceRecord` 和 `AgentConversationSession` 只保存：
+
+- 学生、课程、会话、trace 标识；
+- 教学动作、意图、节点名、错误/告警码、证据 ID；
+- 有界结构化会话状态（当前概念、上一意图/动作、告警）。
+
+它们不保存原始提问、完整回答、完整 Prompt、完整模型 trace 或 Evidence 文本。
+前端为同一学生/课程复用 session ID；服务器端摘要 30 分钟无活动后失效。
+
+## 认知边界
+
+上述 Agent 审计和会话记录**不是**正式 `LearningEvent` 或评分型
+`LearningEvidence`，不会写入 `observed_performance_score`、`MasteryState` 或
+任何正式认知结论。只有独立契约下的 Quiz/Judge0 评分等来源才可产生评分证据。
+
+## 迁移与回滚
+
+`agent-log-minimization-v1` 先做 SQLite 预检，再将历史原始日志替换为最小化
+红删标记，并记录幂等批次。回滚函数仅删除迁移账本；出于隐私原则，已清除的
+原始内容不可恢复。

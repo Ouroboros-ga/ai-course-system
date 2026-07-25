@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 
 DB_PATH = os.path.join(DATABASE_DIR, "smart_class.db")
 ACCESS_CONTROL_MIGRATION_BATCH = "access-control-v1"
+AGENT_LOG_MIGRATION_BATCH = "agent-log-minimization-v1"
 
 MIGRATIONS = {
     "courses": {
@@ -52,6 +53,15 @@ MIGRATIONS = {
     },
     "learning_evidence_records": {
         "timestamp": "ALTER TABLE learning_evidence_records ADD COLUMN timestamp VARCHAR DEFAULT ''",
+    },
+    "agent_learning_events": {
+        "data_policy_version": "ALTER TABLE agent_learning_events ADD COLUMN data_policy_version VARCHAR NOT NULL DEFAULT 'agent-log-minimization/1'",
+        "migration_batch_id": "ALTER TABLE agent_learning_events ADD COLUMN migration_batch_id VARCHAR DEFAULT NULL",
+    },
+    "agent_trace_records": {
+        "session_id": "ALTER TABLE agent_trace_records ADD COLUMN session_id VARCHAR NOT NULL DEFAULT ''",
+        "data_policy_version": "ALTER TABLE agent_trace_records ADD COLUMN data_policy_version VARCHAR NOT NULL DEFAULT 'agent-log-minimization/1'",
+        "migration_batch_id": "ALTER TABLE agent_trace_records ADD COLUMN migration_batch_id VARCHAR DEFAULT NULL",
     },
 }
 
@@ -148,6 +158,88 @@ def rollback_access_control_backfill(database_path: str | None = None) -> dict[s
         raise
     finally:
         conn.close()
+
+
+def agent_log_preflight(database_path: str | None = None) -> dict[str, Any]:
+    """Report whether an existing SQLite database can receive log minimization.
+
+    Existing raw rows are deliberately *not* copied into a rollback table.  The
+    migration replaces them with redacted metadata, so a privacy-safe rollback
+    can only remove the migration marker, not restore content that should no
+    longer be retained.
+    """
+    path = database_path or _sqlite_database_path()
+    if not os.path.exists(path):
+        return {"ok": True, "issues": [], "counts": {}}
+    conn = sqlite3.connect(path)
+    try:
+        cursor = conn.cursor()
+        counts: dict[str, int] = {}
+        issues: list[str] = []
+        for table_name in ("agent_learning_events", "agent_trace_records"):
+            if not _table_exists(cursor, table_name):
+                counts[table_name] = 0
+                continue
+            required = {"id", "student_id", "course_id", "trace_id"}
+            missing = required - _required_columns(cursor, table_name)
+            if missing:
+                issues.append(f"{table_name} missing columns: {', '.join(sorted(missing))}")
+                continue
+            cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            counts[table_name] = int(cursor.fetchone()[0])
+        return {"ok": not issues, "issues": issues, "counts": counts}
+    finally:
+        conn.close()
+
+
+def rollback_agent_log_minimization(database_path: str | None = None) -> dict[str, int]:
+    """Remove only the migration ledger; raw content is intentionally unrecoverable.
+
+    This is an operational rollback companion, not a restoration path for
+    previously over-collected student content.
+    """
+    path = database_path or _sqlite_database_path()
+    conn = sqlite3.connect(path)
+    try:
+        cursor = conn.cursor()
+        if not _table_exists(cursor, "agent_log_migration_records"):
+            return {"agent_log_migration_records": 0}
+        cursor.execute("DELETE FROM agent_log_migration_records WHERE batch_id = ?", (AGENT_LOG_MIGRATION_BATCH,))
+        conn.commit()
+        return {"agent_log_migration_records": max(cursor.rowcount, 0)}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
+def _minimize_agent_logs(cursor: sqlite3.Cursor) -> tuple[int, int]:
+    """Redact legacy raw payloads once, retaining identifiers and error metadata."""
+    if not _table_exists(cursor, "agent_log_migration_records"):
+        return (0, 0)
+    cursor.execute("SELECT 1 FROM agent_log_migration_records WHERE batch_id = ?", (AGENT_LOG_MIGRATION_BATCH,))
+    if cursor.fetchone() is not None:
+        return (0, 0)
+
+    event_rows = trace_rows = 0
+    if _table_exists(cursor, "agent_learning_events"):
+        cursor.execute(
+            "UPDATE agent_learning_events SET event_data = ?, data_policy_version = ?, migration_batch_id = ?",
+            ('{"reason_codes":["LEGACY_RAW_PAYLOAD_REDACTED"]}', "agent-log-minimization/1", AGENT_LOG_MIGRATION_BATCH),
+        )
+        event_rows = max(cursor.rowcount, 0)
+    if _table_exists(cursor, "agent_trace_records"):
+        cursor.execute(
+            "UPDATE agent_trace_records SET trace_data = ?, data_policy_version = ?, migration_batch_id = ?",
+            ('{"reason_codes":["LEGACY_RAW_PAYLOAD_REDACTED"]}', "agent-log-minimization/1", AGENT_LOG_MIGRATION_BATCH),
+        )
+        trace_rows = max(cursor.rowcount, 0)
+    cursor.execute(
+        "INSERT INTO agent_log_migration_records (batch_id, applied_at, redacted_event_rows, redacted_trace_rows) VALUES (?, CURRENT_TIMESTAMP, ?, ?)",
+        (AGENT_LOG_MIGRATION_BATCH, event_rows, trace_rows),
+    )
+    return (event_rows, trace_rows)
 
 
 def _backfill_access_control(cursor: sqlite3.Cursor) -> int:
@@ -256,6 +348,12 @@ def run_migrations():
         }
         if all(_table_exists(cursor, table) for table in access_tables):
             applied += _backfill_access_control(cursor)
+        log_preflight = agent_log_preflight(database_path)
+        if not log_preflight["ok"]:
+            raise RuntimeError("Agent-log preflight failed: " + "; ".join(log_preflight["issues"]))
+        if _table_exists(cursor, "agent_log_migration_records"):
+            redacted_events, redacted_traces = _minimize_agent_logs(cursor)
+            applied += redacted_events + redacted_traces
         conn.commit()
         logger.info("Applied %s migration/backfill operation(s)", applied)
     except Exception:
