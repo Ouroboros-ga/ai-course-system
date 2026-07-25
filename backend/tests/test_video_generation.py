@@ -33,7 +33,7 @@ class TestDigitalHumanClient:
         client = DigitalHumanClient()
 
         with pytest.raises(DigitalHumanError, match="音频文件不存在"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 client.generate_video(
                     audio_path="/nonexistent/audio.wav",
                     video_path="/nonexistent/video.mp4",
@@ -47,7 +47,7 @@ class TestDigitalHumanClient:
         client = DigitalHumanClient()
         client.api_url = "http://localhost:99999"
 
-        result = asyncio.get_event_loop().run_until_complete(client.check_health())
+        result = asyncio.run(client.check_health())
         assert result is False
 
 
@@ -100,7 +100,7 @@ class TestVideoGenerationService:
         session.exec.return_value.first.return_value = None
 
         with pytest.raises(ValueError, match="没有人脸视频素材"):
-            asyncio.get_event_loop().run_until_complete(
+            asyncio.run(
                 service._resolve_face_video(None, mock_node, session)
             )
 
@@ -131,7 +131,7 @@ class TestVideoGenerationService:
             session.get.return_value = mock_script
             session.exec.return_value.first.return_value = mock_asset
 
-            result = asyncio.get_event_loop().run_until_complete(
+            result = asyncio.run(
                 service._resolve_face_video(None, mock_node, session)
             )
             assert result == temp_video
@@ -146,13 +146,14 @@ class TestVideoGenerationAPIRoutes:
         """测试视频生成路由已注册"""
         from app.main import app
         routes = [r.path for r in app.routes if hasattr(r, 'path')]
-        vg_routes = [r for r in routes if 'video-generation' in r]
+        vg_routes = [r for r in routes if 'video-gen' in r]
 
-        assert "/api/v1/video-generation/course/{course_id}/generate" in vg_routes
-        assert "/api/v1/video-generation/node/{node_id}/generate" in vg_routes
-        assert "/api/v1/video-generation/task/{task_id}" in vg_routes
-        assert "/api/v1/video-generation/course/{course_id}/tasks" in vg_routes
-        assert "/api/v1/video-generation/health" in vg_routes
+        assert "/api/v1/video-gen/course/{course_id}/generate" in vg_routes
+        assert "/api/v1/video-gen/node/{node_id}/generate" in vg_routes
+        assert "/api/v1/video-gen/task/{task_id}" in vg_routes
+        assert "/api/v1/video-gen/course/{course_id}/tasks" in vg_routes
+        assert "/api/v1/video-gen/health" in vg_routes
+        assert not any('video-generation' in route for route in routes)
 
 
 if __name__ == "__main__":

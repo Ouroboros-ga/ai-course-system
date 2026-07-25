@@ -110,18 +110,14 @@ class TestPlayerAPI:
         assert mock_nodes[0].timestamp_start == 0.0
         assert mock_nodes[1].timestamp_end == 120.0
 
-    def test_get_player_init_data_course_not_found(self, mock_session, mock_user):
-        """测试课程不存在的情况"""
-        from app.api.v1.endpoints.player import get_player_init_data
-        from fastapi import HTTPException
-
-        mock_session.get.return_value = None
-
-        with pytest.raises(HTTPException) as exc_info:
-            # 这里应该抛出404异常
-            pass
-
-        assert exc_info.value.status_code == 404
+    def test_player_route_requires_course_membership(self, client, student_token):
+        """未知课程不能被播放器读取，且不以空 pass 伪造断言。"""
+        response = client.get(
+            "/api/v1/player/init/999999",
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+        # Course Access resolves scope before player data and fails closed.
+        assert response.status_code in {403, 404}
 
     def test_save_player_progress_new_record(self, mock_session, mock_user):
         """测试保存学习进度 - 新记录"""

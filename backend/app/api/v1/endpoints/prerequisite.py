@@ -8,13 +8,14 @@ import traceback
 from typing import Optional
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Body, Query
-from sqlmodel import Session
+from fastapi import APIRouter, Depends, Body, Query, HTTPException
+from sqlmodel import Session, select
 
 from app.models.database import get_session
 from app.core.security import get_current_user
 from app.core.exceptions import unified_response
 from app.models.progress_model import LearningJumpHistory
+from app.models.course_model import CourseScript, ScriptNode
 from app.services.prerequisite_service import (
     prerequisite_analyzer,
     jump_history_manager,
@@ -24,6 +25,17 @@ from app.services.course_access_service import require_course_permission
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/prerequisite", tags=["前置知识智能跳转"])
+
+
+def _require_course_node(session: Session, course_id: int, node_id: int) -> ScriptNode:
+    """Reject node IDs that belong to another course before using them."""
+    node = session.get(ScriptNode, node_id)
+    if node is None:
+        raise HTTPException(status_code=404, detail="Course node does not exist")
+    script = session.get(CourseScript, node.script_id)
+    if script is None or script.course_id != course_id:
+        raise HTTPException(status_code=404, detail="Course node does not exist")
+    return node
 
 
 @router.post("/analyze-gap")
@@ -88,15 +100,7 @@ async def analyze_prerequisite_gap(
         if not access.analytics_eligible:
             return unified_response(code=403, message="Only learner participation can create prerequisite signals", data=None)
         
-        from app.models.course_model import ScriptNode
-        
-        current_node = session.get(ScriptNode, currentNodeId)
-        if not current_node:
-            return unified_response(
-                code=404, 
-                message="当前节点不存在", 
-                data=None
-            )
+        current_node = _require_course_node(session, courseId, currentNodeId)
         
         result = await prerequisite_analyzer.analyze_prerequisite_gaps(
             question=question,
@@ -119,6 +123,8 @@ async def analyze_prerequisite_gap(
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[前置知识缺陷检测失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(
@@ -194,6 +200,12 @@ async def execute_jump_to_prerequisite(
         access = require_course_permission(session, current_user, courseId, "course.learn")
         if not access.analytics_eligible:
             return unified_response(code=403, message="Only learner participation can create prerequisite jumps", data=None)
+        _require_course_node(session, courseId, fromNodeId)
+        _require_course_node(session, courseId, toPrerequisiteId)
+        if parentJumpId is not None:
+            parent = session.get(LearningJumpHistory, parentJumpId)
+            if parent is None or parent.user_id != user_id or parent.course_id != courseId:
+                raise HTTPException(status_code=404, detail="Parent jump record does not exist")
         
         jump_record = jump_history_manager.create_jump_record(
             session=session,
@@ -247,6 +259,8 @@ async def execute_jump_to_prerequisite(
             }
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[执行跳转失败] {str(e)}\n{traceback.format_exc()}")
         return unified_response(

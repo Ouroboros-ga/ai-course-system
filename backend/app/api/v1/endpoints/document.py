@@ -860,6 +860,10 @@ async def get_my_courses(
                 StudentEnrollment.course_id == course.id,
                 StudentEnrollment.is_active == True,
             )).first()
+            # Do not turn a partial historical migration into a 500 response
+            # or invent an enrolment record during a read operation.
+            if enr is None:
+                continue
 
             my_courses.append({
                 "enrollment_id": enr.id,
@@ -1775,6 +1779,17 @@ async def enroll_course(
     try:
         student_id = int(current_user["user_id"])
 
+        # Enrollment is the lifecycle entrypoint for learner membership.
+        # Allowing a teacher/owner token here would create a legacy
+        # StudentEnrollment row that Course Access v1 correctly refuses to
+        # treat as learner participation.
+        from app.models.user_model import User, UserRole
+        user = session.get(User, student_id)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=401, detail="Account is unavailable")
+        if user.role != UserRole.STUDENT:
+            raise HTTPException(status_code=403, detail="Only student accounts can enroll in a course")
+
         course = session.get(Course, course_id)
         if not course:
             return unified_response(code=404, message="课程不存在")
@@ -1836,6 +1851,8 @@ async def enroll_course(
             "total_nodes": course.total_nodes or 0,
         })
 
+    except HTTPException:
+        raise
     except Exception as e:
         import traceback
         traceback.print_exc()
