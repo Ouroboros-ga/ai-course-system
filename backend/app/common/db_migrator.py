@@ -13,6 +13,7 @@ ACCESS_CONTROL_MIGRATION_BATCH = "access-control-v1"
 MIGRATIONS = {
     "courses": {
         "pdf_file_path": "ALTER TABLE courses ADD COLUMN pdf_file_path VARCHAR DEFAULT NULL",
+        "invite_code": "ALTER TABLE courses ADD COLUMN invite_code VARCHAR DEFAULT NULL",
     },
     "script_nodes": {
         "audio_url": "ALTER TABLE script_nodes ADD COLUMN audio_url VARCHAR DEFAULT NULL",
@@ -48,6 +49,9 @@ MIGRATIONS = {
     },
     "graph_node_reviews": {
         "target_content_hash": "ALTER TABLE graph_node_reviews ADD COLUMN target_content_hash VARCHAR NOT NULL DEFAULT ''",
+    },
+    "learning_evidence_records": {
+        "timestamp": "ALTER TABLE learning_evidence_records ADD COLUMN timestamp VARCHAR DEFAULT ''",
     },
 }
 

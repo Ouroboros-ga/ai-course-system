@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.signature_middleware import SignatureMiddleware
+from app.core.error_monitoring import ErrorMonitoringMiddleware, monitor as error_monitor
 from app.core.exceptions import global_exception_handler, unified_response
 from app.models.database import create_tables
 from app.common.db_migrator import run_migrations
@@ -108,6 +109,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 错误监控中间件（最外层，观测所有 >= 400 响应；批次0上线底座）
+app.add_middleware(ErrorMonitoringMiddleware)
+# 暴露错误计数快照供运维读取
+app.state.error_monitor = error_monitor
+
 # 注册全局异常处理
 app.add_exception_handler(HTTPException, global_exception_handler)
 
@@ -197,6 +203,12 @@ app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=
 @app.get("/", tags=["健康检查"], response_model=UnifiedResponse)
 async def health_check():
     return unified_response(200, "服务运行正常", {"version": "v1"})
+
+
+# 错误监控快照（批次0上线底座）：暴露 403/503/5xx/跨课程拒绝/任务失败计数
+@app.get("/api/v1/health/error-monitor", tags=["健康检查"], response_model=UnifiedResponse)
+async def error_monitor_snapshot():
+    return unified_response(200, "错误监控快照", error_monitor.snapshot())
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])

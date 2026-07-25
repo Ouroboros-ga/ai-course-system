@@ -34,3 +34,47 @@ export function getCourseAccess(courseId) {
 export function getCourseHall(params = {}) {
   return request.get('/document/courses', { params })
 }
+
+// ---------------------------------------------------------------------------
+// 批次1：邀请码入课与课程关闭
+// ---------------------------------------------------------------------------
+
+/**
+ * 教师设置/更新课程邀请码。
+ * POST /course-access/courses/{courseId}/invite-code
+ */
+export function setInviteCode(courseId, code = null) {
+  return request.post(`/course-access/courses/${courseId}/invite-code`, { invite_code: code })
+}
+
+/**
+ * 教师清除课程邀请码。
+ * DELETE /course-access/courses/{courseId}/invite-code
+ */
+export function clearInviteCode(courseId) {
+  return request.delete(`/course-access/courses/${courseId}/invite-code`)
+}
+
+/**
+ * 学生通过邀请码加入课程。
+ * POST /course-access/courses/join-by-code
+ */
+export function joinByCode(inviteCode) {
+  return request.post('/course-access/courses/join-by-code', { invite_code: inviteCode })
+}
+
+/**
+ * 教师关闭课程（拒绝新成员，已加入可继续学习）。
+ * POST /course-access/courses/{courseId}/close
+ */
+export function closeCourse(courseId) {
+  return request.post(`/course-access/courses/${courseId}/close`)
+}
+
+/**
+ * 教师重新开放已关闭课程。
+ * POST /course-access/courses/{courseId}/reopen
+ */
+export function reopenCourse(courseId) {
+  return request.post(`/course-access/courses/${courseId}/reopen`)
+}

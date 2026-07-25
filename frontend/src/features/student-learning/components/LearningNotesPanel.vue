@@ -21,7 +21,7 @@
         @input="$emit('update:modelValue', $event.target.value)"
       ></textarea>
     </label>
-    <p class="sl-note-help">笔记仅保存在当前浏览器，不会上传到课程后台。</p>
+    <p class="sl-note-help">笔记已保存到课程后台，关联当前知识点、页码与播放时间。离线时自动暂存本地，联网后同步。</p>
   </section>
 </template>
 

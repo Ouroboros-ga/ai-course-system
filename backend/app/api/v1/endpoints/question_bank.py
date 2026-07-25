@@ -42,6 +42,7 @@ from app.services.course_access_service import (
     require_platform_permission,
     CourseAccessContext,
 )
+from app.services.cognitive_service import record_scored_evidence
 from app.models.access_control_model import PlatformPermission
 
 router = APIRouter(tags=["Phase B 题库管理"])
@@ -571,6 +572,9 @@ async def submit_attempt(
     session.commit()
     session.refresh(attempt)
 
+    record_scored_evidence(session, attempt)
+    session.commit()
+
     return unified_response(
         code=200,
         message="答题记录已提交",
@@ -609,6 +613,9 @@ async def grade_attempt(
     session.add(attempt)
     session.commit()
     session.refresh(attempt)
+
+    record_scored_evidence(session, attempt)
+    session.commit()
 
     return unified_response(
         code=200,

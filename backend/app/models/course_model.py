@@ -11,6 +11,7 @@ class CourseStatus(str, Enum):
 
     DRAFT = "draft"
     PUBLISHED = "published"
+    CLOSED = "closed"  # 批次1：课程关闭，拒绝新加入但已加入成员可继续学习
     ARCHIVED = "archived"
 
 
@@ -65,6 +66,9 @@ class Course(SQLModel, table=True):
 
     status: CourseStatus = Field(default=CourseStatus.DRAFT, description="课程状态")
     is_ai_generated: bool = Field(default=False, description="是否由AI生成")
+
+    # 批次1：邀请码入课。教师设置后学生可通过邀请码加入；为空表示不接受邀请码加入。
+    invite_code: Optional[str] = Field(default=None, index=True, description="课程邀请码，为空表示未开启邀请码入课")
 
     total_duration: int = Field(default=0, description="总时长(秒)")
     total_nodes: int = Field(default=0, description="脚本总节点数")

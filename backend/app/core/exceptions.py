@@ -12,6 +12,19 @@ def unified_response(code: int, message: str, data: any = None):
     }
 
 
+def shadow_response(code: int, message: str, data: any = None, *, kind: str = "shadow", note: str = ""):
+    """Unified response that explicitly marks data as non-official (shadow/demo/mock/research).
+
+    批次0要求：不把 Shadow、研究功能、Mock 数据标成正式功能。
+    """
+    return {
+        "code": code,
+        "message": message,
+        "data": data if data is not None else None,
+        "provenance": {"kind": kind, "is_official": False, "note": note},
+    }
+
+
 async def global_exception_handler(request: Request, exc: HTTPException):
     # Keep the public envelope stable: ``message`` is always display text and
     # structured machine-readable rejection details live in ``data``.

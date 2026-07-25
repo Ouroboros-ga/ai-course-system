@@ -2,13 +2,14 @@
 import { computed, inject, nextTick, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
-import { createLearnMachine, LEARN_STATES } from '@/app/lib/learnMachine.js'
+import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import LearnContextBar from '@/app/components/learn/LearnContextBar.vue'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
 import LectureStage from '@/app/components/learn/LectureStage.vue'
 import LearningActionDock from '@/app/components/learn/LearningActionDock.vue'
 import CourseAgentPanel from '@/app/components/learn/CourseAgentPanel.vue'
 import CitationStage from '@/app/components/learn/CitationStage.vue'
+import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
@@ -21,7 +22,10 @@ const previewMode = computed(() => ['owner', 'teacher', 'teaching_assistant'].in
 
 const ws = useLearningWorkspace(courseId, { previewMode: previewMode.value })
 
-const machine = createLearnMachine()
+// 批次1：启用 PRACTICE（试一试）切片
+const machine = createLearnMachine({
+  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE],
+})
 const learnState = ref(machine.state)
 const branchContext = ref(null)
 const dockRef = ref(null)
@@ -160,6 +164,13 @@ onMounted(() => {
           v-if="learnState === LEARN_STATES.UNDERSTAND"
           :ws="ws"
           :anchor="branchContext"
+          @exit="exitBranch"
+        />
+
+        <PracticePanel
+          v-if="learnState === LEARN_STATES.PRACTICE"
+          :course-id="courseId"
+          :node-index="ws.currentNodeIndex.value"
           @exit="exitBranch"
         />
       </div>

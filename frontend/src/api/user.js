@@ -49,14 +49,11 @@ export function getMyInfo() {
 
 /**
  * 用户退出登录
+ *
+ * 决策（批次0 API契约清理）：后端为无状态 JWT，不维护 token 黑名单，
+ * 因此没有 POST /user/logout 端点。前端退出时直接清除本地 token 与
+ * 登录状态即可，不调用后端。已移除原先指向不存在端点的死调用。
  */
-export function logout() {
-  return request({
-    url: '/user/logout',
-    method: 'post'
-  })
-}
-
 /**
  * 更新用户信息
  * @param {Object} data - 更新数据

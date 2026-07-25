@@ -1,6 +1,8 @@
 """Course access and capability View Models used by the rebuilt frontend."""
 from __future__ import annotations
 
+import secrets
+import string
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -16,14 +18,22 @@ from app.models.access_control_model import (
     CourseRole,
     MembershipStatus,
 )
-from app.models.user_model import User
+from app.models.course_model import Course, CourseStatus, StudentEnrollment
+from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
     ALL_PERMISSIONS,
+    activate_student_membership,
     require_course_permission,
     serialize_access_context,
 )
 
 router = APIRouter()
+
+
+def _generate_invite_code() -> str:
+    """Generate a random 8-character uppercase alphanumeric invite code."""
+    alphabet = string.ascii_uppercase + string.digits
+    return "".join(secrets.choice(alphabet) for _ in range(8))
 
 
 class MembershipUpsertRequest(BaseModel):
@@ -191,3 +201,158 @@ async def update_course_capabilities(
     session.add(capability)
     session.commit()
     return unified_response(code=200, message="保存课程能力成功", data={"course_id": course_id, "capabilities": values})
+
+
+# ---------------------------------------------------------------------------
+# 批次1：邀请码入课与课程关闭语义
+# ---------------------------------------------------------------------------
+
+
+class InviteCodeRequest(BaseModel):
+    invite_code: str | None = Field(default=None, min_length=4, max_length=32, description="自定义邀请码；不传则自动生成")
+
+
+class JoinByCodeRequest(BaseModel):
+    invite_code: str = Field(min_length=1, max_length=32)
+
+
+@router.post("/courses/{course_id}/invite-code")
+async def set_invite_code(
+    course_id: int,
+    payload: InviteCodeRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师设置或更新课程邀请码（需要 membership.invite 权限）。"""
+    require_course_permission(session, current_user, course_id, "membership.invite")
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
+
+    code = payload.invite_code or _generate_invite_code()
+    # 确保邀请码全局唯一
+    existing = session.exec(select(Course).where(Course.invite_code == code, Course.id != course_id)).first()
+    if existing is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="邀请码已被其他课程占用")
+    course.invite_code = code
+    course.updated_at = datetime.utcnow()
+    session.add(course)
+    session.commit()
+    return unified_response(code=200, message="邀请码已设置", data={"course_id": course_id, "invite_code": code})
+
+
+@router.delete("/courses/{course_id}/invite-code")
+async def clear_invite_code(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师清除邀请码，关闭邀请码入课通道。"""
+    require_course_permission(session, current_user, course_id, "membership.invite")
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
+    course.invite_code = None
+    course.updated_at = datetime.utcnow()
+    session.add(course)
+    session.commit()
+    return unified_response(code=200, message="邀请码已清除", data={"course_id": course_id})
+
+
+@router.post("/courses/join-by-code")
+async def join_by_code(
+    payload: JoinByCodeRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生通过邀请码加入课程。
+
+    - 仅学生角色可调用。
+    - 课程必须为 PUBLISHED 状态（CLOSED/DRAFT/ARCHIVED 拒绝新加入）。
+    - 邀请码必须匹配。
+    - 重复加入返回 already_enrolled；退课后重新加入返回 reactivated。
+    """
+    user_id = int(current_user["user_id"])
+    user = session.get(User, user_id)
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户不存在或已停用")
+    if user.role != UserRole.STUDENT:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅学生账号可通过邀请码加入课程")
+
+    course = session.exec(select(Course).where(Course.invite_code == payload.invite_code)).first()
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="邀请码无效或课程不存在")
+    if course.status != CourseStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"课程当前状态为 {course.status.value}，不接受新成员加入",
+        )
+
+    # 检查是否已加入
+    existing = session.exec(
+        select(StudentEnrollment).where(
+            StudentEnrollment.student_id == user_id,
+            StudentEnrollment.course_id == course.id,
+        )
+    ).first()
+
+    activate_student_membership(session, course_id=course.id, student_user_id=user_id)
+
+    if existing and existing.is_active:
+        session.commit()
+        return unified_response(code=200, message="已加入该课程", data={"course_id": course.id, "already_enrolled": True})
+    elif existing and not existing.is_active:
+        existing.is_active = True
+        existing.enrolled_at = datetime.utcnow()
+        session.add(existing)
+        session.commit()
+        return unified_response(code=200, message="重新加入课程成功", data={"course_id": course.id, "reactivated": True})
+    else:
+        enrollment = StudentEnrollment(
+            student_id=user_id,
+            course_id=course.id,
+            total_nodes_count=course.total_nodes,
+        )
+        session.add(enrollment)
+        session.commit()
+        return unified_response(code=200, message="加入课程成功", data={"course_id": course.id, "enrolled": True})
+
+
+@router.post("/courses/{course_id}/close")
+async def close_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师关闭课程：拒绝新成员加入，已加入成员可继续学习。"""
+    require_course_permission(session, current_user, course_id, "course.publish")
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
+    if course.status == CourseStatus.CLOSED:
+        return unified_response(code=200, message="课程已处于关闭状态", data={"course_id": course_id, "status": "closed"})
+    course.status = CourseStatus.CLOSED
+    course.updated_at = datetime.utcnow()
+    session.add(course)
+    session.commit()
+    return unified_response(code=200, message="课程已关闭，不再接受新成员", data={"course_id": course_id, "status": "closed"})
+
+
+@router.post("/courses/{course_id}/reopen")
+async def reopen_course(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师重新开放已关闭的课程。"""
+    require_course_permission(session, current_user, course_id, "course.publish")
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
+    if course.status != CourseStatus.CLOSED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"课程当前状态为 {course.status.value}，仅 CLOSED 状态可重新开放")
+    course.status = CourseStatus.PUBLISHED
+    course.updated_at = datetime.utcnow()
+    session.add(course)
+    session.commit()
+    return unified_response(code=200, message="课程已重新开放", data={"course_id": course_id, "status": "published"})

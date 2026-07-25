@@ -38,19 +38,11 @@ export function createChatRecord(params) {
 
 /**
  * 删除聊天记录
- * @param {number} chatId - 聊天记录ID
- * @param {number} userId - 用户ID
+ *
+ * 决策（批次0 API契约清理）：后端 chat.py 没有 DELETE 端点，原先的前端
+ * 调用指向不存在的 DELETE /chat/{chatId}。该函数无任何组件调用，已移除。
+ * 若后续需要聊天删除能力，应先在后端补端点再恢复前端调用。
  */
-export function deleteChatRecord(chatId, userId) {
-  return request({
-    url: `/chat/${chatId}`,
-    method: 'delete',
-    params: {
-      userId: userId
-    }
-  })
-}
-
 /**
  * 用户上传文件（图片、文档等）
  * 后端自动解析内容、生成摘要和 TTS 语音，创建/关联会话

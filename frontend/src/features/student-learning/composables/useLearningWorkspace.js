@@ -2,6 +2,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { askQuestion } from '@/api/chat.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
+import { listNotes, createNote, updateNote } from '@/api/note.js'
 import {
   buildProgressPayload,
   clamp,
@@ -58,6 +59,9 @@ export function useLearningWorkspace(courseId, options = {}) {
   const messages = ref([])
   const isAsking = ref(false)
   const notes = ref({})
+  // 批次1：笔记持久化--映射 anchorKey -> 后端 noteId，用于更新而非重复创建
+  const noteIdMap = ref({})
+  let noteSyncTimer = null
   const saveState = ref('saved')
   const mediaError = ref('')
   const returnAnchor = ref(null)
@@ -114,9 +118,81 @@ export function useLearningWorkspace(courseId, options = {}) {
         ...notes.value,
         [noteAnchorKey.value]: String(value),
       }
+      // 离线草稿：立即写 localStorage（不阻塞输入）
       writeJson(notesStorageKey, notes.value)
+      // 批次1：防抖同步到后端
+      scheduleNoteSync(noteAnchorKey.value)
     },
   })
+
+  // 批次1：将本地笔记同步到后端 API
+  function scheduleNoteSync(anchorKey) {
+    window.clearTimeout(noteSyncTimer)
+    noteSyncTimer = window.setTimeout(() => syncNoteToBackend(anchorKey), 800)
+  }
+
+  async function syncNoteToBackend(anchorKey) {
+    if (previewMode) return
+    const content = notes.value[anchorKey]
+    if (content === undefined) return
+    // 解析 anchorKey 提取 node_id 和 page
+    const match = anchorKey.match(/^(.+):page-(\d+)$/)
+    const nodeId = match && match[1] !== 'course' ? Number(match[1]) : null
+    const page = match ? Number(match[2]) : null
+    const existingId = noteIdMap.value[anchorKey]
+
+    try {
+      if (existingId) {
+        await updateNote(existingId, {
+          content: String(content),
+          is_draft: false,
+        })
+      } else {
+        const res = await createNote({
+          course_id: courseId,
+          node_id: nodeId,
+          page: page,
+          timestamp: currentTime.value || null,
+          content: String(content),
+          trigger_source: 'learn',
+          is_draft: false,
+        })
+        if (res?.id) {
+          noteIdMap.value = { ...noteIdMap.value, [anchorKey]: res.id }
+        }
+      }
+    } catch {
+      // 后端同步失败时保留 localStorage 草稿，下次加载时重试
+    }
+  }
+
+  // 批次1：从后端加载笔记
+  async function loadNotesFromBackend() {
+    if (previewMode) return
+    try {
+      const res = await listNotes(courseId)
+      const items = res?.items ?? []
+      const noteMap = {}
+      const idMap = {}
+      for (const item of items) {
+        const anchor = `${item.node_id ?? 'course'}:page-${item.page ?? 1}`
+        noteMap[anchor] = item.content || ''
+        idMap[anchor] = item.id
+      }
+      // 合并：后端笔记优先，localStorage 草稿补充未同步的
+      const localDrafts = readJson(notesStorageKey, {})
+      for (const [key, val] of Object.entries(localDrafts)) {
+        if (!(key in noteMap) && val) {
+          noteMap[key] = val
+        }
+      }
+      notes.value = noteMap
+      noteIdMap.value = idMap
+    } catch {
+      // 后端不可用时回退到 localStorage
+      notes.value = readJson(notesStorageKey, {})
+    }
+  }
 
   function restoreViewState() {
     const saved = readJson(viewStorageKey, {})
@@ -170,6 +246,8 @@ export function useLearningWorkspace(courseId, options = {}) {
       restoreViewState()
       status.value = 'ready'
       startProgressTimer()
+      // 批次1：笔记持久化--从后端加载笔记（失败时回退 localStorage）
+      loadNotesFromBackend()
     } catch (loadError) {
       error.value = loadError?.message || '课程内容加载失败，请稍后重试'
       status.value = 'error'

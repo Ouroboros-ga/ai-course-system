@@ -105,6 +105,7 @@ class LearningEvidenceRecord(SQLModel, table=True):
     label: str = Field(default="")
     description: str = Field(default="")
     source: str = Field(default="cognitive_service", description="来源组件")
+    timestamp: str = Field(default="", description="ISO 8601 UTC 证据时间戳(与领域模型一致)")
 
     # 关联
     question_attempt_id: Optional[int] = Field(default=None, foreign_key="question_attempts.id", description="关联答题记录")

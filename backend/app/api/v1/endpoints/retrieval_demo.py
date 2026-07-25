@@ -19,6 +19,14 @@ from app.core.security import admin_only
 from app.platform.retrieval_demo.service import DemoService
 
 
+_DEMO_PROVENANCE = {"kind": "demo", "is_official": False, "note": "Shadow-1 检索演示数据，非正式课程事实"}
+
+
+def _with_provenance(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach the demo provenance marker without changing the existing payload shape."""
+    return {**payload, "provenance": _DEMO_PROVENANCE}
+
+
 router = APIRouter()
 
 
@@ -68,7 +76,7 @@ async def demo_courses(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return {"course_ids": list(service.active_provider.course_ids), "data_source": service.runtime_source}
+    return _with_provenance({"course_ids": list(service.active_provider.course_ids), "data_source": service.runtime_source})
 
 
 @router.get("/courses/{course_id}/presets", summary="Public-fixture preset questions for a visible demo")
@@ -79,7 +87,7 @@ async def demo_presets(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return {"course_id": course_id, "data_source": service.runtime_source, "presets": await run_in_threadpool(service.active_provider.presets, course_id)}
+    return _with_provenance({"course_id": course_id, "data_source": service.runtime_source, "presets": await run_in_threadpool(service.active_provider.presets, course_id)})
 
 
 @router.get("/courses/{course_id}/graph", summary="Accepted deterministic graph snapshot for a visible demo")
@@ -90,7 +98,7 @@ async def demo_graph(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return await run_in_threadpool(service.active_provider.graph_snapshot, course_id)
+    return _with_provenance(await run_in_threadpool(service.active_provider.graph_snapshot, course_id))
 
 
 @router.post("/query", summary="Run isolated R2 retrieval and persist an independent demo run")
@@ -101,12 +109,13 @@ async def demo_query(
 ) -> dict[str, Any]:
     service = get_demo_service(request)
     require_demo_visible(service)
-    return await run_in_threadpool(
+    result = await run_in_threadpool(
         service.query,
         course_id=body.course_id,
         question=body.question,
         v1_reference=body.v1_reference,
     )
+    return _with_provenance(result)
 
 
 @router.post("/rollback", summary="One-click process-local rollback for the demonstration only")

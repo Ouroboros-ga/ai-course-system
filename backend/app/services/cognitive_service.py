@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -346,8 +346,77 @@ def _persist_evidence(
         label=evidence.label,
         description=evidence.description,
         source=evidence.source,
+        timestamp=evidence.timestamp,
         question_attempt_id=question_attempt_id,
         event_refs=evidence.event_refs,
+    )
+    session.add(record)
+    return record
+
+
+def record_scored_evidence(
+    session: Session,
+    attempt: QuestionAttempt,
+) -> Optional[LearningEvidenceRecord]:
+    """Convert a graded QuestionAttempt into a persisted QUIZ_ACCURACY evidence record.
+
+    Only fires when ``attempt.is_correct`` is not ``None`` (auto-judged or
+    teacher-graded). Viewing time, access frequency, and question count are
+    NEVER treated as mastery here: only scored quiz performance contributes to
+    scored evidence. The ``measurement_role`` must be ``scored_performance``;
+    interaction-state attempts are rejected to keep the performance axis clean.
+
+    Returns the persisted (or pre-existing) record, or ``None`` when the
+    attempt is still ungraded.
+    """
+    # Guard: only scored, judged attempts produce scored evidence.
+    if attempt.is_correct is None:
+        return None
+    if attempt.measurement_role != "scored_performance":
+        return None
+
+    score = attempt.score if attempt.score is not None else float(attempt.is_correct)
+    score = max(0.0, min(score, 1.0))
+
+    # Teacher-graded attempts are higher confidence than auto-judged ones.
+    is_teacher_graded = attempt.judged_by == "teacher"
+    confidence = 1.0 if is_teacher_graded else 0.8
+
+    # Resolve the knowledge node from the question's node list, if any.
+    node_id: Optional[int] = None
+    question = session.get(QuestionBankItem, attempt.question_id)
+    if question is not None and question.knowledge_node_ids:
+        node_id = int(question.knowledge_node_ids[0])
+
+    event_refs = [attempt.source_event_id] if attempt.source_event_id else []
+
+    # Stable, idempotent evidence_id derived from the source event so that
+    # re-grading the same attempt updates rather than duplicates.
+    stable_key = f"question_attempt|{attempt.source_event_id or attempt.id}|quiz_accuracy"
+    evidence_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
+
+    existing = session.exec(
+        select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.evidence_id == evidence_id,
+        )
+    ).first()
+    if existing is not None:
+        return existing
+
+    record = LearningEvidenceRecord(
+        evidence_id=evidence_id,
+        student_id=attempt.student_id,
+        course_id=attempt.course_id,
+        node_id=node_id,
+        evidence_type=EvidenceType.QUIZ_ACCURACY.value,
+        value=score,
+        confidence=confidence,
+        label=f"答题正确率 {score:.0%}",
+        description=f"来自答题记录 #{attempt.id} (评判方式: {attempt.judged_by})",
+        source=f"question_attempt:{attempt.judged_by}",
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        question_attempt_id=attempt.id,
+        event_refs=event_refs,
     )
     session.add(record)
     return record

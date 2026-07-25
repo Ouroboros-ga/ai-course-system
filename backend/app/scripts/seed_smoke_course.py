@@ -5,9 +5,12 @@
 
 幂等：fanya_course_id 固定，已存在则只复用、不重建。
 
+本脚本建立 Course Access v1 基线（OWNER 成员 + 默认能力），并将 SSS 学生
+激活为 STUDENT 成员，使访问控制 resolver 不依赖 legacy teacher_id。
+
 用法（在 backend 目录）：
     uv run python -m app.scripts.seed_smoke_course
-前置：先跑 uv run python -m app.scripts.init_users  建 TTT 账号。
+前置：先跑 uv run python -m app.scripts.init_users  建 TTT/SSS 账号。
 审查完可删除本文件，不影响业务代码。
 """
 import sys
@@ -15,8 +18,12 @@ import sys
 from sqlmodel import Session, select
 
 from app.models.database import engine
-from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
+from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType, CourseStatus
 from app.models.user_model import User
+from app.services.course_access_service import (
+    establish_course_access_baseline,
+    activate_student_membership,
+)
 
 FANYA_ID = "smoke-demo-001"
 TITLE = "[冒烟演示] M5C测试课程"
@@ -29,9 +36,18 @@ def main():
             print("[FAIL] 未找到教师账号 TTT。请先运行: uv run python -m app.scripts.init_users")
             sys.exit(1)
 
+        student = s.exec(select(User).where(User.username == "SSS")).first()
+        if not student:
+            print("[FAIL] 未找到学生账号 SSS。请先运行: uv run python -m app.scripts.init_users")
+            sys.exit(1)
+
         existing = s.exec(select(Course).where(Course.fanya_course_id == FANYA_ID)).first()
         if existing:
-            print(f"[SKIP] 演示课程已存在，复用 course_id={existing.id}")
+            # 补齐历史课程缺失的访问控制基线
+            establish_course_access_baseline(s, course_id=existing.id, owner_user_id=teacher.id)
+            activate_student_membership(s, course_id=existing.id, student_user_id=student.id)
+            s.commit()
+            print(f"[SKIP] 演示课程已存在，复用 course_id={existing.id}（已补齐访问控制基线）")
             print(f"       前端访问: http://localhost:5173/player/course/{existing.id}")
             sys.exit(0)
 
@@ -40,10 +56,17 @@ def main():
             fanya_course_name=TITLE,
             title=TITLE,
             teacher_id=teacher.id,
+            status=CourseStatus.PUBLISHED,
         )
         s.add(course)
         s.commit()
         s.refresh(course)
+
+        # 建立 Course Access v1 基线：OWNER 成员 + 默认能力
+        establish_course_access_baseline(s, course_id=course.id, owner_user_id=teacher.id)
+        # 激活 SSS 学生为 STUDENT 成员
+        activate_student_membership(s, course_id=course.id, student_user_id=student.id)
+        s.commit()
 
         script = CourseScript(
             course_id=course.id,
@@ -87,7 +110,8 @@ def main():
         print(f"     course_id  = {course.id}")
         print(f"     script_id  = {script.id} (is_active=True)")
         print(f"     nodes      = 3 (lecture)")
-        print(f"     teacher    = TTT (id={teacher.id})")
+        print(f"     teacher    = TTT (id={teacher.id}, OWNER 成员)")
+        print(f"     student    = SSS (id={student.id}, STUDENT 成员)")
         print()
         print(f"==> 前端访问: http://localhost:5173/player/course/{course.id}")
         print(f"==> 后端直测: curl -H \"Authorization: Bearer <TOKEN>\" http://localhost:8000/api/v1/player/init/{course.id}")
