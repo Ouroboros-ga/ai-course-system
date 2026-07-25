@@ -232,7 +232,7 @@ def test_cross_student_isolation(session):
     activate_student_membership(session, course.id, student_b.id)
     session.commit()
 
-    # 学生A：7次答题，3次正确 -> 低表现
+    # 学生A：最近5次中1次正确 -> 低表现
     for i in range(7):
         q = _create_published_question(session, course.id)
         _create_attempt(session, student_a.id, course.id, q.id, is_correct=(i < 3))
@@ -248,8 +248,8 @@ def test_cross_student_isolation(session):
 
     # 学生A的状态反映A的数据，不读取B的
     assert state_a.student_id == student_a.id
-    assert state_a.observed_performance_score == pytest.approx(3 / 7)
-    assert state_a.sample_size == 7
+    assert state_a.observed_performance_score == pytest.approx(1 / 5)
+    assert state_a.sample_size == 5
 
     # 学生B的状态反映B的数据，不读取A的
     assert state_b.student_id == student_b.id
@@ -264,7 +264,7 @@ def test_cross_student_isolation(session):
     assert rec_a.student_id == student_a.id
     assert rec_a.recommendation_type == "practice_quiz"
     assert rec_a.priority == "high"
-    assert rec_a.cognitive_snapshot["observed_performance_score"] == pytest.approx(3 / 7)
+    assert rec_a.cognitive_snapshot["observed_performance_score"] == pytest.approx(1 / 5)
 
     # 学生B的推荐反映B的高表现
     assert rec_b.student_id == student_b.id
@@ -280,7 +280,9 @@ def test_cognitive_api_requires_membership_not_teacher_id(client, session):
     建立基线后权限恢复。
     """
     teacher = _user(session, "cr_perm_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_perm_student")
     course = _course(session, teacher.id)
+    activate_student_membership(session, course.id, student.id)
     # 故意不调用 establish_course_access_baseline
     session.commit()
 
@@ -293,7 +295,7 @@ def test_cognitive_api_requires_membership_not_teacher_id(client, session):
     # API层：教师获取认知状态 -> 403
     token = _token(teacher)
     resp = client.get(
-        f"{CR}/course/{course.id}/state",
+        f"{CR}/course/{course.id}/state?student_id={student.id}",
         headers=_auth(token),
     )
     assert resp.status_code == 403
@@ -308,7 +310,7 @@ def test_cognitive_api_requires_membership_not_teacher_id(client, session):
 
     # API层：教师获取认知状态 -> 200
     resp = client.get(
-        f"{CR}/course/{course.id}/state",
+        f"{CR}/course/{course.id}/state?student_id={student.id}",
         headers=_auth(token),
     )
     assert resp.status_code == 200
@@ -339,18 +341,18 @@ def test_platform_admin_cross_course_cognitive_access(client, session):
 
     # 管理员访问课程认知状态 -> 200
     resp = client.get(
-        f"{CR}/course/{course.id}/state",
+        f"{CR}/course/{course.id}/state?student_id={student.id}",
         headers=_auth(token),
     )
     assert resp.status_code == 200
 
-    # 管理员获取推荐 -> 200
+    # 管理员不能以自己的身份生成学生学情推荐
     resp = client.post(
         f"{CR}/course/{course.id}/recommend",
         json={},
         headers=_auth(token),
     )
-    assert resp.status_code == 200
+    assert resp.status_code == 403
 
 
 # ==================== 六维计算逻辑测试 ====================
@@ -383,7 +385,7 @@ def test_performance_score_only_from_quiz_accuracy(session):
 
     创建答题记录（3正确1错误）和QA提问消息（5条），
     验证 observed_performance_score == 3/4（仅答题正确率），
-    inquiry_depth 从QA计算但不影响表现分。
+    无结构化语义标签时 inquiry_depth 必须保持 unknown。
     """
     teacher = _user(session, "cr_perf_teacher", UserRole.TEACHER)
     student = _user(session, "cr_perf_student")
@@ -403,20 +405,17 @@ def test_performance_score_only_from_quiz_accuracy(session):
     assert state.observed_performance_score == pytest.approx(3 / 4)
     assert state.sample_size == 4
 
-    # inquiry_depth 从QA消息计算（独立于表现分）
-    assert state.inquiry_depth is not None
-    assert state.inquiry_depth == pytest.approx(5 / 20)
+    assert state.inquiry_depth is None
 
     # 确认原因码标注了提问不计入表现分
     assert "performance_from_quiz_accuracy" in state.reason_codes
-    assert "inquiry_not_in_performance" in state.reason_codes
+    assert "inquiry_unknown_without_semantic_evidence" in state.reason_codes
 
 
 def test_low_performance_high_confidence_recommendation(session):
     """低表现+高置信度：表现分<0.5且置信度>=0.6时，推荐策略为补弱练习(PRACTICE_QUIZ, HIGH)。
 
-    7次答题（3正确4错误）-> perf=3/7≈0.43 < 0.5
-    7次总答题 >= 5 -> confidence = 0.5 + (7-5)*0.05 = 0.6 >= 0.6
+    最近5次答题中1次正确 -> perf=0.2 < 0.5，5个评分项 -> 高置信度。
     """
     teacher = _user(session, "cr_lowhi_teacher", UserRole.TEACHER)
     student = _user(session, "cr_lowhi_student")
@@ -430,7 +429,7 @@ def test_low_performance_high_confidence_recommendation(session):
     state = compute_cognitive_state(session, student.id, course.id)
 
     # 验证六维状态
-    assert state.observed_performance_score == pytest.approx(3 / 7)
+    assert state.observed_performance_score == pytest.approx(1 / 5)
     assert state.observed_performance_score < 0.5
     assert state.evidence_confidence is not None
     assert state.evidence_confidence >= 0.6
@@ -707,16 +706,58 @@ def test_evidence_separated_from_question_attempt(session):
     # quiz_accuracy 证据是1条（聚合所有答题），quiz_pattern 证据是1条（聚合错误模式）
     assert len(evidence_records) < len(qa_records)
 
-    # 证据的 event_refs 引用了答题记录ID
+    # 证据的 event_refs 引用了稳定来源事件ID
     all_event_refs = set()
     for record in evidence_records:
         all_event_refs.update(record.event_refs)
     assert len(all_event_refs) > 0
 
-    # event_refs 中的ID应与 QuestionAttempt 的ID对应
-    attempt_id_strs = {str(aid) for aid in attempt_ids}
-    assert all_event_refs.issubset(attempt_id_strs)
+    attempt_event_refs = {record.source_event_id for record in qa_records}
+    assert all_event_refs.issubset(attempt_event_refs)
 
     # LearningEvidenceRecord 有独立的表名和主键
     assert evidence_records[0].__tablename__ == "learning_evidence_records"
     assert qa_records[0].__tablename__ == "question_attempts"
+
+
+def test_scored_performance_uses_scores_and_node_scope(session):
+    teacher = _user(session, "cr_score_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_score_student")
+    course = _setup_course(session, teacher, student)
+
+    for score in (0.2, 0.6, 1.0):
+        question = _create_published_question(session, course.id)
+        question.knowledge_node_ids = [101]
+        session.add(question)
+        session.commit()
+        attempt = _create_attempt(
+            session,
+            student.id,
+            course.id,
+            question.id,
+            is_correct=score >= 0.999,
+        )
+        attempt.score = score
+        session.add(attempt)
+        session.commit()
+
+    for _ in range(3):
+        question = _create_published_question(session, course.id)
+        question.knowledge_node_ids = [202]
+        session.add(question)
+        session.commit()
+        attempt = _create_attempt(
+            session,
+            student.id,
+            course.id,
+            question.id,
+            is_correct=False,
+        )
+        attempt.score = 0.0
+        session.add(attempt)
+        session.commit()
+
+    node_state = compute_cognitive_state(session, student.id, course.id, node_id=101)
+    assert node_state.observed_performance_score == pytest.approx(0.6)
+    assert node_state.sample_size == 3
+    assert node_state.evidence_refs

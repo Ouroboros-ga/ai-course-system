@@ -31,6 +31,24 @@ MIGRATIONS = {
     "platform_permission_assignments": {
         "migration_batch_id": "ALTER TABLE platform_permission_assignments ADD COLUMN migration_batch_id VARCHAR DEFAULT NULL",
     },
+    "media_assets": {
+        "course_id": "ALTER TABLE media_assets ADD COLUMN course_id INTEGER REFERENCES courses(id)",
+    },
+    "media_timeline_cues": {
+        "is_active": "ALTER TABLE media_timeline_cues ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT 1",
+    },
+    "web_research_results": {
+        "failure_reason": "ALTER TABLE web_research_results ADD COLUMN failure_reason VARCHAR NOT NULL DEFAULT ''",
+    },
+    "question_attempts": {
+        "source_event_id": "ALTER TABLE question_attempts ADD COLUMN source_event_id VARCHAR",
+        "measurement_role": "ALTER TABLE question_attempts ADD COLUMN measurement_role VARCHAR NOT NULL DEFAULT 'scored_performance'",
+        "question_version": "ALTER TABLE question_attempts ADD COLUMN question_version INTEGER NOT NULL DEFAULT 1",
+        "question_content_hash": "ALTER TABLE question_attempts ADD COLUMN question_content_hash VARCHAR NOT NULL DEFAULT ''",
+    },
+    "graph_node_reviews": {
+        "target_content_hash": "ALTER TABLE graph_node_reviews ADD COLUMN target_content_hash VARCHAR NOT NULL DEFAULT ''",
+    },
 }
 
 
@@ -44,6 +62,14 @@ def _sqlite_database_path() -> str:
 def _required_columns(cursor: sqlite3.Cursor, table_name: str) -> set[str]:
     cursor.execute(f"PRAGMA table_info({table_name})")
     return {row[1] for row in cursor.fetchall()}
+
+
+def _table_exists(cursor: sqlite3.Cursor, table_name: str) -> bool:
+    cursor.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    )
+    return cursor.fetchone() is not None
 
 
 def access_control_preflight(database_path: str | None = None) -> dict[str, Any]:
@@ -185,6 +211,11 @@ def run_migrations():
     applied = 0
     for table_name, columns in MIGRATIONS.items():
         try:
+            # New installations create these tables from SQLModel after this
+            # compatibility migrator runs. Never execute ALTER/UPDATE against
+            # a table that is not present in an older partial installation.
+            if not _table_exists(cursor, table_name):
+                continue
             cursor.execute(f"PRAGMA table_info({table_name})")
             existing_cols = {row[1] for row in cursor.fetchall()}
 
@@ -197,7 +228,30 @@ def run_migrations():
             logger.warning(f"Migration check for {table_name} failed: {e}")
 
     try:
-        applied += _backfill_access_control(cursor)
+        if _table_exists(cursor, "question_attempts"):
+            cursor.execute(
+                """
+                UPDATE question_attempts
+                SET source_event_id = 'legacy_qe_' || id
+                WHERE source_event_id IS NULL OR source_event_id = ''
+                """
+            )
+            if cursor.rowcount > 0:
+                applied += cursor.rowcount
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                uq_question_attempts_source_event_id
+                ON question_attempts(source_event_id)
+                """
+            )
+        access_tables = {
+            "platform_permission_assignments",
+            "course_memberships",
+            "course_capabilities",
+        }
+        if all(_table_exists(cursor, table) for table in access_tables):
+            applied += _backfill_access_control(cursor)
         conn.commit()
         logger.info("Applied %s migration/backfill operation(s)", applied)
     except Exception:

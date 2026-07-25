@@ -11,6 +11,7 @@ Excel 导入的题目默认 unassigned，不可被学生检索或推荐。
 """
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 from enum import Enum
 from typing import Optional, Any
@@ -187,6 +188,19 @@ class QuestionAttempt(SQLModel, table=True):
     question_id: int = Field(foreign_key="question_bank_items.id", index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     student_id: int = Field(foreign_key="users.id", index=True)
+    source_event_id: str = Field(
+        default_factory=lambda: f"qe_{uuid.uuid4().hex}",
+        index=True,
+        unique=True,
+        description="稳定来源事件ID",
+    )
+    measurement_role: str = Field(
+        default="scored_performance",
+        index=True,
+        description="证据测量角色；交互状态不得写入表现轴",
+    )
+    question_version: int = Field(default=1, description="作答时题目版本快照")
+    question_content_hash: str = Field(default="", description="作答时题干与答案版本哈希")
 
     student_answer: str = Field(default="")
     is_correct: Optional[bool] = Field(default=None, description="是否正确(None=待评判)")

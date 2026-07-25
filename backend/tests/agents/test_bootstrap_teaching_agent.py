@@ -137,7 +137,7 @@ def test_enabled_with_report_and_llm_injects_and_endpoint_is_live(tmp_path):
     # the course -> 403; that still proves injection succeeded (503 would mean
     # not configured). A full live-answer path is covered by the workflow tests.
     assert resp.status_code != 503
-    assert resp.status_code in (200, 403)
+    assert resp.status_code == 401
 
 
 def test_bootstrap_never_blocks_startup_on_error(tmp_path):

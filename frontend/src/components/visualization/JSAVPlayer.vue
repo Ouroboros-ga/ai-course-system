@@ -23,13 +23,21 @@ const ALGORITHM_WHITELIST = new Set([
 /* ── 支持 JSAV 数组渲染的算法类别 ── */
 const JSAV_ARRAY_CATEGORIES = new Set(['binary', 'sorting'])
 
-/* ── JSAV CDN（按需加载，不打包到主应用）── */
+/*
+ * JSAV is loaded lazily from a same-origin, deployment-managed asset folder.
+ * Do not execute third-party JavaScript directly from a public CDN in the
+ * authenticated learning application. Deployments may override the folder,
+ * but cross-origin URLs are rejected below.
+ */
+const JSAV_ASSET_BASE = (import.meta.env.VITE_JSAV_ASSET_BASE || '/vendor/jsav')
+  .replace(/\/+$/, '')
 const JSAV_DEPS = [
-  'https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js',
-  'https://cdn.jsdelivr.net/npm/raphael@2.3.0/raphael.min.js',
-  'https://cdn.jsdelivr.net/npm/jsav@0.4.1/build/JSAV.js',
+  `${JSAV_ASSET_BASE}/jquery-3.7.1.min.js`,
+  `${JSAV_ASSET_BASE}/raphael-2.3.0.min.js`,
+  `${JSAV_ASSET_BASE}/jquery.transform.light.js`,
+  `${JSAV_ASSET_BASE}/JSAV-0.4.1.js`,
 ]
-const JSAV_CSS_URL = 'https://cdn.jsdelivr.net/npm/jsav@0.4.1/build/JSAV.css'
+const JSAV_CSS_URL = `${JSAV_ASSET_BASE}/JSAV-0.4.1.css`
 const JSAV_LOAD_TIMEOUT = 12000
 
 /* ── 响应式状态 ── */
@@ -107,6 +115,11 @@ const hasParams = computed(() => Object.keys(displayParams.value).length > 0)
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
+    const resolved = new URL(src, window.location.origin)
+    if (resolved.origin !== window.location.origin) {
+      reject(new Error('JSAV 资源必须由当前站点托管'))
+      return
+    }
     const existing = document.querySelector(`script[data-jsav-src="${src}"]`)
     if (existing) {
       if (existing.dataset.loaded === 'true') return resolve()
@@ -129,6 +142,8 @@ function loadScript(src) {
 
 function loadStylesheet(href) {
   return new Promise((resolve) => {
+    const resolved = new URL(href, window.location.origin)
+    if (resolved.origin !== window.location.origin) return resolve()
     if (document.querySelector(`link[data-jsav-href="${href}"]`)) return resolve()
     const link = document.createElement('link')
     link.rel = 'stylesheet'

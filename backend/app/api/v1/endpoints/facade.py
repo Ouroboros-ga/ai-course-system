@@ -19,6 +19,7 @@ from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -241,19 +242,30 @@ async def get_quiz_view(
         message="获取题目视图成功",
         data={
             "course_id": course_id,
-            "items": [_serialize_quiz_item(q) for q in items],
+            "items": [
+                _serialize_quiz_item(
+                    q,
+                    include_answer=not (
+                        context.role and context.role.value in {"student", "observer"}
+                    ),
+                )
+                for q in items
+            ],
             "total": len(items),
             "role": context.role.value if context.role else None,
         },
     )
 
 
-def _serialize_quiz_item(q: QuestionBankItem) -> dict[str, Any]:
+def _serialize_quiz_item(
+    q: QuestionBankItem,
+    *,
+    include_answer: bool,
+) -> dict[str, Any]:
     """序列化题目为 QuizViewModel"""
-    return {
+    data = {
         "question_id": q.id,
         "question_text": q.question_text,
-        "answer": q.answer,
         "options": q.options,
         "question_type": q.question_type.value,
         "difficulty": q.difficulty.value,
@@ -265,6 +277,9 @@ def _serialize_quiz_item(q: QuestionBankItem) -> dict[str, Any]:
             "label": q.category or "",
         },
     }
+    if include_answer:
+        data["answer"] = q.answer
+    return data
 
 
 # ==================== R2 检索能力检查 ====================
@@ -293,13 +308,15 @@ async def get_retrieval_capability(
             DOCUMENT_KG_RUNTIME_MODE,
             resolve_effective_modes,
         )
-        from app.core.config import settings
         configured = {
             DOCUMENT_KG_RUNTIME_MODE: getattr(settings, DOCUMENT_KG_RUNTIME_MODE, "v1_only"),
         }
         effective = resolve_effective_modes(configured)
         r2_mode = effective[DOCUMENT_KG_RUNTIME_MODE].effective
-        r2_enabled = r2_mode == "v2_shadow"
+        r2_enabled = (
+            r2_mode == "v2_shadow"
+            and settings.R2_STUDENT_ANSWER_ENABLED
+        )
     except Exception:
         pass
 
@@ -324,6 +341,7 @@ async def get_retrieval_capability(
             "evidence_capability": evidence_capable,
             "r2_mode": r2_mode,
             "r2_enabled": r2_enabled,
+            "student_answer_gate_enabled": settings.R2_STUDENT_ANSWER_ENABLED,
             "sidecar_exists": sidecar_exists,
             "can_show_citations": retrieval_available,
             "policy_version": "r2-retrieval-v1.0",

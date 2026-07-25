@@ -13,6 +13,20 @@ def unified_response(code: int, message: str, data: any = None):
 
 
 async def global_exception_handler(request: Request, exc: HTTPException):
+    # Keep the public envelope stable: ``message`` is always display text and
+    # structured machine-readable rejection details live in ``data``.
+    # Several Phase B--E endpoints use an error_code to let the frontend offer
+    # a precise recovery action instead of parsing a human-facing message.
+    if isinstance(exc.detail, dict):
+        detail = exc.detail
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=unified_response(
+                code=exc.status_code,
+                message=str(detail.get("message") or "请求被拒绝"),
+                data=detail,
+            ),
+        )
     return JSONResponse(
         status_code=exc.status_code,
         content=unified_response(code=exc.status_code, message=exc.detail, data=None),

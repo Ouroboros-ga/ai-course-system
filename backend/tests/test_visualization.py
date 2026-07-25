@@ -206,6 +206,25 @@ def test_illegal_step_type_rejected():
     assert any("eval" in err and "不在允许列表中" in err for err in result.errors)
 
 
+def test_step_indices_are_preserved_and_bounds_checked():
+    plan = {
+        "algorithm_id": "bubble_sort",
+        "initial_params": {"array": [3, 1, 2]},
+        "steps": [
+            {"type": "swap", "description": "交换", "i": 0, "j": 1},
+        ],
+    }
+    result = validate_visualization_plan(plan)
+    assert result.valid
+    assert result.sanitized_plan["steps"][0]["i"] == 0
+    assert result.sanitized_plan["steps"][0]["j"] == 1
+
+    plan["steps"][0]["j"] = 3
+    invalid = validate_visualization_plan(plan)
+    assert not invalid.valid
+    assert any("j 超出数组范围" in error for error in invalid.errors)
+
+
 def test_dangerous_content_rejected():
     """危险内容被拒绝：计划含 <script> 或 eval( 应失败。
 

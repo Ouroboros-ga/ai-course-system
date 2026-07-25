@@ -13,11 +13,15 @@
 """
 from __future__ import annotations
 
+import hashlib
+import re
+import uuid
 from datetime import datetime
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -43,28 +47,48 @@ from app.models.access_control_model import PlatformPermission
 router = APIRouter(tags=["Phase B 题库管理"])
 
 
+def _count_rows(session: Session, statement) -> int:
+    count_statement = statement.with_only_columns(func.count()).order_by(None)
+    return int(session.exec(count_statement).one())
+
+
+def _normalize_objective_answer(question_type: QuestionType, value: str) -> str:
+    normalized = value.strip().casefold()
+    if question_type == QuestionType.MULTI_CHOICE:
+        choices = {
+            part for part in re.split(r"[,，;；\s]+", normalized) if part
+        }
+        return "|".join(sorted(choices))
+    if question_type == QuestionType.TRUE_FALSE:
+        if normalized in {"true", "1", "yes", "y", "对", "正确", "是"}:
+            return "true"
+        if normalized in {"false", "0", "no", "n", "错", "错误", "否"}:
+            return "false"
+    return normalized
+
+
 # ==================== 请求模型 ====================
 
 class QuestionAssignRequest(BaseModel):
     """将题目分配到课程"""
-    question_ids: list[int]
+    question_ids: list[int] = Field(min_length=1, max_length=500)
     course_id: int
-    knowledge_node_ids: list[int] = []
+    knowledge_node_ids: list[int] = Field(default_factory=list, max_length=100)
 
 
 class QuestionUpdateRequest(BaseModel):
     """教师编辑题目"""
-    question_text: Optional[str] = None
-    answer: Optional[str] = None
+    question_text: Optional[str] = Field(None, min_length=1, max_length=10000)
+    answer: Optional[str] = Field(None, max_length=10000)
     options: Optional[dict] = None
     difficulty: Optional[QuestionDifficulty] = None
-    knowledge_node_ids: Optional[list[int]] = None
-    prerequisite_node_ids: Optional[list[int]] = None
+    knowledge_node_ids: Optional[list[int]] = Field(None, max_length=100)
+    prerequisite_node_ids: Optional[list[int]] = Field(None, max_length=100)
 
 
 class QuestionPublishRequest(BaseModel):
     """发布/下架题目"""
-    question_ids: list[int]
+    question_ids: list[int] = Field(min_length=1, max_length=500)
     publish: bool  # True=发布, False=下架
 
 
@@ -73,7 +97,13 @@ class QuestionSearchRequest(BaseModel):
     keyword: Optional[str] = None
     knowledge_node_ids: Optional[list[int]] = None
     difficulty: Optional[QuestionDifficulty] = None
-    limit: int = 20
+    limit: int = Field(default=20, ge=1, le=100)
+
+
+class QuestionAttemptGradeRequest(BaseModel):
+    """教师对非客观题进行人工评分。"""
+    score: float = Field(ge=0.0, le=1.0)
+    feedback: str = Field(default="", max_length=5000)
 
 
 # ==================== 题库管理接口 ====================
@@ -89,12 +119,10 @@ async def list_unassigned_questions(
 ):
     """列出未归属题目(unassigned)
 
-    任何已认证教师均可查看待归属题源池。
+    仅具有平台管理员权限的用户可查看待归属题源池。
     unassigned 题目不能面向学生使用。
     """
-    user_role = current_user.get("role", "student")
-    if user_role == "student":
-        raise HTTPException(status_code=403, detail="学生无权查看待归属题源")
+    require_platform_permission(session, current_user, PlatformPermission.ADMIN)
 
     statement = select(QuestionBankItem).where(
         QuestionBankItem.status == QuestionStatus.UNASSIGNED,
@@ -106,7 +134,7 @@ async def list_unassigned_questions(
         statement = statement.where(QuestionBankItem.import_batch_id == batch_id)
 
     # 计算总数
-    total = len(session.exec(statement).all())
+    total = _count_rows(session, statement)
     statement = statement.offset((page - 1) * page_size).limit(page_size)
     items = session.exec(statement).all()
 
@@ -114,7 +142,7 @@ async def list_unassigned_questions(
         code=200,
         message="获取待归属题目成功",
         data={
-            "items": [_serialize_question(q) for q in items],
+            "items": [_serialize_question(q, include_answer=True) for q in items],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -125,7 +153,7 @@ async def list_unassigned_questions(
 @router.get("/course/{course_id}")
 async def list_course_questions(
     course_id: int,
-    status: Optional[str] = Query(None, description="按状态筛选"),
+    status: Optional[QuestionStatus] = Query(None, description="按状态筛选"),
     category: Optional[str] = Query(None, description="按分类筛选"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
@@ -144,16 +172,16 @@ async def list_course_questions(
         QuestionBankItem.is_latest == True,
     )
 
-    # 学生只能看 published
-    if context.role and context.role.value == "student":
+    can_manage = context.allows("question_bank.manage")
+    if not can_manage:
         statement = statement.where(QuestionBankItem.status == QuestionStatus.PUBLISHED)
     elif status:
-        statement = statement.where(QuestionBankItem.status == QuestionStatus(status))
+        statement = statement.where(QuestionBankItem.status == status)
 
     if category:
         statement = statement.where(QuestionBankItem.category == category)
 
-    total = len(session.exec(statement).all())
+    total = _count_rows(session, statement)
     statement = statement.offset((page - 1) * page_size).limit(page_size)
     items = session.exec(statement).all()
 
@@ -161,7 +189,13 @@ async def list_course_questions(
         code=200,
         message="获取课程题目成功",
         data={
-            "items": [_serialize_question(q) for q in items],
+            "items": [
+                _serialize_question(
+                    q,
+                    include_answer=can_manage,
+                )
+                for q in items
+            ],
             "total": total,
             "page": page,
             "page_size": page_size,
@@ -331,6 +365,24 @@ async def publish_questions(
             if item.status not in (QuestionStatus.AUTO_ACCEPTED, QuestionStatus.TEACHER_EDITED, QuestionStatus.PUBLISHED):
                 errors.append({"question_id": qid, "reason": f"当前状态 {item.status.value} 不可发布"})
                 continue
+            mapping = session.exec(
+                select(QuestionSourceMapping).where(
+                    QuestionSourceMapping.question_id == qid,
+                    QuestionSourceMapping.course_id == course_id,
+                    QuestionSourceMapping.is_latest == True,
+                    QuestionSourceMapping.status.in_([
+                        MappingStatus.AUTO_ACCEPTED,
+                        MappingStatus.TEACHER_EDITED,
+                        MappingStatus.LOCKED,
+                    ]),
+                )
+            ).first()
+            if mapping is None or not mapping.evidence_refs:
+                errors.append({
+                    "question_id": qid,
+                    "reason": "缺少已接受且可追溯的题源映射",
+                })
+                continue
             item.status = QuestionStatus.PUBLISHED
             item.published_at = datetime.utcnow()
             item.published_by = user_id
@@ -417,8 +469,8 @@ async def search_course_questions(
         QuestionBankItem.is_latest == True,
     )
 
-    # 学生只能看 published
-    if context.role and context.role.value == "student":
+    can_manage = context.allows("question_bank.manage")
+    if not can_manage:
         statement = statement.where(QuestionBankItem.status == QuestionStatus.PUBLISHED)
 
     if payload.keyword:
@@ -441,7 +493,13 @@ async def search_course_questions(
         code=200,
         message="检索课程题库成功",
         data={
-            "items": [_serialize_question(q) for q in items],
+            "items": [
+                _serialize_question(
+                    q,
+                    include_answer=can_manage,
+                )
+                for q in items
+            ],
             "total": len(items),
             "has_match": len(items) > 0,
         },
@@ -452,7 +510,7 @@ async def search_course_questions(
 async def submit_attempt(
     course_id: int,
     question_id: int,
-    student_answer: str = Body(..., embed=True),
+    student_answer: str = Body(..., embed=True, min_length=1, max_length=20_000),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -463,6 +521,11 @@ async def submit_attempt(
     """
     context = require_course_permission(session, current_user, course_id, "question_bank.read")
     user_id = int(current_user["user_id"])
+    if not context.analytics_eligible:
+        raise HTTPException(
+            status_code=403,
+            detail="仅课程学习者可以提交形成学情证据的答题记录",
+        )
 
     item = session.get(QuestionBankItem, question_id)
     if not item or item.course_id != course_id:
@@ -470,13 +533,39 @@ async def submit_attempt(
     if item.status != QuestionStatus.PUBLISHED:
         raise HTTPException(status_code=403, detail="题目未发布，无法作答")
 
+    normalized_answer = _normalize_objective_answer(
+        item.question_type, student_answer
+    )
+    normalized_expected = _normalize_objective_answer(
+        item.question_type, item.answer
+    )
+    automatically_judged = item.question_type in {
+        QuestionType.SINGLE_CHOICE,
+        QuestionType.MULTI_CHOICE,
+        QuestionType.TRUE_FALSE,
+        QuestionType.FILL_BLANK,
+    }
+    is_correct = (
+        normalized_answer == normalized_expected
+        if automatically_judged
+        else None
+    )
     attempt = QuestionAttempt(
         question_id=question_id,
         course_id=course_id,
         student_id=user_id,
+        source_event_id=f"qe_{uuid.uuid4().hex}",
+        measurement_role="scored_performance",
+        question_version=item.version,
+        question_content_hash=hashlib.sha256(
+            f"{item.version}|{item.question_text}|{item.answer}".encode("utf-8")
+        ).hexdigest(),
         student_answer=student_answer,
+        is_correct=is_correct,
+        score=float(is_correct) if is_correct is not None else None,
         cognitive_context={},
-        judged_by="teacher",
+        judged_by="auto" if automatically_judged else "teacher",
+        judged_at=datetime.utcnow() if automatically_judged else None,
     )
     session.add(attempt)
     session.commit()
@@ -485,18 +574,65 @@ async def submit_attempt(
     return unified_response(
         code=200,
         message="答题记录已提交",
-        data={"attempt_id": attempt.id},
+        data={
+            "attempt_id": attempt.id,
+            "judgement_status": "judged" if automatically_judged else "pending",
+            "is_correct": attempt.is_correct,
+            "score": attempt.score,
+        },
+    )
+
+
+@router.post("/course/{course_id}/attempt/{attempt_id}/grade")
+async def grade_attempt(
+    course_id: int,
+    attempt_id: int,
+    payload: QuestionAttemptGradeRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师评分；只能处理当前课程内的答题记录。"""
+    require_course_permission(session, current_user, course_id, "submission.review")
+    attempt = session.get(QuestionAttempt, attempt_id)
+    if attempt is None or attempt.course_id != course_id:
+        raise HTTPException(status_code=404, detail="答题记录不存在或不属于此课程")
+
+    item = session.get(QuestionBankItem, attempt.question_id)
+    if item is None or item.course_id != course_id:
+        raise HTTPException(status_code=409, detail="答题记录关联的题目无效")
+
+    attempt.score = payload.score
+    attempt.is_correct = payload.score >= 0.999
+    attempt.judged_by = "teacher"
+    attempt.judge_feedback = payload.feedback
+    attempt.judged_at = datetime.utcnow()
+    session.add(attempt)
+    session.commit()
+    session.refresh(attempt)
+
+    return unified_response(
+        code=200,
+        message="答题评分已保存",
+        data={
+            "attempt_id": attempt.id,
+            "score": attempt.score,
+            "is_correct": attempt.is_correct,
+            "judged_at": attempt.judged_at.isoformat(),
+        },
     )
 
 
 # ==================== 辅助函数 ====================
 
-def _serialize_question(q: QuestionBankItem) -> dict[str, Any]:
+def _serialize_question(
+    q: QuestionBankItem,
+    *,
+    include_answer: bool,
+) -> dict[str, Any]:
     """序列化题目为前端友好的字典"""
-    return {
+    data = {
         "id": q.id,
         "question_text": q.question_text,
-        "answer": q.answer,
         "options": q.options,
         "similar_questions": q.similar_questions,
         "question_type": q.question_type.value,
@@ -515,3 +651,6 @@ def _serialize_question(q: QuestionBankItem) -> dict[str, Any]:
         "updated_at": q.updated_at.isoformat() if q.updated_at else None,
         "published_at": q.published_at.isoformat() if q.published_at else None,
     }
+    if include_answer:
+        data["answer"] = q.answer
+    return data

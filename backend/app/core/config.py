@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     # --------------------------
     VIDEO_STORAGE_PATH: str = "./videos"
     TEMP_VIDEO_STORAGE_PATH: str = "./temp_videos"
+    MEDIA_STORAGE_PATH: str = "./media"
 
     # --------------------------
     # 老师素材存储路径配置
@@ -180,13 +181,19 @@ class Settings(BaseSettings):
     # /api/v1/teaching-agent/respond endpoint stays 503 (runtime not injected).
     TEACHING_AGENT_MODE: str = "disabled"
     DEMO_RETRIEVAL_ENVIRONMENT: str = "development"
+    # Formal student-answer promotion is independent from the legacy shadow
+    # flag and must also pass the per-course Evidence capability gate.
+    R2_STUDENT_ANSWER_ENABLED: bool = False
 
     # --------------------------
     # G3: Judge0 代码沙箱配置
     # --------------------------
     JUDGE0_ENABLED: bool = False
     JUDGE0_API_URL: str = "http://127.0.0.1:2358"
+    JUDGE0_AUTHN_HEADER: str = "X-Auth-Token"
     JUDGE0_AUTHN_TOKEN: str = ""
+    JUDGE0_AUTHZ_HEADER: str = "X-Auth-User"
+    JUDGE0_AUTHZ_TOKEN: str = ""
     JUDGE0_DEFAULT_CPU_TIME_LIMIT: int = 5
     JUDGE0_DEFAULT_MEMORY_LIMIT: int = 128000
     JUDGE0_DEFAULT_WALL_TIME_LIMIT: int = 10

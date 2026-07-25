@@ -32,6 +32,7 @@ from app.services.graph_production_service import (
     create_evidence, publish_snapshot, get_active_snapshot,
     list_snapshots, rollback_snapshot, mark_evidence_stale,
     get_evidence_for_node, serialize_snapshot, serialize_evidence,
+    graph_target_hash,
 )
 
 
@@ -72,12 +73,27 @@ class TestGraphProductionService:
         """发布不可变快照"""
         teacher = _user(session, "g9_pub_t")
         course = _setup(session, teacher)
-        nodes = [{"node_id": "n1", "label": "二分查找", "type": "knowledge_point"}]
-        relations = [{"relation_id": "r1", "source": "n1", "target": "n2", "type": "prerequisite_of"}]
+        evidence = create_evidence(
+            session,
+            course_id=course.id,
+            page_number=1,
+            text_snippet="二分查找以前置的有序序列为基础。",
+        )
+        nodes = [
+            {"node_id": "n1", "label": "二分查找", "type": "knowledge_point"},
+            {"node_id": "n2", "label": "有序序列", "type": "knowledge_point"},
+        ]
+        relations = [{
+            "relation_id": "r1",
+            "source": "n2",
+            "target": "n1",
+            "type": "prerequisite_of",
+            "evidence_ids": [evidence.evidence_id],
+        }]
         snapshot = publish_snapshot(session, course_id=course.id, nodes=nodes, relations=relations, user_id=teacher.id)
         assert snapshot.status == SnapshotStatus.PUBLISHED
         assert snapshot.is_active is True
-        assert snapshot.node_count == 1
+        assert snapshot.node_count == 2
         assert snapshot.relation_count == 1
 
     def test_publish_second_supersedes_first(self, session):
@@ -161,6 +177,102 @@ class TestGraphProductionService:
         assert stale_ev.status == EvidenceStatus.STALE
         serialized = serialize_evidence(stale_ev)
         assert serialized["status"] == "stale"
+
+    def test_relation_requires_current_evidence_or_exact_teacher_review(self, session):
+        teacher = _user(session, "g9_relation_review_t")
+        course = _setup(session, teacher)
+        nodes = [{"node_id": "a"}, {"node_id": "b"}]
+        relation = {
+            "relation_id": "r-reviewed",
+            "source": "a",
+            "target": "b",
+            "type": "prerequisite_of",
+        }
+        with pytest.raises(ValueError, match="Evidence"):
+            publish_snapshot(
+                session,
+                course_id=course.id,
+                nodes=nodes,
+                relations=[relation],
+                user_id=teacher.id,
+            )
+
+        session.add(GraphNodeReview(
+            course_id=course.id,
+            target_id="r-reviewed",
+            target_type="relation",
+            target_content_hash=graph_target_hash(relation),
+            decision="accepted",
+            reviewer=teacher.id,
+        ))
+        session.commit()
+        publish_snapshot(
+            session,
+            course_id=course.id,
+            nodes=nodes,
+            relations=[relation],
+            user_id=teacher.id,
+        )
+
+        changed = {**relation, "weight": 2}
+        with pytest.raises(ValueError, match="Evidence"):
+            publish_snapshot(
+                session,
+                course_id=course.id,
+                nodes=nodes,
+                relations=[changed],
+                user_id=teacher.id,
+            )
+
+    def test_rollback_refuses_snapshot_whose_evidence_became_stale(self, session):
+        teacher = _user(session, "g9_stale_rollback_t")
+        course = _setup(session, teacher)
+        evidence = create_evidence(
+            session,
+            course_id=course.id,
+            document_id="doc-stale-rollback",
+            text_snippet="A 是 B 的前置知识。",
+        )
+        nodes = [{"node_id": "a"}, {"node_id": "b"}]
+        first = publish_snapshot(
+            session,
+            course_id=course.id,
+            nodes=nodes,
+            relations=[{
+                "relation_id": "r-stale",
+                "source": "a",
+                "target": "b",
+                "evidence_ids": [evidence.evidence_id],
+            }],
+            user_id=teacher.id,
+        )
+        publish_snapshot(
+            session,
+            course_id=course.id,
+            nodes=nodes,
+            relations=[],
+            user_id=teacher.id,
+        )
+        mark_evidence_stale(session, course.id, "doc-stale-rollback")
+        with pytest.raises(ValueError, match="Evidence"):
+            rollback_snapshot(session, course.id, first.snapshot_id, teacher.id)
+
+    def test_snapshot_rejects_non_array_evidence_ids(self, session):
+        teacher = _user(session, "g9_evidence_shape_t")
+        course = _setup(session, teacher)
+        with pytest.raises(ValueError, match="evidence_ids 必须是数组"):
+            publish_snapshot(
+                session,
+                course_id=course.id,
+                nodes=[{"node_id": "a"}, {"node_id": "b"}],
+                relations=[{
+                    "relation_id": "bad-evidence-shape",
+                    "source": "a",
+                    "target": "b",
+                    "evidence_ids": "ev-not-an-array",
+                }],
+                user_id=teacher.id,
+            )
 
 
 class TestGraphProductionAPI:

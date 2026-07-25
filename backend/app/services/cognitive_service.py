@@ -6,7 +6,7 @@
   - MasteryState / MasteryLevel 领域模型
 
 关键规则：
-  - observed_performance_score: 仅从答题正确率计算，不含提问次数/观看时长
+  - observed_performance_score: 仅从评分型显性证据计算，不含提问次数/观看时长
   - evidence_confidence: 基于样本量（答题数），样本不足时降低
   - confusion_risk: 重复错误模式 + 纠正频率
   - inquiry_depth: 提问深度（独立于表现分）
@@ -28,7 +28,7 @@ from app.models.cognitive_state_model import (
     COGNITIVE_POLICY_VERSION,
 )
 from app.models.question_bank_model import QuestionAttempt, QuestionBankItem
-from app.models.progress_model import NodeProgress, UnderstandingAnalysis
+from app.models.progress_model import LearningProgress, NodeProgress
 from app.domain.learning.evidence import LearningEvidence, EvidenceType
 from app.domain.learning.mastery_state import MasteryState, MasteryLevel, MasterySource
 
@@ -37,6 +37,19 @@ MIN_SAMPLE_FOR_PERFORMANCE = 3
 MIN_SAMPLE_FOR_CONFIDENCE = 5
 MIN_SAMPLE_FOR_CONFUSION = 3
 MIN_SAMPLE_FOR_HINT = 2
+PERFORMANCE_WINDOW_SIZE = 5
+
+
+def _attempt_ref(attempt: QuestionAttempt) -> str:
+    return attempt.source_event_id or f"legacy_question_attempt:{attempt.id}"
+
+
+def _attempt_score(attempt: QuestionAttempt) -> Optional[float]:
+    if attempt.score is not None:
+        return max(0.0, min(float(attempt.score), 1.0))
+    if attempt.is_correct is not None:
+        return float(attempt.is_correct)
+    return None
 
 
 def compute_cognitive_state(
@@ -47,7 +60,7 @@ def compute_cognitive_state(
 ) -> CognitiveState:
     """计算学生六维认知状态
 
-    从 QuestionAttempt + NodeProgress + UnderstandingAnalysis 读取原始数据，
+    从 QuestionAttempt + 课程隔离的 NodeProgress 读取原始数据，
     计算六维状态值。数据不足时对应维度为 None (unknown)。
 
     不跨学生、课程读取或写入状态。
@@ -75,26 +88,52 @@ def compute_cognitive_state(
         QuestionAttempt.course_id == course_id,
     )
     if node_id:
-        # 通过 question -> question_bank_items 关联节点（如果有知识点关联）
-        attempt_stmt = attempt_stmt  # 当前按课程级聚合
+        candidate_questions = session.exec(
+            select(QuestionBankItem).where(
+                QuestionBankItem.course_id == course_id,
+                QuestionBankItem.is_latest == True,
+            )
+        ).all()
+        question_ids = [
+            question.id
+            for question in candidate_questions
+            if node_id in (question.knowledge_node_ids or [])
+        ]
+        if not question_ids:
+            attempt_stmt = attempt_stmt.where(QuestionAttempt.id == -1)
+        else:
+            attempt_stmt = attempt_stmt.where(
+                QuestionAttempt.question_id.in_(question_ids)
+            )
 
-    attempts = session.exec(attempt_stmt).all()
-    total_attempts = len(attempts)
-    judged_attempts = [a for a in attempts if a.is_correct is not None]
-    correct_count = sum(1 for a in judged_attempts if a.is_correct)
+    attempts = list(session.exec(attempt_stmt).all())
+    judged_attempts = [a for a in attempts if _attempt_score(a) is not None]
+    judged_attempts.sort(
+        key=lambda item: (item.created_at, item.id or 0),
+        reverse=True,
+    )
+    judged_attempts = judged_attempts[:PERFORMANCE_WINDOW_SIZE]
+    total_attempts = len(judged_attempts)
+    score_values = [_attempt_score(a) for a in judged_attempts]
 
-    # 2. 计算 observed_performance_score（仅答题正确率）
+    # 2. 计算 observed_performance_score（仅评分型显性证据）
     observed_performance: Optional[float] = None
     if len(judged_attempts) >= MIN_SAMPLE_FOR_PERFORMANCE:
-        observed_performance = correct_count / len(judged_attempts) if judged_attempts else None
+        observed_performance = (
+            sum(score for score in score_values if score is not None)
+            / len(judged_attempts)
+        )
         evidence = _create_evidence(
             student_id, course_id, node_id,
             EvidenceType.QUIZ_ACCURACY,
             value=observed_performance,
             confidence=min(len(judged_attempts) / 10.0, 1.0),
-            label=f"答题正确率 {observed_performance:.0%}",
-            description=f"基于 {len(judged_attempts)} 次评判记录",
-            event_refs=[str(a.id) for a in judged_attempts],
+            label=f"评分型表现 {observed_performance:.0%}",
+            description=(
+                f"基于最近 {len(judged_attempts)} 个独立评分项，"
+                f"窗口上限 {PERFORMANCE_WINDOW_SIZE}"
+            ),
+            event_refs=sorted(_attempt_ref(a) for a in judged_attempts),
         )
         evidence_refs.append(evidence.evidence_id)
         _persist_evidence(session, evidence, question_attempt_id=None)
@@ -107,17 +146,19 @@ def compute_cognitive_state(
     # 3. 计算 evidence_confidence（基于样本量）
     evidence_confidence: Optional[float] = None
     if total_attempts >= MIN_SAMPLE_FOR_CONFIDENCE:
-        # 置信度随样本量递增，上限0.95
-        evidence_confidence = min(0.5 + (total_attempts - MIN_SAMPLE_FOR_CONFIDENCE) * 0.05, 0.95)
+        evidence_confidence = 0.85
         reason_codes.append("confidence_from_sample_size")
     elif total_attempts > 0:
-        evidence_confidence = 0.3  # 低置信度
+        evidence_confidence = 0.3
         reason_codes.append("low_sample_size")
     # else: None = unknown
 
     # 4. 计算 confusion_risk（重复错误 + 纠正频率）
     confusion_risk: Optional[float] = None
-    wrong_attempts = [a for a in judged_attempts if a.is_correct is False]
+    wrong_attempts = [
+        attempt for attempt in judged_attempts
+        if (_attempt_score(attempt) or 0.0) < 0.6
+    ]
     if len(judged_attempts) >= MIN_SAMPLE_FOR_CONFUSION and wrong_attempts:
         wrong_rate = len(wrong_attempts) / len(judged_attempts)
         # 检查重复错误模式（同一题目多次错误）
@@ -135,44 +176,16 @@ def compute_cognitive_state(
             confidence=min(len(wrong_attempts) / 5.0, 1.0),
             label=f"困惑风险 {confusion_risk:.2f}",
             description=f"错误率{wrong_rate:.0%}, 重复错误{repeated_errors}题",
-            event_refs=[str(a.id) for a in wrong_attempts],
+            event_refs=sorted(_attempt_ref(a) for a in wrong_attempts),
         )
         evidence_refs.append(evidence.evidence_id)
         _persist_evidence(session, evidence, question_attempt_id=None)
         reason_codes.append("confusion_from_error_pattern")
 
-    # 5. 计算 inquiry_depth（提问深度，不计入表现分）
-    # 从 UnderstandingAnalysis 读取提问记录
+    # 5. inquiry_depth 只能来自结构化语义标签。提问次数不是深度证据；
+    # 当前生产事件尚未携带冻结的语义标签，因此必须保持 unknown。
     inquiry_depth: Optional[float] = None
-    analyses = session.exec(
-        select(UnderstandingAnalysis).where(
-            UnderstandingAnalysis.student_id == student_id,  # 如果有此字段
-        )
-    ).all() if hasattr(UnderstandingAnalysis, 'student_id') else []
-
-    # 从 QA 消息读取提问数
-    from app.models.qa_model import QAMessage, QASession
-    qa_sessions = session.exec(
-        select(QASession).where(
-            QASession.user_id == student_id,
-            QASession.course_id == course_id,
-        )
-    ).all()
-    total_questions = 0
-    for qs in qa_sessions:
-        msgs = session.exec(
-            select(QAMessage).where(
-                QAMessage.session_id == qs.id,
-                QAMessage.role == "user",
-            )
-        ).all()
-        total_questions += len(msgs)
-
-    if total_questions > 0:
-        # 提问深度：基于提问数量，但不计入表现分
-        inquiry_depth = min(total_questions / 20.0, 1.0)  # 20个问题满分
-        reason_codes.append("inquiry_depth_from_qa_count")
-        reason_codes.append("inquiry_not_in_performance")  # 明确不计入表现分
+    reason_codes.append("inquiry_unknown_without_semantic_evidence")
 
     # 6. 计算 hint_dependency（提示依赖度）
     # 从 cognitive_context 中读取 hint 使用情况
@@ -189,11 +202,17 @@ def compute_cognitive_state(
     low_understanding_count = 0
     total_analyses = 0
     # 尝试从 NodeProgress 读取理解度
-    node_progresses = session.exec(
-        select(NodeProgress).where(
-            NodeProgress.user_id == student_id,  # 如果有此字段
+    node_progress_stmt = (
+        select(NodeProgress)
+        .join(LearningProgress, NodeProgress.progress_id == LearningProgress.id)
+        .where(
+            LearningProgress.user_id == student_id,
+            LearningProgress.course_id == course_id,
         )
-    ).all() if hasattr(NodeProgress, 'user_id') else []
+    )
+    if node_id:
+        node_progress_stmt = node_progress_stmt.where(NodeProgress.node_id == node_id)
+    node_progresses = list(session.exec(node_progress_stmt).all())
 
     if node_progresses:
         total_analyses = len(node_progresses)
@@ -232,8 +251,8 @@ def compute_cognitive_state(
         mastery_level=mastery_level,
         mastery_score=mastery_score,
         policy_version=COGNITIVE_POLICY_VERSION,
-        evidence_refs=evidence_refs,
-        reason_codes=reason_codes,
+        evidence_refs=sorted(set(evidence_refs)),
+        reason_codes=sorted(set(reason_codes)),
         sample_size=total_attempts,
         is_latest=True,
         computed_at=datetime.utcnow(),
@@ -276,12 +295,22 @@ def _create_evidence(
     event_refs: list[str] = None,
 ) -> LearningEvidence:
     """创建内存 LearningEvidence 对象（复用领域模型）"""
+    stable_refs = sorted(set(event_refs or []))
+    stable_key = "|".join([
+        COGNITIVE_POLICY_VERSION,
+        evidence_type.value,
+        str(student_id),
+        str(course_id),
+        str(node_id or ""),
+        ",".join(stable_refs),
+    ])
     return LearningEvidence(
         evidence_type=evidence_type,
         student_id=student_id,
         course_id=course_id,
+        evidence_id=str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key)),
         node_id=node_id,
-        event_refs=event_refs or [],
+        event_refs=stable_refs,
         confidence=confidence,
         value=value,
         label=label,
@@ -296,6 +325,16 @@ def _persist_evidence(
     question_attempt_id: Optional[int] = None,
 ) -> LearningEvidenceRecord:
     """将内存 LearningEvidence 持久化到数据库"""
+    existing = session.exec(
+        select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.evidence_id == evidence.evidence_id,
+            LearningEvidenceRecord.student_id == evidence.student_id,
+            LearningEvidenceRecord.course_id == evidence.course_id,
+        )
+    ).first()
+    if existing is not None:
+        return existing
+
     record = LearningEvidenceRecord(
         evidence_id=evidence.evidence_id,
         student_id=evidence.student_id,

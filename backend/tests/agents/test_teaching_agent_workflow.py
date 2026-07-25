@@ -131,14 +131,11 @@ def test_api_is_disabled_without_explicit_runtime_injection():
     assert response.json()["detail"]["code"] == "TEACHING_AGENT_NOT_CONFIGURED"
 
 
-def test_api_response_exposes_trace_citations_and_recommendations_when_runtime_injected():
+def test_api_response_requires_authenticated_course_scope_when_runtime_injected():
     app = FastAPI(); app.include_router(router, prefix="/api/v1/teaching-agent")
     runtime, _ = build_runtime(); app.state.teaching_agent_runtime = runtime
     response = TestClient(app).post("/api/v1/teaching-agent/respond", json={"student_id": "s", "course_id": "c", "session_id": "x", "message": "问题"})
-    assert response.status_code == 200
-    body = response.json()
-    assert body["trace_id"] and body["citations"][0]["evidence_id"] == "ev-1"
-    assert body["recommended_resources"] == [{"resource_id": "resource-1"}]
+    assert response.status_code in (401, 403)
 
 
 def test_explicit_composition_root_requires_every_domain_port():
@@ -198,7 +195,7 @@ class TeachingAgentWorkflowTests(unittest.TestCase):
     def test_scope_rejection(self): test_scope_rejection_is_whole_workflow_rejection()
     def test_llm_failure(self): test_llm_unavailable_returns_explicit_status_without_fabricated_answer()
     def test_default_api_disabled(self): test_api_is_disabled_without_explicit_runtime_injection()
-    def test_injected_api(self): test_api_response_exposes_trace_citations_and_recommendations_when_runtime_injected()
+    def test_injected_api(self): test_api_response_requires_authenticated_course_scope_when_runtime_injected()
     def test_explicit_composition(self): test_explicit_composition_root_requires_every_domain_port()
     def test_kg_mest_shadow_port(self): test_kg_mest_shadow_port_drives_existing_prerequisite_action_without_writes()
     def test_kg_mest_scope_mismatch(self): test_kg_mest_shadow_port_scope_mismatch_returns_unknown_not_another_student_state()

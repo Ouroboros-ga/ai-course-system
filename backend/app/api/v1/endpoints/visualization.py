@@ -15,7 +15,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -36,9 +36,9 @@ class CreatePlanRequest(BaseModel):
     """创建可视化计划请求"""
     algorithm_id: str
     initial_params: dict
-    steps: list[dict]
-    highlights: list[dict] = []
-    playback_speed: float = 1.0
+    steps: list[dict] = Field(max_length=200)
+    highlights: list[dict] = Field(default_factory=list, max_length=200)
+    playback_speed: float = Field(default=1.0, ge=0.1, le=5.0)
     return_anchor: Optional[dict] = None
     node_id: Optional[int] = None
 

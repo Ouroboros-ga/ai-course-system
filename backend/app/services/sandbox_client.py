@@ -32,6 +32,7 @@ ALLOWED_LANGUAGES: dict[str, int] = {
     "ruby": 72,
     "php": 68,
 }
+MAX_RESULT_TEXT_CHARS = 100_000
 
 
 class SubmissionStatus(str, Enum):
@@ -120,7 +121,6 @@ class SandboxResult:
             "memory": self.memory,
             "exit_code": self.exit_code,
             "message": self.message,
-            "token": self.token,
         }
 
 
@@ -154,7 +154,9 @@ class SandboxClient:
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.authn_token:
-            headers[settings.__class__.__dict__.get("AUTHN_HEADER", "X-Auth-Token")] = self.authn_token
+            headers[settings.JUDGE0_AUTHN_HEADER] = self.authn_token
+        if settings.JUDGE0_AUTHZ_TOKEN:
+            headers[settings.JUDGE0_AUTHZ_HEADER] = settings.JUDGE0_AUTHZ_TOKEN
         return headers
 
     def submit_code(
@@ -248,11 +250,11 @@ class SandboxClient:
                 status=SubmissionStatus.TIME_LIMIT_EXCEEDED,
                 message="沙箱执行超时",
             )
-        except Exception as e:
-            logger.error(f"Judge0 沙箱异常: {e}")
+        except Exception:
+            logger.exception("Judge0 沙箱请求失败")
             return SandboxResult(
                 status=SubmissionStatus.INTERNAL_ERROR,
-                message=f"沙箱内部错误: {str(e)}",
+                message="沙箱内部错误",
             )
 
     def health_check(self) -> bool:
@@ -278,9 +280,12 @@ class SandboxClient:
             if not val:
                 return ""
             try:
-                return base64.b64decode(val).decode()
+                result = base64.b64decode(val).decode(errors="replace")
             except Exception:
-                return val
+                result = val
+            if len(result) > MAX_RESULT_TEXT_CHARS:
+                return result[:MAX_RESULT_TEXT_CHARS] + "\n[output truncated]"
+            return result
 
         return SandboxResult(
             status=status,

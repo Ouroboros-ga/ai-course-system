@@ -14,7 +14,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
 
@@ -72,8 +72,8 @@ class WebResearchConfig(SQLModel, table=True):
     cache_ttl_minutes: int = Field(default=DEFAULT_CACHE_TTL_MINUTES, description="缓存TTL(分钟)")
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class WebResearchResult(SQLModel, table=True):
@@ -91,6 +91,7 @@ class WebResearchResult(SQLModel, table=True):
     query_hash: str = Field(index=True, description="查询内容SHA256哈希")
     query_text: str = Field(default="", description="脱敏后的查询文本(不含学生数据)")
     status: ResearchStatus = Field(default=ResearchStatus.SUCCESS, index=True)
+    failure_reason: str = Field(default="", description="失败/拒绝原因，不含外部异常详情")
 
     # 结果（标记为"补充参考"）
     results: list = Field(
@@ -102,14 +103,19 @@ class WebResearchResult(SQLModel, table=True):
     # 预算跟踪
     searches_used: int = Field(default=0, description="本次研究使用的搜索次数")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: Optional[datetime] = Field(default=None, description="缓存过期时间")
 
     @property
     def is_expired(self) -> bool:
         if self.expires_at is None:
             return True
-        return datetime.utcnow() > self.expires_at
+        now = datetime.now(timezone.utc)
+        expires_at = self.expires_at
+        if expires_at.tzinfo is None:
+            # Existing SQLite rows are UTC-naive compatibility data.
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+        return now > expires_at
 
 
 class ExternalReference(SQLModel, table=True):
@@ -130,7 +136,7 @@ class ExternalReference(SQLModel, table=True):
     source_url: str = Field(default="", description="来源URL")
     title: str = Field(default="", description="参考标题")
     snippet: str = Field(default="", description="内容摘要")
-    retrieved_at: datetime = Field(default_factory=datetime.utcnow, description="检索时间")
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), description="检索时间")
 
     # 用途与标记
     purpose: str = Field(default="supplementary_reference", description="用途")
@@ -141,4 +147,4 @@ class ExternalReference(SQLModel, table=True):
     cannot_modify_recommendation: bool = Field(default=True, description="不可修改推荐优先级")
     cannot_modify_graph: bool = Field(default=True, description="不可修改课程图谱")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

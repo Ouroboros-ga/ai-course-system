@@ -123,6 +123,4 @@ p1_shadow_graph/
 /research/**/artifacts/**/*.pth
 /research/**/artifacts/**/*.ckpt
 /research/**/artifacts/**/cache/
-
-.claude/plans/plan.md
-AGENTS.md
+.claude/plans/

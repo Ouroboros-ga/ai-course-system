@@ -10,10 +10,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import uuid
-from datetime import datetime
+from copy import deepcopy
+from datetime import datetime, timezone
 from typing import Optional, Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.models.graph_production_model import (
@@ -23,6 +26,16 @@ from app.models.graph_production_model import (
     SnapshotStatus,
     EvidenceStatus,
 )
+
+
+def graph_target_hash(target: dict[str, Any]) -> str:
+    canonical = json.dumps(
+        target,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def create_evidence(
@@ -38,6 +51,16 @@ def create_evidence(
     evidence_type: str = "document_extract",
 ) -> CourseEvidenceRecord:
     """创建可校验 Evidence"""
+    if not text_snippet.strip():
+        raise ValueError("Evidence 原文片段不能为空")
+    if page_number is not None and page_number < 1:
+        raise ValueError("Evidence 页码必须大于等于 1")
+    if (char_start is None) != (char_end is None):
+        raise ValueError("Evidence 字符定位必须同时提供起止位置")
+    if char_start is not None and (
+        char_start < 0 or char_end is None or char_end <= char_start
+    ):
+        raise ValueError("Evidence 字符定位范围无效")
     content_hash = hashlib.sha256(text_snippet.encode()).hexdigest()[:32]
     evidence = CourseEvidenceRecord(
         evidence_id=str(uuid.uuid4()),
@@ -72,6 +95,8 @@ def publish_snapshot(
     发布后标记前一活跃快照为 SUPERSEDED。
     新快照变为活跃快照，学生可读。
     """
+    _validate_snapshot_content(session, course_id, nodes, relations)
+
     # 标记前一活跃快照为 SUPERSEDED
     prev_active = session.exec(
         select(GraphSnapshotRecord).where(
@@ -87,16 +112,18 @@ def publish_snapshot(
         prev_snapshot_id = prev_active.snapshot_id
 
     # 计算版本号
-    all_snapshots = session.exec(
-        select(GraphSnapshotRecord).where(GraphSnapshotRecord.course_id == course_id)
-    ).all()
-    version = len(all_snapshots) + 1
+    max_version = session.exec(
+        select(func.max(GraphSnapshotRecord.version)).where(
+            GraphSnapshotRecord.course_id == course_id
+        )
+    ).one()
+    version = int(max_version or 0) + 1
 
     snapshot = GraphSnapshotRecord(
         snapshot_id=str(uuid.uuid4()),
         course_id=course_id,
-        nodes=nodes,
-        relations=relations,
+        nodes=deepcopy(nodes),
+        relations=deepcopy(relations),
         version=version,
         prev_snapshot_id=prev_snapshot_id,
         status=SnapshotStatus.PUBLISHED,
@@ -105,7 +132,7 @@ def publish_snapshot(
         node_count=len(nodes),
         relation_count=len(relations),
         created_by=user_id,
-        published_at=datetime.utcnow(),
+        published_at=datetime.now(timezone.utc),
     )
     session.add(snapshot)
     session.commit()
@@ -140,14 +167,7 @@ def rollback_snapshot(
     user_id: Optional[int] = None,
 ) -> GraphSnapshotRecord:
     """回滚到指定快照版本"""
-    # 标记当前活跃快照为 ROLLED_BACK
-    current = get_active_snapshot(session, course_id)
-    if current:
-        current.is_active = False
-        current.status = SnapshotStatus.ROLLED_BACK
-        session.add(current)
-
-    # 激活目标快照
+    # 先验证目标，避免失败请求在会话中留下已失活的当前快照。
     target = session.exec(
         select(GraphSnapshotRecord).where(
             GraphSnapshotRecord.snapshot_id == snapshot_id,
@@ -156,6 +176,14 @@ def rollback_snapshot(
     ).first()
     if not target:
         raise ValueError(f"快照 {snapshot_id} 不存在")
+    _validate_snapshot_content(session, course_id, target.nodes, target.relations)
+    current = get_active_snapshot(session, course_id)
+    if current and current.snapshot_id == target.snapshot_id:
+        return current
+    if current:
+        current.is_active = False
+        current.status = SnapshotStatus.ROLLED_BACK
+        session.add(current)
 
     target.is_active = True
     target.status = SnapshotStatus.PUBLISHED
@@ -163,6 +191,117 @@ def rollback_snapshot(
     session.commit()
     session.refresh(target)
     return target
+
+
+def _validate_snapshot_content(
+    session: Session,
+    course_id: int,
+    nodes: list[dict],
+    relations: list[dict],
+) -> None:
+    """Validate graph structure and relation traceability before publication."""
+    if not nodes:
+        raise ValueError("图谱快照至少需要一个节点")
+
+    node_ids: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            raise ValueError("图谱节点必须是对象")
+        node_id = str(node.get("id") or node.get("node_id") or "").strip()
+        if not node_id:
+            raise ValueError("图谱节点缺少稳定 ID")
+        node_ids.append(node_id)
+    if len(node_ids) != len(set(node_ids)):
+        raise ValueError("图谱节点 ID 重复")
+    node_id_set = set(node_ids)
+
+    relation_ids: list[str] = []
+    referenced_evidence: set[str] = set()
+    relation_by_id: dict[str, dict] = {}
+    for relation in relations:
+        if not isinstance(relation, dict):
+            raise ValueError("图谱关系必须是对象")
+        relation_id = str(
+            relation.get("id") or relation.get("relation_id") or ""
+        ).strip()
+        source = str(relation.get("source") or relation.get("source_id") or "").strip()
+        target = str(relation.get("target") or relation.get("target_id") or "").strip()
+        if not relation_id or not source or not target:
+            raise ValueError("图谱关系必须包含稳定 ID、source 和 target")
+        if source not in node_id_set or target not in node_id_set:
+            raise ValueError(f"关系 {relation_id} 指向快照外节点")
+        relation_ids.append(relation_id)
+        relation_by_id[relation_id] = relation
+        evidence_ids = relation.get("evidence_ids") or []
+        if not isinstance(evidence_ids, list):
+            raise ValueError(f"关系 {relation_id} 的 evidence_ids 必须是数组")
+        referenced_evidence.update(str(item) for item in evidence_ids if str(item))
+    if len(relation_ids) != len(set(relation_ids)):
+        raise ValueError("图谱关系 ID 重复")
+    _validate_prerequisite_dag(node_id_set, list(relation_by_id.values()))
+
+    active_evidence_ids = set()
+    if referenced_evidence:
+        active_evidence_ids = set(session.exec(
+            select(CourseEvidenceRecord.evidence_id).where(
+                CourseEvidenceRecord.course_id == course_id,
+                CourseEvidenceRecord.evidence_id.in_(referenced_evidence),
+                CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+            )
+        ).all())
+
+    accepted_reviews = {
+        (review.target_id, review.target_content_hash)
+        for review in session.exec(
+            select(GraphNodeReview).where(
+                GraphNodeReview.course_id == course_id,
+                GraphNodeReview.target_type == "relation",
+                GraphNodeReview.decision == "accepted",
+            )
+        ).all()
+    }
+    for relation_id, relation in relation_by_id.items():
+        evidence_ids = {str(item) for item in (relation.get("evidence_ids") or []) if str(item)}
+        if evidence_ids and evidence_ids.issubset(active_evidence_ids):
+            continue
+        if (relation_id, graph_target_hash(relation)) in accepted_reviews:
+            continue
+        raise ValueError(
+            f"关系 {relation_id} 缺少本课程有效 Evidence 或教师确认记录"
+        )
+
+
+def _validate_prerequisite_dag(
+    node_ids: set[str],
+    relations: list[dict],
+) -> None:
+    prerequisite_types = {"prerequisite", "prerequisite_of", "requires"}
+    adjacency = {node_id: [] for node_id in node_ids}
+    for relation in relations:
+        if str(relation.get("type") or "").casefold() not in prerequisite_types:
+            continue
+        source = str(relation.get("source") or relation.get("source_id"))
+        target = str(relation.get("target") or relation.get("target_id"))
+        if source == target:
+            raise ValueError("先修关系不能形成自环")
+        adjacency[source].append(target)
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node_id: str) -> None:
+        if node_id in visiting:
+            raise ValueError("先修关系存在环，不能发布")
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for target_id in sorted(adjacency[node_id]):
+            visit(target_id)
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in sorted(node_ids):
+        visit(node_id)
 
 
 def mark_evidence_stale(
@@ -185,7 +324,7 @@ def mark_evidence_stale(
     for ev in evidences:
         ev.status = EvidenceStatus.STALE
         ev.stale_reason = reason
-        ev.stale_at = datetime.utcnow()
+        ev.stale_at = datetime.now(timezone.utc)
         session.add(ev)
     session.commit()
     return len(evidences)

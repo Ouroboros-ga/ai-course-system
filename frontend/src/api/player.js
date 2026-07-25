@@ -46,3 +46,9 @@ export async function savePlayerProgress(progressData) {
 export async function getPlayerProgress(courseId) {
   return request.get(`/player/progress/${courseId}`)
 }
+
+// Optional enhancement; legacy courses continue using node timestamps.
+export async function getCourseMediaTimeline(courseId) {
+  const data = await request.get(`/media/course/${courseId}/timeline`, { allowFlatResponse: true })
+  return data?.items || []
+}

@@ -11,15 +11,19 @@
 from __future__ import annotations
 
 from typing import Optional, Any
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlmodel import Session
+from sqlmodel import select
+from starlette.concurrency import run_in_threadpool
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
+from app.models.safety_policy_model import CourseSandboxPolicy
 from app.services.sandbox_client import (
     sandbox_client,
     SandboxClient,
@@ -34,23 +38,25 @@ router = APIRouter(tags=["G3 代码沙箱"])
 
 class CodeExecutionRequest(BaseModel):
     """代码执行请求"""
-    source_code: str
+    source_code: str = Field(min_length=1, max_length=100_000)
     language: str  # 必须在 ALLOWED_LANGUAGES 中
-    stdin: str = ""
-    expected_output: str = ""
+    stdin: str = Field(default="", max_length=100_000)
+    expected_output: str = Field(default="", max_length=100_000)
 
     # 可选资源限制（不超过系统上限）
-    cpu_time_limit: Optional[int] = None
-    memory_limit: Optional[int] = None
-    wall_time_limit: Optional[int] = None
-    max_processes: Optional[int] = None
-    max_file_size: Optional[int] = None
+    cpu_time_limit: Optional[int] = Field(default=None, ge=1, le=10)
+    memory_limit: Optional[int] = Field(default=None, ge=16_000, le=256_000)
+    wall_time_limit: Optional[int] = Field(default=None, ge=1, le=20)
+    max_processes: Optional[int] = Field(default=None, ge=1, le=60)
+    max_file_size: Optional[int] = Field(default=None, ge=1, le=2_048)
 
 
 @router.get("/health")
-async def sandbox_health():
+async def sandbox_health(
+    current_user: dict = Depends(get_current_user),
+):
     """检查沙箱是否可用"""
-    available = sandbox_client.health_check()
+    available = await run_in_threadpool(sandbox_client.health_check)
     return unified_response(
         code=200,
         message="沙箱可用" if available else "沙箱不可用",
@@ -75,18 +81,55 @@ async def execute_code(
     不在主应用进程执行学生代码。
     默认关闭网络，禁止在线安装依赖。
     """
-    require_course_permission(session, current_user, course_id, "experiment.run")
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run"
+    )
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(status_code=403, detail="课程代码沙箱能力未启用")
+    if payload.language not in ALLOWED_LANGUAGES:
+        raise HTTPException(status_code=400, detail="不支持的编程语言")
+
+    course_policy = session.exec(
+        select(CourseSandboxPolicy).where(
+            CourseSandboxPolicy.course_id == course_id
+        )
+    ).first()
+    if course_policy and payload.language not in (course_policy.allowed_languages or []):
+        raise HTTPException(status_code=400, detail="课程未允许该编程语言")
+
+    cpu_limit = min(
+        payload.cpu_time_limit or settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
+        course_policy.cpu_limit if course_policy else settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
+        settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
+    )
+    memory_limit = min(
+        payload.memory_limit or settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
+        course_policy.memory_limit if course_policy else settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
+        settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
+    )
+    wall_limit = min(
+        payload.wall_time_limit or settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
+        course_policy.wall_time_limit if course_policy else settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
+        settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
+    )
 
     # 构建资源限制
     limits = SandboxResourceLimits(
-        cpu_time_limit=payload.cpu_time_limit or 5,
-        memory_limit=payload.memory_limit or 128000,
-        wall_time_limit=payload.wall_time_limit or 10,
-        max_processes=payload.max_processes or 30,
-        max_file_size=payload.max_file_size or 1024,
+        cpu_time_limit=cpu_limit,
+        memory_limit=memory_limit,
+        wall_time_limit=wall_limit,
+        max_processes=min(
+            payload.max_processes or settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+        ),
+        max_file_size=min(
+            payload.max_file_size or settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+        ),
     )
 
-    result = sandbox_client.submit_code(
+    result = await run_in_threadpool(
+        sandbox_client.submit_code,
         source_code=payload.source_code,
         language=payload.language,
         stdin=payload.stdin,

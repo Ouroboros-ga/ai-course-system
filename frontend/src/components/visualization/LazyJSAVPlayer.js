@@ -6,7 +6,7 @@ import { defineAsyncComponent, h } from 'vue'
  * 使用 defineAsyncComponent 按需加载 JSAVPlayer.vue，
  * 不影响主应用和普通问答的初始加载性能。
  *
- * JSAVPlayer 内部会动态从 CDN 加载 JSAV 库，
+ * JSAVPlayer 内部会动态加载同源、部署锁定的 JSAV 静态资源，
  * 本包装仅负责组件代码分割（code-splitting）。
  */
 const LazyJSAVPlayer = defineAsyncComponent({

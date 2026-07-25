@@ -23,6 +23,7 @@ from app.services.visualization.algorithm_registry import (
 
 VISUALIZATION_PLAN_VERSION = "viz-plan-v1.0"
 MAX_STEPS = 200
+MAX_PLAN_CHARS = 200_000
 MAX_PLAYBACK_SPEED = 5.0
 MIN_PLAYBACK_SPEED = 0.1
 
@@ -43,6 +44,8 @@ def validate_visualization_plan(plan: dict[str, Any]) -> ValidationResult:
     任何不在契约中的字段或超范围值都会被拒绝。
     """
     errors: list[str] = []
+    if len(repr(plan)) > MAX_PLAN_CHARS:
+        return ValidationResult(valid=False, errors=["VisualizationPlan 体积超过上限"])
 
     # 1. 验证 algorithm_id
     algorithm_id = plan.get("algorithm_id")
@@ -94,6 +97,44 @@ def validate_visualization_plan(plan: dict[str, Any]) -> ValidationResult:
                 f"(允许: {spec.step_types})"
             )
 
+        allowed_step_fields = {
+            "type", "description", "index", "i", "j", "range",
+            "value", "elements", "target", "pivot",
+        }
+        unknown_fields = sorted(set(step) - allowed_step_fields)
+        if unknown_fields:
+            errors.append(f"步骤 {i} 包含未声明字段: {', '.join(unknown_fields)}")
+
+        array_value = initial_params.get("array")
+        array_length = len(array_value) if isinstance(array_value, list) else None
+        for index_field in ("index", "i", "j", "pivot"):
+            index_value = step.get(index_field)
+            if index_value is None:
+                continue
+            if not isinstance(index_value, int) or isinstance(index_value, bool):
+                errors.append(f"步骤 {i} 的 {index_field} 必须是整数")
+            elif array_length is not None and not (0 <= index_value < array_length):
+                errors.append(f"步骤 {i} 的 {index_field} 超出数组范围")
+
+        range_value = step.get("range")
+        if range_value is not None:
+            if (
+                not isinstance(range_value, list)
+                or len(range_value) != 2
+                or any(not isinstance(v, int) or isinstance(v, bool) for v in range_value)
+            ):
+                errors.append(f"步骤 {i} 的 range 必须是两个整数")
+            elif array_length is not None and not (
+                0 <= range_value[0] <= range_value[1] < array_length
+            ):
+                errors.append(f"步骤 {i} 的 range 超出数组范围")
+
+        elements = step.get("elements")
+        if elements is not None and (
+            not isinstance(elements, list) or len(elements) > 50
+        ):
+            errors.append(f"步骤 {i} 的 elements 必须是最多 50 项的数组")
+
         # 验证 description 不含危险内容
         desc = step.get("description", "")
         if isinstance(desc, str) and len(desc) > 500:
@@ -111,6 +152,11 @@ def validate_visualization_plan(plan: dict[str, Any]) -> ValidationResult:
             continue
         if not isinstance(hl.get("step"), int):
             errors.append(f"高亮 {i} 缺少有效的 step 索引")
+        elif not 0 <= hl["step"] < len(steps):
+            errors.append(f"高亮 {i} 的 step 索引超出范围")
+        elements = hl.get("elements", [])
+        if not isinstance(elements, list) or len(elements) > 50:
+            errors.append(f"高亮 {i} 的 elements 必须是最多 50 项的数组")
         color = hl.get("color", "")
         if color and color not in ("yellow", "green", "red", "blue", "orange"):
             errors.append(f"高亮 {i} 的 color '{color}' 不在允许列表中")
@@ -153,7 +199,13 @@ def validate_visualization_plan(plan: dict[str, Any]) -> ValidationResult:
             {
                 "type": s.get("type"),
                 "description": str(s.get("description", ""))[:500],
-                **{k: v for k, v in s.items() if k in ("index", "range", "value", "elements", "target", "pivot")}
+                **{
+                    k: v for k, v in s.items()
+                    if k in (
+                        "index", "i", "j", "range", "value",
+                        "elements", "target", "pivot",
+                    )
+                }
             }
             for s in steps if isinstance(s, dict)
         ],

@@ -6,9 +6,10 @@ MediaTimelineCue 保存视频起止、PPT 页、字幕片段、讲稿引用、�
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Optional
+from urllib.parse import quote
 
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
@@ -37,6 +38,7 @@ class MediaAsset(SQLModel, table=True):
     __tablename__ = "media_assets"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
     object_key: str = Field(unique=True, index=True, description="抽象存储键(如 videos/course_1/node_5/segment_3.mp4)")
     asset_type: str = Field(index=True, description="类型: video/audio/subtitle/thumbnail")
     backend: StorageBackend = Field(default=StorageBackend.LOCAL, description="存储后端")
@@ -47,13 +49,13 @@ class MediaAsset(SQLModel, table=True):
     duration_seconds: float = Field(default=0.0, description="时长(秒)")
     content_hash: str = Field(default="", index=True, description="内容SHA256哈希")
     resource_version: str = Field(default="v1", description="资源版本")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     def resolve_url(self) -> str:
         """解析为可访问的URL"""
         if self.backend == StorageBackend.OSS and self.oss_url:
             return self.oss_url
-        return self.local_path or ""
+        return f"/api/v1/media/assets/{quote(self.object_key, safe='/')}/content"
 
 
 class MediaTimelineCue(SQLModel, table=True):
@@ -92,12 +94,13 @@ class MediaTimelineCue(SQLModel, table=True):
     # 资源版本与哈希
     resource_version: str = Field(default="v1", description="资源版本")
     content_hash: str = Field(default="", description="内容哈希")
+    is_active: bool = Field(default=True, index=True, description="是否为节点当前生效时间轴")
 
     # 额外数据
     cue_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON), description="扩展元数据")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class DigitalHumanPreset(str, Enum):

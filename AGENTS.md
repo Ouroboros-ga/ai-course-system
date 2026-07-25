@@ -41,7 +41,7 @@ Evidence 生产化工作；不授权无关的 V3.1 全量重构。
 11. Phase C/D：接入经课程隔离、版本化、可回滚的 LearningEvent、
     评分证据、GraphSnapshot、认知推荐和图谱治理能力。未隔离的学生
     代码不得在主应用进程执行；代码执行必须经独立沙箱服务。
-12. Phase E：
+12. Phase E：在获得材料授权、隐私处理、人工校对和可回滚方案后，接入
     真实 DocumentIR/Evidence Shadow 与逐步 Canary；不得通过删除
     admin-only/503 保护直接把 Shadow 暴露给学生。
 

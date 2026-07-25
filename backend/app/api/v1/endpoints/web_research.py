@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -29,6 +29,7 @@ from app.services.web_research_service import (
     serialize_result,
     serialize_config,
     sanitize_query,
+    normalize_allowed_domains,
 )
 
 router = APIRouter(tags=["G7 WebResearchTool"])
@@ -36,14 +37,14 @@ router = APIRouter(tags=["G7 WebResearchTool"])
 
 class ConfigUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
-    allowed_domains: Optional[list] = None
-    search_budget_per_query: Optional[int] = None
-    max_results_per_search: Optional[int] = None
-    cache_ttl_minutes: Optional[int] = None
+    allowed_domains: Optional[list[str]] = Field(default=None, max_length=100)
+    search_budget_per_query: Optional[int] = Field(default=None, ge=1, le=100)
+    max_results_per_search: Optional[int] = Field(default=None, ge=1, le=20)
+    cache_ttl_minutes: Optional[int] = Field(default=None, ge=1, le=1440)
 
 
 class SearchRequest(BaseModel):
-    query: str
+    query: str = Field(min_length=2, max_length=500)
 
 
 @router.get("/course/{course_id}/config")
@@ -76,7 +77,10 @@ async def update_config(
     if payload.enabled is not None:
         config.enabled = payload.enabled
     if payload.allowed_domains is not None:
-        config.allowed_domains = payload.allowed_domains
+        try:
+            config.allowed_domains = normalize_allowed_domains(payload.allowed_domains)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if payload.search_budget_per_query is not None:
         config.search_budget_per_query = payload.search_budget_per_query
     if payload.max_results_per_search is not None:

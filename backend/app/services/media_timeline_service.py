@@ -27,6 +27,7 @@ from app.models.video_generation_model import VideoGenerationTask, GenerationSta
 def register_media_asset(
     session: Session,
     *,
+    course_id: int,
     object_key: str,
     asset_type: str,
     local_path: Optional[str] = None,
@@ -45,6 +46,7 @@ def register_media_asset(
         content_hash = hashlib.sha256(content).hexdigest()
 
     asset = MediaAsset(
+        course_id=course_id,
         object_key=object_key,
         asset_type=asset_type,
         backend=StorageBackend.LOCAL,
@@ -78,6 +80,44 @@ def create_timeline_cues_from_node(
     将讲稿分段映射到时间轴，每段对应一个 PPT 页、字幕片段和视频段。
     讲稿可作为真实字幕/讲解内容展示，不再只是 220 字节点摘要。
     """
+    script = session.get(CourseScript, script_id)
+    node = session.get(ScriptNode, node_id)
+    if script is None or script.course_id != course_id:
+        raise ValueError("讲稿不属于当前课程")
+    if node is None or node.script_id != script_id:
+        raise ValueError("节点不属于指定课程讲稿")
+    if audio_duration <= 0 or audio_duration > 86_400:
+        raise ValueError("音频时长超出允许范围")
+    for object_key in (video_object_key, audio_object_key):
+        if not object_key:
+            continue
+        asset = session.exec(
+            select(MediaAsset).where(
+                MediaAsset.course_id == course_id,
+                MediaAsset.object_key == object_key,
+            )
+        ).first()
+        if asset is None:
+            raise ValueError(f"课程媒体资产不存在: {object_key}")
+
+    previous_cues = list(session.exec(
+        select(MediaTimelineCue).where(
+            MediaTimelineCue.course_id == course_id,
+            MediaTimelineCue.node_id == node_id,
+            MediaTimelineCue.is_active == True,
+        )
+    ).all())
+    version_numbers = []
+    for previous in previous_cues:
+        previous.is_active = False
+        session.add(previous)
+        if previous.resource_version.startswith("v"):
+            try:
+                version_numbers.append(int(previous.resource_version[1:]))
+            except ValueError:
+                pass
+    resource_version = f"v{max(version_numbers, default=0) + 1}"
+
     # 将讲稿按自然段分割
     segments = _split_script_into_segments(script_content, ppt_pages)
 
@@ -110,8 +150,9 @@ def create_timeline_cues_from_node(
             script_reference=f"node_{node_id}_segment_{i}",
             video_object_key=video_object_key,
             audio_object_key=audio_object_key,
-            resource_version="v1",
+            resource_version=resource_version,
             content_hash=content_hash,
+            is_active=True,
             cue_metadata={"total_segments": len(segments), "segment_index": i},
         )
         session.add(cue)
@@ -171,6 +212,7 @@ def get_node_timeline(
         select(MediaTimelineCue).where(
             MediaTimelineCue.course_id == course_id,
             MediaTimelineCue.node_id == node_id,
+            MediaTimelineCue.is_active == True,
         ).order_by(MediaTimelineCue.cue_index)
     ).all())
 
@@ -186,6 +228,7 @@ def get_course_timeline(
     cues = session.exec(
         select(MediaTimelineCue).where(
             MediaTimelineCue.course_id == course_id,
+            MediaTimelineCue.is_active == True,
         ).order_by(MediaTimelineCue.node_id, MediaTimelineCue.cue_index)
     ).all()
 
@@ -196,13 +239,19 @@ def get_course_timeline(
         audio_url = None
         if cue.video_object_key:
             asset = session.exec(
-                select(MediaAsset).where(MediaAsset.object_key == cue.video_object_key)
+                select(MediaAsset).where(
+                    MediaAsset.course_id == course_id,
+                    MediaAsset.object_key == cue.video_object_key,
+                )
             ).first()
             if asset:
                 video_url = asset.resolve_url()
         if cue.audio_object_key:
             asset = session.exec(
-                select(MediaAsset).where(MediaAsset.object_key == cue.audio_object_key)
+                select(MediaAsset).where(
+                    MediaAsset.course_id == course_id,
+                    MediaAsset.object_key == cue.audio_object_key,
+                )
             ).first()
             if asset:
                 audio_url = asset.resolve_url()
@@ -233,13 +282,19 @@ def serialize_cue(cue: MediaTimelineCue, session: Session) -> dict[str, Any]:
     audio_url = None
     if cue.video_object_key:
         asset = session.exec(
-            select(MediaAsset).where(MediaAsset.object_key == cue.video_object_key)
+            select(MediaAsset).where(
+                MediaAsset.course_id == cue.course_id,
+                MediaAsset.object_key == cue.video_object_key,
+            )
         ).first()
         if asset:
             video_url = asset.resolve_url()
     if cue.audio_object_key:
         asset = session.exec(
-            select(MediaAsset).where(MediaAsset.object_key == cue.audio_object_key)
+            select(MediaAsset).where(
+                MediaAsset.course_id == cue.course_id,
+                MediaAsset.object_key == cue.audio_object_key,
+            )
         ).first()
         if asset:
             audio_url = asset.resolve_url()

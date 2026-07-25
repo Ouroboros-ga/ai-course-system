@@ -1,0 +1,31 @@
+JSAV static asset manifest
+==========================
+
+Runtime assets are served only from this same-origin directory. Do not replace
+them with a CDN URL in the authenticated learning application.
+
+JSAV-0.4.1.js
+  Source: https://github.com/vkaravir/JSAV.git, tag v0.4.1
+  Commit: 66850d301f64f7a287189b1c1fadcdc20433427b
+  License: MIT (upstream MIT-license.txt)
+  SHA-256: EC53E26E083B9EE470B8E2A361168D457DB8EFBC7A2ACCCF77ABC308E3F41DF4
+
+JSAV-0.4.1.css
+  Source: same JSAV tag
+  License: MIT
+  SHA-256: C9CEEC9BCD389358BAD5D26AD9D7A9ED746CE8E7FC98269852DDFC04E14FC424
+
+jquery-3.7.1.min.js
+  Source: npm jquery@3.7.1 distribution
+  License: MIT
+  SHA-256: 78A85ACA2F0B110C29E0D2B137E09F0A1FB7A8E554B499F740D6744DC8962CFE
+
+raphael-2.3.0.min.js
+  Source: JSAV v0.4.1 upstream lib/raphael.js
+  License: MIT
+  SHA-256: 418A621AF3E7CFAC4FB3F0738BF8C2E87C0E8E20D24D768DA50901B9207738BF
+
+jquery.transform.light.js
+  Source: JSAV v0.4.1 upstream lib/jquery.transform.light.js
+  License: MIT
+  SHA-256: B8301D15396FD4F554086569CA135B5E16526DC85439D338252F955F461443BD

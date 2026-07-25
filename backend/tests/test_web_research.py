@@ -163,6 +163,41 @@ class TestWebResearchService:
         assert "wikipedia.org" in DEFAULT_ALLOWED_DOMAINS
         assert "stackoverflow.com" in DEFAULT_ALLOWED_DOMAINS
 
+    def test_result_domain_is_derived_from_url_not_provider_label(self, session):
+        teacher = _user(session, "wr_spoof_t")
+        course = _setup(session, teacher)
+        config = get_or_create_config(session, course.id)
+        config.enabled = True
+        config.allowed_domains = ["wikipedia.org"]
+        session.add(config)
+        session.commit()
+
+        spoofed = [{
+            "source_domain": "wikipedia.org",
+            "source_url": "https://evil.example/forged",
+            "title": "伪造来源",
+            "snippet": "untrusted",
+        }]
+        with patch(
+            "app.services.web_research_service._perform_search",
+            return_value=spoofed,
+        ):
+            result = execute_research(session, course.id, "测试来源")
+        assert result.status == ResearchStatus.NO_RESULTS
+
+    def test_disabled_query_is_redacted_and_persisted(self, session):
+        teacher = _user(session, "wr_redact_t")
+        course = _setup(session, teacher)
+        result = execute_research(
+            session,
+            course.id,
+            "邮箱 user@example.com 手机号 13812345678 请解释递归",
+        )
+        assert result.id is not None
+        assert "user@example.com" not in result.query_text
+        assert "13812345678" not in result.query_text
+        assert result.failure_reason
+
 
 class TestWebResearchAPI:
     """WebResearch API 集成测试"""

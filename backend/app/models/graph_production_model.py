@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, JSON
+from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -42,7 +42,7 @@ class CourseEvidenceRecord(SQLModel, table=True):
     __tablename__ = "course_evidence_records"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    evidence_id: str = Field(index=True, description="UUID证据ID")
+    evidence_id: str = Field(unique=True, index=True, description="UUID证据ID")
     course_id: int = Field(foreign_key="courses.id", index=True)
 
     # 来源信息
@@ -79,9 +79,14 @@ class GraphSnapshotRecord(SQLModel, table=True):
     """
 
     __tablename__ = "graph_snapshot_records"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id", "version", name="uq_graph_snapshot_course_version"
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    snapshot_id: str = Field(index=True, description="UUID快照ID")
+    snapshot_id: str = Field(unique=True, index=True, description="UUID快照ID")
     course_id: int = Field(foreign_key="courses.id", index=True)
 
     # 快照内容（不可变 JSON）
@@ -123,6 +128,11 @@ class GraphNodeReview(SQLModel, table=True):
     # 审核目标
     target_id: str = Field(index=True, description="节点ID或关系ID")
     target_type: str = Field(default="node", description="node 或 relation")
+    target_content_hash: str = Field(
+        default="",
+        index=True,
+        description="审核时目标内容哈希，防止复用旧决定授权已变更关系",
+    )
 
     # 审核决策
     decision: str = Field(default="proposed", description="proposed/accepted/rejected/needs_review")

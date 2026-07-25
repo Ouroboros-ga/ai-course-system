@@ -5,14 +5,17 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.models.database import get_session
 from app.models.media_timeline_model import (
     MediaAsset,
@@ -34,21 +37,23 @@ router = APIRouter(tags=["G8 媒体时间轴"])
 
 
 class CreateCuesRequest(BaseModel):
+    script_id: int = Field(ge=1)
     node_id: int
-    script_content: str
-    audio_duration: float
-    ppt_pages: list[int] = []
+    script_content: str = Field(min_length=1, max_length=200_000)
+    audio_duration: float = Field(gt=0, le=86_400)
+    ppt_pages: list[int] = Field(default_factory=list, max_length=500)
     video_object_key: Optional[str] = None
     audio_object_key: Optional[str] = None
 
 
 class RegisterAssetRequest(BaseModel):
-    object_key: str
-    asset_type: str  # video/audio/subtitle/thumbnail
-    local_path: Optional[str] = None
-    mime_type: str = ""
-    size_bytes: int = 0
-    duration_seconds: float = 0.0
+    course_id: int = Field(ge=1)
+    object_key: str = Field(min_length=3, max_length=500)
+    asset_type: str = Field(pattern="^(video|audio|subtitle|thumbnail)$")
+    local_path: Optional[str] = Field(None, max_length=500)
+    mime_type: str = Field(default="", max_length=200)
+    size_bytes: int = Field(default=0, ge=0)
+    duration_seconds: float = Field(default=0.0, ge=0, le=86_400)
 
 
 @router.get("/course/{course_id}/timeline")
@@ -91,17 +96,20 @@ async def create_cues(
     """
     require_course_permission(session, current_user, course_id, "course.media.generate")
 
-    cues = create_timeline_cues_from_node(
-        session,
-        course_id=course_id,
-        script_id=0,  # 由调用方补充
-        node_id=payload.node_id,
-        script_content=payload.script_content,
-        audio_duration=payload.audio_duration,
-        ppt_pages=payload.ppt_pages,
-        video_object_key=payload.video_object_key,
-        audio_object_key=payload.audio_object_key,
-    )
+    try:
+        cues = create_timeline_cues_from_node(
+            session,
+            course_id=course_id,
+            script_id=payload.script_id,
+            node_id=payload.node_id,
+            script_content=payload.script_content,
+            audio_duration=payload.audio_duration,
+            ppt_pages=payload.ppt_pages,
+            video_object_key=payload.video_object_key,
+            audio_object_key=payload.audio_object_key,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return unified_response(
         code=200, message=f"创建 {len(cues)} 个时间轴提示",
@@ -119,8 +127,30 @@ async def register_asset(
 
     使用抽象 object_key，未来可平滑迁移 OSS。
     """
+    require_course_permission(
+        session, current_user, payload.course_id, "course.media.generate"
+    )
+    for value, label in (
+        (payload.object_key, "object_key"),
+        (payload.local_path, "local_path"),
+    ):
+        if value and (
+            ".." in Path(value).parts
+            or Path(value).is_absolute()
+            or ":" in value
+            or value.startswith(("/", "\\"))
+        ):
+            raise HTTPException(status_code=422, detail=f"{label} 必须是安全相对路径")
+
+    existing = session.exec(
+        select(MediaAsset).where(MediaAsset.object_key == payload.object_key)
+    ).first()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="object_key 已存在")
+
     asset = register_media_asset(
         session,
+        course_id=payload.course_id,
         object_key=payload.object_key,
         asset_type=payload.asset_type,
         local_path=payload.local_path,
@@ -141,7 +171,40 @@ async def register_asset(
     )
 
 
-@router.get("/assets/{object_key}")
+@router.get("/assets/{object_key:path}/content")
+async def get_asset_content(
+    object_key: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """按课程权限读取本地媒体内容；OSS 资产应使用其受控 URL。"""
+    asset = session.exec(
+        select(MediaAsset).where(MediaAsset.object_key == object_key)
+    ).first()
+    if asset is None or asset.course_id is None:
+        raise HTTPException(status_code=404, detail="媒体资产不存在")
+    require_course_permission(
+        session, current_user, asset.course_id, "course.content.read"
+    )
+    if asset.backend != StorageBackend.LOCAL or not asset.local_path:
+        raise HTTPException(status_code=409, detail="该资产不是可直接读取的本地媒体")
+
+    storage_root = Path(settings.MEDIA_STORAGE_PATH).resolve()
+    file_path = (storage_root / asset.local_path).resolve()
+    try:
+        file_path.relative_to(storage_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="媒体资产路径无效") from exc
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="媒体文件不存在")
+    return FileResponse(
+        path=file_path,
+        media_type=asset.mime_type or None,
+        filename=None,
+    )
+
+
+@router.get("/assets/{object_key:path}")
 async def get_asset(
     object_key: str,
     session: Session = Depends(get_session),
@@ -151,8 +214,11 @@ async def get_asset(
     asset = session.exec(
         select(MediaAsset).where(MediaAsset.object_key == object_key)
     ).first()
-    if not asset:
+    if not asset or asset.course_id is None:
         raise HTTPException(status_code=404, detail="媒体资产不存在")
+    require_course_permission(
+        session, current_user, asset.course_id, "course.content.read"
+    )
 
     return unified_response(
         code=200, message="获取媒体资产成功",

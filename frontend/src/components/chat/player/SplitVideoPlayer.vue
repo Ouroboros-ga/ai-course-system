@@ -46,6 +46,9 @@
           <div v-if="isLoadingVideo" class="video-loading">
             <div class="loading-spinner-small"></div>
           </div>
+          <div v-if="activeTimelineCue?.subtitle_text" class="timeline-subtitle" aria-live="polite">
+            {{ activeTimelineCue.subtitle_text }}
+          </div>
         </div>
 
         <!-- 右侧：PPT幻灯片 (60%) -->
@@ -185,7 +188,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { Play, Pause, VolumeX, Volume2, Maximize, AlertTriangle, BarChart3, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import LoadingSpinner from '@/components/common/LoadingSpinner.vue'
-import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
+import { getCourseMediaTimeline, getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import KnowledgeNavBar from './KnowledgeNavBar.vue'
 
 const props = defineProps({
@@ -231,6 +234,7 @@ const currentPage = ref(1)
 const totalPages = ref(1)
 const completedNodes = ref([])
 const currentSlideImageIndex = ref(0)
+const timelineCues = ref([])
 
 // 自动保存定时器
 let autoSaveTimer = null
@@ -257,10 +261,22 @@ const knowledgePoints = computed(() => {
 })
 
 const currentVideoUrl = computed(() => {
+  if (activeTimelineCue.value?.video_url) return withAccessToken(activeTimelineCue.value.video_url)
   // 根据当前时间找到对应的节点视频URL
   const currentNode = findNodeByTime(currentTime.value)
   return currentNode?.video_url || ''
 })
+
+const activeTimelineCue = computed(() => {
+  const node = findNodeByTime(currentTime.value)
+  if (!node) return null
+  const localTime = Math.max(0, currentTime.value - (node.timestamp_start || 0))
+  return timelineCues.value.find(cue =>
+    cue.node_id === node.id && localTime >= cue.start_time && localTime <= cue.end_time,
+  ) || null
+})
+
+const activePptPage = computed(() => activeTimelineCue.value?.ppt_page || null)
 
 const currentKnowledgePoint = computed(() => {
   if (currentNodeIndex.value >= 0 && currentNodeIndex.value < knowledgePoints.value.length) {
@@ -280,15 +296,17 @@ const currentSlideImages = computed(() => {
   if (!currentNode || !playerData.value.slide_images || playerData.value.slide_images.length === 0) {
     return []
   }
-  const token = localStorage.getItem('token') || ''
-  const addToken = (s) => ({
-    ...s,
-    url: s.url + (s.url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token),
-  })
+  const addToken = (s) => ({ ...s, url: withAccessToken(s.url) })
+
+  if (activePptPage.value) {
+    return playerData.value.slide_images
+      .filter(s => s.page === activePptPage.value)
+      .map(addToken)
+  }
 
   if (hasAccuratePageMapping.value) {
-    const pageStart = currentNode.page_start || 1
-    const pageEnd = currentNode.page_end || pageStart
+    const pageStart = activePptPage.value || currentNode.page_start || 1
+    const pageEnd = activePptPage.value || currentNode.page_end || pageStart
     return playerData.value.slide_images
       .filter(s => s.page >= pageStart && s.page <= pageEnd)
       .map(addToken)
@@ -366,6 +384,13 @@ const completionRate = computed(() => {
   return 0
 })
 
+function withAccessToken(url) {
+  if (!url) return ''
+  const token = localStorage.getItem('token') || ''
+  if (!token || url.includes('token=')) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
 // 初始化播放器
 async function initPlayer() {
   loading.value = true
@@ -384,6 +409,12 @@ async function initPlayer() {
 
     if (response && response.data) {
       playerData.value = response.data
+      try {
+        timelineCues.value = await getCourseMediaTimeline(courseId)
+      } catch (timelineError) {
+        timelineCues.value = []
+        console.warn('[SplitVideoPlayer] media timeline unavailable; using node timing', timelineError)
+      }
 
       // 计算总页数（优先使用真实PPT数据）
       if (playerData.value.ppt_pages && playerData.value.ppt_pages.length > 0) {
@@ -486,6 +517,10 @@ function onTimeUpdate(event) {
       })
 
       console.log(`[SplitVideoPlayer] 节点切换: ${oldIndex} → ${newIndex} (${newNode.title})`)
+    }
+    if (activePptPage.value) {
+      currentPage.value = activePptPage.value
+      currentSlideImageIndex.value = 0
     }
   }
 }
@@ -794,6 +829,20 @@ onUnmounted(() => {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+}
+
+.timeline-subtitle {
+  position: absolute;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  left: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgb(0 0 0 / 72%);
+  color: #fff;
+  font-size: var(--text-sm);
+  line-height: var(--leading-relaxed);
+  text-align: center;
 }
 
 .loading-spinner-small {

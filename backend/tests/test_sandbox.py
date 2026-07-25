@@ -80,6 +80,7 @@ def _setup_course(session, teacher, student, enable_experiment: bool = True):
         ).first()
         if cap:
             cap.experiment = True
+            cap.coding_sandbox = True
             session.add(cap)
     session.commit()
     return course
@@ -355,9 +356,13 @@ class TestSandboxAPI:
         data = response.json()["data"]
         assert data["status"] == "sandbox_unavailable"
 
-    def test_health_endpoint(self, client):
+    def test_health_endpoint(self, client, session):
         """健康检查端点"""
-        response = client.get("/api/v1/sandbox/health")
+        user = _user(session, "sb_health_user")
+        response = client.get(
+            "/api/v1/sandbox/health",
+            headers={"Authorization": f"Bearer {_token(user)}"},
+        )
         assert response.status_code == 200
         data = response.json()["data"]
         assert "enabled" in data
@@ -389,11 +394,7 @@ class TestSandboxAPI:
             json={"source_code": "rm -rf /", "language": "bash"},
             headers={"Authorization": f"Bearer {token}"},
         )
-        # 沙箱禁用时先返回 unavailable，不会到达语言校验
-        # 如果沙箱启用，会返回 400
-        assert response.status_code in (200, 400)
-        if response.status_code == 200:
-            assert response.json()["data"]["status"] == "sandbox_unavailable"
+        assert response.status_code == 400
 
     def test_cross_course_isolation(self, client, session):
         """跨课程隔离：学生A在课程1不能访问课程2的沙箱"""

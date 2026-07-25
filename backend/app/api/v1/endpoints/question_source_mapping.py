@@ -17,11 +17,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import datetime
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -33,11 +35,109 @@ from app.models.question_bank_model import (
     QuestionStatus,
     MappingStatus,
 )
-from app.models.course_model import Course
+from app.models.course_model import Course, DoclingDocument, DoclingText
 from app.models.document_artifact_model import DocumentArtifact
 from app.services.course_access_service import require_course_permission
 
 router = APIRouter(tags=["Phase B 题源映射"])
+MAPPING_POLICY_VERSION = "question-mapping/token-overlap-v1"
+
+
+def _normalized_chars(value: str) -> set[str]:
+    """Small deterministic baseline used only to rank explicitly selected pages."""
+    return set(re.sub(r"[^\w\u4e00-\u9fff]", "", value.casefold()))
+
+
+def _load_selected_texts(
+    session: Session,
+    course_id: int,
+    artifacts: list[DocumentArtifact],
+) -> dict[str, tuple[DoclingDocument, list[DoclingText]]]:
+    """Resolve selected artifacts to real parsed text without scanning directories."""
+    resolved: dict[str, tuple[DoclingDocument, list[DoclingText]]] = {}
+    for artifact in artifacts:
+        parse_info = artifact.parse_info or {}
+        document = None
+        parsed_document_id = parse_info.get("docling_document_id")
+        if parsed_document_id is not None:
+            candidate = session.get(DoclingDocument, parsed_document_id)
+            if candidate is not None and candidate.course_id == course_id:
+                document = candidate
+
+        candidates = list(session.exec(
+            select(DoclingDocument).where(
+                DoclingDocument.course_id == course_id,
+                DoclingDocument.origin_filename == artifact.file_name,
+            ).order_by(DoclingDocument.created_at.desc())
+        ).all())
+        artifact_hash = parse_info.get("origin_binary_hash") or parse_info.get("content_hash")
+        if document is None and artifact_hash:
+            matches = [
+                candidate for candidate in candidates
+                if candidate.origin_binary_hash == artifact_hash
+            ]
+            if len(matches) == 1:
+                document = matches[0]
+        if document is None and len(candidates) == 1:
+            document = candidates[0]
+        if document is None:
+            continue
+        texts = list(session.exec(
+            select(DoclingText).where(
+                DoclingText.doc_id == document.id,
+            ).order_by(DoclingText.sort_order).limit(5000)
+        ).all())
+        if texts:
+            resolved[artifact.document_id] = (document, texts)
+    return resolved
+
+
+def _best_evidence(
+    question: QuestionBankItem,
+    selected_texts: dict[str, tuple[DoclingDocument, list[DoclingText]]],
+) -> Optional[dict[str, Any]]:
+    query_chars = _normalized_chars(f"{question.question_text} {question.answer}")
+    if not query_chars:
+        return None
+    ranked: list[tuple[float, str, DoclingDocument, DoclingText]] = []
+    for document_id, (document, texts) in selected_texts.items():
+        for text in texts:
+            text_chars = _normalized_chars(text.text)
+            if not text_chars:
+                continue
+            score = len(query_chars & text_chars) / len(query_chars)
+            if score > 0:
+                ranked.append((score, document_id, document, text))
+    if not ranked:
+        return None
+    ranked.sort(key=lambda row: (-row[0], row[3].page_no, row[3].sort_order, row[3].id or 0))
+    best_score, best_document_id, best_document, best_text = ranked[0]
+    if best_score < 0.30:
+        return None
+    same_page = [
+        row for row in ranked
+        if row[1] == best_document_id and row[3].page_no == best_text.page_no
+    ][:3]
+    evidence = [
+        {
+            "text_id": row[3].id,
+            "page": row[3].page_no,
+            "text": row[3].text[:1000],
+            "overlap_score": round(row[0], 6),
+        }
+        for row in same_page
+    ]
+    return {
+        "document_id": best_document_id,
+        "document": best_document,
+        "page": best_text.page_no,
+        "score": best_score,
+        "evidence": evidence,
+        "evidence_refs": [
+            f"docling:{best_document.id}:text:{row[3].id}"
+            for row in same_page
+        ],
+    }
 
 
 # ==================== 请求模型 ====================
@@ -48,24 +148,32 @@ class GenerateMappingRequest(BaseModel):
     教师显式指定课件范围和题目范围。
     OCR 只处理 document_ids 中列出的文档。
     """
-    question_ids: list[int] = Body(default=[], description="题目ID列表(空=课程内所有auto_accepted/teacher_edited)")
-    document_ids: list[str] = Body(default=[], description="课件文档ID列表(教师显式选择)")
+    question_ids: list[int] = Field(
+        default_factory=list,
+        max_length=500,
+        description="题目ID列表(空=课程内所有auto_accepted/teacher_edited)",
+    )
+    document_ids: list[str] = Field(
+        min_length=1,
+        max_length=20,
+        description="课件文档ID列表(教师显式选择)",
+    )
     regenerate: bool = Body(default=False, description="是否强制重新生成(跳过已locked的)")
 
 
 class UpdateMappingRequest(BaseModel):
     """教师编辑映射"""
-    slide_file_name: Optional[str] = None
-    page_start: Optional[int] = None
-    page_end: Optional[int] = None
-    knowledge_node_ids: Optional[list[int]] = None
-    mapping_reason: Optional[str] = None
-    confidence: Optional[float] = None
+    slide_file_name: Optional[str] = Field(None, max_length=500)
+    page_start: Optional[int] = Field(None, ge=1)
+    page_end: Optional[int] = Field(None, ge=1)
+    knowledge_node_ids: Optional[list[int]] = Field(None, max_length=100)
+    mapping_reason: Optional[str] = Field(None, max_length=5000)
+    confidence: Optional[float] = Field(None, ge=0.0, le=1.0)
 
 
 class MappingStatusUpdateRequest(BaseModel):
     """映射状态更新"""
-    status: str  # teacher_edited / rejected / locked / stale
+    status: MappingStatus
 
 
 # ==================== 题源映射接口 ====================
@@ -74,7 +182,7 @@ class MappingStatusUpdateRequest(BaseModel):
 async def list_mappings(
     course_id: int,
     question_id: Optional[int] = Query(None, description="按题目筛选"),
-    status: Optional[str] = Query(None, description="按状态筛选"),
+    status: Optional[MappingStatus] = Query(None, description="按状态筛选"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
     session: Session = Depends(get_session),
@@ -93,9 +201,10 @@ async def list_mappings(
     if question_id:
         statement = statement.where(QuestionSourceMapping.question_id == question_id)
     if status:
-        statement = statement.where(QuestionSourceMapping.status == MappingStatus(status))
+        statement = statement.where(QuestionSourceMapping.status == status)
 
-    total = len(session.exec(statement).all())
+    total_statement = statement.with_only_columns(func.count()).order_by(None)
+    total = int(session.exec(total_statement).one())
     statement = statement.offset((page - 1) * page_size).limit(page_size)
     items = session.exec(statement).all()
 
@@ -158,16 +267,33 @@ async def generate_mappings(
             data={"generated": 0, "skipped_locked": 0},
         )
 
-    # 获取课件文档信息（只处理教师显式选择的）
-    documents = []
-    if payload.document_ids:
-        docs = session.exec(
-            select(DocumentArtifact).where(
-                DocumentArtifact.document_id.in_(payload.document_ids),
-                DocumentArtifact.course_id == course_id,
-            )
-        ).all()
-        documents = docs
+    # 只解析教师显式选择且属于当前课程的文档，绝不遍历课件目录。
+    documents = list(session.exec(
+        select(DocumentArtifact).where(
+            DocumentArtifact.document_id.in_(payload.document_ids),
+            DocumentArtifact.course_id == course_id,
+        )
+    ).all())
+    found_document_ids = {item.document_id for item in documents}
+    missing_document_ids = sorted(set(payload.document_ids) - found_document_ids)
+    if missing_document_ids:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "SELECTED_DOCUMENT_NOT_FOUND",
+                "document_ids": missing_document_ids,
+            },
+        )
+    selected_texts = _load_selected_texts(session, course_id, documents)
+    if not selected_texts:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error_code": "SELECTED_DOCUMENT_NOT_PARSED",
+                "message": "所选课件尚无可用解析文本，不能生成可信映射",
+            },
+        )
+    artifacts_by_id = {item.document_id: item for item in documents}
 
     generated = 0
     skipped_locked = 0
@@ -190,10 +316,22 @@ async def generate_mappings(
             skipped_locked += 1
             continue
 
+        match = _best_evidence(q, selected_texts)
+        if match is None:
+            errors.append({
+                "question_id": q.id,
+                "reason": "所选课件中没有达到最低阈值的可追溯文本证据",
+            })
+            continue
+
+        artifact = artifacts_by_id[match["document_id"]]
+
         # 生成内容哈希
         content_str = f"{q.question_text}|{q.answer}"
-        for doc in documents:
-            content_str += f"|{doc.file_name}|{doc.document_id}"
+        content_str += (
+            f"|{artifact.file_name}|{artifact.document_id}|"
+            f"{match['document'].origin_binary_hash or ''}|{MAPPING_POLICY_VERSION}"
+        )
         content_hash = hashlib.sha256(content_str.encode()).hexdigest()[:32]
 
         # 如果已有映射且内容未变化，跳过
@@ -205,22 +343,24 @@ async def generate_mappings(
             existing.is_latest = False
             session.add(existing)
 
-        # 生成新映射（EduAgent 逻辑在此处接入）
-        # 当前为结构化占位：实际 OCR 证据和 EduAgent 理由由映射服务填充
+        confidence = min(0.99, 0.5 + 0.5 * match["score"])
         mapping = QuestionSourceMapping(
             question_id=q.id,
             course_id=course_id,
-            document_id=documents[0].document_id if documents else None,
-            slide_file_name=documents[0].file_name if documents else None,
-            page_start=None,
-            page_end=None,
-            ocr_evidence=[],
-            evidence_refs=[],
+            document_id=artifact.document_id,
+            slide_file_name=artifact.file_name,
+            page_start=match["page"],
+            page_end=match["page"],
+            ocr_evidence=match["evidence"],
+            evidence_refs=match["evidence_refs"],
             knowledge_node_ids=q.knowledge_node_ids or [],
-            mapping_reason="",  # EduAgent 填充
-            confidence=0.0,
-            model_version="",  # EduAgent 填充
-            ocr_version="",  # OCR 引擎填充
+            mapping_reason=(
+                "教师显式选择课件范围内，按题干/答案与解析文本的"
+                f"确定性字符重叠度匹配；score={match['score']:.6f}"
+            ),
+            confidence=confidence,
+            model_version=MAPPING_POLICY_VERSION,
+            ocr_version=match["document"].version,
             graph_version="",
             content_hash=content_hash,
             status=MappingStatus.AUTO_ACCEPTED,
@@ -241,6 +381,8 @@ async def generate_mappings(
             "generated": generated,
             "skipped_locked": skipped_locked,
             "total_questions": len(questions),
+            "errors": errors,
+            "policy_version": MAPPING_POLICY_VERSION,
         },
     )
 
@@ -313,6 +455,12 @@ async def update_mapping(
         mapping.mapping_reason = payload.mapping_reason
     if payload.confidence is not None:
         mapping.confidence = payload.confidence
+    if (
+        mapping.page_start is not None
+        and mapping.page_end is not None
+        and mapping.page_end < mapping.page_start
+    ):
+        raise HTTPException(status_code=422, detail="page_end 不能小于 page_start")
 
     mapping.status = MappingStatus.TEACHER_EDITED
     mapping.updated_at = datetime.utcnow()
@@ -349,7 +497,15 @@ async def update_mapping_status(
     if not mapping.is_latest:
         raise HTTPException(status_code=400, detail="只能更新最新版本")
 
-    new_status = MappingStatus(payload.status)
+    new_status = payload.status
+    allowed_statuses = {
+        MappingStatus.TEACHER_EDITED,
+        MappingStatus.REJECTED,
+        MappingStatus.LOCKED,
+        MappingStatus.STALE,
+    }
+    if new_status not in allowed_statuses:
+        raise HTTPException(status_code=422, detail="不允许手工切换到该映射状态")
 
     if new_status == MappingStatus.LOCKED:
         mapping.locked_by = user_id

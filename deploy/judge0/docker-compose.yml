@@ -4,9 +4,11 @@
 # 仅监听 127.0.0.1，由后端 SandboxPort 调用。
 # 固定镜像版本，不使用 latest。
 #
-# 启动：docker compose -f deploy/judge0/docker-compose.yml up -d
+# 启动：复制 .env.example 为 .env，替换全部密钥后再执行
+#       docker compose --env-file deploy/judge0/.env -f deploy/judge0/docker-compose.yml up -d
 # 停止：docker compose -f deploy/judge0/docker-compose.yml down
-# 回滚：docker compose -f deploy/judge0/docker-compose.yml down -v && git checkout deploy/judge0/
+# 回滚：docker compose -f deploy/judge0/docker-compose.yml down
+# 数据卷不会被普通回滚删除；清理卷必须先备份并由运维显式执行。
 
 x-logging: &default-logging
   logging:
@@ -18,11 +20,23 @@ x-logging: &default-logging
 services:
   server:
     image: judge0/judge0:1.13.1
-    volumes:
-      - ./judge0.conf:/judge0.conf:ro
+    # Judge0 reads this as an environment file. Do not mount it as an
+    # unrelated file: that leaves server/worker with different credentials
+    # than Redis/PostgreSQL.
+    env_file: judge0.conf
+    environment:
+      AUTHN_TOKEN: ${JUDGE0_AUTHN_TOKEN:?set JUDGE0_AUTHN_TOKEN}
+      AUTHZ_TOKEN: ${JUDGE0_AUTHZ_TOKEN:?set JUDGE0_AUTHZ_TOKEN}
+      REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
     ports:
       - "127.0.0.1:2358:2358"
-    privileged: true
+    # Judge0 isolate must create Linux namespaces.  Keep this opt-in and run
+    # it only on a dedicated Judge0 host: Docker Desktop cannot execute even
+    # an empty submission without it.
+    privileged: ${JUDGE0_SERVER_PRIVILEGED:-false}
+    security_opt:
+      - no-new-privileges:true
     <<: *default-logging
     restart: unless-stopped
     depends_on:
@@ -32,8 +46,12 @@ services:
         condition: service_healthy
     networks:
       - judge0_net
+      # The API container alone has a host-facing bridge so the backend can
+      # reach its loopback-published port.  Workers that execute student code
+      # remain solely on the internal network below.
+      - judge0_api
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:2358/system_info"]
+      test: ["CMD-SHELL", "curl -f -H \"X-Auth-Token: $$AUTHN_TOKEN\" -H \"X-Auth-User: $$AUTHZ_TOKEN\" http://localhost:2358/system_info"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -41,10 +59,19 @@ services:
 
   worker:
     image: judge0/judge0:1.13.1
-    command: ["./scripts/workers"]
+    command: ["/bin/bash", "/bootstrap/workers-no-secret-env.sh"]
+    env_file: judge0.conf
+    environment:
+      AUTHN_TOKEN: ${JUDGE0_AUTHN_TOKEN:?set JUDGE0_AUTHN_TOKEN}
+      AUTHZ_TOKEN: ${JUDGE0_AUTHZ_TOKEN:?set JUDGE0_AUTHZ_TOKEN}
+      REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
+    # Judge0's upstream isolate may require elevated worker privileges on
+    # some Linux hosts. Secure-by-default deployments keep this false; an
+    # operator must explicitly opt in after host-level isolation review.
+    privileged: ${JUDGE0_WORKER_PRIVILEGED:-false}
     volumes:
-      - ./judge0.conf:/judge0.conf:ro
-    privileged: true
+      - ./workers-no-secret-env.sh:/bootstrap/workers-no-secret-env.sh:ro
     <<: *default-logging
     restart: unless-stopped
     depends_on:
@@ -58,6 +85,8 @@ services:
   db:
     image: postgres:16.2-alpine
     env_file: judge0.conf
+    environment:
+      POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
     volumes:
       - judge0_pg_data:/var/lib/postgresql/data/
     <<: *default-logging
@@ -73,10 +102,12 @@ services:
   redis:
     image: redis:7.2.4-alpine
     command: [
-      "bash", "-c",
+      "sh", "-c",
       'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"'
     ]
     env_file: judge0.conf
+    environment:
+      REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
     <<: *default-logging
     restart: unless-stopped
     networks:
@@ -95,4 +126,7 @@ networks:
   judge0_net:
     name: judge0_net
     driver: bridge
-    internal: false
+    internal: true
+  judge0_api:
+    name: judge0_api
+    driver: bridge

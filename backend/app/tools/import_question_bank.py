@@ -16,11 +16,10 @@ from __future__ import annotations
 import hashlib
 import os
 import sys
-import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.models.database import engine
 from app.models.question_bank_model import (
@@ -52,6 +51,16 @@ SIMILAR_COLUMN_VARIANTS = [
     "相似问法 1", "相似问法 2", "相似问法 3", "相似问法 4", "相似问法 5", "相似问法 6",
     "相似问题1", "相似问题2", "相似问题3", "相似问题4", "相似问题5", "相似问题6",
 ]
+REQUIRED_COLUMNS = {"规则分类", "标准问题", "答案", "规则状态", "匹配模式"}
+MAX_IMPORT_BYTES = 128 * 1024 * 1024
+
+
+def _file_sha256(file_path: str) -> str:
+    digest = hashlib.sha256()
+    with open(file_path, "rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _read_excel_rows(file_path: str) -> list[dict[str, Any]]:
@@ -73,6 +82,10 @@ def _read_excel_rows(file_path: str) -> list[dict[str, Any]]:
         return []
 
     headers = [str(h).strip() if h is not None else "" for h in rows[0]]
+    missing = REQUIRED_COLUMNS - set(headers)
+    if missing:
+        wb.close()
+        raise ValueError(f"Excel 缺少必需列: {', '.join(sorted(missing))}")
 
     result = []
     for row in rows[1:]:
@@ -149,11 +162,19 @@ def import_excel_to_question_bank(
     Returns:
         导入统计信息
     """
-    if not os.path.exists(file_path):
+    if not os.path.isfile(file_path):
         raise FileNotFoundError(f"Excel 文件不存在: {file_path}")
+    if os.path.splitext(file_path)[1].lower() != ".xlsx":
+        raise ValueError("仅允许导入显式指定的 .xlsx 文件")
+    file_size = os.path.getsize(file_path)
+    if file_size > MAX_IMPORT_BYTES:
+        raise ValueError(f"Excel 文件超过 {MAX_IMPORT_BYTES // (1024 * 1024)} MiB 上限")
+
+    source_hash = _file_sha256(file_path)
 
     if batch_id is None:
-        batch_id = f"excel-import-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
+        # 相同原件产生相同批次身份，重复运行不会复制整批题目。
+        batch_id = f"excel-sha256-{source_hash}"
 
     rows = _read_excel_rows(file_path)
     total_rows = len(rows)
@@ -164,6 +185,7 @@ def import_excel_to_question_bank(
             "total_rows": total_rows,
             "dry_run": True,
             "imported": 0,
+            "source_hash": source_hash,
         }
 
     session = Session(engine)
@@ -172,6 +194,23 @@ def import_excel_to_question_bank(
     errors = []
 
     try:
+        existing = session.exec(
+            select(QuestionBankItem.id)
+            .where(QuestionBankItem.import_batch_id == batch_id)
+            .limit(1)
+        ).first()
+        if existing is not None:
+            return {
+                "batch_id": batch_id,
+                "source_hash": source_hash,
+                "total_rows": total_rows,
+                "imported": 0,
+                "skipped": total_rows,
+                "dry_run": False,
+                "already_imported": True,
+                "errors": [],
+            }
+
         for index, row in enumerate(rows, start=2):  # Excel行号从2开始(1是表头)
             question_text = str(row.get("标准问题", "")).strip()
             if not question_text:
@@ -192,10 +231,12 @@ def import_excel_to_question_bank(
 
     return {
         "batch_id": batch_id,
+        "source_hash": source_hash,
         "total_rows": total_rows,
         "imported": imported,
         "skipped": skipped,
         "dry_run": False,
+        "already_imported": False,
         "errors": errors,
     }
 

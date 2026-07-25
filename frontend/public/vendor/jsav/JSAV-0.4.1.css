@@ -1,0 +1,332 @@
+.jsavcontainer {
+  overflow:hidden;
+  width: 100%;
+  padding: 0.7em;
+  border: 1px solid black;
+  background-color: white;
+}
+.jsavcanvas {
+  position: relative;
+}
+
+.jsavnode {
+  width: 45px;
+  height: 45px;
+  text-align: center;
+  line-height: 45px;
+  border: 1px solid black;
+  background-color: white;
+  color: black;
+  opacity: 1;
+}
+
+.jsavhighlight, .jsavarray.jsavbararray .jsavindex.jsavhighlight  {
+  background-color: yellow;
+  border-width: 4px;
+  font-size: 120%;  
+}
+
+/***** STYLING OF THE ARRAY DATA STRUCTURE *****/
+.jsavarray {
+  position: relative;
+  list-style: none;
+  min-height: 50px;
+  padding: 0;
+}
+.jsavarray.jsavindexed {
+  margin-bottom: 0;
+}
+.jsavarray:after {
+  content: "";
+  clear: both;
+}
+.jsavindexlabel {
+  width: inherit;
+  height: 20px;
+  line-height: 20px;
+  color: black;
+}
+.jsavindex span {
+  z-index: 99;
+  display: block;
+}
+.jsavhorizontalarray .jsavindex:first-of-type, .jsavhorizontalarray .jsavindex:first-of-type .jsavvalue {
+  -o-border-radius: 8px 0 0 8px;
+  -moz-border-radius: 8px 0 0 8px;
+  -ms-border-radius: 8px 0 0 8px;
+  -webkit-border-radius: 8px 0 0 8px;
+  border-radius: 8px 0 0 8px;
+}
+.jsavhorizontalarray .jsavindex:last-of-type, .jsavhorizontalarray .jsavindex:last-of-type .jsavvalue {
+  -moz-border-radius: 0 8px 8px 0;
+  -o-border-radius: 0 8px 8px 0;
+  -ms-border-radius: 0 8px 8px 0;
+  -webkit-border-radius: 0 8px 8px 0;
+  border-radius: 0 8px 8px 0;
+}
+
+.jsavarray.jsavbararray {
+  height: 150px;
+  overflow: visible;
+}
+.jsavarray.jsavbararray .jsavindex {
+  height: 100%;
+  vertical-align: bottom;
+  border: none;
+  background-color: #ddd;
+  margin-left: 2px;
+}
+.jsavbararray .jsavindex .jsavvalue {
+  z-index: 100;
+  bottom: 0;
+  background-color: inherit;
+}
+.jsavarray.jsavbararray .jsavindex .jsavvalue {
+  -moz-border-radius: 0;
+  -o-border-radius: 0;
+  -ms-border-radius: 0;
+  -webkit-border-radius: 0;
+  border-radius: 0;
+}
+.jsavbararray .jsavindex .jsavvalue span {
+  position: absolute;
+  width: inherit;
+  bottom: 0;
+}
+.jsavbararray .jsavindex .jsavvalue, .jsavbararray .jsavindex .jsavvaluebar {
+  display: block;
+  line-height: 20px;
+  padding: 0;
+  position: absolute;
+  width: inherit;
+}
+.jsavbararray .jsavindex .jsavvaluebar {
+  top: 0;
+  background-color: #fff;
+}
+.jsavbararray.jsavindexed {
+  margin-bottom: 25px;
+}
+.jsavbararray .jsavindexlabel {
+  font-size: 90%;
+  position: relative;
+  top: 100%;
+	vertical-align: middle;
+}
+
+/* vertical array */
+.jsavverticalarray.jsavindexed .jsavindex {
+  position: relative;
+}
+.jsavverticalarray .jsavindexlabel {
+  position: absolute;
+}
+
+/* bar array marker line */
+.jsavmark {
+  position: absolute;
+  display: none;
+  background-color: #FF6464;;
+  -moz-border-radius: 10px;
+  -webkit-border-radius: 10px;
+  -ms-border-radius: 10px;
+  -o-border-radius: 10px;
+  border-radius: 10px;
+  width: 8px;
+  height: 8px;
+  z-index: 190;
+}
+.jsavmarkline {
+  position: absolute;
+  display: none;
+  height:1px;
+  background-color: #FF6464;
+  background-color: rgba(255, 100, 100, 0.6);
+  z-index: 190;
+}
+
+/***** END STYLING OF THE ARRAY DATA STRUCTURE *****/
+
+/*** OUTPUT STYLING ***/
+.jsavoutput {
+  width:100%;
+}
+.jsavoutput.jsavscroll {
+  overflow: auto; 
+  background-color: white; 
+  border: 1px solid black;
+  height:220px;
+}
+.jsavoutput.jsavline {
+  overflow: visible;
+  border: none;
+  background-color: inherit;
+  height:50px;
+}
+.jsavoutput .jsavtitle {
+  display:block;
+  margin-top:2.5em;
+  font-size:300%;
+  text-align:center;
+}
+
+.jsavindex.jsavarrow:before {
+  content: "";
+  background-color: transparent;
+  position: absolute;
+  width: 0;
+  height: 0;
+  border: 6px solid transparent;
+  border-top: 6px solid black;
+  top: -10px;
+  left: 17px;
+}
+
+/**** END OUTPUT STYLING ***/
+
+.jsavcanvas svg {
+  position: absolute;
+  height: 100%;
+  width: 100%;
+}
+
+/**** STYLING THE CONTROLS ****/
+.jsavcontrols {
+  text-align: center;
+}
+.jsavcontrols a {
+  display: inline-block;
+  color: transparent;
+  text-indent: 9999px;
+  width: 45px;
+  height: 45px;
+  margin-top: 15px;
+  margin-bottom: 15px;
+  margin-left: 40px;
+  margin-right: 40px;
+  background-color: #aaa;
+  -o-border-radius: 20px;
+  -moz-border-radius: 20px;
+  -webkit-border-radius: 20px;
+  -ms-border-radius: 20px;
+  border-radius: 20px;
+  background-repeat:no-repeat;
+  background-position:50% 50%;
+}
+.jsavcontrols .jsavbegin {
+  background-image: url(images/begin.png);
+}
+.jsavcontrols .jsavend {
+  background-image: url(images/end.png);
+}
+.jsavcontrols .jsavbackward {
+  background-image: url(images/backward.png);
+}
+.jsavcontrols .jsavforward {
+  background-image: url(images/forward.png);
+}
+/**** END STYLING THE CONTROLS ****/
+
+/**** STYLING THE DIALOG ****/
+.jsavdialog {
+  border: 1px solid black;
+  background-color: #fff;
+  z-index: 1000;
+  position: absolute;
+  top: 0; 
+  left: 0;
+  -moz-border-radius: 6px;
+  -ms-border-radius: 6px;
+  -o-border-radius: 6px;
+  -webkit-border-radius: 6px;
+  border-radius: 6px;
+}
+.jsavmodal {
+  z-index: 999;
+  background-color: (120, 120, 120);
+  background-color: rgba(0, 0, 0, 0.2);
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.jsavdialog h2 {
+  background-color: #eee;
+  border-bottom: 1px dashed black;
+  margin: 0;
+  padding: 5px;
+  -moz-border-radius: 6px 6px 0 0;
+  -ms-border-radius: 6px 6px 0 0;
+  -o-border-radius: 6px 6px 0 0;
+  -webkit-border-radius: 6px 6px 0 0;
+  border-radius: 6px 6px 0 0;
+}
+.jsavsettings {
+  padding: 15px;
+}
+a.jsavsettings {
+  background-image: url(images/settings.png);
+  width: 20px;
+  height: 20px;
+  background-position: 50% 50%;
+  background-repeat: no-repeat;
+  background-color: #aaa;
+  text-indent: 9000px;
+  padding: 2px;
+  border: 1px solid black;
+  -o-border-radius: 3px;
+  -ms-border-radius: 3px;
+  -o-border-radius: 3px;
+  -webkit-border-radius: 3px;
+  border-radius: 3px;
+  float:right; 
+  margin-right:10px; 
+  display:block;
+  white-space: nowrap;
+  overflow: hidden;
+  color: rgba(0, 0, 0, 0);
+}
+.jsavsettings .jsavhelp {
+  font-size: 80%;
+  margin-left: 40px;
+}
+.jsavrow {
+  margin: 15px 8px 4px 8px;
+}
+/**** END STYLING THE DIALOG ****/
+
+/**** MODEL ANSWER ********/
+.jsavmodelanswer.jsavcontainer {
+  padding: 0;
+  background-color: white;
+  border-width: 0 0 1px 0;
+  border-style: dashed;
+}
+.jsavcontainer svg {
+  pointer-events: none;
+}
+.jsavmodelanswer .jsavcounter {
+  float: left;
+  left: 10px;
+  position: relative;
+  top: 25px;
+}
+
+/********* TREE DATA STRUCTURE *******/
+
+.jsavtree {
+  position: relative;
+}
+.jsavtreenode {
+  border-radius: 25px;
+  position: absolute;
+}
+.jsavnullnode {
+  min-width: 20px;
+  border-color: #eee;
+  opacity: 0;
+}
+.jsavnulledge {
+  stroke: white;
+  stroke: transparent;
+  opacity: 0;
+}

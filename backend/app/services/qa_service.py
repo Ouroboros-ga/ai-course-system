@@ -282,6 +282,7 @@ class QAService:
         strict_mode: bool = False,
         course_id: Optional[Any] = None,
         student_id: Optional[Any] = None,
+        allow_r2_student_answer: bool = False,
     ) -> Dict[str, Any]:
         """
         基于RAG检索增强的问答
@@ -312,7 +313,8 @@ class QAService:
             )
 
         # ---- P1-09 R2 sidecar retrieval shadow (mainline wiring) ----
-        # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.
+        # Triggered after the course-scoped V1 retrieval attempt and before
+        # the single LLM call. R2 may supply evidence when V1 has no result.
         # When DOCUMENT_KG_RUNTIME_MODE is effectively v2_shadow AND the
         # course has an Evidence sidecar AND R2 returns citation-closed
         # hits, R2 retrieval REPLACES rag_context/rag_sources that feed the
@@ -327,30 +329,43 @@ class QAService:
             "fallback_reason": None,
             "hit_count": 0,
         }
-        if use_rag and rag_sources:
-            retrieval_source = "v1_treerag"
-            try:
-                from app.platform.shadow.r2_retrieval_shadow import (
-                    trigger_r2_retrieval_shadow,
-                )
-                r2 = trigger_r2_retrieval_shadow(
-                    question=question,
-                    course_id=course_id,
-                    v1_context=rag_context,
-                    v1_sources=rag_sources,
-                )
-                if r2.triggered:
-                    rag_context, rag_sources = r2.rag_context, r2.rag_sources
-                    retrieval_source = "v2_r2_sidecar"
-                    retrieval_metadata["hit_count"] = r2.hit_count
-                    retrieval_metadata["evidence_ids"] = [
-                        s.get("path", "") for s in (r2.rag_sources or [])
-                    ]
-                else:
-                    retrieval_metadata["fallback_reason"] = r2.fallback_reason
-            except Exception as r2_err:  # noqa: BLE001
-                print(f"[R2 retrieval shadow] suppressed (V1 unaffected): {r2_err}")
-                retrieval_metadata["fallback_reason"] = f"r2_exception: {str(r2_err)[:200]}"
+        if use_rag:
+            if rag_sources:
+                retrieval_source = "v1_treerag"
+            else:
+                retrieval_metadata["fallback_reason"] = "v1_no_results"
+            if not allow_r2_student_answer:
+                retrieval_metadata["fallback_reason"] = "student_answer_gate_disabled"
+            else:
+                try:
+                    from app.platform.shadow.r2_retrieval_shadow import (
+                        trigger_r2_retrieval_shadow,
+                    )
+                    r2 = trigger_r2_retrieval_shadow(
+                        question=question,
+                        course_id=course_id,
+                        v1_context=rag_context,
+                        v1_sources=rag_sources,
+                    )
+                    if r2.triggered:
+                        rag_context, rag_sources = r2.rag_context, r2.rag_sources
+                        retrieval_source = "v2_r2_sidecar"
+                        retrieval_metadata["hit_count"] = r2.hit_count
+                        retrieval_metadata["evidence_ids"] = sorted({
+                            evidence_id
+                            for source in (r2.rag_sources or [])
+                            for evidence_id in source.get("evidence_refs", [])
+                        })
+                    else:
+                        retrieval_metadata["fallback_reason"] = r2.fallback_reason
+                except Exception as r2_err:  # noqa: BLE001
+                    print(
+                        "[R2 retrieval] suppressed (V1 unaffected): "
+                        f"{type(r2_err).__name__}"
+                    )
+                    retrieval_metadata["fallback_reason"] = (
+                        f"r2_exception:{type(r2_err).__name__}"
+                    )
 
         # ---- P1-09 G3C: V2 evidence/retrieval/citation shadow ----
         # Triggered AFTER V1 retrieval succeeds, BEFORE the V1 LLM call.

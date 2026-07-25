@@ -24,6 +24,11 @@ from app.models.cognitive_state_model import (
     LearningEvidenceRecord,
     RecommendationRecord,
 )
+from app.models.access_control_model import (
+    CourseMembership,
+    CourseRole,
+    MembershipStatus,
+)
 from app.services.cognitive_service import compute_cognitive_state, get_latest_cognitive_state
 from app.services.recommendation_service import (
     generate_recommendation,
@@ -41,6 +46,7 @@ router = APIRouter(tags=["G2 六维认知与推荐"])
 async def get_cognitive_state(
     course_id: int,
     node_id: Optional[int] = Query(None, description="节点ID(空=课程级)"),
+    student_id: Optional[int] = Query(None, ge=1, description="教师查看的课程学生ID"),
     recompute: bool = Query(False, description="是否强制重新计算"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
@@ -53,14 +59,29 @@ async def get_cognitive_state(
     context = require_course_permission(session, current_user, course_id, "course.progress.read_self")
     user_id = int(current_user["user_id"])
 
-    # 教师只能看自己的状态或通过 analytics 查看学生
-    role = context.role.value if context.role else "student"
-    if role == "teacher" or role == "owner":
-        # 教师查看时需要指定 student_id
-        student_id = Query(None, alias="student_id")
-        # 简化：教师默认看自己
-        target_student = user_id
+    # 学生只能查看自己；课程教师查看他人时必须拥有分析权限，且目标必须
+    # 是该课程的有效学生成员。
+    if student_id is not None and student_id != user_id:
+        require_course_permission(
+            session, current_user, course_id, "analytics.view_member"
+        )
+        membership = session.exec(
+            select(CourseMembership).where(
+                CourseMembership.course_id == course_id,
+                CourseMembership.user_id == student_id,
+                CourseMembership.role == CourseRole.STUDENT,
+                CourseMembership.status == MembershipStatus.ACTIVE,
+            )
+        ).first()
+        if membership is None:
+            raise HTTPException(status_code=404, detail="课程学生不存在")
+        target_student = student_id
     else:
+        if not context.analytics_eligible:
+            raise HTTPException(
+                status_code=422,
+                detail="教师查看学情时必须指定课程学生 student_id",
+            )
         target_student = user_id
 
     if recompute:
@@ -87,6 +108,8 @@ async def recompute_cognitive_state(
     """强制重新计算六维认知状态"""
     context = require_course_permission(session, current_user, course_id, "course.progress.read_self")
     user_id = int(current_user["user_id"])
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail="仅课程学习者可以生成个人认知状态")
 
     state = compute_cognitive_state(session, user_id, course_id, node_id)
 
@@ -114,6 +137,8 @@ async def get_recommendation(
     """
     context = require_course_permission(session, current_user, course_id, "course.question.ask")
     user_id = int(current_user["user_id"])
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail="仅课程学习者可以生成个性化推荐")
 
     record = generate_recommendation(
         session, user_id, course_id, node_id, force_recompute
@@ -157,6 +182,23 @@ async def consume_recommendation(
 ):
     """标记推荐为已消费"""
     user_id = int(current_user["user_id"])
+
+    candidate = session.exec(
+        select(RecommendationRecord).where(
+            RecommendationRecord.recommendation_id == recommendation_id,
+            RecommendationRecord.student_id == user_id,
+        )
+    ).first()
+    if candidate is None:
+        raise HTTPException(status_code=404, detail="推荐记录不存在或不属于当前用户")
+    context = require_course_permission(
+        session,
+        current_user,
+        candidate.course_id,
+        "course.progress.read_self",
+    )
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail="当前成员状态不能消费学习推荐")
 
     record = mark_recommendation_consumed(session, recommendation_id, user_id)
     if not record:

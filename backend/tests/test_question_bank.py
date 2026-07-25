@@ -22,11 +22,18 @@ from app.models.access_control_model import (
     PlatformPermission,
     PlatformPermissionAssignment,
 )
-from app.models.course_model import Course, CourseStatus
+from app.models.course_model import (
+    Course,
+    CourseStatus,
+    DoclingDocument,
+    DoclingText,
+    ParseStatus,
+)
 from app.models.document_artifact_model import DocumentArtifact
 from app.models.question_bank_model import (
     MappingStatus,
     QuestionBankItem,
+    QuestionAttempt,
     QuestionDifficulty,
     QuestionSourceMapping,
     QuestionStatus,
@@ -118,10 +125,12 @@ def _question(session, *, question_text="测试题目", answer="测试答案",
     return item
 
 
-def _doc(session, course_id, document_id=None, file_name="test.pdf"):
-    """创建测试文档产物并提交。"""
+def _doc(session, course_id, document_id=None, file_name=None):
+    """创建显式选择的文档产物及其真实解析文本。"""
     if document_id is None:
         document_id = f"doc-{course_id}-{datetime.utcnow().timestamp()}"
+    if file_name is None:
+        file_name = f"{document_id}.pdf"
     doc = DocumentArtifact(
         document_id=document_id,
         course_id=course_id,
@@ -129,9 +138,44 @@ def _doc(session, course_id, document_id=None, file_name="test.pdf"):
         mime_type="application/pdf",
     )
     session.add(doc)
+    parsed = DoclingDocument(
+        course_id=course_id,
+        doc_name=file_name,
+        origin_filename=file_name,
+        origin_binary_hash=f"hash-{document_id}",
+        status=ParseStatus.COMPLETED,
+        version="test-parser/1.0",
+    )
+    session.add(parsed)
+    session.flush()
+    session.add(DoclingText(
+        doc_id=parsed.id,
+        self_ref=f"#/texts/{document_id}",
+        text=(
+            "映射测试题目 映射答案 锁定测试题目 编辑映射题目 "
+            "拒绝映射题目 版本追溯题目 待发布题目 测试答案"
+        ),
+        page_no=1,
+        sort_order=0,
+    ))
     session.commit()
     session.refresh(doc)
     return doc
+
+
+def _accepted_mapping(session, question, course_id):
+    mapping = QuestionSourceMapping(
+        question_id=question.id,
+        course_id=course_id,
+        document_id=f"test-doc-{course_id}",
+        evidence_refs=[f"test-evidence-{question.id}"],
+        ocr_evidence=[{"page": 1, "text": question.question_text}],
+        status=MappingStatus.AUTO_ACCEPTED,
+        content_hash=f"hash-{question.id}",
+    )
+    session.add(mapping)
+    session.commit()
+    return mapping
 
 
 def _auth(token):
@@ -150,7 +194,7 @@ def test_unassigned_questions_invisible_to_students(client, session):
 
     - unassigned 题目 course_id=None，不出现在任何课程检索中
     - 学生不能访问待归属题源池(/unassigned 端点返回 403)
-    - 教师可以查看待归属题源池
+    - 普通课程教师不能查看平台级待归属题源池
     """
     teacher = _user(session, "qb_unassigned_teacher", UserRole.TEACHER)
     course = _course(session, teacher.id)
@@ -184,7 +228,16 @@ def test_unassigned_questions_invisible_to_students(client, session):
     resp = client.get(f"{QB}/unassigned", headers=_auth(student_token))
     assert resp.status_code == 403
 
-    # 教师可以查看待归属题源池
+    # 普通课程教师不能查看平台级待归属题源池
+    resp = client.get(f"{QB}/unassigned", headers=_auth(teacher_token))
+    assert resp.status_code == 403
+
+    # 显式平台管理员权限才可查看
+    session.add(PlatformPermissionAssignment(
+        user_id=teacher.id,
+        permission=PlatformPermission.ADMIN,
+    ))
+    session.commit()
     resp = client.get(f"{QB}/unassigned", headers=_auth(teacher_token))
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
@@ -536,6 +589,7 @@ def test_publish_makes_question_student_retrievable(client, session):
         session, question_text="待发布题目", course_id=course.id,
         status=QuestionStatus.AUTO_ACCEPTED,
     )
+    _accepted_mapping(session, q, course.id)
 
     student_token = _token(student)
     teacher_token = _token(teacher)
@@ -687,7 +741,7 @@ def test_locked_mapping_survives_regenerate(client, session):
     # 生成映射
     resp = client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": False},
         headers=_auth(token),
     )
@@ -710,7 +764,7 @@ def test_locked_mapping_survives_regenerate(client, session):
     # 重跑(regenerate=False) -> 跳过 locked
     resp = client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": False},
         headers=_auth(token),
     )
@@ -721,7 +775,7 @@ def test_locked_mapping_survives_regenerate(client, session):
     # 重跑(regenerate=True) -> 仍然跳过 locked（安全阀门）
     resp = client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": True},
         headers=_auth(token),
     )
@@ -756,7 +810,7 @@ def test_teacher_edit_mapping_becomes_teacher_edited(client, session):
     # 生成映射(v1, auto_accepted)
     client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": False},
         headers=_auth(token),
     )
@@ -808,7 +862,7 @@ def test_reject_mapping_status(client, session):
     # 生成映射
     client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": False},
         headers=_auth(token),
     )
@@ -854,7 +908,7 @@ def test_mapping_version_history_traceable(client, session):
     # 生成映射 (v1, auto_accepted)
     client.post(
         f"{QM}/course/{course.id}/generate",
-        json={"question_ids": [q.id], "document_ids": [],
+        json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
               "regenerate": False},
         headers=_auth(token),
     )
@@ -890,3 +944,81 @@ def test_mapping_version_history_traceable(client, session):
     assert versions[1]["version"] == 1
     assert versions[1]["is_latest"] is False
     assert versions[1]["status"] == "auto_accepted"
+
+
+def test_student_payload_hides_answer_and_objective_attempt_is_scored(client, session):
+    teacher = _user(session, "qb_answer_teacher", UserRole.TEACHER)
+    student = _user(session, "qb_answer_student")
+    course = _course(session, teacher.id)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    activate_student_membership(session, course.id, student.id)
+    session.commit()
+    question = _question(
+        session,
+        question_text="1 + 1 = ?",
+        answer="B",
+        course_id=course.id,
+        status=QuestionStatus.PUBLISHED,
+    )
+    question.question_type = QuestionType.SINGLE_CHOICE
+    question.options = {"A": "1", "B": "2"}
+    session.add(question)
+    session.commit()
+
+    response = client.get(
+        f"{QB}/course/{course.id}",
+        headers=_auth(_token(student)),
+    )
+    assert response.status_code == 200
+    assert "answer" not in response.json()["data"]["items"][0]
+
+    response = client.post(
+        f"{QB}/course/{course.id}/{question.id}/attempt",
+        json={"student_answer": "b"},
+        headers=_auth(_token(student)),
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["score"] == 1.0
+    attempt = session.get(QuestionAttempt, response.json()["data"]["attempt_id"])
+    assert attempt.measurement_role == "scored_performance"
+    assert attempt.source_event_id.startswith("qe_")
+    assert attempt.question_version == question.version
+    assert attempt.question_content_hash
+
+    response = client.post(
+        f"{QB}/course/{course.id}/{question.id}/attempt",
+        json={"student_answer": "B"},
+        headers=_auth(_token(teacher)),
+    )
+    assert response.status_code == 403
+
+
+def test_mapping_without_real_parsed_text_is_rejected(client, session):
+    teacher = _user(session, "qb_unparsed_teacher", UserRole.TEACHER)
+    course = _course(session, teacher.id)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    question = _question(
+        session,
+        question_text="未解析课件题目",
+        course_id=course.id,
+        status=QuestionStatus.AUTO_ACCEPTED,
+    )
+    artifact = DocumentArtifact(
+        document_id="unparsed-doc",
+        course_id=course.id,
+        file_name="unparsed.pdf",
+        mime_type="application/pdf",
+    )
+    session.add(artifact)
+    session.commit()
+    response = client.post(
+        f"{QM}/course/{course.id}/generate",
+        json={
+            "question_ids": [question.id],
+            "document_ids": [artifact.document_id],
+        },
+        headers=_auth(_token(teacher)),
+    )
+    assert response.status_code == 409
+    assert response.json()["code"] == 409
+    assert response.json()["data"]["error_code"] == "SELECTED_DOCUMENT_NOT_PARSED"

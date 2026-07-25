@@ -108,18 +108,35 @@ def _hit_to_source(hit: Dict[str, Any]) -> Dict[str, Any]:
     """
     snippet = str(hit.get("text_snippet") or "")
     chunk_id = str(hit.get("research_chunk_id") or "")
+    citations = [
+        {
+            "evidence_id": str(item.get("research_evidence_id") or ""),
+            "citation_key": str(item.get("citation_key") or ""),
+            "artifact_id": item.get("artifact_id"),
+            "block_id": item.get("block_id"),
+            "page": item.get("page_or_slide"),
+        }
+        for item in (hit.get("citations") or [])
+        if item.get("research_evidence_id")
+    ]
     return {
         "path": chunk_id,
         "score": hit.get("score"),
         "match_type": "rrf_hybrid_bm25_dense",
         "content_preview": snippet,
+        "evidence_refs": [item["evidence_id"] for item in citations],
+        "citations": citations,
     }
 
 
 def _build_context(question: str, sources: List[Dict[str, Any]]) -> str:
     parts: List[str] = []
     for i, src in enumerate(sources, 1):
-        parts.append(f"【来源{i}: {src['path']}】\n{src['content_preview']}")
+        refs = ", ".join(src.get("evidence_refs") or [])
+        parts.append(
+            f"【来源{i}: {src['path']}；证据:{refs}】\n"
+            f"{src['content_preview']}"
+        )
     return "\n\n---\n\n".join(parts)
 
 
@@ -137,8 +154,9 @@ def trigger_r2_retrieval_shadow(
 ) -> R2RetrievalShadowResult:
     """Run R2 sidecar retrieval in shadow; optionally replace V1 context.
 
-    Called from ``qa_service.ask_question_with_rag`` AFTER V1 retrieval
-    succeeds and BEFORE the V1 LLM call. The caller only applies the result
+    Called from ``qa_service.ask_question_with_rag`` after the scoped V1
+    retrieval attempt and before the single LLM call. R2 may provide evidence
+    even when V1 returned no hits. The caller only applies the result
     when ``triggered`` is True; otherwise V1 ``rag_context`` / ``rag_sources``
     are left untouched.
 
@@ -175,7 +193,7 @@ def trigger_r2_retrieval_shadow(
 
         # Course without a sidecar -> silent fallback to V1 (not an error).
         try:
-            available = course_id in provider.course_ids
+            available = str(course_id) in provider.course_ids
         except Exception:
             available = False
         if not available:

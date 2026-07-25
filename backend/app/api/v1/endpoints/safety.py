@@ -9,7 +9,7 @@ from datetime import datetime
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -42,9 +42,9 @@ router = APIRouter(tags=["G6 安全围栏与沙箱治理"])
 
 class SafetyPolicyUpdate(BaseModel):
     course_type: Optional[CourseType] = None
-    forbidden_topics: Optional[list] = None
-    required_citation_topics: Optional[list] = None
-    course_whitelist: Optional[list] = None
+    forbidden_topics: Optional[list[str]] = Field(None, max_length=100)
+    required_citation_topics: Optional[list[str]] = Field(None, max_length=100)
+    course_whitelist: Optional[list[str]] = Field(None, max_length=100)
     high_risk_confirmation_required: Optional[bool] = None
     keyword_assist_enabled: Optional[bool] = None
     status: Optional[SafetyPolicyStatus] = None
@@ -52,16 +52,16 @@ class SafetyPolicyUpdate(BaseModel):
 
 class SandboxPolicyUpdate(BaseModel):
     sandbox_preset: Optional[SandboxPreset] = None
-    allowed_languages: Optional[list] = None
-    allowed_packages: Optional[list] = None
+    allowed_languages: Optional[list[str]] = Field(None, max_length=20)
+    allowed_packages: Optional[list[str]] = Field(None, max_length=100)
     network_mode: Optional[NetworkMode] = None
-    network_whitelist: Optional[list] = None
+    network_whitelist: Optional[list[str]] = Field(None, max_length=100)
     file_access_mode: Optional[FileAccessMode] = None
-    cpu_limit: Optional[int] = None
-    memory_limit: Optional[int] = None
-    wall_time_limit: Optional[int] = None
+    cpu_limit: Optional[int] = Field(None, ge=1)
+    memory_limit: Optional[int] = Field(None, ge=16384)
+    wall_time_limit: Optional[int] = Field(None, ge=1)
     environment_destroy_on_exit: Optional[bool] = None
-    log_retention_days: Optional[int] = None
+    log_retention_days: Optional[int] = Field(None, ge=1, le=365)
 
 
 class EvaluateRequest(BaseModel):
@@ -171,6 +171,12 @@ async def update_sandbox_policy(
     user_id = int(current_user["user_id"])
     policy = get_or_create_sandbox_policy(session, course_id)
 
+    if payload.environment_destroy_on_exit is False:
+        raise HTTPException(
+            status_code=422,
+            detail="平台硬边界要求每次执行后销毁沙箱环境",
+        )
+
     old_values = {}
     if payload.sandbox_preset is not None:
         old_values["sandbox_preset"] = policy.sandbox_preset.value
@@ -182,6 +188,15 @@ async def update_sandbox_policy(
         old_values["allowed_packages"] = policy.allowed_packages
         policy.allowed_packages = payload.allowed_packages
     if payload.network_mode is not None:
+        safety_policy = get_or_create_safety_policy(session, course_id)
+        if (
+            safety_policy.course_type in (CourseType.BASIC, CourseType.PROFESSIONAL)
+            and payload.network_mode != NetworkMode.DISABLED
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="基础或专业课程的沙箱网络必须保持关闭",
+            )
         old_values["network_mode"] = policy.network_mode.value
         policy.network_mode = payload.network_mode
     if payload.network_whitelist is not None:
@@ -201,7 +216,7 @@ async def update_sandbox_policy(
         policy.wall_time_limit = min(payload.wall_time_limit, 30)  # 平台上限
     if payload.environment_destroy_on_exit is not None:
         old_values["environment_destroy_on_exit"] = policy.environment_destroy_on_exit
-        policy.environment_destroy_on_exit = payload.environment_destroy_on_exit
+        policy.environment_destroy_on_exit = True
     if payload.log_retention_days is not None:
         old_values["log_retention_days"] = policy.log_retention_days
         policy.log_retention_days = payload.log_retention_days

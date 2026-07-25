@@ -688,3 +688,29 @@ class TestKnowledgeVsExecution:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 403
+
+
+def test_tool_hard_limits_apply_without_course_policy(session):
+    from app.services.safety_guard_service import evaluate_tool_call
+
+    teacher = _user(session, "tool_no_policy_teacher")
+    course = _setup_course(session, teacher, enable_safety=False)
+
+    dangerous = evaluate_tool_call(
+        session,
+        course.id,
+        tool_name="code_execute",
+        tool_params={"command": "rm -rf /"},
+        user_id=teacher.id,
+    )
+    assert dangerous.allowed is False
+    assert "platform_hard_limit_violation" in dangerous.decision_factors
+
+    unknown = evaluate_tool_call(
+        session,
+        course.id,
+        tool_name="arbitrary_plugin_tool",
+        user_id=teacher.id,
+    )
+    assert unknown.allowed is False
+    assert "unknown_tool_rejected" in unknown.decision_factors

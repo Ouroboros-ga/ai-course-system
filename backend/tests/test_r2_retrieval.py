@@ -9,7 +9,9 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock, AsyncMock
 
 import pytest
@@ -30,6 +32,52 @@ from app.services.course_access_service import (
     establish_course_access_baseline,
     activate_student_membership,
 )
+from app.platform.shadow.r2_retrieval_shadow import R2RetrievalShadowResult
+from app.services.qa_service import QAService
+
+
+def test_real_qa_service_uses_r2_when_v1_has_no_results():
+    """Exercise the real QA orchestration rather than mocking the endpoint."""
+    service = QAService()
+    r2_sources = [{
+        "path": "chunk-1",
+        "score": 0.9,
+        "match_type": "rrf_hybrid_bm25_dense",
+        "content_preview": "二分查找每次排除一半搜索区间。",
+        "evidence_refs": ["ev-1"],
+        "citations": [{"evidence_id": "ev-1", "page": 3}],
+    }]
+    r2_result = R2RetrievalShadowResult(
+        triggered=True,
+        effective_mode="v2_shadow",
+        rag_context="【来源1: chunk-1；证据:ev-1】\n二分查找每次排除一半搜索区间。",
+        rag_sources=r2_sources,
+        hit_count=1,
+    )
+
+    with (
+        patch.object(service, "retrieve_rag_context", return_value=("", [])),
+        patch(
+            "app.platform.shadow.r2_retrieval_shadow.trigger_r2_retrieval_shadow",
+            return_value=r2_result,
+        ),
+        patch(
+            "app.services.qa_service.llm_client.chat",
+            new=AsyncMock(return_value=SimpleNamespace(content="基于课程证据的回答")),
+        ) as llm_chat,
+    ):
+        result = asyncio.run(service.ask_question_with_rag(
+            question="二分查找为什么快？",
+            course_id=7,
+            use_rag=True,
+            strict_mode=True,
+            allow_r2_student_answer=True,
+        ))
+
+    assert llm_chat.await_count == 1
+    assert result["retrieval_source"] == "v2_r2_sidecar"
+    assert result["retrieval_metadata"]["evidence_ids"] == ["ev-1"]
+    assert result["rag_sources"][0]["citations"][0]["page"] == 3
 
 
 def _user(session, name: str, role: UserRole = UserRole.STUDENT) -> User:

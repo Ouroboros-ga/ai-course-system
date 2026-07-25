@@ -149,17 +149,22 @@ class TestMediaTimelineService:
 
     def test_abstract_storage_object_key(self, session):
         """抽象存储使用 object_key"""
+        teacher = _user(session, "mt_asset_service_t")
+        course = _setup(session, teacher)
         asset = register_media_asset(
             session,
+            course_id=course.id,
             object_key="videos/course_1/node_5/segment_3.mp4",
             asset_type="video",
-            local_path="/data/videos/segment_3.mp4",
+            local_path="videos/segment_3.mp4",
             mime_type="video/mp4",
             duration_seconds=10.5,
         )
         assert asset.object_key == "videos/course_1/node_5/segment_3.mp4"
         assert asset.backend == StorageBackend.LOCAL
-        assert asset.resolve_url() == "/data/videos/segment_3.mp4"
+        assert asset.resolve_url().endswith(
+            "/assets/videos/course_1/node_5/segment_3.mp4/content"
+        )
 
     def test_cue_with_video_object_key(self, session):
         """提示关联视频资产的 object_key"""
@@ -173,9 +178,10 @@ class TestMediaTimelineService:
         # 注册视频资产
         register_media_asset(
             session,
+            course_id=course.id,
             object_key="videos/course_1/node_1/full.mp4",
             asset_type="video",
-            local_path="/data/videos/full.mp4",
+            local_path="videos/full.mp4",
         )
 
         cues = create_timeline_cues_from_node(
@@ -216,14 +222,15 @@ class TestMediaTimelineAPI:
     def test_register_asset(self, client, session):
         """注册媒体资产"""
         teacher = _user(session, "mt_api_asset")
-        _setup(session, teacher)
+        course = _setup(session, teacher)
         token = _token(teacher)
         response = client.post(
             "/api/v1/media/assets",
             json={
+                "course_id": course.id,
                 "object_key": "videos/test/segment_1.mp4",
                 "asset_type": "video",
-                "local_path": "/data/test.mp4",
+                "local_path": "videos/test.mp4",
                 "mime_type": "video/mp4",
             },
             headers={"Authorization": f"Bearer {token}"},
@@ -258,5 +265,25 @@ class TestMediaTimelineAPI:
         response = client.get(
             f"/api/v1/media/course/{c2.id}/timeline",
             headers={"Authorization": f"Bearer {token}"},
+        )
+        assert response.status_code == 403
+
+    def test_media_asset_metadata_is_course_scoped(self, client, session):
+        teacher_a = _user(session, "mt_asset_scope_a")
+        teacher_b = _user(session, "mt_asset_scope_b")
+        course_a = _setup(session, teacher_a)
+        _setup(session, teacher_b)
+        object_key = "videos/scoped/asset.mp4"
+        register_media_asset(
+            session,
+            course_id=course_a.id,
+            object_key=object_key,
+            asset_type="video",
+            local_path="videos/scoped/asset.mp4",
+        )
+
+        response = client.get(
+            f"/api/v1/media/assets/{object_key}",
+            headers={"Authorization": f"Bearer {_token(teacher_b)}"},
         )
         assert response.status_code == 403

@@ -1,7 +1,7 @@
 """G2 六维认知状态与学习证据持久化模型
 
 六维冻结为：
-  observed_performance_score  -- 答题正确率（不含提问次数/观看时长）
+  observed_performance_score  -- 评分型显性证据聚合（不含提问次数/观看时长）
   evidence_confidence          -- 证据置信度（基于样本量）
   confusion_risk               -- 困惑风险（重复错误/纠正频率）
   inquiry_depth                -- 提问深度（不计入表现分）
@@ -27,7 +27,7 @@ from sqlmodel import Field, SQLModel
 
 
 # 策略版本号，每次推荐策略变更时递增
-COGNITIVE_POLICY_VERSION = "cognitive-policy-v1.0"
+COGNITIVE_POLICY_VERSION = "cognitive-policy-v1.1"
 
 
 class CognitiveDimension(str, Enum):
@@ -64,7 +64,7 @@ class CognitiveState(SQLModel, table=True):
     node_id: Optional[int] = Field(default=None, index=True, description="节点ID(空=课程级)")
 
     # 六维状态值 (0.0-1.0, None=数据不足/unknown)
-    observed_performance_score: Optional[float] = Field(default=None, description="答题正确率")
+    observed_performance_score: Optional[float] = Field(default=None, description="评分型显性表现")
     evidence_confidence: Optional[float] = Field(default=None, description="证据置信度")
     confusion_risk: Optional[float] = Field(default=None, description="困惑风险")
     inquiry_depth: Optional[float] = Field(default=None, description="提问深度(不计入表现分)")

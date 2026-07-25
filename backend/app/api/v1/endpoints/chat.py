@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
+from app.core.config import settings
 from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
 from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
@@ -187,8 +188,11 @@ async def ask_question(
         print(f"[聊天] 用户 {username} (ID: {user_id}) 提问: {question[:50]}...")
         
         course_context = ""
+        course_access = None
         if courseId:
-            require_course_permission(session, current_user, courseId, "course.question.ask")
+            course_access = require_course_permission(
+                session, current_user, courseId, "course.question.ask"
+            )
             print(f"[聊天] 基于课程 {courseId} 的文档内容回答")
             course_context = await _get_course_context(session, courseId)
         
@@ -242,14 +246,28 @@ async def ask_question(
         current_node_info = None
         if currentNodeId:
             from app.models.course_model import ScriptNode
+            if courseId is None:
+                return unified_response(
+                    code=400,
+                    message="提供学习节点时必须同时提供课程",
+                    data=None,
+                )
             script_node = session.get(ScriptNode, currentNodeId)
-            if script_node:
-                current_node_info = {
-                    "title": script_node.title,
-                    "content": script_node.content,
-                    "node_type": script_node.node_type,
-                    "node_index": script_node.node_index,
-                }
+            if script_node is None:
+                return unified_response(code=404, message="学习节点不存在", data=None)
+            node_script = session.get(CourseScript, script_node.script_id)
+            if node_script is None or node_script.course_id != courseId:
+                return unified_response(
+                    code=400,
+                    message="学习节点不属于当前课程",
+                    data=None,
+                )
+            current_node_info = {
+                "title": script_node.title,
+                "content": script_node.content,
+                "node_type": script_node.node_type,
+                "node_index": script_node.node_index,
+            }
         
         qa_result = await qa_service.ask_question_with_rag(
             question=question,
@@ -260,6 +278,12 @@ async def ask_question(
             rag_top_k=3,
             strict_mode=strictMode,
             course_id=courseId,
+            student_id=user_id,
+            allow_r2_student_answer=bool(
+                course_access
+                and course_access.capabilities.get("evidence", False)
+                and settings.R2_STUDENT_ANSWER_ENABLED
+            ),
         )
         
         ai_answer = qa_result["answer"]
@@ -281,7 +305,12 @@ async def ask_question(
         session.refresh(assistant_message)
 
         understanding_analysis = None
-        if courseId and currentNodeId:
+        if (
+            courseId
+            and currentNodeId
+            and course_access is not None
+            and course_access.analytics_eligible
+        ):
             print(f"[聊天] 进行理解度分析...")
             try:
                 analysis_result = await progress_service.handle_student_question(
@@ -317,12 +346,12 @@ async def ask_question(
             }
         )
         
-    except Exception as e:
+    except Exception:
         import traceback
         traceback.print_exc()
         return unified_response(
             code=500,
-            message=f"问答失败: {str(e)}",
+            message="问答失败",
             data=None
         )
 

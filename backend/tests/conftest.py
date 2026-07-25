@@ -10,7 +10,10 @@ from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, create_engine
 
 _TEST_TMP_PARENT = Path.cwd() / ".pytest_tmp"
-_TEST_ROOT = _TEST_TMP_PARENT / "ai_course_m4a"
+_TEST_RUN_ID = os.environ.get("AI_COURSE_TEST_RUN_ID") or (
+    f"{os.getpid()}_{uuid.uuid4().hex[:8]}"
+)
+_TEST_ROOT = _TEST_TMP_PARENT / f"ai_course_{_TEST_RUN_ID}"
 _TEST_DB_PATH = _TEST_ROOT / "test_smart_class.db"
 _TEST_ROOT.mkdir(parents=True, exist_ok=True)
 
@@ -73,6 +76,7 @@ def test_engine(temp_db_path):
     yield engine
     SQLModel.metadata.drop_all(engine)
     engine.dispose()
+    shutil.rmtree(_TEST_ROOT, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

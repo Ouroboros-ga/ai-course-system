@@ -1,69 +1,96 @@
-"""G7 WebResearchTool 受控研究服务
-
-核心流程：
-  1. 检查课程是否启用 WebResearch
-  2. 脱敏查询（移除学生身份数据）
-  3. 检查域名白名单
-  4. 检查检索预算
-  5. 检查缓存
-  6. 执行搜索（通过 httpx 调用外部 API）
-  7. 缓存结果
-  8. 返回"补充参考"（带来源、时间、用途）
-
-硬约束：
-  - 不发送学生原始聊天记录、身份数据或正式 Memory
-  - 外部资料只标记为"补充参考"
-  - 不以外网结果直接修改掌握度、推荐优先级或课程图谱
-"""
+"""Course-scoped, supplementary web research with fail-closed egress."""
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
-from typing import Optional, Any
+import ipaddress
+import os
+import re
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
+from urllib.parse import urlparse
 
 import httpx
 from sqlmodel import Session, select
 
 from app.models.web_research_model import (
+    DEFAULT_ALLOWED_DOMAINS,
     WebResearchConfig,
     WebResearchResult,
     ExternalReference,
     ResearchStatus,
-    DEFAULT_ALLOWED_DOMAINS,
-    DEFAULT_SEARCH_BUDGET_PER_QUERY,
-    DEFAULT_MAX_RESULTS_PER_SEARCH,
-    DEFAULT_CACHE_TTL_MINUTES,
 )
 
-# 敏感数据模式（用于脱敏）
 SENSITIVE_PATTERNS = [
-    "学号", "身份证", "手机号", "邮箱", "密码", "token",
-    "username", "password", "email", "phone", "student_id",
+    "student_id", "username", "password", "email", "phone", "token",
+    "student number", "identity card", "mobile", "mailbox",
+    "\u5b66\u53f7", "\u8eab\u4efd\u8bc1", "\u624b\u673a\u53f7", "\u90ae\u7bb1", "\u5bc6\u7801",
 ]
+SENSITIVE_VALUE_PATTERNS = (
+    re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE),
+    re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"),
+    re.compile(r"(?<!\d)\d{17}[\dXx](?!\d)"),
+)
 
 
 def sanitize_query(query: str) -> str:
-    """脱敏查询：移除学生身份数据
-
-    不发送学生原始聊天记录、身份数据或正式 Memory。
-    """
+    """Remove obvious identity data before a query can leave this process."""
     sanitized = query
     for pattern in SENSITIVE_PATTERNS:
-        # 移除包含敏感词的部分
-        if pattern.lower() in sanitized.lower():
-            import re
-            # 移除 "pattern:value" 或 "pattern=value" 格式
-            sanitized = re.sub(
-                rf'{pattern}\s*[:：=]\s*\S+',
-                '[REDACTED]',
-                sanitized,
-                flags=re.IGNORECASE,
+        sanitized = re.sub(
+            rf"{re.escape(pattern)}\s*[:\uff1a=]\s*\S+",
+            "[REDACTED]",
+            sanitized,
+            flags=re.IGNORECASE,
+        )
+    for value_pattern in SENSITIVE_VALUE_PATTERNS:
+        sanitized = value_pattern.sub("[REDACTED]", sanitized)
+    return sanitized.strip()
+
+
+def normalize_allowed_domains(domains: list[str]) -> list[str]:
+    """Accept DNS domain names only; reject URLs, IP literals and wildcards."""
+    normalized: set[str] = set()
+    for raw in domains:
+        value = str(raw).strip().lower().rstrip(".")
+        if not value or "://" in value or any(ch in value for ch in "/*@:#?"):
+            raise ValueError(f"invalid allowlist domain: {raw}")
+        try:
+            ipaddress.ip_address(value)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("IP literals are not allowed in the domain allowlist")
+        try:
+            ascii_value = value.encode("idna").decode("ascii")
+        except UnicodeError as exc:
+            raise ValueError(f"invalid allowlist domain: {raw}") from exc
+        if (
+            len(ascii_value) > 253
+            or "." not in ascii_value
+            or any(
+                not label
+                or len(label) > 63
+                or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?", label)
+                for label in ascii_value.split(".")
             )
-    return sanitized
+        ):
+            raise ValueError(f"invalid allowlist domain: {raw}")
+        normalized.add(ascii_value)
+    return sorted(normalized)
+
+
+def _trusted_result_domain(result: dict[str, Any]) -> Optional[str]:
+    parsed = urlparse(str(result.get("source_url") or "").strip())
+    if parsed.scheme not in {"http", "https"} or parsed.username or parsed.password:
+        return None
+    return parsed.hostname.lower().rstrip(".") if parsed.hostname else None
+
+
+def _domain_allowed(domain: str, allowed_domains: list[str]) -> bool:
+    return any(domain == allowed or domain.endswith(f".{allowed}") for allowed in allowed_domains)
 
 
 def get_or_create_config(session: Session, course_id: int) -> WebResearchConfig:
-    """获取或创建默认配置"""
     config = session.exec(
         select(WebResearchConfig).where(WebResearchConfig.course_id == course_id)
     ).first()
@@ -76,197 +103,159 @@ def get_or_create_config(session: Session, course_id: int) -> WebResearchConfig:
 
 
 def execute_research(
-    session: Session,
-    course_id: int,
-    query: str,
-    *,
-    user_id: Optional[int] = None,
+    session: Session, course_id: int, query: str, *, user_id: Optional[int] = None
 ) -> WebResearchResult:
-    """执行受控外部研究
-
-    返回标记为"补充参考"的外部资料，与课程 Evidence 分开。
-    """
+    """Return only supplemental sources; it can never alter course facts."""
     config = get_or_create_config(session, course_id)
-
-    # 1. 检查是否启用
-    if not config.enabled:
-        return _create_result(
-            course_id, query, ResearchStatus.DISABLED,
-            reason="WebResearch 已被教师关闭",
-        )
-
-    # 2. 脱敏查询
     sanitized_query = sanitize_query(query)
-    query_hash = hashlib.sha256(sanitized_query.encode()).hexdigest()
+    if not config.enabled:
+        return _create_result(session, course_id, sanitized_query, ResearchStatus.DISABLED, "disabled by teacher")
 
-    # 3. 检查缓存
-    cached = _check_cache(session, course_id, query_hash, config.cache_ttl_minutes)
+    query_hash = hashlib.sha256(sanitized_query.encode()).hexdigest()
+    cached = _check_cache(session, course_id, query_hash)
     if cached:
         cached.status = ResearchStatus.CACHE_HIT
         session.add(cached)
         session.commit()
         return cached
 
-    # 4. 检查预算
-    recent_searches = _count_recent_searches(session, course_id)
-    if recent_searches >= config.search_budget_per_query:
-        return _create_result(
-            course_id, sanitized_query, ResearchStatus.BUDGET_EXCEEDED,
-            reason=f"检索预算已用尽 ({recent_searches}/{config.search_budget_per_query})",
-        )
+    used = _count_recent_searches(session, course_id)
+    if used >= config.search_budget_per_query:
+        return _create_result(session, course_id, sanitized_query, ResearchStatus.BUDGET_EXCEEDED, "search budget exhausted")
 
-    # 5. 执行搜索
     try:
-        results = _perform_search(sanitized_query, config)
-    except Exception as e:
-        return _create_result(
-            course_id, sanitized_query, ResearchStatus.SEARCH_FAILED,
-            reason=f"搜索失败: {str(e)[:200]}",
-        )
+        candidates = _perform_search(sanitized_query, config)
+    except Exception:
+        return _create_result(session, course_id, sanitized_query, ResearchStatus.SEARCH_FAILED, "provider unavailable")
 
-    # 6. 过滤域名白名单
-    filtered_results = []
-    for result in results:
-        domain = result.get("source_domain", "")
-        if domain in (config.allowed_domains or []):
-            filtered_results.append(result)
-        # 非白名单域名被过滤
+    allowed = normalize_allowed_domains(config.allowed_domains or [])
+    results = []
+    for candidate in candidates:
+        domain = _trusted_result_domain(candidate)
+        if domain and _domain_allowed(domain, allowed):
+            results.append({**candidate, "source_domain": domain})
+    if not results:
+        return _create_result(session, course_id, sanitized_query, ResearchStatus.NO_RESULTS, "no allowlisted source")
 
-    if not filtered_results:
-        return _create_result(
-            course_id, sanitized_query, ResearchStatus.NO_RESULTS,
-            reason="无白名单域名内的搜索结果",
-        )
-
-    # 7. 缓存结果
-    result_record = WebResearchResult(
+    result = WebResearchResult(
         course_id=course_id,
         query_hash=query_hash,
         query_text=sanitized_query,
         status=ResearchStatus.SUCCESS,
-        results=filtered_results[:config.max_results_per_search],
+        results=results[:config.max_results_per_search],
         searches_used=1,
-        expires_at=datetime.utcnow() + timedelta(minutes=config.cache_ttl_minutes),
+        expires_at=datetime.now(timezone.utc) + timedelta(minutes=config.cache_ttl_minutes),
     )
-    session.add(result_record)
-
-    # 8. 持久化外部参考
-    for r in filtered_results[:config.max_results_per_search]:
-        ref = ExternalReference(
+    session.add(result)
+    session.flush()
+    for item in result.results:
+        session.add(ExternalReference(
             course_id=course_id,
-            research_result_id=None,  # 稍后更新
-            source_domain=r.get("source_domain", ""),
-            source_url=r.get("source_url", ""),
-            title=r.get("title", ""),
-            snippet=r.get("snippet", ""),
+            research_result_id=result.id,
+            source_domain=item["source_domain"],
+            source_url=item.get("source_url", ""),
+            title=item.get("title", ""),
+            snippet=item.get("snippet", ""),
             purpose="supplementary_reference",
             is_supplementary=True,
-        )
-        session.add(ref)
-
+        ))
     session.commit()
-    session.refresh(result_record)
-
-    # 更新 ExternalReference 的 research_result_id
-    refs = session.exec(
-        select(ExternalReference).where(
-            ExternalReference.course_id == course_id,
-            ExternalReference.research_result_id.is_(None),
-        )
-    ).all()
-    for ref in refs:
-        ref.research_result_id = result_record.id
-        session.add(ref)
-    session.commit()
-
-    return result_record
+    session.refresh(result)
+    return result
 
 
 def _perform_search(query: str, config: WebResearchConfig) -> list[dict[str, Any]]:
-    """执行搜索（实际调用外部搜索 API）
+    """Call only a reviewed HTTPS provider configured by the operator.
 
-    当前为结构化占位：实际搜索由外部工具接入。
-    不发送学生身份数据。
+    The provider receives the sanitized query only. It is intentionally
+    unavailable without both deployment settings; this avoids accidental
+    egress to an arbitrary public search service.
     """
-    # 实际实现会调用外部搜索 API（如 Web Search API）
-    # 当前返回空列表，表示搜索功能需要外部工具接入
-    # 不可用、无引用或越权来源时拒绝使用
-    return []
+    endpoint = os.getenv("WEB_RESEARCH_PROVIDER_URL", "").strip()
+    api_key = os.getenv("WEB_RESEARCH_PROVIDER_API_KEY", "").strip()
+    if not endpoint or not api_key:
+        raise RuntimeError("provider not configured")
+    parsed = urlparse(endpoint)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise RuntimeError("provider must use HTTPS")
+    response = httpx.post(
+        endpoint,
+        headers={"Authorization": f"Bearer {api_key}"},
+        json={"query": query, "limit": min(config.max_results_per_search, 20)},
+        timeout=httpx.Timeout(8.0, connect=3.0),
+        follow_redirects=False,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    raw_results = payload.get("results", []) if isinstance(payload, dict) else []
+    if not isinstance(raw_results, list):
+        raise RuntimeError("invalid provider response")
+    return [
+        {
+            "source_url": str(item.get("source_url") or item.get("url") or ""),
+            "title": str(item.get("title") or "")[:500],
+            "snippet": str(item.get("snippet") or item.get("content") or "")[:2000],
+        }
+        for item in raw_results if isinstance(item, dict)
+    ]
 
 
-def _check_cache(
-    session: Session,
-    course_id: int,
-    query_hash: str,
-    ttl_minutes: int,
-) -> Optional[WebResearchResult]:
-    """检查缓存"""
+def _check_cache(session: Session, course_id: int, query_hash: str) -> Optional[WebResearchResult]:
     cached = session.exec(
         select(WebResearchResult).where(
             WebResearchResult.course_id == course_id,
             WebResearchResult.query_hash == query_hash,
-            WebResearchResult.status == ResearchStatus.SUCCESS,
+            WebResearchResult.status.in_([ResearchStatus.SUCCESS, ResearchStatus.CACHE_HIT]),
         )
     ).first()
-    if cached and not cached.is_expired:
-        return cached
-    return None
+    return cached if cached and not cached.is_expired else None
 
 
 def _count_recent_searches(session: Session, course_id: int) -> int:
-    """统计近期搜索次数（用于预算控制）"""
-    recent = datetime.utcnow() - timedelta(hours=1)
-    results = session.exec(
+    recent = datetime.now(timezone.utc) - timedelta(hours=1)
+    records = session.exec(
         select(WebResearchResult).where(
             WebResearchResult.course_id == course_id,
             WebResearchResult.created_at >= recent,
             WebResearchResult.status.in_([ResearchStatus.SUCCESS, ResearchStatus.CACHE_HIT]),
         )
     ).all()
-    return sum(r.searches_used for r in results)
+    return sum(record.searches_used for record in records)
 
 
 def _create_result(
-    course_id: int,
-    query: str,
-    status: ResearchStatus,
-    reason: str = "",
+    session: Session, course_id: int, query: str, status: ResearchStatus, reason: str
 ) -> WebResearchResult:
-    """创建失败/禁用结果"""
-    query_hash = hashlib.sha256(query.encode()).hexdigest() if query else ""
-    return WebResearchResult(
+    result = WebResearchResult(
         course_id=course_id,
-        query_hash=query_hash,
+        query_hash=hashlib.sha256(query.encode()).hexdigest() if query else "",
         query_text=query,
         status=status,
+        failure_reason=reason,
         results=[],
         searches_used=0,
     )
+    session.add(result)
+    session.commit()
+    session.refresh(result)
+    return result
 
 
 def serialize_result(result: WebResearchResult) -> dict[str, Any]:
-    """序列化研究结果为前端友好格式"""
     return {
-        "id": result.id,
-        "course_id": result.course_id,
-        "status": result.status.value,
-        "query_text": result.query_text,
-        "results": result.results,
-        "searches_used": result.searches_used,
-        "is_supplementary": True,  # 始终标记为补充参考
-        "cannot_modify_mastery": True,
-        "cannot_modify_recommendation": True,
-        "cannot_modify_graph": True,
+        "id": result.id, "course_id": result.course_id, "status": result.status.value,
+        "failure_reason": result.failure_reason, "query_text": result.query_text,
+        "results": result.results, "searches_used": result.searches_used,
+        "is_supplementary": True, "cannot_modify_mastery": True,
+        "cannot_modify_recommendation": True, "cannot_modify_graph": True,
         "created_at": result.created_at.isoformat() if result.created_at else None,
         "expires_at": result.expires_at.isoformat() if result.expires_at else None,
     }
 
 
 def serialize_config(config: WebResearchConfig) -> dict[str, Any]:
-    """序列化配置"""
     return {
-        "course_id": config.course_id,
-        "enabled": config.enabled,
+        "course_id": config.course_id, "enabled": config.enabled,
         "allowed_domains": config.allowed_domains,
         "search_budget_per_query": config.search_budget_per_query,
         "max_results_per_search": config.max_results_per_search,

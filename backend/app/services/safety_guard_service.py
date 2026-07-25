@@ -388,6 +388,51 @@ def _detect_request_intent(content: str) -> RequestIntent:
     return RequestIntent.UNKNOWN
 
 
+_READ_ONLY_TOOLS = frozenset({
+    "student_state", "studentstatetool",
+    "cognition", "cognitiontool",
+    "graph_read", "graphreadtool",
+    "course_retrieval", "courseretrievaltool",
+    "question_bank", "questionbanktool",
+    "visualization", "visualizationtool",
+})
+_NETWORK_TOOLS = frozenset({
+    "http_request", "network_request", "socket_connect", "port_scan",
+    "curl", "wget", "web_research", "webresearchtool",
+})
+_FILE_TOOLS = frozenset({"file_read", "file_write", "file_exec"})
+_SANDBOX_TOOLS = frozenset({
+    "code_execute", "compile_run", "test_run", "sandbox", "sandboxtool",
+})
+_MUTATING_TOOLS = frozenset({"learning_event", "learningeventtool"})
+_KNOWN_TOOLS = (
+    _READ_ONLY_TOOLS | _NETWORK_TOOLS | _FILE_TOOLS |
+    _SANDBOX_TOOLS | _MUTATING_TOOLS
+)
+_FORBIDDEN_OPERATIONS = (
+    "rm -rf", "sudo", "chmod 777", "dd if=", "mkfs",
+    "shutdown", "reboot", "docker.sock", "--privileged",
+)
+
+
+def _normalize_tool_name(tool_name: str) -> str:
+    return tool_name.strip().replace("-", "_").casefold()
+
+
+def _is_host_path(target: Optional[str]) -> bool:
+    if not target:
+        return False
+    value = target.strip().replace("\\", "/").casefold()
+    return (
+        value.startswith(("/", "//"))
+        or (len(value) >= 3 and value[1:3] == ":/")
+        or value == ".."
+        or value.startswith("../")
+        or "/../" in value
+        or value.startswith(("file:", "/proc/", "/sys/", "/dev/"))
+    )
+
+
 def evaluate_tool_call(
     session: Session,
     course_id: int,
@@ -403,22 +448,83 @@ def evaluate_tool_call(
 
     安全不依赖模型"自觉"，而依赖执行层真正卡住危险动作。
     """
+    normalized_tool = _normalize_tool_name(tool_name)
+    params_text = str(tool_params or {}).casefold()
+
+    # 平台硬边界不得因课程尚未创建/激活策略而失效。
+    forbidden_operation = next(
+        (item for item in _FORBIDDEN_OPERATIONS if item in params_text),
+        None,
+    )
+    if forbidden_operation is not None:
+        return SafetyDecision(
+            allowed=False,
+            action=DecisionAction.REJECT,
+            reason=f"平台硬边界：禁止操作 '{forbidden_operation}'",
+            decision_factors=[
+                f"tool_name={normalized_tool}",
+                "platform_hard_limit_violation",
+            ],
+        )
+
+    if normalized_tool not in _KNOWN_TOOLS:
+        return SafetyDecision(
+            allowed=False,
+            action=DecisionAction.REJECT,
+            reason="未注册的工具不能执行",
+            decision_factors=[
+                f"tool_name={normalized_tool}",
+                "unknown_tool_rejected",
+            ],
+        )
+
+    if normalized_tool in _FILE_TOOLS and _is_host_path(tool_target):
+        return SafetyDecision(
+            allowed=False,
+            action=DecisionAction.REJECT,
+            reason="平台硬边界：禁止访问宿主机路径",
+            decision_factors=[
+                f"tool_name={normalized_tool}",
+                "host_path_blocked",
+            ],
+        )
+
     policy = session.exec(
         select(CourseSafetyPolicy).where(CourseSafetyPolicy.course_id == course_id)
     ).first()
 
     if policy is None:
+        if normalized_tool not in _READ_ONLY_TOOLS:
+            return SafetyDecision(
+                allowed=False,
+                action=DecisionAction.REJECT,
+                reason="执行型工具需要已激活的课程安全策略",
+                decision_factors=["no_active_policy_fail_closed"],
+            )
         return SafetyDecision(
             allowed=True,
-            reason="无安全策略，默认允许工具调用",
-            decision_factors=["no_policy_default_allow"],
+            reason="只读工具通过平台硬边界检查",
+            decision_factors=["no_policy_read_only_allow"],
         )
 
     if policy.status in (SafetyPolicyStatus.DRAFT, SafetyPolicyStatus.CONFLICT):
+        if normalized_tool not in _READ_ONLY_TOOLS:
+            return SafetyDecision(
+                allowed=False,
+                action=DecisionAction.REJECT,
+                reason="执行型工具需要已激活且无冲突的课程安全策略",
+                decision_factors=[
+                    f"policy_status={policy.status.value}",
+                    "inactive_policy_fail_closed",
+                ],
+            )
         return SafetyDecision(
             allowed=True,
-            reason=f"策略状态为 {policy.status.value}，不执行阻断",
-            decision_factors=[f"policy_status={policy.status.value}"],
+            reason="只读工具通过平台硬边界检查",
+            decision_factors=[
+                f"policy_status={policy.status.value}",
+                "inactive_policy_read_only_allow",
+            ],
         )
 
     # 加载沙箱策略
@@ -428,7 +534,7 @@ def evaluate_tool_call(
 
     factors: list[str] = [
         f"course_type={policy.course_type.value}",
-        f"tool_name={tool_name}",
+        f"tool_name={normalized_tool}",
         f"tool_target={tool_target or 'none'}",
     ]
 
@@ -442,23 +548,15 @@ def evaluate_tool_call(
         factors.append("no_sandbox_policy")
 
     # 1. 平台硬边界：始终禁止的操作
-    forbidden_ops = ["rm -rf", "sudo", "chmod 777", "dd if=", "mkfs", "shutdown", "reboot"]
-    tool_params_str = str(tool_params or {}).lower()
-    for op in forbidden_ops:
-        if op in tool_params_str:
-            _log_audit(session, course_id, user_id, policy,
-                        AuditEventType.BLOCK,
-                        f"平台硬边界：禁止操作 '{op}'", None)
-            return SafetyDecision(
-                allowed=False,
-                action=DecisionAction.REJECT,
-                reason=f"平台硬边界：禁止操作 '{op}'",
-                decision_factors=factors + ["platform_hard_limit_violation"],
-            )
-
     # 2. 网络工具目标白名单校验
-    network_tools = ["http_request", "socket_connect", "port_scan", "curl", "wget"]
-    if tool_name in network_tools and tool_target:
+    if normalized_tool in _NETWORK_TOOLS and not tool_target:
+        return SafetyDecision(
+            allowed=False,
+            action=DecisionAction.REJECT,
+            reason="网络工具必须提供经过课程策略校验的目标",
+            decision_factors=factors + ["network_target_required"],
+        )
+    if normalized_tool in _NETWORK_TOOLS and tool_target:
         # 网安/CTF 课程：检查目标是否在白名单内
         if policy.course_type in (CourseType.CYBERSECURITY, CourseType.CTF):
             whitelist = policy.course_whitelist or []
@@ -486,9 +584,8 @@ def evaluate_tool_call(
             )
 
     # 3. 文件系统工具：禁止宿主机路径
-    file_tools = ["file_read", "file_write", "file_exec"]
-    if tool_name in file_tools:
-        if tool_target and ("/etc/" in tool_target or "/root/" in tool_target or "C:\\Windows" in tool_target):
+    if normalized_tool in _FILE_TOOLS:
+        if _is_host_path(tool_target):
             _log_audit(session, course_id, user_id, policy,
                         AuditEventType.BLOCK,
                         f"禁止访问宿主机路径 '{tool_target}'", None)
@@ -500,8 +597,7 @@ def evaluate_tool_call(
             )
 
     # 4. 沙箱执行工具：检查沙箱能力
-    sandbox_tools = ["code_execute", "compile_run", "test_run"]
-    if tool_name in sandbox_tools:
+    if normalized_tool in _SANDBOX_TOOLS:
         if sandbox_policy is None:
             _log_audit(session, course_id, user_id, policy,
                         AuditEventType.BLOCK,
@@ -527,8 +623,8 @@ def evaluate_tool_call(
                 )
 
     # 5. 高风险操作需教师确认
-    high_risk_tools = ["code_execute", "port_scan", "network_request"]
-    if tool_name in high_risk_tools and policy.high_risk_confirmation_required:
+    high_risk_tools = {"code_execute", "port_scan", "network_request"}
+    if normalized_tool in high_risk_tools and policy.high_risk_confirmation_required:
         _log_audit(session, course_id, user_id, policy,
                     AuditEventType.CONFIRM,
                     f"高风险工具 '{tool_name}' 需教师确认", None)
