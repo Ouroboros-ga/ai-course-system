@@ -157,6 +157,39 @@ class Settings(BaseSettings):
     AVATAR_VOICE_SAMPLE_MAX_MB: int = 50
 
     # --------------------------
+    # 阶段8 M2 讯飞在线 TTS 配置
+    # 密钥只留在服务端；自动化测试不调用真实讯飞
+    # --------------------------
+    STAGE8_TTS_PROVIDER: str = "fake"
+    XFYUN_TTS_APP_ID: str = ""
+    XFYUN_TTS_API_KEY: str = ""
+    XFYUN_TTS_API_SECRET: str = ""
+    XFYUN_TTS_DEFAULT_VCN: str = "xiaoyan"
+    XFYUN_TTS_SPEED: int = 50
+    XFYUN_TTS_VOLUME: int = 50
+    XFYUN_TTS_PITCH: int = 50
+    XFYUN_TTS_SAMPLE_RATE: int = 16000
+    XFYUN_TTS_AUDIO_ENCODING: str = "lame"  # lame=mp3, speex-wb
+    XFYUN_TTS_WS_URL: str = "wss://tts-api.xfyun.cn/v2/tts"
+    XFYUN_TTS_CONNECT_TIMEOUT_MS: int = 10000
+    XFYUN_TTS_READ_TIMEOUT_MS: int = 30000
+
+    # --------------------------
+    # 阶段8 M2 TTS 任务重试与限额
+    # --------------------------
+    TTS_MAX_RETRY_ATTEMPTS: int = 3
+    TTS_RATE_LIMIT_PER_MINUTE: int = 30
+    TTS_RATE_LIMIT_BURST: int = 5
+    TTS_MAX_SCRIPT_BYTES: int = 8000
+
+    # --------------------------
+    # 阶段8 M5 数字人 Provider 开关与健康检查
+    # --------------------------
+    STAGE8_DH_PROVIDER: str = "fake"
+    DH_PROVIDER_FALLBACK_ON_FAILURE: bool = True
+    DH_HEALTH_CHECK_INTERVAL_S: int = 60
+
+    # --------------------------
     # 科大讯飞PPT生成API配置
     # --------------------------
     XFYUN_PPT_APP_ID: str = ""

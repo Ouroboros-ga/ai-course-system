@@ -76,6 +76,7 @@ class TtsJobExecuteRequest(BaseModel):
     voice_id: str = Field(default="default", max_length=100)
     resource_version: str = Field(default="v1", max_length=20)
     provider_key: str = Field(default="", max_length=50)
+    max_retries: Optional[int] = Field(None, ge=1, le=10, description="最大重试次数，默认从配置读取")
 
 
 class ReleaseCreateRequest(BaseModel):
@@ -94,6 +95,11 @@ class ReleaseCreateRequest(BaseModel):
 class FreezeCuesRequest(BaseModel):
     """冻结时间轴 Cue 到发布版本"""
     cue_ids: list[int] = Field(default_factory=list, description="MediaTimelineCue.id 列表；为空则冻结全部")
+
+
+class SwitchPlaybackModeRequest(BaseModel):
+    """播放模式切换请求（M3/M5）"""
+    playback_mode: str = Field(pattern="^(auto|low_resource|compatibility)$")
 
 
 # ---------------------------------------------------------------------------
@@ -239,10 +245,49 @@ async def execute_tts_job(
         voice_id=payload.voice_id,
         resource_version=payload.resource_version,
         provider_key=payload.provider_key or None,
+        max_retries=payload.max_retries,
     )
     session.commit()
     return unified_response(
         code=200, message="TTS 任务执行完成",
+        data=_serialize_job(updated),
+    )
+
+
+@media_release_router.post("/course/{course_id}/generation-jobs/{job_id}/retry")
+async def retry_tts_job(
+    course_id: int,
+    job_id: str,
+    payload: TtsJobExecuteRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """人工重跑失败的 TTS 任务
+
+    - 仅 failed 状态任务可重跑
+    - 重置状态后重新执行，支持指定 max_retries
+    """
+    require_course_permission(
+        session, current_user, course_id, "course.media.generate",
+    )
+    job = media_generation_job_service.get_job(session, course_id=course_id, job_id=job_id)
+    if job.job_type != MediaGenerationJobType.TTS:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed(f"任务类型 {job.job_type.value} 不是 tts，无法重跑")
+
+    updated = tts_execution_service.retry_job(
+        session,
+        course_id=course_id,
+        job_id=job_id,
+        script_text=payload.script_text,
+        voice_id=payload.voice_id,
+        resource_version=payload.resource_version,
+        provider_key=payload.provider_key or None,
+        max_retries=payload.max_retries,
+    )
+    session.commit()
+    return unified_response(
+        code=200, message="TTS 任务重跑完成",
         data=_serialize_job(updated),
     )
 
@@ -562,3 +607,143 @@ def _serialize_release_cue(cue) -> dict[str, Any]:
         "audio_object_key": cue.audio_object_key,
         "video_object_key": cue.video_object_key,
     }
+
+
+# ---------------------------------------------------------------------------
+# M3/M5 Provider 健康检查、开关与故障切换
+# ---------------------------------------------------------------------------
+
+
+@media_release_router.get("/providers/health")
+async def get_providers_health(
+    current_user: dict = Depends(get_current_user),
+):
+    """查询所有 Provider 健康状态（M3/M5）
+
+    返回 TTS 和数字人 Provider 的健康检查结果与当前配置。
+    不需要课程权限，仅限已登录用户。
+    """
+    from app.services.digital_human_provider import get_digital_human_provider
+    from app.services.tts_provider import get_tts_provider
+
+    from app.core.config import settings
+
+    tts_provider = get_tts_provider()
+    dh_provider = get_digital_human_provider()
+
+    tts_health = tts_provider.health_check()
+    dh_health = dh_provider.health_check()
+
+    return unified_response(
+        code=200, message="Provider 健康状态查询成功",
+        data={
+            "tts": {
+                "provider_key": tts_provider.provider_key,
+                "provider_version": tts_provider.provider_version,
+                "healthy": tts_health,
+                "configured_provider": getattr(settings, "STAGE8_TTS_PROVIDER", "fake"),
+            },
+            "digital_human": {
+                "provider_key": dh_provider.provider_key,
+                "provider_version": dh_provider.provider_version,
+                "healthy": dh_health.healthy,
+                "status_message": dh_health.message,
+                "configured_provider": getattr(settings, "STAGE8_DH_PROVIDER", "fake"),
+                "fallback_on_failure": getattr(settings, "DH_PROVIDER_FALLBACK_ON_FAILURE", True),
+            },
+        },
+    )
+
+
+@media_release_router.post("/course/{course_id}/playback/switch-mode")
+async def switch_playback_mode(
+    course_id: int,
+    payload: "SwitchPlaybackModeRequest",
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生端手动切换播放模式（M3/M5）
+
+    - 学生可手动切换 auto/low_resource/compatibility
+    - 仅影响当前学生的播放会话，不修改 MediaRelease.default_playback_mode
+    - 数字人 Provider 故障时系统自动降级到 compatibility
+    """
+    require_course_permission(session, current_user, course_id, "course.content.read")
+
+    try:
+        mode = PlaybackMode(payload.playback_mode)
+    except ValueError:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed(f"不支持的播放模式: {payload.playback_mode}")
+
+    # 返回切换确认与兼容模式信息
+    return unified_response(
+        code=200, message="播放模式已切换",
+        data={
+            "course_id": course_id,
+            "playback_mode": mode.value,
+            "digital_human_enabled": mode != PlaybackMode.COMPATIBILITY,
+            "fallback_supported": True,
+            "message": (
+                "已切换到兼容模式（音频+字幕+PPT+讲稿）" if mode == PlaybackMode.COMPATIBILITY
+                else f"已切换到 {mode.value} 模式"
+            ),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# M5 对象存储迁移
+# ---------------------------------------------------------------------------
+
+
+class StorageMigrateRequest(BaseModel):
+    """对象存储迁移请求（M5）"""
+    object_keys: list[str] = Field(default_factory=list, description="待迁移的 object_key 列表；为空则迁移全部")
+    prefix: str = Field(default="", max_length=500, description="按前缀过滤；与 object_keys 互斥")
+    delete_source: bool = Field(default=False, description="迁移成功后删除源文件")
+
+
+@media_release_router.post("/storage/migrate")
+async def migrate_storage(
+    payload: StorageMigrateRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """对象存储迁移（M5）
+
+    将 object_key 从当前存储后端迁移到另一个后端。
+    管理员操作，用于本地→OSS 迁移演练。
+    """
+    # 仅管理员可执行迁移
+    if current_user.get("role") != "admin":
+        from fastapi import HTTPException, status
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="仅管理员可执行对象存储迁移",
+        )
+
+    from app.services.object_storage import (
+        get_object_storage,
+        list_object_keys_under_prefix,
+        migrate_object_keys,
+    )
+
+    source = get_object_storage()
+    # M5 阶段：目标存储暂与源相同（演练），未来切换为 OSS Provider
+    target = source
+
+    keys = payload.object_keys
+    if not keys and payload.prefix:
+        keys = list_object_keys_under_prefix(source, payload.prefix)
+
+    if not keys:
+        return unified_response(
+            code=200, message="无可迁移的 object_key",
+            data={"migrated_count": 0, "failed_count": 0, "skipped_count": 0},
+        )
+
+    report = migrate_object_keys(source, target, keys, delete_source=payload.delete_source)
+    return unified_response(
+        code=200, message="对象存储迁移完成",
+        data=report,
+    )

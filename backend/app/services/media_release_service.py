@@ -15,6 +15,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -646,9 +647,13 @@ class TtsExecutionService:
     """TTS 合成执行器
 
     - M1 阶段：同步执行 Fake Provider，验证端到端流程
-    - M2 阶段：改为异步 worker 调用真实讯飞
+    - M2 阶段：实现重试、限额、人工重跑；真实讯飞仅人工验收
     - 失败时通过 mark_failed 保留原始 error_code，禁止伪装成功
+    - 限额：基于内存滑动窗口，按 course_id 限制每分钟调用次数
     """
+
+    # 内存滑动窗口限额：{course_id: [(timestamp, ...), ...]}
+    _rate_limit_windows: dict[int, list[float]] = {}
 
     def execute_tts_job(
         self,
@@ -660,33 +665,32 @@ class TtsExecutionService:
         voice_id: str = "default",
         resource_version: str = "v1",
         provider_key: Optional[str] = None,
+        max_retries: Optional[int] = None,
     ) -> MediaGenerationJob:
+        """执行 TTS 合成任务，支持自动重试
+
+        - max_retries: 自动重试次数（默认从配置读取 TTS_MAX_RETRY_ATTEMPTS）
+        - 超过重试次数后标记 failed，保留最后一次错误
+        - 限额超限时立即失败，错误码 TTS_RATE_LIMITED
+        """
         job_service = media_generation_job_service
         job = job_service.mark_running(
             session, course_id=course_id, job_id=job_id, stage="tts_synthesizing",
         )
 
-        provider = get_tts_provider(provider_key or job.provider_key or None)
-        attempt_number = self._next_attempt_number(session, job_id=job_id)
-
-        try:
-            request = TtsSynthesisRequest(
-                script_text=script_text,
-                voice_id=voice_id,
-                course_id=course_id,
-                resource_version=resource_version,
-                idempotency_key=job.idempotency_key,
+        # 脚本字节限制
+        from app.core.config import settings
+        max_script_bytes = getattr(settings, "TTS_MAX_SCRIPT_BYTES", 8000)
+        if len(script_text.encode("utf-8")) > max_script_bytes:
+            error_code = "TTS_SCRIPT_TOO_LONG"
+            error_message_safe = (
+                f"讲稿超过最大字节限制 {max_script_bytes}，当前 {len(script_text.encode('utf-8'))}"
             )
-            result = provider.synthesize(request)
-        except Exception as e:
-            # 保留原始失败原因
-            error_code = "TTS_PROVIDER_FAILED"
-            error_message_safe = str(e)[:500]
             job_service.record_attempt(
                 session, course_id=course_id, job_id=job_id,
-                attempt_number=attempt_number,
-                provider_key=provider.provider_key,
-                provider_version=provider.provider_version,
+                attempt_number=self._next_attempt_number(session, job_id=job_id),
+                provider_key="",
+                provider_version="",
                 status=MediaGenerationStatus.FAILED,
                 error_code=error_code,
                 error_message_safe=error_message_safe,
@@ -697,45 +701,172 @@ class TtsExecutionService:
                 error_message_safe=error_message_safe,
             )
 
-        # 记录成功 attempt
-        job_service.record_attempt(
-            session, course_id=course_id, job_id=job_id,
-            attempt_number=attempt_number,
-            provider_key=result.provider_key,
-            provider_version=result.provider_version,
-            status=MediaGenerationStatus.SUCCEEDED,
-            attempt_metadata={
-                "audio_object_key": result.audio_object_key,
-                "duration_ms": result.duration_ms,
-                "audio_sha256": result.audio_sha256,
-                "subtitle_segments": [
-                    {
-                        "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
-                        "sentence_index": s.sentence_index,
-                    } for s in result.subtitle_segments
-                ],
-                "warnings": result.warnings,
-            },
+        # 限额检查
+        rate_limit_error = self._check_rate_limit(course_id)
+        if rate_limit_error:
+            job_service.record_attempt(
+                session, course_id=course_id, job_id=job_id,
+                attempt_number=self._next_attempt_number(session, job_id=job_id),
+                provider_key="",
+                provider_version="",
+                status=MediaGenerationStatus.FAILED,
+                error_code=rate_limit_error[0],
+                error_message_safe=rate_limit_error[1],
+            )
+            return job_service.mark_failed(
+                session, course_id=course_id, job_id=job_id,
+                error_code=rate_limit_error[0],
+                error_message_safe=rate_limit_error[1],
+            )
+
+        provider = get_tts_provider(provider_key or job.provider_key or None)
+        max_attempts = max_retries if max_retries is not None else getattr(
+            settings, "TTS_MAX_RETRY_ATTEMPTS", 3,
         )
 
-        return job_service.mark_succeeded(
+        last_error_code = ""
+        last_error_message = ""
+
+        for attempt_idx in range(max_attempts):
+            attempt_number = self._next_attempt_number(session, job_id=job_id)
+
+            try:
+                request = TtsSynthesisRequest(
+                    script_text=script_text,
+                    voice_id=voice_id,
+                    course_id=course_id,
+                    resource_version=resource_version,
+                    idempotency_key=job.idempotency_key,
+                )
+                result = provider.synthesize(request)
+            except Exception as e:
+                # 保留原始失败原因
+                last_error_code = "TTS_PROVIDER_FAILED"
+                last_error_message = str(e)[:500]
+                job_service.record_attempt(
+                    session, course_id=course_id, job_id=job_id,
+                    attempt_number=attempt_number,
+                    provider_key=provider.provider_key,
+                    provider_version=provider.provider_version,
+                    status=MediaGenerationStatus.FAILED,
+                    error_code=last_error_code,
+                    error_message_safe=last_error_message,
+                )
+                # 还有重试机会则继续
+                if attempt_idx < max_attempts - 1:
+                    continue
+                # 重试耗尽
+                return job_service.mark_failed(
+                    session, course_id=course_id, job_id=job_id,
+                    error_code=last_error_code,
+                    error_message_safe=(
+                        f"{last_error_message}（已重试 {max_attempts} 次）"
+                    ),
+                )
+
+            # 记录成功 attempt
+            job_service.record_attempt(
+                session, course_id=course_id, job_id=job_id,
+                attempt_number=attempt_number,
+                provider_key=result.provider_key,
+                provider_version=result.provider_version,
+                status=MediaGenerationStatus.SUCCEEDED,
+                attempt_metadata={
+                    "audio_object_key": result.audio_object_key,
+                    "duration_ms": result.duration_ms,
+                    "audio_sha256": result.audio_sha256,
+                    "subtitle_segments": [
+                        {
+                            "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
+                            "sentence_index": s.sentence_index,
+                        } for s in result.subtitle_segments
+                    ],
+                    "warnings": result.warnings,
+                    "attempt_index": attempt_idx,
+                },
+            )
+
+            return job_service.mark_succeeded(
+                session, course_id=course_id, job_id=job_id,
+                output_object_key=result.audio_object_key,
+                output_metadata={
+                    "audio_object_key": result.audio_object_key,
+                    "duration_ms": result.duration_ms,
+                    "audio_sha256": result.audio_sha256,
+                    "subtitle_segments": [
+                        {
+                            "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
+                            "sentence_index": s.sentence_index,
+                        } for s in result.subtitle_segments
+                    ],
+                    "warnings": result.warnings,
+                    "provider_key": result.provider_key,
+                    "provider_version": result.provider_version,
+                    "attempts_used": attempt_idx + 1,
+                },
+            )
+
+        # 理论上不会走到这里
+        return job_service.mark_failed(
             session, course_id=course_id, job_id=job_id,
-            output_object_key=result.audio_object_key,
-            output_metadata={
-                "audio_object_key": result.audio_object_key,
-                "duration_ms": result.duration_ms,
-                "audio_sha256": result.audio_sha256,
-                "subtitle_segments": [
-                    {
-                        "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
-                        "sentence_index": s.sentence_index,
-                    } for s in result.subtitle_segments
-                ],
-                "warnings": result.warnings,
-                "provider_key": result.provider_key,
-                "provider_version": result.provider_version,
-            },
+            error_code=last_error_code or "TTS_UNKNOWN_FAILURE",
+            error_message_safe=last_error_message or "未知失败",
         )
+
+    def retry_job(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        job_id: str,
+        script_text: str,
+        voice_id: str = "default",
+        resource_version: str = "v1",
+        provider_key: Optional[str] = None,
+        max_retries: Optional[int] = None,
+    ) -> MediaGenerationJob:
+        """人工重跑：将 failed 任务重置为 pending 后重新执行
+
+        - 仅允许 failed 状态的任务重跑
+        - 重置 status 为 pending，清空 error 字段
+        - 然后调用 execute_tts_job 重新执行
+        """
+        job_service = media_generation_job_service
+        job = job_service.get_job(session, course_id=course_id, job_id=job_id)
+        if job.status != MediaGenerationStatus.FAILED:
+            reject_state_conflict(
+                f"仅 failed 任务可重跑，当前状态 {job.status.value}"
+            )
+        # 重置状态
+        job.status = MediaGenerationStatus.PENDING
+        job.error_code = ""
+        job.error_message_safe = ""
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.flush()
+        return self.execute_tts_job(
+            session, course_id=course_id, job_id=job_id,
+            script_text=script_text, voice_id=voice_id,
+            resource_version=resource_version,
+            provider_key=provider_key, max_retries=max_retries,
+        )
+
+    def _check_rate_limit(self, course_id: int) -> Optional[tuple[str, str]]:
+        """检查每分钟限额，超限返回 (error_code, error_message)"""
+        from app.core.config import settings
+        limit_per_minute = getattr(settings, "TTS_RATE_LIMIT_PER_MINUTE", 30)
+        now = time.time()
+        window = self._rate_limit_windows.setdefault(course_id, [])
+        # 清理 60 秒外的记录
+        cutoff = now - 60
+        window[:] = [ts for ts in window if ts > cutoff]
+        if len(window) >= limit_per_minute:
+            return (
+                "TTS_RATE_LIMITED",
+                f"课程 {course_id} TTS 调用超过每分钟限额 {limit_per_minute}",
+            )
+        window.append(now)
+        return None
 
     def _next_attempt_number(self, session: Session, *, job_id: str) -> int:
         max_attempt = session.exec(
@@ -744,6 +875,11 @@ class TtsExecutionService:
             )
         ).one() or 0
         return int(max_attempt) + 1
+
+    @classmethod
+    def reset_rate_limit_for_tests(cls) -> None:
+        """测试辅助：清空限额窗口"""
+        cls._rate_limit_windows.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -272,3 +272,100 @@ def reset_object_storage_for_tests(provider: Optional[ObjectStorageProvider] = N
     """测试辅助：重置单例"""
     global _object_storage
     _object_storage = provider
+
+
+# ---------------------------------------------------------------------------
+# M5 对象存储迁移工具
+# ---------------------------------------------------------------------------
+
+
+def migrate_object_keys(
+    source: ObjectStorageProvider,
+    target: ObjectStorageProvider,
+    object_keys: list[str],
+    *,
+    delete_source: bool = False,
+) -> dict:
+    """将一批 object_key 从源存储迁移到目标存储
+
+    - 用于从本地磁盘迁移到 OSS（或反向）
+    - 迁移后校验 SHA256 一致性
+    - delete_source=True 时迁移成功后删除源文件
+    - 返回迁移报告 {migrated, failed, skipped, errors}
+
+    注意：本函数不修改业务数据中的 object_key，因为 LocalStorageProvider 和
+    OSSStorageProvider 使用相同的 object_key 命名空间。
+    """
+    migrated = []
+    failed = []
+    skipped = []
+    errors = []
+
+    for key in object_keys:
+        if not key:
+            skipped.append(key)
+            continue
+        try:
+            # 检查源是否存在
+            if not source.exists(key):
+                skipped.append(key)
+                continue
+            # 检查目标是否已存在
+            if target.exists(key):
+                skipped.append(key)
+                continue
+            # 读取源内容
+            content = source.get(key)
+            # 写入目标
+            target.put(key, content)
+            # 校验一致性
+            source_head = source.head(key)
+            target_head = target.head(key)
+            source_sha = source_head.get("sha256", "")
+            target_sha = target_head.get("sha256", "")
+            if source_sha and target_sha and source_sha != target_sha:
+                failed.append(key)
+                errors.append(f"{key}: SHA256 不一致 (source={source_sha[:16]}, target={target_sha[:16]})")
+                continue
+            migrated.append(key)
+            if delete_source:
+                source.delete(key)
+        except Exception as e:
+            failed.append(key)
+            errors.append(f"{key}: {str(e)[:200]}")
+
+    return {
+        "migrated": migrated,
+        "failed": failed,
+        "skipped": skipped,
+        "migrated_count": len(migrated),
+        "failed_count": len(failed),
+        "skipped_count": len(skipped),
+        "errors": errors,
+    }
+
+
+def list_object_keys_under_prefix(
+    provider: ObjectStorageProvider,
+    prefix: str,
+) -> list[str]:
+    """列出指定前缀下的所有 object_key（M5 迁移辅助）
+
+    LocalStorageProvider 遍历根目录下匹配前缀的文件。
+    """
+    if not hasattr(provider, "root_dir"):
+        # OSS 等其他 Provider 需各自实现 list 方法
+        return []
+    root = provider.root_dir  # type: ignore[attr-defined]
+    prefix_path = os.path.join(root, prefix)
+    keys: list[str] = []
+    if not os.path.exists(prefix_path):
+        return keys
+    for dirpath, _dirnames, filenames in os.walk(prefix_path):
+        for filename in filenames:
+            full_path = os.path.join(dirpath, filename)
+            rel_path = os.path.relpath(full_path, root)
+            # 转换为 object_key 格式（使用 / 分隔符）
+            object_key = rel_path.replace(os.sep, "/")
+            keys.append(object_key)
+    return keys

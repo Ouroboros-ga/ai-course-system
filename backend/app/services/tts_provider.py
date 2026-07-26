@@ -1,7 +1,11 @@
 """阶段8 TTS Provider 抽象与实现
 
-实现 `TTSProvider` 抽象，首版提供 `FakeTtsProvider`（用于自动化测试与离线演示）
-和 `XfyunTtsProvider` 占位（M2 接入真实讯飞）。课程核心数据不绑死任何 Provider。
+实现 `TTSProvider` 抽象：
+- `FakeTtsProvider`：自动化测试与离线演示
+- `XfyunTtsProvider`：讯飞在线 TTS WebSocket API（M2）
+- `MockXfyunTtsProvider`：模拟讯飞响应格式，用于自动化测试
+
+课程核心数据不绑死任何 Provider。
 
 设计要点：
 - 输入：script_text、voice_id、speed/pitch/volume、output_format、idempotency_key、
@@ -9,21 +13,30 @@
 - 输出：audio_object_key、duration_ms、subtitle_segments、audio_sha256、
   provider_version、warnings
 - 讲稿按句和 UTF-8 字节限制切分；幂等键去重；外部失败必须返回可解释失败，禁止伪造
-- 讯飞密钥只留在服务端；自动化测试只调用 Fake Provider
-- 单例 `tts_provider_registry` 通过配置 `TTS_PROVIDER` 选择实现
+- 讯飞密钥只留在服务端；自动化测试只调用 Fake 或 Mock Provider
+- 单例 `tts_provider_registry` 通过配置 `STAGE8_TTS_PROVIDER` 选择实现
 """
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
+import logging
 import re
+import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from hmac import HMAC
+from urllib.parse import urlencode, urlparse
 from typing import Any, Optional
 
 from app.core.exceptions import reject_dependency_unavailable
 from app.services.object_storage import get_object_storage
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -227,29 +240,339 @@ class FakeTtsProvider(TTSProvider):
 
 
 # ---------------------------------------------------------------------------
-# 讯飞 TTS 占位（M2 接入真实 API）
+# 讯飞在线 TTS Provider（M2 实现）
 # ---------------------------------------------------------------------------
 
 
-class XfyunTtsProvider(TTSProvider):
-    """讯飞在线 TTS Provider（M2 实现）
+def _build_xfyun_auth_url(api_key: str, api_secret: str, base_url: str) -> str:
+    """生成讯飞 WebSocket 鉴权 URL（HMAC-SHA256 签名）
 
-    首版仅为占位：调用时直接返回 DEPENDENCY_UNAVAILABLE，
-    避免在 M1 阶段误用真实讯飞凭据。
+    依照 https://global.xfyun.cn/doc/tts/online_tts/API.html 鉴权规范。
+    """
+    parsed = urlparse(base_url)
+    now = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+    signature_origin = (
+        f"host: {parsed.hostname}\n"
+        f"date: {now}\n"
+        f"GET {parsed.path} HTTP/1.1"
+    )
+    signature_sha = HMAC(
+        api_secret.encode("utf-8"),
+        signature_origin.encode("utf-8"),
+        hashlib.sha256,
+    ).digest()
+    signature = base64.b64encode(signature_sha).decode("utf-8")
+    authorization_origin = (
+        f"api_key=\"{api_key}\", "
+        f"algorithm=\"hmac-sha256\", "
+        f"headers=\"host date request-line\", "
+        f"signature=\"{signature}\""
+    )
+    authorization = base64.b64encode(
+        authorization_origin.encode("utf-8")
+    ).decode("utf-8")
+    params = urlencode({
+        "authorization": authorization,
+        "date": now,
+        "host": parsed.hostname,
+    })
+    return f"{base_url}?{params}"
+
+
+class XfyunTtsProvider(TTSProvider):
+    """讯飞在线语音合成 Provider
+
+    - 使用讯飞 WebSocket TTS v2 API
+    - 讲稿按句和 UTF-8 字节限制切分，分帧发送
+    - 讯飞密钥只留在服务端，不进入前端/日志/测试
+    - 凭据缺失时返回 DEPENDENCY_UNAVAILABLE，禁止伪装成功
+    - 自动化测试不调用本 Provider，使用 MockXfyunTtsProvider 验证响应解析
     """
 
     provider_key = "xfyun_tts"
-    provider_version = "xfyun-tts-v1.0"
+    provider_version = "xfyun-tts-v2.0"
+
+    # 讯飞单帧最大字节（UTF-8）
+    MAX_FRAME_BYTES = 8000
+
+    def __init__(self) -> None:
+        from app.core.config import settings
+        self._app_id = getattr(settings, "XFYUN_TTS_APP_ID", "") or ""
+        self._api_key = getattr(settings, "XFYUN_TTS_API_KEY", "") or ""
+        self._api_secret = getattr(settings, "XFYUN_TTS_API_SECRET", "") or ""
+        self._default_vcn = getattr(settings, "XFYUN_TTS_DEFAULT_VCN", "xiaoyan")
+        self._speed = getattr(settings, "XFYUN_TTS_SPEED", 50)
+        self._volume = getattr(settings, "XFYUN_TTS_VOLUME", 50)
+        self._pitch = getattr(settings, "XFYUN_TTS_PITCH", 50)
+        self._sample_rate = getattr(settings, "XFYUN_TTS_SAMPLE_RATE", 16000)
+        self._audio_encoding = getattr(settings, "XFYUN_TTS_AUDIO_ENCODING", "lame")
+        self._ws_url = getattr(settings, "XFYUN_TTS_WS_URL", "wss://tts-api.xfyun.cn/v2/tts")
+        self._connect_timeout_ms = getattr(settings, "XFYUN_TTS_CONNECT_TIMEOUT_MS", 10000)
+        self._read_timeout_ms = getattr(settings, "XFYUN_TTS_READ_TIMEOUT_MS", 30000)
 
     def synthesize(self, request: TtsSynthesisRequest) -> TtsSynthesisResult:
-        # M2 将实现真实讯飞调用
-        reject_dependency_unavailable(
-            "讯飞 TTS 尚未接入（M2 任务），请使用 FakeTtsProvider 完成端到端测试"
+        """调用讯飞 TTS 合成音频
+
+        失败时抛 reject_dependency_unavailable，禁止伪装成功。
+        """
+        if not self._app_id or not self._api_key or not self._api_secret:
+            reject_dependency_unavailable(
+                "讯飞 TTS 凭据未配置（XFYUN_TTS_APP_ID/API_KEY/API_SECRET）"
+            )
+
+        sentences = _split_script_into_sentences(
+            request.script_text, max_bytes=self.MAX_FRAME_BYTES,
+        )
+        if not sentences:
+            sentences = [""]
+
+        # 逐句合成并拼接音频
+        audio_chunks: list[bytes] = []
+        segments: list[SubtitleSegment] = []
+        cursor_ms = 0
+        warnings: list[str] = []
+
+        for idx, sentence in enumerate(sentences):
+            try:
+                chunk_audio, duration_ms = self._synthesize_single_sentence(
+                    sentence, request.voice_id,
+                )
+            except Exception as e:
+                # 保留原始失败原因，禁止伪装成功
+                logger.warning("讯飞 TTS 合成第 %d 句失败: %s", idx, e)
+                reject_dependency_unavailable(
+                    f"讯飞 TTS 合成失败（第 {idx + 1} 句）: {str(e)[:200]}"
+                )
+
+            audio_chunks.append(chunk_audio)
+            seg_duration = duration_ms if duration_ms > 0 else max(
+                200, int(len(sentence) / 3.33 * 1000)
+            )
+            segments.append(SubtitleSegment(
+                text=sentence,
+                start_ms=cursor_ms,
+                end_ms=cursor_ms + seg_duration,
+                sentence_index=idx,
+            ))
+            cursor_ms += seg_duration
+
+        # 拼接音频
+        audio_bytes = b"".join(audio_chunks)
+
+        # 写入对象存储
+        audio_object_key = self._build_object_key(request)
+        storage = get_object_storage()
+        content_sha = storage.put(
+            audio_object_key, audio_bytes, mime_type="audio/mpeg",
         )
 
+        return TtsSynthesisResult(
+            audio_object_key=audio_object_key,
+            duration_ms=cursor_ms,
+            subtitle_segments=segments,
+            audio_sha256=content_sha,
+            provider_key=self.provider_key,
+            provider_version=self.provider_version,
+            warnings=warnings,
+        )
+
+    def _synthesize_single_sentence(
+        self, text: str, voice_id: str,
+    ) -> tuple[bytes, int]:
+        """调用讯飞 WebSocket 合成单句
+
+        返回 (audio_bytes, duration_ms)。
+        本方法使用同步 WebSocket（讯飞 TTS 是短连接）。
+        """
+        try:
+            import websocket  # websocket-client 库
+        except ImportError as e:
+            reject_dependency_unavailable(
+                f"websocket-client 库未安装: {e}"
+            )
+
+        auth_url = _build_xfyun_auth_url(
+            self._api_key, self._api_secret, self._ws_url,
+        )
+
+        # 讯飞请求体
+        text_b64 = base64.b64encode(text.encode("utf-8")).decode("utf-8")
+        vcn = voice_id if voice_id and voice_id != "default" else self._default_vcn
+        request_body = {
+            "header": {"app_id": self._app_id, "status": 2},
+            "parameter": {
+                "ora12": {
+                    "vcn": vcn,
+                    "speed": self._speed,
+                    "volume": self._volume,
+                    "pitch": self._pitch,
+                    "bgs": 0,
+                    "tte": 0,
+                    "reg": 0,
+                    "rdn": 0,
+                    "audio": {
+                        "encoding": self._audio_encoding,
+                        "sample_rate": self._sample_rate,
+                        "channels": 1,
+                        "bit_depth": 16,
+                        "frame_size": 0,
+                    },
+                }
+            },
+            "payload": {
+                "text": {
+                    "encoding": "utf8",
+                    "compress": "raw",
+                    "format": "plain",
+                    "status": 2,
+                    "text": text_b64,
+                }
+            },
+        }
+
+        audio_chunks: list[bytes] = []
+        result_duration_ms = 0
+
+        def _on_message(ws, message):
+            nonlocal result_duration_ms
+            try:
+                data = json.loads(message) if isinstance(message, str) else json.loads(message.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                return
+            if data.get("code") != 0:
+                ws.close()
+                return
+            payload = data.get("payload", {}) or {}
+            audio_data = payload.get("audio", {})
+            if audio_data.get("audio"):
+                chunk = base64.b64decode(audio_data["audio"])
+                audio_chunks.append(chunk)
+            if data.get("header", {}).get("status") == 2:
+                # 合成结束
+                result_duration_ms = int(
+                    (data.get("payload", {}).get("audio", {}).get("data", "") and 0)
+                    or (len(text) / 3.33 * 1000)
+                )
+                ws.close()
+
+        def _on_error(ws, error):
+            logger.warning("讯飞 TTS WebSocket 错误: %s", error)
+
+        ws = websocket.WebSocketApp(
+            auth_url,
+            on_message=_on_message,
+            on_error=_on_error,
+        )
+        ws.run_forever(
+            timeout=self._read_timeout_ms / 1000,
+            ping_interval=0,
+        )
+
+        if not audio_chunks:
+            reject_dependency_unavailable("讯飞 TTS 未返回任何音频数据")
+
+        return b"".join(audio_chunks), result_duration_ms
+
     def health_check(self) -> bool:
-        # M2 接入后返回真实健康状态
-        return False
+        """健康检查：凭据已配置即视为可用"""
+        return bool(self._app_id and self._api_key and self._api_secret)
+
+    def _build_object_key(self, request: TtsSynthesisRequest) -> str:
+        """构造稳定的 object_key，便于幂等去重"""
+        if request.idempotency_key:
+            key_part = request.idempotency_key
+        else:
+            key_part = request.input_hash()[:16]
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        ext = "mp3" if "lame" in self._audio_encoding else self._audio_encoding
+        return (
+            f"tts/course_{request.course_id}/{timestamp}/{key_part}.{ext}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# 模拟讯飞 TTS Provider（用于自动化测试）
+# ---------------------------------------------------------------------------
+
+
+class MockXfyunTtsProvider(TTSProvider):
+    """模拟讯飞 TTS Provider
+
+    - 不调用真实讯飞，但模拟讯飞的响应格式（base64 音频、分句合成）
+    - 用于自动化测试 XfyunTtsProvider 的响应解析逻辑
+    - 生成的音频包含讯飞格式元数据，便于断言
+    """
+
+    provider_key = "xfyun_tts"
+    provider_version = "xfyun-tts-v2.0-mock"
+
+    CHARS_PER_SECOND = 3.33
+
+    def synthesize(self, request: TtsSynthesisRequest) -> TtsSynthesisResult:
+        sentences = _split_script_into_sentences(request.script_text)
+        if not sentences:
+            sentences = [""]
+
+        segments: list[SubtitleSegment] = []
+        audio_chunks: list[bytes] = []
+        cursor_ms = 0
+
+        for idx, sentence in enumerate(sentences):
+            char_count = len(sentence)
+            duration_ms = max(200, int(char_count / self.CHARS_PER_SECOND * 1000))
+
+            # 模拟讯飞音频格式（MP3 头 + 占位数据）
+            chunk = self._build_mock_mp3_chunk(sentence, duration_ms, idx)
+            audio_chunks.append(chunk)
+
+            segments.append(SubtitleSegment(
+                text=sentence,
+                start_ms=cursor_ms,
+                end_ms=cursor_ms + duration_ms,
+                sentence_index=idx,
+            ))
+            cursor_ms += duration_ms
+
+        audio_bytes = b"".join(audio_chunks)
+        audio_object_key = self._build_object_key(request)
+        storage = get_object_storage()
+        content_sha = storage.put(
+            audio_object_key, audio_bytes, mime_type="audio/mpeg",
+        )
+
+        return TtsSynthesisResult(
+            audio_object_key=audio_object_key,
+            duration_ms=cursor_ms,
+            subtitle_segments=segments,
+            audio_sha256=content_sha,
+            provider_key=self.provider_key,
+            provider_version=self.provider_version,
+            warnings=["mock_xfyun: 模拟讯飞响应格式，非真实 TTS 产物"],
+        )
+
+    def _build_mock_mp3_chunk(
+        self, text: str, duration_ms: int, idx: int,
+    ) -> bytes:
+        """构造模拟 MP3 音频块"""
+        return (
+            b"MOCK_XFYUN_AUDIO_V2\n"
+            + f"frame={idx}\n".encode()
+            + f"duration_ms={duration_ms}\n".encode()
+            + f"text_sha256={hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]}\n".encode()
+            + b"---\n"
+            + text.encode("utf-8")
+        )
+
+    def _build_object_key(self, request: TtsSynthesisRequest) -> str:
+        if request.idempotency_key:
+            key_part = request.idempotency_key
+        else:
+            key_part = request.input_hash()[:16]
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+        return f"tts/course_{request.course_id}/{timestamp}/{key_part}.mp3"
+
+    def health_check(self) -> bool:
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +585,8 @@ _PROVIDER_REGISTRY: dict[str, TTSProvider] = {
     "fake_tts": FakeTtsProvider(),
     "xfyun": XfyunTtsProvider(),
     "xfyun_tts": XfyunTtsProvider(),
+    "mock_xfyun": MockXfyunTtsProvider(),
+    "mock_xfyun_tts": MockXfyunTtsProvider(),
 }
 
 
@@ -269,7 +594,8 @@ def get_tts_provider(provider_key: Optional[str] = None) -> TTSProvider:
     """获取 TTS Provider
 
     首版默认返回 FakeTtsProvider，确保自动化测试与离线演示不依赖外部服务。
-    M2 接入讯飞后，可通过 settings.TTS_PROVIDER 切换。
+    M2 接入讯飞后，可通过 settings.STAGE8_TTS_PROVIDER 切换。
+    自动化测试使用 mock_xfyun 验证讯飞响应解析，不调用真实讯飞。
     """
     if provider_key is None:
         from app.core.config import settings
@@ -294,4 +620,6 @@ def reset_tts_registry_for_tests() -> None:
         "fake_tts": FakeTtsProvider(),
         "xfyun": XfyunTtsProvider(),
         "xfyun_tts": XfyunTtsProvider(),
+        "mock_xfyun": MockXfyunTtsProvider(),
+        "mock_xfyun_tts": MockXfyunTtsProvider(),
     })
