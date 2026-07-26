@@ -98,6 +98,23 @@ from app.models.task_model import (
     TaskResourceLinkRecord,
     IdempotencyKeyRecord,
 )
+from app.models.course_lifecycle_model import (
+    CourseJoinRequest,
+    CourseGroup,
+    CourseGroupMember,
+    CourseSettingVersion,
+    CourseAuditEvent,
+    IntegrationSyncRun,
+)
+from app.models.course_build_model import (
+    CourseBuildDraft,
+    CourseBuildStep,
+    SourceMaterial,
+    SourceMaterialVersion,
+    CourseQualityGateRun,
+    CourseRelease,
+    CourseReleaseArtifact,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

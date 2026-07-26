@@ -74,6 +74,8 @@ from app.api.v1.endpoints import (
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
     tasks,              # 阶段0 统一任务中心
+    course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
+    course_build,       # 阶段3 课程建设工作流
 )
 from app.schemas import UnifiedResponse
 
@@ -201,6 +203,40 @@ app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=
 
 # 阶段0：统一任务中心（OCR/解析/图谱/媒体/实验/同步等长任务的持久化与状态机）
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务中心"])
+
+# 阶段2：成员、设置、加入申请与课程生命周期
+app.include_router(
+    course_lifecycle.join_requests_router,
+    prefix="/api/v1/course-access",
+    tags=["阶段2 加入申请"],
+)
+app.include_router(
+    course_lifecycle.course_groups_router,
+    prefix="/api/v1/course-groups",
+    tags=["阶段2 课程分组"],
+)
+app.include_router(
+    course_lifecycle.course_settings_router,
+    prefix="/api/v1/course-settings",
+    tags=["阶段2 课程设置"],
+)
+app.include_router(
+    course_lifecycle.integrations_router,
+    prefix="/api/v1/integrations",
+    tags=["阶段2 平台集成同步"],
+)
+app.include_router(
+    course_lifecycle.audit_router,
+    prefix="/api/v1/audit",
+    tags=["阶段2 课程审计"],
+)
+
+# 阶段3：统一任务中心与教师课程建设工作流
+app.include_router(
+    course_build.course_build_router,
+    prefix="/api/v1/course-build",
+    tags=["阶段3 课程建设工作流"],
+)
 
 
 # 根路径健康检查

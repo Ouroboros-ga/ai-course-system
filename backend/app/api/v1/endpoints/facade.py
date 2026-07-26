@@ -31,6 +31,8 @@ from app.models.course_model import (
     ScriptNode,
     StudentEnrollment,
 )
+from app.models.access_control_model import CourseMembership
+from app.models.user_model import User
 from app.models.document_artifact_model import DocumentArtifact
 from app.models.question_bank_model import (
     QuestionBankItem,
@@ -419,4 +421,215 @@ async def get_retrieval_capability(
             "policy_version": "r2-retrieval-v1.0",
             "fallback_to_v1": not retrieval_available,
         },
+    )
+
+
+# ==================== 阶段2：成员/设置聚合读模型 ====================
+
+@router.get("/course/{course_id}/members")
+async def get_course_members_view(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """成员页面聚合读模型
+
+    返回 members / groups / pending_join_requests / recent_sync_runs / audit_summary。
+    跨课程严格隔离；非教师角色看不到 pending_join_requests。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.view")
+    user_id = int(current_user["user_id"])
+
+    from app.models.course_lifecycle_model import (
+        CourseGroup,
+        CourseJoinRequest,
+        CourseSettingVersion,
+        IntegrationSyncRun,
+        JoinRequestStatus,
+        SyncRunStatus,
+    )
+    from app.services.course_lifecycle_service import (
+        course_group_service,
+        fanya_sync_service,
+        join_request_service,
+    )
+
+    # 成员列表（基于 CourseMembership）
+    memberships = session.exec(
+        select(CourseMembership)
+        .where(CourseMembership.course_id == course_id)
+        .order_by(CourseMembership.role, CourseMembership.user_id)
+    ).all()
+    member_user_ids = [m.user_id for m in memberships]
+    users_map = {
+        u.id: u for u in session.exec(select(User).where(User.id.in_(member_user_ids))).all()
+    } if member_user_ids else {}
+
+    members_view = []
+    for m in memberships:
+        u = users_map.get(m.user_id)
+        members_view.append({
+            "user_id": m.user_id,
+            "username": u.username if u else None,
+            "role": m.role.value,
+            "status": m.status.value,
+            "analytics_excluded": m.analytics_excluded,
+            "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            "left_at": m.left_at.isoformat() if m.left_at else None,
+        })
+
+    # 分组
+    groups = course_group_service.list_groups(session, course_id=course_id)
+    groups_view = [
+        {
+            "group_id": g.group_id,
+            "name": g.name,
+            "description": g.description,
+            "group_type": g.group_type,
+            "created_at": g.created_at.isoformat() if g.created_at else None,
+        }
+        for g in groups
+    ]
+
+    # 待处理加入申请（仅教师可见）
+    pending_requests = []
+    if context.allows("membership.role.change"):
+        reqs = join_request_service.list_requests(
+            session,
+            course_id=course_id,
+            status_filter=JoinRequestStatus.PENDING,
+        )
+        pending_requests = [
+            {
+                "request_id": r.request_id,
+                "applicant_user_id": r.applicant_user_id,
+                "apply_reason": r.apply_reason,
+                "channel": r.channel.value,
+                "status": r.status.value,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "expires_at": r.expires_at.isoformat() if r.expires_at else None,
+            }
+            for r in reqs
+        ]
+
+    # 最近同步运行
+    sync_runs = fanya_sync_service.list_runs(session, course_id=course_id, limit=5)
+    sync_view = [
+        {
+            "sync_run_id": r.sync_run_id,
+            "status": r.status.value,
+            "applied_added": r.applied_added,
+            "applied_removed": r.applied_removed,
+            "applied_skipped": r.applied_skipped,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            "error_message": r.error_message,
+        }
+        for r in sync_runs
+    ]
+
+    return unified_response(
+        code=200,
+        message="获取成员页面聚合读模型成功",
+        data={
+            "course_id": course_id,
+            "members": members_view,
+            "groups": groups_view,
+            "pending_join_requests": pending_requests,
+            "recent_sync_runs": sync_view,
+            "can_review_join_requests": context.allows("membership.role.change"),
+            "viewer_role": context.role.value if context.role else None,
+        },
+    )
+
+
+@router.get("/course/{course_id}/settings")
+async def get_course_settings_view(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """设置页面聚合读模型
+
+    返回当前活跃设置版本 + 能力声明 + 教师可编辑范围。
+    跨课程严格隔离；非教师角色 can_edit=False。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.view")
+
+    from app.services.course_lifecycle_service import course_settings_service
+
+    current_setting = course_settings_service.get_current(session, course_id=course_id)
+    setting_view = None
+    if current_setting is not None:
+        setting_view = {
+            "setting_version_id": current_setting.setting_version_id,
+            "version": current_setting.version,
+            "profile": current_setting.profile,
+            "publish": current_setting.publish,
+            "agent_policy": current_setting.agent_policy,
+            "safety": current_setting.safety,
+            "sandbox": current_setting.sandbox,
+            "integration": current_setting.integration,
+            "created_by": current_setting.created_by,
+            "created_at": current_setting.created_at.isoformat() if current_setting.created_at else None,
+        }
+
+    course = session.get(Course, course_id)
+    course_profile = {
+        "title": course.title if course else None,
+        "description": getattr(course, "description", "") if course else None,
+        "cover_url": getattr(course, "cover_url", None) if course else None,
+        "status": course.status.value if course else None,
+        "invite_code": course.invite_code if course else None,
+    } if course else None
+
+    return unified_response(
+        code=200,
+        message="获取设置页面聚合读模型成功",
+        data={
+            "course_id": course_id,
+            "course_profile": course_profile,
+            "current_setting": setting_view,
+            "capabilities": context.capabilities,
+            "can_edit": context.allows("course.edit"),
+            "can_publish": context.allows("course.publish"),
+            "viewer_role": context.role.value if context.role else None,
+        },
+    )
+
+
+# ==================== 阶段3：课程建设聚合读模型 ====================
+
+@router.get("/course/{course_id}/build")
+async def get_course_build_view(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """课程建设聚合读模型
+
+    返回七步建设状态 + 质量门禁 + 发布历史。
+    跨课程严格隔离；非教师角色 can_build=False。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.view")
+
+    from app.services.course_build_service import course_build_service
+
+    # 教师视角自动初始化草稿
+    if context.allows("course.edit"):
+        course_build_service.get_or_create_draft(
+            session,
+            course_id=course_id,
+            actor_user_id=context.user_id,
+        )
+        session.commit()
+
+    build_view = course_build_service.get_build_view(session, course_id=course_id)
+    build_view["can_build"] = context.allows("course.edit")
+    build_view["can_publish"] = context.allows("course.publish")
+    build_view["viewer_role"] = context.role.value if context.role else None
+    return unified_response(
+        code=200,
+        message="获取课程建设聚合读模型成功",
+        data=build_view,
     )
