@@ -1,5 +1,6 @@
 import hashlib
-from datetime import datetime, timedelta
+import logging
+from datetime import datetime, timedelta, timezone
 from typing import Optional, List, Dict, Any
 
 from fastapi import Depends, HTTPException, status, Request
@@ -8,6 +9,8 @@ from jose import JWTError, jwt
 import bcrypt
 
 from app.core.config import settings, UserRole
+
+logger = logging.getLogger(__name__)
 
 pwd_context = bcrypt
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/user/login", auto_error=False)
@@ -26,12 +29,11 @@ def _sort_params(params: Dict[str, Any]) -> str:
     sorted_keys = sorted(filtered_params.keys())
     result = "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])
     
-    # 调试日志
-    print(f"【后端签名调试】原始参数: {params}")
-    print(f"【后端签名调试】过滤后参数: {filtered_params}")
-    print(f"【后端签名调试】排序后键: {sorted_keys}")
-    print(f"【后端签名调试】拼接字符串: {result}")
-    
+    logger.debug("MD5签名校验 - 原始参数: %s", params)
+    logger.debug("MD5签名校验 - 过滤后参数: %s", filtered_params)
+    logger.debug("MD5签名校验 - 排序后键: %s", sorted_keys)
+    logger.debug("MD5签名校验 - 拼接字符串: %s", result)
+
     return result
 
 
@@ -59,11 +61,10 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
     raw_sign = f"{sorted_str}{settings.STATIC_KEY}{time_str}"
     calculated_enc = hashlib.md5(raw_sign.encode("utf-8")).hexdigest().upper()
     
-    # 调试日志
-    print(f"【后端签名调试】原始签名串: {raw_sign}")
-    print(f"【后端签名调试】计算的签名: {calculated_enc}")
-    print(f"【后端签名调试】收到的签名: {enc.upper()}")
-    print(f"【后端签名调试】签名匹配: {calculated_enc == enc.upper()}")
+    logger.debug("MD5签名校验 - 原始签名串: %s", raw_sign)
+    logger.debug("MD5签名校验 - 计算的签名: %s", calculated_enc)
+    logger.debug("MD5签名校验 - 收到的签名: %s", enc.upper())
+    logger.debug("MD5签名校验 - 签名匹配: %s", calculated_enc == enc.upper())
     
     return calculated_enc == enc.upper()
 
@@ -71,10 +72,10 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
 async def verify_request_signature(request: Request):
 
     current_path = request.url.path
-    print(f"【后端签名调试】收到请求: {request.method} {current_path}")
+    logger.debug("MD5签名校验 - 收到请求: %s %s", request.method, current_path)
 
     if any(current_path.startswith(path) for path in settings.NO_AUTH_WHITELIST):
-        print(f"【后端签名调试】白名单路径，跳过验证")
+        logger.debug("MD5签名校验 - 白名单路径，跳过验证")
         return True
 
     # ----------------------------------分割线--------------------------------
@@ -86,19 +87,19 @@ async def verify_request_signature(request: Request):
     # 获取POST参数
     if request.method in ["POST", "PUT", "DELETE"]:
         content_type = request.headers.get("content-type", "")
-        print(f"【后端签名调试】Content-Type: {content_type}")
+        logger.debug("MD5签名校验 - Content-Type: %s", content_type)
         if "application/json" in content_type:
             try:
                 body_json = await request.json()
-                print(f"【后端签名调试】POST JSON 数据: {body_json}")
+                logger.debug("MD5签名校验 - POST JSON 数据: %s", body_json)
                 all_params.update(body_json)
             except Exception as e:
-                print(f"【后端签名调试】读取 JSON 失败: {e}")
+                logger.debug("MD5签名校验 - 读取 JSON 失败: %s", e)
         elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
             form_data = await request.form()
             all_params.update(dict(form_data))
 
-    print(f"【后端签名调试】所有参数: {all_params}")
+    logger.debug("MD5签名校验 - 所有参数: %s", all_params)
 
     # 校验必填参数
     time_str = all_params.get("time")
@@ -134,7 +135,7 @@ def get_password_hash(password: str) -> str:
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.utcnow() + (
+    expire = datetime.now(timezone.utc) + (
         expires_delta or timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     )
     to_encode.update({"exp": expire})

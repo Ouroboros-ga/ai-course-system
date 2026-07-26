@@ -1,0 +1,818 @@
+"""阶段6 课程实验、Judge0 与 CodingAgent API
+
+契约来源：PageDesign前端API契约规划.md §3.7
+
+权限模型：
+- experiment.configure / experiment.assign：教师管理实验定义、版本、测试用例
+- experiment.run：学生创建尝试、提交代码、请求提示
+- experiment.view：学生/教师查看实验列表与详情
+- 跨课程严格隔离：所有查询都按 course_id 过滤
+- 学生只能看自己的尝试，教师只能管理所属课程实验
+- 最终评分型结果才产生 LearningEvidence；单次运行日志不直接修改认知状态
+- Judge0 不可用时课程学习页可以降级，且保留明确恢复提示
+"""
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel, Field
+from sqlmodel import Session
+
+from app.core.exceptions import unified_response
+from app.core.security import get_current_user
+from app.models.database import get_session
+from app.models.experiment_model import (
+    AttemptStatus,
+    CodingHintLevel,
+    ExperimentPublishStatus,
+    RunOutcome,
+)
+from app.services.course_access_service import require_course_permission
+from app.services.experiment_service import (
+    attempt_service,
+    coding_hint_service,
+    definition_service,
+    finalize_service,
+    run_service,
+    version_service,
+)
+
+
+experiment_router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# 请求 schema
+# ---------------------------------------------------------------------------
+
+
+class DefinitionCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+    description: str = Field(default="", max_length=4000)
+    language_whitelist: list[str] = Field(default_factory=list)
+    knowledge_node_ids: list[int] = Field(default_factory=list)
+    max_attempts: int = Field(default=3, ge=1, le=20)
+    cooldown_minutes: int = Field(default=30, ge=0, le=1440)
+
+
+class DefinitionUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    description: Optional[str] = Field(default=None, max_length=4000)
+    language_whitelist: Optional[list[str]] = None
+    max_attempts: Optional[int] = Field(default=None, ge=1, le=20)
+    cooldown_minutes: Optional[int] = Field(default=None, ge=0, le=1440)
+
+
+class VersionCreateRequest(BaseModel):
+    label: str = Field(default="", max_length=100)
+    cpu_time_limit: int = Field(default=5, ge=1, le=30)
+    memory_limit: int = Field(default=128_000, ge=16_000, le=512_000)
+    wall_time_limit: int = Field(default=10, ge=1, le=60)
+    max_processes: int = Field(default=30, ge=1, le=120)
+    max_file_size: int = Field(default=1024, ge=1, le=8192)
+    passing_score: float = Field(default=0.6, ge=0.0, le=1.0)
+    writes_formal_evidence: bool = True
+    test_cases: list[dict] = Field(default_factory=list)
+    activate: bool = True
+
+
+class AttemptCreateRequest(BaseModel):
+    return_anchor: dict = Field(default_factory=dict)
+
+
+class RunCreateRequest(BaseModel):
+    language: str = Field(min_length=1, max_length=50)
+    source_code: str = Field(min_length=1, max_length=100_000)
+
+
+class HintRequest(BaseModel):
+    hint_level: CodingHintLevel
+    reason_codes: list[str] = Field(default_factory=list)
+    full_solution_allowed: bool = False
+    hint_text: str = Field(default="", max_length=10_000)
+    hint_metadata: dict = Field(default_factory=dict)
+
+
+class HintReviewRequest(BaseModel):
+    decision: str = Field(..., description="approved|rejected")
+    note: str = Field(default="", max_length=2000)
+
+
+# ---------------------------------------------------------------------------
+# 序列化
+# ---------------------------------------------------------------------------
+
+
+def _serialize_definition(d) -> dict[str, Any]:
+    return {
+        "experiment_id": d.experiment_id,
+        "course_id": d.course_id,
+        "title": d.title,
+        "description": d.description,
+        "language_whitelist": d.language_whitelist,
+        "default_version_id": d.default_version_id,
+        "publish_status": d.publish_status.value,
+        "knowledge_node_ids": d.knowledge_node_ids,
+        "max_attempts": d.max_attempts,
+        "cooldown_minutes": d.cooldown_minutes,
+        "created_by": d.created_by,
+        "created_at": d.created_at.isoformat() if d.created_at else None,
+        "updated_at": d.updated_at.isoformat() if d.updated_at else None,
+    }
+
+
+def _serialize_version(v, include_test_cases: bool = False, include_hidden: bool = False) -> dict[str, Any]:
+    data = {
+        "version_id": v.version_id,
+        "experiment_id": v.experiment_id,
+        "course_id": v.course_id,
+        "version_number": v.version_number,
+        "label": v.label,
+        "cpu_time_limit": v.cpu_time_limit,
+        "memory_limit": v.memory_limit,
+        "wall_time_limit": v.wall_time_limit,
+        "max_processes": v.max_processes,
+        "max_file_size": v.max_file_size,
+        "enable_network": v.enable_network,
+        "passing_score": v.passing_score,
+        "writes_formal_evidence": v.writes_formal_evidence,
+        "is_locked": v.is_locked,
+        "is_active": v.is_active,
+        "created_by": v.created_by,
+        "created_at": v.created_at.isoformat() if v.created_at else None,
+    }
+    if include_test_cases:
+        # include_hidden 仅教师视图；学生视图始终 False
+        data["test_cases"] = [
+            _serialize_test_case(tc, reveal_hidden=include_hidden)
+            for tc in v._test_cases
+        ] if hasattr(v, "_test_cases") else []
+    return data
+
+
+def _serialize_test_case(tc, reveal_hidden: bool = False) -> dict[str, Any]:
+    """序列化测试用例；隐藏测试仅教师可见，学生视图不暴露 stdin/expected"""
+    if tc.is_hidden and not reveal_hidden:
+        return {
+            "case_id": tc.case_id,
+            "case_name": f"hidden_{tc.case_id[:8]}",
+            "is_hidden": True,
+            "weight": tc.weight,
+        }
+    return {
+        "case_id": tc.case_id,
+        "case_name": tc.case_name,
+        "is_hidden": tc.is_hidden,
+        "weight": tc.weight,
+        "stdin": tc.stdin,
+        "expected_stdout": tc.expected_stdout,
+        "time_limit_override": tc.time_limit_override,
+    }
+
+
+def _serialize_attempt(a, include_student_id: bool = True) -> dict[str, Any]:
+    data = {
+        "attempt_id": a.attempt_id,
+        "experiment_id": a.experiment_id,
+        "version_id": a.version_id,
+        "course_id": a.course_id,
+        "status": a.status.value,
+        "started_at": a.started_at.isoformat() if a.started_at else None,
+        "submitted_at": a.submitted_at.isoformat() if a.submitted_at else None,
+        "finalized_at": a.finalized_at.isoformat() if a.finalized_at else None,
+        "final_score": a.final_score,
+        "passed": a.passed,
+        "evidence_id": a.evidence_id,
+        "return_anchor": a.return_anchor,
+        "created_at": a.created_at.isoformat() if a.created_at else None,
+        "updated_at": a.updated_at.isoformat() if a.updated_at else None,
+    }
+    if include_student_id:
+        data["student_id"] = a.student_id
+    return data
+
+
+def _serialize_run(r) -> dict[str, Any]:
+    return {
+        "run_id": r.run_id,
+        "attempt_id": r.attempt_id,
+        "course_id": r.course_id,
+        "language": r.language,
+        "outcome": r.outcome.value,
+        "passed_count": r.passed_count,
+        "total_count": r.total_count,
+        "score": r.score,
+        "compile_ok": r.compile_ok,
+        "compile_message": r.compile_message,
+        "runtime_message": r.runtime_message,
+        "test_summary": r.test_summary,
+        "cpu_time_ms": r.cpu_time_ms,
+        "wall_time_ms": r.wall_time_ms,
+        "memory_kb": r.memory_kb,
+        "error_code": r.error_code,
+        "error_message": r.error_message,
+        "task_id": r.task_id,
+        "submitted_at": r.submitted_at.isoformat() if r.submitted_at else None,
+        "finished_at": r.finished_at.isoformat() if r.finished_at else None,
+    }
+
+
+def _serialize_hint(h) -> dict[str, Any]:
+    return {
+        "hint_id": h.hint_id,
+        "attempt_id": h.attempt_id,
+        "course_id": h.course_id,
+        "student_id": h.student_id,
+        "hint_level": h.hint_level.value,
+        "reason_codes": h.reason_codes,
+        "policy_version": h.policy_version,
+        "hint_text": h.hint_text,
+        "hint_metadata": h.hint_metadata,
+        "fulfilled_by_agent": h.fulfilled_by_agent,
+        "teacher_reviewed": h.teacher_reviewed,
+        "teacher_decision": h.teacher_decision,
+        "teacher_note": h.teacher_note,
+        "requested_at": h.requested_at.isoformat() if h.requested_at else None,
+        "fulfilled_at": h.fulfilled_at.isoformat() if h.fulfilled_at else None,
+        "reviewed_at": h.reviewed_at.isoformat() if h.reviewed_at else None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 实验定义
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.get("/course/{course_id}/definitions")
+async def list_definitions(
+    course_id: int,
+    publish_status: Optional[ExperimentPublishStatus] = Query(None),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出课程实验定义。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    # 学生仅看 published；教师可看全部
+    if context.role is None or context.role.value == "student":
+        publish_status = ExperimentPublishStatus.PUBLISHED
+    definitions = definition_service.list_definitions(
+        session, course_id=course_id, publish_status=publish_status,
+    )
+    return unified_response(
+        code=200,
+        message="获取实验列表成功",
+        data={
+            "course_id": course_id,
+            "items": [_serialize_definition(d) for d in definitions],
+            "total": len(definitions),
+        },
+    )
+
+
+@experiment_router.post("/course/{course_id}/definitions")
+async def create_definition(
+    course_id: int,
+    payload: DefinitionCreateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师创建实验定义。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    user_id = int(current_user["user_id"])
+    definition = definition_service.create_definition(
+        session,
+        course_id=course_id,
+        title=payload.title,
+        description=payload.description,
+        language_whitelist=payload.language_whitelist,
+        knowledge_node_ids=payload.knowledge_node_ids,
+        max_attempts=payload.max_attempts,
+        cooldown_minutes=payload.cooldown_minutes,
+        created_by=user_id,
+    )
+    session.commit()
+    session.refresh(definition)
+    return unified_response(
+        code=201,
+        message="实验定义已创建",
+        data=_serialize_definition(definition),
+    )
+
+
+@experiment_router.get("/course/{course_id}/definitions/{experiment_id}")
+async def get_definition(
+    course_id: int,
+    experiment_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取实验定义详情（学生视图不返回 draft/archived）。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    definition = definition_service.get_definition(
+        session, course_id=course_id, experiment_id=experiment_id,
+    )
+    if context.role is None or context.role.value == "student":
+        if definition.publish_status != ExperimentPublishStatus.PUBLISHED:
+            from app.core.exceptions import reject_resource_not_found
+            reject_resource_not_found(f"实验 {experiment_id} 不存在")
+    return unified_response(
+        code=200,
+        message="获取实验详情成功",
+        data=_serialize_definition(definition),
+    )
+
+
+@experiment_router.put("/course/{course_id}/definitions/{experiment_id}")
+async def update_definition(
+    course_id: int,
+    experiment_id: str,
+    payload: DefinitionUpdateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师更新实验定义。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    definition = definition_service.update_definition(
+        session,
+        course_id=course_id,
+        experiment_id=experiment_id,
+        title=payload.title,
+        description=payload.description,
+        language_whitelist=payload.language_whitelist,
+        max_attempts=payload.max_attempts,
+        cooldown_minutes=payload.cooldown_minutes,
+    )
+    session.commit()
+    session.refresh(definition)
+    return unified_response(
+        code=200,
+        message="实验定义已更新",
+        data=_serialize_definition(definition),
+    )
+
+
+@experiment_router.post("/course/{course_id}/definitions/{experiment_id}/publish")
+async def publish_definition(
+    course_id: int,
+    experiment_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师发布实验。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    definition = definition_service.publish_definition(
+        session, course_id=course_id, experiment_id=experiment_id,
+    )
+    session.commit()
+    session.refresh(definition)
+    return unified_response(
+        code=200,
+        message="实验已发布",
+        data=_serialize_definition(definition),
+    )
+
+
+@experiment_router.post("/course/{course_id}/definitions/{experiment_id}/archive")
+async def archive_definition(
+    course_id: int,
+    experiment_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师归档实验。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    definition = definition_service.archive_definition(
+        session, course_id=course_id, experiment_id=experiment_id,
+    )
+    session.commit()
+    session.refresh(definition)
+    return unified_response(
+        code=200,
+        message="实验已归档",
+        data=_serialize_definition(definition),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 实验版本与测试用例
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.get("/{experiment_id}/versions")
+async def list_versions(
+    experiment_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出实验版本。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    versions = version_service.list_versions(
+        session, course_id=course_id, experiment_id=experiment_id,
+    )
+    # 学生仅看 active 版本
+    if context.role is None or context.role.value == "student":
+        versions = [v for v in versions if v.is_active]
+    return unified_response(
+        code=200,
+        message="获取实验版本列表成功",
+        data={
+            "course_id": course_id,
+            "experiment_id": experiment_id,
+            "items": [_serialize_version(v) for v in versions],
+            "total": len(versions),
+        },
+    )
+
+
+@experiment_router.post("/{experiment_id}/versions")
+async def create_version(
+    experiment_id: str,
+    payload: VersionCreateRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师创建实验版本。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    user_id = int(current_user["user_id"])
+    version = version_service.create_version(
+        session,
+        course_id=course_id,
+        experiment_id=experiment_id,
+        label=payload.label,
+        cpu_time_limit=payload.cpu_time_limit,
+        memory_limit=payload.memory_limit,
+        wall_time_limit=payload.wall_time_limit,
+        max_processes=payload.max_processes,
+        max_file_size=payload.max_file_size,
+        passing_score=payload.passing_score,
+        writes_formal_evidence=payload.writes_formal_evidence,
+        created_by=user_id,
+        test_cases=payload.test_cases,
+        activate=payload.activate,
+    )
+    session.commit()
+    session.refresh(version)
+    return unified_response(
+        code=201,
+        message="实验版本已创建",
+        data=_serialize_version(version),
+    )
+
+
+@experiment_router.get("/versions/{version_id}")
+async def get_version(
+    version_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取实验版本详情（含测试用例；学生视图不暴露隐藏测试）。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    version = version_service.get_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    # 教师可见隐藏测试，学生不可见
+    include_hidden = context.role is not None and context.role.value != "student"
+    test_cases = version_service.list_test_cases(
+        session, course_id=course_id, version_id=version_id,
+        include_hidden=include_hidden,
+    )
+    data = _serialize_version(version)
+    data["test_cases"] = [_serialize_test_case(tc, reveal_hidden=include_hidden) for tc in test_cases]
+    return unified_response(code=200, message="获取实验版本详情成功", data=data)
+
+
+@experiment_router.put("/versions/{version_id}")
+async def update_version(
+    version_id: str,
+    payload: VersionCreateRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师更新实验版本（仅未锁定时；锁定后需先解锁）。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    version = version_service.get_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    if version.is_locked:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("版本已锁定，无法修改")
+    # 版本不可变，更新通过创建新版本实现；这里仅更新可变元数据
+    version.label = payload.label
+    version.passing_score = payload.passing_score
+    version.writes_formal_evidence = payload.writes_formal_evidence
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    return unified_response(
+        code=200,
+        message="实验版本已更新",
+        data=_serialize_version(version),
+    )
+
+
+@experiment_router.post("/versions/{version_id}/activate")
+async def activate_version(
+    version_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师激活实验版本。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    version = version_service.activate_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    session.commit()
+    session.refresh(version)
+    return unified_response(
+        code=200,
+        message="实验版本已激活",
+        data=_serialize_version(version),
+    )
+
+
+@experiment_router.post("/versions/{version_id}/lock")
+async def lock_version(
+    version_id: str,
+    course_id: int = Query(...),
+    locked: bool = Query(True),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师锁定/解锁实验版本。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    version = version_service.lock_version(
+        session, course_id=course_id, version_id=version_id, locked=locked,
+    )
+    session.commit()
+    session.refresh(version)
+    return unified_response(
+        code=200,
+        message="版本已锁定" if locked else "版本已解锁",
+        data=_serialize_version(version),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 学生尝试
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.post("/{experiment_id}/attempts")
+async def create_attempt(
+    experiment_id: str,
+    payload: AttemptCreateRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生创建一次实验尝试。"""
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    attempt = attempt_service.create_attempt(
+        session,
+        course_id=course_id,
+        experiment_id=experiment_id,
+        student_id=user_id,
+        return_anchor=payload.return_anchor,
+    )
+    session.commit()
+    session.refresh(attempt)
+    return unified_response(
+        code=201,
+        message="实验尝试已创建",
+        data=_serialize_attempt(attempt),
+    )
+
+
+@experiment_router.get("/attempts/{attempt_id}")
+async def get_attempt(
+    attempt_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """获取尝试详情（学生只能看自己的尝试）。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    # 学生只能看自己
+    student_filter = None
+    if context.role is not None and context.role.value == "student":
+        student_filter = int(current_user["user_id"])
+    attempt = attempt_service.get_attempt(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=student_filter,
+    )
+    # 学生视图不暴露 student_id（即使有权限）
+    include_student_id = context.role is not None and context.role.value != "student"
+    return unified_response(
+        code=200,
+        message="获取尝试详情成功",
+        data=_serialize_attempt(attempt, include_student_id=include_student_id),
+    )
+
+
+@experiment_router.post("/attempts/{attempt_id}/submit")
+async def submit_attempt(
+    attempt_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生提交尝试（标记为已提交，等待 finalize）。"""
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    attempt = attempt_service.get_attempt(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
+    )
+    attempt = attempt_service.submit_attempt(
+        session, course_id=course_id, attempt_id=attempt_id,
+    )
+    session.commit()
+    session.refresh(attempt)
+    return unified_response(
+        code=200,
+        message="尝试已提交",
+        data=_serialize_attempt(attempt),
+    )
+
+
+# ---------------------------------------------------------------------------
+# 代码运行
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.post("/attempts/{attempt_id}/runs")
+async def create_run(
+    attempt_id: str,
+    payload: RunCreateRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """学生提交代码；异步执行运行（沙箱不可用时降级）。"""
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    run = await run_service.create_run(
+        session,
+        course_id=course_id,
+        attempt_id=attempt_id,
+        language=payload.language,
+        source_code=payload.source_code,
+        student_id=user_id,
+    )
+    session.commit()
+    session.refresh(run)
+    return unified_response(
+        code=201,
+        message="运行已完成" if run.outcome == RunOutcome.ACCEPTED else "运行结果已生成",
+        data=_serialize_run(run),
+    )
+
+
+@experiment_router.get("/attempts/{attempt_id}/runs")
+async def list_runs(
+    attempt_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出尝试的运行记录。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    student_filter = None
+    if context.role is not None and context.role.value == "student":
+        student_filter = int(current_user["user_id"])
+    runs = run_service.list_runs(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=student_filter,
+    )
+    return unified_response(
+        code=200,
+        message="获取运行列表成功",
+        data={
+            "course_id": course_id,
+            "attempt_id": attempt_id,
+            "items": [_serialize_run(r) for r in runs],
+            "total": len(runs),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# 终结化
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.post("/attempts/{attempt_id}/finalize")
+async def finalize_attempt(
+    attempt_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """通过评分规则后形成正式评分型 Evidence；失败不写掌握结论。"""
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    attempt = finalize_service.finalize_attempt(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
+    )
+    session.commit()
+    session.refresh(attempt)
+    return unified_response(
+        code=200,
+        message="尝试已终结化" if attempt.status == AttemptStatus.FINALIZED else "尝试未通过评分",
+        data=_serialize_attempt(attempt),
+    )
+
+
+# ---------------------------------------------------------------------------
+# CodingAgent 分层提示
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.post("/attempts/{attempt_id}/agent-hints")
+async def request_hint(
+    attempt_id: str,
+    payload: HintRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """CodingAgent 受控分层提示，不能执行任意前端代码。"""
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    hint = coding_hint_service.request_hint(
+        session,
+        course_id=course_id,
+        attempt_id=attempt_id,
+        student_id=user_id,
+        hint_level=payload.hint_level,
+        reason_codes=payload.reason_codes,
+        full_solution_allowed=payload.full_solution_allowed,
+        hint_text=payload.hint_text,
+        hint_metadata=payload.hint_metadata,
+    )
+    session.commit()
+    session.refresh(hint)
+    return unified_response(
+        code=201,
+        message="提示已请求",
+        data=_serialize_hint(hint),
+    )
+
+
+@experiment_router.get("/attempts/{attempt_id}/agent-hints")
+async def list_hints(
+    attempt_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """列出尝试的提示记录（学生只能看自己的）。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    student_filter = None
+    if context.role is not None and context.role.value == "student":
+        student_filter = int(current_user["user_id"])
+    hints = coding_hint_service.list_hints(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=student_filter,
+    )
+    return unified_response(
+        code=200,
+        message="获取提示列表成功",
+        data={
+            "course_id": course_id,
+            "attempt_id": attempt_id,
+            "items": [_serialize_hint(h) for h in hints],
+            "total": len(hints),
+        },
+    )
+
+
+@experiment_router.post("/agent-hints/{hint_id}/review")
+async def review_hint(
+    hint_id: str,
+    payload: HintReviewRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """教师审核 CodingAgent 提示。"""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    user_id = int(current_user["user_id"])
+    hint = coding_hint_service.review_hint(
+        session,
+        course_id=course_id,
+        hint_id=hint_id,
+        decision=payload.decision,
+        reviewer_id=user_id,
+        note=payload.note,
+    )
+    session.commit()
+    session.refresh(hint)
+    return unified_response(
+        code=200,
+        message="提示已审核",
+        data=_serialize_hint(hint),
+    )
