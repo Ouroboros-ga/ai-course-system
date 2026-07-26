@@ -73,6 +73,7 @@ from app.api.v1.endpoints import (
     web_research,       # G7 WebResearchTool
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
+    tasks,              # 阶段0 统一任务中心
 )
 from app.schemas import UnifiedResponse
 
@@ -197,6 +198,9 @@ app.include_router(retrieval_demo.router, prefix="/api/v1/retrieval-demo", tags=
 # TeachingAgent is intentionally independent from V1 chat. It returns 503 until
 # an application composition root injects scope-checked domain Ports.
 app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=["TeachingAgent"])
+
+# 阶段0：统一任务中心（OCR/解析/图谱/媒体/实验/同步等长任务的持久化与状态机）
+app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务中心"])
 
 
 # 根路径健康检查

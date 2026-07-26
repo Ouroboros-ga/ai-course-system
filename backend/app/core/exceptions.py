@@ -51,6 +51,65 @@ class BusinessException(HTTPException):
         super().__init__(status_code=code, detail=message)
 
 
+# ---------------------------------------------------------------------------
+# 统一错误码工厂（阶段0）
+# 与 PageDesign前端API契约规划.md §1.3 对齐：每个错误码对应明确的 HTTP 与前端行为。
+# 路由调用 reject(...) 抛出 HTTPException，detail 形如
+# {"error_code": "VALIDATION_FAILED", "message": "...", "details": {...}}
+# global_exception_handler 会把它放进响应 data，前端按 error_code 路由恢复动作。
+# ---------------------------------------------------------------------------
+
+def reject(status_code: int, error_code: str, message: str, *, details: dict | None = None) -> None:
+    """Raise a structured HTTPException aligned with the unified error contract.
+
+    任何课程接口在权限/状态/依赖失败时调用此函数，而不是返回 200+错误文案。
+    """
+    payload: dict = {"error_code": error_code, "message": message}
+    if details:
+        payload["details"] = details
+    raise HTTPException(status_code=status_code, detail=payload)
+
+
+def reject_auth_required(message: str = "需要登录") -> None:
+    reject(401, "AUTH_REQUIRED", message)
+
+
+def reject_course_access_denied(message: str = "课程访问被拒绝") -> None:
+    reject(403, "COURSE_ACCESS_DENIED", message)
+
+
+def reject_capability_disabled(message: str = "课程未启用该能力") -> None:
+    reject(403, "CAPABILITY_DISABLED", message)
+
+
+def reject_course_not_found(message: str = "课程不存在") -> None:
+    reject(404, "COURSE_NOT_FOUND", message)
+
+
+def reject_resource_not_found(message: str = "资源不存在") -> None:
+    reject(404, "RESOURCE_NOT_FOUND", message)
+
+
+def reject_version_conflict(message: str = "资源版本冲突", *, details: dict | None = None) -> None:
+    reject(409, "VERSION_CONFLICT", message, details=details)
+
+
+def reject_state_conflict(message: str = "状态冲突", *, details: dict | None = None) -> None:
+    reject(409, "STATE_CONFLICT", message, details=details)
+
+
+def reject_validation_failed(message: str = "请求参数校验失败", *, details: dict | None = None) -> None:
+    reject(422, "VALIDATION_FAILED", message, details=details)
+
+
+def reject_budget_exceeded(message: str = "预算超限，请稍后重试") -> None:
+    reject(429, "BUDGET_EXCEEDED", message)
+
+
+def reject_dependency_unavailable(message: str = "外部依赖不可用，已降级") -> None:
+    reject(503, "DEPENDENCY_UNAVAILABLE", message)
+
+
 def handle_api_errors(default_message: str = "操作失败", log_prefix: str = ""):
     """
     API 端点异常处理装饰器

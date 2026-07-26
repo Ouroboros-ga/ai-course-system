@@ -354,6 +354,14 @@ def run_migrations():
         if _table_exists(cursor, "agent_log_migration_records"):
             redacted_events, redacted_traces = _minimize_agent_logs(cursor)
             applied += redacted_events + redacted_traces
+        # 阶段0：登记本次迁移批次到 schema_migration_records 受版本控制账本。
+        # 该表由 SQLModel create_all 创建；此处仅幂等登记，不执行结构变更。
+        applied += _record_migration_batch(
+            cursor,
+            batch_id="stage0-task-center-v1",
+            name="阶段0：统一任务中心与迁移底座（tasks/task_events/task_resource_links/idempotency_keys/schema_migration_records）",
+            rollback_notes="阶段0仅新增表，不修改既有表结构；回滚只需 DROP 这五张表，不影响历史数据。",
+        )
         conn.commit()
         logger.info("Applied %s migration/backfill operation(s)", applied)
     except Exception:
@@ -362,3 +370,35 @@ def run_migrations():
         raise
     finally:
         conn.close()
+
+
+def _record_migration_batch(
+    cursor: sqlite3.Cursor,
+    *,
+    batch_id: str,
+    name: str,
+    rollback_notes: str = "",
+    applied_rows: int = 0,
+) -> int:
+    """幂等登记一次迁移批次到 schema_migration_records。
+
+    返回 1 表示新插入，0 表示已存在。该函数不执行任何结构变更，仅维护账本。
+    """
+    if not _table_exists(cursor, "schema_migration_records"):
+        # 表尚未创建（极旧版本或首次启动前），跳过登记；create_all 后下次运行会补登。
+        return 0
+    cursor.execute(
+        "SELECT 1 FROM schema_migration_records WHERE batch_id = ?",
+        (batch_id,),
+    )
+    if cursor.fetchone() is not None:
+        return 0
+    cursor.execute(
+        """
+        INSERT INTO schema_migration_records
+            (batch_id, name, applied_at, status, rollback_notes, preflight_ok, applied_rows, created_at)
+        VALUES (?, ?, CURRENT_TIMESTAMP, 'applied', ?, 1, ?, CURRENT_TIMESTAMP)
+        """,
+        (batch_id, name, rollback_notes, applied_rows),
+    )
+    return 1

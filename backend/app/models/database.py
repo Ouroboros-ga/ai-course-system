@@ -91,6 +91,13 @@ from app.models.agent_log import (
     AgentConversationSession,
     AgentLogMigrationRecord,
 )
+from app.models.task_model import (
+    SchemaMigrationRecord,
+    TaskRecord,
+    TaskEventRecord,
+    TaskResourceLinkRecord,
+    IdempotencyKeyRecord,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

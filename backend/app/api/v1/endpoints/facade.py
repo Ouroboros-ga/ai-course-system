@@ -4,6 +4,8 @@
 前端应消费此层而非直接消费零散的 V1 端点响应。
 
 ViewModel 契约:
+  - HomeViewModel: 工作首页聚合视图，含继续学习、我建设的、待审核、系统任务
+  - CourseCard: 课程列表读模型（learning/building/hall 视图）
   - CourseOverviewViewModel: 课程概览，含能力声明、统一 document_id、结构摘要
   - CitationViewModel: 引用定位，含稳定 document_id (UUID)
   - QuizViewModel: 题目视图，含知识点关联和发布状态
@@ -39,8 +41,78 @@ from app.services.course_access_service import (
     serialize_access_context,
     ALL_PERMISSIONS,
 )
+from app.services.facade_home_service import facade_home_service
 
 router = APIRouter(tags=["Phase A 门面层"])
+
+
+# ==================== HomeViewModel（阶段1） ====================
+
+@router.get("/home")
+async def get_home(
+    mode: Optional[str] = Query(None, description="强制视图：student 或 teacher"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """工作首页聚合 ViewModel
+
+    返回 HomeViewModel，包含：
+    - active_mode: student/teacher/mixed，由当前用户的课程成员关系推导
+    - continue_learning: 最近学习的课程（学生视角）
+    - building_courses: 我建设的课程（教师视角）
+    - pending_reviews: 待处理审核（教师视角）
+    - system_tasks: 失败/进行中任务（所有视角）
+
+    所有数据基于 CourseMembership 严格隔离，跨用户/跨课程不可见。
+    """
+    data = facade_home_service.get_home(
+        session,
+        current_user,
+        mode=mode,
+    )
+    return unified_response(
+        code=200,
+        message="获取工作首页成功",
+        data=data,
+    )
+
+
+# ==================== CourseCard（阶段1课程列表读模型） ====================
+
+@router.get("/courses")
+async def list_courses(
+    view: str = Query(..., description="列表视图：learning/building/hall"),
+    cursor: Optional[str] = Query(None, description="上一页返回的 next_cursor"),
+    page_size: int = Query(20, ge=1, le=100, description="每页数量，1..100"),
+    query: Optional[str] = Query(None, description="按标题模糊搜索"),
+    subject: Optional[str] = Query(None, description="按学科过滤（hall 视图预留）"),
+    status: Optional[str] = Query(None, description="按状态过滤（learning/building 视图）"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """课程列表读模型
+
+    - view=learning: 当前用户作为学生可学习的课程
+    - view=building: 当前用户有 course.edit 或建设职责的课程
+    - view=hall: 课程大厅，仅返回允许发现的已发布课程；草稿不进入大厅
+
+    返回 items / next_cursor / total / has_next；游标分页协议与 §1.2 一致。
+    """
+    data = facade_home_service.list_courses(
+        session,
+        current_user,
+        view=view,
+        cursor=cursor,
+        page_size=page_size,
+        query=query,
+        subject=subject,
+        status_filter=status,
+    )
+    return unified_response(
+        code=200,
+        message="获取课程列表成功",
+        data=data,
+    )
 
 
 # ==================== CourseOverviewViewModel ====================
