@@ -76,6 +76,8 @@ from app.api.v1.endpoints import (
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_build,       # 阶段3 课程建设工作流
+    document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
+    practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
 )
 from app.schemas import UnifiedResponse
 
@@ -236,6 +238,33 @@ app.include_router(
     course_build.course_build_router,
     prefix="/api/v1/course-build",
     tags=["阶段3 课程建设工作流"],
+)
+
+# 阶段4：课程材料解析、Evidence、Citation 与图谱治理
+# - 解析流水线、候选证据审核、学生可读 Citation、图谱候选批次 路由挂载到 /api/v1/graph 下，
+#   与已有 graph_production 路由共享前缀，但路由路径不冲突。
+app.include_router(
+    document_parse.document_parse_router,
+    prefix="/api/v1/graph",
+    tags=["阶段4 材料解析与证据治理"],
+)
+# - facade: 知识空间首屏与课程健康度 路由挂载到 /api/v1/facade 下
+app.include_router(
+    document_parse.facade_knowledge_router,
+    prefix="/api/v1/facade",
+    tags=["阶段4 知识空间与健康度门面"],
+)
+
+# 阶段5：题库、练习推荐、正式学习证据
+app.include_router(
+    practice_recommendation.practice_router,
+    prefix="/api/v1/practice",
+    tags=["阶段5 题库与练习推荐"],
+)
+app.include_router(
+    practice_recommendation.facade_learning_actions_router,
+    prefix="/api/v1/facade",
+    tags=["阶段5 学习动作门面"],
 )
 
 

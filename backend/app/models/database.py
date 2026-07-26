@@ -115,6 +115,25 @@ from app.models.course_build_model import (
     CourseRelease,
     CourseReleaseArtifact,
 )
+# 阶段4：课程材料解析、Evidence、Citation 与图谱候选
+from app.models.document_parse_model import (
+    DocumentParseRun,
+    DocumentBlock,
+    EvidenceSpan,
+    EvidenceCitation,
+    EvidenceRenderAsset,
+    GraphCandidateBatch,
+    GraphReleaseLink,
+)
+# 阶段5：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
+from app.models.practice_recommendation_model import (
+    QuestionImportRun,
+    QuestionGenerationDraft,
+    QuestionRecommendationRun,
+    QuestionRecommendationItem,
+    AssessmentPolicy,
+    LearningEvidenceLink,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

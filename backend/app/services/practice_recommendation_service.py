@@ -1,0 +1,837 @@
+"""阶段5 服务层：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
+
+完成"题库优先检索 → 无匹配题则约束生成草稿 → 教师审核/发布"的编排链路。
+
+关键约束：
+- AI 生成草稿**不可直接面向学生发布**：必须经教师审核升级为 QuestionBankItem 后才能进入推荐池
+- 每次推荐携带 policy_version, reason_codes, evidence_refs, confidence, six_dimensions, question_source
+- 数据不足返回 unknown / evidence_needed，不把提问次数或观看时长当掌握度
+- 未归属、未映射、未发布、教师拒绝的题目不能被学生检索或推荐
+- 跨课程严格隔离：所有查询都按 course_id 过滤
+"""
+from __future__ import annotations
+
+import uuid
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+from sqlmodel import Session, select
+
+from app.core.exceptions import (
+    reject_course_access_denied,
+    reject_resource_not_found,
+    reject_state_conflict,
+    reject_validation_failed,
+)
+from app.models.cognitive_state_model import (
+    CognitiveState,
+    COGNITIVE_POLICY_VERSION,
+    LearningEvidenceRecord,
+)
+from app.models.practice_recommendation_model import (
+    AssessmentPolicy,
+    AssessmentPurpose,
+    EvidenceLinkContext,
+    GenerationDraftStatus,
+    ImportRunStatus,
+    LearningEvidenceLink,
+    QuestionGenerationDraft,
+    QuestionImportRun,
+    QuestionRecommendationItem,
+    QuestionRecommendationRun,
+    QuestionSource,
+    RecommendationRunStatus,
+)
+from app.models.question_bank_model import (
+    QuestionBankItem,
+    QuestionStatus,
+)
+
+
+# ---------------------------------------------------------------------------
+# 题库导入服务
+# ---------------------------------------------------------------------------
+
+
+PRACTICE_POLICY_VERSION = "practice-recommendation-v1.0"
+
+
+class QuestionImportService:
+    """Excel 题库导入服务
+
+    - 创建导入运行（关联任务中心 task_id）
+    - 行级失败明细写入 failure_details，便于审计
+    - 导入的题目 import_batch_id 与本运行 run_id 对齐
+    """
+
+    def create_run(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        source_file: str,
+        source_object_key: str = "",
+        total_rows: int = 0,
+        initiated_by: int,
+        task_id: Optional[str] = None,
+    ) -> QuestionImportRun:
+        run = QuestionImportRun(
+            course_id=course_id,
+            task_id=task_id,
+            source_file=source_file,
+            source_object_key=source_object_key,
+            total_rows=total_rows,
+            status=ImportRunStatus.PENDING,
+            initiated_by=initiated_by,
+        )
+        session.add(run)
+        session.flush()
+        return run
+
+    def mark_running(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+    ) -> QuestionImportRun:
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        if run.status != ImportRunStatus.PENDING:
+            reject_state_conflict(
+                f"导入运行状态 {run.status.value} 不能转移到 running",
+                details={"current_status": run.status.value},
+            )
+        run.status = ImportRunStatus.RUNNING
+        run.started_at = datetime.utcnow()
+        run.updated_at = datetime.utcnow()
+        session.add(run)
+        session.flush()
+        return run
+
+    def mark_succeeded(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        imported_count: int = 0,
+        skipped_count: int = 0,
+    ) -> QuestionImportRun:
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        run.status = ImportRunStatus.SUCCEEDED
+        run.imported_count = imported_count
+        run.skipped_count = skipped_count
+        run.finished_at = datetime.utcnow()
+        run.updated_at = datetime.utcnow()
+        session.add(run)
+        session.flush()
+        return run
+
+    def mark_failed(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        error_code: str,
+        error_message: str,
+        failure_details: Optional[list] = None,
+    ) -> QuestionImportRun:
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        run.status = ImportRunStatus.FAILED
+        run.error_code = error_code
+        run.error_message = error_message[:500]
+        if failure_details is not None:
+            run.failure_details = failure_details
+        run.finished_at = datetime.utcnow()
+        run.updated_at = datetime.utcnow()
+        session.add(run)
+        session.flush()
+        return run
+
+    def _require_run(self, session: Session, *, run_id: str, course_id: int) -> QuestionImportRun:
+        run = session.exec(
+            select(QuestionImportRun).where(
+                QuestionImportRun.run_id == run_id,
+                QuestionImportRun.course_id == course_id,
+            )
+        ).first()
+        if run is None:
+            reject_resource_not_found("题库导入运行不存在")
+        return run
+
+    def list_runs(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        status: Optional[ImportRunStatus] = None,
+    ) -> list[QuestionImportRun]:
+        stmt = select(QuestionImportRun).where(
+            QuestionImportRun.course_id == course_id
+        ).order_by(QuestionImportRun.created_at.desc())
+        if status is not None:
+            stmt = stmt.where(QuestionImportRun.status == status)
+        return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# AI 生成草稿服务
+# ---------------------------------------------------------------------------
+
+
+class QuestionGenerationDraftService:
+    """AI 约束生成草稿服务
+
+    严格规则：
+    - 草稿不可直接面向学生发布
+    - 教师审核通过后升级为 QuestionBankItem（status=published 或 teacher_edited）
+    - 上下文（图谱/认知状态）变化后标记为 stale，提示教师复核
+    """
+
+    def create_draft(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        node_id: Optional[int],
+        question_type: str,
+        question_text: str,
+        answer: str,
+        options: Optional[list] = None,
+        difficulty: str = "medium",
+        category: str = "",
+        generation_purpose: str = "diagnose",
+        cognitive_snapshot: Optional[dict] = None,
+        six_dimensions: Optional[dict] = None,
+        reason_codes: Optional[list] = None,
+        evidence_refs: Optional[list] = None,
+        confidence: float = 0.0,
+        generated_by: int,
+        policy_version: str = PRACTICE_POLICY_VERSION,
+        model_version: str = "question-gen-v1.0",
+    ) -> QuestionGenerationDraft:
+        draft = QuestionGenerationDraft(
+            course_id=course_id,
+            node_id=node_id,
+            question_type=question_type,
+            question_text=question_text,
+            answer=answer,
+            options=options or [],
+            difficulty=difficulty,
+            category=category,
+            generation_purpose=generation_purpose,
+            cognitive_snapshot=cognitive_snapshot or {},
+            six_dimensions=six_dimensions or {},
+            reason_codes=reason_codes or [],
+            evidence_refs=evidence_refs or [],
+            confidence=confidence,
+            policy_version=policy_version,
+            model_version=model_version,
+            status=GenerationDraftStatus.DRAFT,
+            generated_by=generated_by,
+        )
+        session.add(draft)
+        session.flush()
+        return draft
+
+    def approve_draft(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        draft_id: str,
+        reviewed_by: int,
+        review_comment: str = "",
+        publish_status: QuestionStatus = QuestionStatus.PUBLISHED,
+    ) -> tuple[QuestionGenerationDraft, QuestionBankItem]:
+        """教师审核通过：升级草稿为正式 QuestionBankItem。
+
+        - 草稿状态必须是 DRAFT 或 STALE（stale 允许重新审核）
+        - 已 APPROVED/REJECTED 不可重复审核
+        - 升级后的题目 is_latest=True, status=publish_status
+        """
+        draft = self._require_draft(session, draft_id=draft_id, course_id=course_id)
+        if draft.status == GenerationDraftStatus.APPROVED:
+            reject_state_conflict("草稿已审核通过，无需重复审核")
+        if draft.status == GenerationDraftStatus.REJECTED:
+            reject_state_conflict("草稿已被拒绝，不可再通过")
+
+        # 创建正式 QuestionBankItem
+        question = QuestionBankItem(
+            question_text=draft.question_text,
+            answer=draft.answer,
+            options=draft.options,
+            question_type=draft.question_type,
+            difficulty=draft.difficulty,
+            category=draft.category,
+            course_id=course_id,
+            knowledge_node_ids=[draft.node_id] if draft.node_id else [],
+            status=publish_status,
+            version=1,
+            is_latest=True,
+            generated_by="ai_constrained",
+            generation_metadata={
+                "draft_id": draft.draft_id,
+                "generation_purpose": draft.generation_purpose,
+                "six_dimensions": draft.six_dimensions,
+                "reason_codes": draft.reason_codes,
+                "evidence_refs": draft.evidence_refs,
+                "confidence": draft.confidence,
+                "policy_version": draft.policy_version,
+                "model_version": draft.model_version,
+            },
+            created_by=reviewed_by,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+            published_at=datetime.utcnow() if publish_status == QuestionStatus.PUBLISHED else None,
+            published_by=reviewed_by if publish_status == QuestionStatus.PUBLISHED else None,
+        )
+        session.add(question)
+        session.flush()
+
+        draft.status = GenerationDraftStatus.APPROVED
+        draft.reviewed_by = reviewed_by
+        draft.reviewed_at = datetime.utcnow()
+        draft.review_comment = review_comment
+        draft.upgraded_question_id = question.id
+        draft.updated_at = datetime.utcnow()
+        session.add(draft)
+        session.flush()
+        return draft, question
+
+    def reject_draft(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        draft_id: str,
+        rejected_by: int,
+        review_comment: str = "",
+    ) -> QuestionGenerationDraft:
+        draft = self._require_draft(session, draft_id=draft_id, course_id=course_id)
+        if draft.status in (GenerationDraftStatus.APPROVED, GenerationDraftStatus.REJECTED):
+            reject_state_conflict(
+                f"草稿状态 {draft.status.value} 不可拒绝",
+                details={"current_status": draft.status.value},
+            )
+        draft.status = GenerationDraftStatus.REJECTED
+        draft.reviewed_by = rejected_by
+        draft.reviewed_at = datetime.utcnow()
+        draft.review_comment = review_comment
+        draft.updated_at = datetime.utcnow()
+        session.add(draft)
+        session.flush()
+        return draft
+
+    def mark_stale(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        draft_id: str,
+        stale_reason: str,
+    ) -> QuestionGenerationDraft:
+        """上下文变化后标记草稿为 stale，提示教师复核。"""
+        draft = self._require_draft(session, draft_id=draft_id, course_id=course_id)
+        if draft.status != GenerationDraftStatus.DRAFT:
+            reject_state_conflict(
+                f"草稿状态 {draft.status.value} 不可标记 stale",
+                details={"current_status": draft.status.value},
+            )
+        draft.status = GenerationDraftStatus.STALE
+        draft.stale_reason = stale_reason
+        draft.stale_at = datetime.utcnow()
+        draft.updated_at = datetime.utcnow()
+        session.add(draft)
+        session.flush()
+        return draft
+
+    def _require_draft(
+        self, session: Session, *, draft_id: str, course_id: int,
+    ) -> QuestionGenerationDraft:
+        draft = session.exec(
+            select(QuestionGenerationDraft).where(
+                QuestionGenerationDraft.draft_id == draft_id,
+                QuestionGenerationDraft.course_id == course_id,
+            )
+        ).first()
+        if draft is None:
+            reject_resource_not_found("AI 生成草稿不存在")
+        return draft
+
+    def list_drafts(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        status: Optional[GenerationDraftStatus] = None,
+        node_id: Optional[int] = None,
+    ) -> list[QuestionGenerationDraft]:
+        stmt = select(QuestionGenerationDraft).where(
+            QuestionGenerationDraft.course_id == course_id
+        )
+        if status is not None:
+            stmt = stmt.where(QuestionGenerationDraft.status == status)
+        if node_id is not None:
+            stmt = stmt.where(QuestionGenerationDraft.node_id == node_id)
+        stmt = stmt.order_by(QuestionGenerationDraft.created_at.desc())
+        return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# 个性化练习推荐服务
+# ---------------------------------------------------------------------------
+
+
+class PracticeRecommendationService:
+    """个性化练习推荐服务
+
+    编排流程：
+    1. 题库优先检索：从课程已发布题库按 node_id/difficulty/purpose 检索
+    2. 无匹配题时约束生成草稿：调用 QuestionGenerationDraftService 创建草稿，
+       **不直接对学生发布**
+    3. 教师审核草稿：升级为正式 QuestionBankItem 后才能进入学生可见池
+    4. 学生开始推荐项：标记 is_started，转化为 QuestionAttempt（不在本服务实现）
+
+    每次推荐运行承载 policy_version, six_dimensions, reason_codes, evidence_refs,
+    confidence，便于审计与回放。
+    """
+
+    # 默认每个推荐运行产生的推荐项数量
+    DEFAULT_ITEM_COUNT = 3
+    # 低置信度阈值
+    LOW_CONFIDENCE_THRESHOLD = 0.4
+
+    def create_recommendation(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        node_id: Optional[int] = None,
+        purpose: str = "diagnose",
+        cognitive_state: Optional[CognitiveState] = None,
+        item_count: int = DEFAULT_ITEM_COUNT,
+        allow_generation: bool = True,
+    ) -> QuestionRecommendationRun:
+        """创建一次推荐运行。
+
+        - 题库优先检索：命中已发布题库题
+        - 无匹配题且 allow_generation=True：创建 AI 草稿（不直接发布）
+        - 每个推荐项携带 question_source=bank|generated_draft
+        - 数据不足时返回 unknown 语义（confidence < LOW_CONFIDENCE_THRESHOLD）
+        """
+        recommendation_id = "rec_" + uuid.uuid4().hex
+        now = datetime.utcnow()
+
+        # 抽取认知快照与六维诊断
+        cognitive_snapshot: dict = {}
+        six_dimensions: dict = {}
+        reason_codes: list = []
+        evidence_refs: list = []
+        confidence = 0.0
+        if cognitive_state is not None:
+            cognitive_snapshot = {
+                "observed_performance_score": cognitive_state.observed_performance_score,
+                "evidence_confidence": cognitive_state.evidence_confidence,
+                "confusion_risk": cognitive_state.confusion_risk,
+                "inquiry_depth": cognitive_state.inquiry_depth,
+                "hint_dependency": cognitive_state.hint_dependency,
+                "explanation_need": cognitive_state.explanation_need,
+                "mastery_level": cognitive_state.mastery_level,
+                "sample_size": cognitive_state.sample_size,
+                "policy_version": cognitive_state.policy_version,
+            }
+            six_dimensions = {
+                "observed_performance_score": cognitive_state.observed_performance_score,
+                "evidence_confidence": cognitive_state.evidence_confidence,
+                "confusion_risk": cognitive_state.confusion_risk,
+                "inquiry_depth": cognitive_state.inquiry_depth,
+                "hint_dependency": cognitive_state.hint_dependency,
+                "explanation_need": cognitive_state.explanation_need,
+            }
+            reason_codes = list(cognitive_state.reason_codes or [])
+            evidence_refs = list(cognitive_state.evidence_refs or [])
+            confidence = cognitive_state.evidence_confidence or 0.0
+            # 数据不足时增加 reason_code
+            if cognitive_state.sample_size is not None and cognitive_state.sample_size < 3:
+                if "insufficient_data" not in reason_codes:
+                    reason_codes.append("insufficient_data")
+            if (cognitive_state.evidence_confidence or 0) < self.LOW_CONFIDENCE_THRESHOLD:
+                if "evidence_needed" not in reason_codes:
+                    reason_codes.append("evidence_needed")
+
+        run = QuestionRecommendationRun(
+            course_id=course_id,
+            student_id=student_id,
+            node_id=node_id,
+            recommendation_id=recommendation_id,
+            purpose=purpose,
+            policy_version=PRACTICE_POLICY_VERSION,
+            six_dimensions=six_dimensions,
+            reason_codes=reason_codes,
+            evidence_refs=evidence_refs,
+            confidence=confidence,
+            cognitive_state_id=cognitive_state.id if cognitive_state else None,
+            status=RecommendationRunStatus.PENDING,
+            started_at=now,
+        )
+        session.add(run)
+        session.flush()
+
+        # 题库优先检索
+        items_created = 0
+        bank_questions = self._search_bank_questions(
+            session,
+            course_id=course_id,
+            node_id=node_id,
+            limit=item_count,
+        )
+        for idx, q in enumerate(bank_questions[:item_count]):
+            item = QuestionRecommendationItem(
+                run_id=run.run_id,
+                course_id=course_id,
+                student_id=student_id,
+                recommendation_id=recommendation_id,
+                question_source=QuestionSource.BANK,
+                question_id=q.id,
+                node_id=node_id,
+                reason_codes=reason_codes,
+                evidence_refs=evidence_refs,
+                confidence=confidence,
+                order_index=idx,
+            )
+            session.add(item)
+            items_created += 1
+
+        # 题库不足时生成草稿（不直接发布）
+        if items_created < item_count and allow_generation:
+            remaining = item_count - items_created
+            for i in range(remaining):
+                draft = question_generation_draft_service.create_draft(
+                    session,
+                    course_id=course_id,
+                    node_id=node_id,
+                    question_type="short_answer",
+                    question_text=f"[AI 生成草稿 #{i+1}] 针对 {purpose} 的题目",
+                    answer="[草稿答案待教师完善]",
+                    difficulty="medium",
+                    generation_purpose=purpose,
+                    cognitive_snapshot=cognitive_snapshot,
+                    six_dimensions=six_dimensions,
+                    reason_codes=reason_codes,
+                    evidence_refs=evidence_refs,
+                    confidence=confidence,
+                    generated_by=student_id,  # 由学生触发生成，但草稿不直接对学生可见
+                )
+                item = QuestionRecommendationItem(
+                    run_id=run.run_id,
+                    course_id=course_id,
+                    student_id=student_id,
+                    recommendation_id=recommendation_id,
+                    question_source=QuestionSource.GENERATED_DRAFT,
+                    generation_draft_id=draft.draft_id,
+                    node_id=node_id,
+                    reason_codes=reason_codes,
+                    evidence_refs=evidence_refs,
+                    confidence=confidence,
+                    order_index=items_created + i,
+                )
+                session.add(item)
+                items_created += 1
+
+        run.item_count = items_created
+        run.status = RecommendationRunStatus.SUCCEEDED if items_created > 0 else RecommendationRunStatus.PARTIAL_SUCCESS
+        run.finished_at = datetime.utcnow()
+        run.updated_at = datetime.utcnow()
+        session.add(run)
+        session.flush()
+        return run
+
+    def _search_bank_questions(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        node_id: Optional[int],
+        limit: int,
+    ) -> list[QuestionBankItem]:
+        """从课程已发布题库检索题目。
+
+        严格规则：
+        - 仅 status=PUBLISHED 且 is_latest=True 的题目
+        - 未归属、未映射、未发布、教师拒绝的题目不能被检索
+        - 跨课程严格隔离
+        """
+        stmt = select(QuestionBankItem).where(
+            QuestionBankItem.course_id == course_id,
+            QuestionBankItem.status == QuestionStatus.PUBLISHED,
+            QuestionBankItem.is_latest == True,  # noqa: E712
+        )
+        if node_id is not None:
+            stmt = stmt.where(QuestionBankItem.knowledge_node_ids.contains([node_id]))
+        stmt = stmt.limit(limit)
+        return list(session.exec(stmt).all())
+
+    def get_recommendation(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        recommendation_id: str,
+        student_id: Optional[int] = None,
+    ) -> tuple[QuestionRecommendationRun, list[QuestionRecommendationItem]]:
+        """获取推荐运行及其推荐项。
+
+        - 跨用户拒绝：student_id 不匹配时返回 404
+        - 学生只能看自己的推荐
+        """
+        run = session.exec(
+            select(QuestionRecommendationRun).where(
+                QuestionRecommendationRun.recommendation_id == recommendation_id,
+                QuestionRecommendationRun.course_id == course_id,
+            )
+        ).first()
+        if run is None:
+            reject_resource_not_found("推荐运行不存在")
+        if student_id is not None and run.student_id != student_id:
+            # 跨用户访问拒绝，统一返回 404 避免泄露存在性
+            reject_resource_not_found("推荐运行不存在")
+        items = list(session.exec(
+            select(QuestionRecommendationItem).where(
+                QuestionRecommendationItem.run_id == run.run_id,
+                QuestionRecommendationItem.course_id == course_id,
+            ).order_by(QuestionRecommendationItem.order_index)
+        ).all())
+        return run, items
+
+    def start_recommendation_item(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        recommendation_id: str,
+        item_id: str,
+        student_id: int,
+    ) -> QuestionRecommendationItem:
+        """学生开始作答推荐项。
+
+        - 标记 is_started=True
+        - bank 题目可正常开始；generated_draft 题目需教师先升级（否则拒绝）
+        """
+        run, items = self.get_recommendation(
+            session,
+            course_id=course_id,
+            recommendation_id=recommendation_id,
+            student_id=student_id,
+        )
+        item = next((it for it in items if it.item_id == item_id), None)
+        if item is None:
+            reject_resource_not_found("推荐项不存在")
+        if item.is_started:
+            reject_state_conflict("推荐项已开始")
+        if item.question_source == QuestionSource.GENERATED_DRAFT:
+            # 草稿未升级前不可开始作答
+            draft = session.exec(
+                select(QuestionGenerationDraft).where(
+                    QuestionGenerationDraft.draft_id == item.generation_draft_id,
+                    QuestionGenerationDraft.course_id == course_id,
+                )
+            ).first()
+            if draft is None or draft.status != GenerationDraftStatus.APPROVED:
+                reject_state_conflict(
+                    "AI 生成草稿尚未经教师审核，不可开始作答",
+                    details={"draft_status": draft.status.value if draft else "missing"},
+                )
+            # 升级后改写 question_id
+            item.question_id = draft.upgraded_question_id
+        item.is_started = True
+        item.started_at = datetime.utcnow()
+        item.updated_at = datetime.utcnow()
+        session.add(item)
+        session.flush()
+        return item
+
+    def list_student_recommendations(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        node_id: Optional[int] = None,
+        limit: int = 20,
+    ) -> list[QuestionRecommendationRun]:
+        """学生查询自己的推荐历史。"""
+        stmt = select(QuestionRecommendationRun).where(
+            QuestionRecommendationRun.course_id == course_id,
+            QuestionRecommendationRun.student_id == student_id,
+        )
+        if node_id is not None:
+            stmt = stmt.where(QuestionRecommendationRun.node_id == node_id)
+        stmt = stmt.order_by(QuestionRecommendationRun.created_at.desc()).limit(limit)
+        return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# 评分策略服务
+# ---------------------------------------------------------------------------
+
+
+class AssessmentPolicyService:
+    """评分策略版本化服务
+
+    策略与课程严格隔离：所有查询都按 course_id 过滤，避免课程 A 的策略
+    泄漏到课程 B 的策略列表。
+    """
+
+    def get_or_create_policy(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        purpose: AssessmentPurpose,
+        created_by: int,
+        policy_version: str = "assessment-policy-v1.0",
+        passing_score: float = 0.6,
+        confidence_threshold: float = 0.5,
+        writes_formal_evidence: bool = True,
+        max_attempts_per_node: int = 3,
+        cooldown_minutes: int = 30,
+        rules: Optional[dict] = None,
+    ) -> AssessmentPolicy:
+        existing = session.exec(
+            select(AssessmentPolicy).where(
+                AssessmentPolicy.course_id == course_id,
+                AssessmentPolicy.purpose == purpose,
+                AssessmentPolicy.policy_version == policy_version,
+            )
+        ).first()
+        if existing is not None:
+            return existing
+        policy = AssessmentPolicy(
+            course_id=course_id,
+            purpose=purpose,
+            policy_version=policy_version,
+            passing_score=passing_score,
+            confidence_threshold=confidence_threshold,
+            writes_formal_evidence=writes_formal_evidence,
+            max_attempts_per_node=max_attempts_per_node,
+            cooldown_minutes=cooldown_minutes,
+            rules=rules or {},
+            created_by=created_by,
+        )
+        session.add(policy)
+        session.flush()
+        return policy
+
+    def get_policy(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        purpose: AssessmentPurpose,
+    ) -> AssessmentPolicy:
+        policy = session.exec(
+            select(AssessmentPolicy).where(
+                AssessmentPolicy.course_id == course_id,
+                AssessmentPolicy.purpose == purpose,
+                AssessmentPolicy.is_active == True,  # noqa: E712
+            ).order_by(AssessmentPolicy.created_at.desc())
+        ).first()
+        if policy is None:
+            reject_resource_not_found(f"未找到 {purpose.value} 的有效评分策略")
+        return policy
+
+    def list_policies(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        purpose: Optional[AssessmentPurpose] = None,
+    ) -> list[AssessmentPolicy]:
+        stmt = select(AssessmentPolicy).where(
+            AssessmentPolicy.course_id == course_id,
+            AssessmentPolicy.is_active == True,  # noqa: E712
+        )
+        if purpose is not None:
+            stmt = stmt.where(AssessmentPolicy.purpose == purpose)
+        stmt = stmt.order_by(AssessmentPolicy.purpose, AssessmentPolicy.created_at.desc())
+        return list(session.exec(stmt).all())
+
+
+# ---------------------------------------------------------------------------
+# 学习证据链接服务
+# ---------------------------------------------------------------------------
+
+
+class LearningEvidenceLinkService:
+    """学习证据链接服务
+
+    将 LearningEvidenceRecord 链接到推荐运行、题目尝试、动作完成等上下文，
+    便于"为什么这条证据被采纳"的追溯。
+    """
+
+    def link(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        evidence_id: str,
+        context_type: EvidenceLinkContext,
+        context_id: str,
+        context_snapshot: Optional[dict] = None,
+    ) -> LearningEvidenceLink:
+        link = LearningEvidenceLink(
+            course_id=course_id,
+            student_id=student_id,
+            evidence_id=evidence_id,
+            context_type=context_type,
+            context_id=context_id,
+            context_snapshot=context_snapshot or {},
+        )
+        session.add(link)
+        session.flush()
+        return link
+
+    def list_links_for_evidence(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        evidence_id: str,
+    ) -> list[LearningEvidenceLink]:
+        return list(session.exec(
+            select(LearningEvidenceLink).where(
+                LearningEvidenceLink.course_id == course_id,
+                LearningEvidenceLink.evidence_id == evidence_id,
+            ).order_by(LearningEvidenceLink.linked_at.desc())
+        ).all())
+
+    def list_links_for_context(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        context_type: EvidenceLinkContext,
+        context_id: str,
+    ) -> list[LearningEvidenceLink]:
+        return list(session.exec(
+            select(LearningEvidenceLink).where(
+                LearningEvidenceLink.course_id == course_id,
+                LearningEvidenceLink.context_type == context_type,
+                LearningEvidenceLink.context_id == context_id,
+            ).order_by(LearningEvidenceLink.linked_at.desc())
+        ).all())
+
+
+# ---------------------------------------------------------------------------
+# 单例
+# ---------------------------------------------------------------------------
+
+question_import_service = QuestionImportService()
+question_generation_draft_service = QuestionGenerationDraftService()
+practice_recommendation_service = PracticeRecommendationService()
+assessment_policy_service = AssessmentPolicyService()
+learning_evidence_link_service = LearningEvidenceLinkService()

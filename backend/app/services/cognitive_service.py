@@ -391,9 +391,11 @@ def record_scored_evidence(
     event_refs = [attempt.source_event_id] if attempt.source_event_id else []
 
     # Stable, idempotent evidence_id derived from the source event so that
-    # re-grading the same attempt updates rather than duplicates.
+    # re-grading the same attempt updates rather than duplicates. The ``ev_``
+    # prefix keeps the identifier aligned with the rest of the practice
+    # evidence domain (e.g. learning actions, recommendation links).
     stable_key = f"question_attempt|{attempt.source_event_id or attempt.id}|quiz_accuracy"
-    evidence_id = str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key))
+    evidence_id = "ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex
 
     existing = session.exec(
         select(LearningEvidenceRecord).where(
