@@ -156,6 +156,21 @@ from app.models.resource_model import (
     LabEnrollment,
     LabRecord,
 )
+# 阶段8：媒体生成任务、发布版本、播放能力配置与教师数字人资产中心
+from app.models.media_release_model import (
+    MediaGenerationJob,
+    MediaGenerationAttempt,
+    MediaRelease,
+    MediaReleaseCue,
+    PlaybackCapabilityProfile,
+)
+from app.models.avatar_model import (
+    AvatarProfile,
+    AvatarSourceMedia,
+    AvatarPreparationJob,
+    AvatarAssetPackage,
+    CourseAvatarBinding,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

@@ -101,6 +101,9 @@ backend/p1_shadow_course_evidence/
 # Local Judge0 source checkout used only for container deployment.
 deploy/judge0-source/
 
+# 阶段8 本地对象存储目录（仅开发环境运行时数据，不入 Git）
+backend/media/
+
 # Local presentation inspection artifacts
 /presentation.pptx
 /presentation_modified.pptx

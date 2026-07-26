@@ -146,6 +146,17 @@ class Settings(BaseSettings):
     MAX_AUDIO_ASSET_SIZE_MB: int = 50
 
     # --------------------------
+    # 阶段8 对象存储抽象配置
+    # 后端 local / oss；签名密钥用于受权限保护的媒体 URL
+    # --------------------------
+    OBJECT_STORAGE_BACKEND: str = "local"
+    OBJECT_STORAGE_SIGN_KEY: str = ""
+    MEDIA_UPLOAD_MAX_SIZE_MB: int = 500
+    AVATAR_PORTRAIT_VIDEO_MAX_MB: int = 200
+    AVATAR_PORTRAIT_VIDEO_MAX_DURATION_MS: int = 60_000
+    AVATAR_VOICE_SAMPLE_MAX_MB: int = 50
+
+    # --------------------------
     # 科大讯飞PPT生成API配置
     # --------------------------
     XFYUN_PPT_APP_ID: str = ""

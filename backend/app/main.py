@@ -291,6 +291,27 @@ app.include_router(
     tags=["阶段7 平台实验室"],
 )
 
+# 阶段8：媒体生成与发布（挂在 /api/v1/media 前缀下，与现有 media_timeline 共用）
+from app.api.v1.endpoints import media_release as media_release_endpoints  # noqa: E402
+app.include_router(
+    media_release_endpoints.media_release_router,
+    prefix="/api/v1/media",
+    tags=["阶段8 媒体生成与发布"],
+)
+
+# 阶段8：教师数字人资产中心
+from app.api.v1.endpoints import avatar as avatar_endpoints  # noqa: E402
+app.include_router(
+    avatar_endpoints.avatar_router,
+    prefix="/api/v1",
+    tags=["阶段8 教师数字人资产中心"],
+)
+app.include_router(
+    avatar_endpoints.course_avatar_router,
+    prefix="/api/v1",
+    tags=["阶段8 课程数字人绑定"],
+)
+
 
 # 根路径健康检查
 @app.get("/", tags=["健康检查"], response_model=UnifiedResponse)
