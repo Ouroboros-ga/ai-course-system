@@ -53,6 +53,10 @@ def test_route_contract_locks_known_non_openapi_catch_all(fastapi_app):
     expected_hidden.update({
         ("GET", "/api/v1/media/assets/{object_key:path}/content", "get_asset_content", "app.api.v1.endpoints.media_timeline"),
         ("GET", "/api/v1/media/assets/{object_key:path}", "get_asset", "app.api.v1.endpoints.media_timeline"),
+        # G5 storage admin: soft-delete/reactivate 同样使用 {object_key:path}
+        # 因为对象键可含斜杠；端点内部仍做平台管理员权限校验。
+        ("POST", "/api/v1/admin/storage/refs/{object_key:path}/reactivate", "reactivate_ref", "app.api.v1.endpoints.storage_admin"),
+        ("POST", "/api/v1/admin/storage/refs/{object_key:path}/soft-delete", "mark_soft_deleted", "app.api.v1.endpoints.storage_admin"),
     })
     assert {(row["method"], row["path"], row["endpoint"], row["module"]) for row in hidden_rows} == expected_hidden
 
