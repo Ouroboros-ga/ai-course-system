@@ -43,6 +43,10 @@ function handleSubmit() {
   send(props.ws.questionDraft.value)
 }
 
+function handleInput(e) {
+  props.ws.questionDraft.value = e.target.value
+}
+
 function retry(message) {
   if (message?.retryQuestion) send(message.retryQuestion)
 }
@@ -166,7 +170,7 @@ function formatTime(seconds) {
           maxlength="2000"
           placeholder="就当前知识点提问…（Enter 发送，Shift+Enter 换行）"
           aria-label="向课程智能体提问"
-          @input="(e) => (ws.questionDraft.value = e.target.value)"
+          @input="handleInput"
           @keydown.enter.exact.prevent="handleSubmit"
         />
         <button type="submit" class="sfx-agent-send"

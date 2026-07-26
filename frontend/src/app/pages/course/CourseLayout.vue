@@ -31,20 +31,21 @@ const analyticsEligible = computed(() => Boolean(state.access?.analytics_eligibl
 
 const course = computed(() => state.detail?.course ?? null)
 
-// L2 导航（§10.2/§10.3）。批次3：概览/学习/知识 均为真实页面；其余按
-// §1.5「暂时不可用但用户需要知道的可以禁用并说明」渲染为禁用态。
+// L2 导航（§10.2/§10.3）：学生 = 概览｜学习｜知识｜实验任务；
+// 教师追加 = 建设｜成员｜设置。建设/成员/设置仅对有 course.edit 的角色显示
+// （§1.5：完全无权访问的入口直接隐藏）。
 const navItems = computed(() => {
   const base = [
     { key: 'overview', label: '概览', to: `/app/course/${courseId.value}/overview`, enabled: true },
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
     { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
-    { key: 'experiments', label: '实验任务', enabled: false, reason: '课程实验将在后续切片上线' },
+    { key: 'experiments', label: '实验任务', to: `/app/course/${courseId.value}/experiments`, enabled: true },
   ]
   if (allowed.value['course.edit']) {
     base.push(
-      { key: 'build', label: '建设', enabled: false, reason: '课程建设将在后续切片上线' },
-      { key: 'members', label: '成员', enabled: false, reason: '成员管理将在后续切片上线' },
-      { key: 'settings', label: '设置', enabled: false, reason: '课程设置将在后续切片上线' },
+      { key: 'build', label: '建设', to: `/app/course/${courseId.value}/build`, enabled: true },
+      { key: 'members', label: '成员', to: `/app/course/${courseId.value}/members`, enabled: true },
+      { key: 'settings', label: '设置', to: `/app/course/${courseId.value}/settings`, enabled: true },
     )
   }
   return base
@@ -54,6 +55,10 @@ const activeKey = computed(() => {
   if (route.path.endsWith('/learn')) return 'learn'
   if (route.path.includes('/knowledge')) return 'knowledge'
   if (route.path.includes('/visualize')) return 'learn'
+  if (route.path.includes('/build')) return 'build'
+  if (route.path.includes('/experiments')) return 'experiments'
+  if (route.path.includes('/members')) return 'members'
+  if (route.path.includes('/settings')) return 'settings'
   return 'overview'
 })
 

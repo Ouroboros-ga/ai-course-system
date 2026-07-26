@@ -67,8 +67,7 @@ onMounted(load)
         <h1 class="sfx-t-title1">我学习的</h1>
         <p class="sfx-t-ui sfx-t-secondary">当前作为学生参与的课程</p>
       </div>
-      <!-- page-design §9.1 主操作是「加入课程」。加入抽屉属后续切片，
-           本切片不放无功能按钮（§1.5：未具备能力直接隐藏）。 -->
+      <!-- §9.1 主操作「加入课程」已上收到 CoursesLayout 的 L2 导航右侧（§4.3）。 -->
     </header>
 
     <SfxSkeleton v-if="status === 'loading'" :lines="4" block />

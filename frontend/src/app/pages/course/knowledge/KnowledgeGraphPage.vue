@@ -1,13 +1,13 @@
 <script setup>
 /**
- * 课程知识空间页（批次3，page-design §15）。
+ * 知识空间 · 结构视图（批次3，page-design §15.2）。
  *
  * 整合三块学生侧能力，提供统一入口：
  * - StudentGraphPanel：已发布图谱快照 + 一跳先修/后继 + 跳转锚点；
  * - CognitiveDashboard：六维认知状态（保留 null 语义，不武断判弱）；
  * - RecommendationCard 列表：基于策略版本的推荐，支持消费/锁定状态。
  *
- * 路由：/app/course/:courseId/knowledge/:nodeId?
+ * 路由：/app/course/:courseId/knowledge/graph/:nodeId?
  * - courseId 必填；
  * - nodeId 可选，存在时聚焦到该知识点并拉取相邻关系。
  *
@@ -20,7 +20,7 @@
  */
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft, Eye, Lightbulb, LoaderCircle, TriangleAlert } from 'lucide-vue-next'
+import { Eye, Lightbulb, LoaderCircle, TriangleAlert } from 'lucide-vue-next'
 import StudentGraphPanel from '@/features/student-graph/StudentGraphPanel.vue'
 import CognitiveDashboard from '@/components/cognitive/CognitiveDashboard.vue'
 import RecommendationCard from '@/features/student-learning/components/RecommendationCard.vue'
@@ -113,15 +113,11 @@ async function handleConsume(recommendation) {
 function handleJumpNode(node) {
   // 跳转到先修/后继节点：更新路由 nodeId，触发 StudentGraphPanel 重新加载相邻
   if (node?.id == null) return
-  router.push(`/app/course/${courseId.value}/knowledge/${node.id}`)
+  router.push(`/app/course/${courseId.value}/knowledge/graph/${node.id}`)
 }
 
 function handleReturnAnchor() {
   // 返回课程概览（无锚点时回退到概览）
-  router.push(`/app/course/${courseId.value}/overview`)
-}
-
-function backToOverview() {
   router.push(`/app/course/${courseId.value}/overview`)
 }
 
@@ -137,19 +133,6 @@ onMounted(() => {
 
 <template>
   <div class="sfx-knowledge">
-    <header class="sfx-knowledge__bar">
-      <button type="button" class="sfx-knowledge__back" @click="backToOverview">
-        <ArrowLeft :size="16" /> 返回概览
-      </button>
-      <div class="sfx-knowledge__title-block">
-        <h1 class="sfx-knowledge__title">课程知识空间</h1>
-        <p class="sfx-knowledge__subtitle">
-          <span v-if="isPreview">{{ previewRoleLabel }}预览视角（仅查看已发布图谱）</span>
-          <span v-else>基于已发布图谱快照与六维认知状态</span>
-        </p>
-      </div>
-    </header>
-
     <SfxError
       v-if="missingStudentIdentity"
       variant="error"
@@ -261,51 +244,6 @@ onMounted(() => {
   padding: 16px;
   min-height: 0;
   flex: 1;
-}
-
-.sfx-knowledge__bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--border-default, #e5e7eb);
-}
-
-.sfx-knowledge__back {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 6px;
-  background: var(--surface-panel, #fff);
-  color: var(--text-secondary, #374151);
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.sfx-knowledge__back:hover {
-  background: var(--surface-cool, #f5f5f5);
-}
-
-.sfx-knowledge__title-block {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sfx-knowledge__title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: 600;
-  color: var(--text-primary, #1f2937);
-}
-
-.sfx-knowledge__subtitle {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--text-secondary, #6b7280);
 }
 
 .sfx-knowledge__body {

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { GraduationCap, House, BookOpen, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle } from 'lucide-vue-next'
+import { GraduationCap, House, BookOpen, FlaskConical, FolderOpen, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -10,17 +10,25 @@ const counter = useCounterStore()
 
 const navItems = [
   { label: '首页', to: '/app', icon: House, exact: true },
-  { label: '我的课程', to: '/app/courses/learning', icon: BookOpen },
+  { label: '我的课程', to: '/app/courses/learning', icon: BookOpen, match: '/app/courses' },
+  { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
+  { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
 ]
 
-// page-design §2.1 的其余一级空间（实验室/资源库/智能体）尚无真实后端
-// 支撑，按 §1.5「未具备能力的入口直接隐藏」不在本切片渲染。
+// page-design §2.1「智能体」一级空间尚无对应页面与后端能力，
+// 按 §1.5「未具备能力的入口直接隐藏」不在本切片渲染。
 const adminItem = computed(() =>
   counter.isAdmin ? { label: '平台管理', to: '/admin', icon: ShieldCheck } : null
 )
 
 function isActive(item) {
-  return item.exact ? route.path === item.to : route.path.startsWith(item.to)
+  if (item.exact) return route.path === item.to
+  return route.path.startsWith(item.match ?? item.to)
+}
+
+// 通知入口（§4.2 右侧）：进入任务中心查看待办与系统任务
+function goTasks() {
+  router.push('/app/tasks/todo')
 }
 
 // B2 修复：账号头像菜单（§4.2 右侧）。下拉点击外部关闭 + Esc 关闭。
@@ -95,6 +103,16 @@ onBeforeUnmount(() => {
       </nav>
 
       <div ref="menuRef" class="sfx-l1nav-right">
+        <button
+          type="button"
+          class="sfx-l1nav-icon-btn"
+          :class="{ 'is-active': route.path.startsWith('/app/tasks') }"
+          aria-label="任务中心"
+          title="任务中心"
+          @click="goTasks"
+        >
+          <Bell :size="17" />
+        </button>
         <button
           type="button"
           class="sfx-l1nav-user-btn"
@@ -196,6 +214,19 @@ onBeforeUnmount(() => {
   gap: var(--space-3);
   position: relative;
 }
+
+.sfx-l1nav-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+}
+
+.sfx-l1nav-icon-btn:hover { background: var(--surface-cool); color: var(--ink-700); }
+.sfx-l1nav-icon-btn.is-active { color: var(--ink-900); background: var(--ink-100); }
 
 .sfx-l1nav-user-btn {
   display: inline-flex;

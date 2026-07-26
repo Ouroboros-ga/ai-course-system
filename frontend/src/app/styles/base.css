@@ -48,6 +48,169 @@
 .sfx-t-secondary { color: var(--text-secondary); }
 .sfx-mono { font-family: var(--font-mono); }
 
+/* ── 页面容器（§4.4 页面上下文区 + §5.1 浏览列表页模板） ── */
+.sfx-page {
+  width: 100%;
+  max-width: var(--content-max-width);
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-6) var(--space-16);
+}
+
+.sfx-page--narrow { max-width: 960px; }
+
+.sfx-page-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-6);
+}
+
+.sfx-page-header-sub {
+  margin-top: var(--space-1);
+}
+
+.sfx-page-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-shrink: 0;
+}
+
+/* ── 面板（design.md 4.5 主工作面板；卡片不是默认布局容器） ── */
+.sfx-panel {
+  background: var(--surface-panel);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+
+.sfx-panel + .sfx-panel { margin-top: var(--space-4); }
+
+.sfx-panel-title {
+  font-size: var(--title-3-size);
+  line-height: var(--title-3-line);
+  font-weight: var(--title-3-weight);
+  margin-bottom: var(--space-4);
+}
+
+/* ── 工具条（§6.5 FilterToolbar：搜索 → 筛选 → 排序 → 视图 → 批量） ── */
+.sfx-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.sfx-toolbar-spacer { flex: 1; }
+
+/* ── 表单控件（design.md 4.4：40px 高、10px 圆角、focus 2px 墨蓝） ── */
+.sfx-input,
+.sfx-select,
+.sfx-textarea {
+  width: 100%;
+  min-height: var(--control-height);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background: var(--surface-panel);
+  color: var(--text-primary);
+  font-size: var(--ui-md-size);
+  font-family: inherit;
+  transition: border-color var(--duration-fast) var(--ease-out);
+}
+
+.sfx-input:hover,
+.sfx-select:hover,
+.sfx-textarea:hover { border-color: var(--border-strong); }
+
+.sfx-input:focus,
+.sfx-select:focus,
+.sfx-textarea:focus {
+  outline: none;
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 2px var(--ink-100);
+}
+
+.sfx-input::placeholder,
+.sfx-textarea::placeholder { color: var(--text-muted); }
+
+.sfx-input:disabled,
+.sfx-select:disabled,
+.sfx-textarea:disabled {
+  background: var(--surface-cool);
+  color: var(--text-disabled);
+  cursor: not-allowed;
+}
+
+.sfx-textarea {
+  padding: var(--space-3);
+  line-height: var(--body-md-line);
+  resize: vertical;
+}
+
+.sfx-select {
+  appearance: none;
+  padding-right: var(--space-8);
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 18px) 50%, calc(100% - 13px) 50%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.sfx-input--sm { max-width: 260px; }
+
+/* ── 表格（design.md 4.8：表头弱背景、行高 44px、状态列图标+文字） ── */
+.sfx-table-wrap {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background: var(--surface-panel);
+  overflow: hidden;
+}
+
+.sfx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--ui-md-size);
+}
+
+.sfx-table th {
+  text-align: left;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-cool);
+  color: var(--text-secondary);
+  font-weight: var(--ui-md-weight);
+  font-size: var(--ui-sm-size);
+  border-bottom: 1px solid var(--border-default);
+  white-space: nowrap;
+}
+
+.sfx-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+  min-height: 44px;
+}
+
+.sfx-table tbody tr:last-child td { border-bottom: none; }
+
+.sfx-table tbody tr:hover { background: var(--surface-cool); }
+
+/* ── 描述列表（只读信息区） ── */
+.sfx-desc {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  row-gap: var(--space-3);
+  column-gap: var(--space-4);
+  font-size: var(--ui-md-size);
+}
+
+.sfx-desc dt { color: var(--text-muted); }
+.sfx-desc dd { margin: 0; color: var(--text-primary); }
+
 /* 减少动态效果（page-design §25） */
 @media (prefers-reduced-motion: reduce) {
   .sfx *, .sfx *::before, .sfx *::after {

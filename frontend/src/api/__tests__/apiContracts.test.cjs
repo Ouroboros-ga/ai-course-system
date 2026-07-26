@@ -298,13 +298,17 @@ test('backend: graph_production_service.py serialize_snapshot 返回 relations �
 // P1-3: 课程知识空间入口契约（路由 + 页面 + 导航）
 // ============================================================================
 
-test('router.js: 注册 /app/course/:courseId/knowledge/:nodeId? 路由', () => {
+test('router.js: 注册 /app/course/:courseId/knowledge/graph/:nodeId? 路由', () => {
   const src = read('frontend/src/app/router.js')
-  // 必须注册 knowledge 路由（含可选 nodeId）
-  assert.match(src, /path:\s*['"]knowledge\/:nodeId\?['"]/)
+  // 必须注册 knowledge 结构视图路由（含可选 nodeId）
+  assert.match(src, /path:\s*['"]graph\/:nodeId\?['"]/)
   assert.match(src, /name:\s*['"]app-course-knowledge['"]/)
-  // 必须指向 KnowledgeSpacePage
-  assert.match(src, /KnowledgeSpacePage\.vue/)
+  // 必须指向 KnowledgeGraphPage（知识空间 Local Rail 下的结构视图）
+  assert.match(src, /knowledge\/KnowledgeGraphPage\.vue/)
+  // 知识空间必须具备治理子路由：原文引用 / 候选审核 / 版本记录
+  assert.match(src, /knowledge\/KnowledgeEvidencePage\.vue/)
+  assert.match(src, /knowledge\/KnowledgeReviewsPage\.vue/)
+  assert.match(src, /knowledge\/KnowledgeSnapshotsPage\.vue/)
 })
 
 test('CourseLayout.vue: 启用"知识"导航项（不再 disabled）', () => {
@@ -319,8 +323,8 @@ test('CourseLayout.vue: 启用"知识"导航项（不再 disabled）', () => {
   assert.match(src, /route\.path\.includes\(['"]\/knowledge['"]\)/)
 })
 
-test('KnowledgeSpacePage.vue: 集成 StudentGraphPanel + CognitiveDashboard + RecommendationCard', () => {
-  const src = read('frontend/src/app/pages/course/KnowledgeSpacePage.vue')
+test('KnowledgeGraphPage.vue: 集成 StudentGraphPanel + CognitiveDashboard + RecommendationCard', () => {
+  const src = read('frontend/src/app/pages/course/knowledge/KnowledgeGraphPage.vue')
   // 必须集成三块组件
   assert.match(src, /import\s+StudentGraphPanel\s+from\s+['"]@\/features\/student-graph\/StudentGraphPanel\.vue['"]/)
   assert.match(src, /import\s+CognitiveDashboard\s+from\s+['"]@\/components\/cognitive\/CognitiveDashboard\.vue['"]/)
@@ -341,8 +345,8 @@ test('KnowledgeSpacePage.vue: 集成 StudentGraphPanel + CognitiveDashboard + Re
 // P1: 知识空间角色分流契约（教师预览不请求学生私有认知/推荐）
 // ============================================================================
 
-test('KnowledgeSpacePage.vue: 基于 analyticsEligible 分流，预览视角 studentId=null', () => {
-  const src = read('frontend/src/app/pages/course/KnowledgeSpacePage.vue')
+test('KnowledgeGraphPage.vue: 基于 analyticsEligible 分流，预览视角 studentId=null', () => {
+  const src = read('frontend/src/app/pages/course/knowledge/KnowledgeGraphPage.vue')
   // 必须注入 analyticsEligible
   assert.match(src, /inject\(['"]courseContext['"]\)/)
   assert.match(src, /analyticsEligible/)

@@ -132,10 +132,7 @@ onMounted(load)
           <SfxCapabilityTag level="experimental" />
         </h2>
         <span v-if="status === 'ready'" class="sfx-t-caption">
-          {{ citations.length }} 条引用 · {{ spans.length }} 条证据锚点<template v-if="staleCount"> · {{ staleCount }} 条来源已更新</template><template v-if="verifiedCount"> · {{ verifiedCount }} 条已校验</template>
-        </span>
-        <span v-else-if="validateMeta.abstain && status === 'ready'" class="sfx-t-caption sfx-citation-abstain">
-          校验受限：{{ validateMeta.abstainReason || '后端无法校验' }}
+          {{ citations.length }} 条引用 · {{ spans.length }} 条证据锚点<template v-if="staleCount"> · {{ staleCount }} 条来源已更新</template><template v-if="verifiedCount"> · {{ verifiedCount }} 条已校验</template><span v-if="validateMeta.abstain" class="sfx-citation-abstain"> · 校验受限：{{ validateMeta.abstainReason || '后端无法校验' }}</span>
         </span>
       </div>
     </header>
