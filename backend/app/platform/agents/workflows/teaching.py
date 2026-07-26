@@ -268,19 +268,25 @@ def build_teaching_workflow(tools: TeachingTools):
                     proposal_type="web_research", tool_name="web_research",
                     proposed_action={"query_length": len(str(state.get("user_message", "")))},
                 )
-                # 提案 pending 时仍执行 web research，但标记为待确认；教师可后续拒绝
                 pending = [*state.get("pending_proposals", []), dict(proposal)]
                 state_updates: dict[str, Any] = {
                     "pending_proposals": pending,
                     "trace": _trace(state, "research_web", proposal_id=proposal.get("proposal_id")),
                 }
-                # 如果提案需要确认且未批准，跳过实际 web research 执行
+                # 高风险动作 fail-closed：提案需要确认且未批准时，跳过实际 web research 执行
                 if proposal.get("requires_confirmation") and proposal.get("status") == "pending":
                     state_updates["web_research_results"] = None
                     state_updates["warnings"] = [*state.get("warnings", []), "WEB_RESEARCH_PENDING_TEACHER_CONFIRMATION"]
                     return state_updates
-            except Exception:  # noqa: BLE001 -- 安全阀失败不阻断主流程
-                pass
+            except Exception:  # noqa: BLE001 -- 安全阀自身失败时 fail-closed
+                # 安全阀不可用时不得继续执行高风险 web research；
+                # 主流程继续（Q&A 不受影响），但该高风险工具被降级跳过。
+                payload = _degrade(state, "web_research", "SAFETY_VALVE_UNAVAILABLE")
+                payload.update({
+                    "web_research_results": None,
+                    "trace": _trace(state, "research_web", safety_valve="failed"),
+                })
+                return payload
         try:
             result = await tools.web_research.research(
                 course_id=state["course_id"],

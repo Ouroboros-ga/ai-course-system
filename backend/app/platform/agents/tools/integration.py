@@ -52,8 +52,10 @@ class RetrievalDemoEvidencePort:
         self._service = demo_service
 
     async def retrieve_course_evidence(self, *, course_id: str, message: str, concept_id: str | None, resource_id: str | None) -> list[Mapping[str, Any]]:
+        # 课程不在 R2 白名单时回退到空证据（V1 路径），不抛异常：
+        # 约束：R2 失败/无 sidecar 不得影响正常 Q&A。
         if course_id not in self._service.active_provider.course_ids:
-            raise ServiceUnavailableError("course retrieval pending")
+            return []
         result = self._service.query(course_id=course_id, question=message)
         if result.get("result", {}).get("status") != "ok":
             return []

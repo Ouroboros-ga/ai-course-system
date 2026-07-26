@@ -204,6 +204,124 @@ def test_web_research_node_degrades_when_port_raises():
     assert research_nodes[0].get("error") == "TimeoutError"
 
 
+# ==================== 教师安全阀 × WebResearch 集成测试（G8） ====================
+
+
+class _PendingSafetyValve:
+    """安全阀 stub：create_proposal 始终返回 requires_confirmation=True, status=pending。"""
+
+    async def create_proposal(self, **kwargs: Any) -> Mapping[str, Any]:
+        return {
+            "proposal_id": "prop-test-1",
+            "proposal_type": kwargs.get("proposal_type", "web_research"),
+            "status": "pending",
+            "requires_confirmation": True,
+        }
+
+    async def list_pending_proposals(self, **_: Any) -> list[Mapping[str, Any]]:
+        return []
+
+    async def decide_proposal(self, **_: Any) -> Mapping[str, Any]:
+        return {}
+
+    async def get_proposal(self, **_: Any) -> Mapping[str, Any] | None:
+        return None
+
+
+class _BrokenSafetyValve:
+    """安全阀 stub：create_proposal 始终抛异常，模拟安全阀服务不可用。"""
+
+    async def create_proposal(self, **_: Any) -> Mapping[str, Any]:
+        raise RuntimeError("safety valve DB unreachable")
+
+    async def list_pending_proposals(self, **_: Any) -> list[Mapping[str, Any]]:
+        return []
+
+    async def decide_proposal(self, **_: Any) -> Mapping[str, Any]:
+        return {}
+
+    async def get_proposal(self, **_: Any) -> Mapping[str, Any] | None:
+        return None
+
+
+class _TrackingWebResearch:
+    """WebResearch stub：记录 research 是否被调用（用于验证 fail-closed）。"""
+
+    def __init__(self) -> None:
+        self.called = False
+
+    async def research(self, **_: Any) -> Mapping[str, Any]:
+        self.called = True
+        return {"results": [{"url": "https://example.com", "snippet": "x"}]}
+
+
+def test_web_research_skipped_when_safety_valve_pending_confirmation():
+    """G8: 安全阀返回 pending+requires_confirmation 时，web research 被跳过并写警告。
+
+    高风险动作必须等待教师决策；学生侧不得在教师批准前看到 web research 结果。
+    """
+
+    async def _research(**_: Any) -> Mapping[str, Any]:
+        return {"results": [{"url": "https://example.com", "snippet": "x"}]}
+
+    web_port = CallableWebResearchPort(_research)
+    tools = TeachingTools(
+        scope=FakeScope(),
+        knowledge_graph=FakeGraph(),
+        retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(),
+        recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(),
+        learning_events=FakeEvents(),
+        llm=_fake_llm_default(),
+        web_research=web_port,
+        teacher_safety_valve=_PendingSafetyValve(),
+    )
+    runtime = TeachingAgentRuntime(tools)
+    state = _run(runtime)
+    # web research 结果不得产出
+    assert state.get("web_research_results") is None
+    # 必须写待确认警告
+    assert "WEB_RESEARCH_PENDING_TEACHER_CONFIRMATION" in state.get("warnings", [])
+    # 提案已登记到 pending_proposals
+    assert len(state.get("pending_proposals", [])) == 1
+    assert state["pending_proposals"][0]["proposal_id"] == "prop-test-1"
+    # 主流程不中断
+    assert state.get("final_answer")
+
+
+def test_web_research_fail_closed_when_safety_valve_raises():
+    """G8: 安全阀自身失败时 fail-closed —— web research 不得执行，标记 SAFETY_VALVE_UNAVAILABLE。
+
+    安全阀不可用时不得静默放行高风险动作；主流程继续但该工具被降级跳过。
+    """
+    tracker = _TrackingWebResearch()
+    tools = TeachingTools(
+        scope=FakeScope(),
+        knowledge_graph=FakeGraph(),
+        retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(),
+        recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(),
+        learning_events=FakeEvents(),
+        llm=_fake_llm_default(),
+        web_research=tracker,
+        teacher_safety_valve=_BrokenSafetyValve(),
+    )
+    runtime = TeachingAgentRuntime(tools)
+    state = _run(runtime)
+    # fail-closed：web research 实际未被调用
+    assert tracker.called is False
+    # 标记降级
+    assert "web_research" in state["degraded_services"]
+    assert state.get("web_research_results") is None
+    research_nodes = [t for t in state["trace"] if t.get("node") == "research_web"]
+    assert len(research_nodes) == 1
+    assert research_nodes[0].get("safety_valve") == "failed"
+    # 主流程不中断
+    assert state.get("final_answer")
+
+
 def test_graph_node_degrades_when_port_raises():
     """注入的 KnowledgeGraphPort 抛异常时，节点标记 degraded_services 且不中断流程。
 
