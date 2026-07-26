@@ -99,10 +99,19 @@ MIGRATION_LEDGER: dict[str, dict] = {
             "Application code must be rolled back to a version that understands new states."
         ),
     },
+    "0005": {
+        "batch_id": "storage-object-refs-v1",
+        "name": "Storage object refs v1 (GC ledger, readback verification, soft delete)",
+        "rollback_notes": (
+            "Drops storage_object_refs table. "
+            "GC/readback/soft-delete history is lost; object files in provider are NOT affected. "
+            "Re-running upgrade recreates the table and reconcile() repopulates refs from provider."
+        ),
+    },
 }
 
 BASELINE_REVISION = "0001"
-HEAD_REVISION = "0004"
+HEAD_REVISION = "0005"
 
 
 def _build_connect_args(url: str) -> dict:

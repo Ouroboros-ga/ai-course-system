@@ -9,22 +9,21 @@ from pathlib import Path
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
-from app.core.config import settings
 from app.models.database import get_session
 from app.models.media_timeline_model import (
     MediaAsset,
     MediaTimelineCue,
     CueType,
-    StorageBackend,
     DigitalHumanPreset,
 )
 from app.services.course_access_service import require_course_permission
+from app.services.object_storage import LocalStorageProvider, get_object_storage
 from app.services.media_timeline_service import (
     create_timeline_cues_from_node,
     get_node_timeline,
@@ -177,7 +176,11 @@ async def get_asset_content(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """按课程权限读取本地媒体内容；OSS 资产应使用其受控 URL。"""
+    """按课程权限读取媒体内容。
+
+    本地 Provider 由应用安全地流式返回；远程 Provider 在完成课程权限校验后
+    返回短期预签名 URL。数据库中的 object_key 在迁移前后保持不变。
+    """
     asset = session.exec(
         select(MediaAsset).where(MediaAsset.object_key == object_key)
     ).first()
@@ -186,22 +189,22 @@ async def get_asset_content(
     require_course_permission(
         session, current_user, asset.course_id, "course.content.read"
     )
-    if asset.backend != StorageBackend.LOCAL or not asset.local_path:
-        raise HTTPException(status_code=409, detail="该资产不是可直接读取的本地媒体")
-
-    storage_root = Path(settings.MEDIA_STORAGE_PATH).resolve()
-    file_path = (storage_root / asset.local_path).resolve()
+    storage = get_object_storage()
     try:
-        file_path.relative_to(storage_root)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="媒体资产路径无效") from exc
-    if not file_path.is_file():
-        raise HTTPException(status_code=404, detail="媒体文件不存在")
-    return FileResponse(
-        path=file_path,
-        media_type=asset.mime_type or None,
-        filename=None,
-    )
+        if isinstance(storage, LocalStorageProvider):
+            file_path = storage._safe_full_path(object_key)
+            if not Path(file_path).is_file():
+                raise FileNotFoundError(object_key)
+            return FileResponse(path=file_path, media_type=asset.mime_type or None, filename=None)
+        return RedirectResponse(
+            url=storage.sign_read_url(
+                object_key,
+                scope={"course_id": asset.course_id, "user_id": current_user["user_id"], "purpose": "media"},
+            ),
+            status_code=307,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="媒体文件不存在") from exc
 
 
 @router.get("/assets/{object_key:path}")

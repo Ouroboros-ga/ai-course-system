@@ -80,7 +80,7 @@ def test_empty_sqlite_upgrade_head_creates_all_tables(tmp_path):
         # 验证 alembic_version 表指向 head
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0004", f"alembic_version 应为 0004，实际 {version}"
+            assert version == "0005", f"alembic_version 应为 0005，实际 {version}"
     finally:
         engine.dispose()
 
@@ -121,7 +121,7 @@ def test_legacy_sqlite_stamp_and_upgrade(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0004"
+            assert version == "0005"
 
             # 6. 验证数据迁移生效（0002 access_control backfill）
             # 旧库无 legacy role/teacher_id 数据，所以回填不应产生记录
@@ -295,7 +295,7 @@ def test_postgres_empty_upgrade_head():
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0004"
+            assert version == "0005"
     finally:
         engine.dispose()
 
@@ -348,7 +348,7 @@ def test_migration_chain_downgrade_and_upgrade_roundtrip(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0004"
+            assert version == "0005"
     finally:
         engine.dispose()
 
@@ -376,7 +376,7 @@ def _run_migration_ops(db_url: str, *args: str) -> int:
 
 
 def test_migration_ops_upgrade_writes_ledger(tmp_path):
-    """upgrade head 后 schema_migration_records 应包含 0001/0002/0003/0004 四条账本。"""
+    """upgrade head 后 schema_migration_records 应包含 0001/0002/0003/0004/0005 五条账本。"""
     db_path = tmp_path / "ledger.db"
     db_url = f"sqlite:///{db_path}"
 
@@ -387,7 +387,7 @@ def test_migration_ops_upgrade_writes_ledger(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0004"
+            assert version == "0005"
 
             rows = conn.execute(
                 text(
@@ -399,6 +399,7 @@ def test_migration_ops_upgrade_writes_ledger(tmp_path):
             assert "access-control-v1" in batch_ids
             assert "agent-log-minimization-v1" in batch_ids
             assert "avatar-upload-security-v1" in batch_ids
+            assert "storage-object-refs-v1" in batch_ids
             for r in rows:
                 assert r[1] == "applied"
     finally:
@@ -425,6 +426,7 @@ def test_migration_ops_ledger_command_outputs_entries(tmp_path):
     assert "access-control-v1" in body
     assert "agent-log-minimization-v1" in body
     assert "avatar-upload-security-v1" in body
+    assert "storage-object-refs-v1" in body
 
 
 def test_migration_ops_downgrade_refuses_base_by_default(tmp_path):
@@ -543,6 +545,6 @@ def test_migration_ledger_idempotent_on_repeated_upgrade(tmp_path):
             count = conn.execute(
                 text("SELECT COUNT(*) FROM schema_migration_records")
             ).scalar()
-            assert count == 4, f"应只有 4 条账本，实际 {count}"
+            assert count == 5, f"应只有 5 条账本，实际 {count}"
     finally:
         engine.dispose()

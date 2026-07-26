@@ -76,6 +76,10 @@ class ObjectStorageProvider(ABC):
         本地实现返回 POST /api/v1/media/assets 的预签位置。
         """
 
+    @abstractmethod
+    def list_keys(self, prefix: str = "") -> list[str]:
+        """列出对象键，用于受控迁移和垃圾回收。"""
+
 
 # ---------------------------------------------------------------------------
 # 本地存储实现
@@ -199,6 +203,18 @@ class LocalStorageProvider(ObjectStorageProvider):
         # 用 compare_digest 防止时序攻击
         return secrets.compare_digest(expected, sig)
 
+    def list_keys(self, prefix: str = "") -> list[str]:
+        prefix_path = os.path.join(self.root_dir, prefix)
+        if not os.path.exists(prefix_path):
+            return []
+        keys: list[str] = []
+        for dirpath, _dirnames, filenames in os.walk(prefix_path):
+            for filename in filenames:
+                full_path = os.path.join(dirpath, filename)
+                relative_path = os.path.relpath(full_path, self.root_dir)
+                keys.append(relative_path.replace(os.sep, "/"))
+        return sorted(keys)
+
     def _sign(self, object_key: str, exp: int, scope: Optional[dict]) -> str:
         scope_str = _stringify_scope(scope)
         payload = f"{object_key}|{exp}|{scope_str}|{self._sign_key}"
@@ -246,26 +262,51 @@ def _stringify_scope(scope: Optional[dict]) -> str:
 _object_storage: Optional[ObjectStorageProvider] = None
 
 
+class ObjectStorageConfigurationError(RuntimeError):
+    """远程对象存储配置不完整或不受支持。
+
+    显式配置远程后端却无法初始化时必须失败，避免媒体仍写入本地磁盘却被
+    误以为已经迁移到 OSS。
+    """
+
+
 def get_object_storage() -> ObjectStorageProvider:
     """获取对象存储单例
 
     根据 `settings.OBJECT_STORAGE_BACKEND` 选择实现：
     - `local`（默认）：LocalStorageProvider，根目录为 settings.MEDIA_STORAGE_PATH
-    - `oss`（未来）：OSSStorageProvider，需配置 OSS_*
+    - `s3` / `minio` / `oss`：S3 兼容 Provider，需要完整远程配置
     """
     global _object_storage
     if _object_storage is not None:
         return _object_storage
 
     backend = (settings.OBJECT_STORAGE_BACKEND or "local").lower()
-    if backend == "oss":
-        # 未来实现：from app.services.oss_storage_provider import OSSStorageProvider
-        # _object_storage = OSSStorageProvider(...)
-        # 暂时回退到 local，避免配置缺失直接崩溃
-        _object_storage = LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
-    else:
-        _object_storage = LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
+    _object_storage = build_object_storage_provider(backend)
     return _object_storage
+
+
+def build_object_storage_provider(backend: str) -> ObjectStorageProvider:
+    """按显式后端构造 Provider，供迁移工具同时持有源与目标存储。"""
+    backend = (backend or "local").lower()
+    if backend == "local":
+        return LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
+    elif backend in {"s3", "minio", "oss"}:
+        try:
+            from app.services.s3_object_storage import S3ObjectStorageProvider
+
+            return S3ObjectStorageProvider.from_settings(settings)
+        except Exception as exc:
+            if settings.OBJECT_STORAGE_ALLOW_DEMO_LOCAL_FALLBACK:
+                return LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
+            else:
+                raise ObjectStorageConfigurationError(
+                    f"对象存储后端 {backend!r} 初始化失败；不会静默回退到本地存储: {exc}"
+                ) from exc
+    else:
+        raise ObjectStorageConfigurationError(
+            f"不支持的 OBJECT_STORAGE_BACKEND={backend!r}；可用值为 local/s3/minio/oss"
+        )
 
 
 def reset_object_storage_for_tests(provider: Optional[ObjectStorageProvider] = None) -> None:
@@ -310,9 +351,15 @@ def migrate_object_keys(
             if not source.exists(key):
                 skipped.append(key)
                 continue
-            # 检查目标是否已存在
+            # 已存在的目标可作为断点续传；内容不同则绝不覆盖。
             if target.exists(key):
-                skipped.append(key)
+                source_sha = _content_sha(source, key)
+                target_sha = _content_sha(target, key)
+                if source_sha and target_sha and source_sha != target_sha:
+                    failed.append(key)
+                    errors.append(f"{key}: 目标已存在但 SHA256 不一致")
+                else:
+                    skipped.append(key)
                 continue
             # 读取源内容
             content = source.get(key)
@@ -321,8 +368,8 @@ def migrate_object_keys(
             # 校验一致性
             source_head = source.head(key)
             target_head = target.head(key)
-            source_sha = source_head.get("sha256", "")
-            target_sha = target_head.get("sha256", "")
+            source_sha = source_head.get("content_sha256", "") or source_head.get("sha256", "")
+            target_sha = target_head.get("content_sha256", "") or target_head.get("sha256", "")
             if source_sha and target_sha and source_sha != target_sha:
                 failed.append(key)
                 errors.append(f"{key}: SHA256 不一致 (source={source_sha[:16]}, target={target_sha[:16]})")
@@ -353,19 +400,13 @@ def list_object_keys_under_prefix(
 
     LocalStorageProvider 遍历根目录下匹配前缀的文件。
     """
-    if not hasattr(provider, "root_dir"):
-        # OSS 等其他 Provider 需各自实现 list 方法
-        return []
-    root = provider.root_dir  # type: ignore[attr-defined]
-    prefix_path = os.path.join(root, prefix)
-    keys: list[str] = []
-    if not os.path.exists(prefix_path):
-        return keys
-    for dirpath, _dirnames, filenames in os.walk(prefix_path):
-        for filename in filenames:
-            full_path = os.path.join(dirpath, filename)
-            rel_path = os.path.relpath(full_path, root)
-            # 转换为 object_key 格式（使用 / 分隔符）
-            object_key = rel_path.replace(os.sep, "/")
-            keys.append(object_key)
-    return keys
+    return provider.list_keys(prefix)
+
+
+def _content_sha(provider: ObjectStorageProvider, object_key: str) -> str:
+    """优先读取 Provider 元数据；缺失时读取内容计算，保证迁移校验真实。"""
+    head = provider.head(object_key)
+    known = head.get("content_sha256", "") or head.get("sha256", "")
+    if known:
+        return str(known)
+    return hashlib.sha256(provider.get(object_key)).hexdigest()

@@ -338,10 +338,10 @@ class TestTaskRetry:
         return task_service.get_task(session, view.task_id)
 
     def test_retryable_task_can_retry(self, session, teacher_user):
-        """retryable=True 的失败任务可重试，状态回到 running。"""
+        """retryable=True 的失败任务可重试，先回到 pending 等待 Worker 重投。"""
         record = self._create_failed_task(session, teacher_user, retryable=True)
         view = task_service.retry(session, record.task_id, operator_user_id=teacher_user.id)
-        assert view.status == "running"
+        assert view.status == "pending"
         assert view.error_code == ""
         assert view.progress == 0
 
@@ -401,15 +401,15 @@ class TestObjectStorageMigration:
         assert dst.get("a/file1.txt") == b"content1"
         assert dst.get("a/file2.txt") == b"content2"
 
-    def test_migrate_skip_existing_target(self, tmp_path):
-        """目标已存在时跳过。"""
+    def test_migrate_reject_existing_target_with_different_hash(self, tmp_path):
+        """目标同键但内容不同必须失败，不能静默跳过或覆盖。"""
         src = LocalStorageProvider(str(tmp_path / "src"))
         dst = LocalStorageProvider(str(tmp_path / "dst"))
         src.put("file.txt", b"src_content")
         dst.put("file.txt", b"dst_content")
 
         report = migrate_object_keys(src, dst, ["file.txt"])
-        assert report["skipped_count"] == 1
+        assert report["failed_count"] == 1
         assert report["migrated_count"] == 0
         # 目标内容不被覆盖
         assert dst.get("file.txt") == b"dst_content"

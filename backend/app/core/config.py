@@ -151,6 +151,18 @@ class Settings(BaseSettings):
     # --------------------------
     OBJECT_STORAGE_BACKEND: str = "local"
     OBJECT_STORAGE_SIGN_KEY: str = ""
+    # S3-compatible object storage (MinIO / cloud object-storage endpoint).
+    # An endpoint is required when OBJECT_STORAGE_BACKEND is s3|minio|oss; the
+    # application never silently falls back to the local filesystem.
+    OBJECT_STORAGE_ENDPOINT: str = ""
+    OBJECT_STORAGE_REGION: str = "us-east-1"
+    OBJECT_STORAGE_BUCKET: str = ""
+    OBJECT_STORAGE_ACCESS_KEY_ID: str = ""
+    OBJECT_STORAGE_SECRET_ACCESS_KEY: str = ""
+    OBJECT_STORAGE_SESSION_TOKEN: str = ""
+    OBJECT_STORAGE_ADDRESSING_STYLE: str = "path"
+    OBJECT_STORAGE_PRESIGN_EXPIRES_SECONDS: int = 900
+    OBJECT_STORAGE_ALLOW_DEMO_LOCAL_FALLBACK: bool = False
     MEDIA_UPLOAD_MAX_SIZE_MB: int = 500
     AVATAR_PORTRAIT_VIDEO_MAX_MB: int = 200
     AVATAR_PORTRAIT_VIDEO_MAX_DURATION_MS: int = 60_000

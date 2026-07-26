@@ -97,6 +97,7 @@ from app.api.v1.endpoints import (
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
     historical_rebuild, # 阶段10 历史课程补建清单编排
+    storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
 )
 from app.schemas import UnifiedResponse
 
@@ -340,6 +341,13 @@ app.include_router(
     historical_rebuild.historical_rebuild_router,
     prefix="/api/v1/historical-rebuild",
     tags=["阶段10 历史课程补建清单"],
+)
+
+# G5：对象存储运维（refs/GC/回读校验/迁移对账）
+app.include_router(
+    storage_admin.storage_admin_router,
+    prefix="/api/v1/admin/storage",
+    tags=["G5 对象存储运维"],
 )
 
 

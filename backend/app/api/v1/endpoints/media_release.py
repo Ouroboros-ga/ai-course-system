@@ -40,7 +40,8 @@ from app.models.media_release_model import (
     MediaReleaseStatus,
     PlaybackMode,
 )
-from app.services.course_access_service import require_course_permission
+from app.models.access_control_model import PlatformPermission
+from app.services.course_access_service import require_course_permission, require_platform_permission
 from app.services.media_release_service import (
     media_generation_job_service,
     media_playback_service,
@@ -702,11 +703,14 @@ class StorageMigrateRequest(BaseModel):
     object_keys: list[str] = Field(default_factory=list, description="待迁移的 object_key 列表；为空则迁移全部")
     prefix: str = Field(default="", max_length=500, description="按前缀过滤；与 object_keys 互斥")
     delete_source: bool = Field(default=False, description="迁移成功后删除源文件")
+    source_backend: str = Field(default="local", pattern="^(local|s3|minio|oss)$")
+    target_backend: str = Field(default="s3", pattern="^(local|s3|minio|oss)$")
 
 
 @media_release_router.post("/storage/migrate")
 async def migrate_storage(
     payload: StorageMigrateRequest,
+    session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
     """对象存储迁移（M5）
@@ -714,23 +718,19 @@ async def migrate_storage(
     将 object_key 从当前存储后端迁移到另一个后端。
     管理员操作，用于本地→OSS 迁移演练。
     """
-    # 仅管理员可执行迁移
-    if current_user.get("role") != "admin":
-        from fastapi import HTTPException, status
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="仅管理员可执行对象存储迁移",
-        )
+    require_platform_permission(session, current_user, PlatformPermission.ADMIN)
 
     from app.services.object_storage import (
-        get_object_storage,
+        build_object_storage_provider,
         list_object_keys_under_prefix,
         migrate_object_keys,
     )
 
-    source = get_object_storage()
-    # M5 阶段：目标存储暂与源相同（演练），未来切换为 OSS Provider
-    target = source
+    source = build_object_storage_provider(payload.source_backend)
+    target = build_object_storage_provider(payload.target_backend)
+    if payload.source_backend == payload.target_backend:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("source_backend 与 target_backend 必须不同")
 
     keys = payload.object_keys
     if not keys and payload.prefix:
