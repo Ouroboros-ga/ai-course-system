@@ -19,12 +19,14 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
+
+from app.core.time_utils import utcnow_naive
 
 
 # ---------------------------------------------------------------------------
@@ -132,8 +134,8 @@ class MediaGenerationJob(SQLModel, table=True):
     media_release_id: Optional[str] = Field(default=None, index=True, description="触发该任务的发布版本")
 
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     finished_at: Optional[datetime] = Field(default=None)
 
 
@@ -158,7 +160,7 @@ class MediaGenerationAttempt(SQLModel, table=True):
     provider_key: str = Field(default="")
     provider_version: str = Field(default="")
 
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    started_at: datetime = Field(default_factory=utcnow_naive)
     finished_at: Optional[datetime] = Field(default=None)
     duration_ms: Optional[int] = Field(default=None, description="本次尝试耗时")
 
@@ -226,7 +228,7 @@ class MediaRelease(SQLModel, table=True):
     # 元数据
     notes: str = Field(default="", description="教师备注")
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
     activated_at: Optional[datetime] = Field(default=None)
     superseded_at: Optional[datetime] = Field(default=None)
     withdrawn_at: Optional[datetime] = Field(default=None)
@@ -309,7 +311,7 @@ class PlaybackCapabilityProfile(SQLModel, table=True):
 
     is_active: bool = Field(default=True, index=True)
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
     profile_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON))

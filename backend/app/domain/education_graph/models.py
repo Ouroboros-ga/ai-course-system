@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from app.domain.education_graph.enums import (
@@ -63,8 +63,8 @@ class EducationalUnit:
 
     # Metadata
     properties: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now())
-    updated_at: datetime = field(default_factory=lambda: datetime.now())
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -103,8 +103,8 @@ class GraphNode:
     # Metadata
     ontology_version: str = ONTOLOGY_VERSION
     created_by_run: Optional[str] = None
-    created_at: datetime = field(default_factory=lambda: datetime.now())
-    updated_at: datetime = field(default_factory=lambda: datetime.now())
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         if not self.canonical_key:
@@ -147,8 +147,8 @@ class GraphRelation:
     # Metadata
     ontology_version: str = ONTOLOGY_VERSION
     created_by_run: Optional[str] = None
-    created_at: datetime = field(default_factory=lambda: datetime.now())
-    updated_at: datetime = field(default_factory=lambda: datetime.now())
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     def __post_init__(self) -> None:
         # Undirected relation types
@@ -183,7 +183,7 @@ class GraphSnapshot:
     # Metadata
     label: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
-    created_at: datetime = field(default_factory=lambda: datetime.now())
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +213,7 @@ class ReviewDecision:
     evidence_bundle_id: Optional[str] = None
 
     # Audit
-    created_at: datetime = field(default_factory=lambda: datetime.now())
+    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 # ---------------------------------------------------------------------------

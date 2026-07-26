@@ -5,13 +5,14 @@ import hashlib
 import ipaddress
 import os
 import re
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.web_research_model import (
     DEFAULT_ALLOWED_DOMAINS,
     WebResearchConfig,
@@ -144,7 +145,7 @@ def execute_research(
         status=ResearchStatus.SUCCESS,
         results=results[:config.max_results_per_search],
         searches_used=1,
-        expires_at=datetime.now(timezone.utc) + timedelta(minutes=config.cache_ttl_minutes),
+        expires_at=utcnow_naive() + timedelta(minutes=config.cache_ttl_minutes),
     )
     session.add(result)
     session.flush()
@@ -212,7 +213,7 @@ def _check_cache(session: Session, course_id: int, query_hash: str) -> Optional[
 
 
 def _count_recent_searches(session: Session, course_id: int) -> int:
-    recent = datetime.now(timezone.utc) - timedelta(hours=1)
+    recent = utcnow_naive() - timedelta(hours=1)
     records = session.exec(
         select(WebResearchResult).where(
             WebResearchResult.course_id == course_id,

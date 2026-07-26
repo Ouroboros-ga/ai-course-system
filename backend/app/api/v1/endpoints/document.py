@@ -13,7 +13,7 @@ import logging
 import time
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
@@ -545,7 +545,7 @@ async def upload_document(
             "pictures": structure_result.pictures,
             "raw_content": structure_result.raw_content,
         }
-        docling_doc.updated_at = datetime.utcnow()
+        docling_doc.updated_at = utcnow_naive()
         session.commit()
         print(f"  更新状态: COMPLETED")
 
@@ -591,7 +591,7 @@ async def upload_document(
         course.total_duration = script_result.total_duration
         course.is_ai_generated = True
         course.status = CourseStatus.PUBLISHED
-        course.updated_at = datetime.utcnow()
+        course.updated_at = utcnow_naive()
         session.commit()
         print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}, status=PUBLISHED")
 
@@ -1504,7 +1504,7 @@ async def publish_course(
 
         # 更新状态为已发布
         course.status = CourseStatus.PUBLISHED
-        course.updated_at = datetime.utcnow()
+        course.updated_at = utcnow_naive()
         session.add(course)
         session.commit()
 
@@ -1535,7 +1535,7 @@ async def unpublish_course(
 
         # 更新状态为草稿
         course.status = CourseStatus.DRAFT
-        course.updated_at = datetime.utcnow()
+        course.updated_at = utcnow_naive()
         session.add(course)
         session.commit()
 
@@ -1818,7 +1818,7 @@ async def enroll_course(
         # 如果有历史记录但不活跃，重新激活
         if existing and not existing.is_active:
             existing.is_active = True
-            existing.enrolled_at = datetime.utcnow()
+            existing.enrolled_at = utcnow_naive()
             session.add(existing)
             activate_student_membership(session, course_id, student_id)
             session.commit()
@@ -1890,7 +1890,7 @@ def _init_learning_progress_for_student(session: Session, student_id: int, cours
             total_nodes=total_nodes,
             completed_nodes=0,
             status="not_started",
-            last_accessed_at=datetime.utcnow(),
+            last_accessed_at=utcnow_naive(),
         )
         session.add(learning_progress)
         session.commit()
@@ -1984,8 +1984,8 @@ async def unenroll_course(
         ).first()
         if membership is not None and membership.role.value == "student":
             membership.status = MembershipStatus.WITHDRAWN
-            membership.left_at = datetime.utcnow()
-            membership.updated_at = datetime.utcnow()
+            membership.left_at = utcnow_naive()
+            membership.updated_at = utcnow_naive()
             session.add(membership)
         session.commit()
 

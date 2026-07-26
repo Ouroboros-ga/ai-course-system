@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class LearningStatus(str, Enum):
     """学习状态枚举"""
@@ -64,13 +66,13 @@ class LearningProgress(SQLModel, table=True):
     session_count: int = Field(default=0, description="学习次数")
 
     last_accessed_at: datetime = Field(
-        default_factory=datetime.utcnow, description="最后访问时间"
+        default_factory=utcnow_naive, description="最后访问时间"
     )
     started_at: Optional[datetime] = Field(default=None, description="首次开始学习时间")
     completed_at: Optional[datetime] = Field(default=None, description="完成学习时间")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
+    updated_at: datetime = Field(default_factory=utcnow_naive, description="更新时间")
 
 
 class NodeProgress(SQLModel, table=True):
@@ -144,7 +146,7 @@ class UnderstandingAnalysis(SQLModel, table=True):
         default=None, description="薄弱的关键词(JSON数组)"
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="分析时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="分析时间")
 
 
 class LearningJumpHistory(SQLModel, table=True):
@@ -216,5 +218,5 @@ class LearningJumpHistory(SQLModel, table=True):
     )
     jump_depth: int = Field(default=1, ge=1, le=10, description="当前跳转层级深度")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
+    updated_at: datetime = Field(default_factory=utcnow_naive, description="更新时间")

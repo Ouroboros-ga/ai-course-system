@@ -21,6 +21,8 @@ from typing import Any
 
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
+
 from app.models.database import engine
 from app.models.question_bank_model import (
     QuestionBankItem,
@@ -141,8 +143,8 @@ def _map_row_to_item(row: dict[str, Any], row_index: int, batch_id: str) -> Ques
         source_row_index=row_index,
         generated_by="excel_import",
         generation_metadata={},
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=utcnow_naive(),
+        updated_at=utcnow_naive(),
     )
 
 

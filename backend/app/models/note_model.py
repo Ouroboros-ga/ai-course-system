@@ -6,6 +6,8 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class NoteTriggerSource(str, Enum):
     """笔记触发来源"""
@@ -33,5 +35,5 @@ class Note(SQLModel, table=True):
     tags: list = Field(default=[], sa_column=Column(JSON))
     trigger_source: NoteTriggerSource = Field(default=NoteTriggerSource.LEARN)
     is_draft: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)

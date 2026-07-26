@@ -11,11 +11,12 @@ from __future__ import annotations
 import hashlib
 import random
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import Iterable, Optional
 
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.storage_object_ref_model import (
     StorageObjectRef,
     StorageVerifyStatus,
@@ -213,7 +214,7 @@ class StorageAdminService:
             for ref in session.exec(select(StorageObjectRef)).all()
         }
 
-        now = datetime.utcnow()
+        now = utcnow_naive()
         for key in provider_key_set:
             referenced_by = sorted(
                 {table for table, keys in db_refs.items() if key in keys}
@@ -289,9 +290,9 @@ class StorageAdminService:
         ).first()
         if ref is None:
             return False
-        ref.soft_deleted_at = datetime.utcnow()
+        ref.soft_deleted_at = utcnow_naive()
         ref.soft_delete_reason = reason
-        ref.updated_at = datetime.utcnow()
+        ref.updated_at = utcnow_naive()
         session.add(ref)
         session.commit()
         return True
@@ -305,7 +306,7 @@ class StorageAdminService:
             return False
         ref.soft_deleted_at = None
         ref.soft_delete_reason = ""
-        ref.updated_at = datetime.utcnow()
+        ref.updated_at = utcnow_naive()
         session.add(ref)
         session.commit()
         return True
@@ -335,7 +336,7 @@ class StorageAdminService:
         report = GarbageCollectReport()
         provider = self._provider()
         # 使用 naive UTC 与 SQLite 存储的 naive 字符串比较；SQLModel 写入时会剥离时区。
-        cutoff = datetime.utcnow() - timedelta(seconds=retention_seconds)
+        cutoff = utcnow_naive() - timedelta(seconds=retention_seconds)
 
         # 拉取全部已软删除的对象；candidates 反映回收队列全貌，不过滤保留期。
         all_soft_deleted = session.exec(
@@ -423,7 +424,7 @@ class StorageAdminService:
         else:
             provider_keys = list(provider_keys)
 
-        now = datetime.utcnow()
+        now = utcnow_naive()
 
         # 1) 检查 refs 表中登记但 Provider 已缺失的对象
         all_refs = session.exec(

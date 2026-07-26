@@ -6,7 +6,7 @@
 import uuid
 import json
 from pathlib import Path
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from sqlmodel import Session
@@ -147,7 +147,7 @@ async def upload_document(
             "tables": structure_result.tables,
             "pictures": structure_result.pictures,
         }
-        docling_doc.updated_at = datetime.utcnow()
+        docling_doc.updated_at = utcnow_naive()
         session.commit()
 
         # 存储脚本
@@ -181,7 +181,7 @@ async def upload_document(
         course.total_duration = script_result.total_duration
         course.is_ai_generated = True
         course.status = CourseStatus.PUBLISHED
-        course.updated_at = datetime.utcnow()
+        course.updated_at = utcnow_naive()
         session.commit()
 
         # 启动后台 TTS

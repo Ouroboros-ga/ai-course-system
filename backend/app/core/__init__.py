@@ -2,7 +2,7 @@ from .config import settings, Settings, UserRole
 
 # 导出安全工具与依赖
 from .security import (
-    # 全局签名校验依赖
+    # 全局签名验签依赖
     verify_request_signature,
     # 身份认证依赖
     get_current_user,
@@ -22,6 +22,9 @@ from .security import (
 
 # 导出异常处理与统一响应
 from .exceptions import unified_response, BusinessException
+
+# 导出统一时间工具
+from .time_utils import utcnow_naive
 
 # 明确导出列表（可选，用于规范 `from app.core import *` 的行为）
 __all__ = [
@@ -43,4 +46,6 @@ __all__ = [
     # 异常与响应
     "unified_response",
     "BusinessException",
+    # 时间工具
+    "utcnow_naive",
 ]

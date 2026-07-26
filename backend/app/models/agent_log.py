@@ -12,6 +12,8 @@ from typing import Any, Optional
 
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class AgentLearningEvent(SQLModel, table=True):
     """Sanitized teaching-agent audit event, not a formal learning event."""
@@ -28,7 +30,7 @@ class AgentLearningEvent(SQLModel, table=True):
     event_data: str = Field(default="{}", description="JSON: sanitized audit metadata")
     data_policy_version: str = Field(default="agent-log-minimization/1", max_length=64)
     migration_batch_id: str | None = Field(default=None, max_length=64)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class AgentTraceRecord(SQLModel, table=True):
@@ -45,7 +47,7 @@ class AgentTraceRecord(SQLModel, table=True):
     trace_data: str = Field(default="{}", description="JSON: sanitized trace metadata")
     data_policy_version: str = Field(default="agent-log-minimization/1", max_length=64)
     migration_batch_id: str | None = Field(default=None, max_length=64)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class AgentConversationSession(SQLModel, table=True):
@@ -59,8 +61,8 @@ class AgentConversationSession(SQLModel, table=True):
     session_id: str = Field(index=True, max_length=128)
     context_data: str = Field(default="{}", description="JSON: structured, non-content continuity state")
     data_policy_version: str = Field(default="agent-session-context/1", max_length=64)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive, index=True)
 
 
 class AgentLogMigrationRecord(SQLModel, table=True):
@@ -69,6 +71,6 @@ class AgentLogMigrationRecord(SQLModel, table=True):
     __tablename__ = "agent_log_migration_records"
 
     batch_id: str = Field(primary_key=True, max_length=64)
-    applied_at: datetime = Field(default_factory=datetime.utcnow)
+    applied_at: datetime = Field(default_factory=utcnow_naive)
     redacted_event_rows: int = Field(default=0)
     redacted_trace_rows: int = Field(default=0)

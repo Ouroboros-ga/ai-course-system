@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable, Optional, Protocol
 
 from sqlmodel import Session
@@ -208,7 +208,7 @@ async def _noop_handler(ctx: TaskHandlerContext) -> None:
             session,
             ctx.task_id,
             result_ref="noop://self-check",
-            result_data={"handler": "noop", "completed_at": datetime.utcnow().isoformat()},
+            result_data={"handler": "noop", "completed_at": datetime.now(timezone.utc).isoformat()},
         )
 
 

@@ -5,6 +5,8 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class CourseStatus(str, Enum):
     """课程状态枚举"""
@@ -79,8 +81,8 @@ class Course(SQLModel, table=True):
     pdf_file_path: Optional[str] = Field(default=None, description="转换后的PDF文件路径(PPTX/PPT自动转换)")
     total_pages: int = Field(default=0, description="总页数")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class CourseScript(SQLModel, table=True):
@@ -111,7 +113,7 @@ class CourseScript(SQLModel, table=True):
     audio_url: Optional[str] = Field(default=None, description="合成音频URL")
     audio_duration: int = Field(default=0, description="音频时长(秒)")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
     created_by: int = Field(foreign_key="users.id", description="创建者/教师ID")
 
 
@@ -153,7 +155,7 @@ class ScriptNode(SQLModel, table=True):
         default=None, sa_column=Column(JSON), description="扩展元数据(JSON)"
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class DoclingDocument(SQLModel, table=True):
@@ -194,8 +196,8 @@ class DoclingDocument(SQLModel, table=True):
 
     error_message: Optional[str] = Field(default=None, description="解析失败时的错误信息")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
+    updated_at: datetime = Field(default_factory=utcnow_naive, description="更新时间")
 
 
 class DoclingGroup(SQLModel, table=True):
@@ -227,7 +229,7 @@ class DoclingGroup(SQLModel, table=True):
         default=None, sa_column=Column(JSON), description="扩展数据(JSON)"
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class DoclingTable(SQLModel, table=True):
@@ -272,7 +274,7 @@ class DoclingTable(SQLModel, table=True):
 
     sort_order: int = Field(default=0, description="排序序号")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class DoclingTableCell(SQLModel, table=True):
@@ -301,7 +303,7 @@ class DoclingTableCell(SQLModel, table=True):
     is_row_header: bool = Field(default=False, description="是否为行标题")
     is_row_section: bool = Field(default=False, description="是否为行分区")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class DoclingText(SQLModel, table=True):
@@ -332,7 +334,7 @@ class DoclingText(SQLModel, table=True):
 
     sort_order: int = Field(default=0, description="排序序号")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class DoclingPicture(SQLModel, table=True):
@@ -372,7 +374,7 @@ class DoclingPicture(SQLModel, table=True):
 
     sort_order: int = Field(default=0, description="排序序号")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class StudentEnrollment(SQLModel, table=True):
@@ -387,7 +389,7 @@ class StudentEnrollment(SQLModel, table=True):
     student_id: int = Field(foreign_key="users.id", index=True, description="学生用户ID")
     course_id: int = Field(foreign_key="courses.id", index=True, description="课程ID")
 
-    enrolled_at: datetime = Field(default_factory=datetime.utcnow, description="选课时间")
+    enrolled_at: datetime = Field(default_factory=utcnow_naive, description="选课时间")
 
     # 学习进度统计
     total_nodes_completed: int = Field(default=0, description="已完成节点数")

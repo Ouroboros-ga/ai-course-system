@@ -18,11 +18,11 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
 from typing import Any, Optional
 
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.cognitive_state_model import (
     CognitiveState,
     RecommendationRecord,
@@ -431,7 +431,7 @@ def mark_recommendation_consumed(
     ).first()
     if record:
         record.consumed = True
-        record.consumed_at = datetime.utcnow()
+        record.consumed_at = utcnow_naive()
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -484,7 +484,7 @@ def lock_recommendation(
         return None
     record.is_locked = True
     record.locked_by = teacher_id
-    record.locked_at = datetime.utcnow()
+    record.locked_at = utcnow_naive()
     session.add(record)
     session.commit()
     session.refresh(record)

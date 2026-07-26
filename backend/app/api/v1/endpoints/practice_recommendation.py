@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import uuid
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -536,7 +536,7 @@ async def submit_attempt(
         attempt.is_correct = is_correct
         attempt.score = float(is_correct) if is_correct is not None else None
         attempt.judged_by = "auto"
-        attempt.judged_at = datetime.utcnow()
+        attempt.judged_at = utcnow_naive()
     session.add(attempt)
     session.flush()
 
@@ -887,7 +887,7 @@ async def complete_learning_action(
 
     # 生成动作记录ID
     action_id = "la_" + uuid.uuid4().hex
-    now = datetime.utcnow()
+    now = utcnow_naive()
 
     # 若写入正式证据，需链接到 LearningEvidenceRecord
     # 此处不直接修改认知状态（认知状态由 cognitive_service 异步聚合）

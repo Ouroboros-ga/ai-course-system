@@ -24,6 +24,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 # ---------------------------------------------------------------------------
 # 解析运行
@@ -88,8 +90,8 @@ class DocumentParseRun(SQLModel, table=True):
     initiated_by: int = Field(foreign_key="users.id")
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +131,7 @@ class DocumentBlock(SQLModel, table=True):
     char_end: int = Field(default=0, description="页内字符结束偏移")
     content_hash: str = Field(default="", index=True, description="块内容哈希")
     order_index: int = Field(default=0, description="页内顺序")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -182,8 +184,8 @@ class EvidenceSpan(SQLModel, table=True):
                                   description="关联的知识节点ID列表")
     linked_evidence_id: Optional[str] = Field(default=None, index=True,
                                               description="确认后关联的 CourseEvidenceRecord.evidence_id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -234,8 +236,8 @@ class EvidenceCitation(SQLModel, table=True):
     stale_reason: str = Field(default="")
     stale_at: Optional[datetime] = Field(default=None)
     student_visible: bool = Field(default=True, description="是否对学生可见")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -273,7 +275,7 @@ class EvidenceRenderAsset(SQLModel, table=True):
     height: int = Field(default=0)
     bbox: Optional[dict] = Field(default=None, sa_column=Column(JSON))
     content_hash: str = Field(default="", index=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -325,8 +327,8 @@ class GraphCandidateBatch(SQLModel, table=True):
     initiated_by: int = Field(foreign_key="users.id")
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -352,5 +354,5 @@ class GraphReleaseLink(SQLModel, table=True):
     release_id: str = Field(index=True, description="关联 CourseRelease.release_id")
     snapshot_id: str = Field(index=True, description="关联 GraphSnapshotRecord.snapshot_id")
     linked_by: int = Field(foreign_key="users.id")
-    linked_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    linked_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_naive)

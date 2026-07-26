@@ -34,6 +34,7 @@ from app.core.exceptions import (
     unified_response,
 )
 from app.core.security import get_current_user
+from app.core.time_utils import utcnow_naive
 from app.models.course_build_model import (
     CourseRelease,
     ReleaseStatus,
@@ -329,7 +330,7 @@ async def create_ingestion(
         resource_kind="document_parse_run",
         resource_id=run.run_id,
         relation="output",
-        created_at=__import__("datetime").datetime.utcnow(),
+        created_at=utcnow_naive(),
     ))
 
     session.commit()

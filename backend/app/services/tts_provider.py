@@ -250,7 +250,7 @@ def _build_xfyun_auth_url(api_key: str, api_secret: str, base_url: str) -> str:
     依照 https://global.xfyun.cn/doc/tts/online_tts/API.html 鉴权规范。
     """
     parsed = urlparse(base_url)
-    now = datetime.utcnow().strftime("%a, %d %b %Y %H:%M:%S GMT")
+    now = datetime.now(timezone.utc).strftime("%a, %d %b %Y %H:%M:%S GMT")
     signature_origin = (
         f"host: {parsed.hostname}\n"
         f"date: {now}\n"

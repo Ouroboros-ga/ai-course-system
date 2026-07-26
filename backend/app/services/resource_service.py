@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Optional
 
 from sqlmodel import Session, func, select
@@ -23,6 +23,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
+from app.core.time_utils import utcnow_naive
 from app.models.resource_model import (
     LabCatalogEntry,
     LabCatalogVisibility,
@@ -177,7 +178,7 @@ class ResourceService:
         session.add(version)
 
         resource.current_version_id = version.version_id
-        resource.updated_at = datetime.utcnow()
+        resource.updated_at = utcnow_naive()
         session.add(resource)
         session.flush()
         return version
@@ -295,7 +296,7 @@ class ResourceService:
             resource.name = name
         if description is not None:
             resource.description = description
-        resource.updated_at = datetime.utcnow()
+        resource.updated_at = utcnow_naive()
         session.add(resource)
 
         if tags is not None:
@@ -406,8 +407,8 @@ class ResourceService:
 
         # 软删除
         resource.is_deleted = True
-        resource.deleted_at = datetime.utcnow()
-        resource.updated_at = datetime.utcnow()
+        resource.deleted_at = utcnow_naive()
+        resource.updated_at = utcnow_naive()
         session.add(resource)
 
         # 进入回收站
@@ -416,7 +417,7 @@ class ResourceService:
             owner_user_id=deleted_by,
             course_id=resource.course_id,
             deleted_by=deleted_by,
-            expires_at=datetime.utcnow() + timedelta(days=DEFAULT_RECYCLE_RETENTION_DAYS),
+            expires_at=utcnow_naive() + timedelta(days=DEFAULT_RECYCLE_RETENTION_DAYS),
             affected_references=affected,
             restorable=True,
         )
@@ -450,7 +451,7 @@ class ResourceService:
         if entry is None:
             reject_resource_not_found(f"资源 {resource_id} 不在回收站")
 
-        if datetime.utcnow() > entry.expires_at:
+        if utcnow_naive() > entry.expires_at:
             entry.restorable = False
             session.add(entry)
             reject_state_conflict("回收站条目已过期，无法恢复")
@@ -460,10 +461,10 @@ class ResourceService:
         )
         resource.is_deleted = False
         resource.deleted_at = None
-        resource.updated_at = datetime.utcnow()
+        resource.updated_at = utcnow_naive()
         session.add(resource)
 
-        entry.restored_at = datetime.utcnow()
+        entry.restored_at = utcnow_naive()
         session.add(entry)
         session.flush()
         return resource
@@ -510,7 +511,7 @@ class ResourceService:
         for t in tags:
             session.delete(t)
 
-        entry.purged_at = datetime.utcnow()
+        entry.purged_at = utcnow_naive()
         session.add(entry)
         session.delete(resource)
         session.flush()
@@ -738,8 +739,8 @@ class LabCatalogService:
     ) -> LabCatalogEntry:
         lab = self.get_lab(session, lab_id=lab_id)
         lab.is_published = True
-        lab.published_at = datetime.utcnow()
-        lab.updated_at = datetime.utcnow()
+        lab.published_at = utcnow_naive()
+        lab.updated_at = utcnow_naive()
         session.add(lab)
         session.flush()
         return lab
@@ -766,7 +767,7 @@ class LabCatalogService:
         ).first()
         if existing is not None:
             existing.is_active = True
-            existing.last_active_at = datetime.utcnow()
+            existing.last_active_at = utcnow_naive()
             session.add(existing)
             session.flush()
             return existing
@@ -775,7 +776,7 @@ class LabCatalogService:
             lab_id=lab_id,
             student_id=student_id,
             course_id=lab.course_id,
-            last_active_at=datetime.utcnow(),
+            last_active_at=utcnow_naive(),
         )
         session.add(enrollment)
         session.flush()
@@ -815,7 +816,7 @@ class LabCatalogService:
         ).first()
         if enrollment is not None:
             enrollment.last_attempt_id = attempt_id
-            enrollment.last_active_at = datetime.utcnow()
+            enrollment.last_active_at = utcnow_naive()
             session.add(enrollment)
 
         session.flush()

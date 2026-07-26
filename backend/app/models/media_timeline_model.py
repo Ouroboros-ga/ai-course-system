@@ -6,13 +6,15 @@ MediaTimelineCue 保存视频起止、PPT 页、字幕片段、讲稿引用、�
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 from urllib.parse import quote
 
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
+
+from app.core.time_utils import utcnow_naive
 
 
 class CueType(str, Enum):
@@ -49,7 +51,7 @@ class MediaAsset(SQLModel, table=True):
     duration_seconds: float = Field(default=0.0, description="时长(秒)")
     content_hash: str = Field(default="", index=True, description="内容SHA256哈希")
     resource_version: str = Field(default="v1", description="资源版本")
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
     def resolve_url(self) -> str:
         """解析为可访问的URL"""
@@ -99,8 +101,8 @@ class MediaTimelineCue(SQLModel, table=True):
     # 额外数据
     cue_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON), description="扩展元数据")
 
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class DigitalHumanPreset(str, Enum):

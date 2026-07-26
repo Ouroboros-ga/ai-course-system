@@ -4,7 +4,7 @@
 """
 
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, Depends, Query, Body
 from sqlmodel import Session, select
@@ -303,7 +303,7 @@ async def update_feedback_status(
         feedback.status = status
         if teacher_reply is not None:
             feedback.teacher_reply = teacher_reply
-        feedback.updated_at = datetime.utcnow()
+        feedback.updated_at = utcnow_naive()
 
         session.add(feedback)
         session.commit()

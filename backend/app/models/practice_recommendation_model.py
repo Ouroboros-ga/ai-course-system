@@ -26,6 +26,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 # ---------------------------------------------------------------------------
 # 题库导入运行
@@ -72,8 +74,8 @@ class QuestionImportRun(SQLModel, table=True):
     initiated_by: int = Field(foreign_key="users.id")
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +136,8 @@ class QuestionGenerationDraft(SQLModel, table=True):
     stale_reason: str = Field(default="")
     stale_at: Optional[datetime] = Field(default=None)
     generated_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -181,8 +183,8 @@ class QuestionRecommendationRun(SQLModel, table=True):
     item_count: int = Field(default=0)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class QuestionSource(str, Enum):
@@ -222,8 +224,8 @@ class QuestionRecommendationItem(SQLModel, table=True):
     started_at: Optional[datetime] = Field(default=None)
     is_consumed: bool = Field(default=False, description="是否已转化成 attempt")
     consumed_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -274,8 +276,8 @@ class AssessmentPolicy(SQLModel, table=True):
                         description="策略规则元数据")
     is_active: bool = Field(default=True, index=True)
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -310,5 +312,5 @@ class LearningEvidenceLink(SQLModel, table=True):
     context_id: str = Field(index=True, description="上下文实体ID（推荐ID/attemptID/actionID）")
     context_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON),
                                    description="上下文快照（reason_codes, score 等）")
-    linked_at: datetime = Field(default_factory=datetime.utcnow)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    linked_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_naive)

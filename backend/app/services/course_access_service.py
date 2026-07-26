@@ -1,13 +1,13 @@
 """The single runtime authority for course-scoped access decisions."""
 from __future__ import annotations
 
-from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.access_control_model import (
     CourseCapability,
     CourseMembership,
@@ -219,7 +219,7 @@ def activate_student_membership(session: Session, course_id: int, student_user_i
         membership.status = MembershipStatus.ACTIVE
         membership.analytics_excluded = False
         membership.left_at = None
-        membership.updated_at = datetime.utcnow()
+        membership.updated_at = utcnow_naive()
         session.add(membership)
 
 

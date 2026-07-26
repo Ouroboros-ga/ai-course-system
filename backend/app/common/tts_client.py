@@ -7,7 +7,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote, urlencode
 
@@ -110,7 +110,7 @@ class AliyunTTSClient(BaseTTSClient):
     ) -> TTSResponse:
         url = "https://nls-gateway.cn-shanghai.aliyuncs.com/stream/v1/tts"
 
-        timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+        timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         nonce = str(uuid.uuid4())
 
         voice = voice or self.default_voice

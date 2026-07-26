@@ -4,7 +4,7 @@
 """
 
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, Depends, Query, Body
 from sqlmodel import Session, select
@@ -228,7 +228,7 @@ async def update_note(
         if is_draft is not None:
             note.is_draft = is_draft
 
-        note.updated_at = datetime.utcnow()
+        note.updated_at = utcnow_naive()
         session.add(note)
         session.commit()
         session.refresh(note)

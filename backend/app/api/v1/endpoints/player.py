@@ -8,7 +8,7 @@
 
 import logging
 from typing import Optional, List
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlmodel import Session, select, func
@@ -376,7 +376,7 @@ async def save_player_progress(
                 user_id=user_id,
                 course_id=request.course_id,
                 status=LearningStatus.IN_PROGRESS,
-                started_at=datetime.utcnow(),
+                started_at=utcnow_naive(),
             )
             session.add(progress)
 
@@ -406,8 +406,8 @@ async def save_player_progress(
                 progress.completion_rate = len(request.completed_nodes) / max(total_nodes, 1)
 
         progress.status = LearningStatus.IN_PROGRESS
-        progress.last_accessed_at = datetime.utcnow()
-        progress.updated_at = datetime.utcnow()
+        progress.last_accessed_at = utcnow_naive()
+        progress.updated_at = utcnow_naive()
 
         session.commit()
         session.refresh(progress)

@@ -8,7 +8,7 @@ import uuid
 import json
 import logging
 from typing import Optional, List
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
@@ -443,7 +443,7 @@ async def _parse_generated_pptx(
                 "raw_content": structure_result.raw_content,
             }
             docling_doc.source_file_path = ppt_file_path
-            docling_doc.updated_at = datetime.utcnow()
+            docling_doc.updated_at = utcnow_naive()
             session.commit()
 
         # 创建课程脚本
@@ -481,7 +481,7 @@ async def _parse_generated_pptx(
         # 更新课程统计
         course.total_nodes = len(script_result.nodes)
         course.total_duration = script_result.total_duration
-        course.updated_at = datetime.utcnow()
+        course.updated_at = utcnow_naive()
         session.commit()
 
         logger.info(f"[PPT Parse] 解析完成: {len(script_result.nodes)} 个节点")

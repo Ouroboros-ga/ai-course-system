@@ -6,11 +6,11 @@
 import json
 import logging
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
 
 from sqlmodel import Session, select
 
 from app.common.llm_client import llm_client, Message
+from app.core.time_utils import utcnow_naive
 from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
@@ -538,7 +538,7 @@ class ProgressService:
                 user_id=user_id,
                 course_id=course_id,
                 status=LearningStatus.IN_PROGRESS,
-                started_at=datetime.utcnow(),
+                started_at=utcnow_naive(),
             )
             session.add(progress)
             session.commit()
@@ -561,7 +561,7 @@ class ProgressService:
                 progress_id=progress_id,
                 node_id=node_id,
                 node_index=node_index,
-                first_accessed_at=datetime.utcnow(),
+                first_accessed_at=utcnow_naive(),
             )
             session.add(node_progress)
             session.commit()
@@ -578,7 +578,7 @@ class ProgressService:
         pace_adjustment: Dict,
     ) -> Dict:
         """更新学习进度"""
-        progress.last_accessed_at = datetime.utcnow()
+        progress.last_accessed_at = utcnow_naive()
         progress.session_count += 1
         session.commit()
 

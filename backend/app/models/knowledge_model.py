@@ -10,6 +10,8 @@ from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class SubjectType(str, Enum):
     """学科类型枚举"""
@@ -71,8 +73,8 @@ class KnowledgeBase(SQLModel, table=True):
     is_public: bool = Field(default=True, description="是否公开")
 
     created_by: Optional[int] = Field(default=None, description="创建者ID")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
     config: dict = Field(
         default_factory=dict,
@@ -147,8 +149,8 @@ class KnowledgePoint(SQLModel, table=True):
     embedding: Optional[bytes] = Field(default=None, description="向量嵌入(序列化)")
 
     is_active: bool = Field(default=True, description="是否启用")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class KnowledgeRelation(SQLModel, table=True):
@@ -179,7 +181,7 @@ class KnowledgeRelation(SQLModel, table=True):
 
     description: Optional[str] = Field(default=None, description="关系描述")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class KnowledgeImportLog(SQLModel, table=True):
@@ -204,7 +206,7 @@ class KnowledgeImportLog(SQLModel, table=True):
     error_message: Optional[str] = Field(default=None, description="错误信息")
 
     created_by: Optional[int] = Field(default=None, description="操作者ID")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
     completed_at: Optional[datetime] = Field(default=None, description="完成时间")
 
 
@@ -226,4 +228,4 @@ class KnowledgeSearchHistory(SQLModel, table=True):
     result_count: int = Field(default=0, description="结果数量")
     clicked_points: str = Field(default="", description="点击的知识点ID列表")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)

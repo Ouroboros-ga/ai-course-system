@@ -22,6 +22,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class CourseType(str, Enum):
     """课程安全类型"""
@@ -124,8 +126,8 @@ class CourseSafetyPolicy(SQLModel, table=True):
     )
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class CourseSandboxPolicy(SQLModel, table=True):
@@ -182,8 +184,8 @@ class CourseSandboxPolicy(SQLModel, table=True):
     )
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class SafetyAuditLog(SQLModel, table=True):
@@ -213,4 +215,4 @@ class SafetyAuditLog(SQLModel, table=True):
         description="决策因素列表(课程类型/教学意图/工具目标/隔离环境)",
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)

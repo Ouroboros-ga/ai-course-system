@@ -9,7 +9,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -341,7 +341,7 @@ async def set_default_asset(
 
     # 设置新默认
     asset.is_default = True
-    asset.updated_at = datetime.utcnow()
+    asset.updated_at = utcnow_naive()
     session.add(asset)
     session.commit()
 
@@ -454,7 +454,7 @@ async def clone_voice(
 
     # 更新状态为训练中
     asset.clone_status = CloneStatus.PENDING
-    asset.updated_at = datetime.utcnow()
+    asset.updated_at = utcnow_naive()
     session.add(asset)
     session.commit()
 
@@ -481,7 +481,7 @@ async def clone_voice(
         clone_voice_id = result["speaker_id"]
         asset.clone_voice_id = clone_voice_id
         asset.clone_status = CloneStatus.SUCCESS
-        asset.updated_at = datetime.utcnow()
+        asset.updated_at = utcnow_naive()
         session.add(asset)
         session.commit()
 
@@ -497,7 +497,7 @@ async def clone_voice(
     except TTSError as e:
         # 训练失败，更新状态
         asset.clone_status = CloneStatus.FAILED
-        asset.updated_at = datetime.utcnow()
+        asset.updated_at = utcnow_naive()
         session.add(asset)
         session.commit()
 
@@ -508,7 +508,7 @@ async def clone_voice(
         )
     except Exception as e:
         asset.clone_status = CloneStatus.FAILED
-        asset.updated_at = datetime.utcnow()
+        asset.updated_at = utcnow_naive()
         session.add(asset)
         session.commit()
 

@@ -106,11 +106,33 @@ if startup_side_effects_skipped:
 else:
     startup_dependency_report = run_startup_side_effects()
 
+# G6: 自定义 operation ID 生成函数，确保全局唯一。
+# FastAPI 默认用端点函数名作为 operation_id；当多个路由模块存在同名函数
+# （如 list_evidence / submit_attempt / create_release）时会产生冲突，
+# 破坏 OpenAPI 客户端代码生成。此处用「路由路径 + 函数名」保证唯一性。
+from fastapi.routing import APIRoute
+
+
+def _generate_unique_operation_id(route: APIRoute) -> str:
+    """生成全局唯一的 OpenAPI operation_id。
+
+    格式：``{path}_{name}``，其中 path 替换非字母数字字符为下划线。
+    例如 ``/api/v1/graph/course/{course_id}/evidence`` + ``list_evidence``
+    → ``api_v1_graph_course_course_id_evidence_list_evidence``。
+    """
+    safe_path = route.path.replace("/", "_").replace("{", "").replace("}", "")
+    safe_path = safe_path.replace("-", "_").replace(".", "_")
+    # 去除开头多余的下划线
+    safe_path = safe_path.lstrip("_")
+    return f"{safe_path}_{route.name}"
+
+
 # 创建FastAPI实例
 app = FastAPI(
     title="超星AI互动智课系统",
     description="符合超星开放API设计规范的后端服务",
     version="v1",
+    generate_unique_id_function=_generate_unique_operation_id,
 )
 app.state.startup_side_effects_skipped = startup_side_effects_skipped
 app.state.startup_dependency_report = startup_dependency_report
@@ -363,7 +385,7 @@ async def error_monitor_snapshot():
     return unified_response(200, "错误监控快照", error_monitor.snapshot())
 
 
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
 async def catch_all(path: str):
     if path.startswith("@vite/") or path.startswith("src/") or path.endswith((".js", ".css", ".html", ".ico", ".png", ".svg")):
         return unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None)

@@ -18,7 +18,7 @@ import hashlib
 import json
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 from sqlmodel import Session, select
@@ -28,6 +28,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
+from app.core.time_utils import utcnow_naive
 from app.models.task_model import (
     IdempotencyKeyRecord,
     TaskEventRecord,
@@ -198,7 +199,7 @@ class TaskService:
                 return self.get_task(session, existing, owner_user_id=request.owner_user_id)
 
         task_id = uuid.uuid4().hex
-        now = datetime.utcnow()
+        now = utcnow_naive()
         payload_str = json.dumps(request.input_payload, ensure_ascii=False, sort_keys=True)
         record = TaskRecord(
             task_id=task_id,
@@ -362,7 +363,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "running")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.status = "running"
         record.started_at = record.started_at or now
         record.updated_at = now
@@ -395,7 +396,7 @@ class TaskService:
             reject_state_conflict(f"任务处于 {record.status} 状态，不能更新进度")
         if not 0 <= progress <= 100:
             reject_validation_failed("progress 必须在 0..100 之间")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.progress = progress
         record.updated_at = now
         if stage:
@@ -423,7 +424,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "succeeded")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.status = "succeeded"
         record.progress = 100
         record.finished_at = now
@@ -456,7 +457,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "failed")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.status = "failed"
         record.finished_at = now
         record.updated_at = now
@@ -489,7 +490,7 @@ class TaskService:
         if operator_user_id is not None and record.owner_user_id != operator_user_id:
             reject_resource_not_found("任务不存在或无权访问")
         _assert_transition(record.status, "cancelled")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.status = "cancelled"
         record.finished_at = now
         record.updated_at = now
@@ -524,7 +525,7 @@ class TaskService:
         if not record.retryable:
             reject_state_conflict("任务不可重试")
         _assert_transition(record.status, "pending")
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.status = "pending"
         record.error_code = ""
         record.error_message = ""
@@ -555,7 +556,7 @@ class TaskService:
             reject_resource_not_found("任务不存在或无权访问")
         if record.acknowledged:
             return TaskViewModel.from_record(record)
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record.acknowledged = True
         record.acknowledged_at = now
         record.updated_at = now
@@ -620,7 +621,7 @@ class TaskService:
         user_id: int,
         idempotency_key: str,
     ) -> Optional[str]:
-        now = datetime.utcnow()
+        now = utcnow_naive()
         record = session.exec(
             select(IdempotencyKeyRecord).where(
                 IdempotencyKeyRecord.user_id == user_id,

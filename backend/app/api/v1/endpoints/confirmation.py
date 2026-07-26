@@ -4,7 +4,7 @@
 """
 
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
@@ -176,9 +176,9 @@ async def update_confirmation(
 
         confirmation.status = new_status
         confirmation.confirmed_by = int(current_user["user_id"])
-        confirmation.confirmed_at = datetime.utcnow()
+        confirmation.confirmed_at = utcnow_naive()
         confirmation.notes = body.notes
-        confirmation.updated_at = datetime.utcnow()
+        confirmation.updated_at = utcnow_naive()
         session.add(confirmation)
         session.commit()
         session.refresh(confirmation)

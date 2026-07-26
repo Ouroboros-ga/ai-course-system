@@ -19,6 +19,8 @@ from typing import Optional, Any
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class QuestionType(str, Enum):
     """题型"""
@@ -120,8 +122,8 @@ class QuestionBankItem(SQLModel, table=True):
 
     # 审计
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     published_at: Optional[datetime] = Field(default=None, description="发布时间")
     published_by: Optional[int] = Field(default=None, foreign_key="users.id", description="发布人")
 
@@ -173,8 +175,8 @@ class QuestionSourceMapping(SQLModel, table=True):
 
     # 审计
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     locked_by: Optional[int] = Field(default=None, foreign_key="users.id", description="锁定人")
     locked_at: Optional[datetime] = Field(default=None, description="锁定时间")
 
@@ -213,5 +215,5 @@ class QuestionAttempt(SQLModel, table=True):
     judged_by: str = Field(default="teacher", description="评判方式: teacher/auto/peer")
     judge_feedback: str = Field(default="")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
     judged_at: Optional[datetime] = Field(default=None)

@@ -13,7 +13,7 @@ import os
 import logging
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -461,7 +461,7 @@ class PPTGenerationService:
 
         # 步骤4: 下载PPT
         if task_result.ppt_url:
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
             safe_topic = "".join(c for c in topic if c.isalnum() or c in "._- ")[:30]
             filename = f"{safe_topic}_{timestamp}.pptx"
             save_path = os.path.join(self.ppt_storage_path, filename)

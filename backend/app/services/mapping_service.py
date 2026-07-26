@@ -6,9 +6,9 @@
 import json
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime
 
 from sqlmodel import Session, select
+from app.core.time_utils import utcnow_naive
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -410,7 +410,7 @@ PPT页面内容：
             mapping.page_end = page_end
             mapping.is_manual = True
             mapping.confidence = 1.0
-            mapping.updated_at = datetime.utcnow()
+            mapping.updated_at = utcnow_naive()
             session.add(mapping)
         else:
             script = MappingService.get_active_script(session, course_id)

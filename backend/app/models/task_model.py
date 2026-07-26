@@ -20,6 +20,8 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 # ---------------------------------------------------------------------------
 # schema_migration_records：版本化迁移底座
@@ -38,13 +40,13 @@ class SchemaMigrationRecord(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     batch_id: str = Field(index=True, max_length=128, description="唯一迁移批次标识")
     name: str = Field(max_length=256, description="人类可读的迁移名称")
-    applied_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    applied_at: datetime = Field(default_factory=utcnow_naive, index=True)
     status: str = Field(default="applied", max_length=32, description="applied|rolled_back|failed")
     rollback_notes: str = Field(default="", description="回滚边界与说明")
     preflight_ok: bool = Field(default=True, description="预检是否通过")
     applied_rows: int = Field(default=0, description="影响的行数（用于审计）")
     operator_user_id: Optional[int] = Field(default=None, description="执行迁移的操作员")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -78,8 +80,8 @@ class TaskRecord(SQLModel, table=True):
     acknowledged_at: Optional[datetime] = Field(default=None)
     parent_task_id: Optional[str] = Field(default=None, index=True, description="父任务 UUID（子任务编排）")
     idempotency_key: Optional[str] = Field(default=None, index=True, description="客户端幂等键")
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
-    updated_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    updated_at: datetime = Field(default_factory=utcnow_naive, index=True)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
 
@@ -103,7 +105,7 @@ class TaskEventRecord(SQLModel, table=True):
     message: str = Field(default="")
     error_code: str = Field(default="", max_length=64)
     event_data: str = Field(default="{}", description="JSON: 结构化事件负载")
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +128,7 @@ class TaskResourceLinkRecord(SQLModel, table=True):
     resource_id: str = Field(max_length=128, description="资源标识（UUID 或稳定 ID）")
     relation: str = Field(default="input", max_length=32,
                           description="input|output|affected|reference")
-    created_at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -149,4 +151,4 @@ class IdempotencyKeyRecord(SQLModel, table=True):
     task_id: str = Field(index=True, max_length=64, description="关联 TaskRecord.task_id")
     request_payload_hash: str = Field(default="", max_length=128, description="请求体哈希，校验一致性")
     expires_at: datetime = Field(index=True, description="幂等窗口过期时间")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)

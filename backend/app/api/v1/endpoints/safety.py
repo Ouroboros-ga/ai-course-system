@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -122,7 +122,7 @@ async def update_safety_policy(
         old_values["status"] = policy.status.value
         policy.status = payload.status
 
-    policy.updated_at = datetime.utcnow()
+    policy.updated_at = utcnow_naive()
     session.add(policy)
 
     # 审计日志
@@ -221,7 +221,7 @@ async def update_sandbox_policy(
         old_values["log_retention_days"] = policy.log_retention_days
         policy.log_retention_days = payload.log_retention_days
 
-    policy.updated_at = datetime.utcnow()
+    policy.updated_at = utcnow_naive()
     session.add(policy)
 
     log = SafetyAuditLog(

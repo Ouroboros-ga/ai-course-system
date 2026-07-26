@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import secrets
 import string
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
@@ -167,8 +167,8 @@ async def upsert_course_member(
         existing.status = payload.status
         existing.permission_overrides = payload.permission_overrides
         existing.analytics_excluded = payload.role != CourseRole.STUDENT
-        existing.left_at = datetime.utcnow() if payload.status in {MembershipStatus.REMOVED, MembershipStatus.WITHDRAWN} else None
-        existing.updated_at = datetime.utcnow()
+        existing.left_at = utcnow_naive() if payload.status in {MembershipStatus.REMOVED, MembershipStatus.WITHDRAWN} else None
+        existing.updated_at = utcnow_naive()
         session.add(existing)
     session.commit()
     session.refresh(existing)
@@ -203,7 +203,7 @@ async def update_course_capabilities(
     else:
         for name, value in values.items():
             setattr(capability, name, value)
-        capability.updated_at = datetime.utcnow()
+        capability.updated_at = utcnow_naive()
     session.add(capability)
     session.commit()
     return unified_response(code=200, message="保存课程能力成功", data={"course_id": course_id, "capabilities": values})
@@ -241,7 +241,7 @@ async def set_invite_code(
     if existing is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="邀请码已被其他课程占用")
     course.invite_code = code
-    course.updated_at = datetime.utcnow()
+    course.updated_at = utcnow_naive()
     session.add(course)
     session.commit()
     return unified_response(code=200, message="邀请码已设置", data={"course_id": course_id, "invite_code": code})
@@ -259,7 +259,7 @@ async def clear_invite_code(
     if course is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
     course.invite_code = None
-    course.updated_at = datetime.utcnow()
+    course.updated_at = utcnow_naive()
     session.add(course)
     session.commit()
     return unified_response(code=200, message="邀请码已清除", data={"course_id": course_id})
@@ -309,7 +309,7 @@ async def join_by_code(
         return unified_response(code=200, message="已加入该课程", data={"course_id": course.id, "already_enrolled": True})
     elif existing and not existing.is_active:
         existing.is_active = True
-        existing.enrolled_at = datetime.utcnow()
+        existing.enrolled_at = utcnow_naive()
         session.add(existing)
         session.commit()
         return unified_response(code=200, message="重新加入课程成功", data={"course_id": course.id, "reactivated": True})
@@ -339,7 +339,7 @@ async def close_course(
         return unified_response(code=200, message="课程已处于关闭状态", data={"course_id": course_id, "status": "closed"})
     previous_status = course.status.value
     course.status = CourseStatus.CLOSED
-    course.updated_at = datetime.utcnow()
+    course.updated_at = utcnow_naive()
     session.add(course)
     session.commit()
     # P3 §四.3：课程关闭审计日志
@@ -348,7 +348,7 @@ async def close_course(
         int(current_user["user_id"]),
         course_id,
         previous_status,
-        datetime.utcnow().isoformat(),
+        utcnow_naive().isoformat(),
         extra={
             "actor_user_id": int(current_user["user_id"]),
             "course_id": course_id,
@@ -375,7 +375,7 @@ async def reopen_course(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"课程当前状态为 {course.status.value}，仅 CLOSED 状态可重新开放")
     previous_status = course.status.value
     course.status = CourseStatus.PUBLISHED
-    course.updated_at = datetime.utcnow()
+    course.updated_at = utcnow_naive()
     session.add(course)
     session.commit()
     # P3 §四.3：课程重开审计日志
@@ -384,7 +384,7 @@ async def reopen_course(
         int(current_user["user_id"]),
         course_id,
         previous_status,
-        datetime.utcnow().isoformat(),
+        utcnow_naive().isoformat(),
         extra={
             "actor_user_id": int(current_user["user_id"]),
             "course_id": course_id,

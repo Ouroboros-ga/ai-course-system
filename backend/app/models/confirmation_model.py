@@ -5,6 +5,8 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class ConfirmationType(str, Enum):
     """确认类型"""
@@ -34,5 +36,5 @@ class CourseConfirmation(SQLModel, table=True):
     confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
     confirmed_at: Optional[datetime] = Field(default=None)
     notes: str = Field(default="")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)

@@ -13,12 +13,12 @@ import hashlib
 import json
 import uuid
 from copy import deepcopy
-from datetime import datetime, timezone
 from typing import Optional, Any
 
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
     GraphSnapshotRecord,
@@ -134,7 +134,7 @@ def publish_snapshot(
         node_count=len(nodes),
         relation_count=len(relations),
         created_by=user_id,
-        published_at=datetime.now(timezone.utc),
+        published_at=utcnow_naive(),
     )
     session.add(snapshot)
     session.commit()
@@ -328,7 +328,7 @@ def mark_evidence_stale(
     for ev in evidences:
         ev.status = EvidenceStatus.STALE
         ev.stale_reason = reason
-        ev.stale_at = datetime.now(timezone.utc)
+        ev.stale_at = utcnow_naive()
         session.add(ev)
     # A document lifecycle operation may need this change to be part of its
     # larger transaction.  The public graph endpoint keeps the default.

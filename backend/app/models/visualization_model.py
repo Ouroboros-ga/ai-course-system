@@ -11,6 +11,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class VisualizationStatus(str, Enum):
     """可视化计划状态"""
@@ -50,8 +52,8 @@ class VisualizationPlanRecord(SQLModel, table=True):
     # 状态
     status: VisualizationStatus = Field(default=VisualizationStatus.DRAFT, index=True)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     published_at: Optional[datetime] = Field(default=None)
 
     # 回放统计

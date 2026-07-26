@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from sqlmodel import Session, func, select
@@ -26,6 +26,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
+from app.core.time_utils import utcnow_naive
 from app.models.cognitive_state_model import LearningEvidenceRecord
 from app.models.experiment_model import (
     AttemptStatus,
@@ -157,7 +158,7 @@ class ExperimentDefinitionService:
             definition.max_attempts = max_attempts
         if cooldown_minutes is not None:
             definition.cooldown_minutes = cooldown_minutes
-        definition.updated_at = datetime.utcnow()
+        definition.updated_at = utcnow_naive()
         session.add(definition)
         session.flush()
         return definition
@@ -173,7 +174,7 @@ class ExperimentDefinitionService:
         if not definition.default_version_id:
             reject_state_conflict("实验缺少激活版本，无法发布")
         definition.publish_status = ExperimentPublishStatus.PUBLISHED
-        definition.updated_at = datetime.utcnow()
+        definition.updated_at = utcnow_naive()
         session.add(definition)
         session.flush()
         return definition
@@ -187,8 +188,8 @@ class ExperimentDefinitionService:
     ) -> ExperimentDefinition:
         definition = self.get_definition(session, course_id=course_id, experiment_id=experiment_id)
         definition.publish_status = ExperimentPublishStatus.ARCHIVED
-        definition.archived_at = datetime.utcnow()
-        definition.updated_at = datetime.utcnow()
+        definition.archived_at = utcnow_naive()
+        definition.updated_at = utcnow_naive()
         session.add(definition)
         session.flush()
         return definition
@@ -362,7 +363,7 @@ class ExperimentVersionService:
         ).first()
         if definition is not None:
             definition.default_version_id = version.version_id
-            definition.updated_at = datetime.utcnow()
+            definition.updated_at = utcnow_naive()
             session.add(definition)
 
         session.flush()
@@ -432,7 +433,7 @@ class ExperimentAttemptService:
         ).first()
         if latest_attempt and latest_attempt.created_at:
             cooldown = timedelta(minutes=definition.cooldown_minutes)
-            if datetime.utcnow() - latest_attempt.created_at < cooldown:
+            if utcnow_naive() - latest_attempt.created_at < cooldown:
                 reject_state_conflict("尝试冷却中，请稍后再试")
 
         attempt = ExperimentAttempt(
@@ -500,8 +501,8 @@ class ExperimentAttemptService:
         if attempt.status != AttemptStatus.IN_PROGRESS:
             reject_state_conflict(f"尝试状态 {attempt.status.value} 不可提交")
         attempt.status = AttemptStatus.SUBMITTED
-        attempt.submitted_at = datetime.utcnow()
-        attempt.updated_at = datetime.utcnow()
+        attempt.submitted_at = utcnow_naive()
+        attempt.updated_at = utcnow_naive()
         session.add(attempt)
         session.flush()
         return attempt
@@ -616,7 +617,7 @@ class ExperimentRunService:
             run.outcome = RunOutcome.SANDBOX_UNAVAILABLE
             run.error_code = "SANDBOX_UNAVAILABLE"
             run.error_message = "代码沙箱不可用，请稍后重试"
-            run.finished_at = datetime.utcnow()
+            run.finished_at = utcnow_naive()
             session.add(run)
             session.flush()
             return
@@ -698,7 +699,7 @@ class ExperimentRunService:
                 run.outcome = RunOutcome.INTERNAL_ERROR
                 run.error_code = "INTERNAL_ERROR"
                 run.error_message = str(exc)
-                run.finished_at = datetime.utcnow()
+                run.finished_at = utcnow_naive()
                 run.compile_ok = compile_ok
                 run.test_summary = {"cases": test_summary}
                 session.add(run)
@@ -736,7 +737,7 @@ class ExperimentRunService:
             c.weight for c, t in zip(cases, test_summary) if t["passed"]
         )
         run.score = passed_weight / total_weight if total_weight > 0 else 0.0
-        run.finished_at = datetime.utcnow()
+        run.finished_at = utcnow_naive()
         session.add(run)
         session.flush()
 
@@ -832,9 +833,9 @@ class ExperimentFinalizeService:
 
         attempt.final_score = score
         attempt.passed = passed
-        attempt.finalized_at = datetime.utcnow()
+        attempt.finalized_at = utcnow_naive()
         attempt.status = AttemptStatus.FINALIZED if passed else AttemptStatus.FAILED
-        attempt.updated_at = datetime.utcnow()
+        attempt.updated_at = utcnow_naive()
 
         # 只有评分策略允许且通过时才写入正式 LearningEvidence
         if version.writes_formal_evidence and passed:
@@ -886,7 +887,7 @@ class ExperimentFinalizeService:
             label="实验完成" if attempt.passed else "实验未通过",
             description=f"实验 {attempt.experiment_id} 尝试 {attempt.attempt_id} 评分 {run.score:.2f}",
             source="experiment_finalize_service",
-            timestamp=datetime.utcnow().isoformat(),
+            timestamp=datetime.now(timezone.utc).isoformat(),
             event_refs=[attempt.attempt_id, run.run_id],
             policy_version=CODING_HINT_POLICY_VERSION,
         )
@@ -984,7 +985,7 @@ class CodingHintService:
         hint.teacher_decision = decision
         hint.teacher_note = note
         hint.reviewed_by = reviewer_id
-        hint.reviewed_at = datetime.utcnow()
+        hint.reviewed_at = utcnow_naive()
         session.add(hint)
         session.flush()
         return hint

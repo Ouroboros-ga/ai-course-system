@@ -7,11 +7,11 @@ import json
 import logging
 import uuid
 from typing import Dict, List, Optional, Tuple
-from datetime import datetime
 
 from sqlmodel import Session, select, func
 
 from app.common.llm_client import llm_client, Message
+from app.core.time_utils import utcnow_naive
 from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
@@ -540,9 +540,9 @@ class JumpHistoryManager:
             return False
         
         jump_record.is_returned = True
-        jump_record.returned_at = datetime.utcnow()
+        jump_record.returned_at = utcnow_naive()
         jump_record.review_duration_seconds = review_duration_seconds
-        jump_record.updated_at = datetime.utcnow()
+        jump_record.updated_at = utcnow_naive()
         
         session.add(jump_record)
         session.commit()
@@ -567,7 +567,7 @@ class JumpHistoryManager:
             return False
         
         jump_record.review_completed = True
-        jump_record.updated_at = datetime.utcnow()
+        jump_record.updated_at = utcnow_naive()
         
         session.add(jump_record)
         session.commit()

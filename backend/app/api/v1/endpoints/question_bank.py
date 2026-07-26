@@ -16,7 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -236,7 +236,7 @@ async def assign_questions_to_course(
         item.course_id = payload.course_id
         item.status = QuestionStatus.AUTO_ACCEPTED
         item.knowledge_node_ids = payload.knowledge_node_ids
-        item.updated_at = datetime.utcnow()
+        item.updated_at = utcnow_naive()
         session.add(item)
         updated += 1
 
@@ -320,7 +320,7 @@ async def update_question(
     item.version += 1
     item.prev_version_id = old_item.id
     item.status = QuestionStatus.TEACHER_EDITED
-    item.updated_at = datetime.utcnow()
+    item.updated_at = utcnow_naive()
     session.add(item)
     session.commit()
 
@@ -385,7 +385,7 @@ async def publish_questions(
                 })
                 continue
             item.status = QuestionStatus.PUBLISHED
-            item.published_at = datetime.utcnow()
+            item.published_at = utcnow_naive()
             item.published_by = user_id
         else:
             if item.status != QuestionStatus.PUBLISHED:
@@ -395,7 +395,7 @@ async def publish_questions(
             item.published_at = None
             item.published_by = None
 
-        item.updated_at = datetime.utcnow()
+        item.updated_at = utcnow_naive()
         session.add(item)
         updated += 1
 
@@ -566,7 +566,7 @@ async def submit_attempt(
         score=float(is_correct) if is_correct is not None else None,
         cognitive_context={},
         judged_by="auto" if automatically_judged else "teacher",
-        judged_at=datetime.utcnow() if automatically_judged else None,
+        judged_at=utcnow_naive() if automatically_judged else None,
     )
     session.add(attempt)
     # P3 §四.4：attempt 与评分型证据同事务提交。
@@ -613,7 +613,7 @@ async def grade_attempt(
     attempt.is_correct = payload.score >= 0.999
     attempt.judged_by = "teacher"
     attempt.judge_feedback = payload.feedback
-    attempt.judged_at = datetime.utcnow()
+    attempt.judged_at = utcnow_naive()
     session.add(attempt)
     # P3 §四.4：attempt 与评分型证据同事务提交。
     # 旧实现先 commit attempt 再写证据，证据失败时 attempt 已落库导致证据缺失。

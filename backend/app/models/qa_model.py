@@ -5,6 +5,8 @@ from typing import Optional, List
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class MessageRole(str, Enum):
     """消息角色枚举"""
@@ -39,8 +41,8 @@ class QASession(SQLModel, table=True):
     title: Optional[str] = Field(default=None, max_length=200, description="会话标题")
     is_active: bool = Field(default=True, description="会话是否活跃")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
-    updated_at: datetime = Field(default_factory=datetime.utcnow, description="更新时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
+    updated_at: datetime = Field(default_factory=utcnow_naive, description="更新时间")
 
 
 class QAMessage(SQLModel, table=True):
@@ -76,7 +78,7 @@ class QAMessage(SQLModel, table=True):
     tokens_used: int = Field(default=0, description="消耗的token数")
     response_time_ms: int = Field(default=0, description="响应时间(毫秒)")
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")
 
 
 class QAContext(SQLModel, table=True):
@@ -107,4 +109,4 @@ class QAContext(SQLModel, table=True):
         default=None, description="嵌入向量(序列化存储)"
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow, description="创建时间")
+    created_at: datetime = Field(default_factory=utcnow_naive, description="创建时间")

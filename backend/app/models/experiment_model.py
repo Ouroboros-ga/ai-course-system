@@ -28,6 +28,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 # ---------------------------------------------------------------------------
 # 实验定义
@@ -79,8 +81,8 @@ class ExperimentDefinition(SQLModel, table=True):
     cooldown_minutes: int = Field(default=30, description="尝试冷却（分钟）")
 
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     archived_at: Optional[datetime] = Field(default=None)
 
 
@@ -133,7 +135,7 @@ class ExperimentVersion(SQLModel, table=True):
     is_locked: bool = Field(default=False, description="教师锁定，AI 不可覆盖")
     is_active: bool = Field(default=False, index=True, description="当前激活版本")
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class ExperimentTestCase(SQLModel, table=True):
@@ -158,7 +160,7 @@ class ExperimentTestCase(SQLModel, table=True):
     is_hidden: bool = Field(default=False, index=True, description="隐藏测试不向前端泄露详情")
     weight: float = Field(default=1.0, description="评分权重")
     time_limit_override: Optional[int] = Field(default=None, description="单 case 超时覆盖(秒)")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +198,7 @@ class ExperimentAttempt(SQLModel, table=True):
     student_id: int = Field(foreign_key="users.id", index=True)
 
     status: AttemptStatus = Field(default=AttemptStatus.IN_PROGRESS, index=True)
-    started_at: datetime = Field(default_factory=datetime.utcnow)
+    started_at: datetime = Field(default_factory=utcnow_naive)
     submitted_at: Optional[datetime] = Field(default=None)
     finalized_at: Optional[datetime] = Field(default=None)
 
@@ -212,8 +214,8 @@ class ExperimentAttempt(SQLModel, table=True):
         description="学习位置回锚（course_id/node_id/page 等）",
     )
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class RunOutcome(str, Enum):
@@ -274,7 +276,7 @@ class ExperimentRun(SQLModel, table=True):
     error_code: str = Field(default="")
     error_message: str = Field(default="")
 
-    submitted_at: datetime = Field(default_factory=datetime.utcnow)
+    submitted_at: datetime = Field(default_factory=utcnow_naive)
     finished_at: Optional[datetime] = Field(default=None)
 
 
@@ -293,7 +295,7 @@ class ExperimentRunArtifact(SQLModel, table=True):
     content: str = Field(default="")
     content_object_key: str = Field(default="", description="大对象存储键")
     is_truncated: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 # ---------------------------------------------------------------------------
@@ -332,7 +334,7 @@ class CodingHintRecord(SQLModel, table=True):
     hint_level: CodingHintLevel = Field(index=True)
     reason_codes: list = Field(default_factory=list, sa_column=Column(JSON))
     policy_version: str = Field(default="coding-hint-v1.0")
-    requested_at: datetime = Field(default_factory=datetime.utcnow)
+    requested_at: datetime = Field(default_factory=utcnow_naive)
     fulfilled_at: Optional[datetime] = Field(default=None)
     fulfilled_by_agent: bool = Field(default=False)
 

@@ -6,7 +6,7 @@
 import logging
 import traceback
 from typing import Optional
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 
 from fastapi import APIRouter, Depends, Body, Query, HTTPException
 from sqlmodel import Session, select
@@ -357,7 +357,7 @@ async def return_to_original_position(
                 "originalNode": original_node,
                 "reviewSummary": {
                     "duration": f"{reviewDurationSeconds // 60}分钟{reviewDurationSeconds % 60}秒",
-                    "completedAt": datetime.utcnow().isoformat(),
+                    "completedAt": utcnow_naive().isoformat(),
                 } if reviewDurationSeconds > 0 else None,
             }
         )

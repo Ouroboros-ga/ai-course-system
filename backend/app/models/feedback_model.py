@@ -5,6 +5,8 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
+from app.core.time_utils import utcnow_naive
+
 
 class FeedbackType(str, Enum):
     """反馈类型"""
@@ -35,5 +37,5 @@ class Feedback(SQLModel, table=True):
     content: str = Field(default="")
     status: FeedbackStatus = Field(default=FeedbackStatus.OPEN)
     teacher_reply: str = Field(default="")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)

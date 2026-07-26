@@ -9,6 +9,8 @@ from sqlmodel import SQLModel, Field
 from typing import Optional
 from datetime import datetime
 
+from app.core.time_utils import utcnow_naive
+
 
 class KnowledgePageMap(SQLModel, table=True):
     """
@@ -44,7 +46,7 @@ class KnowledgePageMap(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="创建时间"
+        default_factory=utcnow_naive, description="创建时间"
     )
 
     updated_at: Optional[datetime] = Field(

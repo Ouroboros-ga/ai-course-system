@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlmodel import Session, or_, select
@@ -968,7 +968,7 @@ class FacadeHomeService:
 
 def _encode_cursor(course: Course) -> str:
     """生成下一页游标：updated_at|id。"""
-    ts = course.updated_at.isoformat() if course.updated_at else datetime.utcnow().isoformat()
+    ts = course.updated_at.isoformat() if course.updated_at else datetime.now(timezone.utc).isoformat()
     return f"{ts}|{course.id}"
 
 

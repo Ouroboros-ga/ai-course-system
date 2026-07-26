@@ -15,6 +15,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class SnapshotStatus(str, Enum):
     """快照状态"""
@@ -68,7 +70,7 @@ class CourseEvidenceRecord(SQLModel, table=True):
     reviewed_by: Optional[int] = Field(default=None, foreign_key="users.id")
     reviewed_at: Optional[datetime] = Field(default=None)
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
 
 
 class GraphSnapshotRecord(SQLModel, table=True):
@@ -108,7 +110,7 @@ class GraphSnapshotRecord(SQLModel, table=True):
     relation_count: int = Field(default=0)
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)
     published_at: Optional[datetime] = Field(default=None)
 
 
@@ -142,4 +144,4 @@ class GraphNodeReview(SQLModel, table=True):
     # 证据引用（accepted 节点必须有至少一个）
     evidence_ids: list = Field(default_factory=list, sa_column=Column(JSON))
 
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow_naive)

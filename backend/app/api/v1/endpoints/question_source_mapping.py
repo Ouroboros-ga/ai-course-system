@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -463,7 +463,7 @@ async def update_mapping(
         raise HTTPException(status_code=422, detail="page_end 不能小于 page_start")
 
     mapping.status = MappingStatus.TEACHER_EDITED
-    mapping.updated_at = datetime.utcnow()
+    mapping.updated_at = utcnow_naive()
     session.add(mapping)
     session.commit()
 
@@ -509,13 +509,13 @@ async def update_mapping_status(
 
     if new_status == MappingStatus.LOCKED:
         mapping.locked_by = user_id
-        mapping.locked_at = datetime.utcnow()
+        mapping.locked_at = utcnow_naive()
     elif mapping.status == MappingStatus.LOCKED and new_status != MappingStatus.LOCKED:
         mapping.locked_by = None
         mapping.locked_at = None
 
     mapping.status = new_status
-    mapping.updated_at = datetime.utcnow()
+    mapping.updated_at = utcnow_naive()
     session.add(mapping)
     session.commit()
 

@@ -18,7 +18,6 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from sqlmodel import Session, func, select
@@ -28,6 +27,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
+from app.core.time_utils import utcnow_naive
 from app.models.agent_governance_model import (
     AgentActionDecision,
     AgentActionProposal,
@@ -199,7 +199,7 @@ class AgentGovernanceService:
         # 创建新版本
         snapshot: dict[str, Any] = {}
         result_rows: list[AgentToolPolicy] = []
-        now = datetime.utcnow()
+        now = utcnow_naive()
 
         for upd in updates:
             tool_name = str(upd["tool_name"])
@@ -403,7 +403,7 @@ class AgentGovernanceService:
             rerun_trace_id = str(uuid.uuid4())
 
         proposal.status = new_status
-        proposal.decided_at = datetime.utcnow()
+        proposal.decided_at = utcnow_naive()
         session.add(proposal)
 
         decision_record = AgentActionDecision(

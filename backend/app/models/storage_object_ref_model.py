@@ -10,11 +10,13 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
+
+from app.core.time_utils import utcnow_naive
 
 
 class StorageVerifyStatus(str, Enum):
@@ -56,5 +58,5 @@ class StorageObjectRef(SQLModel, table=True):
         index=True,
         description="ok/missing/hash_mismatch/not_verified",
     )
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    created_at: datetime = Field(default_factory=utcnow_naive)
+    updated_at: datetime = Field(default_factory=utcnow_naive)

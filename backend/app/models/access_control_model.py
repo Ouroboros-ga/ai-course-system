@@ -14,6 +14,8 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
+from app.core.time_utils import utcnow_naive
+
 
 class CourseRole(str, Enum):
     OWNER = "owner"
@@ -67,9 +69,9 @@ class CourseMembership(SQLModel, table=True):
         sa_column=Column(JSON, nullable=False, default=dict),
     )
     analytics_excluded: bool = Field(default=False)
-    joined_at: datetime = Field(default_factory=datetime.utcnow)
+    joined_at: datetime = Field(default_factory=utcnow_naive)
     left_at: Optional[datetime] = Field(default=None)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     migration_batch_id: Optional[str] = Field(default=None, index=True)
 
 
@@ -89,7 +91,7 @@ class CourseCapability(SQLModel, table=True):
     coding_sandbox: bool = Field(default=False)
     cognitive_analysis: bool = Field(default=False)
     safety_policy: bool = Field(default=False)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=utcnow_naive)
     migration_batch_id: Optional[str] = Field(default=None, index=True)
 
 
@@ -105,6 +107,6 @@ class PlatformPermissionAssignment(SQLModel, table=True):
     user_id: int = Field(foreign_key="users.id", index=True)
     permission: PlatformPermission = Field(index=True)
     granted_by_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
-    granted_at: datetime = Field(default_factory=datetime.utcnow)
+    granted_at: datetime = Field(default_factory=utcnow_naive)
     revoked_at: Optional[datetime] = Field(default=None)
     migration_batch_id: Optional[str] = Field(default=None, index=True)

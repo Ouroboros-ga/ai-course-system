@@ -8,11 +8,12 @@ import json
 import logging
 import re
 from typing import Optional, List, Dict, Any, Tuple
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlmodel import Session, select, or_, and_
 
+from app.core.time_utils import utcnow_naive
 from app.models.knowledge_model import (
     KnowledgeBase,
     KnowledgePoint,
@@ -246,7 +247,7 @@ class KnowledgePointService:
         if not point_id:
             kb = session.get(KnowledgeBase, kb_id)
             subject_prefix = kb.subject.value.upper() if kb else "GEN"
-            point_id = f"KP_{subject_prefix}_{datetime.utcnow().strftime('%Y%m%d%H%M%S')}_{hash(title) % 10000:04d}"
+            point_id = f"KP_{subject_prefix}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}_{hash(title) % 10000:04d}"
         
         point = KnowledgePoint(
             kb_id=kb_id,
@@ -403,7 +404,7 @@ class KnowledgePointService:
             if hasattr(point, key) and value is not None:
                 setattr(point, key, value)
         
-        point.updated_at = datetime.utcnow()
+        point.updated_at = utcnow_naive()
         session.commit()
         session.refresh(point)
         
@@ -663,7 +664,7 @@ class KnowledgeImportService:
             import_log.total_points = len(knowledge_points)
             import_log.success_count = len(knowledge_points)
             import_log.status = "completed"
-            import_log.completed_at = datetime.utcnow()
+            import_log.completed_at = utcnow_naive()
             session.commit()
             
             logger.info(f"[KnowledgeImport] 从文档导入完成: {doc_name}, {len(knowledge_points)}个知识点")
@@ -818,7 +819,7 @@ class KnowledgeImportService:
             import_log.success_count = success_count
             import_log.fail_count = fail_count
             import_log.status = "completed"
-            import_log.completed_at = datetime.utcnow()
+            import_log.completed_at = utcnow_naive()
             session.commit()
             
             return {

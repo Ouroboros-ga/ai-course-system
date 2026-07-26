@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
+from app.core.time_utils import utcnow_naive
 from app.models.cognitive_state_model import (
     CognitiveState,
     LearningEvidenceRecord,
@@ -255,7 +256,7 @@ def compute_cognitive_state(
         reason_codes=sorted(set(reason_codes)),
         sample_size=total_attempts,
         is_latest=True,
-        computed_at=datetime.utcnow(),
+        computed_at=utcnow_naive(),
     )
     session.add(state)
     session.commit()

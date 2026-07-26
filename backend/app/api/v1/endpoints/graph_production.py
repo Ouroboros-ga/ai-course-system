@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -108,7 +108,7 @@ async def add_evidence(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     evidence.reviewed_by = int(current_user["user_id"])
-    evidence.reviewed_at = datetime.utcnow()
+    evidence.reviewed_at = utcnow_naive()
     session.add(evidence)
     session.commit()
     session.refresh(evidence)

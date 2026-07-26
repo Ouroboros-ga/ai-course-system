@@ -11,7 +11,7 @@ LLM 不能输出任意 JS/HTML，只能输出受限 VisualizationPlan JSON。
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -177,7 +177,7 @@ async def get_plan(
 
     # 更新回放统计
     record.play_count += 1
-    record.last_played_at = datetime.utcnow()
+    record.last_played_at = utcnow_naive()
     session.add(record)
     session.commit()
 
@@ -209,7 +209,7 @@ async def publish_plan(
         raise HTTPException(status_code=404, detail="计划不存在")
 
     record.status = VisualizationStatus.PUBLISHED
-    record.published_at = datetime.utcnow()
+    record.published_at = utcnow_naive()
     session.add(record)
     session.commit()
 
