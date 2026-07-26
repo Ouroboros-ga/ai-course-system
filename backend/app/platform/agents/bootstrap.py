@@ -16,11 +16,16 @@ from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
 from app.platform.agents.tools.conversation_context import make_session_scoped_conversation_context_port
+from app.platform.agents.tools.experiment import make_session_scoped_experiment_port
 from app.platform.agents.tools.integration import UnavailableSandboxPort
 from app.platform.agents.tools.learning_event import make_session_scoped_learning_event_port
 from app.platform.agents.tools.openai_compatible import OpenAICompatibleTeachingLLM
 from app.platform.agents.tools.question_bank import make_session_scoped_question_bank_port
 from app.platform.agents.tools.recommendation import make_session_scoped_recommendation_port
+from app.platform.agents.tools.teacher_safety_valve import make_session_scoped_teacher_safety_valve_port
+from app.platform.agents.tools.tool_governance import make_session_scoped_tool_governance_port
+from app.platform.agents.tools.visualization import make_session_scoped_visualization_port
+from app.platform.agents.tools.web_research import make_session_scoped_web_research_port
 from app.platform.retrieval_demo.service import DemoService
 from sqlmodel import Session
 
@@ -57,6 +62,12 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             store=KGMestShadowReportStore(),
             cognition=make_session_scoped_cognition_port(session_factory),
             question_bank=make_session_scoped_question_bank_port(session_factory),
+            web_research=make_session_scoped_web_research_port(session_factory),
+            # 阶段9：工具治理、教师安全阀、实验与可视化只读端口
+            tool_governance=make_session_scoped_tool_governance_port(session_factory),
+            teacher_safety_valve=make_session_scoped_teacher_safety_valve_port(session_factory),
+            experiment=make_session_scoped_experiment_port(session_factory),
+            visualization=make_session_scoped_visualization_port(session_factory),
         )
         app.state.teaching_agent_runtime_registry = registry
         logger.info("TeachingAgent registry injected; KG-MEST reports and course sidecars are optional enhancements.")

@@ -171,6 +171,14 @@ from app.models.avatar_model import (
     AvatarAssetPackage,
     CourseAvatarBinding,
 )
+# 阶段9：Agent 工具治理与教师安全阀
+from app.models.agent_governance_model import (
+    AgentPolicyVersion,
+    AgentToolPolicy,
+    AgentActionProposal,
+    AgentActionDecision,
+    AgentToolInvocation,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

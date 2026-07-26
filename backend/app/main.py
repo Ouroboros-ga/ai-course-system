@@ -81,6 +81,8 @@ from app.api.v1.endpoints import (
     experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
+    agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
+    historical_rebuild, # 阶段10 历史课程补建清单编排
 )
 from app.schemas import UnifiedResponse
 
@@ -310,6 +312,20 @@ app.include_router(
     avatar_endpoints.course_avatar_router,
     prefix="/api/v1",
     tags=["阶段8 课程数字人绑定"],
+)
+
+# 阶段9：Agent 工具治理与教师安全阀
+app.include_router(
+    agent_governance.agent_governance_router,
+    prefix="/api/v1/agent-governance",
+    tags=["阶段9 Agent治理与教师安全阀"],
+)
+
+# 阶段10：历史课程补建清单编排
+app.include_router(
+    historical_rebuild.historical_rebuild_router,
+    prefix="/api/v1/historical-rebuild",
+    tags=["阶段10 历史课程补建清单"],
 )
 
 

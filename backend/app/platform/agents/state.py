@@ -43,3 +43,8 @@ class TeachingState(TypedDict, total=False):
     question_bank_items: list[dict[str, Any]]
     web_research_results: dict[str, Any] | None
     session_context: dict[str, Any] | None
+    # 阶段9新增：工具治理与教师安全阀产出字段
+    experiment_items: list[dict[str, Any]]
+    visualization_plans: list[dict[str, Any]]
+    pending_proposals: list[dict[str, Any]]
+    governance_skipped_tools: list[str]

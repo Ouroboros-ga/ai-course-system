@@ -1,7 +1,13 @@
-"""A controlled single-agent teaching graph with explicit deterministic branches."""
+"""A controlled single-agent teaching graph with explicit deterministic branches.
+
+阶段9 改造：在每个可选工具节点前插入 ToolGovernance 检查；高风险动作通过
+TeacherSafetyValve 生成提案，等待教师决策。被禁用的工具跳过执行并记录到
+governance_skipped_tools；沙箱不可用时 CodingAction 标记不可用而非虚构执行。
+"""
 
 from __future__ import annotations
 
+import time
 from typing import Any, Mapping
 
 from langgraph.graph import END, START, StateGraph
@@ -17,7 +23,51 @@ def _trace(state: Mapping[str, Any], node: str, **detail: Any) -> list[dict[str,
 
 
 def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any]:
-    return {"warnings": [*state.get("warnings", []), code], "degraded_services": [*state.get("degraded_services", []), service]}
+    return {
+        "warnings": [*state.get("warnings", []), code],
+        "degraded_services": [*state.get("degraded_services", []), service],
+    }
+
+
+async def _governance_check(tools: TeachingTools, state: TeachingState, tool_name: str) -> tuple[bool, dict[str, Any]]:
+    """检查工具是否被教师策略启用；未注入治理端口时默认允许。
+
+    返回 (允许执行, 治理元数据)；被禁用时记录到 governance_skipped_tools。
+    """
+    if tools.tool_governance is None:
+        return True, {}
+    try:
+        allowed = await tools.tool_governance.is_tool_enabled(
+            course_id=state["course_id"], tool_name=tool_name,
+        )
+        meta: dict[str, Any] = {"allowed": allowed}
+        if not allowed:
+            skipped = [*state.get("governance_skipped_tools", []), tool_name]
+            meta["skipped"] = skipped
+        return allowed, meta
+    except Exception:  # noqa: BLE001 -- 治理失败不阻断主流程
+        return True, {}
+
+
+async def _record_invocation(
+    tools: TeachingTools, state: TeachingState, tool_name: str,
+    input_summary: dict[str, Any], output_summary: dict[str, Any],
+    duration_ms: int | None = None, degraded: bool = False, degraded_reason: str = "",
+    allowed_by_policy: bool = True,
+) -> None:
+    """记录工具调用审计；失败不阻断主流程。"""
+    if tools.tool_governance is None:
+        return
+    try:
+        await tools.tool_governance.record_invocation(
+            course_id=state["course_id"], student_id=state["student_id"],
+            trace_id=state["trace_id"], tool_name=tool_name,
+            input_summary=input_summary, output_summary=output_summary,
+            duration_ms=duration_ms, degraded=degraded,
+            degraded_reason=degraded_reason, allowed_by_policy=allowed_by_policy,
+        )
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def build_teaching_workflow(tools: TeachingTools):
@@ -58,13 +108,32 @@ def build_teaching_workflow(tools: TeachingTools):
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "detect_intent", error=type(error).__name__)}
 
     async def resolve_concept(state: TeachingState) -> dict[str, Any]:
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "graph")
+        if not allowed:
+            return {
+                "concept_grounding_confidence": 0.0,
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "resolve_concept", governance="disabled"),
+            }
+        start = time.monotonic()
         try:
             matches = await tools.knowledge_graph.resolve_concepts(course_id=state["course_id"], message=state["user_message"], candidates=state.get("concept_candidates", []), resource_id=state.get("current_resource_id"))
             selected = dict(matches[0]) if matches else {}
+            await _record_invocation(tools, state, "graph",
+                input_summary={"message_length": len(str(state.get("user_message", "")))},
+                output_summary={"concept_id": selected.get("concept_id"), "candidate_count": len(matches)},
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
             return {"concept_candidates": [dict(item) for item in matches], "current_concept_id": selected.get("concept_id"), "concept_grounding_confidence": float(selected.get("confidence", 0.0)), "trace": _trace(state, "resolve_concept", resolved=bool(selected))}
         except Exception as error:
             payload = _degrade(state, "knowledge_graph", "KNOWLEDGE_GRAPH_UNAVAILABLE")
             payload.update({"concept_grounding_confidence": 0.0, "trace": _trace(state, "resolve_concept", error=type(error).__name__)})
+            await _record_invocation(tools, state, "graph",
+                input_summary={"message_length": len(str(state.get("user_message", "")))},
+                output_summary={}, degraded=True, degraded_reason="KNOWLEDGE_GRAPH_UNAVAILABLE",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
             return payload
 
     async def load_student_state(state: TeachingState) -> dict[str, Any]:
@@ -81,6 +150,13 @@ def build_teaching_workflow(tools: TeachingTools):
         # 批次4可选节点：未注入 CognitionPort 时直接跳过，不影响现有流程
         if tools.cognition is None:
             return {"trace": _trace(state, "load_cognitive_state", skipped=True)}
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "cognition")
+        if not allowed:
+            return {
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_cognitive_state", governance="disabled"),
+            }
         try:
             node_id = state.get("current_concept_id")
             cognitive_state = await tools.cognition.get_state(
@@ -100,6 +176,14 @@ def build_teaching_workflow(tools: TeachingTools):
             return payload
 
     async def load_graph_context(state: TeachingState) -> dict[str, Any]:
+        # 阶段9：ToolGovernance 检查（graph 工具复用）
+        allowed, gov_meta = await _governance_check(tools, state, "graph")
+        if not allowed:
+            return {
+                "graph_context": {}, "prerequisites": [], "successors": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_graph_context", governance="disabled"),
+            }
         try:
             graph = dict(await tools.knowledge_graph.get_context(course_id=state["course_id"], concept_id=str(state["current_concept_id"])))
             return {"graph_context": graph, "prerequisites": list(graph.get("prerequisites", [])), "successors": list(graph.get("successors", [])), "trace": _trace(state, "load_graph_context", graph_version=graph.get("graph_version"))}
@@ -112,6 +196,14 @@ def build_teaching_workflow(tools: TeachingTools):
         # 批次4可选节点：未注入 QuestionBankPort 时直接跳过
         if tools.question_bank is None:
             return {"trace": _trace(state, "load_question_bank", skipped=True)}
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "question_bank")
+        if not allowed:
+            return {
+                "question_bank_items": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_question_bank", governance="disabled"),
+            }
         try:
             node_id = state.get("current_concept_id")
             items = await tools.question_bank.list_questions(
@@ -127,12 +219,31 @@ def build_teaching_workflow(tools: TeachingTools):
             return payload
 
     async def retrieve_evidence(state: TeachingState) -> dict[str, Any]:
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "retrieval")
+        if not allowed:
+            return {
+                "retrieved_evidence": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "retrieve_course_evidence", governance="disabled"),
+            }
+        start = time.monotonic()
         try:
             evidence = await tools.retrieval.retrieve_course_evidence(course_id=state["course_id"], message=state["user_message"], concept_id=state.get("current_concept_id"), resource_id=state.get("current_resource_id"))
+            await _record_invocation(tools, state, "retrieval",
+                input_summary={"message_length": len(str(state.get("user_message", "")))},
+                output_summary={"evidence_count": len(evidence), "evidence_ids": [str(e.get("evidence_id")) for e in evidence if e.get("evidence_id")][:20]},
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
             return {"retrieved_evidence": [dict(item) for item in evidence], "trace": _trace(state, "retrieve_course_evidence", count=len(evidence))}
         except Exception as error:
             payload = _degrade(state, "retrieval", "COURSE_RETRIEVAL_UNAVAILABLE")
             payload.update({"retrieved_evidence": [], "trace": _trace(state, "retrieve_course_evidence", error=type(error).__name__)})
+            await _record_invocation(tools, state, "retrieval",
+                input_summary={}, output_summary={}, degraded=True,
+                degraded_reason="COURSE_RETRIEVAL_UNAVAILABLE",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
             return payload
 
     async def research_web(state: TeachingState) -> dict[str, Any]:
@@ -140,6 +251,36 @@ def build_teaching_workflow(tools: TeachingTools):
         # WebResearch 结果始终标记 is_supplementary=true，不修改掌握度/推荐/图谱。
         if tools.web_research is None:
             return {"trace": _trace(state, "research_web", skipped=True)}
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "web_research")
+        if not allowed:
+            return {
+                "web_research_results": None,
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "research_web", governance="disabled"),
+            }
+        # 阶段9：高风险动作通过教师安全阀生成提案
+        if tools.teacher_safety_valve is not None:
+            try:
+                proposal = await tools.teacher_safety_valve.create_proposal(
+                    course_id=state["course_id"], student_id=state["student_id"],
+                    trace_id=state["trace_id"], session_id=state["session_id"],
+                    proposal_type="web_research", tool_name="web_research",
+                    proposed_action={"query_length": len(str(state.get("user_message", "")))},
+                )
+                # 提案 pending 时仍执行 web research，但标记为待确认；教师可后续拒绝
+                pending = [*state.get("pending_proposals", []), dict(proposal)]
+                state_updates: dict[str, Any] = {
+                    "pending_proposals": pending,
+                    "trace": _trace(state, "research_web", proposal_id=proposal.get("proposal_id")),
+                }
+                # 如果提案需要确认且未批准，跳过实际 web research 执行
+                if proposal.get("requires_confirmation") and proposal.get("status") == "pending":
+                    state_updates["web_research_results"] = None
+                    state_updates["warnings"] = [*state.get("warnings", []), "WEB_RESEARCH_PENDING_TEACHER_CONFIRMATION"]
+                    return state_updates
+            except Exception:  # noqa: BLE001 -- 安全阀失败不阻断主流程
+                pass
         try:
             result = await tools.web_research.research(
                 course_id=state["course_id"],
@@ -159,17 +300,87 @@ def build_teaching_workflow(tools: TeachingTools):
         submission_id = state.get("current_code_submission_id")
         if not submission_id:
             return {"trace": _trace(state, "load_sandbox_context", skipped=True)}
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "sandbox")
+        if not allowed:
+            return {
+                "sandbox_result": None,
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_sandbox_context", governance="disabled"),
+            }
         try:
             result = dict(await tools.sandbox.get_execution_result(student_id=state["student_id"], course_id=state["course_id"], code_submission_id=submission_id))
             return {"sandbox_result": result, "code_diagnosis": result.get("diagnosis"), "trace": _trace(state, "load_sandbox_context", available=True)}
         except Exception as error:
+            # 阶段9：沙箱不可用时 CodingAction 显示不可用而非虚构执行
             payload = _degrade(state, "sandbox", "CODE_SANDBOX_UNAVAILABLE")
-            payload.update({"sandbox_result": None, "trace": _trace(state, "load_sandbox_context", error=type(error).__name__)})
+            payload.update({
+                "sandbox_result": None,
+                "code_diagnosis": {"status": "unavailable", "reason": "CODE_SANDBOX_UNAVAILABLE"},
+                "trace": _trace(state, "load_sandbox_context", error=type(error).__name__),
+            })
+            return payload
+
+    async def load_experiment_context(state: TeachingState) -> dict[str, Any]:
+        """阶段9新增：加载课程实验上下文（按 course_id 隔离，仅 published）。"""
+        if tools.experiment is None:
+            return {"trace": _trace(state, "load_experiment_context", skipped=True)}
+        allowed, gov_meta = await _governance_check(tools, state, "experiment")
+        if not allowed:
+            return {
+                "experiment_items": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_experiment_context", governance="disabled"),
+            }
+        try:
+            items = await tools.experiment.list_experiments(
+                course_id=state["course_id"], node_id=state.get("current_concept_id"), limit=10,
+            )
+            return {
+                "experiment_items": [dict(item) for item in items],
+                "trace": _trace(state, "load_experiment_context", count=len(items)),
+            }
+        except Exception as error:
+            payload = _degrade(state, "experiment", "EXPERIMENT_PORT_UNAVAILABLE")
+            payload.update({"experiment_items": [], "trace": _trace(state, "load_experiment_context", error=type(error).__name__)})
+            return payload
+
+    async def load_visualization_context(state: TeachingState) -> dict[str, Any]:
+        """阶段9新增：加载算法可视化上下文（按 course_id 隔离，仅 published）。"""
+        if tools.visualization is None:
+            return {"trace": _trace(state, "load_visualization_context", skipped=True)}
+        allowed, gov_meta = await _governance_check(tools, state, "visualization")
+        if not allowed:
+            return {
+                "visualization_plans": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_visualization_context", governance="disabled"),
+            }
+        try:
+            plans = await tools.visualization.list_published_plans(
+                course_id=state["course_id"], node_id=state.get("current_concept_id"), limit=10,
+            )
+            return {
+                "visualization_plans": [dict(item) for item in plans],
+                "trace": _trace(state, "load_visualization_context", count=len(plans)),
+            }
+        except Exception as error:
+            payload = _degrade(state, "visualization", "VISUALIZATION_PORT_UNAVAILABLE")
+            payload.update({"visualization_plans": [], "trace": _trace(state, "load_visualization_context", error=type(error).__name__)})
             return payload
 
     async def decide_action(state: TeachingState) -> dict[str, Any]:
         action, reason = decide_teaching_action(state)
         selected: list[str] = []
+        # 阶段9：沙箱不可用时 code_debugging 标记为不可用，不虚构执行
+        if action == "code_debugging" and state.get("sandbox_result") is None:
+            return {
+                "teaching_action": "code_debugging_unavailable",
+                "teaching_action_reason": "sandbox_unavailable",
+                "selected_resource_ids": [],
+                "warnings": [*state.get("warnings", []), "CODE_DEBUGGING_UNAVAILABLE"],
+                "trace": _trace(state, "decide_teaching_action", action="code_debugging_unavailable"),
+            }
         try:
             recommendation = await tools.recommendation.recommend_next_action(student_id=state["student_id"], course_id=state["course_id"], concept_id=state.get("current_concept_id"), action=action, graph_context=state.get("graph_context", {}), student_state=state.get("student_concept_state", {}))
             selected = [str(item) for item in recommendation.get("resource_ids", [])]
@@ -180,7 +391,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     async def generate_response(state: TeachingState) -> dict[str, Any]:
         try:
-            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results", "session_context")})
+            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results", "session_context", "experiment_items", "visualization_plans")})
             return {"final_answer": str(generated.get("answer", "")), "citations": [dict(item) for item in generated.get("citations", [])], "trace": _trace(state, "generate_response", answer_present=bool(generated.get("answer")))}
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "generate_response", error=type(error).__name__)}
@@ -243,6 +454,9 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("retrieve_evidence", retrieve_evidence)
     graph.add_node("research_web", research_web)
     graph.add_node("load_sandbox_context", load_sandbox_context)
+    # 阶段9新增：实验与可视化节点
+    graph.add_node("load_experiment_context", load_experiment_context)
+    graph.add_node("load_visualization_context", load_visualization_context)
     graph.add_node("decide_teaching_action", decide_action)
     graph.add_node("generate_response", generate_response)
     graph.add_node("validate_response", validate_response)
@@ -259,7 +473,10 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_edge("load_question_bank", "retrieve_evidence")
     graph.add_edge("retrieve_evidence", "research_web")
     graph.add_edge("research_web", "load_sandbox_context")
-    graph.add_edge("load_sandbox_context", "decide_teaching_action")
+    # 阶段9：在 sandbox 之后插入 experiment/visualization 节点
+    graph.add_edge("load_sandbox_context", "load_experiment_context")
+    graph.add_edge("load_experiment_context", "load_visualization_context")
+    graph.add_edge("load_visualization_context", "decide_teaching_action")
     graph.add_edge("decide_teaching_action", "generate_response")
     graph.add_conditional_edges("generate_response", after_generation)
     graph.add_edge("validate_response", "record_learning_event")

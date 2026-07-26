@@ -18,11 +18,15 @@ from .composition import build_course_sidecar_runtime, build_kg_mest_shadow_side
 from .contracts import (
     CognitionPort,
     ConversationContextPort,
+    ExperimentPort,
     LearningEventPort,
     QuestionBankPort,
     RecommendationPort,
     SandboxPort,
+    TeacherSafetyValvePort,
     TeachingLLMPort,
+    ToolGovernancePort,
+    VisualizationPort,
     WebResearchPort,
 )
 from .kg_mest_report_store import KGMestShadowReportStore
@@ -55,6 +59,10 @@ class TeachingAgentRuntimeRegistry:
         cognition: Optional[CognitionPort] = None,
         question_bank: Optional[QuestionBankPort] = None,
         conversation_context: Optional[ConversationContextPort] = None,
+        tool_governance: Optional[ToolGovernancePort] = None,
+        teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
+        experiment: Optional[ExperimentPort] = None,
+        visualization: Optional[VisualizationPort] = None,
     ) -> None:
         self._demo_service = demo_service
         self._llm = llm
@@ -66,6 +74,10 @@ class TeachingAgentRuntimeRegistry:
         self._cognition = cognition
         self._question_bank = question_bank
         self._conversation_context = conversation_context
+        self._tool_governance = tool_governance
+        self._teacher_safety_valve = teacher_safety_valve
+        self._experiment = experiment
+        self._visualization = visualization
         self._cache: dict[tuple[str, str], TeachingAgentRuntime] = {}
 
     def get_or_create(
@@ -94,6 +106,8 @@ class TeachingAgentRuntimeRegistry:
                         recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
                         web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
                         conversation_context=self._conversation_context,
+                        tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
+                        experiment=self._experiment, visualization=self._visualization,
                     )
                 except (TypeError, ValueError) as error:
                     # A stale/malformed optional report must not deny normal Q&A.
@@ -105,6 +119,8 @@ class TeachingAgentRuntimeRegistry:
                     recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
                     web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
                     conversation_context=self._conversation_context,
+                    tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
+                    experiment=self._experiment, visualization=self._visualization,
                 )
             elif report is None:
                 runtime = build_course_sidecar_runtime(
@@ -112,6 +128,8 @@ class TeachingAgentRuntimeRegistry:
                     recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
                     web_research=self._web_research, cognition=None, question_bank=self._question_bank,
                     conversation_context=self._conversation_context,
+                    tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
+                    experiment=self._experiment, visualization=self._visualization,
                 )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
             logger.warning(

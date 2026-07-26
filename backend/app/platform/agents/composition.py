@@ -8,6 +8,7 @@ from .contracts import (
     CognitionPort,
     ConversationContextPort,
     CourseRetrievalPort,
+    ExperimentPort,
     KnowledgeGraphPort,
     LearningEventPort,
     QuestionBankPort,
@@ -15,8 +16,11 @@ from .contracts import (
     SandboxPort,
     ScopePort,
     StudentModelingPort,
+    TeacherSafetyValvePort,
     TeachingLLMPort,
     TeachingTools,
+    ToolGovernancePort,
+    VisualizationPort,
     WebResearchPort,
 )
 from .runtime import TeachingAgentRuntime
@@ -38,6 +42,10 @@ def build_teaching_runtime(
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
     conversation_context: Optional[ConversationContextPort] = None,
+    tool_governance: Optional[ToolGovernancePort] = None,
+    teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
+    experiment: Optional[ExperimentPort] = None,
+    visualization: Optional[VisualizationPort] = None,
 ) -> TeachingAgentRuntime:
     """Build an enabled runtime only after the composition root supplies every Port."""
     return TeachingAgentRuntime(TeachingTools(
@@ -46,6 +54,8 @@ def build_teaching_runtime(
         sandbox=sandbox, learning_events=learning_events, llm=llm,
         web_research=web_research, cognition=cognition, question_bank=question_bank,
         conversation_context=conversation_context,
+        tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
+        experiment=experiment, visualization=visualization,
     ))
 
 
@@ -61,6 +71,10 @@ def build_course_sidecar_runtime(
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
     conversation_context: Optional[ConversationContextPort] = None,
+    tool_governance: Optional[ToolGovernancePort] = None,
+    teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
+    experiment: Optional[ExperimentPort] = None,
+    visualization: Optional[VisualizationPort] = None,
 ) -> TeachingAgentRuntime:
     """Use the existing isolated course-sidecar R2 provider for KG/evidence only.
 
@@ -77,10 +91,10 @@ def build_course_sidecar_runtime(
         sandbox=sandbox,
         learning_events=learning_events,
         llm=llm,
-        web_research=web_research,
-        cognition=cognition,
-        question_bank=question_bank,
+        web_research=web_research, cognition=cognition, question_bank=question_bank,
         conversation_context=conversation_context,
+        tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
+        experiment=experiment, visualization=visualization,
     )
 
 
@@ -98,6 +112,10 @@ def build_kg_mest_shadow_sidecar_runtime(
     cognition: Optional[CognitionPort] = None,
     question_bank: Optional[QuestionBankPort] = None,
     conversation_context: Optional[ConversationContextPort] = None,
+    tool_governance: Optional[ToolGovernancePort] = None,
+    teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
+    experiment: Optional[ExperimentPort] = None,
+    visualization: Optional[VisualizationPort] = None,
 ) -> TeachingAgentRuntime:
     """Explicitly inject one approved KG-MEST Shadow report into TeachingAgent."""
     return build_course_sidecar_runtime(
@@ -111,8 +129,8 @@ def build_kg_mest_shadow_sidecar_runtime(
         sandbox=sandbox,
         learning_events=learning_events,
         llm=llm,
-        web_research=web_research,
-        cognition=cognition,
-        question_bank=question_bank,
+        web_research=web_research, cognition=cognition, question_bank=question_bank,
         conversation_context=conversation_context,
+        tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
+        experiment=experiment, visualization=visualization,
     )
