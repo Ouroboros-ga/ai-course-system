@@ -8,8 +8,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.signature_middleware import SignatureMiddleware
 from app.core.error_monitoring import ErrorMonitoringMiddleware, monitor as error_monitor
 from app.core.exceptions import global_exception_handler, unified_response
-from app.models.database import create_tables
-from app.common.db_migrator import run_migrations
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,14 +24,30 @@ def _startup_side_effects_disabled() -> bool:
 
 
 def run_startup_side_effects():
+    """启动时执行依赖检查与任务 handler 注册。
+
+    数据库结构变更由部署流程显式执行 `alembic upgrade head`，
+    不再在应用启动时隐式 create_all 或 run_migrations。
+    见 alembic.ini 与 app/scripts/migration_ops.py。
+
+    任务中心 handler 注册：确保 LocalTaskWorker 能消费业务任务
+    （document_parse / experiment_run / media.* 等），避免任务停留在 pending
+    或被标记为 DEPENDENCY_UNAVAILABLE。
+    """
     dep_report = run_dependency_check(auto_install=True)
     if not dep_report["python_ok"]:
         logger.error("必需的Python依赖缺失，请手动安装后重启服务")
     if dep_report["python_installed"]:
         logger.info(f"自动安装的Python包: {', '.join(dep_report['python_installed'])}")
 
-    create_tables()
-    run_migrations()
+    # 注册任务中心业务 handler（自检 + 业务域）
+    try:
+        from app.platform.tasks.handlers import register_all_handlers
+        register_all_handlers()
+        logger.info("Task worker handlers registered (self_check + business)")
+    except Exception:
+        logger.exception("Failed to register task worker handlers; tasks will stay pending")
+
     return dep_report
 
 

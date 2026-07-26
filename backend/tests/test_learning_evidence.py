@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime
 
 import pytest
@@ -114,6 +115,10 @@ def _question(
 
 QB = "/api/v1/question-bank"
 
+# evidence_id 命名规范：ev_ 前缀 + UUID hex（32 个十六进制字符）
+# 见 project_memory.md：evidence_id must use 'ev_' prefix followed by UUID hex string
+EVIDENCE_ID_PATTERN = re.compile(r"^ev_[0-9a-f]{32}$")
+
 
 def _evidence_for_attempt(session, attempt_id):
     return session.exec(
@@ -183,6 +188,10 @@ def test_scored_attempt_creates_quiz_accuracy_evidence(client, session):
     assert evidence.question_attempt_id == attempt_id
     attempt = session.get(QuestionAttempt, attempt_id)
     assert attempt.source_event_id in evidence.event_refs
+    # P2-12: evidence_id 严格符合 ev_ + UUID hex 规范
+    assert EVIDENCE_ID_PATTERN.match(evidence.evidence_id), (
+        f"evidence_id {evidence.evidence_id!r} 不符合 ev_<uuid_hex> 规范"
+    )
 
 
 def test_ungraded_attempt_creates_no_evidence(client, session):
@@ -258,6 +267,10 @@ def test_evidence_type_is_quiz_accuracy_not_engagement(client, session):
     for record in all_evidence:
         assert record.evidence_type == "quiz_accuracy"
         assert record.evidence_type != "engagement"
+        # P2-12: 所有证据域的 evidence_id 必须符合 ev_ + UUID hex 规范
+        assert EVIDENCE_ID_PATTERN.match(record.evidence_id), (
+            f"evidence_id {record.evidence_id!r} 不符合 ev_<uuid_hex> 规范"
+        )
 
 
 def test_teacher_grading_creates_high_confidence_evidence(client, session):
@@ -307,6 +320,10 @@ def test_teacher_grading_creates_high_confidence_evidence(client, session):
     assert evidence.value == 0.8
     assert evidence.confidence == 1.0
     assert "teacher" in evidence.source
+    # P2-12: 教师评分产生的证据 evidence_id 也必须符合规范
+    assert EVIDENCE_ID_PATTERN.match(evidence.evidence_id), (
+        f"evidence_id {evidence.evidence_id!r} 不符合 ev_<uuid_hex> 规范"
+    )
 
 
 def test_record_scored_evidence_idempotent(session):
@@ -533,3 +550,104 @@ def test_evidence_node_id_from_question_knowledge_nodes(session):
     session.commit()
     assert record is not None
     assert record.node_id == 42
+
+
+def test_evidence_id_strict_format_across_judgement_paths(session):
+    """P2-12: evidence_id 在所有评判路径上严格符合 ev_<uuid_hex> 规范。
+
+    覆盖三种生成路径：
+    1. 自动评判（auto）的客观题
+    2. 教师评分（teacher）的主观题
+    3. 直接调用 record_scored_evidence 的服务层路径
+
+    所有路径产生的 evidence_id 必须匹配 ^ev_[0-9a-f]{32}$。
+    见 project_memory.md：evidence_id must use 'ev_' prefix followed by UUID hex string。
+    """
+    teacher = _user(session, "le_fmt_teacher", UserRole.TEACHER)
+    course = _course(session, teacher.id)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    student = _user(session, "le_fmt_student")
+    activate_student_membership(session, course.id, student.id)
+    session.commit()
+
+    # 路径1：自动评判客观题
+    q_auto = _question(
+        session,
+        question_text="客观题",
+        answer="A",
+        course_id=course.id,
+        status=QuestionStatus.PUBLISHED,
+        question_type=QuestionType.SINGLE_CHOICE,
+        options={"A": "对", "B": "错"},
+    )
+    auto_attempt = QuestionAttempt(
+        question_id=q_auto.id,
+        course_id=course.id,
+        student_id=student.id,
+        measurement_role="scored_performance",
+        student_answer="A",
+        is_correct=True,
+        score=1.0,
+        judged_by="auto",
+    )
+    session.add(auto_attempt)
+    session.commit()
+    session.refresh(auto_attempt)
+    auto_evidence = record_scored_evidence(session, auto_attempt)
+    session.commit()
+    assert auto_evidence is not None
+    assert EVIDENCE_ID_PATTERN.match(auto_evidence.evidence_id), (
+        f"自动评判 evidence_id {auto_evidence.evidence_id!r} 不符合规范"
+    )
+
+    # 路径2：教师评分主观题
+    q_teacher = _question(
+        session,
+        question_text="主观题",
+        answer="参考答案",
+        course_id=course.id,
+        status=QuestionStatus.PUBLISHED,
+        question_type=QuestionType.SHORT_ANSWER,
+    )
+    teacher_attempt = QuestionAttempt(
+        question_id=q_teacher.id,
+        course_id=course.id,
+        student_id=student.id,
+        measurement_role="scored_performance",
+        student_answer="学生回答",
+        is_correct=False,
+        score=0.6,
+        judged_by="teacher",
+    )
+    session.add(teacher_attempt)
+    session.commit()
+    session.refresh(teacher_attempt)
+    teacher_evidence = record_scored_evidence(session, teacher_attempt)
+    session.commit()
+    assert teacher_evidence is not None
+    assert EVIDENCE_ID_PATTERN.match(teacher_evidence.evidence_id), (
+        f"教师评分 evidence_id {teacher_evidence.evidence_id!r} 不符合规范"
+    )
+
+    # 路径3：改分后 evidence_id 应保持稳定（幂等，不重新生成新 ID）
+    teacher_attempt.score = 0.9
+    teacher_attempt.is_correct = True
+    session.add(teacher_attempt)
+    session.commit()
+    regraded = record_scored_evidence(session, teacher_attempt)
+    session.commit()
+    assert regraded is not None
+    assert regraded.evidence_id == teacher_evidence.evidence_id, (
+        "改分后 evidence_id 应保持稳定，不应重新生成"
+    )
+    assert EVIDENCE_ID_PATTERN.match(regraded.evidence_id)
+
+    # 所有证据 ID 互不冲突（除改分幂等外）
+    all_evidence = _evidence_for_student(session, student.id, course.id)
+    ids = [r.evidence_id for r in all_evidence]
+    assert all(EVIDENCE_ID_PATTERN.match(eid) for eid in ids), (
+        f"存在不符合规范的 evidence_id: {ids}"
+    )
+    # 自动评判 + 教师评分 = 2 条唯一记录（改分不新增）
+    unique_ids = set(ids)
+    assert len(unique_ids) == 2

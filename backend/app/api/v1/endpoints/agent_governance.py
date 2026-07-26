@@ -329,10 +329,13 @@ async def decide_proposal(
 ):
     """教师决策提案：approve / reject / lock / rerun。
 
-    - approve: pending → approved；Agent 可继续执行
+    - approve: pending → approved；同时为高风险动作创建 TaskRecord 异步执行
     - reject:  pending → rejected
     - lock:    pending → locked；后续相同模式提案自动 superseded
     - rerun:   rejected/superseded → pending；生成新 trace_id
+
+    P0-2.6: approve 高风险动作时创建 TaskRecord，使动作执行可追踪、可重试、可取消，
+    不再依赖"接口返回成功、后台无执行"的隐性约定。
     """
     require_course_permission(session, current_user, course_id, "agent.policy.configure")
     user_id = int(current_user["user_id"])
@@ -344,13 +347,79 @@ async def decide_proposal(
         decided_by=user_id,
         decision_reason=payload.decision_reason,
     )
+
+    # approve 时创建 TaskRecord 异步执行高风险动作
+    task_view = None
+    if payload.decision == "approve" and proposal.status == "approved":
+        try:
+            from app.services.task_service import TaskCreateRequest, task_service
+            proposed_action = json.loads(proposal.proposed_action) if proposal.proposed_action else {}
+            task_view = task_service.create_task(session, TaskCreateRequest(
+                task_type="agent_action_execute",
+                owner_user_id=user_id,
+                course_id=course_id,
+                input_summary=(
+                    f"Agent 高风险动作执行: {proposal.proposal_type} "
+                    f"(proposal={proposal.proposal_id[:16]})"
+                )[:500],
+                input_payload={
+                    "course_id": course_id,
+                    "proposal_id": proposal.proposal_id,
+                    "proposal_type": proposal.proposal_type,
+                    "tool_name": proposal.tool_name,
+                    "trace_id": proposal.trace_id,
+                    "student_id": proposal.student_id,
+                    "session_id": proposal.session_id,
+                    "proposed_action": proposed_action,
+                    "decided_by": user_id,
+                },
+                resource_links=[
+                    {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
+                    {"resource_kind": "agent_proposal", "resource_id": proposal.proposal_id, "relation": "input"},
+                    {"resource_kind": "agent_decision", "resource_id": str(decision_record.id), "relation": "input"},
+                ],
+            ))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to create agent_action_execute TaskRecord for proposal %s; "
+                "approval recorded but action not dispatched",
+                proposal.proposal_id,
+                exc_info=True,
+            )
+
     session.commit()
+
+    # 异步触发 worker 执行
+    if task_view is not None:
+        try:
+            from app.platform.tasks.worker import local_task_worker
+            from app.models.database import session_factory as _session_factory
+            if local_task_worker.has_handler("agent_action_execute"):
+                local_task_worker.submit(
+                    _session_factory,
+                    task_view.task_id,
+                    {
+                        "course_id": course_id,
+                        "proposal_id": proposal.proposal_id,
+                        "proposal_type": proposal.proposal_type,
+                    },
+                )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "Failed to submit agent_action_execute task %s to worker; stays pending",
+                task_view.task_id,
+                exc_info=True,
+            )
+
     return unified_response(
         200,
         "提案决策已记录",
         {
             "proposal": _serialize_proposal(proposal),
             "decision": _serialize_decision(decision_record),
+            "task_id": task_view.task_id if task_view else None,
         },
     )
 

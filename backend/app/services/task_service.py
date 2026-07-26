@@ -148,8 +148,8 @@ ALLOWED_TRANSITIONS: dict[str, set[str]] = {
     "pending": {"running", "cancelled", "failed"},
     "running": {"succeeded", "failed", "cancelled", "partial_success"},
     "partial_success": {"failed", "cancelled"},
-    "failed": {"running"},  # retry
-    "cancelled": {"running"},  # retry
+    "failed": {"pending", "running"},  # retry → pending（由 worker 重新触发）
+    "cancelled": {"pending", "running"},  # retry → pending（由 worker 重新触发）
     "succeeded": set(),  # terminal
 }
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partial_success"}
@@ -512,25 +512,31 @@ class TaskService:
         *,
         operator_user_id: Optional[int] = None,
     ) -> TaskViewModel:
+        """重试任务：将状态从 failed/cancelled 回到 pending，等待 worker 重新拾取。
+
+        重要：本方法只重置状态与审计事件，**不**直接触发 worker 执行。
+        调用方（路由层）应在 retry 之后调用 `worker.submit(...)` 重新入队，
+        否则任务会停留在 pending（前端可看到，但不伪成功）。
+        """
         record = self._require_task(session, task_id)
         if operator_user_id is not None and record.owner_user_id != operator_user_id:
             reject_resource_not_found("任务不存在或无权访问")
         if not record.retryable:
             reject_state_conflict("任务不可重试")
-        _assert_transition(record.status, "running")
+        _assert_transition(record.status, "pending")
         now = datetime.utcnow()
-        record.status = "running"
+        record.status = "pending"
         record.error_code = ""
         record.error_message = ""
         record.progress = 0
-        record.started_at = now
+        record.started_at = None
         record.finished_at = None
         record.updated_at = now
         session.add(record)
         session.add(TaskEventRecord(
             task_id=task_id,
             event_type="retried",
-            message="任务重试",
+            message="任务已重置为 pending，等待 worker 重新拾取",
             created_at=now,
         ))
         session.commit()

@@ -256,8 +256,8 @@ async def create_ingestion(
 
     - 仅教师（course.edit）可创建
     - 同一 material_version 不允许并发 pending/running 运行
-    - 返回 202 + run_id（异步执行；后续通过 GET /ingestions/{run_id} 查询状态）
-    - 解析本身由统一任务中心异步执行；本端点只创建运行记录
+    - 返回 202 + run_id + task_id（异步执行；后续通过 GET /ingestions/{run_id} 或 /tasks/{task_id} 查询状态）
+    - 解析本身由统一任务中心异步执行（worker 注册 document_parse handler）
     """
     context = require_course_permission(session, current_user, course_id, "course.edit")
     user_id = int(current_user["user_id"])
@@ -287,25 +287,88 @@ async def create_ingestion(
     if version is None:
         reject_resource_not_found("材料版本不存在或不属于该课程")
 
+    # 在统一任务中心创建 TaskRecord，确保解析任务可追踪、可取消、可重试
+    from app.services.task_service import TaskCreateRequest, task_service
+    task_view = task_service.create_task(session, TaskCreateRequest(
+        task_type="document_parse",
+        owner_user_id=user_id,
+        course_id=course_id,
+        input_summary=f"解析课程 {course_id} 材料 {payload.material_id} 版本 {version_id}",
+        input_payload={
+            "course_id": course_id,
+            "material_id": payload.material_id,
+            "material_version_id": version_id,
+            "document_id": payload.document_id,
+            "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
+            "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
+        },
+        resource_links=[
+            {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
+            {"resource_kind": "source_material", "resource_id": payload.material_id, "relation": "input"},
+            {"resource_kind": "source_material_version", "resource_id": version_id, "relation": "input"},
+            {"resource_kind": "document_parse_run", "resource_id": "pending", "relation": "output"},
+        ],
+    ))
+
     run = document_parse_service.create_run(
         session,
         course_id=course_id,
         material_id=payload.material_id,
         material_version_id=version_id,
         document_id=payload.document_id,
+        task_id=task_view.task_id,
         pipeline=payload.pipeline,
         stale_strategy=payload.stale_strategy,
         initiated_by=user_id,
     )
+
+    # 回填 parse_run_id 到 task resource_links（便于后续追踪）
+    from app.models.task_model import TaskResourceLinkRecord
+    session.add(TaskResourceLinkRecord(
+        task_id=task_view.task_id,
+        resource_kind="document_parse_run",
+        resource_id=run.run_id,
+        relation="output",
+        created_at=__import__("datetime").datetime.utcnow(),
+    ))
+
     session.commit()
     session.refresh(run)
+
+    # 触发 worker 异步执行（不阻塞 API 响应）
+    # 若 worker 未注册 handler，任务会停留在 pending（前端可轮询 /tasks/{task_id}）
+    # 若 worker 已注册 handler（main.py startup 调用 register_all_handlers），则异步执行
+    try:
+        from app.platform.tasks.worker import local_task_worker
+        from app.models.database import session_factory as _session_factory
+        if local_task_worker.has_handler("document_parse"):
+            local_task_worker.submit(
+                _session_factory,
+                task_view.task_id,
+                {
+                    "course_id": course_id,
+                    "run_id": run.run_id,
+                    "material_id": payload.material_id,
+                    "material_version_id": version_id,
+                    "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
+                    "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
+                },
+            )
+    except Exception:
+        # worker 触发失败不影响任务记录创建；任务停留在 pending，前端可重试
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to submit document_parse task %s to worker; task stays pending",
+            task_view.task_id,
+            exc_info=True,
+        )
 
     return unified_response(
         code=202,
         message="解析任务已创建",
         data={
             "run_id": run.run_id,
-            "task_id": run.task_id,
+            "task_id": task_view.task_id,
             "status": run.status.value,
             "prev_run_id": run.prev_run_id,
             "affected_evidence_count": run.affected_evidence_count,

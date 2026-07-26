@@ -308,7 +308,9 @@ def _create_evidence(
         evidence_type=evidence_type,
         student_id=student_id,
         course_id=course_id,
-        evidence_id=str(uuid.uuid5(uuid.NAMESPACE_URL, stable_key)),
+        # evidence_id 必须使用 ev_ 前缀 + UUID hex，与 record_scored_evidence
+        # 及其他证据域保持一致（project_memory.md 硬约束）。
+        evidence_id="ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex,
         node_id=node_id,
         event_refs=stable_refs,
         confidence=confidence,

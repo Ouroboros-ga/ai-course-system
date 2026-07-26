@@ -222,9 +222,52 @@ async def retry_task(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
+    """重试任务：重置状态为 pending 并重新提交到 worker。
+
+    - 服务层将状态从 failed/cancelled 回到 pending
+    - 路由层负责调用 worker.submit 重新入队（避免 service 层循环依赖）
+    - 若 worker 未注册对应 handler，任务停留在 pending（前端可见，不伪成功）
+    """
     user_id = int(current_user["user_id"])
     view = task_service.retry(session, task_id, operator_user_id=user_id)
-    return unified_response(202, "任务已重新入队", view.to_dict())
+
+    # 重新提交到 worker（input_payload 需从记录读取，ViewModel 不暴露原始 payload）
+    import json as _json
+    import logging
+    from sqlmodel import select as _select
+    from app.models.task_model import TaskRecord as _TaskRecord
+    _logger = logging.getLogger(__name__)
+    try:
+        from app.platform.tasks.worker import local_task_worker
+        from app.models.database import session_factory as _session_factory
+        if local_task_worker.has_handler(view.task_type):
+            record = session.exec(
+                _select(_TaskRecord).where(_TaskRecord.task_id == view.task_id)
+            ).first()
+            try:
+                input_payload = _json.loads(record.input_payload) if record and record.input_payload else {}
+            except (TypeError, ValueError):
+                input_payload = {}
+            local_task_worker.submit(
+                _session_factory,
+                view.task_id,
+                input_payload,
+            )
+        else:
+            _logger.warning(
+                "Retry: task %s (type=%s) has no registered handler; stays pending",
+                view.task_id, view.task_type,
+            )
+    except Exception:
+        _logger.warning(
+            "Retry: failed to submit task %s to worker; stays pending",
+            view.task_id,
+            exc_info=True,
+        )
+
+    # 重新查询以反映最新状态
+    final_view = task_service.get_task(session, task_id, owner_user_id=user_id)
+    return unified_response(202, "任务已重新入队", final_view.to_dict())
 
 
 @router.post("/{task_id}/acknowledge")

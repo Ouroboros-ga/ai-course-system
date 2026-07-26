@@ -320,6 +320,144 @@ class TestSandboxClient:
         assert payload["enable_network"] is False
 
 
+# ==================== Judge0 恢复演练测试 ====================
+
+class TestSandboxRecovery:
+    """Judge0 沙箱恢复演练测试（验收包4 第5项）
+
+    覆盖场景：
+    - 沙箱 health_check 由 False 恢复为 True 后，submit_code 立即可用
+    - 沙箱短暂不可达期间提交返回 SANDBOX_UNAVAILABLE，恢复后同请求重试返回 ACCEPTED
+    - 沙箱恢复后 ExperimentRun 由 sandbox_unavailable 转为正常评分（通过 sandbox_client 单例验证）
+    """
+
+    def test_health_check_recovers_from_unavailable_to_available(self, monkeypatch):
+        """health_check 由 False 恢复为 True。"""
+        import httpx
+        from app.services import sandbox_client as sb_mod
+
+        # 初始：Judge0 启用但服务不可达
+        monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
+        monkeypatch.setattr(sb_mod.settings, "JUDGE0_API_URL", "http://127.0.0.1:59999")
+
+        client = SandboxClient(base_url="http://127.0.0.1:59999", authn_token="test")
+        client._enabled = True
+
+        # 不可达时 health_check 返回 False
+        assert client.health_check() is False
+
+        # 模拟 Judge0 服务恢复：用一个能返回 200 的 mock 替换 httpx.Client
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.get.return_value = mock_response
+
+        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+            # 恢复后 health_check 立即返回 True，无冷启动延迟
+            assert client.health_check() is True
+
+    def test_submit_code_recovers_after_transient_outage(self, monkeypatch):
+        """沙箱短暂不可达期间返回 SANDBOX_UNAVAILABLE，恢复后重试返回 ACCEPTED。"""
+        import httpx
+        from app.services import sandbox_client as sb_mod
+
+        monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
+        client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
+        client._enabled = True
+
+        # 阶段1：不可达期间提交返回 SANDBOX_UNAVAILABLE
+        mock_unavailable = MagicMock()
+        mock_unavailable.__enter__ = MagicMock(return_value=mock_unavailable)
+        mock_unavailable.__exit__ = MagicMock(return_value=False)
+        mock_unavailable.post.side_effect = httpx.ConnectError("Connection refused")
+
+        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_unavailable):
+            result_down = client.submit_code("print('hello')", "python3")
+            assert result_down.status == SubmissionStatus.SANDBOX_UNAVAILABLE
+            assert "降级" in result_down.message
+            # 不伪造为 ACCEPTED
+            assert result_down.status != SubmissionStatus.ACCEPTED
+
+        # 阶段2：Judge0 恢复，重试同请求返回 ACCEPTED
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "token": "recovered-token",
+            "status": {"id": 3, "description": "Accepted"},
+            "stdout": "aGVsbG8=",  # base64("hello")
+            "stderr": None,
+            "compile_output": None,
+            "time": "0.05",
+            "memory": 1024,
+            "exit_code": 0,
+            "message": None,
+        }
+        mock_recovered = MagicMock()
+        mock_recovered.__enter__ = MagicMock(return_value=mock_recovered)
+        mock_recovered.__exit__ = MagicMock(return_value=False)
+        mock_recovered.post.return_value = mock_response
+
+        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_recovered):
+            result_up = client.submit_code("print('hello')", "python3")
+            assert result_up.status == SubmissionStatus.ACCEPTED
+            assert result_up.stdout == "hello"
+            assert result_up.token == "recovered-token"
+
+    def test_recovery_no_cold_start_delay_for_submit_code(self, monkeypatch):
+        """沙箱恢复后 submit_code 立即可用，无冷启动延迟（不抛异常）。"""
+        import httpx
+        from app.services import sandbox_client as sb_mod
+
+        monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
+        client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
+        client._enabled = True
+
+        # 模拟 Judge0 直接可用（无需预热）
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = {
+            "token": "cold-start-token",
+            "status": {"id": 3, "description": "Accepted"},
+            "stdout": None,
+            "stderr": None,
+            "compile_output": None,
+            "time": "0.01",
+            "memory": 512,
+            "exit_code": 0,
+            "message": None,
+        }
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = mock_response
+
+        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+            # 首次调用即成功，证明无冷启动延迟
+            result = client.submit_code("x=1", "python3")
+            assert result.status == SubmissionStatus.ACCEPTED
+            assert result.token == "cold-start-token"
+
+    def test_disabled_sandbox_recovery_requires_enable_flag(self, monkeypatch):
+        """JUDGE0_ENABLED=False 时即使服务恢复也保持不可用，必须显式开启 flag。"""
+        from app.services import sandbox_client as sb_mod
+
+        monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", False)
+        client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
+        # _enabled 在 __init__ 时已读取 settings，flag 关闭时为 False
+
+        # 即使 mock 一个能用的 httpx.Client，submit_code 仍应返回 SANDBOX_UNAVAILABLE
+        mock_client = MagicMock()
+        with patch("app.services.sandbox_client.httpx.Client", return_value=mock_client):
+            result = client.submit_code("x=1", "python3")
+            assert result.status == SubmissionStatus.SANDBOX_UNAVAILABLE
+            # mock_client.post 不应被调用（flag 关闭直接降级）
+            assert mock_client.post.call_count == 0
+
+
 # ==================== API 集成测试 ====================
 
 class TestSandboxAPI:

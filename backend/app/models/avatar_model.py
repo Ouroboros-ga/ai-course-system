@@ -40,6 +40,7 @@ class AvatarProfileStatus(str, Enum):
     READY = "ready"            # 预处理完成，可用于课程绑定
     FAILED = "failed"          # 预处理失败
     DISABLED = "disabled"      # 教师主动停用
+    QUARANTINED = "quarantined"  # 素材被隔离（恶意文件/校验失败），需教师重新上传
     DELETED = "deleted"        # 软删除
 
 
@@ -50,12 +51,33 @@ class AvatarSourceMediaType(str, Enum):
 
 
 class AvatarSourceMediaStatus(str, Enum):
-    """原始素材上传状态"""
-    PENDING = "pending"        # 已签发上传地址，待上传
-    UPLOADED = "uploaded"      # 已上传至对象存储
-    VALIDATED = "validated"    # 已通过校验
-    INVALID = "invalid"        # 校验失败
-    EXPIRED = "expired"        # 超过保留期
+    """原始素材上传与校验状态机（P0-3 安全链路）
+
+    状态流转：
+        pending_upload -> uploaded -> verified -> (quarantined | withdrawn)
+                              |             |
+                              +--> invalid  +--> expired
+
+    - pending_upload: 已签发上传意图，客户端尚未上传完成
+    - uploaded: 客户端已 PUT，等待服务端确认对象存在 + 探测 + 扫描
+    - verified: 服务端已完成 head/ffprobe/hash/scan，可进入预处理
+    - invalid: 校验失败（MIME/大小/格式/损坏）；可重新上传
+    - quarantined: 病毒扫描阳性或安全风险；保留取证，禁止预处理
+    - withdrawn: 教师主动撤回或预设被停用后撤销，不再可用
+    - expired: 超过保留期，由回收策略处理
+    """
+    PENDING_UPLOAD = "pending_upload"
+    UPLOADED = "uploaded"
+    VERIFIED = "verified"
+    INVALID = "invalid"
+    QUARANTINED = "quarantined"
+    WITHDRAWN = "withdrawn"
+    EXPIRED = "expired"
+
+    # 兼容旧值：register_source_media 历史写入 "validated"
+    @classmethod
+    def _legacy_aliases(cls) -> dict[str, "AvatarSourceMediaStatus"]:
+        return {"validated": cls.VERIFIED, "pending": cls.PENDING_UPLOAD}
 
 
 class AvatarPreparationJobStatus(str, Enum):
@@ -134,6 +156,9 @@ class AvatarProfile(SQLModel, table=True):
     # 教师授权确认（必须勾选本人形象与授权）
     consent_text: str = Field(default="", description="授权确认文本快照")
     consented_at: Optional[datetime] = Field(default=None)
+    # P0-3：显式记录教师本人形象授权确认与撤销时间，区别于 deleted_at（软删除）
+    teacher_authorization_confirmed_at: Optional[datetime] = Field(default=None)
+    revoked_at: Optional[datetime] = Field(default=None, description="教师主动撤销授权时间")
 
     # 渲染偏好
     default_render_mode: str = Field(default="browser_realtime")
@@ -175,13 +200,25 @@ class AvatarSourceMedia(SQLModel, table=True):
     size_bytes: int = Field(default=0)
 
     upload_status: AvatarSourceMediaStatus = Field(
-        default=AvatarSourceMediaStatus.PENDING, index=True,
+        default=AvatarSourceMediaStatus.PENDING_UPLOAD, index=True,
     )
     retention_policy: str = Field(default="standard", description="保留策略标识")
 
     validation_notes: str = Field(default="", description="校验结果备注")
+    # P0-3：服务端探测结果（ffprobe/scan/hash）
+    server_mime_type: str = Field(default="", description="服务端探测到的真实 MIME")
+    server_duration_ms: Optional[int] = Field(default=None, description="服务端探测到的时长")
+    server_size_bytes: int = Field(default=0, description="服务端 head 拿到的字节数")
+    server_content_sha256: str = Field(
+        default="", index=True, description="服务端重算的内容哈希（不信任客户端）",
+    )
+    scan_status: str = Field(
+        default="not_scanned",
+        description="病毒/恶意文件扫描状态：not_scanned|clean|quarantined",
+    )
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    validated_at: Optional[datetime] = Field(default=None)
+    validated_at: Optional[datetime] = Field(default=None, description="通过校验的时间")
+    verified_at: Optional[datetime] = Field(default=None, description="服务端 head+ffprobe+scan 完成时间")
 
 
 class AvatarPreparationJob(SQLModel, table=True):

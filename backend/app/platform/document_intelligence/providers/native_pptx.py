@@ -339,14 +339,21 @@ class NativePptxProvider:
 
     @staticmethod
     def _get_source_data(source: SourceArtifact) -> Optional[bytes]:
-        """Try to access source artifact data.
+        """从 SourceArtifact 读取源数据。
 
-        This is a simplified accessor — in production, the source data
-        would be retrieved from a storage backend using the artifact URI.
+        P0-4：通过 source.uri（即 object_key）从对象存储读取文件内容。
+        若 uri 为空，回退到 None（测试场景可由调用方直接注入数据）。
         """
-        # For testing, we rely on data being passed via SourceArtifact
-        # In real usage, P1-09 would wire up storage access.
-        return None
+        if not source.uri:
+            return None
+        try:
+            from app.services.object_storage import get_object_storage
+            storage = get_object_storage()
+            return storage.get(source.uri)
+        except FileNotFoundError:
+            return None
+        except Exception:
+            return None
 
 
 # ---------------------------------------------------------------------------

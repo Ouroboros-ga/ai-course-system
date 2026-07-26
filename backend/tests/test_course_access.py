@@ -25,7 +25,6 @@ from app.services.course_access_service import (
 )
 from app.common.db_migrator import (
     ACCESS_CONTROL_MIGRATION_BATCH,
-    _backfill_access_control,
     access_control_preflight,
     rollback_access_control_backfill,
 )
@@ -171,6 +170,73 @@ def test_explicit_platform_admin_is_cross_course_authorized(session):
     assert context.analytics_eligible is False
 
 
+def test_safety_manage_platform_permission_grants_agent_policy_across_courses(session):
+    """PlatformPermission.SAFETY_MANAGE 跨课程授予 agent.policy/sandbox.policy 权限子集。
+
+    验收包1 P0-3：覆盖 SAFETY_MANAGE 平台权限，断言权限子集边界。
+    """
+    safety_mgr = _user(session, "permission_safety_mgr", UserRole.TEACHER)
+    course_owner = _user(session, "permission_safety_owner", UserRole.TEACHER)
+    course = _course(session, course_owner.id)
+    # 全 capability 开启，确保权限边界仅由 platform permission 决定
+    _capability(
+        session, course,
+        learning=True, course_building=True, knowledge_graph=True,
+        evidence=True, experiment=True, coding_sandbox=True,
+        cognitive_analysis=True, safety_policy=True,
+    )
+    session.add(PlatformPermissionAssignment(
+        user_id=safety_mgr.id, permission=PlatformPermission.SAFETY_MANAGE,
+    ))
+    session.commit()
+
+    ctx = resolve_course_access(session, _principal(safety_mgr), course.id)
+
+    # SAFETY_MANAGE 应授予 agent.policy 与 sandbox.policy 子集
+    assert ctx.allows("agent.policy.view")
+    assert ctx.allows("agent.policy.configure")
+    assert ctx.allows("sandbox.policy.view")
+    assert ctx.allows("sandbox.policy.configure")
+    # 不应越权获得课程删除/权限管理/发布等敏感权限
+    assert not ctx.allows("course.delete")
+    assert not ctx.allows("permission.manage")
+    assert not ctx.allows("course.publish")
+    # 也不应获得非安全相关的审计权限
+    assert not ctx.allows("analytics.export")
+
+
+def test_capability_manage_platform_permission_grants_permission_manage(session):
+    """PlatformPermission.CAPABILITY_MANAGE 跨课程仅授予 permission.manage。
+
+    验收包1 P0-3：覆盖 CAPABILITY_MANAGE 平台权限，断言权限子集边界。
+    """
+    cap_mgr = _user(session, "permission_cap_mgr", UserRole.TEACHER)
+    course_owner = _user(session, "permission_cap_owner", UserRole.TEACHER)
+    course = _course(session, course_owner.id)
+    _capability(
+        session, course,
+        learning=True, course_building=True, knowledge_graph=True,
+        evidence=True, experiment=True, coding_sandbox=True,
+        cognitive_analysis=True, safety_policy=True,
+    )
+    session.add(PlatformPermissionAssignment(
+        user_id=cap_mgr.id, permission=PlatformPermission.CAPABILITY_MANAGE,
+    ))
+    session.commit()
+
+    ctx = resolve_course_access(session, _principal(cap_mgr), course.id)
+
+    # CAPABILITY_MANAGE 仅授予 permission.manage
+    assert ctx.allows("permission.manage")
+    # 不应越权获得 agent.policy 配置、沙箱配置、课程删除等
+    assert not ctx.allows("agent.policy.configure")
+    assert not ctx.allows("sandbox.policy.configure")
+    assert not ctx.allows("course.delete")
+    assert not ctx.allows("course.publish")
+    # SAFETY_MANAGE 才有的权限不应泄漏到 CAPABILITY_MANAGE
+    assert not ctx.allows("agent.policy.view")
+
+
 def test_course_bootstrap_and_student_activation_create_authoritative_records(session):
     owner = _user(session, "permission_bootstrap_owner", UserRole.TEACHER)
     student = _user(session, "permission_bootstrap_student")
@@ -281,17 +347,59 @@ def test_access_control_preflight_fails_before_backfill_for_orphan_legacy_owner(
     assert report["counts"]["orphan_course_owners"] == 1
 
 
-def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(tmp_path):
-    path = tmp_path / "legacy.sqlite"
-    conn = _legacy_access_db(path)
-    cursor = conn.cursor()
+def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(
+    tmp_path, run_alembic
+):
+    """alembic revision 0002 回填幂等，且 rollback_access_control_backfill 按批次隔离回滚。
 
-    assert access_control_preflight(str(path))["ok"] is True
-    assert _backfill_access_control(cursor) == 4
-    assert _backfill_access_control(cursor) == 0
-    conn.commit()
+    验证：
+    - alembic stamp 0001 + upgrade 0002 后，legacy 数据被回填到目标表（带 batch_id）。
+    - 再次 stamp 0001 + upgrade 0002 时，_batch_already_applied 检查使回填跳过，无重复行。
+    - rollback_access_control_backfill 仅删除本批次记录，回滚边界为 batch_id。
+    """
+    path = tmp_path / "legacy.sqlite"
+    conn = _legacy_access_db(str(path))
     conn.close()
 
+    assert access_control_preflight(str(path))["ok"] is True
+
+    # 1. 通过 alembic stamp 0001 + upgrade 0002 完成回填。
+    run_alembic(str(path), "stamp", "0001")
+    run_alembic(str(path), "upgrade", "0002")
+
+    # 2. 验证回填结果：1 capability + 2 memberships + 1 permission。
+    conn = sqlite3.connect(str(path))
+    caps = conn.execute(
+        "SELECT COUNT(*) FROM course_capabilities WHERE migration_batch_id = ?",
+        (ACCESS_CONTROL_MIGRATION_BATCH,),
+    ).fetchone()[0]
+    memberships = conn.execute(
+        "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
+        (ACCESS_CONTROL_MIGRATION_BATCH,),
+    ).fetchone()[0]
+    perms = conn.execute(
+        "SELECT COUNT(*) FROM platform_permission_assignments WHERE migration_batch_id = ?",
+        (ACCESS_CONTROL_MIGRATION_BATCH,),
+    ).fetchone()[0]
+    conn.close()
+    assert caps == 1
+    assert memberships == 2  # owner + student
+    assert perms == 1  # teacher -> platform.course.create
+
+    # 3. 幂等性：重新 stamp 0001 + upgrade 0002。
+    #    _batch_already_applied 检测到已存在的 batch 行，应跳过回填，不产生重复。
+    run_alembic(str(path), "stamp", "0001")
+    run_alembic(str(path), "upgrade", "0002")
+
+    conn = sqlite3.connect(str(path))
+    memberships_after = conn.execute(
+        "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
+        (ACCESS_CONTROL_MIGRATION_BATCH,),
+    ).fetchone()[0]
+    conn.close()
+    assert memberships_after == 2  # 无重复
+
+    # 4. rollback_access_control_backfill 按批次删除记录（回滚边界为 batch_id）。
     deleted = rollback_access_control_backfill(str(path))
 
     assert deleted == {
@@ -299,7 +407,7 @@ def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(tmp_
         "course_memberships": 2,
         "course_capabilities": 1,
     }
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(str(path))
     remaining = conn.execute(
         "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
         (ACCESS_CONTROL_MIGRATION_BATCH,),

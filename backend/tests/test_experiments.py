@@ -473,6 +473,70 @@ class TestExperimentRun:
         assert body["data"]["outcome"] == "sandbox_unavailable"
         assert body["data"]["error_code"] == "SANDBOX_UNAVAILABLE"
 
+    def test_run_does_not_write_formal_evidence(self, client, session, teacher_user, student_user, monkeypatch):
+        """run 阶段不写正式学习证据（仅 finalize-passed 才写）。
+
+        验收包3 P1-7：显式查询 LearningEvidenceRecord 表断言为空。
+        """
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        _enroll_student(session, course.id, student_user.id)
+
+        d = _create_definition_via_api(client, _token(teacher_user), course.id)
+        _create_version_via_api(client, _token(teacher_user), course.id, d["experiment_id"])
+        _publish_definition_via_api(client, _token(teacher_user), course.id, d["experiment_id"])
+
+        # 记录 run 前的 evidence 数量
+        evidence_before = session.exec(
+            select(LearningEvidenceRecord).where(
+                LearningEvidenceRecord.course_id == course.id,
+                LearningEvidenceRecord.student_id == student_user.id,
+            )
+        ).all()
+        assert len(evidence_before) == 0
+
+        # 创建尝试
+        resp = client.post(
+            f"{EXPERIMENTS}/{d['experiment_id']}/attempts?course_id={course.id}",
+            json={},
+            headers=_auth(_token(student_user)),
+        )
+        attempt_id = resp.json()["data"]["attempt_id"]
+
+        # 强制沙箱可用并执行 run（即使 run 成功也不应写证据）
+        from app.services.experiment_service import sandbox_client as sandbox_singleton
+        monkeypatch.setattr(sandbox_singleton, "health_check", lambda: True)
+        # mock submit_code 返回 ACCEPTED，让 run "成功"
+        from app.services.sandbox_client import SandboxResult, SubmissionStatus
+        monkeypatch.setattr(
+            sandbox_singleton,
+            "submit_code",
+            lambda *a, **kw: SandboxResult(
+                status=SubmissionStatus.ACCEPTED,
+                stdout="hello",
+                message="ok",
+            ),
+        )
+
+        resp_run = client.post(
+            f"{EXPERIMENTS}/attempts/{attempt_id}/runs?course_id={course.id}",
+            json={"language": "python3", "source_code": "print('hello')"},
+            headers=_auth(_token(student_user)),
+        )
+        # run 端点返回 HTTP 200 + body.code=201（与项目统一响应规范一致）
+        assert resp_run.status_code == 200
+        assert resp_run.json()["code"] == 201
+
+        # 查询 run 后的 evidence 表，应为空（finalize 才写证据）
+        evidence_after = session.exec(
+            select(LearningEvidenceRecord).where(
+                LearningEvidenceRecord.course_id == course.id,
+                LearningEvidenceRecord.student_id == student_user.id,
+            )
+        ).all()
+        assert len(evidence_after) == 0, \
+            f"run 阶段不应写正式证据，但发现 {len(evidence_after)} 条记录"
+
     def test_run_rejects_language_not_in_whitelist(self, client, session, teacher_user, student_user):
         course = _course(session, teacher_user.id)
         _enable_experiment_capabilities(session, course.id)

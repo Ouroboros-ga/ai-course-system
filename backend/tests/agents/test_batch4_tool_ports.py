@@ -204,6 +204,38 @@ def test_web_research_node_degrades_when_port_raises():
     assert research_nodes[0].get("error") == "TimeoutError"
 
 
+def test_graph_node_degrades_when_port_raises():
+    """注入的 KnowledgeGraphPort 抛异常时，节点标记 degraded_services 且不中断流程。
+
+    验收包5 P1-5：Graph 端口异常 fail-closed 测试，类比 web_research 异常路径。
+    """
+    class _BrokenGraph:
+        """模拟图谱服务异常（如数据库不可达/解析失败）。"""
+        async def resolve_concepts(self, **_: Any) -> list[Mapping[str, Any]]:
+            raise RuntimeError("graph service down")
+        async def get_context(self, **_: Any) -> Mapping[str, Any]:
+            raise RuntimeError("graph service down")
+
+    tools = TeachingTools(
+        scope=FakeScope(),
+        knowledge_graph=_BrokenGraph(),
+        retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(),
+        recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(),
+        learning_events=FakeEvents(),
+        llm=_fake_llm_default(),
+    )
+    runtime = TeachingAgentRuntime(tools)
+    state = _run(runtime)
+    # 不中断：仍能产出 final_answer（降级为普通问答）
+    assert state.get("final_answer")
+    # 标记降级：knowledge_graph 相关服务进入 degraded_services
+    degraded = state.get("degraded_services", [])
+    assert any("graph" in svc.lower() or "knowledge" in svc.lower() for svc in degraded), \
+        f"degraded_services 应包含 graph/knowledge 之一，实际：{degraded}"
+
+
 # ==================== CognitionPort 契约测试 ====================
 
 

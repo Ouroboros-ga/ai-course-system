@@ -1,12 +1,14 @@
 """Tests for the access-control operations CLI (preflight/backup/restore/rollback/drill).
 
 批次0要求：跑 access_control_preflight，补齐迁移、回滚、备份恢复演练。
+
+P0-1 后：access_control 回填已迁移至 alembic revision 0002，本文件通过
+alembic stamp 0001 + upgrade 0002 完成 legacy 数据回填，再验证 CLI 命令。
 """
 import sqlite3
 
 from app.common.db_migrator import (
     ACCESS_CONTROL_MIGRATION_BATCH,
-    _backfill_access_control,
     access_control_preflight,
 )
 from app.scripts.access_control_ops import (
@@ -19,6 +21,10 @@ from app.scripts.access_control_ops import (
 
 
 def _legacy_access_db(path):
+    """创建带简化 legacy schema 的 DB（users/courses/student_enrollments + 空目标表）。
+
+    不再调用已废弃的 _backfill_access_control；回填由 _apply_backfill_via_alembic 完成。
+    """
     conn = sqlite3.connect(path)
     cursor = conn.cursor()
     cursor.executescript("""
@@ -44,16 +50,24 @@ def _legacy_access_db(path):
     cursor.execute("INSERT INTO users VALUES (2, 1, 'student')")
     cursor.execute("INSERT INTO courses VALUES (10, 1, CURRENT_TIMESTAMP)")
     cursor.execute("INSERT INTO student_enrollments VALUES (10, 2, 1, CURRENT_TIMESTAMP)")
-    # backfill so rollback has rows to remove
-    _backfill_access_control(cursor)
     conn.commit()
     return conn
 
 
-def test_preflight_cli_reports_ok(tmp_path):
+def _apply_backfill_via_alembic(run_alembic, db_path):
+    """通过 alembic revision 0002 完成 access-control-v1 回填。
+
+    旧库已具备 baseline 表结构，先 stamp 0001 标记基线，再 upgrade 0002 执行回填。
+    """
+    run_alembic(db_path, "stamp", "0001")
+    run_alembic(db_path, "upgrade", "0002")
+
+
+def test_preflight_cli_reports_ok(tmp_path, run_alembic):
     path = tmp_path / "legacy.sqlite"
-    conn = _legacy_access_db(path)
+    conn = _legacy_access_db(str(path))
     conn.close()
+    _apply_backfill_via_alembic(run_alembic, str(path))
 
     import argparse
     rc = cmd_preflight(argparse.Namespace(database=str(path)))
@@ -79,10 +93,11 @@ def test_preflight_cli_reports_failure_for_orphan(tmp_path):
     assert rc == 1
 
 
-def test_backup_and_restore_roundtrip(tmp_path):
+def test_backup_and_restore_roundtrip(tmp_path, run_alembic):
     path = tmp_path / "legacy.sqlite"
-    conn = _legacy_access_db(path)
+    conn = _legacy_access_db(str(path))
     conn.close()
+    _apply_backfill_via_alembic(run_alembic, str(path))
 
     import argparse
     dest_dir = str(tmp_path / "backups")
@@ -94,7 +109,7 @@ def test_backup_and_restore_roundtrip(tmp_path):
     backup_file = str(backups[0])
 
     # corrupt the original then restore
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(str(path))
     conn.execute("DELETE FROM course_memberships")
     conn.commit()
     conn.close()
@@ -103,7 +118,7 @@ def test_backup_and_restore_roundtrip(tmp_path):
     rc = cmd_restore(argparse.Namespace(backup_file=backup_file, database=str(path), force=True))
     assert rc == 0
     # restored data should have the backfilled memberships back
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(str(path))
     count = conn.execute(
         "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
         (ACCESS_CONTROL_MIGRATION_BATCH,),
@@ -112,15 +127,16 @@ def test_backup_and_restore_roundtrip(tmp_path):
     assert count == 2  # owner + student
 
 
-def test_rollback_backfill_cli_deletes_batch_rows(tmp_path):
+def test_rollback_backfill_cli_deletes_batch_rows(tmp_path, run_alembic):
     path = tmp_path / "legacy.sqlite"
-    conn = _legacy_access_db(path)
+    conn = _legacy_access_db(str(path))
     conn.close()
+    _apply_backfill_via_alembic(run_alembic, str(path))
 
     import argparse
     rc = cmd_rollback_backfill(argparse.Namespace(database=str(path)))
     assert rc == 0
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(str(path))
     remaining = conn.execute(
         "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
         (ACCESS_CONTROL_MIGRATION_BATCH,),
@@ -129,17 +145,18 @@ def test_rollback_backfill_cli_deletes_batch_rows(tmp_path):
     assert remaining == 0
 
 
-def test_drill_runs_full_cycle(tmp_path):
+def test_drill_runs_full_cycle(tmp_path, run_alembic):
     path = tmp_path / "legacy.sqlite"
-    conn = _legacy_access_db(path)
+    conn = _legacy_access_db(str(path))
     conn.close()
+    _apply_backfill_via_alembic(run_alembic, str(path))
 
     import argparse
     dest_dir = str(tmp_path / "backups")
     rc = cmd_drill(argparse.Namespace(database=str(path), dest_dir=dest_dir))
     assert rc == 0
     # after drill+restore, backfill rows should be restored
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(str(path))
     count = conn.execute(
         "SELECT COUNT(*) FROM course_memberships WHERE migration_batch_id = ?",
         (ACCESS_CONTROL_MIGRATION_BATCH,),

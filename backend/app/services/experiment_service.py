@@ -524,7 +524,13 @@ class ExperimentRunService:
         language: str,
         source_code: str,
         student_id: int,
+        execute: bool = True,
     ) -> ExperimentRun:
+        """创建代码运行记录。
+
+        - execute=True（默认）：同步执行沙箱（兼容现有测试）
+        - execute=False：仅创建 PENDING 记录，由调用方异步触发 _execute_run
+        """
         attempt = attempt_service.get_attempt(
             session, course_id=course_id, attempt_id=attempt_id, student_id=student_id,
         )
@@ -540,6 +546,35 @@ class ExperimentRunService:
             session, course_id=course_id, version_id=attempt.version_id,
         )
 
+        run = self._create_run_record(
+            session,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            language=language,
+            source_code=source_code,
+            student_id=student_id,
+        )
+
+        if execute:
+            # 同步执行沙箱（测试场景）；生产应通过任务中心异步执行
+            await self._execute_run(session, run=run, attempt=attempt, version=version)
+        return run
+
+    def _create_run_record(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        attempt_id: str,
+        language: str,
+        source_code: str,
+        student_id: int,
+    ) -> ExperimentRun:
+        """仅创建 ExperimentRun 记录（PENDING），不执行沙箱。
+
+        异步路径（async_run=true）调用此方法创建记录，随后由 worker
+        通过 _execute_run 异步执行。
+        """
         run = ExperimentRun(
             attempt_id=attempt_id,
             course_id=course_id,
@@ -550,9 +585,6 @@ class ExperimentRunService:
         )
         session.add(run)
         session.flush()
-
-        # 同步执行沙箱（测试场景）；生产应通过任务中心异步执行
-        await self._execute_run(session, run=run, attempt=attempt, version=version)
         return run
 
     async def _execute_run(

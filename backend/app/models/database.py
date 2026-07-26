@@ -188,14 +188,31 @@ PRODUCTION_DATABASE_PATH = os.path.join(DATABASE_DIR, "smart_class.db")
 DEFAULT_DATABASE_URL = f"sqlite:///{PRODUCTION_DATABASE_PATH}"
 DATABASE_URL = os.environ.get("AI_COURSE_DATABASE_URL", DEFAULT_DATABASE_URL)
 
+
+def _build_connect_args(url: str) -> dict:
+    """按数据库类型构建连接参数。
+
+    SQLite 需要 check_same_thread=False（FastAPI 多线程访问）；
+    PostgreSQL/MySQL 不需要且不接受该参数。
+    """
+    if url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    return {}
+
+
 engine = create_engine(
     DATABASE_URL,
     echo=False,
-    connect_args={"check_same_thread": False},
+    connect_args=_build_connect_args(DATABASE_URL),
 )
 
 
 def create_tables():
+    """仅用于开发/测试空库初始化。
+
+    生产部署必须使用 `alembic upgrade head` 建表和迁移；
+    应用启动路径不再调用此函数（见 app.main）。
+    """
     SQLModel.metadata.create_all(engine)
 
 
@@ -211,3 +228,16 @@ def get_session() -> Generator[Session, None, None]:
         yield session
     finally:
         session.close()
+
+
+def session_factory() -> Session:
+    """任务 worker 使用的会话工厂。
+
+    返回一个新的 Session，可作为上下文管理器使用：
+        with session_factory() as session:
+            ...
+
+    LocalTaskWorker 的 handler 通过 ctx.session_factory() 获取独立 session，
+    避免与请求级事务耦合。
+    """
+    return Session(engine)

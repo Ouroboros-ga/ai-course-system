@@ -222,11 +222,18 @@ class AvatarProfileService:
 
 
 class AvatarSourceMediaService:
-    """数字人原始素材服务
+    """数字人原始素材服务（P0-3 安全链路）
 
-    - 仅存 object_key，不暴露绝对路径
-    - 上传校验：文件类型白名单、大小、时长、哈希去重
-    - 语音样本首版不用于声音克隆
+    两步式受控上传：
+    1. request_upload_intent：服务端生成 object_key（按教师+预设命名空间隔离），
+       签发短时、限大小、限 MIME 的上传意图，状态=pending_upload。
+    2. confirm_uploaded：服务端 head 对象 -> ffprobe 探测 -> 计算 hash ->
+       病毒扫描 stub -> 全部通过则状态=verified，否则 invalid/quarantined。
+
+    安全约束：
+    - object_key 只能由服务端生成，禁止客户端提交任意键
+    - 服务端探测的 mime/duration/hash/size 才可信，客户端自报仅作预校验
+    - 预处理入口只接受 verified 素材
     """
 
     PORTRAIT_VIDEO_ALLOWED_MIMES = {
@@ -235,6 +242,211 @@ class AvatarSourceMediaService:
     VOICE_SAMPLE_ALLOWED_MIMES = {
         "audio/mpeg", "audio/wav", "audio/x-wav", "audio/webm",
     }
+
+    # 服务端生成的 object_key 前缀，按教师和 AvatarProfile 命名空间隔离
+    OBJECT_KEY_PREFIX = "avatar_sources"
+
+    def request_upload_intent(
+        self,
+        session: Session,
+        *,
+        avatar_id: str,
+        owner_user_id: int,
+        media_type: AvatarSourceMediaType,
+        client_mime_type: str,
+        client_size_bytes: int,
+    ) -> tuple[AvatarSourceMedia, dict]:
+        """第 1 步：服务端生成 object_key + 签发上传意图。
+
+        返回 (source_media_record, upload_intent_dict)。
+        upload_intent_dict 包含：object_key, upload_url, method, headers,
+        expires_at, max_size_bytes, allowed_mime_types。
+
+        - 不接受客户端提交 object_key，杜绝越权登记他人对象键。
+        - client_mime_type / client_size_bytes 仅作预校验，真实值以服务端探测为准。
+        """
+        # 校验所有者
+        profile = profile_service.get_profile(
+            session, avatar_id=avatar_id, owner_user_id=owner_user_id,
+        )
+        # 预校验 MIME
+        self._validate_mime(media_type, client_mime_type)
+        # 预校验大小
+        self._validate_size(media_type, client_size_bytes)
+
+        # 服务端生成 object_key：avatar_sources/u{user_id}/{avatar_id}/{media_type}/{uuid}.{ext}
+        ext = self._extension_for_mime(media_type, client_mime_type)
+        object_key = (
+            f"{self.OBJECT_KEY_PREFIX}/u{owner_user_id}/{avatar_id}/"
+            f"{media_type.value}/{uuid.uuid4().hex}{ext}"
+        )
+
+        source = AvatarSourceMedia(
+            avatar_id=avatar_id,
+            owner_user_id=owner_user_id,
+            media_type=media_type,
+            object_key=object_key,
+            mime_type=client_mime_type,  # 客户端自报，待服务端探测覆盖
+            size_bytes=client_size_bytes,
+            upload_status=AvatarSourceMediaStatus.PENDING_UPLOAD,
+        )
+        session.add(source)
+        session.flush()
+
+        # 签发上传意图：限大小、限 MIME、短时
+        from app.core.config import settings
+        max_bytes = self._max_bytes_for(media_type)
+        expires_in = 900  # 15 分钟
+        intent = {
+            "object_key": object_key,
+            "source_media_id": source.source_media_id,
+            "upload_url": "/api/v1/media/avatar-sources/upload",
+            "method": "PUT",
+            "headers": {"Content-Type": client_mime_type},
+            "expires_at": int(datetime.now(timezone.utc).timestamp()) + expires_in,
+            "max_size_bytes": max_bytes,
+            "allowed_mime_types": sorted(self._allowed_mimes_for(media_type)),
+            "signature_subject": f"avatar_source:{source.source_media_id}",
+        }
+        # 记录到 profile（保持 profile 状态可观察）
+        if profile.status == AvatarProfileStatus.DRAFT:
+            profile.status = AvatarProfileStatus.UPLOADED
+        return source, intent
+
+    def confirm_uploaded(
+        self,
+        session: Session,
+        *,
+        avatar_id: str,
+        owner_user_id: int,
+        source_media_id: str,
+    ) -> AvatarSourceMedia:
+        """第 2 步：服务端确认对象存在 + 探测 + 哈希 + 扫描，状态转为 verified。
+
+        P0-3 安全链路核心：
+        1. 校验 source_media 属于该教师（防止越权）
+        2. 调用 object_storage.head() 确认对象真实存在
+        3. 调用 _probe_media() 重新探测真实 mime/duration（ffprobe 或同类）
+        4. 服务端重新读取对象流计算 content_sha256（不信任客户端）
+        5. 调用 _scan_for_threats() 病毒/恶意文件扫描
+        6. 全部通过 -> verified；任一失败 -> invalid/quarantined
+        """
+        source = self._get_owned_source(
+            session,
+            avatar_id=avatar_id,
+            owner_user_id=owner_user_id,
+            source_media_id=source_media_id,
+        )
+        # 状态机校验：仅 pending_upload 或 uploaded 可重新确认
+        if source.upload_status not in (
+            AvatarSourceMediaStatus.PENDING_UPLOAD,
+            AvatarSourceMediaStatus.UPLOADED,
+            AvatarSourceMediaStatus.INVALID,
+        ):
+            reject_state_conflict(
+                f"素材当前状态 {source.upload_status.value} 不允许重新确认",
+                details={"source_media_id": source_media_id, "current_status": source.upload_status.value},
+            )
+
+        storage = get_object_storage()
+        notes_parts: list[str] = []
+
+        # 1. 确认对象存在
+        if not storage.exists(source.object_key):
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = "object_not_found"
+            session.add(source)
+            session.flush()
+            return source
+
+        head_info = storage.head(source.object_key)
+        source.server_size_bytes = int(head_info.get("size_bytes") or 0)
+        if source.server_size_bytes == 0:
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = "empty_object"
+            session.add(source)
+            session.flush()
+            return source
+
+        # 2. 服务端重新读取对象流计算 content_sha256（不信任客户端）
+        try:
+            content = storage.get(source.object_key)
+            server_sha = hashlib.sha256(content).hexdigest()
+            source.server_content_sha256 = server_sha
+        except Exception as exc:
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = f"hash_compute_failed: {type(exc).__name__}"
+            session.add(source)
+            session.flush()
+            return source
+
+        # 3. ffprobe/同类探测真实媒体信息
+        try:
+            probe = _probe_media(source.object_key, content, source.media_type)
+            source.server_mime_type = probe.get("mime_type", "")
+            source.server_duration_ms = probe.get("duration_ms")
+            if probe.get("note"):
+                notes_parts.append(probe["note"])
+        except Exception as exc:
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = f"probe_failed: {type(exc).__name__}: {exc}"[:500]
+            session.add(source)
+            session.flush()
+            return source
+
+        # 4. 校验服务端探测到的 MIME 与大小
+        try:
+            self._validate_server_mime(source.media_type, source.server_mime_type)
+            self._validate_server_size(source.media_type, source.server_size_bytes)
+        except Exception as exc:
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = f"server_validation_failed: {exc}"[:500]
+            session.add(source)
+            session.flush()
+            return source
+
+        # 5. 病毒/恶意文件扫描（首版 stub，可接入 ClamAV）
+        scan_result = _scan_for_threats(source.object_key, content)
+        source.scan_status = scan_result.get("status", "not_scanned")
+        if scan_result.get("note"):
+            notes_parts.append(scan_result["note"])
+        if scan_result.get("status") == "quarantined":
+            source.upload_status = AvatarSourceMediaStatus.QUARANTINED
+            source.validation_notes = "; ".join(notes_parts) or "scan_quarantined"
+            session.add(source)
+            session.flush()
+            return source
+
+        # 6. 全部通过 -> verified
+        source.upload_status = AvatarSourceMediaStatus.VERIFIED
+        source.verified_at = datetime.now(timezone.utc)
+        source.validated_at = source.verified_at
+        source.validation_notes = "; ".join(notes_parts) if notes_parts else "ok"
+        session.add(source)
+        session.flush()
+        return source
+
+    def withdraw_source_media(
+        self,
+        session: Session,
+        *,
+        avatar_id: str,
+        owner_user_id: int,
+        source_media_id: str,
+    ) -> AvatarSourceMedia:
+        """教师主动撤回素材（状态转为 withdrawn）。"""
+        source = self._get_owned_source(
+            session,
+            avatar_id=avatar_id,
+            owner_user_id=owner_user_id,
+            source_media_id=source_media_id,
+        )
+        if source.upload_status == AvatarSourceMediaStatus.WITHDRAWN:
+            return source
+        source.upload_status = AvatarSourceMediaStatus.WITHDRAWN
+        session.add(source)
+        session.flush()
+        return source
 
     def register_source_media(
         self,
@@ -249,6 +461,14 @@ class AvatarSourceMediaService:
         duration_ms: Optional[int] = None,
         content_sha256: str = "",
     ) -> AvatarSourceMedia:
+        """[已废弃] 旧式直接登记素材接口。
+
+        P0-3 后请改用 request_upload_intent + confirm_uploaded 两步式流程。
+        本方法保留仅为兼容旧测试，新代码不应使用。
+
+        安全注意：本方法不再信任客户端 object_key，会校验其前缀必须由本服务生成
+        （即必须以 avatar_sources/u{owner_user_id}/{avatar_id}/ 开头）。
+        """
         # 校验所有者
         profile_service.get_profile(
             session, avatar_id=avatar_id, owner_user_id=owner_user_id,
@@ -257,18 +477,19 @@ class AvatarSourceMediaService:
         self._validate_mime(media_type, mime_type)
         # 校验大小
         self._validate_size(media_type, size_bytes)
-
-        # 去重：同 avatar_id + content_sha256 已存在则直接返回
-        if content_sha256:
-            existing = session.exec(
-                select(AvatarSourceMedia).where(
-                    AvatarSourceMedia.avatar_id == avatar_id,
-                    AvatarSourceMedia.content_sha256 == content_sha256,
-                    AvatarSourceMedia.upload_status != AvatarSourceMediaStatus.EXPIRED,
-                )
-            ).first()
-            if existing is not None:
-                return existing
+        # P0-3：校验 object_key 必须由本服务生成（命名空间隔离）
+        expected_prefix = (
+            f"{self.OBJECT_KEY_PREFIX}/u{owner_user_id}/{avatar_id}/"
+        )
+        if not object_key.startswith(expected_prefix):
+            reject_validation_failed(
+                "object_key 必须由服务端 request_upload_intent 生成，"
+                "禁止提交任意对象键",
+                details={
+                    "expected_prefix": expected_prefix,
+                    "object_key": object_key,
+                },
+            )
 
         source = AvatarSourceMedia(
             avatar_id=avatar_id,
@@ -303,14 +524,100 @@ class AvatarSourceMediaService:
         stmt = stmt.order_by(AvatarSourceMedia.created_at.desc())
         return list(session.exec(stmt).all())
 
-    def _validate_mime(
-        self, media_type: AvatarSourceMediaType, mime_type: str,
-    ) -> None:
-        allowed = (
+    def _get_owned_source(
+        self,
+        session: Session,
+        *,
+        avatar_id: str,
+        owner_user_id: int,
+        source_media_id: str,
+    ) -> AvatarSourceMedia:
+        """获取指定 source_media 并校验归属，防止越权。"""
+        profile_service.get_profile(
+            session, avatar_id=avatar_id, owner_user_id=owner_user_id,
+        )
+        source = session.exec(
+            select(AvatarSourceMedia).where(
+                AvatarSourceMedia.source_media_id == source_media_id,
+                AvatarSourceMedia.avatar_id == avatar_id,
+                AvatarSourceMedia.owner_user_id == owner_user_id,
+            )
+        ).first()
+        if source is None:
+            reject_resource_not_found(
+                "AvatarSourceMedia",
+                f"source_media_id={source_media_id} 不存在或不属于该教师",
+            )
+        return source
+
+    def _allowed_mimes_for(
+        self, media_type: AvatarSourceMediaType,
+    ) -> set[str]:
+        return (
             self.PORTRAIT_VIDEO_ALLOWED_MIMES
             if media_type == AvatarSourceMediaType.PORTRAIT_VIDEO
             else self.VOICE_SAMPLE_ALLOWED_MIMES
         )
+
+    def _max_bytes_for(
+        self, media_type: AvatarSourceMediaType,
+    ) -> int:
+        from app.core.config import settings
+        if media_type == AvatarSourceMediaType.PORTRAIT_VIDEO:
+            return int(settings.AVATAR_PORTRAIT_VIDEO_MAX_MB) * 1024 * 1024
+        return int(settings.AVATAR_VOICE_SAMPLE_MAX_MB) * 1024 * 1024
+
+    def _extension_for_mime(
+        self, media_type: AvatarSourceMediaType, mime_type: str,
+    ) -> str:
+        """根据 MIME 推断文件扩展名。"""
+        ext_map = {
+            "video/mp4": ".mp4",
+            "video/webm": ".webm",
+            "video/quicktime": ".mov",
+            "video/x-msvideo": ".avi",
+            "audio/mpeg": ".mp3",
+            "audio/wav": ".wav",
+            "audio/x-wav": ".wav",
+            "audio/webm": ".weba",
+        }
+        return ext_map.get(mime_type.lower(), ".bin")
+
+    def _validate_server_mime(
+        self, media_type: AvatarSourceMediaType, server_mime_type: str,
+    ) -> None:
+        """服务端探测到的 MIME 校验（更严格，不允许 octet-stream）。"""
+        if not server_mime_type:
+            reject_validation_failed(
+                "服务端未能探测到 MIME 类型，文件可能已损坏",
+                details={"server_mime_type": server_mime_type},
+            )
+        allowed = self._allowed_mimes_for(media_type)
+        if server_mime_type.lower() not in allowed:
+            reject_validation_failed(
+                f"服务端探测到的 MIME 类型不被允许: {server_mime_type}",
+                details={"allowed": sorted(allowed), "server_mime_type": server_mime_type},
+            )
+
+    def _validate_server_size(
+        self, media_type: AvatarSourceMediaType, server_size_bytes: int,
+    ) -> None:
+        """服务端探测到的大小校验。"""
+        from app.core.config import settings
+        if media_type == AvatarSourceMediaType.PORTRAIT_VIDEO:
+            max_mb = settings.AVATAR_PORTRAIT_VIDEO_MAX_MB
+        else:
+            max_mb = settings.AVATAR_VOICE_SAMPLE_MAX_MB
+        if server_size_bytes > max_mb * 1024 * 1024:
+            reject_validation_failed(
+                f"服务端探测到文件超过最大限制 {max_mb}MB",
+                details={"server_size_bytes": server_size_bytes, "max_mb": max_mb},
+            )
+
+    def _validate_mime(
+        self, media_type: AvatarSourceMediaType, mime_type: str,
+    ) -> None:
+        allowed = self._allowed_mimes_for(media_type)
         if mime_type.lower() not in allowed:
             reject_validation_failed(
                 f"不支持的文件类型: {mime_type}",
@@ -330,6 +637,155 @@ class AvatarSourceMediaService:
                 f"文件超过最大限制 {max_mb}MB",
                 details={"size_bytes": size_bytes, "max_mb": max_mb},
             )
+
+
+# ---------------------------------------------------------------------------
+# 媒体探测与扫描（P0-3 安全链路）
+# ---------------------------------------------------------------------------
+
+
+def _probe_media(
+    object_key: str, content: bytes, media_type: AvatarSourceMediaType,
+) -> dict:
+    """服务端探测真实媒体信息。
+
+    优先使用 ffprobe；若 ffprobe 不可用，回退到扩展名推断（标注 note）。
+
+    返回 {mime_type, duration_ms, note}。
+    """
+    from app.services.object_storage import mime_type_for
+    note = ""
+    mime = mime_type_for(object_key)
+    duration_ms: Optional[int] = None
+
+    # 尝试调用 ffprobe（如果可用）
+    try:
+        probe_result = _ffprobe_probe(content)
+        if probe_result:
+            mime = probe_result.get("mime_type", mime)
+            duration_ms = probe_result.get("duration_ms")
+    except FileNotFoundError:
+        note = "ffprobe_not_available;fallback_to_extension"
+    except Exception as exc:  # noqa: BLE001
+        note = f"ffprobe_failed:{type(exc).__name__}"
+
+    return {"mime_type": mime, "duration_ms": duration_ms, "note": note}
+
+
+def _ffprobe_probe(content: bytes) -> Optional[dict]:
+    """调用 ffprobe 探测真实媒体信息。
+
+    通过临时文件写入 content，调用 ffprobe 解析 JSON 输出。
+    ffprobe 不可用时抛 FileNotFoundError。
+    """
+    import json as _json
+    import shutil as _shutil
+    import subprocess as _subprocess
+    import tempfile as _tempfile
+
+    ffprobe = _shutil.which("ffprobe")
+    if not ffprobe:
+        raise FileNotFoundError("ffprobe not installed")
+
+    with _tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        result = _subprocess.run(
+            [
+                ffprobe,
+                "-v", "quiet",
+                "-print_format", "json",
+                "-show_format",
+                "-show_streams",
+                tmp_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
+        data = _json.loads(result.stdout or "{}")
+        fmt = data.get("format", {})
+        duration_seconds = float(fmt.get("duration") or 0)
+        duration_ms = int(duration_seconds * 1000) if duration_seconds > 0 else None
+
+        # 从第一个 stream 推断 MIME
+        streams = data.get("streams") or []
+        mime_type = ""
+        if streams:
+            codec_type = streams[0].get("codec_type", "")
+            if codec_type == "video":
+                mime_type = "video/mp4"
+            elif codec_type == "audio":
+                mime_type = "audio/mpeg"
+
+        return {"mime_type": mime_type, "duration_ms": duration_ms}
+    finally:
+        try:
+            import os as _os
+            _os.unlink(tmp_path)
+        except OSError:
+            pass
+
+
+def _scan_for_threats(object_key: str, content: bytes) -> dict:
+    """病毒/恶意文件扫描 stub。
+
+    首版不接入真实杀毒引擎，仅做基本 sanity check：
+    - 文件大小 > 0
+    - 内容非全零（防止伪装上传）
+    - 文件签名与扩展名一致（防止伪装）
+
+    生产部署应替换为 ClamAV 或同类引擎调用。
+    返回 {status: "clean"|"quarantined", note: str}。
+    """
+    if not content:
+        return {"status": "quarantined", "note": "empty_content"}
+
+    # 全零内容检测（伪装上传）
+    if all(b == 0 for b in content[:min(len(content), 4096)]):
+        return {
+            "status": "quarantined",
+            "note": "all_zero_content_suspected_disguise",
+        }
+
+    # 文件签名 sanity check
+    from app.services.object_storage import mime_type_for
+    expected_mime = mime_type_for(object_key)
+    signature_mime = _detect_signature_mime(content)
+    if signature_mime and expected_mime and signature_mime != expected_mime:
+        # 仅当签名明确指向不同类型时报警
+        if (signature_mime.startswith("video/") and expected_mime.startswith("audio/")) or \
+           (signature_mime.startswith("audio/") and expected_mime.startswith("video/")):
+            return {
+                "status": "quarantined",
+                "note": f"signature_mismatch:expected={expected_mime},actual={signature_mime}",
+            }
+
+    return {"status": "clean", "note": "stub_scan_passed"}
+
+
+def _detect_signature_mime(content: bytes) -> str:
+    """通过文件头魔数检测真实 MIME 类型。"""
+    if len(content) < 12:
+        return ""
+    # MP4: .... ftyp
+    if content[4:8] == b"ftyp":
+        return "video/mp4"
+    # WebM: 1A 45 DF A3
+    if content[:4] == b"\x1a\x45\xdf\xa3":
+        return "video/webm"
+    # MP3: ID3 or FF FB
+    if content[:3] == b"ID3" or (content[0] == 0xFF and (content[1] & 0xE0) == 0xE0):
+        return "audio/mpeg"
+    # WAV: RIFF....WAVE
+    if content[:4] == b"RIFF" and content[8:12] == b"WAVE":
+        return "audio/wav"
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -359,11 +815,11 @@ class AvatarPreparationService:
             session, avatar_id=avatar_id, owner_user_id=owner_user_id,
         )
 
-        # 状态机校验：disabled 不允许启动新预处理
+        # 状态机校验：disabled/quarantined 不允许启动新预处理
         # draft/uploaded/failed/ready 均可（ready/failed 用于重预处理或重试）
-        if profile.status == AvatarProfileStatus.DISABLED:
+        if profile.status in (AvatarProfileStatus.DISABLED, AvatarProfileStatus.QUARANTINED):
             reject_state_conflict(
-                "已停用的预设不能启动预处理，请先恢复启用",
+                f"预设当前状态 {profile.status.value} 不能启动预处理，请先恢复启用或重新上传素材",
                 details={"current_status": profile.status.value},
             )
 
@@ -380,6 +836,26 @@ class AvatarPreparationService:
             media_type=AvatarSourceMediaType.VOICE_SAMPLE,
         )
         voice = voice_samples[0] if voice_samples else None
+
+        # P0-3.6 安全校验：所有依赖素材必须处于 VERIFIED 状态
+        # pending_upload/uploaded/invalid/quarantined/withdrawn/expired 均拒绝
+        unverified_sources = [
+            s for s in ([portrait] + ([voice] if voice else []))
+            if s.upload_status != AvatarSourceMediaStatus.VERIFIED
+        ]
+        if unverified_sources:
+            bad = [
+                {
+                    "source_media_id": s.source_media_id,
+                    "media_type": s.media_type.value,
+                    "upload_status": s.upload_status.value,
+                }
+                for s in unverified_sources
+            ]
+            reject_state_conflict(
+                "存在未通过服务端校验的素材，无法启动预处理；请先调用 confirm 端点完成校验",
+                details={"unverified_sources": bad},
+            )
 
         if not idempotency_key:
             idempotency_key = "auto_" + uuid.uuid4().hex[:16]

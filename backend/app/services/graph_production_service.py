@@ -63,7 +63,9 @@ def create_evidence(
         raise ValueError("Evidence 字符定位范围无效")
     content_hash = hashlib.sha256(text_snippet.encode()).hexdigest()[:32]
     evidence = CourseEvidenceRecord(
-        evidence_id=str(uuid.uuid4()),
+        # evidence_id 必须使用 ev_ 前缀 + UUID hex，与所有证据域保持一致
+        # （project_memory.md 硬约束）。
+        evidence_id="ev_" + uuid.uuid4().hex,
         course_id=course_id,
         document_id=document_id,
         source_file=source_file,

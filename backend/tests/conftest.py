@@ -68,15 +68,51 @@ def test_engine(temp_db_path):
     assert str(database.PRODUCTION_DATABASE_PATH) not in database.DATABASE_URL
     assert temp_db_path.name == "test_smart_class.db"
 
+    # 使用 alembic upgrade head 建库，而非 create_all
+    # 这确保测试数据库结构与生产一致（经过迁移链验证）
+    from alembic.config import CommandLine
+    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    alembic_ini = os.path.join(backend_root, "alembic.ini")
+    cmdline = CommandLine(prog="alembic")
+    try:
+        cmdline.main(["-c", alembic_ini, "upgrade", "head"])
+    except SystemExit as e:
+        if e.code not in (None, 0):
+            raise RuntimeError(f"alembic upgrade head failed with exit code {e.code}")
+
     engine = create_engine(
         os.environ["AI_COURSE_DATABASE_URL"],
         connect_args={"check_same_thread": False},
     )
-    SQLModel.metadata.create_all(engine)
     yield engine
     SQLModel.metadata.drop_all(engine)
     engine.dispose()
     shutil.rmtree(_TEST_ROOT, ignore_errors=True)
+
+
+@pytest.fixture
+def run_alembic(monkeypatch):
+    """返回一个函数，用于在指定 SQLite DB 路径上执行 alembic 命令。
+
+    用法:
+        run_alembic(db_path, "upgrade", "head")
+        run_alembic(db_path, "stamp", "0001")
+        run_alembic(db_path, "downgrade", "0002")
+    """
+    def _run(db_path: str, *alembic_args: str) -> None:
+        from alembic.config import CommandLine
+        backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alembic_ini = os.path.join(backend_root, "alembic.ini")
+        monkeypatch.setenv("AI_COURSE_DATABASE_URL", f"sqlite:///{db_path}")
+        cmdline = CommandLine(prog="alembic")
+        try:
+            cmdline.main(["-c", alembic_ini] + list(alembic_args))
+        except SystemExit as e:
+            if e.code not in (None, 0):
+                raise RuntimeError(
+                    f"alembic {' '.join(alembic_args)} failed with exit code {e.code}"
+                )
+    return _run
 
 
 @pytest.fixture(autouse=True)

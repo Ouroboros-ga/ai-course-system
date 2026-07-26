@@ -82,6 +82,25 @@ class SourceMediaRegisterRequest(BaseModel):
     content_sha256: str = Field(default="", max_length=64)
 
 
+class SourceMediaUploadIntentRequest(BaseModel):
+    """P0-3 受控上传意图请求。
+
+    客户端只提交 media_type / mime_type / size_bytes 预校验信息，
+    不提交 object_key；object_key 由服务端生成。
+    """
+    media_type: str = Field(pattern="^(portrait_video|voice_sample)$")
+    mime_type: str = Field(min_length=3, max_length=100)
+    size_bytes: int = Field(gt=0)
+
+
+class SourceMediaConfirmRequest(BaseModel):
+    """P0-3 服务端确认请求。
+
+    客户端上传完成后调用此接口，服务端将独立完成 head/ffprobe/hash/scan。
+    """
+    source_media_id: str = Field(min_length=3, max_length=100)
+
+
 class PrepareRequest(BaseModel):
     provider_key: str = Field(default="", max_length=50)
     idempotency_key: str = Field(default="", max_length=100)
@@ -189,6 +208,97 @@ async def register_source_media(
     session.commit()
     return unified_response(
         code=201, message="原始素材已登记",
+        data=_serialize_source_media(source),
+    )
+
+
+@avatar_router.post("/avatar-profiles/{avatar_id}/source-media/upload-intent")
+async def request_source_media_upload_intent(
+    avatar_id: str,
+    payload: SourceMediaUploadIntentRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """P0-3 第 1 步：服务端生成 object_key + 签发受控上传意图。
+
+    客户端不提交 object_key，由服务端按教师 + AvatarProfile 命名空间生成。
+    返回的 upload_intent 包含短时、限大小、限 MIME 的上传约束。
+    """
+    user_id = int(current_user["user_id"])
+    try:
+        media_type = AvatarSourceMediaType(payload.media_type)
+    except ValueError:
+        reject_validation_failed(f"不支持的素材类型: {payload.media_type}")
+
+    source, intent = source_media_service.request_upload_intent(
+        session,
+        avatar_id=avatar_id,
+        owner_user_id=user_id,
+        media_type=media_type,
+        client_mime_type=payload.mime_type,
+        client_size_bytes=payload.size_bytes,
+    )
+    session.commit()
+    return unified_response(
+        code=200, message="上传意图已签发",
+        data={
+            "source_media": _serialize_source_media(source),
+            "upload_intent": intent,
+        },
+    )
+
+
+@avatar_router.post("/avatar-profiles/{avatar_id}/source-media/{source_media_id}/confirm")
+async def confirm_source_media_uploaded(
+    avatar_id: str,
+    source_media_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """P0-3 第 2 步：服务端确认对象存在 + 探测 + 哈希 + 扫描。
+
+    客户端上传完成后调用，服务端独立完成：
+    1. head() 确认对象存在
+    2. ffprobe 探测真实 mime/duration
+    3. 重算 content_sha256
+    4. 病毒/恶意文件扫描 stub
+    全部通过 -> verified；任一失败 -> invalid/quarantined。
+    """
+    user_id = int(current_user["user_id"])
+    source = source_media_service.confirm_uploaded(
+        session,
+        avatar_id=avatar_id,
+        owner_user_id=user_id,
+        source_media_id=source_media_id,
+    )
+    session.commit()
+    return unified_response(
+        code=200, message="素材校验完成",
+        data=_serialize_source_media(source),
+    )
+
+
+@avatar_router.post("/avatar-profiles/{avatar_id}/source-media/{source_media_id}/withdraw")
+async def withdraw_source_media(
+    avatar_id: str,
+    source_media_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """P0-3：教师主动撤回素材（状态转为 withdrawn）。
+
+    撤回后素材不再可用，预处理入口拒绝。
+    """
+    user_id = int(current_user["user_id"])
+    source = source_media_service.withdraw_source_media(
+        session,
+        avatar_id=avatar_id,
+        owner_user_id=user_id,
+        source_media_id=source_media_id,
+    )
+    session.commit()
+    return unified_response(
+        code=200, message="素材已撤回",
         data=_serialize_source_media(source),
     )
 
@@ -517,6 +627,16 @@ def _serialize_source_media(source) -> dict[str, Any]:
         "validation_notes": source.validation_notes,
         "created_at": source.created_at.isoformat() if source.created_at else None,
         "validated_at": source.validated_at.isoformat() if source.validated_at else None,
+        # P0-3 服务端探测字段
+        "server_mime_type": getattr(source, "server_mime_type", "") or "",
+        "server_duration_ms": getattr(source, "server_duration_ms", None),
+        "server_size_bytes": getattr(source, "server_size_bytes", 0) or 0,
+        "server_content_sha256": getattr(source, "server_content_sha256", "") or "",
+        "scan_status": getattr(source, "scan_status", "not_scanned") or "not_scanned",
+        "verified_at": (
+            source.verified_at.isoformat()
+            if getattr(source, "verified_at", None) else None
+        ),
     }
 
 

@@ -1250,3 +1250,172 @@ def test_prereq_recommendation_cross_course_isolation(session):
     )
     assert rec_b.recommendation_type != "prereq_review"
     assert rec_b.course_id == course_b.id
+
+
+# ==================== P2-13: 低置信度永不 high priority ====================
+
+
+@pytest.mark.parametrize(
+    "scenario, attempt_count, correct_count, expected_confidence_lt",
+    [
+        # 数据完全不足：0 次答题 -> confidence=None (unknown)
+        ("zero_attempts", 0, 0, None),
+        # 极低样本：1 次答题全错 -> confidence=0.3 < 0.4
+        ("one_attempt_all_wrong", 1, 0, 0.4),
+        # 低样本：2 次答题全错 -> confidence=0.3 < 0.4
+        ("two_attempts_all_wrong", 2, 0, 0.4),
+        # 低样本：3 次答题 1 对 2 错 -> confidence=0.3 < 0.4
+        ("three_attempts_low_perf", 3, 1, 0.4),
+        # 低样本：4 次答题全错 -> confidence=0.3 < 0.4
+        ("four_attempts_all_wrong", 4, 0, 0.4),
+    ],
+)
+def test_low_confidence_never_produces_high_priority(
+    session, scenario, attempt_count, correct_count, expected_confidence_lt,
+):
+    """P2-13: 低置信度场景下推荐 priority 永不为 "high"。
+
+    project_memory.md 硬约束：低置信度推荐必须只进入"需要更多证据"状态，
+    不得直接断言薄弱（不得为 high priority）。
+
+    覆盖五种低置信度场景：
+    - 0 次答题（数据完全不足，confidence=None）
+    - 1/2/3/4 次答题（样本不足，confidence=0.3 < CONFIDENCE_LOW=0.4）
+
+    在所有这些场景下：
+    - rec.priority != "high"
+    - rec.priority ∈ {"low", "medium"}
+    - reason_codes 包含"需要更多证据"语义标记
+    """
+    teacher = _user(session, f"cr_p213_{scenario}_teacher", UserRole.TEACHER)
+    student = _user(session, f"cr_p213_{scenario}_student")
+    course = _setup_course(session, teacher, student)
+
+    # 按场景构造答题数据
+    for i in range(attempt_count):
+        q = _create_published_question(session, course.id)
+        _create_attempt(
+            session, student.id, course.id, q.id,
+            is_correct=(i < correct_count),
+        )
+
+    # 计算认知状态，验证置信度确实为低
+    state = compute_cognitive_state(session, student.id, course.id)
+    if expected_confidence_lt is None:
+        # 0 次答题：confidence 应为 None（unknown）
+        assert state.evidence_confidence is None, (
+            f"场景 {scenario}: 0 次答题置信度应为 None，实际 {state.evidence_confidence}"
+        )
+        assert state.sample_size == 0
+    else:
+        assert state.evidence_confidence is not None
+        assert state.evidence_confidence < expected_confidence_lt, (
+            f"场景 {scenario}: 置信度应 < {expected_confidence_lt}，"
+            f"实际 {state.evidence_confidence}"
+        )
+
+    # 生成推荐
+    rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
+
+    # 核心断言：低置信度下 priority 永不为 high
+    assert rec.priority != "high", (
+        f"场景 {scenario}: 低置信度（confidence={state.evidence_confidence}）"
+        f"下 priority 不应为 high，实际 {rec.priority}，"
+        f"reason_codes={rec.reason_codes}"
+    )
+    # priority 只能是 low 或 medium
+    assert rec.priority in ("low", "medium"), (
+        f"场景 {scenario}: priority 应为 low/medium，实际 {rec.priority}"
+    )
+
+    # 不应有"已确认薄弱"语义的 reason_code（低置信度不武断）
+    assert "confirmed_weak_prerequisite" not in rec.reason_codes
+    # 数据不足场景应明确标记"需要更多证据"语义
+    if state.evidence_confidence is None or state.observed_performance_score is None:
+        assert (
+            "insufficient_data" in rec.reason_codes
+            or "insufficient_performance_data" in rec.reason_codes
+            or "diagnostic_not_weakness" in rec.reason_codes
+            or "need_more_evidence" in rec.reason_codes
+        ), f"场景 {scenario}: 数据不足应标记需要更多证据，reason_codes={rec.reason_codes}"
+
+
+def test_low_confidence_prerequisite_never_triggers_high_priority_prereq_review(session):
+    """P2-13 补充：先修节点低置信度时，不触发 PREREQ_REVIEW（high priority）。
+
+    project_memory.md 硬约束：低置信度只进入"需要更多证据"，
+    不直接断言薄弱。PREREQ_REVIEW 是 high priority 推荐类型，
+    只有当先修节点置信度达标（>= 0.6）时才触发。
+
+    本测试构造先修节点仅有 1 次答题（低置信度）的场景，
+    验证不触发 PREREQ_REVIEW，且当前节点推荐 priority 不为 high。
+    """
+    from app.services.graph_production_service import (
+        create_evidence as create_graph_evidence,
+        publish_snapshot,
+    )
+    from app.models.access_control_model import CourseCapability
+
+    teacher = _user(session, "cr_p213_prereq_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_p213_prereq_student")
+    course = _setup_course(session, teacher, student)
+    cap = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course.id)
+    ).first()
+    if cap:
+        cap.knowledge_graph = True
+        session.add(cap)
+        session.commit()
+
+    # 发布图谱快照：n2(先修) -> n1(当前)
+    evidence = create_graph_evidence(
+        session, course_id=course.id, text_snippet="先修知识证据"
+    )
+    publish_snapshot(
+        session, course_id=course.id,
+        nodes=[
+            {"node_id": "101", "label": "当前知识点"},
+            {"node_id": "202", "label": "前置知识点"},
+        ],
+        relations=[{
+            "relation_id": "r1", "source": "202", "target": "101",
+            "type": "prerequisite_of", "evidence_ids": [evidence.evidence_id],
+        }],
+        user_id=teacher.id,
+    )
+
+    # 先修节点 202 仅 2 次答题（低置信度，confidence=0.3 < 0.6）
+    for i in range(2):
+        q = _create_published_question(session, course.id, QuestionDifficulty.EASY)
+        q.knowledge_node_ids = [202]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=False)
+    prereq_state = compute_cognitive_state(session, student.id, course.id, node_id=202)
+    assert prereq_state.evidence_confidence is not None
+    assert prereq_state.evidence_confidence < 0.6, (
+        f"先修节点置信度应 < 0.6（低置信度），实际 {prereq_state.evidence_confidence}"
+    )
+
+    # 当前节点 101 答题
+    for i in range(3):
+        q = _create_published_question(session, course.id)
+        q.knowledge_node_ids = [101]
+        session.add(q)
+        session.commit()
+        _create_attempt(session, student.id, course.id, q.id, is_correct=(i < 1))
+
+    # 生成当前节点 101 的推荐
+    rec = generate_recommendation(
+        session, student.id, course.id, node_id=101, force_recompute=True,
+    )
+
+    # 核心断言：低置信度先修节点不应触发 PREREQ_REVIEW（high priority）
+    assert rec.recommendation_type != "prereq_review", (
+        "先修节点低置信度时不应触发 PREREQ_REVIEW"
+    )
+    assert rec.priority != "high", (
+        f"先修节点低置信度时当前节点推荐 priority 不应为 high，"
+        f"实际 {rec.priority}，reason_codes={rec.reason_codes}"
+    )
+    assert rec.priority in ("low", "medium")

@@ -99,7 +99,8 @@ class LearningEvidence:
     evidence_type: EvidenceType = field(compare=False)
     student_id: int = field(compare=False)
     course_id: int = field(compare=False)
-    evidence_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    # evidence_id 默认使用 ev_ 前缀 + UUID hex，符合 project_memory.md 硬约束。
+    evidence_id: str = field(default_factory=lambda: "ev_" + uuid.uuid4().hex)
     node_id: Optional[int] = None
     event_refs: List[str] = field(default_factory=list)
     confidence: float = 0.0

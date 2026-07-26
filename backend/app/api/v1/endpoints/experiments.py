@@ -650,12 +650,44 @@ async def create_run(
     attempt_id: str,
     payload: RunCreateRequest,
     course_id: int = Query(...),
+    async_run: bool = Query(
+        False,
+        description="异步执行模式：返回 202 + task_id，不阻塞等待 Judge0",
+    ),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """学生提交代码；异步执行运行（沙箱不可用时降级）。"""
+    """学生提交代码；同步或异步执行运行（沙箱不可用时降级）。
+
+    - 同步模式（默认，async_run=false）：在请求内等待 Judge0 返回，兼容现有测试
+    - 异步模式（async_run=true）：创建 TaskRecord，返回 202 + task_id，
+      worker 异步执行；前端通过 GET /api/v1/tasks/{task_id} 轮询状态
+    """
     require_course_permission(session, current_user, course_id, "experiment.run")
     user_id = int(current_user["user_id"])
+
+    if not async_run:
+        # 同步路径（保留向后兼容）
+        run = await run_service.create_run(
+            session,
+            course_id=course_id,
+            attempt_id=attempt_id,
+            language=payload.language,
+            source_code=payload.source_code,
+            student_id=user_id,
+        )
+        session.commit()
+        session.refresh(run)
+        return unified_response(
+            code=201,
+            message="运行已完成" if run.outcome == RunOutcome.ACCEPTED else "运行结果已生成",
+            data=_serialize_run(run),
+        )
+
+    # 异步路径：创建 ExperimentRun（PENDING）+ TaskRecord，返回 202 + task_id
+    from app.services.task_service import TaskCreateRequest, task_service
+
+    # 创建 ExperimentRun（不执行沙箱；校验仍在 create_run 内完成）
     run = await run_service.create_run(
         session,
         course_id=course_id,
@@ -663,13 +695,64 @@ async def create_run(
         language=payload.language,
         source_code=payload.source_code,
         student_id=user_id,
+        execute=False,
     )
+
+    task_view = task_service.create_task(session, TaskCreateRequest(
+        task_type="experiment_run",
+        owner_user_id=user_id,
+        course_id=course_id,
+        input_summary=f"课程 {course_id} 实验 attempt {attempt_id} 代码运行",
+        input_payload={
+            "course_id": course_id,
+            "run_id": run.run_id,
+            "attempt_id": attempt_id,
+            "language": payload.language,
+        },
+        resource_links=[
+            {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
+            {"resource_kind": "experiment_attempt", "resource_id": attempt_id, "relation": "input"},
+            {"resource_kind": "experiment_run", "resource_id": run.run_id, "relation": "output"},
+        ],
+    ))
+
+    # 关联 task_id 到 run（便于后续查询）
+    run.task_id = task_view.task_id
+    session.add(run)
     session.commit()
     session.refresh(run)
+
+    # 触发 worker 异步执行
+    try:
+        from app.platform.tasks.worker import local_task_worker
+        from app.models.database import session_factory as _session_factory
+        if local_task_worker.has_handler("experiment_run"):
+            local_task_worker.submit(
+                _session_factory,
+                task_view.task_id,
+                {
+                    "course_id": course_id,
+                    "run_id": run.run_id,
+                    "attempt_id": attempt_id,
+                },
+            )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "Failed to submit experiment_run task %s to worker; task stays pending",
+            task_view.task_id,
+            exc_info=True,
+        )
+
     return unified_response(
-        code=201,
-        message="运行已完成" if run.outcome == RunOutcome.ACCEPTED else "运行结果已生成",
-        data=_serialize_run(run),
+        code=202,
+        message="代码运行任务已创建",
+        data={
+            "run_id": run.run_id,
+            "task_id": task_view.task_id,
+            "status": run.outcome.value if hasattr(run.outcome, "value") else str(run.outcome),
+            "async": True,
+        },
     )
 
 

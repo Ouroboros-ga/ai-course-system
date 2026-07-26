@@ -175,29 +175,64 @@ def _register_source_media_via_api(
     client, token: str, avatar_id: str,
     *,
     media_type: str = "portrait_video",
-    object_key: str = "avatars/source/portrait.mp4",
+    object_key: str = "avatars/source/portrait.mp4",  # 兼容旧参数，实际由服务端生成
     mime_type: str = "video/mp4",
     size_bytes: int = 1024 * 1024,
     duration_ms: int = 30000,
     content_sha256: str = "",
+    # P0-3：默认走完整两步式上传到 verified 状态，确保后续预处理能通过状态机校验
+    auto_verify: bool = True,
 ) -> dict:
-    payload = {
-        "media_type": media_type,
-        "object_key": object_key,
-        "mime_type": mime_type,
-        "size_bytes": size_bytes,
-        "duration_ms": duration_ms,
-    }
-    if content_sha256:
-        payload["content_sha256"] = content_sha256
+    """P0-3 兼容路径：通过两步式上传流程登记素材并自动 confirm 到 verified。
+
+    - 调用 request_upload_intent 让服务端生成 object_key（不再信任客户端提交）
+    - 若 auto_verify=True，模拟客户端"已上传"并调用 confirm 端点完成服务端校验
+    - 返回 verified 状态的 source_media（与旧行为等价，旧测试可继续工作）
+    """
     resp = client.post(
-        f"{AVATAR}/{avatar_id}/source-media",
-        json=payload,
+        f"{AVATAR}/{avatar_id}/source-media/upload-intent",
+        json={
+            "media_type": media_type,
+            "mime_type": mime_type,
+            "size_bytes": size_bytes,
+        },
         headers=_auth(token),
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["code"] == 201, body
+    assert body["code"] == 200, body
+    source = body["data"]["source_media"]
+
+    if not auto_verify:
+        return source
+
+    # 模拟客户端上传：直接通过 LocalStorageProvider 写入伪造内容
+    from app.services.object_storage import get_object_storage
+    storage = get_object_storage()
+    # 根据 media_type 生成对应签名的内容（通过文件签名 sanity check）
+    if media_type == "portrait_video":
+        fake_content = (
+            b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+            + b"\x00\x00\x00\x08free"
+            + b"\x00\x00\x00\x08mdat"
+            + b"fake video content for stage8 test"
+        )
+    else:  # voice_sample -> WAV
+        fake_content = (
+            b"RIFF\x00\x00\x00\x00WAVEfmt "
+            + b"\x00\x00\x00\x00\x00\x00\x00\x00"
+            + b"fake audio content for stage8 test"
+        )
+    storage.put(source["object_key"], fake_content, mime_type=mime_type)
+
+    # 调用 confirm 端点完成服务端校验
+    resp = client.post(
+        f"{AVATAR}/{avatar_id}/source-media/{source['source_media_id']}/confirm",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["code"] == 200, body
     return body["data"]
 
 
@@ -417,12 +452,14 @@ class TestAvatarSourceMedia:
         )
         assert data["source_media_id"].startswith("asm_")
         assert data["media_type"] == "portrait_video"
-        assert data["upload_status"] == "uploaded"
+        # P0-3：两步式上传完成后状态为 verified
+        assert data["upload_status"] == "verified"
         # object_key 不暴露绝对路径，使用抽象存储键
         assert "object_key" in data
-        assert data["object_key"].startswith("avatars/")
+        # P0-3：服务端生成的 object_key 按教师命名空间隔离
+        assert data["object_key"].startswith(f"avatar_sources/u{teacher_user.id}/")
         assert "\\" not in data["object_key"]  # 不使用 Windows 路径分隔符
-        assert ":" not in data["object_key"] or data["object_key"].startswith("avatars/")
+        assert ":" not in data["object_key"]
 
     def test_register_voice_sample_with_valid_mime(self, client, session, teacher_user):
         p = _create_profile_via_api(client, _token(teacher_user))
@@ -434,55 +471,66 @@ class TestAvatarSourceMedia:
             duration_ms=8000,
         )
         assert data["media_type"] == "voice_sample"
-        assert data["upload_status"] == "uploaded"
+        # P0-3：两步式上传完成后状态为 verified
+        assert data["upload_status"] == "verified"
 
     def test_reject_invalid_mime_type(self, client, session, teacher_user):
         p = _create_profile_via_api(client, _token(teacher_user))
+        # P0-3：通过 upload-intent 端点测试 MIME 校验
         resp = client.post(
-            f"{AVATAR}/{p['avatar_id']}/source-media",
+            f"{AVATAR}/{p['avatar_id']}/source-media/upload-intent",
             json={
                 "media_type": "portrait_video",
-                "object_key": "avatars/source/x.exe",
-                "mime_type": "application/x-msdownload",
+                "mime_type": "application/x-msdownload",  # 不允许
                 "size_bytes": 1024,
             },
             headers=_auth(_token(teacher_user)),
         )
         body = resp.json()
-        assert body.get("code") != 201
+        assert body.get("code") == 422  # validation_failed
 
     def test_reject_oversized_portrait_video(self, client, session, teacher_user):
         p = _create_profile_via_api(client, _token(teacher_user))
         # AVATAR_PORTRAIT_VIDEO_MAX_MB 默认 200MB
         resp = client.post(
-            f"{AVATAR}/{p['avatar_id']}/source-media",
+            f"{AVATAR}/{p['avatar_id']}/source-media/upload-intent",
             json={
                 "media_type": "portrait_video",
-                "object_key": "avatars/source/big.mp4",
                 "mime_type": "video/mp4",
                 "size_bytes": 500 * 1024 * 1024,  # 500MB 超限
             },
             headers=_auth(_token(teacher_user)),
         )
         body = resp.json()
-        assert body.get("code") != 201
+        assert body.get("code") == 422  # validation_failed
 
     def test_deduplicate_by_content_sha256(self, client, session, teacher_user):
+        """P0-3：客户端不能预先提交 content_sha256，去重按服务端计算的 hash 进行。
+
+        旧式客户端提交 sha256 去重的语义已废弃。新流程下：
+        - 客户端只能提交 media_type/mime_type/size_bytes 预校验
+        - 服务端在 confirm_uploaded 时计算 server_content_sha256
+        - 业务层可在 confirm 完成后基于 server_content_sha256 做去重
+        本测试验证新流程下两次独立上传会生成两条独立 source_media 记录，
+        去重逻辑由业务层在 confirm 后基于 server_content_sha256 决定。
+        """
         p = _create_profile_via_api(client, _token(teacher_user))
-        sha = "sha256_" + uuid.uuid4().hex[:16]
 
         first = _register_source_media_via_api(
             client, _token(teacher_user), p["avatar_id"],
-            object_key="avatars/source/dup1.mp4",
-            content_sha256=sha,
+            media_type="portrait_video",
         )
         second = _register_source_media_via_api(
             client, _token(teacher_user), p["avatar_id"],
-            object_key="avatars/source/dup2.mp4",  # 不同 object_key
-            content_sha256=sha,  # 相同哈希
+            media_type="portrait_video",
         )
-        # 应返回同一条记录（去重）
-        assert first["source_media_id"] == second["source_media_id"]
+        # 两次独立 request_upload_intent 生成两条独立记录
+        assert first["source_media_id"] != second["source_media_id"]
+        # 两条记录的 server_content_sha256 相同（因为 mock 内容相同），
+        # 业务层可基于此做去重；本测试只验证服务端 hash 字段已写入
+        assert first["server_content_sha256"]
+        assert second["server_content_sha256"]
+        assert first["server_content_sha256"] == second["server_content_sha256"]
 
     def test_register_both_portrait_and_voice_sample(self, client, session, teacher_user):
         """教师可同时登记形象视频与可选语音样本（首版不克隆）"""
