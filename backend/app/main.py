@@ -78,6 +78,9 @@ from app.api.v1.endpoints import (
     course_build,       # 阶段3 课程建设工作流
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
+    experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
+    resources,          # 阶段7 资源库
+    labs,               # 阶段7 平台实验室目录
 )
 from app.schemas import UnifiedResponse
 
@@ -265,6 +268,27 @@ app.include_router(
     practice_recommendation.facade_learning_actions_router,
     prefix="/api/v1/facade",
     tags=["阶段5 学习动作门面"],
+)
+
+# 阶段6：课程实验、Judge0 与 CodingAgent
+app.include_router(
+    experiments.experiment_router,
+    prefix="/api/v1/experiments",
+    tags=["阶段6 课程实验与 CodingAgent"],
+)
+
+# 阶段7：资源库
+app.include_router(
+    resources.resource_router,
+    prefix="/api/v1/resources",
+    tags=["阶段7 资源库"],
+)
+
+# 阶段7：平台实验室目录
+app.include_router(
+    labs.lab_router,
+    prefix="/api/v1/lab",
+    tags=["阶段7 平台实验室"],
 )
 
 

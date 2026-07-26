@@ -134,6 +134,28 @@ from app.models.practice_recommendation_model import (
     AssessmentPolicy,
     LearningEvidenceLink,
 )
+# 阶段6：课程实验、版本、测试用例、尝试、运行与 CodingAgent 提示记录
+from app.models.experiment_model import (
+    ExperimentDefinition,
+    ExperimentVersion,
+    ExperimentTestCase,
+    ExperimentAttempt,
+    ExperimentRun,
+    ExperimentRunArtifact,
+    CodingHintRecord,
+)
+# 阶段7：通用资源库、回收站与平台实验室目录
+from app.models.resource_model import (
+    ResourceItem,
+    ResourceVersion,
+    ResourceTag,
+    ResourceReference,
+    ResourceAclEntry,
+    RecycleBinEntry,
+    LabCatalogEntry,
+    LabEnrollment,
+    LabRecord,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

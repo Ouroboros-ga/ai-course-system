@@ -469,19 +469,19 @@ async def get_version(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """获取实验版本详情（含测试用例；学生视图不暴露隐藏测试）。"""
+    """获取实验版本详情（含测试用例；学生视图不暴露隐藏测试 stdin/expected）。"""
     context = require_course_permission(session, current_user, course_id, "experiment.view")
     version = version_service.get_version(
         session, course_id=course_id, version_id=version_id,
     )
-    # 教师可见隐藏测试，学生不可见
-    include_hidden = context.role is not None and context.role.value != "student"
+    # 学生视图：返回隐藏测试条目但不暴露 stdin/expected_stdout；教师视图完整暴露
+    reveal_hidden = context.role is not None and context.role.value != "student"
     test_cases = version_service.list_test_cases(
         session, course_id=course_id, version_id=version_id,
-        include_hidden=include_hidden,
+        include_hidden=True,
     )
     data = _serialize_version(version)
-    data["test_cases"] = [_serialize_test_case(tc, reveal_hidden=include_hidden) for tc in test_cases]
+    data["test_cases"] = [_serialize_test_case(tc, reveal_hidden=reveal_hidden) for tc in test_cases]
     return unified_response(code=200, message="获取实验版本详情成功", data=data)
 
 
