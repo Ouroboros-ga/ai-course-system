@@ -463,6 +463,102 @@ async def media_generic_handler(ctx: TaskHandlerContext) -> None:
 
 
 # ---------------------------------------------------------------------------
+# question_bank.import handler
+# ---------------------------------------------------------------------------
+
+
+async def question_bank_import_handler(ctx: TaskHandlerContext) -> None:
+    """Excel 题库导入 handler（G7）。
+
+    input_payload 期望字段：
+    - course_id: int
+    - run_id: str  (QuestionImportRun.run_id)
+
+    执行流程：
+    1. mark_running（task）
+    2. 调用 question_import_service.execute_run 解析 Excel 并写入 QuestionBankItem
+    3. 根据 run.status 标记 task succeeded / failed
+       - SUCCEEDED / PARTIAL_SUCCESS -> task succeeded
+       - FAILED -> task failed（保留原 error_code）
+
+    约束：
+    - 题目默认 status=UNASSIGNED，需教师通过题源映射或题目管理升级为 PUBLISHED
+    - 跨课程严格隔离：导入的题目 course_id 与 run.course_id 一致
+    - 失败不伪装成功：解析错误或读取错误都标记为 FAILED 并保留原 error_code
+    """
+    payload = ctx.input_payload or {}
+    course_id = payload.get("course_id")
+    run_id = payload.get("run_id")
+    if not course_id or not run_id:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "question_bank.import handler 缺少 course_id 或 run_id",
+            retryable=False,
+        )
+
+    from app.services.practice_recommendation_service import (
+        question_import_service,
+        ImportRunStatus,
+    )
+
+    # 1. mark_running（task）
+    with ctx.session_factory() as session:
+        ctx.service.mark_running(session, ctx.task_id, stage="excel_import")
+
+    # 2. 执行导入（execute_run 内部管理 run 状态机）
+    run_status_value: str = ""
+    imported_count: int = 0
+    skipped_count: int = 0
+    error_code: str = ""
+    error_message: str = ""
+    with ctx.session_factory() as session:
+        try:
+            run = question_import_service.execute_run(
+                session,
+                run_id=run_id,
+                course_id=int(course_id),
+            )
+            session.commit()
+            run_status_value = run.status.value
+            imported_count = run.imported_count or 0
+            skipped_count = run.skipped_count or 0
+            error_code = run.error_code or ""
+            error_message = run.error_message or ""
+        except Exception as exc:
+            session.rollback()
+            # service 抛出的业务异常（如状态冲突）
+            raise TaskExecutionError(
+                "IMPORT_RUN_STATE_CONFLICT",
+                f"题库导入执行失败: {exc}",
+                retryable=False,
+            )
+
+    # 3. 根据 run.status 标记 task succeeded / failed
+    if run_status_value in (ImportRunStatus.SUCCEEDED.value,
+                            ImportRunStatus.PARTIAL_SUCCESS.value):
+        with ctx.session_factory() as session:
+            ctx.service.mark_succeeded(
+                session,
+                ctx.task_id,
+                result_ref=f"question_import_run://{run_id}",
+                result_data={
+                    "run_id": run_id,
+                    "course_id": course_id,
+                    "status": run_status_value,
+                    "imported_count": imported_count,
+                    "skipped_count": skipped_count,
+                },
+            )
+    else:
+        # FAILED / 未知状态：标记 task failed，保留原 error_code
+        raise TaskExecutionError(
+            error_code or "IMPORT_FAILED",
+            error_message or f"题库导入运行 {run_id} 处于失败状态: {run_status_value}",
+            retryable=False,
+        )
+
+
+# ---------------------------------------------------------------------------
 # agent action execute handler
 # ---------------------------------------------------------------------------
 
@@ -542,6 +638,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("experiment_run", experiment_run_handler)
     worker.register("media.avatar_preprocess", media_avatar_preprocess_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
+    worker.register("question_bank.import", question_bank_import_handler)
 
     # 媒体生成任务类型（MediaGenerationJobType 枚举值）
     for job_type in ("tts", "subtitle", "avatar_preprocess", "dh_render",

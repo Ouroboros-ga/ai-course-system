@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 import pytest
 from sqlmodel import select
@@ -1403,3 +1404,465 @@ def test_unpublished_question_not_in_recommendation(client, session):
     data = resp.json()["data"]
     # allow_generation=False + 仅 1 道 published -> item_count=1
     assert data["item_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# 11. G7: Excel 题库导入执行链路（execute_run + Task Worker）
+# ---------------------------------------------------------------------------
+
+
+def _make_excel_bytes(
+    rows: list[dict[str, Any]] | None = None,
+) -> bytes:
+    """生成测试用 Excel 文件字节内容。
+
+    默认构造 3 行有效数据 + 1 行空 question_text（验证行级失败明细）。
+    """
+    try:
+        from openpyxl import Workbook
+    except ImportError:
+        pytest.skip("openpyxl 未安装")
+    import io
+
+    wb = Workbook()
+    ws = wb.active
+    # 表头（与 import_question_bank.COLUMN_MAP 对齐）
+    ws.append(["规则分类", "标准问题", "答案", "规则状态", "匹配模式"])
+    if rows is None:
+        rows = [
+            {"规则分类": "算法", "标准问题": "二分查找时间复杂度？", "答案": "O(log n)",
+             "规则状态": "active", "匹配模式": "exact"},
+            {"规则分类": "算法", "标准问题": "快速查找最坏复杂度？", "答案": "O(n^2)",
+             "规则状态": "active", "匹配模式": "exact"},
+            {"规则分类": "数据结构", "标准问题": "栈的特点？", "答案": "后进先出",
+             "规则状态": "active", "匹配模式": "exact"},
+            # 行级失败：question_text 为空
+            {"规则分类": "空题", "标准问题": "", "答案": "无意义",
+             "规则状态": "active", "匹配模式": "exact"},
+        ]
+    for row in rows:
+        ws.append([
+            row.get("规则分类", ""),
+            row.get("标准问题", ""),
+            row.get("答案", ""),
+            row.get("规则状态", ""),
+            row.get("匹配模式", ""),
+        ])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_execute_import_run_succeeds_with_local_file(client, session, tmp_path):
+    """execute_run 从本地文件导入：标记 succeeded，题目 status=UNASSIGNED。"""
+    teacher = _user(session, "s7_exec_local_teacher")
+    course = _course(session, teacher.id, title="G7 本地导入课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "test_bank.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    run = question_import_service.create_run(
+        session,
+        course_id=course.id,
+        source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+
+    # 执行导入
+    result = question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    assert result.status.value == "partial_success"  # 3 成功 + 1 跳过
+    assert result.imported_count == 3
+    assert result.skipped_count == 1
+    assert result.failed_count == 1
+    assert result.error_code == ""
+    assert result.started_at is not None
+    assert result.finished_at is not None
+
+    # 验证题目已创建且 status=UNASSIGNED（不可被学生检索）
+    items = session.exec(
+        select(QuestionBankItem).where(
+            QuestionBankItem.course_id == course.id,
+            QuestionBankItem.import_batch_id.is_not(None),
+        )
+    ).all()
+    assert len(items) == 3
+    for item in items:
+        assert item.status == QuestionStatus.UNASSIGNED
+        assert item.course_id == course.id
+        assert item.is_latest is True
+        assert item.generated_by == "excel_import"
+        assert item.import_batch_id is not None
+        # 所有题目共享同一 batch_id
+        assert item.import_batch_id == items[0].import_batch_id
+
+    # 行级失败明细应记录空 question_text 行
+    assert len(result.failure_details) == 1
+    assert result.failure_details[0]["row"] == 5  # Excel 行号
+
+
+def test_execute_import_run_idempotent_skips_duplicate(client, session, tmp_path):
+    """同 course_id + 同文件 SHA256 的重复导入标记 succeeded + skipped=all。"""
+    teacher = _user(session, "s7_idem_teacher")
+    course = _course(session, teacher.id, title="G7 幂等课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "test_bank_idem.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    # 第一次导入
+    run1 = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+    question_import_service.execute_run(
+        session, run_id=run1.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    # 第二次导入同文件：应跳过
+    run2 = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+    result2 = question_import_service.execute_run(
+        session, run_id=run2.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    assert result2.status.value == "succeeded"
+    assert result2.imported_count == 0
+    # 幂等短路：检测到同 course_id + batch_id 已存在，整批 4 行全部跳过
+    # （包含首次因空 question_text 被跳过的行；语义为"本运行未处理任何行"）
+    assert result2.skipped_count == 4
+    assert result2.total_rows == 4
+
+    # 总题数仍为 3（不重复入库）
+    items = session.exec(
+        select(QuestionBankItem).where(QuestionBankItem.course_id == course.id)
+    ).all()
+    assert len(items) == 3
+
+
+def test_execute_import_run_failed_when_source_missing(session):
+    """源文件不存在时 execute_run 标记 FAILED + SOURCE_FILE_NOT_FOUND。"""
+    teacher = _user(session, "s7_missing_teacher")
+    course = _course(session, teacher.id, title="G7 缺源课程")
+    _enable_capabilities(session, course.id)
+
+    run = question_import_service.create_run(
+        session, course_id=course.id,
+        source_file="/nonexistent/path/bank.xlsx",
+        initiated_by=teacher.id,
+    )
+    session.commit()
+
+    result = question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    assert result.status.value == "failed"
+    assert result.error_code == "SOURCE_FILE_NOT_FOUND"
+    assert "不存在" in result.error_message or "未提供" in result.error_message
+    assert result.imported_count == 0
+
+
+def test_execute_import_run_course_isolation(session, tmp_path):
+    """导入的题目 course_id 与 run.course_id 严格一致，不跨课程污染。"""
+    teacher_a = _user(session, "s7_iso_teacher_a")
+    teacher_b = _user(session, "s7_iso_teacher_b")
+    course_a = _course(session, teacher_a.id, title="G7 课程 A")
+    course_b = _course(session, teacher_b.id, title="G7 课程 B")
+    _enable_capabilities(session, course_a.id)
+    _enable_capabilities(session, course_b.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_a = tmp_path / "bank_a.xlsx"
+    file_a.write_bytes(excel_bytes)
+    file_b = tmp_path / "bank_b.xlsx"
+    file_b.write_bytes(excel_bytes)
+
+    # 两个课程各导入同一文件
+    run_a = question_import_service.create_run(
+        session, course_id=course_a.id, source_file=str(file_a),
+        initiated_by=teacher_a.id,
+    )
+    run_b = question_import_service.create_run(
+        session, course_id=course_b.id, source_file=str(file_b),
+        initiated_by=teacher_b.id,
+    )
+    session.commit()
+    question_import_service.execute_run(
+        session, run_id=run_a.run_id, course_id=course_a.id,
+    )
+    question_import_service.execute_run(
+        session, run_id=run_b.run_id, course_id=course_b.id,
+    )
+    session.commit()
+
+    # 各课程 3 道题（同文件可在不同课程各导入一次）
+    items_a = session.exec(
+        select(QuestionBankItem).where(QuestionBankItem.course_id == course_a.id)
+    ).all()
+    items_b = session.exec(
+        select(QuestionBankItem).where(QuestionBankItem.course_id == course_b.id)
+    ).all()
+    assert len(items_a) == 3
+    assert len(items_b) == 3
+    # 题目不跨课程
+    assert all(i.course_id == course_a.id for i in items_a)
+    assert all(i.course_id == course_b.id for i in items_b)
+
+
+def test_execute_import_run_rejects_repeated_execution(session, tmp_path):
+    """已 succeeded 的 run 不可重复执行（状态机拒绝）。"""
+    from fastapi import HTTPException
+    teacher = _user(session, "s7_repeat_teacher")
+    course = _course(session, teacher.id, title="G7 重复执行课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "bank_repeat.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    run = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+    question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    # 重复执行应被拒绝（reject_state_conflict 抛出 HTTPException 409）
+    with pytest.raises(HTTPException):
+        question_import_service.execute_run(
+            session, run_id=run.run_id, course_id=course.id,
+        )
+
+
+def test_import_run_via_object_storage(session, monkeypatch, tmp_path):
+    """execute_run 通过 source_object_key 从对象存储读取 Excel。"""
+    teacher = _user(session, "s7_obj_teacher")
+    course = _course(session, teacher.id, title="G7 对象存储课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+
+    # 注入 Fake ObjectStorageProvider
+    class _FakeProvider:
+        def get(self, object_key: str) -> bytes:
+            if object_key == "uploads/g7_bank.xlsx":
+                return excel_bytes
+            raise FileNotFoundError(object_key)
+
+    from app.services import object_storage as _os_module
+    fake_provider = _FakeProvider()
+    monkeypatch.setattr(_os_module, "get_object_storage", lambda: fake_provider)
+
+    run = question_import_service.create_run(
+        session, course_id=course.id,
+        source_file="bank.xlsx",  # 仅用于显示
+        source_object_key="uploads/g7_bank.xlsx",
+        initiated_by=teacher.id,
+    )
+    session.commit()
+
+    result = question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    assert result.status.value == "partial_success"
+    assert result.imported_count == 3
+    assert result.skipped_count == 1
+
+
+def test_question_bank_import_handler_via_worker(session, tmp_path):
+    """Task Worker handler 端到端：创建 run + 提交 worker.run_inline + 验证状态。"""
+    from app.platform.tasks.worker import LocalTaskWorker, TaskHandlerContext
+    from app.platform.tasks.handlers import question_bank_import_handler
+    from app.services.task_service import task_service, TaskCreateRequest
+    from app.models.database import session_factory
+
+    teacher = _user(session, "s7_worker_teacher")
+    course = _course(session, teacher.id, title="G7 Worker 课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "worker_bank.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    # 1. 创建导入运行
+    run = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+
+    # 2. 创建任务记录
+    task_request = TaskCreateRequest(
+        task_type="question_bank.import",
+        owner_user_id=teacher.id,
+        course_id=course.id,
+        input_summary="G7 Worker 测试",
+        input_payload={"course_id": course.id, "run_id": run.run_id},
+    )
+    task_view = task_service.create_task(session, task_request)
+    session.commit()
+
+    # 3. 通过 worker 同步执行
+    worker = LocalTaskWorker()
+    worker.register("question_bank.import", question_bank_import_handler)
+    import asyncio
+    asyncio.run(worker.run_inline(
+        session_factory, task_view.task_id, task_request.input_payload,
+    ))
+
+    # 4. 验证 run 状态
+    session.expire_all()
+    final_run = session.exec(
+        select(QuestionImportRun).where(
+            QuestionImportRun.run_id == run.run_id,
+            QuestionImportRun.course_id == course.id,
+        )
+    ).first()
+    assert final_run is not None
+    assert final_run.status.value == "partial_success"
+    assert final_run.imported_count == 3
+
+    # 5. 验证 task 状态
+    final_task = task_service.get_task(
+        session, task_view.task_id, owner_user_id=teacher.id,
+    )
+    assert final_task.status == "succeeded"
+    assert final_task.result_data["imported_count"] == 3
+    assert final_task.result_data["run_id"] == run.run_id
+
+
+def test_imported_questions_not_visible_to_students_until_published(client, session, tmp_path):
+    """导入的 UNASSIGNED 题目不可被学生推荐（需教师升级为 PUBLISHED）。"""
+    teacher = _user(session, "s7_invis_teacher")
+    student = _user(session, "s7_invis_student", UserRole.STUDENT)
+    course = _course(session, teacher.id, title="G7 不可见课程")
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "invisible_bank.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    run = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+    question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    # 学生请求推荐：题库 0 命中（UNASSIGNED 不可见）
+    _make_cognitive_state(
+        session, student_id=student.id, course_id=course.id, node_id=1,
+    )
+    resp = client.post(
+        f"{PRACTICE}/course/{course.id}/recommendations",
+        json={"node_id": 1, "item_count": 3, "allow_generation": False},
+        headers=_auth(_token(student)),
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    # 无 published 题且 allow_generation=False -> item_count=0
+    assert data["item_count"] == 0
+    assert data["status"] == "partial_success"
+
+
+def test_import_run_api_creates_task_and_run(client, session, tmp_path):
+    """API 端点创建 run + task 并关联 task_id；run.status=pending。"""
+    teacher = _user(session, "s7_api_teacher")
+    course = _course(session, teacher.id, title="G7 API 课程")
+    _enable_capabilities(session, course.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "api_bank.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    resp = client.post(
+        f"{PRACTICE}/course/{course.id}/import-runs",
+        json={
+            "source_file": str(file_path),
+            "source_object_key": "",
+            "total_rows": 0,
+        },
+        headers=_auth(_token(teacher)),
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["code"] == 202
+    data = body["data"]
+    assert data["run_id"].startswith("qir_")
+    assert data["status"] == "pending"
+    assert data["task_id"] is not None
+    assert data["task_id"].startswith("task_") or len(data["task_id"]) > 0
+
+
+def test_imported_question_can_be_published_then_recommended(client, session, tmp_path):
+    """导入的 UNASSIGNED 题目经教师升级为 PUBLISHED 后可被学生推荐。"""
+    teacher = _user(session, "s7_pub_teacher")
+    student = _user(session, "s7_pub_student", UserRole.STUDENT)
+    course = _course(session, teacher.id, title="G7 发布后推荐课程")
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+
+    excel_bytes = _make_excel_bytes()
+    file_path = tmp_path / "pub_bank.xlsx"
+    file_path.write_bytes(excel_bytes)
+
+    run = question_import_service.create_run(
+        session, course_id=course.id, source_file=str(file_path),
+        initiated_by=teacher.id,
+    )
+    session.commit()
+    question_import_service.execute_run(
+        session, run_id=run.run_id, course_id=course.id,
+    )
+    session.commit()
+
+    # 教师将导入的题目升级为 PUBLISHED
+    items = session.exec(
+        select(QuestionBankItem).where(
+            QuestionBankItem.course_id == course.id,
+            QuestionBankItem.status == QuestionStatus.UNASSIGNED,
+        )
+    ).all()
+    assert len(items) == 3
+    for item in items:
+        item.status = QuestionStatus.PUBLISHED
+        item.knowledge_node_ids = [42]  # 绑定知识点
+        session.add(item)
+    session.commit()
+
+    # 学生请求推荐：应命中 published 题
+    _make_cognitive_state(
+        session, student_id=student.id, course_id=course.id, node_id=42,
+    )
+    resp = client.post(
+        f"{PRACTICE}/course/{course.id}/recommendations",
+        json={"node_id": 42, "item_count": 5, "allow_generation": False},
+        headers=_auth(_token(student)),
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["item_count"] == 3  # 3 道 published 题全部命中

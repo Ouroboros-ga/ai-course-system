@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import logging
+import os
 import uuid
 from typing import Any, Optional
 
@@ -46,6 +48,8 @@ from app.models.question_bank_model import (
     QuestionBankItem,
     QuestionStatus,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +177,209 @@ class QuestionImportService:
         if status is not None:
             stmt = stmt.where(QuestionImportRun.status == status)
         return list(session.exec(stmt).all())
+
+    # ------------------------------------------------------------------
+    # 执行导入（由 Task Worker 调用）
+    # ------------------------------------------------------------------
+
+    def execute_run(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+        course_id: int,
+    ) -> QuestionImportRun:
+        """执行 Excel 题库导入。
+
+        流程：
+        1. 标记 run 为 RUNNING
+        2. 读取 Excel 内容（优先从 source_object_key 经对象存储读取，
+           否则回退到本地 source_file 路径）
+        3. 计算文件 SHA256；幂等键 = ``excel-sha256-{sha256}``
+        4. 同课程+同 batch_id 已存在题目标记为"已导入过"，跳过新增
+        5. 逐行解析并创建 QuestionBankItem（course_id=run.course_id,
+           status=UNASSIGNED，未发布不可被学生检索）
+        6. 行级失败写入 failure_details
+        7. 标记 run 为 SUCCEEDED / PARTIAL_SUCCESS / FAILED
+
+        约束：
+        - 题目默认 status=UNASSIGNED，需要教师通过题源映射或题目管理
+          升级为 PUBLISHED 后才能进入推荐池
+        - 跨课程严格隔离：导入的题目 course_id 与 run.course_id 一致
+        - 失败不伪装成功：解析错误或读取错误都标记为 FAILED 并保留原 error_code
+        """
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        if run.status not in (ImportRunStatus.PENDING,):
+            reject_state_conflict(
+                f"导入运行状态 {run.status.value} 不可重复执行",
+                details={"current_status": run.status.value},
+            )
+
+        # 1. 标记 RUNNING
+        run.status = ImportRunStatus.RUNNING
+        run.started_at = utcnow_naive()
+        run.updated_at = utcnow_naive()
+        session.add(run)
+        session.flush()
+
+        try:
+            content = self._load_excel_bytes(run)
+        except FileNotFoundError as exc:
+            return self.mark_failed(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                error_code="SOURCE_FILE_NOT_FOUND",
+                error_message=str(exc)[:500],
+            )
+        except Exception as exc:
+            return self.mark_failed(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                error_code="SOURCE_READ_FAILED",
+                error_message=f"{type(exc).__name__}: {exc}"[:500],
+            )
+
+        # 2. 计算 SHA256 并构造 batch_id
+        from app.tools.import_question_bank import _bytes_sha256
+        source_hash = _bytes_sha256(content)
+        batch_id = f"excel-sha256-{source_hash}"
+
+        # 3. 解析 Excel
+        from app.tools.import_question_bank import (
+            _read_excel_rows_from_bytes,
+            _map_row_to_item,
+            MAX_IMPORT_BYTES,
+        )
+        if len(content) > MAX_IMPORT_BYTES:
+            return self.mark_failed(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                error_code="SOURCE_FILE_TOO_LARGE",
+                error_message=(
+                    f"Excel 文件超过 {MAX_IMPORT_BYTES // (1024 * 1024)} MiB 上限"
+                ),
+            )
+
+        try:
+            rows = _read_excel_rows_from_bytes(content)
+        except ValueError as exc:
+            # 缺少必需列等结构问题
+            return self.mark_failed(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                error_code="EXCEL_STRUCTURE_INVALID",
+                error_message=str(exc)[:500],
+            )
+        except Exception as exc:
+            return self.mark_failed(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                error_code="EXCEL_PARSE_FAILED",
+                error_message=f"{type(exc).__name__}: {exc}"[:500],
+            )
+
+        run.total_rows = len(rows)
+        session.add(run)
+        session.flush()
+
+        # 4. 幂等检查：同 course_id + batch_id 已存在题目则跳过新增
+        existing = session.exec(
+            select(QuestionBankItem.id).where(
+                QuestionBankItem.course_id == course_id,
+                QuestionBankItem.import_batch_id == batch_id,
+            ).limit(1)
+        ).first()
+        if existing is not None:
+            # 已导入过：标记成功但 imported_count=0，skipped=total_rows
+            return self.mark_succeeded(
+                session,
+                course_id=course_id,
+                run_id=run_id,
+                imported_count=0,
+                skipped_count=len(rows),
+            )
+
+        # 5. 逐行创建 QuestionBankItem
+        imported_count = 0
+        skipped_count = 0
+        failure_details: list[dict[str, Any]] = []
+        for index, row in enumerate(rows, start=2):  # Excel 行号从 2 开始
+            # openpyxl 对空单元格返回 None；统一转为空字符串再 strip
+            raw_text = row.get("标准问题")
+            question_text = (str(raw_text).strip() if raw_text is not None else "")
+            if not question_text:
+                skipped_count += 1
+                failure_details.append({
+                    "row": index,
+                    "reason": "question_text 为空",
+                })
+                continue
+            try:
+                item = _map_row_to_item(
+                    row, index, batch_id, course_id=course_id,
+                )
+                session.add(item)
+                imported_count += 1
+            except Exception as exc:
+                skipped_count += 1
+                failure_details.append({
+                    "row": index,
+                    "reason": f"{type(exc).__name__}: {exc}",
+                })
+
+        run.imported_count = imported_count
+        run.skipped_count = skipped_count
+        run.failed_count = len(failure_details)
+        if failure_details:
+            # 只保留前 50 条以避免大字段
+            run.failure_details = failure_details[:50]
+
+        # 6. 状态判定
+        if imported_count == 0 and skipped_count > 0:
+            run.status = ImportRunStatus.FAILED
+            run.error_code = "ALL_ROWS_SKIPPED"
+            run.error_message = (
+                f"全部 {skipped_count} 行被跳过，无题目被导入"
+            )
+        elif imported_count > 0 and skipped_count > 0:
+            run.status = ImportRunStatus.PARTIAL_SUCCESS
+        else:
+            run.status = ImportRunStatus.SUCCEEDED
+
+        run.finished_at = utcnow_naive()
+        run.updated_at = utcnow_naive()
+        session.add(run)
+        session.flush()
+        return run
+
+    def _load_excel_bytes(self, run: QuestionImportRun) -> bytes:
+        """读取 Excel 文件内容为字节。
+
+        优先从 source_object_key 经对象存储读取（生产路径）；
+        否则回退到本地 source_file 路径（CLI / 测试路径）。
+        """
+        object_key = (run.source_object_key or "").strip()
+        if object_key:
+            from app.services.object_storage import get_object_storage
+            provider = get_object_storage()
+            return provider.get(object_key)
+
+        file_path = (run.source_file or "").strip()
+        if not file_path:
+            raise FileNotFoundError(
+                "导入运行未提供 source_object_key 或 source_file"
+            )
+        if not os.path.isfile(file_path):
+            raise FileNotFoundError(f"Excel 文件不存在: {file_path}")
+        if os.path.splitext(file_path)[1].lower() != ".xlsx":
+            raise ValueError("仅允许导入 .xlsx 文件")
+        with open(file_path, "rb") as source:
+            return source.read()
 
 
 # ---------------------------------------------------------------------------

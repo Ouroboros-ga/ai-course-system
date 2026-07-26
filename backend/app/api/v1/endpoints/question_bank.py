@@ -125,8 +125,12 @@ async def list_unassigned_questions(
     """
     require_platform_permission(session, current_user, PlatformPermission.ADMIN)
 
+    # 平台级待归属题源池：仅包含 course_id IS NULL 的题目。
+    # 已导入到具体课程但 status=UNASSIGNED 的题目属于课程内审核流，
+    # 不进入平台题源池（避免跨课程污染）。
     statement = select(QuestionBankItem).where(
         QuestionBankItem.status == QuestionStatus.UNASSIGNED,
+        QuestionBankItem.course_id.is_(None),
         QuestionBankItem.is_latest == True,
     )
     if category:

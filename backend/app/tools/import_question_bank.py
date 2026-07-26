@@ -65,6 +65,11 @@ def _file_sha256(file_path: str) -> str:
     return digest.hexdigest()
 
 
+def _bytes_sha256(content: bytes) -> str:
+    """计算字节内容的 SHA256（用于对象存储读取后的哈希校验）"""
+    return hashlib.sha256(content).hexdigest()
+
+
 def _read_excel_rows(file_path: str) -> list[dict[str, Any]]:
     """读取 Excel 文件，返回字典列表。
 
@@ -103,6 +108,45 @@ def _read_excel_rows(file_path: str) -> list[dict[str, Any]]:
     return result
 
 
+def _read_excel_rows_from_bytes(content: bytes) -> list[dict[str, Any]]:
+    """从字节内容读取 Excel 行（用于对象存储读取路径）。
+
+    与 `_read_excel_rows` 共用解析逻辑，但不依赖文件路径。
+    """
+    try:
+        from openpyxl import load_workbook
+    except ImportError:
+        raise RuntimeError("需要 openpyxl: pip install openpyxl")
+    import io
+
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+
+    rows = list(ws.iter_rows(values_only=True))
+    if not rows:
+        wb.close()
+        return []
+
+    headers = [str(h).strip() if h is not None else "" for h in rows[0]]
+    missing = REQUIRED_COLUMNS - set(headers)
+    if missing:
+        wb.close()
+        raise ValueError(f"Excel 缺少必需列: {', '.join(sorted(missing))}")
+
+    result = []
+    for row in rows[1:]:
+        if all(cell is None or str(cell).strip() == "" for cell in row):
+            continue
+        row_dict = {}
+        for i, header in enumerate(headers):
+            if i < len(row):
+                row_dict[header] = row[i]
+        result.append(row_dict)
+
+    wb.close()
+    return result
+
+
 def _extract_similar_questions(row: dict[str, Any]) -> list[str]:
     """从行数据中提取所有相似问法"""
     similar = []
@@ -113,13 +157,30 @@ def _extract_similar_questions(row: dict[str, Any]) -> list[str]:
     return similar
 
 
-def _map_row_to_item(row: dict[str, Any], row_index: int, batch_id: str) -> QuestionBankItem:
-    """将 Excel 行映射为 QuestionBankItem"""
-    question_text = str(row.get("标准问题", "")).strip()
-    answer = str(row.get("答案", "")).strip()
-    category = str(row.get("规则分类", "")).strip()
-    rule_status = str(row.get("规则状态", "")).strip()
-    match_mode = str(row.get("匹配模式", "")).strip()
+def _map_row_to_item(
+    row: dict[str, Any],
+    row_index: int,
+    batch_id: str,
+    *,
+    course_id: int | None = None,
+) -> QuestionBankItem:
+    """将 Excel 行映射为 QuestionBankItem
+
+    Args:
+        row: Excel 行字典
+        row_index: 行号（用于审计）
+        batch_id: 导入批次ID
+        course_id: 课程ID；None 表示未归属（CLI 默认），API 触发时传入具体课程
+    """
+    # openpyxl 对空单元格返回 None；统一转为空字符串再 strip
+    def _cell_str(value: Any) -> str:
+        return str(value).strip() if value is not None else ""
+
+    question_text = _cell_str(row.get("标准问题"))
+    answer = _cell_str(row.get("答案"))
+    category = _cell_str(row.get("规则分类"))
+    rule_status = _cell_str(row.get("规则状态"))
+    match_mode = _cell_str(row.get("匹配模式"))
     similar = _extract_similar_questions(row)
 
     return QuestionBankItem(
@@ -132,7 +193,7 @@ def _map_row_to_item(row: dict[str, Any], row_index: int, batch_id: str) -> Ques
         category=category,
         match_mode=match_mode,
         rule_status=rule_status,
-        course_id=None,  # 未归属
+        course_id=course_id,  # None=未归属；API 触发时绑定到具体课程
         knowledge_node_ids=[],
         prerequisite_node_ids=[],
         status=QuestionStatus.UNASSIGNED,

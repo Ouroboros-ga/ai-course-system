@@ -706,9 +706,21 @@ async def create_import_run(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """创建题库导入运行（异步执行；返回 202 + run_id）。"""
+    """创建题库导入运行（异步执行；返回 202 + run_id + task_id）。
+
+    流程：
+    - 创建 QuestionImportRun（PENDING）
+    - 创建 TaskRecord（task_type=question_bank.import）并关联 run.task_id
+    - 提交到 LocalTaskWorker 异步执行
+    - Worker 调用 question_import_service.execute_run 解析 Excel 并写入题库
+
+    题目默认 status=UNASSIGNED，需教师通过题源映射或题目管理升级为 PUBLISHED
+    后才能进入推荐池；本接口不直接对学生发布任何题目。
+    """
     require_course_permission(session, current_user, course_id, "question_bank.manage")
     user_id = int(current_user["user_id"])
+
+    # 1. 创建导入运行
     run = question_import_service.create_run(
         session,
         course_id=course_id,
@@ -717,8 +729,53 @@ async def create_import_run(
         total_rows=payload.total_rows,
         initiated_by=user_id,
     )
+    session.flush()
+
+    # 2. 创建任务记录并关联到 run
+    from app.services.task_service import task_service, TaskCreateRequest
+    task_request = TaskCreateRequest(
+        task_type="question_bank.import",
+        owner_user_id=user_id,
+        course_id=course_id,
+        input_summary=f"Excel 题库导入: {payload.source_file}",
+        input_payload={
+            "course_id": course_id,
+            "run_id": run.run_id,
+        },
+        idempotency_key=f"qb_import:{course_id}:{run.run_id}",
+    )
+    task_view = task_service.create_task(session, task_request)
+
+    # 3. 回写 task_id 到 run
+    run.task_id = task_view.task_id
+    session.add(run)
     session.commit()
     session.refresh(run)
+
+    # 4. 提交到 worker（异步触发；失败不阻断 API 返回）
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+    try:
+        from app.platform.tasks.worker import local_task_worker
+        from app.models.database import session_factory as _session_factory
+        if local_task_worker.has_handler("question_bank.import"):
+            local_task_worker.submit(
+                _session_factory,
+                task_view.task_id,
+                task_request.input_payload,
+            )
+        else:
+            _logger.warning(
+                "question_bank.import handler 未注册；任务 %s 停留 pending",
+                task_view.task_id,
+            )
+    except Exception:
+        _logger.warning(
+            "题库导入任务 %s 提交 worker 失败；任务停留 pending，可手工 retry",
+            task_view.task_id,
+            exc_info=True,
+        )
+
     return unified_response(
         code=202,
         message="题库导入任务已创建",
