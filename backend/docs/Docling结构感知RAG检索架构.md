@@ -1,5 +1,7 @@
 # Docling 结构感知 RAG 检索架构 — 技术讲解文档
 
+> 历史架构说明。当前系统正在收敛到 `SourceMaterialVersion → DocumentIR/DocumentBlock → Evidence` 的统一解析链；本文中的旧 Docling、树状 RAG 和模型能力描述不得作为现行主链或效果结论。现行目标见 `docs/phase1/统一课程建设与解析基线.md`。
+
 ## 一、整体架构概览
 
 我们摒弃了传统的平铺文本提取，引入 IBM 开源的 Docling 引擎实现课件结构化感知；针对其输出的 Markdown 特性，自主研发了公式占位替换与表格展平算法，深度定制了 IK 分词器，将教育场景下的专有名词识别准确率显著提升；最终通过树状 RAG 检索结合商业 API，实现了精准的课件知识问答。

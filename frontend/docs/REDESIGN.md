@@ -1,5 +1,7 @@
 # Smartrab AI 智课系统 — 前端全面重构设计文档
 
+> 历史设计稿，日期为 2026-07-07。视觉与组件决策仅供追溯；当前页面结构和功能接线以 `page-design.md`、`frontend/src/`、前端契约测试及 `docs/DOCUMENTATION_INDEX.md` 为准。
+
 > 基于 ui-ux-pro-max 设计智能规则生成 | 版本: 2.0 | 日期: 2026-07-07
 
 ***
@@ -613,4 +615,3 @@ Props:
 * [ ] 颜色不是唯一指示器
 
 * [ ] `prefers-reduced-motion` 被尊重
-
