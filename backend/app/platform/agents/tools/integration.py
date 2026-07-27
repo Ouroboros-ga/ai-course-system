@@ -203,6 +203,15 @@ class Judge0SandboxPort:
                 "outcome": "not_found",
                 "message": f"invalid course_id: {course_id!r}",
             }
+        try:
+            student_id_int = int(student_id)
+        except (TypeError, ValueError):
+            return {
+                "available": False,
+                "status": "not_found",
+                "outcome": "not_found",
+                "message": f"invalid student_id: {student_id!r}",
+            }
 
         try:
             from app.models.experiment_model import (
@@ -226,6 +235,11 @@ class Judge0SandboxPort:
                     select(ExperimentRun).where(
                         ExperimentRun.run_id == code_submission_id,
                         ExperimentRun.course_id == course_id_int,
+                        # A run identifier is not a bearer token.  Keep the
+                        # student scope in the read query as well as the
+                        # endpoint check, so a learner cannot attach another
+                        # learner's run_id to an otherwise valid request.
+                        ExperimentRun.student_id == student_id_int,
                     )
                 ).first()
                 if run is None:

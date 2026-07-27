@@ -256,6 +256,10 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             await run_service._execute_run(
                 session, run=run, attempt=attempt, version=version,
             )
+            # Persist the bounded diagnosis in the same worker transaction as
+            # the verified run result.  This keeps the normal path usable by
+            # EduAgent without requiring a second client request.
+            run_service._ensure_coding_diagnosis(session, run)
             session.commit()
         except Exception as exc:
             raise TaskExecutionError(

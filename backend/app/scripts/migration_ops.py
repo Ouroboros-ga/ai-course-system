@@ -118,10 +118,15 @@ MIGRATION_LEDGER: dict[str, dict] = {
         "name": "CodingEduAgent bounded diagnosis records",
         "rollback_notes": "Drops coding diagnosis records only; ExperimentRun and formal LearningEvidence remain intact.",
     },
+    "0008": {
+        "batch_id": "coding-diagnosis-timezone-v1",
+        "name": "CodingDiagnosis timezone-aware timestamps",
+        "rollback_notes": "Restores timestamp columns to legacy timezone-naive metadata; stored UTC instants are retained.",
+    },
 }
 
 BASELINE_REVISION = "0001"
-HEAD_REVISION = "0007"
+HEAD_REVISION = "0008"
 
 
 def _build_connect_args(url: str) -> dict:

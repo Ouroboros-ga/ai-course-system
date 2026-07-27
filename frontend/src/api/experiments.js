@@ -17,6 +17,21 @@ export function createExperimentRun(attemptId, courseId, payload, options = {}) 
   )
 }
 
+export function listPublishedExperiments(courseId) {
+  return request.get(`/experiments/course/${encodeURIComponent(courseId)}/definitions`, {
+    params: { publish_status: 'published' },
+    skipErrorToast: true,
+  })
+}
+
+export function createExperimentAttempt(experimentId, courseId, returnAnchor = {}) {
+  return request.post(
+    `/experiments/${encodeURIComponent(experimentId)}/attempts?course_id=${encodeURIComponent(courseId)}`,
+    { return_anchor: returnAnchor },
+    { skipErrorToast: true },
+  )
+}
+
 export function createCodingDiagnosis(courseId, runId) {
   return request.post(
     `/experiments/runs/${encodeURIComponent(runId)}/diagnosis?course_id=${encodeURIComponent(courseId)}`,

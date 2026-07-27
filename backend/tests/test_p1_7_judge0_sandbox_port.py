@@ -189,6 +189,23 @@ class TestGetExecutionResultReadsExperimentRun:
         assert result["available"] is False
         assert result["status"] == "not_found"
 
+    def test_student_isolation_cross_student_returns_not_found(self) -> None:
+        """同课程内也不能用别人的 run_id 读取执行结果。"""
+        mock_session = MagicMock()
+        mock_exec_result = MagicMock()
+        mock_exec_result.first.return_value = None
+        mock_session.exec.return_value = mock_exec_result
+
+        port = Judge0SandboxPort(
+            client=_make_healthy_client(),
+            session_factory=lambda: mock_session,
+        )
+        result = asyncio.run(port.get_execution_result(
+            student_id="11", course_id="1", code_submission_id="run_owned_by_10",
+        ))
+        assert result["available"] is False
+        assert result["status"] == "not_found"
+
     def test_reads_artifacts_stdout_stderr_compile(self) -> None:
         """读取 ExperimentRunArtifact 中的 stdout/stderr/compile"""
         from app.models.experiment_model import ExperimentRun, RunOutcome, ExperimentRunArtifact

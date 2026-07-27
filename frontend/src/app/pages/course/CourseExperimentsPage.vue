@@ -2,6 +2,13 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { FlaskConical } from 'lucide-vue-next'
 import { getSandboxHealth, getSandboxLanguages } from '@/api/sandbox.js'
+import {
+  createCodingDiagnosis,
+  createExperimentAttempt,
+  createExperimentRun,
+  listPublishedExperiments,
+} from '@/api/experiments.js'
+import { useCounterStore } from '@/stores/counter.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxCapabilityTag from '@/app/ui/SfxCapabilityTag.vue'
 import SfxPlannedPanel from '@/app/ui/SfxPlannedPanel.vue'
@@ -17,6 +24,7 @@ import SfxPlannedPanel from '@/app/ui/SfxPlannedPanel.vue'
  * 教师视图：任务列表 / 创建任务 / 提交情况（§16.2）。
  */
 const courseContext = inject('courseContext')
+const counter = useCounterStore()
 
 const isTeacher = computed(() => Boolean(courseContext.allowed.value['course.edit']))
 
@@ -26,6 +34,19 @@ const teacherTab = ref('list') // list | create | submissions
 const sandboxStatus = ref('loading') // loading | ready | error
 const sandbox = ref(null)
 const languages = ref([])
+const experiments = ref([])
+const selectedExperiment = ref(null)
+const attempt = ref(null)
+const sourceCode = ref('')
+const selectedLanguage = ref('')
+const run = ref(null)
+const diagnosis = ref(null)
+const codeStatus = ref('idle') // idle | loading | running | done | error
+const codeError = ref('')
+
+const codeRunStorageKey = computed(
+  () => `teaching-agent-code-run:${courseContext.courseId.value}:${counter.userData?.id ?? 'anonymous'}`,
+)
 
 async function loadSandbox() {
   sandboxStatus.value = 'loading'
@@ -42,7 +63,59 @@ async function loadSandbox() {
   }
 }
 
-onMounted(loadSandbox)
+async function loadExperiments() {
+  if (isTeacher.value) return
+  try {
+    const result = await listPublishedExperiments(courseContext.courseId.value)
+    experiments.value = result?.items ?? []
+    selectedExperiment.value = experiments.value[0] ?? null
+    selectedLanguage.value = selectedExperiment.value?.language_whitelist?.[0] ?? languages.value[0] ?? ''
+  } catch (error) {
+    codeError.value = error?.message || '实验任务加载失败'
+  }
+}
+
+async function startAttempt() {
+  if (attempt.value || !selectedExperiment.value) return
+  const result = await createExperimentAttempt(
+    selectedExperiment.value.experiment_id,
+    courseContext.courseId.value,
+    {},
+  )
+  attempt.value = result
+}
+
+async function runCode() {
+  if (!selectedExperiment.value || !sourceCode.value.trim() || codeStatus.value === 'running') return
+  codeStatus.value = 'running'
+  codeError.value = ''
+  diagnosis.value = null
+  try {
+    await startAttempt()
+    if (!attempt.value?.attempt_id) throw new Error('实验尝试创建失败')
+    const result = await createExperimentRun(
+      attempt.value.attempt_id,
+      courseContext.courseId.value,
+      { language: selectedLanguage.value, source_code: sourceCode.value },
+    )
+    run.value = result
+    const runId = result?.run_id
+    if (runId) {
+      window.localStorage.setItem(codeRunStorageKey.value, String(runId))
+      const diagnosisResult = await createCodingDiagnosis(courseContext.courseId.value, runId)
+      diagnosis.value = diagnosisResult
+    }
+    codeStatus.value = 'done'
+  } catch (error) {
+    codeError.value = error?.message || '代码运行失败'
+    codeStatus.value = 'error'
+  }
+}
+
+onMounted(async () => {
+  await loadSandbox()
+  await loadExperiments()
+})
 </script>
 
 <template>
@@ -102,7 +175,46 @@ onMounted(loadSandbox)
         >{{ opt.label }}</button>
       </div>
 
+      <section v-if="experiments.length" class="sfx-panel sfx-code-runner">
+        <div class="sfx-exp-sandbox-head">
+          <div>
+            <h2 class="sfx-panel-title">代码实验</h2>
+            <p class="sfx-t-ui sfx-t-secondary">提交后由独立沙箱运行，CodingEduAgent 只读取已验证的 run_id 诊断。</p>
+          </div>
+          <SfxBadge v-if="run?.outcome" tone="ink">{{ run.outcome }}</SfxBadge>
+        </div>
+        <label class="sfx-code-label">
+          实验任务
+          <select v-model="selectedExperiment" class="sfx-code-select" @change="attempt = null">
+            <option v-for="item in experiments" :key="item.experiment_id" :value="item">{{ item.title }}</option>
+          </select>
+        </label>
+        <label class="sfx-code-label">
+          编程语言
+          <select v-model="selectedLanguage" class="sfx-code-select">
+            <option v-for="lang in (selectedExperiment?.language_whitelist || languages)" :key="lang" :value="lang">{{ lang }}</option>
+          </select>
+        </label>
+        <label class="sfx-code-label">
+          代码
+          <textarea v-model="sourceCode" class="sfx-code-editor" rows="12" spellcheck="false" placeholder="在这里编写代码…" />
+        </label>
+        <button class="sfx-code-run" type="button" :disabled="codeStatus === 'running' || !sourceCode.trim() || !selectedExperiment" @click="runCode">
+          {{ codeStatus === 'running' ? '运行中…' : '运行代码' }}
+        </button>
+        <p v-if="codeError" class="sfx-code-error" role="alert">{{ codeError }}</p>
+        <div v-if="diagnosis" class="sfx-code-diagnosis">
+          <strong>代码诊断：{{ diagnosis.error_class || diagnosis.outcome || '已完成' }}</strong>
+          <p v-if="diagnosis.summary">{{ diagnosis.summary }}</p>
+          <ul v-if="diagnosis.debug_steps?.length">
+            <li v-for="step in diagnosis.debug_steps" :key="step">{{ step }}</li>
+          </ul>
+          <small>本次 run_id 已保存；返回学习页后 EduAgent 可读取受限诊断，不会直接修改认知评分。</small>
+        </div>
+      </section>
+
       <SfxPlannedPanel
+        v-if="!experiments.length"
         contract-key="experiments"
         title="课程实验任务 · 接口契约已冻结"
         available-note="沙箱语言与安全边界已在上方真实展示；实验工作区将复用同一沙箱能力。"
@@ -203,4 +315,22 @@ onMounted(loadSandbox)
 
 .sfx-exp-filter:hover { color: var(--ink-700); }
 .sfx-exp-filter.is-active { background: var(--surface-panel); color: var(--ink-900); box-shadow: var(--shadow-xs); }
+
+.sfx-code-runner { display: flex; flex-direction: column; gap: var(--space-3); }
+.sfx-code-label { display: flex; flex-direction: column; gap: var(--space-1); color: var(--text-secondary); font-size: var(--ui-sm-size); }
+.sfx-code-select, .sfx-code-editor {
+  width: 100%;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-panel);
+  color: var(--ink-900);
+  padding: var(--space-2) var(--space-3);
+}
+.sfx-code-editor { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.5; }
+.sfx-code-run { align-self: flex-start; padding: var(--space-2) var(--space-4); border-radius: var(--radius-sm); background: var(--ink-900); color: white; font-weight: 600; }
+.sfx-code-run:disabled { cursor: not-allowed; opacity: .55; }
+.sfx-code-error { color: var(--danger-700, #b42318); }
+.sfx-code-diagnosis { padding: var(--space-3); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--ink-800); }
+.sfx-code-diagnosis p { margin: var(--space-2) 0; }
+.sfx-code-diagnosis ul { margin: 0; padding-left: 1.25rem; }
 </style>

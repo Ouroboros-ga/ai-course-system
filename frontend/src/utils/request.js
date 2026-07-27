@@ -303,7 +303,10 @@ service.interceptors.response.use(
       return res
     }
 
-    if (res.code !== 200) {
+    // The backend envelope uses 200 for reads and 201 for successful creates.
+    // Treat the full 2xx range as success so create-run/attempt/diagnosis
+    // calls are not rejected after the HTTP request itself succeeded.
+    if (typeof res.code !== 'number' || res.code < 200 || res.code >= 300) {
 
       // 特殊状态码处理：Token 过期
       if (res.code === 401) {

@@ -147,4 +147,6 @@ BUILTIN_TOOL_NAMES: list[str] = [
     "student_modeling",
     "recommendation",
     "conversation_context",
+    "coding_diagnosis",
+    "student_history",
 ]

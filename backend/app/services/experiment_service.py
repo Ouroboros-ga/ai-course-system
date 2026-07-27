@@ -559,7 +559,36 @@ class ExperimentRunService:
         if execute:
             # 同步执行沙箱（测试场景）；生产应通过任务中心异步执行
             await self._execute_run(session, run=run, attempt=attempt, version=version)
+            self._ensure_coding_diagnosis(session, run)
         return run
+
+    @staticmethod
+    def _ensure_coding_diagnosis(session: Session, run: ExperimentRun) -> None:
+        """Create the bounded CodingEduAgent record for a terminal run.
+
+        Diagnosis is derived from the server-owned ``ExperimentRun`` after
+        Judge0 has written its result.  It is deliberately best-effort: a
+        diagnosis failure must not roll back an otherwise valid code result or
+        turn a sandbox outage into a fabricated success.
+        """
+        if run.outcome in (RunOutcome.PENDING,):
+            return
+        try:
+            from app.services.coding_eduagent_service import coding_eduagent
+
+            coding_eduagent.diagnose_run(
+                session,
+                course_id=int(run.course_id),
+                student_id=int(run.student_id),
+                run_id=str(run.run_id),
+            )
+        except Exception as exc:  # noqa: BLE001 - diagnosis is optional context
+            logger.warning(
+                "CodingEduAgent diagnosis failed for run %s: %s: %s",
+                run.run_id,
+                type(exc).__name__,
+                exc,
+            )
 
     def _create_run_record(
         self,

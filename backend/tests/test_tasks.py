@@ -405,7 +405,7 @@ def test_cursor_pagination(client, session):
 
 
 def test_migration_batch_recorded(session):
-    """alembic upgrade head 后 alembic_version 表应包含当前 head revision (0007)，
+    """alembic upgrade head 后 alembic_version 表应包含当前 head revision (0008)，
     且 schema_migration_records 审计账本表存在且可查询。
 
     P0-1 后：run_migrations() 已废弃为 no-op，alembic_version 是迁移事实来源；
@@ -413,12 +413,12 @@ def test_migration_batch_recorded(session):
     """
     from sqlalchemy import text
 
-    # 1. alembic_version 表是迁移事实来源，应包含当前 head revision (0007)。
+    # 1. alembic_version 表是迁移事实来源，应包含当前 head revision (0008)。
     #    测试库由 conftest 的 test_engine fixture 通过 alembic upgrade head 建立。
     version_num = session.execute(
         text("SELECT version_num FROM alembic_version")
     ).scalar()
-    assert version_num == "0007"
+    assert version_num == "0008"
 
     # 2. schema_migration_records 作为审计账本仍可查询（不再是迁移事实来源）。
     #    表必须存在且可查询，但不要求有特定记录（alembic 不向其写入）。

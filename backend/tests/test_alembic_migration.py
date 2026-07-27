@@ -80,7 +80,7 @@ def test_empty_sqlite_upgrade_head_creates_all_tables(tmp_path):
         # 验证 alembic_version 表指向 head
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007", f"alembic_version 应为 0007，实际 {version}"
+            assert version == "0008", f"alembic_version 应为 0008，实际 {version}"
     finally:
         engine.dispose()
 
@@ -121,7 +121,7 @@ def test_legacy_sqlite_stamp_and_upgrade(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007"
+            assert version == "0008"
 
             # 6. 验证数据迁移生效（0002 access_control backfill）
             # 旧库无 legacy role/teacher_id 数据，所以回填不应产生记录
@@ -295,7 +295,7 @@ def test_postgres_empty_upgrade_head():
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007"
+            assert version == "0008"
     finally:
         engine.dispose()
 
@@ -348,7 +348,7 @@ def test_migration_chain_downgrade_and_upgrade_roundtrip(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007"
+            assert version == "0008"
     finally:
         engine.dispose()
 
@@ -387,7 +387,7 @@ def test_migration_ops_upgrade_writes_ledger(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007"
+            assert version == "0008"
 
             rows = conn.execute(
                 text(
@@ -545,7 +545,7 @@ def test_migration_ledger_idempotent_on_repeated_upgrade(tmp_path):
             count = conn.execute(
                 text("SELECT COUNT(*) FROM schema_migration_records")
             ).scalar()
-            assert count == 7, f"应只有 7 条账本，实际 {count}"
+            assert count == 8, f"应只有 8 条账本，实际 {count}"
     finally:
         engine.dispose()
 
@@ -608,7 +608,7 @@ def test_upgrade_from_empty_db_executes_all_migrations(tmp_path):
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0007"
+            assert version == "0008"
 
             # 0002 backfill 在空库应写入 0 行（无 legacy 数据）
             membership_count = conn.execute(text(

@@ -7,9 +7,11 @@
   naive UTC（``"2026-07-27 10:00:00.000000"``）与 tz-aware UTC
   （``"2026-07-27 10:00:00.000000+00:00"``）的字符串排序结果不同，混用会破坏
   范围查询、ORDER BY 和唯一性约束。
-- 迁移策略（已完成）：
+- 迁移策略：
   1. 所有应用代码统一使用 ``utcnow_aware``（tz-aware UTC）。
-  2. Alembic 迁移 0008 将所有 ``datetime`` 列升级为 ``sa.DateTime(timezone=True)``。
+  2. Alembic 0008 先将新 CodingDiagnosis 表的时间列升级为
+     ``sa.DateTime(timezone=True)``；旧基线表仍需按部署窗口分批迁移，不能把
+     SQLite 的 ``DateTime`` 元数据改动误报为全库迁移完成。
   3. ``utcnow_naive`` 保留为 ``utcnow_aware`` 的向后兼容别名（不再发弃用警告），
      仅供尚未迁移的外部调用方使用；新代码必须使用 ``utcnow_aware``。
 

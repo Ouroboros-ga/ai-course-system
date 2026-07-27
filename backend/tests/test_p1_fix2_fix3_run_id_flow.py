@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -199,6 +199,42 @@ class TestCodeSubmissionIdEndToEndFlow:
         assert sandbox_called["count"] == 0
         # sandbox_result 不在 state 中（或为 None）
         assert not state.get("sandbox_result")
+
+
+class TestAutomaticCodingDiagnosis:
+    def test_terminal_run_gets_diagnosed_without_client_replay(self) -> None:
+        from app.models.experiment_model import ExperimentRun, RunOutcome
+        from app.services.experiment_service import ExperimentRunService
+        from app.services.coding_eduagent_service import coding_eduagent
+
+        run = MagicMock(spec=ExperimentRun)
+        run.run_id = "run-terminal"
+        run.course_id = 7
+        run.student_id = 11
+        run.outcome = RunOutcome.ACCEPTED
+
+        with patch.object(coding_eduagent, "diagnose_run") as diagnose:
+            ExperimentRunService._ensure_coding_diagnosis(MagicMock(), run)
+
+        diagnose.assert_called_once_with(
+            ANY,
+            course_id=7,
+            student_id=11,
+            run_id="run-terminal",
+        )
+
+    def test_pending_run_does_not_create_diagnosis(self) -> None:
+        from app.models.experiment_model import ExperimentRun, RunOutcome
+        from app.services.experiment_service import ExperimentRunService
+        from app.services.coding_eduagent_service import coding_eduagent
+
+        run = MagicMock(spec=ExperimentRun)
+        run.outcome = RunOutcome.PENDING
+
+        with patch.object(coding_eduagent, "diagnose_run") as diagnose:
+            ExperimentRunService._ensure_coding_diagnosis(MagicMock(), run)
+
+        diagnose.assert_not_called()
 
 
 class TestCodingDiagnosisPortWired:

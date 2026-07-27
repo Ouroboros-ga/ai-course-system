@@ -44,6 +44,10 @@ BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({
     "graph", "retrieval", "question_bank", "experiment",
     "visualization", "learning_event", "web_research", "sandbox",
     "cognition", "student_modeling", "recommendation", "conversation_context",
+    # Read-only teaching context exposed by the CodingEduAgent integration.
+    # These must be configurable so a teacher can disable code diagnostics or
+    # historical context independently of code execution itself.
+    "coding_diagnosis", "student_history",
 })
 
 # 默认工具策略：所有内置工具启用，不需要确认

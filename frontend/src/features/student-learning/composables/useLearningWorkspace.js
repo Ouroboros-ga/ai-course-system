@@ -49,7 +49,10 @@ export function useLearningWorkspace(courseId, options = {}) {
   // CodingEduAgent receives only a server-issued ExperimentRun id. The
   // coding runner can update this value after a verified submission; no
   // source code or Judge0 token is ever placed in the TeachingAgent payload.
-  const codeSubmissionId = ref(options?.codeSubmissionId ?? null)
+  const codeRunStorageKey = `teaching-agent-code-run:${courseId}:${getStudentId() ?? 'anonymous'}`
+  const codeSubmissionId = ref(
+    options?.codeSubmissionId ?? window.localStorage.getItem(codeRunStorageKey) ?? null,
+  )
   const getCodeSubmissionId = options?.getCodeSubmissionId ?? (() => codeSubmissionId.value)
   // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
   // Reuse a per-learner/course ID. The server keeps only a bounded structured
@@ -433,6 +436,11 @@ export function useLearningWorkspace(courseId, options = {}) {
   // V1 问答（/chat/ask）：始终可用的回退路径，不受 Agent 能力开关影响。
   function setCodeSubmissionId(runId) {
     codeSubmissionId.value = runId == null || runId === '' ? null : String(runId)
+    if (codeSubmissionId.value) {
+      window.localStorage.setItem(codeRunStorageKey, codeSubmissionId.value)
+    } else {
+      window.localStorage.removeItem(codeRunStorageKey)
+    }
   }
 
   async function askV1(question) {
