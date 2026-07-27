@@ -24,7 +24,7 @@ from .security import (
 from .exceptions import unified_response, BusinessException
 
 # 导出统一时间工具
-from .time_utils import utcnow_naive
+from .time_utils import utcnow_aware, utcnow_naive, to_aware, to_naive, now_utc_iso
 
 # 明确导出列表（可选，用于规范 `from app.core import *` 的行为）
 __all__ = [
@@ -47,5 +47,9 @@ __all__ = [
     "unified_response",
     "BusinessException",
     # 时间工具
+    "utcnow_aware",
     "utcnow_naive",
+    "to_aware",
+    "to_naive",
+    "now_utc_iso",
 ]

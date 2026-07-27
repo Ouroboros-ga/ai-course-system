@@ -109,3 +109,92 @@ class CallableLearningEventPort:
 class UnavailableSandboxPort:
     async def get_execution_result(self, **_: Any) -> Mapping[str, Any]:
         raise ServiceUnavailableError("sandbox port was not injected")
+
+
+class Judge0SandboxPort:
+    """P1-7: Real Judge0 sandbox port backed by ``SandboxClient``.
+
+    Implements the ``SandboxPort`` protocol (``get_execution_result``).
+    Constructed with a ``SandboxClient`` instance (or the module-level
+    singleton). The port always returns a structured dict; it never
+    raises — when the sandbox is unavailable, ``status`` is set to
+    ``sandbox_unavailable`` so the Agent can degrade gracefully.
+
+    Health-check degradation:
+    - On construction, we run ``client.health_check()`` and cache the
+      result. If the health check fails, the port still accepts calls
+      but every call returns ``sandbox_unavailable``. This preserves
+      the constraint that Agent/Q&A must not crash when Judge0 is down.
+    - The health-check result is exposed via ``is_healthy`` for
+      observability, but the Agent workflow does not gate on it.
+    """
+
+    def __init__(self, client: Any | None = None) -> None:
+        if client is None:
+            # Lazy import to avoid module-level side effects in tests.
+            from app.services.sandbox_client import sandbox_client as _default
+            client = _default
+        self._client = client
+        try:
+            self._healthy = bool(client.health_check())
+        except Exception:  # noqa: BLE001 - never block agent startup
+            self._healthy = False
+
+    @property
+    def is_healthy(self) -> bool:
+        return self._healthy
+
+    @property
+    def is_enabled(self) -> bool:
+        return bool(getattr(self._client, "enabled", False))
+
+    async def get_execution_result(
+        self,
+        *,
+        student_id: str,
+        course_id: str,
+        code_submission_id: str,
+        **_: Any,
+    ) -> Mapping[str, Any]:
+        """Look up a prior sandbox submission by its token.
+
+        The Agent only reads prior execution results — it does not
+        submit new code. Code submission happens through the experiment
+        endpoints, which create ``ExperimentRun`` rows and dispatch
+        ``experiment_run`` tasks. The ``code_submission_id`` here is
+        the Judge0 token (stored as ``ExperimentRun.run_id`` or a
+        dedicated token column).
+
+        Returns a dict with at least:
+        - ``status``: SubmissionStatus value or ``sandbox_unavailable``
+        - ``available``: bool — False when sandbox is down/disabled
+        """
+        # Fast path: disabled or unhealthy → degrade without raising.
+        if not self.is_enabled or not self._healthy:
+            return {
+                "available": False,
+                "status": "sandbox_unavailable",
+                "message": "代码沙箱未启用或健康检查失败，学习主流程正常降级",
+            }
+
+        try:
+            # We do not call submit_code here; the Agent port is read-only.
+            # A future method on SandboxClient (get_submission_by_token)
+            # can be wired in when Judge0 async polling is needed. For now
+            # we return a structured "not_implemented" result so callers
+            # know the lookup path is not yet wired, without raising.
+            return {
+                "available": True,
+                "status": "not_implemented",
+                "message": (
+                    "Judge0 沙箱可用但按 token 查询接口尚未实现；"
+                    "请通过 experiment_run_handler 获取执行结果"
+                ),
+                "code_submission_id": code_submission_id,
+            }
+        except Exception as error:  # noqa: BLE001 - degrade gracefully
+            return {
+                "available": False,
+                "status": "sandbox_unavailable",
+                "message": f"沙箱查询异常: {type(error).__name__}: {error}",
+            }

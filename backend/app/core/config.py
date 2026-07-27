@@ -202,6 +202,19 @@ class Settings(BaseSettings):
     DH_HEALTH_CHECK_INTERVAL_S: int = 60
 
     # --------------------------
+    # 阶段8 M4 DH_live_mini 引擎配置
+    # DH_live 离线视频合成在 Windows 上更完整；资产预处理由独立 Windows Worker 完成
+    # 自动化测试不调用真实引擎，必须通过环境变量显式启用
+    # --------------------------
+    DHLIVE_ENGINE_BINARY: str = ""           # 引擎可执行文件绝对路径；空表示未配置
+    DHLIVE_WORKER_HOST: str = "127.0.0.1"    # 独立 Worker 监听地址
+    DHLIVE_WORKER_PORT: int = 0              # 0 表示未启用 Worker；非零则通过 HTTP 调用
+    DHLIVE_WORKER_TIMEOUT_S: int = 120       # 单次预处理超时
+    DHLIVE_DEFAULT_FPS: int = 25             # 默认帧率，必须以实际测试报告为准
+    DHLIVE_DEFAULT_RESOLUTION: str = "512x512"
+    DHLIVE_STRICT_REPORT: bool = True        # 严格模式：无实际测试报告时不返回 healthy=True
+
+    # --------------------------
     # 科大讯飞PPT生成API配置
     # --------------------------
     XFYUN_PPT_APP_ID: str = ""
@@ -256,6 +269,13 @@ class Settings(BaseSettings):
     JUDGE0_DEFAULT_MAX_PROCESSES: int = 30
     JUDGE0_DEFAULT_MAX_FILE_SIZE: int = 1024
     JUDGE0_QUEUE_TIMEOUT: int = 30
+
+    # --------------------------
+    # 服务间鉴权（Quiz/Judge0/CodingAgent 写正式证据等内部调用）
+    # --------------------------
+    INTERNAL_SERVICE_TOKEN: str = ""
+    # 允许写入正式学习证据的内部来源白名单
+    FORMAL_EVIDENCE_SOURCES: str = "quiz,judge0,codingagent,teacher_manual"
 
     @model_validator(mode="after")
     def _validate_feature_flags(self):
