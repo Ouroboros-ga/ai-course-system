@@ -11,6 +11,7 @@ Validates that:
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -156,20 +157,18 @@ class TestEduAgentFallback:
         monkeypatch.setattr(mod.settings, "DOUBAO_API_KEY", "", raising=False)
         monkeypatch.setattr(mod.settings, "WENXIN_API_KEY", "", raising=False)
 
-    @pytest.mark.asyncio
-    async def test_returns_low_confidence_fallback(self) -> None:
+    def test_returns_low_confidence_fallback(self) -> None:
         q = _make_question(1, "光合作用 叶绿体")
-        result = await eduagent_select_best_evidence(q, _selected_texts())
+        result = asyncio.run(eduagent_select_best_evidence(q, _selected_texts()))
         assert result is not None
         # Hard requirement: fallback confidence must be the low floor, not
         # a fabricated high value.
         assert result["confidence"] == LLM_UNAVAILABLE_CONFIDENCE
         assert "未配置 API Key" in result["mapping_reason"]
 
-    @pytest.mark.asyncio
-    async def test_returns_none_when_no_candidates(self) -> None:
+    def test_returns_none_when_no_candidates(self) -> None:
         q = _make_question(1, "量子力学")
-        result = await eduagent_select_best_evidence(q, _selected_texts())
+        result = asyncio.run(eduagent_select_best_evidence(q, _selected_texts()))
         assert result is None
 
 

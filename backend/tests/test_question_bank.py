@@ -679,8 +679,12 @@ def test_unpublish_makes_question_student_invisible(client, session):
 
 # ==================== 题源映射测试 ====================
 
-def test_generate_mapping_defaults_to_auto_accepted(client, session):
-    """生成映射默认 auto_accepted。"""
+def test_generate_mapping_defaults_to_pending_review(client, session):
+    """生成映射默认 pending_review（P1-4 后新契约）。
+
+    P1-4 之前默认 auto_accepted；P1-4 后所有新生成的映射默认 pending_review，
+    教师必须审核后才能升级为 auto_accepted 或 teacher_edited。
+    """
     teacher = _user(session, "qb_genmap_teacher", UserRole.TEACHER)
     course = _course(session, teacher.id)
     establish_course_access_baseline(session, course.id, teacher.id)
@@ -706,12 +710,12 @@ def test_generate_mapping_defaults_to_auto_accepted(client, session):
     assert resp.json()["data"]["generated"] == 1
     assert resp.json()["data"]["skipped_locked"] == 0
 
-    # 列出映射，验证状态
+    # 列出映射，验证状态（P1-4 后默认 pending_review）
     resp = client.get(f"{QM}/course/{course.id}", headers=_auth(token))
     assert resp.status_code == 200
     items = resp.json()["data"]["items"]
     assert len(items) == 1
-    assert items[0]["status"] == "auto_accepted"
+    assert items[0]["status"] == "pending_review"
     assert items[0]["version"] == 1
     assert items[0]["is_latest"] is True
     assert items[0]["document_id"] == "qb-gen-doc-001"
@@ -807,7 +811,7 @@ def test_teacher_edit_mapping_becomes_teacher_edited(client, session):
 
     token = _token(teacher)
 
-    # 生成映射(v1, auto_accepted)
+    # 生成映射(v1, pending_review) - P1-4 后默认 pending_review
     client.post(
         f"{QM}/course/{course.id}/generate",
         json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
@@ -905,7 +909,7 @@ def test_mapping_version_history_traceable(client, session):
 
     token = _token(teacher)
 
-    # 生成映射 (v1, auto_accepted)
+    # 生成映射 (v1, pending_review) - P1-4 后默认 pending_review
     client.post(
         f"{QM}/course/{course.id}/generate",
         json={"question_ids": [q.id], "document_ids": [_doc(session, course.id).document_id],
@@ -940,10 +944,10 @@ def test_mapping_version_history_traceable(client, session):
     assert versions[0]["is_latest"] is True
     assert versions[0]["status"] == "teacher_edited"
 
-    # 旧版本(v1)
+    # 旧版本(v1) - P1-4 后初始状态为 pending_review
     assert versions[1]["version"] == 1
     assert versions[1]["is_latest"] is False
-    assert versions[1]["status"] == "auto_accepted"
+    assert versions[1]["status"] == "pending_review"
 
 
 def test_student_payload_hides_answer_and_objective_attempt_is_scored(client, session):

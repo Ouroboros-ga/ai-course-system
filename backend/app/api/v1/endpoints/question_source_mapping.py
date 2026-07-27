@@ -389,8 +389,8 @@ async def update_mapping(
     if mapping.status == MappingStatus.LOCKED:
         raise HTTPException(status_code=403, detail="映射已锁定，请先解锁再编辑")
 
-    # 保存旧版本
-    if mapping.status == MappingStatus.AUTO_ACCEPTED:
+    # 保存旧版本（PENDING_REVIEW 或 AUTO_ACCEPTED 状态编辑时都生成新版本）
+    if mapping.status in (MappingStatus.AUTO_ACCEPTED, MappingStatus.PENDING_REVIEW):
         old = QuestionSourceMapping(
             question_id=mapping.question_id,
             course_id=mapping.course_id,
