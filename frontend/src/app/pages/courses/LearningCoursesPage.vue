@@ -2,8 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { BookOpen, ChevronRight, Clock3, UserRound } from 'lucide-vue-next'
-import { getMyCourses } from '@/api/courses.js'
-import { useCounterStore } from '@/stores/counter.js'
+import { listFacadeCourses } from '@/api/facade.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -11,18 +10,8 @@ import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
 const router = useRouter()
-const counter = useCounterStore()
-
 const status = ref('loading') // loading | ready | empty | error
 const courses = ref([])
-const isForbidden = ref(false)
-
-function formatMinutes(minutes) {
-  const value = Number(minutes) || 0
-  if (value < 60) return `${value} 分钟`
-  const hours = Math.floor(value / 60)
-  return hours >= 10 ? `${hours} 小时` : `${hours} 小时 ${value % 60} 分`
-}
 
 function formatLastStudy(iso) {
   if (!iso) return '尚未开始学习'
@@ -37,14 +26,11 @@ function formatLastStudy(iso) {
 
 async function load() {
   status.value = 'loading'
-  isForbidden.value = false
   try {
-    const data = await getMyCourses()
-    courses.value = Array.isArray(data?.courses) ? data.courses : []
+    const data = await listFacadeCourses('learning')
+    courses.value = Array.isArray(data?.items) ? data.items : []
     status.value = courses.value.length ? 'ready' : 'empty'
   } catch (e) {
-    // 后端限定学生角色：教师/管理员会得到 403 —— 按真实状态呈现，不伪造列表
-    isForbidden.value = /403|权限|拒绝|只有学生/.test(String(e?.message || ''))
     status.value = 'error'
   }
 }
@@ -74,10 +60,7 @@ onMounted(load)
 
     <SfxError
       v-else-if="status === 'error'"
-      :variant="isForbidden ? 'forbidden' : 'error'"
-      :description="isForbidden
-        ? `当前账号（${counter.userData.username || '未登录'}）不是学生身份，没有“我学习的”课程列表。教师可在课程空间使用“学生视角预览”。`
-        : '课程列表暂时无法读取，请稍后重试。'"
+      description="课程列表暂时无法读取，请稍后重试。"
       @retry="load"
     />
 
@@ -92,7 +75,7 @@ onMounted(load)
     <ul v-else class="sfx-course-list">
       <li
         v-for="course in courses"
-        :key="course.enrollment_id"
+        :key="course.course_id"
         class="sfx-course-card"
         tabindex="0"
         @click="openOverview(course)"
@@ -108,16 +91,15 @@ onMounted(load)
           </p>
 
           <div class="sfx-course-progress" role="progressbar"
-               :aria-valuenow="Math.round(course.overall_progress || 0)" aria-valuemin="0" aria-valuemax="100"
-               :aria-label="`学习进度 ${Math.round(course.overall_progress || 0)}%`">
-            <div class="sfx-course-progress-bar" :style="{ width: `${Math.min(100, course.overall_progress || 0)}%` }" />
+               :aria-valuenow="Math.round((course.progress?.overall_progress || 0) * 100)" aria-valuemin="0" aria-valuemax="100"
+               :aria-label="`学习进度 ${Math.round((course.progress?.overall_progress || 0) * 100)}%`">
+            <div class="sfx-course-progress-bar" :style="{ width: `${Math.min(100, (course.progress?.overall_progress || 0) * 100)}%` }" />
           </div>
 
           <div class="sfx-course-meta sfx-t-caption">
-            <span>进度 {{ Math.round(course.overall_progress || 0) }}%</span>
-            <span>{{ course.total_nodes }} 个知识点</span>
-            <span><Clock3 :size="12" /> {{ formatLastStudy(course.last_study_time) }}</span>
-            <span v-if="course.total_study_minutes">累计 {{ formatMinutes(course.total_study_minutes) }}</span>
+            <span>进度 {{ Math.round((course.progress?.overall_progress || 0) * 100) }}%</span>
+            <span>{{ course.progress?.total_nodes ?? '—' }} 个知识点</span>
+            <span><Clock3 :size="12" /> {{ formatLastStudy(course.progress?.last_study_time) }}</span>
           </div>
         </div>
 

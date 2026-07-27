@@ -2,8 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Hammer, Search } from 'lucide-vue-next'
-import { getCourseHall } from '@/api/courses.js'
-import { useCounterStore } from '@/stores/counter.js'
+import { listFacadeCourses } from '@/api/facade.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -21,7 +20,6 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
  * 展示推测数字；建设阶段以课程真实 status 呈现。
  */
 const router = useRouter()
-const counter = useCounterStore()
 
 const status = ref('loading') // loading | ready | empty | error
 const courses = ref([])
@@ -50,11 +48,8 @@ const filtered = computed(() => {
 async function load() {
   status.value = 'loading'
   try {
-    const data = await getCourseHall()
-    const myId = Number(counter.userData.id)
-    courses.value = (Array.isArray(data?.courses) ? data.courses : []).filter(
-      (c) => Number(c.teacher_id) === myId,
-    )
+    const data = await listFacadeCourses('building')
+    courses.value = Array.isArray(data?.items) ? data.items : []
     status.value = courses.value.length ? 'ready' : 'empty'
   } catch {
     status.value = 'error'
@@ -136,9 +131,9 @@ onMounted(load)
             </div>
             <p v-if="course.description" class="sfx-t-ui sfx-t-secondary sfx-build-desc">{{ course.description }}</p>
             <div class="sfx-build-meta sfx-t-caption">
-              <span>{{ course.total_nodes ?? 0 }} 个知识点</span>
-              <span>{{ course.student_count ?? 0 }} 名学生</span>
-              <span>创建于 {{ formatDate(course.created_at) }}</span>
+            <span>待审核 {{ course.build_status?.pending_review_count ?? 0 }} 项</span>
+            <span v-if="course.build_status?.failed_task_count">失败任务 {{ course.build_status.failed_task_count }} 项</span>
+            <span>最近活动 {{ formatDate(course.last_activity_at) }}</span>
             </div>
           </div>
           <div class="sfx-build-actions">

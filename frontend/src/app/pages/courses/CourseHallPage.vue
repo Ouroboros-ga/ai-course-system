@@ -2,8 +2,7 @@
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { Compass, Search } from 'lucide-vue-next'
-import { getCourseHall } from '@/api/courses.js'
-import { useCounterStore } from '@/stores/counter.js'
+import { listFacadeCourses } from '@/api/facade.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxDrawer from '@/app/ui/SfxDrawer.vue'
@@ -18,7 +17,6 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
  * 加入方式：邀请码（available）；申请审核为 planned，如实标注。
  */
 const router = useRouter()
-const counter = useCounterStore()
 const coursesContext = inject('coursesContext', null)
 
 const status = ref('loading')
@@ -41,15 +39,11 @@ const filtered = computed(() => {
   return list
 })
 
-function isMine(course) {
-  return Number(course.teacher_id) === Number(counter.userData.id)
-}
-
 async function load() {
   status.value = 'loading'
   try {
-    const data = await getCourseHall({ status: 'published' })
-    courses.value = Array.isArray(data?.courses) ? data.courses : []
+    const data = await listFacadeCourses('hall')
+    courses.value = Array.isArray(data?.items) ? data.items : []
     status.value = courses.value.length ? 'ready' : 'empty'
   } catch {
     status.value = 'error'
@@ -127,17 +121,16 @@ onMounted(load)
         >
           <div class="sfx-hall-card-head">
             <h2 class="sfx-t-title3">{{ course.title }}</h2>
-            <SfxBadge v-if="isMine(course)" tone="ink">我建设的</SfxBadge>
+            <SfxBadge v-if="course.access?.joined" tone="ink">已加入</SfxBadge>
           </div>
           <p class="sfx-hall-card-teacher sfx-t-caption">{{ course.teacher_name || '未知教师' }}</p>
           <p class="sfx-hall-card-desc sfx-t-ui sfx-t-secondary">{{ course.description || '该课程暂未填写简介。' }}</p>
           <div class="sfx-hall-card-meta sfx-t-caption">
-            <span>{{ course.total_nodes ?? 0 }} 个知识点</span>
-            <span>{{ course.student_count ?? 0 }} 名学生</span>
-            <span>开课于 {{ formatDate(course.created_at) }}</span>
+            <span>{{ course.access?.join_method === 'invite_code' ? '需邀请码' : '可申请加入' }}</span>
+            <span>最近活动 {{ formatDate(course.last_activity_at) }}</span>
           </div>
           <div class="sfx-hall-card-foot">
-            <SfxBadge tone="amber">需邀请码或申请</SfxBadge>
+            <SfxBadge :tone="course.access?.joined ? 'green' : 'amber'">{{ course.access?.joined ? '已加入' : '查看加入方式' }}</SfxBadge>
             <SfxButton variant="secondary" size="sm" @click.stop="openDetail(course)">查看详情</SfxButton>
           </div>
         </article>

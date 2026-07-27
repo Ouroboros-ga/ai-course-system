@@ -24,6 +24,18 @@ export function listPublishedExperiments(courseId) {
   })
 }
 
+export function listExperimentDefinitions(courseId, params = {}) {
+  return request.get(`/experiments/course/${encodeURIComponent(courseId)}/definitions`, { params, skipErrorToast: true })
+}
+
+export function createExperimentDefinition(courseId, payload) {
+  return request.post(`/experiments/course/${encodeURIComponent(courseId)}/definitions`, payload)
+}
+
+export function publishExperimentDefinition(courseId, experimentId) {
+  return request.post(`/experiments/course/${encodeURIComponent(courseId)}/definitions/${encodeURIComponent(experimentId)}/publish`)
+}
+
 export function createExperimentAttempt(experimentId, courseId, returnAnchor = {}) {
   return request.post(
     `/experiments/${encodeURIComponent(experimentId)}/attempts?course_id=${encodeURIComponent(courseId)}`,
