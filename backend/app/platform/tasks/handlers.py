@@ -179,6 +179,38 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 "graph_candidate_count": graph_candidate_count,
             },
         )
+        # Keep the teacher-facing material list aligned with the durable task
+        # result.  A course import creates this version as PARSING; without
+        # this transition the UI would show a permanently pending material
+        # even though its parse run has completed.
+        try:
+            from sqlmodel import select
+            from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
+
+            version_id = payload.get("material_version_id")
+            material_id = payload.get("material_id")
+            version = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.version_id == version_id,
+                SourceMaterialVersion.course_id == int(course_id),
+            )).first()
+            if version is not None:
+                version.parse_status = MaterialStatus.PARSED
+                version.parse_output_ref = f"parse_run://{run_id}"
+                version.parse_error = ""
+                session.add(version)
+            material = session.exec(select(SourceMaterial).where(
+                SourceMaterial.material_id == material_id,
+                SourceMaterial.course_id == int(course_id),
+            )).first()
+            if material is not None:
+                material.status = MaterialStatus.PARSED
+                session.add(material)
+            session.commit()
+        except Exception:
+            # Task itself is already correctly marked succeeded.  Preserve that
+            # truth and log this non-critical projection repair for retry.
+            session.rollback()
+            logger.exception("Could not update material parse projection for run %s", run_id)
 
 
 async def _invoke_document_parser(payload: dict[str, Any]) -> tuple[int, int, int]:

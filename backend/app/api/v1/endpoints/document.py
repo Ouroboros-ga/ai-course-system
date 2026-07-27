@@ -11,6 +11,7 @@ import tempfile
 import json
 import logging
 import time
+import hashlib
 from pathlib import Path
 from typing import Optional
 from app.core.time_utils import utcnow_aware
@@ -45,6 +46,8 @@ from app.models.course_model import (
     ScriptNodeType,
 )
 from app.models.document_artifact_model import DocumentArtifact
+from app.models.course_build_model import MaterialStatus
+from app.models.document_parse_model import ParsePipeline, StaleStrategy
 from app.models.access_control_model import CourseMembership, CourseRole, MembershipStatus
 from app.models.user_model import ChatHistory
 from app.services.document_service import document_service
@@ -56,6 +59,10 @@ from app.services.course_access_service import (
     require_course_permission,
 )
 from app.services import smart_course_service
+from app.services.course_build_service import source_material_service
+from app.services.document_parse_service import document_parse_service
+from app.services.object_storage import get_object_storage
+from app.services.task_service import TaskCreateRequest, task_service
 from app.platform.adapters.base import classify_exception
 from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.adapters.tts import TTSAdapter
@@ -69,6 +76,8 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
 tts_generation_status = {}
+
+COURSE_IMPORT_MAX_BYTES = 50 * 1024 * 1024
 
 
 def _tts_batch_task_status(
@@ -369,6 +378,186 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
         )
         _update_tts_generation_status(tts_generation_status[status_key], batch_task_result)
 
+@router.post("/course-imports", response_model=UnifiedResponse)
+async def create_course_import(
+    file: UploadFile = File(..., description="课程源文件 (PPT/PPTX/PDF/DOC/DOCX)"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a draft course and persist its parsing task before returning.
+
+    This is the creation path used by the new UI.  It deliberately does not call
+    the legacy synchronous document-to-script flow and never auto-publishes a
+    course.  Once this endpoint returns 202, the source object and TaskRecord
+    are durable: leaving the browser cannot cancel parsing.
+    """
+    user_id = int(current_user["user_id"])
+    original_name = (file.filename or "untitled").strip()
+    suffix = Path(original_name).suffix.lower()
+    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
+    if suffix not in allowed_suffixes:
+        return unified_response(
+            code=400,
+            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 课程文件",
+            data=None,
+        )
+
+    # UploadFile is already spooled by Starlette.  Copy it in bounded chunks so
+    # an omitted/misleading Content-Length cannot allocate an unbounded bytes
+    # object in the application process.
+    total = 0
+    digest = hashlib.sha256()
+    with tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b") as staged:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > COURSE_IMPORT_MAX_BYTES:
+                return unified_response(
+                    code=413,
+                    message="文件大小超过限制（最大 50MB）",
+                    data={"error_code": "PAYLOAD_TOO_LARGE", "max_size_bytes": COURSE_IMPORT_MAX_BYTES},
+                )
+            digest.update(chunk)
+            staged.write(chunk)
+
+        if total == 0:
+            return unified_response(code=400, message="不能创建空课程文件", data=None)
+
+        import_id = uuid.uuid4().hex
+        object_key = f"course-source/u{user_id}/{import_id}/source{suffix}"
+        staged.seek(0)
+        try:
+            get_object_storage().put(
+                object_key,
+                staged,
+                mime_type=file.content_type or "application/octet-stream",
+            )
+        except Exception as exc:
+            logger.exception("Failed to persist course import source")
+            return unified_response(
+                code=503,
+                message="课程源文件暂时无法保存，请稍后重试",
+                data={"error_code": "OBJECT_STORAGE_UNAVAILABLE", "detail": str(exc)[:200]},
+            )
+
+    try:
+        course = Course(
+            fanya_course_id=f"local_{import_id[:8]}",
+            fanya_course_name=original_name,
+            title=Path(original_name).stem or "未命名课程",
+            description=f"从文件 {original_name} 创建的草稿课程",
+            teacher_id=user_id,
+            status=CourseStatus.DRAFT,
+            is_ai_generated=False,
+            source_file_name=original_name,
+            # Existing Course field is retained for legacy compatibility.  New
+            # parsing always reads the SourceMaterialVersion object_key below.
+            source_file_path=object_key,
+            source_mimetype=file.content_type or "application/octet-stream",
+            total_pages=0,
+        )
+        session.add(course)
+        session.flush()
+        establish_course_access_baseline(session, course.id, user_id)
+
+        material, version = source_material_service.create_material(
+            session,
+            course_id=course.id,
+            name=original_name,
+            material_type="slide" if suffix in {".ppt", ".pptx"} else "document",
+            source_kind="upload",
+            file_path=object_key,
+            file_hash=digest.hexdigest(),
+            file_size=total,
+            mime_type=file.content_type or "application/octet-stream",
+            created_by=user_id,
+        )
+        task_view = task_service.create_task(session, TaskCreateRequest(
+            task_type="document_parse",
+            owner_user_id=user_id,
+            course_id=course.id,
+            input_summary=f"解析新建草稿课程 {course.id} 的材料 {original_name}",
+            input_payload={
+                "course_id": course.id,
+                "material_id": material.material_id,
+                "material_version_id": version.version_id,
+                "pipeline": ParsePipeline.FULL.value,
+                "stale_strategy": StaleStrategy.MARK_STALE.value,
+            },
+            resource_links=[
+                {"resource_kind": "course", "resource_id": str(course.id), "relation": "input"},
+                {"resource_kind": "source_material", "resource_id": material.material_id, "relation": "input"},
+                {"resource_kind": "source_material_version", "resource_id": version.version_id, "relation": "input"},
+            ],
+        ))
+        run = document_parse_service.create_run(
+            session,
+            course_id=course.id,
+            material_id=material.material_id,
+            material_version_id=version.version_id,
+            document_id=None,
+            task_id=task_view.task_id,
+            pipeline=ParsePipeline.FULL,
+            stale_strategy=StaleStrategy.MARK_STALE,
+            initiated_by=user_id,
+        )
+        version.parse_task_id = task_view.task_id
+        version.parse_status = MaterialStatus.PARSING
+        session.add(version)
+        session.commit()
+        session.refresh(course)
+        session.refresh(run)
+    except Exception as exc:
+        session.rollback()
+        # The source object has no database reference after a failed transaction.
+        # Best-effort deletion prevents an accidental orphan without hiding the
+        # database failure from the caller.
+        try:
+            get_object_storage().delete(object_key)
+        except Exception:
+            logger.warning("Could not clean orphaned course import object %s", object_key, exc_info=True)
+        logger.exception("Failed to create course import")
+        return unified_response(code=500, message="创建课程导入任务失败", data={"error_code": "COURSE_IMPORT_CREATE_FAILED", "detail": str(exc)[:200]})
+
+    try:
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if local_task_worker.has_handler("document_parse"):
+            local_task_worker.submit(
+                session_factory,
+                task_view.task_id,
+                {
+                    "course_id": course.id,
+                    "run_id": run.run_id,
+                    "material_id": material.material_id,
+                    "material_version_id": version.version_id,
+                    "pipeline": ParsePipeline.FULL.value,
+                    "stale_strategy": StaleStrategy.MARK_STALE.value,
+                },
+            )
+        else:
+            logger.error("document_parse handler unavailable for task %s", task_view.task_id)
+    except Exception:
+        # The task remains durable and retryable through the task center.
+        logger.exception("Could not submit course import task %s", task_view.task_id)
+
+    return unified_response(
+        code=202,
+        message="草稿课程已创建，材料正在后台解析",
+        data={
+            "course_id": course.id,
+            "status": CourseStatus.DRAFT.value,
+            "material_id": material.material_id,
+            "material_version_id": version.version_id,
+            "run_id": run.run_id,
+            "task_id": task_view.task_id,
+            "source_file_name": original_name,
+        },
+    )
+
+
 @router.post("/upload", response_model=UnifiedResponse)
 async def upload_document(
     request: Request,
@@ -590,10 +779,13 @@ async def upload_document(
         course.total_nodes = len(script_result.nodes)
         course.total_duration = script_result.total_duration
         course.is_ai_generated = True
-        course.status = CourseStatus.PUBLISHED
+        # Importing material creates a buildable draft, never a discoverable
+        # course.  Publication remains the explicit teacher action at
+        # POST /document/course/{course_id}/publish.
+        course.status = CourseStatus.DRAFT
         course.updated_at = utcnow_aware()
         session.commit()
-        print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}, status=PUBLISHED")
+        print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}, status=DRAFT")
 
         print(f"[步骤6.5] 启动后台TTS音频生成任务")
         import asyncio

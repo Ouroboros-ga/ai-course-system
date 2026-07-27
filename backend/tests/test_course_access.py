@@ -285,6 +285,28 @@ def test_access_endpoint_rejects_legacy_owner_without_membership(client, session
     assert response.status_code == 403
 
 
+def test_draft_course_cannot_issue_invite_code(client, session):
+    """A course must be explicitly published before it can be discoverable/joinable."""
+    owner = _user(session, "permission_draft_invite_owner", UserRole.TEACHER)
+    course = _course(session, owner.id)
+    establish_course_access_baseline(session, course.id, owner.id)
+    session.commit()
+    token = create_access_token({"sub": str(owner.id), "username": owner.username, "role": "teacher"})
+
+    response = client.post(
+        f"/api/v1/course-access/courses/{course.id}/invite-code",
+        json={"invite_code": "DRAFT-ONLY"},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 409
+    body = response.json()
+    assert body.get("code") == 409
+    assert "发布" in str(body)
+    session.refresh(course)
+    assert course.invite_code is None
+
+
 def test_citation_endpoint_uses_course_membership_not_legacy_owner(client, session):
     owner = _user(session, "permission_citation_owner", UserRole.TEACHER)
     course = _course(session, owner.id)

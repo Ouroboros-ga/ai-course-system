@@ -30,7 +30,12 @@ from sqlmodel import SQLModel
 config = context.config
 
 # 从环境变量读取数据库 URL（覆盖 alembic.ini 中的空值）
-config.set_main_option("sqlalchemy.url", os.environ.get("AI_COURSE_DATABASE_URL", ""))
+config.set_main_option(
+    "sqlalchemy.url",
+    os.environ.get("AI_COURSE_DATABASE_URL")
+    or config.get_main_option("sqlalchemy.url")
+    or database.DATABASE_URL,
+)
 
 # 日志配置
 if config.config_file_name is not None:

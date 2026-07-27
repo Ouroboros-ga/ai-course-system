@@ -178,6 +178,31 @@ async def get_avatar_profile(
     )
 
 
+@avatar_router.get("/avatar-profiles/{avatar_id}/source-media")
+async def list_avatar_source_media(
+    avatar_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """List only the current teacher's source-media metadata for one preset.
+
+    The endpoint intentionally returns no signed read URL and no binary content.
+    Raw portrait/voice assets remain owner-only and are consumed by the preparation
+    worker, never by course students.
+    """
+    user_id = int(current_user["user_id"])
+    items = source_media_service.list_source_media(
+        session,
+        avatar_id=avatar_id,
+        owner_user_id=user_id,
+    )
+    return unified_response(
+        code=200,
+        message="获取数字人原始素材列表成功",
+        data={"items": [_serialize_source_media(item) for item in items], "total": len(items)},
+    )
+
+
 @avatar_router.post("/avatar-profiles/{avatar_id}/source-media")
 async def register_source_media(
     avatar_id: str,

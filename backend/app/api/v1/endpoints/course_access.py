@@ -234,6 +234,11 @@ async def set_invite_code(
     course = session.get(Course, course_id)
     if course is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="课程不存在")
+    if course.status != CourseStatus.PUBLISHED:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="课程仍是草稿或未开放状态；发布后才能设置邀请码",
+        )
 
     code = payload.invite_code or _generate_invite_code()
     # 确保邀请码全局唯一
