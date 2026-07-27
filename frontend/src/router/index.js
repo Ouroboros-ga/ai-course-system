@@ -190,17 +190,15 @@ const router = createRouter({
   }
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach((to) => {
   const counter = useCounterStore()
   counter.checkAuth()
 
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
-    next({ path: '/profile', query: { redirect: to.fullPath } })
-  } else if (to.meta.role && counter.userData.role !== to.meta.role) {
-    next({ path: '/' })
-  } else {
-    next()
+    return { path: '/profile', query: { redirect: to.fullPath } }
   }
+  if (to.meta.role && counter.userData.role !== to.meta.role) return { path: '/' }
+  return true
 })
 
 export default router

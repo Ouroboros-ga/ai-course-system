@@ -26,6 +26,7 @@ const notice = ref('') // 成功反馈（真实服务端返回后显示）
 const actionError = ref('')
 
 const isClosed = computed(() => course.value?.status === 'closed')
+const isPublished = computed(() => course.value?.status === 'published')
 
 async function run(kind, fn, successText) {
   acting.value = kind
@@ -45,6 +46,10 @@ async function run(kind, fn, successText) {
 }
 
 function submitSetCode() {
+  if (!isPublished.value) {
+    actionError.value = '请先在课程建设中完成发布；草稿课程不能设置邀请码。'
+    return
+  }
   const code = newCode.value.trim()
   if (!code) {
     actionError.value = '请输入邀请码。'
@@ -87,6 +92,9 @@ function submitReopen() {
         设置后学生可在「我的课程 → 加入课程」输入邀请码直接加入。当前已生效的邀请码不在接口中返回，
         重新设置即覆盖旧码。
       </p>
+      <p v-if="!isPublished" class="sfx-access-draft-note sfx-t-ui" role="status">
+        当前课程仍是草稿。发布后才能设置邀请码，草稿课程也不会出现在课程大厅。
+      </p>
       <div class="sfx-access-code-row">
         <SfxField label="新邀请码" for-id="sfx-invite-code">
           <input
@@ -94,12 +102,13 @@ function submitReopen() {
             v-model="newCode"
             class="sfx-input sfx-mono"
             placeholder="例如 DS-2026-ALGO"
+            :disabled="!isPublished"
             @keydown.enter="submitSetCode"
           />
         </SfxField>
         <div class="sfx-access-code-actions">
-          <SfxButton variant="primary" size="sm" :loading="acting === 'set'" @click="submitSetCode">设置邀请码</SfxButton>
-          <SfxButton variant="danger" size="sm" :loading="acting === 'clear'" @click="submitClearCode">清除邀请码</SfxButton>
+          <SfxButton variant="primary" size="sm" :disabled="!isPublished" :loading="acting === 'set'" @click="submitSetCode">设置邀请码</SfxButton>
+          <SfxButton variant="danger" size="sm" :disabled="!isPublished" :loading="acting === 'clear'" @click="submitClearCode">清除邀请码</SfxButton>
         </div>
       </div>
     </section>
@@ -175,4 +184,5 @@ function submitReopen() {
   border-radius: var(--radius-sm);
   padding: var(--space-2) var(--space-3);
 }
+.sfx-access-draft-note { color: var(--amber-800); background: var(--amber-100); border-radius: var(--radius-sm); padding: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
 </style>

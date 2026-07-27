@@ -33,9 +33,9 @@ export const featureFlags = Object.freeze({
   // whole /app/** tree. Off => /app/** redirects to the legacy home. Every
   // shadow surface renders only real-endpoint-provable data; capabilities the
   // backend does not offer degrade to explicit empty/disabled states.
-  shadowFrontend: readBooleanFlag(
-    viteEnv.VITE_ENABLE_SHADOW_FRONTEND
-  ),
+  shadowFrontend: viteEnv.VITE_ENABLE_SHADOW_FRONTEND == null
+    ? true
+    : readBooleanFlag(viteEnv.VITE_ENABLE_SHADOW_FRONTEND),
 })
 
 export { readBooleanFlag }

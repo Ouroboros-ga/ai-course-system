@@ -63,6 +63,25 @@ function joinFromHall() {
   coursesContext?.openJoin?.()
 }
 
+/**
+ * CourseCard 门面层的稳定公开标识是 course_id；保留 id 只是为了兼容
+ * 早期本地 fixture。课程大厅绝不能从全局用户角色或 teacher_id 推断访问权。
+ */
+function courseIdOf(course) {
+  return course?.course_id ?? course?.id ?? null
+}
+
+function isJoined(course) {
+  return course?.access?.joined === true
+}
+
+function enterCourse(course) {
+  const courseId = courseIdOf(course)
+  if (!courseId) return
+  closeDetail()
+  router.push(`/app/course/${courseId}/overview`)
+}
+
 function formatDate(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -130,7 +149,12 @@ onMounted(load)
             <span>最近活动 {{ formatDate(course.last_activity_at) }}</span>
           </div>
           <div class="sfx-hall-card-foot">
-            <SfxBadge :tone="course.access?.joined ? 'green' : 'amber'">{{ course.access?.joined ? '已加入' : '查看加入方式' }}</SfxBadge>
+            <SfxButton
+              variant="tertiary"
+              size="sm"
+              :aria-label="`${course.title}：${course.access?.joined ? '查看课程状态' : '查看加入方式'}`"
+              @click.stop="openDetail(course)"
+            >{{ course.access?.joined ? '已加入' : '查看加入方式' }}</SfxButton>
             <SfxButton variant="secondary" size="sm" @click.stop="openDetail(course)">查看详情</SfxButton>
           </div>
         </article>
@@ -164,9 +188,9 @@ onMounted(load)
       <template #footer>
         <SfxButton variant="tertiary" @click="closeDetail">关闭</SfxButton>
         <SfxButton
-          v-if="detailCourse && isMine(detailCourse)"
+          v-if="detailCourse && isJoined(detailCourse)"
           variant="primary"
-          @click="router.push(`/app/course/${detailCourse.id}/overview`)"
+          @click="enterCourse(detailCourse)"
         >进入课程</SfxButton>
         <SfxButton v-else variant="primary" @click="joinFromHall">输入邀请码加入</SfxButton>
       </template>

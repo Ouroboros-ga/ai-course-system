@@ -57,11 +57,11 @@ async function load() {
 }
 
 function continueBuild(course) {
-  router.push(`/app/course/${course.id}/build`)
+  router.push(`/app/course/${course.course_id}/build`)
 }
 
 function openOverview(course) {
-  router.push(`/app/course/${course.id}/overview`)
+  router.push(`/app/course/${course.course_id}/overview`)
 }
 
 function formatDate(iso) {
@@ -120,7 +120,7 @@ onMounted(load)
       <p v-if="!filtered.length" class="sfx-filter-empty sfx-t-ui sfx-t-secondary">没有符合条件的课程</p>
 
       <ul v-else class="sfx-build-list">
-        <li v-for="course in filtered" :key="course.id" class="sfx-build-card">
+        <li v-for="course in filtered" :key="course.course_id" class="sfx-build-card">
           <div class="sfx-build-main">
             <div class="sfx-build-title-row">
               <h2 class="sfx-t-title3">{{ course.title }}</h2>

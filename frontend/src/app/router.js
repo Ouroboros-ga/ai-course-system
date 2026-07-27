@@ -44,6 +44,11 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 name: 'app-courses-hall',
                 component: () => import('./pages/courses/CourseHallPage.vue'),
               },
+              {
+                path: 'create',
+                name: 'app-courses-create',
+                component: () => import('./pages/courses/CreateCoursePage.vue'),
+              },
             ],
           },
 
@@ -132,6 +137,17 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 component: () => import('./pages/tasks/TaskCompletedPage.vue'),
               },
             ],
+          },
+
+          {
+            path: 'admin',
+            name: 'app-admin',
+            component: () => import('./pages/admin/PlatformAdminPage.vue'),
+          },
+          {
+            path: 'account',
+            name: 'app-account',
+            component: () => import('./pages/account/AccountPage.vue'),
           },
 
           // ── 课程空间（page-design §10–§18） ──

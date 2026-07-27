@@ -37,7 +37,9 @@ const MIME = {
   '.woff2': 'font/woff2',
 }
 
-const SHADOW_BUILT = process.env.VITE_ENABLE_SHADOW_FRONTEND === 'true'
+// /app is the active local Demo workspace.  The build defaults to enabled;
+// callers may explicitly test a rollback build with VITE_ENABLE_SHADOW_FRONTEND=false.
+const SHADOW_BUILT = process.env.VITE_ENABLE_SHADOW_FRONTEND !== 'false'
   || process.env.SMOKE_EXPECT_SHADOW === '1'
 
 async function serve() {

@@ -232,6 +232,15 @@ service.interceptors.request.use(
       config.headers['Authorization'] = `Bearer ${token}`
     }
 
+    // Some endpoints accept a signed raw binary body (for example avatar
+    // portrait/voice source uploads).  Serializing a File into the legacy
+    // request signature payload corrupts that body.  Those endpoints already
+    // carry their own short-lived server signature in the URL, so callers can
+    // explicitly opt out while the Authorization header above remains intact.
+    if (config.skipRequestSigning) {
+      return config
+    }
+
     // 添加签名参数
     const params = config.params || {}
     const data = config.data || {}

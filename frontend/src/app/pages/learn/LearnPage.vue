@@ -12,6 +12,7 @@ import CourseAgentPanel from '@/app/components/learn/CourseAgentPanel.vue'
 import CitationStage from '@/app/components/learn/CitationStage.vue'
 import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
+import NoteStage from '@/app/components/learn/NoteStage.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
@@ -36,7 +37,7 @@ const ws = useLearningWorkspace(courseId, {
 
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
-  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE],
+  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
 })
 const learnState = ref(machine.state)
 const branchContext = ref(null)
@@ -63,6 +64,9 @@ function buildBranchContext(triggerAction) {
     sourceNodeId: ws.currentNodeId.value,
     sourceNodeIndex: anchor?.nodeIndex ?? ws.currentNodeIndex.value,
     sourceNodeTitle: ws.currentNode.value?.title ?? '',
+    sourceSectionId: ws.currentNode.value?.section_id ?? null,
+    learningGoal: ws.currentNode.value?.learning_goal ?? '',
+    completionCondition: '完成当前教学行动后返回原学习位置',
     sourcePage: anchor?.currentPage ?? ws.currentPage.value,
     sourceTime: anchor?.currentTime ?? ws.currentTime.value,
     triggerAction,
@@ -112,6 +116,7 @@ async function exitBranch() {
 function handlePlayback(payload) {
   ws.updatePlayback(payload)
 }
+function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
 onMounted(() => {
   ws.load()
@@ -153,7 +158,7 @@ onMounted(() => {
 
         <main class="sfx-learn-stage">
           <LectureStage
-            v-if="learnState !== LEARN_STATES.CITATION && learnState !== LEARN_STATES.VISUALIZE"
+            v-if="![LEARN_STATES.CITATION, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE].includes(learnState)"
             :current-node="ws.currentNode.value"
             :current-video-url="ws.currentVideoUrl.value"
             :current-slide="ws.currentSlide.value"
@@ -178,6 +183,7 @@ onMounted(() => {
             :node-title="ws.currentNode.value?.title || ''"
             @exit="exitBranch"
           />
+          <NoteStage v-else-if="learnState === LEARN_STATES.NOTE" :ws="ws" :anchor="branchContext" @exit="exitBranch" />
         </main>
 
         <CourseAgentPanel
@@ -185,6 +191,7 @@ onMounted(() => {
           :ws="ws"
           :anchor="branchContext"
           @exit="exitBranch"
+          @action="handleAgentAction"
         />
 
         <PracticePanel

@@ -1,6 +1,6 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookMarked, Lightbulb, ListChecks, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
+import { BookMarked, Code2, Lightbulb, ListChecks, LineChart, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
 
 /**
  * 课程智能体面板（page-design §12.5 UNDERSTAND / §13.1 统一人格 / §6.7 SystemResponsePanel）。
@@ -18,7 +18,7 @@ const props = defineProps({
   anchor: { type: Object, default: null },
 })
 
-const emit = defineEmits(['exit'])
+const emit = defineEmits(['exit', 'action'])
 
 const rootRef = ref(null)
 const inputRef = ref(null)
@@ -29,6 +29,7 @@ const quickActions = [
   { id: 'example', label: '举个例子', icon: Lightbulb, prompt: '请举一个具体例子说明：' },
   { id: 'quiz', label: '出一道小题', icon: ListChecks, prompt: '请针对这个知识点出一道小题考我：' },
 ]
+const teachingActions = [{ id: 'visualize', label: '看可视化', icon: LineChart }, { id: 'practice', label: '用代码验证', icon: Code2 }]
 
 function send(question) {
   props.ws.sendQuestion(question)
@@ -160,6 +161,7 @@ function formatTime(seconds) {
             <component :is="action.icon" :size="14" /> {{ action.label }}
           </button>
         </div>
+        <div class="sfx-agent-quick"><button v-for="action in teachingActions" :key="action.id" type="button" class="sfx-agent-quick-btn sfx-t-sm" @click="emit('action', action.id)"><component :is="action.icon" :size="14" /> {{ action.label }}</button></div>
       </div>
 
       <form class="sfx-agent-input" @submit.prevent="handleSubmit">

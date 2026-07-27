@@ -53,7 +53,7 @@ function handleEsc(e) {
 
 function goProfile() {
   closeMenu()
-  router.push('/profile')
+  router.push('/app/account')
 }
 
 function logout() {
@@ -94,7 +94,7 @@ onBeforeUnmount(() => {
         </RouterLink>
         <RouterLink
           v-if="adminItem"
-          :to="adminItem.to"
+          to="/app/admin"
           class="sfx-l1nav-link"
         >
           <component :is="adminItem.icon" :size="17" />

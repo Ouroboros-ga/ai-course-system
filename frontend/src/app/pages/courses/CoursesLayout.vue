@@ -1,8 +1,9 @@
 <script setup>
 import { computed, provide, ref } from 'vue'
-import { useRoute } from 'vue-router'
-import { UserRoundPlus } from 'lucide-vue-next'
+import { useRoute, useRouter } from 'vue-router'
+import { FilePlus2, UserRoundPlus } from 'lucide-vue-next'
 import JoinCourseDrawer from '@/app/components/courses/JoinCourseDrawer.vue'
+import { useCounterStore } from '@/stores/counter.js'
 
 /**
  * 「我的课程」L2 布局（page-design §2.2/§4.3）。
@@ -10,6 +11,8 @@ import JoinCourseDrawer from '@/app/components/courses/JoinCourseDrawer.vue'
  * 加入课程是右侧聚焦抽屉（§9.4），不是独立页面。
  */
 const route = useRoute()
+const router = useRouter()
+const counter = useCounterStore()
 
 const tabs = [
   { key: 'learning', label: '我学习的', to: '/app/courses/learning' },
@@ -20,15 +23,16 @@ const tabs = [
 const activeKey = computed(() => tabs.find((t) => route.path.startsWith(t.to))?.key ?? 'learning')
 
 const joinOpen = ref(false)
+const canImportCourses = computed(() => counter.isTeacher || counter.isAdmin)
 function openJoin() { joinOpen.value = true }
 function closeJoin() { joinOpen.value = false }
+function openCreateCourse() { router.push('/app/courses/create') }
 
 // 加入成功后子页面可监听该信号刷新列表
 const joinRefreshTick = ref(0)
 function handleJoined() {
   joinRefreshTick.value += 1
 }
-
 provide('coursesContext', { openJoin, joinRefreshTick })
 </script>
 
@@ -45,9 +49,14 @@ provide('coursesContext', { openJoin, joinRefreshTick })
             :class="{ 'is-active': activeKey === tab.key }"
           >{{ tab.label }}</RouterLink>
         </nav>
-        <button type="button" class="sfx-l2nav-join" @click="openJoin">
-          <UserRoundPlus :size="16" /> 加入课程
-        </button>
+        <div class="sfx-l2nav-actions">
+          <button v-if="canImportCourses" type="button" class="sfx-l2nav-join" @click="openCreateCourse">
+            <FilePlus2 :size="16" /> 创建课程
+          </button>
+          <button type="button" class="sfx-l2nav-join" @click="openJoin">
+            <UserRoundPlus :size="16" /> 加入课程
+          </button>
+        </div>
       </div>
     </div>
 
@@ -127,7 +136,20 @@ provide('coursesContext', { openJoin, joinRefreshTick })
   font-size: var(--ui-sm-size);
   font-weight: var(--ui-md-weight);
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .sfx-l2nav-join:hover { background: var(--color-brand-hover); }
+
+.sfx-l2nav-actions { display: flex; align-items: center; gap: var(--space-2); }
+
+@media (max-width: 640px) {
+  .sfx-l2nav-inner { justify-content: flex-start; gap: var(--space-2); padding: 0 var(--space-3); overflow-x: auto; scrollbar-width: none; }
+  .sfx-l2nav-inner::-webkit-scrollbar { display: none; }
+  .sfx-l2nav-links, .sfx-l2nav-actions { flex: 0 0 auto; }
+  .sfx-l2nav-link { white-space: nowrap; padding: 0 var(--space-2); font-size: var(--ui-sm-size); }
+  .sfx-l2nav-link.is-active::after { left: var(--space-2); right: var(--space-2); }
+  .sfx-l2nav-join { padding: 0 var(--space-3); }
+}
+
 </style>
