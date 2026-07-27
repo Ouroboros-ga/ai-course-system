@@ -229,6 +229,15 @@ def test_m4b_user_register_login_and_role_identification(client):
 
 
 def test_m4b_teacher_upload_document_fake_success_and_failure(client, session, monkeypatch, test_artifact_dir):
+    """Step 0 (统一课程建设九步实施计划): /document/upload 转发到统一导入链。
+
+    旧的同步链（同步解析 -> CourseScript/ScriptNode -> 自动 TTS -> 自动发布）
+    已下线。本测试断言新语义：
+    - 不允许的扩展名（如 .md）返回 400，不再静默走旧同步链。
+    - 允许的扩展名（.pptx）返回 202 异步草稿：课程状态 DRAFT（非 PUBLISHED）、
+      is_ai_generated=False、不创建 DoclingDocument/CourseScript/ChatHistory，
+      返回 task_id/run_id/material_version_id 供任务中心轮询。
+    """
     teacher = _create_user(session, UserRole.TEACHER, "m4b_upload_teacher")
 
     import app.api.v1.endpoints.document as document_endpoint
@@ -237,51 +246,37 @@ def test_m4b_teacher_upload_document_fake_success_and_failure(client, session, m
     upload_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(document_endpoint, "UPLOAD_DIR", upload_dir)
 
-    async def no_background_audio(course_id: int, script_id: int):
-        return None
-
-    monkeypatch.setattr(document_endpoint, "_background_synthesize_audio", no_background_audio)
-
-    async def fake_process_document(file_path, filename, enable_rag=True, enable_script=True, course_id=None):
-        return _fake_document_result(filename)
-
-    monkeypatch.setattr(document_endpoint.document_service, "process_document", fake_process_document)
-
-    success_response = client.post(
+    # --- 不允许的扩展名：.md 不是课程文件，直接 400 ---
+    rejected_response = client.post(
         "/api/v1/document/upload",
         headers=_headers(teacher),
         files={"file": ("fake_lesson.md", b"# fake lesson", "text/markdown")},
     )
+    assert rejected_response.status_code == 200
+    rejected_payload = rejected_response.json()
+    assert rejected_payload["code"] == 400
+
+    # --- 允许的扩展名：.pptx 走统一导入链，返回 202 异步草稿 ---
+    success_response = client.post(
+        "/api/v1/document/upload",
+        headers=_headers(teacher),
+        files={"file": ("fake_lesson.pptx", b"PK", "application/vnd.openxmlformats-officedocument.presentationml.presentation")},
+    )
     assert success_response.status_code == 200
     success_payload = success_response.json()
-    assert success_payload["code"] == 200
-    course_id = success_payload["data"]["courseId"]
-    chat_id = success_payload["data"]["chatId"]
+    assert success_payload["code"] == 202
+    course_id = success_payload["data"]["course_id"]
+    assert success_payload["data"]["status"] == CourseStatus.DRAFT.value
+    assert success_payload["data"]["task_id"]
+    assert success_payload["data"]["run_id"]
+    assert success_payload["data"]["material_version_id"]
 
     session.expire_all()
     course = session.get(Course, course_id)
-    assert course.status == CourseStatus.PUBLISHED
-    assert course.is_ai_generated is True
-    assert course.total_nodes == 1
-    assert session.get(ChatHistory, chat_id) is not None
-
-    doc = session.exec(select(DoclingDocument).where(DoclingDocument.course_id == course_id)).first()
-    assert doc.status == ParseStatus.COMPLETED
-    assert doc.total_texts == 1
-
-    async def failing_process_document(file_path, filename, enable_rag=True, enable_script=True, course_id=None):
-        raise RuntimeError("fake document parse business failure")
-
-    monkeypatch.setattr(document_endpoint.document_service, "process_document", failing_process_document)
-    failure_response = client.post(
-        "/api/v1/document/upload",
-        headers=_headers(teacher),
-        files={"file": ("bad_lesson.md", b"# bad lesson", "text/markdown")},
-    )
-    assert failure_response.status_code == 200
-    failure_payload = failure_response.json()
-    assert failure_payload["code"] == 500
-    assert "fake document parse business failure" in failure_payload["data"]["error"]
+    assert course.status == CourseStatus.DRAFT
+    assert course.is_ai_generated is False
+    assert session.exec(select(DoclingDocument).where(DoclingDocument.course_id == course_id)).first() is None
+    assert session.exec(select(CourseScript).where(CourseScript.course_id == course_id)).first() is None
 
 
 def test_m4b_teacher_script_mapping_publish_enrollment_and_course_lifecycle(client, session):

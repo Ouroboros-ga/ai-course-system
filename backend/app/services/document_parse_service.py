@@ -325,8 +325,24 @@ class DocumentParseService:
         char_start: int = 0,
         char_end: int = 0,
         order_index: int = 0,
+        material_version_id: Optional[str] = None,
+        page_or_slide: int = 0,
+        source_kind: str = "",
+        confidence: float = 0.0,
+        provider_version: str = "",
+        heading_level: Optional[int] = None,
+        semantic_role: str = "",
+        style_hints: Optional[dict] = None,
+        parent_block_id: Optional[str] = None,
+        reading_order: int = 0,
+        visual_description: Optional[str] = None,
     ) -> DocumentBlock:
-        """写入文档块，并计算内容哈希。"""
+        """写入文档块，带内容哈希。
+
+        Step 3：保留解析溯源字段（material_version_id/page_or_slide/source_kind/
+        confidence/provider_version），使组合式解析（原生文本 + OCR 经 Reconciler
+        合并）可追溯每块文本来源。
+        """
         content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest() if text else ""
         block = DocumentBlock(
             course_id=course_id,
@@ -340,6 +356,17 @@ class DocumentParseService:
             char_end=char_end,
             content_hash=content_hash,
             order_index=order_index,
+            material_version_id=material_version_id,
+            page_or_slide=page_or_slide or page_number,
+            source_kind=source_kind,
+            confidence=confidence,
+            provider_version=provider_version,
+            heading_level=heading_level,
+            semantic_role=semantic_role,
+            style_hints=style_hints,
+            parent_block_id=parent_block_id,
+            reading_order=reading_order,
+            visual_description=visual_description,
         )
         session.add(block)
         session.flush()

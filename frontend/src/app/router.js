@@ -93,6 +93,11 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 component: () => import('./pages/resources/ResourceFilesPage.vue'),
               },
               {
+                path: 'course-materials',
+                name: 'app-resources-course-materials',
+                component: () => import('./pages/resources/CourseMaterialsLibraryPage.vue'),
+              },
+              {
                 path: 'course-links',
                 name: 'app-resources-course-links',
                 component: () => import('./pages/resources/ResourceCourseLinksPage.vue'),

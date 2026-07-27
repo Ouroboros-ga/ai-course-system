@@ -115,6 +115,19 @@ from app.models.course_build_model import (
     CourseRelease,
     CourseReleaseArtifact,
 )
+from app.models.course_outline_model import (
+    CourseOutlineVersion,
+    CourseOutlineNode,
+    CoursePptMapping,
+    OutlineNodeType,
+    OutlineLifecycleStatus,
+    TeachingScriptVersion,
+    TeachingScriptNode,
+    PatchProposal,
+    PatchProposalOperation,
+    PatchProposalStatus,
+    PatchOperation,
+)
 # 阶段4：课程材料解析、Evidence、Citation 与图谱候选
 from app.models.document_parse_model import (
     DocumentParseRun,

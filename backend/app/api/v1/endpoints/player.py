@@ -19,6 +19,7 @@ from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
+from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, TeachingScriptNode, TeachingScriptVersion
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus
 from app.models.mapping_model import KnowledgePageMap
@@ -99,8 +100,94 @@ async def get_player_init_data(
             .order_by(CourseScript.version.desc())
         ).first()
 
-        if not active_script:
-            raise HTTPException(status_code=404, detail="课程暂无可用脚本")
+        published_outline = session.exec(
+            select(CourseOutlineVersion)
+            .where(
+                CourseOutlineVersion.course_id == course_id,
+                CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED,
+            )
+            .order_by(CourseOutlineVersion.version.desc())
+        ).first()
+
+        # New course-build releases use immutable outline/script versions. Keep
+        # the legacy CourseScript path for old courses, but prefer the new
+        # published content when no legacy script exists.
+        published_script = None
+        if published_outline:
+            published_script = session.exec(
+                select(TeachingScriptVersion)
+                .where(
+                    TeachingScriptVersion.course_id == course_id,
+                    TeachingScriptVersion.outline_version_id == published_outline.outline_version_id,
+                    TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED,
+                )
+                .order_by(TeachingScriptVersion.version.desc())
+            ).first()
+
+        if published_script or not active_script:
+            if not published_outline:
+                raise HTTPException(status_code=404, detail="课程暂无可用脚本")
+            if not published_script:
+                raise HTTPException(status_code=404, detail="课程暂无已发布讲稿")
+            outline_nodes = session.exec(
+                select(CourseOutlineNode)
+                .where(CourseOutlineNode.outline_version_id == published_outline.outline_version_id)
+                .order_by(CourseOutlineNode.order_index.asc())
+            ).all()
+            script_nodes = session.exec(
+                select(TeachingScriptNode)
+                .where(TeachingScriptNode.script_version_id == published_script.script_version_id)
+            ).all()
+            script_by_outline = {item.outline_node_id: item for item in script_nodes}
+            nodes_data = []
+            for index, outline_node in enumerate(outline_nodes):
+                script_node = script_by_outline.get(outline_node.outline_node_id)
+                nodes_data.append({
+                    # The legacy progress endpoint uses integer node ids. Keep
+                    # a stable ordinal for progress compatibility and expose
+                    # the immutable outline id separately for citations.
+                    "id": index + 1,
+                    "outline_node_id": outline_node.outline_node_id,
+                    "node_index": index,
+                    "node_type": outline_node.node_type.value,
+                    "title": outline_node.title,
+                    "content": (script_node.content if script_node else "")[:200],
+                    "chapter_id": outline_node.parent_node_id,
+                    "timestamp_start": 0,
+                    "timestamp_end": 0,
+                    "duration": 0,
+                    "page_start": int((outline_node.page_range or "1").split("-")[0]) if (outline_node.page_range or "1").split("-")[0].isdigit() else 1,
+                    "page_end": int((outline_node.page_range or "1").split("-")[-1]) if (outline_node.page_range or "1").split("-")[-1].isdigit() else 1,
+                    "is_key_point": outline_node.node_type.value == "knowledge_point",
+                    "video_url": None,
+                    "status": "published",
+                })
+            progress = session.exec(select(LearningProgress).where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.course_id == course_id,
+            )).first()
+            saved_progress = None
+            if progress:
+                saved_progress = {
+                    "current_node_id": progress.current_node_id,
+                    "current_node_index": progress.current_node_index,
+                    "current_timestamp": progress.current_timestamp,
+                    "current_page": progress.current_page,
+                    "completion_rate": progress.completion_rate,
+                    "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
+                }
+            return PlayerInitData(
+                course_id=course_id,
+                course_title=course.title,
+                script_id=0,
+                total_duration=0,
+                total_nodes=len(nodes_data),
+                nodes=nodes_data,
+                video_base_url="/api/v1/video/stream/",
+                ppt_pages=None,
+                slide_images=None,
+                saved_progress=saved_progress,
+            )
 
         # 3. 查询所有脚本节点（按node_index排序）
         nodes = session.exec(

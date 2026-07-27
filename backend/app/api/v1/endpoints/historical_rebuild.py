@@ -1,9 +1,15 @@
 """阶段10 历史课程补建清单编排 API 路由。
 
+.. deprecated:: 2026-07-27 (统一课程建设九步实施计划 Step 0)
+   旧课程自动迁移/自动补建已**关闭**。本模块端点保留为**只读遗留参考**，
+   仅展示历史补建清单与状态，不再触发任何自动迁移动作。旧课程保持只读；
+   想使用新解析链与新建设功能，请通过 ``POST /document/course-imports``
+   重新上传创建新草稿课程。见 docs/phase1/decisions/2026-07-27-统一课程建设九步实施计划.md。
+
 路由前缀：
-- /api/v1/historical-rebuild/checklist              全局补建清单（按阶段聚合）
-- /api/v1/historical-rebuild/summary                全局进度汇总
-- /api/v1/historical-rebuild/course/{course_id}     课程级补建状态详情
+- /api/v1/historical-rebuild/checklist              全局补建清单（按阶段聚合，只读）
+- /api/v1/historical-rebuild/summary                全局进度汇总（只读）
+- /api/v1/historical-rebuild/course/{course_id}     课程级补建状态详情（只读）
 
 权限模型：
 - platform.course.audit：平台审计员可查看全部课程

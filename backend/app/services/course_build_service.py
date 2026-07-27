@@ -37,6 +37,15 @@ from app.models.course_build_model import (
     SourceMaterial,
     SourceMaterialVersion,
 )
+from app.models.course_outline_model import (
+    CourseOutlineNode,
+    CourseOutlineVersion,
+    OutlineLifecycleStatus,
+    OutlineNodeType,
+    TeachingScriptNode,
+    TeachingScriptVersion,
+    CoursePptMapping,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -672,6 +681,37 @@ class QualityGateService:
                     "message": f"步骤 {req_step.value} 处于失败状态",
                 })
                 blocker_count += 1
+
+        outline = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.course_id == course_id,
+            CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+        ).order_by(CourseOutlineVersion.version.desc())).first()
+        if outline:
+            nodes = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_version_id == outline.outline_version_id)).all()
+            knowledge = [n for n in nodes if n.node_type == OutlineNodeType.KNOWLEDGE_POINT]
+            sections = [n for n in nodes if n.node_type == OutlineNodeType.SECTION]
+            if not sections:
+                checks.append({"check_id": "structure.section_exists", "name": "课程至少有一节", "severity": GateSeverity.ERROR.value, "passed": False, "message": "课程结构缺少 section 节点"})
+                error_count += 1
+            if any(n.parent_node_id is None for n in knowledge):
+                checks.append({"check_id": "structure.knowledge_parent", "name": "知识点归属节", "severity": GateSeverity.ERROR.value, "passed": False, "message": "存在未归属到节的知识点"})
+                error_count += 1
+            script_version = session.exec(select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == course_id,
+                TeachingScriptVersion.outline_version_id == outline.outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(TeachingScriptVersion.version.desc())).first()
+            script_ids = {item.outline_node_id for item in session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script_version.script_version_id)).all()} if script_version else set()
+            missing_scripts = [n.outline_node_id for n in knowledge if n.outline_node_id not in script_ids]
+            if missing_scripts:
+                checks.append({"check_id": "scripts.knowledge_coverage", "name": "知识点讲稿覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_scripts)} 个知识点缺少讲稿"})
+                error_count += 1
+            if materials and any(m.material_type == "slide" for m in materials):
+                mapped = {item.outline_node_id for item in session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id, CoursePptMapping.status == "draft")).all()}
+                missing_mapping = [n.outline_node_id for n in knowledge if n.outline_node_id not in mapped]
+                if missing_mapping:
+                    checks.append({"check_id": "mapping.knowledge_coverage", "name": "知识点 PPT 映射覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_mapping)} 个知识点缺少 PPT 映射"})
+                    error_count += 1
 
         passed = blocker_count == 0 and error_count == 0
         run = CourseQualityGateRun(

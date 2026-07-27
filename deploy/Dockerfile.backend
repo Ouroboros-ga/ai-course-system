@@ -1,2 +1,37 @@
-# Python 3.11 后端镜像构建文件
-FROM python:3.11-slim
+# Python 3.12 后端镜像构建文件。
+# 统一课程建设九步实施计划 Step 2：主栈 deploy/docker-compose.yml 的 backend 服务用此构建。
+# 不安装 paddleocr/paddlepaddle（OCR 由独立 paddleocr 服务承载）。
+FROM python:3.12-slim
+
+# 系统依赖：LibreOffice（Office 文档转 PDF）、Tesseract（CPU OCR 降级）、
+# libpq（PostgreSQL 客户端）、构建工具链。
+# 注意：镜像体积较大；生产可拆分为多阶段构建。Demo 阶段优先可用。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 gcc libpq-dev \
+    libreoffice-core libreoffice-writer libreoffice-impress \
+    tesseract-ocr tesseract-ocr-chi-sim \
+    poppler-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# 安装依赖（先复制锁文件以利用层缓存）
+COPY pyproject.toml uv.lock* requirements*.txt /app/
+# 优先用 uv（若锁文件存在），否则 pip install
+RUN if [ -f uv.lock ]; then \
+        pip install --no-cache-dir uv && uv sync --frozen --no-dev; \
+    elif [ -f requirements.txt ]; then \
+        pip install --no-cache-dir -r requirements.txt; \
+    else \
+        pip install --no-cache-dir fastapi uvicorn sqlmodel pydantic-settings httpx bcrypt python-jose python-multipart python-dotenv langgraph Pillow pymupdf pdfplumber python-docx python-pptx psycopg2-binary; \
+    fi
+
+# 复制后端源码
+COPY . /app
+
+ENV PYTHONPATH=/app
+EXPOSE 8000
+
+# 主后端通过 alembic upgrade head 建表（不在启动时 create_all）。
+# Demo：启动时先 migrate 再起 uvicorn。
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]

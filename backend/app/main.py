@@ -48,6 +48,21 @@ def run_startup_side_effects():
     except Exception:
         logger.exception("Failed to register task worker handlers; tasks will stay pending")
 
+    # 启动任务扫尾：把上一进程遗留的 pending/running 任务标为 interrupted。
+    # LocalTaskWorker 用 asyncio.create_task 执行，进程重启后这些任务既不会
+    # 成功也不会失败，会永远停在 running。此处把它们转为 interrupted，
+    # 使其从"处理中"视图中移除并给出"重新解析"操作；不自动恢复。
+    # Step 0 of 统一课程建设九步实施计划。
+    try:
+        from app.models.database import session_factory
+        from app.services.task_service import task_service
+        with session_factory() as session:
+            report = task_service.sweep_stale_running(session, grace_seconds=0)
+        logger.info("Startup task sweep: %d stale task(s) marked interrupted",
+                    report.get("swept", 0))
+    except Exception:
+        logger.exception("Startup task sweep failed; stale running tasks may persist")
+
     return dep_report
 
 
@@ -90,6 +105,7 @@ from app.api.v1.endpoints import (
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_build,       # 阶段3 课程建设工作流
+    course_build_editor, # Step 5-8 课程树/讲稿/提案/发布
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
@@ -280,6 +296,11 @@ app.include_router(
     course_build.course_build_router,
     prefix="/api/v1/course-build",
     tags=["阶段3 课程建设工作流"],
+)
+app.include_router(
+    course_build_editor.router,
+    prefix="/api/v1/course-editor",
+    tags=["课程树、讲稿与备课提案"],
 )
 
 # 阶段4：课程材料解析、Evidence、Citation 与图谱治理

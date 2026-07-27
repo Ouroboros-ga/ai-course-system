@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -145,15 +146,21 @@ class TaskViewModel:
 # ---------------------------------------------------------------------------
 
 
+logger = logging.getLogger(__name__)
+
+
 ALLOWED_TRANSITIONS: dict[str, set[str]] = {
-    "pending": {"running", "cancelled", "failed"},
-    "running": {"succeeded", "failed", "cancelled", "partial_success"},
+    "pending": {"running", "cancelled", "failed", "interrupted"},
+    "running": {"succeeded", "failed", "cancelled", "partial_success", "interrupted"},
     "partial_success": {"failed", "cancelled"},
     "failed": {"pending", "running"},  # retry → pending（由 worker 重新触发）
     "cancelled": {"pending", "running"},  # retry → pending（由 worker 重新触发）
+    "interrupted": {"pending", "running"},  # 后端重启扫尾后，retry → pending 重新触发解析
     "succeeded": set(),  # terminal
 }
-TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partial_success"}
+# interrupted 也是终态：后端重启遗留的 running 任务不再算"处理中"，
+# 但与 succeeded/failed 不同，它不是业务结论——前端给出"重新解析"操作。
+TERMINAL_STATUSES = {"succeeded", "failed", "cancelled", "partial_success", "interrupted"}
 
 
 def _assert_transition(current: str, target: str) -> None:
@@ -505,6 +512,117 @@ class TaskService:
         session.commit()
         session.refresh(record)
         return TaskViewModel.from_record(record)
+
+    def mark_interrupted(
+        self,
+        session: Session,
+        task_id: str,
+        *,
+        reason: str = "",
+    ) -> TaskViewModel:
+        """把遗留的 pending/running 任务标为 interrupted（非正常中断）。
+
+        用于后端重启时的启动扫尾：``LocalTaskWorker`` 用 ``asyncio.create_task``
+        执行任务，进程重启后这些任务既不会成功也不会失败，会永远停在 running。
+        本方法把它们转为 interrupted，使其从"处理中"视图中移除，但不是业务终态成功--
+        ``retry()`` 可把 interrupted 回到 pending 重新触发解析。
+
+        本方法绕过 ``_assert_transition`` 的 owner 校验（启动时无 operator），
+        但仍走状态机断言：只有 pending/running 可被标 interrupted。
+        """
+        record = self._require_task(session, task_id)
+        _assert_transition(record.status, "interrupted")
+        now = utcnow_aware()
+        record.status = "interrupted"
+        record.finished_at = now
+        record.updated_at = now
+        record.error_code = "INTERRUPTED"
+        record.error_message = (reason or "解析因服务重启中断，请重新解析")[:500]
+        record.retryable = True
+        session.add(record)
+        session.add(TaskEventRecord(
+            task_id=task_id,
+            event_type="interrupted",
+            stage=record.stage,
+            progress=record.progress,
+            message=record.error_message[:200],
+            error_code="INTERRUPTED",
+            created_at=now,
+        ))
+        session.commit()
+        session.refresh(record)
+        return TaskViewModel.from_record(record)
+
+    def sweep_stale_running(
+        self,
+        session: Session,
+        *,
+        grace_seconds: int = 0,
+    ) -> dict[str, Any]:
+        """启动扫尾：把超过宽限期仍为 pending/running 的任务标为 interrupted。
+
+        Demo 阶段允许后端重启中断本地解析任务，但任务中心不能永久显示"解析中"。
+        本方法在启动时调用一次，不自动恢复（不重新触发 worker），只标记可重试。
+
+        ``grace_seconds``：宽限期。默认 0 表示启动时立即清扫所有 pending/running
+        （这些任务在上一进程内已随进程死亡）。若需给热重载留缓冲，可设为正数。
+
+        返回 ``{"swept": N, "task_ids": [...]}`` 供日志记录。同步把对应
+        ``DocumentParseRun`` 也标记为 interrupted（若存在）。
+        """
+        cutoff = utcnow_aware() - timedelta(seconds=grace_seconds)
+        stale = session.exec(
+            select(TaskRecord).where(
+                TaskRecord.status.in_(["pending", "running"]),
+                TaskRecord.updated_at <= cutoff,
+            )
+        ).all()
+        swept_ids: list[str] = []
+        for record in stale:
+            try:
+                # 复用 mark_interrupted 的状态机与事件写入
+                self.mark_interrupted(
+                    session,
+                    record.task_id,
+                    reason="解析因服务重启中断，请重新解析",
+                )
+                swept_ids.append(record.task_id)
+                # 同步对应 DocumentParseRun（若有）
+                self._mark_parse_run_interrupted(session, record.task_id)
+            except Exception:
+                logger.exception("Failed to sweep stale task %s", record.task_id)
+        logger.info(
+            "startup task sweep: marked %d stale task(s) interrupted: %s",
+            len(swept_ids), swept_ids,
+        )
+        return {"swept": len(swept_ids), "task_ids": swept_ids}
+
+    def _mark_parse_run_interrupted(self, session: Session, task_id: str) -> None:
+        """把与 task_id 关联的 DocumentParseRun.status 同步标记为 interrupted。
+
+        DocumentParseRun 是解析运行的权威记录，必须与 TaskRecord 状态一致，
+        否则前端/解析历史会与任务中心脱节。失败不影响主扫尾流程。
+        """
+        try:
+            from app.models.document_parse_model import DocumentParseRun
+            run = session.exec(
+                select(DocumentParseRun).where(DocumentParseRun.task_id == task_id)
+            ).first()
+            if run is None:
+                return
+            # 直接写字段，不经过 ParseRunService 的状态机（启动扫尾无业务上下文）。
+            # DocumentParseRun.status 是字符串列，"interrupted" 是合法值。
+            run.status = "interrupted"
+            run.error_code = "INTERRUPTED"
+            run.error_message = "解析因服务重启中断，请重新解析"
+            run.finished_at = utcnow_aware()
+            session.add(run)
+            session.commit()
+        except Exception:
+            logger.exception(
+                "Failed to sync DocumentParseRun for interrupted task %s", task_id
+            )
+            session.rollback()
 
     def retry(
         self,

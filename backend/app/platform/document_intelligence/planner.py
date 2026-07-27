@@ -217,14 +217,29 @@ class ParsePlanner:
     ) -> None:
         """Plan for DOCX documents.
 
-        P1-3: No real DOCX parser registered yet (DoclingFakeProvider
-        removed). If no provider is available, no steps are added — the
-        pipeline will fail with PARSE_FAILED rather than fabricate output.
-        To enable DOCX, register a real DOCX provider (e.g. python-docx
-        wrapper) in ``document_parse_pipeline._get_parser_registry``.
+        Step 3: python-docx is the PRIMARY parser (paragraphs, headings,
+        tables). DOCX has no native pagination; page coordinates + OCR of
+        embedded images come from converting DOCX to PDF via
+        LibreOfficeHeadlessConverter and running the PDF + PaddleOCR chain.
+        OCR enrichment is added when the probe reports image-only content.
         """
-        # Intentionally empty: no real DOCX provider available.
-        return
+        if "python-docx" in self._available_providers:
+            steps.append(ParseStep(
+                provider_name="python-docx",
+                priority=ParsePriority.PRIMARY,
+                timeout_ms=120000,
+            ))
+
+        if probe.image_only_pages and (
+            "tesseract-ocr" in self._available_providers or "paddleocr" in self._available_providers
+        ):
+            steps.append(ParseStep(
+                provider_name="paddleocr",
+                priority=ParsePriority.ENRICHMENT,
+                timeout_ms=300000,
+                enrichment_for="python-docx",
+                config={"pages": list(probe.image_only_pages)},
+            ))
 
     def _plan_image(
         self,

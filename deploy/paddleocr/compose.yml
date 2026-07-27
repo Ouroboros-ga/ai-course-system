@@ -1,0 +1,46 @@
+# 独立 PaddleOCR 服务 Compose。
+# 仅用于 OCR；不与主栈耦合。dev-stack 脚本和主 compose 会引用它。
+# 固定资源、超时与并发，避免拖垮宿主。
+
+services:
+  paddleocr:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: smartcarb/paddleocr:2.7.3-cpu
+    container_name: smartcarb-paddleocr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      PADDLEOCR_HOST: "0.0.0.0"
+      PADDLEOCR_PORT: "8090"
+      PADDLEOCR_WORKERS: "1"
+      PADDLEOCR_MAX_PAGES: "50"
+      PADDLEOCR_REQUEST_TIMEOUT_S: "300"
+      PADDLEOCR_HOME: /paddleocr_models
+      OMP_NUM_THREADS: "4"
+    volumes:
+      - paddleocr_models:/paddleocr_models
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=4); sys.exit(0 if r.status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - paddleocr_net
+
+volumes:
+  paddleocr_models:
+
+networks:
+  paddleocr_net:
+    driver: bridge

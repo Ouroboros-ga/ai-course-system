@@ -1,0 +1,35 @@
+{
+  "comment": "PaddleOCR 服务所用模型清单与 SHA256（审计用）。models.lock 固定模型版本，避免运行时拉到不同模型导致结果漂移。",
+  "paddleocr_version": "2.7.3",
+  "paddlepaddle_version": "2.6.2",
+  "lang": "ch",
+  "use_angle_cls": true,
+  "models": [
+    {
+      "name": "ch_PP-OCRv4_det",
+      "purpose": "文本检测",
+      "source": "PaddleOCR 内置下载（首次运行缓存到 PADDLEOCR_HOME）",
+      "sha256": "to-be-pinned-after-first-download"
+    },
+    {
+      "name": "ch_PP-OCRv4_rec",
+      "purpose": "文本识别",
+      "source": "PaddleOCR 内置下载",
+      "sha256": "to-be-pinned-after-first-download"
+    },
+    {
+      "name": "ch_ppocr_mobile_v2.0_cls",
+      "purpose": "方向分类",
+      "source": "PaddleOCR 内置下载",
+      "sha256": "to-be-pinned-after-first-download"
+    }
+  ],
+  "runtime": {
+    "device": "cpu",
+    "threads": 4,
+    "max_pages_per_request": 50,
+    "request_timeout_s": 300,
+    "max_concurrent_requests": 4
+  },
+  "note": "首次构建镜像时 PREWARM_MODELS=true 会触发模型下载并固化进镜像层；生产应改用挂载卷（offline_models=true）并在此填入实际 SHA256，确保可复现。"
+}
