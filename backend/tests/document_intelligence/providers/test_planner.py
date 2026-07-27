@@ -65,7 +65,7 @@ class TestParsePlanner:
     def planner_with_providers(self) -> ParsePlanner:
         planner = ParsePlanner()
         planner.set_available_providers([
-            "native-pptx", "docling-fake", "ocr-fake",
+            "native-pptx", "pdf-plumber", "tesseract-ocr",
         ])
         return planner
 
@@ -99,7 +99,7 @@ class TestParsePlanner:
         plan = planner_with_providers.plan(probe, artifact_id="art_123")
         assert plan.enable_ocr_enrichment is True
         enrich = plan.enrichment_steps
-        assert any(s.provider_name == "ocr-fake" for s in enrich)
+        assert any(s.provider_name == "tesseract-ocr" for s in enrich)
 
     def test_plan_pdf_with_providers(self, planner_with_providers: ParsePlanner) -> None:
         probe = ProbeResult(
@@ -135,7 +135,7 @@ class TestParsePlanner:
         plan = planner_with_providers.plan(probe, artifact_id="art_img")
         assert len(plan.steps) >= 1
         assert plan.primary_step is not None
-        assert plan.primary_step.provider_name == "ocr-fake"
+        assert plan.primary_step.provider_name == "tesseract-ocr"
 
     def test_plan_corrupt_returns_empty_steps(
         self, planner_with_providers: ParsePlanner,
@@ -174,15 +174,20 @@ class TestParsePlanner:
         plan = planner_empty.plan(probe, artifact_id="art_123")
         assert len(plan.steps) == 0
 
-    def test_plan_docx(self, planner_with_providers: ParsePlanner) -> None:
+    def test_plan_docx_no_real_provider(self, planner_with_providers: ParsePlanner) -> None:
+        """P1-3: No real DOCX provider registered — planner must NOT fabricate steps.
+
+        Honest failure: returns empty steps so the pipeline can raise
+        PARSE_FAILED instead of running a fake parser.
+        """
         probe = ProbeResult(
             detected_format=DetectedFormat.DOCX,
             page_or_slide_count=3,
             has_text_content=True,
         )
         plan = planner_with_providers.plan(probe, artifact_id="art_docx")
-        assert len(plan.steps) >= 1
-        assert plan.primary_step is not None
+        assert len(plan.steps) == 0
+        assert plan.primary_step is None
 
     def test_plan_sets_quality_gate(self, planner_with_providers: ParsePlanner) -> None:
         probe = ProbeResult(
@@ -197,5 +202,5 @@ class TestParsePlanner:
 
     def test_set_available_providers_replaces(self) -> None:
         planner = ParsePlanner(available_providers=["native-pptx"])
-        planner.set_available_providers(["ocr-fake"])
-        assert planner._available_providers == {"ocr-fake"}
+        planner.set_available_providers(["tesseract-ocr"])
+        assert planner._available_providers == {"tesseract-ocr"}

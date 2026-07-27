@@ -48,6 +48,10 @@ from app.models.question_bank_model import (
     QuestionBankItem,
     QuestionStatus,
 )
+from app.services.question_generation_llm import (
+    GENERATION_POLICY_VERSION as LLM_GEN_POLICY_VERSION,
+    generate_question_sync,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -712,25 +716,51 @@ class PracticeRecommendationService:
             session.add(item)
             items_created += 1
 
-        # 题库不足时生成草稿（不直接发布）
+        # 题库不足时通过 LLM 生成个性化草稿（不直接发布）
         if items_created < item_count and allow_generation:
             remaining = item_count - items_created
             for i in range(remaining):
+                # P1-5: 调用 LLM 生成个性化题目；LLM 不可用时返回带明确标记的占位草稿
+                gen = generate_question_sync(
+                    session,
+                    course_id=course_id,
+                    node_id=node_id,
+                    purpose=purpose,
+                    difficulty="medium",
+                    cognitive_snapshot=cognitive_snapshot,
+                    six_dimensions=six_dimensions,
+                    reason_codes=reason_codes,
+                )
+                # 合并 LLM 返回的 reason_codes 与运行级 reason_codes
+                merged_reasons = list(reason_codes)
+                for rc in gen.get("reason_codes", []):
+                    if rc not in merged_reasons:
+                        merged_reasons.append(rc)
+                # 草稿置信度取 LLM 返回值与运行级置信度的较低者，
+                # 避免在数据不足时仍宣称高置信度
+                draft_confidence = min(
+                    float(gen.get("confidence", 0.0) or 0.0),
+                    confidence if confidence > 0 else 1.0,
+                )
                 draft = question_generation_draft_service.create_draft(
                     session,
                     course_id=course_id,
                     node_id=node_id,
                     question_type="short_answer",
-                    question_text=f"[AI 生成草稿 #{i+1}] 针对 {purpose} 的题目",
-                    answer="[草稿答案待教师完善]",
-                    difficulty="medium",
+                    question_text=gen["question_text"],
+                    answer=gen["answer"],
+                    options=gen.get("options") or [],
+                    difficulty=gen.get("difficulty") or "medium",
+                    category=gen.get("category") or "",
                     generation_purpose=purpose,
                     cognitive_snapshot=cognitive_snapshot,
                     six_dimensions=six_dimensions,
-                    reason_codes=reason_codes,
+                    reason_codes=merged_reasons,
                     evidence_refs=evidence_refs,
-                    confidence=confidence,
+                    confidence=draft_confidence,
                     generated_by=student_id,  # 由学生触发生成，但草稿不直接对学生可见
+                    policy_version=PRACTICE_POLICY_VERSION,
+                    model_version=LLM_GEN_POLICY_VERSION,
                 )
                 item = QuestionRecommendationItem(
                     run_id=run.run_id,
@@ -740,9 +770,9 @@ class PracticeRecommendationService:
                     question_source=QuestionSource.GENERATED_DRAFT,
                     generation_draft_id=draft.draft_id,
                     node_id=node_id,
-                    reason_codes=reason_codes,
+                    reason_codes=merged_reasons,
                     evidence_refs=evidence_refs,
-                    confidence=confidence,
+                    confidence=draft_confidence,
                     order_index=items_created + i,
                 )
                 session.add(item)

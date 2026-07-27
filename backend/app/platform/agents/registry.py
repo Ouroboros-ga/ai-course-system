@@ -17,12 +17,14 @@ from typing import Any, Optional
 from .composition import build_course_sidecar_runtime, build_kg_mest_shadow_sidecar_runtime
 from .contracts import (
     CognitionPort,
+    CodingDiagnosisPort,
     ConversationContextPort,
     ExperimentPort,
     LearningEventPort,
     QuestionBankPort,
     RecommendationPort,
     SandboxPort,
+    StudentHistoryPort,
     TeacherSafetyValvePort,
     TeachingLLMPort,
     ToolGovernancePort,
@@ -63,6 +65,8 @@ class TeachingAgentRuntimeRegistry:
         teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
         experiment: Optional[ExperimentPort] = None,
         visualization: Optional[VisualizationPort] = None,
+        coding_diagnosis: Optional[CodingDiagnosisPort] = None,
+        student_history: Optional[StudentHistoryPort] = None,
     ) -> None:
         self._demo_service = demo_service
         self._llm = llm
@@ -78,6 +82,8 @@ class TeachingAgentRuntimeRegistry:
         self._teacher_safety_valve = teacher_safety_valve
         self._experiment = experiment
         self._visualization = visualization
+        self._coding_diagnosis = coding_diagnosis
+        self._student_history = student_history
         self._cache: dict[tuple[str, str], TeachingAgentRuntime] = {}
 
     def get_or_create(
@@ -108,6 +114,7 @@ class TeachingAgentRuntimeRegistry:
                         conversation_context=self._conversation_context,
                         tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                         experiment=self._experiment, visualization=self._visualization,
+                        coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                     )
                 except (TypeError, ValueError) as error:
                     # A stale/malformed optional report must not deny normal Q&A.
@@ -121,6 +128,7 @@ class TeachingAgentRuntimeRegistry:
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, visualization=self._visualization,
+                    coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                 )
             elif report is None:
                 runtime = build_course_sidecar_runtime(
@@ -130,6 +138,7 @@ class TeachingAgentRuntimeRegistry:
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, visualization=self._visualization,
+                    coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                 )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
             logger.warning(

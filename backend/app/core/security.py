@@ -216,6 +216,36 @@ student_only = role_required([UserRole.STUDENT, UserRole.ADMIN])
 
 
 # --------------------------
+# 5. 服务间鉴权（Quiz/Judge0/CodingAgent 等内部服务调用）
+# --------------------------
+async def require_internal_service(request: Request) -> dict:
+    """【服务间鉴权依赖】校验 X-Internal-Service-Token 头
+
+    用于服务端评分结果写正式证据等敏感内部操作。
+    必须配置 settings.INTERNAL_SERVICE_TOKEN；未配置时拒绝所有内部服务调用。
+    """
+    if not settings.INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="内部服务鉴权未配置（INTERNAL_SERVICE_TOKEN 为空）",
+        )
+    token = request.headers.get("X-Internal-Service-Token", "")
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少 X-Internal-Service-Token 头",
+        )
+    # 使用 compare_digest 防止时序攻击
+    import hmac as _hmac
+    if not _hmac.compare_digest(token, settings.INTERNAL_SERVICE_TOKEN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="内部服务令牌无效",
+        )
+    return {"service_authorized": True}
+
+
+# --------------------------
 # 便捷身份提取依赖（消除样板代码）
 # --------------------------
 async def _get_user_id(current_user: dict = Depends(get_current_user)) -> int:

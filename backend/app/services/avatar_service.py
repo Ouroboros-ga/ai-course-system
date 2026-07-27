@@ -294,20 +294,33 @@ class AvatarSourceMediaService:
         session.add(source)
         session.flush()
 
-        # 签发上传意图：限大小、限 MIME、短时
-        from app.core.config import settings
+        # 签发上传意图：限大小、限 MIME、短时、由对象存储 Provider 真实签名
         max_bytes = self._max_bytes_for(media_type)
         expires_in = 900  # 15 分钟
+        upload_path = (
+            f"/api/v1/avatar-profiles/{avatar_id}/source-media/"
+            f"{source.source_media_id}/upload"
+        )
+        storage = get_object_storage()
+        storage_intent = storage.sign_upload_intent(
+            object_key,
+            expires_in=expires_in,
+            max_size_bytes=max_bytes,
+            upload_path=upload_path,
+        )
         intent = {
             "object_key": object_key,
             "source_media_id": source.source_media_id,
-            "upload_url": "/api/v1/media/avatar-sources/upload",
-            "method": "PUT",
+            "upload_url": storage_intent["upload_url"],
+            "method": storage_intent["method"],
             "headers": {"Content-Type": client_mime_type},
-            "expires_at": int(datetime.now(timezone.utc).timestamp()) + expires_in,
+            "expires_at": storage_intent["expires_at"],
             "max_size_bytes": max_bytes,
             "allowed_mime_types": sorted(self._allowed_mimes_for(media_type)),
             "signature_subject": f"avatar_source:{source.source_media_id}",
+            # 暴露 exp/sig 便于客户端在 PUT 请求时携带 query 参数
+            "exp": storage_intent.get("exp"),
+            "sig": storage_intent.get("sig"),
         }
         # 记录到 profile（保持 profile 状态可观察）
         if profile.status == AvatarProfileStatus.DRAFT:
@@ -423,6 +436,76 @@ class AvatarSourceMediaService:
         source.verified_at = utcnow_naive()
         source.validated_at = source.verified_at
         source.validation_notes = "; ".join(notes_parts) if notes_parts else "ok"
+        session.add(source)
+        session.flush()
+        return source
+
+    def store_uploaded_content(
+        self,
+        session: Session,
+        *,
+        avatar_id: str,
+        owner_user_id: int,
+        source_media_id: str,
+        content: bytes,
+        content_mime_type: str,
+        content_length: int,
+    ) -> AvatarSourceMedia:
+        """P0-2 第 1.5 步：接收上传二进制内容并写入对象存储。
+
+        - 校验 source_media 归属与状态机（仅 PENDING_UPLOAD/UPLOADED 允许覆盖）
+        - 校验 content_length <= max_size_bytes
+        - 校验 content_mime_type 在允许列表内
+        - 调用 storage.put 写入对象存储
+        - 更新 upload_status = UPLOADED（不直接 VERIFIED，需 confirm_uploaded 完成）
+        """
+        source = self._get_owned_source(
+            session,
+            avatar_id=avatar_id,
+            owner_user_id=owner_user_id,
+            source_media_id=source_media_id,
+        )
+        # 状态机校验：仅 pending_upload/uploed 允许接收内容
+        if source.upload_status not in (
+            AvatarSourceMediaStatus.PENDING_UPLOAD,
+            AvatarSourceMediaStatus.UPLOADED,
+        ):
+            reject_state_conflict(
+                f"素材当前状态 {source.upload_status.value} 不允许接收上传",
+                details={
+                    "source_media_id": source_media_id,
+                    "current_status": source.upload_status.value,
+                },
+            )
+        # 大小校验
+        max_bytes = self._max_bytes_for(source.media_type)
+        if content_length <= 0:
+            reject_validation_failed("上传内容为空")
+        if content_length > max_bytes:
+            reject_validation_failed(
+                f"上传内容超过最大限制 {max_bytes} 字节",
+                details={"content_length": content_length, "max_size_bytes": max_bytes},
+            )
+        if len(content) != content_length:
+            reject_validation_failed(
+                "Content-Length 与实际内容长度不一致",
+                details={"declared": content_length, "actual": len(content)},
+            )
+        # MIME 校验
+        allowed = self._allowed_mimes_for(source.media_type)
+        if content_mime_type not in allowed:
+            reject_validation_failed(
+                f"MIME 类型 {content_mime_type} 不在允许列表内",
+                details={"allowed": sorted(allowed)},
+            )
+        # 写入对象存储
+        storage = get_object_storage()
+        storage.put(source.object_key, content, mime_type=content_mime_type)
+        # 更新状态（uploaded_at 不单独记录，validated_at 在 confirm_uploaded 时写入）
+        source.upload_status = AvatarSourceMediaStatus.UPLOADED
+        source.size_bytes = content_length
+        source.server_size_bytes = content_length
+        source.mime_type = content_mime_type
         session.add(source)
         session.flush()
         return source

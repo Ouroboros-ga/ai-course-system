@@ -8,7 +8,7 @@
   教师选择课程+课件范围
   -> OCR 解析教师显式选中的课件
   -> EduAgent 基于题目、答案、OCR页块、课程图谱生成映射
-  -> 默认 status=auto_accepted，可信可发布
+  -> P1-4: 默认 status=pending_review，教师须复核后才能发布
   -> 教师可编辑、锁定、拒绝或重新生成
   -> locked 映射 EduAgent 重跑不可覆盖（教师安全阀门）
 
@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from app.core.time_utils import utcnow_naive
 from typing import Optional, Any
 
@@ -38,14 +37,14 @@ from app.models.question_bank_model import (
 from app.models.course_model import Course, DoclingDocument, DoclingText
 from app.models.document_artifact_model import DocumentArtifact
 from app.services.course_access_service import require_course_permission
+from app.services.question_mapping_eduagent import (
+    MAPPING_POLICY_VERSION,
+    build_evidence_payload,
+    eduagent_select_best_evidence,
+    mapping_status_for_candidate,
+)
 
 router = APIRouter(tags=["Phase B 题源映射"])
-MAPPING_POLICY_VERSION = "question-mapping/token-overlap-v1"
-
-
-def _normalized_chars(value: str) -> set[str]:
-    """Small deterministic baseline used only to rank explicitly selected pages."""
-    return set(re.sub(r"[^\w\u4e00-\u9fff]", "", value.casefold()))
 
 
 def _load_selected_texts(
@@ -96,48 +95,22 @@ def _best_evidence(
     question: QuestionBankItem,
     selected_texts: dict[str, tuple[DoclingDocument, list[DoclingText]]],
 ) -> Optional[dict[str, Any]]:
-    query_chars = _normalized_chars(f"{question.question_text} {question.answer}")
-    if not query_chars:
-        return None
-    ranked: list[tuple[float, str, DoclingDocument, DoclingText]] = []
-    for document_id, (document, texts) in selected_texts.items():
-        for text in texts:
-            text_chars = _normalized_chars(text.text)
-            if not text_chars:
-                continue
-            score = len(query_chars & text_chars) / len(query_chars)
-            if score > 0:
-                ranked.append((score, document_id, document, text))
-    if not ranked:
-        return None
-    ranked.sort(key=lambda row: (-row[0], row[3].page_no, row[3].sort_order, row[3].id or 0))
-    best_score, best_document_id, best_document, best_text = ranked[0]
-    if best_score < 0.30:
-        return None
-    same_page = [
-        row for row in ranked
-        if row[1] == best_document_id and row[3].page_no == best_text.page_no
-    ][:3]
-    evidence = [
-        {
-            "text_id": row[3].id,
-            "page": row[3].page_no,
-            "text": row[3].text[:1000],
-            "overlap_score": round(row[0], 6),
-        }
-        for row in same_page
-    ]
-    return {
-        "document_id": best_document_id,
-        "document": best_document,
-        "page": best_text.page_no,
-        "score": best_score,
-        "evidence": evidence,
-        "evidence_refs": [
-            f"docling:{best_document.id}:text:{row[3].id}"
-            for row in same_page
-        ],
-    }
+    """P1-4: EduAgent-driven evidence selection (sync wrapper for back-compat).
+
+    Delegates to ``eduagent_select_best_evidence`` which:
+    1. Pre-ranks candidates by character overlap (fast deterministic signal).
+    2. Calls the LLM to pick the best evidence among the top-K candidates.
+    3. Returns a low-confidence fallback when the LLM is unavailable, so
+       the teacher still sees a candidate but must review it.
+
+    This sync wrapper is retained for callers that are not inside an
+    event loop. The FastAPI ``generate_mappings`` endpoint awaits the
+    async coroutine directly.
+    """
+    import asyncio
+    return asyncio.get_event_loop().run_until_complete(
+        eduagent_select_best_evidence(question, selected_texts)
+    )
 
 
 # ==================== 请求模型 ====================
@@ -316,11 +289,12 @@ async def generate_mappings(
             skipped_locked += 1
             continue
 
-        match = _best_evidence(q, selected_texts)
+        # P1-4: 用 EduAgent (LLM + OCR) 选择最佳证据，替代确定性字符重叠匹配
+        match = await eduagent_select_best_evidence(q, selected_texts)
         if match is None:
             errors.append({
                 "question_id": q.id,
-                "reason": "所选课件中没有达到最低阈值的可追溯文本证据",
+                "reason": "所选课件中没有达到最低阈值的可追溯文本证据，或 EduAgent 判定无可信候选",
             })
             continue
 
@@ -343,7 +317,12 @@ async def generate_mappings(
             existing.is_latest = False
             session.add(existing)
 
-        confidence = min(0.99, 0.5 + 0.5 * match["score"])
+        # P1-4: 用 EduAgent 返回的置信度（已含 LLM 判断或 fallback 0.3）
+        confidence = max(0.0, min(0.99, match["confidence"]))
+        evidence, evidence_refs = build_evidence_payload(match)
+        mapping_reason = match.get("mapping_reason") or (
+            "EduAgent+OCR 自动生成，待教师复核"
+        )
         mapping = QuestionSourceMapping(
             question_id=q.id,
             course_id=course_id,
@@ -351,19 +330,17 @@ async def generate_mappings(
             slide_file_name=artifact.file_name,
             page_start=match["page"],
             page_end=match["page"],
-            ocr_evidence=match["evidence"],
-            evidence_refs=match["evidence_refs"],
+            ocr_evidence=evidence,
+            evidence_refs=evidence_refs,
             knowledge_node_ids=q.knowledge_node_ids or [],
-            mapping_reason=(
-                "教师显式选择课件范围内，按题干/答案与解析文本的"
-                f"确定性字符重叠度匹配；score={match['score']:.6f}"
-            ),
+            mapping_reason=mapping_reason,
             confidence=confidence,
             model_version=MAPPING_POLICY_VERSION,
             ocr_version=match["document"].version,
             graph_version="",
             content_hash=content_hash,
-            status=MappingStatus.AUTO_ACCEPTED,
+            # P1-4: 新候选默认 pending_review，教师须复核后才能发布
+            status=mapping_status_for_candidate(),
             version=1 if not existing else existing.version + 1,
             prev_version_id=existing.id if existing else None,
             is_latest=True,
@@ -376,13 +353,14 @@ async def generate_mappings(
 
     return unified_response(
         code=200,
-        message=f"生成 {generated} 条映射候选",
+        message=f"生成 {generated} 条映射候选（待教师复核）",
         data={
             "generated": generated,
             "skipped_locked": skipped_locked,
             "total_questions": len(questions),
             "errors": errors,
             "policy_version": MAPPING_POLICY_VERSION,
+            "default_status": mapping_status_for_candidate().value,
         },
     )
 
@@ -498,11 +476,15 @@ async def update_mapping_status(
         raise HTTPException(status_code=400, detail="只能更新最新版本")
 
     new_status = payload.status
+    # P1-4: 允许教师显式批准 pending_review -> auto_accepted（不再作为新候选默认值，
+    # 但仍可作为教师显式批准后的状态）。其余状态转换保持原安全阀门约束。
     allowed_statuses = {
+        MappingStatus.AUTO_ACCEPTED,
         MappingStatus.TEACHER_EDITED,
         MappingStatus.REJECTED,
         MappingStatus.LOCKED,
         MappingStatus.STALE,
+        MappingStatus.PENDING_REVIEW,
     }
     if new_status not in allowed_statuses:
         raise HTTPException(status_code=422, detail="不允许手工切换到该映射状态")

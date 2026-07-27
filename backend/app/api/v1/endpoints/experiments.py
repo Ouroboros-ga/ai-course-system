@@ -37,6 +37,8 @@ from app.services.experiment_service import (
     run_service,
     version_service,
 )
+from app.services.coding_eduagent_service import coding_eduagent, serialize_diagnosis
+from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 
 
 experiment_router = APIRouter()
@@ -899,3 +901,65 @@ async def review_hint(
         message="提示已审核",
         data=_serialize_hint(hint),
     )
+
+
+# ---------------------------------------------------------------------------
+# CodingEduAgent 诊断
+# ---------------------------------------------------------------------------
+
+
+@experiment_router.post("/runs/{run_id}/diagnosis")
+async def create_run_diagnosis(
+    run_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """根据服务器已保存的 ExperimentRun 生成受限 CodingDiagnosis。
+
+    学生只能诊断自己的运行；教师可通过课程权限查看结果，但不能把
+    客户端提交的文本伪装成诊断或正式评分。
+    """
+    context = require_course_permission(session, current_user, course_id, "experiment.run")
+    user_id = int(current_user["user_id"])
+    run = run_service.get_run(
+        session, course_id=course_id, run_id=run_id,
+        student_id=user_id if context.role is not None and context.role.value == "student" else None,
+    )
+    if str(getattr(run.outcome, "value", run.outcome)) in {"pending", "processing"}:
+        return unified_response(
+            code=409,
+            message="运行尚未完成，暂不能生成诊断",
+            data={"run_id": run_id, "status": "pending"},
+        )
+    diagnosis = coding_eduagent.diagnose_run(
+        session, course_id=course_id, student_id=run.student_id, run_id=run_id,
+    )
+    session.commit()
+    return unified_response(code=201, message="代码诊断已生成", data=serialize_diagnosis(diagnosis))
+
+
+@experiment_router.get("/runs/{run_id}/diagnosis")
+async def get_run_diagnosis(
+    run_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """读取受限 CodingDiagnosis；不返回源码或完整沙箱日志。"""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    user_id = int(current_user["user_id"])
+    run = run_service.get_run(
+        session, course_id=course_id, run_id=run_id,
+        student_id=user_id if context.role is not None and context.role.value == "student" else None,
+    )
+    diagnosis = session.exec(
+        select(CodingDiagnosisRecord).where(
+            CodingDiagnosisRecord.run_id == run_id,
+            CodingDiagnosisRecord.course_id == course_id,
+            CodingDiagnosisRecord.student_id == run.student_id,
+        )
+    ).first()
+    if diagnosis is None:
+        return unified_response(code=200, message="尚未生成代码诊断", data={"run_id": run_id, "diagnosis": None})
+    return unified_response(code=200, message="获取代码诊断成功", data=serialize_diagnosis(diagnosis))

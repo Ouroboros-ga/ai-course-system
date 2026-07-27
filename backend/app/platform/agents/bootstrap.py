@@ -15,6 +15,7 @@ from app.models.database import engine
 from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
+from app.platform.agents.tools.coding import make_session_scoped_coding_ports
 from app.platform.agents.tools.conversation_context import make_session_scoped_conversation_context_port
 from app.platform.agents.tools.experiment import make_session_scoped_experiment_port
 from app.platform.agents.tools.integration import Judge0SandboxPort
@@ -52,6 +53,7 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             environment=settings.DEMO_RETRIEVAL_ENVIRONMENT,
         )
         session_factory = lambda: Session(engine)
+        coding_diagnosis, student_history = make_session_scoped_coding_ports(session_factory)
         registry = TeachingAgentRuntimeRegistry(
             demo_service=service,
             llm=OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model),
@@ -59,7 +61,8 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             # P1-7: 注入真实 Judge0 沙箱 Port；构造时执行 health_check 并缓存结果。
             # 健康检查失败时 Port 仍接受调用，但每次返回 sandbox_unavailable，
             # 保证 Agent/Q&A 主流程在 Judge0 不可用时不中断（降级语义）。
-            sandbox=Judge0SandboxPort(),
+            # 修复：注入 session_factory，使 Port 能按 run_id 从 ExperimentRun 读取已验证结果。
+            sandbox=Judge0SandboxPort(session_factory=session_factory),
             learning_events=make_session_scoped_learning_event_port(session_factory),
             conversation_context=make_session_scoped_conversation_context_port(session_factory),
             store=KGMestShadowReportStore(),
@@ -71,6 +74,8 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             teacher_safety_valve=make_session_scoped_teacher_safety_valve_port(session_factory),
             experiment=make_session_scoped_experiment_port(session_factory),
             visualization=make_session_scoped_visualization_port(session_factory),
+            coding_diagnosis=coding_diagnosis,
+            student_history=student_history,
         )
         app.state.teaching_agent_runtime_registry = registry
         logger.info("TeachingAgent registry injected; KG-MEST reports and course sidecars are optional enhancements.")

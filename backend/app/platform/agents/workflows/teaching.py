@@ -327,6 +327,59 @@ def build_teaching_workflow(tools: TeachingTools):
             })
             return payload
 
+    async def load_coding_diagnosis(state: TeachingState) -> dict[str, Any]:
+        """Load a server-owned, read-only CodingEduAgent diagnosis.
+
+        This is teaching context only. It must never be converted into a
+        LearningEvidence record or modify the six-dimensional cognition state.
+        """
+        if tools.coding_diagnosis is None or not state.get("current_code_submission_id"):
+            return {"trace": _trace(state, "load_coding_diagnosis", skipped=True)}
+        allowed, gov_meta = await _governance_check(tools, state, "coding_diagnosis")
+        if not allowed:
+            return {
+                "coding_diagnosis": None,
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_coding_diagnosis", governance="disabled"),
+            }
+        try:
+            diagnosis = await tools.coding_diagnosis.get_latest_diagnosis(
+                student_id=state["student_id"], course_id=state["course_id"],
+                run_id=state.get("current_code_submission_id"),
+            )
+            return {
+                "coding_diagnosis": dict(diagnosis) if diagnosis else None,
+                "trace": _trace(state, "load_coding_diagnosis", available=diagnosis is not None),
+            }
+        except Exception as error:  # noqa: BLE001 -- diagnosis is optional context
+            payload = _degrade(state, "coding_diagnosis", "CODING_DIAGNOSIS_UNAVAILABLE")
+            payload.update({
+                "coding_diagnosis": None,
+                "trace": _trace(state, "load_coding_diagnosis", error=type(error).__name__),
+            })
+            return payload
+
+    async def load_learning_history(state: TeachingState) -> dict[str, Any]:
+        """Provide bounded assessment/cognition history without chat or source code."""
+        if tools.student_history is None:
+            return {"trace": _trace(state, "load_learning_history", skipped=True)}
+        try:
+            history = await tools.student_history.get_history(
+                student_id=state["student_id"], course_id=state["course_id"],
+                concept_id=state.get("current_concept_id"),
+            )
+            return {
+                "learning_history": dict(history),
+                "trace": _trace(state, "load_learning_history", status=history.get("status", "unknown")),
+            }
+        except Exception as error:  # noqa: BLE001 -- history must not block Q&A
+            payload = _degrade(state, "student_history", "STUDENT_HISTORY_UNAVAILABLE")
+            payload.update({
+                "learning_history": {"status": "unknown", "reason": "history_unavailable"},
+                "trace": _trace(state, "load_learning_history", error=type(error).__name__),
+            })
+            return payload
+
     async def load_experiment_context(state: TeachingState) -> dict[str, Any]:
         """阶段9新增：加载课程实验上下文（按 course_id 隔离，仅 published）。"""
         if tools.experiment is None:
@@ -397,7 +450,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     async def generate_response(state: TeachingState) -> dict[str, Any]:
         try:
-            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results", "session_context", "experiment_items", "visualization_plans")})
+            generated = await tools.llm.generate_teaching_response(context={key: state.get(key) for key in ("course_id", "user_message", "intent", "current_concept_id", "student_concept_state", "graph_context", "retrieved_evidence", "teaching_action", "teaching_action_reason", "selected_resource_ids", "degraded_services", "cognitive_state", "cognitive_recommendation", "question_bank_items", "web_research_results", "session_context", "learning_history", "coding_diagnosis", "experiment_items", "visualization_plans")})
             return {"final_answer": str(generated.get("answer", "")), "citations": [dict(item) for item in generated.get("citations", [])], "trace": _trace(state, "generate_response", answer_present=bool(generated.get("answer")))}
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "generate_response", error=type(error).__name__)}
@@ -460,6 +513,8 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("retrieve_evidence", retrieve_evidence)
     graph.add_node("research_web", research_web)
     graph.add_node("load_sandbox_context", load_sandbox_context)
+    graph.add_node("load_coding_diagnosis", load_coding_diagnosis)
+    graph.add_node("load_learning_history", load_learning_history)
     # 阶段9新增：实验与可视化节点
     graph.add_node("load_experiment_context", load_experiment_context)
     graph.add_node("load_visualization_context", load_visualization_context)
@@ -480,7 +535,9 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_edge("retrieve_evidence", "research_web")
     graph.add_edge("research_web", "load_sandbox_context")
     # 阶段9：在 sandbox 之后插入 experiment/visualization 节点
-    graph.add_edge("load_sandbox_context", "load_experiment_context")
+    graph.add_edge("load_sandbox_context", "load_coding_diagnosis")
+    graph.add_edge("load_coding_diagnosis", "load_learning_history")
+    graph.add_edge("load_learning_history", "load_experiment_context")
     graph.add_edge("load_experiment_context", "load_visualization_context")
     graph.add_edge("load_visualization_context", "decide_teaching_action")
     graph.add_edge("decide_teaching_action", "generate_response")

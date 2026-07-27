@@ -108,10 +108,20 @@ MIGRATION_LEDGER: dict[str, dict] = {
             "Re-running upgrade recreates the table and reconcile() repopulates refs from provider."
         ),
     },
+    "0006": {
+        "batch_id": "question-mapping-pending-review-v1",
+        "name": "Question source mapping pending-review status",
+        "rollback_notes": "Downgrade normalizes pending_review rows to auto_accepted; PostgreSQL enum value remains.",
+    },
+    "0007": {
+        "batch_id": "coding-diagnosis-v1",
+        "name": "CodingEduAgent bounded diagnosis records",
+        "rollback_notes": "Drops coding diagnosis records only; ExperimentRun and formal LearningEvidence remain intact.",
+    },
 }
 
 BASELINE_REVISION = "0001"
-HEAD_REVISION = "0005"
+HEAD_REVISION = "0007"
 
 
 def _build_connect_args(url: str) -> dict:

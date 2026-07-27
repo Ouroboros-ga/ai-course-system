@@ -23,21 +23,24 @@ facade:
 from __future__ import annotations
 
 import hashlib
+import hmac
+import secrets
 import uuid
 from app.core.time_utils import utcnow_naive
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.core.exceptions import (
     reject_resource_not_found,
     reject_state_conflict,
     reject_validation_failed,
     unified_response,
 )
-from app.core.security import get_current_user
+from app.core.security import get_current_user, require_internal_service
 from app.models.cognitive_state_model import LearningEvidenceRecord
 from app.models.database import get_session
 from app.models.practice_recommendation_model import (
@@ -168,7 +171,13 @@ class PolicyCreateRequest(BaseModel):
 
 
 class LearningActionCompleteRequest(BaseModel):
-    """学习动作完成"""
+    """学习动作完成
+
+    P0-1 安全修复：学生端不再采信 is_scored/score 写入正式证据。
+    - is_scored/score 字段保留仅为兼容旧客户端，但不再影响正式证据写入
+    - 正式证据由服务端评分器（Quiz/Judge0/CodingAgent）通过
+      /learning-actions/{action_id}/attach-evidence 端点写入
+    """
 
     node_id: Optional[int] = Field(None, description="关联知识点")
     action_type: str = Field(
@@ -179,15 +188,97 @@ class LearningActionCompleteRequest(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
     is_scored: bool = Field(
         default=False,
-        description="是否评分型动作；非评分动作不得抬高表现分",
+        description="[已废弃] 学生端提交的 is_scored 不再写入正式证据；"
+        "正式证据由服务端评分器通过 attach-evidence 端点写入",
     )
-    score: Optional[float] = Field(None, ge=0.0, le=1.0, description="评分型动作的分数")
+    score: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="[已废弃] 学生端提交的 score 不再写入正式证据",
+    )
     recommendation_id: Optional[str] = Field(None, description="来源推荐ID")
+
+
+class AttachEvidenceRequest(BaseModel):
+    """服务端评分器写入正式证据请求
+
+    由 Quiz/Judge0/CodingAgent 等可信内部服务调用，需携带
+    X-Internal-Service-Token 头与有效签名 action_id。
+    """
+
+    student_id: int = Field(..., description="学习者用户ID")
+    action_type: str = Field(..., min_length=1, max_length=100, description="动作类型")
+    node_id: Optional[int] = Field(None, description="关联知识点")
+    score: float = Field(..., ge=0.0, le=1.0, description="服务端评分结果（0-1）")
+    evidence_source: str = Field(
+        ..., min_length=1, max_length=50,
+        description="评分来源标识：quiz/judge0/codingagent/teacher_manual",
+    )
+    evidence_type: str = Field(
+        default="learning_action_scored",
+        description="证据类型，默认 learning_action_scored",
+    )
+    label: str = Field(default="", max_length=200)
+    description: str = Field(default="", max_length=1000)
+    confidence: Optional[float] = Field(
+        None, ge=0.0, le=1.0,
+        description="置信度；不传则使用评分策略的 confidence_threshold",
+    )
+    purpose: Optional[str] = Field(
+        None, description="评分目的；不传则按 action_type 推断",
+    )
+    policy_version: Optional[str] = Field(None, description="评分策略版本；不传则取最新")
+    recommendation_id: Optional[str] = Field(None, description="来源推荐ID")
+    idempotency_key: Optional[str] = Field(
+        None, description="幂等键；相同 action_id + idempotency_key 重复调用幂等",
+    )
 
 
 # ---------------------------------------------------------------------------
 # 序列化 helpers
 # ---------------------------------------------------------------------------
+
+
+# P0-1: 签名 action_id 工具
+# 学生端 /complete-learning-action 返回签名后的 action_id；内部评分器调用
+# /attach-evidence 时必须携带该 action_id，端点验签后才允许写正式证据。
+# 签名密钥复用 settings.JWT_SECRET_KEY，绑定 course_id/student_id/action_type
+# 防止跨课程或跨学生伪造。
+
+
+def _sign_action_id(course_id: int, student_id: int, action_type: str, raw: str) -> str:
+    """对 action_id 的 raw 部分生成 HMAC-SHA256 签名（取前 16 字符）"""
+    secret = settings.JWT_SECRET_KEY.encode("utf-8")
+    payload = f"la|{course_id}|{student_id}|{action_type}|{raw}".encode("utf-8")
+    return hmac.new(secret, payload, hashlib.sha256).hexdigest()[:16]
+
+
+def _issue_signed_action_id(course_id: int, student_id: int, action_type: str) -> str:
+    """生成带签名的 action_id，形如 'la_{uuid_hex}.{sig}'"""
+    raw = uuid.uuid4().hex
+    sig = _sign_action_id(course_id, student_id, action_type, raw)
+    return f"la_{raw}.{sig}"
+
+
+def _verify_signed_action_id(
+    action_id: str, course_id: int, student_id: int, action_type: str,
+) -> bool:
+    """验证 action_id 签名是否有效且绑定到指定的 course/student/action_type"""
+    if not action_id or "." not in action_id:
+        return False
+    raw_part, _, sig = action_id.partition(".")
+    if not raw_part.startswith("la_"):
+        return False
+    raw = raw_part[3:]
+    if not raw or not sig:
+        return False
+    expected = _sign_action_id(course_id, student_id, action_type, raw)
+    return secrets.compare_digest(expected, sig)
+
+
+def _parse_allowed_evidence_sources() -> set[str]:
+    """解析 settings.FORMAL_EVIDENCE_SOURCES 白名单"""
+    raw = settings.FORMAL_EVIDENCE_SOURCES or ""
+    return {s.strip() for s in raw.split(",") if s.strip()}
 
 
 def _serialize_run(run: QuestionRecommendationRun) -> dict[str, Any]:
@@ -902,12 +993,14 @@ async def complete_learning_action(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """记录学习动作完成，返回锚点和是否形成正式证据。
+    """记录学习动作完成，返回签名 action_id。
 
-    关键约束：
-    - 非评分动作不得抬高表现分（writes_formal_evidence=False）
-    - 评分型动作需通过评分策略校验后才写入正式 LearningEvidence
-    - 链接到推荐运行/动作上下文（LearningEvidenceLink）便于追溯
+    P0-1 安全修复：
+    - 学生端不再采信 is_scored/score 写入正式证据
+    - 本端点只记录学习动作并返回签名 action_id
+    - 正式证据由服务端评分器（Quiz/Judge0/CodingAgent）通过
+      /learning-actions/{action_id}/attach-evidence 端点写入
+    - action_id 绑定 course_id/student_id/action_type，防止跨课程或跨学生伪造
     """
     context = require_course_permission(session, current_user, course_id, "course.question.ask")
     user_id = int(current_user["user_id"])
@@ -917,90 +1010,8 @@ async def complete_learning_action(
             details={"analytics_eligible": False},
         )
 
-    # 获取对应目的的评分策略
-    policy: Optional[AssessmentPolicy] = None
-    try:
-        # action_type 映射到 purpose
-        purpose_map = {
-            "quiz": AssessmentPurpose.DIAGNOSE,
-            "remediation": AssessmentPurpose.REMEDIATION,
-            "hint_withdrawal": AssessmentPurpose.HINT_WITHDRAWAL,
-            "post_explanation": AssessmentPurpose.POST_EXPLANATION,
-            "summative": AssessmentPurpose.SUMMATIVE,
-        }
-        purpose = purpose_map.get(payload.action_type, AssessmentPurpose.DIAGNOSE)
-        policy = assessment_policy_service.get_policy(
-            session, course_id=course_id, purpose=purpose,
-        )
-    except Exception:
-        # 策略缺失不阻断动作记录，但不写入正式证据
-        policy = None
-
-    writes_formal_evidence = (
-        payload.is_scored
-        and payload.score is not None
-        and (policy is None or policy.writes_formal_evidence)
-    )
-
-    # 生成动作记录ID
-    action_id = "la_" + uuid.uuid4().hex
-    now = utcnow_naive()
-
-    # 若写入正式证据，需链接到 LearningEvidenceRecord
-    # 此处不直接修改认知状态（认知状态由 cognitive_service 异步聚合）
-    evidence_id: Optional[str] = None
-    if writes_formal_evidence and policy is not None:
-        # 评分型动作通过 LearningEvidenceRecord 写入
-        evidence_id = "ev_" + uuid.uuid4().hex
-        record = LearningEvidenceRecord(
-            evidence_id=evidence_id,
-            student_id=user_id,
-            course_id=course_id,
-            node_id=payload.node_id,
-            evidence_type="learning_action_scored",
-            value=payload.score,
-            confidence=policy.confidence_threshold,
-            label=payload.action_type,
-            description=f"学习动作评分：{payload.action_type}",
-            source="learning_action",
-            timestamp=now.isoformat(),
-            event_refs=[action_id],
-            policy_version=policy.policy_version,
-            created_at=now,
-        )
-        session.add(record)
-        session.flush()
-
-        # 链接到动作上下文
-        learning_evidence_link_service.link(
-            session,
-            course_id=course_id,
-            student_id=user_id,
-            evidence_id=evidence_id,
-            context_type=EvidenceLinkContext.LEARNING_ACTION,
-            context_id=action_id,
-            context_snapshot={
-                "action_type": payload.action_type,
-                "score": payload.score,
-                "duration_seconds": payload.duration_seconds,
-                "purpose": policy.purpose.value,
-                "policy_version": policy.policy_version,
-            },
-        )
-        # 链接到推荐运行（如有）
-        if payload.recommendation_id:
-            learning_evidence_link_service.link(
-                session,
-                course_id=course_id,
-                student_id=user_id,
-                evidence_id=evidence_id,
-                context_type=EvidenceLinkContext.RECOMMENDATION,
-                context_id=payload.recommendation_id,
-                context_snapshot={
-                    "action_type": payload.action_type,
-                    "score": payload.score,
-                },
-            )
+    # 生成签名 action_id（绑定 course_id/student_id/action_type）
+    action_id = _issue_signed_action_id(course_id, user_id, payload.action_type)
 
     session.commit()
 
@@ -1012,13 +1023,175 @@ async def complete_learning_action(
             "course_id": course_id,
             "node_id": payload.node_id,
             "action_type": payload.action_type,
-            "is_scored": payload.is_scored,
-            "score": payload.score,
-            "writes_formal_evidence": writes_formal_evidence,
-            "evidence_id": evidence_id,
+            # 学生端始终不写入正式证据；正式证据由服务端评分器通过 attach-evidence 写入
+            "is_scored": False,
+            "score": None,
+            "writes_formal_evidence": False,
+            "evidence_id": None,
             "return_anchor": {
                 "node_id": payload.node_id,
                 "action_type": payload.action_type,
             },
+        },
+    )
+
+
+@facade_learning_actions_router.post(
+    "/course/{course_id}/learning-actions/{action_id}/attach-evidence",
+)
+async def attach_learning_action_evidence(
+    course_id: int,
+    action_id: str,
+    payload: AttachEvidenceRequest,
+    session: Session = Depends(get_session),
+    service_auth: dict = Depends(require_internal_service),
+):
+    """服务端评分器写入正式学习证据（Quiz/Judge0/CodingAgent）。
+
+    P0-1 安全修复核心端点：
+    - 必须携带 X-Internal-Service-Token 头（require_internal_service 依赖）
+    - 必须携带有效签名 action_id（由 /complete-learning-action 签发）
+    - action_id 签名绑定 course_id/student_id/action_type，防止伪造
+    - evidence_source 必须在 settings.FORMAL_EVIDENCE_SOURCES 白名单内
+    - 评分策略需 writes_formal_evidence=True 才写入
+    - 幂等：相同 action_id 的重复调用返回已存在的 evidence_id
+    """
+    # 1. 验证 action_id 签名（绑定 course_id/student_id/action_type）
+    if not _verify_signed_action_id(
+        action_id, course_id, payload.student_id, payload.action_type,
+    ):
+        reject_validation_failed(
+            "action_id 签名无效或不匹配；无法写入正式证据",
+            details={"action_id": action_id},
+        )
+
+    # 2. 校验 evidence_source 白名单
+    allowed_sources = _parse_allowed_evidence_sources()
+    if payload.evidence_source not in allowed_sources:
+        reject_validation_failed(
+            f"evidence_source 不在白名单内: {payload.evidence_source}",
+            details={"allowed": sorted(allowed_sources)},
+        )
+
+    # 3. 幂等检查：相同 action_id 已有证据则直接返回
+    #     注意：event_refs 是 JSON 列，SQLite 原生不支持 JSON 包含查询，
+    #     这里先按 course_id + student_id 过滤再在 Python 中检查 event_refs。
+    candidate_records = session.exec(
+        select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.course_id == course_id,
+            LearningEvidenceRecord.student_id == payload.student_id,
+        )
+    ).all()
+    existing = next(
+        (r for r in candidate_records if action_id in (r.event_refs or [])),
+        None,
+    )
+    if existing is not None:
+        return unified_response(
+            code=200,
+            message="学习动作证据已存在（幂等）",
+            data={
+                "action_id": action_id,
+                "evidence_id": existing.evidence_id,
+                "writes_formal_evidence": True,
+                "idempotent": True,
+            },
+        )
+
+    # 4. 解析评分策略
+    purpose_map = {
+        "quiz": AssessmentPurpose.DIAGNOSE,
+        "remediation": AssessmentPurpose.REMEDIATION,
+        "hint_withdrawal": AssessmentPurpose.HINT_WITHDRAWAL,
+        "post_explanation": AssessmentPurpose.POST_EXPLANATION,
+        "summative": AssessmentPurpose.SUMMATIVE,
+    }
+    try:
+        purpose_str = payload.purpose or payload.action_type
+        purpose = purpose_map.get(purpose_str, AssessmentPurpose.DIAGNOSE)
+        policy = assessment_policy_service.get_policy(
+            session, course_id=course_id, purpose=purpose,
+        )
+    except Exception:
+        policy = None
+
+    # 5. 策略必须允许写正式证据
+    if policy is None or not policy.writes_formal_evidence:
+        reject_state_conflict(
+            "评分策略未配置或不允许写入正式证据",
+            details={
+                "purpose": purpose.value if policy else None,
+                "writes_formal_evidence": policy.writes_formal_evidence if policy else False,
+            },
+        )
+
+    # 6. 写入正式证据
+    evidence_id = "ev_" + uuid.uuid4().hex
+    now = utcnow_naive()
+    confidence = (
+        payload.confidence if payload.confidence is not None
+        else policy.confidence_threshold
+    )
+    record = LearningEvidenceRecord(
+        evidence_id=evidence_id,
+        student_id=payload.student_id,
+        course_id=course_id,
+        node_id=payload.node_id,
+        evidence_type=payload.evidence_type,
+        value=payload.score,
+        confidence=confidence,
+        label=payload.label or payload.action_type,
+        description=payload.description or f"服务端评分：{payload.evidence_source}/{payload.action_type}",
+        source=payload.evidence_source,
+        timestamp=now.isoformat(),
+        event_refs=[action_id],
+        policy_version=policy.policy_version,
+        created_at=now,
+    )
+    session.add(record)
+    session.flush()
+
+    # 7. 链接到动作上下文
+    learning_evidence_link_service.link(
+        session,
+        course_id=course_id,
+        student_id=payload.student_id,
+        evidence_id=evidence_id,
+        context_type=EvidenceLinkContext.LEARNING_ACTION,
+        context_id=action_id,
+        context_snapshot={
+            "action_type": payload.action_type,
+            "score": payload.score,
+            "evidence_source": payload.evidence_source,
+            "purpose": policy.purpose.value,
+            "policy_version": policy.policy_version,
+        },
+    )
+    # 链接到推荐运行（如有）
+    if payload.recommendation_id:
+        learning_evidence_link_service.link(
+            session,
+            course_id=course_id,
+            student_id=payload.student_id,
+            evidence_id=evidence_id,
+            context_type=EvidenceLinkContext.RECOMMENDATION,
+            context_id=payload.recommendation_id,
+            context_snapshot={
+                "action_type": payload.action_type,
+                "score": payload.score,
+                "evidence_source": payload.evidence_source,
+            },
+        )
+
+    session.commit()
+
+    return unified_response(
+        code=201,
+        message="服务端评分证据已写入",
+        data={
+            "action_id": action_id,
+            "evidence_id": evidence_id,
+            "writes_formal_evidence": True,
+            "idempotent": False,
         },
     )

@@ -12,7 +12,7 @@ import asyncio
 
 import pytest
 
-from backend.tests.product1.contracts.contract_helpers import (
+from tests.product1.contracts.contract_helpers import (
     ALL_CONTRACT_MODES,
     MODE_BUSINESS_FAILURE,
     MODE_MALFORMED,

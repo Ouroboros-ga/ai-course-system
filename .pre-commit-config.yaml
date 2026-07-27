@@ -1,0 +1,51 @@
+# Pre-commit hooks - 代码提交前自动质量检查
+# 安装: pip install pre-commit && pre-commit install
+# 手动运行所有文件: pre-commit run --all-files
+
+repos:
+  # ============= 通用检查 =============
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: debug-statements
+        name: 禁止 print() 调试语句残留
+        # 仅对 backend 生效，scripts/tools 目录允许 print
+        exclude: ^backend/app/(scripts|tools)/.*\.py$
+      - id: mixed-line-ending
+        args: ['--fix=lf']
+
+  # ============= Python =============
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.11.0
+    hooks:
+      - id: ruff
+        args: [--fix, --exit-non-zero-on-fix]
+        files: ^backend/
+      - id: ruff-format
+        files: ^backend/
+
+  # ============= 前端 =============
+  - repo: https://github.com/oxc-project/mirrors-oxlint
+    rev: v0.16.0
+    hooks:
+      - id: oxlint
+        files: ^frontend/src/
+
+  # ============= 通用安全 =============
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: >
+          (?x)^(
+            backend/.env.example|
+            frontend/.env.example
+          )$

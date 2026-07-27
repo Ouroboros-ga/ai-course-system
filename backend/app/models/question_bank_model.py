@@ -63,13 +63,15 @@ class MappingStatus(str, Enum):
     """题源映射状态
 
     - unassigned: 无映射
-    - auto_accepted: OCR+EduAgent 自动生成，默认可信
+    - pending_review: P1-4 EduAgent+OCR 生成的候选，须教师复核后才能发布
+    - auto_accepted: 仅在历史数据或教师显式批准后使用（不再作为新候选默认值）
     - teacher_edited: 教师已编辑
     - rejected: 教师拒绝
     - stale: 内容哈希变化后标记待复核
     - locked: 教师锁定，EduAgent重跑不可覆盖
     """
     UNASSIGNED = "unassigned"
+    PENDING_REVIEW = "pending_review"
     AUTO_ACCEPTED = "auto_accepted"
     TEACHER_EDITED = "teacher_edited"
     REJECTED = "rejected"

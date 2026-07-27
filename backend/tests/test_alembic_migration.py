@@ -80,7 +80,7 @@ def test_empty_sqlite_upgrade_head_creates_all_tables(tmp_path):
         # 验证 alembic_version 表指向 head
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0005", f"alembic_version 应为 0005，实际 {version}"
+            assert version == "0007", f"alembic_version 应为 0007，实际 {version}"
     finally:
         engine.dispose()
 
@@ -121,7 +121,7 @@ def test_legacy_sqlite_stamp_and_upgrade(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0005"
+            assert version == "0007"
 
             # 6. 验证数据迁移生效（0002 access_control backfill）
             # 旧库无 legacy role/teacher_id 数据，所以回填不应产生记录
@@ -295,7 +295,7 @@ def test_postgres_empty_upgrade_head():
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0005"
+            assert version == "0007"
     finally:
         engine.dispose()
 
@@ -348,7 +348,7 @@ def test_migration_chain_downgrade_and_upgrade_roundtrip(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0005"
+            assert version == "0007"
     finally:
         engine.dispose()
 
@@ -387,7 +387,7 @@ def test_migration_ops_upgrade_writes_ledger(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0005"
+            assert version == "0007"
 
             rows = conn.execute(
                 text(
@@ -545,6 +545,165 @@ def test_migration_ledger_idempotent_on_repeated_upgrade(tmp_path):
             count = conn.execute(
                 text("SELECT COUNT(*) FROM schema_migration_records")
             ).scalar()
-            assert count == 5, f"应只有 5 条账本，实际 {count}"
+            assert count == 7, f"应只有 7 条账本，实际 {count}"
+    finally:
+        engine.dispose()
+
+
+# ==================== 场景5：真实历史 schema 升级演练（P1-2）====================
+
+
+def test_upgrade_from_empty_db_executes_all_migrations(tmp_path):
+    """P1-2: 从空库 upgrade head，验证迁移链每个步骤真实执行 DDL/DML。
+
+    旧测试用 SQLModel.metadata.create_all() 建库，会提前建好 0002-0005 新增的
+    表和列，导致 upgrade head 实际只跑数据 backfill，不验证 DDL 真实性。
+
+    本测试从空库出发，逐个验证：
+    1. baseline 0001 创建所有表（含 avatar_profiles / course_memberships /
+       storage_object_refs 等）
+    2. 0002 access_control backfill 在无 legacy 数据时写入 0 行但表可查
+    3. 0003 agent log 账本记录存在
+    4. 0004 avatar_profiles 有 teacher_authorization_confirmed_at / revoked_at 列
+    5. 0005 storage_object_refs 表与唯一索引存在
+    6. alembic_version = 0005
+    """
+    db_path = tmp_path / "empty_upgrade.db"
+    db_url = f"sqlite:///{db_path}"
+
+    _run_alembic(db_url, "upgrade", "head")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        inspector = inspect(engine)
+        tables = set(inspector.get_table_names())
+
+        # baseline 0001 创建的核心表
+        for t in ("users", "courses", "course_memberships", "course_capabilities",
+                  "platform_permission_assignments", "avatar_profiles",
+                  "avatar_source_media", "agent_log_migration_records",
+                  "schema_migration_records"):
+            assert t in tables, f"baseline 应创建 {t}"
+
+        # 0005 新增表
+        assert "storage_object_refs" in tables, "0005 应创建 storage_object_refs"
+
+        # 0004 ALTER 新增列
+        avatar_cols = {c["name"] for c in inspector.get_columns("avatar_profiles")}
+        assert "teacher_authorization_confirmed_at" in avatar_cols, "0004 应添加该列"
+        assert "revoked_at" in avatar_cols
+
+        source_cols = {c["name"] for c in inspector.get_columns("avatar_source_media")}
+        assert "server_mime_type" in source_cols, "0004 应添加 server_mime_type"
+        assert "server_content_sha256" in source_cols
+        assert "scan_status" in source_cols
+
+        # 0005 唯一索引
+        indices = {idx["name"] for idx in inspector.get_indexes("storage_object_refs")}
+        assert "ix_storage_object_refs_object_key" in indices
+        # 验证唯一性
+        for idx in inspector.get_indexes("storage_object_refs"):
+            if idx["name"] == "ix_storage_object_refs_object_key":
+                assert bool(idx["unique"]) is True
+
+        with engine.connect() as conn:
+            version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
+            assert version == "0007"
+
+            # 0002 backfill 在空库应写入 0 行（无 legacy 数据）
+            membership_count = conn.execute(text(
+                "SELECT COUNT(*) FROM course_memberships"
+            )).scalar()
+            assert membership_count == 0
+
+            # 0003 账本应存在（0 行脱敏）
+            log_count = conn.execute(text(
+                "SELECT COUNT(*) FROM agent_log_migration_records"
+            )).scalar()
+            assert log_count == 1
+    finally:
+        engine.dispose()
+
+
+def test_upgrade_from_empty_db_then_backfill_with_legacy_data(tmp_path):
+    """P1-2: 空库 upgrade head 后，插入 legacy 数据，重新跑 0002 backfill 验证 DML。
+
+    场景：新部署的库 upgrade head 后，从外部数据源导入 legacy users/courses/
+    enrollments，然后重新执行 0002 backfill 生成 access_control 记录。
+    """
+    db_path = tmp_path / "backfill_after_import.db"
+    db_url = f"sqlite:///{db_path}"
+
+    # 1. 空库 upgrade head
+    _run_alembic(db_url, "upgrade", "head")
+
+    # 2. 插入 legacy 数据（模拟从外部数据源导入）
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users (username, hashed_password, role, is_active, "
+            "is_fanya_verified, created_at) "
+            "VALUES ('legacy_teacher', 'hash', 'teacher', 1, 0, CURRENT_TIMESTAMP)"
+        ))
+        teacher_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+
+        conn.execute(text(
+            "INSERT INTO users (username, hashed_password, role, is_active, "
+            "is_fanya_verified, created_at) "
+            "VALUES ('legacy_student', 'hash', 'student', 1, 0, CURRENT_TIMESTAMP)"
+        ))
+        student_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+
+        conn.execute(text(
+            "INSERT INTO courses (fanya_course_id, fanya_course_name, title, teacher_id, "
+            "status, is_ai_generated, total_duration, total_nodes, total_pages, "
+            "created_at, updated_at) "
+            "VALUES ('legacy-1', 'Legacy', 'Legacy Course', :tid, 'published', "
+            "0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ), {"tid": teacher_id})
+        course_id = conn.execute(text("SELECT last_insert_rowid()")).scalar()
+
+        conn.execute(text(
+            "INSERT INTO student_enrollments (student_id, course_id, is_active, "
+            "overall_progress, enrolled_at, total_nodes_completed, total_nodes_count, "
+            "avg_understanding_score, avg_understanding_level, total_study_minutes) "
+            "VALUES (:sid, :cid, 1, 0.0, CURRENT_TIMESTAMP, 0, 0, 0.0, 'UNKNOWN', 0)"
+        ), {"sid": student_id, "cid": course_id})
+    engine.dispose()
+
+    # 3. 重新跑 0002 backfill（通过 downgrade 0001 + upgrade head）
+    #    注意：0002 的 _batch_already_applied 检查会跳过已执行的批次，
+    #    所以需要先 downgrade 撤销 0002 再 upgrade 重新执行
+    _run_alembic(db_url, "downgrade", "0001")
+    _run_alembic(db_url, "upgrade", "head")
+
+    # 4. 验证 backfill 生成了 access_control 记录
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            owner_count = conn.execute(text(
+                "SELECT COUNT(*) FROM course_memberships WHERE role = 'owner' "
+                "AND migration_batch_id = 'access-control-v1'"
+            )).scalar()
+            assert owner_count == 1, f"应有 1 条 owner membership，实际 {owner_count}"
+
+            student_count = conn.execute(text(
+                "SELECT COUNT(*) FROM course_memberships WHERE role = 'student' "
+                "AND migration_batch_id = 'access-control-v1'"
+            )).scalar()
+            assert student_count == 1
+
+            perm_count = conn.execute(text(
+                "SELECT COUNT(*) FROM platform_permission_assignments "
+                "WHERE permission = 'platform.course.create' "
+                "AND migration_batch_id = 'access-control-v1'"
+            )).scalar()
+            assert perm_count == 1
+
+            cap_count = conn.execute(text(
+                "SELECT COUNT(*) FROM course_capabilities "
+                "WHERE migration_batch_id = 'access-control-v1'"
+            )).scalar()
+            assert cap_count == 1
     finally:
         engine.dispose()

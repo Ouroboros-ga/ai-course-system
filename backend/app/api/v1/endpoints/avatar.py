@@ -31,7 +31,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -54,6 +54,7 @@ from app.services.avatar_service import (
     source_media_service,
 )
 from app.services.course_access_service import require_course_permission
+from app.services.object_storage import get_object_storage
 
 
 avatar_router = APIRouter(tags=["阶段8 教师数字人资产中心"])
@@ -275,6 +276,134 @@ async def confirm_source_media_uploaded(
     return unified_response(
         code=200, message="素材校验完成",
         data=_serialize_source_media(source),
+    )
+
+
+@avatar_router.put("/avatar-profiles/{avatar_id}/source-media/{source_media_id}/upload")
+async def upload_source_media_content(
+    avatar_id: str,
+    source_media_id: str,
+    request: Request,
+    exp: int = Query(..., description="上传意图签发的过期时间戳"),
+    sig: str = Query(..., description="上传意图签发的签名"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """P0-2 受控上传：接收原始素材二进制内容。
+
+    流程：
+    1. 校验 current_user 是 AvatarProfile 的所有者
+    2. 查找 source_media 并获取其 object_key
+    3. 通过 storage.verify_upload_signature 验签（绑定 object_key + exp）
+    4. 校验 Content-Length <= max_size_bytes
+    5. 校验 Content-Type 在 allowed_mime_types 列表内
+    6. 调用 storage.put 写入对象存储
+    7. 更新 upload_status = UPLOADED
+
+    注意：本路由不直接 VERIFIED，需调用 /confirm 完成 head+ffprobe+hash+scan。
+    """
+    user_id = int(current_user["user_id"])
+
+    # 1. 先通过 source_media_service 校验归属并获取 source
+    #    （内部会校验 avatar_id + owner_user_id + source_media_id）
+    #    这里用 _get_owned_source 但不暴露私有方法，改用 list + filter
+    from sqlmodel import select
+    from app.models.avatar_model import AvatarSourceMedia
+    source = session.exec(
+        select(AvatarSourceMedia).where(
+            AvatarSourceMedia.source_media_id == source_media_id,
+            AvatarSourceMedia.avatar_id == avatar_id,
+            AvatarSourceMedia.owner_user_id == user_id,
+        )
+    ).first()
+    if source is None:
+        raise HTTPException(status_code=404, detail="source_media 不存在或不属于该教师")
+
+    # 2. 验签（绑定 object_key + exp）
+    storage = get_object_storage()
+    try:
+        valid = storage.verify_upload_signature(source.object_key, exp, sig)
+    except NotImplementedError:
+        # S3/MinIO Provider 不通过应用路由验签，上传走 presigned URL
+        raise HTTPException(
+            status_code=400,
+            detail="当前对象存储后端不通过此路由上传；请直接使用 presigned URL",
+        )
+    if not valid:
+        raise HTTPException(
+            status_code=403,
+            detail="上传签名无效或已过期",
+        )
+
+    # 3. 读取请求体并校验大小/MIME
+    # P0 修复：先按可信 Content-Length 硬拒绝超限请求，再流式读取
+    # 攻击者可省略或伪造 Content-Length，使超大文件先被完整缓冲到主应用内存；
+    # 这里在读取 body 之前先拒绝超限，并用有上限的流式读取替代 await request.body()
+    content_length_str = request.headers.get("content-length", "")
+    content_type = request.headers.get("content-type", "application/octet-stream")
+
+    # 获取 source 的 media_type 以计算 max_bytes
+    from app.models.avatar_model import AvatarSourceMediaType
+    max_bytes = source_media_service._max_bytes_for(source.media_type)
+
+    # 3a. 硬拒绝：可信 Content-Length 超限时直接返回 413，不读取 body
+    try:
+        declared_length = int(content_length_str) if content_length_str else 0
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Content-Length 头部不是有效整数",
+        )
+    if declared_length > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error_code": "PAYLOAD_TOO_LARGE",
+                "message": f"上传内容超过最大限制 {max_bytes} 字节",
+                "content_length": declared_length,
+                "max_size_bytes": max_bytes,
+            },
+        )
+
+    # 3b. 流式读取：按块累计，一旦超过 max_bytes 立即中止
+    # 防止攻击者省略 Content-Length 或伪造较小值后发送超大 body
+    collected = bytearray()
+    overflow = False
+    async for chunk in request.stream():
+        collected.extend(chunk)
+        if len(collected) > max_bytes:
+            overflow = True
+            break
+    if overflow:
+        # 清空已读取数据，避免内存驻留
+        del collected
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "error_code": "PAYLOAD_TOO_LARGE_STREAMING",
+                "message": f"流式读取过程中检测到内容超过最大限制 {max_bytes} 字节",
+                "max_size_bytes": max_bytes,
+            },
+        )
+    content = bytes(collected)
+    del collected
+    # 兜底：若客户端未带 content-length，使用流式读取后的实际长度
+    content_length = declared_length if declared_length > 0 else len(content)
+
+    # 4. 委托 service 完成大小/MIME 校验 + 存储 + 状态更新
+    updated = source_media_service.store_uploaded_content(
+        session,
+        avatar_id=avatar_id,
+        owner_user_id=user_id,
+        source_media_id=source_media_id,
+        content=content,
+        content_mime_type=content_type,
+        content_length=content_length,
+    )
+    session.commit()
+    return unified_response(
+        code=200, message="素材已上传，等待校验",
+        data=_serialize_source_media(updated),
     )
 
 

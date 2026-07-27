@@ -13,7 +13,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from backend.tests.product1.contracts.contract_helpers import (
+from tests.product1.contracts.contract_helpers import (
     GateDecision,
     QualityGateReport,
 )

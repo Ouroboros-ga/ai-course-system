@@ -1007,20 +1007,28 @@ def test_complete_learning_action_non_scored_no_evidence(client, session):
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
+    # P0-1: 学生端始终不写入正式证据
     assert data["is_scored"] is False
     assert data["writes_formal_evidence"] is False
     assert data["evidence_id"] is None
     assert data["return_anchor"]["action_type"] == "video_watch"
+    # action_id 必须是签名格式 la_{hex}.{sig}
+    assert data["action_id"].startswith("la_")
+    assert "." in data["action_id"]
 
 
-def test_complete_learning_action_scored_writes_evidence(client, session):
-    """评分型动作通过评分策略校验后写入正式 LearningEvidence。"""
+def test_complete_learning_action_scored_does_not_write_evidence_from_client(client, session):
+    """P0-1: 学生端提交 is_scored=True/score 不再写入正式证据。
+
+    旧契约允许学生提交 is_scored=True, score=0.85 直接写入 LearningEvidenceRecord，
+    存在伪造高分证据风险。修复后学生端始终返回 writes_formal_evidence=False。
+    """
     teacher = _user(session, "s5_action_scored_teacher")
     student = _user(session, "s5_action_scored_student", UserRole.STUDENT)
     course = _course(session, teacher.id)
     _enable_capabilities(session, course.id)
     _enroll_student(session, course.id, student.id)
-    # 准备评分策略
+    # 准备评分策略（即使策略允许写正式证据，学生端也不写）
     assessment_policy_service.get_or_create_policy(
         session,
         course_id=course.id,
@@ -1038,26 +1046,30 @@ def test_complete_learning_action_scored_writes_evidence(client, session):
             "action_type": "quiz",
             "duration_seconds": 60,
             "payload": {"quiz_id": "qz-1"},
-            "is_scored": True,
-            "score": 0.85,
+            "is_scored": True,  # 学生伪造评分
+            "score": 0.85,      # 学生伪造高分
         },
         headers=_auth(_token(student)),
     )
     assert resp.status_code == 200, resp.text
     data = resp.json()["data"]
-    assert data["is_scored"] is True
-    assert data["writes_formal_evidence"] is True
-    assert data["evidence_id"] is not None
-    assert data["evidence_id"].startswith("ev_")
+    # 即使学生提交 is_scored=True/score=0.85，也不写入正式证据
+    assert data["is_scored"] is False
+    assert data["score"] is None
+    assert data["writes_formal_evidence"] is False
+    assert data["evidence_id"] is None
+    # 返回签名 action_id 供服务端评分器使用
+    assert data["action_id"].startswith("la_")
+    assert "." in data["action_id"]
 
-    # 验证 LearningEvidenceLink 链接到动作上下文
-    links = session.exec(
-        select(LearningEvidenceLink).where(
-            LearningEvidenceLink.evidence_id == data["evidence_id"],
-            LearningEvidenceLink.context_type == EvidenceLinkContext.LEARNING_ACTION,
+    # 确认数据库中无新增 LearningEvidenceRecord
+    evidence_count = session.exec(
+        select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.course_id == course.id,
+            LearningEvidenceRecord.student_id == student.id,
         )
     ).all()
-    assert len(links) >= 1
+    assert len(evidence_count) == 0
 
 
 def test_complete_learning_action_rejects_non_learner(client, session):
@@ -1076,6 +1088,319 @@ def test_complete_learning_action_rejects_non_learner(client, session):
         headers=_auth(_token(teacher)),
     )
     # 教师 analytics_eligible=False，应被拒绝
+    assert resp.status_code == 409
+
+
+# ---------------------------------------------------------------------------
+# 6b. P0-1 attach-evidence: 服务端评分器写入正式证据
+# ---------------------------------------------------------------------------
+
+
+_INTERNAL_TOKEN = "test-internal-service-token"
+
+
+def _internal_auth() -> dict[str, str]:
+    return {"X-Internal-Service-Token": _INTERNAL_TOKEN}
+
+
+def _complete_action(client, student, course, *, action_type: str = "quiz") -> str:
+    """辅助：学生完成学习动作，返回签名 action_id"""
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/complete",
+        json={"action_type": action_type, "duration_seconds": 60},
+        headers=_auth(_token(student)),
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()["data"]["action_id"]
+
+
+def test_attach_evidence_writes_formal_evidence(client, session):
+    """P0-1: 服务端评分器通过 attach-evidence 写入正式证据。"""
+    teacher = _user(session, "s5_attach_teacher")
+    student = _user(session, "s5_attach_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="attach-v1.0",
+        writes_formal_evidence=True,
+    )
+    session.commit()
+
+    action_id = _complete_action(client, student, course)
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "node_id": 50,
+            "score": 0.85,
+            "evidence_source": "quiz",
+            "evidence_type": "learning_action_scored",
+            "label": "quiz-scored",
+            "description": "Quiz 服务端评分",
+        },
+        headers=_internal_auth(),
+    )
+    assert resp.status_code == 200, resp.text
+    data = resp.json()["data"]
+    assert data["writes_formal_evidence"] is True
+    assert data["evidence_id"].startswith("ev_")
+    assert data["action_id"] == action_id
+
+    # 验证 LearningEvidenceRecord 落库
+    record = session.exec(
+        select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.evidence_id == data["evidence_id"],
+        )
+    ).first()
+    assert record is not None
+    assert record.source == "quiz"
+    assert record.value == 0.85
+    assert action_id in (record.event_refs or [])
+
+    # 验证 LearningEvidenceLink 链接到动作上下文
+    links = session.exec(
+        select(LearningEvidenceLink).where(
+            LearningEvidenceLink.evidence_id == data["evidence_id"],
+            LearningEvidenceLink.context_type == EvidenceLinkContext.LEARNING_ACTION,
+        )
+    ).all()
+    assert len(links) >= 1
+
+
+def test_attach_evidence_rejects_missing_service_token(client, session):
+    """P0-1: 缺少 X-Internal-Service-Token 头拒绝写证据。"""
+    teacher = _user(session, "s5_attach_no_token_teacher")
+    student = _user(session, "s5_attach_no_token_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+
+    action_id = _complete_action(client, student, course)
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.9,
+            "evidence_source": "quiz",
+        },
+        # 不带 X-Internal-Service-Token
+    )
+    assert resp.status_code == 401
+
+
+def test_attach_evidence_rejects_invalid_service_token(client, session):
+    """P0-1: 无效 X-Internal-Service-Token 拒绝写证据。"""
+    teacher = _user(session, "s5_attach_bad_token_teacher")
+    student = _user(session, "s5_attach_bad_token_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+
+    action_id = _complete_action(client, student, course)
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.9,
+            "evidence_source": "quiz",
+        },
+        headers={"X-Internal-Service-Token": "wrong-token"},
+    )
+    assert resp.status_code == 403
+
+
+def test_attach_evidence_rejects_forged_action_id(client, session):
+    """P0-1: 伪造的 action_id 签名验证失败，拒绝写证据。"""
+    teacher = _user(session, "s5_attach_forged_teacher")
+    student = _user(session, "s5_attach_forged_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="forged-v1.0",
+        writes_formal_evidence=True,
+    )
+    session.commit()
+
+    # 伪造一个 action_id（格式正确但签名错误）
+    forged_action_id = "la_" + uuid.uuid4().hex + ".decafbeefdeadbeef"
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{forged_action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.9,
+            "evidence_source": "quiz",
+        },
+        headers=_internal_auth(),
+    )
+    assert resp.status_code == 422
+
+
+def test_attach_evidence_rejects_cross_student_action_id(client, session):
+    """P0-1: 学生 A 的 action_id 不能为学生 B 写证据（签名绑定 student_id）。"""
+    teacher = _user(session, "s5_attach_cross_teacher")
+    student_a = _user(session, "s5_attach_cross_student_a", UserRole.STUDENT)
+    student_b = _user(session, "s5_attach_cross_student_b", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student_a.id)
+    _enroll_student(session, course.id, student_b.id)
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="cross-v1.0",
+        writes_formal_evidence=True,
+    )
+    session.commit()
+
+    # 学生 A 完成动作
+    action_id_a = _complete_action(client, student_a, course)
+
+    # 尝试用学生 A 的 action_id 为学生 B 写证据
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id_a}/attach-evidence",
+        json={
+            "student_id": student_b.id,  # 不同学生
+            "action_type": "quiz",
+            "score": 0.9,
+            "evidence_source": "quiz",
+        },
+        headers=_internal_auth(),
+    )
+    assert resp.status_code == 422
+
+
+def test_attach_evidence_rejects_invalid_source(client, session):
+    """P0-1: evidence_source 不在白名单内拒绝写证据。"""
+    teacher = _user(session, "s5_attach_bad_source_teacher")
+    student = _user(session, "s5_attach_bad_source_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="badsrc-v1.0",
+        writes_formal_evidence=True,
+    )
+    session.commit()
+
+    action_id = _complete_action(client, student, course)
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.9,
+            "evidence_source": "student_self_report",  # 不在白名单
+        },
+        headers=_internal_auth(),
+    )
+    assert resp.status_code == 422
+
+
+def test_attach_evidence_idempotent(client, session):
+    """P0-1: 相同 action_id 重复调用 attach-evidence 幂等返回。"""
+    teacher = _user(session, "s5_attach_idempotent_teacher")
+    student = _user(session, "s5_attach_idempotent_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="idem-v1.0",
+        writes_formal_evidence=True,
+    )
+    session.commit()
+
+    action_id = _complete_action(client, student, course)
+
+    # 第一次写证据
+    resp1 = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.85,
+            "evidence_source": "quiz",
+        },
+        headers=_internal_auth(),
+    )
+    assert resp1.status_code == 200
+    evidence_id_1 = resp1.json()["data"]["evidence_id"]
+
+    # 第二次重复调用（幂等）
+    resp2 = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.95,  # 不同分数
+            "evidence_source": "quiz",
+        },
+        headers=_internal_auth(),
+    )
+    assert resp2.status_code == 200
+    data2 = resp2.json()["data"]
+    assert data2["idempotent"] is True
+    assert data2["evidence_id"] == evidence_id_1
+
+
+def test_attach_evidence_rejects_policy_not_writing_formal(client, session):
+    """P0-1: 评分策略 writes_formal_evidence=False 时拒绝写证据。"""
+    teacher = _user(session, "s5_attach_no_formal_teacher")
+    student = _user(session, "s5_attach_no_formal_student", UserRole.STUDENT)
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    _enroll_student(session, course.id, student.id)
+    # 策略明确不允许写正式证据
+    assessment_policy_service.get_or_create_policy(
+        session,
+        course_id=course.id,
+        purpose=AssessmentPurpose.DIAGNOSE,
+        created_by=teacher.id,
+        policy_version="no-formal-v1.0",
+        writes_formal_evidence=False,
+    )
+    session.commit()
+
+    action_id = _complete_action(client, student, course)
+
+    resp = client.post(
+        f"{FACADE}/course/{course.id}/learning-actions/{action_id}/attach-evidence",
+        json={
+            "student_id": student.id,
+            "action_type": "quiz",
+            "score": 0.85,
+            "evidence_source": "quiz",
+        },
+        headers=_internal_auth(),
+    )
     assert resp.status_code == 409
 
 

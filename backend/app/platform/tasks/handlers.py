@@ -579,10 +579,12 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
 
     执行流程：
     1. mark_running
-    2. 按 proposal_type 分发到对应业务 service（如 trigger_experiment → 实验）
-       当前阶段仅记录"已派发"状态，真实执行由各业务域在后续阶段接入；
-       handler 保证任务状态机正确流转，避免"approve 后无执行"
-    3. mark_succeeded，记录 proposal_id 与派发结果
+    2. P1-6: 按 proposal_type 分发到对应业务 service 真实执行
+       - trigger_experiment → experiment_service（创建 run / attempt）
+       - web_research       → web_research_service.execute_research
+       - change_topic       → 记录 dispatched event（UI 层消费）
+       失败保留原 error_code，不伪装成功；dispatched=True 仅在真实执行成功后设置
+    3. mark_succeeded，记录 proposal_id 与派发结果（含 dispatched 标志）
     """
     payload = ctx.input_payload or {}
     course_id = payload.get("course_id")
@@ -595,26 +597,52 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
             retryable=False,
         )
 
+    proposed_action = payload.get("proposed_action") or {}
+    student_id = payload.get("student_id")
+    trace_id = payload.get("trace_id", "")
+    decided_by = payload.get("decided_by")
+
     # 1. mark_running
     with ctx.session_factory() as session:
         ctx.service.mark_running(session, ctx.task_id, stage=f"agent_action:{proposal_type}")
 
-    # 2. 按 proposal_type 分发（当前阶段：记录派发意图，真实执行由业务域后续接入）
-    # 保守策略：trigger_experiment / web_research 等高风险动作的"执行"应交由
-    # 对应业务域（experiment_service / web_research_service）处理。
-    # 这里只做编排与审计，避免在 handler 内重复实现业务逻辑。
+    # 2. P1-6: 按 proposal_type 真实分发
     dispatch_result: dict[str, Any] = {
         "proposal_id": proposal_id,
         "proposal_type": proposal_type,
         "dispatched": False,
-        "note": "Agent 动作已派发记录；真实执行由业务域在后续阶段接入",
+        "dispatched_at": None,
+        "outcome": "pending",
+        "details": {},
     }
 
-    # 当前阶段：trigger_experiment 类型可派发到 experiment_service（若有具体定义）
-    # 其他类型（web_research / change_topic）保持 dispatched=False，仅记录审计
-    # P0-2.6 完成状态机闭环；真实执行逻辑由 P0-4 / 新增2 接入
+    try:
+        outcome = await _dispatch_agent_action(
+            proposal_type=proposal_type,
+            course_id=int(course_id),
+            student_id=int(student_id) if student_id else None,
+            proposed_action=proposed_action,
+            session_factory=ctx.session_factory,
+            decided_by=int(decided_by) if decided_by else None,
+            trace_id=trace_id,
+        )
+        dispatch_result.update(outcome)
+    except TaskExecutionError:
+        # 保留原 error_code，向上抛出由 worker 分类处理
+        raise
+    except Exception as exc:
+        # 未知异常归一化为 DISPATCH_FAILED，保留原始异常类型供审计
+        logger.exception(
+            "agent_action_execute dispatch failed: proposal=%s type=%s",
+            proposal_id, proposal_type,
+        )
+        raise TaskExecutionError(
+            "DISPATCH_FAILED",
+            f"高风险动作派发失败 ({type(exc).__name__}): {exc}",
+            retryable=False,
+        )
 
-    # 3. mark_succeeded
+    # 3. mark_succeeded 仅在 dispatched=True 时表示真实执行；否则保留 outcome 供审计
     with ctx.session_factory() as session:
         ctx.service.mark_succeeded(
             session,
@@ -622,6 +650,214 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
             result_ref=f"agent_proposal://{proposal_id}",
             result_data=dispatch_result,
         )
+
+
+async def _dispatch_agent_action(
+    *,
+    proposal_type: str,
+    course_id: int,
+    student_id: Optional[int],
+    proposed_action: dict[str, Any],
+    session_factory,
+    decided_by: Optional[int],
+    trace_id: str,
+) -> dict[str, Any]:
+    """P1-6: 真实分发高风险动作到对应业务 service。
+
+    返回 dict 包含：dispatched, dispatched_at, outcome, details。
+    任何失败都抛异常（由 ``agent_action_execute_handler`` 捕获并保留 error_code），
+    不得返回 ``dispatched=True`` 同时携带失败细节。
+    """
+    from app.core.time_utils import utcnow_naive
+
+    dispatched_at = utcnow_naive().isoformat()
+
+    if proposal_type == "web_research":
+        return await _dispatch_web_research(
+            course_id=course_id,
+            proposed_action=proposed_action,
+            session_factory=session_factory,
+            dispatched_at=dispatched_at,
+        )
+
+    if proposal_type == "trigger_experiment":
+        return await _dispatch_trigger_experiment(
+            course_id=course_id,
+            student_id=student_id,
+            proposed_action=proposed_action,
+            session_factory=session_factory,
+            decided_by=decided_by,
+            dispatched_at=dispatched_at,
+        )
+
+    if proposal_type == "change_topic":
+        # change_topic 是 UI 导航提示，无独立业务 service；
+        # 真实"执行"由前端消费 proposed_action 中的 target_topic 字段。
+        # 我们记录 dispatched=True 表示已通过审批并写入审计，便于前端拉取。
+        target_topic = proposed_action.get("target_topic") or proposed_action.get("topic")
+        return {
+            "dispatched": True,
+            "dispatched_at": dispatched_at,
+            "outcome": "topic_change_recorded",
+            "details": {
+                "target_topic": target_topic,
+                "consumer": "frontend_navigation",
+            },
+        }
+
+    # 未知高风险类型：记录为 dispatched=False 而非抛错，避免阻塞 worker；
+    # 教师可在审计中看到 outcome=unknown_type，再决定是否手动处理。
+    return {
+        "dispatched": False,
+        "dispatched_at": dispatched_at,
+        "outcome": "unknown_type",
+        "details": {"proposal_type": proposal_type},
+    }
+
+
+async def _dispatch_web_research(
+    *,
+    course_id: int,
+    proposed_action: dict[str, Any],
+    session_factory,
+    dispatched_at: str,
+) -> dict[str, Any]:
+    """P1-6: 派发 web_research 到 web_research_service.execute_research。
+
+    proposed_action 期望字段：
+    - query: str  (搜索查询)
+    失败保留原 error_code；web_research_service 内部已实现降级语义
+    （disabled / budget_exceeded / no_results / search_failed）。
+    """
+    from app.services.web_research_service import execute_research
+
+    query = str(proposed_action.get("query") or "").strip()
+    if not query:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "web_research proposed_action 缺少 query 字段",
+            retryable=False,
+        )
+
+    # execute_research 内部已处理降级（返回 ResearchStatus.* 而非抛错），
+    # 因此只有在配置/网络异常时才会抛出。我们将其视为派发失败。
+    with session_factory() as session:
+        try:
+            result = execute_research(session, course_id, query)
+        except Exception as exc:
+            raise TaskExecutionError(
+                "WEB_RESEARCH_DISPATCH_FAILED",
+                f"web_research 执行异常: {exc}",
+                retryable=True,
+            )
+
+        return {
+            "dispatched": True,
+            "dispatched_at": dispatched_at,
+            "outcome": str(getattr(result, "status", "unknown")),
+            "details": {
+                "result_id": getattr(result, "id", None),
+                "query": query[:200],
+            },
+        }
+
+
+async def _dispatch_trigger_experiment(
+    *,
+    course_id: int,
+    student_id: Optional[int],
+    proposed_action: dict[str, Any],
+    session_factory,
+    decided_by: Optional[int],
+    dispatched_at: str,
+) -> dict[str, Any]:
+    """P1-6: 派发 trigger_experiment 到 experiment_service。
+
+    proposed_action 期望字段：
+    - experiment_id: str   → 必填，标识要触发的实验
+    - language: str        → 可选，若提供则同时创建 run
+    - source_code: str     → 可选，与 language 配合创建 run
+
+    流程：
+    1. 通过 attempt_service.create_attempt 为学生创建尝试（使用实验默认版本）
+    2. 若提供 language + source_code，则通过 run_service.create_run(execute=False)
+       创建 PENDING run，由 experiment_run_handler 异步执行
+    3. 否则仅创建 attempt，学生可在 UI 中提交代码
+    """
+    experiment_id = proposed_action.get("experiment_id")
+    if not experiment_id:
+        return {
+            "dispatched": False,
+            "dispatched_at": dispatched_at,
+            "outcome": "missing_experiment_id",
+            "details": {"reason": "trigger_experiment proposed_action 缺少 experiment_id"},
+        }
+
+    if student_id is None:
+        return {
+            "dispatched": False,
+            "dispatched_at": dispatched_at,
+            "outcome": "missing_student_id",
+            "details": {"reason": "trigger_experiment 需要 student_id 才能创建 attempt"},
+        }
+
+    language = proposed_action.get("language")
+    source_code = proposed_action.get("source_code") or proposed_action.get("code")
+    has_code_payload = bool(language) and bool(source_code)
+
+    with session_factory() as session:
+        try:
+            from app.services.experiment_service import (
+                attempt_service,
+                run_service,
+            )
+
+            attempt = attempt_service.create_attempt(
+                session,
+                course_id=course_id,
+                experiment_id=str(experiment_id),
+                student_id=int(student_id),
+            )
+
+            run_id = None
+            if has_code_payload:
+                # 创建 PENDING run（不立即执行），由 experiment_run_handler 异步消费
+                run = await run_service.create_run(
+                    session,
+                    course_id=course_id,
+                    attempt_id=attempt.attempt_id,
+                    language=str(language),
+                    source_code=str(source_code),
+                    student_id=int(student_id),
+                    execute=False,
+                )
+                run_id = run.run_id
+
+            session.commit()
+        except TaskExecutionError:
+            raise
+        except Exception as exc:
+            raise TaskExecutionError(
+                "EXPERIMENT_DISPATCH_FAILED",
+                f"trigger_experiment 派发失败: {exc}",
+                retryable=True,
+            )
+
+        return {
+            "dispatched": True,
+            "dispatched_at": dispatched_at,
+            "outcome": "experiment_attempt_created" if not has_code_payload else "experiment_run_created",
+            "details": {
+                "experiment_id": str(experiment_id),
+                "attempt_id": attempt.attempt_id,
+                "run_id": run_id,
+                "note": (
+                    "ExperimentAttempt 已创建；学生可在 UI 中提交代码"
+                    if not has_code_payload
+                    else "ExperimentRun 已创建为 PENDING；由 experiment_run_handler 后续执行"
+                ),
+            },
+        }
 
 
 # ---------------------------------------------------------------------------

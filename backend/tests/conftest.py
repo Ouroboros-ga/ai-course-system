@@ -2,12 +2,21 @@ import importlib
 import os
 import shutil
 import socket
+import sys
 import uuid
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import SQLModel, Session, create_engine
+
+# P1-1 修复：兼容从仓库根目录或 backend/ 目录运行测试
+# - 仓库根目录：pytest.ini 已设 pythonpath=backend，app.* 可导入；
+#   但 `from fakes import` 这种无前缀导入需要把 backend/tests 加入 sys.path
+# - backend/ 目录：fakes 直接可见
+_TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+if _TESTS_DIR not in sys.path:
+    sys.path.insert(0, _TESTS_DIR)
 
 _TEST_TMP_PARENT = Path.cwd() / ".pytest_tmp"
 _TEST_RUN_ID = os.environ.get("AI_COURSE_TEST_RUN_ID") or (
@@ -30,6 +39,8 @@ os.environ.setdefault("XFYUN_PPT_APP_ID", "")
 os.environ.setdefault("XFYUN_PPT_API_SECRET", "")
 os.environ.setdefault("VOLCENGINE_TTS_ACCESS_TOKEN", "")
 os.environ.setdefault("VOLCENGINE_VOICE_CLONE_API_KEY", "")
+# P0-1: 测试用内部服务令牌（供 attach-evidence 等服务间调用测试）
+os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "test-internal-service-token")
 
 from app.core.security import create_access_token, get_password_hash  # noqa: E402
 from app.models.user_model import User, UserRole  # noqa: E402

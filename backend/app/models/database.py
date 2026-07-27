@@ -144,6 +144,7 @@ from app.models.experiment_model import (
     ExperimentRunArtifact,
     CodingHintRecord,
 )
+from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 # 阶段7：通用资源库、回收站与平台实验室目录
 from app.models.resource_model import (
     ResourceItem,

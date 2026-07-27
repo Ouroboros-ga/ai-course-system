@@ -1,0 +1,81 @@
+name: CI - Backend & Frontend
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ============================================================
+  # 后端：Lint + 测试
+  # ============================================================
+  backend:
+    name: Backend (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Ruff lint
+        run: uv run ruff check . --output-format=github
+
+      - name: Ruff format check
+        run: uv run ruff format . --check --diff
+
+      - name: Run tests
+        run: uv run pytest -v --tb=short --timeout=60
+
+  # ============================================================
+  # 前端：Lint + 契约测试
+  # ============================================================
+  frontend:
+    name: Frontend (Node.js)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (oxlint + eslint)
+        run: npm run lint
+
+      - name: Frontend tests
+        run: node --test src/**/*.test.js src/**/*.test.cjs
+
+      - name: API contract alignment check
+        run: node --test src/**/apiContracts.test.cjs
+
+      - name: Build
+        run: npm run build

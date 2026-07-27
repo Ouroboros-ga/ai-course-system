@@ -28,6 +28,8 @@ class TeachingState(TypedDict, total=False):
     citations: list[dict[str, Any]]
     sandbox_result: dict[str, Any] | None
     code_diagnosis: dict[str, Any] | None
+    coding_diagnosis: dict[str, Any] | None
+    learning_history: dict[str, Any] | None
     teaching_action: str
     teaching_action_reason: str
     selected_resource_ids: list[str]

@@ -162,7 +162,9 @@ class S3ObjectStorageProvider(ObjectStorageProvider):
 
     def sign_upload_intent(
         self, object_key: str, *, expires_in: int = 900, max_size_bytes: int = 0,
+        upload_path: str = "",
     ) -> dict:
+        # S3 实现忽略 upload_path：上传直接走 presigned POST 到 S3，不经过应用路由。
         key = self._validate_key(object_key)
         max_bytes = max(1, max_size_bytes or 500 * 1024 * 1024)
         post = self._client.generate_presigned_post(
@@ -180,6 +182,15 @@ class S3ObjectStorageProvider(ObjectStorageProvider):
             "expires_at": None,
             "max_size_bytes": max_bytes,
         }
+
+    def verify_upload_signature(
+        self, object_key: str, exp: int, sig: str,
+    ) -> bool:
+        """S3 Provider 使用 presigned URL 自身校验，不通过应用路由验签。"""
+        raise NotImplementedError(
+            "S3ObjectStorageProvider 使用 presigned POST URL；"
+            "上传校验由 S3 服务端完成，不调用 verify_upload_signature"
+        )
 
     def list_keys(self, prefix: str = "") -> list[str]:
         prefix = self._validate_key(prefix) if prefix else ""

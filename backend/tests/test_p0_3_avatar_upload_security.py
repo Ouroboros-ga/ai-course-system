@@ -15,6 +15,7 @@
 7. 未校验素材：pending_upload/uploaded 状态无法启动预处理
 8. 教师撤回素材：withdrawn 状态无法启动预处理
 9. 学生无法下载原始素材（仅能看到已发布课程渲染资产）
+10. PUT /upload 路由：签名校验、过期、越权、超大、错误 MIME
 """
 from __future__ import annotations
 
@@ -474,3 +475,309 @@ def test_avatar_profile_has_authorization_timestamps(client, session, temp_stora
     # 字段存在（即使为 None）
     assert hasattr(record, "teacher_authorization_confirmed_at")
     assert hasattr(record, "revoked_at")
+
+
+# ---------------------------------------------------------------------------
+# 7. PUT /upload 路由：受控上传完整链路
+# ---------------------------------------------------------------------------
+
+
+_MIN_MP4 = (
+    b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+    + b"\x00\x00\x00\x08free"
+    + b"\x00\x00\x00\x08mdat"
+    + b"put-route video content"
+)
+
+
+def _request_intent_and_get_params(
+    client, token: str, avatar_id: str,
+    *,
+    media_type: str = "portrait_video",
+    mime_type: str = "video/mp4",
+    size_bytes: int = 1024 * 1024,
+) -> dict:
+    """请求上传意图并返回 source_media + upload_intent 完整字段。"""
+    data = _request_upload_intent(
+        client, token, avatar_id,
+        media_type=media_type, mime_type=mime_type, size_bytes=size_bytes,
+    )
+    return data
+
+
+def test_put_upload_route_writes_object_and_marks_uploaded(client, session, temp_storage):
+    """PUT /upload 路由成功上传后，对象写入存储且 upload_status 转为 uploaded。"""
+    teacher = _user(session, "p03_put_success")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source = data["source_media"]
+    intent = data["upload_intent"]
+    source_media_id = source["source_media_id"]
+    object_key = source["object_key"]
+
+    # 客户端通过 PUT 路由上传，携带 exp/sig
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["code"] == 200, body
+    updated = body["data"]
+    # 状态转为 uploaded（不是 verified，需 /confirm 完成 head+ffprobe+hash+scan）
+    assert updated["upload_status"] == "uploaded", updated
+    assert updated["server_size_bytes"] == len(_MIN_MP4)
+    assert updated["mime_type"] == "video/mp4"
+
+    # 对象确实写入存储
+    assert temp_storage.exists(object_key)
+    stored = temp_storage.get(object_key)
+    assert stored == _MIN_MP4
+
+
+def test_put_upload_route_rejects_missing_signature_params(client, session, temp_storage):
+    """缺少 exp/sig 任一参数应返回 422（FastAPI Query 校验）。"""
+    teacher = _user(session, "p03_put_missing_sig")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source_media_id = data["source_media"]["source_media_id"]
+
+    # 缺少 exp
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"sig": "any"},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 422, resp.text
+
+    # 缺少 sig
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": 9999999999},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 422, resp.text
+
+
+def test_put_upload_route_rejects_invalid_signature(client, session, temp_storage):
+    """伪造的 sig 应被拒绝（403）。"""
+    teacher = _user(session, "p03_put_invalid_sig")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source_media_id = data["source_media"]["source_media_id"]
+    object_key = data["source_media"]["object_key"]
+
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": 9999999999, "sig": "tampered_signature_value"},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 403, resp.text
+    body = resp.json()
+    assert "签名无效" in body.get("detail", "") or body.get("code") == 403, body
+
+    # 对象不应被写入
+    assert not temp_storage.exists(object_key)
+
+
+def test_put_upload_route_rejects_expired_signature(client, session, temp_storage):
+    """过期的 exp 应被拒绝（403）。"""
+    teacher = _user(session, "p03_put_expired")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source_media_id = data["source_media"]["source_media_id"]
+    object_key = data["source_media"]["object_key"]
+
+    # 直接构造一个过期的 exp + 对应签名（用 provider 内部 _sign 方法）
+    storage = temp_storage
+    expired_exp = int(datetime(2020, 1, 1).timestamp())  # 过去时间
+    expired_sig = storage._sign(object_key, expired_exp, {"upload": True})
+
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": expired_exp, "sig": expired_sig},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 403, resp.text
+
+    # 对象不应被写入
+    assert not temp_storage.exists(object_key)
+
+
+def test_put_upload_route_rejects_cross_teacher(client, session, temp_storage):
+    """教师 B 不能用教师 A 的 source_media_id 上传（即使持有签名）。"""
+    teacher_a = _user(session, "p03_put_owner")
+    teacher_b = _user(session, "p03_put_attacker")
+    profile_a = _create_profile(client, _token(teacher_a))
+    data = _request_intent_and_get_params(client, _token(teacher_a), profile_a["avatar_id"])
+    source_media_id = data["source_media"]["source_media_id"]
+    intent = data["upload_intent"]
+
+    # 教师 B 持有教师 A 签发的 exp/sig，但仍应被 404（归属校验先于验签）
+    resp = client.put(
+        f"{AVATAR}/{profile_a['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher_b)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 404, resp.text
+    body = resp.json()
+    assert body.get("detail") or body.get("code") == 404
+
+
+def test_put_upload_route_rejects_oversized_content(client, session, temp_storage):
+    """超过 max_size_bytes 的内容应被拒绝（413 PAYLOAD_TOO_LARGE）。
+
+    P0 修复：在读取 body 之前先按可信 Content-Length 硬拒绝，避免超大文件读入内存。
+    """
+    teacher = _user(session, "p03_put_oversize")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(
+        client, _token(teacher), profile["avatar_id"],
+        size_bytes=1024,  # 申报 1KB（预校验通过）
+    )
+    source_media_id = data["source_media"]["source_media_id"]
+    intent = data["upload_intent"]
+    max_bytes = intent["max_size_bytes"]
+    # 构造超出上限的内容
+    oversized = b"\x00" * (max_bytes + 1024)
+
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=oversized,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    # P0 修复后：413 PAYLOAD_TOO_LARGE（在读取 body 之前硬拒绝）
+    assert resp.status_code == 413, resp.text
+    body = resp.json()
+    assert body["code"] == 413
+    detail = body.get("data") or body
+    assert detail.get("error_code") == "PAYLOAD_TOO_LARGE"
+
+
+def test_put_upload_route_rejects_oversized_streaming_no_content_length(
+    client, session, temp_storage, monkeypatch,
+):
+    """省略 Content-Length 时通过流式读取检测超限并返回 413。
+
+    P0 修复：攻击者可省略 Content-Length，使超大文件绕过前置校验；
+    流式读取累计字节数，一旦超过 max_bytes 立即中止。
+    """
+    teacher = _user(session, "p03_put_stream_overflow")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(
+        client, _token(teacher), profile["avatar_id"],
+        size_bytes=1024,
+    )
+    source_media_id = data["source_media"]["source_media_id"]
+    intent = data["upload_intent"]
+    max_bytes = intent["max_size_bytes"]
+    # 构造超出上限的内容
+    oversized = b"\x00" * (max_bytes + 1024)
+
+    # 使用 chunked transfer encoding 模拟省略 Content-Length
+    # httpx client 在 content=bytes 时会自动设置 Content-Length，
+    # 但我们用 data=generator 触发 chunked encoding（无 Content-Length）
+    def _chunked():
+        yield oversized
+
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        data=_chunked(),  # chunked encoding，无 Content-Length header
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    # 流式读取检测超限 → 413 PAYLOAD_TOO_LARGE_STREAMING
+    assert resp.status_code == 413, resp.text
+    body = resp.json()
+    assert body["code"] == 413
+    detail = body.get("data") or body
+    assert detail.get("error_code") in ("PAYLOAD_TOO_LARGE_STREAMING", "PAYLOAD_TOO_LARGE")
+
+
+def test_put_upload_route_rejects_wrong_mime(client, session, temp_storage):
+    """Content-Type 不在 allowed_mime_types 列表内应被拒绝。"""
+    teacher = _user(session, "p03_put_wrong_mime")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(
+        client, _token(teacher), profile["avatar_id"],
+        media_type="portrait_video",
+        mime_type="video/mp4",  # 预校验通过
+    )
+    source_media_id = data["source_media"]["source_media_id"]
+    intent = data["upload_intent"]
+
+    # 实际 PUT 时改用不允许的 MIME
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "application/zip"},
+    )
+    assert resp.status_code == 422, resp.text
+    body = resp.json()
+    assert body["code"] == 422, body
+
+
+def test_put_upload_route_signature_bound_to_object_key(client, session, temp_storage):
+    """签名绑定 object_key：用 source_media_A 的 sig 上传到 source_media_B 应失败。"""
+    teacher = _user(session, "p03_put_sig_bind")
+    profile = _create_profile(client, _token(teacher))
+    # 为同一教师创建两个 source_media
+    data_a = _request_intent_and_get_params(
+        client, _token(teacher), profile["avatar_id"],
+        mime_type="video/mp4",
+    )
+    data_b = _request_intent_and_get_params(
+        client, _token(teacher), profile["avatar_id"],
+        mime_type="video/mp4",
+    )
+    source_a_id = data_a["source_media"]["source_media_id"]
+    intent_b = data_b["upload_intent"]  # 用 B 的签名上传到 A
+
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_a_id}/upload",
+        params={"exp": intent_b["exp"], "sig": intent_b["sig"]},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    # 验签会失败，因为 sig 绑定的是 B 的 object_key
+    assert resp.status_code == 403, resp.text
+
+
+def test_put_upload_then_confirm_reaches_verified(client, session, temp_storage):
+    """完整链路：PUT 上传 -> POST /confirm -> verified。"""
+    teacher = _user(session, "p03_put_then_confirm")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source_media_id = data["source_media"]["source_media_id"]
+    intent = data["upload_intent"]
+
+    # PUT 上传
+    resp = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=_MIN_MP4,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["upload_status"] == "uploaded"
+
+    # 调用 /confirm 完成 head+ffprobe+hash+scan
+    resp = client.post(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source_media_id}/confirm",
+        headers=_auth(_token(teacher)),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    source = body["data"]
+    assert source["upload_status"] == "verified", source
+    expected_sha = hashlib.sha256(_MIN_MP4).hexdigest()
+    assert source["server_content_sha256"] == expected_sha

@@ -49,20 +49,33 @@ _PARSER_REGISTRY = None
 
 
 def _get_parser_registry():
-    """获取 ParserRegistry 单例，注册内置 Provider。"""
+    """获取 ParserRegistry 单例，注册内置 Provider。
+
+    P1-3: 用真实 Provider 替换 fake 实现：
+    - NativePptxProvider: 真实 PPTX 解析（python-pptx）
+    - PdfPlumberProvider: 真实 PDF 解析（pdfplumber，CPU-only）
+    - TesseractOcrProvider: 真实 OCR（pytesseract，CPU-only）
+    - OcrProvider: PaddleOCR 占位（GPU，未启用）
+
+    所有 Provider 在依赖不可用时抛 ParseUnavailableError，绝不返回伪造结果。
+    """
     global _PARSER_REGISTRY
     if _PARSER_REGISTRY is not None:
         return _PARSER_REGISTRY
 
     from app.platform.document_intelligence.registry import ParserRegistry
     from app.platform.document_intelligence.providers.native_pptx import NativePptxProvider
-    from app.platform.document_intelligence.providers.docling_fake import DoclingFakeProvider
-    from app.platform.document_intelligence.providers.ocr_fake import OcrFakeProvider
+    from app.platform.document_intelligence.providers.pdf_plumber import PdfPlumberProvider
+    from app.platform.document_intelligence.providers.ocr_provider import (
+        TesseractOcrProvider,
+        OcrProvider,
+    )
 
     registry = ParserRegistry()
     registry.register(NativePptxProvider())
-    registry.register(DoclingFakeProvider())
-    registry.register(OcrFakeProvider())
+    registry.register(PdfPlumberProvider())
+    registry.register(TesseractOcrProvider())
+    registry.register(OcrProvider())
     _PARSER_REGISTRY = registry
     return registry
 
@@ -175,15 +188,15 @@ async def run_parse_pipeline(
                 blocks_data, units_data, assets_data = map_pptx_output_to_ir(
                     output, source, run_id, parser_run_id,
                 )
-            elif step.provider_name in ("docling-fake", "docling"):
-                from app.platform.document_intelligence.providers.docling_fake import (
-                    map_docling_output_to_ir,
+            elif step.provider_name == "pdf-plumber":
+                from app.platform.document_intelligence.providers.pdf_plumber import (
+                    map_pdf_plumber_output_to_ir,
                 )
-                blocks_data, units_data, assets_data = map_docling_output_to_ir(
+                blocks_data, units_data, assets_data = map_pdf_plumber_output_to_ir(
                     output, source, run_id, parser_run_id,
                 )
-            elif step.provider_name in ("ocr-fake", "ocr"):
-                from app.platform.document_intelligence.providers.ocr_fake import (
+            elif step.provider_name in ("tesseract-ocr", "paddleocr"):
+                from app.platform.document_intelligence.providers.ocr_provider import (
                     map_ocr_output_to_ir,
                 )
                 blocks_data, units_data, assets_data = map_ocr_output_to_ir(

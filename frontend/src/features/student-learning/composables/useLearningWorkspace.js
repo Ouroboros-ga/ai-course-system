@@ -46,6 +46,11 @@ export function useLearningWorkspace(courseId, options = {}) {
   const getStudentId = options?.getStudentId ?? (() => null)
   const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
   const getCapabilities = options?.getCapabilities ?? (() => ({}))
+  // CodingEduAgent receives only a server-issued ExperimentRun id. The
+  // coding runner can update this value after a verified submission; no
+  // source code or Judge0 token is ever placed in the TeachingAgent payload.
+  const codeSubmissionId = ref(options?.codeSubmissionId ?? null)
+  const getCodeSubmissionId = options?.getCodeSubmissionId ?? (() => codeSubmissionId.value)
   // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
   // Reuse a per-learner/course ID. The server keeps only a bounded structured
   // summary and expires it after 30 minutes; no transcript is persisted.
@@ -403,12 +408,14 @@ export function useLearningWorkspace(courseId, options = {}) {
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
   async function askTeachingAgent(question, studentId) {
+    const verifiedRunId = getCodeSubmissionId()
     const result = await respondTeachingAgent({
       student_id: String(studentId),
       course_id: String(course.value.courseId),
       session_id: teachingSessionId,
       message: question,
       resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
+      code_submission_id: verifiedRunId ? String(verifiedRunId) : null,
     })
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
@@ -424,6 +431,10 @@ export function useLearningWorkspace(courseId, options = {}) {
   }
 
   // V1 问答（/chat/ask）：始终可用的回退路径，不受 Agent 能力开关影响。
+  function setCodeSubmissionId(runId) {
+    codeSubmissionId.value = runId == null || runId === '' ? null : String(runId)
+  }
+
   async function askV1(question) {
     const result = await askQuestion({
       question,
@@ -609,6 +620,7 @@ export function useLearningWorkspace(courseId, options = {}) {
     captureReturnAnchor,
     restoreReturnAnchor,
     sendQuestion,
+    setCodeSubmissionId,
     saveProgress,
   }
 }

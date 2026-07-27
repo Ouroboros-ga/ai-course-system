@@ -32,6 +32,22 @@ class SandboxPort(Protocol):
     async def get_execution_result(self, *, student_id: str, course_id: str, code_submission_id: str) -> Mapping[str, Any]: ...
 
 
+class CodingDiagnosisPort(Protocol):
+    """只读代码诊断；诊断不是正式 LearningEvidence。"""
+
+    async def get_latest_diagnosis(
+        self, *, student_id: str, course_id: str, run_id: str | None = None,
+    ) -> Mapping[str, Any] | None: ...
+
+
+class StudentHistoryPort(Protocol):
+    """返回有界、去原文的学习历史快照。"""
+
+    async def get_history(
+        self, *, student_id: str, course_id: str, concept_id: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
 class LearningEventPort(Protocol):
     async def record_learning_event(self, *, event: Mapping[str, Any]) -> None: ...
     async def record_agent_trace(self, *, trace: Mapping[str, Any]) -> None: ...
@@ -132,6 +148,8 @@ class TeachingTools:
     sandbox: SandboxPort
     learning_events: LearningEventPort
     llm: TeachingLLMPort
+    coding_diagnosis: Optional[CodingDiagnosisPort] = None
+    student_history: Optional[StudentHistoryPort] = None
     # 批次4新增可选工具：未注入时 workflow 节点跳过执行，不影响现有流程
     web_research: Optional[WebResearchPort] = None
     cognition: Optional[CognitionPort] = None

@@ -112,29 +112,33 @@ class UnavailableSandboxPort:
 
 
 class Judge0SandboxPort:
-    """P1-7: Real Judge0 sandbox port backed by ``SandboxClient``.
+    """Real Judge0 sandbox port backed by ``SandboxClient`` and ``ExperimentRun``.
 
     Implements the ``SandboxPort`` protocol (``get_execution_result``).
-    Constructed with a ``SandboxClient`` instance (or the module-level
-    singleton). The port always returns a structured dict; it never
-    raises — when the sandbox is unavailable, ``status`` is set to
-    ``sandbox_unavailable`` so the Agent can degrade gracefully.
 
-    Health-check degradation:
-    - On construction, we run ``client.health_check()`` and cache the
-      result. If the health check fails, the port still accepts calls
-      but every call returns ``sandbox_unavailable``. This preserves
-      the constraint that Agent/Q&A must not crash when Judge0 is down.
-    - The health-check result is exposed via ``is_healthy`` for
-      observability, but the Agent workflow does not gate on it.
+    设计要点（修复"Judge0→TeachingAgent 仍未真正接通"）：
+    - ``code_submission_id`` 即 ``ExperimentRun.run_id``，由前端在提交代码后传给 TeachingAgent
+    - 健康时按 ``run_id`` + ``course_id`` 从本地 ``ExperimentRun`` 表读取已验证结果
+      （而非直接暴露 Judge0 token 或调用 Judge0 API）
+    - 同时读取关联的 ``ExperimentRunArtifact``（stdout/stderr/compile/test_report）
+    - 严格 course_id 隔离：跨课程查询返回 not_found，不泄露他人结果
+    - 健康检查失败或沙箱禁用时返回 ``sandbox_unavailable``，保留降级语义
+    - DB 查询异常时返回 ``internal_error``，不抛出，保证 Agent/Q&A 不中断
     """
 
-    def __init__(self, client: Any | None = None) -> None:
+    def __init__(
+        self,
+        client: Any | None = None,
+        *,
+        session_factory: Any | None = None,
+    ) -> None:
         if client is None:
             # Lazy import to avoid module-level side effects in tests.
             from app.services.sandbox_client import sandbox_client as _default
             client = _default
         self._client = client
+        # session_factory 用于查询 ExperimentRun；None 时查询路径降级
+        self._session_factory = session_factory
         try:
             self._healthy = bool(client.health_check())
         except Exception:  # noqa: BLE001 - never block agent startup
@@ -156,45 +160,144 @@ class Judge0SandboxPort:
         code_submission_id: str,
         **_: Any,
     ) -> Mapping[str, Any]:
-        """Look up a prior sandbox submission by its token.
+        """按 ``run_id`` 从本地 ``ExperimentRun`` 读取已验证结果。
 
-        The Agent only reads prior execution results — it does not
-        submit new code. Code submission happens through the experiment
-        endpoints, which create ``ExperimentRun`` rows and dispatch
-        ``experiment_run`` tasks. The ``code_submission_id`` here is
-        the Judge0 token (stored as ``ExperimentRun.run_id`` or a
-        dedicated token column).
+        ``code_submission_id`` 是前端在提交代码后获得的 ``ExperimentRun.run_id``。
+        本方法不调用 Judge0 API，而是读取已落库的运行结果（由 experiment_run_handler
+        在沙箱执行完成后写入），保证 Agent 只读取已验证结果而非原始 Judge0 token。
 
-        Returns a dict with at least:
-        - ``status``: SubmissionStatus value or ``sandbox_unavailable``
-        - ``available``: bool — False when sandbox is down/disabled
+        Returns:
+            dict 至少包含：
+            - ``available``: bool — False 表示沙箱不可用或结果不存在
+            - ``status``: RunOutcome 值或 ``sandbox_unavailable`` / ``not_found`` / ``internal_error``
+            - ``outcome``: RunOutcome 值（与 status 一致，便于 Agent 消费）
+            - ``diagnosis``: 受限诊断摘要（compile_ok、passed_count/total_count、score、error_code）
+            - ``stdout``/``stderr``/``compile_output``: 来自 ExperimentRunArtifact（截断保护）
+            - ``test_summary``: 分层测试摘要（不泄露隐藏测试详情）
+            - ``resource_usage``: cpu_time_ms/wall_time_ms/memory_kb
         """
         # Fast path: disabled or unhealthy → degrade without raising.
         if not self.is_enabled or not self._healthy:
             return {
                 "available": False,
                 "status": "sandbox_unavailable",
+                "outcome": "sandbox_unavailable",
                 "message": "代码沙箱未启用或健康检查失败，学习主流程正常降级",
             }
 
-        try:
-            # We do not call submit_code here; the Agent port is read-only.
-            # A future method on SandboxClient (get_submission_by_token)
-            # can be wired in when Judge0 async polling is needed. For now
-            # we return a structured "not_implemented" result so callers
-            # know the lookup path is not yet wired, without raising.
+        # session_factory 缺失：查询路径无法执行，降级
+        if self._session_factory is None:
             return {
-                "available": True,
-                "status": "not_implemented",
-                "message": (
-                    "Judge0 沙箱可用但按 token 查询接口尚未实现；"
-                    "请通过 experiment_run_handler 获取执行结果"
-                ),
-                "code_submission_id": code_submission_id,
+                "available": False,
+                "status": "internal_error",
+                "outcome": "internal_error",
+                "message": "session_factory 未注入，无法查询 ExperimentRun",
             }
+
+        try:
+            course_id_int = int(course_id)
+        except (TypeError, ValueError):
+            return {
+                "available": False,
+                "status": "not_found",
+                "outcome": "not_found",
+                "message": f"invalid course_id: {course_id!r}",
+            }
+
+        try:
+            from app.models.experiment_model import (
+                ExperimentRun,
+                ExperimentRunArtifact,
+            )
+            from sqlmodel import select
+        except ImportError as error:
+            return {
+                "available": False,
+                "status": "internal_error",
+                "outcome": "internal_error",
+                "message": f"model import failed: {type(error).__name__}: {error}",
+            }
+
+        try:
+            session = self._session_factory()
+            try:
+                # 严格 course_id 隔离：跨课程查询返回 not_found
+                run = session.exec(
+                    select(ExperimentRun).where(
+                        ExperimentRun.run_id == code_submission_id,
+                        ExperimentRun.course_id == course_id_int,
+                    )
+                ).first()
+                if run is None:
+                    return {
+                        "available": False,
+                        "status": "not_found",
+                        "outcome": "not_found",
+                        "message": f"运行 {code_submission_id} 在课程 {course_id} 下不存在",
+                    }
+
+                # 读取关联的 ExperimentRunArtifact（stdout/stderr/compile/test_report）
+                artifacts_rows = session.exec(
+                    select(ExperimentRunArtifact).where(
+                        ExperimentRunArtifact.run_id == run.run_id,
+                    )
+                ).all()
+                artifacts: dict[str, str] = {}
+                for art in artifacts_rows:
+                    artifacts[art.artifact_type] = art.content or ""
+
+                # 截断保护：避免超大输出污染 Agent 上下文
+                max_text = 4000
+
+                def _trunc(text: str) -> str:
+                    if not text:
+                        return ""
+                    return text if len(text) <= max_text else text[:max_text] + "\n[truncated]"
+
+                outcome_value = run.outcome.value if hasattr(run.outcome, "value") else str(run.outcome)
+
+                # 构建受限诊断摘要：包含 Agent 诊断所需的最小信息
+                # 不泄露隐藏测试详情（test_summary 已由 experiment_run_handler 处理）
+                diagnosis = {
+                    "outcome": outcome_value,
+                    "compile_ok": bool(run.compile_ok),
+                    "compile_message": _trunc(run.compile_message),
+                    "runtime_message": _trunc(run.runtime_message),
+                    "passed_count": int(run.passed_count or 0),
+                    "total_count": int(run.total_count or 0),
+                    "score": float(run.score) if run.score is not None else None,
+                    "error_code": run.error_code or "",
+                    "error_message": _trunc(run.error_message),
+                    "test_summary": run.test_summary or {},
+                }
+
+                return {
+                    "available": True,
+                    "status": outcome_value,
+                    "outcome": outcome_value,
+                    "run_id": run.run_id,
+                    "attempt_id": run.attempt_id,
+                    "language": run.language,
+                    "diagnosis": diagnosis,
+                    "stdout": _trunc(artifacts.get("stdout", "")),
+                    "stderr": _trunc(artifacts.get("stderr", "")),
+                    "compile_output": _trunc(artifacts.get("compile", "")),
+                    "test_report": _trunc(artifacts.get("test_report", "")),
+                    "test_summary": run.test_summary or {},
+                    "resource_usage": {
+                        "cpu_time_ms": run.cpu_time_ms,
+                        "wall_time_ms": run.wall_time_ms,
+                        "memory_kb": run.memory_kb,
+                    },
+                    "submitted_at": run.submitted_at.isoformat() if run.submitted_at else None,
+                    "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+                }
+            finally:
+                session.close()
         except Exception as error:  # noqa: BLE001 - degrade gracefully
             return {
                 "available": False,
-                "status": "sandbox_unavailable",
-                "message": f"沙箱查询异常: {type(error).__name__}: {error}",
+                "status": "internal_error",
+                "outcome": "internal_error",
+                "message": f"查询 ExperimentRun 异常: {type(error).__name__}: {error}",
             }

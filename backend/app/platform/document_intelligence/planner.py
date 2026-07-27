@@ -142,7 +142,7 @@ class ParsePlanner:
                 ))
 
         # Check if OCR enrichment is needed
-        if probe.needs_ocr() and "ocr-fake" in self._available_providers:
+        if probe.needs_ocr() and "tesseract-ocr" in self._available_providers:
             enable_ocr = True
             max_enrich = max(max_enrich, len(probe.image_only_pages))
 
@@ -169,18 +169,10 @@ class ParsePlanner:
                 timeout_ms=120000,
             ))
 
-        if "docling-fake" in self._available_providers:
-            fallbacks.append("docling-fake")
-            steps.append(ParseStep(
-                provider_name="docling-fake",
-                priority=ParsePriority.SECONDARY,
-                timeout_ms=180000,
-            ))
-
         # OCR enrichment for image-heavy slides
-        if probe.image_only_pages and "ocr-fake" in self._available_providers:
+        if probe.image_only_pages and "tesseract-ocr" in self._available_providers:
             steps.append(ParseStep(
-                provider_name="ocr-fake",
+                provider_name="tesseract-ocr",
                 priority=ParsePriority.ENRICHMENT,
                 timeout_ms=300000,
                 enrichment_for="native-pptx",
@@ -193,23 +185,27 @@ class ParsePlanner:
         steps: List[ParseStep],
         fallbacks: List[str],
     ) -> None:
-        """Plan for PDF documents."""
-        if "docling-fake" in self._available_providers:
+        """Plan for PDF documents.
+
+        P1-3: Primary parser is now ``pdf-plumber`` (real pdfplumber).
+        OCR enrichment uses ``tesseract-ocr`` for image-only pages.
+        """
+        if "pdf-plumber" in self._available_providers:
             steps.append(ParseStep(
-                provider_name="docling-fake",
+                provider_name="pdf-plumber",
                 priority=ParsePriority.PRIMARY,
                 timeout_ms=180000,
             ))
 
-        if "ocr-fake" in self._available_providers:
-            fallbacks.append("ocr-fake")
+        if "tesseract-ocr" in self._available_providers:
+            fallbacks.append("tesseract-ocr")
             # Add OCR enrichment for image-only pages
             if probe.image_only_pages:
                 steps.append(ParseStep(
-                    provider_name="ocr-fake",
+                    provider_name="tesseract-ocr",
                     priority=ParsePriority.ENRICHMENT,
                     timeout_ms=300000,
-                    enrichment_for="docling-fake",
+                    enrichment_for="pdf-plumber",
                     config={"pages": list(probe.image_only_pages)},
                 ))
 
@@ -219,13 +215,16 @@ class ParsePlanner:
         steps: List[ParseStep],
         fallbacks: List[str],
     ) -> None:
-        """Plan for DOCX documents."""
-        if "docling-fake" in self._available_providers:
-            steps.append(ParseStep(
-                provider_name="docling-fake",
-                priority=ParsePriority.PRIMARY,
-                timeout_ms=180000,
-            ))
+        """Plan for DOCX documents.
+
+        P1-3: No real DOCX parser registered yet (DoclingFakeProvider
+        removed). If no provider is available, no steps are added — the
+        pipeline will fail with PARSE_FAILED rather than fabricate output.
+        To enable DOCX, register a real DOCX provider (e.g. python-docx
+        wrapper) in ``document_parse_pipeline._get_parser_registry``.
+        """
+        # Intentionally empty: no real DOCX provider available.
+        return
 
     def _plan_image(
         self,
@@ -234,9 +233,9 @@ class ParsePlanner:
         fallbacks: List[str],
     ) -> None:
         """Plan for standalone image files."""
-        if "ocr-fake" in self._available_providers:
+        if "tesseract-ocr" in self._available_providers:
             steps.append(ParseStep(
-                provider_name="ocr-fake",
+                provider_name="tesseract-ocr",
                 priority=ParsePriority.PRIMARY,
                 timeout_ms=300000,
             ))
