@@ -1,4 +1,4 @@
-"""阶段2 成员、设置、加入申请与课程生命周期服务。
+﻿"""阶段2 成员、设置、加入申请与课程生命周期服务。
 
 每个服务接收 Session（事务边界由路由层管理），不自行创建独立 session。
 所有写入都通过 CourseAccessContext 校验权限，不依赖 User.role。
@@ -19,7 +19,7 @@ from app.core.exceptions import (
     reject_validation_failed,
     reject_version_conflict,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.access_control_model import (
     CourseMembership,
     CourseRole,
@@ -143,7 +143,7 @@ class JoinRequestService:
             return existing_req
 
         days = expires_in_days if expires_in_days is not None else self.DEFAULT_EXPIRE_DAYS
-        expires_at = utcnow_naive() + timedelta(days=days) if days > 0 else None
+        expires_at = utcnow_aware() + timedelta(days=days) if days > 0 else None
 
         req = CourseJoinRequest(
             course_id=course_id,
@@ -227,8 +227,8 @@ class JoinRequestService:
         req.status = JoinRequestStatus.APPROVED
         req.reviewer_user_id = reviewer_user_id
         req.review_comment = review_comment
-        req.reviewed_at = utcnow_naive()
-        req.updated_at = utcnow_naive()
+        req.reviewed_at = utcnow_aware()
+        req.updated_at = utcnow_aware()
         session.add(req)
 
         audit = CourseAuditEvent(
@@ -257,8 +257,8 @@ class JoinRequestService:
         req.status = JoinRequestStatus.REJECTED
         req.reviewer_user_id = reviewer_user_id
         req.review_comment = review_comment
-        req.reviewed_at = utcnow_naive()
-        req.updated_at = utcnow_naive()
+        req.reviewed_at = utcnow_aware()
+        req.updated_at = utcnow_aware()
         session.add(req)
 
         audit = CourseAuditEvent(
@@ -288,8 +288,8 @@ class JoinRequestService:
         req.status = JoinRequestStatus.INFO_REQUESTED
         req.reviewer_user_id = reviewer_user_id
         req.review_comment = review_comment
-        req.reviewed_at = utcnow_naive()
-        req.updated_at = utcnow_naive()
+        req.reviewed_at = utcnow_aware()
+        req.updated_at = utcnow_aware()
         session.add(req)
         session.flush()
         return req
@@ -310,7 +310,7 @@ class JoinRequestService:
         _assert_join_transition(req.status, JoinRequestStatus.PENDING)
         req.status = JoinRequestStatus.PENDING
         req.supplement_info = supplement_info
-        req.updated_at = utcnow_naive()
+        req.updated_at = utcnow_aware()
         session.add(req)
         session.flush()
         return req
@@ -329,7 +329,7 @@ class JoinRequestService:
             reject_course_access_denied("只能撤销自己的申请")
         _assert_join_transition(req.status, JoinRequestStatus.CANCELLED)
         req.status = JoinRequestStatus.CANCELLED
-        req.updated_at = utcnow_naive()
+        req.updated_at = utcnow_aware()
         session.add(req)
         session.flush()
         return req
@@ -409,7 +409,7 @@ class CourseGroupService:
             g.description = description
         if group_type is not None:
             g.group_type = group_type
-        g.updated_at = utcnow_naive()
+        g.updated_at = utcnow_aware()
         session.add(g)
         session.flush()
         return g
@@ -637,7 +637,7 @@ class CourseSettingsService:
                     course.description = filtered["description"]
                 if "cover_url" in filtered and filtered["cover_url"] is not None:
                     course.cover_url = filtered["cover_url"]
-                course.updated_at = utcnow_naive()
+                course.updated_at = utcnow_aware()
                 session.add(course)
 
         # 同步 publish.join_mode 到 Course.invite_code 等
@@ -656,7 +656,7 @@ class CourseSettingsService:
                     if existing is not None:
                         reject_state_conflict("邀请码已被其他课程占用")
                     course.invite_code = new_code
-                    course.updated_at = utcnow_naive()
+                    course.updated_at = utcnow_aware()
                     session.add(course)
 
         before_section = dict(getattr(current, section))
@@ -847,7 +847,7 @@ class FanyaSyncService:
             "removed": len(removed),
             "conflicts": len(conflicts),
         }
-        run.updated_at = utcnow_naive()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -868,15 +868,15 @@ class FanyaSyncService:
             # 空差异直接成功
             run.status = SyncRunStatus.SUCCEEDED
             run.confirmed_by = confirmed_by
-            run.confirmed_at = utcnow_naive()
-            run.completed_at = utcnow_naive()
+            run.confirmed_at = utcnow_aware()
+            run.completed_at = utcnow_aware()
             session.add(run)
             session.flush()
             return run
 
         run.status = SyncRunStatus.RUNNING
         run.confirmed_by = confirmed_by
-        run.confirmed_at = utcnow_naive()
+        run.confirmed_at = utcnow_aware()
         session.add(run)
         session.flush()
 
@@ -927,8 +927,8 @@ class FanyaSyncService:
                     applied_skipped += 1
                     continue
                 membership.status = MembershipStatus.REMOVED
-                membership.left_at = utcnow_naive()
-                membership.updated_at = utcnow_naive()
+                membership.left_at = utcnow_aware()
+                membership.updated_at = utcnow_aware()
                 session.add(membership)
                 applied_removed += 1
 
@@ -936,7 +936,7 @@ class FanyaSyncService:
             run.applied_removed = applied_removed
             run.applied_skipped = applied_skipped
             run.status = SyncRunStatus.SUCCEEDED
-            run.completed_at = utcnow_naive()
+            run.completed_at = utcnow_aware()
             session.add(run)
 
             audit = CourseAuditEvent(
@@ -956,7 +956,7 @@ class FanyaSyncService:
         except Exception as exc:
             run.status = SyncRunStatus.FAILED
             run.error_message = str(exc)
-            run.completed_at = utcnow_naive()
+            run.completed_at = utcnow_aware()
             session.add(run)
             session.flush()
             raise

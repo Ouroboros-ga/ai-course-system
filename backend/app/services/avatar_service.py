@@ -1,4 +1,4 @@
-"""阶段8 教师数字人资产中心服务
+﻿"""阶段8 教师数字人资产中心服务
 
 实现「教师建立数字人预设 → 课程绑定 → 学生端播放」的服务编排。
 
@@ -28,7 +28,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.avatar_model import (
     AvatarAssetPackage,
     AvatarAssetPackageStatus,
@@ -88,7 +88,7 @@ class AvatarProfileService:
             status=AvatarProfileStatus.DRAFT,
             provider_key=provider_key,
             consent_text=consent_text,
-            consented_at=utcnow_naive(),
+            consented_at=utcnow_aware(),
             notes=notes,
         )
         session.add(profile)
@@ -150,7 +150,7 @@ class AvatarProfileService:
         if profile.status == AvatarProfileStatus.DELETED:
             reject_state_conflict("预设已删除，无法停用")
         profile.status = AvatarProfileStatus.DISABLED
-        profile.updated_at = utcnow_naive()
+        profile.updated_at = utcnow_aware()
         session.add(profile)
         # 同时把已发布的绑定标记 stale，触发教师重新选择
         bindings = session.exec(
@@ -178,7 +178,7 @@ class AvatarProfileService:
         """软删除预设：标记 deleted，不立即清除历史绑定"""
         profile = self.get_profile(session, avatar_id=avatar_id, owner_user_id=owner_user_id)
         profile.status = AvatarProfileStatus.DELETED
-        profile.deleted_at = utcnow_naive()
+        profile.deleted_at = utcnow_aware()
         profile.updated_at = profile.deleted_at
         session.add(profile)
         # 已发布绑定标记 stale，学生端走兼容模式
@@ -211,7 +211,7 @@ class AvatarProfileService:
         profile.provider_key = provider_key
         profile.provider_version = provider_version
         profile.status = AvatarProfileStatus.READY
-        profile.updated_at = utcnow_naive()
+        profile.updated_at = utcnow_aware()
         session.add(profile)
         session.flush()
         return profile
@@ -433,7 +433,7 @@ class AvatarSourceMediaService:
 
         # 6. 全部通过 -> verified
         source.upload_status = AvatarSourceMediaStatus.VERIFIED
-        source.verified_at = utcnow_naive()
+        source.verified_at = utcnow_aware()
         source.validated_at = source.verified_at
         source.validation_notes = "; ".join(notes_parts) if notes_parts else "ok"
         session.add(source)
@@ -997,7 +997,7 @@ class AvatarPreparationService:
 
         # 同时把 profile 标记 processing
         profile.status = AvatarProfileStatus.PROCESSING
-        profile.updated_at = utcnow_naive()
+        profile.updated_at = utcnow_aware()
         session.add(profile)
 
         session.flush()
@@ -1021,7 +1021,7 @@ class AvatarPreparationService:
 
         # 标记 running
         job.status = AvatarPreparationJobStatus.RUNNING
-        job.started_at = utcnow_naive()
+        job.started_at = utcnow_aware()
         job.attempt_count += 1
         session.add(job)
         if job.task_id:
@@ -1048,7 +1048,7 @@ class AvatarPreparationService:
             job.status = AvatarPreparationJobStatus.FAILED
             job.error_code = error_code
             job.error_message_safe = error_message_safe
-            job.finished_at = utcnow_naive()
+            job.finished_at = utcnow_aware()
             session.add(job)
             profile.status = AvatarProfileStatus.FAILED
             profile.updated_at = job.finished_at
@@ -1075,7 +1075,7 @@ class AvatarPreparationService:
             supported_render_modes=result.supported_render_modes,
             quality_profiles=result.quality_profiles,
             status=AvatarAssetPackageStatus.READY,
-            finished_at=utcnow_naive(),
+            finished_at=utcnow_aware(),
         )
         session.add(asset_package)
         session.flush()
@@ -1085,12 +1085,12 @@ class AvatarPreparationService:
         profile.current_asset_package_id = asset_package.asset_package_id
         profile.provider_key = result.provider_key
         profile.provider_version = result.provider_version
-        profile.updated_at = utcnow_naive()
+        profile.updated_at = utcnow_aware()
         session.add(profile)
 
         job.status = AvatarPreparationJobStatus.SUCCEEDED
         job.result_asset_package_id = asset_package.asset_package_id
-        job.finished_at = utcnow_naive()
+        job.finished_at = utcnow_aware()
         session.add(job)
         if job.task_id:
             task_service.mark_succeeded(
@@ -1303,7 +1303,7 @@ class CourseAvatarBindingService:
 
         binding.status = CourseAvatarBindingStatus.PUBLISHED
         binding.media_release_id = media_release_id
-        binding.published_at = utcnow_naive()
+        binding.published_at = utcnow_aware()
         session.add(binding)
         session.flush()
         return binding
@@ -1328,7 +1328,7 @@ class CourseAvatarBindingService:
                 details={"current_status": binding.status.value},
             )
         binding.status = CourseAvatarBindingStatus.WITHDRAWN
-        binding.withdrawn_at = utcnow_naive()
+        binding.withdrawn_at = utcnow_aware()
         session.add(binding)
         session.flush()
         return binding

@@ -1,4 +1,4 @@
-"""
+﻿"""
 文档上传与解析 API
 处理文件上传、文档解析、AI 分析
 """
@@ -6,7 +6,7 @@
 import uuid
 import json
 from pathlib import Path
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request
 from sqlmodel import Session
@@ -147,7 +147,7 @@ async def upload_document(
             "tables": structure_result.tables,
             "pictures": structure_result.pictures,
         }
-        docling_doc.updated_at = utcnow_naive()
+        docling_doc.updated_at = utcnow_aware()
         session.commit()
 
         # 存储脚本
@@ -181,7 +181,7 @@ async def upload_document(
         course.total_duration = script_result.total_duration
         course.is_ai_generated = True
         course.status = CourseStatus.PUBLISHED
-        course.updated_at = utcnow_naive()
+        course.updated_at = utcnow_aware()
         session.commit()
 
         # 启动后台 TTS

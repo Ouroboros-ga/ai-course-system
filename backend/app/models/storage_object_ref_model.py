@@ -1,4 +1,4 @@
-"""G5 对象存储引用登记表（GC 与回读校验的唯一真实来源）
+﻿"""G5 对象存储引用登记表（GC 与回读校验的唯一真实来源）
 
 设计要点：
 - `StorageObjectRef` 记录每个 `object_key` 在 Provider 中的存在状态与引用来源。
@@ -16,7 +16,7 @@ from typing import Optional
 
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class StorageVerifyStatus(str, Enum):
@@ -58,5 +58,5 @@ class StorageObjectRef(SQLModel, table=True):
         index=True,
         description="ok/missing/hash_mismatch/not_verified",
     )
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)

@@ -1,11 +1,11 @@
-"""G6 课程安全围栏与沙箱治理 API
+﻿"""G6 课程安全围栏与沙箱治理 API
 
 教师可配置安全策略和沙箱权限，平台硬边界不可关闭。
 所有策略修改、命中、放行、阻断和教师确认均可审计。
 """
 from __future__ import annotations
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -122,7 +122,7 @@ async def update_safety_policy(
         old_values["status"] = policy.status.value
         policy.status = payload.status
 
-    policy.updated_at = utcnow_naive()
+    policy.updated_at = utcnow_aware()
     session.add(policy)
 
     # 审计日志
@@ -221,7 +221,7 @@ async def update_sandbox_policy(
         old_values["log_retention_days"] = policy.log_retention_days
         policy.log_retention_days = payload.log_retention_days
 
-    policy.updated_at = utcnow_naive()
+    policy.updated_at = utcnow_aware()
     session.add(policy)
 
     log = SafetyAuditLog(

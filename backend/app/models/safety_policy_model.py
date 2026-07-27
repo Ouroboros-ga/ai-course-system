@@ -1,4 +1,4 @@
-"""G6 课程安全围栏与沙箱治理数据模型
+﻿"""G6 课程安全围栏与沙箱治理数据模型
 
 三类教师可配置、平台硬边界不可关闭的安全策略：
   1. CourseSafetyPolicy - 智能体安全围栏
@@ -22,7 +22,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class CourseType(str, Enum):
@@ -126,8 +126,8 @@ class CourseSafetyPolicy(SQLModel, table=True):
     )
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class CourseSandboxPolicy(SQLModel, table=True):
@@ -184,8 +184,8 @@ class CourseSandboxPolicy(SQLModel, table=True):
     )
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class SafetyAuditLog(SQLModel, table=True):
@@ -215,4 +215,4 @@ class SafetyAuditLog(SQLModel, table=True):
         description="决策因素列表(课程类型/教学意图/工具目标/隔离环境)",
     )
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)

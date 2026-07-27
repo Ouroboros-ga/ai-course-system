@@ -1,4 +1,4 @@
-"""阶段5 题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接 持久化模型
+﻿"""阶段5 题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接 持久化模型
 
 完成"题库优先检索 → 无匹配题则约束生成草稿 → 教师审核/发布"的编排链路。
 将判分后的 Quiz/实验完成等写入正式 LearningEvent / LearningEvidence 契约（复用既有
@@ -26,7 +26,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +74,8 @@ class QuestionImportRun(SQLModel, table=True):
     initiated_by: int = Field(foreign_key="users.id")
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -136,8 +136,8 @@ class QuestionGenerationDraft(SQLModel, table=True):
     stale_reason: str = Field(default="")
     stale_at: Optional[datetime] = Field(default=None)
     generated_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -183,8 +183,8 @@ class QuestionRecommendationRun(SQLModel, table=True):
     item_count: int = Field(default=0)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class QuestionSource(str, Enum):
@@ -224,8 +224,8 @@ class QuestionRecommendationItem(SQLModel, table=True):
     started_at: Optional[datetime] = Field(default=None)
     is_consumed: bool = Field(default=False, description="是否已转化成 attempt")
     consumed_at: Optional[datetime] = Field(default=None)
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +276,8 @@ class AssessmentPolicy(SQLModel, table=True):
                         description="策略规则元数据")
     is_active: bool = Field(default=True, index=True)
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -312,5 +312,5 @@ class LearningEvidenceLink(SQLModel, table=True):
     context_id: str = Field(index=True, description="上下文实体ID（推荐ID/attemptID/actionID）")
     context_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON),
                                    description="上下文快照（reason_codes, score 等）")
-    linked_at: datetime = Field(default_factory=utcnow_naive)
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    linked_at: datetime = Field(default_factory=utcnow_aware)
+    created_at: datetime = Field(default_factory=utcnow_aware)

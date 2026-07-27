@@ -1,10 +1,10 @@
-"""
+﻿"""
 进度续接API接口
 提供学习进度管理、理解度分析、节点定位等接口
 """
 
 from typing import Optional, List
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlmodel import Session, select
@@ -168,7 +168,7 @@ async def sync_learning_progress(
                 user_id=user_id,
                 course_id=courseId,
                 status=LearningStatus.IN_PROGRESS,
-                started_at=utcnow_naive(),
+                started_at=utcnow_aware(),
                 total_nodes=totalNodes or 0,
             )
             session.add(progress)
@@ -177,7 +177,7 @@ async def sync_learning_progress(
 
         progress.current_node_id = nodeId
         progress.current_timestamp = timestamp
-        progress.last_accessed_at = utcnow_naive()
+        progress.last_accessed_at = utcnow_aware()
         if timeSpent > 0:
             progress.total_learning_time += timeSpent
         elif studyTime and studyTime > 0:
@@ -201,7 +201,7 @@ async def sync_learning_progress(
                 progress_id=progress.id,
                 node_id=nodeId,
                 node_index=nodeIndex if nodeIndex is not None else (script.node_index if script else 0),
-                first_accessed_at=utcnow_naive(),
+                first_accessed_at=utcnow_aware(),
             )
             session.add(node_progress)
             session.commit()
@@ -212,7 +212,7 @@ async def sync_learning_progress(
             node_progress.time_spent += timeSpent
         elif studyTime and studyTime > 0:
             node_progress.time_spent += studyTime
-        node_progress.last_accessed_at = utcnow_naive()
+        node_progress.last_accessed_at = utcnow_aware()
 
         if understandingLevel:
             try:
@@ -224,7 +224,7 @@ async def sync_learning_progress(
 
         if isCompleted and not node_progress.is_completed:
             node_progress.is_completed = True
-            node_progress.completed_at = utcnow_naive()
+            node_progress.completed_at = utcnow_aware()
             node_progress.completion_count += 1
 
             progress.completed_nodes += 1
@@ -233,7 +233,7 @@ async def sync_learning_progress(
 
             if progress.completion_rate >= 1.0:
                 progress.status = LearningStatus.COMPLETED
-                progress.completed_at = utcnow_naive()
+                progress.completed_at = utcnow_aware()
 
         session.commit()
 
@@ -450,7 +450,7 @@ async def mark_node_completed(
                 progress_id=progress.id,
                 node_id=nodeId,
                 node_index=script.node_index if script else 0,
-                first_accessed_at=utcnow_naive(),
+                first_accessed_at=utcnow_aware(),
             )
             session.add(node_progress)
             session.commit()
@@ -458,7 +458,7 @@ async def mark_node_completed(
 
         if not node_progress.is_completed:
             node_progress.is_completed = True
-            node_progress.completed_at = utcnow_naive()
+            node_progress.completed_at = utcnow_aware()
             node_progress.completion_count += 1
 
             progress.completed_nodes += 1
@@ -467,7 +467,7 @@ async def mark_node_completed(
 
             if progress.completion_rate >= 1.0:
                 progress.status = LearningStatus.COMPLETED
-                progress.completed_at = utcnow_naive()
+                progress.completed_at = utcnow_aware()
 
             session.commit()
 

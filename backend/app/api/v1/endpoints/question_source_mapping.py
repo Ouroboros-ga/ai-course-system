@@ -1,4 +1,4 @@
-"""Phase B 题源映射 API
+﻿"""Phase B 题源映射 API
 
 使用统一权限解析器进行课程级权限校验。
 - 生成映射: question_mapping.generate (教师触发 OCR+EduAgent)
@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import hashlib
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -441,7 +441,7 @@ async def update_mapping(
         raise HTTPException(status_code=422, detail="page_end 不能小于 page_start")
 
     mapping.status = MappingStatus.TEACHER_EDITED
-    mapping.updated_at = utcnow_naive()
+    mapping.updated_at = utcnow_aware()
     session.add(mapping)
     session.commit()
 
@@ -491,13 +491,13 @@ async def update_mapping_status(
 
     if new_status == MappingStatus.LOCKED:
         mapping.locked_by = user_id
-        mapping.locked_at = utcnow_naive()
+        mapping.locked_at = utcnow_aware()
     elif mapping.status == MappingStatus.LOCKED and new_status != MappingStatus.LOCKED:
         mapping.locked_by = None
         mapping.locked_at = None
 
     mapping.status = new_status
-    mapping.updated_at = utcnow_naive()
+    mapping.updated_at = utcnow_aware()
     session.add(mapping)
     session.commit()
 

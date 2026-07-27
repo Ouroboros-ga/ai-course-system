@@ -1,11 +1,11 @@
-"""G9 Evidence 与知识图谱生产化 API
+﻿"""G9 Evidence 与知识图谱生产化 API
 
 学生只读已发布快照；内部检索轨迹继续受控。
 教师可治理知识点、别名、映射、先修关系和冲突。
 """
 from __future__ import annotations
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -108,7 +108,7 @@ async def add_evidence(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     evidence.reviewed_by = int(current_user["user_id"])
-    evidence.reviewed_at = utcnow_naive()
+    evidence.reviewed_at = utcnow_aware()
     session.add(evidence)
     session.commit()
     session.refresh(evidence)

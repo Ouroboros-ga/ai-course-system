@@ -1,4 +1,4 @@
-"""阶段7 资源库、平台实验室与任务中心 持久化模型
+﻿"""阶段7 资源库、平台实验室与任务中心 持久化模型
 
 完成通用资源库（文件版本、标签、课程引用、回收站、下游影响与权限）和平台实验
 大厅读模型（catalog、course-tasks、my-experiments、records）。
@@ -27,7 +27,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -83,8 +83,8 @@ class ResourceItem(SQLModel, table=True):
     is_deleted: bool = Field(default=False, index=True)
     deleted_at: Optional[datetime] = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ResourceVersion(SQLModel, table=True):
@@ -120,7 +120,7 @@ class ResourceVersion(SQLModel, table=True):
 
     is_active: bool = Field(default=False, index=True, description="当前激活版本")
     uploaded_by: int = Field(foreign_key="users.id")
-    uploaded_at: datetime = Field(default_factory=utcnow_naive)
+    uploaded_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ResourceTag(SQLModel, table=True):
@@ -138,7 +138,7 @@ class ResourceTag(SQLModel, table=True):
     resource_id: str = Field(index=True)
     tag: str = Field(default="", max_length=50, index=True)
     owner_user_id: int = Field(foreign_key="users.id", index=True)
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ResourceReference(SQLModel, table=True):
@@ -166,7 +166,7 @@ class ResourceReference(SQLModel, table=True):
     target_lab_id: Optional[str] = Field(default=None)
 
     reference_note: str = Field(default="", max_length=500)
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ResourceAclEntry(SQLModel, table=True):
@@ -195,7 +195,7 @@ class ResourceAclEntry(SQLModel, table=True):
     grantee_course_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
     permission: str = Field(default="read", description="read|write|admin")
     granted_by: int = Field(foreign_key="users.id")
-    granted_at: datetime = Field(default_factory=utcnow_naive)
+    granted_at: datetime = Field(default_factory=utcnow_aware)
     expires_at: Optional[datetime] = Field(default=None)
 
 
@@ -219,8 +219,8 @@ class RecycleBinEntry(SQLModel, table=True):
     course_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
 
     deleted_by: int = Field(foreign_key="users.id")
-    deleted_at: datetime = Field(default_factory=utcnow_naive)
-    expires_at: datetime = Field(default_factory=utcnow_naive)
+    deleted_at: datetime = Field(default_factory=utcnow_aware)
+    expires_at: datetime = Field(default_factory=utcnow_aware)
 
     # 恢复时的下游影响摘要（删除时的快照）
     affected_references: list = Field(
@@ -283,8 +283,8 @@ class LabCatalogEntry(SQLModel, table=True):
     knowledge_node_ids: list = Field(default_factory=list, sa_column=Column(JSON))
 
     created_by: int = Field(foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     published_at: Optional[datetime] = Field(default=None)
 
 
@@ -307,7 +307,7 @@ class LabEnrollment(SQLModel, table=True):
     student_id: int = Field(foreign_key="users.id", index=True)
     course_id: Optional[int] = Field(default=None, foreign_key="courses.id", index=True)
 
-    enrolled_at: datetime = Field(default_factory=utcnow_naive)
+    enrolled_at: datetime = Field(default_factory=utcnow_aware)
     last_active_at: Optional[datetime] = Field(default=None)
     is_active: bool = Field(default=True, index=True)
 
@@ -338,5 +338,5 @@ class LabRecord(SQLModel, table=True):
     evidence_id: Optional[str] = Field(default=None, index=True)
 
     return_anchor: dict = Field(default_factory=dict, sa_column=Column(JSON))
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)

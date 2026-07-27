@@ -1,4 +1,4 @@
-"""阶段3 统一任务中心与教师课程建设工作流服务。
+﻿"""阶段3 统一任务中心与教师课程建设工作流服务。
 
 承载路线图 §6 七步建设状态：
     materials → structure → scripts → page_mappings → media → validate → release
@@ -22,7 +22,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.course_build_model import (
     BuildStepName,
     BuildStepStatus,
@@ -273,12 +273,12 @@ class CourseBuildService:
         if error_message is not None:
             step.error_message = error_message
 
-        step.updated_at = utcnow_naive()
+        step.updated_at = utcnow_aware()
         session.add(step)
 
         # 更新草稿 current_step
         draft.current_step = step_name
-        draft.updated_at = utcnow_naive()
+        draft.updated_at = utcnow_aware()
         session.add(draft)
         session.flush()
         return step
@@ -306,9 +306,9 @@ class CourseBuildService:
             )
         step.status = BuildStepStatus.LOCKED
         step.locked_by = locked_by
-        step.locked_at = utcnow_naive()
+        step.locked_at = utcnow_aware()
         step.lock_reason = lock_reason
-        step.updated_at = utcnow_naive()
+        step.updated_at = utcnow_aware()
         session.add(step)
         session.flush()
         return step
@@ -329,7 +329,7 @@ class CourseBuildService:
         step.locked_by = None
         step.locked_at = None
         step.lock_reason = ""
-        step.updated_at = utcnow_naive()
+        step.updated_at = utcnow_aware()
         session.add(step)
         session.flush()
         return step
@@ -516,7 +516,7 @@ class SourceMaterialService:
         session.add(version)
         material.current_version_id = version.version_id
         material.status = MaterialStatus.UPLOADED
-        material.updated_at = utcnow_naive()
+        material.updated_at = utcnow_aware()
         session.add(material)
         session.flush()
         return version
@@ -569,7 +569,7 @@ class SourceMaterialService:
         # 同步 material 状态
         material = self.get_material(session, course_id=course_id, material_id=material_id)
         material.status = status
-        material.updated_at = utcnow_naive()
+        material.updated_at = utcnow_aware()
         session.add(material)
         session.flush()
         return version
@@ -684,7 +684,7 @@ class QualityGateService:
             warning_count=warning_count,
             target_release_id=target_release_id,
             initiated_by=initiated_by,
-            completed_at=utcnow_naive(),
+            completed_at=utcnow_aware(),
         )
         session.add(run)
         session.flush()
@@ -873,7 +873,7 @@ class CourseReleaseService:
         release.status = ReleaseStatus.PUBLISHED
         release.is_active = True
         release.published_by = published_by
-        release.published_at = utcnow_naive()
+        release.published_at = utcnow_aware()
         session.add(release)
         session.flush()
         return release
@@ -922,7 +922,7 @@ class CourseReleaseService:
             evidence_refs=list(target.evidence_refs),
             quality_gate_passed=True,
             published_by=actor_user_id,
-            published_at=utcnow_naive(),
+            published_at=utcnow_aware(),
             created_by=actor_user_id,
         )
         session.add(new_release)

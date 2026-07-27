@@ -1,4 +1,4 @@
-"""阶段9 Agent 工具治理与教师安全阀服务层。
+﻿"""阶段9 Agent 工具治理与教师安全阀服务层。
 
 职责：
 - 课程级工具策略 CRUD（教师启用/禁用/锁定/确认门槛），版本化快照支持回滚
@@ -27,7 +27,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.agent_governance_model import (
     AgentActionDecision,
     AgentActionProposal,
@@ -199,7 +199,7 @@ class AgentGovernanceService:
         # 创建新版本
         snapshot: dict[str, Any] = {}
         result_rows: list[AgentToolPolicy] = []
-        now = utcnow_naive()
+        now = utcnow_aware()
 
         for upd in updates:
             tool_name = str(upd["tool_name"])
@@ -403,7 +403,7 @@ class AgentGovernanceService:
             rerun_trace_id = str(uuid.uuid4())
 
         proposal.status = new_status
-        proposal.decided_at = utcnow_naive()
+        proposal.decided_at = utcnow_aware()
         session.add(proposal)
 
         decision_record = AgentActionDecision(

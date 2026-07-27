@@ -1,4 +1,4 @@
-"""Persisted, scope-bound CodingEduAgent diagnoses.
+﻿"""Persisted, scope-bound CodingEduAgent diagnoses.
 
 The record deliberately contains a bounded diagnosis and references to the
 execution artifacts, not the student's source code or a raw LLM trace.  A
@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 CODING_DIAGNOSIS_POLICY_VERSION = "coding-diagnosis/rule-v1"
@@ -45,5 +45,5 @@ class CodingDiagnosisRecord(SQLModel, table=True):
     reason_codes: list = Field(default_factory=list, sa_column=Column(JSON))
     policy_version: str = Field(default=CODING_DIAGNOSIS_POLICY_VERSION)
     generated_by: str = Field(default="coding-rules")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)

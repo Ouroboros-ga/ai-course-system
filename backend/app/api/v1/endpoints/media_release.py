@@ -717,13 +717,24 @@ async def migrate_storage(
 
     将 object_key 从当前存储后端迁移到另一个后端。
     管理员操作，用于本地→OSS 迁移演练。
+
+    约束来源: "Object storage migration must implement resumable task ledger
+    with per-object migration status and byte SHA verification"
+
+    实现要点:
+    - 使用 ObjectMigrationLedger 持久化每个 object_key 的迁移状态
+    - 逐对象 byte SHA 校验：source_sha256 与 target_sha256 必须一致才标记 verified
+    - 重新调用本接口可断点续传：跳过 verified，重试 failed，续传 in_progress
+    - 单对象失败不阻断整批；超过 max_attempts 标记 failed 不再自动重试
     """
     require_platform_permission(session, current_user, PlatformPermission.ADMIN)
 
+    from app.core.config import settings
     from app.services.object_storage import (
+        ObjectMigrationLedger,
         build_object_storage_provider,
         list_object_keys_under_prefix,
-        migrate_object_keys,
+        migrate_object_keys_resumable,
     )
 
     source = build_object_storage_provider(payload.source_backend)
@@ -739,11 +750,95 @@ async def migrate_storage(
     if not keys:
         return unified_response(
             code=200, message="无可迁移的 object_key",
-            data={"migrated_count": 0, "failed_count": 0, "skipped_count": 0},
+            data={
+                "migrated_count": 0,
+                "failed_count": 0,
+                "skipped_count": 0,
+                "summary": {"pending": 0, "in_progress": 0, "migrated": 0, "verified": 0, "failed": 0, "total": 0},
+            },
         )
 
-    report = migrate_object_keys(source, target, keys, delete_source=payload.delete_source)
+    # 使用可恢复账本：每个 object_key 独立状态机 + byte SHA 校验
+    ledger = ObjectMigrationLedger(settings.OBJECT_STORAGE_MIGRATION_LEDGER_PATH)
+    report = migrate_object_keys_resumable(
+        source,
+        target,
+        keys,
+        ledger=ledger,
+        delete_source=payload.delete_source,
+        max_attempts=settings.OBJECT_STORAGE_MIGRATION_MAX_ATTEMPTS,
+    )
+    # 透出账本路径便于运维查看断点状态
+    report["ledger_path"] = settings.OBJECT_STORAGE_MIGRATION_LEDGER_PATH
+    report["delete_source"] = payload.delete_source
     return unified_response(
         code=200, message="对象存储迁移完成",
         data=report,
+    )
+
+
+@media_release_router.get("/storage/migrate/status")
+async def get_storage_migrate_status(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """查询对象存储迁移账本状态（M5）
+
+    管理员可查看每个 object_key 的迁移状态、SHA、attempts、last_error，
+    用于断点续传前评估是否需要人工介入或重置 failed 条目。
+    """
+    require_platform_permission(session, current_user, PlatformPermission.ADMIN)
+
+    from app.core.config import settings
+    from app.services.object_storage import ObjectMigrationLedger
+
+    ledger = ObjectMigrationLedger(settings.OBJECT_STORAGE_MIGRATION_LEDGER_PATH)
+    summary = ledger.summary()
+    # 透出失败条目详情便于人工介入
+    failed_entries = [
+        {"object_key": k, "attempts": v.get("attempts", 0), "last_error": v.get("last_error", "")}
+        for k, v in ledger._entries.items()
+        if v.get("status") == "failed"
+    ]
+    return unified_response(
+        code=200, message="对象存储迁移账本状态",
+        data={
+            "summary": summary,
+            "ledger_path": settings.OBJECT_STORAGE_MIGRATION_LEDGER_PATH,
+            "failed_entries": failed_entries,
+        },
+    )
+
+
+@media_release_router.post("/storage/migrate/reset-failed")
+async def reset_failed_migration_entries(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """重置 failed 状态的迁移条目为 pending，允许重新尝试（M5）
+
+    人工介入后（如修复源对象、扩充配额、修正凭据）可调用此接口清空 failed
+    状态，再次调用 /storage/migrate 时这些条目将重新进入迁移流程。
+    """
+    require_platform_permission(session, current_user, PlatformPermission.ADMIN)
+
+    from app.core.config import settings
+    from app.services.object_storage import ObjectMigrationLedger
+
+    ledger = ObjectMigrationLedger(settings.OBJECT_STORAGE_MIGRATION_LEDGER_PATH)
+    reset_count = 0
+    for key, entry in list(ledger._entries.items()):
+        if entry.get("status") == "failed":
+            # 保留 attempts 历史以便审计；重置状态为 pending
+            entry["status"] = "pending"
+            entry["last_error"] = ""
+            reset_count += 1
+    if reset_count:
+        ledger._save()
+    return unified_response(
+        code=200, message="已重置 failed 状态迁移条目",
+        data={
+            "reset_count": reset_count,
+            "summary_after_reset": ledger.summary(),
+        },
     )

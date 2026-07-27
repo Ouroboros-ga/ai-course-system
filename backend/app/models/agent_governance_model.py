@@ -1,4 +1,4 @@
-"""阶段9 Agent 工具治理与教师安全阀数据模型。
+﻿"""阶段9 Agent 工具治理与教师安全阀数据模型。
 
 设计要点（与 agent_log.py 一致的数据最小化策略）：
 - 所有结构化字段仅存审计/治理元数据，绝不存原始 user_message、final_answer、prompt 或完整 LLM trace。
@@ -13,7 +13,7 @@ from typing import Any, Optional
 
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ class AgentPolicyVersion(SQLModel, table=True):
     policy_snapshot: str = Field(default="{}", description="JSON: 完整策略快照")
     is_active: bool = Field(default=True, index=True)
     created_by: int = Field(default=0)
-    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -64,8 +64,8 @@ class AgentToolPolicy(SQLModel, table=True):
     locked_reason: str | None = Field(default=None, max_length=256)
     agent_policy_version_id: Optional[int] = Field(default=None, foreign_key="agent_policy_versions.id", index=True)
     created_by: int = Field(default=0)
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     data_policy_version: str = Field(default="agent-governance/1", max_length=64)
 
 
@@ -98,7 +98,7 @@ class AgentActionProposal(SQLModel, table=True):
     status: str = Field(default="pending", index=True, max_length=16, description="pending | approved | rejected | locked | superseded")
     agent_policy_version_id: Optional[int] = Field(default=None, foreign_key="agent_policy_versions.id")
     data_policy_version: str = Field(default="agent-governance/1", max_length=64)
-    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware, index=True)
     decided_at: datetime | None = Field(default=None)
 
 
@@ -124,7 +124,7 @@ class AgentActionDecision(SQLModel, table=True):
     rerun_trace_id: str | None = Field(default=None, max_length=128, description="重跑时关联新 trace_id")
     audit_data: str = Field(default="{}", description="JSON: 审计元数据")
     data_policy_version: str = Field(default="agent-governance/1", max_length=64)
-    decided_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    decided_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -146,7 +146,7 @@ class AgentToolInvocation(SQLModel, table=True):
     student_id: int = Field(index=True)
     course_id: int = Field(index=True)
     tool_name: str = Field(index=True, max_length=64)
-    invoked_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    invoked_at: datetime = Field(default_factory=utcnow_aware, index=True)
     input_summary: str = Field(default="{}", description="JSON: 结构化输入摘要，不含 raw query/text")
     output_summary: str = Field(default="{}", description="JSON: 结构化输出摘要，如 evidence_ids/concept_id/is_supplementary")
     duration_ms: int | None = Field(default=None)

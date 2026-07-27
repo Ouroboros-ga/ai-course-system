@@ -1,4 +1,4 @@
-"""阶段8 教师数字人资产中心模型
+﻿"""阶段8 教师数字人资产中心模型
 
 实现「教师建立数字人预设 → 课程绑定 → 学生端播放」的资产链。
 
@@ -26,7 +26,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -170,8 +170,8 @@ class AvatarProfile(SQLModel, table=True):
     )
 
     notes: str = Field(default="", description="教师备注")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     deleted_at: Optional[datetime] = Field(default=None)
 
 
@@ -218,7 +218,7 @@ class AvatarSourceMedia(SQLModel, table=True):
         default="not_scanned",
         description="病毒/恶意文件扫描状态：not_scanned|clean|quarantined",
     )
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     validated_at: Optional[datetime] = Field(default=None, description="通过校验的时间")
     verified_at: Optional[datetime] = Field(default=None, description="服务端 head+ffprobe+scan 完成时间")
 
@@ -270,7 +270,7 @@ class AvatarPreparationJob(SQLModel, table=True):
     error_message_safe: str = Field(default="")
     attempt_count: int = Field(default=0)
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
 
@@ -319,7 +319,7 @@ class AvatarAssetPackage(SQLModel, table=True):
         default=AvatarAssetPackageStatus.BUILDING, index=True,
     )
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     finished_at: Optional[datetime] = Field(default=None)
 
 
@@ -369,7 +369,7 @@ class CourseAvatarBinding(SQLModel, table=True):
     locked_asset_package_id: Optional[str] = Field(default=None)
 
     notes: str = Field(default="")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     published_at: Optional[datetime] = Field(default=None)
     withdrawn_at: Optional[datetime] = Field(default=None)
 

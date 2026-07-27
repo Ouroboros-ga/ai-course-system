@@ -24,7 +24,7 @@ import pytest
 from sqlmodel import select
 
 from app.core.security import create_access_token, get_password_hash
-from app.models.access_control_model import CourseCapability
+from app.models.access_control_model import CourseCapability, PlatformPermission, PlatformPermissionAssignment
 from app.models.course_model import Course, CourseStatus, StudentEnrollment
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
@@ -135,6 +135,50 @@ def _token(user: User) -> str:
 
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+def _make_real_admin(session, monkeypatch, tmp_path) -> tuple[User, str]:
+    """创建真实管理员用户并授予 PlatformPermission.ADMIN。
+
+    require_platform_permission 检查 PlatformPermissionAssignment（非 UserRole），
+    因此必须在 DB 中显式授予权限。
+    """
+    from app.core.config import settings
+    from app.services.object_storage import reset_object_storage_for_tests
+
+    unique = datetime.utcnow().timestamp()
+    admin = User(
+        username=f"s8m2_admin_{unique}",
+        hashed_password=get_password_hash("test-password"),
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session.add(admin)
+    session.commit()
+    session.refresh(admin)
+    session.add(PlatformPermissionAssignment(
+        user_id=admin.id,
+        permission=PlatformPermission.ADMIN,
+        granted_by_user_id=admin.id,
+    ))
+    session.commit()
+
+    token = create_access_token({
+        "sub": str(admin.id),
+        "username": admin.username,
+        "role": admin.role.value,
+        "school_id": admin.school_id or "test-school",
+    })
+
+    # 把账本路径指向临时目录，避免污染开发环境数据
+    monkeypatch.setattr(settings, "OBJECT_STORAGE_MIGRATION_LEDGER_PATH", str(tmp_path / "ledger" / "migration.json"))
+    monkeypatch.setattr(settings, "OBJECT_STORAGE_MIGRATION_MAX_ATTEMPTS", 3)
+    # 允许 demo local fallback，使 s3 后端在测试环境中回退到本地
+    monkeypatch.setattr(settings, "OBJECT_STORAGE_ALLOW_DEMO_LOCAL_FALLBACK", True)
+    monkeypatch.setattr(settings, "MEDIA_STORAGE_PATH", str(tmp_path / "media"))
+    reset_object_storage_for_tests()
+
+    return admin, token
 
 
 def _create_tts_job_via_api(
@@ -636,20 +680,20 @@ class TestObjectStorageMigration:
         assert target.exists("avatars/u_1/manifest.json")
 
     def test_migrate_skips_existing_keys(self, tmp_path):
-        """目标已存在的 key 跳过"""
+        """目标已存在且 SHA 一致的 key 跳过（SHA 不一致则 failed）"""
         source = LocalStorageProvider(str(tmp_path / "source"))
         target = LocalStorageProvider(str(tmp_path / "target"))
 
-        source.put("tts/course_1/audio.mp3", b"source_audio", mime_type="audio/mpeg")
-        target.put("tts/course_1/audio.mp3", b"target_audio", mime_type="audio/mpeg")
+        # 相同内容 → SHA 一致 → skipped
+        source.put("tts/course_1/audio.mp3", b"same_audio", mime_type="audio/mpeg")
+        target.put("tts/course_1/audio.mp3", b"same_audio", mime_type="audio/mpeg")
 
         report = migrate_object_keys(
             source, target, ["tts/course_1/audio.mp3"],
         )
-        assert report["migrated_count"] == 0
         assert report["skipped_count"] == 1
         # 目标内容未被覆盖
-        assert target.get("tts/course_1/audio.mp3") == b"target_audio"
+        assert target.get("tts/course_1/audio.mp3") == b"same_audio"
 
     def test_migrate_skips_nonexistent_keys(self, tmp_path):
         """源不存在的 key 跳过"""
@@ -696,8 +740,9 @@ class TestObjectStorageMigration:
 class TestStorageMigrateApi:
     """M5: 对象存储迁移 API 端点"""
 
-    def test_admin_can_migrate_storage(self, client, session, admin_token):
-        """管理员可执行迁移"""
+    def test_admin_can_migrate_storage(self, client, session, monkeypatch, tmp_path):
+        """管理员可执行迁移（使用可恢复账本 API）"""
+        admin, token = _make_real_admin(session, monkeypatch, tmp_path)
         # 先写入一些 object_key
         from app.services.object_storage import get_object_storage
         storage = get_object_storage()
@@ -705,26 +750,36 @@ class TestStorageMigrateApi:
 
         resp = client.post(
             f"{MEDIA}/storage/migrate",
-            json={"object_keys": ["tts/course_1/test.mp3"]},
-            headers=_auth(admin_token),
+            json={
+                "object_keys": ["tts/course_1/test.mp3"],
+                "source_backend": "local",
+                "target_backend": "s3",  # 不同后端；fallback 使两者指向同一 LocalStorageProvider
+            },
+            headers=_auth(token),
         )
         assert resp.status_code == 200, resp.text
         body = resp.json()
         assert body["code"] == 200
-        # 源和目标是同一个，所以 skipped
-        assert body["data"]["skipped_count"] >= 1
+        # 可恢复账本返回 processed dict + summary + ledger_path
+        data = body["data"]
+        assert "summary" in data
+        assert "processed" in data
+        assert "ledger_path" in data
+        # fallback 下 source==target 存储，SHA 一致 → verified
+        assert data["processed"]["verified"] >= 1
 
     def test_teacher_cannot_migrate_storage(self, client, session, teacher_user):
         """教师不能执行迁移"""
         resp = client.post(
             f"{MEDIA}/storage/migrate",
-            json={"object_keys": []},
+            json={"object_keys": [], "source_backend": "local", "target_backend": "s3"},
             headers=_auth(_token(teacher_user)),
         )
         assert resp.status_code == 403
 
-    def test_migrate_by_prefix(self, client, session, admin_token):
-        """按前缀迁移"""
+    def test_migrate_by_prefix(self, client, session, monkeypatch, tmp_path):
+        """按前缀迁移（使用可恢复账本 API）"""
+        admin, token = _make_real_admin(session, monkeypatch, tmp_path)
         from app.services.object_storage import get_object_storage
         storage = get_object_storage()
         storage.put("tts/course_1/a.mp3", b"a", mime_type="audio/mpeg")
@@ -732,13 +787,21 @@ class TestStorageMigrateApi:
 
         resp = client.post(
             f"{MEDIA}/storage/migrate",
-            json={"prefix": "tts/course_1/"},
-            headers=_auth(admin_token),
+            json={
+                "prefix": "tts/course_1/",
+                "source_backend": "local",
+                "target_backend": "s3",
+            },
+            headers=_auth(token),
         )
         assert resp.status_code == 200
         body = resp.json()
         assert body["code"] == 200
-        assert body["data"]["skipped_count"] >= 2  # 源=目标，跳过
+        data = body["data"]
+        assert "summary" in data
+        assert "processed" in data
+        # fallback 下两个 key 都应 verified
+        assert data["processed"]["verified"] >= 2
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""G2 六维认知状态与学习证据持久化模型
+﻿"""G2 六维认知状态与学习证据持久化模型
 
 六维冻结为：
   observed_performance_score  -- 评分型显性证据聚合（不含提问次数/观看时长）
@@ -25,7 +25,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # 策略版本号，每次推荐策略变更时递增
@@ -82,8 +82,8 @@ class CognitiveState(SQLModel, table=True):
     sample_size: int = Field(default=0, description="样本量(答题数)")
 
     is_latest: bool = Field(default=True, index=True, description="是否为最新状态")
-    computed_at: datetime = Field(default_factory=utcnow_naive)
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    computed_at: datetime = Field(default_factory=utcnow_aware)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class LearningEvidenceRecord(SQLModel, table=True):
@@ -114,7 +114,7 @@ class LearningEvidenceRecord(SQLModel, table=True):
     event_refs: list = Field(default_factory=list, sa_column=Column(JSON), description="事件引用")
 
     policy_version: str = Field(default=COGNITIVE_POLICY_VERSION)
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class RecommendationRecord(SQLModel, table=True):
@@ -152,7 +152,7 @@ class RecommendationRecord(SQLModel, table=True):
     source: str = Field(default="recommendation_service")
     source_version: str = Field(default="1.0")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     consumed: bool = Field(default=False, description="学生是否已消费(答题/查看)")
     consumed_at: Optional[datetime] = Field(default=None)
 

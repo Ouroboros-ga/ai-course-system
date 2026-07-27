@@ -1,10 +1,10 @@
-"""
+﻿"""
 学生向教师反馈通道API接口
 提供反馈的创建、查询、详情、状态更新功能
 """
 
 from typing import Optional
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, Query, Body
 from sqlmodel import Session, select
@@ -303,7 +303,7 @@ async def update_feedback_status(
         feedback.status = status
         if teacher_reply is not None:
             feedback.teacher_reply = teacher_reply
-        feedback.updated_at = utcnow_naive()
+        feedback.updated_at = utcnow_aware()
 
         session.add(feedback)
         session.commit()

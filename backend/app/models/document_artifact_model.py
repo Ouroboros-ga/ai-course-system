@@ -1,11 +1,11 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlmodel import SQLModel, Field, Column
 from sqlalchemy import JSON
 from typing import Optional
 from datetime import datetime
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class DocumentArtifact(SQLModel, table=True):
@@ -19,4 +19,4 @@ class DocumentArtifact(SQLModel, table=True):
     file_name: str = Field(description="原始文件名")
     mime_type: str = Field(default="")
     parse_info: dict = Field(default={}, sa_column=Column(JSON), description="解析状态信息")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)

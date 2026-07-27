@@ -1,10 +1,10 @@
-"""
+﻿"""
 笔记管理API接口
 提供学生笔记的创建、查询、更新、删除功能
 """
 
 from typing import Optional
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, Query, Body
 from sqlmodel import Session, select
@@ -228,7 +228,7 @@ async def update_note(
         if is_draft is not None:
             note.is_draft = is_draft
 
-        note.updated_at = utcnow_naive()
+        note.updated_at = utcnow_aware()
         session.add(note)
         session.commit()
         session.refresh(note)

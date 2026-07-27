@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlmodel import SQLModel, Field, Column
 from sqlalchemy import JSON
@@ -6,7 +6,7 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class NoteTriggerSource(str, Enum):
@@ -35,5 +35,5 @@ class Note(SQLModel, table=True):
     tags: list = Field(default=[], sa_column=Column(JSON))
     trigger_source: NoteTriggerSource = Field(default=NoteTriggerSource.LEARN)
     is_draft: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)

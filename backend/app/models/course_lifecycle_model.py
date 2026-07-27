@@ -1,4 +1,4 @@
-"""阶段2 成员、设置、加入申请与课程生命周期 持久化模型。
+﻿"""阶段2 成员、设置、加入申请与课程生命周期 持久化模型。
 
 承载路线图 §5：
 - 加入申请状态机：pending → approved | rejected | info_requested | cancelled | expired
@@ -19,7 +19,7 @@ from typing import Any, Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -87,8 +87,8 @@ class CourseJoinRequest(SQLModel, table=True):
     # 过期
     expires_at: Optional[datetime] = Field(default=None, description="申请过期时间")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -118,8 +118,8 @@ class CourseGroup(SQLModel, table=True):
     group_type: str = Field(default="study", description="study|class|experiment|lab")
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class CourseGroupMember(SQLModel, table=True):
@@ -139,7 +139,7 @@ class CourseGroupMember(SQLModel, table=True):
     user_id: int = Field(foreign_key="users.id", index=True)
 
     added_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    added_at: datetime = Field(default_factory=utcnow_naive)
+    added_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ class CourseSettingVersion(SQLModel, table=True):
 
     # 审计
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +234,7 @@ class CourseAuditEvent(SQLModel, table=True):
     after: dict = Field(default_factory=dict, sa_column=Column(JSON))
     note: str = Field(default="")
 
-    created_at: datetime = Field(default_factory=utcnow_naive, index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +291,7 @@ class IntegrationSyncRun(SQLModel, table=True):
     initiated_by: Optional[int] = Field(default=None, foreign_key="users.id")
     confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     confirmed_at: Optional[datetime] = Field(default=None)
     completed_at: Optional[datetime] = Field(default=None)

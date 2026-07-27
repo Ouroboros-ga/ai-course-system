@@ -1,4 +1,4 @@
-"""阶段5 服务层：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
+﻿"""阶段5 服务层：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
 
 完成"题库优先检索 → 无匹配题则约束生成草稿 → 教师审核/发布"的编排链路。
 
@@ -24,7 +24,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
     COGNITIVE_POLICY_VERSION,
@@ -110,8 +110,8 @@ class QuestionImportService:
                 details={"current_status": run.status.value},
             )
         run.status = ImportRunStatus.RUNNING
-        run.started_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.started_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -129,8 +129,8 @@ class QuestionImportService:
         run.status = ImportRunStatus.SUCCEEDED
         run.imported_count = imported_count
         run.skipped_count = skipped_count
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -151,8 +151,8 @@ class QuestionImportService:
         run.error_message = error_message[:500]
         if failure_details is not None:
             run.failure_details = failure_details
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -221,8 +221,8 @@ class QuestionImportService:
 
         # 1. 标记 RUNNING
         run.status = ImportRunStatus.RUNNING
-        run.started_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.started_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
 
@@ -355,8 +355,8 @@ class QuestionImportService:
         else:
             run.status = ImportRunStatus.SUCCEEDED
 
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -493,9 +493,9 @@ class QuestionGenerationDraftService:
                 "model_version": draft.model_version,
             },
             created_by=reviewed_by,
-            created_at=utcnow_naive(),
-            updated_at=utcnow_naive(),
-            published_at=utcnow_naive() if publish_status == QuestionStatus.PUBLISHED else None,
+            created_at=utcnow_aware(),
+            updated_at=utcnow_aware(),
+            published_at=utcnow_aware() if publish_status == QuestionStatus.PUBLISHED else None,
             published_by=reviewed_by if publish_status == QuestionStatus.PUBLISHED else None,
         )
         session.add(question)
@@ -503,10 +503,10 @@ class QuestionGenerationDraftService:
 
         draft.status = GenerationDraftStatus.APPROVED
         draft.reviewed_by = reviewed_by
-        draft.reviewed_at = utcnow_naive()
+        draft.reviewed_at = utcnow_aware()
         draft.review_comment = review_comment
         draft.upgraded_question_id = question.id
-        draft.updated_at = utcnow_naive()
+        draft.updated_at = utcnow_aware()
         session.add(draft)
         session.flush()
         return draft, question
@@ -528,9 +528,9 @@ class QuestionGenerationDraftService:
             )
         draft.status = GenerationDraftStatus.REJECTED
         draft.reviewed_by = rejected_by
-        draft.reviewed_at = utcnow_naive()
+        draft.reviewed_at = utcnow_aware()
         draft.review_comment = review_comment
-        draft.updated_at = utcnow_naive()
+        draft.updated_at = utcnow_aware()
         session.add(draft)
         session.flush()
         return draft
@@ -552,8 +552,8 @@ class QuestionGenerationDraftService:
             )
         draft.status = GenerationDraftStatus.STALE
         draft.stale_reason = stale_reason
-        draft.stale_at = utcnow_naive()
-        draft.updated_at = utcnow_naive()
+        draft.stale_at = utcnow_aware()
+        draft.updated_at = utcnow_aware()
         session.add(draft)
         session.flush()
         return draft
@@ -634,7 +634,7 @@ class PracticeRecommendationService:
         - 数据不足时返回 unknown 语义（confidence < LOW_CONFIDENCE_THRESHOLD）
         """
         recommendation_id = "rec_" + uuid.uuid4().hex
-        now = utcnow_naive()
+        now = utcnow_aware()
 
         # 抽取认知快照与六维诊断
         cognitive_snapshot: dict = {}
@@ -780,8 +780,8 @@ class PracticeRecommendationService:
 
         run.item_count = items_created
         run.status = RecommendationRunStatus.SUCCEEDED if items_created > 0 else RecommendationRunStatus.PARTIAL_SUCCESS
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -884,8 +884,8 @@ class PracticeRecommendationService:
             # 升级后改写 question_id
             item.question_id = draft.upgraded_question_id
         item.is_started = True
-        item.started_at = utcnow_naive()
-        item.updated_at = utcnow_naive()
+        item.started_at = utcnow_aware()
+        item.updated_at = utcnow_aware()
         session.add(item)
         session.flush()
         return item

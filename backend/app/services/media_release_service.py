@@ -1,4 +1,4 @@
-"""阶段8 媒体生成与发布服务
+﻿"""阶段8 媒体生成与发布服务
 
 实现「讲稿 → TTS → 字幕/PPT 时间轴 → MediaRelease → 学生端播放」的服务编排。
 
@@ -27,7 +27,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.media_release_model import (
     MediaGenerationAttempt,
     MediaGenerationJob,
@@ -188,7 +188,7 @@ class MediaGenerationJobService:
     ) -> MediaGenerationJob:
         job = self.get_job(session, course_id=course_id, job_id=job_id)
         job.status = MediaGenerationStatus.RUNNING
-        job.updated_at = utcnow_naive()
+        job.updated_at = utcnow_aware()
         session.add(job)
         if job.task_id:
             task_service.mark_running(session, job.task_id, stage=stage)
@@ -210,7 +210,7 @@ class MediaGenerationJobService:
         job.output_metadata = output_metadata or {}
         job.error_code = ""
         job.error_message_safe = ""
-        job.finished_at = utcnow_naive()
+        job.finished_at = utcnow_aware()
         job.updated_at = job.finished_at
         session.add(job)
         if job.task_id:
@@ -236,7 +236,7 @@ class MediaGenerationJobService:
         job.status = MediaGenerationStatus.FAILED
         job.error_code = error_code
         job.error_message_safe = error_message_safe
-        job.finished_at = utcnow_naive()
+        job.finished_at = utcnow_aware()
         job.updated_at = job.finished_at
         session.add(job)
         if job.task_id:
@@ -278,7 +278,7 @@ class MediaGenerationJobService:
             error_message_safe=error_message_safe,
             degraded_from_provider=degraded_from_provider,
             attempt_metadata=attempt_metadata or {},
-            finished_at=utcnow_naive() if status != MediaGenerationStatus.RUNNING else None,
+            finished_at=utcnow_aware() if status != MediaGenerationStatus.RUNNING else None,
         )
         session.add(attempt)
         session.flush()
@@ -398,7 +398,7 @@ class MediaReleaseService:
                 MediaRelease.status == MediaReleaseStatus.ACTIVE,
             )
         ).all()
-        now = utcnow_naive()
+        now = utcnow_aware()
         for old in old_actives:
             old.status = MediaReleaseStatus.SUPERSEDED
             old.superseded_at = now
@@ -421,7 +421,7 @@ class MediaReleaseService:
                 details={"current_status": release.status.value},
             )
         release.status = MediaReleaseStatus.WITHDRAWN
-        release.withdrawn_at = utcnow_naive()
+        release.withdrawn_at = utcnow_aware()
         session.add(release)
         session.flush()
         return release
@@ -451,7 +451,7 @@ class MediaReleaseService:
                 MediaRelease.status == MediaReleaseStatus.ACTIVE,
             )
         ).all()
-        now = utcnow_naive()
+        now = utcnow_aware()
         for old in old_actives:
             old.status = MediaReleaseStatus.SUPERSEDED
             old.superseded_at = now
@@ -841,7 +841,7 @@ class TtsExecutionService:
         job.status = MediaGenerationStatus.PENDING
         job.error_code = ""
         job.error_message_safe = ""
-        job.updated_at = utcnow_naive()
+        job.updated_at = utcnow_aware()
         session.add(job)
         session.flush()
         return self.execute_tts_job(

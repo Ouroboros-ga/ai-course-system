@@ -1,12 +1,14 @@
 """P1-10 验收测试：time_utils.py 替换 utcnow_naive() 为时区感知实现
 
-验证约束：
+验证约束（Fix6 完成后的新契约）：
 - utcnow_aware() 返回 timezone-aware UTC datetime（tzinfo=timezone.utc）
-- utcnow_naive() 标记为 deprecated，调用时发出 DeprecationWarning
+- utcnow_naive() 已变为 utcnow_aware() 的向后兼容别名：
+  * 返回 timezone-aware UTC（与 utcnow_aware 完全一致）
+  * 不再发出 DeprecationWarning（迁移已完成，别名保留仅供外部调用方过渡）
 - to_aware() 将 naive datetime 转为 tz-aware（假定 UTC）
 - to_naive() 将 tz-aware datetime 转为 naive（剥离 tzinfo）
 - now_utc_iso() 返回含 +00:00 后缀的 ISO 8601 字符串
-- 新代码（非 DB 写入）必须使用 utcnow_aware() 而非 utcnow_naive()
+- 新代码必须使用 utcnow_aware()；utcnow_naive 仅供尚未迁移的外部调用方使用
 
 约束来源：
 - Hard Constraints: "All datetime fields must use timezone-aware UTC; utcnow_naive()
@@ -50,27 +52,32 @@ class TestUtcnowAware:
             utcnow_aware()  # 不应抛 DeprecationWarning
 
 
-class TestUtcnowNaiveDeprecated:
-    """测试2: utcnow_naive 标记为 deprecated"""
+class TestUtcnowNaiveAlias:
+    """测试2: utcnow_naive 已变为 utcnow_aware 的向后兼容别名
 
-    def test_emits_deprecation_warning(self) -> None:
-        with pytest.warns(DeprecationWarning, match="deprecated"):
-            utcnow_naive()
+    Fix6 完成后，所有应用代码已迁移到 utcnow_aware，DB schema 已升级为
+    DateTime(timezone=True)。utcnow_naive 保留为别名，返回 tz-aware UTC，
+    不再发弃用警告（迁移已完成，无需再警告）。
+    """
 
-    def test_returns_naive_datetime(self) -> None:
+    def test_does_not_emit_deprecation_warning(self) -> None:
+        """Fix6 完成后不再发警告（迁移已完成）"""
         with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            now = utcnow_naive()
-        assert now.tzinfo is None
+            warnings.simplefilter("error")
+            utcnow_naive()  # 不应抛任何警告
 
-    def test_naive_value_equals_aware_value_stripped(self) -> None:
-        """naive 与 aware 的 UTC 时刻应一致（剥离 tzinfo 后相等）"""
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", DeprecationWarning)
-            naive = utcnow_naive()
+    def test_returns_timezone_aware_datetime(self) -> None:
+        """别名返回 tz-aware UTC，与 utcnow_aware 一致"""
+        now = utcnow_naive()
+        assert now.tzinfo is not None
+        assert now.tzinfo == timezone.utc
+
+    def test_alias_value_equals_aware_value(self) -> None:
+        """别名与 utcnow_aware 的 UTC 时刻应一致（差异在毫秒内）"""
+        naive = utcnow_naive()
         aware = utcnow_aware()
-        # 两者都基于 datetime.now(timezone.utc)，差异应在毫秒内
-        diff = abs((aware.replace(tzinfo=None) - naive).total_seconds())
+        # 两者都是 tz-aware UTC，可直接比较
+        diff = abs((aware - naive).total_seconds())
         assert diff < 1.0
 
 

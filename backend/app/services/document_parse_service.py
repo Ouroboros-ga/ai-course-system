@@ -1,4 +1,4 @@
-"""阶段4 服务层：课程材料解析、Evidence、Citation 与图谱候选
+﻿"""阶段4 服务层：课程材料解析、Evidence、Citation 与图谱候选
 
 不重复实现已有 graph_production_service 的能力（CourseEvidenceRecord/GraphSnapshotRecord/GraphNodeReview），
 而是补全解析流水线、候选证据、学生可读 Citation、图谱候选批次、release 关联。
@@ -22,7 +22,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.document_parse_model import (
     CandidateBatchStatus,
     CitationStatus,
@@ -143,7 +143,7 @@ class DocumentParseService:
         - orphan: EvidenceSpan.status=orphaned, EvidenceCitation.status=source_invalid
         - delete: 物理删除（默认不使用）
         """
-        now = utcnow_naive()
+        now = utcnow_aware()
         affected = 0
         if stale_strategy == StaleStrategy.DELETE:
             # 仅在明确授权时使用，默认不删除
@@ -230,8 +230,8 @@ class DocumentParseService:
                 details={"current_status": run.status.value},
             )
         run.status = ParseRunStatus.RUNNING
-        run.started_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.started_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -256,8 +256,8 @@ class DocumentParseService:
         run.block_count = block_count
         run.evidence_span_count = evidence_span_count
         run.graph_candidate_count = graph_candidate_count
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -275,8 +275,8 @@ class DocumentParseService:
         run.status = ParseRunStatus.FAILED
         run.error_code = error_code
         run.error_message = error_message[:500]
-        run.finished_at = utcnow_naive()
-        run.updated_at = utcnow_naive()
+        run.finished_at = utcnow_aware()
+        run.updated_at = utcnow_aware()
         session.add(run)
         session.flush()
         return run
@@ -405,7 +405,7 @@ class DocumentParseService:
                 details={"current_status": span.status.value},
             )
 
-        now = utcnow_naive()
+        now = utcnow_aware()
         span.status = EvidenceSpanStatus.CONFIRMED
         span.confirmed_by = confirmed_by
         span.confirmed_at = now
@@ -477,9 +477,9 @@ class DocumentParseService:
             )
         span.status = EvidenceSpanStatus.REJECTED
         span.rejected_by = rejected_by
-        span.rejected_at = utcnow_naive()
+        span.rejected_at = utcnow_aware()
         span.reject_reason = reject_reason
-        span.updated_at = utcnow_naive()
+        span.updated_at = utcnow_aware()
         session.add(span)
         session.flush()
         return span
@@ -582,7 +582,7 @@ class GraphCandidateService:
                               CandidateBatchStatus.SUCCEEDED, CandidateBatchStatus.PARTIAL_SUCCESS):
                 prev_batch_id = old.batch_id
                 old.status = CandidateBatchStatus.SUPERSEDED
-                old.updated_at = utcnow_naive()
+                old.updated_at = utcnow_aware()
                 session.add(old)
 
         batch = GraphCandidateBatch(
@@ -611,8 +611,8 @@ class GraphCandidateService:
         batch.status = CandidateBatchStatus.SUCCEEDED
         batch.node_candidate_count = node_candidate_count
         batch.relation_candidate_count = relation_candidate_count
-        batch.finished_at = utcnow_naive()
-        batch.updated_at = utcnow_naive()
+        batch.finished_at = utcnow_aware()
+        batch.updated_at = utcnow_aware()
         session.add(batch)
         session.flush()
         return batch
@@ -637,7 +637,7 @@ class GraphCandidateService:
         if snapshot is None:
             reject_resource_not_found("图谱快照不存在或不属于该课程")
         batch.snapshot_id = snapshot_id
-        batch.updated_at = utcnow_naive()
+        batch.updated_at = utcnow_aware()
         session.add(batch)
         session.flush()
         return batch
@@ -709,7 +709,7 @@ class GraphReleaseLinkService:
             # 幂等更新 snapshot
             existing.snapshot_id = snapshot_id
             existing.linked_by = linked_by
-            existing.linked_at = utcnow_naive()
+            existing.linked_at = utcnow_aware()
             session.add(existing)
             session.flush()
             return existing

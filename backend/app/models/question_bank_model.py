@@ -1,4 +1,4 @@
-"""Phase B 题库与题源映射数据模型。
+﻿"""Phase B 题库与题源映射数据模型。
 
 核心数据契约：
 - QuestionBankItem: 题目、答案、选项、难度、题型、课程归属、知识点、先修、状态、版本
@@ -19,7 +19,7 @@ from typing import Optional, Any
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class QuestionType(str, Enum):
@@ -124,8 +124,8 @@ class QuestionBankItem(SQLModel, table=True):
 
     # 审计
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     published_at: Optional[datetime] = Field(default=None, description="发布时间")
     published_by: Optional[int] = Field(default=None, foreign_key="users.id", description="发布人")
 
@@ -177,8 +177,8 @@ class QuestionSourceMapping(SQLModel, table=True):
 
     # 审计
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
     locked_by: Optional[int] = Field(default=None, foreign_key="users.id", description="锁定人")
     locked_at: Optional[datetime] = Field(default=None, description="锁定时间")
 
@@ -217,5 +217,5 @@ class QuestionAttempt(SQLModel, table=True):
     judged_by: str = Field(default="teacher", description="评判方式: teacher/auto/peer")
     judge_feedback: str = Field(default="")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     judged_at: Optional[datetime] = Field(default=None)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 知识库服务
 多学科知识数据库的核心业务逻辑
 支持知识点的增删改查、关系管理、批量导入、智能检索
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from sqlmodel import Session, select, or_, and_
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.knowledge_model import (
     KnowledgeBase,
     KnowledgePoint,
@@ -404,7 +404,7 @@ class KnowledgePointService:
             if hasattr(point, key) and value is not None:
                 setattr(point, key, value)
         
-        point.updated_at = utcnow_naive()
+        point.updated_at = utcnow_aware()
         session.commit()
         session.refresh(point)
         
@@ -664,7 +664,7 @@ class KnowledgeImportService:
             import_log.total_points = len(knowledge_points)
             import_log.success_count = len(knowledge_points)
             import_log.status = "completed"
-            import_log.completed_at = utcnow_naive()
+            import_log.completed_at = utcnow_aware()
             session.commit()
             
             logger.info(f"[KnowledgeImport] 从文档导入完成: {doc_name}, {len(knowledge_points)}个知识点")
@@ -819,7 +819,7 @@ class KnowledgeImportService:
             import_log.success_count = success_count
             import_log.fail_count = fail_count
             import_log.status = "completed"
-            import_log.completed_at = utcnow_naive()
+            import_log.completed_at = utcnow_aware()
             session.commit()
             
             return {

@@ -1,4 +1,4 @@
-"""
+﻿"""
 前置知识智能跳转服务
 实现AI驱动的知识缺陷检测、多层跳转管理、学习路径可视化
 """
@@ -11,7 +11,7 @@ from typing import Dict, List, Optional, Tuple
 from sqlmodel import Session, select, func
 
 from app.common.llm_client import llm_client, Message
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.progress_model import (
     LearningProgress,
     NodeProgress,
@@ -540,9 +540,9 @@ class JumpHistoryManager:
             return False
         
         jump_record.is_returned = True
-        jump_record.returned_at = utcnow_naive()
+        jump_record.returned_at = utcnow_aware()
         jump_record.review_duration_seconds = review_duration_seconds
-        jump_record.updated_at = utcnow_naive()
+        jump_record.updated_at = utcnow_aware()
         
         session.add(jump_record)
         session.commit()
@@ -567,7 +567,7 @@ class JumpHistoryManager:
             return False
         
         jump_record.review_completed = True
-        jump_record.updated_at = utcnow_naive()
+        jump_record.updated_at = utcnow_aware()
         
         session.add(jump_record)
         session.commit()

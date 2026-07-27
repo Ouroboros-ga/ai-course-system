@@ -1,4 +1,4 @@
-"""阶段5 题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接 API 路由。
+﻿"""阶段5 题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接 API 路由。
 
 路由前缀：
 - /api/v1/practice/course/{course_id}/recommendations                创建/列表推荐运行
@@ -26,7 +26,7 @@ import hashlib
 import hmac
 import secrets
 import uuid
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -627,7 +627,7 @@ async def submit_attempt(
         attempt.is_correct = is_correct
         attempt.score = float(is_correct) if is_correct is not None else None
         attempt.judged_by = "auto"
-        attempt.judged_at = utcnow_naive()
+        attempt.judged_at = utcnow_aware()
     session.add(attempt)
     session.flush()
 
@@ -1127,7 +1127,7 @@ async def attach_learning_action_evidence(
 
     # 6. 写入正式证据
     evidence_id = "ev_" + uuid.uuid4().hex
-    now = utcnow_naive()
+    now = utcnow_aware()
     confidence = (
         payload.confidence if payload.confidence is not None
         else policy.confidence_threshold

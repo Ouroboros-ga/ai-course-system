@@ -1,4 +1,4 @@
-"""G7 WebResearchTool 受控研究 API
+﻿"""G7 WebResearchTool 受控研究 API
 
 教师可以关闭课程级 WebResearch。
 每条外部参考带来源、时间和用途。
@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -88,7 +88,7 @@ async def update_config(
     if payload.cache_ttl_minutes is not None:
         config.cache_ttl_minutes = payload.cache_ttl_minutes
 
-    config.updated_at = utcnow_naive()
+    config.updated_at = utcnow_aware()
     session.add(config)
     session.commit()
     session.refresh(config)

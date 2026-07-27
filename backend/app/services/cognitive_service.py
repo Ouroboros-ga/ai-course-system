@@ -1,4 +1,4 @@
-"""G2 六维认知状态计算引擎
+﻿"""G2 六维认知状态计算引擎
 
 从 QuestionAttempt 记录计算六维认知状态，复用已有的：
   - RuleBasedMasteryProvider 的加权计算思路
@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
     LearningEvidenceRecord,
@@ -256,7 +256,7 @@ def compute_cognitive_state(
         reason_codes=sorted(set(reason_codes)),
         sample_size=total_attempts,
         is_latest=True,
-        computed_at=utcnow_naive(),
+        computed_at=utcnow_aware(),
     )
     session.add(state)
     session.commit()

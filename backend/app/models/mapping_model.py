@@ -1,4 +1,4 @@
-"""
+﻿"""
 知识点↔PPT页面映射数据模型
 建立知识点与PPT页面的双向对应关系
 """
@@ -9,7 +9,7 @@ from sqlmodel import SQLModel, Field
 from typing import Optional
 from datetime import datetime
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class KnowledgePageMap(SQLModel, table=True):
@@ -46,7 +46,7 @@ class KnowledgePageMap(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="创建时间"
+        default_factory=utcnow_aware, description="创建时间"
     )
 
     updated_at: Optional[datetime] = Field(

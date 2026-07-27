@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from sqlmodel import SQLModel, Field
 from pydantic import field_validator
@@ -7,7 +7,7 @@ from datetime import datetime
 from enum import Enum
 import re
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class UserRole(str, Enum):
@@ -90,7 +90,7 @@ class User(SQLModel, table=True):
 
     # --- 时间戳 ---
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="账号创建时间"
+        default_factory=utcnow_aware, description="账号创建时间"
     )
     updated_at: Optional[datetime] = Field(default=None, description="最后更新时间")
 
@@ -193,7 +193,7 @@ class ChatHistory(SQLModel, table=True):
     content: str = Field(description="聊天内容/会话标题")
 
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="创建时间"
+        default_factory=utcnow_aware, description="创建时间"
     )
 
 
@@ -223,5 +223,5 @@ class ChatMessage(SQLModel, table=True):
     content: str = Field(description="消息内容")
 
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="创建时间"
+        default_factory=utcnow_aware, description="创建时间"
     )

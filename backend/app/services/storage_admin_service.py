@@ -16,7 +16,7 @@ from typing import Iterable, Optional
 
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware, to_aware
 from app.models.storage_object_ref_model import (
     StorageObjectRef,
     StorageVerifyStatus,
@@ -214,7 +214,7 @@ class StorageAdminService:
             for ref in session.exec(select(StorageObjectRef)).all()
         }
 
-        now = utcnow_naive()
+        now = utcnow_aware()
         for key in provider_key_set:
             referenced_by = sorted(
                 {table for table, keys in db_refs.items() if key in keys}
@@ -290,9 +290,9 @@ class StorageAdminService:
         ).first()
         if ref is None:
             return False
-        ref.soft_deleted_at = utcnow_naive()
+        ref.soft_deleted_at = utcnow_aware()
         ref.soft_delete_reason = reason
-        ref.updated_at = utcnow_naive()
+        ref.updated_at = utcnow_aware()
         session.add(ref)
         session.commit()
         return True
@@ -306,7 +306,7 @@ class StorageAdminService:
             return False
         ref.soft_deleted_at = None
         ref.soft_delete_reason = ""
-        ref.updated_at = utcnow_naive()
+        ref.updated_at = utcnow_aware()
         session.add(ref)
         session.commit()
         return True
@@ -336,7 +336,7 @@ class StorageAdminService:
         report = GarbageCollectReport()
         provider = self._provider()
         # 使用 naive UTC 与 SQLite 存储的 naive 字符串比较；SQLModel 写入时会剥离时区。
-        cutoff = utcnow_naive() - timedelta(seconds=retention_seconds)
+        cutoff = utcnow_aware() - timedelta(seconds=retention_seconds)
 
         # 拉取全部已软删除的对象；candidates 反映回收队列全貌，不过滤保留期。
         all_soft_deleted = session.exec(
@@ -350,7 +350,7 @@ class StorageAdminService:
             if len(report.deleted_keys) >= max_deletions:
                 break
             # 保留期内不回收
-            if ref.soft_deleted_at is not None and ref.soft_deleted_at > cutoff:
+            if ref.soft_deleted_at is not None and to_aware(ref.soft_deleted_at) > cutoff:
                 report.retained_within_retention += 1
                 continue
 
@@ -424,7 +424,7 @@ class StorageAdminService:
         else:
             provider_keys = list(provider_keys)
 
-        now = utcnow_naive()
+        now = utcnow_aware()
 
         # 1) 检查 refs 表中登记但 Provider 已缺失的对象
         all_refs = session.exec(

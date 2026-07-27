@@ -1,4 +1,4 @@
-"""
+﻿"""
 视频生成服务
 F5核心管线：脚本节点 → TTS合成语音 → 数字人视频生成
 
@@ -19,7 +19,7 @@ from typing import Optional
 from sqlmodel import Session, select
 
 from app.core.config import settings
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.course_model import Course, CourseScript, ScriptNode
 from app.models.asset_model import TeacherAsset, AssetType
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
@@ -101,7 +101,7 @@ class VideoGenerationService:
                 script_id=node.script_id,
                 node_id=node_id,
             )
-        task.updated_at = utcnow_naive()
+        task.updated_at = utcnow_aware()
         session.add(task)
         session.commit()
         session.refresh(task)
@@ -120,7 +120,7 @@ class VideoGenerationService:
         task.status = GenerationStatus.TTS_SYNTHESIZING
         task.voice = voice
         task.face_video_asset_id = face_video_asset_id
-        task.updated_at = utcnow_naive()
+        task.updated_at = utcnow_aware()
         session.add(task)
         session.commit()
 
@@ -129,14 +129,14 @@ class VideoGenerationService:
         except TTSError as e:
             task.status = GenerationStatus.FAILED
             task.error_message = f"TTS合成失败: {str(e)}"
-            task.updated_at = utcnow_naive()
+            task.updated_at = utcnow_aware()
             session.add(task)
             session.commit()
             raise
 
         # 8. 数字人视频生成
         task.status = GenerationStatus.DH_GENERATING
-        task.updated_at = utcnow_naive()
+        task.updated_at = utcnow_aware()
         session.add(task)
         session.commit()
 
@@ -159,7 +159,7 @@ class VideoGenerationService:
             if not dh_result.success:
                 task.status = GenerationStatus.FAILED
                 task.error_message = f"Digital human generation failed: {dh_result.error_message}"
-                task.updated_at = utcnow_naive()
+                task.updated_at = utcnow_aware()
                 session.add(task)
                 session.commit()
                 session.refresh(task)
@@ -173,7 +173,7 @@ class VideoGenerationService:
             if dh_status and str(dh_status).lower() not in {"success", "succeeded", "done", "completed"}:
                 task.status = GenerationStatus.FAILED
                 task.error_message = f"Digital human generation failed: {dh_error or dh_status}"
-                task.updated_at = utcnow_naive()
+                task.updated_at = utcnow_aware()
                 session.add(task)
                 session.commit()
                 session.refresh(task)
@@ -181,7 +181,7 @@ class VideoGenerationService:
             if not getattr(dh_response, "video_path", None):
                 task.status = GenerationStatus.FAILED
                 task.error_message = f"Digital human generation failed: {dh_error or 'video_path is empty'}"
-                task.updated_at = utcnow_naive()
+                task.updated_at = utcnow_aware()
                 session.add(task)
                 session.commit()
                 session.refresh(task)
@@ -191,20 +191,20 @@ class VideoGenerationService:
         except DigitalHumanError as e:
             task.status = GenerationStatus.FAILED
             task.error_message = f"Digital human generation failed: {str(e)}"
-            task.updated_at = utcnow_naive()
+            task.updated_at = utcnow_aware()
             session.add(task)
             session.commit()
             raise
         except Exception as e:
             task.status = GenerationStatus.FAILED
             task.error_message = f"Digital human generation failed: {str(e)}"
-            task.updated_at = utcnow_naive()
+            task.updated_at = utcnow_aware()
             session.add(task)
             session.commit()
             raise
         # 9. 完成
         task.status = GenerationStatus.COMPLETED
-        task.updated_at = utcnow_naive()
+        task.updated_at = utcnow_aware()
         session.add(task)
         session.commit()
         session.refresh(task)
@@ -331,7 +331,7 @@ class VideoGenerationService:
         task.audio_path = str(audio_path)
         task.audio_duration = response.duration_ms / 1000 if response.duration_ms else 0
         task.status = GenerationStatus.TTS_COMPLETED
-        task.updated_at = utcnow_naive()
+        task.updated_at = utcnow_aware()
         session.add(task)
         session.commit()
 

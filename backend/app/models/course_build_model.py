@@ -1,4 +1,4 @@
-"""阶段3 统一任务中心与教师课程建设工作流 持久化模型。
+﻿"""阶段3 统一任务中心与教师课程建设工作流 持久化模型。
 
 承载路线图 §6：
 - 七步建设状态：资料(materials)→结构(structure)→讲稿(scripts)→页映射(page_mappings)→媒体(media)→校验(validate)→发布(release)
@@ -19,7 +19,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 # ---------------------------------------------------------------------------
@@ -74,8 +74,8 @@ class CourseBuildDraft(SQLModel, table=True):
     overall_status: str = Field(default="not_started", description="not_started/in_progress/blocked/ready_for_release/released")
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class CourseBuildStep(SQLModel, table=True):
@@ -121,8 +121,8 @@ class CourseBuildStep(SQLModel, table=True):
     quality_gate_passed: bool = Field(default=False)
     quality_gate_details: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -169,8 +169,8 @@ class SourceMaterial(SQLModel, table=True):
 
     # 归属
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class SourceMaterialVersion(SQLModel, table=True):
@@ -207,7 +207,7 @@ class SourceMaterialVersion(SQLModel, table=True):
     is_current: bool = Field(default=True, index=True)
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ class CourseQualityGateRun(SQLModel, table=True):
     target_release_id: Optional[str] = Field(default=None, description="目标发布 ID")
 
     initiated_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     completed_at: Optional[datetime] = Field(default=None)
 
 
@@ -316,7 +316,7 @@ class CourseRelease(SQLModel, table=True):
     published_at: Optional[datetime] = Field(default=None)
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class CourseReleaseArtifact(SQLModel, table=True):
@@ -337,4 +337,4 @@ class CourseReleaseArtifact(SQLModel, table=True):
     artifact_version: int = Field(default=1)
     artifact_ref: str = Field(default="", description="产物引用路径")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)

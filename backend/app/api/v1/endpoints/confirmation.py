@@ -1,10 +1,10 @@
-"""
+﻿"""
 教师确认管理API
 提供课程结构、映射、引用等关键环节的教师确认与状态追踪
 """
 
 from typing import Optional
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
@@ -176,9 +176,9 @@ async def update_confirmation(
 
         confirmation.status = new_status
         confirmation.confirmed_by = int(current_user["user_id"])
-        confirmation.confirmed_at = utcnow_naive()
+        confirmation.confirmed_at = utcnow_aware()
         confirmation.notes = body.notes
-        confirmation.updated_at = utcnow_naive()
+        confirmation.updated_at = utcnow_aware()
         session.add(confirmation)
         session.commit()
         session.refresh(confirmation)

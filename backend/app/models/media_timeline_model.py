@@ -1,4 +1,4 @@
-"""G8 MediaTimelineCue 与抽象存储模型
+﻿"""G8 MediaTimelineCue 与抽象存储模型
 
 MediaTimelineCue 保存视频起止、PPT 页、字幕片段、讲稿引用、资源版本和哈希。
 本地存储使用抽象 object_key，未来可平滑迁移 OSS。
@@ -14,7 +14,7 @@ from urllib.parse import quote
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class CueType(str, Enum):
@@ -51,7 +51,7 @@ class MediaAsset(SQLModel, table=True):
     duration_seconds: float = Field(default=0.0, description="时长(秒)")
     content_hash: str = Field(default="", index=True, description="内容SHA256哈希")
     resource_version: str = Field(default="v1", description="资源版本")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
     def resolve_url(self) -> str:
         """解析为可访问的URL"""
@@ -101,8 +101,8 @@ class MediaTimelineCue(SQLModel, table=True):
     # 额外数据
     cue_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON), description="扩展元数据")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class DigitalHumanPreset(str, Enum):

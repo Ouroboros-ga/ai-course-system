@@ -1,4 +1,4 @@
-"""
+﻿"""
 F3 · AI生成PPT课件 API
 老师输入大纲/主题/知识点 → LLM扩展为结构化教学脚本 → 讯飞PPT API生成.pptx → 自动进入解析管线
 """
@@ -8,7 +8,7 @@ import uuid
 import json
 import logging
 from typing import Optional, List
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Depends, Request, BackgroundTasks
@@ -443,7 +443,7 @@ async def _parse_generated_pptx(
                 "raw_content": structure_result.raw_content,
             }
             docling_doc.source_file_path = ppt_file_path
-            docling_doc.updated_at = utcnow_naive()
+            docling_doc.updated_at = utcnow_aware()
             session.commit()
 
         # 创建课程脚本
@@ -481,7 +481,7 @@ async def _parse_generated_pptx(
         # 更新课程统计
         course.total_nodes = len(script_result.nodes)
         course.total_duration = script_result.total_duration
-        course.updated_at = utcnow_naive()
+        course.updated_at = utcnow_aware()
         session.commit()
 
         logger.info(f"[PPT Parse] 解析完成: {len(script_result.nodes)} 个节点")

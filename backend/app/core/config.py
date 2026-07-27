@@ -163,6 +163,12 @@ class Settings(BaseSettings):
     OBJECT_STORAGE_ADDRESSING_STYLE: str = "path"
     OBJECT_STORAGE_PRESIGN_EXPIRES_SECONDS: int = 900
     OBJECT_STORAGE_ALLOW_DEMO_LOCAL_FALLBACK: bool = False
+    # 可恢复对象存储迁移账本持久化路径（M5）
+    # 约束来源: "Object storage migration must implement resumable task ledger
+    # with per-object migration status and byte SHA verification"
+    OBJECT_STORAGE_MIGRATION_LEDGER_PATH: str = "./data/object_migration_ledger.json"
+    # 单次迁移最大重试次数；超过则标记 failed 不再自动重试，需人工介入
+    OBJECT_STORAGE_MIGRATION_MAX_ATTEMPTS: int = 3
     MEDIA_UPLOAD_MAX_SIZE_MB: int = 500
     AVATAR_PORTRAIT_VIDEO_MAX_MB: int = 200
     AVATAR_PORTRAIT_VIDEO_MAX_DURATION_MS: int = 60_000

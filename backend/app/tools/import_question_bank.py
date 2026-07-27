@@ -1,4 +1,4 @@
-"""Phase B 专用 Excel 导入器
+﻿"""Phase B 专用 Excel 导入器
 
 仅读取指定 Excel 文件，不遍历课件目录。
 将教学问答数据集导入为 QuestionBankItem 记录，默认 status=unassigned。
@@ -21,7 +21,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from app.models.database import engine
 from app.models.question_bank_model import (
@@ -204,8 +204,8 @@ def _map_row_to_item(
         source_row_index=row_index,
         generated_by="excel_import",
         generation_metadata={},
-        created_at=utcnow_naive(),
-        updated_at=utcnow_naive(),
+        created_at=utcnow_aware(),
+        updated_at=utcnow_aware(),
     )
 
 

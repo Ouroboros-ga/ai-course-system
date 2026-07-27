@@ -1,4 +1,4 @@
-"""G9 Evidence 与知识图谱生产化服务
+﻿"""G9 Evidence 与知识图谱生产化服务
 
 核心能力：
   1. 发布不可变 GraphSnapshot（教师可治理）
@@ -18,7 +18,7 @@ from typing import Optional, Any
 from sqlalchemy import func
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
     GraphSnapshotRecord,
@@ -134,7 +134,7 @@ def publish_snapshot(
         node_count=len(nodes),
         relation_count=len(relations),
         created_by=user_id,
-        published_at=utcnow_naive(),
+        published_at=utcnow_aware(),
     )
     session.add(snapshot)
     session.commit()
@@ -328,7 +328,7 @@ def mark_evidence_stale(
     for ev in evidences:
         ev.status = EvidenceStatus.STALE
         ev.stale_reason = reason
-        ev.stale_at = utcnow_naive()
+        ev.stale_at = utcnow_aware()
         session.add(ev)
     # A document lifecycle operation may need this change to be part of its
     # larger transaction.  The public graph endpoint keeps the default.

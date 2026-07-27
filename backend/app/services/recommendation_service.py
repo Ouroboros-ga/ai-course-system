@@ -1,4 +1,4 @@
-"""G2 六维认知驱动的推荐策略引擎
+﻿"""G2 六维认知驱动的推荐策略引擎
 
 根据六维认知状态筛选题目，生成可解释的推荐。
 每次推荐带 policy_version、reason_codes、evidence_refs。
@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
     RecommendationRecord,
@@ -431,7 +431,7 @@ def mark_recommendation_consumed(
     ).first()
     if record:
         record.consumed = True
-        record.consumed_at = utcnow_naive()
+        record.consumed_at = utcnow_aware()
         session.add(record)
         session.commit()
         session.refresh(record)
@@ -484,7 +484,7 @@ def lock_recommendation(
         return None
     record.is_locked = True
     record.locked_by = teacher_id
-    record.locked_at = utcnow_naive()
+    record.locked_at = utcnow_aware()
     session.add(record)
     session.commit()
     session.refresh(record)

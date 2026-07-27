@@ -1,4 +1,4 @@
-"""
+﻿"""
 老师素材数据模型
 存储老师上传的人脸视频、参考音频等数字人素材
 """
@@ -10,7 +10,7 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class AssetType(str, Enum):
@@ -75,7 +75,7 @@ class TeacherAsset(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="创建时间"
+        default_factory=utcnow_aware, description="创建时间"
     )
     updated_at: Optional[datetime] = Field(
         default=None, description="最后更新时间"

@@ -1,4 +1,4 @@
-"""业务任务 handler 注册（阶段0 统一任务中心）。
+﻿"""业务任务 handler 注册（阶段0 统一任务中心）。
 
 将各业务域的长操作接入 LocalTaskWorker，避免任务停留在 pending 或被
 立即标记为 DEPENDENCY_UNAVAILABLE。
@@ -668,9 +668,9 @@ async def _dispatch_agent_action(
     任何失败都抛异常（由 ``agent_action_execute_handler`` 捕获并保留 error_code），
     不得返回 ``dispatched=True`` 同时携带失败细节。
     """
-    from app.core.time_utils import utcnow_naive
+    from app.core.time_utils import utcnow_aware
 
-    dispatched_at = utcnow_naive().isoformat()
+    dispatched_at = utcnow_aware().isoformat()
 
     if proposal_type == "web_research":
         return await _dispatch_web_research(

@@ -1,4 +1,4 @@
-"""统一任务中心服务（阶段0）。
+﻿"""统一任务中心服务（阶段0）。
 
 不依赖 Redis/Celery；使用 SQLModel 持久化 + 可替换的本地 worker 适配接口。
 后续可替换为 RQ/Celery/Dramatiq，只要保留相同的 TaskService 接口。
@@ -28,7 +28,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.task_model import (
     IdempotencyKeyRecord,
     TaskEventRecord,
@@ -199,7 +199,7 @@ class TaskService:
                 return self.get_task(session, existing, owner_user_id=request.owner_user_id)
 
         task_id = uuid.uuid4().hex
-        now = utcnow_naive()
+        now = utcnow_aware()
         payload_str = json.dumps(request.input_payload, ensure_ascii=False, sort_keys=True)
         record = TaskRecord(
             task_id=task_id,
@@ -363,7 +363,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "running")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.status = "running"
         record.started_at = record.started_at or now
         record.updated_at = now
@@ -396,7 +396,7 @@ class TaskService:
             reject_state_conflict(f"任务处于 {record.status} 状态，不能更新进度")
         if not 0 <= progress <= 100:
             reject_validation_failed("progress 必须在 0..100 之间")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.progress = progress
         record.updated_at = now
         if stage:
@@ -424,7 +424,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "succeeded")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.status = "succeeded"
         record.progress = 100
         record.finished_at = now
@@ -457,7 +457,7 @@ class TaskService:
     ) -> TaskViewModel:
         record = self._require_task(session, task_id)
         _assert_transition(record.status, "failed")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.status = "failed"
         record.finished_at = now
         record.updated_at = now
@@ -490,7 +490,7 @@ class TaskService:
         if operator_user_id is not None and record.owner_user_id != operator_user_id:
             reject_resource_not_found("任务不存在或无权访问")
         _assert_transition(record.status, "cancelled")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.status = "cancelled"
         record.finished_at = now
         record.updated_at = now
@@ -525,7 +525,7 @@ class TaskService:
         if not record.retryable:
             reject_state_conflict("任务不可重试")
         _assert_transition(record.status, "pending")
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.status = "pending"
         record.error_code = ""
         record.error_message = ""
@@ -556,7 +556,7 @@ class TaskService:
             reject_resource_not_found("任务不存在或无权访问")
         if record.acknowledged:
             return TaskViewModel.from_record(record)
-        now = utcnow_naive()
+        now = utcnow_aware()
         record.acknowledged = True
         record.acknowledged_at = now
         record.updated_at = now
@@ -621,7 +621,7 @@ class TaskService:
         user_id: int,
         idempotency_key: str,
     ) -> Optional[str]:
-        now = utcnow_naive()
+        now = utcnow_aware()
         record = session.exec(
             select(IdempotencyKeyRecord).where(
                 IdempotencyKeyRecord.user_id == user_id,

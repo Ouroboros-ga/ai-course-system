@@ -7,7 +7,7 @@ import json
 from datetime import datetime, timedelta
 from typing import Any, Callable, Mapping
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware, to_aware
 
 
 SESSION_TTL_MINUTES = 30
@@ -49,7 +49,7 @@ class SessionScopedConversationContextPort:
                     AgentConversationSession.course_id == course,
                     AgentConversationSession.session_id == str(session_id),
                 ).order_by(AgentConversationSession.updated_at.desc())).first()
-                if record is None or record.updated_at < utcnow_naive() - timedelta(minutes=SESSION_TTL_MINUTES):
+                if record is None or to_aware(record.updated_at) < utcnow_aware() - timedelta(minutes=SESSION_TTL_MINUTES):
                     return None
                 try:
                     return normalize_context(json.loads(record.context_data))
@@ -76,7 +76,7 @@ class SessionScopedConversationContextPort:
                 if record is None:
                     record = AgentConversationSession(student_id=student, course_id=course, session_id=str(session_id))
                 record.context_data = payload
-                record.updated_at = utcnow_naive()
+                record.updated_at = utcnow_aware()
                 session.add(record)
                 session.commit()
         await asyncio.to_thread(_write)

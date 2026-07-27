@@ -1,4 +1,4 @@
-"""G7 WebResearchTool 受控研究与接入
+﻿"""G7 WebResearchTool 受控研究与接入
 
 为 EduAgent 增加外部资料补充能力，但不让外网内容污染课程事实、引用链或认知结论。
 
@@ -21,7 +21,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class ResearchStatus(str, Enum):
@@ -74,8 +74,8 @@ class WebResearchConfig(SQLModel, table=True):
     cache_ttl_minutes: int = Field(default=DEFAULT_CACHE_TTL_MINUTES, description="缓存TTL(分钟)")
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
-    updated_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class WebResearchResult(SQLModel, table=True):
@@ -105,7 +105,7 @@ class WebResearchResult(SQLModel, table=True):
     # 预算跟踪
     searches_used: int = Field(default=0, description="本次研究使用的搜索次数")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     expires_at: Optional[datetime] = Field(default=None, description="缓存过期时间")
 
     @property
@@ -138,7 +138,7 @@ class ExternalReference(SQLModel, table=True):
     source_url: str = Field(default="", description="来源URL")
     title: str = Field(default="", description="参考标题")
     snippet: str = Field(default="", description="内容摘要")
-    retrieved_at: datetime = Field(default_factory=utcnow_naive, description="检索时间")
+    retrieved_at: datetime = Field(default_factory=utcnow_aware, description="检索时间")
 
     # 用途与标记
     purpose: str = Field(default="supplementary_reference", description="用途")
@@ -149,4 +149,4 @@ class ExternalReference(SQLModel, table=True):
     cannot_modify_recommendation: bool = Field(default=True, description="不可修改推荐优先级")
     cannot_modify_graph: bool = Field(default=True, description="不可修改课程图谱")
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)

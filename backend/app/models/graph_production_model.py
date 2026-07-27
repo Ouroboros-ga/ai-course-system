@@ -1,4 +1,4 @@
-"""G9 Evidence 与课程知识图谱生产化 持久化模型
+﻿"""G9 Evidence 与课程知识图谱生产化 持久化模型
 
 将已授权课件材料转换为可校验 Evidence，并发布教师可治理、学生可读的课程级 GraphSnapshot。
 
@@ -15,7 +15,7 @@ from typing import Optional
 from sqlalchemy import Column, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class SnapshotStatus(str, Enum):
@@ -70,7 +70,7 @@ class CourseEvidenceRecord(SQLModel, table=True):
     reviewed_by: Optional[int] = Field(default=None, foreign_key="users.id")
     reviewed_at: Optional[datetime] = Field(default=None)
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class GraphSnapshotRecord(SQLModel, table=True):
@@ -110,7 +110,7 @@ class GraphSnapshotRecord(SQLModel, table=True):
     relation_count: int = Field(default=0)
 
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)
     published_at: Optional[datetime] = Field(default=None)
 
 
@@ -144,4 +144,4 @@ class GraphNodeReview(SQLModel, table=True):
     # 证据引用（accepted 节点必须有至少一个）
     evidence_ids: list = Field(default_factory=list, sa_column=Column(JSON))
 
-    created_at: datetime = Field(default_factory=utcnow_naive)
+    created_at: datetime = Field(default_factory=utcnow_aware)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 前置知识智能跳转API端点
 提供知识缺陷检测、跳转管理、学习路径可视化等接口
 """
@@ -6,7 +6,7 @@
 import logging
 import traceback
 from typing import Optional
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, Body, Query, HTTPException
 from sqlmodel import Session, select
@@ -357,7 +357,7 @@ async def return_to_original_position(
                 "originalNode": original_node,
                 "reviewSummary": {
                     "duration": f"{reviewDurationSeconds // 60}分钟{reviewDurationSeconds % 60}秒",
-                    "completedAt": utcnow_naive().isoformat(),
+                    "completedAt": utcnow_aware().isoformat(),
                 } if reviewDurationSeconds > 0 else None,
             }
         )

@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import httpx
 import hashlib
 import time
 import logging
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional
 
 from fastapi import APIRouter, Query, Depends, Request, HTTPException
@@ -264,7 +264,7 @@ async def sync_course(
             existing_course.title = request.fanya_course_name
             if request.course_description:
                 existing_course.description = request.course_description
-            existing_course.updated_at = utcnow_naive()
+            existing_course.updated_at = utcnow_aware()
             session.add(existing_course)
             session.commit()
             session.refresh(existing_course)
@@ -419,7 +419,7 @@ async def callback_progress(
                 enrollment.avg_understanding_score = total / max(
                     enrollment.total_nodes_completed, 1
                 )
-            enrollment.last_study_time = utcnow_naive()
+            enrollment.last_study_time = utcnow_aware()
             session.add(enrollment)
             session.commit()
 
@@ -510,7 +510,7 @@ async def unbind_course(
     old_fanya_id = course.fanya_course_id
     course.fanya_course_id = f"local_{course_id}"
     course.fanya_course_name = course.title or "本地课程"
-    course.updated_at = utcnow_naive()
+    course.updated_at = utcnow_aware()
     session.add(course)
     session.commit()
 

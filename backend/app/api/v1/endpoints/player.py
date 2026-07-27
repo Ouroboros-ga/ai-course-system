@@ -1,4 +1,4 @@
-"""
+﻿"""
 分屏视频播放器API接口
 提供学生端分屏播放所需的数据接口，包括：
 - 播放器初始化数据（课程信息、节点列表、视频URL等）
@@ -8,7 +8,7 @@
 
 import logging
 from typing import Optional, List
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, HTTPException, Body, Query
 from sqlmodel import Session, select, func
@@ -376,7 +376,7 @@ async def save_player_progress(
                 user_id=user_id,
                 course_id=request.course_id,
                 status=LearningStatus.IN_PROGRESS,
-                started_at=utcnow_naive(),
+                started_at=utcnow_aware(),
             )
             session.add(progress)
 
@@ -406,8 +406,8 @@ async def save_player_progress(
                 progress.completion_rate = len(request.completed_nodes) / max(total_nodes, 1)
 
         progress.status = LearningStatus.IN_PROGRESS
-        progress.last_accessed_at = utcnow_naive()
-        progress.updated_at = utcnow_naive()
+        progress.last_accessed_at = utcnow_aware()
+        progress.updated_at = utcnow_aware()
 
         session.commit()
         session.refresh(progress)

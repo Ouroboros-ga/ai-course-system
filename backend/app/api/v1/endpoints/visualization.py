@@ -1,4 +1,4 @@
-"""G4 算法可视化 API
+﻿"""G4 算法可视化 API
 
 使用统一权限解析器进行课程级权限校验。
 - 创建/验证计划: course.mapping.edit (教师)
@@ -11,7 +11,7 @@ LLM 不能输出任意 JS/HTML，只能输出受限 VisualizationPlan JSON。
 from __future__ import annotations
 
 import uuid
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -177,7 +177,7 @@ async def get_plan(
 
     # 更新回放统计
     record.play_count += 1
-    record.last_played_at = utcnow_naive()
+    record.last_played_at = utcnow_aware()
     session.add(record)
     session.commit()
 
@@ -209,7 +209,7 @@ async def publish_plan(
         raise HTTPException(status_code=404, detail="计划不存在")
 
     record.status = VisualizationStatus.PUBLISHED
-    record.published_at = utcnow_naive()
+    record.published_at = utcnow_aware()
     session.add(record)
     session.commit()
 

@@ -1,4 +1,4 @@
-from .config import settings, Settings, UserRole
+﻿from .config import settings, Settings, UserRole
 
 # 导出安全工具与依赖
 from .security import (
@@ -24,6 +24,7 @@ from .security import (
 from .exceptions import unified_response, BusinessException
 
 # 导出统一时间工具
+# utcnow_naive 保留为向后兼容别名（= utcnow_aware），仅供尚未迁移的外部调用方使用
 from .time_utils import utcnow_aware, utcnow_naive, to_aware, to_naive, now_utc_iso
 
 # 明确导出列表（可选，用于规范 `from app.core import *` 的行为）

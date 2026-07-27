@@ -1,4 +1,4 @@
-"""
+﻿"""
 知识点↔PPT页面映射引擎服务
 提供自动映射（基于已有page_start/page_end + AI语义匹配）和手动调整功能
 """
@@ -8,7 +8,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 from sqlmodel import Session, select
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -410,7 +410,7 @@ PPT页面内容：
             mapping.page_end = page_end
             mapping.is_manual = True
             mapping.confidence = 1.0
-            mapping.updated_at = utcnow_naive()
+            mapping.updated_at = utcnow_aware()
             session.add(mapping)
         else:
             script = MappingService.get_active_script(session, course_id)

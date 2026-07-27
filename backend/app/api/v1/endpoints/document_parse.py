@@ -1,4 +1,4 @@
-"""阶段4 课程材料解析、Evidence、Citation 与图谱治理 API 路由。
+﻿"""阶段4 课程材料解析、Evidence、Citation 与图谱治理 API 路由。
 
 路由前缀：
 - /api/v1/graph/course/{course_id}/ingestions           创建解析任务
@@ -34,7 +34,7 @@ from app.core.exceptions import (
     unified_response,
 )
 from app.core.security import get_current_user
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 from app.models.course_build_model import (
     CourseRelease,
     ReleaseStatus,
@@ -330,7 +330,7 @@ async def create_ingestion(
         resource_kind="document_parse_run",
         resource_id=run.run_id,
         relation="output",
-        created_at=utcnow_naive(),
+        created_at=utcnow_aware(),
     ))
 
     session.commit()

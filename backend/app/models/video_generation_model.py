@@ -1,4 +1,4 @@
-"""
+﻿"""
 视频生成任务数据模型
 记录每个脚本节点的视频生成状态和结果
 """
@@ -10,7 +10,7 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
-from app.core.time_utils import utcnow_naive
+from app.core.time_utils import utcnow_aware
 
 
 class GenerationStatus(str, Enum):
@@ -86,7 +86,7 @@ class VideoGenerationTask(SQLModel, table=True):
     )
 
     created_at: datetime = Field(
-        default_factory=utcnow_naive, description="创建时间"
+        default_factory=utcnow_aware, description="创建时间"
     )
     updated_at: Optional[datetime] = Field(
         default=None, description="最后更新时间"
