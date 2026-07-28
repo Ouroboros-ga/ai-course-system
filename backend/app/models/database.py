@@ -140,6 +140,10 @@ from app.models.document_parse_model import (
     EvidenceRenderAsset,
     GraphCandidateBatch,
     GraphReleaseLink,
+    DocumentIRVersion,
+    EvidenceAnchor,
+    RetrievalChunk,
+    RetrievalIndexSnapshot,
 )
 # 阶段5：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
 from app.models.practice_recommendation_model import (

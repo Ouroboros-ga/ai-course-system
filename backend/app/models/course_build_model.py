@@ -240,6 +240,7 @@ class CourseCorpusSnapshot(SQLModel, table=True):
     status: CorpusSnapshotStatus = Field(default=CorpusSnapshotStatus.BUILDING, index=True)
     material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     parse_run_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     content_hash: str = Field(default="", index=True)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware)
@@ -262,6 +263,7 @@ class CourseRetrievalSnapshot(SQLModel, table=True):
     course_id: int = Field(foreign_key="courses.id", index=True)
     corpus_snapshot_id: str = Field(index=True)
     material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     status: str = Field(default="ready", index=True, description="building|ready|superseded")
     provider_policy_version: str = Field(default="canonical-retrieval/1")
     created_at: datetime = Field(default_factory=utcnow_aware)
@@ -401,6 +403,7 @@ class CourseRelease(SQLModel, table=True):
     # the active release, never from whichever material happened to parse last.
     material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     document_ir_run_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     corpus_snapshot_id: Optional[str] = Field(default=None, index=True)
     retrieval_snapshot_id: Optional[str] = Field(default=None, index=True)
     outline_version_id: Optional[str] = Field(default=None, index=True)

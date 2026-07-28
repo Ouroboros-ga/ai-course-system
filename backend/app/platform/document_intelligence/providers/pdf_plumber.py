@@ -186,26 +186,19 @@ class PdfPlumberProvider:
         text_blocks: List[Dict[str, Any]] = []
         tables: List[Dict[str, Any]] = []
 
-        # Extract words with positions for reading order
+        # Extract visual words, then resolve reading order separately.  The
+        # PDF text stream is often wrong for multi-column course material.
         try:
             words = page.extract_words(
-                use_text_flow=True,
+                use_text_flow=False,
                 keep_blank_chars=False,
                 extra_attrs=["size", "fontname"],
             )
         except Exception:
             words = []
 
-        # Group words into lines by approximate y-coordinate
         if words:
-            lines: Dict[float, List[Dict[str, Any]]] = {}
-            for w in words:
-                # Round y to nearest 3px to group words on same line
-                y_key = round(float(w.get("top", 0)) / 3) * 3
-                lines.setdefault(y_key, []).append(w)
-
-            for y_key in sorted(lines.keys()):
-                line_words = sorted(lines[y_key], key=lambda w: float(w.get("x0", 0)))
+            for line_words in self._resolve_lines(words, width=width, height=height):
                 text = " ".join(str(w.get("text", "")) for w in line_words).strip()
                 if not text:
                     continue
@@ -239,25 +232,66 @@ class PdfPlumberProvider:
                     "font_size": avg_size,
                 })
 
-        # Extract tables
+        # Extract tables with their detected geometry. ``extract_tables`` only
+        # returns strings, so prefer the Table objects when this pdfplumber
+        # version exposes them. Coordinates let evidence cite the actual table
+        # rather than a flattened tab-delimited surrogate.
         try:
-            raw_tables = page.extract_tables()
-            for tbl in raw_tables:
-                if not tbl:
+            raw_tables = page.find_tables()
+            for table in raw_tables:
+                extracted = table.extract()
+                if not extracted:
                     continue
-                rows = len(tbl)
-                cols = max(len(r) for r in tbl) if tbl else 0
+                rows = len(extracted)
+                cols = max(len(row) for row in extracted) if extracted else 0
                 cells = tuple(
-                    tuple(str(c) if c is not None else "" for c in row)
-                    for row in tbl
+                    tuple(str(cell) if cell is not None else "" for cell in row)
+                    for row in extracted
                 )
+                x0, top, x1, bottom = table.bbox
+                table_bbox = [
+                    round(max(0.0, min(1.0, x0 / width)), 6),
+                    round(max(0.0, min(1.0, top / height)), 6),
+                    round(max(0.0, min(1.0, x1 / width)), 6),
+                    round(max(0.0, min(1.0, bottom / height)), 6),
+                ]
+                row_cells = getattr(table, "rows", ())
+                cell_bboxes = []
+                for row in row_cells:
+                    cell_bboxes.append([
+                        ([
+                            round(max(0.0, min(1.0, cell[0] / width)), 6),
+                            round(max(0.0, min(1.0, cell[1] / height)), 6),
+                            round(max(0.0, min(1.0, cell[2] / width)), 6),
+                            round(max(0.0, min(1.0, cell[3] / height)), 6),
+                        ] if cell is not None else None)
+                        for cell in row.cells
+                    ])
                 tables.append({
                     "rows": rows,
                     "columns": cols,
                     "cells": cells,
+                    "bbox": table_bbox,
+                    "cell_bboxes": cell_bboxes,
                 })
         except Exception:
-            pass
+            # Older pdfplumber releases do not expose Table geometry. Retain
+            # text and mark the missing structure explicitly for review.
+            try:
+                for raw_table in page.extract_tables():
+                    if not raw_table:
+                        continue
+                    tables.append({
+                        "rows": len(raw_table),
+                        "columns": max(len(row) for row in raw_table),
+                        "cells": tuple(
+                            tuple(str(cell) if cell is not None else "" for cell in row)
+                            for row in raw_table
+                        ),
+                        "structure_unresolved": True,
+                    })
+            except Exception:
+                pass
 
         return {
             "page_no": page_no,
@@ -268,6 +302,63 @@ class PdfPlumberProvider:
             "tables": tables,
             "formulas": [],
         }
+
+    @staticmethod
+    def _resolve_lines(words: List[Dict[str, Any]], *, width: float, height: float) -> List[List[Dict[str, Any]]]:
+        """Group visually aligned words and read columns left-to-right.
+
+        This deliberately avoids fixed pixel buckets.  It uses each word's
+        vertical overlap and font-size-derived tolerance, then detects a
+        durable horizontal whitespace gap as a column separator.
+        """
+        ordered = sorted(words, key=lambda word: (float(word.get("top", 0)), float(word.get("x0", 0))))
+        lines: List[List[Dict[str, Any]]] = []
+        for word in ordered:
+            top, bottom = float(word.get("top", 0)), float(word.get("bottom", 0))
+            size = max(float(word.get("size", 10) or 10), 1.0)
+            target = None
+            for line in reversed(lines):
+                first = line[0]
+                line_top, line_bottom = float(first.get("top", 0)), float(first.get("bottom", 0))
+                overlap = max(0.0, min(bottom, line_bottom) - max(top, line_top))
+                minimum_height = max(min(bottom - top, line_bottom - line_top), 1.0)
+                baseline_gap = abs(top - line_top)
+                if overlap / minimum_height >= 0.60 or baseline_gap <= max(size * 0.45, 1.5):
+                    target = line
+                    break
+            if target is None:
+                lines.append([word])
+            else:
+                target.append(word)
+        for line in lines:
+            line.sort(key=lambda word: float(word.get("x0", 0)))
+
+        line_boxes = [
+            (min(float(word.get("x0", 0)) for word in line), max(float(word.get("x1", 0)) for word in line), line)
+            for line in lines
+        ]
+        # A gap spanning most lines indicates a column boundary.  The resolver
+        # intentionally handles the common two-column case conservatively.
+        candidates: List[float] = []
+        for left, right, _line in line_boxes:
+            candidates.extend((left, right))
+        split = None
+        if candidates:
+            midpoint = width / 2.0
+            near_mid = sorted(candidates, key=lambda value: abs(value - midpoint))[:4]
+            for boundary in near_mid:
+                left_lines = sum(1 for left, right, _ in line_boxes if right <= boundary)
+                right_lines = sum(1 for left, right, _ in line_boxes if left >= boundary)
+                if left_lines >= 2 and right_lines >= 2:
+                    split = boundary
+                    break
+        if split is None:
+            return [line for _, _, line in sorted(line_boxes, key=lambda item: (float(item[2][0].get("top", 0)), item[0]))]
+        left_column = [item for item in line_boxes if item[1] <= split]
+        right_column = [item for item in line_boxes if item[0] >= split]
+        spanning = [item for item in line_boxes if item not in left_column and item not in right_column]
+        key = lambda item: float(item[2][0].get("top", 0))
+        return [line for _, _, line in sorted(spanning, key=key) + sorted(left_column, key=key) + sorted(right_column, key=key)]
 
 
 # ---------------------------------------------------------------------------
@@ -291,7 +382,9 @@ def map_pdf_plumber_output_to_ir(
         ``block_type``, ``text``, ``page_or_slide``, ``bbox``.
     """
     from ..contracts import BoundingBox, CoordinateSpace
-    from ..document_ir.models import Provenance
+    from ..document_ir.models import (
+        ParseWarning, Provenance, TableBlock, TableCell, WarningSeverity,
+    )
 
     blocks: List[Dict[str, Any]] = []
     units: List[Dict[str, Any]] = []
@@ -352,6 +445,47 @@ def map_pdf_plumber_output_to_ir(
             if not table_text.strip():
                 continue
             block_id = f"blk_pdf_p{page_no}_t{tidx}"
+            bbox_raw = tbl.get("bbox")
+            bbox = None
+            if bbox_raw and len(bbox_raw) == 4:
+                try:
+                    bbox = BoundingBox(
+                        x0=round(bbox_raw[0], 6), y0=round(bbox_raw[1], 6),
+                        x1=round(bbox_raw[2], 6), y1=round(bbox_raw[3], 6),
+                        coordinate_space=CoordinateSpace.NORMALIZED,
+                    )
+                except ValueError:
+                    bbox = None
+            cell_bboxes = tbl.get("cell_bboxes") or []
+            structured_cells = []
+            for row_index, row in enumerate(cells):
+                for col_index, cell_text in enumerate(row):
+                    raw_cell_bbox = (
+                        cell_bboxes[row_index][col_index]
+                        if row_index < len(cell_bboxes)
+                        and col_index < len(cell_bboxes[row_index])
+                        else None
+                    )
+                    try:
+                        cell_bbox = BoundingBox(
+                            x0=raw_cell_bbox[0], y0=raw_cell_bbox[1],
+                            x1=raw_cell_bbox[2], y1=raw_cell_bbox[3],
+                            coordinate_space=CoordinateSpace.NORMALIZED,
+                        ) if raw_cell_bbox else None
+                    except ValueError:
+                        cell_bbox = None
+                    structured_cells.append(TableCell(
+                        row=row_index, col=col_index, text=cell_text,
+                        bbox=cell_bbox, header=row_index == 0,
+                    ))
+            warnings = ()
+            if tbl.get("structure_unresolved") or bbox is None:
+                warnings = (ParseWarning(
+                    code="TABLE_STRUCTURE_UNRESOLVED",
+                    severity=WarningSeverity.WARNING,
+                    message="PDF table cells were extracted without reliable geometry",
+                    run_id=run_id,
+                ),)
             provenance = Provenance(
                 artifact_id=source.artifact_id,
                 run_id=run_id,
@@ -359,18 +493,22 @@ def map_pdf_plumber_output_to_ir(
                 provider=output.provider,
                 raw_locator=f"pages/{page_no}/tables/{tidx}",
                 page_or_slide=page_no,
+                bbox=bbox,
                 confidence=1.0,
             )
-            blocks.append({
-                "block_id": block_id,
-                "block_type": "table",
-                "text": table_text,
-                "page_or_slide": page_no,
-                "bbox": None,
-                "char_start": 0,
-                "char_end": len(table_text),
-                "order_index": len(text_blocks) + tidx,
-                "provenance": provenance,
-            })
+            blocks.append(TableBlock(
+                block_id=block_id,
+                page_or_slide=page_no,
+                bbox=bbox,
+                reading_order=len(text_blocks) + tidx,
+                rows=tbl.get("rows"),
+                columns=tbl.get("columns"),
+                cells=tuple(structured_cells),
+                text=table_text,
+                provider=output.provider,
+                provenance=(provenance,),
+                raw_result_ref=f"artifact://{parser_run_id}/raw.json#/pages/{page_no}/tables/{tidx}",
+                warnings=warnings,
+            ).to_dict())
 
     return blocks, units, assets

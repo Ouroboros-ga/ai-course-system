@@ -37,6 +37,7 @@ from app.models.document_parse_model import (
     ParseRunStatus,
     StaleStrategy,
 )
+from app.models.task_model import TaskRecord
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
     EvidenceStatus,
@@ -280,6 +281,31 @@ def test_create_ingestion_returns_202(client, session):
     assert "run_id" in data and data["run_id"].startswith("dpr_")
     assert data["status"] == "pending"
     assert data["stale_strategy"] == "mark_stale"
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == data["task_id"])).one()
+    import json
+    assert json.loads(task.input_payload)["run_id"] == data["run_id"]
+
+
+def test_create_ingestion_rejects_version_from_another_material(client, session):
+    """A material version is not interchangeable merely because its course matches."""
+    teacher = _user(session, "s4_version_material_isolation")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    first = _create_material(session, course.id, teacher.id)
+    second = _create_material(session, course.id, teacher.id)
+
+    response = client.post(
+        f"{GRAPH}/course/{course.id}/ingestions",
+        json={
+            "material_id": first.material_id,
+            "material_version_id": second.current_version_id,
+            "pipeline": "full",
+            "stale_strategy": "mark_stale",
+        },
+        headers=_auth(_token(teacher)),
+    )
+
+    assert response.status_code == 404
 
 
 def test_get_ingestion_returns_run_detail(client, session):
@@ -342,7 +368,7 @@ def test_list_ingestions_filters_by_material(client, session):
     assert data["items"][0]["material_id"] == m1.material_id
 
 
-def test_reparse_marks_old_evidence_stale(client, session):
+def test_reparse_preserves_old_evidence_until_explicit_apply(client, session):
     """重解析时旧证据按 mark_stale 策略标记。"""
     teacher = _user(session, "s4_reparse_teacher")
     course = _course(session, teacher.id)
@@ -386,16 +412,21 @@ def test_reparse_marks_old_evidence_stale(client, session):
     data = body["data"]
     assert data["status"] == "pending"
     assert data["stale_strategy"] == "mark_stale"
-    assert data["affected_evidence_count"] >= 1  # 至少标记了 1 条 span + 1 条 citation
+    assert data["affected_evidence_count"] == 0
     assert data["prev_run_id"] == run1.run_id
 
-    # 旧证据已被标记 stale
+    session.refresh(span)
+    assert span.status == EvidenceSpanStatus.CONFIRMED
+    document_parse_service.mark_running(session, run_id=data["run_id"], course_id=course.id)
+    document_parse_service.mark_succeeded(session, run_id=data["run_id"], course_id=course.id)
+    document_parse_service.apply_reparse(session, course_id=course.id, run_id=data["run_id"])
+    session.commit()
     session.refresh(span)
     assert span.status == EvidenceSpanStatus.STALE
     assert span.stale_reason == "courseware_reparse"
 
 
-def test_reparse_orphan_strategy_marks_orphaned(client, session):
+def test_reparse_orphan_strategy_waits_for_explicit_apply(client, session):
     """重解析使用 orphan 策略时，旧证据标记 orphaned。"""
     teacher = _user(session, "s4_orphan_teacher")
     course = _course(session, teacher.id)
@@ -430,6 +461,13 @@ def test_reparse_orphan_strategy_marks_orphaned(client, session):
     )
     assert resp.status_code == 200
 
+    session.refresh(span)
+    assert span.status == EvidenceSpanStatus.CONFIRMED
+    replacement_id = resp.json()["data"]["run_id"]
+    document_parse_service.mark_running(session, run_id=replacement_id, course_id=course.id)
+    document_parse_service.mark_succeeded(session, run_id=replacement_id, course_id=course.id)
+    document_parse_service.apply_reparse(session, course_id=course.id, run_id=replacement_id)
+    session.commit()
     session.refresh(span)
     assert span.status == EvidenceSpanStatus.ORPHANED
     assert span.stale_reason == "courseware_orphaned"
@@ -660,14 +698,18 @@ def test_student_citations_exclude_stale_by_default(client, session):
     )
     session.commit()
 
-    # 重解析让旧 citation 变 stale
-    _create_succeeded_run(
+    # A replacement must be explicitly adopted before its stale policy runs.
+    replacement = _create_succeeded_run(
         session,
         course_id=course.id,
         material_id=material.material_id,
         material_version_id=material.current_version_id,
         initiated_by=teacher.id,
     )
+    document_parse_service.apply_reparse(
+        session, course_id=course.id, run_id=replacement.run_id,
+    )
+    session.commit()
 
     # 学生只看 exact/approximate -> 此时无可见 citation
     resp = client.get(
@@ -762,6 +804,38 @@ def test_list_candidate_batches_isolated_by_course(client, session):
     data_b = resp_b.json()["data"]
     assert data_b["total"] == 1
     assert data_b["items"][0]["course_id"] == course_b.id
+
+
+def test_candidate_batch_exposes_reviewable_payload(client, session):
+    teacher = _user(session, "s4_payload_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    batch = graph_candidate_service.create_batch(
+        session, course_id=course.id, initiated_by=teacher.id,
+    )
+    graph_candidate_service.mark_succeeded(
+        session, course_id=course.id, batch_id=batch.batch_id,
+        node_candidate_count=2, relation_candidate_count=1,
+        node_candidates=[{
+            "candidate_id": "node-a", "label": "制冷循环", "kind": "concept",
+            "status": "proposed", "confidence": 0.9,
+            "source_block_ids": ["block-a"], "anchor_ids": ["anchor-a"],
+        }],
+        relation_candidates=[{
+            "candidate_id": "rel-a", "source_candidate_id": "node-a",
+            "target_candidate_id": "node-b", "relation_type": "next_topic",
+            "status": "proposed", "confidence": 0.8, "anchor_ids": ["anchor-a"],
+        }],
+    )
+    session.commit()
+
+    response = client.get(
+        f"{GRAPH}/course/{course.id}/candidate-batches",
+        headers=_auth(_token(teacher)),
+    )
+    item = response.json()["data"]["items"][0]
+    assert item["node_candidates"][0]["label"] == "制冷循环"
+    assert item["relation_candidates"][0]["relation_type"] == "next_topic"
 
 
 def test_new_candidate_batch_supersedes_previous(client, session):

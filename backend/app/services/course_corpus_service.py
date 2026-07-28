@@ -24,7 +24,7 @@ from app.models.course_build_model import (
     SourceMaterialVersion,
 )
 from app.models.course_outline_model import CourseOutlineVersion, TeachingScriptVersion
-from app.models.document_parse_model import DocumentParseRun, ParseRunStatus
+from app.models.document_parse_model import DocumentIRVersion, DocumentParseRun, ParseRunStatus
 from app.services.task_service import TaskCreateRequest, task_service
 
 
@@ -45,6 +45,7 @@ class CourseCorpusService:
             return None
 
         run_ids: list[str] = []
+        ir_version_ids: list[str] = []
         for version in versions:
             run = session.exec(select(DocumentParseRun).where(
                 DocumentParseRun.course_id == course_id,
@@ -53,12 +54,22 @@ class CourseCorpusService:
             ).order_by(DocumentParseRun.finished_at.desc())).first()
             if run is None:
                 return None
+            if not run.document_ir_version_id:
+                return None
+            ir_version = session.exec(select(DocumentIRVersion).where(
+                DocumentIRVersion.ir_version_id == run.document_ir_version_id,
+                DocumentIRVersion.course_id == course_id,
+                DocumentIRVersion.material_version_id == version.version_id,
+            )).first()
+            if ir_version is None:
+                return None
             run_ids.append(run.run_id)
+            ir_version_ids.append(ir_version.ir_version_id)
 
         version_ids = sorted(v.version_id for v in versions)
         run_ids = sorted(run_ids)
         content_hash = hashlib.sha256(json.dumps(
-            {"versions": version_ids, "runs": run_ids}, sort_keys=True,
+            {"versions": version_ids, "runs": run_ids, "document_ir_versions": sorted(ir_version_ids)}, sort_keys=True,
         ).encode("utf-8")).hexdigest()
         existing = session.exec(select(CourseCorpusSnapshot).where(
             CourseCorpusSnapshot.course_id == course_id,
@@ -80,6 +91,7 @@ class CourseCorpusService:
             status=CorpusSnapshotStatus.READY,
             material_version_ids=version_ids,
             parse_run_ids=run_ids,
+            document_ir_version_ids=sorted(ir_version_ids),
             content_hash=content_hash,
             created_by=owner_user_id,
         )
@@ -100,6 +112,7 @@ class CourseCorpusService:
             course_id=corpus.course_id,
             corpus_snapshot_id=corpus.corpus_snapshot_id,
             material_version_ids=list(corpus.material_version_ids or []),
+            document_ir_version_ids=list(corpus.document_ir_version_ids or []),
             status="ready",
         )
         session.add(retrieval)

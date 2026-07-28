@@ -34,6 +34,7 @@ from app.models.course_outline_model import (
     TeachingScriptVersion,
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan
+from app.models.course_build_model import SourceMaterialVersion
 from app.models.resource_model import (
     ResourceItem,
     ResourceLifecycleStatus,
@@ -166,6 +167,16 @@ def build_outline_draft(
     )
     session.add(version)
     session.flush()
+    source_version = None
+    if material_version_id:
+        source_version = session.exec(select(SourceMaterialVersion).where(
+            SourceMaterialVersion.version_id == material_version_id,
+            SourceMaterialVersion.course_id == course_id,
+        )).first()
+    supports_page_mapping = bool(source_version and source_version.mime_type in {
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    })
     ordered = sorted(blocks, key=lambda item: (
         int(item.page_or_slide or item.page_number or 0),
         int(getattr(item, "reading_order", 0) or item.order_index or 0),
@@ -187,7 +198,7 @@ def build_outline_draft(
             content_hash=(refs[0] if refs else ""),
         )
         session.add(node)
-        if node_type == OutlineNodeType.KNOWLEDGE_POINT and material_version_id:
+        if node_type == OutlineNodeType.KNOWLEDGE_POINT and material_version_id and supports_page_mapping:
             session.add(CoursePptMapping(
                 course_id=course_id, outline_node_id=node.outline_node_id,
                 material_version_id=material_version_id, page_start=page_start,
@@ -486,7 +497,12 @@ def build_draft_assets(
 
     # 2. 图谱候选草稿
     _stage("graph_draft")
-    result.warnings.append("graph candidates remain material-level parser output")
+    result.graph_node_candidates, result.graph_relation_candidates = build_graph_draft(
+        session,
+        course_id=course_id,
+        run_id=run_id or corpus_snapshot_id or "",
+        blocks=list(blocks),
+    )
 
     # 3. 课程目录草稿
     _stage("outline_draft")
@@ -548,66 +564,6 @@ def build_draft_assets(
     except Exception as exc:
         result.warnings.append(f"markdown_resource_draft failed: {exc}")
 
-    # Deprecated compatibility block: initial generation is already a pending
-    # system draft. It must not also create a duplicate accept/reject proposal.
-    return_after_initial_draft = True
-    if return_after_initial_draft:
-        session.commit()
-        return result
-
-    # First import is a teacher-reviewable proposal, never a direct mutation.
-    # Existing proposals are left untouched so a retry cannot duplicate them.
-    try:
-        from app.models.course_outline_model import PatchProposal, PatchProposalOperation, PatchOperation, TeachingScriptNode
-        existing = session.exec(select(PatchProposal).where(
-            PatchProposal.course_id == course_id,
-            PatchProposal.tool_name == "CourseBuildAgent",
-        )).first()
-        if not existing and result.outline_version_id:
-            outline_nodes = session.exec(select(CourseOutlineNode).where(
-                CourseOutlineNode.outline_version_id == result.outline_version_id,
-            ).order_by(CourseOutlineNode.order_index)).all()
-            proposal = PatchProposal(
-                course_id=course_id,
-                tool_name="CourseBuildAgent",
-                policy_version="course-build-agent/1.0",
-                reason="首次上传课件后，根据统一解析结果生成课程结构与讲授脚本候选，请教师审核后应用。",
-                created_by=created_by,
-            )
-            session.add(proposal)
-            session.flush()
-            for node in outline_nodes:
-                if node.node_type != OutlineNodeType.KNOWLEDGE_POINT:
-                    continue
-                session.add(PatchProposalOperation(
-                    proposal_id=proposal.proposal_id,
-                    course_id=course_id,
-                    operation=PatchOperation.REPLACE,
-                    target=f"outline:{node.outline_node_id}:title",
-                    before="",
-                    after=node.title,
-                    reason="解析块生成的课程结构候选",
-                    evidence_refs=[],
-                    policy_version="course-build-agent/1.0",
-                ))
-            script_nodes = session.exec(select(TeachingScriptNode).where(
-                TeachingScriptNode.script_version_id == result.script_version_id,
-            )).all() if result.script_version_id else []
-            for script_node in script_nodes:
-                session.add(PatchProposalOperation(
-                    proposal_id=proposal.proposal_id,
-                    course_id=course_id,
-                    operation=PatchOperation.REPLACE,
-                    target=f"script:{script_node.script_node_id}:content",
-                    before="",
-                    after=script_node.content,
-                    reason="解析块生成的讲授脚本候选",
-                    evidence_refs=[],
-                    policy_version="course-build-agent/1.0",
-                ))
-            result.warnings.append("created initial teacher-review proposal")
-    except Exception as exc:
-        result.warnings.append(f"initial proposal creation failed: {exc}")
-
+    # Initial generation creates a pending system draft directly. Later runs are proposals.
     session.commit()
     return result

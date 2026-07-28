@@ -1,7 +1,7 @@
 """course-level corpus snapshots and draft build orchestration.
 
-Revision ID: 0015
-Revises: 0014
+Revision ID: 0021
+Revises: 0020
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0015"
-down_revision: Union[str, None] = "0014"
+revision: str = "0021"
+down_revision: Union[str, None] = "0020"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -26,6 +26,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("material_version_ids", sa.JSON(), nullable=False),
         sa.Column("parse_run_ids", sa.JSON(), nullable=False),
+        sa.Column("document_ir_version_ids", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("content_hash", sa.String(), nullable=False),
         sa.Column("created_by", sa.Integer(), sa.ForeignKey("users.id"), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -40,6 +41,7 @@ def upgrade() -> None:
         sa.Column("course_id", sa.Integer(), sa.ForeignKey("courses.id"), nullable=False),
         sa.Column("corpus_snapshot_id", sa.String(), nullable=False),
         sa.Column("material_version_ids", sa.JSON(), nullable=False),
+        sa.Column("document_ir_version_ids", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("status", sa.String(), nullable=False),
         sa.Column("provider_policy_version", sa.String(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
@@ -76,6 +78,7 @@ def upgrade() -> None:
     with op.batch_alter_table("course_releases") as batch:
         batch.add_column(sa.Column("material_version_ids", sa.JSON(), nullable=False, server_default="[]"))
         batch.add_column(sa.Column("document_ir_run_ids", sa.JSON(), nullable=False, server_default="[]"))
+        batch.add_column(sa.Column("document_ir_version_ids", sa.JSON(), nullable=False, server_default="[]"))
         batch.add_column(sa.Column("corpus_snapshot_id", sa.String(), nullable=True))
         batch.add_column(sa.Column("retrieval_snapshot_id", sa.String(), nullable=True))
         batch.add_column(sa.Column("outline_version_id", sa.String(), nullable=True))
@@ -103,7 +106,7 @@ def downgrade() -> None:
     for column in ("corpus_snapshot_id", "retrieval_snapshot_id", "outline_version_id", "script_version_id"):
         op.drop_index(f"ix_course_releases_{column}", table_name="course_releases")
     with op.batch_alter_table("course_releases") as batch:
-        for column in ("script_version_id", "outline_version_id", "retrieval_snapshot_id", "corpus_snapshot_id", "document_ir_run_ids", "material_version_ids"):
+        for column in ("script_version_id", "outline_version_id", "retrieval_snapshot_id", "corpus_snapshot_id", "document_ir_version_ids", "document_ir_run_ids", "material_version_ids"):
             batch.drop_column(column)
     op.drop_table("course_draft_build_tasks")
     op.drop_table("course_retrieval_snapshots")

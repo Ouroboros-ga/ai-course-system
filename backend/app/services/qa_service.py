@@ -246,6 +246,13 @@ class QAService:
                         "content_preview": chunk.metadata.get(
                             "matched_content_preview", ""
                         ),
+                        "document_id": chunk.document_id,
+                        "unit_id": chunk.unit_id,
+                        "block_id": chunk.block_id,
+                        "anchor_ids": list(chunk.metadata.get("anchor_ids", [])),
+                        "ir_version_id": chunk.metadata.get("ir_version_id"),
+                        "citation_closed": bool(chunk.metadata.get("citation_closed", False)),
+                        "retrieval_source": chunk.retrieval_source,
                     })
                 return "\n\n---\n\n".join(context_parts), sources
 
@@ -312,26 +319,23 @@ class QAService:
                 question, top_k=rag_top_k, course_id=course_id
             )
 
-        # ---- P1-09 R2 sidecar retrieval shadow (mainline wiring) ----
-        # Triggered after the course-scoped V1 retrieval attempt and before
-        # the single LLM call. R2 may supply evidence when V1 has no result.
-        # When DOCUMENT_KG_RUNTIME_MODE is effectively v2_shadow AND the
-        # course has an Evidence sidecar AND R2 returns citation-closed
-        # hits, R2 retrieval REPLACES rag_context/rag_sources that feed the
-        # single (still-V1) LLM call. No second LLM call. When the flag is
-        # off, the course has no sidecar, R2 abstains, or any runtime error
-        # occurs, triggered=False and V1 retrieval is left untouched
-        # (business fail-closed). Default flag v1_only = no-op = pure V1.
+        # Sidecar retrieval is a test-only observer. It may write a trace but
+        # must never supply prompt context or alter the production answer.
         retrieval_source = "none"
         retrieval_metadata = {
             "policy_version": "r2-retrieval-v1.0",
             "evidence_ids": [],
             "fallback_reason": None,
             "hit_count": 0,
+            "shadow_hit_count": 0,
         }
         if use_rag:
             if rag_sources:
-                retrieval_source = "v1_treerag"
+                retrieval_source = (
+                    "canonical_document_ir"
+                    if any(source.get("retrieval_source") == "canonical_document_ir" for source in rag_sources)
+                    else "v1_treerag"
+                )
             else:
                 retrieval_metadata["fallback_reason"] = "v1_no_results"
             if not allow_r2_student_answer:
@@ -348,14 +352,8 @@ class QAService:
                         v1_sources=rag_sources,
                     )
                     if r2.triggered:
-                        rag_context, rag_sources = r2.rag_context, r2.rag_sources
-                        retrieval_source = "v2_r2_sidecar"
-                        retrieval_metadata["hit_count"] = r2.hit_count
-                        retrieval_metadata["evidence_ids"] = sorted({
-                            evidence_id
-                            for source in (r2.rag_sources or [])
-                            for evidence_id in source.get("evidence_refs", [])
-                        })
+                        retrieval_metadata["shadow_hit_count"] = r2.hit_count
+                        retrieval_metadata["fallback_reason"] = "sidecar_observer_only"
                     else:
                         retrieval_metadata["fallback_reason"] = r2.fallback_reason
                 except Exception as r2_err:  # noqa: BLE001

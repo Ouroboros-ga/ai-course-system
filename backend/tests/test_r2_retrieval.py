@@ -36,8 +36,8 @@ from app.platform.shadow.r2_retrieval_shadow import R2RetrievalShadowResult
 from app.services.qa_service import QAService
 
 
-def test_real_qa_service_uses_r2_when_v1_has_no_results():
-    """Exercise the real QA orchestration rather than mocking the endpoint."""
+def test_real_qa_service_observes_r2_without_using_it_for_answer():
+    """Sidecar retrieval is observable but cannot become QA prompt context."""
     service = QAService()
     r2_sources = [{
         "path": "chunk-1",
@@ -75,9 +75,10 @@ def test_real_qa_service_uses_r2_when_v1_has_no_results():
         ))
 
     assert llm_chat.await_count == 1
-    assert result["retrieval_source"] == "v2_r2_sidecar"
-    assert result["retrieval_metadata"]["evidence_ids"] == ["ev-1"]
-    assert result["rag_sources"][0]["citations"][0]["page"] == 3
+    assert result["retrieval_source"] == "none"
+    assert result["retrieval_metadata"]["shadow_hit_count"] == 1
+    assert result["retrieval_metadata"]["fallback_reason"] == "sidecar_observer_only"
+    assert not result["rag_sources"]
 
 
 def _user(session, name: str, role: UserRole = UserRole.STUDENT) -> User:

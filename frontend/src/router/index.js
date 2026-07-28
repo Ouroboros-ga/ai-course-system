@@ -150,13 +150,11 @@ const router = createRouter({
       meta: { requiresAuth: true, role: 'admin' }
     },
     {
-      // Evidence Viewer (admin-only). Mounted route; does not touch
-      // SplitVideoPlayer/TeacherDashboard/StudentDashboard. Wired to the
-      // real V2 Evidence API (/api/v1/evidence-v2) via api/evidence.js.
-      path: '/evidence-viewer/:documentId?',
+      // Production Viewer reads Canonical DocumentIR by course and parse run.
+      path: '/evidence-viewer/:courseId?/:runId?',
       name: 'evidence-viewer',
       component: loadView('EvidenceViewerPage'),
-      meta: { requiresAuth: true, role: 'admin' }
+      meta: { requiresAuth: true }
     },
     {
       // Graph browser (P1-09 follow-up): visualizes ONLY real-endpoint-provable

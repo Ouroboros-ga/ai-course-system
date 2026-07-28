@@ -6,6 +6,8 @@ requires python-pptx to be installed.  The provider raises
 """
 
 import pytest
+import io
+import zipfile
 
 from app.platform.document_intelligence.providers.native_pptx import (
     NativePptxProvider,
@@ -24,6 +26,8 @@ from app.platform.document_intelligence.planner import (
     ParsePriority,
 )
 from app.platform.document_intelligence.source_artifact import SourceArtifact
+from app.platform.document_intelligence.registry import ParserOutput
+from app.platform.document_intelligence.providers.native_pptx import map_pptx_output_to_ir
 
 
 class TestNativePptxProvider:
@@ -109,3 +113,44 @@ class TestSlideData:
         assert slide.slide_index == 1
         assert slide.title == "Test Slide"
         assert slide.notes == "Some notes"
+
+
+def test_ooxml_supplement_extracts_picture_alt_text_and_marks_visual_review():
+    from app.platform.document_intelligence.providers.native_pptx import _extract_ooxml_supplements
+
+    content = io.BytesIO()
+    with zipfile.ZipFile(content, "w") as archive:
+        archive.writestr("ppt/slides/slide1.xml", """<p:sld xmlns:p='http://schemas.openxmlformats.org/presentationml/2006/main'
+          xmlns:a='http://schemas.openxmlformats.org/drawingml/2006/main'>
+          <p:cSld><p:spTree><p:pic><p:nvPicPr><p:cNvPr descr='Circuit diagram'/></p:nvPicPr></p:pic>
+          <a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/diagram'/>
+          <a:graphicData uri='http://schemas.openxmlformats.org/drawingml/2006/chart'/>
+          </p:spTree></p:cSld></p:sld>""")
+
+    pages, warnings = _extract_ooxml_supplements(content.getvalue(), 1)
+
+    assert pages[1][0]["text"] == "Circuit diagram"
+    assert pages[1][0]["raw_locator"].startswith("ppt/slides/slide1.xml#")
+    assert any("SMARTART_REVIEW_REQUIRED" in warning for warning in warnings)
+    assert any("CHART_REVIEW_REQUIRED" in warning for warning in warnings)
+
+
+def test_mapper_keeps_ooxml_alt_text_as_precisely_located_block():
+    source = SourceArtifact.from_bytes(b"pptx", "slides.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    output = ParserOutput(
+        provider="native-pptx", provider_version="1",
+        metadata={"slide_width_emu": 100, "slide_height_emu": 100},
+        pages=({
+            "slide_index": 1, "title": "", "shapes": [], "tables": [],
+            "ooxml_supplements": [{
+                "kind": "image_alt_text", "text": "diagram alternative text",
+                "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[1]/p:nvPicPr/p:cNvPr",
+            }],
+        },),
+    )
+
+    blocks, _, _ = map_pptx_output_to_ir(output, source, "run", "parser")
+
+    assert blocks[0]["text"] == "diagram alternative text"
+    assert blocks[0]["block_type"] == "image"
+    assert blocks[0]["provenance"][0]["raw_locator"].startswith("ppt/slides/slide1.xml#")

@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -45,11 +46,15 @@ from app.models.database import get_session
 from app.models.document_parse_model import (
     CandidateBatchStatus,
     CitationStatus,
+    DocumentIRVersion,
     DocumentParseRun,
+    EvidenceAnchor,
+    EvidenceRenderAsset,
     EvidenceCitation,
     EvidenceSpan,
     EvidenceSpanStatus,
     GraphCandidateBatch,
+    RetrievalChunk,
     ParsePipeline,
     ParseRunStatus,
     StaleStrategy,
@@ -59,6 +64,7 @@ from app.models.graph_production_model import (
     GraphSnapshotRecord,
     SnapshotStatus,
 )
+from app.models.agent_governance_model import AgentActionProposal
 from app.services.course_access_service import require_course_permission
 from app.services.document_parse_service import (
     document_parse_service,
@@ -110,6 +116,16 @@ class ReparseRequest(BaseModel):
     stale_strategy: StaleStrategy = Field(default=StaleStrategy.MARK_STALE)
 
 
+class HighQualityOcrReparseRequest(BaseModel):
+    """An auditable teacher-agent proposal for a narrowly scoped OCR reparse."""
+
+    material_id: str = Field(..., min_length=1, max_length=200)
+    material_version_id: Optional[str] = Field(None, max_length=200)
+    pages: list[int] = Field(..., min_length=1, max_length=200)
+    agent_action_id: str = Field(..., min_length=1, max_length=200)
+    stale_strategy: StaleStrategy = Field(default=StaleStrategy.MARK_STALE)
+
+
 class EvidenceSpanConfirmRequest(BaseModel):
     """教师确认候选证据"""
 
@@ -123,6 +139,12 @@ class EvidenceSpanRejectRequest(BaseModel):
     """教师拒绝候选证据"""
 
     reject_reason: str = Field(default="", max_length=500)
+
+
+class CanonicalRetrievalRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=2_000)
+    run_id: Optional[str] = Field(default=None, max_length=200)
+    top_k: int = Field(default=5, ge=1, le=20)
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +165,9 @@ def _serialize_run(run: DocumentParseRun) -> dict[str, Any]:
         "status": run.status.value,
         "stale_strategy": run.stale_strategy.value,
         "affected_evidence_count": run.affected_evidence_count,
+        "reparse_applied": run.reparse_applied,
+        "parse_profile": run.parse_profile,
+        "reparse_scope": run.reparse_scope,
         "block_count": run.block_count,
         "evidence_span_count": run.evidence_span_count,
         "graph_candidate_count": run.graph_candidate_count,
@@ -161,6 +186,7 @@ def _serialize_span(span: EvidenceSpan) -> dict[str, Any]:
         "span_id": span.span_id,
         "course_id": span.course_id,
         "run_id": span.run_id,
+        "ir_version_id": span.ir_version_id,
         "block_id": span.block_id,
         "document_id": span.document_id,
         "page_number": span.page_number,
@@ -181,6 +207,38 @@ def _serialize_span(span: EvidenceSpan) -> dict[str, Any]:
         "linked_evidence_id": span.linked_evidence_id,
         "created_at": span.created_at.isoformat() if span.created_at else None,
         "updated_at": span.updated_at.isoformat() if span.updated_at else None,
+    }
+
+
+def _serialize_anchor(anchor: EvidenceAnchor) -> dict[str, Any]:
+    return {
+        "anchor_id": anchor.anchor_id,
+        "ir_version_id": anchor.ir_version_id,
+        "run_id": anchor.run_id,
+        "document_id": anchor.document_id,
+        "unit_id": anchor.unit_id,
+        "block_id": anchor.block_id,
+        "page_or_slide": anchor.page_or_slide,
+        "char_start": anchor.char_start,
+        "char_end": anchor.char_end,
+        "text": anchor.text,
+        "content_hash": anchor.content_hash,
+        "bbox": anchor.bbox,
+        "provenance": anchor.provenance,
+        "status": anchor.status,
+    }
+
+
+def _serialize_ir_version(version: DocumentIRVersion) -> dict[str, Any]:
+    return {
+        "ir_version_id": version.ir_version_id,
+        "document_id": version.document_id,
+        "schema_version": version.schema_version,
+        "quality_verdict": version.quality_verdict,
+        "parse_outcome": version.parse_outcome,
+        "needs_review": version.needs_review,
+        "warning_count": version.warning_count,
+        "prev_ir_version_id": version.prev_ir_version_id,
     }
 
 
@@ -226,6 +284,8 @@ def _serialize_batch(batch: GraphCandidateBatch) -> dict[str, Any]:
         "status": batch.status.value,
         "node_candidate_count": batch.node_candidate_count,
         "relation_candidate_count": batch.relation_candidate_count,
+        "node_candidates": batch.node_candidates,
+        "relation_candidates": batch.relation_candidates,
         "accepted_count": batch.accepted_count,
         "rejected_count": batch.rejected_count,
         "needs_review_count": batch.needs_review_count,
@@ -283,6 +343,7 @@ async def create_ingestion(
         select(SourceMaterialVersion).where(
             SourceMaterialVersion.version_id == version_id,
             SourceMaterialVersion.course_id == course_id,
+            SourceMaterialVersion.material_id == payload.material_id,
         )
     ).first()
     if version is None:
@@ -398,7 +459,12 @@ async def get_ingestion(
     return unified_response(
         code=200,
         message="获取解析运行成功",
-        data=_serialize_run(run),
+        data={
+            **_serialize_run(run),
+            "canonical_ir": _serialize_ir_version(version) if (version := session.exec(
+                select(DocumentIRVersion).where(DocumentIRVersion.ir_version_id == run.document_ir_version_id)
+            ).first()) else None,
+        },
     )
 
 
@@ -455,7 +521,13 @@ async def reparse_material(
             "材料尚未上传版本，无法重解析",
             details={"material_id": payload.material_id},
         )
-
+    version = session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.version_id == version_id,
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.material_id == payload.material_id,
+    )).first()
+    if version is None:
+        reject_resource_not_found("材料版本不存在或不属于指定材料")
     run = document_parse_service.create_run(
         session,
         course_id=course_id,
@@ -466,8 +538,41 @@ async def reparse_material(
         stale_strategy=payload.stale_strategy,
         initiated_by=user_id,
     )
+
+    from app.services.task_service import TaskCreateRequest, task_service
+    task_view = task_service.create_task(session, TaskCreateRequest(
+        task_type="document_parse",
+        owner_user_id=user_id,
+        course_id=course_id,
+        input_summary=f"重解析课程 {course_id} 材料 {payload.material_id} 版本 {version_id}",
+        input_payload={
+            "course_id": course_id,
+            "run_id": run.run_id,
+            "material_id": payload.material_id,
+            "material_version_id": version_id,
+            "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
+            "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
+        },
+    ))
+    run.task_id = task_view.task_id
+    session.add(run)
     session.commit()
     session.refresh(run)
+    try:
+        from app.models.database import session_factory as _session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if local_task_worker.has_handler("document_parse"):
+            local_task_worker.submit(_session_factory, task_view.task_id, {
+                "course_id": course_id,
+                "run_id": run.run_id,
+                "material_id": payload.material_id,
+                "material_version_id": version_id,
+                "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
+                "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
+            })
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Failed to submit reparse task %s", task_view.task_id, exc_info=True)
 
     return unified_response(
         code=202,
@@ -478,8 +583,300 @@ async def reparse_material(
             "affected_evidence_count": run.affected_evidence_count,
             "stale_strategy": run.stale_strategy.value,
             "status": run.status.value,
+            "task_id": task_view.task_id,
         },
     )
+
+
+@document_parse_router.get("/course/{course_id}/reparse/{run_id}/diff")
+async def get_reparse_diff(
+    course_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Show the evidence replacement impact before a teacher applies it."""
+    require_course_permission(session, current_user, course_id, "evidence.review")
+    run = session.exec(select(DocumentParseRun).where(
+        DocumentParseRun.course_id == course_id,
+        DocumentParseRun.run_id == run_id,
+    )).first()
+    if run is None:
+        reject_resource_not_found("解析运行不存在")
+    if run.status not in (ParseRunStatus.SUCCEEDED, ParseRunStatus.PARTIAL_SUCCESS) or not run.prev_run_id:
+        reject_validation_failed("仅已成功的重解析运行可生成差异")
+    previous = session.exec(select(DocumentParseRun).where(
+        DocumentParseRun.course_id == course_id,
+        DocumentParseRun.run_id == run.prev_run_id,
+    )).first()
+    if previous is None or not previous.document_ir_version_id or not run.document_ir_version_id:
+        reject_validation_failed("重解析缺少可比较的 Canonical DocumentIR 版本")
+    old = session.exec(select(EvidenceAnchor).where(
+        EvidenceAnchor.course_id == course_id,
+        EvidenceAnchor.ir_version_id == previous.document_ir_version_id,
+    )).all()
+    new = session.exec(select(EvidenceAnchor).where(
+        EvidenceAnchor.course_id == course_id,
+        EvidenceAnchor.ir_version_id == run.document_ir_version_id,
+    )).all()
+    old_by_hash = {item.content_hash: item for item in old}
+    new_by_hash = {item.content_hash: item for item in new}
+    return unified_response(200, "获取重解析差异成功", {
+        "run_id": run_id,
+        "prev_run_id": run.prev_run_id,
+        "stale_strategy": run.stale_strategy.value,
+        "already_applied": run.reparse_applied,
+        "added": [_serialize_anchor(item) for item in new if item.content_hash not in old_by_hash],
+        "removed": [_serialize_anchor(item) for item in old if item.content_hash not in new_by_hash],
+        "unchanged_count": len(set(old_by_hash).intersection(new_by_hash)),
+    })
+
+
+@document_parse_router.post("/course/{course_id}/reparse/high-quality-ocr")
+async def request_high_quality_ocr_reparse(
+    course_id: int,
+    payload: HighQualityOcrReparseRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Queue an agent-proposed, page-scoped OCR reparse for teacher review.
+
+    The caller must already hold course-edit permission.  ``agent_action_id``
+    is persisted as provenance, while adoption stays a separate `/apply` step.
+    """
+    require_course_permission(session, current_user, course_id, "course.edit")
+    user_id = int(current_user["user_id"])
+    pages = sorted(set(payload.pages))
+    if any(page < 1 for page in pages):
+        reject_validation_failed("pages 必须是从 1 开始的页码/幻灯片序号")
+    material = source_material_service.get_material(
+        session, course_id=course_id, material_id=payload.material_id,
+    )
+    version_id = payload.material_version_id or material.current_version_id
+    version = session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.version_id == version_id,
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.material_id == payload.material_id,
+    )).first() if version_id else None
+    if version is None:
+        reject_resource_not_found("材料版本不存在或不属于指定材料")
+    proposal = session.exec(select(AgentActionProposal).where(
+        AgentActionProposal.proposal_id == payload.agent_action_id,
+        AgentActionProposal.course_id == course_id,
+    )).first()
+    if proposal is None:
+        reject_resource_not_found("教师代理动作提案不存在或不属于该课程")
+    if proposal.status != "approved" or proposal.proposal_type != "high_quality_ocr_reparse":
+        reject_validation_failed("高质量 OCR 重解析需要已批准的对应教师代理提案")
+
+    run = document_parse_service.create_run(
+        session, course_id=course_id, material_id=payload.material_id,
+        material_version_id=version_id, pipeline=ParsePipeline.FULL,
+        stale_strategy=payload.stale_strategy, parse_profile="high_quality_ocr",
+        reparse_scope={"pages": pages, "agent_action_id": payload.agent_action_id},
+        initiated_by=user_id,
+    )
+    from app.services.task_service import TaskCreateRequest, task_service
+    task = task_service.create_task(session, TaskCreateRequest(
+        task_type="document_parse", owner_user_id=user_id, course_id=course_id,
+        input_summary=f"高质量 OCR 重解析课程 {course_id} 材料 {payload.material_id} 页 {pages}",
+        input_payload={
+            "course_id": course_id, "run_id": run.run_id,
+            "material_id": payload.material_id, "material_version_id": version_id,
+            "pipeline": "full", "stale_strategy": payload.stale_strategy.value,
+            "parse_profile": "high_quality_ocr", "pages": pages,
+            "agent_action_id": payload.agent_action_id,
+        },
+    ))
+    run.task_id = task.task_id
+    session.add(run)
+    session.commit()
+    session.refresh(run)
+    try:
+        from app.models.database import session_factory as _session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if local_task_worker.has_handler("document_parse"):
+            local_task_worker.submit(_session_factory, task.task_id, {
+                "course_id": course_id, "run_id": run.run_id,
+                "material_id": payload.material_id, "material_version_id": version_id,
+                "pipeline": "full", "stale_strategy": payload.stale_strategy.value,
+                "parse_profile": "high_quality_ocr", "pages": pages,
+                "agent_action_id": payload.agent_action_id,
+            })
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("Failed to submit high-quality OCR task %s", task.task_id, exc_info=True)
+    return unified_response(202, "高质量 OCR 重解析任务已创建，等待差异审核与显式采用", {
+        "run_id": run.run_id, "task_id": task.task_id, "prev_run_id": run.prev_run_id,
+        "parse_profile": run.parse_profile, "scope": run.reparse_scope,
+        "adoption_required": True,
+    })
+
+
+@document_parse_router.post("/course/{course_id}/reparse/{run_id}/apply")
+async def apply_reparse(
+    course_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Teacher confirmation point for replacing an earlier evidence version."""
+    require_course_permission(session, current_user, course_id, "evidence.confirm")
+    run = document_parse_service.apply_reparse(session, course_id=course_id, run_id=run_id)
+    session.commit()
+    session.refresh(run)
+    return unified_response(200, "重解析差异已确认并应用", _serialize_run(run))
+
+
+@document_parse_router.get("/course/{course_id}/document-ir/{run_id}/anchors")
+async def list_canonical_anchors(
+    course_id: int,
+    run_id: str,
+    page_or_slide: Optional[int] = Query(None, ge=1),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Evidence Viewer API backed by the immutable Canonical IR projection."""
+    require_course_permission(session, current_user, course_id, "evidence.review")
+    run = session.exec(select(DocumentParseRun).where(
+        DocumentParseRun.course_id == course_id,
+        DocumentParseRun.run_id == run_id,
+    )).first()
+    if run is None or not run.document_ir_version_id:
+        reject_resource_not_found("Canonical DocumentIR 不存在")
+    statement = select(EvidenceAnchor).where(
+        EvidenceAnchor.course_id == course_id,
+        EvidenceAnchor.ir_version_id == run.document_ir_version_id,
+    ).order_by(EvidenceAnchor.page_or_slide, EvidenceAnchor.char_start)
+    if page_or_slide is not None:
+        statement = statement.where(EvidenceAnchor.page_or_slide == page_or_slide)
+    anchors = list(session.exec(statement).all())
+    return unified_response(200, "获取 Canonical Evidence Viewer 数据成功", {
+        "run_id": run_id,
+        "ir_version_id": run.document_ir_version_id,
+        "page_assets": _canonical_page_assets(session, course_id, run_id, anchors),
+        "items": [_serialize_anchor(item) for item in anchors],
+        "total": len(anchors),
+    })
+
+
+def _canonical_page_assets(
+    session: Session,
+    course_id: int,
+    run_id: str,
+    anchors: list[EvidenceAnchor],
+) -> list[dict[str, Any]]:
+    """Expose page renders only through signed, course-scoped object URLs."""
+    pages: dict[int, dict[str, Any]] = {}
+    page_numbers = {anchor.page_or_slide for anchor in anchors if anchor.page_or_slide is not None}
+    assets = list(session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.run_id == run_id,
+        EvidenceRenderAsset.page_number.in_(page_numbers or {-1}),
+    )).all())
+    by_page = {asset.page_number: asset for asset in assets if asset.object_key}
+    for anchor in anchors:
+        if anchor.page_or_slide is None:
+            continue
+        asset = by_page.get(anchor.page_or_slide)
+        pages.setdefault(anchor.page_or_slide, {
+            "page_or_slide": anchor.page_or_slide,
+            "anchor_count": 0,
+            "rendition_url": f"/api/v1/graph/course/{course_id}/evidence-renders/{asset.asset_id}/content" if asset else None,
+            "width": asset.width if asset else None,
+            "height": asset.height if asset else None,
+        })["anchor_count"] += 1
+    return [pages[page] for page in sorted(pages)]
+
+
+@document_parse_router.get("/course/{course_id}/evidence-renders/{asset_id}/content")
+async def get_evidence_render_content(
+    course_id: int,
+    asset_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Read a persisted evidence page after course permission verification."""
+    require_course_permission(session, current_user, course_id, "evidence.review")
+    asset = session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.asset_id == asset_id,
+        EvidenceRenderAsset.course_id == course_id,
+    )).first()
+    if asset is None or not asset.object_key:
+        reject_resource_not_found("Evidence 渲染资源不存在")
+    try:
+        from app.services.object_storage import LocalStorageProvider, get_object_storage
+        storage = get_object_storage()
+        if isinstance(storage, LocalStorageProvider):
+            from pathlib import Path
+            file_path = storage._safe_full_path(asset.object_key)
+            if not Path(file_path).is_file():
+                raise FileNotFoundError(asset.object_key)
+            return FileResponse(file_path, media_type=asset.mime_type)
+        return RedirectResponse(storage.sign_read_url(
+            asset.object_key,
+            expires_in=900,
+            scope={"course_id": course_id, "user_id": current_user["user_id"], "purpose": "evidence_viewer"},
+        ), status_code=307)
+    except FileNotFoundError:
+        reject_resource_not_found("Evidence 渲染文件不存在")
+
+
+@document_parse_router.post("/course/{course_id}/document-ir/retrieval/query")
+async def query_canonical_retrieval(
+    course_id: int,
+    payload: CanonicalRetrievalRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Deterministic course-local retrieval over teacher-confirmed IR chunks."""
+    require_course_permission(session, current_user, course_id, "evidence.review")
+    from app.models.document_parse_model import RetrievalIndexSnapshot
+
+    snapshot_stmt = select(RetrievalIndexSnapshot).where(
+        RetrievalIndexSnapshot.course_id == course_id,
+        RetrievalIndexSnapshot.status == "active",
+    )
+    if payload.run_id:
+        requested = session.exec(select(DocumentParseRun).where(
+            DocumentParseRun.course_id == course_id,
+            DocumentParseRun.run_id == payload.run_id,
+        )).first()
+        if requested is None:
+            reject_resource_not_found("解析运行不存在")
+        snapshot_stmt = snapshot_stmt.where(
+            RetrievalIndexSnapshot.ir_version_id == requested.document_ir_version_id,
+        )
+    snapshot = session.exec(snapshot_stmt).first()
+    if snapshot is None:
+        return unified_response(200, "尚无可检索的 Canonical DocumentIR", {"items": [], "total": 0})
+    result_run = session.exec(select(DocumentParseRun).where(
+        DocumentParseRun.course_id == course_id,
+        DocumentParseRun.document_ir_version_id == snapshot.ir_version_id,
+    )).first()
+    terms = [term.lower() for term in payload.query.split() if term.strip()]
+    chunks = list(session.exec(select(RetrievalChunk).where(
+        RetrievalChunk.course_id == course_id,
+        RetrievalChunk.ir_version_id == snapshot.ir_version_id,
+        RetrievalChunk.status == "active",
+    )).all())
+    ranked = []
+    for chunk in chunks:
+        text = chunk.text.lower()
+        score = sum(text.count(term) for term in terms)
+        if score:
+            ranked.append((score, chunk))
+    ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
+    return unified_response(200, "Canonical 检索完成", {
+        "run_id": result_run.run_id if result_run else None,
+        "ir_version_id": snapshot.ir_version_id,
+        "items": [{
+            "chunk_id": chunk.chunk_id, "score": score, "text": chunk.text,
+            "document_id": chunk.document_id, "unit_id": chunk.unit_id,
+            "block_ids": chunk.block_ids, "anchor_ids": chunk.anchor_ids,
+        } for score, chunk in ranked[:payload.top_k]],
+        "total": min(len(ranked), payload.top_k),
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -810,7 +1207,9 @@ async def get_course_health_view(
 
     # 解析运行
     runs = document_parse_service.list_runs(session, course_id=course_id)
-    succeeded_runs = [r for r in runs if r.status == ParseRunStatus.SUCCEEDED]
+    succeeded_runs = [r for r in runs if r.status in (
+        ParseRunStatus.SUCCEEDED, ParseRunStatus.PARTIAL_SUCCESS,
+    )]
     failed_runs = [r for r in runs if r.status == ParseRunStatus.FAILED]
     parse_summary = {
         "status": "available" if succeeded_runs else ("pending" if not runs else "degraded"),

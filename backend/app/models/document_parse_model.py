@@ -21,7 +21,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, ForeignKeyConstraint, JSON, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 from app.core.time_utils import utcnow_aware
@@ -78,6 +78,11 @@ class DocumentParseRun(SQLModel, table=True):
                                                description="关联 SourceMaterialVersion.version_id")
     document_id: Optional[str] = Field(default=None, index=True,
                                        description="关联 DocumentArtifact.document_id")
+    document_ir_version_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="本次运行产出的 Canonical DocumentIRVersion；失败运行为空",
+    )
     task_id: Optional[str] = Field(default=None, index=True,
                                    description="关联 TaskRecord.task_id")
     prev_run_id: Optional[str] = Field(default=None, description="重解析时的上一运行ID")
@@ -85,6 +90,22 @@ class DocumentParseRun(SQLModel, table=True):
     status: ParseRunStatus = Field(default=ParseRunStatus.PENDING, index=True)
     stale_strategy: StaleStrategy = Field(default=StaleStrategy.MARK_STALE)
     affected_evidence_count: int = Field(default=0, description="本次运行影响的旧证据数")
+    reparse_applied: bool = Field(
+        default=False,
+        index=True,
+        description="重解析替换是否已由教师确认并应用；首次解析恒为 false",
+    )
+    parse_profile: str = Field(
+        default="standard",
+        max_length=40,
+        index=True,
+        description="standard|high_quality_ocr; immutable parse configuration label",
+    )
+    reparse_scope: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Explicit page/slide scope and agent request reference",
+    )
     block_count: int = Field(default=0)
     evidence_span_count: int = Field(default=0)
     graph_candidate_count: int = Field(default=0)
@@ -118,13 +139,28 @@ class DocumentBlock(SQLModel, table=True):
     """
 
     __tablename__ = "document_blocks"
+    __table_args__ = (
+        # A canonical source locator is stable across reparses.  The immutable
+        # IR version supplies the scope that makes a projected row unique.
+        UniqueConstraint("document_ir_version_id", "block_id", name="uq_document_blocks_ir_block"),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     block_id: str = Field(default_factory=lambda: "blk_" + __import__("uuid").uuid4().hex,
-                          unique=True, index=True)
+                          index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     run_id: str = Field(foreign_key="document_parse_runs.run_id", index=True)
     document_id: Optional[str] = Field(default=None, index=True)
+    unit_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="Canonical DocumentIR 的稳定 unit_id",
+    )
+    document_ir_version_id: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="首次投影该块的 DocumentIRVersion；历史版本以 DocumentIRVersion JSON 为准",
+    )
     page_number: int = Field(default=0, index=True, description="1-based 页码")
     block_type: BlockType = Field(default=BlockType.TEXT, index=True)
     bbox: Optional[dict] = Field(default=None, sa_column=Column(JSON),
@@ -162,6 +198,141 @@ class DocumentBlock(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Canonical DocumentIR version and downstream projections
+# ---------------------------------------------------------------------------
+
+
+class DocumentIRVersion(SQLModel, table=True):
+    """Immutable, versioned canonical parse artifact for one parse run.
+
+    The JSON in object storage is authoritative.  Relational rows such as
+    ``DocumentBlock`` and ``EvidenceAnchor`` are query projections and never
+    replace this artifact.  A source material version can therefore keep every
+    historical parse without overwriting the raw source or a prior IR.
+    """
+
+    __tablename__ = "document_ir_versions"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ir_version_id: str = Field(
+        default_factory=lambda: "dirv_" + __import__("uuid").uuid4().hex,
+        unique=True,
+        index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    material_version_id: Optional[str] = Field(default=None, index=True)
+    run_id: str = Field(foreign_key="document_parse_runs.run_id", unique=True, index=True)
+    document_id: str = Field(index=True)
+    artifact_id: str = Field(index=True)
+    source_sha256: str = Field(default="", index=True)
+    schema_version: str = Field(default="document-ir/1.0")
+    object_key: str = Field(default="", description="Immutable canonical JSON object key")
+    content_hash: str = Field(default="", index=True)
+    parser_versions: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    quality: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    quality_verdict: str = Field(default="", index=True)
+    parse_outcome: str = Field(
+        default="",
+        index=True,
+        description="native_complete|native_with_ocr|partial_success|manual_review_required|unsupported_visual_structure",
+    )
+    needs_review: bool = Field(default=False, index=True)
+    warning_count: int = Field(default=0)
+    prev_ir_version_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class EvidenceAnchor(SQLModel, table=True):
+    """Stable source span projected from a canonical DocumentIR block.
+
+    ``EvidenceSpan`` remains the teacher-review compatibility projection.  New
+    retrieval and citation builders must use this anchor identity instead of a
+    truncated, database-generated text snippet.
+    """
+
+    __tablename__ = "evidence_anchors"
+    __table_args__ = (
+        UniqueConstraint("ir_version_id", "block_id", "char_start", "char_end", name="uq_evidence_anchor_span"),
+        ForeignKeyConstraint(
+            ["ir_version_id", "block_id"],
+            ["document_blocks.document_ir_version_id", "document_blocks.block_id"],
+            name="fk_evidence_anchors_ir_block",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    anchor_id: str = Field(
+        default_factory=lambda: "ea_" + __import__("uuid").uuid4().hex,
+        unique=True,
+        index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    ir_version_id: str = Field(foreign_key="document_ir_versions.ir_version_id", index=True)
+    run_id: str = Field(foreign_key="document_parse_runs.run_id", index=True)
+    document_id: str = Field(index=True)
+    unit_id: Optional[str] = Field(default=None, index=True)
+    block_id: str = Field(index=True)
+    page_or_slide: Optional[int] = Field(default=None, index=True)
+    char_start: int = Field(default=0)
+    char_end: int = Field(default=0)
+    text: str = Field(default="")
+    content_hash: str = Field(default="", index=True)
+    bbox: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    provenance: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    status: str = Field(default="candidate", index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class RetrievalChunk(SQLModel, table=True):
+    """Deterministic, evidence-closed retrieval input derived from anchors."""
+
+    __tablename__ = "retrieval_chunks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chunk_id: str = Field(unique=True, index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    ir_version_id: str = Field(foreign_key="document_ir_versions.ir_version_id", index=True)
+    document_id: str = Field(index=True)
+    unit_id: Optional[str] = Field(default=None, index=True)
+    block_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    anchor_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    text: str = Field(default="")
+    content_hash: str = Field(default="", index=True)
+    status: str = Field(default="draft", index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class RetrievalIndexSnapshot(SQLModel, table=True):
+    """Versioned course retrieval index assembled from Canonical chunks.
+
+    A parse creates a candidate snapshot.  Only one snapshot per course may
+    be active, and a reparse switches it only through the explicit adopt
+    operation.  The database retriever uses this row as its formal index
+    boundary rather than treating every chunk projection as immediately live.
+    """
+
+    __tablename__ = "retrieval_index_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    snapshot_id: str = Field(
+        default_factory=lambda: "ris_" + __import__("uuid").uuid4().hex,
+        unique=True,
+        index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    ir_version_id: str = Field(
+        foreign_key="document_ir_versions.ir_version_id", unique=True, index=True,
+    )
+    document_id: str = Field(index=True)
+    status: str = Field(default="candidate", index=True, description="candidate|active|superseded")
+    chunk_count: int = Field(default=0)
+    content_hash: str = Field(default="", index=True)
+    activated_at: Optional[datetime] = Field(default=None)
+    superseded_at: Optional[datetime] = Field(default=None)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+# ---------------------------------------------------------------------------
 # Evidence 片段（候选态）
 # ---------------------------------------------------------------------------
 
@@ -185,13 +356,26 @@ class EvidenceSpan(SQLModel, table=True):
     """
 
     __tablename__ = "evidence_spans"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["ir_version_id", "block_id"],
+            ["document_blocks.document_ir_version_id", "document_blocks.block_id"],
+            name="fk_evidence_spans_ir_block",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     span_id: str = Field(default_factory=lambda: "es_" + __import__("uuid").uuid4().hex,
                          unique=True, index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     run_id: str = Field(foreign_key="document_parse_runs.run_id", index=True)
-    block_id: str = Field(foreign_key="document_blocks.block_id", index=True)
+    ir_version_id: Optional[str] = Field(
+        default=None,
+        foreign_key="document_ir_versions.ir_version_id",
+        index=True,
+        description="Canonical IR version that scopes block_id; null only for legacy projections",
+    )
+    block_id: str = Field(index=True)
     document_id: Optional[str] = Field(default=None, index=True)
     page_number: int = Field(default=0, index=True)
     text_snippet: str = Field(default="", description="证据文本片段")
@@ -291,6 +475,10 @@ class EvidenceRenderAsset(SQLModel, table=True):
     asset_id: str = Field(default_factory=lambda: "era_" + __import__("uuid").uuid4().hex,
                           unique=True, index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
+    run_id: Optional[str] = Field(
+        default=None, foreign_key="document_parse_runs.run_id", index=True,
+        description="Canonical parse run that rendered this page; scopes assets when document_id is absent",
+    )
     citation_id: Optional[str] = Field(default=None, foreign_key="evidence_citations.citation_id",
                                        index=True)
     document_id: Optional[str] = Field(default=None, index=True)
@@ -346,6 +534,16 @@ class GraphCandidateBatch(SQLModel, table=True):
     accepted_count: int = Field(default=0)
     rejected_count: int = Field(default=0)
     needs_review_count: int = Field(default=0)
+    node_candidates: list = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="Teacher-reviewable concept candidates with source block and anchor references",
+    )
+    relation_candidates: list = Field(
+        default_factory=list,
+        sa_column=Column(JSON),
+        description="Teacher-reviewable typed relation candidates with source references",
+    )
     snapshot_id: Optional[str] = Field(default=None, index=True,
                                        description="审核通过后生成的 GraphSnapshotRecord.snapshot_id")
     model_version: str = Field(default="graph-candidate-v1.0")

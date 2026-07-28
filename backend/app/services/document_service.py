@@ -1867,7 +1867,12 @@ class RAGProcessor:
 
 
 class DocumentService:
-    """文档处理服务"""
+    """Legacy document workflow retained only for historical compatibility.
+
+    New course material ingestion must enter through SourceMaterialVersion and
+    the async DocumentParseRun pipeline.  Do not add new course-build writes
+    to this service until migration equivalence and rollback are documented.
+    """
 
     def __init__(self):
         self.parser = DocumentParser()

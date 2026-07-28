@@ -6,6 +6,8 @@ versions; published outline/script data is immutable and exposed read-only.
 from __future__ import annotations
 
 import hashlib
+import json
+import logging
 import os
 import re
 import tempfile
@@ -36,6 +38,8 @@ from app.models.course_outline_model import (
 )
 from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, MaterialStatus, SourceMaterial
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
+from app.models.document_parse_model import EvidenceSpan, EvidenceSpanStatus
+from app.models.graph_production_model import CourseEvidenceRecord, EvidenceStatus
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
 from app.services.course_build_service import course_release_service, quality_gate_service, source_material_service
@@ -46,8 +50,11 @@ from app.platform.tasks.worker import local_task_worker
 from app.models.database import session_factory
 from app.models.resource_model import ResourceItem, ResourceLifecycleStatus, ResourceVisibility
 from app.services.ppt_generation_service import ppt_generation_service
+from app.schemas.controlled_prep import ControlledPrepInput, TeachingStyleConfig
+from app.services.controlled_prep_workflow import controlled_prep_workflow
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class OutlineNodeCreate(BaseModel):
@@ -105,6 +112,22 @@ class PptMappingUpdate(BaseModel):
 class PptGenerateRequest(BaseModel):
     template_id: Optional[str] = Field(default=None, max_length=128)
     search: bool = False
+
+
+class ControlledPrepRequest(BaseModel):
+    """Input for one controlled preparation run.
+
+    Evidence text is resolved server-side from course-scoped records. This
+    prevents callers from smuggling arbitrary text into an auditable proposal.
+    """
+
+    source_text: str = Field(min_length=1, max_length=200_000)
+    evidence_ids: list[str] = Field(min_length=1, max_length=500)
+    course_positioning: str = Field(default="", max_length=2_000)
+    style: TeachingStyleConfig = Field(default_factory=TeachingStyleConfig)
+    candidate_id: Optional[str] = Field(default=None, max_length=100)
+    existing_outline_ids: dict[str, str] = Field(default_factory=dict)
+    existing_script_ids: dict[str, str] = Field(default_factory=dict)
 
 
 def _mark_build_step(session: Session, course_id: int, step_name: BuildStepName, status: BuildStepStatus, actor_id: int, output_ref: str = "") -> None:
@@ -235,6 +258,28 @@ def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> Cou
                     content_hash=old_script.content_hash,
                 ))
     return draft
+
+
+def _ensure_draft_script(session: Session, outline: CourseOutlineVersion, user_id: int) -> TeachingScriptVersion:
+    script = session.exec(
+        select(TeachingScriptVersion)
+        .where(TeachingScriptVersion.course_id == outline.course_id)
+        .where(TeachingScriptVersion.outline_version_id == outline.outline_version_id)
+        .order_by(TeachingScriptVersion.version.desc())
+    ).first()
+    if script:
+        return script
+    script = TeachingScriptVersion(
+        course_id=outline.course_id,
+        outline_version_id=outline.outline_version_id,
+        version=1,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        source_parse_run_id=outline.source_parse_run_id,
+        created_by=user_id,
+    )
+    session.add(script)
+    session.flush()
+    return script
 
 
 def _outline_node_view(node: CourseOutlineNode) -> dict[str, Any]:
@@ -412,6 +457,90 @@ async def update_script(course_id: int, script_node_id: str, payload: ScriptUpda
     return unified_response(200, "讲稿已保存", _script_node_view(node))
 
 
+@router.post("/course/{course_id}/controlled-prep/run")
+async def run_controlled_prep(
+    course_id: int,
+    payload: ControlledPrepRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Run five structured stages and persist only a teacher-review proposal."""
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    if len(payload.evidence_ids) != len(set(payload.evidence_ids)):
+        raise HTTPException(422, "evidence_ids 不能重复")
+
+    formal = session.exec(select(CourseEvidenceRecord).where(
+        CourseEvidenceRecord.course_id == course_id,
+        CourseEvidenceRecord.evidence_id.in_(payload.evidence_ids),
+        CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+    )).all()
+    formal_by_id = {item.evidence_id: item for item in formal}
+    spans = session.exec(select(EvidenceSpan).where(
+        EvidenceSpan.course_id == course_id,
+        EvidenceSpan.span_id.in_(payload.evidence_ids),
+        EvidenceSpan.status == EvidenceSpanStatus.CONFIRMED,
+    )).all()
+    span_by_id = {item.span_id: item for item in spans}
+    missing = [item for item in payload.evidence_ids if item not in formal_by_id and item not in span_by_id]
+    if missing:
+        raise HTTPException(422, detail={"error_code": "INVALID_COURSE_EVIDENCE", "evidence_ids": missing})
+
+    evidence = []
+    for evidence_id in payload.evidence_ids:
+        item = formal_by_id.get(evidence_id)
+        if item:
+            evidence.append({"evidence_id": item.evidence_id, "text": item.text_snippet, "page": item.page_number})
+        else:
+            span = span_by_id[evidence_id]
+            evidence.append({"evidence_id": span.span_id, "text": span.text_snippet, "page": span.page_number, "block_id": span.block_id})
+
+    request = ControlledPrepInput(
+        source_text=payload.source_text,
+        evidence=evidence,
+        course_positioning=payload.course_positioning,
+        style=payload.style,
+    )
+    try:
+        result = await controlled_prep_workflow.run(
+            request,
+            candidate_id=payload.candidate_id,
+            existing_outline_ids=payload.existing_outline_ids,
+            existing_script_ids=payload.existing_script_ids,
+        )
+    except Exception as exc:
+        logger.exception("Controlled prep failed for course %s", course_id)
+        raise HTTPException(422, detail={"error_code": "CONTROLLED_PREP_FAILED", "message": str(exc)[:500]}) from exc
+
+    proposal = result["proposal"]
+    db_proposal = PatchProposal(
+        course_id=course_id, tool_name=proposal.tool_name,
+        policy_version=proposal.policy_version, reason=proposal.reason,
+        created_by=context.user_id,
+    )
+    session.add(db_proposal)
+    session.flush()
+    for operation in proposal.operations:
+        session.add(PatchProposalOperation(
+            proposal_id=db_proposal.proposal_id, course_id=course_id,
+            operation=PatchOperation(operation.operation), target=operation.target,
+            before=operation.before, after=operation.after, reason=operation.reason,
+            evidence_refs=operation.evidence_refs, external_ref=operation.external_ref,
+            policy_version=proposal.policy_version,
+        ))
+    session.commit()
+    return unified_response(201, "受控备课完成，提案等待教师审核", {
+        "proposal_id": db_proposal.proposal_id,
+        "status": db_proposal.status.value,
+        "stages": {
+            "evidence_segmenter": result["segments"].model_dump(),
+            "outline_planner": result["outline"].model_dump(),
+            "script_writer": [item.model_dump() for item in result["scripts"]],
+            "evidence_verifier": [item.model_dump() for item in result["verifications"]],
+            "patch_compiler": proposal.model_dump(),
+        },
+    })
+
+
 @router.post("/course/{course_id}/scripts/{script_node_id}/lock")
 async def lock_script(course_id: int, script_node_id: str, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     context = require_course_permission(session, current_user, course_id, "course.script.edit")
@@ -448,6 +577,31 @@ def _apply_operation(session: Session, course_id: int, op: PatchProposalOperatio
     if not match: raise HTTPException(400, f"不支持的提案目标: {op.target}")
     kind, target_id, field = match.groups()
     if kind == "outline":
+        if target_id == "new":
+            try:
+                payload = json.loads(op.after)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(422, "新增目录节点的 after 不是有效 JSON") from exc
+            outline = _ensure_draft_outline(session, course_id, user_id)
+            parent_id = payload.get("parent_node_id")
+            parent = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_node_id == parent_id,
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_version_id == outline.outline_version_id,
+            )).first() if parent_id else None
+            session.add(CourseOutlineNode(
+                outline_node_id=payload.get("outline_node_id") or f"on_agent_{hashlib.sha256(op.after.encode()).hexdigest()[:16]}",
+                outline_version_id=outline.outline_version_id,
+                course_id=course_id,
+                parent_node_id=parent.outline_node_id if parent else None,
+                node_type=OutlineNodeType(payload["node_type"]),
+                title=payload["title"],
+                order_index=int(payload.get("order_index", 0)),
+                source_block_refs=payload.get("source_block_refs") or op.evidence_refs,
+                generation_reason=op.reason,
+                confidence=1.0 if op.evidence_refs else 0.0,
+            ))
+            return
         target = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_node_id == target_id, CourseOutlineNode.course_id == course_id)).first()
         if not target: raise HTTPException(404, "提案目标目录节点不存在")
         version = session.exec(select(CourseOutlineVersion).where(
@@ -457,6 +611,30 @@ def _apply_operation(session: Session, course_id: int, op: PatchProposalOperatio
         if target.locked_by is not None: raise HTTPException(409, "提案目标目录节点已锁定")
         setattr(target, field, op.after); target.updated_at = utcnow_aware(); session.add(target)
     else:
+        if target_id == "new":
+            try:
+                payload = json.loads(op.after)
+            except json.JSONDecodeError as exc:
+                raise HTTPException(422, "新增讲稿节点的 after 不是有效 JSON") from exc
+            outline = _ensure_draft_outline(session, course_id, user_id)
+            outline_node = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_node_id == payload.get("outline_node_id"),
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_version_id == outline.outline_version_id,
+            )).first()
+            if outline_node is None:
+                raise HTTPException(409, "新增讲稿缺少对应的草稿目录节点")
+            script = _ensure_draft_script(session, outline, user_id)
+            session.add(TeachingScriptNode(
+                script_version_id=script.script_version_id,
+                course_id=course_id,
+                outline_node_id=outline_node.outline_node_id,
+                content=payload.get("content", ""),
+                style=payload.get("style", ""),
+                evidence_refs=payload.get("evidence_refs") or op.evidence_refs,
+                source_block_refs=payload.get("evidence_refs") or op.evidence_refs,
+            ))
+            return
         target = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_node_id == target_id, TeachingScriptNode.course_id == course_id)).first()
         if not target: raise HTTPException(404, "提案目标讲稿节点不存在")
         version = session.exec(select(TeachingScriptVersion).where(

@@ -391,6 +391,7 @@ class CourseBuildService:
             "retrieval_snapshot_id": r.retrieval_snapshot_id,
             "material_version_ids": r.material_version_ids or [],
             "document_ir_run_ids": r.document_ir_run_ids or [],
+            "document_ir_version_ids": r.document_ir_version_ids or [],
             "outline_version_id": r.outline_version_id,
             "script_version_id": r.script_version_id,
             "quality_gate_passed": r.quality_gate_passed,
@@ -916,6 +917,23 @@ class CourseReleaseService:
         if retrieval is None:
             reject_state_conflict("没有可冻结的课程检索快照")
 
+        # The release must not mix a draft generated from an earlier corpus
+        # with a newer material set. Students only see one coherent snapshot.
+        outline_id = (structure_snapshot or {}).get("outline_version_id")
+        script_id = (scripts_snapshot or {}).get("script_version_id")
+        outline = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.course_id == course_id,
+            CourseOutlineVersion.outline_version_id == outline_id,
+        )).first() if outline_id else None
+        script = session.exec(select(TeachingScriptVersion).where(
+            TeachingScriptVersion.course_id == course_id,
+            TeachingScriptVersion.script_version_id == script_id,
+        )).first() if script_id else None
+        if outline is None or script is None:
+            reject_state_conflict("发布必须指定同一草稿版本的课程结构与讲稿")
+        if outline.corpus_snapshot_id != corpus.corpus_snapshot_id or script.corpus_snapshot_id != corpus.corpus_snapshot_id:
+            reject_state_conflict("课程结构或讲稿不属于当前课程材料快照；请重新生成或选择对应材料版本")
+
         # 质量门禁
         if run_quality_gate:
             gate_run = quality_gate_service.run_checks(
@@ -961,10 +979,11 @@ class CourseReleaseService:
             release.evidence_refs = evidence_refs
         release.material_version_ids = list(corpus.material_version_ids or [])
         release.document_ir_run_ids = list(corpus.parse_run_ids or [])
+        release.document_ir_version_ids = list(corpus.document_ir_version_ids or [])
         release.corpus_snapshot_id = corpus.corpus_snapshot_id
         release.retrieval_snapshot_id = retrieval.retrieval_snapshot_id
-        release.outline_version_id = (release.structure_snapshot or {}).get("outline_version_id")
-        release.script_version_id = (release.scripts_snapshot or {}).get("script_version_id")
+        release.outline_version_id = outline.outline_version_id
+        release.script_version_id = script.script_version_id
 
         release.status = ReleaseStatus.PUBLISHED
         release.is_active = True
@@ -1018,6 +1037,7 @@ class CourseReleaseService:
             evidence_refs=list(target.evidence_refs),
             material_version_ids=list(target.material_version_ids or []),
             document_ir_run_ids=list(target.document_ir_run_ids or []),
+            document_ir_version_ids=list(target.document_ir_version_ids or []),
             corpus_snapshot_id=target.corpus_snapshot_id,
             retrieval_snapshot_id=target.retrieval_snapshot_id,
             outline_version_id=target.outline_version_id,

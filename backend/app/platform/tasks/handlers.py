@@ -158,7 +158,7 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
     # 3. 标记 succeeded（task + parse_run）
     with ctx.session_factory() as session:
         try:
-            document_parse_service.mark_succeeded(
+            parse_run = document_parse_service.mark_succeeded(
                 session,
                 run_id=run_id,
                 course_id=int(course_id),
@@ -166,26 +166,41 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 evidence_span_count=evidence_span_count,
                 graph_candidate_count=graph_candidate_count,
             )
+            document_parse_service.activate_initial_retrieval_snapshot(
+                session,
+                course_id=int(course_id),
+                run_id=run_id,
+            )
         except Exception as exc:
             raise TaskExecutionError(
                 "PARSE_RUN_STATE_CONFLICT",
                 f"无法标记 parse_run 为 succeeded: {exc}",
                 retryable=False,
             )
-        ctx.service.mark_succeeded(
-            session,
-            ctx.task_id,
-            result_ref=f"parse_run://{run_id}",
-            result_data={
-                "run_id": run_id,
-                "course_id": course_id,
-                "block_count": block_count,
-                "evidence_span_count": evidence_span_count,
-                "graph_candidate_count": graph_candidate_count,
-                "draft_assets": _draft_progress,
-                "draft_warnings": _draft_warnings,
-            },
-        )
+        result_data = {
+            "run_id": run_id,
+            "course_id": course_id,
+            "parse_run_status": parse_run.status.value,
+            "block_count": block_count,
+            "evidence_span_count": evidence_span_count,
+            "graph_candidate_count": graph_candidate_count,
+            "draft_assets": _draft_progress,
+            "draft_warnings": _draft_warnings,
+        }
+        if parse_run.status == ParseRunStatus.PARTIAL_SUCCESS:
+            ctx.service.mark_partial_success(
+                session,
+                ctx.task_id,
+                result_ref=f"parse_run://{run_id}",
+                result_data=result_data,
+            )
+        else:
+            ctx.service.mark_succeeded(
+                session,
+                ctx.task_id,
+                result_ref=f"parse_run://{run_id}",
+                result_data=result_data,
+            )
         # Keep the teacher-facing material list aligned with the durable task
         # result.  A course import creates this version as PARSING; without
         # this transition the UI would show a permanently pending material
