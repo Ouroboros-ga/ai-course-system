@@ -3,15 +3,27 @@ import request from '@/utils/request.js'
 const base = (courseId) => `/course-build/course/${encodeURIComponent(courseId)}`
 
 export const listBuildMaterials = (courseId) => request.get(`${base(courseId)}/materials`)
+export const createCourseWorkspace = (payload) => request.post('/courses', payload)
+
 /** Upload bytes through the single SourceMaterialVersion -> TaskRecord path. */
-export const uploadCourseSourceMaterial = (courseId, file, onUploadProgress) => {
+export const uploadCourseMaterials = (courseId, files, onUploadProgress) => {
   const body = new FormData()
-  body.append('file', file)
-  return request.post(`/document/course/${encodeURIComponent(courseId)}/source-materials`, body, {
+  files.forEach((item) => {
+    body.append('files', item.file)
+    body.append('material_roles', item.role)
+  })
+  return request.post(`/courses/${encodeURIComponent(courseId)}/materials`, body, {
     headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress,
   })
 }
+
+/** Legacy single-file helper retained for callers not yet migrated to batch UI. */
+export const uploadCourseSourceMaterial = (courseId, file, onUploadProgress) => uploadCourseMaterials(
+  courseId,
+  [{ file, role: '' }],
+  onUploadProgress,
+)
 export const listBuildMaterialVersions = (courseId, materialId) => request.get(`${base(courseId)}/materials/${encodeURIComponent(materialId)}/versions`)
 export const getBuildStep = (courseId, stepName) => request.get(`${base(courseId)}/steps/${encodeURIComponent(stepName)}`)
 export const updateBuildStep = (courseId, stepName, payload) => request.put(`${base(courseId)}/steps/${encodeURIComponent(stepName)}`, payload)

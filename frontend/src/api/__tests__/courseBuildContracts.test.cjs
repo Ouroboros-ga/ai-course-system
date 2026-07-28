@@ -11,7 +11,8 @@ test('new course-build client uses the formal outline, script, proposal and unif
   assert.match(source, /outlines\/drafts/)
   assert.match(source, /\/scripts\//)
   assert.match(source, /\/patch-proposals/)
-  assert.match(source, /\/document\/course\/\$\{encodeURIComponent\(courseId\)\}\/source-materials/)
+  assert.match(source, /\/courses\/\$\{encodeURIComponent\(courseId\)\}\/materials/)
+  assert.match(source, /createCourseWorkspace/)
   assert.doesNotMatch(source, /createBuildMaterial|markBuildMaterialParse/)
 })
 
