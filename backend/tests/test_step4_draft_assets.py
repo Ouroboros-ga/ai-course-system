@@ -213,6 +213,27 @@ def test_outline_nodes_carry_source_block_refs(session):
                 assert ref in block_ids
 
 
+def test_pdf_material_does_not_create_ppt_page_mappings(session):
+    """Page mappings are a slide-only projection, not a PDF page index."""
+    user = _user(session, "s4_pdf_mapping_user")
+    course = _course(session, user.id)
+    run, version = _seed_run_and_blocks(session, course.id, user.id, n_blocks=2)
+    version.mime_type = "application/pdf"
+    session.add(version)
+    session.commit()
+
+    result = build_draft_assets(
+        session, course_id=course.id, run_id=run.run_id,
+        material_version_id=version.version_id, created_by=user.id,
+    )
+
+    from app.models.course_outline_model import CoursePptMapping
+    assert result.outline_version_id is not None
+    assert not list(session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course.id,
+    )).all())
+
+
 # ---------------------------------------------------------------------------
 # 5. 进度回调被逐阶段调用
 # ---------------------------------------------------------------------------

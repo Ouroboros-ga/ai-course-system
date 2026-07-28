@@ -160,6 +160,56 @@ class TestMapPdfPlumberOutputToIr:
         assert "a\tb" in blocks[0]["text"]
         assert "c\td" in blocks[0]["text"]
         assert blocks[0]["page_or_slide"] == 2
+        assert blocks[0]["kind"] == "table"
+        assert blocks[0]["cells"][0]["row"] == 0
+        assert blocks[0]["cells"][0]["col"] == 0
+        assert blocks[0]["cells"][0]["header"] is True
+
+    def test_preserves_table_and_cell_geometry(self) -> None:
+        source = SourceArtifact.from_bytes(b"fake-pdf", "doc.pdf", "application/pdf")
+        output = ParserOutput(
+            provider="pdf-plumber",
+            provider_version="1.0.0",
+            pages=({
+                "page_no": 1,
+                "text_blocks": [],
+                "tables": [{
+                    "rows": 2,
+                    "columns": 2,
+                    "cells": (("h1", "h2"), ("a", "b")),
+                    "bbox": [0.1, 0.2, 0.9, 0.6],
+                    "cell_bboxes": [
+                        [[0.1, 0.2, 0.5, 0.4], [0.5, 0.2, 0.9, 0.4]],
+                        [[0.1, 0.4, 0.5, 0.6], [0.5, 0.4, 0.9, 0.6]],
+                    ],
+                }],
+            },),
+        )
+
+        blocks, _, _ = map_pdf_plumber_output_to_ir(output, source, "run_1", "prun_1")
+
+        assert blocks[0]["bbox"]["x0"] == 0.1
+        assert blocks[0]["cells"][3]["bbox"]["y1"] == 0.6
+        assert "warnings" not in blocks[0]
+
+    def test_marks_geometry_less_table_for_review(self) -> None:
+        source = SourceArtifact.from_bytes(b"fake-pdf", "doc.pdf", "application/pdf")
+        output = ParserOutput(
+            provider="pdf-plumber",
+            provider_version="1.0.0",
+            pages=({
+                "page_no": 1,
+                "text_blocks": [],
+                "tables": [{
+                    "rows": 1, "columns": 1, "cells": (("a",),),
+                    "structure_unresolved": True,
+                }],
+            },),
+        )
+
+        blocks, _, _ = map_pdf_plumber_output_to_ir(output, source, "run_1", "prun_1")
+
+        assert blocks[0]["warnings"][0]["code"] == "TABLE_STRUCTURE_UNRESOLVED"
 
     def test_skips_empty_tables(self) -> None:
         source = SourceArtifact.from_bytes(

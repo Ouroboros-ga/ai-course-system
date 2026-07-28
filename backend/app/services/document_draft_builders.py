@@ -34,6 +34,7 @@ from app.models.course_outline_model import (
     TeachingScriptVersion,
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan
+from app.models.course_build_model import SourceMaterialVersion
 from app.models.resource_model import (
     ResourceItem,
     ResourceLifecycleStatus,
@@ -158,6 +159,16 @@ def build_outline_draft(
     )
     session.add(version)
     session.flush()
+    source_version = None
+    if material_version_id:
+        source_version = session.exec(select(SourceMaterialVersion).where(
+            SourceMaterialVersion.version_id == material_version_id,
+            SourceMaterialVersion.course_id == course_id,
+        )).first()
+    supports_page_mapping = bool(source_version and source_version.mime_type in {
+        "application/vnd.ms-powerpoint",
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    })
     ordered = sorted(blocks, key=lambda item: (
         int(item.page_or_slide or item.page_number or 0),
         int(getattr(item, "reading_order", 0) or item.order_index or 0),
@@ -179,7 +190,7 @@ def build_outline_draft(
             content_hash=(refs[0] if refs else ""),
         )
         session.add(node)
-        if node_type == OutlineNodeType.KNOWLEDGE_POINT and material_version_id:
+        if node_type == OutlineNodeType.KNOWLEDGE_POINT and material_version_id and supports_page_mapping:
             session.add(CoursePptMapping(
                 course_id=course_id, outline_node_id=node.outline_node_id,
                 material_version_id=material_version_id, page_start=page_start,

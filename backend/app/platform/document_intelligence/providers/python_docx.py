@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import io
 import time
+import zipfile
 from typing import Any, Dict, List, Tuple
+from xml.etree import ElementTree
 
 from ..registry import (
     ParserCapabilities,
@@ -34,6 +36,49 @@ try:
 except ImportError:
     HAS_DOCX = False
     _docx = None  # type: ignore
+
+
+_WORD_NS = {
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+    "pic": "http://schemas.openxmlformats.org/drawingml/2006/picture",
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "wp": "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+}
+
+
+def _extract_docx_ooxml_supplements(data: bytes) -> tuple[list[dict[str, str]], list[str]]:
+    """Read floating-image metadata without inventing page geometry.
+
+    Floating drawings and OMML are outside python-docx's normal body iterator.
+    This extraction leaves each item as an exact OOXML locator and asks for
+    review where formulas cannot be faithfully normalized to LaTeX.
+    """
+    supplements: list[dict[str, str]] = []
+    warnings: list[str] = []
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            if "word/document.xml" not in archive.namelist():
+                return supplements, ["DOCX_OOXML_DOCUMENT_MISSING"]
+            root = ElementTree.fromstring(archive.read("word/document.xml"))
+            for index, drawing in enumerate(root.findall(".//w:drawing", _WORD_NS), start=1):
+                doc_pr = drawing.find(".//wp:docPr", _WORD_NS)
+                description = str(doc_pr.get("descr", "")).strip() if doc_pr is not None else ""
+                title = str(doc_pr.get("title", "")).strip() if doc_pr is not None else ""
+                if description or title:
+                    supplements.append({
+                        "kind": "image_alt_text",
+                        "text": description or title,
+                        "raw_locator": f"word/document.xml#/w:body//w:drawing[{index}]/wp:docPr",
+                    })
+                if drawing.find(".//wp:anchor", _WORD_NS) is not None:
+                    warnings.append(f"DOCX_FLOATING_DRAWING_REVIEW_REQUIRED:word/document.xml#/w:body//w:drawing[{index}]")
+            formula_count = len(root.findall(".//m:oMath", _WORD_NS))
+            if formula_count:
+                warnings.append(f"DOCX_OMML_FORMULA_REVIEW_REQUIRED:word/document.xml#{formula_count}")
+    except (OSError, ValueError, zipfile.BadZipFile, ElementTree.ParseError) as exc:
+        warnings.append(f"DOCX_OOXML_SUPPLEMENT_UNAVAILABLE:{type(exc).__name__}")
+    return supplements, warnings
 
 
 class PythonDocxProvider:
@@ -81,62 +126,60 @@ class PythonDocxProvider:
             raise ParseUnavailableError(
                 f"python-docx failed to open document: {exc}"
             ) from exc
+        supplements, supplement_warnings = _extract_docx_ooxml_supplements(data)
 
-        pages: List[Dict[str, Any]] = []
-        # DOCX has no native pagination; emit a single "page" of semantic blocks
-        # so the IR mapper produces ordered text blocks. Page coordinates come
-        # from the PDF conversion in the pipeline (Step 3 combo chain).
+        # DOCX has no reliable native page geometry.  Treat body content as a
+        # section unit, retaining OOXML locators rather than inventing page 1.
         text_blocks: List[Dict[str, Any]] = []
         order = 0
-        for para in document.paragraphs:
-            text = (para.text or "").strip()
-            if not text:
-                continue
-            style_name = (para.style.name or "").lower() if para.style else ""
-            if "heading" in style_name or "title" in style_name:
-                kind = "heading"
-                heading_level = next((int(ch) for ch in style_name if ch.isdigit()), 1)
-            else:
-                kind = "text"
-                heading_level = None
-            text_blocks.append({
-                "text": text,
-                "bbox": None,           # DOCX has no page coordinates
-                "confidence": 1.0,
-                "kind": kind,
-                "heading_level": heading_level,
-                "style_hints": {"style_name": style_name},
-                "order_index": order,
-            })
-            order += 1
-
-        # Tables: flatten cells as text blocks
         table_count = 0
-        for table in document.tables:
-            for row in table.rows:
-                for cell in row.cells:
-                    text = (cell.text or "").strip()
-                    if text:
-                        text_blocks.append({
-                            "text": text,
-                            "bbox": None,
-                            "confidence": 1.0,
-                            "kind": "table_cell",
-                            "order_index": order,
-                        })
-                        order += 1
-            table_count += 1
+        # python-docx 1.1+ retains the body order. Fall back defensively for
+        # older installations, preserving the explicit limitation in metadata.
+        inner = getattr(document, "iter_inner_content", None)
+        items = list(inner()) if callable(inner) else list(document.paragraphs) + list(document.tables)
+        for body_index, item in enumerate(items, start=1):
+            if hasattr(item, "paragraph_format"):
+                text = (item.text or "").strip()
+                if not text:
+                    continue
+                style_name = (item.style.name or "").lower() if item.style else ""
+                is_heading = "heading" in style_name or "title" in style_name
+                text_blocks.append({
+                    "text": text,
+                    "bbox": None,
+                    "confidence": 1.0,
+                    "kind": "heading" if is_heading else "paragraph",
+                    "heading_level": next((int(ch) for ch in style_name if ch.isdigit()), 1) if is_heading else None,
+                    "style_hints": {"style_name": style_name, "native_locator": f"word/document.xml#/w:body/w:p[{body_index}]"},
+                    "raw_locator": f"word/document.xml#/w:body/w:p[{body_index}]",
+                    "order_index": order,
+                })
+                order += 1
+            else:
+                table_count += 1
+                for row_index, row in enumerate(item.rows, start=1):
+                    for cell_index, cell in enumerate(row.cells, start=1):
+                        text = (cell.text or "").strip()
+                        if text:
+                            text_blocks.append({
+                                "text": text,
+                                "bbox": None,
+                                "confidence": 1.0,
+                                "kind": "table",
+                                "style_hints": {"native_locator": f"word/document.xml#/w:body/w:tbl[{body_index}]/w:tr[{row_index}]/w:tc[{cell_index}]"},
+                                "raw_locator": f"word/document.xml#/w:body/w:tbl[{body_index}]/w:tr[{row_index}]/w:tc[{cell_index}]",
+                                "order_index": order,
+                            })
+                            order += 1
 
-        pages.append({
-            "page_no": 1,
-            "slide_index": 1,
+        pages: List[Dict[str, Any]] = [{
+            "section_index": 1,
             "text_blocks": text_blocks,
             "tables": [],
             "formulas": [],
-            "width": 1.0,
-            "height": 1.0,
-            "coordinate_unit": "none",
-        })
+            "ooxml_supplements": supplements,
+            "coordinate_unit": "native-structure",
+        }]
 
         elapsed = (time.perf_counter() - start) * 1000
         return ParserOutput(
@@ -144,18 +187,20 @@ class PythonDocxProvider:
             provider_version=self.version,
             pages=tuple(pages),
             metadata={
-                "page_count": 1,
+                "section_count": 1,
                 "duration_ms": int(elapsed),
                 "is_fake": False,
                 "docx_engine": "python-docx",
                 "paragraph_count": order,
                 "table_count": table_count,
             },
-            warnings=[],
+            warnings=supplement_warnings,
         )
 
     @staticmethod
     def _get_source_data(source: SourceArtifact) -> Any:
+        if source.data is not None:
+            return source.data
         if not source.uri:
             return None
         try:
@@ -174,10 +219,44 @@ def map_docx_output_to_ir(
     parser_run_id: str,
     normalization_version: str = "1",
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """Map python-docx ParserOutput to DocumentIR block dicts.
+    """Map ordered DOCX body content without inventing page coordinates."""
+    from ..document_ir.models import ContentBlock, Provenance
 
-    Reuses the OCR mapper shape (text_blocks with bbox/text/confidence/kind)
-    so the pipeline reconciler treats DOCX blocks uniformly.
-    """
-    from app.platform.document_intelligence.providers.ocr_provider import map_ocr_output_to_ir
-    return map_ocr_output_to_ir(output, source, run_id, parser_run_id, normalization_version)
+    blocks: List[Dict[str, Any]] = []
+    for section in output.pages:
+        section_index = int(section.get("section_index", 1))
+        for index, raw in enumerate(section.get("text_blocks", [])):
+            text = raw.get("text", "")
+            locator = raw.get("raw_locator") or f"word/document.xml#/body/item[{index + 1}]"
+            blocks.append({
+                "block_id": f"blk_docx_s{section_index}_i{index}",
+                "block_type": raw.get("kind", "paragraph"),
+                "text": text,
+                "page_or_slide": None,
+                "bbox": None,
+                "reading_order": raw.get("order_index", index),
+                "heading_level": raw.get("heading_level"),
+                "style_hints": raw.get("style_hints") or {},
+                "provenance": Provenance(
+                    artifact_id=source.artifact_id, run_id=run_id, parser_run_id=parser_run_id,
+                    provider=output.provider, raw_locator=locator, confidence=raw.get("confidence"),
+                ),
+            })
+        for supplement_index, supplement in enumerate(section.get("ooxml_supplements", [])):
+            text = supplement.get("text", "").strip()
+            if not text:
+                continue
+            locator = supplement["raw_locator"]
+            blocks.append(ContentBlock(
+                block_id=f"blk_docx_s{section_index}_xml{supplement_index}",
+                block_type="image",
+                text=text,
+                reading_order=len(blocks),
+                style_hints={"native_locator": locator, "bbox_unavailable": True},
+                provider="python-docx-ooxml",
+                provenance=(Provenance(
+                    artifact_id=source.artifact_id, run_id=run_id, parser_run_id=parser_run_id,
+                    provider="python-docx-ooxml", raw_locator=locator, confidence=1.0,
+                ),),
+            ).to_dict())
+    return blocks, [], []

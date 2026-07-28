@@ -453,6 +453,39 @@ class TaskService:
         session.refresh(record)
         return TaskViewModel.from_record(record)
 
+    def mark_partial_success(
+        self,
+        session: Session,
+        task_id: str,
+        *,
+        result_ref: str = "",
+        result_data: Optional[dict[str, Any]] = None,
+    ) -> TaskViewModel:
+        """Finish a task with durable output that still needs review."""
+        record = self._require_task(session, task_id)
+        _assert_transition(record.status, "partial_success")
+        now = utcnow_aware()
+        record.status = "partial_success"
+        record.progress = 100
+        record.finished_at = now
+        record.updated_at = now
+        record.result_ref = result_ref
+        if result_data is not None:
+            record.result_data = json.dumps(result_data, ensure_ascii=False)
+        session.add(record)
+        session.add(TaskEventRecord(
+            task_id=task_id,
+            event_type="partial_success",
+            stage=record.stage,
+            progress=100,
+            message="任务完成，结果等待人工审核",
+            event_data=record.result_data,
+            created_at=now,
+        ))
+        session.commit()
+        session.refresh(record)
+        return TaskViewModel.from_record(record)
+
     def mark_failed(
         self,
         session: Session,

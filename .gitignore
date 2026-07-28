@@ -115,6 +115,9 @@ backend/media/
 /presentation_modified.pptx
 /presentation_modified.pptx.inspect.ndjson
 
+# Local courseware-derived parsing audits must not be exported with source code.
+/docs/phase1/parse-verification/
+
 # Python virtual environments (named variants like .venv-paddlenlp)
 .venv-*/
 

@@ -165,6 +165,38 @@ export async function fetchEvidenceSpans(documentId, options = {}) {
   return items.map(item => parseEvidenceSpan(item)).filter(Boolean)
 }
 
+/** Read the production Canonical DocumentIR anchor projection for one run. */
+export async function fetchCanonicalEvidenceViewer(courseId, runId) {
+  if (!courseId || !runId) throw new Error('courseId and runId are required')
+  const response = await evidenceFetch(
+    `/api/v1/graph/course/${encodeURIComponent(courseId)}/document-ir/${encodeURIComponent(runId)}/anchors`,
+  )
+  const body = await response.json()
+  const data = body?.data ?? body ?? {}
+  const pageAssets = Array.isArray(data.page_assets) ? data.page_assets : []
+  const pages = new Map(pageAssets.map((page) => [Number(page.page_or_slide), page]))
+  const evidenceSpans = (Array.isArray(data.items) ? data.items : []).map((anchor) => ({
+    artifact_id: anchor.provenance?.artifact_id ?? anchor.ir_version_id,
+    document_id: anchor.document_id,
+    unit_id: anchor.unit_id,
+    block_id: anchor.block_id,
+    version_ref: anchor.ir_version_id,
+    page_or_slide: anchor.page_or_slide,
+    char_start: anchor.char_start,
+    char_end: anchor.char_end,
+    text_snippet: anchor.text,
+    status: anchor.status === 'active' ? 'active' : 'suspended',
+    metadata: anchor.bbox ? { bboxes: [anchor.bbox] } : {},
+  })).map((anchor) => parseEvidenceSpan(anchor)).filter(Boolean)
+  const maxPage = Math.max(0, ...pageAssets.map((page) => Number(page.page_or_slide) || 0))
+  return {
+    runId: data.run_id ?? runId,
+    documentId: data.items?.[0]?.document_id ?? '',
+    evidenceSpans,
+    pageImageUrls: Array.from({ length: maxPage }, (_, index) => pages.get(index + 1)?.rendition_url ?? null),
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Citation validation
 // ---------------------------------------------------------------------------

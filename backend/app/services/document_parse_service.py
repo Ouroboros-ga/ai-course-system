@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -27,8 +28,12 @@ from app.models.document_parse_model import (
     CandidateBatchStatus,
     CitationStatus,
     DocumentBlock,
+    DocumentIRVersion,
     DocumentParseRun,
     EvidenceCitation,
+    EvidenceAnchor,
+    RetrievalIndexSnapshot,
+    RetrievalChunk,
     EvidenceRenderAsset,
     EvidenceSpan,
     EvidenceSpanStatus,
@@ -69,6 +74,8 @@ class DocumentParseService:
         task_id: Optional[str] = None,
         pipeline: ParsePipeline = ParsePipeline.FULL,
         stale_strategy: StaleStrategy = StaleStrategy.MARK_STALE,
+        parse_profile: str = "standard",
+        reparse_scope: Optional[dict] = None,
         initiated_by: int,
     ) -> DocumentParseRun:
         """创建解析运行。
@@ -97,7 +104,9 @@ class DocumentParseService:
             select(DocumentParseRun).where(
                 DocumentParseRun.course_id == course_id,
                 DocumentParseRun.material_id == material_id,
-                DocumentParseRun.status == ParseRunStatus.SUCCEEDED,
+                DocumentParseRun.status.in_([
+                    ParseRunStatus.SUCCEEDED, ParseRunStatus.PARTIAL_SUCCESS,
+                ]),
             ).order_by(DocumentParseRun.finished_at.desc())
         ).first()
 
@@ -111,23 +120,130 @@ class DocumentParseService:
             pipeline=pipeline,
             status=ParseRunStatus.PENDING,
             stale_strategy=stale_strategy,
+            parse_profile=parse_profile,
+            reparse_scope=reparse_scope or {},
             initiated_by=initiated_by,
         )
         session.add(run)
         session.flush()
-
-        # 预处理旧证据：根据 stale_strategy 标记
-        if prev_run is not None:
-            affected = self._mark_old_evidence_stale(
+        if task_id:
+            self.bind_task(
                 session,
                 course_id=course_id,
-                run_id=prev_run.run_id,
-                stale_strategy=stale_strategy,
+                run_id=run.run_id,
+                task_id=task_id,
             )
-            run.affected_evidence_count = affected
-            session.add(run)
-            session.flush()
+
+        # Keep the currently published evidence usable until the replacement
+        # parse succeeds and a teacher explicitly applies its diff.
         return run
+
+    def apply_reparse(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+    ) -> DocumentParseRun:
+        """Apply a successful reparse's explicit stale strategy exactly once."""
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        if run.status not in (ParseRunStatus.SUCCEEDED, ParseRunStatus.PARTIAL_SUCCESS):
+            reject_state_conflict("重解析尚未成功，不能替换旧证据")
+        if not run.prev_run_id:
+            reject_state_conflict("首次解析没有可替换的旧证据")
+        if run.reparse_applied:
+            return run
+        affected = self._mark_old_evidence_stale(
+            session,
+            course_id=course_id,
+            run_id=run.prev_run_id,
+            stale_strategy=run.stale_strategy,
+        )
+        self._activate_retrieval_snapshot(
+            session, course_id=course_id, ir_version_id=run.document_ir_version_id,
+        )
+        run.affected_evidence_count = affected
+        run.reparse_applied = True
+        run.updated_at = utcnow_aware()
+        session.add(run)
+        session.flush()
+        return run
+
+    @staticmethod
+    def bind_task(
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        task_id: str,
+    ) -> None:
+        """Persist the parse run ID in its task so retries remain executable."""
+        from app.models.task_model import TaskRecord
+
+        task = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).first()
+        if task is None:
+            raise ValueError(f"TaskRecord not found: {task_id}")
+        if task.task_type != "document_parse" or task.course_id != course_id:
+            raise ValueError("TaskRecord is not a course-scoped document_parse task")
+        try:
+            payload = json.loads(task.input_payload or "{}")
+        except (TypeError, ValueError):
+            payload = {}
+        payload["course_id"] = course_id
+        payload["run_id"] = run_id
+        task.input_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        task.updated_at = utcnow_aware()
+        session.add(task)
+
+    def activate_initial_retrieval_snapshot(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+    ) -> None:
+        """Publish the first parse's formal index once its task succeeds."""
+        run = self._require_run(session, run_id=run_id, course_id=course_id)
+        if run.prev_run_id is None:
+            self._activate_retrieval_snapshot(
+                session, course_id=course_id, ir_version_id=run.document_ir_version_id,
+            )
+
+    @staticmethod
+    def _activate_retrieval_snapshot(
+        session: Session, *, course_id: int, ir_version_id: Optional[str],
+    ) -> None:
+        if not ir_version_id:
+            return
+        target = session.exec(select(RetrievalIndexSnapshot).where(
+            RetrievalIndexSnapshot.course_id == course_id,
+            RetrievalIndexSnapshot.ir_version_id == ir_version_id,
+        )).first()
+        if target is None:
+            return
+        now = utcnow_aware()
+        active = session.exec(select(RetrievalIndexSnapshot).where(
+            RetrievalIndexSnapshot.course_id == course_id,
+            RetrievalIndexSnapshot.status == "active",
+        )).all()
+        for snapshot in active:
+            if snapshot.snapshot_id != target.snapshot_id:
+                snapshot.status = "superseded"
+                snapshot.superseded_at = now
+                session.add(snapshot)
+        target.status = "active"
+        target.activated_at = now
+        session.add(target)
+        chunks = session.exec(select(RetrievalChunk).where(
+            RetrievalChunk.course_id == course_id,
+            RetrievalChunk.ir_version_id == ir_version_id,
+        )).all()
+        for chunk in chunks:
+            # Retrieval remains evidence-gated. Candidate anchors are not
+            # searchable merely because their enclosing snapshot is active.
+            if chunk.status == "draft":
+                chunk.status = "candidate"
+                session.add(chunk)
 
     def _mark_old_evidence_stale(
         self,
@@ -197,6 +313,7 @@ class DocumentParseService:
             span.stale_at = now
             span.updated_at = now
             session.add(span)
+            self._set_canonical_projection_status(session, span=span, status=new_span_status.value)
             affected += 1
 
         citations = session.exec(
@@ -252,7 +369,21 @@ class DocumentParseService:
                 f"解析运行状态 {run.status.value} 不能转移到 succeeded",
                 details={"current_status": run.status.value},
             )
-        run.status = ParseRunStatus.SUCCEEDED
+        version = None
+        if run.document_ir_version_id:
+            version = session.exec(select(DocumentIRVersion).where(
+                DocumentIRVersion.ir_version_id == run.document_ir_version_id,
+            )).first()
+        requires_review = bool(version and (
+            version.needs_review
+            or version.parse_outcome in {
+                "partial_success", "manual_review_required", "unsupported_visual_structure",
+            }
+        ))
+        run.status = (
+            ParseRunStatus.PARTIAL_SUCCESS if requires_review
+            else ParseRunStatus.SUCCEEDED
+        )
         run.block_count = block_count
         run.evidence_span_count = evidence_span_count
         run.graph_candidate_count = graph_candidate_count
@@ -440,6 +571,7 @@ class DocumentParseService:
         if node_id is not None and node_id not in span.linked_node_ids:
             span.linked_node_ids = [*span.linked_node_ids, node_id]
         session.add(span)
+        self._set_canonical_projection_status(session, span=span, status="active")
 
         # 生成正式 CourseEvidenceRecord
         evidence_id = "ev_" + __import__("uuid").uuid4().hex
@@ -508,8 +640,34 @@ class DocumentParseService:
         span.reject_reason = reject_reason
         span.updated_at = utcnow_aware()
         session.add(span)
+        self._set_canonical_projection_status(session, span=span, status="rejected")
         session.flush()
         return span
+
+    @staticmethod
+    def _set_canonical_projection_status(
+        session: Session, *, span: EvidenceSpan, status: str,
+    ) -> None:
+        """Keep Canonical IR retrieval eligible only after evidence review."""
+        anchors = session.exec(select(EvidenceAnchor).where(
+            EvidenceAnchor.course_id == span.course_id,
+            EvidenceAnchor.run_id == span.run_id,
+            EvidenceAnchor.ir_version_id == span.ir_version_id,
+            EvidenceAnchor.block_id == span.block_id,
+            EvidenceAnchor.char_start == span.char_start,
+            EvidenceAnchor.char_end == span.char_end,
+        )).all()
+        for anchor in anchors:
+            anchor.status = status
+            session.add(anchor)
+            chunks = session.exec(select(RetrievalChunk).where(
+                RetrievalChunk.course_id == span.course_id,
+                RetrievalChunk.ir_version_id == anchor.ir_version_id,
+            )).all()
+            for chunk in chunks:
+                if anchor.anchor_id in (chunk.anchor_ids or []):
+                    chunk.status = status
+                    session.add(chunk)
 
     def _require_span(self, session: Session, *, span_id: str, course_id: int) -> EvidenceSpan:
         span = session.exec(
@@ -633,11 +791,17 @@ class GraphCandidateService:
         batch_id: str,
         node_candidate_count: int = 0,
         relation_candidate_count: int = 0,
+        node_candidates: Optional[list[dict]] = None,
+        relation_candidates: Optional[list[dict]] = None,
     ) -> GraphCandidateBatch:
         batch = self._require_batch(session, batch_id=batch_id, course_id=course_id)
         batch.status = CandidateBatchStatus.SUCCEEDED
         batch.node_candidate_count = node_candidate_count
         batch.relation_candidate_count = relation_candidate_count
+        if node_candidates is not None:
+            batch.node_candidates = node_candidates
+        if relation_candidates is not None:
+            batch.relation_candidates = relation_candidates
         batch.finished_at = utcnow_aware()
         batch.updated_at = utcnow_aware()
         session.add(batch)

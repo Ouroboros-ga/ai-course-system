@@ -1,6 +1,8 @@
 """Contract tests for the navigation-safe course creation path."""
 from __future__ import annotations
 
+import json
+
 from sqlmodel import select
 
 from app.core.security import create_access_token, get_password_hash
@@ -62,3 +64,4 @@ def test_course_import_persists_draft_material_and_parse_task(client, session, m
     assert material is not None and material.course_id == course.id
     assert version is not None and version.parse_task_id == data["task_id"]
     assert task is not None and task.course_id == course.id and task.status == "pending"
+    assert json.loads(task.input_payload)["run_id"] == data["run_id"]

@@ -20,6 +20,7 @@ import logging
 from typing import List, Optional
 
 from app.platform.retrieval.providers.tree import TreeRetrieverProvider
+from app.platform.retrieval.providers.canonical_document_ir import CanonicalDocumentIRRetriever
 from app.platform.retrieval.registry import RetrieverRegistry
 from app.platform.retrieval.schemas import RetrievedChunk, RetrievalScope
 
@@ -65,6 +66,14 @@ class RetrievalGateway:
         k = self._normalize_top_k(top_k)
 
         try:
+            # Production course material is retrieved from immutable Canonical
+            # DocumentIR projections first. The tree retriever remains only a
+            # compatibility fallback for older course content.
+            canonical = CanonicalDocumentIRRetriever.retrieve(
+                query, scope=scope, top_k=k,
+            )
+            if canonical:
+                return canonical
             return self._provider.retrieve(query, scope=scope, top_k=k)
         except Exception as e:  # noqa: BLE001 - 网关层兜底，保证主链不中断
             logger.error(
