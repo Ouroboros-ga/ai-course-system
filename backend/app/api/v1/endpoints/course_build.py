@@ -219,6 +219,7 @@ def _serialize_material(m) -> dict:
         "course_id": m.course_id,
         "name": m.name,
         "material_type": m.material_type,
+        "material_role": m.material_role,
         "source_kind": m.source_kind,
         "current_version_id": m.current_version_id,
         "status": m.status.value,

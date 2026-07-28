@@ -135,6 +135,7 @@ class MaterialStatus(str, Enum):
     UPLOADED = "uploaded"
     PARSING = "parsing"
     PARSED = "parsed"
+    NEEDS_REVIEW = "needs_review"
     FAILED = "failed"
     SUPERSEDED = "superseded"    # 被新版本替代
 
@@ -159,6 +160,7 @@ class SourceMaterial(SQLModel, table=True):
     # 材料信息
     name: str = Field(default="", description="材料名称")
     material_type: str = Field(default="document", description="document|slide|video|audio|other")
+    material_role: str = Field(default="reference", description="primary_courseware|textbook|syllabus|experiment_guide|exercise_bank|reference")
     source_kind: str = Field(default="upload", description="upload|fanya_sync|reference")
 
     # 当前版本

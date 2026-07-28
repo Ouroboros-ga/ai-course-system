@@ -104,6 +104,7 @@ from app.api.v1.endpoints import (
     graph_production,   # G9 Evidence与图谱
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
+    course_creation,    # P0 空课程创建与统一材料上传
     course_build,       # 阶段3 课程建设工作流
     course_build_editor, # Step 5-8 课程树/讲稿/提案/发布
     course_outline,
@@ -290,6 +291,16 @@ app.include_router(
     course_lifecycle.audit_router,
     prefix="/api/v1/audit",
     tags=["阶段2 课程审计"],
+)
+app.include_router(
+    course_creation.course_creation_router,
+    prefix="/api/v1/courses",
+    tags=["课程创建"],
+)
+app.include_router(
+    course_creation.course_materials_router,
+    prefix="/api/v1/courses",
+    tags=["课程材料"],
 )
 
 # 阶段3：统一任务中心与教师课程建设工作流

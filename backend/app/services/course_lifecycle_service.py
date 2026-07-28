@@ -511,7 +511,10 @@ course_group_service = CourseGroupService()
 
 
 # 受控字段白名单：教师只能修改这些字段；不允许通过 settings 接口绕过权限。
-_PROFILE_FIELDS = {"title", "description", "cover_url", "subject", "term", "language"}
+_PROFILE_FIELDS = {
+    "title", "description", "cover_url", "subject", "term", "language",
+    "course_type", "teaching_audience",
+}
 _PUBLISH_FIELDS = {
     "hall_visible", "join_mode", "invite_code", "require_review",
     "start_at", "end_at", "notify_on_publish", "allow_withdraw", "allow_chapter_jump",

@@ -71,7 +71,29 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
             document_parse_service.mark_running(
                 session, run_id=run_id, course_id=int(course_id),
             )
+            # A material remains `uploaded` while its durable task is queued.
+            # Move the list projection to `parsing` only once this worker owns
+            # the run, so the construction workspace reflects real progress.
+            from sqlmodel import select
+            from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
+
+            version = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.version_id == payload.get("material_version_id"),
+                SourceMaterialVersion.course_id == int(course_id),
+            )).first()
+            if version is not None:
+                version.parse_status = MaterialStatus.PARSING
+                session.add(version)
+            material = session.exec(select(SourceMaterial).where(
+                SourceMaterial.material_id == payload.get("material_id"),
+                SourceMaterial.course_id == int(course_id),
+            )).first()
+            if material is not None:
+                material.status = MaterialStatus.PARSING
+                session.add(material)
+            session.commit()
         except Exception as exc:
+            session.rollback()
             # parse_run 状态机冲突等：任务仍标记 failed
             raise TaskExecutionError(
                 "PARSE_RUN_STATE_CONFLICT",
@@ -216,7 +238,11 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 SourceMaterialVersion.course_id == int(course_id),
             )).first()
             if version is not None:
-                version.parse_status = MaterialStatus.PARSED
+                version.parse_status = (
+                    MaterialStatus.NEEDS_REVIEW
+                    if parse_run.status == ParseRunStatus.PARTIAL_SUCCESS
+                    else MaterialStatus.PARSED
+                )
                 version.parse_output_ref = f"parse_run://{run_id}"
                 version.parse_error = ""
                 session.add(version)
@@ -225,7 +251,11 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 SourceMaterial.course_id == int(course_id),
             )).first()
             if material is not None:
-                material.status = MaterialStatus.PARSED
+                material.status = (
+                    MaterialStatus.NEEDS_REVIEW
+                    if parse_run.status == ParseRunStatus.PARTIAL_SUCCESS
+                    else MaterialStatus.PARSED
+                )
                 session.add(material)
             session.commit()
             # A parse run is about one material. Once every current material
