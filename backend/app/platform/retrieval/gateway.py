@@ -74,6 +74,11 @@ class RetrievalGateway:
             )
             if canonical:
                 return canonical
+            # Once a course has a P4 release, its learner corpus is closed.
+            # In particular, do not fall back to the process-local tree here:
+            # that index can contain candidate material uploaded after release.
+            if CanonicalDocumentIRRetriever.has_active_release(scope):
+                return []
             return self._provider.retrieve(query, scope=scope, top_k=k)
         except Exception as e:  # noqa: BLE001 - 网关层兜底，保证主链不中断
             logger.error(

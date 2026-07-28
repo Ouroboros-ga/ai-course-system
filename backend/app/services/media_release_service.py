@@ -556,7 +556,32 @@ class MediaPlaybackService:
     def get_current_playback(
         self, session: Session, *, course_id: int,
     ) -> dict[str, Any]:
-        release = media_release_service.get_current_release(session, course_id=course_id)
+        # P4: when a course release exists, its media snapshot is authoritative.
+        # A newer MediaRelease may be prepared for the next course version but
+        # must not silently replace media in the current learner experience.
+        from app.models.course_build_model import CourseRelease, ReleaseStatus
+        course_release = session.exec(select(CourseRelease).where(
+            CourseRelease.course_id == course_id,
+            CourseRelease.is_active == True,  # noqa: E712
+            CourseRelease.status == ReleaseStatus.PUBLISHED,
+        )).first()
+        if course_release is not None:
+            media_release_id = (course_release.media_snapshot or {}).get("media_release_id")
+            if not media_release_id:
+                return {
+                    "available": False,
+                    "reason": "media_not_frozen",
+                    "message": "当前课程发布版本未包含讲解媒体",
+                    "fallback_mode": "compatibility",
+                    "course_release_id": course_release.release_id,
+                }
+            release = session.exec(select(MediaRelease).where(
+                MediaRelease.course_id == course_id,
+                MediaRelease.release_id == media_release_id,
+            )).first()
+        else:
+            # Compatibility only for legacy courses that predate CourseRelease.
+            release = media_release_service.get_current_release(session, course_id=course_id)
         if release is None:
             return {
                 "available": False,
@@ -618,6 +643,7 @@ class MediaPlaybackService:
 
         return {
             "available": True,
+            "course_release_id": course_release.release_id if course_release else None,
             "release_id": release.release_id,
             "version_number": release.version_number,
             "label": release.label,

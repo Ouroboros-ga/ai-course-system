@@ -36,13 +36,14 @@ from app.models.course_outline_model import (
     TeachingScriptNode,
     TeachingScriptVersion,
 )
-from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, MaterialStatus, SourceMaterial
+from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, CourseCorpusSnapshot, MaterialStatus, SourceMaterial
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 from app.models.graph_production_model import CourseEvidenceRecord, EvidenceStatus
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
 from app.services.course_build_service import course_release_service, quality_gate_service, source_material_service
+from app.services.course_corpus_service import course_corpus_service
 from app.services.document_parse_service import document_parse_service
 from app.services.object_storage import get_object_storage
 from app.services.task_service import TaskCreateRequest, task_service
@@ -976,6 +977,14 @@ async def publish_course_build(course_id: int, session: Session = Depends(get_se
         _mark_build_step(session, course_id, BuildStepName.MATERIALS, BuildStepStatus.APPROVED, context.user_id, str(len(materials)))
     _mark_build_step(session, course_id, BuildStepName.RELEASE, BuildStepStatus.IN_PROGRESS, context.user_id, release.release_id)
     session.flush()
+    corpus = session.exec(select(CourseCorpusSnapshot).where(
+        CourseCorpusSnapshot.course_id == course_id,
+        CourseCorpusSnapshot.status == "ready",
+    ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
+    if corpus is not None:
+        # The gate below must inspect the same reviewed learner-retrieval set
+        # that publish_release will bind to the CourseRelease.
+        course_corpus_service.freeze_release_retrieval_snapshot(session, corpus=corpus)
     gate = quality_gate_service.run_checks(session, course_id=course_id, initiated_by=context.user_id, target_release_id=release.release_id)
     if not gate.passed:
         raise HTTPException(status_code=409, detail={"error_code": "QUALITY_GATE_FAILED", "message": "发布前质量检查未通过", "details": {"gate_run_id": gate.gate_run_id, "error_count": gate.error_count, "blocker_count": gate.blocker_count}})
@@ -985,9 +994,7 @@ async def publish_course_build(course_id: int, session: Session = Depends(get_se
         CoursePptMapping.status == "draft",
     )).all()
     mapping_snapshot = [_ppt_mapping_view(item) for item in mappings]
-    release = course_release_service.publish_release(session, course_id=course_id, release_id=release.release_id, published_by=context.user_id, structure_snapshot={"outline_version_id": outline.outline_version_id, "nodes": [_outline_node_view(n) for n in nodes]}, scripts_snapshot={"script_version_id": scripts.script_version_id, "nodes": [_script_node_view(n) for n in script_nodes]}, page_mappings_snapshot={"items": mapping_snapshot}, run_quality_gate=False)
-    release.quality_gate_run_id = gate.gate_run_id
-    release.quality_gate_passed = gate.passed
+    release = course_release_service.publish_release(session, course_id=course_id, release_id=release.release_id, published_by=context.user_id, structure_snapshot={"outline_version_id": outline.outline_version_id, "nodes": [_outline_node_view(n) for n in nodes]}, scripts_snapshot={"script_version_id": scripts.script_version_id, "nodes": [_script_node_view(n) for n in script_nodes]}, page_mappings_snapshot={"items": mapping_snapshot}, run_quality_gate=False, quality_gate_run_id=gate.gate_run_id)
     resources = session.exec(select(ResourceItem).where(ResourceItem.course_id == course_id, ResourceItem.is_deleted == False)).all()  # noqa: E712
     for resource in resources:
         resource.lifecycle_status = ResourceLifecycleStatus.PUBLISHED

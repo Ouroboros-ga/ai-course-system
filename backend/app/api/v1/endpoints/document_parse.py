@@ -813,14 +813,14 @@ async def query_canonical_retrieval(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Deterministic course-local retrieval over teacher-confirmed IR chunks."""
-    require_course_permission(session, current_user, course_id, "evidence.review")
-    from app.models.document_parse_model import RetrievalIndexSnapshot
+    """Teacher-workspace retrieval over candidate Canonical DocumentIR chunks.
 
-    snapshot_stmt = select(RetrievalIndexSnapshot).where(
-        RetrievalIndexSnapshot.course_id == course_id,
-        RetrievalIndexSnapshot.status == "active",
-    )
+    This route requires ``evidence.review`` and is deliberately distinct from
+    learner QA, which resolves only the frozen retrieval manifest on the
+    active CourseRelease.
+    """
+    require_course_permission(session, current_user, course_id, "evidence.review")
+    ir_version_id = None
     if payload.run_id:
         requested = session.exec(select(DocumentParseRun).where(
             DocumentParseRun.course_id == course_id,
@@ -828,21 +828,24 @@ async def query_canonical_retrieval(
         )).first()
         if requested is None:
             reject_resource_not_found("解析运行不存在")
-        snapshot_stmt = snapshot_stmt.where(
-            RetrievalIndexSnapshot.ir_version_id == requested.document_ir_version_id,
-        )
-    snapshot = session.exec(snapshot_stmt).first()
-    if snapshot is None:
+        ir_version_id = requested.document_ir_version_id
+    if not ir_version_id:
+        latest_run = session.exec(select(DocumentParseRun).where(
+            DocumentParseRun.course_id == course_id,
+            DocumentParseRun.document_ir_version_id.is_not(None),
+        ).order_by(DocumentParseRun.finished_at.desc())).first()
+        ir_version_id = latest_run.document_ir_version_id if latest_run else None
+    if not ir_version_id:
         return unified_response(200, "尚无可检索的 Canonical DocumentIR", {"items": [], "total": 0})
     result_run = session.exec(select(DocumentParseRun).where(
         DocumentParseRun.course_id == course_id,
-        DocumentParseRun.document_ir_version_id == snapshot.ir_version_id,
+        DocumentParseRun.document_ir_version_id == ir_version_id,
     )).first()
     terms = [term.lower() for term in payload.query.split() if term.strip()]
     chunks = list(session.exec(select(RetrievalChunk).where(
         RetrievalChunk.course_id == course_id,
-        RetrievalChunk.ir_version_id == snapshot.ir_version_id,
-        RetrievalChunk.status == "active",
+        RetrievalChunk.ir_version_id == ir_version_id,
+        RetrievalChunk.status.in_(["draft", "candidate", "active"]),
     )).all())
     ranked = []
     for chunk in chunks:
@@ -853,7 +856,7 @@ async def query_canonical_retrieval(
     ranked.sort(key=lambda item: (-item[0], item[1].chunk_id))
     return unified_response(200, "Canonical 检索完成", {
         "run_id": result_run.run_id if result_run else None,
-        "ir_version_id": snapshot.ir_version_id,
+        "ir_version_id": ir_version_id,
         "items": [{
             "chunk_id": chunk.chunk_id, "score": score, "text": chunk.text,
             "document_id": chunk.document_id, "unit_id": chunk.unit_id,

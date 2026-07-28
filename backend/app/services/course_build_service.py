@@ -11,6 +11,8 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Optional
 
 from sqlmodel import Session, select
@@ -683,15 +685,16 @@ class QualityGateService:
             retrieval = session.exec(select(CourseRetrievalSnapshot).where(
                 CourseRetrievalSnapshot.course_id == course_id,
                 CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
+                CourseRetrievalSnapshot.snapshot_kind == "release",
                 CourseRetrievalSnapshot.status == "ready",
             )).first()
-            if retrieval is None:
+            if retrieval is None or not retrieval.retrieval_chunk_ids:
                 checks.append({
                     "check_id": "retrieval.release_ready",
                     "name": "课程检索快照",
                     "severity": GateSeverity.ERROR.value,
                     "passed": False,
-                    "message": "课程语料尚未形成可发布的检索快照",
+                    "message": "课程语料尚未形成包含已确认 Evidence 的可发布检索快照",
                 })
                 error_count += 1
         # 检查 3：七步中 materials/structure/scripts 必须非 NOT_STARTED
@@ -826,6 +829,7 @@ class CourseReleaseService:
             select(CourseRelease).where(
                 CourseRelease.course_id == course_id,
                 CourseRelease.is_active == True,  # noqa: E712
+                CourseRelease.status == ReleaseStatus.PUBLISHED,
             )
         ).first()
 
@@ -891,6 +895,7 @@ class CourseReleaseService:
         graph_snapshot_ref: Optional[str] = None,
         evidence_refs: Optional[list] = None,
         run_quality_gate: bool = True,
+        quality_gate_run_id: Optional[str] = None,
     ) -> CourseRelease:
         """发布：质量门禁通过后，将 release 标记为 published + is_active。
 
@@ -911,13 +916,15 @@ class CourseReleaseService:
         ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
         if corpus is None:
             reject_state_conflict("没有可冻结的课程材料快照")
-        retrieval = session.exec(select(CourseRetrievalSnapshot).where(
-            CourseRetrievalSnapshot.course_id == course_id,
-            CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
-            CourseRetrievalSnapshot.status == "ready",
-        )).first()
+        # Candidate retrieval is available to the build workspace.  A learner
+        # release gets a separate immutable selection containing only chunks
+        # whose evidence has been confirmed by a teacher.
+        from app.services.course_corpus_service import course_corpus_service
+        retrieval = course_corpus_service.freeze_release_retrieval_snapshot(
+            session, corpus=corpus,
+        )
         if retrieval is None:
-            reject_state_conflict("没有可冻结的课程检索快照")
+            reject_state_conflict("没有已确认的课程证据，无法冻结学生检索快照")
 
         # The release must not mix a draft generated from an earlier corpus
         # with a newer material set. Students only see one coherent snapshot.
@@ -958,6 +965,16 @@ class CourseReleaseService:
                         "gate_run_id": gate_run.gate_run_id,
                     },
                 )
+        elif quality_gate_run_id:
+            # Compatibility callers that ran the gate before assembling their
+            # page-mapping snapshot still have to freeze that exact run ID.
+            gate_run = quality_gate_service.get_run(
+                session, course_id=course_id, gate_run_id=quality_gate_run_id,
+            )
+            if not gate_run.passed:
+                reject_state_conflict("质量门禁未通过，无法发布")
+            release.quality_gate_run_id = gate_run.gate_run_id
+            release.quality_gate_passed = True
 
         # 旧 active release 标记为 superseded
         old_active = self.get_active_release(session, course_id=course_id)
@@ -976,9 +993,20 @@ class CourseReleaseService:
         if media_snapshot is not None:
             release.media_snapshot = media_snapshot
         if graph_snapshot_ref is not None:
+            from app.models.graph_production_model import GraphSnapshotRecord
+            graph = session.exec(select(GraphSnapshotRecord).where(
+                GraphSnapshotRecord.course_id == course_id,
+                GraphSnapshotRecord.snapshot_id == graph_snapshot_ref,
+            )).first()
+            if graph is None:
+                reject_state_conflict("图谱快照不存在或不属于该课程")
             release.graph_snapshot_ref = graph_snapshot_ref
         if evidence_refs is not None:
             release.evidence_refs = evidence_refs
+        if media_snapshot is None:
+            release.media_snapshot = self._current_media_snapshot(
+                session, course_id=course_id,
+            )
         release.material_version_ids = list(corpus.material_version_ids or [])
         release.document_ir_run_ids = list(corpus.parse_run_ids or [])
         release.document_ir_version_ids = list(corpus.document_ir_version_ids or [])
@@ -991,8 +1019,19 @@ class CourseReleaseService:
         release.is_active = True
         release.published_by = published_by
         release.published_at = utcnow_aware()
+        release.content_hash = self._release_content_hash(release)
         session.add(release)
         session.flush()
+        self._record_frozen_artifacts(session, release=release)
+        if release.graph_snapshot_ref:
+            from app.services.document_parse_service import graph_release_link_service
+            graph_release_link_service.link(
+                session,
+                course_id=course_id,
+                release_id=release.release_id,
+                snapshot_id=release.graph_snapshot_ref,
+                linked_by=published_by,
+            )
         return release
 
     def rollback_to_release(
@@ -1049,9 +1088,96 @@ class CourseReleaseService:
             published_at=utcnow_aware(),
             created_by=actor_user_id,
         )
+        new_release.content_hash = self._release_content_hash(new_release)
         session.add(new_release)
         session.flush()
+        self._record_frozen_artifacts(session, release=new_release)
+        if new_release.graph_snapshot_ref:
+            from app.services.document_parse_service import graph_release_link_service
+            graph_release_link_service.link(
+                session,
+                course_id=course_id,
+                release_id=new_release.release_id,
+                snapshot_id=new_release.graph_snapshot_ref,
+                linked_by=actor_user_id,
+            )
         return new_release
+
+    @staticmethod
+    def _current_media_snapshot(session: Session, *, course_id: int) -> dict:
+        """Capture the active media release by ID, never by a mutable pointer."""
+        from app.models.media_release_model import MediaRelease, MediaReleaseStatus
+
+        media = session.exec(select(MediaRelease).where(
+            MediaRelease.course_id == course_id,
+            MediaRelease.status == MediaReleaseStatus.ACTIVE,
+        ).order_by(MediaRelease.version_number.desc())).first()
+        if media is None:
+            return {}
+        return {
+            "media_release_id": media.release_id,
+            "timeline_content_hash": media.timeline_content_hash,
+            "audio_object_key": media.audio_object_key,
+            "subtitle_manifest_object_key": media.subtitle_manifest_object_key,
+            "ppt_manifest_object_key": media.ppt_manifest_object_key,
+            "digital_human_manifest_object_key": media.digital_human_manifest_object_key,
+        }
+
+    @staticmethod
+    def _release_content_hash(release: CourseRelease) -> str:
+        manifest = {
+            "material_version_ids": release.material_version_ids or [],
+            "document_ir_run_ids": release.document_ir_run_ids or [],
+            "document_ir_version_ids": release.document_ir_version_ids or [],
+            "corpus_snapshot_id": release.corpus_snapshot_id,
+            "retrieval_snapshot_id": release.retrieval_snapshot_id,
+            "outline_version_id": release.outline_version_id,
+            "script_version_id": release.script_version_id,
+            "structure_snapshot": release.structure_snapshot or {},
+            "scripts_snapshot": release.scripts_snapshot or {},
+            "page_mappings_snapshot": release.page_mappings_snapshot or {},
+            "media_snapshot": release.media_snapshot or {},
+            "graph_snapshot_ref": release.graph_snapshot_ref,
+            "evidence_refs": release.evidence_refs or [],
+            "quality_gate_run_id": release.quality_gate_run_id,
+        }
+        encoded = json.dumps(manifest, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+    def _record_frozen_artifacts(self, session: Session, *, release: CourseRelease) -> None:
+        """Write the auditable, immutable manifest alongside a release."""
+        existing = session.exec(select(CourseReleaseArtifact).where(
+            CourseReleaseArtifact.release_id == release.release_id,
+            CourseReleaseArtifact.course_id == release.course_id,
+        )).first()
+        if existing is not None:
+            return
+        artifacts: list[tuple[str, str, str]] = [
+            ("course_corpus", release.corpus_snapshot_id or "", "course_corpus_snapshot"),
+            ("retrieval", release.retrieval_snapshot_id or "", "course_retrieval_snapshot"),
+            ("outline", release.outline_version_id or "", "course_outline_version"),
+            ("script", release.script_version_id or "", "teaching_script_version"),
+            ("quality_gate", release.quality_gate_run_id or "", "course_quality_gate_run"),
+        ]
+        artifacts.extend(("material_version", item, "source_material_version") for item in (release.material_version_ids or []))
+        artifacts.extend(("document_ir_version", item, "document_ir_version") for item in (release.document_ir_version_ids or []))
+        if release.graph_snapshot_ref:
+            artifacts.append(("graph", release.graph_snapshot_ref, "graph_snapshot"))
+        if (release.media_snapshot or {}).get("media_release_id"):
+            artifacts.append(("media", release.media_snapshot["media_release_id"], "media_release"))
+        if (release.page_mappings_snapshot or {}).get("items"):
+            artifacts.append(("ppt_mapping", "frozen", "page_mappings_snapshot"))
+        for artifact_type, artifact_id, artifact_ref in artifacts:
+            if not artifact_id:
+                continue
+            session.add(CourseReleaseArtifact(
+                release_id=release.release_id,
+                course_id=release.course_id,
+                artifact_type=artifact_type,
+                artifact_id=artifact_id,
+                artifact_ref=artifact_ref,
+            ))
+        session.flush()
 
     def add_artifact(
         self,
@@ -1065,8 +1191,11 @@ class CourseReleaseService:
         artifact_ref: str = "",
     ) -> CourseReleaseArtifact:
         """为发布关联产物。"""
-        # 校验 release 归属
-        self.get_release(session, course_id=course_id, release_id=release_id)
+        # 发布后清单由 publish_release 原子生成；外部调用只能在 draft
+        # 阶段补充，以免 published release 被悄悄改写。
+        release = self.get_release(session, course_id=course_id, release_id=release_id)
+        if release.status != ReleaseStatus.DRAFT:
+            reject_state_conflict("已发布版本的冻结清单不可修改")
         art = CourseReleaseArtifact(
             release_id=release_id,
             course_id=course_id,

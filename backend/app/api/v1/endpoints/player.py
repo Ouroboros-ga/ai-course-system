@@ -20,6 +20,7 @@ from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
 from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, TeachingScriptNode, TeachingScriptVersion
+from app.services.course_build_service import course_release_service
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus
 from app.models.mapping_model import KnowledgePageMap
@@ -90,7 +91,97 @@ async def get_player_init_data(
         if not course:
             raise HTTPException(status_code=404, detail="课程不存在")
 
-        # 2. 查询当前激活的脚本版本
+        # 2. P4 path: an active CourseRelease is the sole learner-facing
+        # content selector.  Do not select whichever outline/script happened
+        # to be published most recently after the course release was made.
+        frozen_release = course_release_service.get_active_release(
+            session, course_id=course_id,
+        )
+        if frozen_release is not None:
+            frozen_outline = session.exec(
+                select(CourseOutlineVersion).where(
+                    CourseOutlineVersion.course_id == course_id,
+                    CourseOutlineVersion.outline_version_id == frozen_release.outline_version_id,
+                )
+            ).first()
+            frozen_script = session.exec(
+                select(TeachingScriptVersion).where(
+                    TeachingScriptVersion.course_id == course_id,
+                    TeachingScriptVersion.script_version_id == frozen_release.script_version_id,
+                )
+            ).first()
+            if frozen_outline is None or frozen_script is None:
+                raise HTTPException(status_code=409, detail="发布版本缺少冻结的课程结构或讲稿")
+            outline_nodes = session.exec(
+                select(CourseOutlineNode)
+                .where(CourseOutlineNode.outline_version_id == frozen_outline.outline_version_id)
+                .order_by(CourseOutlineNode.order_index.asc())
+            ).all()
+            script_nodes = session.exec(
+                select(TeachingScriptNode)
+                .where(TeachingScriptNode.script_version_id == frozen_script.script_version_id)
+            ).all()
+            script_by_outline = {item.outline_node_id: item for item in script_nodes}
+            mapping_by_outline = {
+                item.get("outline_node_id"): item
+                for item in (frozen_release.page_mappings_snapshot or {}).get("items", [])
+            }
+            nodes_data = []
+            for index, outline_node in enumerate(outline_nodes):
+                script_node = script_by_outline.get(outline_node.outline_node_id)
+                mapping = mapping_by_outline.get(outline_node.outline_node_id, {})
+                nodes_data.append({
+                    "id": index + 1,
+                    "outline_node_id": outline_node.outline_node_id,
+                    "node_index": index,
+                    "node_type": outline_node.node_type.value,
+                    "title": outline_node.title,
+                    "content": (script_node.content if script_node else "")[:200],
+                    "chapter_id": outline_node.parent_node_id,
+                    "timestamp_start": 0,
+                    "timestamp_end": 0,
+                    "duration": 0,
+                    "page_start": mapping.get("page_start") or (
+                        int((outline_node.page_range or "1").split("-")[0])
+                        if (outline_node.page_range or "1").split("-")[0].isdigit() else 1
+                    ),
+                    "page_end": mapping.get("page_end") or (
+                        int((outline_node.page_range or "1").split("-")[-1])
+                        if (outline_node.page_range or "1").split("-")[-1].isdigit() else 1
+                    ),
+                    "is_key_point": outline_node.node_type.value == "knowledge_point",
+                    "video_url": None,
+                    "status": "published",
+                })
+            progress = session.exec(select(LearningProgress).where(
+                LearningProgress.user_id == user_id,
+                LearningProgress.course_id == course_id,
+            )).first()
+            saved_progress = None
+            if progress:
+                saved_progress = {
+                    "current_node_id": progress.current_node_id,
+                    "current_node_index": progress.current_node_index,
+                    "current_timestamp": progress.current_timestamp,
+                    "current_page": progress.current_page,
+                    "completion_rate": progress.completion_rate,
+                    "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
+                }
+            return PlayerInitData(
+                course_id=course_id,
+                course_title=course.title,
+                script_id=0,
+                total_duration=0,
+                total_nodes=len(nodes_data),
+                nodes=nodes_data,
+                video_base_url="/api/v1/video/stream/",
+                ppt_pages=None,
+                slide_images=None,
+                saved_progress=saved_progress,
+            )
+
+        # Legacy direct-publication compatibility path. New courses always
+        # take the frozen CourseRelease branch above.
         active_script = session.exec(
             select(CourseScript)
             .where(
@@ -359,6 +450,54 @@ async def get_knowledge_points(
     - 完成状态
     """
     try:
+        frozen_release = course_release_service.get_active_release(
+            session, course_id=course_id,
+        )
+        if frozen_release is not None:
+            frozen_outline = session.exec(select(CourseOutlineVersion).where(
+                CourseOutlineVersion.course_id == course_id,
+                CourseOutlineVersion.outline_version_id == frozen_release.outline_version_id,
+            )).first()
+            if frozen_outline is None:
+                raise HTTPException(status_code=409, detail="发布版本缺少冻结的课程结构")
+            nodes = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_version_id == frozen_outline.outline_version_id,
+            ).order_by(CourseOutlineNode.order_index.asc())).all()
+            progress = session.exec(select(LearningProgress).where(
+                LearningProgress.user_id == access.user_id,
+                LearningProgress.course_id == course_id,
+            )).first()
+            completed_nodes = []
+            if progress:
+                from app.models.progress_model import NodeProgress
+                completed_nodes = [item.node_id for item in session.exec(
+                    select(NodeProgress).where(
+                        NodeProgress.progress_id == progress.id,
+                        NodeProgress.is_completed == True,
+                    )
+                ).all()]
+            knowledge_points = [
+                KnowledgePoint(
+                    node_id=index + 1,
+                    chapter_id=node.parent_node_id,
+                    title=node.title or f"知识点{index + 1}",
+                    timestamp_start=0,
+                    timestamp_end=0,
+                    node_index=index,
+                    is_completed=(index + 1) in completed_nodes,
+                ).dict()
+                for index, node in enumerate(nodes)
+                if node.node_type.value == "knowledge_point"
+            ]
+            return unified_response(200, "获取成功", {
+                "release_id": frozen_release.release_id,
+                "knowledge_points": knowledge_points,
+                "total_count": len(knowledge_points),
+                "completed_count": len(completed_nodes),
+            })
+
+        # Legacy direct-publication compatibility path; new releases cannot
+        # fall through to CourseScript's mutable active pointer.
         # 查询激活脚本
         active_script = session.exec(
             select(CourseScript)

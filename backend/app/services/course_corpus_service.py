@@ -27,7 +27,12 @@ from app.models.course_build_model import (
     SourceMaterialVersion,
 )
 from app.models.course_outline_model import CourseOutlineVersion, TeachingScriptVersion
-from app.models.document_parse_model import DocumentIRVersion, DocumentParseRun, ParseRunStatus
+from app.models.document_parse_model import (
+    DocumentIRVersion,
+    DocumentParseRun,
+    ParseRunStatus,
+    RetrievalChunk,
+)
 from app.services.task_service import TaskCreateRequest, task_service
 
 
@@ -152,17 +157,84 @@ class CourseCorpusService:
     def ensure_retrieval_snapshot(
         self, session: Session, *, corpus: CourseCorpusSnapshot,
     ) -> CourseRetrievalSnapshot:
+        """Create the teacher-side candidate retrieval selection for a corpus.
+
+        This is intentionally separate from the snapshot frozen at publication:
+        builders may inspect all parsed candidate material, while learners may
+        only read the reviewed chunk IDs captured by
+        :meth:`freeze_release_retrieval_snapshot`.
+        """
         existing = session.exec(select(CourseRetrievalSnapshot).where(
             CourseRetrievalSnapshot.course_id == corpus.course_id,
             CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
+            CourseRetrievalSnapshot.snapshot_kind == "candidate",
         )).first()
         if existing:
             return existing
+        chunks = list(session.exec(select(RetrievalChunk).where(
+            RetrievalChunk.course_id == corpus.course_id,
+            RetrievalChunk.ir_version_id.in_(list(corpus.document_ir_version_ids or [])),
+        )).all())
         retrieval = CourseRetrievalSnapshot(
             course_id=corpus.course_id,
             corpus_snapshot_id=corpus.corpus_snapshot_id,
             material_version_ids=list(corpus.material_version_ids or []),
             document_ir_version_ids=list(corpus.document_ir_version_ids or []),
+            snapshot_kind="candidate",
+            retrieval_chunk_ids=sorted(chunk.chunk_id for chunk in chunks),
+            evidence_anchor_ids=sorted({
+                anchor_id for chunk in chunks for anchor_id in (chunk.anchor_ids or [])
+            }),
+            status="ready",
+        )
+        session.add(retrieval)
+        session.flush()
+        return retrieval
+
+    def freeze_release_retrieval_snapshot(
+        self, session: Session, *, corpus: CourseCorpusSnapshot,
+    ) -> Optional[CourseRetrievalSnapshot]:
+        """Freeze exactly the teacher-confirmed chunks for a course release.
+
+        A subsequent evidence decision or reparse may change chunk status, but
+        it cannot alter this selection.  Returning ``None`` means the course
+        has no student-safe retrieval material yet and publication must stop.
+        """
+        chunks = list(session.exec(select(RetrievalChunk).where(
+            RetrievalChunk.course_id == corpus.course_id,
+            RetrievalChunk.ir_version_id.in_(list(corpus.document_ir_version_ids or [])),
+            RetrievalChunk.status == "active",
+        )).all())
+        if not chunks:
+            return None
+
+        chunk_ids = sorted({chunk.chunk_id for chunk in chunks})
+        anchor_ids = sorted({
+            anchor_id for chunk in chunks for anchor_id in (chunk.anchor_ids or [])
+        })
+        # A new snapshot is required whenever the reviewed set changes.  The
+        # lookup also makes retrying the same publish request idempotent.
+        release_snapshots = list(session.exec(select(CourseRetrievalSnapshot).where(
+            CourseRetrievalSnapshot.course_id == corpus.course_id,
+            CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
+            CourseRetrievalSnapshot.snapshot_kind == "release",
+            CourseRetrievalSnapshot.status == "ready",
+        )).all())
+        existing = next((snapshot for snapshot in release_snapshots if
+            list(snapshot.retrieval_chunk_ids or []) == chunk_ids
+            and list(snapshot.evidence_anchor_ids or []) == anchor_ids
+        ), None)
+        if existing:
+            return existing
+
+        retrieval = CourseRetrievalSnapshot(
+            course_id=corpus.course_id,
+            corpus_snapshot_id=corpus.corpus_snapshot_id,
+            material_version_ids=list(corpus.material_version_ids or []),
+            document_ir_version_ids=list(corpus.document_ir_version_ids or []),
+            snapshot_kind="release",
+            retrieval_chunk_ids=chunk_ids,
+            evidence_anchor_ids=anchor_ids,
             status="ready",
         )
         session.add(retrieval)

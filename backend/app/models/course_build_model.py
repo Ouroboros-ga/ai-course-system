@@ -299,6 +299,13 @@ class CourseRetrievalSnapshot(SQLModel, table=True):
     corpus_snapshot_id: str = Field(index=True)
     material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    # A candidate corpus is useful to the teacher-side builder, but it is not
+    # an entitlement to expose every parsed block to learners.  A ``release``
+    # snapshot contains the exact reviewed chunks/anchors that were frozen at
+    # publication time and is the only kind a student reader may use.
+    snapshot_kind: str = Field(default="candidate", index=True, description="candidate|release")
+    retrieval_chunk_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    evidence_anchor_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     status: str = Field(default="ready", index=True, description="building|ready|superseded")
     provider_policy_version: str = Field(default="canonical-retrieval/1")
     created_at: datetime = Field(default_factory=utcnow_aware)
