@@ -71,6 +71,7 @@ backend/.env
 
 # Codex / local agent runtime
 .agents/
+.workbuddy/
 
 # Local databases
 database/*.db
