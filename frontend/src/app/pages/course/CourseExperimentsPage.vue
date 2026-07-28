@@ -12,6 +12,7 @@ import { useCounterStore } from '@/stores/counter.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxCapabilityTag from '@/app/ui/SfxCapabilityTag.vue'
 import SfxPlannedPanel from '@/app/ui/SfxPlannedPanel.vue'
+import TeacherExperimentPanel from '@/app/components/course/TeacherExperimentPanel.vue'
 
 /**
  * 课程实验任务（page-design §16）。
@@ -156,6 +157,8 @@ onMounted(async () => {
       </p>
     </section>
 
+    <TeacherExperimentPanel v-if="isTeacher" />
+
     <!-- 学生视图 -->
     <template v-if="!isTeacher">
       <div class="sfx-exp-filters" role="tablist" aria-label="实验任务筛选">
@@ -227,8 +230,8 @@ onMounted(async () => {
       </SfxPlannedPanel>
     </template>
 
-    <!-- 教师视图 -->
-    <template v-else>
+    <!-- 旧教师占位说明保留为历史参考；真实教师端由 TeacherExperimentPanel 提供。 -->
+    <template v-if="false">
       <div class="sfx-exp-filters" role="tablist" aria-label="教师实验工作区">
         <button
           v-for="opt in [

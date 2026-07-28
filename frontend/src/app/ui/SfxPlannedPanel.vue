@@ -1,7 +1,5 @@
 <script setup>
-import { computed } from 'vue'
 import { FileCode2 } from 'lucide-vue-next'
-import { getPlannedContract } from '@/api/planned.js'
 import SfxCapabilityTag from './SfxCapabilityTag.vue'
 
 /**
@@ -17,7 +15,6 @@ const props = defineProps({
   availableNote: { type: String, default: '' },
 })
 
-const contract = computed(() => getPlannedContract(props.contractKey))
 </script>
 
 <template>
@@ -25,20 +22,13 @@ const contract = computed(() => getPlannedContract(props.contractKey))
     <div class="sfx-planned-head">
       <span class="sfx-planned-icon" aria-hidden="true"><FileCode2 :size="20" :stroke-width="1.9" /></span>
       <div>
-        <h3 class="sfx-t-title3">{{ title || `${contract.domain} · 接口契约已冻结` }}</h3>
-        <p class="sfx-t-ui sfx-t-secondary">后端实现并通过契约测试后，本页面将接入真实数据。</p>
+        <h3 class="sfx-t-title3">{{ title || '该功能暂不可用' }}</h3>
+        <p class="sfx-t-ui sfx-t-secondary">此能力尚未完整接入；不会伪造数据或操作成功状态。</p>
       </div>
       <SfxCapabilityTag level="experimental" />
     </div>
 
-    <p class="sfx-planned-summary sfx-t-ui">{{ contract.summary }}</p>
-
-    <div v-if="contract.endpoints.length" class="sfx-planned-endpoints">
-      <p class="sfx-t-caption sfx-t-muted">冻结契约（planned，当前不可调用）：</p>
-      <ul>
-        <li v-for="ep in contract.endpoints" :key="ep" class="sfx-mono sfx-t-sm">{{ ep }}</li>
-      </ul>
-    </div>
+    <p class="sfx-planned-summary sfx-t-ui">功能边界会在可用时由真实接口和页面状态说明。</p>
 
     <p v-if="availableNote" class="sfx-planned-available sfx-t-ui">
       <strong>当前可用：</strong>{{ availableNote }}

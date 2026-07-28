@@ -48,6 +48,21 @@ def run_startup_side_effects():
     except Exception:
         logger.exception("Failed to register task worker handlers; tasks will stay pending")
 
+    # 启动任务扫尾：把上一进程遗留的 pending/running 任务标为 interrupted。
+    # LocalTaskWorker 用 asyncio.create_task 执行，进程重启后这些任务既不会
+    # 成功也不会失败，会永远停在 running。此处把它们转为 interrupted，
+    # 使其从"处理中"视图中移除并给出"重新解析"操作；不自动恢复。
+    # Step 0 of 统一课程建设九步实施计划。
+    try:
+        from app.models.database import session_factory
+        from app.services.task_service import task_service
+        with session_factory() as session:
+            report = task_service.sweep_stale_running(session, grace_seconds=0)
+        logger.info("Startup task sweep: %d stale task(s) marked interrupted",
+                    report.get("swept", 0))
+    except Exception:
+        logger.exception("Startup task sweep failed; stale running tasks may persist")
+
     return dep_report
 
 
@@ -90,13 +105,13 @@ from app.api.v1.endpoints import (
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_build,       # 阶段3 课程建设工作流
+    course_outline,     # 统一课程树 / 讲稿 / 教师审核提案
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
-    historical_rebuild, # 阶段10 历史课程补建清单编排
     storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
 )
 from app.schemas import UnifiedResponse
@@ -281,6 +296,11 @@ app.include_router(
     prefix="/api/v1/course-build",
     tags=["阶段3 课程建设工作流"],
 )
+app.include_router(
+    course_outline.course_outline_router,
+    prefix="/api/v1/course-build",
+    tags=["统一课程结构、讲稿与教师审核"],
+)
 
 # 阶段4：课程材料解析、Evidence、Citation 与图谱治理
 # - 解析流水线、候选证据审核、学生可读 Citation、图谱候选批次 路由挂载到 /api/v1/graph 下，
@@ -358,12 +378,9 @@ app.include_router(
     tags=["阶段9 Agent治理与教师安全阀"],
 )
 
-# 阶段10：历史课程补建清单编排
-app.include_router(
-    historical_rebuild.historical_rebuild_router,
-    prefix="/api/v1/historical-rebuild",
-    tags=["阶段10 历史课程补建清单"],
-)
+# 历史课程自动补建已下线。旧课程保持只读；教师重新上传后才进入统一
+# SourceMaterialVersion -> ParseRun -> draft assets 链。模块保留为迁移期代码，
+# 但不再注册公开路由，避免前端误以为旧课程仍能自动升级。
 
 # G5：对象存储运维（refs/GC/回读校验/迁移对账）
 app.include_router(

@@ -39,6 +39,9 @@ class ParseRunStatus(str, Enum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
+    # 后端重启扫尾：遗留 running 的解析运行标记为 interrupted，
+    # 与 TaskRecord.status 一致；可重新解析，不是业务终态成功。
+    INTERRUPTED = "interrupted"
     PARTIAL_SUCCESS = "partial_success"
 
 
@@ -131,6 +134,24 @@ class DocumentBlock(SQLModel, table=True):
     char_end: int = Field(default=0, description="页内字符结束偏移")
     content_hash: str = Field(default="", index=True, description="块内容哈希")
     order_index: int = Field(default=0, description="页内顺序")
+    # Step 3 解析溯源：组合式解析（原生文本 + OCR）必须保留来源/坐标/置信度/版本/材料
+    material_version_id: Optional[str] = Field(
+        default=None, index=True,
+        description="产出该块的 SourceMaterialVersion.version_id（解析溯源）",
+    )
+    page_or_slide: int = Field(
+        default=0, index=True,
+        description="通用页/幻灯片序号（PPTX=slide，PDF/image=page），与 page_number 对齐但语义更广",
+    )
+    source_kind: str = Field(
+        default="", max_length=32, index=True,
+        description="native|ocr|reconciled：块文本来源（原生解析或 OCR 补充或合并）",
+    )
+    confidence: float = Field(default=0.0, description="来源置信度 0..1（OCR 块）")
+    provider_version: str = Field(
+        default="", max_length=64,
+        description="产出该块的 Provider 版本（如 paddleocr 2.7 / pdfplumber 0.11）",
+    )
     created_at: datetime = Field(default_factory=utcnow_aware)
 
 

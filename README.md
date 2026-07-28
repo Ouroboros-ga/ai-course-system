@@ -30,4 +30,4 @@
 - `docs/phase1/`：当前 Demo 的审计、契约、运行与实施基线。
 - `docs/research/`、`research/`：离线研究与实验。
 - `docs/refactor/`：重构、Shadow、迁移和评审历史。
-- `docs/archive/`：历史材料，不作为当前实现依据。
+- 过时的 CodeMind/V3 方案和 `docs/archive/` 历史实现文档已删除；需要追溯时使用 Git 历史。当前状态以 `docs/phase1/` 的审计、实施和配置清单为准。

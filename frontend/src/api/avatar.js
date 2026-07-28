@@ -40,3 +40,19 @@ export function createAvatarPreparationJob(avatarId, payload = {}) {
 export function listAvatarPreparationJobs(avatarId) {
   return request.get(`/avatar-profiles/${encodeURIComponent(avatarId)}/preparation-jobs`)
 }
+
+export function listCourseAvatarProfiles(courseId) {
+  return request.get(`/courses/${encodeURIComponent(courseId)}/available-avatar-profiles`)
+}
+
+export function getCourseAvatarBinding(courseId) {
+  return request.get(`/courses/${encodeURIComponent(courseId)}/media/avatar-binding`)
+}
+
+export function setCourseAvatarBinding(courseId, payload) {
+  return request.put(`/courses/${encodeURIComponent(courseId)}/media/avatar-binding`, payload)
+}
+
+export function publishCourseAvatarBinding(courseId, bindingId) {
+  return request.post(`/courses/${encodeURIComponent(courseId)}/media/avatar-binding/${encodeURIComponent(bindingId)}/publish`)
+}

@@ -344,6 +344,8 @@ class NativePptxProvider:
         P0-4：通过 source.uri（即 object_key）从对象存储读取文件内容。
         若 uri 为空，回退到 None（测试场景可由调用方直接注入数据）。
         """
+        if source.data is not None:
+            return source.data
         if not source.uri:
             return None
         try:

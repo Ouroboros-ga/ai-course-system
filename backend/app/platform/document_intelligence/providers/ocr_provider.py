@@ -158,6 +158,8 @@ class TesseractOcrProvider:
 
     @staticmethod
     def _get_source_data(source: SourceArtifact) -> Optional[bytes]:
+        if source.data is not None:
+            return source.data
         if not source.uri:
             return None
         try:

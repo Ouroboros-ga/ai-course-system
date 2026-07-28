@@ -95,6 +95,12 @@ async def create_material(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
+    require_course_permission(session, current_user, course_id, "course.edit")
+    return unified_response(
+        code=410,
+        message="材料登记入口已下线；请通过统一文件上传入口创建解析任务",
+        data={"error_code": "UNIFIED_SOURCE_UPLOAD_REQUIRED", "upload_endpoint": f"/api/v1/document/course/{course_id}/source-materials"},
+    )
     """创建源材料 + 首版本。"""
     context = require_course_permission(session, current_user, course_id, "course.edit")
     material, version = source_material_service.create_material(
@@ -152,6 +158,12 @@ async def add_material_version(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
+    require_course_permission(session, current_user, course_id, "course.edit")
+    return unified_response(
+        code=410,
+        message="材料版本必须由统一上传入口创建，不能手填对象路径",
+        data={"error_code": "UNIFIED_SOURCE_UPLOAD_REQUIRED", "upload_endpoint": f"/api/v1/document/course/{course_id}/source-materials"},
+    )
     """为材料添加新版本；旧版本标记为 superseded。"""
     context = require_course_permission(session, current_user, course_id, "course.edit")
     version = source_material_service.add_version(
@@ -176,6 +188,12 @@ async def trigger_material_parse(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
+    require_course_permission(session, current_user, course_id, "course.edit")
+    return unified_response(
+        code=410,
+        message="解析状态由统一任务中心维护，前端不得手工写入",
+        data={"error_code": "TASK_OWNED_PARSE_STATUS"},
+    )
     """触发材料解析（记录解析任务 ID 与状态）。
 
     实际解析由统一任务中心异步执行；本接口仅记录任务关联。

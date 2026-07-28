@@ -54,6 +54,29 @@ def _run_alembic(db_url: str, *args: str) -> None:
             os.environ.pop("AI_COURSE_DATABASE_URL", None)
 
 
+def _head_revision() -> str:
+    """动态确定 alembic 当前 head revision，避免每次新增迁移都要改本测试。
+
+    遍历 versions 目录的 revision/down_revision 链，取未被任何 down_revision
+    引用的末端 revision（即 head）。
+    """
+    import glob
+    import re as _re
+    versions_dir = Path(__file__).resolve().parent.parent / "alembic" / "versions"
+    revisions: dict[str, str | None] = {}
+    for path in glob.glob(str(versions_dir / "*.py")):
+        with open(path, encoding="utf-8-sig") as fh:
+            content = fh.read()
+        rev_m = _re.search(r'^revision\b[^=]*=\s*["\']([^"\']+)["\']', content, _re.M)
+        down_m = _re.search(r'^down_revision\b[^=]*=\s*(None|["\']([^"\']+)["\'])', content, _re.M)
+        if rev_m:
+            revisions[rev_m.group(1)] = (down_m.group(2) if (down_m and down_m.group(2)) else None)
+    all_downs = {d for d in revisions.values() if d}
+    heads = [r for r in revisions if r not in all_downs]
+    assert heads, f"could not determine head revision from {versions_dir}"
+    return heads[0]
+
+
 # ==================== 场景1：空库 upgrade head（SQLite）====================
 
 
@@ -80,7 +103,7 @@ def test_empty_sqlite_upgrade_head_creates_all_tables(tmp_path):
         # 验证 alembic_version 表指向 head
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008", f"alembic_version 应为 0008，实际 {version}"
+            assert version == _head_revision()
     finally:
         engine.dispose()
 
@@ -121,7 +144,7 @@ def test_legacy_sqlite_stamp_and_upgrade(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008"
+            assert version == _head_revision()
 
             # 6. 验证数据迁移生效（0002 access_control backfill）
             # 旧库无 legacy role/teacher_id 数据，所以回填不应产生记录
@@ -295,7 +318,7 @@ def test_postgres_empty_upgrade_head():
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008"
+            assert version == _head_revision()
     finally:
         engine.dispose()
 
@@ -348,7 +371,7 @@ def test_migration_chain_downgrade_and_upgrade_roundtrip(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008"
+            assert version == _head_revision()
     finally:
         engine.dispose()
 
@@ -387,7 +410,7 @@ def test_migration_ops_upgrade_writes_ledger(tmp_path):
     try:
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008"
+            assert version == _head_revision()
 
             rows = conn.execute(
                 text(
@@ -608,7 +631,7 @@ def test_upgrade_from_empty_db_executes_all_migrations(tmp_path):
 
         with engine.connect() as conn:
             version = conn.execute(text("SELECT version_num FROM alembic_version")).scalar()
-            assert version == "0008"
+            assert version == _head_revision()
 
             # 0002 backfill 在空库应写入 0 行（无 legacy 数据）
             membership_count = conn.execute(text(

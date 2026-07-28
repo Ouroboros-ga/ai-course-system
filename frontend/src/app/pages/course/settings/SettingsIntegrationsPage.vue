@@ -1,48 +1,17 @@
 <script setup>
-import SfxPlannedPanel from '@/app/ui/SfxPlannedPanel.vue'
+import { computed, inject, onMounted, ref } from 'vue'
+import { confirmFanyaSync, listFanyaSyncRuns, previewFanyaSync, startFanyaSync } from '@/api/course_lifecycle.js'
+import SfxBadge from '@/app/ui/SfxBadge.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
+import SfxEmpty from '@/app/ui/SfxEmpty.vue'
+import SfxError from '@/app/ui/SfxError.vue'
 
-/**
- * 设置 · 平台集成（page-design §18.7）。
- * 泛雅绑定与同步为 planned 契约（§3.8）：显式异步同步，不在页面请求中
- * 隐式调外部平台；同步前必须预览变化（§17.5）。
- */
+const courseContext=inject('courseContext'); const courseId=computed(()=>courseContext.courseId.value); const allowed=computed(()=>courseContext.allowed.value?.['membership.sync']); const runs=ref([]); const state=ref('loading'); const working=ref(''); const error=ref('')
+async function load(){state.value='loading';try{const data=await listFanyaSyncRuns(courseId.value);runs.value=data?.items??[];state.value=runs.value.length?'ready':'empty'}catch(e){error.value=e?.message||'泛雅同步记录读取失败';state.value='error'}}
+async function start(){working.value='start';try{await startFanyaSync(courseId.value);await load()}finally{working.value=''}}
+async function preview(run){working.value=run.sync_run_id;try{await previewFanyaSync(courseId.value,run.sync_run_id);await load()}finally{working.value=''}}
+async function confirm(run){working.value=run.sync_run_id;try{await confirmFanyaSync(courseId.value,run.sync_run_id);await load()}finally{working.value=''}}
+onMounted(load)
 </script>
-
-<template>
-  <div class="sfx-integrations">
-    <header class="sfx-integrations-head">
-      <div>
-        <h1 class="sfx-t-title2">平台集成</h1>
-        <p class="sfx-t-ui sfx-t-secondary">泛雅课程绑定与同步</p>
-      </div>
-    </header>
-
-    <SfxPlannedPanel
-      contract-key="fanya-sync"
-      title="泛雅集成 · 接口契约已冻结"
-    >
-      <p class="sfx-t-ui sfx-t-secondary">
-        契约实现后可配置（§18.7）：泛雅课程绑定、成员同步、内容同步、回调与任务状态、
-        最近同步与冲突处理。外部服务不可用时保留本地课程可用性和错误记录；
-        同步前必须预览变化，禁止静默覆盖本地成员关系。
-      </p>
-    </SfxPlannedPanel>
-  </div>
-</template>
-
-<style scoped>
-.sfx-integrations {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
-  max-width: 860px;
-}
-
-.sfx-integrations-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-</style>
+<template><div class="sfx-integrations"><header class="sfx-integrations-head"><div><h1 class="sfx-t-title2">泛雅集成</h1><p class="sfx-t-ui sfx-t-secondary">同步先生成变更预览；确认后才会写入课程成员或材料，不会静默覆盖本地数据。</p></div><SfxButton :disabled="!allowed" :loading="working==='start'" @click="start">发起同步</SfxButton></header><SfxError v-if="state==='error'" :description="error" @retry="load"/><SfxEmpty v-else-if="state==='empty'" title="暂无同步记录" description="需要时由教师显式发起一次预览同步。"/><section v-else class="sfx-panel"><div class="sfx-table-wrap"><table class="sfx-table"><thead><tr><th>同步批次</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead><tbody><tr v-for="run in runs" :key="run.sync_run_id"><td>{{run.sync_run_id}}</td><td><SfxBadge tone="neutral">{{run.status}}</SfxBadge></td><td>{{run.created_at?new Date(run.created_at).toLocaleString('zh-CN'):'—'}}</td><td class="sfx-actions"><SfxButton size="sm" variant="secondary" :loading="working===run.sync_run_id" @click="preview(run)">预览</SfxButton><SfxButton v-if="run.status==='preview_ready'" size="sm" :loading="working===run.sync_run_id" @click="confirm(run)">确认同步</SfxButton></td></tr></tbody></table></div></section></div></template>
+<style scoped>.sfx-integrations{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-6);max-width:1080px}.sfx-integrations-head{display:flex;justify-content:space-between;align-items:flex-end;gap:var(--space-3)}.sfx-actions{display:flex;gap:var(--space-2)}</style>

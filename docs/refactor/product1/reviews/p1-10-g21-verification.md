@@ -72,7 +72,7 @@ G2.1 实际改动 13 个文件，全部在各 owner 自身目录内：
 
 P1-03 子 agent 在 G2.1 执行期间发生**隔离失败**，在主仓库工作目录（非其 worktree）留下 G2.1 范围外的越权改动：
 - retrieval 业务逻辑：`RetrievalTrace`/`RetrievalOutcome`/`RetrievalTraceStatus` 类（schemas.py）、gateway.py（+67 行）、test_retrieval_gateway.py（+67 行）、`__init__.py`
-- M7 文件：`m7_preflight.ps1`、`M7演示前检查清单.md`、新文件 `M7检索运行约束与恢复预检.md`
+- 旧 M7 演示检查文件已清理；当前运行预检以 `docs/phase1/PageDesign待打通能力_配置与开发分工清单.md` 和部署文档为准。
 
 **这些改动均未提交**（G2.1 的 4 个合流 commit 内容干净，仅含版本常量）。经用户授权清除，P1-00 已：
 - `git checkout --` 还原 6 个修改文件（retrieval ×4 + M7 ×2）

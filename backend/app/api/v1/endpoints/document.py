@@ -1,4 +1,4 @@
-﻿"""
+"""
 文档处理API接口
 流程：上传文件 -> Docling解析为Markdown -> 豆包AI生成智课脚本 -> 存储到数据库 -> 返回结果
 Updated: 2026-03-28 - 集成Docling解析和豆包AI，添加用户认证
@@ -78,6 +78,10 @@ document_cache = {}
 tts_generation_status = {}
 
 COURSE_IMPORT_MAX_BYTES = 50 * 1024 * 1024
+COURSE_SOURCE_SUFFIXES = {
+    ".ppt", ".pptx", ".pdf", ".doc", ".docx",
+    ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp",
+}
 
 
 def _tts_batch_task_status(
@@ -380,7 +384,7 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
 
 @router.post("/course-imports", response_model=UnifiedResponse)
 async def create_course_import(
-    file: UploadFile = File(..., description="课程源文件 (PPT/PPTX/PDF/DOC/DOCX)"),
+    file: UploadFile = File(..., description="课程源文件 (PPT/PPTX/PDF/DOC/DOCX/图片)"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -394,14 +398,130 @@ async def create_course_import(
     user_id = int(current_user["user_id"])
     original_name = (file.filename or "untitled").strip()
     suffix = Path(original_name).suffix.lower()
-    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
-    if suffix not in allowed_suffixes:
+    if suffix not in COURSE_SOURCE_SUFFIXES:
         return unified_response(
             code=400,
-            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 课程文件",
+            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件",
             data=None,
         )
 
+    return await _create_course_import_core(file, session, user_id, original_name, suffix)
+
+
+@router.post("/course/{course_id}/source-materials", response_model=UnifiedResponse)
+async def upload_course_source_material(
+    course_id: int,
+    file: UploadFile = File(..., description="追加到现有草稿课程的源文件"),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """The only supported way to add material to an existing course.
+
+    It deliberately does not accept a caller-controlled object key or parse
+    status.  Once accepted, the durable task continues if the browser leaves
+    the page and the Build Materials screen can show its task/run state.
+    """
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    original_name = (file.filename or "untitled").strip()
+    suffix = Path(original_name).suffix.lower()
+    if suffix not in COURSE_SOURCE_SUFFIXES:
+        return unified_response(400, "仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件", None)
+
+    total = 0
+    digest = hashlib.sha256()
+    material_id = None
+    version = None
+    task_view = None
+    run = None
+    object_key = f"course-source/c{course_id}/{uuid.uuid4().hex}/source{suffix}"
+    with tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b") as staged:
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > COURSE_IMPORT_MAX_BYTES:
+                return unified_response(413, "文件大小超过限制（最大50MB）", {"error_code": "PAYLOAD_TOO_LARGE"})
+            digest.update(chunk)
+            staged.write(chunk)
+        if total == 0:
+            return unified_response(400, "不能上传空文件", None)
+        staged.seek(0)
+        try:
+            get_object_storage().put(object_key, staged, mime_type=file.content_type or "application/octet-stream")
+        except Exception as exc:
+            logger.exception("Failed to persist source material")
+            return unified_response(503, "课程源文件暂时无法保存", {"error_code": "OBJECT_STORAGE_UNAVAILABLE", "detail": str(exc)[:200]})
+
+    try:
+        material, version = source_material_service.create_material(
+            session, course_id=course_id, name=original_name,
+            material_type=("slide" if suffix in {".ppt", ".pptx"} else "image" if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"} else "document"),
+            source_kind="upload", file_path=object_key, file_hash=digest.hexdigest(),
+            file_size=total, mime_type=file.content_type or "application/octet-stream",
+            created_by=context.user_id,
+        )
+        task_view = task_service.create_task(session, TaskCreateRequest(
+            task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
+            input_summary=f"解析课程 {course_id} 的新增材料 {original_name}",
+            input_payload={"course_id": course_id, "material_id": material.material_id,
+                           "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value,
+                           "stale_strategy": StaleStrategy.MARK_STALE.value},
+            resource_links=[{"resource_kind": "source_material", "resource_id": material.material_id, "relation": "input"},
+                            {"resource_kind": "source_material_version", "resource_id": version.version_id, "relation": "input"}],
+        ))
+        run = document_parse_service.create_run(
+            session, course_id=course_id, material_id=material.material_id,
+            material_version_id=version.version_id, document_id=None, task_id=task_view.task_id,
+            pipeline=ParsePipeline.FULL, stale_strategy=StaleStrategy.MARK_STALE,
+            initiated_by=context.user_id,
+        )
+        version.parse_task_id = task_view.task_id
+        version.parse_status = MaterialStatus.PARSING
+        session.add(version)
+        session.commit()
+    except Exception as exc:
+        session.rollback()
+        try:
+            get_object_storage().delete(object_key)
+        except Exception:
+            logger.warning("Could not clean failed material object %s", object_key, exc_info=True)
+        logger.exception("Failed to create source material parse task")
+        return unified_response(500, "创建课程材料解析任务失败", {"error_code": "SOURCE_MATERIAL_CREATE_FAILED", "detail": str(exc)[:200]})
+
+    try:
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if local_task_worker.has_handler("document_parse"):
+            local_task_worker.submit(session_factory, task_view.task_id, {
+                "course_id": course_id, "run_id": run.run_id, "material_id": material.material_id,
+                "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value,
+                "stale_strategy": StaleStrategy.MARK_STALE.value,
+            })
+    except Exception:
+        logger.exception("Could not submit source material parse task %s", task_view.task_id)
+    return unified_response(202, "课程材料已保存，正在后台解析", {
+        "course_id": course_id, "material_id": material.material_id,
+        "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id,
+    })
+
+
+async def _create_course_import_core(
+    file: UploadFile,
+    session: Session,
+    user_id: int,
+    original_name: str,
+    suffix: str,
+) -> UnifiedResponse:
+    """统一课程导入核心逻辑：对象存储 + 草稿课 + 材料 + 任务 + 解析运行 + 异步触发。
+
+    这是 Step 0 后新旧链收敛的**唯一**课程创建路径：旧 ``/document/upload``
+    与新 ``/document/course-imports`` 都委托到这里，不再有同步解析、旧
+    ``CourseScript/ScriptNode`` 写入、自动 TTS 或自动发布。
+    """
     # UploadFile is already spooled by Starlette.  Copy it in bounded chunks so
     # an omitted/misleading Content-Length cannot allocate an unbounded bytes
     # object in the application process.
@@ -466,7 +586,7 @@ async def create_course_import(
             session,
             course_id=course.id,
             name=original_name,
-            material_type="slide" if suffix in {".ppt", ".pptx"} else "document",
+            material_type=("slide" if suffix in {".ppt", ".pptx"} else "image" if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"} else "document"),
             source_kind="upload",
             file_path=object_key,
             file_hash=digest.hexdigest(),
@@ -565,308 +685,28 @@ async def upload_document(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
+    """旧上传入口 - 兼容转发到统一课程导入链（Step 0 收口）。
+
+    旧的同步链（DoclingDocument -> CourseScript/ScriptNode -> 自动 TTS -> 自动
+    发布）已下线。本端点保留签名兼容旧前端，内部委托给与新入口
+    ``POST /document/course-imports`` 完全相同的 ``_create_course_import_core``，
+    确保新旧链收敛为一条可审核的备课生产线：
+    对象存储 -> SourceMaterialVersion -> DocumentParseRun -> 草稿资产 -> 教师审核。
+
+    不再：同步解析、写旧 CourseScript/ScriptNode、自动 TTS、自动发布。
+    旧课程保持只读；想使用新功能请重新上传创建新草稿课程。
     """
-    上传文档并解析，存储到数据库，生成智课脚本
-    
-    需要用户登录认证
-    
-    流程：
-    1. 验证用户身份
-    2. 存储文件信息到 courses 表
-    3. 创建 docling_documents 记录 (status = PENDING)
-    4. 调用document_service处理文档（解析+RAG+脚本生成）
-    5. 存储解析结果到数据库
-    6. 创建聊天记录归档
-    7. 返回结果
-    """
-    try:
-        user_id = int(current_user["user_id"])
-        username = current_user.get("username", "user")
-        print(f"[认证] 用户 {username} (ID: {user_id}) 上传文件")
-
-        document_id = str(uuid.uuid4())
-
-        file_ext = Path(file.filename).suffix.lower()
-        safe_filename = f"{document_id}{file_ext}"
-        file_path = UPLOAD_DIR / safe_filename
-
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            f.write(content)
-
-        file_size = file_path.stat().st_size
-        if file_size > 50 * 1024 * 1024:
-            file_path.unlink()
-            return unified_response(
-                code=400,
-                message="文件大小超过限制（最大50MB）",
-                data=None
-            )
-
-        print(f"[步骤1] 存储文件信息到 courses 表")
-        print(f"  文件已保存: {file_path}")
-
-        course = Course(
-            fanya_course_id=f"local_{document_id[:8]}",
-            fanya_course_name=file.filename,
-            title=Path(file.filename).stem,
-            description=f"从文件 {file.filename} 导入的课程",
-            teacher_id=user_id,
-            status=CourseStatus.DRAFT,
-            is_ai_generated=False,
-            source_file_name=file.filename,
-            source_file_path=str(file_path),
-            source_mimetype=file.content_type or "application/octet-stream",
-            total_pages=0,
-        )
-        session.add(course)
-        session.commit()
-        session.refresh(course)
-        establish_course_access_baseline(session, course.id, user_id)
-        session.commit()
-        print(f"  创建课程记录: ID={course.id}, 标题={course.title}")
-
-        try:
-            from app.common.slide_converter import is_office_file, is_pdf_file, get_or_create_pdf
-            if is_office_file(str(file_path)):
-                print(f"[步骤1.5] 检测到Office文件，自动转换为PDF...")
-                pdf_path = get_or_create_pdf(str(file_path))
-                if pdf_path:
-                    course.pdf_file_path = pdf_path
-                    session.add(course)
-                    session.commit()
-                    print(f"  PDF转换成功: {pdf_path}")
-                else:
-                    print(f"  PDF转换失败，将在展示时重试")
-            elif is_pdf_file(str(file_path)):
-                course.pdf_file_path = str(file_path)
-                session.add(course)
-                session.commit()
-                print(f"  PDF文件，直接存储路径")
-        except Exception as e:
-            print(f"  PDF转换异常(不影响主流程): {e}")
-
-        print(f"[步骤2] 创建 docling_documents 记录 (status = PENDING)")
-        docling_doc = DoclingDocument(
-            course_id=course.id,
-            schema_name="DoclingDocument",
-            version="1.10.0",
-            doc_name=file.filename,
-            origin_filename=file.filename,
-            origin_mimetype=file.content_type,
-            origin_binary_hash=document_id,
-            source_file_path=str(file_path),
-            status=ParseStatus.PENDING,
-        )
-        session.add(docling_doc)
-        session.commit()
-        session.refresh(docling_doc)
-        print(f"  创建文档解析记录: ID={docling_doc.id}, status=PENDING")
-
-        print(f"[步骤3] 调用document_service处理文档")
-        docling_doc.status = ParseStatus.PROCESSING
-        session.commit()
-        print(f"  更新状态: PROCESSING")
-
-        process_result = await document_service.process_document(
-            file_path=file_path,
-            filename=file.filename,
-            enable_rag=True,
-            enable_script=True,
-            course_id=course.id,
-        )
-        
-        parse_result = process_result.parse_result
-        structure_result = process_result.structure_result
-        script_result = process_result.script_result
-        rag_result = process_result.rag_result
-        mind_map = process_result.mind_map
-
-        print(f"  文档解析完成: {parse_result.parse_method}, {len(parse_result.markdown_content)} 字符")
-        print(f"  RAG预处理: 公式{rag_result.formula_count}个, 表格{rag_result.table_count}个, 知识点{len(rag_result.knowledge_points)}个")
-        print(f"  脚本生成: {len(script_result.nodes)} 个节点")
-
-        print(f"[步骤4] 存储解析结果到相关表")
-        total_texts = 0
-        total_tables = 0
-        total_pictures = 0
-        total_groups = 0
-
-        for group_data in structure_result.groups:
-            group = DoclingGroup(
-                doc_id=docling_doc.id,
-                self_ref=group_data.get("self_ref", f"#/groups/{total_groups}"),
-                name=group_data.get("name", f"Section {total_groups + 1}"),
-                label=group_data.get("label", "section"),
-                content_layer=group_data.get("content_layer", "body"),
-                sort_order=total_groups,
-            )
-            session.add(group)
-            session.commit()
-            session.refresh(group)
-            total_groups += 1
-        print(f"  存储 {total_groups} 个分组记录")
-
-        for idx, text_data in enumerate(structure_result.texts):
-            text_record = DoclingText(
-                doc_id=docling_doc.id,
-                group_id=None,
-                self_ref=text_data.get("self_ref", f"#/texts/{idx}"),
-                label=text_data.get("label", "text"),
-                text=text_data.get("text", ""),
-                page_no=text_data.get("page_no", 1),
-                sort_order=idx,
-            )
-            session.add(text_record)
-            total_texts += 1
-        session.commit()
-        print(f"  存储 {total_texts} 条文本记录")
-
-        docling_doc.status = ParseStatus.COMPLETED
-        docling_doc.total_groups = total_groups
-        docling_doc.total_texts = total_texts
-        docling_doc.total_tables = total_tables
-        docling_doc.total_pictures = total_pictures
-        docling_doc.raw_json = {
-            "groups": structure_result.groups,
-            "texts": structure_result.texts,
-            "tables": structure_result.tables,
-            "pictures": structure_result.pictures,
-            "raw_content": structure_result.raw_content,
-        }
-        docling_doc.updated_at = utcnow_aware()
-        session.commit()
-        print(f"  更新状态: COMPLETED")
-
-        print(f"[步骤5] 存储智课脚本到数据库")
-        course_script = CourseScript(
-            course_id=course.id,
-            version=1,
-            version_name="v1.0",
-            script_content=script_result.script_content,
-            summary_text=script_result.summary,
-            keywords=json.dumps(script_result.keywords, ensure_ascii=False),
-            is_active=True,
-            audio_url=None,
-            audio_duration=0,
-            created_by=user_id,
-        )
-        session.add(course_script)
-        session.commit()
-        session.refresh(course_script)
-        print(f"  创建课程脚本记录: ID={course_script.id}")
-
-        print(f"[步骤6] 拆分脚本节点")
-        for idx, node in enumerate(script_result.nodes):
-            script_node = ScriptNode(
-                script_id=course_script.id,
-                chapter_id=node.chapter_id,
-                node_index=idx,
-                node_type=ScriptNodeType(node.node_type),
-                title=node.title,
-                content=node.content,
-                page_start=node.page_start,
-                page_end=node.page_end,
-                duration=node.duration,
-                is_key_point=node.is_key_point,
-                timestamp_start=node.timestamp_start,
-                timestamp_end=node.timestamp_end,
-            )
-            session.add(script_node)
-        session.commit()
-        print(f"  创建 {len(script_result.nodes)} 个 script_nodes 记录（含时间戳数据）")
-
-        course.total_nodes = len(script_result.nodes)
-        course.total_duration = script_result.total_duration
-        course.is_ai_generated = True
-        # Importing material creates a buildable draft, never a discoverable
-        # course.  Publication remains the explicit teacher action at
-        # POST /document/course/{course_id}/publish.
-        course.status = CourseStatus.DRAFT
-        course.updated_at = utcnow_aware()
-        session.commit()
-        print(f"  更新课程统计: total_nodes={course.total_nodes}, total_duration={course.total_duration}, status=DRAFT")
-
-        print(f"[步骤6.5] 启动后台TTS音频生成任务")
-        import asyncio
-        asyncio.create_task(_background_synthesize_audio(course.id, course_script.id))
-        print(f"  后台TTS任务已启动: course_id={course.id}, script_id={course_script.id}")
-
-        print(f"[步骤7] 创建聊天记录归档")
-        chat_record = ChatHistory(
-            user_id=user_id,
-            content=f"{file.filename} 解析",
-        )
-        session.add(chat_record)
-        session.commit()
-        session.refresh(chat_record)
-        chat_id = chat_record.id
-        print(f"  创建聊天记录: ID={chat_id}")
-
-        document_cache[document_id] = {
-            "course_id": course.id,
-            "script_id": course_script.id,
-            "doc_id": docling_doc.id,
-            "chat_id": chat_id,
-            "filename": file.filename,
-            "markdown_content": parse_result.markdown_content,
-            "script_content": script_result.script_content,
-            "file_path": str(file_path),
-            "rag_knowledge_points": rag_result.knowledge_points,
-        }
-
-        # 持久化到数据库
-        try:
-            existing = session.exec(
-                select(DocumentArtifact).where(DocumentArtifact.document_id == document_id)
-            ).first()
-            if not existing:
-                artifact = DocumentArtifact(
-                    document_id=document_id,
-                    course_id=course.id if course else 0,
-                    file_name=file.filename if file else "",
-                    mime_type=file.content_type if file else "",
-                    parse_info={"status": "uploaded"},
-                )
-                session.add(artifact)
-                session.commit()
-        except Exception:
-            pass  # 持久化失败不影响主流程
-
-        print(f"[步骤8] 返回结果给前端")
-        
+    user_id = int(current_user["user_id"])
+    original_name = (file.filename or "untitled").strip()
+    suffix = Path(original_name).suffix.lower()
+    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    if suffix not in allowed_suffixes:
         return unified_response(
-            code=200,
-            message="上传并解析成功，TTS语音正在后台生成",
-            data={
-                "fullContent": script_result.beautiful_markdown,
-                "rawContent": parse_result.markdown_content,
-                "title": course.title,
-                "audioUrl": None,
-                "mindMapJson": mind_map,
-                "chatId": chat_id,
-                "courseId": course.id,
-                "ttsStatus": "processing",
-                "ragInfo": {
-                    "formulaCount": rag_result.formula_count,
-                    "tableCount": rag_result.table_count,
-                    "domainTermCount": rag_result.domain_term_count,
-                    "treeNodeCount": rag_result.tree_node_count,
-                    "knowledgePointCount": len(rag_result.knowledge_points),
-                } if not rag_result.error else None,
-            }
+            code=400,
+            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件",
+            data=None,
         )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(
-            code=500,
-            message=f"文档处理失败: {str(e)}",
-            data={"error": str(e)}
-        )
+    return await _create_course_import_core(file, session, user_id, original_name, suffix)
 
 
 @router.post("/analyze", response_model=DocumentAnalyzeResponse)

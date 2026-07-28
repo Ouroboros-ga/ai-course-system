@@ -277,6 +277,18 @@ class Settings(BaseSettings):
     JUDGE0_QUEUE_TIMEOUT: int = 30
 
     # --------------------------
+    # Step 2: 独立 PaddleOCR 服务配置
+    # PaddleOCR 运行在独立容器（deploy/paddleocr/），主后端通过 DocumentOcrPort
+    # (PaddleOcrHttpAdapter) 调用，不在主后端安装 paddle。
+    # PADDLEOCR_URL 为空时 OCR 端口 fail-closed（UnavailableOcrPort），
+    # OCR 相关任务以 OCR_SERVICE_UNAVAILABLE 失败并可重试，不伪造输出。
+    # --------------------------
+    PADDLEOCR_URL: str = "http://127.0.0.1:8090"
+    PADDLEOCR_REQUIRED_FOR_PDF: bool = True
+    PADDLEOCR_TIMEOUT_S: int = 300
+    PADDLEOCR_MAX_PAGES: int = 50
+
+    # --------------------------
     # 服务间鉴权（Quiz/Judge0/CodingAgent 写正式证据等内部调用）
     # --------------------------
     INTERNAL_SERVICE_TOKEN: str = ""

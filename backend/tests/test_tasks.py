@@ -405,20 +405,44 @@ def test_cursor_pagination(client, session):
 
 
 def test_migration_batch_recorded(session):
-    """alembic upgrade head 后 alembic_version 表应包含当前 head revision (0008)，
+    """alembic upgrade head 后 alembic_version 表应包含当前 head revision，
     且 schema_migration_records 审计账本表存在且可查询。
 
     P0-1 后：run_migrations() 已废弃为 no-op，alembic_version 是迁移事实来源；
     schema_migration_records 保留为审计账本，但不再是迁移状态的唯一来源。
+
+    head revision 通过遍历 alembic versions 目录动态确定，避免每次新增迁移都要改本测试。
     """
     from sqlalchemy import text
+    import glob
+    import os
+    import re as _re
 
-    # 1. alembic_version 表是迁移事实来源，应包含当前 head revision (0008)。
+    # 1. alembic_version 表是迁移事实来源，应包含当前 head revision。
     #    测试库由 conftest 的 test_engine fixture 通过 alembic upgrade head 建立。
     version_num = session.execute(
         text("SELECT version_num FROM alembic_version")
     ).scalar()
-    assert version_num == "0008"
+
+    # 动态确定 head revision：遍历 versions 目录，取 revision/down_revision 链的末端。
+    versions_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "alembic", "versions",
+    )
+    revisions: dict[str, str | None] = {}
+    for path in glob.glob(os.path.join(versions_dir, "*.py")):
+        with open(path, encoding="utf-8-sig") as fh:
+            content = fh.read()
+        rev_m = _re.search(r'^revision\b[^=]*=\s*["\']([^"\']+)["\']', content, _re.M)
+        down_m = _re.search(r'^down_revision\b[^=]*=\s*(None|["\']([^"\']+)["\'])', content, _re.M)
+        if rev_m:
+            revisions[rev_m.group(1)] = (down_m.group(2) if (down_m and down_m.group(2)) else None)
+    # head = 出现在 revisions 的 key 中、但不出现在任何 down_revision 中的 revision
+    all_downs = {d for d in revisions.values() if d}
+    head_candidates = [r for r in revisions if r not in all_downs]
+    assert head_candidates, f"could not determine head revision from {versions_dir}"
+    head_revision = head_candidates[0]
+    assert version_num == head_revision
 
     # 2. schema_migration_records 作为审计账本仍可查询（不再是迁移事实来源）。
     #    表必须存在且可查询，但不要求有特定记录（alembic 不向其写入）。

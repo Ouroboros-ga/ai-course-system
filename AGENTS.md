@@ -13,7 +13,7 @@ Agent 默认拥有实现权，可以大胆试验、重构和学习；重点是�
 
 - 优先完成可体验的产品闭环；
 - 允许试错、替换旧实现和局部/模块级重构；
-- 用测试、样例数据、日志和文档记录结论，而非假定旧实现正确；
+- 用可运行行为、手工体验、样例数据、日志、文档或测试记录结论，而非假定旧实现正确；
 - 每次有意义的改动保持可理解、可运行、可回退；
 - 历史 Demo、Shadow 和旧 API 可以被替代，但必须明确迁移或下线语义。
 
@@ -46,9 +46,18 @@ Agent 默认拥有实现权，可以大胆试验、重构和学习；重点是�
 9. 使用课程能力开关、Demo 配置或明确的发布状态，逐步把新能力接入本地体验；
    新能力不必永久保持 Shadow 状态。
 
-实施时按风险匹配验证强度：小改动至少运行相关测试；跨域、数据库、权限、沙箱或
-外部服务改动应增加针对性测试、迁移检查和可操作的回退方案。无需为了试验而维持
-已被替代的旧实现。
+### 2.1 快速迭代与验证策略
+
+本地 Demo 默认优先实现、集成和真实手工体验；测试、构建、全量回归和覆盖率均为
+**推荐工具，不是继续开发、提交或切换功能的硬门槛**。Agent 可以在尚未补齐测试的
+情况下提交可运行的阶段性实现，并在交接时如实说明已验证与未验证的部分。
+
+- 能快速运行相关测试时，优先运行；不能运行或成本过高时，不阻塞开发。
+- 前后端改动可以先用真实页面、接口调用、日志和样例数据验证，再集中补回归测试。
+- 数据库、权限、沙箱或外部服务改动仍须保留可理解的失败语义、迁移路径和回退方式，
+  但不要求本地每次都完成全量迁移/回归演练。
+- 不得为了维持已被替代的旧测试或旧接口而拖慢重构；可以同步更新、拆分或删除已经
+  失效的测试与兼容代码，并记录原因。
 
 ---
 
@@ -68,7 +77,7 @@ Agent 默认拥有实现权，可以大胆试验、重构和学习；重点是�
 ### 3.2 兼容、迁移与重构
 
 1. 允许改变公开 API、请求/响应结构、数据库结构、启动配置和用户可见行为，前提是
-   同步更新真实调用方、迁移、测试和文档；对仍在使用的接口保留兼容层，或提供明确
+   同步更新真实调用方、迁移和必要文档；测试可在后续迭代补齐。对仍在使用的接口保留兼容层，或提供明确
    的版本化/迁移方案。
 2. 允许重构或替换核心模块；重构前应识别实际路由、调用链和数据模型，重构后必须
    覆盖主流程和失败/降级路径。
@@ -76,7 +85,7 @@ Agent 默认拥有实现权，可以大胆试验、重构和学习；重点是�
    中明确标记为废弃并给出替代入口。
 4. 不得为了“看起来完成”创建未接线的空目录、空类、伪实现或虚构成功状态。
 
-### 3.3 测试与结果诚实性
+### 3.3 结果诚实性与测试边界
 
 1. 禁止调用真实付费 LLM 服务执行自动化测试。
 2. 禁止调用真实付费 TTS 服务执行自动化测试。
@@ -84,11 +93,10 @@ Agent 默认拥有实现权，可以大胆试验、重构和学习；重点是�
 4. 禁止调用真实数字人服务执行自动化测试。
 5. 禁止读取生产 API Key、Token 或其他密钥。
 6. 禁止使用生产数据库运行测试。
-7. 禁止删除失败测试以获得全绿结果。
-8. 禁止无理由增加 `skip`、`xfail` 或忽略规则。
-9. 禁止弱化有效断言以迎合现有实现。
-10. 禁止只断言 Mock 固定字符串而不验证业务调用关系。
-11. 禁止伪造功能状态、准确率、性能数据和测试结果。
+7. 可以删除、改写、拆分、跳过或延后旧测试，只要其对应的功能/契约已经被替代，
+   并在提交说明或代码注释中写明原因。
+8. 不得把未运行、失败或仅 Mock 验证的结果表述为真实环境全绿、真实效果或已上线能力。
+9. 不得伪造功能状态、准确率、性能数据和测试结果。
 
 ---
 
@@ -186,19 +194,18 @@ because of one of those fields.
 4. Database rollback is a deployment companion to application rollback, not a
    runtime recovery mechanism. Never run it on a live system while the new
    application version is serving traffic.
-5. Do not use production data as a test fixture. Test migrations use an
-   isolated temporary database and must verify both idempotency and rollback
-   scope.
+5. Do not use production data as a test fixture. 若编写迁移测试，应使用隔离临时数据库；
+   Demo 快速迭代时，迁移演练可后置，但不得把未演练的迁移描述为已验证。
 
 ### 5.4 Compatibility and verification
 
 1. Existing public paths and response fields remain compatible unless an
    explicitly versioned contract changes them. New access information is added
    through the public course-access view model.
-2. Changes to course authorization require regression coverage in
-   `backend/tests/test_course_access.py`, including cross-course denial,
-   capability denial, lifecycle transitions, migration preflight, and rollback.
-3. Frontend changes require both unit coverage and a production build check.
+2. Course authorization changes 应优先用 `backend/tests/test_course_access.py`、接口调用或
+   手工角色切换验证跨课程拒绝、能力拒绝和生命周期；这些验证不构成每次提交的硬门槛。
+3. Frontend changes 可按需要使用单测、构建或浏览器体验验证；本地 Demo 阶段允许先接通
+   页面再集中补验证。
 4. When legacy behavior and the new model conflict, record the compatibility
    decision and its evidence in `docs/phase1/`; do not introduce an untracked
    role-check exception.

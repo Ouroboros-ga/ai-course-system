@@ -41,6 +41,10 @@ class SourceArtifact:
     created_at: Optional[datetime] = None
     uri: Optional[str] = None
     normalization_version: str = "1"
+    # Runtime-only parser input.  It is deliberately not serialized and does
+    # not participate in the stable artifact ID; providers prefer it so a
+    # LibreOffice-converted PDF never needs a fake object-storage key.
+    data: Optional[bytes] = field(default=None, repr=False, compare=False)
 
     @classmethod
     def from_bytes(
@@ -69,6 +73,7 @@ class SourceArtifact:
             created_at=datetime.now(timezone.utc),
             uri=uri,
             normalization_version=normalization_version,
+            data=data,
         )
 
     def to_dict(self) -> dict:
@@ -96,6 +101,7 @@ class SourceArtifact:
             created_at=created,
             uri=d.get("uri"),
             normalization_version=d.get("normalization_version", "1"),
+            data=None,
         )
 
 

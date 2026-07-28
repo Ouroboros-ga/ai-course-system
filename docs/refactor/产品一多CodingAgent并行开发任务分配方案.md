@@ -21,7 +21,7 @@
 
 - 产品说明：`docs/产品一-泛雅AI互动智课平台.md`。
 - R2D 全部设计：`docs/refactor/document_kg_v2/`。
-- 基线报告：`docs/phase1/M4A执行报告.md`、`M4B执行报告.md`、`M4C缺陷修复报告.md`、`M7*.md`、`docs/refactor/R1*.md`、`R2B数字人与PPT任务迁移报告.md`、`R2C-TTS批量任务迁移报告.md`。
+- 旧 M4/M7 报告已清理；该历史任务分配方案仅供追溯，当前实施状态以 `docs/phase1/统一课程建设实施状态.md` 和 PageDesign 待打通能力清单为准。
 - 真实后端：`backend/app/main.py`、路由、Service、SQLModel、Adapter、TaskRunner、RAG、配置、启动和部署文件。
 - 真实前端：`frontend/src/router/index.js`、`frontend/src/utils/request.js`、教师端、学生端、播放器、问答、进度、映射组件与 API。
 - 测试：M4A/M4B/M7、R1、R2B、R2C、课程范围检索与 RetrievalGateway 测试。
@@ -93,7 +93,7 @@
 
 1. `R2D0当前文档与图谱链路审计.md` 中“问答无课程隔离”已被提交 `622e3f1` 的 `RetrievalScope/RetrievalGateway` 修复；但持久索引、Evidence 和多文档仍未实现。
 2. `R2D0-P1A统一Retriever接口与知识作用域建模.md` 写有“未 commit/push”，实际代码已在 `622e3f1`，且当前相关分支均包含该提交。
-3. `M4B执行报告.md` 记录的首次选课、`my-courses` 路由和数字人业务失败缺陷，已由 `M4C缺陷修复报告.md` 和当前代码修复。M4B 仍应作为发现历史，不作为当前缺陷清单。
+3. 原 M4B/M4C 报告记录的缺陷已不再作为当前缺陷清单；如需查看原始记录，请使用 Git 历史并以当前代码复核。
 4. `R2C-TTS批量任务迁移报告.md` 的“尚未提交”回滚描述已过时；补齐提交 `1598abb` 已存在。
 5. `deploy/docker-compose.yml` 含 PostgreSQL/Neo4j，但当前 `database.py` 默认事实是 SQLite `database/smart_class.db`；compose 不能作为生产已迁移证据。
 6. `schemas/cognitive.py`、`schemas/graphrag.py`、`schemas/agent.py` 和对应 endpoint 只有注释，且未在 `main.py` 注册；前端 cognitive/graphrag/agent 组件也多为占位。

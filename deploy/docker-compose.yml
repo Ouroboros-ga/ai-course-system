@@ -1,27 +1,144 @@
-version: '3.8'
+# 统一课程建设九步实施计划 - 主栈 Compose。
+# 云端用此 Compose 管理 backend + paddleocr + postgres + redis + frontend/nginx。
+# Judge0 保持独立栈（deploy/judge0/docker-compose.yml），后端通过 127.0.0.1:2358 调用。
+#
+# 启动顺序由 depends_on.condition: service_healthy 控制：
+#   postgres/redis -> paddleocr(healthy) -> backend -> frontend
+# 本地开发用 scripts/dev-stack.{ps1,sh} 单独管理 OCR+后端，无需启动全套。
+#
+# 见 docs/phase1/decisions/2026-07-27-统一课程建设九步实施计划.md §6 Step 2。
+
 services:
   postgres:
     image: postgres:16
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_DB: codemind
       POSTGRES_USER: codemind
       POSTGRES_PASSWORD: codemind_dev_2026
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U codemind -d codemind"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_net
+
+  redis:
+    image: redis:7.2-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks:
+      - app_net
 
   neo4j:
     image: neo4j:5.20
     ports:
-      - "7474:7474"
-      - "7687:7687"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:7687:7687"
     environment:
       NEO4J_AUTH: neo4j/codemind_dev_2026
       NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - neo4j_data:/data
+    networks:
+      - app_net
+
+  paddleocr:
+    build:
+      context: ./paddleocr
+      dockerfile: Dockerfile
+    image: smartcarb/paddleocr:2.7.3-cpu
+    container_name: smartcarb-paddleocr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8090:8090"
+    environment:
+      PADDLEOCR_HOST: "0.0.0.0"
+      PADDLEOCR_PORT: "8090"
+      PADDLEOCR_WORKERS: "1"
+      PADDLEOCR_MAX_PAGES: "50"
+      PADDLEOCR_REQUEST_TIMEOUT_S: "300"
+      PADDLEOCR_HOME: /paddleocr_models
+      OMP_NUM_THREADS: "4"
+    volumes:
+      - paddleocr_models:/paddleocr_models
+    deploy:
+      resources:
+        limits:
+          cpus: "4.0"
+          memory: 4G
+        reservations:
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8090/health',timeout=4); sys.exit(0 if r.status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+      retries: 5
+    networks:
+      - app_net
+
+  backend:
+    build:
+      context: ../backend
+      dockerfile: ../deploy/Dockerfile.backend
+    container_name: smartcarb-backend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      # 主后端通过服务名访问 OCR；本地开发时 PADDLEOCR_URL=127.0.0.1:8090
+      AI_COURSE_DATABASE_URL: "postgresql://codemind:codemind_dev_2026@postgres:5432/codemind"
+      PADDLEOCR_URL: "http://paddleocr:8090"
+      PADDLEOCR_REQUIRED_FOR_PDF: "true"
+      PADDLEOCR_TIMEOUT_S: "300"
+      # Judge0 保持独立栈，通过 host 网关访问
+      JUDGE0_API_URL: "http://host.docker.internal:2358"
+      # 其余密钥通过 .env 注入，不写入镜像
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      paddleocr:
+        condition: service_healthy
+    networks:
+      - app_net
+
+  frontend:
+    image: nginx:1.27-alpine
+    container_name: smartcarb-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:80:80"
+    volumes:
+      - ../frontend/dist:/usr/share/nginx/html:ro
+      - ./nginx/frontend.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - backend
+    networks:
+      - app_net
 
 volumes:
   postgres_data:
+  redis_data:
   neo4j_data:
+  paddleocr_models:
+  backend_data:
+
+networks:
+  app_net:
+    driver: bridge

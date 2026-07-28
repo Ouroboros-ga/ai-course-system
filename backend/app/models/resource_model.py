@@ -54,12 +54,26 @@ class ResourceItemType(str, Enum):
     OTHER = "other"
 
 
+class ResourceLifecycleStatus(str, Enum):
+    """资源生命周期（Step 1）：草稿仅建设角色可读，发布版对有效课程成员开放。"""
+    DRAFT = "draft"
+    PUBLISHED = "published"
+    ARCHIVED = "archived"
+
+
+class ResourceVisibility(str, Enum):
+    """资源可见性：teachers 仅建设角色；course_members 对有效课程成员开放。"""
+    TEACHERS = "teachers"
+    COURSE_MEMBERS = "course_members"
+
+
 class ResourceItem(SQLModel, table=True):
     """通用资源项
 
     - 按 owner_user_id 与 course_id（可选）隔离
     - 软删除：is_deleted=True 后进入回收站，可恢复
     - 版本演进不破坏历史引用
+    - Step 1：lifecycle_status / visibility 控制草稿与发布的可见性
     """
 
     __tablename__ = "resource_items"
@@ -82,6 +96,16 @@ class ResourceItem(SQLModel, table=True):
     current_version_id: Optional[str] = Field(default=None, index=True)
     is_deleted: bool = Field(default=False, index=True)
     deleted_at: Optional[datetime] = Field(default=None)
+
+    # Step 1：草稿/发布生命周期与可见性
+    lifecycle_status: ResourceLifecycleStatus = Field(
+        default=ResourceLifecycleStatus.DRAFT, index=True,
+        description="draft|published|archived：草稿仅建设角色可读，发布版对有效课程成员开放",
+    )
+    visibility: ResourceVisibility = Field(
+        default=ResourceVisibility.TEACHERS, index=True,
+        description="teachers|course_members：控制资源可见范围",
+    )
 
     created_at: datetime = Field(default_factory=utcnow_aware)
     updated_at: datetime = Field(default_factory=utcnow_aware)
@@ -117,6 +141,20 @@ class ResourceVersion(SQLModel, table=True):
     content_hash: str = Field(default="", index=True, description="内容哈希用于去重")
     file_size: int = Field(default=0)
     mime_type: str = Field(default="")
+
+    # Step 1：解析溯源（Markdown 资源版本必须可追溯其来源解析运行/材料版本/源块）
+    material_version_id: Optional[str] = Field(
+        default=None, index=True,
+        description="生成该版本的 SourceMaterialVersion.version_id",
+    )
+    parse_run_id: Optional[str] = Field(
+        default=None, index=True,
+        description="生成该版本的 DocumentParseRun.run_id",
+    )
+    source_block_refs: Optional[list] = Field(
+        default=None, sa_column=Column(JSON),
+        description="[DocumentBlock.block_id, ...] Markdown 段落对应的源块引用",
+    )
 
     is_active: bool = Field(default=False, index=True, description="当前激活版本")
     uploaded_by: int = Field(foreign_key="users.id")

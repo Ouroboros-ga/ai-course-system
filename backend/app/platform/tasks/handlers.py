@@ -83,6 +83,9 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
     block_count = 0
     evidence_span_count = 0
     graph_candidate_count = 0
+    # Step 4 草稿资产构建产物引用（默认空；pipeline 成功后填充）
+    _draft_progress: dict = {}
+    _draft_warnings: list = []
     try:
         from app.services.document_parse_pipeline import (
             ParsePipelineError,
@@ -102,6 +105,40 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                     )
                 )
                 pipeline_session.commit()
+
+                # Step 4: 生成草稿资产（可观测子阶段），逐阶段记录 TaskRecord 进度。
+                # 解析产出 DocumentBlock 后并行生成 RAG/图谱/目录/讲稿/Markdown 草稿；
+                # 草稿不塞任务 JSON，Markdown 写为 ResourceItem/ResourceVersion(draft)。
+                try:
+                    from app.services.document_draft_builders import build_draft_assets
+
+                    def _progress(stage_name: str) -> None:
+                        with ctx.session_factory() as prog_session:
+                            ctx.service.mark_progress(
+                                prog_session, ctx.task_id,
+                                progress=0, stage=f"document_parse:{stage_name}",
+                                message=f"草稿资产构建：{stage_name}",
+                            )
+
+                    with ctx.session_factory() as draft_session:
+                        draft_result = build_draft_assets(
+                            draft_session,
+                            course_id=int(course_id),
+                            run_id=run_id,
+                            material_version_id=payload.get("material_version_id"),
+                            created_by=payload.get("initiated_by"),
+                            progress_cb=_progress,
+                        )
+                    # 暂存供下方 mark_succeeded 的 result_data 引用
+                    _draft_progress = draft_result.to_progress_data()
+                    _draft_warnings = list(draft_result.warnings)
+                except Exception as draft_exc:
+                    logger.exception(
+                        "document_parse_handler: draft asset build failed for run %s: %s",
+                        run_id, draft_exc,
+                    )
+                    _draft_progress = {}
+                    _draft_warnings = [f"draft asset build failed: {draft_exc}"]
             except ParsePipelineError as exc:
                 pipeline_session.rollback()
                 # 解析失败：标记 parse_run + task 为 failed，不伪装成功
@@ -177,6 +214,8 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 "block_count": block_count,
                 "evidence_span_count": evidence_span_count,
                 "graph_candidate_count": graph_candidate_count,
+                "draft_assets": _draft_progress,
+                "draft_warnings": _draft_warnings,
             },
         )
         # Keep the teacher-facing material list aligned with the durable task
