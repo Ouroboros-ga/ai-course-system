@@ -9,9 +9,9 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import UploadFile
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app.models.course_build_model import MaterialStatus
+from app.models.course_build_model import MaterialStatus, SourceMaterialVersion
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
 from app.services.course_build_service import source_material_service
 from app.services.document_parse_service import document_parse_service
@@ -69,7 +69,12 @@ class CourseMaterialUploadService:
             if total == 0:
                 raise ValueError("不能上传空文件")
 
-            object_key = f"course-source/u{user_id}/{uuid.uuid4().hex}/source{suffix}"
+            source_hash = digest.hexdigest()
+            existing = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.file_hash == source_hash,
+            ).order_by(SourceMaterialVersion.created_at.desc())).first()
+            object_reused = bool(existing and existing.file_path and get_object_storage().exists(existing.file_path))
+            object_key = existing.file_path if object_reused else f"course-source/u{user_id}/{uuid.uuid4().hex}/source{suffix}"
             staged.seek(0)
             try:
                 get_object_storage().put(
@@ -90,7 +95,7 @@ class CourseMaterialUploadService:
                 material_role=(material_role or _suggest_material_role(suffix)).strip(),
                 source_kind="upload",
                 file_path=object_key,
-                file_hash=digest.hexdigest(),
+                file_hash=source_hash,
                 file_size=total,
                 mime_type=file.content_type or "application/octet-stream",
                 created_by=user_id,
@@ -132,10 +137,11 @@ class CourseMaterialUploadService:
             session.commit()
         except Exception:
             session.rollback()
-            try:
-                get_object_storage().delete(object_key)
-            except Exception:
-                logger.warning("Could not clean orphaned course source object %s", object_key, exc_info=True)
+            if not object_reused:
+                try:
+                    get_object_storage().delete(object_key)
+                except Exception:
+                    logger.warning("Could not clean orphaned course source object %s", object_key, exc_info=True)
             raise
 
         self._submit_parse_task(course_id, run.run_id, material.material_id, version.version_id, user_id, task_view.task_id)
@@ -148,6 +154,7 @@ class CourseMaterialUploadService:
             "parse_status": version.parse_status.value,
             "name": original_name,
             "material_role": material.material_role,
+            "source_object_reused": object_reused,
         }
 
     @staticmethod
@@ -155,16 +162,9 @@ class CourseMaterialUploadService:
         try:
             from app.models.database import session_factory
             from app.platform.tasks.worker import local_task_worker
+            from app.platform.tasks.document_parse_queue import document_parse_queue
             if local_task_worker.has_handler("document_parse"):
-                local_task_worker.submit(session_factory, task_id, {
-                    "course_id": course_id,
-                    "run_id": run_id,
-                    "material_id": material_id,
-                    "material_version_id": version_id,
-                    "pipeline": ParsePipeline.FULL.value,
-                    "stale_strategy": StaleStrategy.MARK_STALE.value,
-                    "initiated_by": user_id,
-                })
+                document_parse_queue.submit(session_factory, local_task_worker, task_id)
             else:
                 logger.error("document_parse handler unavailable for task %s", task_id)
         except Exception:

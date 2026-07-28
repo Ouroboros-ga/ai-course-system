@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import hashlib
+import json
 import io
 import os
 import tempfile
@@ -38,6 +39,7 @@ from app.models.document_parse_model import (
     EvidenceSpan,
     GraphCandidateBatch,
     ParseRunStatus,
+    DocumentIRVersion,
 )
 from app.services.document_parse_service import (
     document_parse_service,
@@ -45,6 +47,36 @@ from app.services.document_parse_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+_CACHE_PARSER_VERSIONS = {
+    "canonical-projector": "1.0.0",
+    "native-pptx": "1.0.0",
+    "pdf-plumber": "1.0.0",
+    "python-docx": "1.0.0",
+    "tesseract-ocr": "1.0.0",
+}
+
+
+def _canonical_cache_key(*, source_sha256: str, parse_profile: str, pipeline: str) -> str:
+    """Stable pre-parse key; changing parser or IR contract invalidates reuse."""
+    from app.platform.document_intelligence.contracts import CURRENT_SCHEMA_VERSION
+    identity = {
+        "source_sha256": source_sha256,
+        "parser_profile": parse_profile,
+        "pipeline": pipeline,
+        "parser_versions": _CACHE_PARSER_VERSIONS,
+        "ir_schema_version": CURRENT_SCHEMA_VERSION.serialize(),
+    }
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _find_cached_ir(session: Session, cache_key: str) -> Optional[DocumentIRVersion]:
+    from app.services.object_storage import get_object_storage
+    candidates = session.exec(select(DocumentIRVersion).where(
+        DocumentIRVersion.cache_key == cache_key,
+    ).order_by(DocumentIRVersion.created_at.desc())).all()
+    storage = get_object_storage()
+    return next((item for item in candidates if item.object_key and storage.exists(item.object_key)), None)
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +194,42 @@ async def run_parse_pipeline(
         mime=version.mime_type or "application/octet-stream",
         uri=object_key,
     )
+
+    cache_key = _canonical_cache_key(
+        source_sha256=version.file_hash or source.sha256,
+        parse_profile=parse_run.parse_profile,
+        pipeline=pipeline,
+    )
+    cached = _find_cached_ir(session, cache_key)
+    if cached is not None:
+        from app.platform.document_intelligence.canonical import DocumentIRProjector
+        from app.platform.document_intelligence.document_ir.serialization import deserialize_document_ir
+        from app.services.object_storage import get_object_storage
+
+        cached_ir = deserialize_document_ir(get_object_storage().get(cached.object_key).decode("utf-8"))
+        stored_ir, block_count, evidence_span_count = DocumentIRProjector().persist_and_project(
+            session,
+            course_id=course_id,
+            material_version_id=material_version_id,
+            run_id=run_id,
+            previous_run_id=parse_run.prev_run_id,
+            document_ir=cached_ir,
+            quality_decision=None,
+            provider_versions=cached.parser_versions,
+            parse_outcome=cached.parse_outcome,
+            parser_profile=parse_run.parse_profile,
+            cache_key=cache_key,
+            cache_source=cached,
+        )
+        parse_run.document_id = cached_ir.document_id
+        parse_run.document_ir_version_id = stored_ir.ir_version_id
+        session.add(parse_run)
+        batch = graph_candidate_service.create_batch(session, course_id=course_id, parse_run_id=run_id, initiated_by=initiated_by)
+        nodes, relations = _build_graph_candidates(session, course_id=course_id, run_id=run_id, ir_version_id=stored_ir.ir_version_id)
+        graph_candidate_service.mark_succeeded(session, batch_id=batch.batch_id, course_id=course_id,
+                                              node_candidate_count=len(nodes), relation_candidate_count=len(relations),
+                                              node_candidates=nodes, relation_candidates=relations)
+        return block_count, evidence_span_count, 1
 
     # Legacy binary Office is accepted by the import API but has no native
     # parser. Convert it inside this worker to a transient PDF and use that
@@ -443,6 +511,8 @@ async def run_parse_pipeline(
         quality_decision=quality_decision,
         provider_versions=provider_versions,
         parse_outcome=_parse_outcome(quality_decision, provider_versions, warnings),
+        parser_profile=parse_run.parse_profile,
+        cache_key=cache_key,
     )
     parse_run.document_id = document_ir.document_id
     parse_run.document_ir_version_id = stored_ir.ir_version_id

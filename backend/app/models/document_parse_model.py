@@ -118,6 +118,19 @@ class DocumentParseRun(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
+class DocumentParseOwnerLease(SQLModel, table=True):
+    """One durable parser lease per owner; queued work is represented by TaskRecord."""
+
+    __tablename__ = "document_parse_owner_leases"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    owner_user_id: int = Field(unique=True, index=True)
+    task_id: str = Field(default="", index=True)
+    lease_token: str = Field(default="", index=True)
+    lease_expires_at: Optional[datetime] = Field(default=None, index=True)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
 # ---------------------------------------------------------------------------
 # 文档块（DocumentIR 最小可引用单元）
 # ---------------------------------------------------------------------------
@@ -226,6 +239,8 @@ class DocumentIRVersion(SQLModel, table=True):
     artifact_id: str = Field(index=True)
     source_sha256: str = Field(default="", index=True)
     schema_version: str = Field(default="document-ir/1.0")
+    parser_profile: str = Field(default="standard", max_length=40, index=True)
+    cache_key: str = Field(default="", max_length=128, index=True)
     object_key: str = Field(default="", description="Immutable canonical JSON object key")
     content_hash: str = Field(default="", index=True)
     parser_versions: dict = Field(default_factory=dict, sa_column=Column(JSON))

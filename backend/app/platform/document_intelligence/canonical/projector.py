@@ -42,37 +42,46 @@ class DocumentIRProjector:
         quality_decision: Any,
         provider_versions: dict[str, str],
         parse_outcome: str,
+        parser_profile: str = "standard",
+        cache_key: str = "",
+        cache_source: DocumentIRVersion | None = None,
     ) -> tuple[StoredDocumentIR, int, int]:
         raw = serialize_document_ir(document_ir, indent=2)
-        content_hash = hashlib.sha256(raw.encode("utf-8")).hexdigest()
+        content_hash = cache_source.content_hash if cache_source else hashlib.sha256(raw.encode("utf-8")).hexdigest()
         previous = self._previous_version(session, previous_run_id)
         version = DocumentIRVersion(
             course_id=course_id,
             material_version_id=material_version_id,
             run_id=run_id,
             document_id=document_ir.document_id,
-            artifact_id=document_ir.source_artifact.artifact_id,
-            source_sha256=document_ir.source_artifact.sha256,
-            schema_version=document_ir.schema_version,
+            artifact_id=cache_source.artifact_id if cache_source else document_ir.source_artifact.artifact_id,
+            source_sha256=cache_source.source_sha256 if cache_source else document_ir.source_artifact.sha256,
+            schema_version=cache_source.schema_version if cache_source else document_ir.schema_version,
+            parser_profile=parser_profile,
+            cache_key=cache_key,
             content_hash=content_hash,
-            parser_versions=provider_versions,
-            quality=document_ir.quality.to_dict() if document_ir.quality else {},
-            quality_verdict=quality_decision.verdict.value,
-            parse_outcome=parse_outcome,
-            needs_review=quality_decision.needs_review,
-            warning_count=len(document_ir.warnings),
+            parser_versions=cache_source.parser_versions if cache_source else provider_versions,
+            quality=cache_source.quality if cache_source else (document_ir.quality.to_dict() if document_ir.quality else {}),
+            quality_verdict=cache_source.quality_verdict if cache_source else quality_decision.verdict.value,
+            parse_outcome=cache_source.parse_outcome if cache_source else parse_outcome,
+            needs_review=cache_source.needs_review if cache_source else quality_decision.needs_review,
+            warning_count=cache_source.warning_count if cache_source else len(document_ir.warnings),
             prev_ir_version_id=previous.ir_version_id if previous else None,
         )
         session.add(version)
         session.flush()
-        object_key = f"document-ir/course{course_id}/{document_ir.document_id}/{version.ir_version_id}.json"
+        object_key = cache_source.object_key if cache_source else f"document-ir/course{course_id}/{document_ir.document_id}/{version.ir_version_id}.json"
         storage = get_object_storage()
-        payload = raw.encode("utf-8")
-        if storage.exists(object_key):
-            if storage.get(object_key) != payload:
-                raise RuntimeError(f"Immutable Canonical DocumentIR key collision: {object_key}")
+        if cache_source is not None:
+            if not storage.exists(object_key):
+                raise RuntimeError(f"Cached Canonical DocumentIR object missing: {object_key}")
         else:
-            storage.put(object_key, payload, mime_type="application/json")
+            payload = raw.encode("utf-8")
+            if storage.exists(object_key):
+                if storage.get(object_key) != payload:
+                    raise RuntimeError(f"Immutable Canonical DocumentIR key collision: {object_key}")
+            else:
+                storage.put(object_key, payload, mime_type="application/json")
         version.object_key = object_key
         session.add(version)
 

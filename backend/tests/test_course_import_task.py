@@ -24,6 +24,9 @@ class _MemoryObjectStorage:
         self.objects.pop(object_key, None)
         return True
 
+    def exists(self, object_key):
+        return object_key in self.objects
+
 
 def test_course_import_persists_draft_material_and_parse_task(client, session, monkeypatch):
     """The request may finish, but parsing is represented by durable DB state."""
@@ -122,3 +125,16 @@ def test_empty_course_then_multiple_material_uploads_share_one_workspace(client,
         "primary_courseware", "textbook", "experiment_guide",
     }
     assert len(session.exec(select(TaskRecord).where(TaskRecord.course_id == course_id)).all()) == 3
+
+    reused = client.post(
+        f"/api/v1/courses/{course_id}/materials",
+        files=[("files", ("book-copy.pdf", b"pdf", "application/pdf"))],
+        headers=headers,
+    )
+    assert reused.status_code == 200
+    assert reused.json()["data"]["items"][0]["source_object_reused"] is True
+    versions = session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.file_hash == "c35b21d6ca39aa7cc3b79a705d989f1a6e88b99ab43988d74048799e3db926a3",
+    )).all()
+    assert len({version.file_path for version in versions}) == 1

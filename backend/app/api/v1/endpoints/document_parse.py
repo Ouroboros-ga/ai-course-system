@@ -402,20 +402,10 @@ async def create_ingestion(
     # 若 worker 已注册 handler（main.py startup 调用 register_all_handlers），则异步执行
     try:
         from app.platform.tasks.worker import local_task_worker
+        from app.platform.tasks.document_parse_queue import document_parse_queue
         from app.models.database import session_factory as _session_factory
         if local_task_worker.has_handler("document_parse"):
-            local_task_worker.submit(
-                _session_factory,
-                task_view.task_id,
-                {
-                    "course_id": course_id,
-                    "run_id": run.run_id,
-                    "material_id": payload.material_id,
-                    "material_version_id": version_id,
-                    "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
-                    "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
-                },
-            )
+            document_parse_queue.submit(_session_factory, local_task_worker, task_view.task_id)
     except Exception:
         # worker 触发失败不影响任务记录创建；任务停留在 pending，前端可重试
         import logging
@@ -561,15 +551,9 @@ async def reparse_material(
     try:
         from app.models.database import session_factory as _session_factory
         from app.platform.tasks.worker import local_task_worker
+        from app.platform.tasks.document_parse_queue import document_parse_queue
         if local_task_worker.has_handler("document_parse"):
-            local_task_worker.submit(_session_factory, task_view.task_id, {
-                "course_id": course_id,
-                "run_id": run.run_id,
-                "material_id": payload.material_id,
-                "material_version_id": version_id,
-                "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
-                "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
-            })
+            document_parse_queue.submit(_session_factory, local_task_worker, task_view.task_id)
     except Exception:
         import logging
         logging.getLogger(__name__).warning("Failed to submit reparse task %s", task_view.task_id, exc_info=True)

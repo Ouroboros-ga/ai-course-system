@@ -607,6 +607,7 @@ class TaskService:
         stale = session.exec(
             select(TaskRecord).where(
                 TaskRecord.status.in_(["pending", "running"]),
+                TaskRecord.task_type != "document_parse",
                 TaskRecord.updated_at <= cutoff,
             )
         ).all()
