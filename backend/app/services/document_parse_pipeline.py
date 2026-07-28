@@ -202,6 +202,10 @@ async def run_parse_pipeline(
     )
     cached = _find_cached_ir(session, cache_key)
     if cached is not None:
+        logger.info(
+            "document_parse cache hit: run=%s source_sha256=%s canonical_ir=%s",
+            run_id, (version.file_hash or source.sha256)[:16], cached.ir_version_id,
+        )
         from app.platform.document_intelligence.canonical import DocumentIRProjector
         from app.platform.document_intelligence.document_ir.serialization import deserialize_document_ir
         from app.services.object_storage import get_object_storage

@@ -75,6 +75,8 @@ class CourseMaterialUploadService:
             ).order_by(SourceMaterialVersion.created_at.desc())).first()
             object_reused = bool(existing and existing.file_path and get_object_storage().exists(existing.file_path))
             object_key = existing.file_path if object_reused else f"course-source/u{user_id}/{uuid.uuid4().hex}/source{suffix}"
+            if object_reused:
+                logger.info("course source object reused: sha256=%s object_key=%s", source_hash[:16], object_key)
             staged.seek(0)
             try:
                 get_object_storage().put(
