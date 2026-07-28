@@ -106,6 +106,7 @@ from app.api.v1.endpoints import (
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_build,       # 阶段3 课程建设工作流
     course_build_editor, # Step 5-8 课程树/讲稿/提案/发布
+    course_outline,
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
@@ -301,6 +302,11 @@ app.include_router(
     course_build_editor.router,
     prefix="/api/v1/course-editor",
     tags=["课程树、讲稿与备课提案"],
+)
+app.include_router(
+    course_outline.course_outline_router,
+    prefix="/api/v1/course-outline",
+    tags=["课程版本化结构与讲稿"],
 )
 
 # 阶段4：课程材料解析、Evidence、Citation 与图谱治理

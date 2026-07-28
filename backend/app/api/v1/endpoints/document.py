@@ -499,8 +499,8 @@ async def _create_course_import_core(
                 "course_id": course.id,
                 "material_id": material.material_id,
                 "material_version_id": version.version_id,
-                "pipeline": ParsePipeline.FULL.value,
                 "stale_strategy": StaleStrategy.MARK_STALE.value,
+                "initiated_by": user_id,
             },
             resource_links=[
                 {"resource_kind": "course", "resource_id": str(course.id), "relation": "input"},
@@ -549,8 +549,8 @@ async def _create_course_import_core(
                     "run_id": run.run_id,
                     "material_id": material.material_id,
                     "material_version_id": version.version_id,
-                    "pipeline": ParsePipeline.FULL.value,
                     "stale_strategy": StaleStrategy.MARK_STALE.value,
+                    "initiated_by": user_id,
                 },
             )
         else:
@@ -1417,33 +1417,19 @@ async def publish_course(
     session: Session = Depends(get_session),
     _access: CourseAccessContext = Depends(course_permission("course.publish")),
 ):
+    """Deprecated compatibility endpoint.
+
+    Publishing is only valid through the course-build release gate, which
+    freezes the material corpus, retrieval snapshot, outline and script.
     """
-    发布课程（老师操作）
-    
-    将课程状态从 draft 改为 published，学生可以看到并选择该课程
-    """
-    try:
-        course = session.get(Course, course_id)
-        if not course:
-            return unified_response(code=404, message="课程不存在")
-
-        if course.status == CourseStatus.PUBLISHED:
-            return unified_response(code=200, message="课程已是发布状态", data={"status": "published"})
-
-        # 更新状态为已发布
-        course.status = CourseStatus.PUBLISHED
-        course.updated_at = utcnow_aware()
-        session.add(course)
-        session.commit()
-
-        return unified_response(code=200, message="课程发布成功", data={"status": "published"})
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(code=500, message=f"发布失败: {str(e)}", data=None)
-
-
+    return unified_response(
+        code=410,
+        message="直接发布入口已下线，请使用课程建设发布流程",
+        data={
+            "error_code": "COURSE_RELEASE_REQUIRED",
+            "publish_endpoint": f"/api/v1/course-editor/course/{course_id}/publish",
+        },
+    )
 @router.post("/course/{course_id}/unpublish")
 async def unpublish_course(
     course_id: int,

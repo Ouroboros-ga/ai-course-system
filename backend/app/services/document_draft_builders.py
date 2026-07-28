@@ -57,6 +57,7 @@ class DraftAssetResult:
     course_id: int
     run_id: str
     material_version_id: Optional[str]
+    corpus_snapshot_id: Optional[str] = None
     outline_version_id: Optional[str] = None
     script_version_id: Optional[str] = None
     rag_indexed_chunks: int = 0
@@ -140,10 +141,12 @@ def build_outline_draft(
     session: Session,
     *,
     course_id: int,
-    run_id: str,
+    run_id: Optional[str],
     material_version_id: Optional[str],
     blocks: list[DocumentBlock],
-    created_by: Optional[int],
+    created_by: Optional[int] = None,
+    corpus_snapshot_id: Optional[str] = None,
+    build_task_id: Optional[str] = None,
 ) -> tuple[str, int]:
     """从 DocumentBlock 生成课程目录草稿（CourseOutlineVersion + Node）。
 
@@ -151,10 +154,15 @@ def build_outline_draft(
     （chapter/section/knowledge_point）由 Step 5 教师编辑或后续 LLM 优化。
     返回 (outline_version_id, node_count)。
     """
+    latest = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.course_id == course_id,
+    ).order_by(CourseOutlineVersion.version.desc())).first()
     version = CourseOutlineVersion(
-        course_id=course_id, version=1,
+        course_id=course_id, version=(latest.version + 1) if latest else 1,
         lifecycle_status=OutlineLifecycleStatus.DRAFT,
         source_parse_run_id=run_id, created_by=created_by,
+        corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
+        generation_source="agent_initial_generation", review_status="pending",
     )
     session.add(version)
     session.flush()
@@ -283,21 +291,29 @@ def build_teaching_script_draft(
     session: Session,
     *,
     course_id: int,
-    run_id: str,
+    run_id: Optional[str],
     outline_version_id: str,
     outline_node_ids: list[str],
     blocks_by_node: dict[str, list[DocumentBlock]],
-    created_by: Optional[int],
+    created_by: Optional[int] = None,
+    corpus_snapshot_id: Optional[str] = None,
+    build_task_id: Optional[str] = None,
 ) -> tuple[str, int]:
     """根据草稿目录 + Evidence 生成讲稿草稿（TeachingScriptNode）。
 
     与目录版本对齐（同一 outline_version_id），保证目录与讲稿发布状态一致。
     返回 (script_version_id, node_count)。
     """
+    latest = session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.course_id == course_id,
+    ).order_by(TeachingScriptVersion.version.desc())).first()
     script_version = TeachingScriptVersion(
-        course_id=course_id, outline_version_id=outline_version_id, version=1,
+        course_id=course_id, outline_version_id=outline_version_id,
+        version=(latest.version + 1) if latest else 1,
         lifecycle_status=OutlineLifecycleStatus.DRAFT,
         source_parse_run_id=run_id, created_by=created_by,
+        corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
+        generation_source="agent_initial_generation", review_status="pending",
     )
     session.add(script_version)
     session.flush()
@@ -418,9 +434,11 @@ def build_draft_assets(
     session: Session,
     *,
     course_id: int,
-    run_id: str,
-    material_version_id: Optional[str],
-    created_by: Optional[int],
+    run_id: Optional[str] = None,
+    material_version_id: Optional[str] = None,
+    created_by: Optional[int] = None,
+    corpus_snapshot_id: Optional[str] = None,
+    build_task_id: Optional[str] = None,
     progress_cb=None,
 ) -> DraftAssetResult:
     """解析后生成全部草稿资产，逐子阶段回调进度。
@@ -433,14 +451,24 @@ def build_draft_assets(
     保证发布状态一致。
     """
     result = DraftAssetResult(
-        course_id=course_id, run_id=run_id, material_version_id=material_version_id,
+        course_id=course_id, run_id=run_id or "", material_version_id=material_version_id,
+        corpus_snapshot_id=corpus_snapshot_id,
     )
-    blocks = session.exec(
-        select(DocumentBlock).where(
-            DocumentBlock.run_id == run_id,
-            DocumentBlock.course_id == course_id,
-        ).order_by(DocumentBlock.order_index)
-    ).all()
+    stmt = select(DocumentBlock).where(DocumentBlock.course_id == course_id)
+    if corpus_snapshot_id:
+        from app.models.course_build_model import CourseCorpusSnapshot
+        corpus = session.exec(select(CourseCorpusSnapshot).where(
+            CourseCorpusSnapshot.course_id == course_id,
+            CourseCorpusSnapshot.corpus_snapshot_id == corpus_snapshot_id,
+        )).first()
+        if corpus is None:
+            raise ValueError("course corpus snapshot not found")
+        stmt = stmt.where(DocumentBlock.run_id.in_(list(corpus.parse_run_ids or [])))
+    elif run_id:
+        stmt = stmt.where(DocumentBlock.run_id == run_id)
+    else:
+        raise ValueError("run_id or corpus_snapshot_id is required")
+    blocks = session.exec(stmt.order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all()
     if not blocks:
         result.warnings.append("no DocumentBlock found; skipping draft asset build")
         return result
@@ -454,22 +482,11 @@ def build_draft_assets(
 
     # 1. RAG 草稿索引
     _stage("rag_index_draft")
-    try:
-        result.rag_indexed_chunks = build_rag_index_draft(
-            session, course_id=course_id, run_id=run_id,
-            material_version_id=material_version_id, blocks=list(blocks),
-        )
-    except Exception as exc:
-        result.warnings.append(f"rag_index_draft failed: {exc}")
+    result.rag_indexed_chunks = sum(1 for block in blocks if len((block.text or "").strip()) >= 5)
 
     # 2. 图谱候选草稿
     _stage("graph_draft")
-    try:
-        n, r = build_graph_draft(session, course_id=course_id, run_id=run_id, blocks=list(blocks))
-        result.graph_node_candidates = n
-        result.graph_relation_candidates = r
-    except Exception as exc:
-        result.warnings.append(f"graph_draft failed: {exc}")
+    result.warnings.append("graph candidates remain material-level parser output")
 
     # 3. 课程目录草稿
     _stage("outline_draft")
@@ -478,6 +495,7 @@ def build_draft_assets(
             session, course_id=course_id, run_id=run_id,
             material_version_id=material_version_id,
             blocks=list(blocks), created_by=created_by,
+            corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
         )
         result.outline_version_id = ov_id
         result.outline_node_count = node_count
@@ -510,6 +528,7 @@ def build_draft_assets(
                 outline_version_id=result.outline_version_id,
                 outline_node_ids=[n.outline_node_id for n in script_nodes],
                 blocks_by_node=blocks_by_node, created_by=created_by,
+                corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
             )
             result.script_version_id = sv_id
             result.script_node_count = scount
@@ -528,6 +547,13 @@ def build_draft_assets(
         result.markdown_resource_version_id = vid
     except Exception as exc:
         result.warnings.append(f"markdown_resource_draft failed: {exc}")
+
+    # Deprecated compatibility block: initial generation is already a pending
+    # system draft. It must not also create a duplicate accept/reject proposal.
+    return_after_initial_draft = True
+    if return_after_initial_draft:
+        session.commit()
+        return result
 
     # First import is a teacher-reviewable proposal, never a direct mutation.
     # Existing proposals are left untouched so a retry cannot duplicate them.

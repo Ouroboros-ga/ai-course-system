@@ -594,7 +594,7 @@ async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, sessi
         task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
         input_summary=f"解析课程 {course_id} 的 AI PPT", input_payload={
             "course_id": course_id, "material_id": material.material_id, "material_version_id": version.version_id,
-            "pipeline": ParsePipeline.FULL.value, "stale_strategy": StaleStrategy.MARK_STALE.value,
+            "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id,
         }, resource_links=[{"resource_kind": "course", "resource_id": str(course_id), "relation": "input"}],
     ))
     run = document_parse_service.create_run(session, course_id=course_id, material_id=material.material_id, material_version_id=version.version_id,
@@ -604,7 +604,7 @@ async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, sessi
     session.add(version)
     session.commit()
     if local_task_worker.has_handler("document_parse"):
-        local_task_worker.submit(session_factory, task_view.task_id, {"course_id": course_id, "run_id": run.run_id, "material_id": material.material_id, "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value, "stale_strategy": StaleStrategy.MARK_STALE.value})
+        local_task_worker.submit(session_factory, task_view.task_id, {"course_id": course_id, "run_id": run.run_id, "material_id": material.material_id, "material_version_id": version.version_id, "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id})
     return unified_response(202, "AI PPT 已生成并进入统一解析链", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
 
 
@@ -636,7 +636,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
         task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
         input_summary=f"解析课程 {course_id} 的教学 PPT {filename}", input_payload={
             "course_id": course_id, "material_id": material.material_id, "material_version_id": version.version_id,
-            "pipeline": ParsePipeline.FULL.value, "stale_strategy": StaleStrategy.MARK_STALE.value,
+            "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id,
         }, resource_links=[{"resource_kind":"course","resource_id":str(course_id),"relation":"input"}],
     ))
     run = document_parse_service.create_run(session, course_id=course_id, material_id=material.material_id,
@@ -648,8 +648,8 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
     if local_task_worker.has_handler("document_parse"):
         local_task_worker.submit(session_factory, task_view.task_id, {
             "course_id": course_id, "run_id": run.run_id, "material_id": material.material_id,
-            "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value,
-            "stale_strategy": StaleStrategy.MARK_STALE.value,
+            "material_version_id": version.version_id, "stale_strategy": StaleStrategy.MARK_STALE.value,
+            "initiated_by": context.user_id,
         })
     return unified_response(202, "PPT 已上传，正在重新解析并建立映射", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
 
@@ -703,30 +703,71 @@ async def publish_course_build(course_id: int, session: Session = Depends(get_se
 @router.get("/course/{course_id}/published-content")
 async def get_published_content(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.view")
-    outline = _published_outline(session, course_id)
-    if not outline: return unified_response(200, "课程尚无已发布内容", {"outline": [], "scripts": []})
-    nodes = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_version_id == outline.outline_version_id).order_by(CourseOutlineNode.order_index)).all()
-    script = session.exec(select(TeachingScriptVersion).where(TeachingScriptVersion.course_id == course_id, TeachingScriptVersion.outline_version_id == outline.outline_version_id, TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED)).first()
-    scripts = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script.script_version_id)).all() if script else []
-    mappings = session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id, CoursePptMapping.status == "published")).all()
-    return unified_response(200, "获取已发布课程内容成功", {"outline_version_id": outline.outline_version_id, "outline": [_outline_node_view(n) for n in nodes], "scripts": [_script_node_view(n) for n in scripts], "ppt_mappings": [_ppt_mapping_view(item) for item in mappings]})
+    release = course_release_service.get_active_release(session, course_id=course_id)
+    if not release:
+        return unified_response(200, "课程尚无已发布内容", {"outline": [], "scripts": []})
+    outline = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.course_id == course_id,
+        CourseOutlineVersion.outline_version_id == release.outline_version_id,
+    )).first()
+    if not outline:
+        raise HTTPException(409, "发布版本缺少课程结构，请回滚或重新发布")
+    nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+    ).order_by(CourseOutlineNode.order_index)).all()
+    script = session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.course_id == course_id,
+        TeachingScriptVersion.script_version_id == release.script_version_id,
+    )).first()
+    scripts = session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.script_version_id == script.script_version_id,
+    )).all() if script else []
+    return unified_response(200, "获取已发布课程内容成功", {
+        "release_id": release.release_id,
+        "outline_version_id": outline.outline_version_id,
+        "outline": [_outline_node_view(node) for node in nodes],
+        "scripts": [_script_node_view(node) for node in scripts],
+        "ppt_mappings": (release.page_mappings_snapshot or {}).get("items", []),
+    })
 @router.get("/course/{course_id}/published-learning-units")
 async def get_published_learning_units(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.view")
-    outline = _published_outline(session, course_id)
-    if not outline:
+    release = course_release_service.get_active_release(session, course_id=course_id)
+    if not release:
         return unified_response(200, "课程暂无已发布内容", {"items": [], "total": 0})
-    nodes = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_version_id == outline.outline_version_id).order_by(CourseOutlineNode.order_index)).all()
-    script = session.exec(select(TeachingScriptVersion).where(TeachingScriptVersion.course_id == course_id, TeachingScriptVersion.outline_version_id == outline.outline_version_id, TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED)).first()
-    scripts = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script.script_version_id)).all() if script else []
-    mappings = session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id, CoursePptMapping.status == "published")).all()
+    outline = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.course_id == course_id,
+        CourseOutlineVersion.outline_version_id == release.outline_version_id,
+    )).first()
+    if not outline:
+        raise HTTPException(409, "发布版本缺少课程结构，请回滚或重新发布")
+    nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+    ).order_by(CourseOutlineNode.order_index)).all()
+    script = session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.course_id == course_id,
+        TeachingScriptVersion.script_version_id == release.script_version_id,
+    )).first()
+    scripts = session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.script_version_id == script.script_version_id,
+    )).all() if script else []
     by_script = {item.outline_node_id: item for item in scripts}
-    by_mapping = {item.outline_node_id: item for item in mappings}
+    by_mapping = {item["outline_node_id"]: item for item in (release.page_mappings_snapshot or {}).get("items", [])}
     by_id = {item.outline_node_id: item for item in nodes}
     items = []
     for node in nodes:
         if node.node_type != OutlineNodeType.KNOWLEDGE_POINT:
             continue
         children = [item for item in nodes if item.parent_node_id == node.outline_node_id]
-        items.append({"unit_id": node.outline_node_id, "section_id": node.parent_node_id, "knowledge_point": _outline_node_view(node), "script": _script_node_view(by_script[node.outline_node_id]) if node.outline_node_id in by_script else None, "ppt_mapping": _ppt_mapping_view(by_mapping[node.outline_node_id]) if node.outline_node_id in by_mapping else None, "examples": [_outline_node_view(item) for item in children if item.node_type == OutlineNodeType.EXAMPLE], "practice_suggestions": [_outline_node_view(item) for item in children if item.node_type == OutlineNodeType.PRACTICE_SUGGESTION], "section": _outline_node_view(by_id[node.parent_node_id]) if node.parent_node_id in by_id else None, "playable": True})
-    return unified_response(200, "获取学习单元成功", {"outline_version_id": outline.outline_version_id, "items": items, "total": len(items)})
+        items.append({
+            "unit_id": node.outline_node_id,
+            "section_id": node.parent_node_id,
+            "knowledge_point": _outline_node_view(node),
+            "script": _script_node_view(by_script[node.outline_node_id]) if node.outline_node_id in by_script else None,
+            "ppt_mapping": by_mapping.get(node.outline_node_id),
+            "examples": [_outline_node_view(item) for item in children if item.node_type == OutlineNodeType.EXAMPLE],
+            "practice_suggestions": [_outline_node_view(item) for item in children if item.node_type == OutlineNodeType.PRACTICE_SUGGESTION],
+            "section": _outline_node_view(by_id[node.parent_node_id]) if node.parent_node_id in by_id else None,
+            "playable": True,
+        })
+    return unified_response(200, "获取学习单元成功", {"release_id": release.release_id, "outline_version_id": outline.outline_version_id, "items": items, "total": len(items)})

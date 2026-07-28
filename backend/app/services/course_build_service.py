@@ -31,6 +31,8 @@ from app.models.course_build_model import (
     CourseQualityGateRun,
     CourseRelease,
     CourseReleaseArtifact,
+    CourseCorpusSnapshot,
+    CourseRetrievalSnapshot,
     GateSeverity,
     MaterialStatus,
     ReleaseStatus,
@@ -385,6 +387,12 @@ class CourseBuildService:
             "label": r.label,
             "release_notes": r.release_notes,
             "content_hash": r.content_hash,
+            "corpus_snapshot_id": r.corpus_snapshot_id,
+            "retrieval_snapshot_id": r.retrieval_snapshot_id,
+            "material_version_ids": r.material_version_ids or [],
+            "document_ir_run_ids": r.document_ir_run_ids or [],
+            "outline_version_id": r.outline_version_id,
+            "script_version_id": r.script_version_id,
             "quality_gate_passed": r.quality_gate_passed,
             "quality_gate_run_id": r.quality_gate_run_id,
             "published_by": r.published_by,
@@ -655,6 +663,34 @@ class QualityGateService:
                 "message": "所有材料已解析",
             })
 
+        corpus = session.exec(select(CourseCorpusSnapshot).where(
+            CourseCorpusSnapshot.course_id == course_id,
+            CourseCorpusSnapshot.status == "ready",
+        ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
+        if corpus is None:
+            checks.append({
+                "check_id": "corpus.release_ready",
+                "name": "课程材料快照",
+                "severity": GateSeverity.ERROR.value,
+                "passed": False,
+                "message": "尚未形成包含全部已解析材料的课程语料快照",
+            })
+            error_count += 1
+        else:
+            retrieval = session.exec(select(CourseRetrievalSnapshot).where(
+                CourseRetrievalSnapshot.course_id == course_id,
+                CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
+                CourseRetrievalSnapshot.status == "ready",
+            )).first()
+            if retrieval is None:
+                checks.append({
+                    "check_id": "retrieval.release_ready",
+                    "name": "课程检索快照",
+                    "severity": GateSeverity.ERROR.value,
+                    "passed": False,
+                    "message": "课程语料尚未形成可发布的检索快照",
+                })
+                error_count += 1
         # 检查 3：七步中 materials/structure/scripts 必须非 NOT_STARTED
         steps = session.exec(
             select(CourseBuildStep).where(CourseBuildStep.course_id == course_id)
@@ -866,6 +902,20 @@ class CourseReleaseService:
         if release.status == ReleaseStatus.ROLLED_BACK:
             reject_state_conflict("发布已被回滚，不可再发布")
 
+        corpus = session.exec(select(CourseCorpusSnapshot).where(
+            CourseCorpusSnapshot.course_id == course_id,
+            CourseCorpusSnapshot.status == "ready",
+        ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
+        if corpus is None:
+            reject_state_conflict("没有可冻结的课程材料快照")
+        retrieval = session.exec(select(CourseRetrievalSnapshot).where(
+            CourseRetrievalSnapshot.course_id == course_id,
+            CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
+            CourseRetrievalSnapshot.status == "ready",
+        )).first()
+        if retrieval is None:
+            reject_state_conflict("没有可冻结的课程检索快照")
+
         # 质量门禁
         if run_quality_gate:
             gate_run = quality_gate_service.run_checks(
@@ -909,6 +959,12 @@ class CourseReleaseService:
             release.graph_snapshot_ref = graph_snapshot_ref
         if evidence_refs is not None:
             release.evidence_refs = evidence_refs
+        release.material_version_ids = list(corpus.material_version_ids or [])
+        release.document_ir_run_ids = list(corpus.parse_run_ids or [])
+        release.corpus_snapshot_id = corpus.corpus_snapshot_id
+        release.retrieval_snapshot_id = retrieval.retrieval_snapshot_id
+        release.outline_version_id = (release.structure_snapshot or {}).get("outline_version_id")
+        release.script_version_id = (release.scripts_snapshot or {}).get("script_version_id")
 
         release.status = ReleaseStatus.PUBLISHED
         release.is_active = True
@@ -960,6 +1016,12 @@ class CourseReleaseService:
             media_snapshot=dict(target.media_snapshot),
             graph_snapshot_ref=target.graph_snapshot_ref,
             evidence_refs=list(target.evidence_refs),
+            material_version_ids=list(target.material_version_ids or []),
+            document_ir_run_ids=list(target.document_ir_run_ids or []),
+            corpus_snapshot_id=target.corpus_snapshot_id,
+            retrieval_snapshot_id=target.retrieval_snapshot_id,
+            outline_version_id=target.outline_version_id,
+            script_version_id=target.script_version_id,
             quality_gate_passed=True,
             published_by=actor_user_id,
             published_at=utcnow_aware(),

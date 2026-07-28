@@ -96,7 +96,7 @@ async def run_parse_pipeline(
     run_id: str,
     material_id: str,
     material_version_id: Optional[str],
-    pipeline: str = "full",
+    pipeline: str = "standard",
     stale_strategy: str = "mark_stale",
 ) -> tuple[int, int, int]:
     """执行真实解析流水线，返回 (block_count, evidence_span_count, graph_candidate_count)。
@@ -149,6 +149,12 @@ async def run_parse_pipeline(
     probe = DocumentProbe()
     probe_result = probe.probe(content, filename=object_key, mime=version.mime_type or "")
 
+    if not probe_result.is_parseable():
+        raise ParsePipelineError(
+            "SOURCE_REUPLOAD_REQUIRED",
+            probe_result.error or f"Unsupported source format for {object_key}",
+        )
+
     # 4. 规划解析步骤
     from app.platform.document_intelligence.planner import ParsePlanner
     planner = ParsePlanner()
@@ -157,6 +163,11 @@ async def run_parse_pipeline(
     planner.set_available_providers(list(registry.list_providers()))
     artifact_id = f"art_{uuid.uuid4().hex}"
     plan = planner.plan(probe_result, artifact_id)
+    required_ocr_pages = {
+        page for step in plan.steps
+        if step.priority.value == "enrichment" and step.provider_name in {"tesseract-ocr", "paddleocr"}
+        for page in (step.config.get("pages") or [])
+    }
 
     # 5. 查找并执行 Provider
     from app.platform.document_intelligence.source_artifact import SourceArtifact
@@ -282,6 +293,16 @@ async def run_parse_pipeline(
             f"All providers failed for {object_key}. Warnings: {warnings}",
         )
 
+    # Planner-required OCR is a quality boundary. Native text can remain as a
+    # partial result for teacher review, but it must never be reported as a
+    # complete parse when the required OCR pages were not obtained.
+    ocr_pages_done = {
+        int(block.get("page_or_slide") or 0) for block in enrichment_blocks
+    }
+    missing_required_ocr = sorted(required_ocr_pages - ocr_pages_done)
+    if missing_required_ocr:
+        warnings.append(f"required OCR unavailable for pages: {missing_required_ocr}")
+
     # 6. 写入 DocumentBlock + EvidenceSpan 候选（带解析溯源字段）
     block_count = 0
     evidence_span_count = 0
@@ -387,6 +408,11 @@ async def run_parse_pipeline(
         relation_candidate_count=relation_count,
     )
 
+    if missing_required_ocr:
+        raise ParsePipelineError(
+            "OCR_REQUIRED_REVIEW",
+            f"Required OCR was not completed for pages {missing_required_ocr}; native extraction was retained for review.",
+        )
     return block_count, evidence_span_count, 1  # graph_candidate_count=1（一个 batch）
 
 

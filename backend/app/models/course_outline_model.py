@@ -68,6 +68,10 @@ class CourseOutlineVersion(SQLModel, table=True):
     source_parse_run_id: Optional[str] = Field(
         default=None, index=True, description="产出该目录草稿的 DocumentParseRun.run_id",
     )
+    corpus_snapshot_id: Optional[str] = Field(default=None, index=True)
+    build_task_id: Optional[str] = Field(default=None, index=True)
+    generation_source: str = Field(default="teacher", max_length=64)
+    review_status: str = Field(default="pending", max_length=32)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
@@ -180,6 +184,10 @@ class TeachingScriptVersion(SQLModel, table=True):
         default=OutlineLifecycleStatus.DRAFT, index=True,
     )
     source_parse_run_id: Optional[str] = Field(default=None, index=True)
+    corpus_snapshot_id: Optional[str] = Field(default=None, index=True)
+    build_task_id: Optional[str] = Field(default=None, index=True)
+    generation_source: str = Field(default="teacher", max_length=64)
+    review_status: str = Field(default="pending", max_length=32)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware, index=True)
 

@@ -211,6 +211,100 @@ class SourceMaterialVersion(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# 课程级材料/检索快照与编排任务
+# ---------------------------------------------------------------------------
+
+
+class CorpusSnapshotStatus(str, Enum):
+    """A frozen set of material versions selected for course construction."""
+
+    BUILDING = "building"
+    READY = "ready"
+    SUPERSEDED = "superseded"
+
+
+class CourseCorpusSnapshot(SQLModel, table=True):
+    """Immutable course-level view of the material versions used to build a draft.
+
+    A parse run is a fact about one material.  This snapshot is the only
+    allowed input to a course-wide outline, script, graph, or release.
+    """
+
+    __tablename__ = "course_corpus_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    corpus_snapshot_id: str = Field(
+        default_factory=lambda: f"ccs_{uuid.uuid4().hex}", unique=True, index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    status: CorpusSnapshotStatus = Field(default=CorpusSnapshotStatus.BUILDING, index=True)
+    material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    parse_run_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    content_hash: str = Field(default="", index=True)
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class CourseRetrievalSnapshot(SQLModel, table=True):
+    """The course-scoped retrieval corpus selection.
+
+    The table deliberately stores a *set* of material versions.  It prevents
+    a later material index from replacing the course's earlier material index.
+    Retrieval engines may change, but consumers keep this stable snapshot ID.
+    """
+
+    __tablename__ = "course_retrieval_snapshots"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    retrieval_snapshot_id: str = Field(
+        default_factory=lambda: f"crs_{uuid.uuid4().hex}", unique=True, index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    corpus_snapshot_id: str = Field(index=True)
+    material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    status: str = Field(default="ready", index=True, description="building|ready|superseded")
+    provider_policy_version: str = Field(default="canonical-retrieval/1")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class CourseDraftBuildStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class CourseDraftBuildTask(SQLModel, table=True):
+    """Course-wide construction orchestration, separate from material parsing."""
+
+    __tablename__ = "course_draft_build_tasks"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    build_task_id: str = Field(
+        default_factory=lambda: f"cdbt_{uuid.uuid4().hex}", unique=True, index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    corpus_snapshot_id: str = Field(index=True)
+    task_id: Optional[str] = Field(default=None, index=True)
+    owner_user_id: Optional[int] = Field(default=None, foreign_key="users.id")
+    status: CourseDraftBuildStatus = Field(default=CourseDraftBuildStatus.QUEUED, index=True)
+    trigger: str = Field(default="auto_after_materials_ready")
+    generation_mode: str = Field(default="initial", description="initial|proposal")
+    base_outline_version_id: Optional[str] = Field(default=None, index=True)
+    base_script_version_id: Optional[str] = Field(default=None, index=True)
+    result_outline_version_id: Optional[str] = Field(default=None, index=True)
+    result_script_version_id: Optional[str] = Field(default=None, index=True)
+    result_retrieval_snapshot_id: Optional[str] = Field(default=None, index=True)
+    error_code: str = Field(default="")
+    error_message: str = Field(default="")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    started_at: Optional[datetime] = Field(default=None)
+    finished_at: Optional[datetime] = Field(default=None)
+
+
+# ---------------------------------------------------------------------------
 # 质量门禁运行
 # ---------------------------------------------------------------------------
 
@@ -302,6 +396,15 @@ class CourseRelease(SQLModel, table=True):
     media_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
     graph_snapshot_ref: Optional[str] = Field(default=None, description="关联 GraphSnapshot ID")
     evidence_refs: list = Field(default_factory=list, sa_column=Column(JSON))
+
+    # Frozen source selections. Student readers must resolve these IDs from
+    # the active release, never from whichever material happened to parse last.
+    material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    document_ir_run_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    corpus_snapshot_id: Optional[str] = Field(default=None, index=True)
+    retrieval_snapshot_id: Optional[str] = Field(default=None, index=True)
+    outline_version_id: Optional[str] = Field(default=None, index=True)
+    script_version_id: Optional[str] = Field(default=None, index=True)
 
     # 质量门禁
     quality_gate_run_id: Optional[str] = Field(default=None)

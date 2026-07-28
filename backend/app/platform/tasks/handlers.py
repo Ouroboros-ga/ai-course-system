@@ -83,7 +83,8 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
     block_count = 0
     evidence_span_count = 0
     graph_candidate_count = 0
-    # Step 4 草稿资产构建产物引用（默认空；pipeline 成功后填充）
+    # Material parse intentionally stops at material-level facts. Course-wide
+    # drafts are scheduled only after the complete material set is ready.
     _draft_progress: dict = {}
     _draft_warnings: list = []
     try:
@@ -100,45 +101,12 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                         run_id=run_id,
                         material_id=payload.get("material_id", ""),
                         material_version_id=payload.get("material_version_id"),
-                        pipeline=payload.get("pipeline", "full"),
+                        pipeline="standard",
                         stale_strategy=payload.get("stale_strategy", "mark_stale"),
                     )
                 )
                 pipeline_session.commit()
 
-                # Step 4: 生成草稿资产（可观测子阶段），逐阶段记录 TaskRecord 进度。
-                # 解析产出 DocumentBlock 后并行生成 RAG/图谱/目录/讲稿/Markdown 草稿；
-                # 草稿不塞任务 JSON，Markdown 写为 ResourceItem/ResourceVersion(draft)。
-                try:
-                    from app.services.document_draft_builders import build_draft_assets
-
-                    def _progress(stage_name: str) -> None:
-                        with ctx.session_factory() as prog_session:
-                            ctx.service.mark_progress(
-                                prog_session, ctx.task_id,
-                                progress=0, stage=f"document_parse:{stage_name}",
-                                message=f"草稿资产构建：{stage_name}",
-                            )
-
-                    with ctx.session_factory() as draft_session:
-                        draft_result = build_draft_assets(
-                            draft_session,
-                            course_id=int(course_id),
-                            run_id=run_id,
-                            material_version_id=payload.get("material_version_id"),
-                            created_by=payload.get("initiated_by"),
-                            progress_cb=_progress,
-                        )
-                    # 暂存供下方 mark_succeeded 的 result_data 引用
-                    _draft_progress = draft_result.to_progress_data()
-                    _draft_warnings = list(draft_result.warnings)
-                except Exception as draft_exc:
-                    logger.exception(
-                        "document_parse_handler: draft asset build failed for run %s: %s",
-                        run_id, draft_exc,
-                    )
-                    _draft_progress = {}
-                    _draft_warnings = [f"draft asset build failed: {draft_exc}"]
             except ParsePipelineError as exc:
                 pipeline_session.rollback()
                 # 解析失败：标记 parse_run + task 为 failed，不伪装成功
@@ -245,6 +213,30 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 material.status = MaterialStatus.PARSED
                 session.add(material)
             session.commit()
+            # A parse run is about one material. Once every current material
+            # has completed, create one frozen corpus and queue one separate
+            # course-wide build task instead of rebuilding after each upload.
+            from app.services.course_corpus_service import course_corpus_service
+            corpus = course_corpus_service.create_ready_snapshot(
+                session, course_id=int(course_id), owner_user_id=int(payload.get("initiated_by") or 0),
+            )
+            if corpus is not None:
+                build, build_task_id = course_corpus_service.create_build_task(
+                    session, corpus=corpus, owner_user_id=int(payload.get("initiated_by") or 0),
+                )
+                session.commit()
+                _draft_progress = {
+                    "corpus_snapshot_id": corpus.corpus_snapshot_id,
+                    "course_draft_build_task_id": build.build_task_id,
+                    "task_id": build_task_id,
+                }
+                try:
+                    local_task_worker.submit(
+                        ctx.session_factory, build_task_id,
+                        {"course_id": int(course_id), "corpus_snapshot_id": corpus.corpus_snapshot_id, "build_task_id": build.build_task_id},
+                    )
+                except Exception:
+                    logger.exception("Could not submit course draft build task %s", build_task_id)
         except Exception:
             # Task itself is already correctly marked succeeded.  Preserve that
             # truth and log this non-critical projection repair for retry.
@@ -259,6 +251,102 @@ async def _invoke_document_parser(payload: dict[str, Any]) -> tuple[int, int, in
     本函数保留仅为兼容旧 import，不应再被调用。
     """
     return 0, 0, 0
+
+
+async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
+    """Build a course draft from one frozen multi-material corpus snapshot."""
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    corpus_snapshot_id = str(payload.get("corpus_snapshot_id") or "")
+    build_task_id = str(payload.get("build_task_id") or "")
+    if not course_id or not corpus_snapshot_id or not build_task_id:
+        raise TaskExecutionError("VALIDATION_FAILED", "course_draft_build 缺少课程或语料快照", retryable=False)
+
+    from app.core.time_utils import utcnow_aware
+    from app.models.course_build_model import (
+        CourseCorpusSnapshot,
+        CourseDraftBuildStatus,
+        CourseDraftBuildTask,
+    )
+    from app.services.course_corpus_service import course_corpus_service
+    from app.services.document_draft_builders import build_draft_assets
+
+    with ctx.session_factory() as session:
+        ctx.service.mark_running(session, ctx.task_id, stage="course_corpus")
+        build = session.exec(select(CourseDraftBuildTask).where(
+            CourseDraftBuildTask.course_id == course_id,
+            CourseDraftBuildTask.build_task_id == build_task_id,
+            CourseDraftBuildTask.corpus_snapshot_id == corpus_snapshot_id,
+        )).first()
+        if build is None:
+            raise TaskExecutionError("RESOURCE_NOT_FOUND", "课程草稿构建任务不存在", retryable=False)
+        build.status = CourseDraftBuildStatus.RUNNING
+        build.started_at = utcnow_aware()
+        session.add(build)
+        session.commit()
+
+    try:
+        with ctx.session_factory() as session:
+            build = session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.build_task_id == build_task_id,
+                CourseDraftBuildTask.course_id == course_id,
+            )).first()
+            corpus = session.exec(select(CourseCorpusSnapshot).where(
+                CourseCorpusSnapshot.corpus_snapshot_id == corpus_snapshot_id,
+                CourseCorpusSnapshot.course_id == course_id,
+            )).first()
+            if corpus is None:
+                raise ValueError("课程语料快照不存在")
+            retrieval = course_corpus_service.ensure_retrieval_snapshot(session, corpus=corpus)
+            if build.generation_mode == "proposal":
+                # Later agent executions never overwrite a teacher's draft.
+                from app.models.course_outline_model import PatchProposal
+                proposal = PatchProposal(
+                    course_id=course_id,
+                    tool_name="CourseBuildAgent",
+                    policy_version="course-build-agent/2.0",
+                    reason="材料集合已变化；请在教师工作台审核并决定是否重新生成课程结构和讲稿。",
+                    created_by=build.owner_user_id,
+                )
+                session.add(proposal)
+                result_data = {"proposal_id": proposal.proposal_id, "corpus_snapshot_id": corpus_snapshot_id}
+            else:
+                result = build_draft_assets(
+                    session,
+                    course_id=course_id,
+                    created_by=build.owner_user_id,
+                    corpus_snapshot_id=corpus_snapshot_id,
+                    build_task_id=build.build_task_id,
+                )
+                build.result_outline_version_id = result.outline_version_id
+                build.result_script_version_id = result.script_version_id
+                result_data = result.to_progress_data()
+            build.result_retrieval_snapshot_id = retrieval.retrieval_snapshot_id
+            build.status = CourseDraftBuildStatus.SUCCEEDED
+            build.finished_at = utcnow_aware()
+            session.add(build)
+            session.commit()
+    except Exception as exc:
+        with ctx.session_factory() as session:
+            build = session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.build_task_id == build_task_id,
+                CourseDraftBuildTask.course_id == course_id,
+            )).first()
+            if build:
+                build.status = CourseDraftBuildStatus.FAILED
+                build.error_code = "COURSE_DRAFT_BUILD_FAILED"
+                build.error_message = str(exc)[:500]
+                build.finished_at = utcnow_aware()
+                session.add(build)
+                session.commit()
+        raise TaskExecutionError("COURSE_DRAFT_BUILD_FAILED", str(exc), retryable=True) from exc
+
+    with ctx.session_factory() as session:
+        ctx.service.mark_succeeded(
+            session, ctx.task_id,
+            result_ref=f"course_corpus://{corpus_snapshot_id}",
+            result_data={"build_task_id": build_task_id, **result_data},
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -946,6 +1034,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     在应用启动时调用（main.py startup），确保任务中心能消费业务任务。
     """
     worker.register("document_parse", document_parse_handler)
+    worker.register("course_draft_build", course_draft_build_handler)
     worker.register("experiment_run", experiment_run_handler)
     worker.register("media.avatar_preprocess", media_avatar_preprocess_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
