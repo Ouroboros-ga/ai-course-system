@@ -112,6 +112,7 @@ from app.models.course_build_model import (
     SourceMaterial,
     SourceMaterialVersion,
     CourseCorpusSnapshot,
+    CourseCorpusItem,
     CourseRetrievalSnapshot,
     CourseDraftBuildTask,
     CourseQualityGateRun,

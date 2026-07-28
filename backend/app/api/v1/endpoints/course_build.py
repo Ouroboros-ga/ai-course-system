@@ -68,6 +68,10 @@ class MaterialParseStatusRequest(BaseModel):
     parse_error: Optional[str] = None
 
 
+class MaterialCorpusSelectionRequest(BaseModel):
+    include_in_course_corpus: bool
+
+
 @course_build_router.get("/course/{course_id}/materials")
 async def list_materials(
     course_id: int,
@@ -150,6 +154,57 @@ async def list_material_versions(
     )
 
 
+@course_build_router.patch("/course/{course_id}/materials/{material_id}/corpus-selection")
+async def set_material_corpus_selection(
+    course_id: int,
+    material_id: str,
+    payload: MaterialCorpusSelectionRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Explicitly include/exclude a material from the next course corpus.
+
+    This is the only permitted way for a failed parse to stop blocking an
+    automatic course build; it remains visible in the material list.
+    """
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    material = source_material_service.get_material(
+        session, course_id=course_id, material_id=material_id,
+    )
+    material.include_in_course_corpus = payload.include_in_course_corpus
+    session.add(material)
+    from app.services.course_corpus_service import course_corpus_service
+    course_corpus_service.invalidate_queued_builds(
+        session, course_id=course_id, reason="课程材料纳入范围已由教师修改",
+    )
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course_id, owner_user_id=context.user_id,
+    )
+    build = None
+    build_task_id = None
+    if corpus is not None:
+        build, build_task_id = course_corpus_service.create_build_task(
+            session, corpus=corpus, owner_user_id=context.user_id, trigger="teacher_material_selection",
+        )
+    session.commit()
+    if build_task_id:
+        try:
+            from app.models.database import session_factory
+            from app.platform.tasks.worker import local_task_worker
+            local_task_worker.submit(session_factory, build_task_id, {
+                "course_id": course_id,
+                "corpus_snapshot_id": corpus.corpus_snapshot_id,
+                "build_task_id": build.build_task_id,
+            })
+        except Exception:
+            # Durable task remains queued and can be retried from task centre.
+            pass
+    return unified_response(code=200, message="课程语料纳入范围已更新", data={
+        "material": _serialize_material(material),
+        "corpus_snapshot_id": corpus.corpus_snapshot_id if corpus else None,
+        "course_draft_build_task_id": build.build_task_id if build else None,
+        "task_id": build_task_id,
+    })
 @course_build_router.post("/course/{course_id}/materials/{material_id}/versions")
 async def add_material_version(
     course_id: int,
@@ -220,6 +275,7 @@ def _serialize_material(m) -> dict:
         "name": m.name,
         "material_type": m.material_type,
         "material_role": m.material_role,
+        "include_in_course_corpus": m.include_in_course_corpus,
         "source_kind": m.source_kind,
         "current_version_id": m.current_version_id,
         "status": m.status.value,

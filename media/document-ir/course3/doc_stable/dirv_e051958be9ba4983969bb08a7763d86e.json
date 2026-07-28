@@ -1,0 +1,48 @@
+{
+  "schema_version": "document-ir/1.0",
+  "document_id": "doc_stable",
+  "source_artifact": {
+    "artifact_id": "art_051f3cc0e9c45a58bf46ed1110d54590",
+    "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+    "filename": "source.pdf",
+    "mime": "application/pdf",
+    "size_bytes": 4,
+    "created_at": "2026-07-28T08:11:18.031905+00:00",
+    "uri": null,
+    "normalization_version": "1"
+  },
+  "units": [
+    {
+      "unit_id": "unit_1",
+      "unit_type": "page",
+      "index": 1,
+      "block_ids": [
+        "blk_stable_source_locator"
+      ],
+      "reading_order": []
+    }
+  ],
+  "blocks": [
+    {
+      "block_id": "blk_stable_source_locator",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 0,
+      "block_type": "paragraph",
+      "text": "stable evidence",
+      "provenance": [
+        {
+          "artifact_id": "art_051f3cc0e9c45a58bf46ed1110d54590",
+          "run_id": "dpr_b22f6543ddbb41d78e9109ef30d65d25",
+          "parser_run_id": "parser",
+          "provider": "native",
+          "raw_locator": "pages/1/blocks/0",
+          "page_or_slide": 1
+        }
+      ]
+    }
+  ],
+  "quality": {
+    "overall_score": 1.0
+  }
+}

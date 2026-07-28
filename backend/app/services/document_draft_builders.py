@@ -148,6 +148,7 @@ def build_outline_draft(
     created_by: Optional[int] = None,
     corpus_snapshot_id: Optional[str] = None,
     build_task_id: Optional[str] = None,
+    material_role_by_run: Optional[dict[str, str]] = None,
 ) -> tuple[str, int]:
     """从 DocumentBlock 生成课程目录草稿（CourseOutlineVersion + Node）。
 
@@ -177,7 +178,17 @@ def build_outline_draft(
         "application/vnd.ms-powerpoint",
         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     })
+    material_role_by_run = material_role_by_run or {}
+    role_priority = {
+        "primary_courseware": 10,
+        "syllabus": 20,
+        "textbook": 30,
+        "experiment_guide": 40,
+        "exercise_bank": 50,
+        "reference": 60,
+    }
     ordered = sorted(blocks, key=lambda item: (
+        role_priority.get(material_role_by_run.get(item.run_id, "primary_courseware"), 10),
         int(item.page_or_slide or item.page_number or 0),
         int(getattr(item, "reading_order", 0) or item.order_index or 0),
     ))
@@ -237,10 +248,21 @@ def build_outline_draft(
         if first_section and blk.block_id == first_section.block_id:
             continue
         role = blk.semantic_role or "explanation"
+        material_role = material_role_by_run.get(blk.run_id, "primary_courseware")
         text = blk.text.strip()
         if role == "section_title":
             flush_kp()
             section = add_node(OutlineNodeType.SECTION, text, None, [blk.block_id], kp_order + 1, blk.confidence)
+        elif material_role in {"experiment_guide", "exercise_bank"} and current_kp is not None:
+            # Practical materials enrich the current teaching sequence rather
+            # than becoming a competing chapter order of their own.
+            add_node(OutlineNodeType.PRACTICE_SUGGESTION, text, current_kp, [blk.block_id], child_order, blk.confidence)
+            child_order += 1
+        elif material_role in {"textbook", "reference"} and current_kp is not None:
+            # Textbooks/references contribute evidence and script detail to
+            # the primary-courseware knowledge point. A later agent can split
+            # this into richer proposals, but it never changes the base order.
+            kp_refs.append(blk.block_id)
         elif current_kp is None or role == "knowledge_title" or (first_section is None and role == "explanation"):
             flush_kp()
             current_kp = add_node(OutlineNodeType.KNOWLEDGE_POINT, text, section, [blk.block_id], kp_order, blk.confidence)
@@ -466,8 +488,9 @@ def build_draft_assets(
         corpus_snapshot_id=corpus_snapshot_id,
     )
     stmt = select(DocumentBlock).where(DocumentBlock.course_id == course_id)
+    material_role_by_run: dict[str, str] = {}
     if corpus_snapshot_id:
-        from app.models.course_build_model import CourseCorpusSnapshot
+        from app.models.course_build_model import CourseCorpusItem, CourseCorpusSnapshot
         corpus = session.exec(select(CourseCorpusSnapshot).where(
             CourseCorpusSnapshot.course_id == course_id,
             CourseCorpusSnapshot.corpus_snapshot_id == corpus_snapshot_id,
@@ -475,6 +498,12 @@ def build_draft_assets(
         if corpus is None:
             raise ValueError("course corpus snapshot not found")
         stmt = stmt.where(DocumentBlock.run_id.in_(list(corpus.parse_run_ids or [])))
+        corpus_items = session.exec(select(CourseCorpusItem).where(
+            CourseCorpusItem.corpus_snapshot_id == corpus_snapshot_id,
+            CourseCorpusItem.course_id == course_id,
+            CourseCorpusItem.included == True,  # noqa: E712
+        )).all()
+        material_role_by_run = {item.parse_run_id: item.material_role for item in corpus_items}
     elif run_id:
         stmt = stmt.where(DocumentBlock.run_id == run_id)
     else:
@@ -512,6 +541,7 @@ def build_draft_assets(
             material_version_id=material_version_id,
             blocks=list(blocks), created_by=created_by,
             corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
+            material_role_by_run=material_role_by_run,
         )
         result.outline_version_id = ov_id
         result.outline_node_count = node_count

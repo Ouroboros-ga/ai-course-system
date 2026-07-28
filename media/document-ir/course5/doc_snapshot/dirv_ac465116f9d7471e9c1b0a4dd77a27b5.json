@@ -1,0 +1,37 @@
+{
+  "schema_version": "document-ir/1.0",
+  "document_id": "doc_snapshot",
+  "source_artifact": {
+    "artifact_id": "art_02619ecdcfa851d8b5cc5644346bb43c",
+    "sha256": "16a0eeb0791b6c92451fd284dd9f599e0a7dbe7f6ebea6e2d2d06c7f74aec112",
+    "filename": "source.pdf",
+    "mime": "application/pdf",
+    "size_bytes": 8,
+    "created_at": "2026-07-28T08:44:13.522743+00:00",
+    "uri": null,
+    "normalization_version": "1"
+  },
+  "units": [
+    {
+      "unit_id": "unit_dpr_e2a02118821348be9784385d183f025e",
+      "unit_type": "page",
+      "index": 1,
+      "block_ids": [
+        "blk_snapshot"
+      ],
+      "reading_order": []
+    }
+  ],
+  "blocks": [
+    {
+      "block_id": "blk_snapshot",
+      "kind": "content",
+      "page_or_slide": 1,
+      "block_type": "paragraph",
+      "text": "first"
+    }
+  ],
+  "quality": {
+    "overall_score": 1.0
+  }
+}

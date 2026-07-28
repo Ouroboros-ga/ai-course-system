@@ -1,7 +1,7 @@
 """course-level corpus snapshots and draft build orchestration.
 
-Revision ID: 0021
-Revises: 0020
+Revision ID: 0023
+Revises: 0022
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "0021"
-down_revision: Union[str, None] = "0020"
+revision: str = "0023"
+down_revision: Union[str, None] = "0022"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

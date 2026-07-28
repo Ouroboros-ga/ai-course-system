@@ -161,6 +161,10 @@ class SourceMaterial(SQLModel, table=True):
     name: str = Field(default="", description="材料名称")
     material_type: str = Field(default="document", description="document|slide|video|audio|other")
     material_role: str = Field(default="reference", description="primary_courseware|textbook|syllabus|experiment_guide|exercise_bank|reference")
+    include_in_course_corpus: bool = Field(
+        default=True,
+        description="教师是否把当前材料纳入下一次课程语料快照；失败材料须重试或显式排除",
+    )
     source_kind: str = Field(default="upload", description="upload|fanya_sync|reference")
 
     # 当前版本
@@ -243,8 +247,37 @@ class CourseCorpusSnapshot(SQLModel, table=True):
     material_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     parse_run_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    warnings: list = Field(default_factory=list, sa_column=Column(JSON))
     content_hash: str = Field(default="", index=True)
     created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class CourseCorpusItem(SQLModel, table=True):
+    """One material-version decision inside an immutable corpus snapshot.
+
+    The denormalized ID lists on :class:`CourseCorpusSnapshot` remain useful
+    for old readers, while this table captures the teacher-facing semantics
+    (role, priority, inclusion and parse-quality warning) that the course
+    builder must preserve.
+    """
+
+    __tablename__ = "course_corpus_items"
+    __table_args__ = (
+        UniqueConstraint("corpus_snapshot_id", "material_version_id", name="uq_corpus_item_version"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    corpus_snapshot_id: str = Field(index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    material_id: str = Field(index=True)
+    material_version_id: str = Field(index=True)
+    material_role: str = Field(default="reference", index=True)
+    priority: int = Field(default=100)
+    document_ir_version_id: str = Field(index=True)
+    parse_run_id: str = Field(index=True)
+    included: bool = Field(default=True, index=True)
+    quality_warning: str = Field(default="")
     created_at: datetime = Field(default_factory=utcnow_aware)
 
 
@@ -303,6 +336,7 @@ class CourseDraftBuildTask(SQLModel, table=True):
     result_retrieval_snapshot_id: Optional[str] = Field(default=None, index=True)
     error_code: str = Field(default="")
     error_message: str = Field(default="")
+    not_before_at: Optional[datetime] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow_aware)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)

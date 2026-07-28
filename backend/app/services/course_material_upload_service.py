@@ -89,6 +89,14 @@ class CourseMaterialUploadService:
                 raise RuntimeError("课程源文件暂时无法保存，请稍后重试") from exc
 
         try:
+            # A newly selected material changes the future course corpus. Any
+            # deferred build for the older selection must not race ahead.
+            from app.services.course_corpus_service import course_corpus_service
+            course_corpus_service.invalidate_queued_builds(
+                session,
+                course_id=course_id,
+                reason="课程材料已更新，等待新的完整语料快照",
+            )
             material, version = source_material_service.create_material(
                 session,
                 course_id=course_id,

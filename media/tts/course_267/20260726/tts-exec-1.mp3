@@ -1,0 +1,11 @@
+FAKE_TTS_AUDIO_V1
+provider=fake_tts
+version=fake-v1.0
+voice=default
+duration_ms=5405
+format=mp3
+course_id=267
+resource_version=v1
+input_hash=1a78bffd6055b06c466b9b24d4dcca87c36646192137c71bb5f71c407b3e1d98
+---
+第一页：介绍二分查找。第二页：演示代码。

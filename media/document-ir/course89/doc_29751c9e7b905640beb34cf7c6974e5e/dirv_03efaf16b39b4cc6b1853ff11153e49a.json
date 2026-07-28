@@ -1,0 +1,4714 @@
+{
+  "schema_version": "document-ir/1.0",
+  "document_id": "doc_29751c9e7b905640beb34cf7c6974e5e",
+  "source_artifact": {
+    "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+    "sha256": "9daf7406521add4eb484599661955853e24cdc3fe53604e3b060d1b704213283",
+    "filename": "course-source/manual-verification/three-format-parse-20260728/pptx-855cb48c2237/source.pptx",
+    "mime": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "size_bytes": 4437822,
+    "created_at": "2026-07-28T09:59:24.732292+00:00",
+    "uri": "course-source/manual-verification/three-format-parse-20260728/pptx-855cb48c2237/source.pptx",
+    "normalization_version": "1"
+  },
+  "parser_runs": [
+    {
+      "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+      "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31_native-pptx",
+      "provider": "native-pptx",
+      "provider_version": "1.0.0",
+      "status": "succeeded",
+      "input_artifact_id": "art_92359a3220a756df94a7e5d988b3be4c"
+    }
+  ],
+  "units": [
+    {
+      "unit_id": "unit_1315b1401f505f718935394a3794c80a",
+      "unit_type": "slide",
+      "index": 1,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_2e09337cc374a95b59024f7dc095b2c3",
+        "blk_31f81dc56900089215635a59b848fcb4",
+        "blk_cc0a097c5b5eaaadd57512abf9d04e17",
+        "blk_9e198cdb7165240dab0feecef647af18",
+        "blk_395069ac11674512387ce45c1761d874",
+        "blk_75cfcd7dfc484ef4860d5eb87417fb03",
+        "blk_263cb191990b5c5501882339064918a2",
+        "blk_4fe526c48d65bbf54ac756d08275ce49",
+        "blk_fc964b0c6308b9486207d15aa0945bf1",
+        "blk_34c11a233b509b30ca6f61a47ff9179a",
+        "blk_c7ed025de6e42867306a3839459faa7d",
+        "blk_507c21f0d041255c1771d57577b1d4f9",
+        "blk_74af104826e27c73b9c458f952396120",
+        "blk_68fa951e904e0d5aef749af1802ecf3f",
+        "blk_11cbdc82bcf50725d4b658a8ede725c1"
+      ],
+      "reading_order": [
+        "blk_2e09337cc374a95b59024f7dc095b2c3",
+        "blk_31f81dc56900089215635a59b848fcb4",
+        "blk_cc0a097c5b5eaaadd57512abf9d04e17",
+        "blk_9e198cdb7165240dab0feecef647af18",
+        "blk_395069ac11674512387ce45c1761d874",
+        "blk_75cfcd7dfc484ef4860d5eb87417fb03",
+        "blk_263cb191990b5c5501882339064918a2",
+        "blk_4fe526c48d65bbf54ac756d08275ce49",
+        "blk_fc964b0c6308b9486207d15aa0945bf1",
+        "blk_34c11a233b509b30ca6f61a47ff9179a",
+        "blk_c7ed025de6e42867306a3839459faa7d",
+        "blk_507c21f0d041255c1771d57577b1d4f9",
+        "blk_74af104826e27c73b9c458f952396120",
+        "blk_68fa951e904e0d5aef749af1802ecf3f",
+        "blk_11cbdc82bcf50725d4b658a8ede725c1"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1",
+          "page_or_slide": 1
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_27601c9b2d1553fea67bf6fc892a6c6e",
+      "unit_type": "slide",
+      "index": 2,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_5de6ad5b2169d95db0739db0713211fb",
+        "blk_e9c0bbc4b57b219b97208664027bbe79"
+      ],
+      "reading_order": [
+        "blk_5de6ad5b2169d95db0739db0713211fb",
+        "blk_e9c0bbc4b57b219b97208664027bbe79"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/2",
+          "page_or_slide": 2
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_3e8a6e3ae0ad5204a3ec6bdec20e834c",
+      "unit_type": "slide",
+      "index": 3,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_48d9b39bba09d25dcf738ba8860542e5",
+        "blk_b825ed4ef89be9ed045a36c32bb09f7a"
+      ],
+      "reading_order": [
+        "blk_48d9b39bba09d25dcf738ba8860542e5",
+        "blk_b825ed4ef89be9ed045a36c32bb09f7a"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/3",
+          "page_or_slide": 3
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_dcf06c9df70c5ba5b2f6c220edce8646",
+      "unit_type": "slide",
+      "index": 4,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_6e41a77320a3d6548539d0ea2252820f",
+        "blk_cbfad46aed35f0f4e81d0a5bd96c82aa",
+        "blk_8f75e3b147f0419a124e48c33c013ac0",
+        "blk_eb2f3815c79bfb6db414b739acf02b68",
+        "blk_a46036ef9155715e0fb099fc948cc8f2"
+      ],
+      "reading_order": [
+        "blk_6e41a77320a3d6548539d0ea2252820f",
+        "blk_cbfad46aed35f0f4e81d0a5bd96c82aa",
+        "blk_8f75e3b147f0419a124e48c33c013ac0",
+        "blk_eb2f3815c79bfb6db414b739acf02b68",
+        "blk_a46036ef9155715e0fb099fc948cc8f2"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4",
+          "page_or_slide": 4
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_4b68cd36c0c15094ae1865c4314927ff",
+      "unit_type": "slide",
+      "index": 5,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_c4dc4a88417509ee919ff15fde25532e",
+        "blk_cc5057942749c5c4fee667bf0349a6a8"
+      ],
+      "reading_order": [
+        "blk_c4dc4a88417509ee919ff15fde25532e",
+        "blk_cc5057942749c5c4fee667bf0349a6a8"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/5",
+          "page_or_slide": 5
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_bc1ae0f1d59f53eeb8ae085d46916c0b",
+      "unit_type": "slide",
+      "index": 6,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_76ad0a249522b0889524a6fcab910c51",
+        "blk_9aa5283a2c137bc55e17065e7be98a28"
+      ],
+      "reading_order": [
+        "blk_76ad0a249522b0889524a6fcab910c51",
+        "blk_9aa5283a2c137bc55e17065e7be98a28"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/6",
+          "page_or_slide": 6
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_f4ab2247534a5fb1a81748bf815f3216",
+      "unit_type": "slide",
+      "index": 7,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_8a12efa6a155392fd866e383830f8f67",
+        "blk_4bc7daca2e169a34bfd30c7fb2e4f032",
+        "blk_ae6d747435fb8a11d42bc1e912ee671d",
+        "blk_51019f6edfedc99c5a082f601f8fdd1b"
+      ],
+      "reading_order": [
+        "blk_8a12efa6a155392fd866e383830f8f67",
+        "blk_4bc7daca2e169a34bfd30c7fb2e4f032",
+        "blk_ae6d747435fb8a11d42bc1e912ee671d",
+        "blk_51019f6edfedc99c5a082f601f8fdd1b"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/7",
+          "page_or_slide": 7
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_5f184d17c7ba592ba757a0e0625a32db",
+      "unit_type": "slide",
+      "index": 8,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_10e8b47a33b4bbe067985bde25e35f84",
+        "blk_783e20a7da1cce5e5dde7b4ff7524139",
+        "blk_8fcfa1db45a72e62f87e22c99cea15be"
+      ],
+      "reading_order": [
+        "blk_10e8b47a33b4bbe067985bde25e35f84",
+        "blk_783e20a7da1cce5e5dde7b4ff7524139",
+        "blk_8fcfa1db45a72e62f87e22c99cea15be"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/8",
+          "page_or_slide": 8
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_86c67b00eacb5a359b655334ecf8edfd",
+      "unit_type": "slide",
+      "index": 9,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_2a0115f5dec21fd300c9fac2c9cfa8b6",
+        "blk_69a47a7984aca58da90325690f5e7dd0"
+      ],
+      "reading_order": [
+        "blk_2a0115f5dec21fd300c9fac2c9cfa8b6",
+        "blk_69a47a7984aca58da90325690f5e7dd0"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/9",
+          "page_or_slide": 9
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_a2b8b5370c4055c08020d996b04b929d",
+      "unit_type": "slide",
+      "index": 10,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_8e910bf96ec31c86e690d29f9934c986",
+        "blk_d1bbeb072d3ded358fcb5e45bb97feb9",
+        "blk_db877a1296671dd353b92789911f2731"
+      ],
+      "reading_order": [
+        "blk_8e910bf96ec31c86e690d29f9934c986",
+        "blk_d1bbeb072d3ded358fcb5e45bb97feb9",
+        "blk_db877a1296671dd353b92789911f2731"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/10",
+          "page_or_slide": 10
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_1f67415bb6f35640ac4e29186eaf2313",
+      "unit_type": "slide",
+      "index": 11,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_cb88e27e74bafbab831d0e46208bb8fd",
+        "blk_2d9d2007b639958342c8100f8563da56",
+        "blk_8dad93ef126612520749d2f992405089",
+        "blk_ae95e316e5137990b39fe09394c59684",
+        "blk_aae407c62234050efaee2463fe4a6b98",
+        "blk_4eef412522fd136fc42da982b504d323",
+        "blk_90a61a4fb5cac4fd4c23281d8bcfe53c",
+        "blk_851ae783928fd9e26c55628785b6826c",
+        "blk_6f092d8287853c79c07f9c89afae76d0"
+      ],
+      "reading_order": [
+        "blk_cb88e27e74bafbab831d0e46208bb8fd",
+        "blk_2d9d2007b639958342c8100f8563da56",
+        "blk_8dad93ef126612520749d2f992405089",
+        "blk_ae95e316e5137990b39fe09394c59684",
+        "blk_aae407c62234050efaee2463fe4a6b98",
+        "blk_4eef412522fd136fc42da982b504d323",
+        "blk_90a61a4fb5cac4fd4c23281d8bcfe53c",
+        "blk_851ae783928fd9e26c55628785b6826c",
+        "blk_6f092d8287853c79c07f9c89afae76d0"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11",
+          "page_or_slide": 11
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_05fdb9c0c5f95d17b016163d29e69eb6",
+      "unit_type": "slide",
+      "index": 12,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_31e6c68c8e65c5bab39880690fac3459",
+        "blk_3b3c87b14e7b11ea3548fb40c6455d80",
+        "blk_267726312db1ee681516bd0944879545"
+      ],
+      "reading_order": [
+        "blk_31e6c68c8e65c5bab39880690fac3459",
+        "blk_3b3c87b14e7b11ea3548fb40c6455d80",
+        "blk_267726312db1ee681516bd0944879545"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/12",
+          "page_or_slide": 12
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_142283ed425856de9a3040d0eeefe234",
+      "unit_type": "slide",
+      "index": 13,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_daa83ed9b8e69496fb2c357419db56f4",
+        "blk_8d960bbeafc3dd65cf804abd262b5584",
+        "blk_bcd152acac7c3f5d29b5831ae4315ff0",
+        "blk_0432f1a7599ab04b2bf3d685dfea8206",
+        "blk_aff82e029d7da3972f8aed33a667982b"
+      ],
+      "reading_order": [
+        "blk_daa83ed9b8e69496fb2c357419db56f4",
+        "blk_8d960bbeafc3dd65cf804abd262b5584",
+        "blk_bcd152acac7c3f5d29b5831ae4315ff0",
+        "blk_0432f1a7599ab04b2bf3d685dfea8206",
+        "blk_aff82e029d7da3972f8aed33a667982b"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13",
+          "page_or_slide": 13
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_679ec32fe2875649aa15e9d3f2d3f251",
+      "unit_type": "slide",
+      "index": 14,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_0c4569256dd7abe6108e1e38e2deee77",
+        "blk_b251ecc1495612c6266ae5a0ecb3ab95",
+        "blk_c57fa270528434897c0ecaa8a1fe71a0",
+        "blk_edd1e0fe47724acab2026457a300aed0"
+      ],
+      "reading_order": [
+        "blk_0c4569256dd7abe6108e1e38e2deee77",
+        "blk_b251ecc1495612c6266ae5a0ecb3ab95",
+        "blk_c57fa270528434897c0ecaa8a1fe71a0",
+        "blk_edd1e0fe47724acab2026457a300aed0"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/14",
+          "page_or_slide": 14
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_c40d1284c0a15686acc8ac8060bd8a4c",
+      "unit_type": "slide",
+      "index": 15,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_c2bfcbe9b5c773d2d0bcab664ab30a80",
+        "blk_e847b9d0167c0fb927f7112af46a1a98",
+        "blk_82d1e8bc4d2cea8b51ada5f447b4b840",
+        "blk_282bce88a561c6c2f1957e6f189948c2",
+        "blk_5eeb5cd61fbca31e34359a607ae567c0"
+      ],
+      "reading_order": [
+        "blk_c2bfcbe9b5c773d2d0bcab664ab30a80",
+        "blk_e847b9d0167c0fb927f7112af46a1a98",
+        "blk_82d1e8bc4d2cea8b51ada5f447b4b840",
+        "blk_282bce88a561c6c2f1957e6f189948c2",
+        "blk_5eeb5cd61fbca31e34359a607ae567c0"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15",
+          "page_or_slide": 15
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_7dfa80751d4c55969ff6d8e6c3c34fa7",
+      "unit_type": "slide",
+      "index": 16,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_90c763ea78b6211fc7a7f78581febbb9",
+        "blk_619b2c9fbe6b7ca15aa12cf2b76799fd",
+        "blk_9ac4045542b3fe550ed7270462da3705",
+        "blk_79fab6146af5ceb85403bc3c7abaf482"
+      ],
+      "reading_order": [
+        "blk_90c763ea78b6211fc7a7f78581febbb9",
+        "blk_619b2c9fbe6b7ca15aa12cf2b76799fd",
+        "blk_9ac4045542b3fe550ed7270462da3705",
+        "blk_79fab6146af5ceb85403bc3c7abaf482"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/16",
+          "page_or_slide": 16
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_e1c98e32288559c0ac670a44fba3130f",
+      "unit_type": "slide",
+      "index": 17,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_7fe14062fb93e727df8d34b37f747ad3",
+        "blk_3ecf9d2e9a174f4ac5f4c8f7a3f9b9ea",
+        "blk_59200ba6a6b7159aaa3c19a8d3905a23",
+        "blk_2fdbe81a0c6bbd3a5b98e920ddf576e5",
+        "blk_6a48f527fe4855b88132cdd22a512f82"
+      ],
+      "reading_order": [
+        "blk_7fe14062fb93e727df8d34b37f747ad3",
+        "blk_3ecf9d2e9a174f4ac5f4c8f7a3f9b9ea",
+        "blk_59200ba6a6b7159aaa3c19a8d3905a23",
+        "blk_2fdbe81a0c6bbd3a5b98e920ddf576e5",
+        "blk_6a48f527fe4855b88132cdd22a512f82"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17",
+          "page_or_slide": 17
+        }
+      ]
+    },
+    {
+      "unit_id": "unit_3ccc2fc195985c1eb048920f7166794d",
+      "unit_type": "slide",
+      "index": 18,
+      "width": 10.0,
+      "height": 7.5,
+      "coordinate_unit": "inch",
+      "block_ids": [
+        "blk_76fae0c5dc15fea8381508892bbd3913",
+        "blk_06d2eec16f3cb434fb9b7d0f1e7f6d44"
+      ],
+      "reading_order": [
+        "blk_76fae0c5dc15fea8381508892bbd3913",
+        "blk_06d2eec16f3cb434fb9b7d0f1e7f6d44"
+      ],
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/18",
+          "page_or_slide": 18
+        }
+      ]
+    }
+  ],
+  "blocks": [
+    {
+      "block_id": "blk_2e09337cc374a95b59024f7dc095b2c3",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/14",
+      "text": "汽车的定义及分类",
+      "bbox": {
+        "x0": 0.192882,
+        "y0": 0.21412,
+        "x1": 0.838542,
+        "y1": 0.307639,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/14",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.192882,
+            "y0": 0.21412,
+            "x1": 0.838542,
+            "y1": 0.307639,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_31f81dc56900089215635a59b848fcb4",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 2,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/15",
+      "bbox": {
+        "x0": 0.117882,
+        "y0": 0.236343,
+        "x1": 0.156597,
+        "y1": 0.287963,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/15",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.117882,
+            "y0": 0.236343,
+            "x1": 0.156597,
+            "y1": 0.287963,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_cc0a097c5b5eaaadd57512abf9d04e17",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/6",
+      "text": "车辆识别代号编码",
+      "bbox": {
+        "x0": 0.192882,
+        "y0": 0.342593,
+        "x1": 0.838542,
+        "y1": 0.436837,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/6",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.192882,
+            "y0": 0.342593,
+            "x1": 0.838542,
+            "y1": 0.436837,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_9e198cdb7165240dab0feecef647af18",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 4,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/11",
+      "bbox": {
+        "x0": 0.117882,
+        "y0": 0.364815,
+        "x1": 0.156597,
+        "y1": 0.416435,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/11",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.117882,
+            "y0": 0.364815,
+            "x1": 0.156597,
+            "y1": 0.416435,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_395069ac11674512387ce45c1761d874",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 5,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/7",
+      "text": "国产汽车产品型号编制规则",
+      "bbox": {
+        "x0": 0.192882,
+        "y0": 0.471065,
+        "x1": 0.822917,
+        "y1": 0.56531,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/7",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.192882,
+            "y0": 0.471065,
+            "x1": 0.822917,
+            "y1": 0.56531,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_75cfcd7dfc484ef4860d5eb87417fb03",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 6,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/4",
+      "bbox": {
+        "x0": 0.117882,
+        "y0": 0.493287,
+        "x1": 0.156597,
+        "y1": 0.544907,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/4",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.117882,
+            "y0": 0.493287,
+            "x1": 0.156597,
+            "y1": 0.544907,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_263cb191990b5c5501882339064918a2",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 7,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/13",
+      "text": "汽车的总体构造",
+      "bbox": {
+        "x0": 0.192882,
+        "y0": 0.600231,
+        "x1": 0.885938,
+        "y1": 0.694476,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/13",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.192882,
+            "y0": 0.600231,
+            "x1": 0.885938,
+            "y1": 0.694476,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_4fe526c48d65bbf54ac756d08275ce49",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 8,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/12",
+      "bbox": {
+        "x0": 0.117882,
+        "y0": 0.622454,
+        "x1": 0.156597,
+        "y1": 0.674074,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/12",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.117882,
+            "y0": 0.622454,
+            "x1": 0.156597,
+            "y1": 0.674074,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_fc964b0c6308b9486207d15aa0945bf1",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 9,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/8",
+      "text": "汽车行驶的基本原理",
+      "bbox": {
+        "x0": 0.197049,
+        "y0": 0.725,
+        "x1": 0.885938,
+        "y1": 0.819245,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/8",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.197049,
+            "y0": 0.725,
+            "x1": 0.885938,
+            "y1": 0.819245,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_34c11a233b509b30ca6f61a47ff9179a",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 10,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/1/shapes/5",
+      "bbox": {
+        "x0": 0.117882,
+        "y0": 0.75162,
+        "x1": 0.156597,
+        "y1": 0.803241,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/1/shapes/5",
+          "page_or_slide": 1,
+          "bbox": {
+            "x0": 0.117882,
+            "y0": 0.75162,
+            "x1": 0.156597,
+            "y1": 0.803241,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_c7ed025de6e42867306a3839459faa7d",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 11,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[1]/p:nvPicPr/p:cNvPr",
+      "text": "book6",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[1]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 1,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_507c21f0d041255c1771d57577b1d4f9",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 12,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[2]/p:nvPicPr/p:cNvPr",
+      "text": "book6",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[2]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 1,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_74af104826e27c73b9c458f952396120",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 13,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[3]/p:nvPicPr/p:cNvPr",
+      "text": "book6",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[3]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 1,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_68fa951e904e0d5aef749af1802ecf3f",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 14,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[4]/p:nvPicPr/p:cNvPr",
+      "text": "book6",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[4]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 1,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_11cbdc82bcf50725d4b658a8ede725c1",
+      "kind": "content",
+      "page_or_slide": 1,
+      "reading_order": 15,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[5]/p:nvPicPr/p:cNvPr",
+      "text": "book6",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide1.xml#/p:sld/p:cSld/p:spTree/p:pic[5]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 1,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_5de6ad5b2169d95db0739db0713211fb",
+      "kind": "content",
+      "page_or_slide": 2,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/2/shapes/10",
+      "text": "知识目标——",
+      "bbox": {
+        "x0": 0.019643,
+        "y0": 0.163124,
+        "x1": 0.432802,
+        "y1": 0.266345,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/2/shapes/10",
+          "page_or_slide": 2,
+          "bbox": {
+            "x0": 0.019643,
+            "y0": 0.163124,
+            "x1": 0.432802,
+            "y1": 0.266345,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_e9c0bbc4b57b219b97208664027bbe79",
+      "kind": "content",
+      "page_or_slide": 2,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/2/shapes/9",
+      "text": "◇了解汽车的定义及分类。\n   ◇理解车辆识别代码用途，掌握车辆识别代码内容。\n   ◇了解国产汽车产品型号编制规则。\n   ◇掌握汽车的总体构造。\n   ◇理解汽车行驶的基本原理。",
+      "bbox": {
+        "x0": 0.019643,
+        "y0": 0.286765,
+        "x1": 0.977778,
+        "y1": 0.704135,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/2/shapes/9",
+          "page_or_slide": 2,
+          "bbox": {
+            "x0": 0.019643,
+            "y0": 0.286765,
+            "x1": 0.977778,
+            "y1": 0.704135,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_48d9b39bba09d25dcf738ba8860542e5",
+      "kind": "content",
+      "page_or_slide": 3,
+      "reading_order": 1,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/3/shapes/5",
+      "bbox": {
+        "x0": 0.051802,
+        "y0": 0.168994,
+        "x1": 0.539264,
+        "y1": 0.533064,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/3/shapes/5",
+          "page_or_slide": 3,
+          "bbox": {
+            "x0": 0.051802,
+            "y0": 0.168994,
+            "x1": 0.539264,
+            "y1": 0.533064,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_b825ed4ef89be9ed045a36c32bb09f7a",
+      "kind": "content",
+      "page_or_slide": 3,
+      "reading_order": 2,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/3/shapes/4",
+      "bbox": {
+        "x0": 0.376333,
+        "y0": 0.365804,
+        "x1": 0.94925,
+        "y1": 0.938027,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/3/shapes/4",
+          "page_or_slide": 3,
+          "bbox": {
+            "x0": 0.376333,
+            "y0": 0.365804,
+            "x1": 0.94925,
+            "y1": 0.938027,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_6e41a77320a3d6548539d0ea2252820f",
+      "kind": "content",
+      "page_or_slide": 4,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/4/shapes/2",
+      "text": "一、汽车的定义及分类",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.13999,
+        "x1": 0.490277,
+        "y1": 0.225259,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4/shapes/2",
+          "page_or_slide": 4,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.13999,
+            "x1": 0.490277,
+            "y1": 0.225259,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_cbfad46aed35f0f4e81d0a5bd96c82aa",
+      "kind": "content",
+      "page_or_slide": 4,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/4/shapes/7",
+      "text": "1. 汽车的定义（问题：汽车与火车、飞机、轮船区别）",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.223323,
+        "x1": 0.987082,
+        "y1": 0.299617,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4/shapes/7",
+          "page_or_slide": 4,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.223323,
+            "x1": 0.987082,
+            "y1": 0.299617,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8f75e3b147f0419a124e48c33c013ac0",
+      "kind": "content",
+      "page_or_slide": 4,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/4/shapes/4",
+      "text": "在GB/T 3730.1—2001《汽车和挂车类型的术语和定义》中，汽车的定义是：由动力驱动，一般具有4个或4个以上车轮的非轨道承载车辆，主要用于载运人、货物及其他的一些特殊用途。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.308107,
+        "x1": 0.981944,
+        "y1": 0.483133,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4/shapes/4",
+          "page_or_slide": 4,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.308107,
+            "x1": 0.981944,
+            "y1": 0.483133,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_eb2f3815c79bfb6db414b739acf02b68",
+      "kind": "content",
+      "page_or_slide": 4,
+      "reading_order": 4,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/4/shapes/6",
+      "text": "2. 汽车的分类",
+      "bbox": {
+        "x0": 0.024611,
+        "y0": 0.491623,
+        "x1": 0.282171,
+        "y1": 0.567916,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4/shapes/6",
+          "page_or_slide": 4,
+          "bbox": {
+            "x0": 0.024611,
+            "y0": 0.491623,
+            "x1": 0.282171,
+            "y1": 0.567916,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_a46036ef9155715e0fb099fc948cc8f2",
+      "kind": "content",
+      "page_or_slide": 4,
+      "reading_order": 5,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/4/shapes/5",
+      "text": "（1）国内汽车分类\n    1）GB/T 3730.1—2001中，将汽车按用途分为乘用车和商用车两大类。\n    ①乘用车：在其设计和技术特性上主要用于载运乘客及其随身行李和（或）临时物品的汽车，包括驾驶员座位在内最多不超过9个座位。它也可牵引一辆挂车（具体分类）。",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/4/shapes/5",
+          "page_or_slide": 4,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_c4dc4a88417509ee919ff15fde25532e",
+      "kind": "content",
+      "page_or_slide": 5,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/5/shapes/8",
+      "text": "②商用车：在设计和技术特性上用于运送人员和货物的汽车，并且可以牵引挂车，乘用车不包括在内（具体分类）。\n    2）GB/T 15089—2001《机动车辆及挂车分类》中，按乘客座位数及汽车总质量将汽车分为M类、N类和O类（简单了解）。\n    3）GB/T 9417—1988《汽车产品型号编制规则》中，将国产汽车分为轿车、客车、载货汽车、越野汽车、牵引汽车、自卸汽车、专用汽车和半挂车共8类（分类标准已淘汰）。      \n    4）轿车根据轴距大小分为微型轿车、小型轿车、紧凑型轿车、中型轿车、大中型轿车和豪华型轿车（简单了解）。\n    （2）国外汽车分类（简单了解）\n    1）德国奔驰汽车公司。\n    2）德国大众汽车公司。",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.151285,
+        "x1": 0.983869,
+        "y1": 0.900756,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/5/shapes/8",
+          "page_or_slide": 5,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.151285,
+            "x1": 0.983869,
+            "y1": 0.900756,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_cc5057942749c5c4fee667bf0349a6a8",
+      "kind": "content",
+      "page_or_slide": 5,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/5/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/5/shapes/9",
+          "page_or_slide": 5,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_76ad0a249522b0889524a6fcab910c51",
+      "kind": "content",
+      "page_or_slide": 6,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/6/shapes/8",
+      "text": "3）德国宝马汽车公司。\n    4）德国奥迪汽车公司。\n    5）日本汽车公司。\n    6）美国轿车。",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.151285,
+        "x1": 0.983869,
+        "y1": 0.425044,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/6/shapes/8",
+          "page_or_slide": 6,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.151285,
+            "x1": 0.983869,
+            "y1": 0.425044,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_9aa5283a2c137bc55e17065e7be98a28",
+      "kind": "content",
+      "page_or_slide": 6,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/6/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/6/shapes/9",
+          "page_or_slide": 6,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8a12efa6a155392fd866e383830f8f67",
+      "kind": "content",
+      "page_or_slide": 7,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/7/shapes/7",
+      "text": "二、车辆识别代码编号",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.141922,
+        "x1": 0.490277,
+        "y1": 0.227191,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/7/shapes/7",
+          "page_or_slide": 7,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.141922,
+            "x1": 0.490277,
+            "y1": 0.227191,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_4bc7daca2e169a34bfd30c7fb2e4f032",
+      "kind": "content",
+      "page_or_slide": 7,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/7/shapes/11",
+      "text": "1. 用途",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.225255,
+        "x1": 0.16244,
+        "y1": 0.301548,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/7/shapes/11",
+          "page_or_slide": 7,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.225255,
+            "x1": 0.16244,
+            "y1": 0.301548,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_ae6d747435fb8a11d42bc1e912ee671d",
+      "kind": "content",
+      "page_or_slide": 7,
+      "reading_order": 3,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/7/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/7/shapes/9",
+          "page_or_slide": 7,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_51019f6edfedc99c5a082f601f8fdd1b",
+      "kind": "content",
+      "page_or_slide": 7,
+      "reading_order": 4,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/7/shapes/10",
+      "text": "车辆识别代码（Vehicle Identification Number，VIN）由一组字母和阿拉伯数字组成。共17位，又称17位识别代码编号（类似居民身份证）。\n    （1）汽车管理。\n    （2）汽车维修。\n    （3）汽车检测。\n    （4）二手车交易。\n    （5）车辆保险。\n    （6）汽车召回。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.310038,
+        "x1": 0.981944,
+        "y1": 0.897946,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/7/shapes/10",
+          "page_or_slide": 7,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.310038,
+            "x1": 0.981944,
+            "y1": 0.897946,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_10e8b47a33b4bbe067985bde25e35f84",
+      "kind": "content",
+      "page_or_slide": 8,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/8/shapes/14",
+      "text": "2. 基本内容（了解国内、外VIN码举例，知道VIN位置）",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.146028,
+        "x1": 1.0,
+        "y1": 0.222322,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/8/shapes/14",
+          "page_or_slide": 8,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.146028,
+            "x1": 1.0,
+            "y1": 0.222322,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_783e20a7da1cce5e5dde7b4ff7524139",
+      "kind": "content",
+      "page_or_slide": 8,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/8/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/8/shapes/9",
+          "page_or_slide": 8,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8fcfa1db45a72e62f87e22c99cea15be",
+      "kind": "content",
+      "page_or_slide": 8,
+      "reading_order": 3,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/8/shapes/13",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.287869,
+        "x1": 0.976386,
+        "y1": 0.807101,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/8/shapes/13",
+          "page_or_slide": 8,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.287869,
+            "x1": 0.976386,
+            "y1": 0.807101,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_2a0115f5dec21fd300c9fac2c9cfa8b6",
+      "kind": "content",
+      "page_or_slide": 9,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/9/shapes/7",
+      "text": "（1）世界制造厂识别代号（WMI）\n    由三位字码组成：第一位字码是标明一个地理区域的字母或数字；第二位字码是标明一个特定地区内的一个国家的字母或数字；第三位字码是标明某个特定的制造厂的字母或数字。\n    （2）车辆说明部分（VDS）\n   车辆说明部分（VDS）由六位字码组成（第4~9位）。\n    （3）车辆指示部分（VIS）\n    第10位：车型年份（一般标识为车辆的出厂年份，是识别车辆的重要标识）（能够识别）。\n    第11位：车辆装配厂。\n    第12～17位：顺序号。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.149652,
+        "x1": 0.981944,
+        "y1": 0.860227,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/9/shapes/7",
+          "page_or_slide": 9,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.149652,
+            "x1": 0.981944,
+            "y1": 0.860227,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_69a47a7984aca58da90325690f5e7dd0",
+      "kind": "content",
+      "page_or_slide": 9,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/9/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/9/shapes/9",
+          "page_or_slide": 9,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8e910bf96ec31c86e690d29f9934c986",
+      "kind": "content",
+      "page_or_slide": 10,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/10/shapes/8",
+      "text": "车辆识别代号第10位含义",
+      "bbox": {
+        "x0": 0.300705,
+        "y0": 0.177107,
+        "x1": 0.692901,
+        "y1": 0.244425,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/10/shapes/8",
+          "page_or_slide": 10,
+          "bbox": {
+            "x0": 0.300705,
+            "y0": 0.177107,
+            "x1": 0.692901,
+            "y1": 0.244425,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_d1bbeb072d3ded358fcb5e45bb97feb9",
+      "kind": "content",
+      "page_or_slide": 10,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/10/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/10/shapes/9",
+          "page_or_slide": 10,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_db877a1296671dd353b92789911f2731",
+      "kind": "table",
+      "page_or_slide": 10,
+      "reading_order": 3,
+      "block_type": "table",
+      "provider": "native-pptx",
+      "rows": 11,
+      "columns": 8,
+      "bbox": {
+        "x0": 0.052359,
+        "y0": 0.287051,
+        "x1": 0.941248,
+        "y1": 0.881865,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/10/shapes/6",
+          "page_or_slide": 10,
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.287051,
+            "x1": 0.941248,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        }
+      ],
+      "cells": [
+        {
+          "row": 0,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "年份",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.287051,
+            "x1": 0.16347,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "代码",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.287051,
+            "x1": 0.274581,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "年份",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.287051,
+            "x1": 0.385692,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "代码",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.287051,
+            "x1": 0.496803,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "年份",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.287051,
+            "x1": 0.607914,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "代码",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.287051,
+            "x1": 0.719025,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "年份",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.287051,
+            "x1": 0.830136,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 0,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": true,
+          "text": "代码",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.287051,
+            "x1": 0.941248,
+            "y1": 0.341125,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2001",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.341125,
+            "x1": 0.16347,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "1",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.341125,
+            "x1": 0.274581,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2011",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.341125,
+            "x1": 0.385692,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "B",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.341125,
+            "x1": 0.496803,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2021",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.341125,
+            "x1": 0.607914,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "M",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.341125,
+            "x1": 0.719025,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2031",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.341125,
+            "x1": 0.830136,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 1,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "1",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.341125,
+            "x1": 0.941248,
+            "y1": 0.395199,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2002",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.395199,
+            "x1": 0.16347,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.395199,
+            "x1": 0.274581,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2012",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.395199,
+            "x1": 0.385692,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "C",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.395199,
+            "x1": 0.496803,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2022",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.395199,
+            "x1": 0.607914,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "N",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.395199,
+            "x1": 0.719025,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2032",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.395199,
+            "x1": 0.830136,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 2,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.395199,
+            "x1": 0.941248,
+            "y1": 0.449273,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2003",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.449273,
+            "x1": 0.16347,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "3",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.449273,
+            "x1": 0.274581,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2013",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.449273,
+            "x1": 0.385692,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "D",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.449273,
+            "x1": 0.496803,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2023",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.449273,
+            "x1": 0.607914,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "P",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.449273,
+            "x1": 0.719025,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2033",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.449273,
+            "x1": 0.830136,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 3,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "3",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.449273,
+            "x1": 0.941248,
+            "y1": 0.503347,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2004",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.503347,
+            "x1": 0.16347,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "4",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.503347,
+            "x1": 0.274581,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2014",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.503347,
+            "x1": 0.385692,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "E",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.503347,
+            "x1": 0.496803,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2024",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.503347,
+            "x1": 0.607914,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "R",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.503347,
+            "x1": 0.719025,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2034",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.503347,
+            "x1": 0.830136,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 4,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "4",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.503347,
+            "x1": 0.941248,
+            "y1": 0.557421,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2005",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.557421,
+            "x1": 0.16347,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "5",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.557421,
+            "x1": 0.274581,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2015",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.557421,
+            "x1": 0.385692,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "F",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.557421,
+            "x1": 0.496803,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2025",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.557421,
+            "x1": 0.607914,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "S",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.557421,
+            "x1": 0.719025,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2035",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.557421,
+            "x1": 0.830136,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 5,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "5",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.557421,
+            "x1": 0.941248,
+            "y1": 0.611495,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2006",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.611495,
+            "x1": 0.16347,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "6",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.611495,
+            "x1": 0.274581,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2016",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.611495,
+            "x1": 0.385692,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "G",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.611495,
+            "x1": 0.496803,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2026",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.611495,
+            "x1": 0.607914,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "T",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.611495,
+            "x1": 0.719025,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2036",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.611495,
+            "x1": 0.830136,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 6,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "6",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.611495,
+            "x1": 0.941248,
+            "y1": 0.665569,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2007",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.665569,
+            "x1": 0.16347,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "7",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.665569,
+            "x1": 0.274581,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2017",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.665569,
+            "x1": 0.385692,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "H",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.665569,
+            "x1": 0.496803,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2027",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.665569,
+            "x1": 0.607914,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "V",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.665569,
+            "x1": 0.719025,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2037",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.665569,
+            "x1": 0.830136,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 7,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "7",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.665569,
+            "x1": 0.941248,
+            "y1": 0.719643,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2008",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.719643,
+            "x1": 0.16347,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "8",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.719643,
+            "x1": 0.274581,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2018",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.719643,
+            "x1": 0.385692,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "J",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.719643,
+            "x1": 0.496803,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2028",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.719643,
+            "x1": 0.607914,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "W",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.719643,
+            "x1": 0.719025,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2038",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.719643,
+            "x1": 0.830136,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 8,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "8",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.719643,
+            "x1": 0.941248,
+            "y1": 0.773717,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2009",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.773717,
+            "x1": 0.16347,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "9",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.773717,
+            "x1": 0.274581,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2019",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.773717,
+            "x1": 0.385692,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "K",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.773717,
+            "x1": 0.496803,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2029",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.773717,
+            "x1": 0.607914,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "X",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.773717,
+            "x1": 0.719025,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2039",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.773717,
+            "x1": 0.830136,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 9,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "9",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.773717,
+            "x1": 0.941248,
+            "y1": 0.827791,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 0,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2010",
+          "bbox": {
+            "x0": 0.052359,
+            "y0": 0.827791,
+            "x1": 0.16347,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 1,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "A",
+          "bbox": {
+            "x0": 0.16347,
+            "y0": 0.827791,
+            "x1": 0.274581,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 2,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2020",
+          "bbox": {
+            "x0": 0.274581,
+            "y0": 0.827791,
+            "x1": 0.385692,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 3,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "L",
+          "bbox": {
+            "x0": 0.385692,
+            "y0": 0.827791,
+            "x1": 0.496803,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 4,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2030",
+          "bbox": {
+            "x0": 0.496803,
+            "y0": 0.827791,
+            "x1": 0.607914,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 5,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "Y",
+          "bbox": {
+            "x0": 0.607914,
+            "y0": 0.827791,
+            "x1": 0.719025,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 6,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "2040",
+          "bbox": {
+            "x0": 0.719025,
+            "y0": 0.827791,
+            "x1": 0.830136,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        },
+        {
+          "row": 10,
+          "col": 7,
+          "row_span": 1,
+          "col_span": 1,
+          "header": false,
+          "text": "A",
+          "bbox": {
+            "x0": 0.830136,
+            "y0": 0.827791,
+            "x1": 0.941248,
+            "y1": 0.881865,
+            "coordinate_space": "normalized"
+          }
+        }
+      ]
+    },
+    {
+      "block_id": "blk_cb88e27e74bafbab831d0e46208bb8fd",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 1,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/11/shapes/5",
+      "bbox": {
+        "x0": 0.07435,
+        "y0": 0.211627,
+        "x1": 0.365754,
+        "y1": 0.501758,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11/shapes/5",
+          "page_or_slide": 11,
+          "bbox": {
+            "x0": 0.07435,
+            "y0": 0.211627,
+            "x1": 0.365754,
+            "y1": 0.501758,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_2d9d2007b639958342c8100f8563da56",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 2,
+      "block_type": "unknown",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/11/shapes/9",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.255633,
+        "x1": 0.983869,
+        "y1": 0.322951,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11/shapes/9",
+          "page_or_slide": 11,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.255633,
+            "x1": 0.983869,
+            "y1": 0.322951,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8dad93ef126612520749d2f992405089",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 3,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/11/shapes/10",
+      "bbox": {
+        "x0": 0.078232,
+        "y0": 0.557434,
+        "x1": 0.369636,
+        "y1": 0.859039,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11/shapes/10",
+          "page_or_slide": 11,
+          "bbox": {
+            "x0": 0.078232,
+            "y0": 0.557434,
+            "x1": 0.369636,
+            "y1": 0.859039,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_ae95e316e5137990b39fe09394c59684",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 4,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/11/shapes/7",
+      "bbox": {
+        "x0": 0.640325,
+        "y0": 0.211627,
+        "x1": 0.930148,
+        "y1": 0.502305,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11/shapes/7",
+          "page_or_slide": 11,
+          "bbox": {
+            "x0": 0.640325,
+            "y0": 0.211627,
+            "x1": 0.930148,
+            "y1": 0.502305,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_aae407c62234050efaee2463fe4a6b98",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 5,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/11/shapes/11",
+      "bbox": {
+        "x0": 0.640325,
+        "y0": 0.558708,
+        "x1": 0.940391,
+        "y1": 0.863708,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/11/shapes/11",
+          "page_or_slide": 11,
+          "bbox": {
+            "x0": 0.640325,
+            "y0": 0.558708,
+            "x1": 0.940391,
+            "y1": 0.863708,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_4eef412522fd136fc42da982b504d323",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 6,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[1]/p:nvPicPr/p:cNvPr",
+      "text": "图1-23",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[1]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 11,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_90a61a4fb5cac4fd4c23281d8bcfe53c",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 7,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[2]/p:nvPicPr/p:cNvPr",
+      "text": "图1-24",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[2]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 11,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_851ae783928fd9e26c55628785b6826c",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 8,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[3]/p:nvPicPr/p:cNvPr",
+      "text": "图1-25",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[3]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 11,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_6f092d8287853c79c07f9c89afae76d0",
+      "kind": "content",
+      "page_or_slide": 11,
+      "reading_order": 9,
+      "block_type": "image",
+      "provider": "native-pptx-ooxml",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[4]/p:nvPicPr/p:cNvPr",
+      "text": "图1-26",
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx-ooxml",
+          "raw_locator": "ppt/slides/slide11.xml#/p:sld/p:cSld/p:spTree/p:pic[4]/p:nvPicPr/p:cNvPr",
+          "page_or_slide": 11,
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_31e6c68c8e65c5bab39880690fac3459",
+      "kind": "content",
+      "page_or_slide": 12,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/12/shapes/2",
+      "text": "三、国产汽车产品型号编制规则（标准已作废）",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.13999,
+        "x1": 0.98394,
+        "y1": 0.225259,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/12/shapes/2",
+          "page_or_slide": 12,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.13999,
+            "x1": 0.98394,
+            "y1": 0.225259,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_3b3c87b14e7b11ea3548fb40c6455d80",
+      "kind": "content",
+      "page_or_slide": 12,
+      "reading_order": 2,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/12/shapes/3",
+      "bbox": {
+        "x0": 0.203062,
+        "y0": 0.257351,
+        "x1": 0.804029,
+        "y1": 0.483712,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/12/shapes/3",
+          "page_or_slide": 12,
+          "bbox": {
+            "x0": 0.203062,
+            "y0": 0.257351,
+            "x1": 0.804029,
+            "y1": 0.483712,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_267726312db1ee681516bd0944879545",
+      "kind": "content",
+      "page_or_slide": 12,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/12/shapes/5",
+      "text": "（1）企业名称代号。\n    （2）车辆类别代号。\n    （3）主参数代号。\n    （4）产品序号。\n    （5）专用汽车分类代号。\n    （6）企业自定代号。",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.510706,
+        "x1": 0.983869,
+        "y1": 0.922092,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/12/shapes/5",
+          "page_or_slide": 12,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.510706,
+            "x1": 0.983869,
+            "y1": 0.922092,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_daa83ed9b8e69496fb2c357419db56f4",
+      "kind": "content",
+      "page_or_slide": 13,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/13/shapes/2",
+      "text": "四、汽车的总体结构（部件举例，理解并掌握）",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.13999,
+        "x1": 0.98394,
+        "y1": 0.225259,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13/shapes/2",
+          "page_or_slide": 13,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.13999,
+            "x1": 0.98394,
+            "y1": 0.225259,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_8d960bbeafc3dd65cf804abd262b5584",
+      "kind": "content",
+      "page_or_slide": 13,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/13/shapes/7",
+      "text": "1. 发动机",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.223323,
+        "x1": 0.201709,
+        "y1": 0.299617,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13/shapes/7",
+          "page_or_slide": 13,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.223323,
+            "x1": 0.201709,
+            "y1": 0.299617,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_bcd152acac7c3f5d29b5831ae4315ff0",
+      "kind": "content",
+      "page_or_slide": 13,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/13/shapes/4",
+      "text": "曲柄连杆机构、配气机构、燃料供给系统、冷却系统、润滑系统、点火系统（汽油发动机用）和起动系统。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.308107,
+        "x1": 0.981944,
+        "y1": 0.429279,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13/shapes/4",
+          "page_or_slide": 13,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.308107,
+            "x1": 0.981944,
+            "y1": 0.429279,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_0432f1a7599ab04b2bf3d685dfea8206",
+      "kind": "content",
+      "page_or_slide": 13,
+      "reading_order": 4,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/13/shapes/6",
+      "text": "2. 底盘",
+      "bbox": {
+        "x0": 0.024611,
+        "y0": 0.435584,
+        "x1": 0.164365,
+        "y1": 0.511878,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13/shapes/6",
+          "page_or_slide": 13,
+          "bbox": {
+            "x0": 0.024611,
+            "y0": 0.435584,
+            "x1": 0.164365,
+            "y1": 0.511878,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_aff82e029d7da3972f8aed33a667982b",
+      "kind": "content",
+      "page_or_slide": 13,
+      "reading_order": 5,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/13/shapes/5",
+      "text": "（1）传动系统  主要由离合器、变速器、万向传动装置和驱动桥组成。\n  （2）行驶系统  主要由车架、车桥、车轮和悬架组成。\n    （3）转向系统  主要由转向器和转向传动机构组成。\n    （4）制动系统  主要由制动器和制动传动机构组成。",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.520368,
+        "x1": 0.983869,
+        "y1": 0.84798,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/13/shapes/5",
+          "page_or_slide": 13,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.520368,
+            "x1": 0.983869,
+            "y1": 0.84798,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_0c4569256dd7abe6108e1e38e2deee77",
+      "kind": "content",
+      "page_or_slide": 14,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/14/shapes/9",
+      "text": "3. 电气和电子设备",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.144097,
+        "x1": 0.358783,
+        "y1": 0.22039,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/14/shapes/9",
+          "page_or_slide": 14,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.144097,
+            "x1": 0.358783,
+            "y1": 0.22039,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_b251ecc1495612c6266ae5a0ecb3ab95",
+      "kind": "content",
+      "page_or_slide": 14,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/14/shapes/8",
+      "text": "汽车电气设备：电源（发动机和蓄电池）、汽油发动机点火系统、起动系统、照明与信号装置、空调和仪表等。\n    汽车电子设备：发动机电控系统、底盘电控系统和车身电控系统等。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.22888,
+        "x1": 0.981944,
+        "y1": 0.47272,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/14/shapes/8",
+          "page_or_slide": 14,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.22888,
+            "x1": 0.981944,
+            "y1": 0.47272,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_c57fa270528434897c0ecaa8a1fe71a0",
+      "kind": "content",
+      "page_or_slide": 14,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/14/shapes/11",
+      "text": "4. 车身",
+      "bbox": {
+        "x0": 0.024611,
+        "y0": 0.474232,
+        "x1": 0.164365,
+        "y1": 0.550526,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/14/shapes/11",
+          "page_or_slide": 14,
+          "bbox": {
+            "x0": 0.024611,
+            "y0": 0.474232,
+            "x1": 0.164365,
+            "y1": 0.550526,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_edd1e0fe47724acab2026457a300aed0",
+      "kind": "content",
+      "page_or_slide": 14,
+      "reading_order": 4,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/14/shapes/10",
+      "text": "轿车和客车一般有一个完整的车身。\n  货车车身由驾驶室和货箱（或封闭式货箱）组成。",
+      "bbox": {
+        "x0": 0.023222,
+        "y0": 0.559016,
+        "x1": 0.983869,
+        "y1": 0.695147,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/14/shapes/10",
+          "page_or_slide": 14,
+          "bbox": {
+            "x0": 0.023222,
+            "y0": 0.559016,
+            "x1": 0.983869,
+            "y1": 0.695147,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_c2bfcbe9b5c773d2d0bcab664ab30a80",
+      "kind": "content",
+      "page_or_slide": 15,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/15/shapes/2",
+      "text": "五、汽车行驶的基本原理（理解并掌握）",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.13999,
+        "x1": 0.849305,
+        "y1": 0.297065,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15/shapes/2",
+          "page_or_slide": 15,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.13999,
+            "x1": 0.849305,
+            "y1": 0.297065,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_e847b9d0167c0fb927f7112af46a1a98",
+      "kind": "content",
+      "page_or_slide": 15,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/15/shapes/7",
+      "text": "1. 汽车行驶的驱动条件",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.223323,
+        "x1": 0.437321,
+        "y1": 0.299617,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15/shapes/7",
+          "page_or_slide": 15,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.223323,
+            "x1": 0.437321,
+            "y1": 0.299617,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_82d1e8bc4d2cea8b51ada5f447b4b840",
+      "kind": "content",
+      "page_or_slide": 15,
+      "reading_order": 3,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/15/shapes/4",
+      "text": "（1）驱动力（问题：如何增大汽车的驱动力？）",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.308107,
+        "x1": 0.981944,
+        "y1": 0.375424,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15/shapes/4",
+          "page_or_slide": 15,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.308107,
+            "x1": 0.981944,
+            "y1": 0.375424,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_282bce88a561c6c2f1957e6f189948c2",
+      "kind": "content",
+      "page_or_slide": 15,
+      "reading_order": 4,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/15/shapes/8",
+      "bbox": {
+        "x0": 0.33772,
+        "y0": 0.383914,
+        "x1": 0.665521,
+        "y1": 0.707045,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15/shapes/8",
+          "page_or_slide": 15,
+          "bbox": {
+            "x0": 0.33772,
+            "y0": 0.383914,
+            "x1": 0.665521,
+            "y1": 0.707045,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_5eeb5cd61fbca31e34359a607ae567c0",
+      "kind": "content",
+      "page_or_slide": 15,
+      "reading_order": 5,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/15/shapes/9",
+      "bbox": {
+        "x0": 0.411007,
+        "y0": 0.76631,
+        "x1": 0.592234,
+        "y1": 0.838523,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/15/shapes/9",
+          "page_or_slide": 15,
+          "bbox": {
+            "x0": 0.411007,
+            "y0": 0.76631,
+            "x1": 0.592234,
+            "y1": 0.838523,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_90c763ea78b6211fc7a7f78581febbb9",
+      "kind": "content",
+      "page_or_slide": 16,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/16/shapes/4",
+      "text": "（2）行驶阻力\n    1）滚动阻力。\n    2）坡度阻力。\n    3）空气阻力。\n    4）加速阻力。",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.149653,
+        "x1": 0.981944,
+        "y1": 0.492225,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/16/shapes/4",
+          "page_or_slide": 16,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.149653,
+            "x1": 0.981944,
+            "y1": 0.492225,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_619b2c9fbe6b7ca15aa12cf2b76799fd",
+      "kind": "content",
+      "page_or_slide": 16,
+      "reading_order": 2,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/16/shapes/10",
+      "bbox": {
+        "x0": 0.427536,
+        "y0": 0.159373,
+        "x1": 0.897614,
+        "y1": 0.482504,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/16/shapes/10",
+          "page_or_slide": 16,
+          "bbox": {
+            "x0": 0.427536,
+            "y0": 0.159373,
+            "x1": 0.897614,
+            "y1": 0.482504,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_9ac4045542b3fe550ed7270462da3705",
+      "kind": "content",
+      "page_or_slide": 16,
+      "reading_order": 3,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/16/shapes/11",
+      "bbox": {
+        "x0": 0.31154,
+        "y0": 0.596328,
+        "x1": 0.691701,
+        "y1": 0.665764,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/16/shapes/11",
+          "page_or_slide": 16,
+          "bbox": {
+            "x0": 0.31154,
+            "y0": 0.596328,
+            "x1": 0.691701,
+            "y1": 0.665764,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_79fab6146af5ceb85403bc3c7abaf482",
+      "kind": "content",
+      "page_or_slide": 16,
+      "reading_order": 4,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/16/shapes/12",
+      "bbox": {
+        "x0": 0.35216,
+        "y0": 0.769868,
+        "x1": 0.651081,
+        "y1": 0.833748,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/16/shapes/12",
+          "page_or_slide": 16,
+          "bbox": {
+            "x0": 0.35216,
+            "y0": 0.769868,
+            "x1": 0.651081,
+            "y1": 0.833748,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_7fe14062fb93e727df8d34b37f747ad3",
+      "kind": "content",
+      "page_or_slide": 17,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/17/shapes/7",
+      "text": "2. 汽车行驶的附着条件（问题：如何让汽车不打滑）",
+      "bbox": {
+        "x0": 0.022686,
+        "y0": 0.144097,
+        "x1": 0.947813,
+        "y1": 0.22039,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17/shapes/7",
+          "page_or_slide": 17,
+          "bbox": {
+            "x0": 0.022686,
+            "y0": 0.144097,
+            "x1": 0.947813,
+            "y1": 0.22039,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_3ecf9d2e9a174f4ac5f4c8f7a3f9b9ea",
+      "kind": "content",
+      "page_or_slide": 17,
+      "reading_order": 2,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/17/shapes/10",
+      "bbox": {
+        "x0": 0.409444,
+        "y0": 0.261143,
+        "x1": 0.593796,
+        "y1": 0.345855,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17/shapes/10",
+          "page_or_slide": 17,
+          "bbox": {
+            "x0": 0.409444,
+            "y0": 0.261143,
+            "x1": 0.593796,
+            "y1": 0.345855,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_59200ba6a6b7159aaa3c19a8d3905a23",
+      "kind": "content",
+      "page_or_slide": 17,
+      "reading_order": 3,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/17/shapes/11",
+      "bbox": {
+        "x0": 0.428713,
+        "y0": 0.386608,
+        "x1": 0.574528,
+        "y1": 0.462987,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17/shapes/11",
+          "page_or_slide": 17,
+          "bbox": {
+            "x0": 0.428713,
+            "y0": 0.386608,
+            "x1": 0.574528,
+            "y1": 0.462987,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_2fdbe81a0c6bbd3a5b98e920ddf576e5",
+      "kind": "content",
+      "page_or_slide": 17,
+      "reading_order": 4,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/17/shapes/13",
+      "text": "汽车行驶的驱动附着条件：",
+      "bbox": {
+        "x0": 0.021297,
+        "y0": 0.516802,
+        "x1": 0.981944,
+        "y1": 0.58412,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17/shapes/13",
+          "page_or_slide": 17,
+          "bbox": {
+            "x0": 0.021297,
+            "y0": 0.516802,
+            "x1": 0.981944,
+            "y1": 0.58412,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_6a48f527fe4855b88132cdd22a512f82",
+      "kind": "content",
+      "page_or_slide": 17,
+      "reading_order": 5,
+      "block_type": "image",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/17/shapes/12",
+      "bbox": {
+        "x0": 0.334815,
+        "y0": 0.638308,
+        "x1": 0.723309,
+        "y1": 0.72302,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/17/shapes/12",
+          "page_or_slide": 17,
+          "bbox": {
+            "x0": 0.334815,
+            "y0": 0.638308,
+            "x1": 0.723309,
+            "y1": 0.72302,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_76fae0c5dc15fea8381508892bbd3913",
+      "kind": "content",
+      "page_or_slide": 18,
+      "reading_order": 1,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/18/shapes/2",
+      "text": "END",
+      "bbox": {
+        "x0": 0.353299,
+        "y0": 0.290491,
+        "x1": 0.591146,
+        "y1": 0.523593,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/18/shapes/2",
+          "page_or_slide": 18,
+          "bbox": {
+            "x0": 0.353299,
+            "y0": 0.290491,
+            "x1": 0.591146,
+            "y1": 0.523593,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    },
+    {
+      "block_id": "blk_06d2eec16f3cb434fb9b7d0f1e7f6d44",
+      "kind": "content",
+      "page_or_slide": 18,
+      "reading_order": 2,
+      "block_type": "paragraph",
+      "provider": "native-pptx",
+      "raw_result_ref": "artifact://prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31/raw.json#/slides/18/shapes/3",
+      "text": "请各位师生批评指正 ！",
+      "bbox": {
+        "x0": 0.000545,
+        "y0": 0.596321,
+        "x1": 1.0,
+        "y1": 0.757883,
+        "coordinate_space": "normalized"
+      },
+      "provenance": [
+        {
+          "artifact_id": "art_92359a3220a756df94a7e5d988b3be4c",
+          "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "parser_run_id": "prun_dpr_ac37d7ce53644ff9bf9579b01abf2c31",
+          "provider": "native-pptx",
+          "raw_locator": "slides/18/shapes/3",
+          "page_or_slide": 18,
+          "bbox": {
+            "x0": 0.000545,
+            "y0": 0.596321,
+            "x1": 1.0,
+            "y1": 0.757883,
+            "coordinate_space": "normalized"
+          },
+          "confidence": 1.0
+        }
+      ]
+    }
+  ],
+  "assets": [
+    {
+      "asset_id": "asset_pptx_slide_1",
+      "kind": "slide_render",
+      "page_or_slide": 1,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_2e09337cc374a95b59024f7dc095b2c3",
+        "blk_31f81dc56900089215635a59b848fcb4",
+        "blk_cc0a097c5b5eaaadd57512abf9d04e17",
+        "blk_9e198cdb7165240dab0feecef647af18",
+        "blk_395069ac11674512387ce45c1761d874",
+        "blk_75cfcd7dfc484ef4860d5eb87417fb03",
+        "blk_263cb191990b5c5501882339064918a2",
+        "blk_4fe526c48d65bbf54ac756d08275ce49",
+        "blk_fc964b0c6308b9486207d15aa0945bf1",
+        "blk_34c11a233b509b30ca6f61a47ff9179a",
+        "blk_c7ed025de6e42867306a3839459faa7d",
+        "blk_507c21f0d041255c1771d57577b1d4f9",
+        "blk_74af104826e27c73b9c458f952396120",
+        "blk_68fa951e904e0d5aef749af1802ecf3f",
+        "blk_11cbdc82bcf50725d4b658a8ede725c1"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_2",
+      "kind": "slide_render",
+      "page_or_slide": 2,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_5de6ad5b2169d95db0739db0713211fb",
+        "blk_e9c0bbc4b57b219b97208664027bbe79"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_3",
+      "kind": "slide_render",
+      "page_or_slide": 3,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_48d9b39bba09d25dcf738ba8860542e5",
+        "blk_b825ed4ef89be9ed045a36c32bb09f7a"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_4",
+      "kind": "slide_render",
+      "page_or_slide": 4,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_6e41a77320a3d6548539d0ea2252820f",
+        "blk_cbfad46aed35f0f4e81d0a5bd96c82aa",
+        "blk_8f75e3b147f0419a124e48c33c013ac0",
+        "blk_eb2f3815c79bfb6db414b739acf02b68",
+        "blk_a46036ef9155715e0fb099fc948cc8f2"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_5",
+      "kind": "slide_render",
+      "page_or_slide": 5,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_c4dc4a88417509ee919ff15fde25532e",
+        "blk_cc5057942749c5c4fee667bf0349a6a8"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_6",
+      "kind": "slide_render",
+      "page_or_slide": 6,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_76ad0a249522b0889524a6fcab910c51",
+        "blk_9aa5283a2c137bc55e17065e7be98a28"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_7",
+      "kind": "slide_render",
+      "page_or_slide": 7,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_8a12efa6a155392fd866e383830f8f67",
+        "blk_4bc7daca2e169a34bfd30c7fb2e4f032",
+        "blk_ae6d747435fb8a11d42bc1e912ee671d",
+        "blk_51019f6edfedc99c5a082f601f8fdd1b"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_8",
+      "kind": "slide_render",
+      "page_or_slide": 8,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_10e8b47a33b4bbe067985bde25e35f84",
+        "blk_783e20a7da1cce5e5dde7b4ff7524139",
+        "blk_8fcfa1db45a72e62f87e22c99cea15be"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_9",
+      "kind": "slide_render",
+      "page_or_slide": 9,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_2a0115f5dec21fd300c9fac2c9cfa8b6",
+        "blk_69a47a7984aca58da90325690f5e7dd0"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_10",
+      "kind": "slide_render",
+      "page_or_slide": 10,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_8e910bf96ec31c86e690d29f9934c986",
+        "blk_d1bbeb072d3ded358fcb5e45bb97feb9",
+        "blk_db877a1296671dd353b92789911f2731"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_11",
+      "kind": "slide_render",
+      "page_or_slide": 11,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_cb88e27e74bafbab831d0e46208bb8fd",
+        "blk_2d9d2007b639958342c8100f8563da56",
+        "blk_8dad93ef126612520749d2f992405089",
+        "blk_ae95e316e5137990b39fe09394c59684",
+        "blk_aae407c62234050efaee2463fe4a6b98",
+        "blk_4eef412522fd136fc42da982b504d323",
+        "blk_90a61a4fb5cac4fd4c23281d8bcfe53c",
+        "blk_851ae783928fd9e26c55628785b6826c",
+        "blk_6f092d8287853c79c07f9c89afae76d0"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_12",
+      "kind": "slide_render",
+      "page_or_slide": 12,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_31e6c68c8e65c5bab39880690fac3459",
+        "blk_3b3c87b14e7b11ea3548fb40c6455d80",
+        "blk_267726312db1ee681516bd0944879545"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_13",
+      "kind": "slide_render",
+      "page_or_slide": 13,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_daa83ed9b8e69496fb2c357419db56f4",
+        "blk_8d960bbeafc3dd65cf804abd262b5584",
+        "blk_bcd152acac7c3f5d29b5831ae4315ff0",
+        "blk_0432f1a7599ab04b2bf3d685dfea8206",
+        "blk_aff82e029d7da3972f8aed33a667982b"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_14",
+      "kind": "slide_render",
+      "page_or_slide": 14,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_0c4569256dd7abe6108e1e38e2deee77",
+        "blk_b251ecc1495612c6266ae5a0ecb3ab95",
+        "blk_c57fa270528434897c0ecaa8a1fe71a0",
+        "blk_edd1e0fe47724acab2026457a300aed0"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_15",
+      "kind": "slide_render",
+      "page_or_slide": 15,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_c2bfcbe9b5c773d2d0bcab664ab30a80",
+        "blk_e847b9d0167c0fb927f7112af46a1a98",
+        "blk_82d1e8bc4d2cea8b51ada5f447b4b840",
+        "blk_282bce88a561c6c2f1957e6f189948c2",
+        "blk_5eeb5cd61fbca31e34359a607ae567c0"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_16",
+      "kind": "slide_render",
+      "page_or_slide": 16,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_90c763ea78b6211fc7a7f78581febbb9",
+        "blk_619b2c9fbe6b7ca15aa12cf2b76799fd",
+        "blk_9ac4045542b3fe550ed7270462da3705",
+        "blk_79fab6146af5ceb85403bc3c7abaf482"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_17",
+      "kind": "slide_render",
+      "page_or_slide": 17,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_7fe14062fb93e727df8d34b37f747ad3",
+        "blk_3ecf9d2e9a174f4ac5f4c8f7a3f9b9ea",
+        "blk_59200ba6a6b7159aaa3c19a8d3905a23",
+        "blk_2fdbe81a0c6bbd3a5b98e920ddf576e5",
+        "blk_6a48f527fe4855b88132cdd22a512f82"
+      ]
+    },
+    {
+      "asset_id": "asset_pptx_slide_18",
+      "kind": "slide_render",
+      "page_or_slide": 18,
+      "provider": "native-pptx",
+      "width": 10.0,
+      "height": 7.5,
+      "linked_block_ids": [
+        "blk_76fae0c5dc15fea8381508892bbd3913",
+        "blk_06d2eec16f3cb434fb9b7d0f1e7f6d44"
+      ]
+    }
+  ],
+  "quality": {
+    "overall_score": 0.6233766233766234,
+    "text_coverage": 0.6233766233766234,
+    "reading_order_confidence": 1.0,
+    "heading_confidence": 1.0,
+    "ocr_ratio": 0.0,
+    "formula_coverage": 1.0,
+    "table_coverage": 1.0,
+    "duplicate_ratio": 0.08333333333333333,
+    "empty_unit_ratio": 0.0,
+    "scorer_version": "canonical-assembler/1.0"
+  },
+  "warnings": [
+    {
+      "code": "PIPELINE_WARNING",
+      "severity": "warning",
+      "message": "OCR service unavailable via DocumentOcrPort; will try in-process fallback",
+      "recoverable": true,
+      "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31"
+    },
+    {
+      "code": "PIPELINE_WARNING",
+      "severity": "warning",
+      "message": "Office OCR port produced no output; skipped unsafe raw-byte OCR fallback",
+      "recoverable": true,
+      "run_id": "dpr_ac37d7ce53644ff9bf9579b01abf2c31"
+    }
+  ],
+  "created_at": "2026-07-28T09:59:26.891674+00:00"
+}

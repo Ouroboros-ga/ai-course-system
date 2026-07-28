@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -316,8 +317,10 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
     from app.services.course_corpus_service import course_corpus_service
     from app.services.document_draft_builders import build_draft_assets
 
+    # Keep the durable task pending through a short quiet window. This stops a
+    # teacher who is uploading several files from getting a draft after the
+    # first one happens to parse quickly.
     with ctx.session_factory() as session:
-        ctx.service.mark_running(session, ctx.task_id, stage="course_corpus")
         build = session.exec(select(CourseDraftBuildTask).where(
             CourseDraftBuildTask.course_id == course_id,
             CourseDraftBuildTask.build_task_id == build_task_id,
@@ -325,6 +328,41 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
         )).first()
         if build is None:
             raise TaskExecutionError("RESOURCE_NOT_FOUND", "课程草稿构建任务不存在", retryable=False)
+        if build.not_before_at:
+            not_before_at = build.not_before_at
+            if not_before_at.tzinfo is None:
+                not_before_at = not_before_at.replace(tzinfo=timezone.utc)
+            delay_seconds = max(0.0, (not_before_at - utcnow_aware()).total_seconds())
+        else:
+            delay_seconds = 0.0
+    if delay_seconds:
+        await asyncio.sleep(delay_seconds)
+
+    with ctx.session_factory() as session:
+        build = session.exec(select(CourseDraftBuildTask).where(
+            CourseDraftBuildTask.course_id == course_id,
+            CourseDraftBuildTask.build_task_id == build_task_id,
+            CourseDraftBuildTask.corpus_snapshot_id == corpus_snapshot_id,
+        )).first()
+        if build is None or build.status == CourseDraftBuildStatus.CANCELLED:
+            return
+        corpus = session.exec(select(CourseCorpusSnapshot).where(
+            CourseCorpusSnapshot.corpus_snapshot_id == corpus_snapshot_id,
+            CourseCorpusSnapshot.course_id == course_id,
+        )).first()
+        if corpus is None or not course_corpus_service.is_snapshot_current(session, corpus=corpus):
+            build.status = CourseDraftBuildStatus.CANCELLED
+            build.error_code = "CORPUS_CHANGED"
+            build.error_message = "静默窗口内课程材料发生变化，已等待新的课程语料快照"
+            session.add(build)
+            session.commit()
+            try:
+                ctx.service.cancel(session, ctx.task_id, reason=build.error_message)
+            except ValueError:
+                pass
+            return
+
+        ctx.service.mark_running(session, ctx.task_id, stage="course_corpus")
         build.status = CourseDraftBuildStatus.RUNNING
         build.started_at = utcnow_aware()
         session.add(build)

@@ -1,0 +1,17 @@
+{
+  "asset_package_id": "aap_390b7dbebb2e4fe2b96049a5a1dbf38d",
+  "avatar_id": "avp_9d20246cb6b64e74a11feeb6d45c144a",
+  "provider": "fake",
+  "provider_version": "fake-dh-v1.0",
+  "object_prefix": "avatars/u_32/aap_390b7dbebb2e4fe2b96049a5a1dbf38d/",
+  "render_modes": [
+    "browser_realtime"
+  ],
+  "quality_profiles": [
+    "auto",
+    "low_resource",
+    "compatibility"
+  ],
+  "created_at": "2026-07-26T10:44:26.605549+00:00",
+  "note": "fake digital human manifest; not a real engine output"
+}
