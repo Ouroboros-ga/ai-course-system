@@ -38,7 +38,7 @@ from app.models.course_outline_model import (
 )
 from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, MaterialStatus, SourceMaterial
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
-from app.models.document_parse_model import EvidenceSpan, EvidenceSpanStatus
+from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 from app.models.graph_production_model import CourseEvidenceRecord, EvidenceStatus
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
@@ -128,6 +128,12 @@ class ControlledPrepRequest(BaseModel):
     candidate_id: Optional[str] = Field(default=None, max_length=100)
     existing_outline_ids: dict[str, str] = Field(default_factory=dict)
     existing_script_ids: dict[str, str] = Field(default_factory=dict)
+
+
+class PrepAgentCommandRequest(BaseModel):
+    """Natural-language instruction for the teacher-facing preparation agent."""
+
+    instruction: str = Field(min_length=2, max_length=8_000)
 
 
 def _mark_build_step(session: Session, course_id: int, step_name: BuildStepName, status: BuildStepStatus, actor_id: int, output_ref: str = "") -> None:
@@ -344,7 +350,13 @@ async def get_outline(course_id: int, session: Session = Depends(get_session), c
         CourseOutlineNode.outline_version_id == version.outline_version_id,
     ).order_by(CourseOutlineNode.order_index)).all()
     return unified_response(200, "获取课程目录成功", {
-        "version": {"outline_version_id": version.outline_version_id, "version": version.version, "status": version.lifecycle_status.value},
+        "version": {
+            "outline_version_id": version.outline_version_id,
+            "version": version.version,
+            "status": version.lifecycle_status.value,
+            "generation_source": version.generation_source,
+            "review_status": version.review_status,
+        },
         "nodes": [_outline_node_view(n) for n in nodes],
         "editable": version.lifecycle_status == OutlineLifecycleStatus.DRAFT,
     })
@@ -438,7 +450,7 @@ async def get_scripts(course_id: int, session: Session = Depends(get_session), c
     ).order_by(TeachingScriptVersion.version.desc())).first()
     if not script: return unified_response(200, "讲稿尚未生成", {"version": None, "items": []})
     nodes = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script.script_version_id)).all()
-    return unified_response(200, "获取讲授脚本成功", {"version": {"script_version_id": script.script_version_id, "status": script.lifecycle_status.value}, "items": [_script_node_view(n) for n in nodes], "editable": script.lifecycle_status == OutlineLifecycleStatus.DRAFT})
+    return unified_response(200, "获取讲授脚本成功", {"version": {"script_version_id": script.script_version_id, "status": script.lifecycle_status.value, "generation_source": script.generation_source, "review_status": script.review_status}, "items": [_script_node_view(n) for n in nodes], "editable": script.lifecycle_status == OutlineLifecycleStatus.DRAFT})
 
 
 @router.patch("/course/{course_id}/scripts/{script_node_id}")
@@ -538,6 +550,119 @@ async def run_controlled_prep(
             "evidence_verifier": [item.model_dump() for item in result["verifications"]],
             "patch_compiler": proposal.model_dump(),
         },
+    })
+
+
+@router.post("/course/{course_id}/prep-agent/commands")
+async def run_prep_agent_command(
+    course_id: int,
+    payload: PrepAgentCommandRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Turn a teacher's natural-language request into a reviewable proposal.
+
+    This is intentionally a compatibility-facade route.  It uses the existing
+    PatchProposal persistence and decision endpoint, so it cannot double-write
+    the outline/script records.
+    """
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    from app.services.course_prep_agent_service import course_prep_agent_service
+
+    try:
+        result = await course_prep_agent_service.plan(
+            session, course_id=course_id, instruction=payload.instruction,
+        )
+    except ValueError as exc:
+        raise HTTPException(422, detail={"error_code": "PREP_AGENT_NO_EDITABLE_TARGET", "message": str(exc)}) from exc
+
+    proposal = PatchProposal(
+        course_id=course_id,
+        tool_name="CoursePrepAgent",
+        policy_version="course-prep-agent/1.0",
+        reason=result.summary,
+        created_by=context.user_id,
+    )
+    session.add(proposal)
+    session.flush()
+    operation_count = 0
+    for item in result.operations:
+        target_kind, target_id, field = item["target"].split(":", 2)
+        before = ""
+        if target_kind == "outline":
+            target = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_node_id == target_id,
+            )).first()
+            if target is None or target.locked_by is not None:
+                continue
+            before = str(getattr(target, field, ""))
+        else:
+            target = session.exec(select(TeachingScriptNode).where(
+                TeachingScriptNode.course_id == course_id,
+                TeachingScriptNode.script_node_id == target_id,
+            )).first()
+            if target is None or target.locked_by is not None:
+                continue
+            before = str(getattr(target, field, ""))
+        session.add(PatchProposalOperation(
+            proposal_id=proposal.proposal_id,
+            course_id=course_id,
+            operation=PatchOperation.REPLACE,
+            target=item["target"],
+            before=before,
+            after=item["after"],
+            reason=item["reason"],
+            evidence_refs=item["evidence_refs"],
+            policy_version="course-prep-agent/1.0",
+        ))
+        operation_count += 1
+    if operation_count == 0:
+        session.rollback()
+        raise HTTPException(409, "提案目标已在生成期间被锁定或删除，请刷新后重试")
+    session.commit()
+    return unified_response(201, "备课 Agent 已生成待教师审核的提案", {
+        "proposal_id": proposal.proposal_id,
+        "status": PatchProposalStatus.PENDING.value,
+        "explanation": {
+            "changed": [item["target"] for item in result.operations],
+            "reason": result.summary,
+            "evidence": result.evidence,
+            "excluded_locked_targets": result.excluded_locked_targets,
+            "planner": result.planner,
+        },
+    })
+
+
+@router.get("/course/{course_id}/prep-agent/evidence/{node_id}")
+async def get_prep_agent_node_evidence(
+    course_id: int,
+    node_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Expose source blocks for the evidence pane, scoped to the current course."""
+    require_course_permission(session, current_user, course_id, "course.view")
+    node = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.course_id == course_id,
+        CourseOutlineNode.outline_node_id == node_id,
+    )).first()
+    if node is None:
+        raise HTTPException(404, "课程目录节点不存在")
+    refs = list(node.source_block_refs or [])
+    blocks = session.exec(select(DocumentBlock).where(
+        DocumentBlock.course_id == course_id,
+        DocumentBlock.block_id.in_(refs),
+    ).order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all() if refs else []
+    return unified_response(200, "获取原文证据成功", {
+        "outline_node_id": node_id,
+        "items": [{
+            "block_id": block.block_id,
+            "page": block.page_or_slide or block.page_number,
+            "text": block.text,
+            "confidence": block.confidence,
+            "source_kind": block.source_kind,
+        } for block in blocks],
     })
 
 

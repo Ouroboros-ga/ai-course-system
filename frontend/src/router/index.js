@@ -93,7 +93,7 @@ const router = createRouter({
     {
       path: '/teacher/course/:courseId',
       name: 'teacher-course',
-      component: loadView('TeacherDashboard'),
+      component: loadView('TeacherCourseWorkbench'),
       meta: { requiresAuth: true, role: 'teacher' }
     },
     {
