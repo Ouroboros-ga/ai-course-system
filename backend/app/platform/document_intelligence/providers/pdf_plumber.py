@@ -234,7 +234,8 @@ class PdfPlumberProvider:
                     "bbox": [round(x0, 6), round(y0, 6), round(x1, 6), round(y1, 6)],
                     "text": text,
                     "confidence": 1.0,  # pdfplumber extracts real text
-                    "is_heading": is_heading,
+                "is_heading": is_heading,
+                    "heading_level": 1 if is_heading else None,
                     "font_size": avg_size,
                 })
 

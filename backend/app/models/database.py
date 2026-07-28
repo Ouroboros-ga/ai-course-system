@@ -118,6 +118,7 @@ from app.models.course_build_model import (
 from app.models.course_outline_model import (
     CourseOutlineVersion,
     CourseOutlineNode,
+    CoursePptMapping,
     OutlineNodeType,
     OutlineLifecycleStatus,
     TeachingScriptVersion,

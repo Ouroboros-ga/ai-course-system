@@ -126,6 +126,33 @@ class CourseOutlineNode(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
+class CoursePptMapping(SQLModel, table=True):
+    """课程树节点与某一份 PPT 材料版本的独立映射。
+
+    ``CourseOutlineNode.page_range`` 仅保留为兼容/摘要字段；正式学生播放、
+    教师审核和发布快照均以本表为准。一个节点可以对应多个不连续页面。
+    """
+
+    __tablename__ = "course_ppt_mappings"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    mapping_id: str = Field(default_factory=lambda: f"pm_{uuid.uuid4().hex}", unique=True, index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    outline_node_id: str = Field(index=True)
+    material_version_id: Optional[str] = Field(default=None, index=True)
+    page_start: int = Field(default=1, ge=1)
+    page_end: int = Field(default=1, ge=1)
+    page_refs: list = Field(default_factory=list, sa_column=Column(JSON))
+    confidence: float = Field(default=0.0, ge=0, le=1)
+    source_block_refs: list = Field(default_factory=list, sa_column=Column(JSON))
+    status: str = Field(default="draft", index=True, description="draft|published|stale|rejected")
+    teacher_locked: bool = Field(default=False, index=True)
+    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    updated_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
 # ---------------------------------------------------------------------------
 # 讲授脚本：版本 + 节点（按课程树组织，非旧扁平 ScriptNode）
 # ---------------------------------------------------------------------------

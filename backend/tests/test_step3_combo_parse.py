@@ -10,7 +10,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 from sqlmodel import Session as _Session, select
@@ -36,7 +36,7 @@ def _user(session, name):
 
 def _course(session, teacher_id):
     c = Course(
-        fanya_course_id=f"s3-{teacher_id}-{datetime.now(timezone.utc).timestamp()}",
+        fanya_course_id=f"s3-{teacher_id}-{datetime.utcnow().timestamp()}",
         fanya_course_name="S3 Course", title="S3 Course",
         teacher_id=teacher_id, status=CourseStatus.DRAFT,
     )

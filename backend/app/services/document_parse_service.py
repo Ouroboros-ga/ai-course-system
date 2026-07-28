@@ -330,6 +330,12 @@ class DocumentParseService:
         source_kind: str = "",
         confidence: float = 0.0,
         provider_version: str = "",
+        heading_level: Optional[int] = None,
+        semantic_role: str = "",
+        style_hints: Optional[dict] = None,
+        parent_block_id: Optional[str] = None,
+        reading_order: int = 0,
+        visual_description: Optional[str] = None,
     ) -> DocumentBlock:
         """写入文档块，带内容哈希。
 
@@ -355,6 +361,12 @@ class DocumentParseService:
             source_kind=source_kind,
             confidence=confidence,
             provider_version=provider_version,
+            heading_level=heading_level,
+            semantic_role=semantic_role,
+            style_hints=style_hints,
+            parent_block_id=parent_block_id,
+            reading_order=reading_order,
+            visual_description=visual_description,
         )
         session.add(block)
         session.flush()

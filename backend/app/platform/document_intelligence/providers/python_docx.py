@@ -95,13 +95,17 @@ class PythonDocxProvider:
             style_name = (para.style.name or "").lower() if para.style else ""
             if "heading" in style_name or "title" in style_name:
                 kind = "heading"
+                heading_level = next((int(ch) for ch in style_name if ch.isdigit()), 1)
             else:
                 kind = "text"
+                heading_level = None
             text_blocks.append({
                 "text": text,
                 "bbox": None,           # DOCX has no page coordinates
                 "confidence": 1.0,
                 "kind": kind,
+                "heading_level": heading_level,
+                "style_hints": {"style_name": style_name},
                 "order_index": order,
             })
             order += 1
@@ -152,8 +156,6 @@ class PythonDocxProvider:
 
     @staticmethod
     def _get_source_data(source: SourceArtifact) -> Any:
-        if source.data is not None:
-            return source.data
         if not source.uri:
             return None
         try:

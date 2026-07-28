@@ -199,18 +199,15 @@ class ParsePlanner:
 
         if "tesseract-ocr" in self._available_providers:
             fallbacks.append("tesseract-ocr")
-            # Course construction policy: PDF native text is never treated as
-            # sufficient proof that a page has no image/table text.  Every PDF
-            # page enters the OCR pass.  The caller enforces its configured
-            # page limit rather than silently OCR-ing only the first N pages.
-            page_count = max(1, int(probe.page_or_slide_count or 0))
-            steps.append(ParseStep(
-                provider_name="tesseract-ocr",
-                priority=ParsePriority.ENRICHMENT,
-                timeout_ms=300000,
-                enrichment_for="pdf-plumber",
-                config={"pages": list(range(1, page_count + 1)), "required_for_all_pages": True},
-            ))
+            # Add OCR enrichment for image-only pages
+            if probe.image_only_pages:
+                steps.append(ParseStep(
+                    provider_name="tesseract-ocr",
+                    priority=ParsePriority.ENRICHMENT,
+                    timeout_ms=300000,
+                    enrichment_for="pdf-plumber",
+                    config={"pages": list(probe.image_only_pages)},
+                ))
 
     def _plan_docx(
         self,
@@ -233,10 +230,6 @@ class ParsePlanner:
                 timeout_ms=120000,
             ))
 
-        # DOCX conversion is performed by the pipeline before this planner is
-        # asked to parse the converted PDF.  Keep the native python-docx step
-        # here for semantic paragraphs/tables; the converted PDF receives the
-        # same all-page OCR policy as ordinary PDFs.
         if probe.image_only_pages and (
             "tesseract-ocr" in self._available_providers or "paddleocr" in self._available_providers
         ):
@@ -256,13 +249,8 @@ class ParsePlanner:
     ) -> None:
         """Plan for standalone image files."""
         if "tesseract-ocr" in self._available_providers:
-            # The pipeline invokes DocumentOcrPort first for OCR steps, then
-            # falls back to the local Tesseract provider only if the separate
-            # PaddleOCR service is unavailable.  This keeps images on the
-            # same auditable OCR contract as PDFs.
             steps.append(ParseStep(
                 provider_name="tesseract-ocr",
-                priority=ParsePriority.ENRICHMENT,
+                priority=ParsePriority.PRIMARY,
                 timeout_ms=300000,
-                config={"pages": [1], "required_for_all_pages": True},
             ))

@@ -19,8 +19,6 @@
 from __future__ import annotations
 
 import logging
-import os
-import tempfile
 import uuid
 from typing import Any, Optional
 
@@ -146,48 +144,12 @@ async def run_parse_pipeline(
             f"Failed to read object {object_key}: {exc}",
         ) from exc
 
-    # 3. Office conversion before probing.  ``.doc`` is not a zip format and
-    # cannot be honestly parsed by python-docx; ``.docx`` additionally needs
-    # PDF coordinates and image OCR.  Keep the original DOCX bytes for its
-    # semantic parser, then make the converted PDF the OCR/rendering source.
-    original_docx_content: bytes | None = None
-    original_docx_mime = version.mime_type or "application/octet-stream"
-    original_docx_filename = object_key
-    lower_name = object_key.lower()
-    if lower_name.endswith((".doc", ".docx", ".ppt")):
-        if lower_name.endswith(".docx"):
-            original_docx_content = content
-        try:
-            from app.platform.document_intelligence.libreoffice_converter import (
-                ConversionError,
-                libreoffice_converter,
-            )
-            suffix = os.path.splitext(lower_name)[1] or ".office"
-            with tempfile.TemporaryDirectory(prefix="course_convert_") as temp_dir:
-                source_path = os.path.join(temp_dir, f"source{suffix}")
-                with open(source_path, "wb") as temp_source:
-                    temp_source.write(content)
-                converted = libreoffice_converter.convert_to_pdf(source_path, output_dir=temp_dir)
-                with open(converted.pdf_path, "rb") as converted_file:
-                    content = converted_file.read()
-            object_key = f"{object_key}.converted.pdf"
-            version_mime_for_parse = "application/pdf"
-        except ConversionError as exc:
-            raise ParsePipelineError(exc.error_code, exc.message) from exc
-        except Exception as exc:
-            raise ParsePipelineError(
-                "CONVERSION_FAILED",
-                f"Office conversion failed; please re-upload as PDF or DOCX: {exc}",
-            ) from exc
-    else:
-        version_mime_for_parse = version.mime_type or "application/octet-stream"
-
-    # 4. Probe the actual parsing source (the converted PDF for legacy Office).
+    # 3. 探测格式
     from app.platform.document_intelligence.probe import DocumentProbe
     probe = DocumentProbe()
-    probe_result = probe.probe(content, filename=object_key, mime=version_mime_for_parse)
+    probe_result = probe.probe(content, filename=object_key, mime=version.mime_type or "")
 
-    # 5. 规划解析步骤
+    # 4. 规划解析步骤
     from app.platform.document_intelligence.planner import ParsePlanner
     planner = ParsePlanner()
     # 显式告知 planner 哪些 provider 已注册（默认空 set 会导致 plan.steps 为空）
@@ -196,13 +158,13 @@ async def run_parse_pipeline(
     artifact_id = f"art_{uuid.uuid4().hex}"
     plan = planner.plan(probe_result, artifact_id)
 
-    # 6. 查找并执行 Provider
+    # 5. 查找并执行 Provider
     from app.platform.document_intelligence.source_artifact import SourceArtifact
 
     source = SourceArtifact.from_bytes(
         content,
         filename=object_key,
-        mime=version_mime_for_parse,
+        mime=version.mime_type or "application/octet-stream",
         uri=object_key,
     )
 
@@ -240,9 +202,7 @@ async def run_parse_pipeline(
                 map_pdf_plumber_output_to_ir,
             )
             b, u, a = map_pdf_plumber_output_to_ir(output, source, run_id, parser_run_id)
-        elif step_name == "python-docx":
-            b, u, a = map_docx_output_to_ir(output, source, run_id, parser_run_id)
-        elif step_name in ("tesseract-ocr", "paddleocr"):
+        elif step_name in ("tesseract-ocr", "paddleocr", "python-docx"):
             from app.platform.document_intelligence.providers.ocr_provider import (
                 map_ocr_output_to_ir,
             )
@@ -250,41 +210,6 @@ async def run_parse_pipeline(
         else:
             b, u, a = [], [], []
         return b, u, a
-
-    # DOCX semantic pass is intentionally retained in addition to the
-    # converted PDF pass.  The former gives headings/tables; the latter gives
-    # page coordinates and every-page OCR.  A conversion failure has already
-    # produced an auditable task failure above, never a fabricated success.
-    if original_docx_content is not None:
-        docx_provider = registry.get("python-docx")
-        if docx_provider is not None:
-            try:
-                original_source = SourceArtifact.from_bytes(
-                    original_docx_content,
-                    filename=original_docx_filename,
-                    mime=original_docx_mime,
-                    uri=version.file_path,
-                )
-                output = await docx_provider.parse(original_source, plan)
-                used_providers.append("python-docx")
-                provider_versions["python-docx"] = output.provider_version
-                b, u, a = _map_step_output("python-docx", output)
-                primary_blocks.extend(b)
-                units_data.extend(u)
-                assets_data.extend(a)
-            except Exception as exc:
-                warnings.append(f"native DOCX semantic pass failed: {type(exc).__name__}: {exc}")
-
-    # PDF policy requires OCR of every page, not a silent first-N subset.
-    if probe_result.detected_format.value == "pdf":
-        from app.core.config import settings
-        page_count = int(probe_result.page_or_slide_count or 0)
-        if page_count > settings.PADDLEOCR_MAX_PAGES:
-            raise ParsePipelineError(
-                "OCR_PAGE_LIMIT_EXCEEDED",
-                f"PDF has {page_count} pages; configured OCR limit is {settings.PADDLEOCR_MAX_PAGES}. "
-                "Increase PADDLEOCR_MAX_PAGES or split the document; partial OCR is not accepted.",
-            )
 
     # 执行 PRIMARY 步骤（收集原生文本，不 break）
     for step in plan.steps:
@@ -318,7 +243,7 @@ async def run_parse_pipeline(
         # 先尝试经 DocumentOcrPort 调独立 PaddleOCR 服务
         if step.provider_name in ("tesseract-ocr", "paddleocr"):
             ocr_blocks = await _ocr_enrichment_via_port(
-                source, plan, step, warnings, run_id, parser_run_id, content,
+                source, plan, step, warnings, run_id, parser_run_id,
             )
             if ocr_blocks:
                 enrichment_blocks.extend(ocr_blocks)
@@ -326,17 +251,6 @@ async def run_parse_pipeline(
                     "provider_version", "paddleocr-service"
                 )
                 continue
-            # PDF 的每一页都必须经过独立 PaddleOCR；不能在服务不可用时
-            # 静默降级为仅 pdfplumber/Tesseract 的“成功解析”。空白页可以
-            # 合法地产生零 OCR block，因此只以服务健康性判断是否失败。
-            if "pdf" in (source.mime or "").lower():
-                from app.core.config import settings
-                from app.platform.document_intelligence.ocr_port import get_ocr_port
-                if settings.PADDLEOCR_REQUIRED_FOR_PDF and not get_ocr_port().is_available:
-                    raise ParsePipelineError(
-                        "OCR_SERVICE_UNAVAILABLE",
-                        "PDF requires the configured PaddleOCR service; retry after the service is healthy.",
-                    )
         # 回退：进程内 provider（如 TesseractOcrProvider）
         provider = registry.get(step.provider_name)
         if provider is None:
@@ -382,6 +296,17 @@ async def run_parse_pipeline(
         bbox_dict = bbox if isinstance(bbox, dict) else (
             bbox.__dict__ if hasattr(bbox, "__dict__") and not isinstance(bbox, type) else None
         )
+        heading_level = blk.get("heading_level")
+        try:
+            heading_level = int(heading_level) if heading_level is not None else None
+        except (TypeError, ValueError):
+            heading_level = None
+        semantic_role = _infer_semantic_role(
+            text=text,
+            block_type=block_type,
+            heading_level=heading_level,
+            style_hints=blk.get("style_hints") or {},
+        )
         # 溯源：判断该块来自原生解析还是 OCR 补充
         provenance = blk.get("provenance")
         source_kind = "native"
@@ -419,6 +344,12 @@ async def run_parse_pipeline(
             source_kind=source_kind,
             confidence=confidence,
             provider_version=combined_provider_version,
+            heading_level=heading_level,
+            semantic_role=semantic_role,
+            style_hints=blk.get("style_hints") or {},
+            parent_block_id=blk.get("parent_id"),
+            reading_order=int(blk.get("reading_order", blk.get("order_index", block_count)) or 0),
+            visual_description=blk.get("visual_description"),
         )
         block_count += 1
 
@@ -471,7 +402,6 @@ async def _ocr_enrichment_via_port(
     warnings: list[str],
     run_id: str,
     parser_run_id: str,
-    source_bytes: bytes | None = None,
 ) -> list[dict[str, Any]]:
     """经 DocumentOcrPort 调独立 PaddleOCR 服务，做 OCR enrichment。
 
@@ -491,18 +421,13 @@ async def _ocr_enrichment_via_port(
             warnings.append("OCR service unavailable via DocumentOcrPort; will try in-process fallback")
             return []
 
-        # A DOC/DOCX/PPT conversion produces transient PDF bytes that are not
-        # an object-storage key. Prefer the pipeline-provided bytes; ordinary
-        # sources still use the durable object key.
-        if source_bytes is not None:
-            content_bytes = source_bytes
-        else:
-            from app.services.object_storage import get_object_storage
-            try:
-                content_bytes = get_object_storage().get(source.uri)
-            except Exception as exc:
-                warnings.append(f"OCR enrichment: could not read source {source.uri}: {exc}")
-                return []
+        # 读取源字节
+        from app.services.object_storage import get_object_storage
+        try:
+            content_bytes = get_object_storage().get(source.uri)
+        except Exception as exc:
+            warnings.append(f"OCR enrichment: could not read source {source.uri}: {exc}")
+            return []
 
         # 确定要 OCR 的页码（来自 plan step config）
         target_pages = step.config.get("pages", [1]) if step.config else [1]
@@ -633,6 +558,10 @@ def _reconcile_blocks(
                     page_or_slide=int(b.get("page_or_slide", 1) or 1),
                     bbox=ir_bbox,
                     order_index=b.get("order_index", 0),
+                    heading_level=b.get("heading_level"),
+                    style_hints=b.get("style_hints") or {},
+                    parent_id=b.get("parent_id"),
+                    visual_description=b.get("visual_description"),
                     provenance=prov,
                 ))
             return DocumentIR(
@@ -668,6 +597,10 @@ def _reconcile_blocks(
                     "char_start": 0,
                     "char_end": len(getattr(b, "text", "") or ""),
                     "order_index": getattr(b, "order_index", len(out)),
+                    "heading_level": getattr(b, "heading_level", None),
+                    "style_hints": getattr(b, "style_hints", {}) or {},
+                    "parent_id": getattr(b, "parent_id", None),
+                    "visual_description": getattr(b, "visual_description", None),
                     "provenance": prov,
                 })
         return out
@@ -717,6 +650,18 @@ def _map_block_type(ir_block_type: str) -> str:
         "unknown": "text",
     }
     return mapping.get(ir_block_type, "text")
+
+
+def _infer_semantic_role(*, text: str, block_type: str, heading_level: Optional[int], style_hints: dict) -> str:
+    """Infer a conservative role; this is a hint, never a publish decision."""
+    compact = (text or "").strip().replace(" ", "")
+    if any(token in compact for token in ("练习", "习题", "思考题", "试一试", "课后题")):
+        return "practice_suggestion"
+    if any(token in compact for token in ("示例", "例题", "案例", "例如", "代码演示")):
+        return "example"
+    if block_type == "title" or heading_level is not None or style_hints.get("is_heading"):
+        return "section_title" if any(token in compact for token in ("章", "节", "单元", "模块", "部分")) else "knowledge_title"
+    return "explanation"
 
 
 class ParsePipelineError(Exception):

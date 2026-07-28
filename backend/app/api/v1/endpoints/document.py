@@ -78,10 +78,6 @@ document_cache = {}
 tts_generation_status = {}
 
 COURSE_IMPORT_MAX_BYTES = 50 * 1024 * 1024
-COURSE_SOURCE_SUFFIXES = {
-    ".ppt", ".pptx", ".pdf", ".doc", ".docx",
-    ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp",
-}
 
 
 def _tts_batch_task_status(
@@ -384,7 +380,7 @@ async def _background_synthesize_audio(course_id: int, script_id: int):
 
 @router.post("/course-imports", response_model=UnifiedResponse)
 async def create_course_import(
-    file: UploadFile = File(..., description="课程源文件 (PPT/PPTX/PDF/DOC/DOCX/图片)"),
+    file: UploadFile = File(..., description="课程源文件 (PPT/PPTX/PDF/DOC/DOCX)"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -398,115 +394,15 @@ async def create_course_import(
     user_id = int(current_user["user_id"])
     original_name = (file.filename or "untitled").strip()
     suffix = Path(original_name).suffix.lower()
-    if suffix not in COURSE_SOURCE_SUFFIXES:
+    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
+    if suffix not in allowed_suffixes:
         return unified_response(
             code=400,
-            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件",
+            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 课程文件",
             data=None,
         )
 
     return await _create_course_import_core(file, session, user_id, original_name, suffix)
-
-
-@router.post("/course/{course_id}/source-materials", response_model=UnifiedResponse)
-async def upload_course_source_material(
-    course_id: int,
-    file: UploadFile = File(..., description="追加到现有草稿课程的源文件"),
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """The only supported way to add material to an existing course.
-
-    It deliberately does not accept a caller-controlled object key or parse
-    status.  Once accepted, the durable task continues if the browser leaves
-    the page and the Build Materials screen can show its task/run state.
-    """
-    context = require_course_permission(session, current_user, course_id, "course.edit")
-    course = session.get(Course, course_id)
-    if course is None:
-        raise HTTPException(status_code=404, detail="课程不存在")
-    original_name = (file.filename or "untitled").strip()
-    suffix = Path(original_name).suffix.lower()
-    if suffix not in COURSE_SOURCE_SUFFIXES:
-        return unified_response(400, "仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件", None)
-
-    total = 0
-    digest = hashlib.sha256()
-    material_id = None
-    version = None
-    task_view = None
-    run = None
-    object_key = f"course-source/c{course_id}/{uuid.uuid4().hex}/source{suffix}"
-    with tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b") as staged:
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > COURSE_IMPORT_MAX_BYTES:
-                return unified_response(413, "文件大小超过限制（最大50MB）", {"error_code": "PAYLOAD_TOO_LARGE"})
-            digest.update(chunk)
-            staged.write(chunk)
-        if total == 0:
-            return unified_response(400, "不能上传空文件", None)
-        staged.seek(0)
-        try:
-            get_object_storage().put(object_key, staged, mime_type=file.content_type or "application/octet-stream")
-        except Exception as exc:
-            logger.exception("Failed to persist source material")
-            return unified_response(503, "课程源文件暂时无法保存", {"error_code": "OBJECT_STORAGE_UNAVAILABLE", "detail": str(exc)[:200]})
-
-    try:
-        material, version = source_material_service.create_material(
-            session, course_id=course_id, name=original_name,
-            material_type=("slide" if suffix in {".ppt", ".pptx"} else "image" if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"} else "document"),
-            source_kind="upload", file_path=object_key, file_hash=digest.hexdigest(),
-            file_size=total, mime_type=file.content_type or "application/octet-stream",
-            created_by=context.user_id,
-        )
-        task_view = task_service.create_task(session, TaskCreateRequest(
-            task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
-            input_summary=f"解析课程 {course_id} 的新增材料 {original_name}",
-            input_payload={"course_id": course_id, "material_id": material.material_id,
-                           "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value,
-                           "stale_strategy": StaleStrategy.MARK_STALE.value},
-            resource_links=[{"resource_kind": "source_material", "resource_id": material.material_id, "relation": "input"},
-                            {"resource_kind": "source_material_version", "resource_id": version.version_id, "relation": "input"}],
-        ))
-        run = document_parse_service.create_run(
-            session, course_id=course_id, material_id=material.material_id,
-            material_version_id=version.version_id, document_id=None, task_id=task_view.task_id,
-            pipeline=ParsePipeline.FULL, stale_strategy=StaleStrategy.MARK_STALE,
-            initiated_by=context.user_id,
-        )
-        version.parse_task_id = task_view.task_id
-        version.parse_status = MaterialStatus.PARSING
-        session.add(version)
-        session.commit()
-    except Exception as exc:
-        session.rollback()
-        try:
-            get_object_storage().delete(object_key)
-        except Exception:
-            logger.warning("Could not clean failed material object %s", object_key, exc_info=True)
-        logger.exception("Failed to create source material parse task")
-        return unified_response(500, "创建课程材料解析任务失败", {"error_code": "SOURCE_MATERIAL_CREATE_FAILED", "detail": str(exc)[:200]})
-
-    try:
-        from app.models.database import session_factory
-        from app.platform.tasks.worker import local_task_worker
-        if local_task_worker.has_handler("document_parse"):
-            local_task_worker.submit(session_factory, task_view.task_id, {
-                "course_id": course_id, "run_id": run.run_id, "material_id": material.material_id,
-                "material_version_id": version.version_id, "pipeline": ParsePipeline.FULL.value,
-                "stale_strategy": StaleStrategy.MARK_STALE.value,
-            })
-    except Exception:
-        logger.exception("Could not submit source material parse task %s", task_view.task_id)
-    return unified_response(202, "课程材料已保存，正在后台解析", {
-        "course_id": course_id, "material_id": material.material_id,
-        "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id,
-    })
 
 
 async def _create_course_import_core(
@@ -586,7 +482,7 @@ async def _create_course_import_core(
             session,
             course_id=course.id,
             name=original_name,
-            material_type=("slide" if suffix in {".ppt", ".pptx"} else "image" if suffix in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"} else "document"),
+            material_type="slide" if suffix in {".ppt", ".pptx"} else "document",
             source_kind="upload",
             file_path=object_key,
             file_hash=digest.hexdigest(),
@@ -699,11 +595,11 @@ async def upload_document(
     user_id = int(current_user["user_id"])
     original_name = (file.filename or "untitled").strip()
     suffix = Path(original_name).suffix.lower()
-    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}
+    allowed_suffixes = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
     if suffix not in allowed_suffixes:
         return unified_response(
             code=400,
-            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 或图片课程文件",
+            message="仅支持 PPT、PPTX、PDF、DOC、DOCX 课程文件",
             data=None,
         )
     return await _create_course_import_core(file, session, user_id, original_name, suffix)

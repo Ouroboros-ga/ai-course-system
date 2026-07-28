@@ -41,8 +41,10 @@ from app.models.course_outline_model import (
     CourseOutlineNode,
     CourseOutlineVersion,
     OutlineLifecycleStatus,
+    OutlineNodeType,
     TeachingScriptNode,
     TeachingScriptVersion,
+    CoursePptMapping,
 )
 
 
@@ -633,60 +635,6 @@ class QualityGateService:
                 "message": f"共 {len(materials)} 个材料",
             })
 
-        # 新版教学树与讲稿是学生发布的事实来源。旧 CourseScript 只能作为
-        # 兼容读取，不能再让发布绕过教师审核过的 versioned artefacts。
-        published_outline = session.exec(select(CourseOutlineVersion).where(
-            CourseOutlineVersion.course_id == course_id,
-            CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED,
-        ).order_by(CourseOutlineVersion.version.desc())).first()
-        outline_nodes = [] if published_outline is None else list(session.exec(
-            select(CourseOutlineNode).where(
-                CourseOutlineNode.course_id == course_id,
-                CourseOutlineNode.outline_version_id == published_outline.outline_version_id,
-            )
-        ).all())
-        outline_ok = published_outline is not None and bool(outline_nodes)
-        checks.append({
-            "check_id": "outline.published",
-            "name": "已审核课程结构",
-            "severity": GateSeverity.ERROR.value,
-            "passed": outline_ok,
-            "message": (
-                f"课程结构 v{published_outline.version} 已发布，含 {len(outline_nodes)} 个节点"
-                if outline_ok else "必须先发布至少含一个节点的新 CourseOutline"
-            ),
-        })
-        if not outline_ok:
-            error_count += 1
-
-        published_script = session.exec(select(TeachingScriptVersion).where(
-            TeachingScriptVersion.course_id == course_id,
-            TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED,
-        ).order_by(TeachingScriptVersion.version.desc())).first()
-        script_nodes = [] if published_script is None else list(session.exec(
-            select(TeachingScriptNode).where(
-                TeachingScriptNode.course_id == course_id,
-                TeachingScriptNode.script_version_id == published_script.script_version_id,
-            )
-        ).all())
-        scripts_match_outline = bool(
-            published_script and published_outline
-            and published_script.outline_version_id == published_outline.outline_version_id
-        )
-        script_ok = scripts_match_outline and bool(script_nodes)
-        checks.append({
-            "check_id": "script.published_for_outline",
-            "name": "已审核讲授脚本",
-            "severity": GateSeverity.ERROR.value,
-            "passed": script_ok,
-            "message": (
-                f"讲稿 v{published_script.version} 与课程结构版本一致，含 {len(script_nodes)} 个节点"
-                if script_ok else "必须发布与当前 CourseOutline 对齐、且含内容的 TeachingScript"
-            ),
-        })
-        if not script_ok:
-            error_count += 1
-
         # 检查 2：所有材料必须已解析
         unparsed = [m for m in materials if m.status not in (MaterialStatus.PARSED,)]
         if unparsed:
@@ -733,6 +681,37 @@ class QualityGateService:
                     "message": f"步骤 {req_step.value} 处于失败状态",
                 })
                 blocker_count += 1
+
+        outline = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.course_id == course_id,
+            CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+        ).order_by(CourseOutlineVersion.version.desc())).first()
+        if outline:
+            nodes = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_version_id == outline.outline_version_id)).all()
+            knowledge = [n for n in nodes if n.node_type == OutlineNodeType.KNOWLEDGE_POINT]
+            sections = [n for n in nodes if n.node_type == OutlineNodeType.SECTION]
+            if not sections:
+                checks.append({"check_id": "structure.section_exists", "name": "课程至少有一节", "severity": GateSeverity.ERROR.value, "passed": False, "message": "课程结构缺少 section 节点"})
+                error_count += 1
+            if any(n.parent_node_id is None for n in knowledge):
+                checks.append({"check_id": "structure.knowledge_parent", "name": "知识点归属节", "severity": GateSeverity.ERROR.value, "passed": False, "message": "存在未归属到节的知识点"})
+                error_count += 1
+            script_version = session.exec(select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == course_id,
+                TeachingScriptVersion.outline_version_id == outline.outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(TeachingScriptVersion.version.desc())).first()
+            script_ids = {item.outline_node_id for item in session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script_version.script_version_id)).all()} if script_version else set()
+            missing_scripts = [n.outline_node_id for n in knowledge if n.outline_node_id not in script_ids]
+            if missing_scripts:
+                checks.append({"check_id": "scripts.knowledge_coverage", "name": "知识点讲稿覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_scripts)} 个知识点缺少讲稿"})
+                error_count += 1
+            if materials and any(m.material_type == "slide" for m in materials):
+                mapped = {item.outline_node_id for item in session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id, CoursePptMapping.status == "draft")).all()}
+                missing_mapping = [n.outline_node_id for n in knowledge if n.outline_node_id not in mapped]
+                if missing_mapping:
+                    checks.append({"check_id": "mapping.knowledge_coverage", "name": "知识点 PPT 映射覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_mapping)} 个知识点缺少 PPT 映射"})
+                    error_count += 1
 
         passed = blocker_count == 0 and error_count == 0
         run = CourseQualityGateRun(

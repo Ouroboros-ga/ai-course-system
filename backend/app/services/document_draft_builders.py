@@ -27,17 +27,13 @@ from app.core.time_utils import utcnow_aware
 from app.models.course_outline_model import (
     CourseOutlineNode,
     CourseOutlineVersion,
+    CoursePptMapping,
     OutlineLifecycleStatus,
     OutlineNodeType,
-    PatchOperation,
-    PatchProposal,
-    PatchProposalOperation,
-    PatchProposalStatus,
     TeachingScriptNode,
     TeachingScriptVersion,
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan
-from app.models.graph_production_model import GraphNodeReview
 from app.models.resource_model import (
     ResourceItem,
     ResourceLifecycleStatus,
@@ -66,12 +62,10 @@ class DraftAssetResult:
     rag_indexed_chunks: int = 0
     graph_node_candidates: int = 0
     graph_relation_candidates: int = 0
-    graph_review_candidate_count: int = 0
     outline_node_count: int = 0
     script_node_count: int = 0
     markdown_resource_id: Optional[str] = None
     markdown_resource_version_id: Optional[str] = None
-    patch_proposal_id: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
 
     def to_progress_data(self) -> dict[str, Any]:
@@ -80,12 +74,10 @@ class DraftAssetResult:
             "script_version_id": self.script_version_id,
             "rag_indexed_chunks": self.rag_indexed_chunks,
             "graph_node_candidates": self.graph_node_candidates,
-            "graph_review_candidate_count": self.graph_review_candidate_count,
             "outline_node_count": self.outline_node_count,
             "script_node_count": self.script_node_count,
             "markdown_resource_id": self.markdown_resource_id,
             "markdown_resource_version_id": self.markdown_resource_version_id,
-            "patch_proposal_id": self.patch_proposal_id,
         }
 
 
@@ -139,147 +131,6 @@ def build_graph_draft(
     return node_count, relation_count
 
 
-def build_graph_review_candidates(
-    session: Session,
-    *,
-    course_id: int,
-    run_id: str,
-    blocks: list[DocumentBlock],
-) -> int:
-    """Persist deterministic, teacher-reviewable graph candidates.
-
-    The parser does not claim that adjacent text blocks are true educational
-    relations.  It records them as ``proposed`` review rows with stable source
-    and Evidence references.  A later graph/LLM strategy may replace these
-    candidates, but it must create a new policy version rather than silently
-    changing this baseline.
-    """
-    evidence_by_block = {
-        span.block_id: span.span_id
-        for span in session.exec(
-            select(EvidenceSpan).where(
-                EvidenceSpan.course_id == course_id,
-                EvidenceSpan.run_id == run_id,
-            )
-        ).all()
-    }
-    created = 0
-    previous_target: str | None = None
-    previous_evidence: str | None = None
-    for block in blocks:
-        text = (block.text or "").strip()
-        if not text:
-            continue
-        target_id = f"candidate:{run_id}:{block.block_id}"
-        if not session.exec(select(GraphNodeReview).where(
-            GraphNodeReview.course_id == course_id,
-            GraphNodeReview.target_id == target_id,
-        )).first():
-            session.add(GraphNodeReview(
-                course_id=course_id,
-                target_id=target_id,
-                target_type="node",
-                target_content_hash=block.content_hash,
-                decision="proposed",
-                evidence_ids=[evidence_by_block[block.block_id]] if block.block_id in evidence_by_block else [],
-            ))
-            created += 1
-        current_evidence = evidence_by_block.get(block.block_id)
-        if previous_target and current_evidence:
-            relation_target = f"relation:{run_id}:{previous_target}:{target_id}"
-            if not session.exec(select(GraphNodeReview).where(
-                GraphNodeReview.course_id == course_id,
-                GraphNodeReview.target_id == relation_target,
-            )).first():
-                evidence_ids = [x for x in (previous_evidence, current_evidence) if x]
-                session.add(GraphNodeReview(
-                    course_id=course_id,
-                    target_id=relation_target,
-                    target_type="relation",
-                    target_content_hash=block.content_hash,
-                    decision="proposed",
-                    evidence_ids=evidence_ids,
-                ))
-                created += 1
-        previous_target = target_id
-        previous_evidence = current_evidence
-    session.flush()
-    return created
-
-
-def build_patch_proposal_draft(
-    session: Session,
-    *,
-    course_id: int,
-    run_id: str,
-    outline_version_id: str,
-    script_version_id: Optional[str],
-    blocks: list[DocumentBlock],
-    created_by: Optional[int],
-) -> Optional[str]:
-    """Create a reviewable proposal for deterministic title cleanup.
-
-    This is deliberately not an LLM result.  It only proposes the first
-    non-empty source line as a shorter title when that differs from the raw
-    parser title.  The teacher must accept it before any draft node changes.
-    """
-    existing = session.exec(select(PatchProposal).where(
-        PatchProposal.course_id == course_id,
-        PatchProposal.tool_name == "document_parse_baseline",
-        PatchProposal.reason == f"generated_from_parse_run:{run_id}",
-    )).first()
-    if existing:
-        return existing.proposal_id
-
-    outline_nodes = list(session.exec(select(CourseOutlineNode).where(
-        CourseOutlineNode.course_id == course_id,
-        CourseOutlineNode.outline_version_id == outline_version_id,
-    ).order_by(CourseOutlineNode.order_index)).all())
-    blocks_by_id = {block.block_id: block for block in blocks}
-    operations: list[PatchProposalOperation] = []
-    for node in outline_nodes:
-        refs = node.source_block_refs or []
-        source = next((blocks_by_id[ref] for ref in refs if ref in blocks_by_id), None)
-        if source is None:
-            continue
-        source_line = next((line.strip() for line in (source.text or "").splitlines() if line.strip()), "")
-        candidate_title = source_line[:80]
-        if not candidate_title or candidate_title == node.title:
-            continue
-        span = session.exec(select(EvidenceSpan).where(
-            EvidenceSpan.course_id == course_id,
-            EvidenceSpan.run_id == run_id,
-            EvidenceSpan.block_id == source.block_id,
-        )).first()
-        operations.append(PatchProposalOperation(
-            course_id=course_id,
-            operation=PatchOperation.REPLACE,
-            target=f"outline:{node.outline_node_id}:title",
-            before=node.title,
-            after=candidate_title,
-            reason="按源材料首行收敛知识点标题；仅作为教师审核候选",
-            evidence_refs=[span.span_id] if span else [],
-            policy_version="document-draft-baseline/1.0",
-        ))
-    if not operations:
-        return None
-    proposal = PatchProposal(
-        course_id=course_id,
-        tool_name="document_parse_baseline",
-        policy_version="document-draft-baseline/1.0",
-        status=PatchProposalStatus.PENDING,
-        reason=f"generated_from_parse_run:{run_id}",
-        created_by=created_by,
-    )
-    session.add(proposal)
-    session.flush()
-    for operation in operations:
-        operation.proposal_id = proposal.proposal_id
-        session.add(operation)
-    session.flush()
-    return proposal.proposal_id
-
-
 # ---------------------------------------------------------------------------
 # TeachingStructureBuilder（课程目录草稿）
 # ---------------------------------------------------------------------------
@@ -307,7 +158,88 @@ def build_outline_draft(
     )
     session.add(version)
     session.flush()
-    order = 0
+    ordered = sorted(blocks, key=lambda item: (
+        int(item.page_or_slide or item.page_number or 0),
+        int(getattr(item, "reading_order", 0) or item.order_index or 0),
+    ))
+    nonempty = [b for b in ordered if (b.text or "").strip()]
+    first_section = next((b for b in nonempty if b.semantic_role == "section_title"), None)
+
+    def add_node(node_type, title, parent, refs, node_order, confidence):
+        pages = [int((b.page_or_slide or b.page_number or 1)) for b in ordered if b.block_id in refs]
+        page_start, page_end = (min(pages), max(pages)) if pages else (1, 1)
+        node = CourseOutlineNode(
+            outline_version_id=version.outline_version_id, course_id=course_id,
+            parent_node_id=parent.outline_node_id if parent else None,
+            node_type=node_type, title=title[:300], order_index=node_order,
+            source_block_refs=list(refs),
+            page_range=str(page_start) if page_start == page_end else f"{page_start}-{page_end}",
+            generation_reason="deterministic_semantic_builder",
+            confidence=max(0.0, min(1.0, confidence)),
+            content_hash=(refs[0] if refs else ""),
+        )
+        session.add(node)
+        if node_type == OutlineNodeType.KNOWLEDGE_POINT and material_version_id:
+            session.add(CoursePptMapping(
+                course_id=course_id, outline_node_id=node.outline_node_id,
+                material_version_id=material_version_id, page_start=page_start,
+                page_end=page_end, page_refs=list(range(page_start, page_end + 1)),
+                confidence=node.confidence, source_block_refs=list(refs),
+                status="draft", created_by=created_by,
+            ))
+        return node
+
+    section = add_node(
+        OutlineNodeType.SECTION,
+        first_section.text.strip() if first_section else "课程内容",
+        None,
+        [first_section.block_id] if first_section else ([nonempty[0].block_id] if nonempty else []),
+        0,
+        first_section.confidence if first_section else 0.55,
+    )
+    current_kp = None
+    kp_refs = []
+    kp_order = 0
+    child_order = 0
+
+    def flush_kp():
+        nonlocal current_kp, kp_refs, kp_order, child_order
+        if current_kp is not None:
+            current_kp.source_block_refs = list(dict.fromkeys(kp_refs))
+            pages = [int((b.page_or_slide or b.page_number or 1)) for b in ordered if b.block_id in kp_refs]
+            if pages:
+                current_kp.page_range = str(min(pages)) if min(pages) == max(pages) else f"{min(pages)}-{max(pages)}"
+            session.add(current_kp)
+        current_kp, kp_refs = None, []
+        kp_order += 1
+        child_order = 0
+
+    for blk in nonempty:
+        if first_section and blk.block_id == first_section.block_id:
+            continue
+        role = blk.semantic_role or "explanation"
+        text = blk.text.strip()
+        if role == "section_title":
+            flush_kp()
+            section = add_node(OutlineNodeType.SECTION, text, None, [blk.block_id], kp_order + 1, blk.confidence)
+        elif current_kp is None or role == "knowledge_title" or (first_section is None and role == "explanation"):
+            flush_kp()
+            current_kp = add_node(OutlineNodeType.KNOWLEDGE_POINT, text, section, [blk.block_id], kp_order, blk.confidence)
+            kp_refs = [blk.block_id]
+        elif role in {"example", "practice_suggestion"}:
+            child_type = OutlineNodeType.EXAMPLE if role == "example" else OutlineNodeType.PRACTICE_SUGGESTION
+            add_node(child_type, text, current_kp, [blk.block_id], child_order, blk.confidence)
+            child_order += 1
+        else:
+            kp_refs.append(blk.block_id)
+    flush_kp()
+    session.flush()
+    generated_count = len(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == version.outline_version_id,
+        CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+    )).all())
+    return version.outline_version_id, generated_count
+    """
     for blk in blocks:
         title = (blk.text or "").strip()[:80] or f"知识点 {order + 1}"
         node = CourseOutlineNode(
@@ -322,9 +254,24 @@ def build_outline_draft(
             content_hash=blk.content_hash,
         )
         session.add(node)
+        if blk.page_or_slide or blk.page_number:
+            page = int(blk.page_or_slide or blk.page_number or 1)
+            session.add(CoursePptMapping(
+                course_id=course_id,
+                outline_node_id=node.outline_node_id,
+                material_version_id=material_version_id,
+                page_start=page,
+                page_end=page,
+                page_refs=[page],
+                confidence=blk.confidence,
+                source_block_refs=[blk.block_id],
+                status="draft",
+                created_by=created_by,
+            ))
         order += 1
     session.flush()
     return version.outline_version_id, order
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -521,9 +468,6 @@ def build_draft_assets(
         n, r = build_graph_draft(session, course_id=course_id, run_id=run_id, blocks=list(blocks))
         result.graph_node_candidates = n
         result.graph_relation_candidates = r
-        result.graph_review_candidate_count = build_graph_review_candidates(
-            session, course_id=course_id, run_id=run_id, blocks=list(blocks),
-        )
     except Exception as exc:
         result.warnings.append(f"graph_draft failed: {exc}")
 
@@ -549,10 +493,14 @@ def build_draft_assets(
                     CourseOutlineNode.outline_version_id == result.outline_version_id
                 ).order_by(CourseOutlineNode.order_index)
             ).all()
+            # Only knowledge points are playable teaching units. Sections and
+            # child examples/practice items remain outline nodes but do not get
+            # placeholder lecture scripts.
+            script_nodes = [n for n in outline_nodes if n.node_type == OutlineNodeType.KNOWLEDGE_POINT]
             # 每个节点关联其 source_block_refs 指向的 blocks
             blocks_by_id = {b.block_id: b for b in blocks}
             blocks_by_node: dict[str, list[DocumentBlock]] = {}
-            for n in outline_nodes:
+            for n in script_nodes:
                 refs = n.source_block_refs or []
                 blocks_by_node[n.outline_node_id] = [
                     blocks_by_id[r] for r in refs if r in blocks_by_id
@@ -560,7 +508,7 @@ def build_draft_assets(
             sv_id, scount = build_teaching_script_draft(
                 session, course_id=course_id, run_id=run_id,
                 outline_version_id=result.outline_version_id,
-                outline_node_ids=[n.outline_node_id for n in outline_nodes],
+                outline_node_ids=[n.outline_node_id for n in script_nodes],
                 blocks_by_node=blocks_by_node, created_by=created_by,
             )
             result.script_version_id = sv_id
@@ -569,20 +517,6 @@ def build_draft_assets(
             result.warnings.append(f"teaching_script_draft failed: {exc}")
 
     # 5. Markdown 资源草稿
-    _stage("patch_proposal_draft")
-    try:
-        result.patch_proposal_id = build_patch_proposal_draft(
-            session,
-            course_id=course_id,
-            run_id=run_id,
-            outline_version_id=result.outline_version_id or "",
-            script_version_id=result.script_version_id,
-            blocks=list(blocks),
-            created_by=created_by,
-        ) if result.outline_version_id else None
-    except Exception as exc:
-        result.warnings.append(f"patch_proposal_draft failed: {exc}")
-
     _stage("markdown_resource_draft")
     try:
         rid, vid = build_markdown_resource_draft(
@@ -594,6 +528,60 @@ def build_draft_assets(
         result.markdown_resource_version_id = vid
     except Exception as exc:
         result.warnings.append(f"markdown_resource_draft failed: {exc}")
+
+    # First import is a teacher-reviewable proposal, never a direct mutation.
+    # Existing proposals are left untouched so a retry cannot duplicate them.
+    try:
+        from app.models.course_outline_model import PatchProposal, PatchProposalOperation, PatchOperation, TeachingScriptNode
+        existing = session.exec(select(PatchProposal).where(
+            PatchProposal.course_id == course_id,
+            PatchProposal.tool_name == "CourseBuildAgent",
+        )).first()
+        if not existing and result.outline_version_id:
+            outline_nodes = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_version_id == result.outline_version_id,
+            ).order_by(CourseOutlineNode.order_index)).all()
+            proposal = PatchProposal(
+                course_id=course_id,
+                tool_name="CourseBuildAgent",
+                policy_version="course-build-agent/1.0",
+                reason="首次上传课件后，根据统一解析结果生成课程结构与讲授脚本候选，请教师审核后应用。",
+                created_by=created_by,
+            )
+            session.add(proposal)
+            session.flush()
+            for node in outline_nodes:
+                if node.node_type != OutlineNodeType.KNOWLEDGE_POINT:
+                    continue
+                session.add(PatchProposalOperation(
+                    proposal_id=proposal.proposal_id,
+                    course_id=course_id,
+                    operation=PatchOperation.REPLACE,
+                    target=f"outline:{node.outline_node_id}:title",
+                    before="",
+                    after=node.title,
+                    reason="解析块生成的课程结构候选",
+                    evidence_refs=[],
+                    policy_version="course-build-agent/1.0",
+                ))
+            script_nodes = session.exec(select(TeachingScriptNode).where(
+                TeachingScriptNode.script_version_id == result.script_version_id,
+            )).all() if result.script_version_id else []
+            for script_node in script_nodes:
+                session.add(PatchProposalOperation(
+                    proposal_id=proposal.proposal_id,
+                    course_id=course_id,
+                    operation=PatchOperation.REPLACE,
+                    target=f"script:{script_node.script_node_id}:content",
+                    before="",
+                    after=script_node.content,
+                    reason="解析块生成的讲授脚本候选",
+                    evidence_refs=[],
+                    policy_version="course-build-agent/1.0",
+                ))
+            result.warnings.append("created initial teacher-review proposal")
+    except Exception as exc:
+        result.warnings.append(f"initial proposal creation failed: {exc}")
 
     session.commit()
     return result

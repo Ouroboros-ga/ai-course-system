@@ -105,13 +105,14 @@ from app.api.v1.endpoints import (
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_build,       # 阶段3 课程建设工作流
-    course_outline,     # 统一课程树 / 讲稿 / 教师审核提案
+    course_build_editor, # Step 5-8 课程树/讲稿/提案/发布
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
     experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
+    historical_rebuild, # 阶段10 历史课程补建清单编排
     storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
 )
 from app.schemas import UnifiedResponse
@@ -297,9 +298,9 @@ app.include_router(
     tags=["阶段3 课程建设工作流"],
 )
 app.include_router(
-    course_outline.course_outline_router,
-    prefix="/api/v1/course-build",
-    tags=["统一课程结构、讲稿与教师审核"],
+    course_build_editor.router,
+    prefix="/api/v1/course-editor",
+    tags=["课程树、讲稿与备课提案"],
 )
 
 # 阶段4：课程材料解析、Evidence、Citation 与图谱治理
@@ -378,9 +379,12 @@ app.include_router(
     tags=["阶段9 Agent治理与教师安全阀"],
 )
 
-# 历史课程自动补建已下线。旧课程保持只读；教师重新上传后才进入统一
-# SourceMaterialVersion -> ParseRun -> draft assets 链。模块保留为迁移期代码，
-# 但不再注册公开路由，避免前端误以为旧课程仍能自动升级。
+# 阶段10：历史课程补建清单编排
+app.include_router(
+    historical_rebuild.historical_rebuild_router,
+    prefix="/api/v1/historical-rebuild",
+    tags=["阶段10 历史课程补建清单"],
+)
 
 # G5：对象存储运维（refs/GC/回读校验/迁移对账）
 app.include_router(

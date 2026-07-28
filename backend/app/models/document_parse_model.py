@@ -152,6 +152,12 @@ class DocumentBlock(SQLModel, table=True):
         default="", max_length=64,
         description="产出该块的 Provider 版本（如 paddleocr 2.7 / pdfplumber 0.11）",
     )
+    heading_level: Optional[int] = Field(default=None, index=True)
+    semantic_role: str = Field(default="", max_length=40, index=True)
+    style_hints: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    parent_block_id: Optional[str] = Field(default=None, index=True)
+    reading_order: int = Field(default=0)
+    visual_description: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=utcnow_aware)
 
 

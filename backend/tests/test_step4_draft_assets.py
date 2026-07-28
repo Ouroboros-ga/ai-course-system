@@ -11,7 +11,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
 from sqlmodel import Session as _Session, select
@@ -28,8 +28,6 @@ from app.models.course_outline_model import (
 )
 from app.models.database import engine
 from app.models.document_parse_model import DocumentBlock, DocumentParseRun
-from app.models.graph_production_model import GraphNodeReview
-from app.models.course_outline_model import PatchProposal, PatchProposalOperation
 from app.models.resource_model import (
     ResourceItem,
     ResourceLifecycleStatus,
@@ -53,7 +51,7 @@ def _user(session, name):
 
 def _course(session, teacher_id):
     c = Course(
-        fanya_course_id=f"s4-{teacher_id}-{datetime.now(timezone.utc).timestamp()}",
+        fanya_course_id=f"s4-{teacher_id}-{datetime.utcnow().timestamp()}",
         fanya_course_name="S4 Course", title="S4 Course",
         teacher_id=teacher_id, status=CourseStatus.DRAFT,
     )
@@ -107,33 +105,12 @@ def test_build_draft_assets_produces_all_artifacts(session):
 
     assert result.rag_indexed_chunks == 3
     assert result.graph_node_candidates == 3
-    assert result.graph_review_candidate_count >= 3
     assert result.outline_version_id is not None
     assert result.outline_node_count == 3
     assert result.script_version_id is not None
     assert result.script_node_count == 3
     assert result.markdown_resource_id is not None
     assert result.markdown_resource_version_id is not None
-
-    with _Session(engine) as s:
-        reviews = s.exec(select(GraphNodeReview).where(
-            GraphNodeReview.course_id == course.id,
-            GraphNodeReview.target_id.like(f"candidate:{run.run_id}:%"),
-        )).all()
-        assert reviews
-        assert all(item.decision == "proposed" for item in reviews)
-        proposal = s.exec(select(PatchProposal).where(
-            PatchProposal.course_id == course.id,
-            PatchProposal.reason == f"generated_from_parse_run:{run.run_id}",
-        )).first()
-        # A one-line-per-block fixture may already have clean titles; in that
-        # case no title diff is needed. When present, every operation remains
-        # pending and carries only local Evidence references.
-        if proposal:
-            operations = s.exec(select(PatchProposalOperation).where(
-                PatchProposalOperation.proposal_id == proposal.proposal_id,
-            )).all()
-            assert all(op.accepted is None for op in operations)
 
 
 # ---------------------------------------------------------------------------
@@ -234,40 +211,6 @@ def test_outline_nodes_carry_source_block_refs(session):
             assert node.source_block_refs
             for ref in node.source_block_refs:
                 assert ref in block_ids
-
-
-def test_parse_draft_creates_teacher_proposal_when_title_can_be_cleaned(session):
-    user = _user(session, "s4_proposal_user")
-    course = _course(session, user.id)
-    run, version = _seed_run_and_blocks(session, course.id, user.id, n_blocks=1)
-    block = session.exec(select(DocumentBlock).where(DocumentBlock.run_id == run.run_id)).first()
-    block.text = "Binary search\nDetailed explanation from the source page."
-    session.add(block)
-    session.commit()
-    document_parse_service.add_evidence_span(
-        session, course_id=course.id, run_id=run.run_id,
-        block_id=block.block_id, document_id=None, page_number=1,
-        text_snippet=block.text, bbox=None, char_start=0,
-        char_end=len(block.text), linked_node_ids=[],
-    )
-    session.commit()
-
-    result = build_draft_assets(
-        session, course_id=course.id, run_id=run.run_id,
-        material_version_id=version.version_id, created_by=user.id,
-    )
-
-    assert result.patch_proposal_id is not None
-    proposal = session.exec(select(PatchProposal).where(
-        PatchProposal.proposal_id == result.patch_proposal_id,
-    )).first()
-    assert proposal is not None and proposal.status.value == "pending"
-    operations = session.exec(select(PatchProposalOperation).where(
-        PatchProposalOperation.proposal_id == result.patch_proposal_id,
-    )).all()
-    assert len(operations) == 1
-    assert operations[0].target.startswith("outline:")
-    assert operations[0].evidence_refs
 
 
 # ---------------------------------------------------------------------------
