@@ -210,23 +210,29 @@
 .sfx-desc dt { color: var(--text-muted); }
 .sfx-desc dd { margin: 0; color: var(--text-primary); }
 
-/* ── 页面过渡动画（design.md：Quiet Technology，克制而不张扬） ── */
+/* ── 页面过渡动画（design.md：Quiet Technology，克制而不张扬） ──
+   优化要点：
+   1. 仅用 opacity（无 transform 位移），避免 main 区域上下错动抖动；
+   2. backface-visibility 强制独立合成层，过渡期间不触发重绘；
+   3. 离开期间禁用指针事件，避免用户误触正在消失的旧组件；
+   4. 120ms 时长 + (0.16, 1, 0.3, 1) 缓动，配合 mode="out-in" 总感知约 240ms，
+      既不生硬也不拖沓，符合 Quiet Technology 克制原则。 */
 .sfx-page-enter-active,
 .sfx-page-leave-active {
-  transition:
-    opacity var(--duration-normal) var(--ease-out),
-    transform var(--duration-normal) var(--ease-out);
-  will-change: opacity, transform;
+  transition: opacity var(--duration-fast) var(--ease-out);
+  will-change: opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
-.sfx-page-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
+.sfx-page-leave-active {
+  /* 离开期间禁用交互，避免误触即将消失的旧组件触发额外路由/请求 */
+  pointer-events: none;
 }
 
+.sfx-page-enter-from,
 .sfx-page-leave-to {
   opacity: 0;
-  transform: translateY(-4px);
 }
 
 /* 减少动态效果（page-design §25） */

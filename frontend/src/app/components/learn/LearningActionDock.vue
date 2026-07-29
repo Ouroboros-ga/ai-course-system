@@ -10,7 +10,7 @@ import { DOCK_ACTIONS } from '@/app/lib/learnMachine.js'
  */
 const props = defineProps({
   currentState: { type: String, required: true },
-  enabledStates: { type: Object, required: true }, // (state) => boolean
+  enabledStates: { type: Function, required: true }, // (state) => boolean
 })
 
 const emit = defineEmits(['action'])

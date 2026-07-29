@@ -1,10 +1,9 @@
 <script setup>
 import { computed, inject, nextTick, onMounted, ref } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
-import LearnContextBar from '@/app/components/learn/LearnContextBar.vue'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
 import LectureStage from '@/app/components/learn/LectureStage.vue'
 import LearningActionDock from '@/app/components/learn/LearningActionDock.vue'
@@ -17,7 +16,6 @@ import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
 const route = useRoute()
-const router = useRouter()
 const counter = useCounterStore()
 const { courseRole, detail, analyticsEligible, capabilities } = inject('courseContext')
 
@@ -42,11 +40,6 @@ const machine = createLearnMachine({
 const learnState = ref(machine.state)
 const branchContext = ref(null)
 const dockRef = ref(null)
-
-const isFullscreen = ref(false)
-function toggleFullscreen() {
-  isFullscreen.value = !isFullscreen.value
-}
 
 const trackManualOverride = ref(null)
 const trackCollapsed = computed(() =>
@@ -124,18 +117,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="sfx-learn" :class="{ 'is-fullscreen': isFullscreen }">
-    <LearnContextBar
-      :course-title="ws.course.value?.courseTitle || ''"
-      :node-title="ws.currentNode.value?.title || ''"
-      :current-page="ws.currentPage.value"
-      :total-pages="ws.totalPages.value"
-      :save-state="ws.saveState.value"
-      :preview="previewMode"
-      @back="router.push(`/app/course/${courseId}/overview`)"
-      @fullscreen="toggleFullscreen"
-    />
-
+  <div class="sfx-learn">
     <SfxSkeleton v-if="ws.status.value === 'loading'" :lines="4" block />
 
     <SfxError
@@ -155,7 +137,6 @@ onMounted(() => {
     <template v-else>
       <div class="sfx-learn-body">
         <LearningTrack
-          v-if="!isFullscreen"
           :nodes="ws.nodes.value"
           :current-index="ws.currentNodeIndex.value"
           :completed-ids="ws.completedNodes.value"
@@ -214,7 +195,6 @@ onMounted(() => {
       </div>
 
       <LearningActionDock
-        v-if="!isFullscreen"
         ref="dockRef"
         :current-state="learnState"
         :enabled-states="machine.isEnabled"
@@ -230,15 +210,6 @@ onMounted(() => {
   min-height: 0;
   display: flex;
   flex-direction: column;
-}
-
-/* §12.12 全屏讲解：覆盖整个视口，隐藏 L1/L2/工具坞（由 v-if 控制），
-   舞台独占，保留极简退出（ContextBar 的全屏按钮） */
-.sfx-learn.is-fullscreen {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  background: var(--surface-canvas);
 }
 
 .sfx-learn-body {
