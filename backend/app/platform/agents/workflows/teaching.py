@@ -268,6 +268,13 @@ def build_teaching_workflow(tools: TeachingTools):
                     proposal_type="web_research", tool_name="web_research",
                     proposed_action={"query_length": len(str(state.get("user_message", "")))},
                 )
+                # P1-E6: 教师已锁定该工具/动作模式，跳过执行并加 warning
+                if proposal.get("status") == "tool_locked_by_teacher":
+                    return {
+                        "web_research_results": None,
+                        "warnings": [*state.get("warnings", []), "TOOL_LOCKED_BY_TEACHER"],
+                        "trace": _trace(state, "research_web", governance="tool_locked"),
+                    }
                 pending = [*state.get("pending_proposals", []), dict(proposal)]
                 state_updates: dict[str, Any] = {
                     "pending_proposals": pending,
@@ -457,14 +464,20 @@ def build_teaching_workflow(tools: TeachingTools):
 
     async def validate_response(state: TeachingState) -> dict[str, Any]:
         allowed = {str(item.get("evidence_id")) for item in state.get("retrieved_evidence", []) if item.get("evidence_id")}
-        citations = [item for item in state.get("citations", []) if not item.get("evidence_id") or str(item["evidence_id"]) in allowed]
+        original_citations = list(state.get("citations", []))
+        # P1-E1: 强制要求 evidence_id 存在且在已检索证据集合内；缺失/空/未匹配的引用一律剔除。
+        citations = [
+            item for item in original_citations
+            if item.get("evidence_id") and str(item["evidence_id"]) in allowed
+        ]
         warnings = list(state.get("warnings", []))
-        if len(citations) != len(state.get("citations", [])):
+        removed_count = len(original_citations) - len(citations)
+        if removed_count > 0:
             warnings.append("UNSUPPORTED_CITATION_REMOVED")
         if state.get("retrieved_evidence") == []:
             citations = []
             warnings.append("NO_COURSE_EVIDENCE_AVAILABLE")
-        return {"citations": citations, "warnings": warnings, "trace": _trace(state, "validate_response", citation_count=len(citations))}
+        return {"citations": citations, "warnings": warnings, "trace": _trace(state, "validate_response", citation_count=len(citations), citations_removed=removed_count)}
 
     async def record_event(state: TeachingState) -> dict[str, Any]:
         # Audit/context records never carry raw question text, answer text, prompt or full trace.

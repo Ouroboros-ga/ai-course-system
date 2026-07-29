@@ -12,6 +12,8 @@
 from __future__ import annotations
 
 import logging
+import time
+from collections import OrderedDict
 from typing import Any, Optional
 
 from .composition import build_course_sidecar_runtime, build_kg_mest_shadow_sidecar_runtime
@@ -36,6 +38,11 @@ from .runtime import TeachingAgentRuntime
 from .tools.cognition_student_modeling import CognitionStudentModelingPort, UnknownStudentModelingPort
 
 logger = logging.getLogger(__name__)
+
+# P1-E3: 缓存容量与 TTL 上限，避免 runtime 缓存无界增长。
+# 使用 LRU（OrderedDict）+ TTL（monotonic 时间戳）双重淘汰。
+MAX_CACHE_SIZE = 256
+CACHE_TTL_SECONDS = 1800  # 30 分钟
 
 
 class TeachingAgentRuntimeRegistry:
@@ -84,7 +91,8 @@ class TeachingAgentRuntimeRegistry:
         self._visualization = visualization
         self._coding_diagnosis = coding_diagnosis
         self._student_history = student_history
-        self._cache: dict[tuple[str, str], TeachingAgentRuntime] = {}
+        # P1-E3: OrderedDict 实现 LRU；值为 (runtime, created_at_monotonic) 元组以支持 TTL 淘汰。
+        self._cache: "OrderedDict[tuple[str, str], tuple[TeachingAgentRuntime, float]]" = OrderedDict()
 
     def get_or_create(
         self,
@@ -95,7 +103,12 @@ class TeachingAgentRuntimeRegistry:
         key = (str(student_id), str(course_id))
         cached = self._cache.get(key)
         if cached is not None:
-            return cached
+            runtime, created_at = cached
+            # P1-E3: TTL 过期则剔除并重建；未过期则 LRU 标记为最近使用。
+            if (time.monotonic() - created_at) < CACHE_TTL_SECONDS:
+                self._cache.move_to_end(key)
+                return runtime
+            self._cache.pop(key, None)
         report = None
         try:
             report = self._store.read(key[0], key[1])
@@ -146,7 +159,10 @@ class TeachingAgentRuntimeRegistry:
                 key[0], key[1], type(error).__name__, error,
             )
             return None
-        self._cache[key] = runtime
+        # P1-E3: 写入 (runtime, created_at)；超过容量时按 LRU 淘汰最久未用的条目。
+        self._cache[key] = (runtime, time.monotonic())
+        if len(self._cache) > MAX_CACHE_SIZE:
+            self._cache.popitem(last=False)
         return runtime
 
     def list_cached_scopes(self) -> list[tuple[str, str]]:

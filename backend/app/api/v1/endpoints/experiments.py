@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -91,7 +91,6 @@ class RunCreateRequest(BaseModel):
 class HintRequest(BaseModel):
     hint_level: CodingHintLevel
     reason_codes: list[str] = Field(default_factory=list)
-    full_solution_allowed: bool = False
     hint_text: str = Field(default="", max_length=10_000)
     hint_metadata: dict = Field(default_factory=dict)
 
@@ -665,7 +664,12 @@ async def create_run(
     - 异步模式（async_run=true）：创建 TaskRecord，返回 202 + task_id，
       worker 异步执行；前端通过 GET /api/v1/tasks/{task_id} 轮询状态
     """
-    require_course_permission(session, current_user, course_id, "experiment.run")
+    context = require_course_permission(session, current_user, course_id, "experiment.run")
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "课程未启用代码沙箱能力"},
+        )
     user_id = int(current_user["user_id"])
 
     if not async_run:
@@ -710,6 +714,7 @@ async def create_run(
             "run_id": run.run_id,
             "attempt_id": attempt_id,
             "language": payload.language,
+            "student_id": user_id,
         },
         resource_links=[
             {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
@@ -736,6 +741,7 @@ async def create_run(
                     "course_id": course_id,
                     "run_id": run.run_id,
                     "attempt_id": attempt_id,
+                    "student_id": user_id,
                 },
             )
     except Exception:
@@ -798,7 +804,12 @@ async def finalize_attempt(
     current_user: dict = Depends(get_current_user),
 ):
     """通过评分规则后形成正式评分型 Evidence；失败不写掌握结论。"""
-    require_course_permission(session, current_user, course_id, "experiment.run")
+    context = require_course_permission(session, current_user, course_id, "experiment.run")
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "课程未启用代码沙箱能力"},
+        )
     user_id = int(current_user["user_id"])
     attempt = finalize_service.finalize_attempt(
         session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
@@ -835,7 +846,6 @@ async def request_hint(
         student_id=user_id,
         hint_level=payload.hint_level,
         reason_codes=payload.reason_codes,
-        full_solution_allowed=payload.full_solution_allowed,
         hint_text=payload.hint_text,
         hint_metadata=payload.hint_metadata,
     )

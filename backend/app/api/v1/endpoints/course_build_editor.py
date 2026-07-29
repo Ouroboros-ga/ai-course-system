@@ -721,7 +721,7 @@ async def run_controlled_prep(
         )
     except Exception as exc:
         logger.exception("Controlled prep failed for course %s", course_id)
-        raise HTTPException(422, detail={"error_code": "CONTROLLED_PREP_FAILED", "message": str(exc)[:500]}) from exc
+        raise HTTPException(422, detail={"error_code": "CONTROLLED_PREP_FAILED", "message": "受控备课流水线执行失败，请检查输入参数或稍后重试"}) from exc
 
     proposal = result["proposal"]
     db_proposal = PatchProposal(
@@ -911,7 +911,32 @@ async def create_proposal(course_id: int, payload: ProposalCreate, session: Sess
     return unified_response(201, "备课提案已创建，等待教师审核", {"proposal_id": proposal.proposal_id, "status": proposal.status.value})
 
 
+def _filter_course_evidence_refs(session: Session, course_id: int, refs):
+    """P1-B4: 只保留属于当前课程的证据引用，过滤跨课程引用并记录警告。
+
+    refs 为 None/空时原样返回，保持与历史空值语义一致。
+    """
+    if not refs:
+        return refs
+    formal_ids = {item.evidence_id for item in session.exec(select(CourseEvidenceRecord).where(
+        CourseEvidenceRecord.course_id == course_id,
+        CourseEvidenceRecord.evidence_id.in_(refs),
+    )).all()}
+    span_ids = {item.span_id for item in session.exec(select(EvidenceSpan).where(
+        EvidenceSpan.course_id == course_id,
+        EvidenceSpan.span_id.in_(refs),
+    )).all()}
+    valid = formal_ids | span_ids
+    filtered = [r for r in refs if r in valid]
+    dropped = [r for r in refs if r not in valid]
+    if dropped:
+        logger.warning("P1-B4: 过滤掉不属于课程 %s 的 evidence_refs: %s", course_id, dropped)
+    return filtered
+
+
 def _apply_operation(session: Session, course_id: int, op: PatchProposalOperation, user_id: int) -> None:
+    # P1-B4: 校验 evidence_refs 课程归属，过滤跨课程引用。
+    op.evidence_refs = _filter_course_evidence_refs(session, course_id, op.evidence_refs)
     match = re.match(r"^(outline|script):([^:]+):(title|content|style)$", op.target)
     if not match: raise HTTPException(400, f"不支持的提案目标: {op.target}")
     kind, target_id, field = match.groups()
@@ -921,25 +946,39 @@ def _apply_operation(session: Session, course_id: int, op: PatchProposalOperatio
                 payload = json.loads(op.after)
             except json.JSONDecodeError as exc:
                 raise HTTPException(422, "新增目录节点的 after 不是有效 JSON") from exc
+            # P1-B5: 幂等——先查询派生的 outline_node_id 是否已存在，若存在则跳过创建，
+            # 避免重试时重复创建节点导致主键冲突。
+            derived_node_id = payload.get("outline_node_id") or f"on_agent_{hashlib.sha256(op.after.encode()).hexdigest()[:16]}"
             outline = _ensure_draft_outline(session, course_id, user_id)
-            parent_id = payload.get("parent_node_id")
-            parent = session.exec(select(CourseOutlineNode).where(
-                CourseOutlineNode.outline_node_id == parent_id,
+            existing = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_node_id == derived_node_id,
                 CourseOutlineNode.course_id == course_id,
-                CourseOutlineNode.outline_version_id == outline.outline_version_id,
-            )).first() if parent_id else None
-            session.add(CourseOutlineNode(
-                outline_node_id=payload.get("outline_node_id") or f"on_agent_{hashlib.sha256(op.after.encode()).hexdigest()[:16]}",
-                outline_version_id=outline.outline_version_id,
-                course_id=course_id,
-                parent_node_id=parent.outline_node_id if parent else None,
-                node_type=OutlineNodeType(payload["node_type"]),
-                title=payload["title"],
-                order_index=int(payload.get("order_index", 0)),
-                source_block_refs=payload.get("source_block_refs") or op.evidence_refs,
-                generation_reason=op.reason,
-                confidence=1.0 if op.evidence_refs else 0.0,
-            ))
+            )).first()
+            if existing is not None:
+                logger.info("P1-B5: outline_node_id %s 已存在，跳过重复创建", derived_node_id)
+                return
+            # S-B3: JSON 字段类型校验，缺失或类型错误返回 422 而非 500。
+            try:
+                parent_id = payload.get("parent_node_id")
+                parent = session.exec(select(CourseOutlineNode).where(
+                    CourseOutlineNode.outline_node_id == parent_id,
+                    CourseOutlineNode.course_id == course_id,
+                    CourseOutlineNode.outline_version_id == outline.outline_version_id,
+                )).first() if parent_id else None
+                session.add(CourseOutlineNode(
+                    outline_node_id=derived_node_id,
+                    outline_version_id=outline.outline_version_id,
+                    course_id=course_id,
+                    parent_node_id=parent.outline_node_id if parent else None,
+                    node_type=OutlineNodeType(payload["node_type"]),
+                    title=payload["title"],
+                    order_index=int(payload.get("order_index", 0)),
+                    source_block_refs=payload.get("source_block_refs") or op.evidence_refs,
+                    generation_reason=op.reason,
+                    confidence=1.0 if op.evidence_refs else 0.0,
+                ))
+            except (KeyError, ValueError, TypeError) as exc:
+                raise HTTPException(422, detail={"error_code": "INVALID_NODE_PAYLOAD", "message": "新增目录节点的 JSON 字段缺失或类型不正确"}) from exc
             return
         target = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_node_id == target_id, CourseOutlineNode.course_id == course_id)).first()
         if not target: raise HTTPException(404, "提案目标目录节点不存在")
@@ -956,23 +995,27 @@ def _apply_operation(session: Session, course_id: int, op: PatchProposalOperatio
             except json.JSONDecodeError as exc:
                 raise HTTPException(422, "新增讲稿节点的 after 不是有效 JSON") from exc
             outline = _ensure_draft_outline(session, course_id, user_id)
-            outline_node = session.exec(select(CourseOutlineNode).where(
-                CourseOutlineNode.outline_node_id == payload.get("outline_node_id"),
-                CourseOutlineNode.course_id == course_id,
-                CourseOutlineNode.outline_version_id == outline.outline_version_id,
-            )).first()
-            if outline_node is None:
-                raise HTTPException(409, "新增讲稿缺少对应的草稿目录节点")
-            script = _ensure_draft_script(session, outline, user_id)
-            session.add(TeachingScriptNode(
-                script_version_id=script.script_version_id,
-                course_id=course_id,
-                outline_node_id=outline_node.outline_node_id,
-                content=payload.get("content", ""),
-                style=payload.get("style", ""),
-                evidence_refs=payload.get("evidence_refs") or op.evidence_refs,
-                source_block_refs=payload.get("evidence_refs") or op.evidence_refs,
-            ))
+            # S-B3: JSON 字段类型校验。
+            try:
+                outline_node = session.exec(select(CourseOutlineNode).where(
+                    CourseOutlineNode.outline_node_id == payload.get("outline_node_id"),
+                    CourseOutlineNode.course_id == course_id,
+                    CourseOutlineNode.outline_version_id == outline.outline_version_id,
+                )).first()
+                if outline_node is None:
+                    raise HTTPException(409, "新增讲稿缺少对应的草稿目录节点")
+                script = _ensure_draft_script(session, outline, user_id)
+                session.add(TeachingScriptNode(
+                    script_version_id=script.script_version_id,
+                    course_id=course_id,
+                    outline_node_id=outline_node.outline_node_id,
+                    content=payload.get("content", ""),
+                    style=payload.get("style", ""),
+                    evidence_refs=payload.get("evidence_refs") or op.evidence_refs,
+                    source_block_refs=payload.get("evidence_refs") or op.evidence_refs,
+                ))
+            except (KeyError, ValueError, TypeError) as exc:
+                raise HTTPException(422, detail={"error_code": "INVALID_NODE_PAYLOAD", "message": "新增讲稿节点的 JSON 字段缺失或类型不正确"}) from exc
             return
         target = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_node_id == target_id, TeachingScriptNode.course_id == course_id)).first()
         if not target: raise HTTPException(404, "提案目标讲稿节点不存在")

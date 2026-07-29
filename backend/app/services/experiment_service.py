@@ -1,4 +1,4 @@
-﻿"""阶段6 服务层：课程实验、Judge0 与 CodingAgent
+"""阶段6 服务层：课程实验、Judge0 与 CodingAgent
 
 完成"实验定义 → 版本 → 测试用例 → 尝试 → 运行 → finalize + CodingAgent hints"编排。
 
@@ -55,6 +55,9 @@ logger = logging.getLogger(__name__)
 CODING_HINT_POLICY_VERSION = "coding-hint-v1.0"
 
 # 默认禁止 full_solution 提示，需教师策略显式允许
+# TODO(P1-C1): 未来应从课程/版本教师策略（CourseSafetyPolicy 或实验定义）读取
+# full_solution 是否被允许；当前无策略查询逻辑，硬编码为 False，
+# 且客户端不可覆盖（端点已移除 full_solution_allowed 字段）。
 DEFAULT_FULL_SOLUTION_ALLOWED = False
 
 
@@ -409,18 +412,17 @@ class ExperimentAttemptService:
         if not definition.default_version_id:
             reject_state_conflict("实验缺少激活版本")
 
-        # 检查尝试次数限制
-        active_attempts = session.exec(
+        # 检查尝试次数限制：统计所有非 CANCELLED 尝试（含已终结化），
+        # 防止学生通过"创建→提交→终结化→创建"循环绕过 max_attempts 总次数限制。
+        all_attempts = session.exec(
             select(ExperimentAttempt).where(
                 ExperimentAttempt.experiment_id == experiment_id,
                 ExperimentAttempt.student_id == student_id,
                 ExperimentAttempt.course_id == course_id,
-                ExperimentAttempt.status.in_([
-                    AttemptStatus.IN_PROGRESS, AttemptStatus.SUBMITTED,
-                ]),
+                ExperimentAttempt.status != AttemptStatus.CANCELLED,
             )
         ).all()
-        if len(active_attempts) >= definition.max_attempts:
+        if len(all_attempts) >= definition.max_attempts:
             reject_state_conflict("已达最大尝试次数限制")
 
         # 检查冷却

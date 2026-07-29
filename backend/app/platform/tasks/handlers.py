@@ -1,4 +1,4 @@
-﻿"""业务任务 handler 注册（阶段0 统一任务中心）。
+"""业务任务 handler 注册（阶段0 统一任务中心）。
 
 将各业务域的长操作接入 LocalTaskWorker，避免任务停留在 pending 或被
 立即标记为 DEPENDENCY_UNAVAILABLE。
@@ -611,6 +611,7 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
     course_id = payload.get("course_id")
     run_id = payload.get("run_id")
     attempt_id = payload.get("attempt_id")
+    student_id = payload.get("student_id")
     if not course_id or not run_id or not attempt_id:
         raise TaskExecutionError(
             "VALIDATION_FAILED",
@@ -645,8 +646,18 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                 f"ExperimentRun {run_id} 不存在",
                 retryable=False,
             )
+        # 验证学生归属：payload 中的 student_id 必须与 ExperimentRun 记录一致，
+        # 防止伪造 run_id/attempt_id 访问他人数据
+        if student_id is not None and run.student_id != int(student_id):
+            raise TaskExecutionError(
+                "STUDENT_MISMATCH",
+                f"Student ID mismatch: expected {student_id}, got {run.student_id}",
+                retryable=False,
+            )
+        # 使用 run 记录中的 student_id 校验 attempt 归属（权威来源）
         attempt = attempt_service.get_attempt(
             session, course_id=int(course_id), attempt_id=attempt_id,
+            student_id=run.student_id,
         )
         version = version_service.get_version(
             session, course_id=int(course_id), version_id=attempt.version_id,

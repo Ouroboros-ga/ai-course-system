@@ -36,3 +36,8 @@ dependencies = [
 
 [project.optional-dependencies]
 postgres = ["psycopg2-binary>=2.9.9"]
+
+[project.scripts]
+# 安全审计脚本：检测已知安全漏洞是否已修复。
+# 也可直接运行：python backend/scripts/security_audit.py
+security-audit = "scripts.security_audit:main"

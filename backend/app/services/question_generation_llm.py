@@ -308,7 +308,6 @@ async def generate_question_via_llm(
         or getattr(settings, "OPENAI_API_KEY", "")
         or getattr(settings, "QWEN_API_KEY", "")
         or getattr(settings, "DOUBAO_API_KEY", "")
-        or getattr(settings, "WENXIN_API_KEY", "")
     )
     if not api_key:
         return _build_fallback_payload(

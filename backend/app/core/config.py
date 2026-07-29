@@ -16,7 +16,6 @@ class UserRole(str, Enum):
 class LLMProvider(str, Enum):
     DOUBAO = "doubao"
     QWEN = "qwen"
-    WENXIN = "wenxin"
     OPENAI = "openai"
 
 
@@ -68,10 +67,6 @@ class Settings(BaseSettings):
     # 通义千问配置
     QWEN_API_KEY: str = ""
     QWEN_MODEL_NAME: str = "qwen-turbo"
-
-    # 文心一言配置
-    WENXIN_API_KEY: str = ""
-    WENXIN_SECRET_KEY: str = ""
 
     # --------------------------
     # 语音合成API配置

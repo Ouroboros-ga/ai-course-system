@@ -461,6 +461,9 @@ async def update_step(
 ):
     """更新单步状态与产物。"""
     context = require_course_permission(session, current_user, course_id, "course.edit")
+    # P1-B1: bypass_lock 绕过教师锁定，等同于发布级操作，需更高权限。
+    if payload.bypass_lock:
+        require_course_permission(session, current_user, course_id, "course.publish")
     target_status = BuildStepStatus(payload.target_status) if payload.target_status else None
     step = course_build_service.update_step(
         session,

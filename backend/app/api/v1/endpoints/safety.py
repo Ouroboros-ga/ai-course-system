@@ -1,4 +1,4 @@
-﻿"""G6 课程安全围栏与沙箱治理 API
+"""G6 课程安全围栏与沙箱治理 API
 
 教师可配置安全策略和沙箱权限，平台硬边界不可关闭。
 所有策略修改、命中、放行、阻断和教师确认均可审计。
@@ -9,7 +9,7 @@ from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -65,8 +65,8 @@ class SandboxPolicyUpdate(BaseModel):
 
 
 class EvaluateRequest(BaseModel):
-    content: str
-    tool_target: Optional[str] = None
+    content: str = Field(max_length=10000)
+    tool_target: Optional[str] = Field(default=None, max_length=128)
 
 
 # ==================== 安全策略接口 ====================
@@ -277,15 +277,25 @@ async def evaluate_content(
 
 class EvaluateToolRequest(BaseModel):
     """工具调用评估请求"""
-    tool_name: str
-    tool_target: Optional[str] = None
-    tool_params: Optional[dict] = None
+    tool_name: str = Field(max_length=128)
+    tool_target: Optional[str] = Field(default=None, max_length=128)
+    tool_params: Optional[dict] = Field(default=None)
 
 
 class EvaluateAIContentRequest(BaseModel):
     """AI产出安全门控请求"""
-    content: str
-    source_materials: Optional[list[str]] = None
+    content: str = Field(max_length=10000)
+    source_materials: Optional[list[str]] = Field(default=None, max_length=20)
+
+    @field_validator("source_materials")
+    @classmethod
+    def _validate_source_materials(cls, v: Optional[list[str]]) -> Optional[list[str]]:
+        if v is None:
+            return v
+        for item in v:
+            if not isinstance(item, str) or len(item) > 5000:
+                raise ValueError("source_materials 单个素材长度不能超过 5000 字符")
+        return v
 
 
 @router.post("/course/{course_id}/evaluate-tool")

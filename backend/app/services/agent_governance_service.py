@@ -1,4 +1,4 @@
-﻿"""阶段9 Agent 工具治理与教师安全阀服务层。
+"""阶段9 Agent 工具治理与教师安全阀服务层。
 
 职责：
 - 课程级工具策略 CRUD（教师启用/禁用/锁定/确认门槛），版本化快照支持回滚
@@ -292,12 +292,33 @@ class AgentGovernanceService:
         tool_name: str,
         proposed_action: dict[str, Any],
         requires_confirmation: Optional[bool] = None,
-    ) -> AgentActionProposal:
+    ) -> Optional[AgentActionProposal]:
         """创建动作提案；状态默认 pending。
 
         - 风险等级按 proposal_type 自动分类
         - proposed_action 仅存结构化动作元数据，调用方负责剥离 raw message
+        - P1-E6: 若同 (course_id, student_id, tool_name, proposal_type) 模式已存在
+          locked 提案，直接拒绝创建并返回 None，调用方应跳过该工具调用
+          并加 warning TOOL_LOCKED_BY_TEACHER。
         """
+        # P1-E6: 教师锁定该工具/动作模式后，后续相同模式提案拒绝创建
+        locked_existing = session.exec(
+            select(AgentActionProposal).where(
+                AgentActionProposal.course_id == course_id,
+                AgentActionProposal.student_id == student_id,
+                AgentActionProposal.tool_name == tool_name,
+                AgentActionProposal.proposal_type == proposal_type,
+                AgentActionProposal.status == "locked",
+            ).limit(1)
+        ).first()
+        if locked_existing is not None:
+            logger.warning(
+                "create_proposal rejected: tool=%s proposal_type=%s locked by teacher "
+                "for course_id=%s student_id=%s",
+                tool_name, proposal_type, course_id, student_id,
+            )
+            return None
+
         risk = self._classify_risk(proposal_type)
         active_version = self.get_active_policy_version(session, course_id=course_id)
         if requires_confirmation is None:
@@ -324,14 +345,20 @@ class AgentGovernanceService:
 
     def get_proposal(
         self, session: Session, *, course_id: int, proposal_id: str,
+        for_update: bool = False,
     ) -> AgentActionProposal:
-        """按 course_id 隔离获取提案；跨课程返回 404。"""
-        proposal = session.exec(
-            select(AgentActionProposal).where(
-                AgentActionProposal.proposal_id == proposal_id,
-                AgentActionProposal.course_id == course_id,
-            )
-        ).first()
+        """按 course_id 隔离获取提案；跨课程返回 404。
+
+        for_update=True 时使用 SELECT ... FOR UPDATE 加行锁，用于教师决策
+        状态机以避免 TOCTOU 竞态（并发 approve 导致重复创建 TaskRecord）。
+        """
+        stmt = select(AgentActionProposal).where(
+            AgentActionProposal.proposal_id == proposal_id,
+            AgentActionProposal.course_id == course_id,
+        )
+        if for_update:
+            stmt = stmt.with_for_update()
+        proposal = session.exec(stmt).first()
         if proposal is None:
             reject_resource_not_found(f"提案 {proposal_id} 不存在")
         return proposal
@@ -380,7 +407,7 @@ class AgentGovernanceService:
         if decision not in ("approve", "reject", "lock", "rerun"):
             reject_validation_failed(f"无效决策: {decision}")
 
-        proposal = self.get_proposal(session, course_id=course_id, proposal_id=proposal_id)
+        proposal = self.get_proposal(session, course_id=course_id, proposal_id=proposal_id, for_update=True)
 
         # 状态机校验
         valid_transitions = {

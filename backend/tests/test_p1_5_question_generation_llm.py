@@ -224,7 +224,6 @@ class TestGenerateViaLLM:
             mock_settings.OPENAI_API_KEY = ""
             mock_settings.QWEN_API_KEY = ""
             mock_settings.DOUBAO_API_KEY = ""
-            mock_settings.WENXIN_API_KEY = ""
 
             result = asyncio.run(generate_question_via_llm(
                 session,
@@ -248,7 +247,6 @@ class TestGenerateViaLLM:
             mock_settings.OPENAI_API_KEY = ""
             mock_settings.QWEN_API_KEY = ""
             mock_settings.DOUBAO_API_KEY = ""
-            mock_settings.WENXIN_API_KEY = ""
             mock_client.chat = AsyncMock(side_effect=RuntimeError("network down"))
 
             result = asyncio.run(generate_question_via_llm(
@@ -281,7 +279,6 @@ class TestGenerateViaLLM:
             mock_settings.OPENAI_API_KEY = ""
             mock_settings.QWEN_API_KEY = ""
             mock_settings.DOUBAO_API_KEY = ""
-            mock_settings.WENXIN_API_KEY = ""
             mock_client.chat = AsyncMock(return_value=mock_response)
 
             result = asyncio.run(generate_question_via_llm(
@@ -308,7 +305,6 @@ class TestGenerateViaLLM:
             mock_settings.OPENAI_API_KEY = ""
             mock_settings.QWEN_API_KEY = ""
             mock_settings.DOUBAO_API_KEY = ""
-            mock_settings.WENXIN_API_KEY = ""
             mock_client.chat = AsyncMock(return_value=mock_response)
 
             result = asyncio.run(generate_question_via_llm(
@@ -335,7 +331,6 @@ class TestGenerateSync:
                 mock_settings.OPENAI_API_KEY = ""
                 mock_settings.QWEN_API_KEY = ""
                 mock_settings.DOUBAO_API_KEY = ""
-                mock_settings.WENXIN_API_KEY = ""
 
                 result = generate_question_sync(
                     session,

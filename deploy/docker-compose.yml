@@ -16,7 +16,7 @@ services:
     environment:
       POSTGRES_DB: codemind
       POSTGRES_USER: codemind
-      POSTGRES_PASSWORD: codemind_dev_2026
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -47,7 +47,7 @@ services:
       - "127.0.0.1:7474:7474"
       - "127.0.0.1:7687:7687"
     environment:
-      NEO4J_AUTH: neo4j/codemind_dev_2026
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:?set NEO4J_PASSWORD in .env}
       NEO4J_PLUGINS: '["apoc"]'
     volumes:
       - neo4j_data:/data
@@ -99,7 +99,7 @@ services:
       - "127.0.0.1:8000:8000"
     environment:
       # 主后端通过服务名访问 OCR；本地开发时 PADDLEOCR_URL=127.0.0.1:8090
-      AI_COURSE_DATABASE_URL: "postgresql://codemind:codemind_dev_2026@postgres:5432/codemind"
+      AI_COURSE_DATABASE_URL: "postgresql://codemind:${POSTGRES_PASSWORD}@postgres:5432/codemind"
       PADDLEOCR_URL: "http://paddleocr:8090"
       PADDLEOCR_REQUIRED_FOR_PDF: "true"
       PADDLEOCR_TIMEOUT_S: "300"

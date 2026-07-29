@@ -9,6 +9,13 @@
 # 停止：docker compose -f deploy/judge0/docker-compose.yml down
 # 回滚：docker compose -f deploy/judge0/docker-compose.yml down
 # 数据卷不会被普通回滚删除；清理卷必须先备份并由运维显式执行。
+#
+# P0-2 安全约束：本配置已移除 `privileged` 字段。Judge0 isolate 通过
+# 最小化的 cap_add: SYS_ADMIN 创建 Linux 命名空间，并保留
+# no-new-privileges:true 防止权限提升。如因特殊原因必须使用特权模式
+# （例如 isolate 在某些内核版本上无法工作），必须在专用硬化主机上
+# 手动配置 privileged: true，并接受部署安全评审；不得通过环境变量
+# 在普通主机上开启特权模式。
 
 x-logging: &default-logging
   logging:
@@ -31,10 +38,12 @@ services:
       POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
     ports:
       - "127.0.0.1:2358:2358"
-    # Judge0 isolate must create Linux namespaces.  Keep this opt-in and run
-    # it only on a dedicated Judge0 host: Docker Desktop cannot execute even
-    # an empty submission without it.
-    privileged: ${JUDGE0_SERVER_PRIVILEGED:-false}
+    # Judge0 isolate must create Linux namespaces. Use the minimal
+    # capability (SYS_ADMIN) instead of privileged mode, and keep
+    # no-new-privileges to prevent privilege escalation. See the P0-2
+    # security note at the top of this file before considering privileged.
+    cap_add:
+      - SYS_ADMIN
     security_opt:
       - no-new-privileges:true
     <<: *default-logging
@@ -67,9 +76,13 @@ services:
       REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
       POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
     # Judge0's upstream isolate may require elevated worker privileges on
-    # some Linux hosts. Secure-by-default deployments keep this false; an
-    # operator must explicitly opt in after host-level isolation review.
-    privileged: ${JUDGE0_WORKER_PRIVILEGED:-false}
+    # some Linux hosts. Use the minimal capability (SYS_ADMIN) instead of
+    # privileged mode, and keep no-new-privileges to prevent escalation.
+    # See the P0-2 security note at the top of this file.
+    cap_add:
+      - SYS_ADMIN
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./workers-no-secret-env.sh:/bootstrap/workers-no-secret-env.sh:ro
     <<: *default-logging

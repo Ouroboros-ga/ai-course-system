@@ -91,6 +91,7 @@ def _parse_node_id(node_id: str | None) -> int | None:
 
 
 def _serialize_question(item: Any) -> Mapping[str, Any]:
+    # P1-E4: 答案不进入 LLM context，仅暴露布尔标志 has_answer，避免 Prompt Injection 泄露标准答案。
     return {
         "question_id": item.id,
         "course_id": item.course_id,
@@ -98,7 +99,7 @@ def _serialize_question(item: Any) -> Mapping[str, Any]:
         "difficulty": item.difficulty.value if item.difficulty else None,
         "knowledge_node_ids": list(item.knowledge_node_ids or []),
         "question_text": item.question_text,
-        "answer": item.answer,
+        "has_answer": bool(item.answer),
         "options": dict(item.options or {}),
         "status": item.status.value if item.status else None,
         "version": item.version,

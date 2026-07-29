@@ -155,7 +155,6 @@ class TestEduAgentFallback:
         monkeypatch.setattr(mod.settings, "LLM_API_KEY", "", raising=False)
         monkeypatch.setattr(mod.settings, "QWEN_API_KEY", "", raising=False)
         monkeypatch.setattr(mod.settings, "DOUBAO_API_KEY", "", raising=False)
-        monkeypatch.setattr(mod.settings, "WENXIN_API_KEY", "", raising=False)
 
     def test_returns_low_confidence_fallback(self) -> None:
         q = _make_question(1, "光合作用 叶绿体")

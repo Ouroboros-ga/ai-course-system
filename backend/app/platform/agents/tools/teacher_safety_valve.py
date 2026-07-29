@@ -78,6 +78,9 @@ def make_session_scoped_teacher_safety_valve_port(session_factory: Callable[[], 
                     proposed_action=dict(proposed_action),
                     requires_confirmation=requires_confirmation,
                 )
+                # P1-E6: 工具/动作模式已被教师锁定，拒绝创建提案
+                if proposal is None:
+                    return {"proposal_id": "", "status": "tool_locked_by_teacher"}
                 session.commit()
                 return _proposal_to_dict(proposal)
             except Exception as error:  # noqa: BLE001

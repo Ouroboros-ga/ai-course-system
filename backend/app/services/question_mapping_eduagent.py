@@ -233,7 +233,6 @@ async def eduagent_select_best_evidence(
         or getattr(settings, "OPENAI_API_KEY", "")
         or getattr(settings, "QWEN_API_KEY", "")
         or getattr(settings, "DOUBAO_API_KEY", "")
-        or getattr(settings, "WENXIN_API_KEY", "")
     )
     if not api_key:
         top = candidates[0]

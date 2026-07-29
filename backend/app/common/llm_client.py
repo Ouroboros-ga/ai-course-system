@@ -75,7 +75,21 @@ class BaseLLMClient(ABC):
         except httpx.TimeoutException:
             raise LLMError(f"LLM API请求超时 ({timeout}秒)")
         except httpx.HTTPStatusError as e:
-            raise LLMError(f"LLM API请求失败: {e.response.status_code} - {e.response.text}")
+            # P1-B2: 响应体可能含账户标识、请求 ID、回显内容等敏感信息，
+            # 不得写入异常消息（会冒泡到客户端/日志）。仅保留 status_code，
+            # 完整响应体仅记录到服务端日志（warning 级别，不输出到客户端）。
+            try:
+                body = e.response.text
+            except Exception:
+                body = "<unreadable>"
+            logger.warning(
+                "LLM API请求失败: status=%s url=%s body_len=%d body_preview=%r",
+                e.response.status_code,
+                url,
+                len(body) if body else 0,
+                (body[:200] if body else ""),
+            )
+            raise LLMError(f"LLM API请求失败: {e.response.status_code}") from None
         except Exception as e:
             raise LLMError(f"LLM API请求异常: {str(e)}")
 
@@ -252,98 +266,6 @@ class QwenClient(BaseLLMClient):
                                 continue
 
 
-class WenxinClient(BaseLLMClient):
-    def __init__(self):
-        self.api_key = settings.WENXIN_API_KEY or settings.LLM_API_KEY
-        self.secret_key = settings.WENXIN_SECRET_KEY
-        self.base_url = settings.LLM_API_BASE or "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop"
-        self.model = settings.LLM_MODEL_NAME or "ernie-bot-4"
-        self.timeout = settings.LLM_TIMEOUT
-        self._access_token: Optional[str] = None
-        self._token_expire_time: float = 0
-
-        if not self.api_key or not self.secret_key:
-            logger.warning("文心一言API Key未配置，请在.env中设置WENXIN_API_KEY和WENXIN_SECRET_KEY")
-
-    async def _get_access_token(self) -> str:
-        if self._access_token and time.time() < self._token_expire_time:
-            return self._access_token
-
-        url = f"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials&client_id={self.api_key}&client_secret={self.secret_key}"
-
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(url)
-            response.raise_for_status()
-            result = response.json()
-            self._access_token = result.get("access_token")
-            self._token_expire_time = time.time() + result.get("expires_in", 86400) - 300
-            return self._access_token
-
-    async def chat(
-        self,
-        messages: List[Message],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs,
-    ) -> LLMResponse:
-        access_token = await self._get_access_token()
-        url = f"{self.base_url}/chat/{self.model}?access_token={access_token}"
-
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "messages": [m.to_dict() for m in messages],
-            "temperature": temperature or settings.LLM_TEMPERATURE,
-            "max_output_tokens": max_tokens or settings.LLM_MAX_TOKENS,
-        }
-        payload.update(kwargs)
-
-        result = await self._make_request(url, headers, payload, self.timeout)
-
-        return LLMResponse(
-            content=result.get("result", ""),
-            usage={
-                "prompt_tokens": result.get("usage", {}).get("prompt_tokens", 0),
-                "completion_tokens": result.get("usage", {}).get("completion_tokens", 0),
-                "total_tokens": result.get("usage", {}).get("total_tokens", 0),
-            },
-            model=self.model,
-            finish_reason="stop" if result.get("is_truncated") is False else "length",
-            latency_ms=result.get("_latency_ms", 0),
-        )
-
-    async def chat_stream(
-        self,
-        messages: List[Message],
-        temperature: Optional[float] = None,
-        max_tokens: Optional[int] = None,
-        **kwargs,
-    ) -> AsyncGenerator[str, None]:
-        access_token = await self._get_access_token()
-        url = f"{self.base_url}/chat/{self.model}?access_token={access_token}&stream=True"
-
-        headers = {"Content-Type": "application/json"}
-        payload = {
-            "messages": [m.to_dict() for m in messages],
-            "temperature": temperature or settings.LLM_TEMPERATURE,
-            "max_output_tokens": max_tokens or settings.LLM_MAX_TOKENS,
-            "stream": True,
-        }
-        payload.update(kwargs)
-
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            async with client.stream("POST", url, json=payload, headers=headers) as response:
-                response.raise_for_status()
-                async for line in response.aiter_lines():
-                    if line.startswith("data: "):
-                        data = line[6:]
-                        try:
-                            chunk = json.loads(data)
-                            if "result" in chunk:
-                                yield chunk["result"]
-                        except Exception:
-                            continue
-
-
 class OpenAIClient(BaseLLMClient):
     def __init__(self):
         self.api_key = settings.LLM_API_KEY
@@ -444,7 +366,6 @@ class LLMClient:
         clients = {
             "doubao": DoubaoClient,
             "qwen": QwenClient,
-            "wenxin": WenxinClient,
             "openai": OpenAIClient,
         }
 

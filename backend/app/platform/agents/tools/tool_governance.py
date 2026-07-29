@@ -21,6 +21,12 @@ from app.services.agent_governance_service import agent_governance_service
 
 logger = logging.getLogger(__name__)
 
+# P1-E5: 高风险工具集合；治理服务异常时对这类工具 fail-closed（默认禁用/强制确认），
+# 避免治理端口故障导致 web_research 等高风险动作默认放行。
+HIGH_RISK_TOOLS: frozenset[str] = frozenset({
+    "web_research", "trigger_experiment", "change_topic",
+})
+
 
 def make_session_scoped_tool_governance_port(session_factory: Callable[[], Session]):
     """构造一个 session 作用域的 ToolGovernancePort 实现。
@@ -39,8 +45,11 @@ def make_session_scoped_tool_governance_port(session_factory: Callable[[], Sessi
                 return agent_governance_service.is_tool_enabled(
                     session, course_id=course_id_int, tool_name=tool_name,
                 )
-            except Exception as error:  # noqa: BLE001 -- 治理失败不阻断主流程
+            except Exception as error:  # noqa: BLE001
                 logger.warning("ToolGovernance.is_tool_enabled failed: %s: %s", type(error).__name__, error)
+                # P1-E5: 高风险工具 fail-closed（禁用），低风险工具 fail-open（放行）
+                if tool_name in HIGH_RISK_TOOLS:
+                    return False
                 return True
             finally:
                 session.close()
@@ -58,6 +67,9 @@ def make_session_scoped_tool_governance_port(session_factory: Callable[[], Sessi
                 return {"require_confirmation": require, "threshold": threshold}
             except Exception as error:  # noqa: BLE001
                 logger.warning("ToolGovernance.requires_confirmation failed: %s: %s", type(error).__name__, error)
+                # P1-E5: 高风险工具 fail-closed（强制确认），低风险工具 fail-open
+                if tool_name in HIGH_RISK_TOOLS:
+                    return {"require_confirmation": True, "threshold": "always"}
                 return {"require_confirmation": False, "threshold": "never"}
             finally:
                 session.close()
