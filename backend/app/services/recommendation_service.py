@@ -42,6 +42,11 @@ from app.domain.learning.recommendation import (
 )
 from app.services.cognitive_service import compute_cognitive_state, get_latest_cognitive_state
 from app.services.graph_production_service import get_prerequisite_nodes
+from app.services.graph_production_service import get_active_snapshot
+from app.services.knowledge_node_identity_service import (
+    resolve_node_id,
+    resolve_node_key,
+)
 
 # 推荐策略阈值
 PERFORMANCE_LOW = 0.5
@@ -110,6 +115,8 @@ def generate_recommendation(
     ]
 
     # 6. 创建推荐记录
+    active_snapshot = get_active_snapshot(session, course_id)
+    formal_node_id = resolve_node_id(session, course_id, node_id)
     cognitive_snapshot = {
         "observed_performance_score": state.observed_performance_score,
         "evidence_confidence": state.evidence_confidence,
@@ -126,6 +133,8 @@ def generate_recommendation(
         student_id=student_id,
         course_id=course_id,
         node_id=node_id,
+        graph_snapshot_id=active_snapshot.snapshot_id if active_snapshot else None,
+        knowledge_node_id=formal_node_id,
         recommendation_type=rec_type.value,
         priority=priority.value,
         title=title,
@@ -146,6 +155,32 @@ def generate_recommendation(
     return record
 
 
+def refresh_cognition_and_recommendation(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    node_id: Optional[int],
+) -> tuple[Optional[CognitiveState], Optional[RecommendationRecord]]:
+    """Recompute cognition and create a recommendation after a scored answer.
+
+    Answer endpoints call this only after their attempt/evidence transaction has
+    committed. The existing compute/generate functions own their commits, so
+    no nested commit occurs inside the answer transaction.
+    """
+    if node_id is None:
+        return None, None
+    state = compute_cognitive_state(session, student_id, course_id, node_id)
+    recommendation = generate_recommendation(
+        session,
+        student_id,
+        course_id,
+        node_id=node_id,
+        force_recompute=False,
+    )
+    return state, recommendation
+
+
 def _find_confirmed_weak_prerequisites(
     session: Session,
     student_id: int,
@@ -164,7 +199,9 @@ def _find_confirmed_weak_prerequisites(
     """
     if not state.node_id:
         return []
-    node_id_str = str(state.node_id)
+    node_id_str = resolve_node_key(session, course_id, state.node_id) or str(state.node_id)
+    if not node_id_str:
+        return []
     prereq_nodes = get_prerequisite_nodes(
         session, course_id, node_id_str, direction="incoming"
     )
@@ -175,11 +212,13 @@ def _find_confirmed_weak_prerequisites(
         prereq_id = str(node.get("id") or node.get("node_id") or "")
         if not prereq_id:
             continue
-        try:
+        prereq_id_int = resolve_node_id(session, course_id, prereq_id)
+        # Compatibility for older hand-authored snapshots that predate the
+        # CourseKnowledgeNode identity table. New assembled snapshots always
+        # carry identity_id/node_key and use the branch above.
+        if prereq_id_int is None and prereq_id.isdigit():
             prereq_id_int = int(prereq_id)
-        except (TypeError, ValueError):
-            # 图谱节点 ID 若不是整数则无法对齐 cognitive_state.node_id，
-            # 跳过而非伪造数据。
+        if prereq_id_int is None:
             continue
         prereq_state = get_latest_cognitive_state(
             session, student_id, course_id, prereq_id_int

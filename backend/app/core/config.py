@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 8192
     LLM_TEMPERATURE: float = 0.7
     LLM_TIMEOUT: int = 180
+    # Course preparation has a shorter, explicit stage budget than the
+    # generic LLM client and a separate end-to-end budget for all stages.
+    COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
+    COURSE_BUILD_TOTAL_TIMEOUT_SECONDS: int = 900
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

@@ -11,6 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session
 
 from app.core.exceptions import unified_response
@@ -89,6 +90,18 @@ async def upload_course_materials(
             raise HTTPException(status_code=422, detail={"error_code": "VALIDATION_FAILED", "message": str(exc)}) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail={"error_code": "OBJECT_STORAGE_UNAVAILABLE", "message": str(exc)}) from exc
+        except OperationalError as exc:
+            # Local SQLite can briefly be busy while a durable worker commits
+            # parse/build progress.  This is retryable and must not be shown
+            # to the teacher as an unexplained server failure.
+            session.rollback()
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error_code": "COURSE_MATERIAL_UPLOAD_BUSY",
+                    "message": "课程建设任务正在提交进度，请稍后重试上传。",
+                },
+            ) from exc
     return unified_response(
         code=202,
         message="课程材料已保存，正在排队解析",

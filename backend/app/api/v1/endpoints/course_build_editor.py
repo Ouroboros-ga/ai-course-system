@@ -296,7 +296,76 @@ def _ensure_draft_script(session: Session, outline: CourseOutlineVersion, user_i
     return script
 
 
-def _outline_node_view(node: CourseOutlineNode) -> dict[str, Any]:
+def _mark_teacher_edited(version: CourseOutlineVersion | TeachingScriptVersion) -> None:
+    """Record teacher intent so an initial draft can never be replaced later."""
+    if version.generation_source == "agent_initial_generation" and version.review_status == "pending":
+        version.review_status = "teacher_edited"
+
+
+def _outline_tree_views(nodes: list[CourseOutlineNode]) -> tuple[list[CourseOutlineNode], dict[str, dict[str, Any]]]:
+    """Return one canonical display order/label for every build surface.
+
+    ``outline_node_id`` remains the durable cross-version reference.  Teachers
+    see a label derived from the current outline tree, so renaming or moving a
+    node immediately updates scripts and PPT mapping without duplicating titles
+    into those tables.
+    """
+    children: dict[str | None, list[CourseOutlineNode]] = {}
+    for node in nodes:
+        children.setdefault(node.parent_node_id, []).append(node)
+    for group in children.values():
+        group.sort(key=lambda item: (item.order_index, item.created_at, item.outline_node_id))
+
+    ordered: list[CourseOutlineNode] = []
+    views: dict[str, dict[str, Any]] = {}
+
+    def walk(parent_id: str | None, numeric_path: tuple[int, ...], breadcrumb: list[str], depth: int) -> None:
+        type_counts: dict[OutlineNodeType, int] = {}
+        for node in children.get(parent_id, []):
+            type_counts[node.node_type] = type_counts.get(node.node_type, 0) + 1
+            index = type_counts[node.node_type]
+            if node.node_type == OutlineNodeType.CHAPTER:
+                child_path = (index,)
+                number = f"第{index}章"
+            elif node.node_type == OutlineNodeType.SECTION:
+                child_path = numeric_path + (index,) if numeric_path else (index,)
+                number = ".".join(str(value) for value in child_path) if numeric_path else f"第{index}节"
+            elif node.node_type == OutlineNodeType.KNOWLEDGE_POINT:
+                child_path = numeric_path + (index,) if numeric_path else (index,)
+                number = ".".join(str(value) for value in child_path)
+            elif node.node_type == OutlineNodeType.EXAMPLE:
+                child_path = numeric_path
+                number = f"例 {index}"
+            else:
+                child_path = numeric_path
+                number = f"练习 {index}"
+            label = f"{number} {node.title}".strip()
+            node_breadcrumb = [*breadcrumb, label]
+            views[node.outline_node_id] = {
+                "display_number": number,
+                "display_label": label,
+                "breadcrumb": node_breadcrumb,
+                "depth": depth,
+            }
+            ordered.append(node)
+            walk(node.outline_node_id, child_path, node_breadcrumb, depth + 1)
+
+    walk(None, (), [], 0)
+    # A malformed legacy tree may point to a missing parent. Keep it visible
+    # and label it predictably instead of making data disappear from review.
+    for node in nodes:
+        if node.outline_node_id not in views:
+            views[node.outline_node_id] = {
+                "display_number": "未归类",
+                "display_label": f"未归类 {node.title}",
+                "breadcrumb": [f"未归类 {node.title}"],
+                "depth": 0,
+            }
+            ordered.append(node)
+    return ordered, views
+
+
+def _outline_node_view(node: CourseOutlineNode, display: dict[str, Any] | None = None) -> dict[str, Any]:
     return {
         "outline_node_id": node.outline_node_id,
         "outline_version_id": node.outline_version_id,
@@ -312,11 +381,17 @@ def _outline_node_view(node: CourseOutlineNode) -> dict[str, Any]:
         "locked": node.locked_by is not None,
         "locked_by": node.locked_by,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
+        **(display or {}),
     }
 
 
-def _script_node_view(node: TeachingScriptNode) -> dict[str, Any]:
-    return {
+def _script_node_view(
+    node: TeachingScriptNode,
+    *,
+    outline_view: dict[str, Any] | None = None,
+    ppt_mapping: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    view = {
         "script_node_id": node.script_node_id,
         "outline_node_id": node.outline_node_id,
         "course_id": node.course_id,
@@ -328,6 +403,15 @@ def _script_node_view(node: TeachingScriptNode) -> dict[str, Any]:
         "locked_by": node.locked_by,
         "updated_at": node.updated_at.isoformat() if node.updated_at else None,
     }
+    if outline_view is not None:
+        view["outline_node"] = outline_view
+        view["outline_title"] = outline_view["title"]
+        view["display_number"] = outline_view.get("display_number")
+        view["display_label"] = outline_view.get("display_label")
+        view["breadcrumb"] = outline_view.get("breadcrumb", [])
+    if ppt_mapping is not None:
+        view["ppt_mapping"] = ppt_mapping
+    return view
 
 
 def _ppt_mapping_view(mapping: CoursePptMapping) -> dict[str, Any]:
@@ -354,9 +438,10 @@ async def get_outline(course_id: int, session: Session = Depends(get_session), c
     version = _draft_outline(session, course_id) or _published_outline(session, course_id)
     if not version:
         return unified_response(200, "课程目录尚未生成", {"version": None, "nodes": []})
-    nodes = session.exec(select(CourseOutlineNode).where(
+    nodes = list(session.exec(select(CourseOutlineNode).where(
         CourseOutlineNode.outline_version_id == version.outline_version_id,
-    ).order_by(CourseOutlineNode.order_index)).all()
+    )).all())
+    ordered_nodes, displays = _outline_tree_views(nodes)
     return unified_response(200, "获取课程目录成功", {
         "version": {
             "outline_version_id": version.outline_version_id,
@@ -365,7 +450,7 @@ async def get_outline(course_id: int, session: Session = Depends(get_session), c
             "generation_source": version.generation_source,
             "review_status": version.review_status,
         },
-        "nodes": [_outline_node_view(n) for n in nodes],
+        "nodes": [_outline_node_view(n, displays[n.outline_node_id]) for n in ordered_nodes],
         "editable": version.lifecycle_status == OutlineLifecycleStatus.DRAFT,
     })
 
@@ -387,6 +472,8 @@ async def create_outline_node(course_id: int, payload: OutlineNodeCreate, sessio
         title=payload.title.strip(), order_index=payload.order_index,
         page_range=payload.page_range, generation_reason="teacher_edit",
     )
+    _mark_teacher_edited(version)
+    session.add(version)
     session.add(node); session.commit(); session.refresh(node)
     return unified_response(201, "目录节点已创建", _outline_node_view(node))
 
@@ -420,6 +507,8 @@ async def update_outline_node(course_id: int, node_id: str, payload: OutlineNode
     if payload.node_type is not None: node.node_type = payload.node_type
     if payload.order_index is not None: node.order_index = payload.order_index
     if payload.page_range is not None: node.page_range = payload.page_range
+    _mark_teacher_edited(version)
+    session.add(version)
     node.updated_at = utcnow_aware(); session.add(node); session.commit(); session.refresh(node)
     return unified_response(200, "目录节点已更新", _outline_node_view(node))
 
@@ -434,6 +523,8 @@ async def reorder_outline(course_id: int, payload: ReorderRequest, session: Sess
         raise HTTPException(400, "排序列表必须包含当前草稿的全部节点")
     for index, node_id in enumerate(payload.node_ids):
         by_id[node_id].order_index = index; by_id[node_id].updated_at = utcnow_aware(); session.add(by_id[node_id])
+    _mark_teacher_edited(version)
+    session.add(version)
     session.commit()
     return unified_response(200, "目录顺序已保存", {"node_ids": payload.node_ids})
 
@@ -443,6 +534,11 @@ async def lock_outline_node(course_id: int, node_id: str, session: Session = Dep
     context = require_course_permission(session, current_user, course_id, "course.structure.edit")
     node = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_node_id == node_id, CourseOutlineNode.course_id == course_id)).first()
     if not node: raise HTTPException(404, "目录节点不存在")
+    version = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.outline_version_id == node.outline_version_id,
+    )).first()
+    if version:
+        _mark_teacher_edited(version); session.add(version)
     node.locked_by = context.user_id; node.locked_at = utcnow_aware(); session.add(node); session.commit()
     return unified_response(200, "目录节点已锁定", _outline_node_view(node))
 
@@ -471,7 +567,24 @@ async def delete_outline_node(course_id: int, node_id: str, session: Session = D
         raise HTTPException(409, "已发布目录不可直接编辑")
     if node.locked_by is not None and node.locked_by != context.user_id:
         raise HTTPException(409, "节点已被教师锁定")
+    children = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.course_id == course_id,
+        CourseOutlineNode.outline_version_id == node.outline_version_id,
+        CourseOutlineNode.parent_node_id == node.outline_node_id,
+    )).all()
+    if children:
+        raise HTTPException(409, "请先处理子节点；删除父节点会使讲稿与 PPT 映射失去归属")
     version_id = node.outline_version_id
+    mappings = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course_id,
+        CoursePptMapping.outline_node_id == node_id,
+        CoursePptMapping.status == "draft",
+    )).all()
+    for mapping in mappings:
+        mapping.status = "stale"
+        mapping.updated_by = context.user_id
+        mapping.updated_at = utcnow_aware()
+        session.add(mapping)
     session.delete(node)
     # 重新整理剩余节点顺序，避免 order_index 出现空洞
     remaining = session.exec(select(CourseOutlineNode).where(
@@ -479,6 +592,8 @@ async def delete_outline_node(course_id: int, node_id: str, session: Session = D
     ).order_by(CourseOutlineNode.order_index)).all()
     for index, n in enumerate(remaining):
         n.order_index = index; n.updated_at = utcnow_aware(); session.add(n)
+    _mark_teacher_edited(version)
+    session.add(version)
     session.commit()
     return unified_response(200, "目录节点已删除", {"outline_node_id": node_id})
 
@@ -493,8 +608,41 @@ async def get_scripts(course_id: int, session: Session = Depends(get_session), c
         TeachingScriptVersion.outline_version_id == outline.outline_version_id,
     ).order_by(TeachingScriptVersion.version.desc())).first()
     if not script: return unified_response(200, "讲稿尚未生成", {"version": None, "items": []})
-    nodes = session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script.script_version_id)).all()
-    return unified_response(200, "获取讲授脚本成功", {"version": {"script_version_id": script.script_version_id, "status": script.lifecycle_status.value, "generation_source": script.generation_source, "review_status": script.review_status}, "items": [_script_node_view(n) for n in nodes], "editable": script.lifecycle_status == OutlineLifecycleStatus.DRAFT})
+    outline_nodes = list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+    )).all())
+    ordered_outline, displays = _outline_tree_views(outline_nodes)
+    outline_by_id = {node.outline_node_id: node for node in ordered_outline}
+    mappings = list(session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course_id,
+        CoursePptMapping.outline_node_id.in_(list(outline_by_id)),
+        CoursePptMapping.status == "draft",
+    )).all()) if outline_by_id else []
+    mapping_by_node = {item.outline_node_id: _ppt_mapping_view(item) for item in mappings}
+    script_nodes = list(session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.script_version_id == script.script_version_id,
+    )).all())
+    nodes_by_outline = {node.outline_node_id: node for node in script_nodes}
+    items = [
+        _script_node_view(
+            nodes_by_outline[outline_node.outline_node_id],
+            outline_view=_outline_node_view(outline_node, displays[outline_node.outline_node_id]),
+            ppt_mapping=mapping_by_node.get(outline_node.outline_node_id),
+        )
+        for outline_node in ordered_outline
+        if outline_node.outline_node_id in nodes_by_outline
+    ]
+    return unified_response(200, "获取讲授脚本成功", {
+        "version": {
+            "script_version_id": script.script_version_id,
+            "outline_version_id": outline.outline_version_id,
+            "status": script.lifecycle_status.value,
+            "generation_source": script.generation_source,
+            "review_status": script.review_status,
+        },
+        "items": items,
+        "editable": script.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+    })
 
 
 @router.patch("/course/{course_id}/scripts/{script_node_id}")
@@ -509,6 +657,14 @@ async def update_script(course_id: int, script_node_id: str, payload: ScriptUpda
     if node.locked_by is not None and node.locked_by != context.user_id: raise HTTPException(409, "讲稿节点已锁定")
     if payload.content is not None: node.content = payload.content
     if payload.style is not None: node.style = payload.style
+    _mark_teacher_edited(version)
+    session.add(version)
+    outline = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.outline_version_id == version.outline_version_id,
+    )).first()
+    if outline:
+        _mark_teacher_edited(outline)
+        session.add(outline)
     node.updated_at = utcnow_aware(); session.add(node); session.commit(); session.refresh(node)
     return unified_response(200, "讲稿已保存", _script_node_view(node))
 
@@ -851,15 +1007,31 @@ async def get_ppt_mapping(course_id: int, session: Session = Depends(get_session
     outline = _draft_outline(session, course_id) or _published_outline(session, course_id)
     materials = session.exec(select(SourceMaterial).where(SourceMaterial.course_id == course_id)).all()
     has_ppt = any(m.material_type == "slide" for m in materials)
-    nodes = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_version_id == outline.outline_version_id).order_by(CourseOutlineNode.order_index)).all() if outline else []
-    mappings = session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id)).all()
+    nodes = list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+    )).all()) if outline else []
+    ordered_nodes, displays = _outline_tree_views(nodes)
+    current_node_ids = {node.outline_node_id for node in ordered_nodes}
+    all_mappings = list(session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course_id,
+    )).all())
+    mappings = [item for item in all_mappings if item.outline_node_id in current_node_ids]
+    stale_mappings = [item for item in all_mappings if item.outline_node_id not in current_node_ids]
     mapping_by_node = {item.outline_node_id: item for item in mappings}
     node_views = []
-    for node in nodes:
-        view = _outline_node_view(node)
+    for node in ordered_nodes:
+        view = _outline_node_view(node, displays[node.outline_node_id])
         view["ppt_mapping"] = _ppt_mapping_view(mapping_by_node[node.outline_node_id]) if node.outline_node_id in mapping_by_node else None
         node_views.append(view)
-    return unified_response(200, "获取 PPT 映射状态成功", {"has_ppt": has_ppt, "editable": bool(outline and outline.lifecycle_status == OutlineLifecycleStatus.DRAFT), "nodes": node_views, "mappings": [_ppt_mapping_view(item) for item in mappings], "actions": {"upload_existing": True, "generate_ai": bool(nodes)}})
+    return unified_response(200, "获取 PPT 映射状态成功", {
+        "has_ppt": has_ppt,
+        "editable": bool(outline and outline.lifecycle_status == OutlineLifecycleStatus.DRAFT),
+        "outline_version_id": outline.outline_version_id if outline else None,
+        "nodes": node_views,
+        "mappings": [_ppt_mapping_view(item) for item in mappings],
+        "stale_mappings": [_ppt_mapping_view(item) for item in stale_mappings],
+        "actions": {"upload_existing": True, "generate_ai": bool(nodes)},
+    })
 
 
 @router.patch("/course/{course_id}/ppt-mapping/{outline_node_id}")
@@ -897,6 +1069,8 @@ async def update_ppt_mapping(course_id: int, outline_node_id: str, payload: PptM
         mapping.confidence = payload.confidence
     if payload.locked is True:
         mapping.teacher_locked = True
+    _mark_teacher_edited(version)
+    session.add(version)
     mapping.updated_by = context.user_id
     mapping.updated_at = utcnow_aware()
     session.add(mapping)

@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { FilePlus2, Upload } from 'lucide-vue-next'
-import { listBuildMaterials, uploadCourseMaterials } from '@/api/course_build.js'
+import { getDraftBuildStatus, listBuildMaterials, uploadCourseMaterials } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 
@@ -14,6 +14,7 @@ const loading = ref(true)
 const error = ref('')
 const uploadError = ref('')
 const materials = ref([])
+const draftBuild = ref(null)
 const pendingFiles = ref([])
 const uploading = ref(false)
 const uploadPercent = ref(0)
@@ -35,6 +36,24 @@ const terminalStates = new Set(['parsed', 'needs_review', 'failed', 'superseded'
 const progressText = computed(() => {
   const done = materials.value.filter((item) => terminalStates.has(item.status)).length
   return `${done}/${materials.value.length} 份资料已完成处理`
+})
+const hasUnfinishedMaterials = computed(() => materials.value.some((item) => !terminalStates.has(item.status)))
+const needsPolling = computed(() => (
+  hasUnfinishedMaterials.value
+  || ['assembling_corpus', 'submitting_build', 'building'].includes(draftBuild.value?.phase)
+))
+const draftBuildText = computed(() => {
+  switch (draftBuild.value?.phase) {
+    case 'parsing_materials': return '课程资料正在解析；全部材料完成后将自动启动智能备课。'
+    case 'assembling_corpus': return '资料解析完成，正在汇总课程材料。'
+    case 'submitting_build': return '课程材料已汇总，正在提交智能备课任务。'
+    case 'building': return '备课智能体正在整理课程结构、讲授脚本和候选知识图谱。'
+    case 'ready_for_review': return '智能备课完成，课程草稿已进入教师审核。'
+    case 'blocked_by_materials': return draftBuild.value?.error_message || '有材料需要处理后才能自动备课。'
+    case 'build_failed': return `智能备课失败：${draftBuild.value?.error_message || '请在任务中心查看失败原因。'}`
+    case 'build_cancelled': return '材料版本已变化，系统将基于最新材料自动重新汇总。'
+    default: return ''
+  }
 })
 
 function suggestedRole(file) {
@@ -59,8 +78,12 @@ async function load({ quiet = false } = {}) {
   if (!quiet) loading.value = true
   error.value = ''
   try {
-    const data = await listBuildMaterials(courseId.value)
+    const [data, buildStatus] = await Promise.all([
+      listBuildMaterials(courseId.value),
+      getDraftBuildStatus(courseId.value),
+    ])
     materials.value = data?.items ?? []
+    draftBuild.value = buildStatus ?? null
   } catch (err) {
     error.value = err?.message || '资料读取失败'
   } finally {
@@ -87,10 +110,10 @@ async function upload() {
 }
 function startPolling() {
   window.clearInterval(pollTimer)
-  if (materials.value.some((item) => !terminalStates.has(item.status))) {
+  if (needsPolling.value) {
     pollTimer = window.setInterval(async () => {
       await load({ quiet: true })
-      if (!materials.value.some((item) => !terminalStates.has(item.status))) window.clearInterval(pollTimer)
+      if (!needsPolling.value) window.clearInterval(pollTimer)
     }, 4000)
   }
 }
@@ -126,6 +149,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
     <SfxError v-if="!loading && error" :description="error" @retry="load" />
     <template v-else>
       <div class="materials-head"><h2 class="sfx-t-title3">已上传资料</h2><span class="sfx-t-caption sfx-t-secondary">{{ progressText }}</span></div>
+      <p v-if="draftBuildText" class="draft-build-status" :class="`draft-build-${draftBuild?.phase}`" role="status">{{ draftBuildText }}</p>
       <p v-if="loading" class="empty">正在读取资料…</p>
       <div v-else-if="!materials.length" class="empty">还没有课程资料。添加主课件、教材或其他教学材料后，解析会在后台继续执行。</div>
       <div v-else class="materials">
@@ -151,6 +175,9 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .upload-actions{display:flex;justify-content:flex-end}
 .materials-head{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);margin:var(--space-4) 0 var(--space-3)}
 .materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}
+.draft-build-status{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-left:3px solid var(--ink-500);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
+.draft-build-ready_for_review{border-left-color:var(--green-700);background:var(--green-50);color:var(--green-700)}
+.draft-build-blocked_by_materials,.draft-build-build_failed{border-left-color:var(--amber-700);background:var(--amber-50);color:var(--amber-700)}
 .material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
 .status{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--ui-sm-size);font-weight:600;color:var(--text-secondary)}
 .status::before{content:"◇"}

@@ -144,6 +144,14 @@ onMounted(() => {
       @retry="ws.load"
     />
 
+    <SfxError
+      v-else-if="ws.status.value === 'empty'"
+      variant="unavailable"
+      title="课程学习内容尚未就绪"
+      :description="ws.error.value || '该课程当前没有可学习的讲解节点。'"
+      :retryable="false"
+    />
+
     <template v-else>
       <div class="sfx-learn-body">
         <LearningTrack
@@ -172,7 +180,9 @@ onMounted(() => {
 
           <CitationStage
             v-else-if="learnState === LEARN_STATES.CITATION"
+            :course-id="courseId"
             :document-id="evidenceDocumentId"
+            :preview="previewMode"
             @exit="exitBranch"
           />
 
@@ -181,6 +191,7 @@ onMounted(() => {
             :course-id="courseId"
             :node-id="ws.currentNodeId.value"
             :node-title="ws.currentNode.value?.title || ''"
+            :preview="previewMode"
             @exit="exitBranch"
           />
           <NoteStage v-else-if="learnState === LEARN_STATES.NOTE" :ws="ws" :anchor="branchContext" @exit="exitBranch" />

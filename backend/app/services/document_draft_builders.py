@@ -235,6 +235,7 @@ def build_outline_draft(
     corpus_snapshot_id: Optional[str] = None,
     build_task_id: Optional[str] = None,
     material_role_by_run: Optional[dict[str, str]] = None,
+    primary_ppt_run_id: Optional[str] = None,
 ) -> tuple[str, int]:
     """从 DocumentBlock 生成课程目录草稿（CourseOutlineVersion + Node）。
 
@@ -282,7 +283,13 @@ def build_outline_draft(
     first_section = next((b for b in nonempty if b.semantic_role == "section_title"), None)
 
     def add_node(node_type, title, parent, refs, node_order, confidence):
-        pages = [int((b.page_or_slide or b.page_number or 1)) for b in ordered if b.block_id in refs]
+        # A knowledge point may cite textbook/PDF evidence, but a teaching PPT
+        # mapping must only use page evidence from the selected primary deck.
+        mapping_blocks = [
+            block for block in ordered
+            if block.block_id in refs and (not primary_ppt_run_id or block.run_id == primary_ppt_run_id)
+        ]
+        pages = [int((b.page_or_slide or b.page_number or 1)) for b in mapping_blocks]
         page_start, page_end = (min(pages), max(pages)) if pages else (1, 1)
         node = CourseOutlineNode(
             outline_version_id=version.outline_version_id, course_id=course_id,
@@ -576,6 +583,7 @@ def build_draft_assets(
     stmt = select(DocumentBlock).where(DocumentBlock.course_id == course_id)
     material_role_by_run: dict[str, str] = {}
     primary_ppt_version_id: Optional[str] = material_version_id
+    primary_ppt_run_id: Optional[str] = None
     if corpus_snapshot_id:
         from app.models.course_build_model import CourseCorpusItem, CourseCorpusSnapshot
         corpus = session.exec(select(CourseCorpusSnapshot).where(
@@ -601,6 +609,7 @@ def build_draft_assets(
                                   SourceMaterial.course_id == course_id,
                               )).first()) is not None and material.material_type == "slide"), None)
         primary_ppt_version_id = primary_slide.material_version_id if primary_slide else None
+        primary_ppt_run_id = primary_slide.parse_run_id if primary_slide else None
     elif run_id:
         stmt = stmt.where(DocumentBlock.run_id == run_id)
     else:
@@ -646,6 +655,7 @@ def build_draft_assets(
             blocks=list(blocks), created_by=created_by,
             corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
             material_role_by_run=material_role_by_run,
+            primary_ppt_run_id=primary_ppt_run_id,
         )
         result.outline_version_id = ov_id
         result.outline_node_count = node_count

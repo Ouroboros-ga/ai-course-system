@@ -18,11 +18,15 @@ import {
   CornerDownRight,
   GitFork,
   LoaderCircle,
+  FileText,
+  X,
   TriangleAlert,
 } from 'lucide-vue-next'
 import {
   getCourseSnapshot,
   getNodePrerequisites,
+  listCourseCitations,
+  fetchProtectedImageUrl,
 } from '@/api/graph.js'
 
 const props = defineProps({
@@ -62,6 +66,11 @@ const snapshot = ref(null)
 const neighbors = ref({ incoming: [], outgoing: [] })
 const neighborsStatus = ref('idle')
 const neighborsError = ref('')
+const citations = ref([])
+const citationsStatus = ref('idle')
+const selectedCitation = ref(null)
+const citationImageUrl = ref('')
+const citationImageStatus = ref('idle')
 
 const LOW_CONFIDENCE_THRESHOLD = 0.5
 
@@ -94,6 +103,14 @@ const currentNodeInSnapshot = computed(() => {
     snapshot.value.nodes.find((n) => String(n.id) === String(props.nodeId)) ??
     null
   )
+})
+
+const snapshotNodes = computed(() => Array.isArray(snapshot.value?.nodes) ? snapshot.value.nodes : [])
+
+const currentNodeCitations = computed(() => {
+  const identityId = currentNodeInSnapshot.value?.identity_id
+  if (identityId == null) return []
+  return citations.value.filter((citation) => String(citation.node_id) === String(identityId))
 })
 
 const isLowConfidence = computed(() => {
@@ -151,10 +168,44 @@ async function loadSnapshot() {
     }
     snapshot.value = res
     status.value = 'ready'
+    await loadCitations()
   } catch (err) {
     status.value = mapLoadError(err)
     errorMessage.value = err?.message || '快照加载失败'
   }
+}
+
+async function loadCitations() {
+  citationsStatus.value = 'loading'
+  try {
+    const res = await listCourseCitations(props.courseId)
+    citations.value = Array.isArray(res) ? res : (res?.items ?? [])
+    citationsStatus.value = 'ready'
+  } catch (err) {
+    citations.value = []
+    citationsStatus.value = 'error'
+  }
+}
+
+async function openCitation(citation) {
+  selectedCitation.value = citation
+  citationImageUrl.value = ''
+  citationImageStatus.value = 'idle'
+  if (!citation?.render_url) return
+  citationImageStatus.value = 'loading'
+  try {
+    citationImageUrl.value = await fetchProtectedImageUrl(citation.render_url)
+    citationImageStatus.value = 'ready'
+  } catch {
+    citationImageStatus.value = 'error'
+  }
+}
+
+function closeCitation() {
+  if (citationImageUrl.value) URL.revokeObjectURL(citationImageUrl.value)
+  selectedCitation.value = null
+  citationImageUrl.value = ''
+  citationImageStatus.value = 'idle'
 }
 
 async function loadNeighbors() {
@@ -336,6 +387,27 @@ onMounted(async () => {
         </span>
       </div>
 
+      <section class="sfx-student-graph__node-list" aria-labelledby="student-graph-node-list-title">
+        <header class="sfx-student-graph__section-head">
+          <span id="student-graph-node-list-title">全部知识点</span>
+          <small class="sfx-student-graph__section-count">{{ snapshotNodes.length }}</small>
+        </header>
+        <div v-if="snapshotNodes.length" class="sfx-student-graph__node-grid">
+          <button
+            v-for="node in snapshotNodes"
+            :key="node.id"
+            type="button"
+            class="sfx-student-graph__node-btn"
+            :class="{ 'is-current': String(node.id) === String(props.nodeId) }"
+            @click="handleJump(node)"
+          >
+            <span class="sfx-student-graph__node-key">{{ node.id }}</span>
+            <span class="sfx-student-graph__node-title">{{ node.title || node.name || '未命名知识点' }}</span>
+          </button>
+        </div>
+        <p v-else class="sfx-student-graph__neighbor-empty">当前快照没有可展示的知识点。</p>
+      </section>
+
       <!-- 当前知识点 -->
       <article v-if="currentNodeInSnapshot" class="sfx-student-graph__current">
         <header class="sfx-student-graph__section-head">
@@ -350,6 +422,24 @@ onMounted(async () => {
         >
           {{ currentNodeInSnapshot.summary || currentNodeInSnapshot.description }}
         </p>
+        <div class="sfx-student-graph__citations">
+          <header class="sfx-student-graph__section-head">
+            <span>原文引用</span>
+            <small class="sfx-student-graph__section-count">{{ currentNodeCitations.length }}</small>
+          </header>
+          <p v-if="citationsStatus === 'loading'" class="sfx-student-graph__neighbor-empty">正在加载原文引用…</p>
+          <p v-else-if="citationsStatus === 'error'" class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error">原文引用暂时不可用。</p>
+          <p v-else-if="!currentNodeCitations.length" class="sfx-student-graph__neighbor-empty">该知识点暂无学生可读引用。</p>
+          <ul v-else class="sfx-student-graph__citation-list">
+            <li v-for="citation in currentNodeCitations" :key="citation.citation_id" class="sfx-student-graph__citation-item">
+              <button type="button" class="sfx-student-graph__citation-btn" @click="openCitation(citation)">
+                <FileText :size="15" />
+                <span>{{ citation.source_file || '课程材料' }} · 第 {{ citation.page_number || '—' }} 页</span>
+              </button>
+              <p class="sfx-student-graph__citation-snippet">{{ citation.text_snippet || '已确认原文引用' }}</p>
+            </li>
+          </ul>
+        </div>
       </article>
 
       <!-- 一跳先修 / 后继 -->
@@ -439,6 +529,24 @@ onMounted(async () => {
         </div>
       </div>
     </template>
+
+    <div v-if="selectedCitation" class="sfx-student-graph__drawer-backdrop" @click.self="closeCitation">
+      <aside class="sfx-student-graph__drawer" role="dialog" aria-modal="true" aria-labelledby="citation-drawer-title">
+        <header class="sfx-student-graph__drawer-head">
+          <div>
+            <p class="sfx-student-graph__drawer-eyebrow">原文引用</p>
+            <h3 id="citation-drawer-title">{{ selectedCitation.source_file || '课程材料' }}</h3>
+          </div>
+          <button type="button" class="sfx-student-graph__drawer-close" aria-label="关闭引用" @click="closeCitation"><X :size="18" /></button>
+        </header>
+        <p class="sfx-student-graph__drawer-meta">第 {{ selectedCitation.page_number || '—' }} 页 · {{ selectedCitation.status || 'active' }}</p>
+        <img v-if="citationImageUrl" :src="citationImageUrl" alt="原文页面" class="sfx-student-graph__citation-image" />
+        <p v-else-if="citationImageStatus === 'loading'" class="sfx-student-graph__neighbor-empty">正在加载原文页面…</p>
+        <p v-else-if="citationImageStatus === 'error'" class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error">原文页面暂时无法加载，但引用文本仍可查看。</p>
+        <blockquote class="sfx-student-graph__drawer-quote">{{ selectedCitation.text_snippet || '暂无文本片段' }}</blockquote>
+        <p v-if="selectedCitation.bbox" class="sfx-student-graph__drawer-meta">已记录原文框选区域，可用于教师复核。</p>
+      </aside>
+    </div>
   </section>
 </template>
 
@@ -535,6 +643,172 @@ onMounted(async () => {
 .sfx-student-graph__state-text {
   margin: 0;
   font-size: 0.85rem;
+}
+
+.sfx-student-graph__node-list,
+.sfx-student-graph__citations {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 8px;
+  background: var(--surface-panel, #fff);
+}
+
+.sfx-student-graph__node-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.sfx-student-graph__node-btn,
+.sfx-student-graph__citation-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 10px;
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 7px;
+  background: var(--surface-panel, #fff);
+  color: var(--text-primary, #1f2937);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+
+.sfx-student-graph__node-btn:hover,
+.sfx-student-graph__node-btn:focus-visible,
+.sfx-student-graph__citation-btn:hover,
+.sfx-student-graph__citation-btn:focus-visible {
+  border-color: var(--accent-primary, #4f8cf7);
+  background: var(--surface-cool, #f5f8ff);
+  outline: none;
+}
+
+.sfx-student-graph__node-btn.is-current {
+  border-color: var(--accent-primary, #4f8cf7);
+  box-shadow: inset 3px 0 var(--accent-primary, #4f8cf7);
+}
+
+.sfx-student-graph__node-key {
+  flex: 0 0 auto;
+  color: var(--text-muted, #6b7280);
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 0.72rem;
+}
+
+.sfx-student-graph__node-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.86rem;
+}
+
+.sfx-student-graph__citation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sfx-student-graph__citation-item {
+  padding: 8px;
+  border-radius: 6px;
+  background: var(--surface-cool, #f8fafc);
+}
+
+.sfx-student-graph__citation-btn {
+  width: 100%;
+  min-height: 38px;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent-primary, #2563eb);
+}
+
+.sfx-student-graph__citation-snippet {
+  margin: 5px 0 0 23px;
+  color: var(--text-secondary, #475569);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+.sfx-student-graph__drawer-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: rgba(15, 23, 42, 0.38);
+}
+
+.sfx-student-graph__drawer {
+  width: min(520px, 100vw);
+  height: 100%;
+  overflow-y: auto;
+  padding: 22px;
+  background: var(--surface-panel, #fff);
+  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.16);
+}
+
+.sfx-student-graph__drawer-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sfx-student-graph__drawer-head h3,
+.sfx-student-graph__drawer-eyebrow {
+  margin: 0;
+}
+
+.sfx-student-graph__drawer-eyebrow {
+  color: var(--text-muted, #64748b);
+  font-size: 0.78rem;
+}
+
+.sfx-student-graph__drawer-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.sfx-student-graph__drawer-meta {
+  margin: 10px 0;
+  color: var(--text-secondary, #475569);
+  font-size: 0.82rem;
+}
+
+.sfx-student-graph__citation-image {
+  display: block;
+  width: 100%;
+  max-height: 420px;
+  object-fit: contain;
+  border: 1px solid var(--border-default, #e5e7eb);
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+.sfx-student-graph__drawer-quote {
+  margin: 16px 0 0;
+  padding: 14px 16px;
+  border-left: 3px solid var(--accent-primary, #4f8cf7);
+  background: var(--surface-cool, #f8fafc);
+  color: var(--text-primary, #1f2937);
+  line-height: 1.65;
 }
 
 .sfx-student-graph__spinner {

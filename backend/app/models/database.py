@@ -82,6 +82,7 @@ from app.models.media_timeline_model import (
 )
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
+    CourseKnowledgeNode,
     GraphSnapshotRecord,
     GraphNodeReview,
 )
@@ -115,6 +116,7 @@ from app.models.course_build_model import (
     CourseCorpusItem,
     CourseRetrievalSnapshot,
     CourseDraftBuildTask,
+    CourseDraftBuildCheckpoint,
     CourseQualityGateRun,
     CourseRelease,
     CourseReleaseArtifact,

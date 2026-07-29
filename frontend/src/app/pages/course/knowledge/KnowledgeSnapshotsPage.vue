@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { History } from 'lucide-vue-next'
-import { diffSnapshots, listSnapshots, rollbackSnapshot } from '@/api/graph.js'
+import { diffSnapshots, listSnapshots, publishReviewedSnapshot, rollbackSnapshot } from '@/api/graph.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxDrawer from '@/app/ui/SfxDrawer.vue'
@@ -34,9 +34,11 @@ const diffError = ref('')
 // 回滚
 const rollbackTarget = ref(null)
 const rollingBack = ref(false)
+const publishing = ref(false)
 const actionError = ref('')
 
 const statusMeta = {
+  rolled_back: { label: '已回滚', tone: 'neutral' },
   published: { label: '正式发布', tone: 'green' },
   superseded: { label: '已被取代', tone: 'neutral' },
   draft: { label: '草稿', tone: 'amber' },
@@ -89,8 +91,24 @@ async function runDiff() {
 }
 
 function diffList(key) {
-  const value = diffResult.value?.[key]
+  const group = key.startsWith('relation_') ? diffResult.value?.relations : diffResult.value?.nodes
+  const value = group?.[key.replace(/^relation_/, '')]
   return Array.isArray(value) ? value : []
+}
+
+async function publishReviewed() {
+  if (publishing.value) return
+  publishing.value = true
+  actionError.value = ''
+  try {
+    await publishReviewedSnapshot(courseId)
+    await load()
+  } catch (e) {
+    const detail = e?.response?.data?.detail
+    actionError.value = detail?.message || e?.message || '发布前校验未通过，请先完成候选审核和 Evidence 确认。'
+  } finally {
+    publishing.value = false
+  }
 }
 
 function askRollback(snap) {
@@ -132,9 +150,16 @@ onMounted(load)
       <SfxButton v-if="items.length >= 2" variant="secondary" size="sm" @click="openCompare">
         对比版本
       </SfxButton>
+      <div class="sfx-snapshots-head-actions">
+        <SfxButton variant="primary" size="sm" :loading="publishing" @click="publishReviewed">
+          发布已审核图谱
+        </SfxButton>
+      </div>
     </header>
 
     <SfxSkeleton v-if="status === 'loading'" :lines="5" />
+
+    <p v-if="actionError && status !== 'loading'" class="sfx-snapshots-error sfx-t-ui" role="alert">{{ actionError }}</p>
 
     <SfxError
       v-else-if="status === 'error'"
@@ -224,12 +249,17 @@ onMounted(load)
           </ul>
         </section>
         <section class="sfx-diff-group">
-          <h3 class="sfx-t-ui sfx-diff-heading"><SfxBadge tone="amber">修改</SfxBadge> {{ diffList('changed').length }} 项</h3>
-          <ul v-if="diffList('changed').length" class="sfx-diff-list">
-            <li v-for="(d, i) in diffList('changed')" :key="i" class="sfx-t-sm">{{ d.title ?? d.name ?? d.id ?? JSON.stringify(d) }}</li>
+          <h3 class="sfx-t-ui sfx-diff-heading"><SfxBadge tone="amber">修改</SfxBadge> {{ diffList('modified').length }} 项</h3>
+          <ul v-if="diffList('modified').length" class="sfx-diff-list">
+            <li v-for="(d, i) in diffList('modified')" :key="i" class="sfx-t-sm">{{ d.title ?? d.name ?? d.id ?? JSON.stringify(d) }}</li>
           </ul>
         </section>
-        <p v-if="!diffList('added').length && !diffList('removed').length && !diffList('changed').length" class="sfx-t-ui sfx-t-secondary">
+        <section class="sfx-diff-group">
+          <h3 class="sfx-t-ui sfx-diff-heading"><SfxBadge tone="green">关系新增</SfxBadge> {{ diffList('relation_added').length }} 项</h3>
+          <h3 class="sfx-t-ui sfx-diff-heading"><SfxBadge tone="red">关系删除</SfxBadge> {{ diffList('relation_removed').length }} 项</h3>
+          <h3 class="sfx-t-ui sfx-diff-heading"><SfxBadge tone="amber">关系修改</SfxBadge> {{ diffList('relation_modified').length }} 项</h3>
+        </section>
+        <p v-if="!diffList('added').length && !diffList('removed').length && !diffList('modified').length && !diffList('relation_added').length && !diffList('relation_removed').length && !diffList('relation_modified').length" class="sfx-t-ui sfx-t-secondary">
           两个版本之间没有差异。
         </p>
       </template>
@@ -249,7 +279,7 @@ onMounted(load)
       <ul class="sfx-rollback-impacts sfx-t-ui">
         <li>当前发布快照将被取代，学生端立即看到回滚后的图谱；</li>
         <li>基于当前快照的检索与推荐会切换到回滚版本；</li>
-        <li>回滚本身会形成新的可追溯记录，不会删除历史快照。</li>
+        <li>目标快照保持不可变；回滚只重新激活已有版本，不创建新的内容版本。</li>
       </ul>
       <template #footer>
         <SfxButton variant="tertiary" @click="rollbackTarget = null">取消</SfxButton>
@@ -272,6 +302,13 @@ onMounted(load)
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-4);
+}
+
+.sfx-snapshots-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 .sfx-snapshots-error {

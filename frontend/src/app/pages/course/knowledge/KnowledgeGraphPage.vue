@@ -37,7 +37,7 @@ const counter = useCounterStore()
 const { courseId, courseRole, analyticsEligible } = inject('courseContext')
 
 const nodeId = computed(() =>
-  route.params.nodeId != null ? Number(route.params.nodeId) : null,
+  route.params.nodeId != null ? String(route.params.nodeId) : null,
 )
 
 // 角色分流：仅 analytics_eligible=true（学生且未 excluded）才加载学生私有认知/推荐。

@@ -32,6 +32,7 @@ from app.models.question_bank_model import QuestionAttempt, QuestionBankItem
 from app.models.progress_model import LearningProgress, NodeProgress
 from app.domain.learning.evidence import LearningEvidence, EvidenceType
 from app.domain.learning.mastery_state import MasteryState, MasteryLevel, MasterySource
+from app.services.knowledge_node_identity_service import resolve_node_id
 
 # 最小样本量阈值：低于此值时输出 unknown
 MIN_SAMPLE_FOR_PERFORMANCE = 3
@@ -389,7 +390,11 @@ def record_scored_evidence(
     node_id: Optional[int] = None
     question = session.get(QuestionBankItem, attempt.question_id)
     if question is not None and question.knowledge_node_ids:
-        node_id = int(question.knowledge_node_ids[0])
+        raw_node_id = question.knowledge_node_ids[0]
+        node_id = resolve_node_id(session, attempt.course_id, raw_node_id)
+        # Preserve old, pre-identity Demo records until they are migrated.
+        if node_id is None and str(raw_node_id).isdigit():
+            node_id = int(raw_node_id)
 
     event_refs = [attempt.source_event_id] if attempt.source_event_id else []
 

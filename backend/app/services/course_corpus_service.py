@@ -256,14 +256,38 @@ class CourseCorpusService:
         self, session: Session, *, corpus: CourseCorpusSnapshot, owner_user_id: int,
         trigger: str = "auto_after_materials_ready",
         quiet_window_seconds: int = DEFAULT_CORPUS_QUIET_WINDOW_SECONDS,
+        force_initial: bool = False,
     ) -> tuple[CourseDraftBuildTask, str]:
-        existing = session.exec(select(CourseDraftBuildTask).where(
+        active_builds = list(session.exec(select(CourseDraftBuildTask).where(
             CourseDraftBuildTask.course_id == corpus.course_id,
-            CourseDraftBuildTask.corpus_snapshot_id == corpus.corpus_snapshot_id,
             CourseDraftBuildTask.status.in_([CourseDraftBuildStatus.QUEUED, CourseDraftBuildStatus.RUNNING]),
-        )).first()
-        if existing and existing.task_id:
-            return existing, existing.task_id
+        )).all())
+        same_corpus = next((build for build in active_builds
+                            if build.corpus_snapshot_id == corpus.corpus_snapshot_id), None)
+
+        # Durable course-level concurrency lock: a new corpus supersedes and
+        # cancels every queued/running build for this course before its own
+        # orchestration row is created.  The handler also re-checks this
+        # boundary between LLM stages, so an in-flight request cannot publish
+        # stale results after the material set changes.
+        for older in active_builds:
+            if older.corpus_snapshot_id == corpus.corpus_snapshot_id:
+                continue
+            older.status = CourseDraftBuildStatus.CANCELLED
+            older.error_code = "CORPUS_CHANGED"
+            older.error_message = "新课程语料快照已生成，旧备课任务已取消"
+            older.finished_at = utcnow_aware()
+            session.add(older)
+            if older.task_id:
+                try:
+                    task = task_service.get_task(session, older.task_id)
+                    if task.status in {"pending", "running"}:
+                        task_service.cancel(session, older.task_id, reason=older.error_message)
+                except ValueError:
+                    logger.info("Course build task %s was already terminal", older.task_id)
+
+        if same_corpus is not None:
+            return same_corpus, same_corpus.task_id or ""
 
         latest_outline = session.exec(select(CourseOutlineVersion).where(
             CourseOutlineVersion.course_id == corpus.course_id,
@@ -271,7 +295,11 @@ class CourseCorpusService:
         latest_script = session.exec(select(TeachingScriptVersion).where(
             TeachingScriptVersion.course_id == corpus.course_id,
         ).order_by(TeachingScriptVersion.version.desc())).first()
-        mode = "initial" if latest_outline is None else "proposal"
+        # A teacher may explicitly discard an untouched system-generated
+        # initial draft and ask the preparation agent to regenerate it.  The
+        # caller is responsible for enforcing that narrow safety condition;
+        # all normal rebuilds remain proposals once a draft exists.
+        mode = "initial" if force_initial or latest_outline is None else "proposal"
         not_before_at = self._quiet_window_deadline(
             session, course_id=corpus.course_id, quiet_window_seconds=quiet_window_seconds,
         )

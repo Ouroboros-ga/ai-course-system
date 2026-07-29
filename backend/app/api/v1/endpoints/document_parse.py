@@ -65,7 +65,7 @@ from app.models.graph_production_model import (
     SnapshotStatus,
 )
 from app.models.agent_governance_model import AgentActionProposal
-from app.services.course_access_service import require_course_permission
+from app.services.course_access_service import require_course_permission, resolve_course_access
 from app.services.document_parse_service import (
     document_parse_service,
     graph_candidate_service,
@@ -133,6 +133,9 @@ class EvidenceSpanConfirmRequest(BaseModel):
     source_type: str = Field(default="document",
                              description="ppt/textbook/handout/lesson_plan/document")
     node_id: Optional[int] = Field(None, description="关联知识点ID")
+    identity_node_key: Optional[str] = Field(
+        None, max_length=200, description="关联课程知识节点的稳定 node_key"
+    )
 
 
 class EvidenceSpanRejectRequest(BaseModel):
@@ -242,7 +245,12 @@ def _serialize_ir_version(version: DocumentIRVersion) -> dict[str, Any]:
     }
 
 
-def _serialize_citation(cit: EvidenceCitation, *, student_view: bool = False) -> dict[str, Any]:
+def _serialize_citation(
+    cit: EvidenceCitation,
+    *,
+    student_view: bool = False,
+    render_url: Optional[str] = None,
+) -> dict[str, Any]:
     """序列化 Citation。
 
     学生视图不暴露 evidence_id 与 span_id（内部追溯用）；只暴露学生可见字段。
@@ -250,6 +258,7 @@ def _serialize_citation(cit: EvidenceCitation, *, student_view: bool = False) ->
     data = {
         "citation_id": cit.citation_id,
         "course_id": cit.course_id,
+        "run_id": cit.run_id,
         "document_id": cit.document_id,
         "node_id": cit.node_id,
         "source_file": cit.source_file,
@@ -257,6 +266,7 @@ def _serialize_citation(cit: EvidenceCitation, *, student_view: bool = False) ->
         "page_number": cit.page_number,
         "page_range": cit.page_range,
         "bbox": cit.bbox,
+        "source_anchor_ids": list(cit.source_anchor_ids or []),
         "text_snippet": cit.text_snippet,
         "char_start": cit.char_start,
         "char_end": cit.char_end,
@@ -267,6 +277,7 @@ def _serialize_citation(cit: EvidenceCitation, *, student_view: bool = False) ->
         "student_visible": cit.student_visible,
         "created_at": cit.created_at.isoformat() if cit.created_at else None,
         "updated_at": cit.updated_at.isoformat() if cit.updated_at else None,
+        "render_url": render_url,
     }
     if not student_view:
         data["evidence_id"] = cit.evidence_id
@@ -780,14 +791,34 @@ async def get_evidence_render_content(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Read a persisted evidence page after course permission verification."""
-    require_course_permission(session, current_user, course_id, "evidence.review")
+    """Read a persisted evidence page after course permission verification.
+
+    Teachers may inspect any page render.  Students may only fetch a page that
+    backs an active, student-visible Citation; this keeps the binary route
+    course-scoped even though browsers cannot attach a Bearer header to an
+    ``<img>`` element directly.
+    """
+    context = resolve_course_access(session, current_user, course_id)
+    is_teacher = context.allows("evidence.review")
+    if not is_teacher and not context.allows("course.citation.read"):
+        require_course_permission(session, current_user, course_id, "evidence.review")
     asset = session.exec(select(EvidenceRenderAsset).where(
         EvidenceRenderAsset.asset_id == asset_id,
         EvidenceRenderAsset.course_id == course_id,
     )).first()
     if asset is None or not asset.object_key:
         reject_resource_not_found("Evidence 渲染资源不存在")
+    if not is_teacher:
+        citation = session.exec(select(EvidenceCitation).where(
+            EvidenceCitation.course_id == course_id,
+            EvidenceCitation.document_id == asset.document_id,
+            EvidenceCitation.run_id == asset.run_id,
+            EvidenceCitation.page_number == asset.page_number,
+            EvidenceCitation.student_visible.is_(True),
+            EvidenceCitation.status.in_([CitationStatus.EXACT, CitationStatus.APPROXIMATE]),
+        )).first()
+        if citation is None:
+            raise HTTPException(status_code=403, detail="该原文页尚未绑定学生可读引用")
     try:
         from app.services.object_storage import LocalStorageProvider, get_object_storage
         storage = get_object_storage()
@@ -925,6 +956,7 @@ async def confirm_evidence_span(
         source_file=payload.source_file,
         source_type=payload.source_type,
         node_id=payload.node_id,
+        identity_node_key=payload.identity_node_key,
     )
     session.commit()
     session.refresh(span)
@@ -939,6 +971,9 @@ async def confirm_evidence_span(
             "evidence": {
                 "evidence_id": formal.evidence_id,
                 "course_id": formal.course_id,
+                "run_id": formal.run_id,
+                "span_id": formal.span_id,
+                "node_id": formal.node_id,
                 "document_id": formal.document_id,
                 "source_file": formal.source_file,
                 "page_number": formal.page_number,
@@ -1014,12 +1049,37 @@ async def list_citations(
         student_visible=student_visible,
         include_stale=include_stale,
     )
+    render_urls: dict[str, str] = {}
+    for citation in citations:
+        asset = session.exec(select(EvidenceRenderAsset).where(
+            EvidenceRenderAsset.course_id == course_id,
+            EvidenceRenderAsset.citation_id == citation.citation_id,
+        )).first()
+        if asset is None:
+            asset = session.exec(select(EvidenceRenderAsset).where(
+                EvidenceRenderAsset.course_id == course_id,
+                EvidenceRenderAsset.document_id == citation.document_id,
+                EvidenceRenderAsset.run_id == citation.run_id,
+                EvidenceRenderAsset.page_number == citation.page_number,
+                EvidenceRenderAsset.asset_type == "page_image",
+            )).first()
+        if asset is not None:
+            render_urls[citation.citation_id] = (
+                f"/api/v1/graph/course/{course_id}/evidence-renders/{asset.asset_id}/content"
+            )
     return unified_response(
         code=200,
         message="获取原文引用列表成功",
         data={
             "course_id": course_id,
-            "items": [_serialize_citation(c, student_view=not is_teacher) for c in citations],
+            "items": [
+                _serialize_citation(
+                    c,
+                    student_view=not is_teacher,
+                    render_url=render_urls.get(c.citation_id),
+                )
+                for c in citations
+            ],
             "total": len(citations),
             "include_stale": include_stale,
         },

@@ -33,6 +33,19 @@ class EvidenceStatus(str, Enum):
     ORPHANED = "orphaned"       # 课件删除后标记为 orphaned
 
 
+class CourseKnowledgeNodeStatus(str, Enum):
+    """课程知识节点身份状态。
+
+    The identity is created before publication so candidate review, question
+    mappings and cognitive state can all refer to the same stable node key.
+    """
+
+    CANDIDATE = "candidate"
+    ACCEPTED = "accepted"
+    PUBLISHED = "published"
+    RETIRED = "retired"
+
+
 class CourseEvidenceRecord(SQLModel, table=True):
     """课程证据持久化表
 
@@ -49,6 +62,19 @@ class CourseEvidenceRecord(SQLModel, table=True):
 
     # 来源信息
     document_id: Optional[str] = Field(default=None, index=True, description="课件文档UUID")
+    run_id: Optional[str] = Field(
+        default=None, index=True,
+        description="生成该正式证据的解析运行；重解析失效边界",
+    )
+    span_id: Optional[str] = Field(
+        default=None, index=True,
+        description="来源 EvidenceSpan；保留候选到正式证据的可追溯链",
+    )
+    node_id: Optional[int] = Field(
+        default=None, index=True,
+        description="关联 CourseKnowledgeNode.id；关系证据由 GraphNodeReview.evidence_ids 关联",
+    )
+    source_anchor_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     source_file: str = Field(default="", description="来源文件名")
 
     # 定位信息（页码/文本定位）
@@ -71,6 +97,43 @@ class CourseEvidenceRecord(SQLModel, table=True):
     reviewed_at: Optional[datetime] = Field(default=None)
 
     created_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class CourseKnowledgeNode(SQLModel, table=True):
+    """Stable course-scoped identity for a knowledge graph node.
+
+    ``id`` is the numeric identity used by legacy cognitive/question tables;
+    ``node_key`` is the public stable identity used by graph payloads.  A
+    parser candidate is never used as the formal identity directly.
+    """
+
+    __tablename__ = "course_knowledge_nodes"
+    __table_args__ = (
+        UniqueConstraint("course_id", "node_key", name="uq_course_knowledge_node_key"),
+        UniqueConstraint(
+            "course_id", "source_candidate_id",
+            name="uq_course_knowledge_node_source_candidate",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    node_key: str = Field(index=True, description="稳定公开节点ID，如 kn_xxx")
+    title: str = Field(default="", max_length=300)
+    kind: str = Field(default="concept", max_length=80)
+    status: CourseKnowledgeNodeStatus = Field(
+        default=CourseKnowledgeNodeStatus.CANDIDATE, index=True,
+    )
+    source_candidate_id: Optional[str] = Field(default=None, index=True)
+    canonical_node_id: Optional[int] = Field(
+        default=None, foreign_key="course_knowledge_nodes.id", index=True,
+        description="合并后指向的规范节点；未合并时为空",
+    )
+    source_batch_id: Optional[str] = Field(default=None, index=True)
+    source_anchor_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    extra_data: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class GraphSnapshotRecord(SQLModel, table=True):
@@ -126,6 +189,17 @@ class GraphNodeReview(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     snapshot_id: Optional[str] = Field(default=None, index=True)
+
+    # Candidate bridge metadata.  Nullable to preserve older hand-created
+    # governance records that predate the parser candidate bridge.
+    candidate_batch_id: Optional[str] = Field(default=None, index=True)
+    candidate_id: Optional[str] = Field(default=None, index=True)
+    source_candidate_id: Optional[str] = Field(default=None, index=True)
+    target_candidate_id: Optional[str] = Field(default=None, index=True)
+    identity_node_id: Optional[int] = Field(
+        default=None, foreign_key="course_knowledge_nodes.id", index=True,
+    )
+    target_content: Optional[dict] = Field(default=None, sa_column=Column(JSON))
 
     # 审核目标
     target_id: str = Field(index=True, description="节点ID或关系ID")

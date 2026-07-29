@@ -43,6 +43,7 @@ from app.services.course_access_service import (
     CourseAccessContext,
 )
 from app.services.cognitive_service import record_scored_evidence
+from app.services.recommendation_service import refresh_cognition_and_recommendation
 from app.models.access_control_model import PlatformPermission
 
 router = APIRouter(tags=["Phase B 题库管理"])
@@ -580,8 +581,14 @@ async def submit_attempt(
     session.flush()
     session.refresh(attempt)
 
-    record_scored_evidence(session, attempt)
+    evidence_record = record_scored_evidence(session, attempt)
     session.commit()
+    cognitive_state, recommendation = refresh_cognition_and_recommendation(
+        session,
+        student_id=user_id,
+        course_id=course_id,
+        node_id=evidence_record.node_id if evidence_record else None,
+    )
 
     return unified_response(
         code=200,
@@ -591,6 +598,9 @@ async def submit_attempt(
             "judgement_status": "judged" if automatically_judged else "pending",
             "is_correct": attempt.is_correct,
             "score": attempt.score,
+            "evidence_id": evidence_record.evidence_id if evidence_record else None,
+            "cognitive_state_id": cognitive_state.id if cognitive_state else None,
+            "recommendation_id": recommendation.recommendation_id if recommendation else None,
         },
     )
 
@@ -626,8 +636,14 @@ async def grade_attempt(
     session.flush()
     session.refresh(attempt)
 
-    record_scored_evidence(session, attempt)
+    evidence_record = record_scored_evidence(session, attempt)
     session.commit()
+    cognitive_state, recommendation = refresh_cognition_and_recommendation(
+        session,
+        student_id=attempt.student_id,
+        course_id=course_id,
+        node_id=evidence_record.node_id if evidence_record else None,
+    )
 
     return unified_response(
         code=200,
@@ -637,6 +653,9 @@ async def grade_attempt(
             "score": attempt.score,
             "is_correct": attempt.is_correct,
             "judged_at": attempt.judged_at.isoformat(),
+            "evidence_id": evidence_record.evidence_id if evidence_record else None,
+            "cognitive_state_id": cognitive_state.id if cognitive_state else None,
+            "recommendation_id": recommendation.recommendation_id if recommendation else None,
         },
     )
 

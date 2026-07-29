@@ -122,6 +122,8 @@ export function normalizePlayerData(rawResponse) {
     courseId: numberOr(raw.course_id ?? raw.courseId),
     courseTitle: String(raw.course_title ?? raw.courseTitle ?? '未命名课程'),
     scriptId: numberOr(raw.script_id ?? raw.scriptId),
+    contentStatus: String(raw.content_status ?? raw.contentStatus ?? 'ready'),
+    contentMessage: String(raw.content_message ?? raw.contentMessage ?? ''),
     totalDuration: Math.max(
       numberOr(raw.total_duration ?? raw.totalDuration),
       nodes.at(-1)?.timestampEnd || 0

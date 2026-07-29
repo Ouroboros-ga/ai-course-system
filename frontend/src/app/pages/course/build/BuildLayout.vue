@@ -1,7 +1,8 @@
 <script setup>
-import { computed, provide, reactive, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { BookOpenCheck, FileText, ListTree, MonitorPlay, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
+import { getDraftBuildStatus } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
 
@@ -12,7 +13,10 @@ const agentOpen = ref(false)
 const stageActions = ref(null)
 const pendingInstruction = ref('')
 const pendingNodeId = ref(null)
-const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId })
+// 智能体首次智慧备课阶段：parsing_materials / assembling_corpus / submitting_build / building
+// 这些阶段下，structure/scripts/mapping 子页面需要提示"智能体首次智慧备课中"
+const draftBuildPhase = ref('')
+const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId, draftBuildPhase })
 
 provide('courseBuildWorkbench', workbench)
 
@@ -25,6 +29,27 @@ function requestDelete() {
   confirmDelete.value = false
   stageActions.value.onDelete?.()
 }
+
+// 轮询首次智慧备课状态：仅在与备课进度相关的子页面共享该状态
+let draftBuildPollTimer = null
+async function refreshDraftBuildPhase() {
+  try {
+    const data = await getDraftBuildStatus(courseId.value)
+    draftBuildPhase.value = data?.phase || ''
+  } catch (error) {
+    // 静默失败：状态读取失败不应阻塞页面渲染
+    draftBuildPhase.value = ''
+  }
+}
+function startDraftBuildPolling() {
+  window.clearInterval(draftBuildPollTimer)
+  refreshDraftBuildPhase()
+  draftBuildPollTimer = window.setInterval(refreshDraftBuildPhase, 5000)
+}
+onMounted(startDraftBuildPolling)
+onBeforeUnmount(() => { window.clearInterval(draftBuildPollTimer) })
+// 切换课程时重置并重新轮询
+watch(courseId, () => { startDraftBuildPolling() })
 
 const steps = [
   { key: 'materials', label: '课程资料', description: '上传并解析教学材料', icon: FileText },

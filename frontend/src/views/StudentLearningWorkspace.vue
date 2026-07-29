@@ -18,6 +18,15 @@
       </div>
     </div>
 
+    <div v-else-if="status === 'empty'" class="sl-page-state">
+      <TriangleAlert :size="34" />
+      <strong>课程学习内容尚未就绪</strong>
+      <p>{{ error || '该课程当前没有可学习的讲解节点。' }}</p>
+      <div>
+        <button type="button" class="secondary" @click="goBack">返回课程</button>
+      </div>
+    </div>
+
     <template v-else-if="course">
       <LearningWorkspaceHeader
         :course-title="course.courseTitle"

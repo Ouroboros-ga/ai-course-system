@@ -293,11 +293,13 @@ export function useLearningWorkspace(courseId, options = {}) {
     try {
       const response = await getPlayerInitData(courseId)
       const normalized = normalizePlayerData(response)
+      course.value = normalized
       if (!normalized.nodes.length) {
-        throw new Error('课程暂无可学习的讲解节点')
+        error.value = normalized.contentMessage || '课程学习内容尚未就绪，请稍后再试。'
+        status.value = 'empty'
+        return
       }
 
-      course.value = normalized
       currentNodeIndex.value = normalized.savedProgress.currentNodeIndex
       currentTime.value = normalized.savedProgress.currentTime
       currentPage.value = normalized.savedProgress.currentPage

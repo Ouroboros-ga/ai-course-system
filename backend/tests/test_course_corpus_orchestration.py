@@ -18,16 +18,28 @@ from app.models.course_build_model import (
     SourceMaterialVersion,
 )
 from app.models.course_model import Course, CourseStatus
-from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
+from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, CoursePptMapping, OutlineNodeType
 from app.models.document_parse_model import DocumentBlock, DocumentIRVersion, DocumentParseRun, ParseRunStatus
 from app.models.task_model import TaskRecord
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.course_corpus_service import course_corpus_service
 from app.services.document_draft_builders import build_draft_assets
+from app.services.course_initial_prep_service import initial_course_prep_service
+from app.schemas.controlled_prep import (
+    EvidenceFinding,
+    EvidenceSegment,
+    EvidenceSegmenterResult,
+    EvidenceVerifierResult,
+    OutlineCandidate,
+    OutlinePlannerResult,
+    TeachingScriptNodeDraft,
+    TeachingStyleConfig,
+)
 from app.services.task_service import task_service
 from app.platform.tasks.handlers import course_draft_build_handler
 from app.platform.tasks.worker import TaskHandlerContext
+from app.platform.tasks.course_draft_build_queue import recover_course_draft_build_queue
 
 
 def _course_owner(session):
@@ -144,7 +156,69 @@ def test_legacy_course_build_retry_payload_is_repaired(session):
     assert retried.status == "pending"
 
 
-def test_course_draft_build_handler_executes_with_persisted_payload(session):
+def test_teacher_restart_can_request_initial_mode_after_an_unreviewed_draft(session):
+    owner, course = _course_owner(session)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course.id, owner_user_id=owner.id,
+    )
+    first, _ = course_corpus_service.create_build_task(
+        session, corpus=corpus, owner_user_id=owner.id, quiet_window_seconds=0,
+    )
+    first.status = CourseDraftBuildStatus.CANCELLED
+    session.add(first)
+    session.add(CourseOutlineVersion(
+        course_id=course.id,
+        version=1,
+        generation_source="agent_initial_generation",
+        review_status="pending",
+    ))
+    session.commit()
+
+    restart, _ = course_corpus_service.create_build_task(
+        session,
+        corpus=corpus,
+        owner_user_id=owner.id,
+        trigger="teacher_restart_unreviewed_initial",
+        quiet_window_seconds=0,
+        force_initial=True,
+    )
+    assert restart.generation_mode == "initial"
+    assert restart.trigger == "teacher_restart_unreviewed_initial"
+
+
+def test_restart_recovers_interrupted_current_course_build(session):
+    owner, course = _course_owner(session)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course.id, owner_user_id=owner.id,
+    )
+    build, task_id = course_corpus_service.create_build_task(
+        session, corpus=corpus, owner_user_id=owner.id, quiet_window_seconds=0,
+    )
+    task_service.mark_interrupted(session, task_id, reason="test restart")
+
+    submitted: list[tuple[str, dict]] = []
+
+    class CapturingWorker:
+        def submit(self, _session_factory, submitted_task_id, payload):
+            submitted.append((submitted_task_id, payload))
+
+    test_engine = session.get_bind()
+    recovered = asyncio.run(recover_course_draft_build_queue(
+        lambda: Session(test_engine), CapturingWorker(),
+    ))
+
+    session.expire_all()
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).one()
+    session.refresh(build)
+    assert recovered == 1
+    assert task.status == "pending"
+    assert build.status == CourseDraftBuildStatus.QUEUED
+    assert submitted == [(task_id, json.loads(task.input_payload))]
+
+
+def test_course_draft_build_handler_executes_with_persisted_payload(session, monkeypatch):
     owner, course = _course_owner(session)
     _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
     corpus = course_corpus_service.create_ready_snapshot(
@@ -170,6 +244,12 @@ def test_course_draft_build_handler_executes_with_persisted_payload(session):
     payload = json.loads(task.input_payload)
     test_engine = session.get_bind()
 
+    async def fake_initial_build(_session, **_kwargs):
+        from app.services.document_draft_builders import DraftAssetResult
+        return DraftAssetResult(course_id=course.id, run_id="fake", material_version_id=None)
+
+    monkeypatch.setattr(initial_course_prep_service, "build", fake_initial_build)
+
     asyncio.run(course_draft_build_handler(TaskHandlerContext(
         task_id=task_id,
         input_payload=payload,
@@ -182,6 +262,93 @@ def test_course_draft_build_handler_executes_with_persisted_payload(session):
     session.refresh(build)
     assert final.status == "succeeded"
     assert build.status == CourseDraftBuildStatus.SUCCEEDED
+
+
+def test_initial_agent_draft_uses_teaching_tree_and_primary_ppt_evidence_only(session):
+    owner, course = _course_owner(session)
+    primary, _ = _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    primary.material_type = "slide"
+    session.add(primary)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="textbook")
+    corpus = course_corpus_service.create_ready_snapshot(session, course_id=course.id, owner_user_id=owner.id)
+    assert corpus is not None
+    items = {item.material_role: item for item in session.exec(select(CourseCorpusItem).where(
+        CourseCorpusItem.corpus_snapshot_id == corpus.corpus_snapshot_id,
+    )).all()}
+    primary_block = DocumentBlock(
+        course_id=course.id, run_id=items["primary_courseware"].parse_run_id,
+        material_version_id=items["primary_courseware"].material_version_id,
+        text="四冲程发动机的工作过程", semantic_role="knowledge_title",
+        page_number=3, page_or_slide=3,
+    )
+    textbook_block = DocumentBlock(
+        course_id=course.id, run_id=items["textbook"].parse_run_id,
+        material_version_id=items["textbook"].material_version_id,
+        text="进气、压缩、做功和排气构成一个完整循环。", semantic_role="explanation",
+        page_number=99, page_or_slide=99,
+    )
+    caption_block = DocumentBlock(
+        course_id=course.id, run_id=items["primary_courseware"].parse_run_id,
+        material_version_id=items["primary_courseware"].material_version_id,
+        text="图 2-1 发动机结构示意图", semantic_role="explanation",
+        page_number=4, page_or_slide=4,
+    )
+    session.add(primary_block); session.add(textbook_block); session.add(caption_block); session.commit()
+
+    class FakeWorkflow:
+        async def run(self, request):
+            ids = {item.text: item.evidence_id for item in request.evidence}
+            primary_id = ids["四冲程发动机的工作过程"]
+            textbook_id = ids["进气、压缩、做功和排气构成一个完整循环。"]
+            outline = OutlinePlannerResult(
+                stage="outline_planner",
+                candidates=[
+                    OutlineCandidate(candidate_id="chapter", node_type="chapter", title="发动机基础", evidence_ids=[primary_id]),
+                    OutlineCandidate(candidate_id="section", node_type="section", title="四冲程发动机", parent_candidate_id="chapter", evidence_ids=[primary_id]),
+                    OutlineCandidate(candidate_id="kp", node_type="knowledge_point", title="四冲程工作原理", parent_candidate_id="section", evidence_ids=[primary_id, textbook_id]),
+                ],
+                prerequisites=[],
+            )
+            script = TeachingScriptNodeDraft(
+                stage="script_writer", candidate_id="kp", title="四冲程工作原理",
+                evidence_ids=[primary_id, textbook_id], course_positioning="发动机课程",
+                prerequisites=[], style=TeachingStyleConfig(level="beginner"),
+                content="四冲程发动机依次经历进气、压缩、做功和排气。",
+                claims=["四冲程包含进气、压缩、做功和排气"],
+                paragraph_evidence=[[primary_id, textbook_id]],
+            )
+            verification = EvidenceVerifierResult(
+                stage="evidence_verifier", verdict="passed",
+                findings=[EvidenceFinding(claim=script.claims[0], evidence_ids=script.evidence_ids, supported=True)],
+            )
+            return {
+                "segments": EvidenceSegmenterResult(stage="evidence_segmenter", segments=[EvidenceSegment(segment_id="seg", title="四冲程", topic="发动机工作", evidence_ids=[primary_id])]),
+                "outline": outline,
+                "scripts": [script],
+                "verifications": [verification],
+            }
+
+    result = asyncio.run(initial_course_prep_service.build(
+        session,
+        course_id=course.id,
+        corpus_snapshot_id=corpus.corpus_snapshot_id,
+        created_by=owner.id,
+        workflow=FakeWorkflow(),
+    ))
+    nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == result.outline_version_id,
+    )).all()
+    assert [(node.node_type, node.title) for node in nodes] == [
+        (OutlineNodeType.CHAPTER, "发动机基础"),
+        (OutlineNodeType.SECTION, "四冲程发动机"),
+        (OutlineNodeType.KNOWLEDGE_POINT, "四冲程工作原理"),
+    ]
+    mapping = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course.id,
+    )).one()
+    assert mapping.page_refs == [3]
+    assert caption_block.block_id not in mapping.source_block_refs
+    assert result.script_node_count == 1
 
 
 def test_failed_material_blocks_until_teacher_excludes_it(session):

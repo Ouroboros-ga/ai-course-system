@@ -22,20 +22,22 @@ from app.models.access_control_model import (
 from app.models.course_model import Course, CourseStatus
 from app.models.user_model import User, UserRole
 from app.models.graph_production_model import (
-    CourseEvidenceRecord, GraphSnapshotRecord, GraphNodeReview,
-    EvidenceStatus, SnapshotStatus,
+    CourseEvidenceRecord, CourseKnowledgeNode, GraphSnapshotRecord, GraphNodeReview,
+    EvidenceStatus, SnapshotStatus, CourseKnowledgeNodeStatus,
 )
+from app.models.document_parse_model import CandidateBatchStatus, GraphCandidateBatch
 from app.models.document_artifact_model import DocumentArtifact
 from app.services.course_access_service import (
     establish_course_access_baseline, activate_student_membership,
 )
 from app.services.graph_production_service import (
-    create_evidence, publish_snapshot, get_active_snapshot,
+    create_evidence, publish_snapshot, publish_reviewed_snapshot, get_active_snapshot,
     list_snapshots, rollback_snapshot, mark_evidence_stale,
     get_evidence_for_node, serialize_snapshot, serialize_evidence,
     graph_target_hash,
     list_review_candidates, transition_review, diff_snapshots,
     get_prerequisite_nodes,
+    bridge_candidate_batch, GraphAssemblyError,
 )
 
 
@@ -419,6 +421,258 @@ class TestGraphProductionAPI:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 403
+
+
+class TestCandidateIdentityBridge:
+    def test_successful_candidate_batch_bridges_to_stable_identities_and_reviews(self, session):
+        teacher = _user(session, "identity_bridge_t")
+        course = _setup(session, teacher)
+        batch = GraphCandidateBatch(
+            course_id=course.id,
+            initiated_by=teacher.id,
+            status=CandidateBatchStatus.SUCCEEDED,
+            node_candidate_count=2,
+            relation_candidate_count=1,
+            node_candidates=[
+                {
+                    "candidate_id": "gcn-a",
+                    "label": "变量",
+                    "kind": "concept",
+                    "confidence": 0.91,
+                    "source_block_ids": ["blk-a"],
+                    "anchor_ids": ["ea-a"],
+                },
+                {
+                    "candidate_id": "gcn-b",
+                    "label": "函数",
+                    "kind": "concept",
+                    "confidence": 0.87,
+                    "source_block_ids": ["blk-b"],
+                    "anchor_ids": ["ea-b"],
+                },
+            ],
+            relation_candidates=[{
+                "candidate_id": "gcr-a-b",
+                "source_candidate_id": "gcn-a",
+                "target_candidate_id": "gcn-b",
+                "relation_type": "next_topic",
+                "confidence": 0.8,
+                "anchor_ids": ["ea-a", "ea-b"],
+            }],
+        )
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+
+        result = bridge_candidate_batch(session, batch=batch)
+        session.commit()
+        assert result["nodes_created"] == 2
+        assert result["reviews_created"] == 3
+
+        nodes = session.exec(
+            select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course.id)
+        ).all()
+        assert {node.source_candidate_id for node in nodes} == {"gcn-a", "gcn-b"}
+        assert all(node.node_key.startswith("kn_") for node in nodes)
+
+        reviews = list_review_candidates(session, course.id)
+        assert {review.target_type for review in reviews} == {"node", "relation"}
+        relation_review = next(review for review in reviews if review.target_type == "relation")
+        assert relation_review.target_content["id"] == "gcr-a-b"
+        assert relation_review.target_content["source"].startswith("kn_")
+        assert relation_review.target_content["target"].startswith("kn_")
+
+        # Re-running the bridge must not duplicate identities or review rows.
+        bridge_candidate_batch(session, batch=batch)
+        session.commit()
+        assert len(session.exec(
+            select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course.id)
+        ).all()) == 2
+        assert len(session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.candidate_batch_id == batch.batch_id)
+        ).all()) == 3
+
+        node_review = next(review for review in reviews if review.target_type == "node")
+        transition_review(
+            session, course.id, node_review.id,
+            new_decision="accepted", reviewer_id=teacher.id,
+        )
+        node = session.exec(
+            select(CourseKnowledgeNode).where(CourseKnowledgeNode.id == node_review.identity_node_id)
+        ).one()
+        assert node.status == CourseKnowledgeNodeStatus.ACCEPTED
+        session.refresh(batch)
+        assert batch.accepted_count == 1
+        assert batch.needs_review_count == 2
+
+    def test_candidates_endpoint_backfills_existing_successful_batch(self, client, session):
+        teacher = _user(session, "identity_bridge_api_t")
+        course = _setup(session, teacher)
+        batch = GraphCandidateBatch(
+            course_id=course.id,
+            initiated_by=teacher.id,
+            status=CandidateBatchStatus.SUCCEEDED,
+            node_candidate_count=1,
+            relation_candidate_count=0,
+            node_candidates=[{
+                "candidate_id": "gcn-api",
+                "label": "接口候选",
+                "kind": "concept",
+                "confidence": 0.95,
+                "anchor_ids": ["ea-api"],
+            }],
+            relation_candidates=[],
+        )
+        session.add(batch)
+        session.commit()
+
+        response = client.get(
+            f"/api/v1/graph/course/{course.id}/candidates",
+            headers={"Authorization": f"Bearer {_token(teacher)}"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["total"] == 1
+        assert data["items"][0]["target_type"] == "node"
+        assert data["items"][0]["target_content"]["id"].startswith("kn_")
+
+
+class TestReviewedSnapshotAssembly:
+    def _reviewed_batch(self, session, teacher):
+        course = _setup(session, teacher)
+        batch = GraphCandidateBatch(
+            course_id=course.id,
+            initiated_by=teacher.id,
+            status=CandidateBatchStatus.SUCCEEDED,
+            node_candidate_count=2,
+            relation_candidate_count=1,
+            node_candidates=[
+                {"candidate_id": "gcn-assembly-a", "label": "变量", "kind": "concept", "anchor_ids": ["anchor-a"]},
+                {"candidate_id": "gcn-assembly-b", "label": "函数", "kind": "concept", "anchor_ids": ["anchor-b"]},
+            ],
+            relation_candidates=[{
+                "candidate_id": "gcr-assembly-a-b",
+                "source_candidate_id": "gcn-assembly-a",
+                "target_candidate_id": "gcn-assembly-b",
+                "relation_type": "prerequisite_of",
+                "anchor_ids": ["anchor-a", "anchor-b"],
+            }],
+        )
+        session.add(batch)
+        session.commit()
+        session.refresh(batch)
+        bridge_candidate_batch(session, batch=batch)
+        session.commit()
+        reviews = session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.candidate_batch_id == batch.batch_id)
+        ).all()
+        nodes = session.exec(
+            select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course.id)
+        ).all()
+        evidence = []
+        for node in nodes:
+            item = create_evidence(
+                session,
+                course_id=course.id,
+                page_number=1,
+                text_snippet=f"正式证据 {node.title}",
+            )
+            item.node_id = node.id
+            session.add(item)
+            evidence.append(item)
+        relation_evidence = create_evidence(
+            session,
+            course_id=course.id,
+            page_number=2,
+            text_snippet="关系正式证据",
+        )
+        session.commit()
+        for review in reviews:
+            if review.target_type == "node":
+                node_evidence = next(item for item in evidence if item.node_id == review.identity_node_id)
+                transition_review(
+                    session, course.id, review.id,
+                    new_decision="accepted", reviewer_id=teacher.id,
+                    evidence_ids=[node_evidence.evidence_id],
+                )
+            else:
+                transition_review(
+                    session, course.id, review.id,
+                    new_decision="accepted", reviewer_id=teacher.id,
+                    evidence_ids=[relation_evidence.evidence_id],
+                )
+        return course, batch
+
+    def test_assembles_accepted_reviews_into_stable_published_snapshot(self, session):
+        teacher = _user(session, "reviewed_publish_t")
+        course, batch = self._reviewed_batch(session, teacher)
+
+        snapshot, assembly = publish_reviewed_snapshot(
+            session, course_id=course.id, user_id=teacher.id,
+        )
+
+        assert snapshot.is_active is True
+        assert snapshot.node_count == 2
+        assert snapshot.relation_count == 1
+        assert assembly["batch_id"] == batch.batch_id
+        assert all(item["id"].startswith("kn_") for item in snapshot.nodes)
+        assert all(item["evidence_ids"] for item in snapshot.nodes + snapshot.relations)
+        assert all(review.snapshot_id == snapshot.snapshot_id for review in session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.course_id == course.id)
+        ).all())
+        assert all(node.status == CourseKnowledgeNodeStatus.PUBLISHED for node in session.exec(
+            select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course.id)
+        ).all())
+        same_snapshot, second_assembly = publish_reviewed_snapshot(
+            session, course_id=course.id, user_id=teacher.id,
+        )
+        assert same_snapshot.snapshot_id == snapshot.snapshot_id
+        assert second_assembly["idempotent"] is True
+        assert len(list_snapshots(session, course.id)) == 1
+
+    def test_publish_gate_rejects_pending_review_before_evidence_check(self, session):
+        teacher = _user(session, "reviewed_publish_gate_t")
+        course, _ = self._reviewed_batch(session, teacher)
+        review = session.exec(select(GraphNodeReview).where(
+            GraphNodeReview.course_id == course.id,
+            GraphNodeReview.decision == "accepted",
+        )).first()
+        assert review is not None
+        review.decision = "proposed"
+        session.add(review)
+        session.commit()
+        with pytest.raises(GraphAssemblyError, match="未完成审核") as error:
+            publish_reviewed_snapshot(session, course_id=course.id, user_id=teacher.id)
+        assert error.value.code == "REVIEW_INCOMPLETE"
+
+    def test_publish_gate_rejects_relation_without_active_evidence(self, session):
+        teacher = _user(session, "reviewed_publish_evidence_t")
+        course, _ = self._reviewed_batch(session, teacher)
+        relation = session.exec(select(GraphNodeReview).where(
+            GraphNodeReview.course_id == course.id,
+            GraphNodeReview.target_type == "relation",
+        )).first()
+        assert relation is not None
+        relation.evidence_ids = []
+        session.add(relation)
+        session.commit()
+        with pytest.raises(GraphAssemblyError, match="缺少有效 Evidence") as error:
+            publish_reviewed_snapshot(session, course_id=course.id, user_id=teacher.id)
+        assert error.value.code == "EVIDENCE_REQUIRED"
+
+    def test_publish_reviewed_endpoint_returns_assembly_metadata(self, client, session):
+        teacher = _user(session, "reviewed_publish_api_t")
+        course, batch = self._reviewed_batch(session, teacher)
+        response = client.post(
+            f"/api/v1/graph/course/{course.id}/publish-reviewed",
+            json={"label": "教师审核版"},
+            headers={"Authorization": f"Bearer {_token(teacher)}"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["assembly"]["source"] == "reviewed_candidates"
+        assert data["assembly"]["batch_id"] == batch.batch_id
+        assert data["node_count"] == 2
 
 
 class TestBatch3ReviewStateMachine:

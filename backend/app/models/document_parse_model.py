@@ -446,6 +446,8 @@ class EvidenceCitation(SQLModel, table=True):
                                        description="关联 CourseEvidenceRecord.evidence_id")
     span_id: Optional[str] = Field(default=None, index=True,
                                    description="关联 EvidenceSpan.span_id")
+    run_id: Optional[str] = Field(default=None, index=True,
+                                  description="来源解析运行；用于精确处理重解析失效")
     document_id: Optional[str] = Field(default=None, index=True)
     node_id: Optional[int] = Field(default=None, index=True, description="关联知识点")
     source_file: str = Field(default="", description="来源文件名")
@@ -454,6 +456,7 @@ class EvidenceCitation(SQLModel, table=True):
     page_range: Optional[dict] = Field(default=None, sa_column=Column(JSON),
                                        description="{start,end} 跨页引用")
     bbox: Optional[dict] = Field(default=None, sa_column=Column(JSON))
+    source_anchor_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     text_snippet: str = Field(default="")
     char_start: int = Field(default=0)
     char_end: int = Field(default=0)

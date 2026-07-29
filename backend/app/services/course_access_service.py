@@ -71,6 +71,7 @@ ROLE_PERMISSIONS = {
 }
 
 CAPABILITY_FOR_PERMISSION = {
+    "knowledge.view": "knowledge_graph",
     "course.edit": "course_building", "course.structure.edit": "course_building",
     "course.script.edit": "course_building", "course.mapping.edit": "course_building",
     "course.media.generate": "course_building", "course.validate": "course_building",

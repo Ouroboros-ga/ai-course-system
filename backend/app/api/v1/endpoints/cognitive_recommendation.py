@@ -371,6 +371,8 @@ def _serialize_recommendation(record: RecommendationRecord) -> dict[str, Any]:
         "student_id": record.student_id,
         "course_id": record.course_id,
         "node_id": record.node_id,
+        "graph_snapshot_id": record.graph_snapshot_id,
+        "knowledge_node_id": record.knowledge_node_id,
         "recommendation_type": record.recommendation_type,
         "priority": record.priority,
         "title": record.title,

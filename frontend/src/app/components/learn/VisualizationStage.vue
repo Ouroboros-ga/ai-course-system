@@ -29,6 +29,8 @@ const props = defineProps({
   nodeId: { type: [Number, String], default: null },
   /** 当前知识点标题（用于头部展示） */
   nodeTitle: { type: String, default: '' },
+  /** Teacher preview may inspect validated/draft plans; students see published only. */
+  preview: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['exit'])
@@ -43,12 +45,9 @@ const activePlan = ref(null)
 const activePlanLoading = ref(false)
 const activePlanError = ref('')
 
-const publishedPlans = computed(() =>
-  plans.value.filter(
-    (p) => p.status === 'published' || p.is_published === true,
-  ),
-)
-
+const visiblePlans = computed(() => props.preview ? plans.value : plans.value.filter(
+  (p) => p.status === 'published' || p.is_published === true,
+))
 function mapError(err) {
   const msg = String(err?.message || '')
   if (/403|401|forbidden|权限|拒绝/.test(msg)) return 'forbidden'
@@ -64,7 +63,7 @@ async function loadPlans() {
   status.value = 'loading'
   errorMessage.value = ''
   try {
-    const params = { status: 'published' }
+    const params = props.preview ? {} : { status: 'published' }
     if (props.nodeId != null) params.node_id = props.nodeId
     const res = await listPlans(props.courseId, params)
     const items = Array.isArray(res) ? res : (res?.items ?? res?.plans ?? [])
@@ -133,7 +132,7 @@ onMounted(loadPlans)
           <span v-if="nodeTitle" class="sfx-vis-stage-node">· {{ nodeTitle }}</span>
         </h2>
         <span v-if="status === 'ready'" class="sfx-vis-stage-meta">
-          {{ publishedPlans.length }} 个已发布计划
+          {{ visiblePlans.length }} {{ props.preview ? '个可预览' : '个已发布' }}计划
         </span>
       </div>
       <button
@@ -210,7 +209,7 @@ onMounted(loadPlans)
 
     <ul v-else class="sfx-vis-stage-list">
       <li
-        v-for="plan in publishedPlans"
+        v-for="plan in visiblePlans"
         :key="plan.plan_id"
         class="sfx-vis-stage-item"
       >

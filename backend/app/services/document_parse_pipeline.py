@@ -195,6 +195,25 @@ async def run_parse_pipeline(
         uri=object_key,
     )
 
+    # Page renders are a first-class provenance projection, independent of
+    # whether the parser needed OCR.  Native PPTX parsing can therefore still
+    # provide a clickable source page when LibreOffice is unavailable.
+    source_name = object_key.lower()
+    if source_name.endswith(".pptx") and not session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.run_id == run_id,
+    )).first():
+        _persist_python_pptx_renders(
+            content_bytes=content,
+            source=source,
+            target_pages=[],
+            run_id=run_id,
+            course_id=course_id,
+            document_id=parse_run.document_id,
+            session=session,
+            warnings=[],
+        )
+
     cache_key = _canonical_cache_key(
         source_sha256=version.file_hash or source.sha256,
         parse_profile=parse_run.parse_profile,
@@ -227,6 +246,9 @@ async def run_parse_pipeline(
         )
         parse_run.document_id = cached_ir.document_id
         parse_run.document_ir_version_id = stored_ir.ir_version_id
+        _bind_render_assets_to_document(
+            session, course_id=course_id, run_id=run_id, document_id=cached_ir.document_id,
+        )
         session.add(parse_run)
         batch = graph_candidate_service.create_batch(session, course_id=course_id, parse_run_id=run_id, initiated_by=initiated_by)
         nodes, relations = _build_graph_candidates(session, course_id=course_id, run_id=run_id, ir_version_id=stored_ir.ir_version_id)
@@ -520,6 +542,9 @@ async def run_parse_pipeline(
     )
     parse_run.document_id = document_ir.document_id
     parse_run.document_ir_version_id = stored_ir.ir_version_id
+    _bind_render_assets_to_document(
+        session, course_id=course_id, run_id=run_id, document_id=document_ir.document_id,
+    )
     session.add(parse_run)
 
     # 7. 创建 GraphCandidateBatch
@@ -551,6 +576,24 @@ async def run_parse_pipeline(
 # ---------------------------------------------------------------------------
 # 辅助
 # ---------------------------------------------------------------------------
+
+
+def _bind_render_assets_to_document(
+    session: Session,
+    *,
+    course_id: int,
+    run_id: str,
+    document_id: str,
+) -> None:
+    """Replace the provisional source-artifact scope with canonical IR ID."""
+    assets = session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.run_id == run_id,
+        EvidenceRenderAsset.document_id.is_(None),
+    )).all()
+    for asset in assets:
+        asset.document_id = document_id
+        session.add(asset)
 
 
 def _build_graph_candidates(
@@ -1059,6 +1102,16 @@ def _ocr_office_pages_via_port(
                 provider_version = result.provider_version
     except Exception as exc:
         warnings.append(f"Office OCR rendering failed: {type(exc).__name__}: {exc}")
+        _persist_python_pptx_renders(
+            content_bytes=content_bytes,
+            source=source,
+            target_pages=target_pages,
+            run_id=run_id,
+            course_id=course_id,
+            document_id=document_id,
+            session=session,
+            warnings=warnings,
+        )
         return []
 
     from app.platform.document_intelligence.contracts import BoundingBox, CoordinateSpace
@@ -1087,6 +1140,89 @@ def _ocr_office_pages_via_port(
             ),
         })
     return blocks
+
+
+def _persist_python_pptx_renders(
+    *,
+    content_bytes: bytes,
+    source: Any,
+    target_pages: list[int],
+    run_id: str,
+    course_id: Optional[int],
+    document_id: Optional[str],
+    session: Optional[Session],
+    warnings: list[str],
+) -> None:
+    """Persist a deterministic local PPTX rendition when LibreOffice is absent.
+
+    This is a source-derived fallback, not a fake page: text boxes and embedded
+    images are read from the actual PPTX package and placed on a normalized
+    slide canvas.  Native LibreOffice rendering remains preferred when present.
+    """
+    if session is None or course_id is None:
+        return
+    try:
+        from pptx import Presentation
+        from PIL import Image, ImageDraw, ImageFont
+
+        presentation = Presentation(io.BytesIO(content_bytes))
+        canvas_width, canvas_height = 1600, 900
+        scale_x = canvas_width / float(presentation.slide_width)
+        scale_y = canvas_height / float(presentation.slide_height)
+        font_candidates = [
+            os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts", "msyh.ttc"),
+            os.path.join(os.environ.get("WINDIR", "C:/Windows"), "Fonts", "simhei.ttf"),
+        ]
+        font_path = next((path for path in font_candidates if os.path.isfile(path)), None)
+
+        for page_number, slide in enumerate(presentation.slides, start=1):
+            if target_pages and page_number not in set(target_pages):
+                continue
+            canvas = Image.new("RGB", (canvas_width, canvas_height), "white")
+            draw = ImageDraw.Draw(canvas)
+            for shape in slide.shapes:
+                left = max(0, int(shape.left * scale_x))
+                top = max(0, int(shape.top * scale_y))
+                width = max(1, int(shape.width * scale_x))
+                height = max(1, int(shape.height * scale_y))
+                if getattr(shape, "shape_type", None) == 13 and getattr(shape, "image", None):
+                    try:
+                        with Image.open(io.BytesIO(shape.image.blob)) as embedded:
+                            embedded = embedded.convert("RGB")
+                            embedded.thumbnail((width, height))
+                            canvas.paste(embedded, (left, top))
+                    except Exception as image_error:
+                        warnings.append(f"PPTX image rendition skipped on page {page_number}: {image_error}")
+                if not getattr(shape, "has_text_frame", False):
+                    continue
+                text = "\n".join(
+                    paragraph.text for paragraph in shape.text_frame.paragraphs if paragraph.text
+                ).strip()
+                if not text:
+                    continue
+                font_size = 22
+                try:
+                    first_run = next(run for paragraph in shape.text_frame.paragraphs for run in paragraph.runs if run.text)
+                    if first_run.font.size:
+                        font_size = max(12, min(72, int(first_run.font.size.pt * scale_y)))
+                except (StopIteration, AttributeError, TypeError, ValueError):
+                    pass
+                font = ImageFont.truetype(font_path, font_size) if font_path else ImageFont.load_default()
+                draw.multiline_text((left + 8, top + 8), text, fill=(25, 35, 50), font=font, spacing=6)
+
+            output = io.BytesIO()
+            canvas.save(output, format="PNG")
+            _persist_evidence_render_asset(
+                session=session,
+                course_id=course_id,
+                document_id=document_id,
+                run_id=run_id,
+                page_number=page_number,
+                image_bytes=output.getvalue(),
+                warnings=warnings,
+            )
+    except Exception as exc:
+        warnings.append(f"Python PPTX fallback rendering failed: {type(exc).__name__}: {exc}")
 
 
 def _persist_evidence_render_asset(

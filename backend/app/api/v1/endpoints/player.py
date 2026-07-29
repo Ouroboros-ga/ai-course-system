@@ -20,6 +20,7 @@ from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
 from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, TeachingScriptNode, TeachingScriptVersion
+from app.models.access_control_model import CourseRole
 from app.services.course_build_service import course_release_service
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus
@@ -44,6 +45,12 @@ class PlayerInitData(BaseModel):
     ppt_pages: Optional[List[dict]] = Field(default=None, description="PPT逐页内容（用于右侧显示）")
     slide_images: Optional[List[dict]] = Field(default=None, description="PPT逐页图片URL列表")
     saved_progress: Optional[dict] = Field(default=None, description="已保存的学习进度")
+    # A course can be accessible before its learning artefacts are ready.  That
+    # is a normal course state, not a missing HTTP resource.  Keep this in the
+    # player payload so clients can render an honest empty state without
+    # treating it as a transport failure.
+    content_status: str = Field(default="ready", description="学习内容状态：ready、preview 或 unavailable")
+    content_message: Optional[str] = Field(default=None, description="学习内容暂不可用时的说明")
 
 
 class KnowledgePoint(BaseModel):
@@ -64,6 +71,122 @@ class ProgressSaveRequest(BaseModel):
     current_timestamp: float = Field(..., description="当前播放时间(秒)")
     current_page: int = Field(1, description="当前PPT页码")
     completed_nodes: List[int] = Field(default=[], description="已完成节点ID列表")
+
+
+def _unavailable_player_data(course: Course, message: str) -> PlayerInitData:
+    """Return an explicit, non-fabricated empty learning payload.
+
+    Course membership and the ``course.learn`` permission have already been
+    checked by the caller.  This is intentionally used only for a real course
+    with no learner-facing content yet; a missing course must remain a 404 and
+    an unauthorized request must still fail closed in the access dependency.
+    """
+    return PlayerInitData(
+        course_id=course.id,
+        course_title=course.title,
+        script_id=0,
+        total_duration=0,
+        total_nodes=0,
+        nodes=[],
+        video_base_url="/api/v1/video/stream/",
+        ppt_pages=None,
+        slide_images=None,
+        saved_progress=None,
+        content_status="unavailable",
+        content_message=message,
+    )
+
+
+def _versioned_player_data(
+    session: Session,
+    *,
+    course: Course,
+    user_id: int,
+    outline: CourseOutlineVersion,
+    script: Optional[TeachingScriptVersion],
+    page_mappings_snapshot: Optional[dict] = None,
+    content_status: str = "ready",
+    content_message: Optional[str] = None,
+) -> PlayerInitData:
+    """Build learner data from an immutable release or an authorized draft.
+
+    ``script`` is optional for a teacher preview: a teacher can inspect a
+    partially prepared outline before the matching lecture draft exists.  No
+    synthetic lesson text is created in that case.
+    """
+    outline_nodes = session.exec(
+        select(CourseOutlineNode)
+        .where(CourseOutlineNode.outline_version_id == outline.outline_version_id)
+        .order_by(CourseOutlineNode.order_index.asc())
+    ).all()
+    if not outline_nodes:
+        return _unavailable_player_data(
+            course,
+            "当前版本尚未包含可学习的课程节点。",
+        )
+
+    script_nodes = session.exec(
+        select(TeachingScriptNode)
+        .where(TeachingScriptNode.script_version_id == script.script_version_id)
+    ).all() if script else []
+    script_by_outline = {item.outline_node_id: item for item in script_nodes}
+    mapping_by_outline = {
+        item.get("outline_node_id"): item
+        for item in (page_mappings_snapshot or {}).get("items", [])
+    }
+    nodes_data = []
+    for index, outline_node in enumerate(outline_nodes):
+        script_node = script_by_outline.get(outline_node.outline_node_id)
+        mapping = mapping_by_outline.get(outline_node.outline_node_id, {})
+        page_range = outline_node.page_range or "1"
+        page_start = page_range.split("-")[0]
+        page_end = page_range.split("-")[-1]
+        nodes_data.append({
+            "id": index + 1,
+            "outline_node_id": outline_node.outline_node_id,
+            "node_index": index,
+            "node_type": outline_node.node_type.value,
+            "title": outline_node.title,
+            "content": (script_node.content if script_node else "")[:200],
+            "chapter_id": outline_node.parent_node_id,
+            "timestamp_start": 0,
+            "timestamp_end": 0,
+            "duration": 0,
+            "page_start": mapping.get("page_start") or (int(page_start) if page_start.isdigit() else 1),
+            "page_end": mapping.get("page_end") or (int(page_end) if page_end.isdigit() else 1),
+            "is_key_point": outline_node.node_type.value == "knowledge_point",
+            "video_url": None,
+            "status": "preview" if content_status == "preview" else "published",
+        })
+
+    progress = session.exec(select(LearningProgress).where(
+        LearningProgress.user_id == user_id,
+        LearningProgress.course_id == course.id,
+    )).first()
+    saved_progress = None
+    if progress:
+        saved_progress = {
+            "current_node_id": progress.current_node_id,
+            "current_node_index": progress.current_node_index,
+            "current_timestamp": progress.current_timestamp,
+            "current_page": progress.current_page,
+            "completion_rate": progress.completion_rate,
+            "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
+        }
+    return PlayerInitData(
+        course_id=course.id,
+        course_title=course.title,
+        script_id=script.id if script and script.id else 0,
+        total_duration=0,
+        total_nodes=len(nodes_data),
+        nodes=nodes_data,
+        video_base_url="/api/v1/video/stream/",
+        ppt_pages=None,
+        slide_images=None,
+        saved_progress=saved_progress,
+        content_status=content_status,
+        content_message=content_message,
+    )
 
 
 @router.get("/init/{course_id}", response_model=PlayerInitData)
@@ -91,6 +214,43 @@ async def get_player_init_data(
         if not course:
             raise HTTPException(status_code=404, detail="课程不存在")
 
+        # Staff may preview the latest editable outline before it is released.
+        # This selection is deliberately role-scoped: students continue to see
+        # only the frozen release / legacy published path below.
+        can_preview_draft = access.role in {
+            CourseRole.OWNER,
+            CourseRole.TEACHER,
+            CourseRole.TEACHING_ASSISTANT,
+        }
+        if can_preview_draft:
+            draft_outline = session.exec(
+                select(CourseOutlineVersion)
+                .where(
+                    CourseOutlineVersion.course_id == course_id,
+                    CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+                )
+                .order_by(CourseOutlineVersion.version.desc())
+            ).first()
+            if draft_outline is not None:
+                draft_script = session.exec(
+                    select(TeachingScriptVersion)
+                    .where(
+                        TeachingScriptVersion.course_id == course_id,
+                        TeachingScriptVersion.outline_version_id == draft_outline.outline_version_id,
+                        TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+                    )
+                    .order_by(TeachingScriptVersion.version.desc())
+                ).first()
+                return _versioned_player_data(
+                    session,
+                    course=course,
+                    user_id=user_id,
+                    outline=draft_outline,
+                    script=draft_script,
+                    content_status="preview",
+                    content_message="教师预览：正在使用未发布的课程草稿。",
+                )
+
         # 2. P4 path: an active CourseRelease is the sole learner-facing
         # content selector.  Do not select whichever outline/script happened
         # to be published most recently after the course release was made.
@@ -112,72 +272,13 @@ async def get_player_init_data(
             ).first()
             if frozen_outline is None or frozen_script is None:
                 raise HTTPException(status_code=409, detail="发布版本缺少冻结的课程结构或讲稿")
-            outline_nodes = session.exec(
-                select(CourseOutlineNode)
-                .where(CourseOutlineNode.outline_version_id == frozen_outline.outline_version_id)
-                .order_by(CourseOutlineNode.order_index.asc())
-            ).all()
-            script_nodes = session.exec(
-                select(TeachingScriptNode)
-                .where(TeachingScriptNode.script_version_id == frozen_script.script_version_id)
-            ).all()
-            script_by_outline = {item.outline_node_id: item for item in script_nodes}
-            mapping_by_outline = {
-                item.get("outline_node_id"): item
-                for item in (frozen_release.page_mappings_snapshot or {}).get("items", [])
-            }
-            nodes_data = []
-            for index, outline_node in enumerate(outline_nodes):
-                script_node = script_by_outline.get(outline_node.outline_node_id)
-                mapping = mapping_by_outline.get(outline_node.outline_node_id, {})
-                nodes_data.append({
-                    "id": index + 1,
-                    "outline_node_id": outline_node.outline_node_id,
-                    "node_index": index,
-                    "node_type": outline_node.node_type.value,
-                    "title": outline_node.title,
-                    "content": (script_node.content if script_node else "")[:200],
-                    "chapter_id": outline_node.parent_node_id,
-                    "timestamp_start": 0,
-                    "timestamp_end": 0,
-                    "duration": 0,
-                    "page_start": mapping.get("page_start") or (
-                        int((outline_node.page_range or "1").split("-")[0])
-                        if (outline_node.page_range or "1").split("-")[0].isdigit() else 1
-                    ),
-                    "page_end": mapping.get("page_end") or (
-                        int((outline_node.page_range or "1").split("-")[-1])
-                        if (outline_node.page_range or "1").split("-")[-1].isdigit() else 1
-                    ),
-                    "is_key_point": outline_node.node_type.value == "knowledge_point",
-                    "video_url": None,
-                    "status": "published",
-                })
-            progress = session.exec(select(LearningProgress).where(
-                LearningProgress.user_id == user_id,
-                LearningProgress.course_id == course_id,
-            )).first()
-            saved_progress = None
-            if progress:
-                saved_progress = {
-                    "current_node_id": progress.current_node_id,
-                    "current_node_index": progress.current_node_index,
-                    "current_timestamp": progress.current_timestamp,
-                    "current_page": progress.current_page,
-                    "completion_rate": progress.completion_rate,
-                    "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
-                }
-            return PlayerInitData(
-                course_id=course_id,
-                course_title=course.title,
-                script_id=0,
-                total_duration=0,
-                total_nodes=len(nodes_data),
-                nodes=nodes_data,
-                video_base_url="/api/v1/video/stream/",
-                ppt_pages=None,
-                slide_images=None,
-                saved_progress=saved_progress,
+            return _versioned_player_data(
+                session,
+                course=course,
+                user_id=user_id,
+                outline=frozen_outline,
+                script=frozen_script,
+                page_mappings_snapshot=frozen_release.page_mappings_snapshot,
             )
 
         # Legacy direct-publication compatibility path. New courses always
@@ -217,67 +318,15 @@ async def get_player_init_data(
 
         if published_script or not active_script:
             if not published_outline:
-                raise HTTPException(status_code=404, detail="课程暂无可用脚本")
+                return _unavailable_player_data(course, "课程内容尚未发布，暂时无法开始学习。")
             if not published_script:
-                raise HTTPException(status_code=404, detail="课程暂无已发布讲稿")
-            outline_nodes = session.exec(
-                select(CourseOutlineNode)
-                .where(CourseOutlineNode.outline_version_id == published_outline.outline_version_id)
-                .order_by(CourseOutlineNode.order_index.asc())
-            ).all()
-            script_nodes = session.exec(
-                select(TeachingScriptNode)
-                .where(TeachingScriptNode.script_version_id == published_script.script_version_id)
-            ).all()
-            script_by_outline = {item.outline_node_id: item for item in script_nodes}
-            nodes_data = []
-            for index, outline_node in enumerate(outline_nodes):
-                script_node = script_by_outline.get(outline_node.outline_node_id)
-                nodes_data.append({
-                    # The legacy progress endpoint uses integer node ids. Keep
-                    # a stable ordinal for progress compatibility and expose
-                    # the immutable outline id separately for citations.
-                    "id": index + 1,
-                    "outline_node_id": outline_node.outline_node_id,
-                    "node_index": index,
-                    "node_type": outline_node.node_type.value,
-                    "title": outline_node.title,
-                    "content": (script_node.content if script_node else "")[:200],
-                    "chapter_id": outline_node.parent_node_id,
-                    "timestamp_start": 0,
-                    "timestamp_end": 0,
-                    "duration": 0,
-                    "page_start": int((outline_node.page_range or "1").split("-")[0]) if (outline_node.page_range or "1").split("-")[0].isdigit() else 1,
-                    "page_end": int((outline_node.page_range or "1").split("-")[-1]) if (outline_node.page_range or "1").split("-")[-1].isdigit() else 1,
-                    "is_key_point": outline_node.node_type.value == "knowledge_point",
-                    "video_url": None,
-                    "status": "published",
-                })
-            progress = session.exec(select(LearningProgress).where(
-                LearningProgress.user_id == user_id,
-                LearningProgress.course_id == course_id,
-            )).first()
-            saved_progress = None
-            if progress:
-                saved_progress = {
-                    "current_node_id": progress.current_node_id,
-                    "current_node_index": progress.current_node_index,
-                    "current_timestamp": progress.current_timestamp,
-                    "current_page": progress.current_page,
-                    "completion_rate": progress.completion_rate,
-                    "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
-                }
-            return PlayerInitData(
-                course_id=course_id,
-                course_title=course.title,
-                script_id=0,
-                total_duration=0,
-                total_nodes=len(nodes_data),
-                nodes=nodes_data,
-                video_base_url="/api/v1/video/stream/",
-                ppt_pages=None,
-                slide_images=None,
-                saved_progress=saved_progress,
+                return _unavailable_player_data(course, "课程讲稿尚未发布，暂时无法开始学习。")
+            return _versioned_player_data(
+                session,
+                course=course,
+                user_id=user_id,
+                outline=published_outline,
+                script=published_script,
             )
 
         # 3. 查询所有脚本节点（按node_index排序）
@@ -288,7 +337,7 @@ async def get_player_init_data(
         ).all()
 
         if not nodes:
-            raise HTTPException(status_code=404, detail="脚本暂无节点数据")
+            return _unavailable_player_data(course, "课程脚本尚未生成学习节点。")
 
         # 4. 批量查询各节点的视频生成任务
         node_ids = [node.id for node in nodes]

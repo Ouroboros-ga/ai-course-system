@@ -16,7 +16,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional
 
-from sqlalchemy import Column, JSON, UniqueConstraint
+from sqlalchemy import Column, JSON, Index, UniqueConstraint, text
 from sqlmodel import Field, SQLModel
 
 from app.core.time_utils import utcnow_aware
@@ -324,6 +324,16 @@ class CourseDraftBuildTask(SQLModel, table=True):
     """Course-wide construction orchestration, separate from material parsing."""
 
     __tablename__ = "course_draft_build_tasks"
+    __table_args__ = (
+        # Database-level guard for the course build lease.  Status transitions
+        # release the lease when a task reaches a terminal state.
+        Index(
+            "uq_course_draft_build_active_course",
+            "course_id",
+            unique=True,
+            sqlite_where=text("status IN ('queued', 'running')"),
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     build_task_id: str = Field(
@@ -347,6 +357,34 @@ class CourseDraftBuildTask(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow_aware)
     started_at: Optional[datetime] = Field(default=None)
     finished_at: Optional[datetime] = Field(default=None)
+
+
+class CourseDraftBuildCheckpoint(SQLModel, table=True):
+    """Durable, non-teacher-visible output from one completed build stage.
+
+    Checkpoints make a long build inspectable and restartable without exposing
+    a half-formed outline or script version to the teacher-facing workspace.
+    The final outline/script rows are still committed only after every stage
+    has passed validation.
+    """
+
+    __tablename__ = "course_draft_build_checkpoints"
+    __table_args__ = (
+        UniqueConstraint("build_task_id", "stage", name="uq_course_build_checkpoint_stage"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    checkpoint_id: str = Field(
+        default_factory=lambda: f"cdbc_{uuid.uuid4().hex}", unique=True, index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    build_task_id: str = Field(index=True)
+    corpus_snapshot_id: str = Field(index=True)
+    stage: str = Field(index=True, max_length=64)
+    progress: int = Field(default=0)
+    status: str = Field(default="completed", max_length=32)
+    payload: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    created_at: datetime = Field(default_factory=utcnow_aware)
 
 
 # ---------------------------------------------------------------------------

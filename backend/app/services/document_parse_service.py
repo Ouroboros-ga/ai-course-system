@@ -43,8 +43,11 @@ from app.models.document_parse_model import (
     ParseRunStatus,
     StaleStrategy,
 )
+from app.models.document_artifact_model import DocumentArtifact
+from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
+    CourseKnowledgeNode,
     EvidenceStatus,
     GraphSnapshotRecord,
     SnapshotStatus,
@@ -278,6 +281,7 @@ class DocumentParseService:
             citations = session.exec(
                 select(EvidenceCitation).where(
                     EvidenceCitation.course_id == course_id,
+                    EvidenceCitation.run_id == run_id,
                     EvidenceCitation.status.in_([
                         CitationStatus.EXACT, CitationStatus.APPROXIMATE,
                     ]),
@@ -285,6 +289,13 @@ class DocumentParseService:
             ).all()
             for cit in citations:
                 session.delete(cit)
+                affected += 1
+            formal_records = session.exec(select(CourseEvidenceRecord).where(
+                CourseEvidenceRecord.course_id == course_id,
+                CourseEvidenceRecord.run_id == run_id,
+            )).all()
+            for formal in formal_records:
+                session.delete(formal)
                 affected += 1
             return affected
 
@@ -319,6 +330,7 @@ class DocumentParseService:
         citations = session.exec(
             select(EvidenceCitation).where(
                 EvidenceCitation.course_id == course_id,
+                EvidenceCitation.run_id == run_id,
                 EvidenceCitation.status.in_([
                     CitationStatus.EXACT, CitationStatus.APPROXIMATE,
                 ]),
@@ -330,6 +342,22 @@ class DocumentParseService:
             cit.stale_at = now
             cit.updated_at = now
             session.add(cit)
+            affected += 1
+
+        formal_records = session.exec(select(CourseEvidenceRecord).where(
+            CourseEvidenceRecord.course_id == course_id,
+            CourseEvidenceRecord.run_id == run_id,
+            CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+        )).all()
+        for formal in formal_records:
+            formal.status = (
+                EvidenceStatus.STALE
+                if stale_strategy == StaleStrategy.MARK_STALE
+                else EvidenceStatus.ORPHANED
+            )
+            formal.stale_reason = reason
+            formal.stale_at = now
+            session.add(formal)
             affected += 1
         return affected
 
@@ -548,6 +576,7 @@ class DocumentParseService:
         source_file: str = "",
         source_type: str = "document",
         node_id: Optional[int] = None,
+        identity_node_key: Optional[str] = None,
     ) -> tuple[EvidenceSpan, CourseEvidenceRecord, EvidenceCitation]:
         """教师确认候选证据：升级为正式 CourseEvidenceRecord + 学生可读 EvidenceCitation。
 
@@ -564,6 +593,34 @@ class DocumentParseService:
             )
 
         now = utcnow_aware()
+        if identity_node_key:
+            identity = session.exec(select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.course_id == course_id,
+                CourseKnowledgeNode.node_key == identity_node_key,
+            )).first()
+            if identity is None:
+                reject_resource_not_found("关联的课程知识节点不存在")
+            node_id = identity.id
+        # ``node_id`` remains a compatibility input for older question-bank
+        # mappings.  New graph flows pass ``identity_node_key`` and are
+        # strictly resolved above; legacy numeric mappings are preserved until
+        # the node-identity migration completes.
+
+        source_file = source_file.strip() or self._source_file_for_span(session, span)
+        source_type = source_type.strip()
+        if not source_type or source_type == "document":
+            source_type = self._source_type_for_file(source_file)
+        source_anchor_ids = [
+            anchor.anchor_id
+            for anchor in session.exec(select(EvidenceAnchor).where(
+                EvidenceAnchor.course_id == course_id,
+                EvidenceAnchor.run_id == span.run_id,
+                EvidenceAnchor.ir_version_id == span.ir_version_id,
+                EvidenceAnchor.block_id == span.block_id,
+                EvidenceAnchor.char_start == span.char_start,
+                EvidenceAnchor.char_end == span.char_end,
+            )).all()
+        ]
         span.status = EvidenceSpanStatus.CONFIRMED
         span.confirmed_by = confirmed_by
         span.confirmed_at = now
@@ -578,6 +635,10 @@ class DocumentParseService:
         formal = CourseEvidenceRecord(
             evidence_id=evidence_id,
             course_id=course_id,
+            run_id=span.run_id,
+            span_id=span.span_id,
+            node_id=node_id,
+            source_anchor_ids=source_anchor_ids,
             document_id=span.document_id,
             source_file=source_file,
             page_number=span.page_number,
@@ -598,12 +659,14 @@ class DocumentParseService:
             course_id=course_id,
             evidence_id=evidence_id,
             span_id=span.span_id,
+            run_id=span.run_id,
             document_id=span.document_id,
             node_id=node_id,
             source_file=source_file,
             source_type=source_type,
             page_number=span.page_number,
             bbox=span.bbox,
+            source_anchor_ids=source_anchor_ids,
             text_snippet=span.text_snippet,
             char_start=span.char_start,
             char_end=span.char_end,
@@ -617,6 +680,42 @@ class DocumentParseService:
         session.add(span)
         session.flush()
         return span, formal, citation
+
+    @staticmethod
+    def _source_file_for_span(session: Session, span: EvidenceSpan) -> str:
+        """Resolve a display filename without exposing storage object keys."""
+        if span.document_id:
+            artifact = session.exec(select(DocumentArtifact).where(
+                DocumentArtifact.course_id == span.course_id,
+                DocumentArtifact.document_id == span.document_id,
+            )).first()
+            if artifact and artifact.file_name:
+                return artifact.file_name
+        run = session.exec(select(DocumentParseRun).where(
+            DocumentParseRun.course_id == span.course_id,
+            DocumentParseRun.run_id == span.run_id,
+        )).first()
+        if run and run.material_version_id:
+            version = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.course_id == span.course_id,
+                SourceMaterialVersion.version_id == run.material_version_id,
+            )).first()
+            if version:
+                material = session.exec(select(SourceMaterial).where(
+                    SourceMaterial.material_id == version.material_id,
+                    SourceMaterial.course_id == span.course_id,
+                )).first()
+                if material and material.name:
+                    return material.name
+        return "未命名课件"
+
+    @staticmethod
+    def _source_type_for_file(source_file: str) -> str:
+        suffix = source_file.lower().rsplit(".", 1)[-1] if "." in source_file else ""
+        return {
+            "ppt": "ppt", "pptx": "ppt", "pdf": "textbook",
+            "doc": "textbook", "docx": "textbook",
+        }.get(suffix, "document")
 
     def reject_evidence_span(
         self,
@@ -806,6 +905,11 @@ class GraphCandidateService:
         batch.updated_at = utcnow_aware()
         session.add(batch)
         session.flush()
+        # The parser remains candidate-only, but the successful payload is
+        # immediately projected into the teacher governance model.  The bridge
+        # is idempotent and participates in the caller's transaction.
+        from app.services.graph_production_service import bridge_candidate_batch
+        bridge_candidate_batch(session, batch=batch, commit=False)
         return batch
 
     def link_snapshot(

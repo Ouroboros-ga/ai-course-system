@@ -18,6 +18,7 @@ from app.models.database import get_session
 from app.models.document_artifact_model import DocumentArtifact
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
+    CourseKnowledgeNode,
     GraphSnapshotRecord,
     GraphNodeReview,
     EvidenceStatus,
@@ -26,6 +27,8 @@ from app.services.course_access_service import require_course_permission
 from app.services.graph_production_service import (
     create_evidence,
     publish_snapshot,
+    publish_reviewed_snapshot,
+    GraphAssemblyError,
     get_active_snapshot,
     list_snapshots,
     rollback_snapshot,
@@ -37,6 +40,7 @@ from app.services.graph_production_service import (
     graph_target_hash,
     list_review_candidates,
     transition_review,
+    bridge_candidate_batches,
     diff_snapshots,
     get_prerequisite_nodes,
 )
@@ -45,8 +49,14 @@ router = APIRouter(tags=["G9 Evidence与图谱"])
 
 
 class PublishSnapshotRequest(BaseModel):
-    nodes: list[dict] = Field(default_factory=list, max_length=5000)
-    relations: list[dict] = Field(default_factory=list, max_length=20000)
+    nodes: Optional[list[dict]] = Field(default=None, max_length=5000)
+    relations: Optional[list[dict]] = Field(default=None, max_length=20000)
+    label: str = Field(default="", max_length=200)
+
+
+class PublishReviewedSnapshotRequest(BaseModel):
+    """发布当前审核批次；节点、关系由后端从审核记录组装。"""
+
     label: str = Field(default="", max_length=200)
 
 
@@ -189,12 +199,25 @@ async def create_graph_review(
         if set(evidence) != set(payload.evidence_ids):
             raise HTTPException(status_code=422, detail="包含无效或跨课程 Evidence")
 
+    identity_node_id = None
+    if payload.target_type == "node":
+        identity = session.exec(
+            select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.course_id == course_id,
+                CourseKnowledgeNode.node_key == payload.target_id,
+            )
+        ).first()
+        if identity is not None:
+            identity_node_id = identity.id
+
     review = GraphNodeReview(
         course_id=course_id,
         snapshot_id=payload.snapshot_id,
+        identity_node_id=identity_node_id,
         target_id=payload.target_id,
         target_type=payload.target_type,
         target_content_hash=graph_target_hash(target_content),
+        target_content=target_content,
         decision=payload.decision,
         reviewer=int(current_user["user_id"]),
         review_comment=payload.review_comment,
@@ -243,6 +266,20 @@ async def publish(
     user_id = int(current_user["user_id"])
 
     try:
+        if payload.nodes is None and payload.relations is None:
+            snapshot, assembly = publish_reviewed_snapshot(
+                session,
+                course_id=course_id,
+                label=payload.label,
+                user_id=user_id,
+            )
+            return unified_response(
+                code=200,
+                message="审核通过的图谱已组装并发布",
+                data={**serialize_snapshot(snapshot), "assembly": assembly},
+            )
+        if payload.nodes is None or payload.relations is None:
+            raise ValueError("nodes 与 relations 必须同时提供，或省略以发布当前审核批次")
         snapshot = publish_snapshot(
             session,
             course_id=course_id,
@@ -251,9 +288,48 @@ async def publish(
             label=payload.label,
             user_id=user_id,
         )
+    except GraphAssemblyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": str(exc), **exc.details},
+        ) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return unified_response(code=200, message="快照已发布", data=serialize_snapshot(snapshot))
+
+
+@router.post("/course/{course_id}/publish-reviewed")
+async def publish_reviewed(
+    course_id: int,
+    payload: PublishReviewedSnapshotRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """将当前候选批次的已接受审核记录自动组装并发布。
+
+    这是教师治理流的正式发布入口。它不接受前端拼装的节点/关系，
+    并在同一事务中写入快照、审核关联和节点发布状态。
+    """
+    require_course_permission(session, current_user, course_id, "knowledge.edit")
+    try:
+        snapshot, assembly = publish_reviewed_snapshot(
+            session,
+            course_id=course_id,
+            label=payload.label,
+            user_id=int(current_user["user_id"]),
+        )
+    except GraphAssemblyError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": str(exc), **exc.details},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return unified_response(
+        code=200,
+        message="审核通过的图谱已组装并发布",
+        data={**serialize_snapshot(snapshot), "assembly": assembly},
+    )
 
 
 @router.get("/course/{course_id}/snapshots")
@@ -353,6 +429,10 @@ async def list_candidates(
     教师可在此界面逐条确认或驳回后，再发布不可变快照。
     """
     require_course_permission(session, current_user, course_id, "knowledge.review")
+    # Historical parse runs predate the bridge.  Re-running this idempotent
+    # projection on the review read path makes existing courses discoverable
+    # without silently publishing any candidate.
+    bridge_candidate_batches(session, course_id, commit=True)
     reviews = list_review_candidates(
         session, course_id, decision=decision, target_type=target_type
     )

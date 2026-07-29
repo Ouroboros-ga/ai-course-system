@@ -342,7 +342,13 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
         CourseDraftBuildTask,
     )
     from app.services.course_corpus_service import course_corpus_service
-    from app.services.document_draft_builders import build_draft_assets
+    from app.services.course_initial_prep_service import initial_course_prep_service
+    from app.services.controlled_prep_workflow import (
+        CourseBuildCancelled,
+        CourseBuildStageTimeout,
+    )
+    from app.core.config import settings
+    from app.models.course_build_model import CourseDraftBuildCheckpoint
 
     # Keep the durable task pending through a short quiet window. This stops a
     # teacher who is uploading several files from getting a draft after the
@@ -395,6 +401,58 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
         session.add(build)
         session.commit()
 
+    async def on_stage(stage: str, progress: int, value: Any) -> None:
+        """Persist progress/checkpoint and revalidate the course build lease."""
+        with ctx.session_factory() as stage_session:
+            current_build = stage_session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.course_id == course_id,
+                CourseDraftBuildTask.build_task_id == build_task_id,
+            )).first()
+            current_corpus = stage_session.exec(select(CourseCorpusSnapshot).where(
+                CourseCorpusSnapshot.course_id == course_id,
+                CourseCorpusSnapshot.corpus_snapshot_id == corpus_snapshot_id,
+            )).first()
+            if (
+                current_build is None
+                or current_build.status != CourseDraftBuildStatus.RUNNING
+                or current_corpus is None
+                or not course_corpus_service.is_snapshot_current(stage_session, corpus=current_corpus)
+            ):
+                raise CourseBuildCancelled("课程语料已更新，旧备课任务已取消")
+            ctx.service.mark_progress(
+                stage_session,
+                ctx.task_id,
+                progress=progress,
+                stage=stage,
+                message={
+                    "evidence": "已完成材料证据整理",
+                    "outline": "已完成课程结构规划",
+                    "scripts": "已完成基础讲授脚本生成",
+                    "verification": "正在核验讲授脚本证据",
+                }.get(stage, stage),
+            )
+            checkpoint_stage = stage if stage != "verification" else f"verification_{progress}"
+            checkpoint = stage_session.exec(select(CourseDraftBuildCheckpoint).where(
+                CourseDraftBuildCheckpoint.build_task_id == build_task_id,
+                CourseDraftBuildCheckpoint.stage == checkpoint_stage,
+            )).first()
+            payload_data = value.model_dump(mode="json") if hasattr(value, "model_dump") else {}
+            if checkpoint is None:
+                checkpoint = CourseDraftBuildCheckpoint(
+                    course_id=course_id,
+                    build_task_id=build_task_id,
+                    corpus_snapshot_id=corpus_snapshot_id,
+                    stage=checkpoint_stage,
+                    progress=progress,
+                    payload=payload_data,
+                )
+            else:
+                checkpoint.progress = progress
+                checkpoint.payload = payload_data
+                checkpoint.created_at = utcnow_aware()
+            stage_session.add(checkpoint)
+            stage_session.commit()
+
     try:
         with ctx.session_factory() as session:
             build = session.exec(select(CourseDraftBuildTask).where(
@@ -417,21 +475,97 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 )
                 result_data = {"proposal_id": proposal.proposal_id, "corpus_snapshot_id": corpus_snapshot_id}
             else:
-                result = build_draft_assets(
-                    session,
-                    course_id=course_id,
-                    created_by=build.owner_user_id,
-                    corpus_snapshot_id=corpus_snapshot_id,
-                    build_task_id=build.build_task_id,
+                # Parsing has already produced DocumentIR/DocumentBlock facts.
+                # The first teacher-visible draft must be organized by the
+                # controlled preparation agent; never expose the legacy raw
+                # block-to-node fallback as a completed course structure.
+                result = await asyncio.wait_for(
+                    initial_course_prep_service.build(
+                        session,
+                        course_id=course_id,
+                        created_by=build.owner_user_id,
+                        corpus_snapshot_id=corpus_snapshot_id,
+                        build_task_id=build.build_task_id,
+                        replace_unreviewed_initial=(build.trigger == "teacher_restart_unreviewed_initial"),
+                        on_stage=on_stage,
+                    ),
+                    timeout=max(1, int(settings.COURSE_BUILD_TOTAL_TIMEOUT_SECONDS)),
                 )
                 build.result_outline_version_id = result.outline_version_id
                 build.result_script_version_id = result.script_version_id
                 result_data = result.to_progress_data()
             build.result_retrieval_snapshot_id = retrieval.retrieval_snapshot_id
+            if not course_corpus_service.is_snapshot_current(session, corpus=corpus):
+                raise CourseBuildCancelled("课程语料已更新，未提交旧版本草稿")
+            ctx.service.mark_progress(
+                session,
+                ctx.task_id,
+                progress=100,
+                stage="persisting",
+                message="课程结构、讲授脚本及关联映射已完成持久化",
+            )
+            checkpoint = session.exec(select(CourseDraftBuildCheckpoint).where(
+                CourseDraftBuildCheckpoint.build_task_id == build_task_id,
+                CourseDraftBuildCheckpoint.stage == "persisting",
+            )).first()
+            if checkpoint is not None:
+                checkpoint.progress = 100
+                checkpoint.payload = result_data
+                checkpoint.created_at = utcnow_aware()
+                session.add(checkpoint)
             build.status = CourseDraftBuildStatus.SUCCEEDED
             build.finished_at = utcnow_aware()
             session.add(build)
             session.commit()
+    except CourseBuildCancelled as exc:
+        with ctx.session_factory() as session:
+            build = session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.build_task_id == build_task_id,
+                CourseDraftBuildTask.course_id == course_id,
+            )).first()
+            if build is not None:
+                build.status = CourseDraftBuildStatus.CANCELLED
+                build.error_code = "CORPUS_CHANGED"
+                build.error_message = str(exc)[:500]
+                build.finished_at = utcnow_aware()
+                session.add(build)
+            try:
+                task = ctx.service.get_task(session, ctx.task_id)
+                if task.status in {"pending", "running"}:
+                    ctx.service.cancel(session, ctx.task_id, reason=str(exc))
+                else:
+                    session.commit()
+            except ValueError:
+                session.commit()
+        return
+    except asyncio.TimeoutError as exc:
+        with ctx.session_factory() as session:
+            build = session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.build_task_id == build_task_id,
+                CourseDraftBuildTask.course_id == course_id,
+            )).first()
+            if build:
+                build.status = CourseDraftBuildStatus.FAILED
+                build.error_code = "COURSE_BUILD_TIMEOUT"
+                build.error_message = f"课程备课超过 {settings.COURSE_BUILD_TOTAL_TIMEOUT_SECONDS} 秒"
+                build.finished_at = utcnow_aware()
+                session.add(build)
+                session.commit()
+        raise TaskExecutionError("COURSE_BUILD_TIMEOUT", str(exc), retryable=True) from exc
+    except CourseBuildStageTimeout as exc:
+        with ctx.session_factory() as session:
+            build = session.exec(select(CourseDraftBuildTask).where(
+                CourseDraftBuildTask.build_task_id == build_task_id,
+                CourseDraftBuildTask.course_id == course_id,
+            )).first()
+            if build:
+                build.status = CourseDraftBuildStatus.FAILED
+                build.error_code = "COURSE_BUILD_STAGE_TIMEOUT"
+                build.error_message = str(exc)[:500]
+                build.finished_at = utcnow_aware()
+                session.add(build)
+                session.commit()
+        raise TaskExecutionError("COURSE_BUILD_STAGE_TIMEOUT", str(exc), retryable=True) from exc
     except Exception as exc:
         with ctx.session_factory() as session:
             build = session.exec(select(CourseDraftBuildTask).where(

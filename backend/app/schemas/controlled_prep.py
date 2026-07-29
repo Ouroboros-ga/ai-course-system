@@ -41,7 +41,11 @@ class EvidenceSegmenterResult(StrictModel):
 
 class OutlineCandidate(StrictModel):
     candidate_id: str = Field(min_length=1, max_length=100)
-    node_type: Literal["section", "knowledge_point"]
+    # A first course draft is a tree, rather than a flat list of extracted
+    # headings.  Keeping chapter in the structured contract lets the initial
+    # preparation workflow establish the stable hierarchy that scripts and
+    # slide mappings later reference.
+    node_type: Literal["chapter", "section", "knowledge_point"]
     title: str = Field(min_length=1, max_length=300)
     parent_candidate_id: str | None = Field(default=None, max_length=100)
     evidence_ids: list[str] = Field(min_length=1)
@@ -66,6 +70,8 @@ class OutlinePlannerResult(StrictModel):
         for candidate in self.candidates:
             if candidate.parent_candidate_id and candidate.parent_candidate_id not in ids:
                 raise ValueError(f"unknown parent_candidate_id: {candidate.parent_candidate_id}")
+            if candidate.node_type == "chapter" and candidate.parent_candidate_id:
+                raise ValueError("chapter candidates cannot have a parent")
         kp_ids = {candidate.candidate_id for candidate in self.candidates if candidate.node_type == "knowledge_point"}
         for prerequisite in self.prerequisites:
             if prerequisite.knowledge_point_candidate_id not in kp_ids:
@@ -93,6 +99,13 @@ class TeachingScriptNodeDraft(StrictModel):
         if len(self.paragraph_evidence) != len(self.content.split("\n\n")):
             raise ValueError("paragraph_evidence must align with content paragraphs")
         return self
+
+
+class TeachingScriptBatchResult(StrictModel):
+    """One LLM response containing the first-round scripts for all KPs."""
+
+    stage: Literal["script_writer_batch", "script_writer"] = "script_writer_batch"
+    scripts: list[TeachingScriptNodeDraft] = Field(min_length=1, max_length=50)
 
 
 class EvidenceFinding(StrictModel):

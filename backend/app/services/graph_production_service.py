@@ -15,17 +15,276 @@ import uuid
 from copy import deepcopy
 from typing import Optional, Any
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from app.core.time_utils import utcnow_aware
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
+    CourseKnowledgeNode,
+    CourseKnowledgeNodeStatus,
     GraphSnapshotRecord,
     GraphNodeReview,
     SnapshotStatus,
     EvidenceStatus,
 )
+
+
+class GraphAssemblyError(ValueError):
+    """A teacher-actionable publication gate failure."""
+
+    def __init__(self, code: str, message: str, *, details: Optional[dict[str, Any]] = None):
+        super().__init__(message)
+        self.code = code
+        self.details = details or {}
+
+
+def _candidate_id(candidate: dict[str, Any]) -> str:
+    return str(candidate.get("candidate_id") or candidate.get("id") or "").strip()
+
+
+def _node_key(course_id: int, candidate_id: str) -> str:
+    """Derive a deterministic public identity without exposing parser IDs."""
+    digest = hashlib.sha256(f"course:{course_id}:candidate:{candidate_id}".encode()).hexdigest()
+    return f"kn_{digest[:24]}"
+
+
+def _review_decision(candidate: dict[str, Any]) -> str:
+    decision = str(candidate.get("status") or "proposed")
+    return decision if decision in {"proposed", "accepted", "rejected", "needs_review"} else "proposed"
+
+
+def _node_content(node: CourseKnowledgeNode, candidate: dict[str, Any]) -> dict[str, Any]:
+    """Normalize a parser node candidate into the graph review/publish shape."""
+    label = str(candidate.get("label") or candidate.get("title") or node.title or "").strip()
+    return {
+        "id": node.node_key,
+        "node_key": node.node_key,
+        "identity_id": node.id,
+        "label": label,
+        "title": label,
+        "kind": str(candidate.get("kind") or node.kind or "concept"),
+        "confidence": candidate.get("confidence"),
+        "source_candidate_id": _candidate_id(candidate),
+        "source_block_ids": list(candidate.get("source_block_ids") or []),
+        "anchor_ids": list(candidate.get("anchor_ids") or []),
+        "page_or_slide": candidate.get("page_or_slide"),
+    }
+
+
+def bridge_candidate_batch(
+    session: Session,
+    *,
+    batch: Any,
+    commit: bool = False,
+) -> dict[str, int]:
+    """Idempotently bridge one parser batch into formal identities/reviews.
+
+    This is deliberately a governance bridge, not an auto-publish path:
+    candidates remain proposed until a teacher transitions their review.
+    ``commit=False`` lets the parser include the bridge in its own transaction.
+    """
+    if getattr(batch.status, "value", batch.status) not in {"succeeded", "partial_success"}:
+        return {"nodes_created": 0, "relations_created": 0, "reviews_created": 0}
+
+    from app.models.document_parse_model import GraphCandidateBatch
+    from app.models.document_parse_model import EvidenceAnchor, EvidenceSpan
+
+    if not isinstance(batch, GraphCandidateBatch):
+        raise ValueError("candidate batch 类型无效")
+
+    node_by_candidate: dict[str, CourseKnowledgeNode] = {}
+    nodes_created = 0
+    reviews_created = 0
+
+    for candidate in batch.node_candidates or []:
+        candidate_id = _candidate_id(candidate)
+        if not candidate_id:
+            continue
+        node = session.exec(
+            select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.course_id == batch.course_id,
+                CourseKnowledgeNode.source_candidate_id == candidate_id,
+            )
+        ).first()
+        if node is None:
+            node = CourseKnowledgeNode(
+                course_id=batch.course_id,
+                node_key=_node_key(batch.course_id, candidate_id),
+                title=str(candidate.get("label") or candidate.get("title") or "").strip()[:300],
+                kind=str(candidate.get("kind") or "concept")[:80],
+                status=CourseKnowledgeNodeStatus.CANDIDATE,
+                source_candidate_id=candidate_id,
+                source_batch_id=batch.batch_id,
+                source_anchor_ids=list(candidate.get("anchor_ids") or []),
+                extra_data={"source_block_ids": list(candidate.get("source_block_ids") or [])},
+            )
+            session.add(node)
+            session.flush()
+            nodes_created += 1
+        node_by_candidate[candidate_id] = node
+
+        # Make the candidate evidence projection point at the same formal
+        # numeric identity.  This lets the Evidence page filter by the node
+        # without treating parser candidate IDs as knowledge-node IDs.
+        for anchor_id in list(candidate.get("anchor_ids") or []):
+            anchor = session.exec(select(EvidenceAnchor).where(
+                EvidenceAnchor.course_id == batch.course_id,
+                EvidenceAnchor.anchor_id == str(anchor_id),
+            )).first()
+            if anchor is None:
+                continue
+            spans = session.exec(select(EvidenceSpan).where(
+                EvidenceSpan.course_id == batch.course_id,
+                EvidenceSpan.run_id == anchor.run_id,
+                EvidenceSpan.ir_version_id == anchor.ir_version_id,
+                EvidenceSpan.block_id == anchor.block_id,
+                EvidenceSpan.char_start == anchor.char_start,
+                EvidenceSpan.char_end == anchor.char_end,
+            )).all()
+            for span in spans:
+                linked = list(span.linked_node_ids or [])
+                if node.id not in linked:
+                    span.linked_node_ids = [*linked, node.id]
+                    session.add(span)
+
+        content = _node_content(node, candidate)
+        existing = session.exec(
+            select(GraphNodeReview).where(
+                GraphNodeReview.course_id == batch.course_id,
+                GraphNodeReview.candidate_batch_id == batch.batch_id,
+                GraphNodeReview.candidate_id == candidate_id,
+                GraphNodeReview.target_type == "node",
+            )
+        ).first()
+        if existing is None:
+            existing = GraphNodeReview(
+                course_id=batch.course_id,
+                candidate_batch_id=batch.batch_id,
+                candidate_id=candidate_id,
+                identity_node_id=node.id,
+                target_id=node.node_key,
+                target_type="node",
+                target_content_hash=graph_target_hash(content),
+                target_content=content,
+                decision=_review_decision(candidate),
+                reviewer=None,
+            )
+            session.add(existing)
+            reviews_created += 1
+        elif existing.decision not in {"accepted", "rejected"}:
+            existing.target_content = content
+            existing.target_content_hash = graph_target_hash(content)
+            existing.identity_node_id = node.id
+            existing.target_id = node.node_key
+            session.add(existing)
+
+        candidate_status = _review_decision(candidate)
+        if candidate_status == "accepted" and node.status == CourseKnowledgeNodeStatus.CANDIDATE:
+            node.status = CourseKnowledgeNodeStatus.ACCEPTED
+            session.add(node)
+        elif candidate_status == "rejected" and node.status != CourseKnowledgeNodeStatus.PUBLISHED:
+            node.status = CourseKnowledgeNodeStatus.RETIRED
+            session.add(node)
+
+    relation_reviews_created = 0
+    for relation in batch.relation_candidates or []:
+        relation_id = _candidate_id(relation)
+        source_candidate_id = str(relation.get("source_candidate_id") or "").strip()
+        target_candidate_id = str(relation.get("target_candidate_id") or "").strip()
+        if not relation_id or not source_candidate_id or not target_candidate_id:
+            continue
+        source_node = node_by_candidate.get(source_candidate_id)
+        target_node = node_by_candidate.get(target_candidate_id)
+        content = {
+            "id": relation_id,
+            "source": source_node.node_key if source_node else None,
+            "target": target_node.node_key if target_node else None,
+            "type": str(relation.get("relation_type") or relation.get("type") or "related"),
+            "relation_type": str(relation.get("relation_type") or relation.get("type") or "related"),
+            "source_candidate_id": source_candidate_id,
+            "target_candidate_id": target_candidate_id,
+            "confidence": relation.get("confidence"),
+            "anchor_ids": list(relation.get("anchor_ids") or []),
+            "unresolved_endpoint": source_node is None or target_node is None,
+        }
+        existing = session.exec(
+            select(GraphNodeReview).where(
+                GraphNodeReview.course_id == batch.course_id,
+                GraphNodeReview.candidate_batch_id == batch.batch_id,
+                GraphNodeReview.candidate_id == relation_id,
+                GraphNodeReview.target_type == "relation",
+            )
+        ).first()
+        if existing is None:
+            existing = GraphNodeReview(
+                course_id=batch.course_id,
+                candidate_batch_id=batch.batch_id,
+                candidate_id=relation_id,
+                source_candidate_id=source_candidate_id,
+                target_candidate_id=target_candidate_id,
+                target_id=relation_id,
+                target_type="relation",
+                target_content_hash=graph_target_hash(content),
+                target_content=content,
+                decision=("needs_review" if content["unresolved_endpoint"] else _review_decision(relation)),
+            )
+            session.add(existing)
+            relation_reviews_created += 1
+        elif existing.decision not in {"accepted", "rejected"}:
+            existing.target_content = content
+            existing.target_content_hash = graph_target_hash(content)
+            session.add(existing)
+
+    batch.accepted_count = sum(
+        1 for review in session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.candidate_batch_id == batch.batch_id)
+        ).all() if review.decision == "accepted"
+    )
+    batch.rejected_count = sum(
+        1 for review in session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.candidate_batch_id == batch.batch_id)
+        ).all() if review.decision == "rejected"
+    )
+    batch.needs_review_count = sum(
+        1 for review in session.exec(
+            select(GraphNodeReview).where(GraphNodeReview.candidate_batch_id == batch.batch_id)
+        ).all() if review.decision in {"proposed", "needs_review"}
+    )
+    batch.updated_at = utcnow_aware()
+    session.add(batch)
+    session.flush()
+    if commit:
+        session.commit()
+    return {
+        "nodes_created": nodes_created,
+        "relations_created": len(batch.relation_candidates or []),
+        "reviews_created": reviews_created + relation_reviews_created,
+    }
+
+
+def bridge_candidate_batches(session: Session, course_id: int, *, commit: bool = False) -> dict[str, int]:
+    """Bridge all non-superseded successful batches for a course."""
+    from app.models.document_parse_model import CandidateBatchStatus, GraphCandidateBatch
+
+    batches = session.exec(
+        select(GraphCandidateBatch).where(
+            GraphCandidateBatch.course_id == course_id,
+            GraphCandidateBatch.status.in_([
+                CandidateBatchStatus.SUCCEEDED,
+                CandidateBatchStatus.PARTIAL_SUCCESS,
+            ]),
+        )
+    ).all()
+    totals = {"batches": 0, "nodes_created": 0, "relations_created": 0, "reviews_created": 0}
+    for batch in batches:
+        result = bridge_candidate_batch(session, batch=batch, commit=False)
+        totals["batches"] += 1
+        for key in ("nodes_created", "relations_created", "reviews_created"):
+            totals[key] += result[key]
+    if commit:
+        session.commit()
+    return totals
 
 
 def graph_target_hash(target: dict[str, Any]) -> str:
@@ -83,6 +342,245 @@ def create_evidence(
     return evidence
 
 
+def _active_evidence_for_review(
+    session: Session,
+    course_id: int,
+    review: GraphNodeReview,
+) -> list[CourseEvidenceRecord]:
+    """Resolve the formal evidence that is allowed to enter a snapshot.
+
+    Relation reviews normally carry explicit ``evidence_ids``.  A confirmed
+    parser span may also be linked by its source anchors; this fallback keeps
+    the candidate-to-evidence bridge useful without treating an unconfirmed
+    span as publication proof.
+    """
+    from app.models.document_parse_model import EvidenceCitation
+
+    explicit_ids = {
+        str(item).strip() for item in (review.evidence_ids or []) if str(item).strip()
+    }
+    evidence = list(session.exec(
+        select(CourseEvidenceRecord).where(
+            CourseEvidenceRecord.course_id == course_id,
+            CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+            CourseEvidenceRecord.evidence_id.in_(explicit_ids),
+        )
+    ).all()) if explicit_ids else []
+    resolved_ids = {item.evidence_id for item in evidence}
+
+    if review.target_type == "node" and review.identity_node_id is not None:
+        for candidate in session.exec(
+            select(CourseEvidenceRecord).where(
+                CourseEvidenceRecord.course_id == course_id,
+                CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+                CourseEvidenceRecord.node_id == review.identity_node_id,
+            )
+        ).all():
+            if candidate.evidence_id not in resolved_ids:
+                evidence.append(candidate)
+                resolved_ids.add(candidate.evidence_id)
+
+    # A relation candidate's anchors are a safe, auditable binding only after
+    # a teacher has promoted the exact span to formal Evidence.
+    anchor_ids = {
+        str(item).strip()
+        for item in ((review.target_content or {}).get("anchor_ids") or [])
+        if str(item).strip()
+    }
+    if anchor_ids:
+        for candidate in session.exec(
+            select(CourseEvidenceRecord).where(
+                CourseEvidenceRecord.course_id == course_id,
+                CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
+            )
+        ).all():
+            if resolved_ids.__contains__(candidate.evidence_id):
+                continue
+            if anchor_ids.intersection(str(item) for item in (candidate.source_anchor_ids or [])):
+                evidence.append(candidate)
+                resolved_ids.add(candidate.evidence_id)
+    return evidence
+
+
+def _citation_ids_for_evidence(
+    session: Session,
+    course_id: int,
+    evidence_ids: set[str],
+) -> list[str]:
+    """Return student-readable citation IDs for the formal evidence refs."""
+    if not evidence_ids:
+        return []
+    from app.models.document_parse_model import CitationStatus, EvidenceCitation
+
+    citations = session.exec(
+        select(EvidenceCitation).where(
+            EvidenceCitation.course_id == course_id,
+            EvidenceCitation.evidence_id.in_(evidence_ids),
+            EvidenceCitation.status.in_([CitationStatus.EXACT, CitationStatus.APPROXIMATE]),
+            EvidenceCitation.student_visible == True,
+        )
+    ).all()
+    return sorted({citation.citation_id for citation in citations})
+
+
+def assemble_reviewed_snapshot(
+    session: Session,
+    course_id: int,
+) -> dict[str, Any]:
+    """Build a publish payload from the latest bridged candidate batch.
+
+    This is the single server-side source of truth for teacher publication.
+    It never changes a proposed candidate's decision and never publishes a
+    partial batch: every candidate must be terminal, every accepted target
+    must have active formal Evidence, and every accepted relation must point
+    to an accepted node.
+    """
+    from app.models.document_parse_model import CandidateBatchStatus, GraphCandidateBatch
+
+    bridge_candidate_batches(session, course_id, commit=False)
+    batch = session.exec(
+        select(GraphCandidateBatch).where(
+            GraphCandidateBatch.course_id == course_id,
+            GraphCandidateBatch.status.in_([
+                CandidateBatchStatus.SUCCEEDED,
+                CandidateBatchStatus.PARTIAL_SUCCESS,
+            ]),
+        ).order_by(GraphCandidateBatch.created_at.desc())
+    ).first()
+    if batch is None:
+        raise GraphAssemblyError(
+            "NO_CANDIDATE_BATCH",
+            "当前课程没有可发布的图谱候选批次，请先完成课件解析。",
+        )
+
+    reviews = session.exec(
+        select(GraphNodeReview).where(
+            GraphNodeReview.course_id == course_id,
+            GraphNodeReview.candidate_batch_id == batch.batch_id,
+        ).order_by(GraphNodeReview.target_type, GraphNodeReview.created_at, GraphNodeReview.id)
+    ).all()
+    if not reviews:
+        raise GraphAssemblyError(
+            "NO_REVIEW_RECORDS",
+            "当前候选批次尚未进入审核流，请先打开候选审核页。",
+            details={"batch_id": batch.batch_id},
+        )
+
+    pending = [review.target_id for review in reviews if review.decision in {"proposed", "needs_review"}]
+    if pending:
+        raise GraphAssemblyError(
+            "REVIEW_INCOMPLETE",
+            f"仍有 {len(pending)} 个候选未完成审核，不能发布。",
+            details={"batch_id": batch.batch_id, "pending_target_ids": pending[:100]},
+        )
+
+    accepted_nodes = [review for review in reviews if review.target_type == "node" and review.decision == "accepted"]
+    accepted_relations = [review for review in reviews if review.target_type == "relation" and review.decision == "accepted"]
+    if not accepted_nodes:
+        raise GraphAssemblyError(
+            "NO_ACCEPTED_NODES",
+            "没有已接受的知识节点，不能发布空图谱。",
+            details={"batch_id": batch.batch_id},
+        )
+
+    nodes: list[dict[str, Any]] = []
+    blocking_evidence: list[str] = []
+    for review in accepted_nodes:
+        content = deepcopy(review.target_content or {})
+        if graph_target_hash(content) != review.target_content_hash:
+            raise GraphAssemblyError(
+                "REVIEW_CONTENT_CHANGED",
+                f"候选 {review.target_id} 的内容已变化，请重新审核后再发布。",
+                details={"target_id": review.target_id},
+            )
+        identity = session.exec(
+            select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.course_id == course_id,
+                CourseKnowledgeNode.id == review.identity_node_id,
+            )
+        ).first() if review.identity_node_id is not None else None
+        if identity is None:
+            raise GraphAssemblyError(
+                "IDENTITY_MISSING",
+                f"节点 {review.target_id} 缺少正式课程身份。",
+                details={"target_id": review.target_id},
+            )
+        evidence = _active_evidence_for_review(session, course_id, review)
+        if not evidence:
+            blocking_evidence.append(review.target_id)
+            continue
+        node_id = identity.node_key
+        content["id"] = node_id
+        content["node_key"] = node_id
+        content["identity_id"] = identity.id
+        content["evidence_ids"] = sorted(item.evidence_id for item in evidence)
+        content["citation_ids"] = _citation_ids_for_evidence(
+            session, course_id, set(content["evidence_ids"])
+        )
+        nodes.append(content)
+
+    if blocking_evidence:
+        raise GraphAssemblyError(
+            "EVIDENCE_REQUIRED",
+            f"有 {len(blocking_evidence)} 个已接受节点缺少有效 Evidence，不能发布。",
+            details={"batch_id": batch.batch_id, "target_ids": blocking_evidence[:100]},
+        )
+
+    node_ids = {str(node["id"]) for node in nodes}
+    relations: list[dict[str, Any]] = []
+    relation_blockers: list[str] = []
+    endpoint_blockers: list[str] = []
+    for review in accepted_relations:
+        content = deepcopy(review.target_content or {})
+        if graph_target_hash(content) != review.target_content_hash:
+            raise GraphAssemblyError(
+                "REVIEW_CONTENT_CHANGED",
+                f"关系 {review.target_id} 的内容已变化，请重新审核后再发布。",
+                details={"target_id": review.target_id},
+            )
+        source = str(content.get("source") or "").strip()
+        target = str(content.get("target") or "").strip()
+        if source not in node_ids or target not in node_ids:
+            endpoint_blockers.append(review.target_id)
+            continue
+        evidence = _active_evidence_for_review(session, course_id, review)
+        if not evidence:
+            relation_blockers.append(review.target_id)
+            continue
+        content["id"] = str(content.get("id") or review.target_id)
+        content["source"] = source
+        content["target"] = target
+        content["evidence_ids"] = sorted(item.evidence_id for item in evidence)
+        content["citation_ids"] = _citation_ids_for_evidence(
+            session, course_id, set(content["evidence_ids"])
+        )
+        relations.append(content)
+
+    if endpoint_blockers:
+        raise GraphAssemblyError(
+            "RELATION_ENDPOINT_INVALID",
+            f"有 {len(endpoint_blockers)} 条已接受关系指向未发布节点，不能发布。",
+            details={"batch_id": batch.batch_id, "target_ids": endpoint_blockers[:100]},
+        )
+    if relation_blockers:
+        raise GraphAssemblyError(
+            "EVIDENCE_REQUIRED",
+            f"有 {len(relation_blockers)} 条已接受关系缺少有效 Evidence，不能发布。",
+            details={"batch_id": batch.batch_id, "target_ids": relation_blockers[:100]},
+        )
+
+    nodes.sort(key=lambda item: str(item.get("id") or ""))
+    relations.sort(key=lambda item: str(item.get("id") or ""))
+    return {
+        "batch_id": batch.batch_id,
+        "nodes": nodes,
+        "relations": relations,
+        "reviews": reviews,
+        "node_count": len(nodes),
+        "relation_count": len(relations),
+    }
+
+
 def publish_snapshot(
     session: Session,
     *,
@@ -91,6 +589,7 @@ def publish_snapshot(
     relations: list[dict],
     label: str = "",
     user_id: Optional[int] = None,
+    commit: bool = True,
 ) -> GraphSnapshotRecord:
     """发布不可变 GraphSnapshot
 
@@ -137,9 +636,80 @@ def publish_snapshot(
         published_at=utcnow_aware(),
     )
     session.add(snapshot)
+    if commit:
+        session.commit()
+        session.refresh(snapshot)
+    else:
+        session.flush()
+    return snapshot
+
+
+def publish_reviewed_snapshot(
+    session: Session,
+    *,
+    course_id: int,
+    label: str = "",
+    user_id: Optional[int] = None,
+) -> tuple[GraphSnapshotRecord, dict[str, Any]]:
+    """Atomically assemble and publish the teacher-reviewed candidate batch."""
+    assembled = assemble_reviewed_snapshot(session, course_id)
+    from app.models.document_parse_model import GraphCandidateBatch
+    batch = session.exec(
+        select(GraphCandidateBatch).where(
+            GraphCandidateBatch.course_id == course_id,
+            GraphCandidateBatch.batch_id == assembled["batch_id"],
+        )
+    ).first()
+    if batch is not None and batch.snapshot_id:
+        existing = session.exec(
+            select(GraphSnapshotRecord).where(
+                GraphSnapshotRecord.course_id == course_id,
+                GraphSnapshotRecord.snapshot_id == batch.snapshot_id,
+                GraphSnapshotRecord.is_active == True,
+                GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
+            )
+        ).first()
+        if existing is not None:
+            return existing, {
+                "source": "reviewed_candidates",
+                "batch_id": assembled["batch_id"],
+                "node_count": assembled["node_count"],
+                "relation_count": assembled["relation_count"],
+                "idempotent": True,
+            }
+    snapshot = publish_snapshot(
+        session,
+        course_id=course_id,
+        nodes=assembled["nodes"],
+        relations=assembled["relations"],
+        label=label or f"审核发布 · {assembled['batch_id']}",
+        user_id=user_id,
+        commit=False,
+    )
+    for review in assembled["reviews"]:
+        if review.decision == "accepted":
+            review.snapshot_id = snapshot.snapshot_id
+            session.add(review)
+    for node in session.exec(
+        select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course_id)
+    ).all():
+        if node.node_key in {str(item["id"]) for item in assembled["nodes"]}:
+            node.status = CourseKnowledgeNodeStatus.PUBLISHED
+        elif node.status == CourseKnowledgeNodeStatus.PUBLISHED:
+            node.status = CourseKnowledgeNodeStatus.ACCEPTED
+        node.updated_at = utcnow_aware()
+        session.add(node)
+    if batch is not None:
+        batch.snapshot_id = snapshot.snapshot_id
+        session.add(batch)
     session.commit()
     session.refresh(snapshot)
-    return snapshot
+    return snapshot, {
+        "source": "reviewed_candidates",
+        "batch_id": assembled["batch_id"],
+        "node_count": assembled["node_count"],
+        "relation_count": assembled["relation_count"],
+    }
 
 
 def get_active_snapshot(session: Session, course_id: int) -> Optional[GraphSnapshotRecord]:
@@ -190,6 +760,20 @@ def rollback_snapshot(
     target.is_active = True
     target.status = SnapshotStatus.PUBLISHED
     session.add(target)
+    target_node_ids = {
+        str(item.get("id") or item.get("node_id") or "")
+        for item in (target.nodes or [])
+        if isinstance(item, dict)
+    }
+    for node in session.exec(
+        select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course_id)
+    ).all():
+        if node.node_key in target_node_ids:
+            node.status = CourseKnowledgeNodeStatus.PUBLISHED
+        elif node.status == CourseKnowledgeNodeStatus.PUBLISHED:
+            node.status = CourseKnowledgeNodeStatus.ACCEPTED
+        node.updated_at = utcnow_aware()
+        session.add(node)
     session.commit()
     session.refresh(target)
     return target
@@ -353,15 +937,19 @@ def get_evidence_for_node(
     for review in reviews:
         evidence_ids.extend(review.evidence_ids or [])
 
-    if not evidence_ids:
-        return []
-
-    return list(session.exec(
-        select(CourseEvidenceRecord).where(
-            CourseEvidenceRecord.course_id == course_id,
-            CourseEvidenceRecord.evidence_id.in_(evidence_ids),
+    stmt = select(CourseEvidenceRecord).where(CourseEvidenceRecord.course_id == course_id)
+    if evidence_ids:
+        stmt = stmt.where(
+            or_(
+                CourseEvidenceRecord.evidence_id.in_(evidence_ids),
+                CourseEvidenceRecord.node_id == int(node_id) if str(node_id).isdigit() else False,
+            )
         )
-    ).all())
+    elif str(node_id).isdigit():
+        stmt = stmt.where(CourseEvidenceRecord.node_id == int(node_id))
+    else:
+        return []
+    return list(session.exec(stmt).all())
 
 
 def serialize_snapshot(snapshot: GraphSnapshotRecord) -> dict[str, Any]:
@@ -390,6 +978,10 @@ def serialize_evidence(evidence: CourseEvidenceRecord) -> dict[str, Any]:
     return {
         "evidence_id": evidence.evidence_id,
         "course_id": evidence.course_id,
+        "run_id": evidence.run_id,
+        "span_id": evidence.span_id,
+        "node_id": evidence.node_id,
+        "source_anchor_ids": list(evidence.source_anchor_ids or []),
         "document_id": evidence.document_id,
         "source_file": evidence.source_file,
         "page_number": evidence.page_number,
@@ -431,8 +1023,21 @@ def list_review_candidates(
     冲突处理：默认返回所有 proposed 与 needs_review 的记录，供教师在发布前
     逐条确认或驳回。每条记录携带 target_content_hash，便于检测内容漂移。
     """
+    from app.models.document_parse_model import CandidateBatchStatus, GraphCandidateBatch
+
+    active_batch_ids = select(GraphCandidateBatch.batch_id).where(
+        GraphCandidateBatch.course_id == course_id,
+        GraphCandidateBatch.status.in_([
+            CandidateBatchStatus.SUCCEEDED,
+            CandidateBatchStatus.PARTIAL_SUCCESS,
+        ]),
+    )
     stmt = select(GraphNodeReview).where(
         GraphNodeReview.course_id == course_id,
+        or_(
+            GraphNodeReview.candidate_batch_id.is_(None),
+            GraphNodeReview.candidate_batch_id.in_(active_batch_ids),
+        ),
     )
     if decision:
         stmt = stmt.where(GraphNodeReview.decision == decision)
@@ -494,6 +1099,45 @@ def transition_review(
         review.review_comment = review_comment
     review.decision = new_decision
     review.reviewer = reviewer_id
+    if review.identity_node_id is not None:
+        identity = session.exec(
+            select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.id == review.identity_node_id,
+                CourseKnowledgeNode.course_id == course_id,
+            )
+        ).first()
+        if identity is not None:
+            identity.status = (
+                CourseKnowledgeNodeStatus.ACCEPTED
+                if new_decision == "accepted"
+                else CourseKnowledgeNodeStatus.RETIRED
+                if new_decision == "rejected"
+                else CourseKnowledgeNodeStatus.CANDIDATE
+            )
+            identity.updated_at = utcnow_aware()
+            session.add(identity)
+    if review.candidate_batch_id:
+        from app.models.document_parse_model import GraphCandidateBatch
+        batch = session.exec(
+            select(GraphCandidateBatch).where(
+                GraphCandidateBatch.course_id == course_id,
+                GraphCandidateBatch.batch_id == review.candidate_batch_id,
+            )
+        ).first()
+        if batch is not None:
+            batch_reviews = session.exec(
+                select(GraphNodeReview).where(
+                    GraphNodeReview.course_id == course_id,
+                    GraphNodeReview.candidate_batch_id == batch.batch_id,
+                )
+            ).all()
+            batch.accepted_count = sum(item.decision == "accepted" for item in batch_reviews)
+            batch.rejected_count = sum(item.decision == "rejected" for item in batch_reviews)
+            batch.needs_review_count = sum(
+                item.decision in {"proposed", "needs_review"} for item in batch_reviews
+            )
+            batch.updated_at = utcnow_aware()
+            session.add(batch)
     session.add(review)
     session.commit()
     session.refresh(review)
@@ -613,9 +1257,15 @@ def serialize_review(review: GraphNodeReview) -> dict[str, Any]:
         "id": review.id,
         "course_id": review.course_id,
         "snapshot_id": review.snapshot_id,
+        "candidate_batch_id": review.candidate_batch_id,
+        "candidate_id": review.candidate_id,
+        "source_candidate_id": review.source_candidate_id,
+        "target_candidate_id": review.target_candidate_id,
+        "identity_node_id": review.identity_node_id,
         "target_id": review.target_id,
         "target_type": review.target_type,
         "target_content_hash": review.target_content_hash,
+        "target_content": review.target_content,
         "decision": review.decision,
         "reviewer": review.reviewer,
         "review_comment": review.review_comment,

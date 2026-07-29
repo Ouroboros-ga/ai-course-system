@@ -167,8 +167,8 @@ app.state.startup_dependency_report = startup_dependency_report
 
 
 @app.on_event("startup")
-async def recover_document_parse_queue() -> None:
-    """Requeue unfinished document parses after a process restart."""
+async def recover_durable_task_queues() -> None:
+    """Recover parse and course-build work interrupted by a local restart."""
     try:
         from app.models.database import session_factory
         from app.platform.tasks.document_parse_queue import document_parse_queue
@@ -176,6 +176,14 @@ async def recover_document_parse_queue() -> None:
         await document_parse_queue.recover(session_factory, local_task_worker)
     except Exception:
         logger.exception("Document parse queue recovery failed")
+    try:
+        from app.models.database import session_factory
+        from app.platform.tasks.course_draft_build_queue import recover_course_draft_build_queue
+        from app.platform.tasks.worker import local_task_worker
+
+        await recover_course_draft_build_queue(session_factory, local_task_worker)
+    except Exception:
+        logger.exception("Course draft build queue recovery failed")
 
 # P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
 # disabled -> no injection -> /api/v1/teaching-agent/respond stays 503. Only

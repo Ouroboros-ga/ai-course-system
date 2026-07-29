@@ -32,6 +32,7 @@ from app.models.cognitive_state_model import (
     LearningEvidenceRecord,
     RecommendationRecord,
 )
+from app.models.graph_production_model import CourseKnowledgeNode, CourseKnowledgeNodeStatus
 from app.models.qa_model import MessageRole, QAMessage, QASession
 from app.models.question_bank_model import (
     QuestionAttempt,
@@ -54,6 +55,7 @@ from app.services.recommendation_service import (
     generate_recommendation,
     lock_recommendation,
     mark_recommendation_consumed,
+    refresh_cognition_and_recommendation,
     unlock_recommendation,
 )
 
@@ -1419,3 +1421,59 @@ def test_low_confidence_prerequisite_never_triggers_high_priority_prereq_review(
         f"实际 {rec.priority}，reason_codes={rec.reason_codes}"
     )
     assert rec.priority in ("low", "medium")
+
+
+def test_kn_identity_snapshot_and_answer_refresh_persist_formal_links(session):
+    """Automatic snapshots and answer refresh keep graph/cognitive IDs aligned."""
+    teacher = _user(session, "kn_identity_teacher", UserRole.TEACHER)
+    student = _user(session, "kn_identity_student")
+    course = _setup_course(session, teacher, student)
+
+    current = CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_current",
+        title="当前知识点",
+        status=CourseKnowledgeNodeStatus.PUBLISHED,
+    )
+    session.add(current)
+    session.commit()
+    session.refresh(current)
+
+    from app.services.graph_production_service import publish_snapshot
+
+    snapshot = publish_snapshot(
+        session,
+        course_id=course.id,
+        nodes=[{
+            "id": current.node_key,
+            "identity_id": current.id,
+            "title": current.title,
+            "type": "knowledge_point",
+        }],
+        relations=[],
+        user_id=teacher.id,
+    )
+
+    question = _create_published_question(session, course.id)
+    question.knowledge_node_ids = [current.id]
+    session.add(question)
+    session.commit()
+    attempt = _create_attempt(
+        session, student.id, course.id, question.id, is_correct=True,
+    )
+
+    from app.services.cognitive_service import record_scored_evidence
+
+    evidence = record_scored_evidence(session, attempt)
+    session.commit()
+    state, recommendation = refresh_cognition_and_recommendation(
+        session,
+        student_id=student.id,
+        course_id=course.id,
+        node_id=evidence.node_id,
+    )
+
+    assert state is not None and state.node_id == current.id
+    assert recommendation is not None
+    assert recommendation.graph_snapshot_id == snapshot.snapshot_id
+    assert recommendation.knowledge_node_id == current.id

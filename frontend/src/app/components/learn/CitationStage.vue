@@ -3,8 +3,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, ChevronDown, FileWarning, MessageSquareWarning } from 'lucide-vue-next'
 import {
   fetchCitations,
+  fetchCourseCitations,
+  fetchCourseEvidenceSpans,
   fetchEvidenceSpans,
   fetchPageImage,
+  fetchProtectedImageUrl,
   validateCitations,
 } from '@/api/evidence.js'
 import {
@@ -19,14 +22,17 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 /**
  * CITATION 原文引用舞台（page-design §12.9 / §6.8）。
  * 数据全部来自真实 V2 Evidence 端点：
- *  - citations / evidence spans / 校验结果 / 页图，均为真实调用；
+ *  - 学习页引用/证据来自课程级 graph/document-parse API；独立 Evidence Viewer
+ *    仍可使用 evidence-v2 的文档级能力；
  *  - 引用状态由 mapCitationStatus 按后端真实信号（valid/stale/abstain）推导，
  *    不推测为通过（修正：旧版假设 {key,status} 字段，与后端 {evidence_ref,valid} 不符）；
  *  - documentId 缺失 / 403 / 503 → 显式状态，绝不伪造引用；
- *  - evidence-v2 为 admin-only 影子端点，对学生标「实验能力」（§6.11）。
+ *  - admin-only 的 evidence-v2 不作为学习页依赖，权限/空数据均显式呈现。
  */
 const props = defineProps({
+  courseId: { type: [String, Number], default: null },
   documentId: { type: [String, Number], default: null },
+  preview: { type: Boolean, default: false },
 })
 
 const emit = defineEmits(['exit'])
@@ -57,7 +63,7 @@ function mapError(e) {
 }
 
 async function load() {
-  if (props.documentId == null || props.documentId === '') {
+  if ((props.courseId == null || props.courseId === '') && (props.documentId == null || props.documentId === '')) {
     status.value = 'no-document'
     return
   }
@@ -65,15 +71,30 @@ async function load() {
   expandedKey.value = null
   pageImages.value = {}
   try {
-    const [citationList, spanList] = await Promise.all([
-      fetchCitations(props.documentId),
-      fetchEvidenceSpans(props.documentId),
-    ])
+    // The learning workspace is course-scoped.  The document-scoped
+    // evidence-v2 routes are an admin-only shadow API and would return 401/403
+    // for ordinary teachers/students.  Keep the old path only for the
+    // standalone evidence viewer, which passes documentId without courseId.
+    const citationList = props.courseId != null && props.courseId !== ''
+      ? await fetchCourseCitations(props.courseId, props.preview ? { include_stale: true } : {})
+      : await fetchCitations(props.documentId)
+    let spanList = []
+    if (props.courseId != null && props.courseId !== '' && props.preview) {
+      try {
+        spanList = await fetchCourseEvidenceSpans(props.courseId)
+      } catch {
+        // Teacher preview may still show formal citations when candidate-span
+        // review is unavailable or has not been provisioned yet.
+        spanList = []
+      }
+    } else if (props.courseId == null || props.courseId === '') {
+      spanList = await fetchEvidenceSpans(props.documentId)
+    }
     citations.value = citationList
     spans.value = spanList
 
     // 真实校验引用状态（后端返回 details:[{evidence_ref,valid}] + abstain）
-    if (citationList.length) {
+    if (citationList.length && (props.courseId == null || props.courseId === '')) {
       try {
         const result = await validateCitations(props.documentId, citationList)
         validateDetails.value = Array.isArray(result?.details) ? result.details : []
@@ -105,9 +126,12 @@ async function toggleCitation(citation) {
   if (expandedKey.value && page != null && !pageImages.value[page]) {
     pageImages.value = { ...pageImages.value, [page]: { status: 'loading', url: '' } }
     try {
-      const pageData = await fetchPageImage(props.documentId, page)
-      if (!pageData?.imageUrl) throw new Error('empty image url')
-      pageImages.value = { ...pageImages.value, [page]: { status: 'ready', url: pageData.imageUrl } }
+      const renderUrl = citation.metadata?.renderUrl
+      const imageUrl = renderUrl
+        ? await fetchProtectedImageUrl(renderUrl)
+        : (await fetchPageImage(props.documentId, page))?.imageUrl
+      if (!imageUrl) throw new Error('empty image url')
+      pageImages.value = { ...pageImages.value, [page]: { status: 'ready', url: imageUrl } }
     } catch {
       pageImages.value = { ...pageImages.value, [page]: { status: 'error', url: '' } }
     }
@@ -115,7 +139,7 @@ async function toggleCitation(citation) {
 }
 
 // A7 修复：documentId 变化时重新加载（切换课程场景）
-watch(() => props.documentId, () => load())
+watch(() => [props.courseId, props.documentId, props.preview], () => load())
 
 onMounted(load)
 </script>

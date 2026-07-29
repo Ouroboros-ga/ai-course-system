@@ -40,6 +40,7 @@ from app.models.document_parse_model import (
 from app.models.task_model import TaskRecord
 from app.models.graph_production_model import (
     CourseEvidenceRecord,
+    CourseKnowledgeNode,
     EvidenceStatus,
     GraphSnapshotRecord,
     SnapshotStatus,
@@ -514,6 +515,47 @@ def test_confirm_evidence_span_creates_formal_evidence_and_citation(client, sess
     assert data["citation"]["status"] == "exact"
     assert data["citation"]["student_visible"] is True
     assert data["citation"]["source_file"] == "lecture.pdf"
+
+
+def test_confirm_evidence_span_preserves_identity_and_run_provenance(client, session):
+    """New graph identities survive the candidate -> Evidence/Citation promotion."""
+    teacher = _user(session, "s4_identity_evidence_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    material = _create_material(session, course.id, teacher.id)
+    run = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+    identity = CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_identity_evidence",
+        title="稳定节点",
+        source_candidate_id="cgcn_identity_evidence",
+    )
+    session.add(identity)
+    session.commit()
+    session.refresh(identity)
+    block = _create_block(session, course_id=course.id, run_id=run.run_id)
+    span = _create_candidate_span(
+        session, course_id=course.id, run_id=run.run_id, block_id=block.block_id,
+    )
+
+    response = client.post(
+        f"{GRAPH}/course/{course.id}/evidence-spans/{span.span_id}/confirm",
+        json={"identity_node_key": identity.node_key},
+        headers=_auth(_token(teacher)),
+    )
+
+    assert response.status_code == 200, response.text
+    data = response.json()["data"]
+    assert data["evidence"]["node_id"] == identity.id
+    assert data["evidence"]["run_id"] == run.run_id
+    assert data["evidence"]["span_id"] == span.span_id
+    assert data["citation"]["run_id"] == run.run_id
 
 
 def test_confirm_evidence_span_idempotent_rejects(client, session):

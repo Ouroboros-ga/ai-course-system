@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { ChevronDown, ChevronUp, GripVertical, LockKeyhole, LockOpen, Save, Sparkles } from 'lucide-vue-next'
 import { createOutlineNode, deleteOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, updateOutlineNode, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
@@ -19,6 +20,11 @@ const selectedId = ref('')
 const organizing = ref(false)
 const deleting = ref(false)
 const selected = computed(() => nodes.value.find((node) => node.outline_node_id === selectedId.value) ?? null)
+
+// 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
+// 这几个阶段下页面应提示"智能体首次智慧备课中"，避免教师误以为目录草稿缺失
+const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
+const isFirstPrepInProgress = computed(() => FIRST_PREP_PHASES.has(workbench?.draftBuildPhase))
 
 function select(node) {
   selectedId.value = node.outline_node_id
@@ -125,6 +131,12 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
   <section class="structure-stage">
     <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
+    <div v-else-if="isFirstPrepInProgress && !nodes.length" class="first-prep-pending" role="status" aria-live="polite">
+      <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
+      <h3>智能体首次智慧备课中</h3>
+      <p>助教智能体正在解析课程材料，并整理目录草稿与知识点结构。完成后此处会自动呈现可编辑的课程结构。</p>
+      <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
     <div v-else-if="!nodes.length" class="empty-state">
       <Sparkles :size="22" />
       <strong>课程结构尚未生成</strong>
@@ -140,9 +152,9 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
           :class="{ selected: selectedId === node.outline_node_id, locked: node.locked }"
           @click="select(node)"
         >
-          <span class="outline-order">{{ String(index + 1).padStart(2, '0') }}</span>
+          <span class="outline-order">{{ node.display_number || String(index + 1).padStart(2, '0') }}</span>
           <GripVertical :size="16" class="drag-mark" aria-hidden="true" />
-          <span class="outline-title">{{ node.title }}</span>
+          <span class="outline-title" :style="{ paddingInlineStart: `${Math.min((node.depth || 0) * 12, 36)}px` }">{{ node.title }}</span>
           <LockKeyhole v-if="node.locked" :size="15" aria-label="已锁定" class="lock-icon" />
           <span v-else-if="node.source_block_refs?.length" class="evidence-count">{{ node.source_block_refs.length }} 条证据</span>
         </button>
@@ -151,7 +163,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
       <article v-if="selected" class="node-editor">
         <header>
           <div>
-            <p class="node-type">{{ selected.node_type }} · 节点 {{ nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id) + 1 }}</p>
+            <p class="node-type">{{ selected.node_type }} · {{ selected.display_number || `节点 ${nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id) + 1}` }}</p>
             <h3>编辑课程节点</h3>
           </div>
           <SfxBadge :tone="selected.locked ? 'green' : 'amber'">{{ selected.locked ? '已锁定' : '可编辑' }}</SfxBadge>
@@ -201,6 +213,16 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .empty-state{display:grid;justify-items:center;gap:var(--space-2);padding:var(--space-12) var(--space-5);color:var(--text-muted);text-align:center}
 .empty-state strong{color:var(--text-primary);font-size:var(--title-3-size)}
 .empty-state p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
+.first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);padding:var(--space-12) var(--space-5);color:var(--text-secondary);text-align:center}
+.first-prep-pending h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);font-weight:var(--title-3-weight)}
+.first-prep-pending p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
+.first-prep-icon{width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700);display:flex;align-items:center;justify-content:center;animation:first-prep-pulse 1.6s ease-in-out infinite}
+.first-prep-progress{display:flex;gap:var(--space-2)}
+.first-prep-progress span{width:8px;height:8px;border-radius:var(--radius-full);background:var(--ink-500);opacity:.4;animation:first-prep-bounce 1.2s ease-in-out infinite}
+.first-prep-progress span:nth-child(2){animation-delay:.15s}
+.first-prep-progress span:nth-child(3){animation-delay:.3s}
+@keyframes first-prep-pulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(var(--ink-700-rgb, 60, 90, 160),.25)}50%{transform:scale(1.06);box-shadow:0 0 0 10px rgba(var(--ink-700-rgb, 60, 90, 160),0)}}
+@keyframes first-prep-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}
 @media(max-width:880px){.structure-workbench{grid-template-columns:1fr;overflow:visible}.outline-list{max-height:300px;overflow-y:auto}}
 @media(max-width:560px){.structure-stage{padding:var(--space-3)}.outline-row{padding:0 var(--space-2)}.evidence-count{display:none}.node-actions :deep(.sfx-btn){flex:1}}
 </style>

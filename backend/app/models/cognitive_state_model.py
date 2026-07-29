@@ -131,6 +131,8 @@ class RecommendationRecord(SQLModel, table=True):
     student_id: int = Field(foreign_key="users.id", index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     node_id: Optional[int] = Field(default=None)
+    graph_snapshot_id: Optional[str] = Field(default=None, index=True)
+    knowledge_node_id: Optional[int] = Field(default=None, index=True)
 
     recommendation_type: str = Field(index=True, description="推荐类型(RecommendationType枚举值)")
     priority: str = Field(default="low")

@@ -7,6 +7,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock, patch
 from pathlib import Path
+import uuid
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -118,6 +119,109 @@ class TestPlayerAPI:
         )
         # Course Access resolves scope before player data and fails closed.
         assert response.status_code in {403, 404}
+
+    def test_player_returns_empty_payload_for_accessible_course_without_content(
+        self, client, session, teacher_user, student_user, student_token,
+    ):
+        """An accessible draft course is an empty learning state, not a 404."""
+        from app.models.course_model import Course, CourseStatus
+        from app.services.course_access_service import (
+            activate_student_membership,
+            establish_course_access_baseline,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        course = Course(
+            fanya_course_id=f"empty-player-{suffix}",
+            fanya_course_name="Empty player fixture",
+            title="Empty player fixture",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.DRAFT,
+        )
+        session.add(course)
+        session.commit()
+        session.refresh(course)
+        establish_course_access_baseline(session, course.id, teacher_user.id)
+        activate_student_membership(session, course.id, student_user.id)
+        session.commit()
+
+        response = client.get(
+            f"/api/v1/player/init/{course.id}",
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["course_id"] == course.id
+        assert payload["nodes"] == []
+        assert payload["content_status"] == "unavailable"
+        assert payload["content_message"]
+
+    def test_teacher_can_preview_unpublished_outline_but_student_cannot(
+        self, client, session, teacher_user, student_user, teacher_token, student_token,
+    ):
+        """Draft lesson content is visible only through the teacher preview path."""
+        from app.models.course_model import Course, CourseStatus
+        from app.models.course_outline_model import (
+            CourseOutlineNode,
+            CourseOutlineVersion,
+            OutlineLifecycleStatus,
+            OutlineNodeType,
+        )
+        from app.services.course_access_service import (
+            activate_student_membership,
+            establish_course_access_baseline,
+        )
+
+        suffix = uuid.uuid4().hex[:8]
+        course = Course(
+            fanya_course_id=f"draft-preview-{suffix}",
+            fanya_course_name="Draft preview fixture",
+            title="Draft preview fixture",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.DRAFT,
+        )
+        session.add(course)
+        session.commit()
+        session.refresh(course)
+        establish_course_access_baseline(session, course.id, teacher_user.id)
+        activate_student_membership(session, course.id, student_user.id)
+
+        outline = CourseOutlineVersion(
+            course_id=course.id,
+            version=1,
+            lifecycle_status=OutlineLifecycleStatus.DRAFT,
+            created_by=teacher_user.id,
+        )
+        session.add(outline)
+        session.commit()
+        session.refresh(outline)
+        session.add(CourseOutlineNode(
+            course_id=course.id,
+            outline_version_id=outline.outline_version_id,
+            node_type=OutlineNodeType.KNOWLEDGE_POINT,
+            title="未发布的知识点",
+            order_index=1,
+            page_range="2-3",
+        ))
+        session.commit()
+
+        teacher_response = client.get(
+            f"/api/v1/player/init/{course.id}",
+            headers={"Authorization": f"Bearer {teacher_token}"},
+        )
+        assert teacher_response.status_code == 200
+        teacher_payload = teacher_response.json()
+        assert teacher_payload["content_status"] == "preview"
+        assert teacher_payload["nodes"][0]["title"] == "未发布的知识点"
+        assert teacher_payload["nodes"][0]["status"] == "preview"
+
+        student_response = client.get(
+            f"/api/v1/player/init/{course.id}",
+            headers={"Authorization": f"Bearer {student_token}"},
+        )
+        assert student_response.status_code == 200
+        assert student_response.json()["content_status"] == "unavailable"
 
     def test_save_player_progress_new_record(self, mock_session, mock_user):
         """测试保存学习进度 - 新记录"""

@@ -19,6 +19,7 @@ import {
   parseCitationValidationResult,
   EvidenceStatus,
 } from '../features/evidence-viewer/contracts.js'
+import request from '../utils/request.js'
 
 /**
  * @typedef {Object} DocumentPageResponse
@@ -119,6 +120,15 @@ export async function fetchDocumentPages(documentId) {
   return Array.isArray(data) ? data : (data.pages ?? [])
 }
 
+/** Fetch a protected course page and return a browser-safe blob URL. */
+export async function fetchProtectedImageUrl(url) {
+  if (!url) return null
+  const relativeUrl = url.replace(/^\/api\/v1\//, '')
+  const blob = await request.get(relativeUrl, { responseType: 'blob' })
+  if (!(blob instanceof Blob)) throw new Error('Evidence render did not return an image')
+  return URL.createObjectURL(blob)
+}
+
 // ---------------------------------------------------------------------------
 // Citations
 // ---------------------------------------------------------------------------
@@ -140,6 +150,72 @@ export async function fetchCitations(documentId, options = {}) {
   const data = await response.json()
   const items = Array.isArray(data) ? data : (data.citations ?? [])
   return items.map(item => parseCitation(item)).filter(Boolean)
+}
+
+/**
+ * Fetch learner-facing citations through the course-scoped production API.
+ *
+ * The internal ``evidence-v2`` routes above are deliberately admin-only and
+ * must not be used by the learning workspace.  This adapter keeps the
+ * evidence-viewer shape while preserving the course citation status and the
+ * signed page-render URL returned by the graph/document-parse API.
+ */
+export async function fetchCourseCitations(courseId, options = {}) {
+  if (courseId == null || courseId === '') return []
+  const data = await request.get(
+    `graph/course/${encodeURIComponent(courseId)}/citations`,
+    { params: options },
+  )
+  const items = Array.isArray(data) ? data : (data?.items ?? data?.citations ?? [])
+  return items
+    .map((item) => {
+      const statement = item?.text_snippet ?? item?.statement ?? ''
+      if (!statement) return null
+      const status = String(item?.status ?? '').toLowerCase()
+      return {
+        key: item?.citation_id ?? item?.key ?? null,
+        statement,
+        evidenceRef: item?.evidence_id ?? item?.evidence_ref ?? item?.citation_id ?? null,
+        pageOrSlide: item?.page_number ?? item?.page_or_slide ?? null,
+        confidence: status === 'exact' ? 1 : status === 'approximate' ? 0.7 : null,
+        metadata: {
+          courseId,
+          citationId: item?.citation_id ?? null,
+          sourceStatus: status || null,
+          sourceFile: item?.source_file ?? null,
+          documentId: item?.document_id ?? null,
+          renderUrl: item?.render_url ?? null,
+          raw: item,
+        },
+      }
+    })
+    .filter(Boolean)
+}
+
+/**
+ * Fetch teacher evidence spans from the course-scoped production API.
+ * Students do not have ``evidence.review``; callers should only request this
+ * in a teacher preview and treat a forbidden response as an empty evidence
+ * list rather than hiding otherwise readable citations.
+ */
+export async function fetchCourseEvidenceSpans(courseId, options = {}) {
+  if (courseId == null || courseId === '') return []
+  const data = await request.get(
+    `graph/course/${encodeURIComponent(courseId)}/evidence-spans`,
+    { params: options },
+  )
+  const items = Array.isArray(data) ? data : (data?.items ?? data?.evidence_spans ?? [])
+  return items.map((item) => parseEvidenceSpan({
+    artifact_id: item?.span_id ?? item?.linked_evidence_id ?? item?.block_id,
+    document_id: item?.document_id,
+    block_id: item?.block_id ?? item?.span_id,
+    page_or_slide: item?.page_number,
+    char_start: item?.char_start,
+    char_end: item?.char_end,
+    text_snippet: item?.text_snippet,
+    status: item?.status === 'stale' ? 'stale' : 'active',
+    metadata: item,
+  })).filter(Boolean)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,11 +244,37 @@ export async function fetchEvidenceSpans(documentId, options = {}) {
 /** Read the production Canonical DocumentIR anchor projection for one run. */
 export async function fetchCanonicalEvidenceViewer(courseId, runId) {
   if (!courseId || !runId) throw new Error('courseId and runId are required')
-  const response = await evidenceFetch(
-    `/api/v1/graph/course/${encodeURIComponent(courseId)}/document-ir/${encodeURIComponent(runId)}/anchors`,
+  const data = await request.get(
+    `graph/course/${encodeURIComponent(courseId)}/document-ir/${encodeURIComponent(runId)}/anchors`,
   )
-  const body = await response.json()
-  const data = body?.data ?? body ?? {}
+  let rawCitations = []
+  try {
+    const citationData = await request.get(
+      `graph/course/${encodeURIComponent(courseId)}/citations`,
+      { params: { include_stale: true } },
+    )
+    rawCitations = citationData?.items ?? []
+  } catch {
+    // Keep the empty initial value when the optional citation projection is unavailable.
+  }
+  const citations = rawCitations
+    .filter((citation) => !citation.run_id || citation.run_id === runId)
+    .map((citation) => parseCitation({
+      key: citation.citation_id,
+      statement: citation.text_snippet,
+      evidence_ref: citation.evidence_id ?? null,
+      page_or_slide: citation.page_number,
+      metadata: {
+        course_id: citation.course_id,
+        run_id: citation.run_id,
+        document_id: citation.document_id,
+        status: citation.status,
+        source_file: citation.source_file,
+        bbox: citation.bbox,
+        source_anchor_ids: citation.source_anchor_ids ?? [],
+      },
+    }))
+    .filter(Boolean)
   const pageAssets = Array.isArray(data.page_assets) ? data.page_assets : []
   const pages = new Map(pageAssets.map((page) => [Number(page.page_or_slide), page]))
   const evidenceSpans = (Array.isArray(data.items) ? data.items : []).map((anchor) => ({
@@ -185,13 +287,14 @@ export async function fetchCanonicalEvidenceViewer(courseId, runId) {
     char_start: anchor.char_start,
     char_end: anchor.char_end,
     text_snippet: anchor.text,
-    status: anchor.status === 'active' ? 'active' : 'suspended',
+    status: anchor.status === 'active' ? 'active' : (anchor.status === 'stale' ? 'stale' : 'suspended'),
     metadata: anchor.bbox ? { bboxes: [anchor.bbox] } : {},
   })).map((anchor) => parseEvidenceSpan(anchor)).filter(Boolean)
   const maxPage = Math.max(0, ...pageAssets.map((page) => Number(page.page_or_slide) || 0))
   return {
     runId: data.run_id ?? runId,
     documentId: data.items?.[0]?.document_id ?? '',
+    citations,
     evidenceSpans,
     pageImageUrls: Array.from({ length: maxPage }, (_, index) => pages.get(index + 1)?.rendition_url ?? null),
   }

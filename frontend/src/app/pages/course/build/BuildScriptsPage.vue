@@ -24,6 +24,10 @@ const outlineBreadcrumb = (item) => {
   return breadcrumb.length > 1 ? breadcrumb.slice(0, -1).join(' / ') : '课程结构'
 }
 
+// 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
+const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
+const isFirstPrepInProgress = computed(() => FIRST_PREP_PHASES.has(workbench?.draftBuildPhase))
+
 function select(item) { selectedId.value = item.script_node_id }
 async function load() {
   state.value = 'loading'; error.value = ''
@@ -107,6 +111,12 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
   <section class="scripts-stage">
     <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
+    <div v-else-if="isFirstPrepInProgress && !items.length" class="first-prep-pending" role="status" aria-live="polite">
+      <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
+      <h3>智能体首次智慧备课中</h3>
+      <p>助教智能体正在解析课程材料，并生成讲授脚本草稿。完成后此处会自动呈现可审核的讲稿节点。</p>
+      <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
     <div v-else-if="!items.length" class="empty-state"><Sparkles :size="22" /><strong>讲授脚本尚未生成</strong><p>先确认课程结构并完成首次智能备课，系统才会生成可审核的讲稿草稿。</p></div>
     <div v-else class="scripts-workbench">
       <div class="script-list" aria-label="讲稿节点列表">
@@ -154,6 +164,16 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .empty-state{display:grid;justify-items:center;gap:var(--space-2);padding:var(--space-12) var(--space-5);color:var(--text-muted);text-align:center}
 .empty-state strong{color:var(--text-primary);font-size:var(--title-3-size)}
 .empty-state p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
+.first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);padding:var(--space-12) var(--space-5);color:var(--text-secondary);text-align:center}
+.first-prep-pending h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);font-weight:var(--title-3-weight)}
+.first-prep-pending p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
+.first-prep-icon{width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700);display:flex;align-items:center;justify-content:center;animation:first-prep-pulse 1.6s ease-in-out infinite}
+.first-prep-progress{display:flex;gap:var(--space-2)}
+.first-prep-progress span{width:8px;height:8px;border-radius:var(--radius-full);background:var(--ink-500);opacity:.4;animation:first-prep-bounce 1.2s ease-in-out infinite}
+.first-prep-progress span:nth-child(2){animation-delay:.15s}
+.first-prep-progress span:nth-child(3){animation-delay:.3s}
+@keyframes first-prep-pulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(var(--ink-700-rgb, 60, 90, 160),.25)}50%{transform:scale(1.06);box-shadow:0 0 0 10px rgba(var(--ink-700-rgb, 60, 90, 160),0)}}
+@keyframes first-prep-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}
 .missing-script{padding:var(--space-4);border:1px dashed var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-muted);line-height:1.6}
 @media(max-width:880px){.scripts-workbench{grid-template-columns:1fr;overflow:visible}.script-list{max-height:260px;overflow:auto}}
 @media(max-width:560px){.scripts-stage{padding:var(--space-3)}.script-editor{padding:var(--space-3)}.script-actions :deep(.sfx-btn){flex:1}}

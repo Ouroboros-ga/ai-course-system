@@ -16,13 +16,16 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.course_build_model import (
     BuildStepName,
     BuildStepStatus,
+    CourseCorpusSnapshot,
+    CourseDraftBuildTask,
+    CorpusSnapshotStatus,
     MaterialStatus,
 )
 from app.models.database import get_session
@@ -33,6 +36,8 @@ from app.services.course_build_service import (
     quality_gate_service,
     source_material_service,
 )
+from app.services.course_corpus_service import course_corpus_service
+from app.core.exceptions import reject_state_conflict
 
 
 course_build_router = APIRouter()
@@ -90,6 +95,111 @@ async def list_materials(
             "total": len(items),
         },
     )
+
+
+@course_build_router.get("/course/{course_id}/draft-build-status")
+async def get_draft_build_status(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return the automatic course-preparation state for the material workspace.
+
+    Uploading materials is the only teacher action that starts initial
+    preparation.  This endpoint is deliberately read-only: it tells the UI
+    whether parsing is still in progress, a corpus is being assembled, or the
+    durable course-build task is queued/running/finished.
+    """
+    require_course_permission(session, current_user, course_id, "course.view")
+    materials = source_material_service.list_materials(session, course_id=course_id)
+    included = [item for item in materials if item.include_in_course_corpus]
+    if not included:
+        return unified_response(code=200, message="等待上传课程材料", data={
+            "course_id": course_id,
+            "phase": "waiting_for_materials",
+            "build_status": None,
+            "corpus_snapshot_id": None,
+            "course_draft_build_task_id": None,
+            "task_id": None,
+            "error_message": "",
+        })
+    pending = [
+        item for item in included
+        if item.status not in {MaterialStatus.PARSED, MaterialStatus.NEEDS_REVIEW, MaterialStatus.FAILED}
+    ]
+    failed = [item for item in included if item.status == MaterialStatus.FAILED]
+    if pending:
+        return unified_response(code=200, message="课程材料仍在解析", data={
+            "course_id": course_id,
+            "phase": "parsing_materials",
+            "build_status": None,
+            "corpus_snapshot_id": None,
+            "course_draft_build_task_id": None,
+            "task_id": None,
+            "error_message": "",
+        })
+    if failed:
+        return unified_response(code=200, message="课程材料解析需要处理", data={
+            "course_id": course_id,
+            "phase": "blocked_by_materials",
+            "build_status": None,
+            "corpus_snapshot_id": None,
+            "course_draft_build_task_id": None,
+            "task_id": None,
+            "error_message": "存在解析失败的已纳入材料；请重试或明确排除后再自动构建课程。",
+        })
+
+    expected_version_ids = sorted(item.current_version_id for item in included if item.current_version_id)
+    corpus = session.exec(select(CourseCorpusSnapshot).where(
+        CourseCorpusSnapshot.course_id == course_id,
+        CourseCorpusSnapshot.status == CorpusSnapshotStatus.READY,
+    ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
+    if corpus is None or sorted(corpus.material_version_ids or []) != expected_version_ids:
+        return unified_response(code=200, message="正在汇总课程材料", data={
+            "course_id": course_id,
+            "phase": "assembling_corpus",
+            "build_status": None,
+            "corpus_snapshot_id": None,
+            "course_draft_build_task_id": None,
+            "task_id": None,
+            "error_message": "",
+        })
+
+    build = session.exec(select(CourseDraftBuildTask).where(
+        CourseDraftBuildTask.course_id == course_id,
+        CourseDraftBuildTask.corpus_snapshot_id == corpus.corpus_snapshot_id,
+    ).order_by(CourseDraftBuildTask.created_at.desc())).first()
+    if build is None:
+        # The document worker has persisted the snapshot; a durable build task
+        # will be submitted in the same completion flow shortly afterwards.
+        return unified_response(code=200, message="正在提交智能备课任务", data={
+            "course_id": course_id,
+            "phase": "submitting_build",
+            "build_status": None,
+            "corpus_snapshot_id": corpus.corpus_snapshot_id,
+            "course_draft_build_task_id": None,
+            "task_id": None,
+            "error_message": "",
+        })
+
+    status = build.status.value if hasattr(build.status, "value") else str(build.status)
+    phase_by_status = {
+        "queued": "building",
+        "running": "building",
+        "succeeded": "ready_for_review",
+        "partial_success": "ready_for_review",
+        "failed": "build_failed",
+        "cancelled": "build_cancelled",
+    }
+    return unified_response(code=200, message="获取自动备课状态成功", data={
+        "course_id": course_id,
+        "phase": phase_by_status.get(status, "building"),
+        "build_status": status,
+        "corpus_snapshot_id": corpus.corpus_snapshot_id,
+        "course_draft_build_task_id": build.build_task_id,
+        "task_id": build.task_id,
+        "error_message": build.error_message or "",
+    })
 
 
 @course_build_router.post("/course/{course_id}/materials")
@@ -506,6 +616,64 @@ async def confirm_validation_warnings(
         "warning_override_confirmed_by": run.warning_override_confirmed_by,
         "warning_override_reason": run.warning_override_reason,
         "warning_override_at": run.warning_override_at.isoformat() if run.warning_override_at else None,
+    })
+
+
+@course_build_router.post("/course/{course_id}/initial-draft/rebuild")
+async def rebuild_unreviewed_initial_draft(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Ask the preparation Agent to replace only an untouched initial draft.
+
+    The worker repeats the draft-safety check immediately before persistence.
+    Therefore a concurrent teacher edit or lock fails safely instead of being
+    overwritten by this asynchronous task.
+    """
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    corpus = session.exec(select(CourseCorpusSnapshot).where(
+        CourseCorpusSnapshot.course_id == course_id,
+        CourseCorpusSnapshot.status == "ready",
+    ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
+    if corpus is None or not course_corpus_service.is_snapshot_current(session, corpus=corpus):
+        reject_state_conflict(
+            "当前课程材料尚未形成可用语料快照，请先完成解析或等待课程材料汇总",
+            details={"error_code": "CURRENT_CORPUS_REQUIRED"},
+        )
+
+    build, task_id = course_corpus_service.create_build_task(
+        session,
+        corpus=corpus,
+        owner_user_id=context.user_id,
+        trigger="teacher_restart_unreviewed_initial",
+        quiet_window_seconds=0,
+        force_initial=True,
+    )
+    if build.generation_mode != "initial":
+        reject_state_conflict(
+            "当前语料已有其他课程构建任务，请等待其完成后再重新整理初稿",
+            details={"error_code": "COURSE_BUILD_ALREADY_RUNNING", "task_id": build.task_id},
+        )
+    session.commit()
+    try:
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+
+        local_task_worker.submit(session_factory, task_id, {
+            "course_id": course_id,
+            "corpus_snapshot_id": corpus.corpus_snapshot_id,
+            "build_task_id": build.build_task_id,
+        })
+    except Exception:
+        # The durable task stays queued and can be recovered by the task worker.
+        pass
+    return unified_response(code=202, message="已提交未审核初稿的重新整理任务", data={
+        "course_id": course_id,
+        "corpus_snapshot_id": corpus.corpus_snapshot_id,
+        "course_draft_build_task_id": build.build_task_id,
+        "task_id": task_id,
+        "generation_mode": build.generation_mode,
     })
 
 

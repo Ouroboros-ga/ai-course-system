@@ -1,4 +1,5 @@
 import request from '@/utils/request.js'
+import { fetchProtectedImageUrl } from '@/api/evidence.js'
 
 /**
  * P2 批次3 知识图谱 API
@@ -121,6 +122,13 @@ export function publishSnapshot(courseId, payload) {
   return request.post(`/graph/course/${courseId}/publish`, payload)
 }
 
+/** Publish the current fully reviewed candidate batch. The server assembles
+ * stable node identities, active Evidence and student-readable citation refs.
+ */
+export function publishReviewedSnapshot(courseId, payload = {}) {
+  return request.post(`/graph/course/${courseId}/publish-reviewed`, payload)
+}
+
 /**
  * 回滚到指定快照。
  * POST /graph/course/{courseId}/rollback/{snapshotId}
@@ -146,6 +154,34 @@ export function rollbackSnapshot(courseId, snapshotId) {
 export function listEvidence(courseId, params = {}) {
   return request.get(`/graph/course/${courseId}/evidence`, { params })
 }
+
+/** List candidate/confirmed evidence spans for teacher evidence governance. */
+export function listEvidenceSpans(courseId, params = {}) {
+  return request.get(`/graph/course/${courseId}/evidence-spans`, { params })
+}
+
+/** Confirm one candidate span and promote it to formal Evidence + Citation. */
+export function confirmEvidenceSpan(courseId, spanId, payload = {}) {
+  return request.post(
+    `/graph/course/${courseId}/evidence-spans/${encodeURIComponent(spanId)}/confirm`,
+    payload,
+  )
+}
+
+/** Reject one candidate span with an auditable reason. */
+export function rejectEvidenceSpan(courseId, spanId, payload = {}) {
+  return request.post(
+    `/graph/course/${courseId}/evidence-spans/${encodeURIComponent(spanId)}/reject`,
+    payload,
+  )
+}
+
+/** List formal student-readable citations (teacher view may include stale). */
+export function listCourseCitations(courseId, params = {}) {
+  return request.get(`/graph/course/${courseId}/citations`, { params })
+}
+
+export { fetchProtectedImageUrl }
 
 /**
  * 添加学习证据（关联课程与文档）。

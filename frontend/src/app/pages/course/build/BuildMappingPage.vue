@@ -1,15 +1,21 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { generateCoursePpt, getPptMappingState, updatePptMapping, uploadExistingPpt } from '@/api/course_editor.js'
 import { useRoute } from 'vue-router'
+import { Sparkles } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
+const workbench = inject('courseBuildWorkbench', null)
 const state = ref(null)
 const loading = ref(true)
 const inputRef = ref(null)
 const message = ref('')
+
+// 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
+const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
+const isFirstPrepInProgress = computed(() => FIRST_PREP_PHASES.has(workbench?.draftBuildPhase))
 
 async function load() {
   loading.value = true
@@ -35,6 +41,12 @@ onMounted(load)
 <template>
   <section class="stage">
     <div v-if="loading" class="empty">正在读取映射状态…</div>
+    <div v-else-if="isFirstPrepInProgress && !state?.has_ppt" class="first-prep-pending" role="status" aria-live="polite">
+      <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
+      <h3>智能体首次智慧备课中</h3>
+      <p>助教智能体正在解析课程材料，并整理课程结构与讲授脚本。完成首次备课后，PPT 映射才能基于已确认的节点生成。</p>
+      <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+    </div>
     <div v-else-if="!state?.has_ppt" class="frozen">
       <h2>当前课程尚无可映射的 PPT 文件</h2>
       <p>PDF、DOCX 和 DOC 的页码仍可用于原文引用，但不会自动成为教学 PPT 映射。</p>
@@ -44,7 +56,7 @@ onMounted(load)
     </div>
     <div v-else class="ready">
       <h2>已发现 PPT 文件</h2><p>可编辑课程节点对应的幻灯片页码。</p>
-      <div class="mapping-list"><label v-for="node in state.nodes" :key="node.outline_node_id"><span>{{ node.title }}</span><input v-model="node.page_range" placeholder="页码，例如 1-3" @blur="saveMapping(node)" /></label></div>
+      <div class="mapping-list"><label v-for="node in state.nodes" :key="node.outline_node_id"><span>{{ node.display_label || node.title }}</span><input v-model="node.page_range" placeholder="页码，例如 1-3" @blur="saveMapping(node)" /></label></div>
     </div>
     <p v-if="message" class="message">{{ message }}</p>
   </section>
@@ -62,4 +74,14 @@ onMounted(load)
 .mapping-list span{flex:1}
 .mapping-list input{width:150px;padding:var(--space-1);border:1px solid var(--border-strong);border-radius:var(--radius-sm)}
 .message{margin-top:var(--space-4);color:var(--ink-700)}
+.first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);padding:var(--space-12) var(--space-5);color:var(--text-secondary);text-align:center}
+.first-prep-pending h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);font-weight:var(--title-3-weight)}
+.first-prep-pending p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
+.first-prep-icon{width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700);display:flex;align-items:center;justify-content:center;animation:first-prep-pulse 1.6s ease-in-out infinite}
+.first-prep-progress{display:flex;gap:var(--space-2)}
+.first-prep-progress span{width:8px;height:8px;border-radius:var(--radius-full);background:var(--ink-500);opacity:.4;animation:first-prep-bounce 1.2s ease-in-out infinite}
+.first-prep-progress span:nth-child(2){animation-delay:.15s}
+.first-prep-progress span:nth-child(3){animation-delay:.3s}
+@keyframes first-prep-pulse{0%,100%{transform:scale(1);box-shadow:0 0 0 0 rgba(var(--ink-700-rgb, 60, 90, 160),.25)}50%{transform:scale(1.06);box-shadow:0 0 0 10px rgba(var(--ink-700-rgb, 60, 90, 160),0)}}
+@keyframes first-prep-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}
 </style>

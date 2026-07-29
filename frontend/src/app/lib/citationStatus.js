@@ -34,6 +34,17 @@ export function mapCitationStatus(citation, validateDetails = [], spansByEvidenc
     return CITATION_STATUS.NO_EVIDENCE
   }
 
+  // Course-scoped citation responses carry an auditable source status even
+  // though they do not expose the admin-only V2 validation endpoint.  Prefer
+  // that signal over guessing "verified" from the presence of a citation.
+  const sourceStatus = String(citation.metadata?.sourceStatus ?? '').toLowerCase()
+  if (sourceStatus === 'exact' || sourceStatus === 'verified') return CITATION_STATUS.VERIFIED
+  if (sourceStatus === 'approximate' || sourceStatus === 'partial') return CITATION_STATUS.PARTIAL
+  if (sourceStatus === 'stale' || sourceStatus === 'source_updated') return CITATION_STATUS.STALE
+  if (sourceStatus === 'source_invalid' || sourceStatus === 'orphaned' || sourceStatus === 'mismatch') {
+    return CITATION_STATUS.MISMATCH
+  }
+
   // 关联的证据 span 已 stale → 来源已更新（真实信号）
   const linkedSpan = citation.evidenceRef ? spansByEvidenceRef[citation.evidenceRef] : null
   if (linkedSpan && linkedSpan.status === 'stale') {

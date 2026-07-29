@@ -14,25 +14,28 @@
       :evidenceSpans="evidenceSpans"
       :pageImageUrls="pageImageUrls"
       :totalPages="pageImageUrls.length"
+      :initialPage="initialPage"
     />
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import EvidenceViewerWithPanel from '@/features/evidence-viewer/components/EvidenceViewerWithPanel.vue'
-import { fetchCanonicalEvidenceViewer } from '@/api/evidence.js'
+import { fetchCanonicalEvidenceViewer, fetchProtectedImageUrl } from '@/api/evidence.js'
 
 const route = useRoute()
 const courseId = String(route.params.courseId || route.query.courseId || '')
 const runId = String(route.params.runId || route.query.runId || '')
+const initialPage = Math.max(1, Number(route.query.page || 1))
 const documentId = ref('')
 const loading = ref(true)
 const error = ref(null)
 const citations = ref([])
 const evidenceSpans = ref([])
 const pageImageUrls = ref([])
+const objectUrls = []
 
 onMounted(async () => {
   if (!courseId || !runId) {
@@ -42,12 +45,26 @@ onMounted(async () => {
   try {
     const data = await fetchCanonicalEvidenceViewer(courseId, runId)
     documentId.value = data.documentId
+    citations.value = data.citations || []
     evidenceSpans.value = data.evidenceSpans
-    pageImageUrls.value = data.pageImageUrls
+    pageImageUrls.value = await Promise.all((data.pageImageUrls || []).map(async (url) => {
+      if (!url) return null
+      try {
+        const objectUrl = await fetchProtectedImageUrl(url)
+        if (objectUrl) objectUrls.push(objectUrl)
+        return objectUrl
+      } catch {
+        return null
+      }
+    }))
   } catch (reason) {
     error.value = reason?.message || String(reason)
   }
   loading.value = false
+})
+
+onUnmounted(() => {
+  objectUrls.forEach((url) => URL.revokeObjectURL(url))
 })
 </script>
 
