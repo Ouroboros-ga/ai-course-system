@@ -456,6 +456,33 @@ async def unlock_outline_node(course_id: int, node_id: str, session: Session = D
     return unified_response(200, "目录节点已解锁", _outline_node_view(node))
 
 
+@router.delete("/course/{course_id}/outline/nodes/{node_id}")
+async def delete_outline_node(course_id: int, node_id: str, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    context = require_course_permission(session, current_user, course_id, "course.structure.edit")
+    node = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_node_id == node_id, CourseOutlineNode.course_id == course_id,
+    )).first()
+    if not node:
+        raise HTTPException(404, "目录节点不存在")
+    version = session.exec(select(CourseOutlineVersion).where(
+        CourseOutlineVersion.outline_version_id == node.outline_version_id,
+    )).first()
+    if not version or version.lifecycle_status != OutlineLifecycleStatus.DRAFT:
+        raise HTTPException(409, "已发布目录不可直接编辑")
+    if node.locked_by is not None and node.locked_by != context.user_id:
+        raise HTTPException(409, "节点已被教师锁定")
+    version_id = node.outline_version_id
+    session.delete(node)
+    # 重新整理剩余节点顺序，避免 order_index 出现空洞
+    remaining = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == version_id,
+    ).order_by(CourseOutlineNode.order_index)).all()
+    for index, n in enumerate(remaining):
+        n.order_index = index; n.updated_at = utcnow_aware(); session.add(n)
+    session.commit()
+    return unified_response(200, "目录节点已删除", {"outline_node_id": node_id})
+
+
 @router.get("/course/{course_id}/scripts")
 async def get_scripts(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.view")

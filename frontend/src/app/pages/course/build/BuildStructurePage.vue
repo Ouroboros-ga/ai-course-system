@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ChevronDown, ChevronUp, GripVertical, LockKeyhole, LockOpen, Save, Sparkles } from 'lucide-vue-next'
-import { createOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, updateOutlineNode, runPrepAgentCommand } from '@/api/course_editor.js'
+import { createOutlineNode, deleteOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, updateOutlineNode, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
@@ -17,6 +17,7 @@ const editable = ref(false)
 const saving = ref('')
 const selectedId = ref('')
 const organizing = ref(false)
+const deleting = ref(false)
 const selected = computed(() => nodes.value.find((node) => node.outline_node_id === selectedId.value) ?? null)
 
 function select(node) {
@@ -56,6 +57,19 @@ async function addNode() {
     nodes.value.push(item); select(item)
   } catch (caught) { error.value = caught?.message || '新增课程节点失败' }
 }
+async function deleteNode() {
+  const node = selected.value
+  if (!node || deleting.value) return
+  deleting.value = true; error.value = ''
+  try {
+    await deleteOutlineNode(courseId.value, node.outline_node_id)
+    const index = nodes.value.findIndex((n) => n.outline_node_id === node.outline_node_id)
+    nodes.value.splice(index, 1)
+    selectedId.value = nodes.value[Math.max(0, index - 1)]?.outline_node_id ?? ''
+    if (workbench) workbench.selectedNode = selected.value
+  } catch (caught) { error.value = caught?.message || '删除节点失败' }
+  finally { deleting.value = false }
+}
 async function move(index, delta) {
   const targetIndex = index + delta
   if (targetIndex < 0 || targetIndex >= nodes.value.length || !editable.value) return
@@ -89,14 +103,17 @@ function openAgent() {
 function refreshAfterProposal() { load() }
 
 // 通过 workbench.stageActions 把按钮操作暴露给 BuildLayout 的 stage-context
-watch([editable, nodes, organizing], () => {
+watch([editable, nodes, organizing, deleting, selectedId], () => {
   if (workbench) {
     workbench.stageActions = {
       canOrganize: editable.value && nodes.value.length > 0,
       organizing: organizing.value,
       canAdd: editable.value,
+      canDelete: editable.value && Boolean(selected.value) && nodes.value.length > 0,
+      deleting: deleting.value,
       onOrganize: organizeAll,
       onAdd: addNode,
+      onDelete: deleteNode,
     }
   }
 }, { immediate: true })
