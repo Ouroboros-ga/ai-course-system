@@ -414,7 +414,20 @@ class CourseCorpusService:
             session.add(build)
             if build.task_id:
                 try:
-                    task_service.cancel(session, build.task_id, reason=reason)
+                    task = task_service.get_task(session, build.task_id)
+                    if task.status in {"pending", "running"}:
+                        task_service.cancel(session, build.task_id, reason=reason)
+                    else:
+                        # A process restart may leave the orchestration row
+                        # queued while its durable task is already terminal.
+                        # The stale build still must be cancelled, but there
+                        # is no task transition left to perform.
+                        logger.info(
+                            "Course build task %s already terminal (%s); "
+                            "only invalidated its stale build record",
+                            build.task_id,
+                            task.status,
+                        )
                 except ValueError:
                     # The handler validates freshness before generating; an
                     # already running task is therefore still safe.

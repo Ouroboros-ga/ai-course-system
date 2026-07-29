@@ -9,6 +9,7 @@ from sqlmodel import select
 from app.core.security import get_password_hash
 from app.models.course_build_model import (
     CourseCorpusItem,
+    CourseDraftBuildStatus,
     CourseDraftBuildTask,
     MaterialStatus,
     SourceMaterial,
@@ -17,6 +18,7 @@ from app.models.course_build_model import (
 from app.models.course_model import Course, CourseStatus
 from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
 from app.models.document_parse_model import DocumentBlock, DocumentIRVersion, DocumentParseRun, ParseRunStatus
+from app.models.task_model import TaskRecord
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.course_corpus_service import course_corpus_service
@@ -160,3 +162,35 @@ def test_corpus_role_strategy_keeps_primary_order_and_layers_other_materials(ses
     assert textbook_detail.block_id in knowledge.source_block_refs
     practice = next(node for node in nodes if node.node_type == OutlineNodeType.PRACTICE_SUGGESTION)
     assert practice.source_block_refs == [experiment_task.block_id]
+
+
+def test_material_change_invalidates_stale_queued_build_with_interrupted_task(session):
+    """A restart must not make the next material upload return a 409."""
+    owner, course = _course_owner(session)
+    task = TaskRecord(
+        task_id=uuid4().hex,
+        task_type="course_draft_build",
+        status="interrupted",
+        owner_user_id=owner.id,
+        course_id=course.id,
+    )
+    session.add(task)
+    session.flush()
+    build = CourseDraftBuildTask(
+        course_id=course.id,
+        corpus_snapshot_id=f"snapshot-{uuid4().hex}",
+        task_id=task.task_id,
+        owner_user_id=owner.id,
+        status=CourseDraftBuildStatus.QUEUED,
+    )
+    session.add(build)
+    session.commit()
+
+    course_corpus_service.invalidate_queued_builds(
+        session, course_id=course.id, reason="materials changed",
+    )
+
+    session.refresh(build)
+    session.refresh(task)
+    assert build.status == CourseDraftBuildStatus.CANCELLED
+    assert task.status == "interrupted"

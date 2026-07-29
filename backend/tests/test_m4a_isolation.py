@@ -15,6 +15,13 @@ async def _call_fake(fake, method_name, *args, **kwargs):
 
 def test_app_import_is_safe_and_startup_side_effects_are_skipped(fastapi_app):
     assert fastapi_app.state.startup_side_effects_skipped is True
+
+
+def test_app_registers_durable_parse_handler_when_startup_side_effects_are_skipped(fastapi_app):
+    """Test-mode imports still need to execute queued local parse work."""
+    from app.platform.tasks.worker import local_task_worker
+
+    assert local_task_worker.has_handler("document_parse")
     assert fastapi_app.state.startup_dependency_report is None
 
 

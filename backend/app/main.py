@@ -40,14 +40,6 @@ def run_startup_side_effects():
     if dep_report["python_installed"]:
         logger.info(f"自动安装的Python包: {', '.join(dep_report['python_installed'])}")
 
-    # 注册任务中心业务 handler（自检 + 业务域）
-    try:
-        from app.platform.tasks.handlers import register_all_handlers
-        register_all_handlers()
-        logger.info("Task worker handlers registered (self_check + business)")
-    except Exception:
-        logger.exception("Failed to register task worker handlers; tasks will stay pending")
-
     # 启动任务扫尾：把上一进程遗留的 pending/running 任务标为 interrupted。
     # LocalTaskWorker 用 asyncio.create_task 执行，进程重启后这些任务既不会
     # 成功也不会失败，会永远停在 running。此处把它们转为 interrupted，
@@ -64,6 +56,22 @@ def run_startup_side_effects():
         logger.exception("Startup task sweep failed; stale running tasks may persist")
 
     return dep_report
+
+
+def register_task_handlers() -> None:
+    """Register durable local task handlers even in no-side-effect mode.
+
+    ``AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS`` skips dependency installation and
+    database maintenance for tests and controlled local starts. It must not
+    turn a running API into an upload-only service that leaves parse tasks in
+    ``pending`` forever.
+    """
+    try:
+        from app.platform.tasks.handlers import register_all_handlers
+        register_all_handlers()
+        logger.info("Task worker handlers registered (self_check + business)")
+    except Exception:
+        logger.exception("Failed to register task worker handlers; tasks will stay pending")
 
 
 startup_side_effects_skipped = _startup_side_effects_disabled()
@@ -119,6 +127,8 @@ from app.api.v1.endpoints import (
 )
 from app.schemas import UnifiedResponse
 
+register_task_handlers()
+
 if startup_side_effects_skipped:
     logger.info("AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS enabled; startup dependency checks, table creation and migrations are skipped.")
 else:
@@ -159,8 +169,6 @@ app.state.startup_dependency_report = startup_dependency_report
 @app.on_event("startup")
 async def recover_document_parse_queue() -> None:
     """Requeue unfinished document parses after a process restart."""
-    if startup_side_effects_skipped:
-        return
     try:
         from app.models.database import session_factory
         from app.platform.tasks.document_parse_queue import document_parse_queue
