@@ -17,6 +17,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -34,7 +35,7 @@ from app.models.course_outline_model import (
     TeachingScriptVersion,
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan
-from app.models.course_build_model import SourceMaterialVersion
+from app.models.course_build_model import CourseCorpusItem, SourceMaterial, SourceMaterialVersion
 from app.models.resource_model import (
     ResourceItem,
     ResourceLifecycleStatus,
@@ -64,6 +65,7 @@ class DraftAssetResult:
     rag_indexed_chunks: int = 0
     graph_node_candidates: int = 0
     graph_relation_candidates: int = 0
+    graph_candidate_batch_id: Optional[str] = None
     outline_node_count: int = 0
     script_node_count: int = 0
     markdown_resource_id: Optional[str] = None
@@ -76,6 +78,7 @@ class DraftAssetResult:
             "script_version_id": self.script_version_id,
             "rag_indexed_chunks": self.rag_indexed_chunks,
             "graph_node_candidates": self.graph_node_candidates,
+            "graph_candidate_batch_id": self.graph_candidate_batch_id,
             "outline_node_count": self.outline_node_count,
             "script_node_count": self.script_node_count,
             "markdown_resource_id": self.markdown_resource_id,
@@ -131,6 +134,89 @@ def build_graph_draft(
     node_count = len(blocks)
     relation_count = max(0, len(blocks) - 1)
     return node_count, relation_count
+
+
+def build_course_graph_candidate_draft(
+    session: Session,
+    *,
+    course_id: int,
+    blocks: list[DocumentBlock],
+    corpus_snapshot_id: str,
+    created_by: Optional[int],
+) -> tuple[str, int, int]:
+    """Create one reviewable graph candidate batch for the complete corpus.
+
+    Per-material parse batches preserve raw extraction facts. This aggregate
+    batch is the course-builder's teaching graph draft: labels are normalized
+    across materials while every candidate keeps its source blocks/anchors.
+    It remains a candidate and never creates a published graph snapshot.
+    """
+    from app.models.document_parse_model import EvidenceAnchor
+    from app.services.document_parse_service import graph_candidate_service
+
+    anchors = list(session.exec(select(EvidenceAnchor).where(
+        EvidenceAnchor.course_id == course_id,
+        EvidenceAnchor.block_id.in_([block.block_id for block in blocks]),
+    )).all()) if blocks else []
+    anchor_by_block = {anchor.block_id: anchor.anchor_id for anchor in anchors}
+    nodes_by_label: dict[str, dict[str, Any]] = {}
+    ordered_nodes: list[dict[str, Any]] = []
+    for block in blocks:
+        text = (block.text or "").strip()
+        if not text:
+            continue
+        is_topic = block.semantic_role in {"section_title", "knowledge_title"}
+        if not is_topic and block.block_type == "title" and len(text) <= 160:
+            is_topic = True
+        if not is_topic:
+            continue
+        label = text.split("\n", 1)[0][:300]
+        normalized = "".join(label.casefold().split())
+        if not normalized:
+            continue
+        existing = nodes_by_label.get(normalized)
+        if existing is not None:
+            existing["source_block_ids"].append(block.block_id)
+            if block.block_id in anchor_by_block:
+                existing["anchor_ids"].append(anchor_by_block[block.block_id])
+            existing["confidence"] = max(existing["confidence"], round(float(block.confidence or 0), 3))
+            continue
+        node = {
+            "candidate_id": f"cgcn_{hashlib.sha256(f'{corpus_snapshot_id}:{normalized}'.encode()).hexdigest()[:24]}",
+            "label": label,
+            "kind": "concept",
+            "status": "proposed",
+            "confidence": round(float(block.confidence or 0), 3),
+            "source_block_ids": [block.block_id],
+            "anchor_ids": [anchor_by_block[block.block_id]] if block.block_id in anchor_by_block else [],
+            "page_or_slide": block.page_or_slide,
+        }
+        nodes_by_label[normalized] = node
+        ordered_nodes.append(node)
+    for node in ordered_nodes:
+        node["source_block_ids"] = list(dict.fromkeys(node["source_block_ids"]))
+        node["anchor_ids"] = list(dict.fromkeys(node["anchor_ids"]))
+    relations = []
+    for left, right in zip(ordered_nodes, ordered_nodes[1:]):
+        relation_identity = f"{corpus_snapshot_id}:{left['candidate_id']}:{right['candidate_id']}"
+        relations.append({
+            "candidate_id": f"cgcr_{hashlib.sha256(relation_identity.encode()).hexdigest()[:24]}",
+            "source_candidate_id": left["candidate_id"],
+            "target_candidate_id": right["candidate_id"],
+            "relation_type": "next_topic",
+            "status": "proposed",
+            "confidence": min(left["confidence"], right["confidence"]),
+            "anchor_ids": list(dict.fromkeys(left["anchor_ids"] + right["anchor_ids"])),
+        })
+    batch = graph_candidate_service.create_batch(
+        session, course_id=course_id, parse_run_id=None, initiated_by=created_by,
+    )
+    graph_candidate_service.mark_succeeded(
+        session, course_id=course_id, batch_id=batch.batch_id,
+        node_candidate_count=len(ordered_nodes), relation_candidate_count=len(relations),
+        node_candidates=ordered_nodes, relation_candidates=relations,
+    )
+    return batch.batch_id, len(ordered_nodes), len(relations)
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +575,7 @@ def build_draft_assets(
     )
     stmt = select(DocumentBlock).where(DocumentBlock.course_id == course_id)
     material_role_by_run: dict[str, str] = {}
+    primary_ppt_version_id: Optional[str] = material_version_id
     if corpus_snapshot_id:
         from app.models.course_build_model import CourseCorpusItem, CourseCorpusSnapshot
         corpus = session.exec(select(CourseCorpusSnapshot).where(
@@ -504,6 +591,16 @@ def build_draft_assets(
             CourseCorpusItem.included == True,  # noqa: E712
         )).all()
         material_role_by_run = {item.parse_run_id: item.material_role for item in corpus_items}
+        # A primary slide deck is the teaching-playback source.  Its mappings
+        # are generated from the outline, whereas PDF/DOCX only carry source
+        # page evidence and do not need CoursePptMapping rows.
+        primary_slide = next((item for item in sorted(corpus_items, key=lambda item: item.priority)
+                              if item.material_role == "primary_courseware" and
+                              (material := session.exec(select(SourceMaterial).where(
+                                  SourceMaterial.material_id == item.material_id,
+                                  SourceMaterial.course_id == course_id,
+                              )).first()) is not None and material.material_type == "slide"), None)
+        primary_ppt_version_id = primary_slide.material_version_id if primary_slide else None
     elif run_id:
         stmt = stmt.where(DocumentBlock.run_id == run_id)
     else:
@@ -526,19 +623,26 @@ def build_draft_assets(
 
     # 2. 图谱候选草稿
     _stage("graph_draft")
-    result.graph_node_candidates, result.graph_relation_candidates = build_graph_draft(
-        session,
-        course_id=course_id,
-        run_id=run_id or corpus_snapshot_id or "",
-        blocks=list(blocks),
-    )
+    if corpus_snapshot_id:
+        (
+            result.graph_candidate_batch_id,
+            result.graph_node_candidates,
+            result.graph_relation_candidates,
+        ) = build_course_graph_candidate_draft(
+            session, course_id=course_id, blocks=list(blocks),
+            corpus_snapshot_id=corpus_snapshot_id, created_by=created_by,
+        )
+    else:
+        result.graph_node_candidates, result.graph_relation_candidates = build_graph_draft(
+            session, course_id=course_id, run_id=run_id or "", blocks=list(blocks),
+        )
 
     # 3. 课程目录草稿
     _stage("outline_draft")
     try:
         ov_id, node_count = build_outline_draft(
             session, course_id=course_id, run_id=run_id,
-            material_version_id=material_version_id,
+            material_version_id=primary_ppt_version_id,
             blocks=list(blocks), created_by=created_by,
             corpus_snapshot_id=corpus_snapshot_id, build_task_id=build_task_id,
             material_role_by_run=material_role_by_run,

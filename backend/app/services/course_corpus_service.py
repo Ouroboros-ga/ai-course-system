@@ -27,9 +27,20 @@ from app.models.course_build_model import (
     SourceMaterialVersion,
 )
 from app.models.course_outline_model import CourseOutlineVersion, TeachingScriptVersion
+from app.models.course_outline_model import (
+    CourseOutlineNode,
+    OutlineNodeType,
+    PatchOperation,
+    PatchProposal,
+    PatchProposalOperation,
+    TeachingScriptNode,
+)
 from app.models.document_parse_model import (
     DocumentIRVersion,
     DocumentParseRun,
+    DocumentBlock,
+    EvidenceSpan,
+    EvidenceSpanStatus,
     ParseRunStatus,
     RetrievalChunk,
 )
@@ -289,6 +300,106 @@ class CourseCorpusService:
         session.add(build)
         session.flush()
         return build, task_view.task_id
+
+    def create_update_proposal(
+        self,
+        session: Session,
+        *,
+        corpus: CourseCorpusSnapshot,
+        created_by: int | None,
+    ) -> PatchProposal:
+        """Turn newly parsed corpus facts into concrete, teacher-reviewed edits.
+
+        Rebuilds after the first draft must not overwrite the teacher's work.
+        The proposal adds at most one evidence-linked knowledge point and its
+        script, and never attaches content below a locked section.
+        """
+        existing = session.exec(select(PatchProposal).where(
+            PatchProposal.course_id == corpus.course_id,
+            PatchProposal.tool_name == "CourseBuildAgent",
+            PatchProposal.status == "pending",
+            PatchProposal.reason.contains(corpus.corpus_snapshot_id),
+        )).first()
+        if existing is not None:
+            return existing
+
+        outline = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.course_id == corpus.course_id,
+        ).order_by(CourseOutlineVersion.version.desc())).first()
+        if outline is None:
+            raise ValueError("后续构建缺少基准课程目录")
+        nodes = list(session.exec(select(CourseOutlineNode).where(
+            CourseOutlineNode.outline_version_id == outline.outline_version_id,
+        ).order_by(CourseOutlineNode.order_index)).all())
+        sections = [node for node in nodes if node.node_type == OutlineNodeType.SECTION and node.locked_by is None]
+        if not sections:
+            raise ValueError("所有课程 section 均已锁定，无法为新材料创建可审核提案")
+
+        known_blocks = {
+            block_id
+            for node in nodes
+            for block_id in (node.source_block_refs or [])
+        }
+        blocks = list(session.exec(select(DocumentBlock).where(
+            DocumentBlock.course_id == corpus.course_id,
+            DocumentBlock.run_id.in_(list(corpus.parse_run_ids or [])),
+        ).order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all())
+        candidate = next((block for block in blocks if (block.text or "").strip()
+                          and block.block_id not in known_blocks
+                          and block.semantic_role in {"knowledge_title", "section_title", "explanation"}), None)
+        if candidate is None:
+            candidate = next((block for block in blocks if (block.text or "").strip()
+                              and block.block_id not in known_blocks), None)
+        if candidate is None:
+            raise ValueError("新课程语料没有可形成教学提案的新增内容")
+
+        evidence_ids = list(session.exec(select(EvidenceSpan.span_id).where(
+            EvidenceSpan.course_id == corpus.course_id,
+            EvidenceSpan.block_id == candidate.block_id,
+            EvidenceSpan.status == EvidenceSpanStatus.CONFIRMED,
+        )).all())
+        parent = sections[0]
+        sibling_order = max((node.order_index for node in nodes if node.parent_node_id == parent.outline_node_id), default=-1) + 1
+        title = (candidate.text or "").strip().split("\n", 1)[0][:300]
+        new_outline_id = f"on_corpus_{candidate.block_id[-20:]}"
+        proposal = PatchProposal(
+            course_id=corpus.course_id,
+            tool_name="CourseBuildAgent",
+            policy_version="course-build-agent/2.1",
+            reason=(f"材料集合已更新（{corpus.corpus_snapshot_id}）：建议将新增材料内容加入“{parent.title}”。"
+                    "教师接受后才会写入课程草稿；已锁定节点未进入本提案。"),
+            created_by=created_by,
+        )
+        session.add(proposal)
+        session.flush()
+        outline_payload = {
+            "outline_node_id": new_outline_id,
+            "parent_node_id": parent.outline_node_id,
+            "node_type": OutlineNodeType.KNOWLEDGE_POINT.value,
+            "title": title,
+            "order_index": sibling_order,
+            "source_block_refs": [candidate.block_id],
+        }
+        session.add(PatchProposalOperation(
+            proposal_id=proposal.proposal_id, course_id=corpus.course_id,
+            operation=PatchOperation.ADD, target="outline:new:title", before="",
+            after=json.dumps(outline_payload, ensure_ascii=False),
+            reason="新增材料包含尚未纳入课程树的知识内容；下游影响：接受后需复核 PPT 映射和练习建议。",
+            evidence_refs=evidence_ids or None, policy_version=proposal.policy_version,
+        ))
+        session.add(PatchProposalOperation(
+            proposal_id=proposal.proposal_id, course_id=corpus.course_id,
+            operation=PatchOperation.ADD, target="script:new:content", before="",
+            after=json.dumps({
+                "outline_node_id": new_outline_id,
+                "content": (candidate.text or "").strip(),
+                "evidence_refs": evidence_ids,
+            }, ensure_ascii=False),
+            reason="为新增知识点提供与原文块绑定的初始讲稿。",
+            evidence_refs=evidence_ids or None, policy_version=proposal.policy_version,
+        ))
+        session.flush()
+        return proposal
 
     def invalidate_queued_builds(self, session: Session, *, course_id: int, reason: str) -> None:
         """Cancel only builds that have not started when a material set changes."""

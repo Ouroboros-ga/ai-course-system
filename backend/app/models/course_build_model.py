@@ -387,6 +387,12 @@ class CourseQualityGateRun(SQLModel, table=True):
     error_count: int = Field(default=0)
     warning_count: int = Field(default=0)
 
+    # Warnings never become an implicit bypass.  A teacher must explicitly
+    # acknowledge the exact gate run before it can be used for publication.
+    warning_override_confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    warning_override_reason: str = Field(default="")
+    warning_override_at: Optional[datetime] = Field(default=None)
+
     # 关联发布
     target_release_id: Optional[str] = Field(default=None, description="目标发布 ID")
 

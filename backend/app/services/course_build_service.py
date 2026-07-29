@@ -30,6 +30,7 @@ from app.models.course_build_model import (
     BuildStepStatus,
     CourseBuildDraft,
     CourseBuildStep,
+    CourseDraftBuildTask,
     CourseQualityGateRun,
     CourseRelease,
     CourseReleaseArtifact,
@@ -49,7 +50,11 @@ from app.models.course_outline_model import (
     TeachingScriptNode,
     TeachingScriptVersion,
     CoursePptMapping,
+    PatchProposal,
+    PatchProposalStatus,
 )
+from app.models.document_parse_model import RetrievalChunk
+from app.models.graph_production_model import GraphSnapshotRecord, SnapshotStatus
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +378,10 @@ class CourseBuildService:
             "blocker_count": g.blocker_count,
             "error_count": g.error_count,
             "warning_count": g.warning_count,
+            "requires_warning_confirmation": bool(g.warning_count and g.warning_override_at is None),
+            "warning_override_confirmed_by": g.warning_override_confirmed_by,
+            "warning_override_reason": g.warning_override_reason,
+            "warning_override_at": g.warning_override_at.isoformat() if g.warning_override_at else None,
             "checks": g.checks,
             "target_release_id": g.target_release_id,
             "created_at": g.created_at.isoformat() if g.created_at else None,
@@ -605,6 +614,39 @@ source_material_service = SourceMaterialService()
 # ---------------------------------------------------------------------------
 
 
+def _prerequisite_cycle_nodes(relations: list[dict]) -> set[str]:
+    """Return nodes participating in a directed prerequisite cycle."""
+    prerequisite_types = {"prerequisite", "prerequisite_of", "requires"}
+    adjacency: dict[str, set[str]] = {}
+    for relation in relations:
+        if str(relation.get("type") or "").casefold() not in prerequisite_types:
+            continue
+        source = str(relation.get("source") or relation.get("source_id") or "").strip()
+        target = str(relation.get("target") or relation.get("target_id") or "").strip()
+        if source and target:
+            adjacency.setdefault(source, set()).add(target)
+
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    cycles: set[str] = set()
+
+    def visit(node_id: str, path: list[str]) -> None:
+        if node_id in visiting:
+            cycles.update(path[path.index(node_id):])
+            return
+        if node_id in visited:
+            return
+        visiting.add(node_id)
+        for target_id in adjacency.get(node_id, set()):
+            visit(target_id, [*path, target_id])
+        visiting.remove(node_id)
+        visited.add(node_id)
+
+    for node_id in sorted(adjacency):
+        visit(node_id, [node_id])
+    return cycles
+
+
 class QualityGateService:
     """质量门禁服务
 
@@ -668,6 +710,7 @@ class QualityGateService:
                 "message": "所有材料已解析",
             })
 
+        retrieval = None
         corpus = session.exec(select(CourseCorpusSnapshot).where(
             CourseCorpusSnapshot.course_id == course_id,
             CourseCorpusSnapshot.status == "ready",
@@ -682,12 +725,13 @@ class QualityGateService:
             })
             error_count += 1
         else:
-            retrieval = session.exec(select(CourseRetrievalSnapshot).where(
-                CourseRetrievalSnapshot.course_id == course_id,
-                CourseRetrievalSnapshot.corpus_snapshot_id == corpus.corpus_snapshot_id,
-                CourseRetrievalSnapshot.snapshot_kind == "release",
-                CourseRetrievalSnapshot.status == "ready",
-            )).first()
+            # The same learner-safe selection is used for a pre-publish gate
+            # and the final CourseRelease; validate must not report a false
+            # failure merely because publication has not happened yet.
+            from app.services.course_corpus_service import course_corpus_service
+            retrieval = course_corpus_service.freeze_release_retrieval_snapshot(
+                session, corpus=corpus,
+            )
             if retrieval is None or not retrieval.retrieval_chunk_ids:
                 checks.append({
                     "check_id": "retrieval.release_ready",
@@ -697,6 +741,45 @@ class QualityGateService:
                     "message": "课程语料尚未形成包含已确认 Evidence 的可发布检索快照",
                 })
                 error_count += 1
+            else:
+                frozen_ids = set(retrieval.retrieval_chunk_ids or [])
+                available_ids = set(session.exec(select(RetrievalChunk.chunk_id).where(
+                    RetrievalChunk.course_id == course_id,
+                    RetrievalChunk.chunk_id.in_(frozen_ids),
+                )).all())
+                missing_chunks = frozen_ids - available_ids
+                if missing_chunks:
+                    checks.append({
+                        "check_id": "retrieval.release_chunks_available",
+                        "name": "学生 RAG 冻结 chunk 可用性",
+                        "severity": GateSeverity.ERROR.value,
+                        "passed": False,
+                        "message": f"冻结检索快照缺少 {len(missing_chunks)} 个 chunk",
+                    })
+                    error_count += 1
+                else:
+                    checks.append({
+                        "check_id": "retrieval.release_chunks_available",
+                        "name": "学生 RAG 冻结 chunk 可用性",
+                        "severity": GateSeverity.INFO.value,
+                        "passed": True,
+                        "message": f"{len(frozen_ids)} 个已确认 chunk 可供学生检索",
+                    })
+
+            parse_warnings = list(corpus.warnings or []) + [
+                f"{material.name}: 需要人工检查"
+                for material in materials if material.status == MaterialStatus.NEEDS_REVIEW
+            ]
+            if parse_warnings:
+                checks.append({
+                    "check_id": "materials.parse_warnings_resolved",
+                    "name": "解析警告处理",
+                    "severity": GateSeverity.WARNING.value,
+                    "passed": False,
+                    "message": f"存在 {len(parse_warnings)} 项待教师确认的解析警告",
+                    "details": parse_warnings[:20],
+                })
+                warning_count += 1
         # 检查 3：七步中 materials/structure/scripts 必须非 NOT_STARTED
         steps = session.exec(
             select(CourseBuildStep).where(CourseBuildStep.course_id == course_id)
@@ -724,6 +807,21 @@ class QualityGateService:
                 })
                 blocker_count += 1
 
+        pending_proposals = list(session.exec(select(PatchProposal).where(
+            PatchProposal.course_id == course_id,
+            PatchProposal.status == PatchProposalStatus.PENDING,
+        )).all())
+        if pending_proposals:
+            checks.append({
+                "check_id": "agent.pending_proposals_reviewed",
+                "name": "Agent 修改提案审核",
+                "severity": GateSeverity.WARNING.value,
+                "passed": False,
+                "message": f"有 {len(pending_proposals)} 个 Agent Proposal 尚未审核",
+                "details": [proposal.proposal_id for proposal in pending_proposals[:20]],
+            })
+            warning_count += 1
+
         outline = session.exec(select(CourseOutlineVersion).where(
             CourseOutlineVersion.course_id == course_id,
             CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
@@ -738,24 +836,127 @@ class QualityGateService:
             if any(n.parent_node_id is None for n in knowledge):
                 checks.append({"check_id": "structure.knowledge_parent", "name": "知识点归属节", "severity": GateSeverity.ERROR.value, "passed": False, "message": "存在未归属到节的知识点"})
                 error_count += 1
+            if not knowledge:
+                checks.append({"check_id": "structure.knowledge_exists", "name": "核心知识点存在", "severity": GateSeverity.ERROR.value, "passed": False, "message": "课程目录不包含任何知识点"})
+                error_count += 1
             script_version = session.exec(select(TeachingScriptVersion).where(
                 TeachingScriptVersion.course_id == course_id,
                 TeachingScriptVersion.outline_version_id == outline.outline_version_id,
                 TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
             ).order_by(TeachingScriptVersion.version.desc())).first()
-            script_ids = {item.outline_node_id for item in session.exec(select(TeachingScriptNode).where(TeachingScriptNode.script_version_id == script_version.script_version_id)).all()} if script_version else set()
+            script_nodes = list(session.exec(select(TeachingScriptNode).where(
+                TeachingScriptNode.script_version_id == script_version.script_version_id,
+            )).all()) if script_version else []
+            if script_version is None:
+                checks.append({"check_id": "scripts.version_exists", "name": "讲稿草稿存在", "severity": GateSeverity.ERROR.value, "passed": False, "message": "课程目录尚未生成对应讲稿版本"})
+                error_count += 1
+            scripts_by_outline = {item.outline_node_id: item for item in script_nodes}
+            script_ids = set(scripts_by_outline)
             missing_scripts = [n.outline_node_id for n in knowledge if n.outline_node_id not in script_ids]
             if missing_scripts:
                 checks.append({"check_id": "scripts.knowledge_coverage", "name": "知识点讲稿覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_scripts)} 个知识点缺少讲稿"})
                 error_count += 1
+
+            empty_scripts = [node.outline_node_id for node in knowledge if (
+                node.outline_node_id in scripts_by_outline
+                and not (scripts_by_outline[node.outline_node_id].content or "").strip()
+            )]
+            if empty_scripts:
+                checks.append({"check_id": "scripts.non_empty", "name": "知识点讲稿非空", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(empty_scripts)} 个知识点讲稿为空", "details": empty_scripts[:20]})
+                error_count += 1
+
+            missing_evidence = [node.outline_node_id for node in knowledge if not (
+                node.source_block_refs
+                or (scripts_by_outline.get(node.outline_node_id) and (
+                    scripts_by_outline[node.outline_node_id].evidence_refs
+                    or scripts_by_outline[node.outline_node_id].source_block_refs
+                ))
+            )]
+            if missing_evidence:
+                checks.append({"check_id": "evidence.core_knowledge_coverage", "name": "核心知识点证据覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_evidence)} 个知识点没有来源 Evidence 或 Block 引用", "details": missing_evidence[:20]})
+                error_count += 1
+
+            empty_sections = [section.outline_node_id for section in sections if not any(
+                item.parent_node_id == section.outline_node_id for item in knowledge
+            )]
+            if empty_sections:
+                checks.append({"check_id": "structure.no_isolated_nodes", "name": "课程树孤立节点", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(empty_sections)} 个 section 没有知识点子节点", "details": empty_sections[:20]})
+                error_count += 1
+
+            if corpus is not None and script_version is not None:
+                lineage_errors = []
+                if outline.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                    lineage_errors.append("outline corpus 与当前材料快照不一致")
+                if script_version.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                    lineage_errors.append("script corpus 与当前材料快照不一致")
+                if outline.build_task_id != script_version.build_task_id:
+                    lineage_errors.append("outline/script build_task 不一致")
+                if outline.build_task_id:
+                    build = session.exec(select(CourseDraftBuildTask).where(
+                        CourseDraftBuildTask.course_id == course_id,
+                        CourseDraftBuildTask.build_task_id == outline.build_task_id,
+                    )).first()
+                    if build is None or build.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                        lineage_errors.append("build task 不属于当前 corpus")
+                if lineage_errors:
+                    checks.append({"check_id": "release.same_build_lineage", "name": "发布版本构建血缘一致性", "severity": GateSeverity.ERROR.value, "passed": False, "message": "；".join(lineage_errors)})
+                    error_count += 1
             if materials and any(m.material_type == "slide" for m in materials):
-                mapped = {item.outline_node_id for item in session.exec(select(CoursePptMapping).where(CoursePptMapping.course_id == course_id, CoursePptMapping.status == "draft")).all()}
+                mappings = list(session.exec(select(CoursePptMapping).where(
+                    CoursePptMapping.course_id == course_id,
+                    CoursePptMapping.status == "draft",
+                )).all())
+                mapped = {item.outline_node_id for item in mappings}
                 missing_mapping = [n.outline_node_id for n in knowledge if n.outline_node_id not in mapped]
                 if missing_mapping:
                     checks.append({"check_id": "mapping.knowledge_coverage", "name": "知识点 PPT 映射覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_mapping)} 个知识点缺少 PPT 映射"})
                     error_count += 1
+                low_confidence = [item.outline_node_id for item in mappings if item.confidence < 0.6]
+                if low_confidence:
+                    checks.append({"check_id": "mapping.confidence", "name": "教学 PPT 映射置信度", "severity": GateSeverity.WARNING.value, "passed": False, "message": f"{len(low_confidence)} 个 PPT 映射置信度低于 0.60", "details": low_confidence[:20]})
+                    warning_count += 1
+        else:
+            checks.append({"check_id": "structure.outline_exists", "name": "课程结构草稿存在", "severity": GateSeverity.ERROR.value, "passed": False, "message": "尚未生成可发布的课程目录草稿"})
+            error_count += 1
 
-        passed = blocker_count == 0 and error_count == 0
+        # A release always freezes a reviewed graph snapshot.  Candidate graph
+        # batches are useful while building, but are never learner content.
+        graph = session.exec(select(GraphSnapshotRecord).where(
+            GraphSnapshotRecord.course_id == course_id,
+            GraphSnapshotRecord.is_active == True,  # noqa: E712
+            GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
+        ).order_by(GraphSnapshotRecord.version.desc())).first()
+        if graph is None:
+            checks.append({"check_id": "graph.release_ready", "name": "已审核课程知识图谱", "severity": GateSeverity.ERROR.value, "passed": False, "message": "尚未发布可冻结的课程知识图谱快照"})
+            error_count += 1
+        else:
+            graph_node_ids = {
+                str(node.get("id") or node.get("node_id") or "")
+                for node in (graph.nodes or []) if isinstance(node, dict)
+            }
+            graph_node_ids.discard("")
+            graph_relations = [item for item in (graph.relations or []) if isinstance(item, dict)]
+            cycle_nodes = _prerequisite_cycle_nodes(graph_relations)
+            if cycle_nodes:
+                checks.append({"check_id": "graph.prerequisite_acyclic", "name": "图谱前置关系无环", "severity": GateSeverity.BLOCKER.value, "passed": False, "message": "检测到前置关系循环", "details": sorted(cycle_nodes)[:20]})
+                blocker_count += 1
+            else:
+                checks.append({"check_id": "graph.prerequisite_acyclic", "name": "图谱前置关系无环", "severity": GateSeverity.INFO.value, "passed": True, "message": "未检测到前置关系循环"})
+            connected = {
+                str(relation.get("source") or relation.get("source_id") or "")
+                for relation in graph_relations
+            } | {
+                str(relation.get("target") or relation.get("target_id") or "")
+                for relation in graph_relations
+            }
+            isolated = sorted(graph_node_ids - connected)
+            if isolated:
+                checks.append({"check_id": "graph.no_isolated_nodes", "name": "图谱孤立节点", "severity": GateSeverity.WARNING.value, "passed": False, "message": f"存在 {len(isolated)} 个图谱孤立节点", "details": isolated[:20]})
+                warning_count += 1
+
+        # Warnings require an explicit teacher acknowledgement on this exact
+        # gate run; they never silently become a publication bypass.
+        passed = blocker_count == 0 and error_count == 0 and warning_count == 0
         run = CourseQualityGateRun(
             course_id=course_id,
             draft_id=draft_id,
@@ -787,6 +988,35 @@ class QualityGateService:
         ).first()
         if run is None:
             reject_resource_not_found("质量门禁运行不存在")
+        return run
+
+    def confirm_warning_override(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        gate_run_id: str,
+        confirmed_by: int,
+        reason: str,
+    ) -> CourseQualityGateRun:
+        """Explicitly acknowledge warnings on one immutable gate result.
+
+        Errors and blockers are never overrideable.  The acknowledgement is
+        recorded on the run subsequently supplied to the publish call.
+        """
+        run = self.get_run(session, course_id=course_id, gate_run_id=gate_run_id)
+        if run.blocker_count or run.error_count:
+            reject_state_conflict("存在 BLOCKER 或 ERROR，不能以 Warning 确认绕过")
+        if run.warning_count <= 0:
+            reject_state_conflict("该质量门禁不存在需要确认的 Warning")
+        if len((reason or "").strip()) < 3:
+            reject_validation_failed("Warning 确认原因至少需要 3 个字符")
+        run.warning_override_confirmed_by = confirmed_by
+        run.warning_override_reason = reason.strip()[:1000]
+        run.warning_override_at = utcnow_aware()
+        run.passed = True
+        session.add(run)
+        session.flush()
         return run
 
 
@@ -943,8 +1173,41 @@ class CourseReleaseService:
         if outline.corpus_snapshot_id != corpus.corpus_snapshot_id or script.corpus_snapshot_id != corpus.corpus_snapshot_id:
             reject_state_conflict("课程结构或讲稿不属于当前课程材料快照；请重新生成或选择对应材料版本")
 
-        # 质量门禁
-        if run_quality_gate:
+        # Freeze the currently published graph with this release.  The caller
+        # may name it explicitly, but cannot select an unpublished or stale
+        # graph draft after the quality gate has reviewed the active snapshot.
+        active_graph = session.exec(select(GraphSnapshotRecord).where(
+            GraphSnapshotRecord.course_id == course_id,
+            GraphSnapshotRecord.is_active == True,  # noqa: E712
+            GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
+        ).order_by(GraphSnapshotRecord.version.desc())).first()
+        if active_graph is None:
+            reject_state_conflict("没有已发布的课程知识图谱，无法冻结发布版本")
+        if graph_snapshot_ref is not None and graph_snapshot_ref != active_graph.snapshot_id:
+            reject_state_conflict("发布只能冻结当前已发布的活动知识图谱快照")
+        graph_snapshot_ref = active_graph.snapshot_id
+
+        # A teacher may publish with a previously reviewed gate run.  When no
+        # ID is supplied we create a fresh run, which will stop on any Warning
+        # until the teacher explicitly acknowledges it through the gate API.
+        if quality_gate_run_id:
+            gate_run = quality_gate_service.get_run(
+                session, course_id=course_id, gate_run_id=quality_gate_run_id,
+            )
+            if gate_run.blocker_count or gate_run.error_count or not gate_run.passed:
+                reject_state_conflict(
+                    "质量门禁未通过，无法发布",
+                    details={
+                        "blocker_count": gate_run.blocker_count,
+                        "error_count": gate_run.error_count,
+                        "warning_count": gate_run.warning_count,
+                        "gate_run_id": gate_run.gate_run_id,
+                        "requires_warning_confirmation": gate_run.warning_count > 0 and gate_run.warning_override_at is None,
+                    },
+                )
+            release.quality_gate_run_id = gate_run.gate_run_id
+            release.quality_gate_passed = True
+        elif run_quality_gate:
             gate_run = quality_gate_service.run_checks(
                 session,
                 course_id=course_id,
@@ -965,16 +1228,8 @@ class CourseReleaseService:
                         "gate_run_id": gate_run.gate_run_id,
                     },
                 )
-        elif quality_gate_run_id:
-            # Compatibility callers that ran the gate before assembling their
-            # page-mapping snapshot still have to freeze that exact run ID.
-            gate_run = quality_gate_service.get_run(
-                session, course_id=course_id, gate_run_id=quality_gate_run_id,
-            )
-            if not gate_run.passed:
-                reject_state_conflict("质量门禁未通过，无法发布")
-            release.quality_gate_run_id = gate_run.gate_run_id
-            release.quality_gate_passed = True
+        else:
+            reject_state_conflict("发布必须运行质量门禁或指定已通过的门禁记录")
 
         # 旧 active release 标记为 superseded
         old_active = self.get_active_release(session, course_id=course_id)
@@ -992,15 +1247,7 @@ class CourseReleaseService:
             release.page_mappings_snapshot = page_mappings_snapshot
         if media_snapshot is not None:
             release.media_snapshot = media_snapshot
-        if graph_snapshot_ref is not None:
-            from app.models.graph_production_model import GraphSnapshotRecord
-            graph = session.exec(select(GraphSnapshotRecord).where(
-                GraphSnapshotRecord.course_id == course_id,
-                GraphSnapshotRecord.snapshot_id == graph_snapshot_ref,
-            )).first()
-            if graph is None:
-                reject_state_conflict("图谱快照不存在或不属于该课程")
-            release.graph_snapshot_ref = graph_snapshot_ref
+        release.graph_snapshot_ref = graph_snapshot_ref
         if evidence_refs is not None:
             release.evidence_refs = evidence_refs
         if media_snapshot is None:

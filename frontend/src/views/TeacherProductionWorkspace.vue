@@ -251,12 +251,16 @@ async function createSnapshot() {
 async function togglePublication() {
   if (!isPublished.value && !canPublish.value) return
   const wasPublished = isPublished.value
+  if (!wasPublished) {
+    showToast('请在课程建设的“发布”步骤运行质量门禁，并按需确认 Warning 后发布。', 'info')
+    router.push(`/app/course/${courseId.value}/build/releases`)
+    return
+  }
   const nextAction = wasPublished ? '取消发布' : '发布'
   if (!window.confirm(`确定要${nextAction}“${courseTitle.value}”吗？`)) return
   publicationLoading.value = true
   try {
-    if (wasPublished) await unpublishCourse(courseId.value)
-    else await publishCourse(courseId.value)
+    await unpublishCourse(courseId.value)
     if (courseContext.value?.course) courseContext.value = { ...courseContext.value, course: { ...courseContext.value.course, status: wasPublished ? 'draft' : 'published' } }
     saveState.value = wasPublished ? '课程已取消发布' : '课程已发布'
     showToast(wasPublished ? '课程已取消发布' : '课程已发布', 'success')

@@ -65,6 +65,29 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
     from app.models.document_parse_model import ParseRunStatus
     from app.services.document_parse_service import document_parse_service
 
+    def mark_material_failed(error_code: str, error_message: str) -> None:
+        """Keep the material list truthful when its durable parse run fails."""
+        from sqlmodel import select
+        from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
+
+        with ctx.session_factory() as failure_session:
+            version = failure_session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.version_id == payload.get("material_version_id"),
+                SourceMaterialVersion.course_id == int(course_id),
+            )).first()
+            if version is not None:
+                version.parse_status = MaterialStatus.FAILED
+                version.parse_error = f"{error_code}: {error_message}"[:500]
+                failure_session.add(version)
+            material = failure_session.exec(select(SourceMaterial).where(
+                SourceMaterial.material_id == payload.get("material_id"),
+                SourceMaterial.course_id == int(course_id),
+            )).first()
+            if material is not None:
+                material.status = MaterialStatus.FAILED
+                failure_session.add(material)
+            failure_session.commit()
+
     # 1. 标记 running（task + parse_run）
     with ctx.session_factory() as session:
         ctx.service.mark_running(session, ctx.task_id, stage="parse")
@@ -146,6 +169,7 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                         fail_session.commit()
                     except Exception:
                         fail_session.rollback()
+                mark_material_failed(exc.error_code, exc.message)
                 raise TaskExecutionError(
                     exc.error_code,
                     exc.message,
@@ -172,6 +196,7 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 fail_session.commit()
             except Exception:
                 fail_session.rollback()
+        mark_material_failed("UNEXPECTED_ERROR", f"{type(exc).__name__}: {exc}")
         raise TaskExecutionError(
             "UNEXPECTED_ERROR",
             f"document_parse_handler unexpected failure: {exc}",
@@ -383,15 +408,11 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
             retrieval = course_corpus_service.ensure_retrieval_snapshot(session, corpus=corpus)
             if build.generation_mode == "proposal":
                 # Later agent executions never overwrite a teacher's draft.
-                from app.models.course_outline_model import PatchProposal
-                proposal = PatchProposal(
-                    course_id=course_id,
-                    tool_name="CourseBuildAgent",
-                    policy_version="course-build-agent/2.0",
-                    reason="材料集合已变化；请在教师工作台审核并决定是否重新生成课程结构和讲稿。",
+                proposal = course_corpus_service.create_update_proposal(
+                    session,
+                    corpus=corpus,
                     created_by=build.owner_user_id,
                 )
-                session.add(proposal)
                 result_data = {"proposal_id": proposal.proposal_id, "corpus_snapshot_id": corpus_snapshot_id}
             else:
                 result = build_draft_assets(

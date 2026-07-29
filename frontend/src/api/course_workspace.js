@@ -10,7 +10,9 @@ export function getCourseWorkspaceContext(courseId) {
 }
 
 export function publishCourse(courseId) {
-  return request.post(`/document/course/${courseId}/publish`)
+  // Legacy production workspace now delegates to the release-gated facade.
+  // It can no longer flip Course.status without freezing a CourseRelease.
+  return request.post(`/course-editor/course/${courseId}/publish`)
 }
 
 export function unpublishCourse(courseId) {

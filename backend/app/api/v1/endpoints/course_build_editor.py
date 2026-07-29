@@ -137,6 +137,12 @@ class PrepAgentCommandRequest(BaseModel):
     instruction: str = Field(min_length=2, max_length=8_000)
 
 
+class LegacyReleasePublishRequest(BaseModel):
+    """Compatibility payload for the editor's one-click release action."""
+
+    quality_gate_run_id: Optional[str] = Field(default=None, max_length=100)
+
+
 def _mark_build_step(session: Session, course_id: int, step_name: BuildStepName, status: BuildStepStatus, actor_id: int, output_ref: str = "") -> None:
     step = session.exec(select(CourseBuildStep).where(
         CourseBuildStep.course_id == course_id,
@@ -959,7 +965,12 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
 
 
 @router.post("/course/{course_id}/publish")
-async def publish_course_build(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+async def publish_course_build(
+    course_id: int,
+    payload: LegacyReleasePublishRequest = LegacyReleasePublishRequest(),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
     context = require_course_permission(session, current_user, course_id, "course.publish")
     course = session.get(Course, course_id)
     if not course: raise HTTPException(404, "课程不存在")
@@ -985,9 +996,18 @@ async def publish_course_build(course_id: int, session: Session = Depends(get_se
         # The gate below must inspect the same reviewed learner-retrieval set
         # that publish_release will bind to the CourseRelease.
         course_corpus_service.freeze_release_retrieval_snapshot(session, corpus=corpus)
-    gate = quality_gate_service.run_checks(session, course_id=course_id, initiated_by=context.user_id, target_release_id=release.release_id)
+    gate = (
+        quality_gate_service.get_run(
+            session, course_id=course_id, gate_run_id=payload.quality_gate_run_id,
+        )
+        if payload.quality_gate_run_id
+        else quality_gate_service.run_checks(
+            session, course_id=course_id, initiated_by=context.user_id,
+            target_release_id=release.release_id,
+        )
+    )
     if not gate.passed:
-        raise HTTPException(status_code=409, detail={"error_code": "QUALITY_GATE_FAILED", "message": "发布前质量检查未通过", "details": {"gate_run_id": gate.gate_run_id, "error_count": gate.error_count, "blocker_count": gate.blocker_count}})
+        raise HTTPException(status_code=409, detail={"error_code": "QUALITY_GATE_FAILED", "message": "发布前质量检查未通过", "details": {"gate_run_id": gate.gate_run_id, "error_count": gate.error_count, "blocker_count": gate.blocker_count, "warning_count": gate.warning_count, "requires_warning_confirmation": gate.warning_count > 0 and gate.warning_override_at is None}})
     mappings = session.exec(select(CoursePptMapping).where(
         CoursePptMapping.course_id == course_id,
         CoursePptMapping.outline_node_id.in_([node.outline_node_id for node in nodes]),

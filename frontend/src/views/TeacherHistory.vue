@@ -519,7 +519,7 @@ async function publishCourse(course) {
   publishingId.value = course.id
 
   try {
-    await request({ url: `/document/course/${course.id}/publish`, method: 'post' })
+    await request({ url: `/course-editor/course/${course.id}/publish`, method: 'post' })
     showToast('课程发布成功！学生现在可以选择此课程', 'success')
     course.status = 'published'
     await loadCourses()

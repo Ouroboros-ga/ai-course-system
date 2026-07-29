@@ -437,6 +437,7 @@ async def run_validation(
             "blocker_count": run.blocker_count,
             "error_count": run.error_count,
             "warning_count": run.warning_count,
+            "requires_warning_confirmation": bool(run.warning_count and run.warning_override_at is None),
             "checks": run.checks,
             "created_at": run.created_at.isoformat() if run.created_at else None,
         },
@@ -464,12 +465,48 @@ async def get_validation_run(
             "blocker_count": run.blocker_count,
             "error_count": run.error_count,
             "warning_count": run.warning_count,
+            "requires_warning_confirmation": bool(run.warning_count and run.warning_override_at is None),
+            "warning_override_confirmed_by": run.warning_override_confirmed_by,
+            "warning_override_reason": run.warning_override_reason,
+            "warning_override_at": run.warning_override_at.isoformat() if run.warning_override_at else None,
             "checks": run.checks,
             "target_release_id": run.target_release_id,
             "created_at": run.created_at.isoformat() if run.created_at else None,
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
         },
     )
+
+
+class WarningOverrideRequest(BaseModel):
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+@course_build_router.post("/course/{course_id}/validate/{gate_run_id}/confirm-warnings")
+async def confirm_validation_warnings(
+    course_id: int,
+    gate_run_id: str,
+    payload: WarningOverrideRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Record the teacher's explicit acknowledgement of publish warnings."""
+    context = require_course_permission(session, current_user, course_id, "course.publish")
+    run = quality_gate_service.confirm_warning_override(
+        session,
+        course_id=course_id,
+        gate_run_id=gate_run_id,
+        confirmed_by=context.user_id,
+        reason=payload.reason,
+    )
+    session.commit()
+    return unified_response(code=200, message="已确认 Warning，允许使用该门禁记录发布", data={
+        "gate_run_id": run.gate_run_id,
+        "passed": run.passed,
+        "warning_count": run.warning_count,
+        "warning_override_confirmed_by": run.warning_override_confirmed_by,
+        "warning_override_reason": run.warning_override_reason,
+        "warning_override_at": run.warning_override_at.isoformat() if run.warning_override_at else None,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -490,6 +527,7 @@ class ReleasePublishRequest(BaseModel):
     graph_snapshot_ref: Optional[str] = None
     evidence_refs: Optional[list] = None
     run_quality_gate: bool = Field(default=True)
+    quality_gate_run_id: Optional[str] = Field(default=None)
 
 
 class ReleaseRollbackRequest(BaseModel):
@@ -565,6 +603,7 @@ async def publish_release(
         graph_snapshot_ref=payload.graph_snapshot_ref,
         evidence_refs=payload.evidence_refs,
         run_quality_gate=payload.run_quality_gate,
+        quality_gate_run_id=payload.quality_gate_run_id,
     )
     session.commit()
     return unified_response(code=200, message="发布已完成", data=course_build_service._serialize_release(release))

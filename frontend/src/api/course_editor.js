@@ -33,6 +33,6 @@ export const uploadExistingPpt = (courseId, file, options = {}) => {
     onUploadProgress: options.onUploadProgress,
   })
 }
-export const publishCourseBuild = (courseId) => request.post(`${base(courseId)}/publish`)
+export const publishCourseBuild = (courseId, payload = {}) => request.post(`${base(courseId)}/publish`, payload)
 export const getPublishedCourseContent = (courseId) => request.get(`${base(courseId)}/published-content`)
 export const getPublishedLearningUnits = (courseId) => request.get(`${base(courseId)}/published-learning-units`)
