@@ -29,7 +29,11 @@ const railItems = computed(() => {
   <div class="sfx-settings-layout">
     <SfxLocalRail :items="railItems" aria-label="课程设置" storage-key="settings" />
     <div class="sfx-settings-main">
-      <router-view />
+      <router-view v-slot="{ Component, route }">
+        <Transition name="sfx-page" mode="out-in">
+          <component :is="Component" :key="route.path" />
+        </Transition>
+      </router-view>
     </div>
   </div>
 </template>

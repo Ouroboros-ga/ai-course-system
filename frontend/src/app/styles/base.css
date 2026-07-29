@@ -210,6 +210,25 @@
 .sfx-desc dt { color: var(--text-muted); }
 .sfx-desc dd { margin: 0; color: var(--text-primary); }
 
+/* ── 页面过渡动画（design.md：Quiet Technology，克制而不张扬） ── */
+.sfx-page-enter-active,
+.sfx-page-leave-active {
+  transition:
+    opacity var(--duration-normal) var(--ease-out),
+    transform var(--duration-normal) var(--ease-out);
+  will-change: opacity, transform;
+}
+
+.sfx-page-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.sfx-page-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
 /* 减少动态效果（page-design §25） */
 @media (prefers-reduced-motion: reduce) {
   .sfx *, .sfx *::before, .sfx *::after {

@@ -33,7 +33,11 @@ const activeKey = computed(() => props.tabs.find((t) => route.path.startsWith(t.
         </div>
       </div>
     </div>
-    <router-view />
+    <router-view v-slot="{ Component, route }">
+      <Transition name="sfx-page" mode="out-in">
+        <component :is="Component" :key="route.path" />
+      </Transition>
+    </router-view>
   </div>
 </template>
 

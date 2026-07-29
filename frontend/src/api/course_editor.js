@@ -7,6 +7,7 @@ export const createOutlineNode = (courseId, payload) => request.post(`${base(cou
 export const updateOutlineNode = (courseId, nodeId, payload) => request.patch(`${base(courseId)}/outline/nodes/${encodeURIComponent(nodeId)}`, payload)
 export const reorderOutline = (courseId, nodeIds) => request.post(`${base(courseId)}/outline/reorder`, { node_ids: nodeIds })
 export const lockOutlineNode = (courseId, nodeId) => request.post(`${base(courseId)}/outline/nodes/${encodeURIComponent(nodeId)}/lock`)
+export const unlockOutlineNode = (courseId, nodeId) => request.post(`${base(courseId)}/outline/nodes/${encodeURIComponent(nodeId)}/unlock`)
 
 export const getTeachingScripts = (courseId) => request.get(`${base(courseId)}/scripts`)
 export const updateTeachingScript = (courseId, scriptNodeId, payload) => request.patch(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}`, payload)

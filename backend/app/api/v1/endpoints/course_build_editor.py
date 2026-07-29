@@ -447,6 +447,15 @@ async def lock_outline_node(course_id: int, node_id: str, session: Session = Dep
     return unified_response(200, "目录节点已锁定", _outline_node_view(node))
 
 
+@router.post("/course/{course_id}/outline/nodes/{node_id}/unlock")
+async def unlock_outline_node(course_id: int, node_id: str, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    context = require_course_permission(session, current_user, course_id, "course.structure.edit")
+    node = session.exec(select(CourseOutlineNode).where(CourseOutlineNode.outline_node_id == node_id, CourseOutlineNode.course_id == course_id)).first()
+    if not node: raise HTTPException(404, "目录节点不存在")
+    node.locked_by = None; node.locked_at = None; session.add(node); session.commit()
+    return unified_response(200, "目录节点已解锁", _outline_node_view(node))
+
+
 @router.get("/course/{course_id}/scripts")
 async def get_scripts(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.view")

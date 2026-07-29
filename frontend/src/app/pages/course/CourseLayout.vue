@@ -147,7 +147,11 @@ onMounted(load)
       @retry="load"
     />
 
-    <router-view v-else />
+    <router-view v-else v-slot="{ Component, route }">
+      <Transition name="sfx-page" mode="out-in">
+        <component :is="Component" :key="route.path" />
+      </Transition>
+    </router-view>
   </div>
 </template>
 

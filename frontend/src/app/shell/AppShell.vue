@@ -20,7 +20,11 @@ watch(() => route.path, () => {
   <div class="sfx sfx-shell">
     <PrimaryNav />
     <main ref="mainRef" class="sfx-shell-main">
-      <router-view />
+      <router-view v-slot="{ Component }">
+        <Transition name="sfx-page" mode="out-in">
+          <component :is="Component" />
+        </Transition>
+      </router-view>
     </main>
   </div>
 </template>

@@ -60,7 +60,11 @@ provide('coursesContext', { openJoin, joinRefreshTick })
       </div>
     </div>
 
-    <router-view />
+    <router-view v-slot="{ Component, route }">
+      <Transition name="sfx-page" mode="out-in">
+        <component :is="Component" :key="route.path" />
+      </Transition>
+    </router-view>
 
     <JoinCourseDrawer :open="joinOpen" @close="closeJoin" @joined="handleJoined" />
   </div>

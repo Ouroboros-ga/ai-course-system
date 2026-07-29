@@ -192,6 +192,11 @@ router.beforeEach((to) => {
   const counter = useCounterStore()
   counter.checkAuth()
 
+  // 已登录用户访问首页时直接进入 shadow 前端工作台
+  if (to.path === '/' && counter.isLoggedIn && featureFlags.shadowFrontend) {
+    return { path: '/app', replace: true }
+  }
+
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
     return { path: '/profile', query: { redirect: to.fullPath } }
   }
