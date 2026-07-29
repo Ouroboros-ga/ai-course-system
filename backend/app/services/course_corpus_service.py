@@ -275,21 +275,13 @@ class CourseCorpusService:
         not_before_at = self._quiet_window_deadline(
             session, course_id=corpus.course_id, quiet_window_seconds=quiet_window_seconds,
         )
-        task_view = task_service.create_task(session, TaskCreateRequest(
-            task_type="course_draft_build",
-            owner_user_id=owner_user_id,
-            course_id=corpus.course_id,
-            input_summary="汇总已解析课程材料，生成课程建设草稿",
-            input_payload={"course_id": corpus.course_id, "corpus_snapshot_id": corpus.corpus_snapshot_id},
-            resource_links=[
-                {"resource_kind": "course", "resource_id": str(corpus.course_id), "relation": "input"},
-                {"resource_kind": "course_corpus_snapshot", "resource_id": corpus.corpus_snapshot_id, "relation": "input"},
-            ],
-        ))
+        # Create the orchestration row first so its public identifier is part of
+        # the durable TaskRecord payload.  The generic retry endpoint rebuilds
+        # worker input exclusively from that payload; passing build_task_id only
+        # to the first in-memory submit made every later retry lose this value.
         build = CourseDraftBuildTask(
             course_id=corpus.course_id,
             corpus_snapshot_id=corpus.corpus_snapshot_id,
-            task_id=task_view.task_id,
             owner_user_id=owner_user_id,
             trigger=trigger,
             generation_mode=mode,
@@ -297,9 +289,81 @@ class CourseCorpusService:
             base_script_version_id=latest_script.script_version_id if latest_script else None,
             not_before_at=not_before_at,
         )
+        task_view = task_service.create_task(session, TaskCreateRequest(
+            task_type="course_draft_build",
+            owner_user_id=owner_user_id,
+            course_id=corpus.course_id,
+            input_summary="汇总已解析课程材料，生成课程建设草稿",
+            input_payload={
+                "course_id": corpus.course_id,
+                "corpus_snapshot_id": corpus.corpus_snapshot_id,
+                "build_task_id": build.build_task_id,
+            },
+            resource_links=[
+                {"resource_kind": "course", "resource_id": str(corpus.course_id), "relation": "input"},
+                {"resource_kind": "course_corpus_snapshot", "resource_id": corpus.corpus_snapshot_id, "relation": "input"},
+            ],
+        ))
+        build.task_id = task_view.task_id
         session.add(build)
         session.flush()
         return build, task_view.task_id
+
+    def repair_legacy_build_task_retry(
+        self,
+        session: Session,
+        *,
+        task_id: str,
+        owner_user_id: int,
+    ) -> bool:
+        """Repair the retry payload written by older course-build code.
+
+        Older rows omitted ``build_task_id`` from ``TaskRecord.input_payload``.
+        After a normal build failure, pressing retry therefore replaced the
+        original error with a non-retryable ``VALIDATION_FAILED``.  Recovery is
+        deliberately narrow: the task owner, task/build linkage, course, corpus
+        snapshot, and the legacy failure signature must all match.
+        """
+        from app.models.task_model import TaskEventRecord, TaskRecord
+
+        record = session.exec(select(TaskRecord).where(
+            TaskRecord.task_id == task_id,
+            TaskRecord.owner_user_id == owner_user_id,
+            TaskRecord.task_type == "course_draft_build",
+        )).first()
+        if record is None or record.status != "failed" or record.error_code != "VALIDATION_FAILED":
+            return False
+
+        try:
+            payload = json.loads(record.input_payload) if record.input_payload else {}
+        except (TypeError, ValueError):
+            payload = {}
+        if payload.get("build_task_id"):
+            return False
+
+        build = session.exec(select(CourseDraftBuildTask).where(
+            CourseDraftBuildTask.task_id == task_id,
+            CourseDraftBuildTask.course_id == record.course_id,
+            CourseDraftBuildTask.corpus_snapshot_id == str(payload.get("corpus_snapshot_id") or ""),
+        )).first()
+        if build is None:
+            return False
+
+        payload["course_id"] = build.course_id
+        payload["corpus_snapshot_id"] = build.corpus_snapshot_id
+        payload["build_task_id"] = build.build_task_id
+        record.input_payload = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        record.retryable = True
+        record.updated_at = utcnow_aware()
+        session.add(record)
+        session.add(TaskEventRecord(
+            task_id=task_id,
+            event_type="retry_payload_repaired",
+            message="已恢复旧版课程草稿构建任务的重试参数",
+            created_at=record.updated_at,
+        ))
+        session.commit()
+        return True
 
     def create_update_proposal(
         self,

@@ -326,6 +326,8 @@ async def _invoke_document_parser(payload: dict[str, Any]) -> tuple[int, int, in
 
 async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
     """Build a course draft from one frozen multi-material corpus snapshot."""
+    from sqlmodel import select
+
     payload = ctx.input_payload or {}
     course_id = int(payload.get("course_id") or 0)
     corpus_snapshot_id = str(payload.get("corpus_snapshot_id") or "")

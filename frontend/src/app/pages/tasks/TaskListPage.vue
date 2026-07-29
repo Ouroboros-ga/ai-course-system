@@ -11,6 +11,7 @@ const props = defineProps({ view: { type: String, required: true }, title: { typ
 const state = ref('loading')
 const items = ref([])
 const working = ref('')
+const actionError = ref('')
 
 const statusTone = { pending: 'neutral', queued: 'neutral', running: 'ink', succeeded: 'green', failed: 'red', cancelled: 'neutral', interrupted: 'amber' }
 const ordered = computed(() => [...items.value].sort((a, b) => String(b.updated_at || b.created_at).localeCompare(String(a.updated_at || a.created_at))))
@@ -26,12 +27,33 @@ async function load() {
   }
 }
 async function cancel(item) {
+  actionError.value = ''
   working.value = item.task_id
-  try { await cancelTask(item.task_id); await load() } finally { working.value = '' }
+  try {
+    await cancelTask(item.task_id)
+    await load()
+  } catch (error) {
+    actionError.value = error?.response?.data?.message || '取消任务失败，请刷新状态后重试。'
+  } finally {
+    working.value = ''
+  }
 }
 async function retry(item) {
+  actionError.value = ''
   working.value = item.task_id
-  try { await retryTask(item.task_id); await load() } finally { working.value = '' }
+  try {
+    await retryTask(item.task_id)
+    await load()
+  } catch (error) {
+    actionError.value = error?.response?.data?.message || '重试任务失败，请刷新状态后再试。'
+  } finally {
+    working.value = ''
+  }
+}
+function canRetry(item) {
+  if (!['failed', 'interrupted', 'cancelled'].includes(item.status)) return false
+  // Older course_draft_build rows are repaired atomically by the retry API.
+  return item.retryable !== false || (item.task_type === 'course_draft_build' && item.error_code === 'VALIDATION_FAILED')
 }
 function when(value) { return value ? new Date(value).toLocaleString('zh-CN') : '—' }
 onMounted(load)
@@ -43,8 +65,9 @@ onMounted(load)
     <SfxSkeleton v-if="state === 'loading'" :lines="5" block />
     <SfxError v-else-if="state === 'error'" description="任务中心暂时无法读取" @retry="load" />
     <SfxEmpty v-else-if="state === 'empty'" title="暂无任务" description="后续创建解析、媒体或实验任务后会在这里显示。" />
-    <section v-else class="sfx-panel"><div class="sfx-table-wrap"><table class="sfx-table"><thead><tr><th>任务</th><th>状态</th><th>阶段</th><th>更新时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in ordered" :key="item.task_id"><td><strong>{{ item.input_summary || item.task_type }}</strong><p class="sfx-t-caption sfx-t-muted">{{ item.task_id }}</p></td><td><SfxBadge :tone="statusTone[item.status] || 'neutral'">{{ item.status }}</SfxBadge></td><td>{{ item.stage || '—' }}</td><td class="sfx-t-caption">{{ when(item.updated_at || item.created_at) }}</td><td><span class="sfx-task-actions"><SfxButton v-if="['pending','queued','running'].includes(item.status)" size="sm" variant="secondary" :loading="working === item.task_id" @click="cancel(item)">取消</SfxButton><SfxButton v-if="['failed','interrupted','cancelled'].includes(item.status)" size="sm" variant="secondary" :loading="working === item.task_id" @click="retry(item)">重试</SfxButton></span></td></tr></tbody></table></div></section>
+    <p v-if="actionError" class="sfx-task-error sfx-t-ui" role="alert">{{ actionError }}</p>
+    <section v-if="state === 'ready'" class="sfx-panel"><div class="sfx-table-wrap"><table class="sfx-table"><thead><tr><th>任务</th><th>状态</th><th>阶段</th><th>更新时间</th><th>操作</th></tr></thead><tbody><tr v-for="item in ordered" :key="item.task_id"><td><strong>{{ item.input_summary || item.task_type }}</strong><p class="sfx-t-caption sfx-t-muted">{{ item.task_id }}</p></td><td><SfxBadge :tone="statusTone[item.status] || 'neutral'">{{ item.status }}</SfxBadge></td><td>{{ item.stage || '—' }}</td><td class="sfx-t-caption">{{ when(item.updated_at || item.created_at) }}</td><td><span class="sfx-task-actions"><SfxButton v-if="['pending','queued','running'].includes(item.status)" size="sm" variant="secondary" :loading="working === item.task_id" @click="cancel(item)">取消</SfxButton><SfxButton v-if="canRetry(item)" size="sm" variant="secondary" :loading="working === item.task_id" @click="retry(item)">重试</SfxButton><span v-else-if="['failed','interrupted','cancelled'].includes(item.status)" class="sfx-t-caption sfx-t-muted">不可重试</span></span></td></tr></tbody></table></div></section>
   </div>
 </template>
 
-<style scoped>.sfx-tasks{max-width:1180px}.sfx-task-actions{display:flex;gap:var(--space-2)}</style>
+<style scoped>.sfx-tasks{max-width:1180px}.sfx-task-actions{display:flex;align-items:center;gap:var(--space-2)}.sfx-task-error{margin:0 0 var(--space-3);padding:var(--space-3);border:1px solid var(--color-danger);border-radius:var(--radius-md);background:var(--color-danger-light);color:var(--color-danger-hover)}</style>

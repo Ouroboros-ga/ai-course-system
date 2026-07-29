@@ -21,28 +21,43 @@ const lastResponse = ref(null)
 const pending = computed(() => proposals.value.filter((proposal) => proposal.status === 'pending'))
 const selectedTitle = computed(() => props.selectedNode?.title || '')
 
+function apiErrorMessage(caught, fallback) {
+  const payload = caught?.response?.data
+  const detail = payload?.detail
+  return (
+    (typeof detail === 'string' ? detail : detail?.message)
+    || payload?.message
+    || caught?.message
+    || fallback
+  )
+}
+
 async function loadProposals() {
   loading.value = true
   try { proposals.value = (await listBuildProposals(props.courseId))?.items ?? [] }
-  catch (caught) { error.value = caught?.message || '无法读取 Agent 提案' }
+  catch (caught) { error.value = apiErrorMessage(caught, '无法读取 Agent 提案') }
   finally { loading.value = false }
 }
 async function loadEvidence() {
   evidence.value = []
   if (!props.selectedNode?.outline_node_id) return
   try { evidence.value = (await getPrepAgentNodeEvidence(props.courseId, props.selectedNode.outline_node_id))?.items ?? [] }
-  catch (caught) { error.value = caught?.message || '无法读取此节点的原文证据' }
+  catch (caught) { error.value = apiErrorMessage(caught, '无法读取此节点的原文证据') }
 }
 async function send() {
   const value = instruction.value.trim()
   if (!value || sending.value) return
   sending.value = true; error.value = ''; lastResponse.value = null
   try {
-    const data = await runPrepAgentCommand(props.courseId, value)
+    const data = await runPrepAgentCommand(
+      props.courseId,
+      value,
+      props.selectedNode?.outline_node_id ?? null,
+    )
     lastResponse.value = data?.explanation ?? { reason: '已创建待教师审核的提案。', changed: [] }
     instruction.value = ''
     await loadProposals()
-  } catch (caught) { error.value = caught?.message || '备课 Agent 暂时无法生成提案' }
+  } catch (caught) { error.value = apiErrorMessage(caught, '备课 Agent 暂时无法生成提案') }
   finally { sending.value = false }
 }
 async function decide(proposal, accepted) {
@@ -51,7 +66,7 @@ async function decide(proposal, accepted) {
     await decideBuildProposal(props.courseId, proposal.proposal_id, accepted)
     await loadProposals()
     window.dispatchEvent(new CustomEvent('course-build-proposal-decided'))
-  } catch (caught) { error.value = caught?.message || '提案审核失败；草稿未被修改' }
+  } catch (caught) { error.value = apiErrorMessage(caught, '提案审核失败；草稿未被修改') }
   finally { deciding.value = '' }
 }
 function submitOnEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }
@@ -82,6 +97,9 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
       <section v-if="lastResponse" class="agent-explanation">
         <p class="panel-kicker">本次提案说明</p>
         <strong>{{ lastResponse.reason || '已生成待审核提案。' }}</strong>
+        <p v-if="lastResponse.planner">
+          生成方式：{{ lastResponse.planner === 'llm' ? '在线模型' : '本地规则（未调用在线模型）' }}
+        </p>
         <p v-if="lastResponse.changed?.length">修改目标：{{ lastResponse.changed.join('、') }}</p>
         <p v-if="lastResponse.excluded_locked_targets?.length" class="excluded">已排除锁定项：{{ lastResponse.excluded_locked_targets.join('、') }}</p>
       </section>

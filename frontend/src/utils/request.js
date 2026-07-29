@@ -339,6 +339,12 @@ service.interceptors.response.use(
     let message = '网络连接异常，请稍后再试'
 
     if (error.response) {
+      const responseData = error.response.data
+      const detail = responseData?.detail
+      const backendMessage = (
+        (typeof detail === 'string' ? detail : detail?.message)
+        || responseData?.message
+      )
       switch (error.response.status) {
         case 401:
           message = '登录已过期，请重新登录'
@@ -351,16 +357,16 @@ service.interceptors.response.use(
           message = '请求资源不存在'
           break
         case 500:
-          message = error.response.data?.detail || '服务器开小差了'
+          message = backendMessage || '服务器开小差了'
           break
         case 503:
-          message = error.response.data?.detail || '服务暂不可用，请稍后重试'
+          message = backendMessage || '服务暂不可用，请稍后重试'
           break
         case 504:
-          message = error.response.data?.detail || '请求超时，请稍后重试'
+          message = backendMessage || '请求超时，请稍后重试'
           break
         default:
-          message = error.response.data?.detail || error.response.data?.message || '未知错误'
+          message = backendMessage || '未知错误'
       }
     } else if (error.message.includes('timeout')) {
       message = '请求超时，请检查网络'

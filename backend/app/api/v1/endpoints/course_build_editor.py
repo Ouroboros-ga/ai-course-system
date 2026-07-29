@@ -135,6 +135,7 @@ class PrepAgentCommandRequest(BaseModel):
     """Natural-language instruction for the teacher-facing preparation agent."""
 
     instruction: str = Field(min_length=2, max_length=8_000)
+    outline_node_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class LegacyReleasePublishRequest(BaseModel):
@@ -574,12 +575,26 @@ async def run_prep_agent_command(
     the outline/script records.
     """
     context = require_course_permission(session, current_user, course_id, "course.edit")
-    from app.services.course_prep_agent_service import course_prep_agent_service
+    from app.services.course_prep_agent_service import (
+        CoursePrepAgentPlanningError,
+        course_prep_agent_service,
+    )
 
     try:
         result = await course_prep_agent_service.plan(
-            session, course_id=course_id, instruction=payload.instruction,
+            session,
+            course_id=course_id,
+            instruction=payload.instruction,
+            outline_node_id=payload.outline_node_id,
         )
+    except CoursePrepAgentPlanningError as exc:
+        raise HTTPException(
+            502,
+            detail={
+                "error_code": "PREP_AGENT_LLM_INVALID_RESPONSE",
+                "message": str(exc),
+            },
+        ) from exc
     except ValueError as exc:
         raise HTTPException(422, detail={"error_code": "PREP_AGENT_NO_EDITABLE_TARGET", "message": str(exc)}) from exc
 

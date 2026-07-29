@@ -18,7 +18,14 @@ export const decideBuildProposal = (courseId, proposalId, accepted) => request.p
 
 // Teacher-facing controlled preparation Agent.  It only returns/persists a
 // PatchProposal; accepting a proposal remains a separate explicit action.
-export const runPrepAgentCommand = (courseId, instruction) => request.post(`${base(courseId)}/prep-agent/commands`, { instruction })
+export const runPrepAgentCommand = (courseId, instruction, outlineNodeId = null) => request.post(
+  `${base(courseId)}/prep-agent/commands`,
+  {
+    instruction,
+    ...(outlineNodeId ? { outline_node_id: outlineNodeId } : {}),
+  },
+  { skipErrorToast: true },
+)
 export const getPrepAgentNodeEvidence = (courseId, nodeId) => request.get(`${base(courseId)}/prep-agent/evidence/${encodeURIComponent(nodeId)}`)
 
 export const getPptMappingState = (courseId) => request.get(`${base(courseId)}/ppt-mapping`)

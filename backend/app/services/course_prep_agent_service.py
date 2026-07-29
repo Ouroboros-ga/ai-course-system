@@ -8,6 +8,7 @@ the LLM sees its editable target set and are checked again before persistence.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from dataclasses import dataclass
 from typing import Any
@@ -17,11 +18,18 @@ from sqlmodel import Session, select
 
 from app.common.llm_client import Message, llm_client
 from app.models.course_build_model import CourseCorpusSnapshot, CorpusSnapshotStatus
-from app.models.course_outline_model import CourseOutlineNode, TeachingScriptNode
+from app.models.course_outline_model import (
+    CourseOutlineNode,
+    CourseOutlineVersion,
+    OutlineLifecycleStatus,
+    TeachingScriptNode,
+    TeachingScriptVersion,
+)
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 
 
 PROMPT_VERSION = "course-prep-agent/1.0"
+logger = logging.getLogger(__name__)
 
 
 class AgentOperation(BaseModel):
@@ -48,24 +56,65 @@ class CoursePrepAgentResult:
     planner: str
 
 
+class CoursePrepAgentPlanningError(RuntimeError):
+    """The configured LLM failed to return a safe, valid preparation plan."""
+
+
 class CoursePrepAgentService:
     """Read course facts, plan safe modifications, return proposal-ready data."""
 
     async def plan(
-        self, session: Session, *, course_id: int, instruction: str,
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        instruction: str,
+        outline_node_id: str | None = None,
     ) -> CoursePrepAgentResult:
         instruction = instruction.strip()
         if not instruction:
             raise ValueError("备课指令不能为空")
 
+        outline_version = session.exec(
+            select(CourseOutlineVersion).where(
+                CourseOutlineVersion.course_id == course_id,
+                CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(CourseOutlineVersion.version.desc())
+        ).first()
+        if outline_version is None:
+            raise ValueError("课程尚未有初始草稿；请先完成材料解析与首次智能备课")
         outline = list(session.exec(select(CourseOutlineNode).where(
             CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_version_id == outline_version.outline_version_id,
         ).order_by(CourseOutlineNode.order_index)).all())
-        scripts = list(session.exec(select(TeachingScriptNode).where(
-            TeachingScriptNode.course_id == course_id,
-        ).order_by(TeachingScriptNode.updated_at.desc())).all())
+        script_version = session.exec(
+            select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == course_id,
+                TeachingScriptVersion.outline_version_id == outline_version.outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(TeachingScriptVersion.version.desc())
+        ).first()
+        scripts = [] if script_version is None else list(session.exec(
+            select(TeachingScriptNode).where(
+                TeachingScriptNode.course_id == course_id,
+                TeachingScriptNode.script_version_id == script_version.script_version_id,
+            ).order_by(TeachingScriptNode.updated_at.desc())
+        ).all())
         if not outline:
             raise ValueError("课程尚未有初始草稿；请先完成材料解析与首次智能备课")
+
+        if outline_node_id:
+            selected_outline = next(
+                (node for node in outline if node.outline_node_id == outline_node_id),
+                None,
+            )
+            if selected_outline is None:
+                raise ValueError("选中的课程节点不属于当前最新草稿，请刷新后重试")
+            outline = [selected_outline]
+            scripts = [
+                node for node in scripts
+                if node.outline_node_id == outline_node_id
+            ]
 
         locked_targets = {
             *(f"outline:{node.outline_node_id}" for node in outline if node.locked_by is not None),
@@ -90,15 +139,25 @@ class CoursePrepAgentService:
         allowed_evidence_ids = {item["evidence_id"] for item in evidence if item.get("evidence_id")}
         kept: list[dict[str, Any]] = []
         excluded: list[str] = []
+        discarded_invalid_or_noop = 0
         for operation in plan.operations:
             key = f"{operation.target_kind}:{operation.target_id}"
             if key in locked_targets:
                 excluded.append(key)
                 continue
-            exists = any(node.outline_node_id == operation.target_id for node in editable_outline) if operation.target_kind == "outline" else any(
-                node.script_node_id == operation.target_id for node in editable_scripts
+            target_node = next(
+                (node for node in editable_outline if node.outline_node_id == operation.target_id),
+                None,
+            ) if operation.target_kind == "outline" else next(
+                (node for node in editable_scripts if node.script_node_id == operation.target_id),
+                None,
             )
-            if not exists:
+            allowed_fields = {"title"} if operation.target_kind == "outline" else {"content", "style"}
+            if target_node is None or operation.field not in allowed_fields:
+                discarded_invalid_or_noop += 1
+                continue
+            if str(getattr(target_node, operation.field, "")) == operation.after:
+                discarded_invalid_or_noop += 1
                 continue
             kept.append({
                 "target": f"{operation.target_kind}:{operation.target_id}:{operation.field}",
@@ -107,6 +166,8 @@ class CoursePrepAgentService:
                 "evidence_refs": [item for item in operation.evidence_refs if item in allowed_evidence_ids],
             })
         if not kept:
+            if discarded_invalid_or_noop:
+                raise ValueError("模型没有产生可应用的实质性修改，请补充更明确的调整要求后重试")
             raise ValueError("指令没有可修改的未锁定课程节点；锁定内容不会进入 Agent 修改范围")
         return CoursePrepAgentResult(
             summary=plan.summary,
@@ -177,16 +238,50 @@ class CoursePrepAgentService:
             "返回纯 JSON，结构为 {summary, operations[]}；每项包含 target_kind, target_id, field, after, reason, downstream_impact, evidence_refs。"
             "证据只能使用已提供且 confirmed=true 的 evidence_id。"
         )
+        system += (
+            "target_kind 必须严格使用英文字符串 \"outline\" 或 \"script\"，不能使用同义词、中文或节点类型；"
+            "field 必须严格使用英文字符串 \"title\"、\"content\" 或 \"style\"；target_id 必须从输入中原样复制。"
+            "editable_scripts.content 是允许改写的课程事实来源；可以在不改变事实含义的前提下重组、简化和改写其表达。"
+            "如果没有 confirmed evidence，evidence_refs 使用空数组即可，不得因此保留原文不变。"
+            "当教师明确要求改写时，after 必须与原字段有实质差异，不能提交原文不变的空操作。"
+            "示例：{\"summary\":\"...\",\"operations\":[{\"target_kind\":\"script\","
+            "\"target_id\":\"输入中的 script id\",\"field\":\"content\",\"after\":\"...\","
+            "\"reason\":\"...\",\"downstream_impact\":\"...\",\"evidence_refs\":[]}]}。"
+            "如果教师要求只生成一项，operations 必须恰好包含一项。"
+        )
         try:
             response = await llm_client.chat([
                 Message(role="system", content=system),
                 Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
             ], temperature=0.2, response_format={"type": "json_object"})
-            return AgentPlan.model_validate_json(response.content)
-        except (ValidationError, json.JSONDecodeError, ValueError):
-            return None
-        except Exception:
-            return None
+            plan = AgentPlan.model_validate_json(response.content)
+            logger.info(
+                "Course prep LLM succeeded: model=%s latency_ms=%.0f usage=%s operations=%d",
+                response.model,
+                response.latency_ms,
+                response.usage,
+                len(plan.operations),
+            )
+            return plan
+        except ValidationError as exc:
+            logger.warning(
+                "Course prep LLM returned an invalid plan: errors=%s",
+                exc.errors(include_input=False),
+            )
+            raise CoursePrepAgentPlanningError("模型返回的备课提案格式不符合安全协议，请重试") from exc
+        except (json.JSONDecodeError, ValueError) as exc:
+            logger.warning(
+                "Course prep LLM returned invalid JSON: %s",
+                type(exc).__name__,
+            )
+            raise CoursePrepAgentPlanningError("模型返回的备课提案不是有效 JSON，请重试") from exc
+        except Exception as exc:
+            logger.warning(
+                "Course prep LLM request failed: %s: %s",
+                type(exc).__name__,
+                str(exc)[:500],
+            )
+            raise CoursePrepAgentPlanningError("备课模型服务调用失败，请稍后重试") from exc
 
     @staticmethod
     def _llm_is_configured() -> bool:

@@ -229,6 +229,16 @@ async def retry_task(
     - 若 worker 未注册对应 handler，任务停留在 pending（前端可见，不伪成功）
     """
     user_id = int(current_user["user_id"])
+
+    # Compatibility repair for course-draft tasks created before build_task_id
+    # became part of their durable payload.  The helper is owner-scoped and
+    # only reclassifies the exact legacy VALIDATION_FAILED shape.
+    from app.services.course_corpus_service import course_corpus_service
+    course_corpus_service.repair_legacy_build_task_retry(
+        session,
+        task_id=task_id,
+        owner_user_id=user_id,
+    )
     view = task_service.retry(session, task_id, operator_user_id=user_id)
 
     # 重新提交到 worker（input_payload 需从记录读取，ViewModel 不暴露原始 payload）

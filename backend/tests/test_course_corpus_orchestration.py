@@ -1,10 +1,12 @@
 """P2 regression coverage for course-level material aggregation."""
 from __future__ import annotations
 
+import asyncio
+import json
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from sqlmodel import select
+from sqlmodel import Session, select
 
 from app.core.security import get_password_hash
 from app.models.course_build_model import (
@@ -23,6 +25,9 @@ from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.course_corpus_service import course_corpus_service
 from app.services.document_draft_builders import build_draft_assets
+from app.services.task_service import task_service
+from app.platform.tasks.handlers import course_draft_build_handler
+from app.platform.tasks.worker import TaskHandlerContext
 
 
 def _course_owner(session):
@@ -102,6 +107,81 @@ def test_corpus_is_one_role_aware_snapshot_and_partial_parse_is_warning(session)
     assert session.exec(select(CourseDraftBuildTask).where(
         CourseDraftBuildTask.course_id == course.id,
     )).all()
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == first_task_id)).one()
+    assert json.loads(task.input_payload)["build_task_id"] == first_build.build_task_id
+
+
+def test_legacy_course_build_retry_payload_is_repaired(session):
+    owner, course = _course_owner(session)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course.id, owner_user_id=owner.id,
+    )
+    build, task_id = course_corpus_service.create_build_task(
+        session, corpus=corpus, owner_user_id=owner.id, quiet_window_seconds=0,
+    )
+
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).one()
+    task.input_payload = json.dumps({
+        "course_id": course.id,
+        "corpus_snapshot_id": corpus.corpus_snapshot_id,
+    })
+    task.status = "failed"
+    task.error_code = "VALIDATION_FAILED"
+    task.error_message = "course_draft_build 缺少课程或语料快照"
+    task.retryable = False
+    session.add(task)
+    session.commit()
+
+    assert course_corpus_service.repair_legacy_build_task_retry(
+        session, task_id=task_id, owner_user_id=owner.id,
+    ) is True
+    session.refresh(task)
+    assert json.loads(task.input_payload)["build_task_id"] == build.build_task_id
+    assert task.retryable is True
+
+    retried = task_service.retry(session, task_id, operator_user_id=owner.id)
+    assert retried.status == "pending"
+
+
+def test_course_draft_build_handler_executes_with_persisted_payload(session):
+    owner, course = _course_owner(session)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course.id, owner_user_id=owner.id,
+    )
+    item = session.exec(select(CourseCorpusItem).where(
+        CourseCorpusItem.corpus_snapshot_id == corpus.corpus_snapshot_id,
+    )).one()
+    session.add(DocumentBlock(
+        course_id=course.id,
+        run_id=item.parse_run_id,
+        text="Handler regression concept",
+        page_number=1,
+        page_or_slide=1,
+        semantic_role="knowledge_title",
+        material_version_id=item.material_version_id,
+    ))
+    build, task_id = course_corpus_service.create_build_task(
+        session, corpus=corpus, owner_user_id=owner.id, quiet_window_seconds=0,
+    )
+    session.commit()
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).one()
+    payload = json.loads(task.input_payload)
+    test_engine = session.get_bind()
+
+    asyncio.run(course_draft_build_handler(TaskHandlerContext(
+        task_id=task_id,
+        input_payload=payload,
+        session_factory=lambda: Session(test_engine),
+        service=task_service,
+    )))
+
+    session.expire_all()
+    final = task_service.get_task(session, task_id, owner_user_id=owner.id)
+    session.refresh(build)
+    assert final.status == "succeeded"
+    assert build.status == CourseDraftBuildStatus.SUCCEEDED
 
 
 def test_failed_material_blocks_until_teacher_excludes_it(session):
