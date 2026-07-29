@@ -79,6 +79,9 @@ provide('coursesContext', { openJoin, joinRefreshTick })
   background: var(--surface-panel);
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
 .sfx-l2nav-inner {

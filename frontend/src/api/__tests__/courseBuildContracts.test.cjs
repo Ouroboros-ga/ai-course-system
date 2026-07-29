@@ -27,9 +27,23 @@ test('new construction backend guards all teacher mutations with Course Access v
   assert.match(source, /_require_draft_script/)
 })
 
-test('course release gate requires published CourseOutline and an aligned TeachingScript', () => {
+test('course release gate freezes one corpus lineage with an aligned draft outline and script', () => {
   const source = read('backend/app/services/course_build_service.py')
-  assert.match(source, /"outline\.published"/)
-  assert.match(source, /"script\.published_for_outline"/)
-  assert.match(source, /published_script\.outline_version_id == published_outline\.outline_version_id/)
+  assert.match(source, /没有可冻结的课程材料快照/)
+  assert.match(source, /freeze_release_retrieval_snapshot/)
+  assert.match(source, /发布必须指定同一草稿版本的课程结构与讲稿/)
+  assert.match(source, /outline\.corpus_snapshot_id != corpus\.corpus_snapshot_id/)
+  assert.match(source, /release\.retrieval_snapshot_id = retrieval\.retrieval_snapshot_id/)
+})
+
+test('course builder agent uses the natural-language proposal and evidence APIs, never the DSL creation path', () => {
+  const panel = read('frontend/src/app/pages/course/build/CourseBuildAgentPanel.vue')
+  const editor = read('frontend/src/api/course_editor.js')
+  assert.match(panel, /向备课 Agent 说明你想调整什么/)
+  assert.match(panel, /runPrepAgentCommand/)
+  assert.match(panel, /getPrepAgentNodeEvidence/)
+  assert.match(panel, /接受提案/)
+  assert.doesNotMatch(panel, /outline:on_x:title/)
+  assert.match(editor, /prep-agent\/commands/)
+  assert.match(editor, /prep-agent\/evidence/)
 })

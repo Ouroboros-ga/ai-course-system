@@ -12,6 +12,8 @@
   // NavigationBar/GradientBackground shell is bypassed for those routes so
   // the two visual systems never mix.
   const isShadowApp = computed(() => route.path === '/app' || route.path.startsWith('/app/'))
+  // The authentication entry owns its complete Academic Ink layout.
+  const isAuthEntry = computed(() => route.path === '/profile' && !counter.isLoggedIn)
 
   onMounted(() => {
     counter.checkAuth()
@@ -21,6 +23,7 @@
 <template>
   <div id="app">
     <router-view v-if="isShadowApp" />
+    <router-view v-else-if="isAuthEntry" />
     <template v-else>
       <NavigationBar />
       <GradientBackground
@@ -31,9 +34,11 @@
 </template>
 
 <style>
-/* ========== 全局重置样式（基于设计令牌） ========== */
+/* ========== 全局重置 ========== */
 
-* {
+*,
+*::before,
+*::after {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
@@ -41,7 +46,7 @@
 
 html, body {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   font-family: var(--font-sans);
   font-size: var(--text-base);
   line-height: var(--leading-normal);
@@ -49,13 +54,14 @@ html, body {
   background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow-x: hidden;
+  /* clip 而非 hidden：不创建滚动容器，不破坏 position: sticky */
+  overflow-x: clip;
   transition: background-color var(--duration-slow) var(--ease), color var(--duration-slow) var(--ease);
 }
 
 #app {
   width: 100%;
-  height: 100%;
+  min-height: 100%;
   position: relative;
 }
 
@@ -112,7 +118,7 @@ select:focus-visible {
   }
 }
 
-/* 滚动条美化 */
+/* 滚动条 */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -129,6 +135,12 @@ select:focus-visible {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-hover);
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border) transparent;
 }
 
 /* 选中文本 */

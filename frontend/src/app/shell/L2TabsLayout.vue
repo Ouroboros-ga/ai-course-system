@@ -50,6 +50,9 @@ const activeKey = computed(() => props.tabs.find((t) => route.path.startsWith(t.
   background: var(--surface-panel);
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 
 .sfx-space-l2nav-inner {

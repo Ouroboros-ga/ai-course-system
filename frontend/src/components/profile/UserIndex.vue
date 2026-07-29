@@ -1,5 +1,6 @@
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import Login from './LoginIn/login/Login.vue'
 import UserInfoCard from "./LoginIn/userinfo/UserInfoCard.vue"
 import StatsCard from "./LoginIn/stats/StatsCard.vue"
@@ -12,12 +13,16 @@ import { Settings, Palette, BookOpen, LogOut, Bot } from 'lucide-vue-next'
 
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
+const route = useRoute()
+const router = useRouter()
 
 // 控制是否显示设置面板
 const showSettingsPanel = ref(false)
 const showPreferencePanel = ref(false)
 const showMyCoursesPanel = ref(false)
 const avatarModalVisible = ref(false)
+const authLoading = ref(false)
+const authError = ref('')
 
 // 统计数据
 const courseCount = ref(0)
@@ -47,8 +52,29 @@ const loadUserStats = () => {
   }, 300)
 }
 
+function nextAuthenticatedRoute() {
+  const redirect = Array.isArray(route.query.redirect)
+    ? route.query.redirect[0]
+    : route.query.redirect
+
+  // The route guard only supplies internal paths. Keep that guarantee when a
+  // login page is opened directly, and never send a user back to the auth page.
+  if (typeof redirect === 'string' && redirect.startsWith('/') && !redirect.startsWith('//') && redirect !== '/profile') {
+    return redirect
+  }
+  return '/app'
+}
+
+async function finishAuthentication(successMessage) {
+  showToast(successMessage, 'success')
+  loadUserStats()
+  await router.replace(nextAuthenticatedRoute())
+}
+
 // 1. 登录成功
 const handleLoginSend = async (data) => {
+  authLoading.value = true
+  authError.value = ''
   try {
     const res = await api.user.login(data)
     localStorage.setItem('token', res.token)
@@ -65,16 +91,20 @@ const handleLoginSend = async (data) => {
       role: res.userInfo.role
     })
 
-    showToast("登录成功", "success")
-    loadUserStats()
+    await finishAuthentication('登录成功')
   } catch (error) {
     console.error('登录失败', error)
-    showToast(error || "错误", "error")
+    authError.value = error?.message || String(error || '登录失败，请检查用户名和密码。')
+    showToast(authError.value, "error")
+  } finally {
+    authLoading.value = false
   }
 }
 
 // 2. 注册成功
 const handleRegisterSend = async (data) => {
+  authLoading.value = true
+  authError.value = ''
   try {
     const registerData = {
       username: data.username,
@@ -95,11 +125,13 @@ const handleRegisterSend = async (data) => {
       role: res.userInfo.role
     })
 
-    showToast("注册成功并自动登录", "success")
-    loadUserStats()
+    await finishAuthentication('注册成功并自动登录')
   } catch (error) {
     console.error('注册失败', error)
-    showToast(error || "错误", "error")
+    authError.value = error?.message || String(error || '注册失败，请稍后重试。')
+    showToast(authError.value, "error")
+  } finally {
+    authLoading.value = false
   }
 }
 
@@ -203,6 +235,8 @@ const handleLogout = () => {
     <Login
       v-if="!counter.userData.id"
       class="login-modal"
+      :loading="authLoading"
+      :server-error="authError"
       @loginSend="handleLoginSend"
       @registerSend="handleRegisterSend"
     />
@@ -293,7 +327,7 @@ const handleLogout = () => {
 <style scoped>
 .user-index-wrapper {
   width: 100%;
-  height: calc(100vh - var(--navbar-height));
+  min-height: 100vh;
   position: relative;
   display: flex;
   justify-content: center;

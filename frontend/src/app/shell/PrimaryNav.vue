@@ -144,8 +144,7 @@ onBeforeUnmount(() => {
   background: var(--surface-panel);
   border-bottom: 1px solid var(--border-default);
   flex-shrink: 0;
-  position: sticky;
-  top: 0;
+  position: relative;
   z-index: 40;
 }
 

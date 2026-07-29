@@ -42,6 +42,7 @@ const railItems = computed(() => {
   display: flex;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
 }
 
 .sfx-knowledge-main {

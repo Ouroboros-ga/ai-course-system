@@ -1,479 +1,596 @@
 <script setup>
-import { ref } from 'vue'
-import { showToast } from '@/utils/toast.js'
-import { LogIn, UserPlus, User, Lock, Eye, EyeOff } from 'lucide-vue-next'
+import { computed, reactive, ref, watch } from 'vue'
+import {
+  ArrowRight,
+  BookOpenCheck,
+  Check,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LoaderCircle,
+  LockKeyhole,
+  Sparkles,
+  UserRound,
+} from 'lucide-vue-next'
 
-// 状态管理：当前是否为登录模式
-const isLoginMode = ref(true)
-
-// 密码显示切换
-const showPassword = ref(false)
-const showConfirmPassword = ref(false)
-
-// 自定义信号
-const emit = defineEmits(['loginSend', 'registerSend']);
-
-
-// 表单数据
-const form = ref({
-  username: '',
-  password: '',
-  confirmPassword: ''
+const props = defineProps({
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  serverError: {
+    type: String,
+    default: '',
+  },
 })
 
-// 提交表单
-const handleSubmit = () => {
-  // --- 定义校验规则 ---
+const emit = defineEmits(['loginSend', 'registerSend'])
 
-  // 用户名规则：1-80位，纯英文字母
+const isLoginMode = ref(true)
+const showPassword = ref(false)
+const showConfirmPassword = ref(false)
+const form = reactive({
+  username: '',
+  password: '',
+  confirmPassword: '',
+})
+const errors = reactive({
+  username: '',
+  password: '',
+  confirmPassword: '',
+})
+
+const title = computed(() => (isLoginMode.value ? '登录工作空间' : '创建工作空间账号'))
+const description = computed(() => (
+  isLoginMode.value
+    ? '继续管理课程材料、教学草稿与已发布版本。'
+    : '创建账号后即可开始建立第一门课程。'
+))
+const submitLabel = computed(() => (isLoginMode.value ? '登录并继续' : '创建账号'))
+
+function clearErrors() {
+  errors.username = ''
+  errors.password = ''
+  errors.confirmPassword = ''
+}
+
+function switchMode(loginMode) {
+  if (isLoginMode.value === loginMode || props.loading) return
+  isLoginMode.value = loginMode
+  form.confirmPassword = ''
+  clearErrors()
+}
+
+function validate() {
+  clearErrors()
   const usernameRegex = /^[a-zA-Z]{1,80}$/
-
-  // 密码规则：6-18位，仅包含英文字母和数字
   const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
 
-  // 1. 校验用户名
-  if (!form.value.username) {
-    showToast('用户名不能为空！')
-    return
-  }
-  if (!usernameRegex.test(form.value.username)) {
-    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。')
-    return
+  if (!form.username) {
+    errors.username = '请输入用户名。'
+  } else if (!usernameRegex.test(form.username)) {
+    errors.username = '用户名仅支持 1–80 位英文字母。'
   }
 
-  // 2. 校验密码
-  if (!form.value.password) {
-    showToast('密码不能为空！')
-    return
-  }
-  if (!passwordRegex.test(form.value.password)) {
-    showToast('密码格式错误：长度需在6~18位之间，且只能包含英文字母和数字。')
-    return
+  if (!form.password) {
+    errors.password = '请输入密码。'
+  } else if (!passwordRegex.test(form.password)) {
+    errors.password = '密码需为 6–18 位字母或数字。'
   }
 
-  // 3. 注册模式下的额外校验
   if (!isLoginMode.value) {
-    if (form.value.password !== form.value.confirmPassword) {
-      showToast('两次密码输入不一致！')
-      return
+    if (!form.confirmPassword) {
+      errors.confirmPassword = '请再次输入密码。'
+    } else if (form.password !== form.confirmPassword) {
+      errors.confirmPassword = '两次输入的密码不一致。'
     }
-    // 注册：只发送 username 和 password
-    const registerData = {
-      username: form.value.username,
-      password: form.value.password
-    }
-    emit('registerSend', registerData)
-  } else {
-    // 登录：发送 username 和 password
-    const loginData = {
-      username: form.value.username,
-      password: form.value.password
-    }
-    emit('loginSend', loginData)
   }
+
+  return !errors.username && !errors.password && !errors.confirmPassword
 }
+
+function handleSubmit() {
+  if (props.loading || !validate()) return
+  const credentials = { username: form.username, password: form.password }
+  emit(isLoginMode.value ? 'loginSend' : 'registerSend', credentials)
+}
+
+watch(() => props.serverError, (value) => {
+  if (value) clearErrors()
+})
 </script>
 
 <template>
-  <div class="login-container">
-    <!-- 毛玻璃卡片 -->
-    <div class="glass-card">
-      <!-- 头部切换 Tab -->
-      <div class="tab-header">
-        <button
-          :class="{ active: isLoginMode }"
-          @click="isLoginMode = true"
-        >
-          <LogIn :size="18" />
-          登录
-        </button>
-        <button
-          :class="{ active: !isLoginMode }"
-          @click="isLoginMode = false"
-        >
-          <UserPlus :size="18" />
-          注册
-        </button>
-        <!-- 滑块背景 -->
-        <div class="slider" :class="{ 'slider-right': !isLoginMode }"></div>
+  <main class="auth-page">
+    <section class="auth-introduction" aria-labelledby="auth-brand-title">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><BookOpenCheck :size="24" /></div>
+        <span>智课工作空间</span>
       </div>
 
-      <!-- 表单区域 -->
-      <form @submit.prevent="handleSubmit" class="form-body">
-        <!-- 使用 transition-group 实现平滑过渡 -->
-        <TransitionGroup name="soft-transition" tag="div" class="form-wrapper">
+      <div class="introduction-copy">
+        <p class="eyebrow"><Sparkles :size="15" /> Evidence-driven teaching</p>
+        <h1 id="auth-brand-title">让课程回应学习</h1>
+        <p>
+          从材料解析到课程发布，在同一个可追溯的教学工作空间中完成。
+        </p>
+      </div>
 
-          <!-- 登录模板 -->
-          <div v-if="isLoginMode" key="login" class="form-content">
-            <div class="input-group">
-              <label>用户名</label>
-              <div class="input-wrapper">
-                <User class="input-icon" :size="20" />
-                <input
-                  type="text"
-                  v-model="form.username"
-                  placeholder="请输入用户名 (仅英文字母)"
-                  maxlength="80"
-                  required
-                />
-              </div>
+      <ol class="workflow" aria-label="课程建设流程">
+        <li>
+          <span class="workflow-index">01</span>
+          <div><strong>汇集材料</strong><small>保留原文、版本与解析证据</small></div>
+        </li>
+        <li>
+          <span class="workflow-index">02</span>
+          <div><strong>组织教学</strong><small>审核课程结构、讲稿与知识关联</small></div>
+        </li>
+        <li>
+          <span class="workflow-index">03</span>
+          <div><strong>冻结发布</strong><small>让学生只读取已确认的课程版本</small></div>
+        </li>
+      </ol>
+
+      <p class="introduction-note">
+        <Check :size="16" /> AI 建议始终保留来源，教师始终拥有最终决定权。
+      </p>
+    </section>
+
+    <section class="auth-panel" aria-labelledby="auth-form-title">
+      <div class="auth-panel__inner">
+        <header class="auth-heading">
+          <p class="auth-heading__label">课程建设入口</p>
+          <h2 id="auth-form-title">{{ title }}</h2>
+          <p>{{ description }}</p>
+        </header>
+
+        <div class="mode-switch" role="tablist" aria-label="身份验证方式">
+          <button
+            id="login-tab"
+            type="button"
+            role="tab"
+            :aria-selected="isLoginMode"
+            :class="{ active: isLoginMode }"
+            :disabled="loading"
+            @click="switchMode(true)"
+          >
+            登录
+          </button>
+          <button
+            id="register-tab"
+            type="button"
+            role="tab"
+            :aria-selected="!isLoginMode"
+            :class="{ active: !isLoginMode }"
+            :disabled="loading"
+            @click="switchMode(false)"
+          >
+            注册
+          </button>
+        </div>
+
+        <form class="auth-form" novalidate @submit.prevent="handleSubmit">
+          <p v-if="serverError" class="form-alert" role="alert">
+            <KeyRound :size="17" /> {{ serverError }}
+          </p>
+
+          <div class="field-group">
+            <label for="auth-username">用户名</label>
+            <div class="field-control" :class="{ invalid: errors.username }">
+              <UserRound :size="18" aria-hidden="true" />
+              <input
+                id="auth-username"
+                v-model.trim="form.username"
+                name="username"
+                autocomplete="username"
+                maxlength="80"
+                placeholder="请输入英文用户名"
+                :aria-invalid="Boolean(errors.username)"
+                :aria-describedby="errors.username ? 'username-error' : 'username-hint'"
+                @input="errors.username = ''"
+              />
             </div>
-            <div class="input-group">
-              <label>密码</label>
-              <div class="input-wrapper has-toggle">
-                <Lock class="input-icon" :size="20" />
-                <input
-                  :type="showPassword ? 'text' : 'password'"
-                  v-model="form.password"
-                  placeholder="请输入密码 (6-18位字母或数字)"
-                  maxlength="18"
-                  required
-                />
-                <button
-                  type="button"
-                  class="password-toggle"
-                  @click="showPassword = !showPassword"
-                  :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-                >
-                  <Eye v-if="showPassword" :size="20" />
-                  <EyeOff v-else :size="20" />
-                </button>
-              </div>
-            </div>
-            <div class="options">
-              <label class="remember">
-                <input type="checkbox"> 记住我
-              </label>
-<!--              <a href="#" class="forgot">忘记密码？</a>-->
-            </div>
+            <p id="username-hint" class="field-hint">仅支持 1–80 位英文字母。</p>
+            <p v-if="errors.username" id="username-error" class="field-error" role="alert">{{ errors.username }}</p>
           </div>
 
-          <!-- 注册模板 -->
-          <div v-else key="register" class="form-content">
-            <div class="input-group">
-              <label>用户名</label>
-              <div class="input-wrapper">
-                <User class="input-icon" :size="20" />
-                <input
-                  type="text"
-                  v-model="form.username"
-                  placeholder="请输入用户名 (仅英文字母)"
-                  maxlength="80"
-                  required
-                />
-              </div>
+          <div class="field-group">
+            <label for="auth-password">密码</label>
+            <div class="field-control" :class="{ invalid: errors.password }">
+              <LockKeyhole :size="18" aria-hidden="true" />
+              <input
+                id="auth-password"
+                v-model="form.password"
+                name="password"
+                :type="showPassword ? 'text' : 'password'"
+                autocomplete="current-password"
+                maxlength="18"
+                placeholder="请输入密码"
+                :aria-invalid="Boolean(errors.password)"
+                :aria-describedby="errors.password ? 'password-error' : 'password-hint'"
+                @input="errors.password = ''"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                :aria-label="showPassword ? '隐藏密码' : '显示密码'"
+                @click="showPassword = !showPassword"
+              >
+                <EyeOff v-if="showPassword" :size="19" />
+                <Eye v-else :size="19" />
+              </button>
             </div>
-            <div class="input-group">
-              <label>密码</label>
-              <div class="input-wrapper has-toggle">
-                <Lock class="input-icon" :size="20" />
-                <input
-                  :type="showPassword ? 'text' : 'password'"
-                  v-model="form.password"
-                  placeholder="请输入密码 (6-18位字母或数字)"
-                  maxlength="18"
-                  required
-                />
-                <button
-                  type="button"
-                  class="password-toggle"
-                  @click="showPassword = !showPassword"
-                  :aria-label="showPassword ? '隐藏密码' : '显示密码'"
-                >
-                  <Eye v-if="showPassword" :size="20" />
-                  <EyeOff v-else :size="20" />
-                </button>
-              </div>
-            </div>
-            <div class="input-group">
-              <label>确认密码</label>
-              <div class="input-wrapper has-toggle">
-                <Lock class="input-icon" :size="20" />
-                <input
-                  :type="showConfirmPassword ? 'text' : 'password'"
-                  v-model="form.confirmPassword"
-                  placeholder="再次输入密码"
-                  maxlength="18"
-                  required
-                />
-                <button
-                  type="button"
-                  class="password-toggle"
-                  @click="showConfirmPassword = !showConfirmPassword"
-                  :aria-label="showConfirmPassword ? '隐藏密码' : '显示密码'"
-                >
-                  <Eye v-if="showConfirmPassword" :size="20" />
-                  <EyeOff v-else :size="20" />
-                </button>
-              </div>
-            </div>
+            <p id="password-hint" class="field-hint">6–18 位字母或数字。</p>
+            <p v-if="errors.password" id="password-error" class="field-error" role="alert">{{ errors.password }}</p>
           </div>
 
-        </TransitionGroup>
+          <div v-if="!isLoginMode" class="field-group">
+            <label for="auth-confirm-password">确认密码</label>
+            <div class="field-control" :class="{ invalid: errors.confirmPassword }">
+              <LockKeyhole :size="18" aria-hidden="true" />
+              <input
+                id="auth-confirm-password"
+                v-model="form.confirmPassword"
+                name="confirm-password"
+                :type="showConfirmPassword ? 'text' : 'password'"
+                autocomplete="new-password"
+                maxlength="18"
+                placeholder="再次输入密码"
+                :aria-invalid="Boolean(errors.confirmPassword)"
+                :aria-describedby="errors.confirmPassword ? 'confirm-password-error' : undefined"
+                @input="errors.confirmPassword = ''"
+              />
+              <button
+                type="button"
+                class="password-toggle"
+                :aria-label="showConfirmPassword ? '隐藏确认密码' : '显示确认密码'"
+                @click="showConfirmPassword = !showConfirmPassword"
+              >
+                <EyeOff v-if="showConfirmPassword" :size="19" />
+                <Eye v-else :size="19" />
+              </button>
+            </div>
+            <p v-if="errors.confirmPassword" id="confirm-password-error" class="field-error" role="alert">{{ errors.confirmPassword }}</p>
+          </div>
 
-        <!-- 提交按钮 -->
-        <button type="submit" class="submit-btn">
-          <LogIn v-if="isLoginMode" :size="20" />
-          <UserPlus v-else :size="20" />
-          {{ isLoginMode ? '登 录' : '创 建 账 户' }}
-        </button>
-      </form>
-    </div>
-  </div>
+          <button type="submit" class="submit-button" :disabled="loading">
+            <LoaderCircle v-if="loading" class="is-spinning" :size="18" />
+            <template v-else>{{ submitLabel }} <ArrowRight :size="18" /></template>
+          </button>
+        </form>
+
+        <p class="auth-footer">
+          {{ isLoginMode ? '还没有账号？' : '已有账号？' }}
+          <button type="button" :disabled="loading" @click="switchMode(!isLoginMode)">
+            {{ isLoginMode ? '创建账号' : '返回登录' }}
+          </button>
+        </p>
+      </div>
+    </section>
+  </main>
 </template>
 
 <style scoped>
-/* --- 容器与背景 --- */
-.login-container {
-  width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  font-family: var(--font-sans);
-  pointer-events: none;
-  transform: translateY(calc(-1 * var(--space-12)));
+.auth-page {
+  --ink-950: #101A31;
+  --ink-900: #14213D;
+  --ink-700: #203A5F;
+  --ink-500: #355C7D;
+  --ink-100: #E8EEF4;
+  --surface-page: #F7F5EF;
+  --surface-panel: #FFFFFF;
+  --surface-cool: #F7F8FA;
+  --border-default: #DDE2E8;
+  --border-strong: #C9CFD8;
+  --text-primary: #172033;
+  --text-secondary: #4E5969;
+  --text-muted: #7B8494;
+  --red-700: #8B3A3A;
+  --red-100: #FAEEEE;
+  --font-ui: Inter, "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(440px, 0.9fr);
+  min-height: 100vh;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
 }
 
-/* --- 毛玻璃卡片 --- */
-.glass-card {
+.auth-introduction {
   position: relative;
-  width: 420px;
-  padding: var(--space-7);
-  background: var(--color-surface);
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--color-border);
-  box-shadow: var(--shadow-lg);
-  z-index: var(--z-overlay);
-  color: var(--color-text-secondary);
-  pointer-events: auto;
-}
-
-/* --- 头部切换 --- */
-.tab-header {
   display: flex;
-  position: relative;
-  margin-bottom: var(--space-7);
-  background: var(--color-surface-2);
-  border-radius: var(--radius-lg);
-  padding: var(--space-1);
-}
-
-.tab-header button {
-  flex: 1;
-  padding: var(--space-3) 0;
-  background: transparent;
-  border: none;
-  color: var(--color-text-muted);
-  font-size: var(--text-base);
-  font-weight: var(--font-medium);
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: color var(--duration-slow) var(--ease);
-  z-index: 2;
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   justify-content: center;
-  gap: var(--space-2);
+  min-height: 100vh;
+  padding: 64px clamp(48px, 9vw, 144px);
+  background: var(--ink-900);
+  color: #FFFFFF;
+  overflow: hidden;
 }
 
-.tab-header button.active {
-  color: var(--color-text);
-}
-
-.tab-header .slider {
+.auth-introduction::before,
+.auth-introduction::after {
   position: absolute;
-  top: var(--space-1);
-  left: var(--space-1);
-  width: calc(50% - var(--space-1));
-  height: calc(100% - var(--space-2));
-  background: var(--color-surface);
-  border-radius: var(--radius-md);
-  transition: transform var(--duration-slow) var(--ease-spring);
-  box-shadow: var(--shadow-sm);
+  content: "";
+  pointer-events: none;
+}
+
+.auth-introduction::before {
+  width: min(48vw, 620px);
+  height: min(48vw, 620px);
+  right: -28%;
+  bottom: -28%;
+  border: 1px solid rgba(232, 238, 244, 0.18);
+  border-radius: 50%;
+  box-shadow: 0 0 0 42px rgba(232, 238, 244, 0.04), 0 0 0 84px rgba(232, 238, 244, 0.03);
+}
+
+.auth-introduction::after {
+  width: 1px;
+  inset: 0 auto 0 42%;
+  background: rgba(232, 238, 244, 0.08);
+}
+
+.brand-lockup,
+.introduction-copy,
+.workflow,
+.introduction-note {
+  position: relative;
   z-index: 1;
 }
 
-.tab-header .slider.slider-right {
-  transform: translateX(100%);
+.brand-lockup {
+  position: absolute;
+  top: 32px;
+  left: clamp(48px, 9vw, 144px);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
-/* --- 表单样式 --- */
-.form-body {
-  position: relative;
-  min-height: 250px;
+.brand-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid rgba(232, 238, 244, 0.42);
+  border-radius: 10px;
+  background: rgba(232, 238, 244, 0.08);
 }
 
-.input-group {
-  margin-bottom: var(--space-6);
-}
+.introduction-copy { max-width: 560px; }
 
-.input-group label {
-  display: block;
-  margin-bottom: var(--space-2);
-  font-size: var(--text-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text-secondary);
-}
-
-.input-wrapper {
-  position: relative;
+.eyebrow,
+.auth-heading__label {
   display: flex;
   align-items: center;
+  gap: 6px;
+  margin: 0 0 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
 
-.input-icon {
-  position: absolute;
-  left: var(--space-4);
-  color: var(--color-text-muted);
-  pointer-events: none;
-  transition: color var(--duration-normal) var(--ease);
-  flex-shrink: 0;
+.eyebrow { color: #C9D6E4; }
+.auth-heading__label { color: var(--ink-500); }
+
+h1,
+h2,
+p { margin-top: 0; }
+
+h1 {
+  max-width: 9em;
+  margin-bottom: 20px;
+  font-size: clamp(38px, 4.2vw, 60px);
+  line-height: 1.17;
+  letter-spacing: -0.04em;
 }
 
-.input-wrapper:focus-within .input-icon {
-  color: var(--color-primary);
+.introduction-copy > p:last-child {
+  max-width: 31em;
+  margin-bottom: 44px;
+  color: #D7E0EA;
+  font-size: 18px;
+  line-height: 1.7;
 }
 
-.input-wrapper input {
-  width: 100%;
-  padding: var(--space-4);
-  padding-left: calc(var(--space-5) + var(--space-5));
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  color: var(--color-text);
-  font-size: var(--text-base);
-  font-family: var(--font-sans);
-  outline: none;
-  transition: border-color var(--duration-normal) var(--ease),
-              box-shadow var(--duration-normal) var(--ease);
-  box-sizing: border-box;
+.workflow {
+  display: grid;
+  width: min(100%, 560px);
+  border-top: 1px solid rgba(232, 238, 244, 0.22);
 }
 
-.input-wrapper input::placeholder {
-  color: var(--color-text-muted);
+.workflow li {
+  display: grid;
+  grid-template-columns: 42px 1fr;
+  gap: 16px;
+  padding: 18px 0;
+  border-bottom: 1px solid rgba(232, 238, 244, 0.16);
 }
 
-.input-wrapper input:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+.workflow-index {
+  color: #9CB2C7;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  font-size: 13px;
+  line-height: 21px;
 }
 
-/* 有密码切换按钮时，输入框右侧留空间 */
-.input-wrapper.has-toggle input {
-  padding-right: calc(var(--space-5) + var(--space-5));
+.workflow strong,
+.workflow small { display: block; }
+.workflow strong { margin-bottom: 3px; font-size: 16px; font-weight: 600; }
+.workflow small { color: #B7C7D6; font-size: 14px; line-height: 20px; }
+
+.introduction-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: min(100%, 560px);
+  margin: 28px 0 0;
+  color: #C9D6E4;
+  font-size: 14px;
+  line-height: 22px;
 }
 
-/* 密码切换按钮 */
-.password-toggle {
-  position: absolute;
-  right: var(--space-4);
+.introduction-note svg { flex: 0 0 auto; margin-top: 3px; color: #A8C3A5; }
+
+.auth-panel {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 48px;
+  background: var(--surface-page);
+}
+
+.auth-panel__inner { width: min(100%, 420px); }
+
+.auth-heading { margin-bottom: 32px; }
+.auth-heading__label { margin-bottom: 12px; }
+.auth-heading h2 { margin-bottom: 10px; color: var(--ink-950); font-size: 32px; line-height: 40px; letter-spacing: -0.025em; }
+.auth-heading > p:last-child { color: var(--text-secondary); font-size: 16px; line-height: 26px; }
+
+.mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 28px;
+  border-bottom: 1px solid var(--border-default);
+}
+
+.mode-switch button {
+  min-height: 44px;
+  border: 0;
+  border-bottom: 2px solid transparent;
   background: transparent;
-  border: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 600;
+  transition: color 160ms ease, border-color 160ms ease;
+}
+
+.mode-switch button:hover:not(:disabled) { color: var(--ink-700); }
+.mode-switch button.active { border-color: var(--ink-900); color: var(--ink-900); }
+
+.auth-form { display: grid; gap: 20px; }
+
+.form-alert {
   display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #D9A3A3;
+  border-radius: 10px;
+  background: var(--red-100);
+  color: var(--red-700);
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.form-alert svg { flex: 0 0 auto; margin-top: 1px; }
+.field-group { display: grid; gap: 7px; }
+.field-group > label { color: var(--text-primary); font-size: 14px; font-weight: 600; line-height: 20px; }
+
+.field-control {
+  display: flex;
+  align-items: center;
+  height: 42px;
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
+  background: var(--surface-panel);
+  color: var(--text-muted);
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.field-control:focus-within { border: 2px solid var(--ink-500); box-shadow: 0 0 0 3px var(--ink-100); }
+.field-control.invalid { border-color: #B85C5C; }
+.field-control > svg { flex: 0 0 auto; margin-left: 13px; }
+
+.field-control input {
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+.field-control input::placeholder { color: var(--text-muted); }
+
+.password-toggle {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 40px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  transition: color 160ms ease, background-color 160ms ease;
+}
+
+.password-toggle:hover { color: var(--ink-700); background: var(--surface-cool); }
+.field-hint,
+.field-error { margin: 0; font-size: 13px; line-height: 18px; }
+.field-hint { color: var(--text-muted); }
+.field-error { color: var(--red-700); }
+
+.submit-button {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-1);
-  border-radius: var(--radius-sm);
-  transition: color var(--duration-normal) var(--ease);
-  flex-shrink: 0;
+  gap: 8px;
+  min-height: 42px;
+  margin-top: 4px;
+  border: 1px solid var(--ink-900);
+  border-radius: 10px;
+  background: var(--ink-900);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color 160ms ease, transform 100ms ease;
 }
 
-.password-toggle:hover {
-  color: var(--color-primary);
+.submit-button:hover:not(:disabled) { background: var(--ink-700); }
+.submit-button:active:not(:disabled) { transform: translateY(1px); }
+.submit-button:disabled,
+.mode-switch button:disabled,
+.auth-footer button:disabled { cursor: not-allowed; opacity: 0.62; }
+.is-spinning { animation: spin 0.8s linear infinite; }
+
+.auth-footer { margin: 24px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 20px; text-align: center; }
+.auth-footer button { padding: 0; border: 0; background: transparent; color: var(--ink-500); font-size: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.auth-footer button:hover:not(:disabled) { color: var(--ink-900); }
+
+button:focus-visible,
+input:focus-visible { outline: 2px solid var(--ink-500); outline-offset: 2px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 920px) {
+  .auth-page { grid-template-columns: 1fr; }
+  .auth-introduction { min-height: auto; padding: 32px 40px; }
+  .brand-lockup { position: static; margin-bottom: 44px; }
+  .introduction-copy > p:last-child { margin-bottom: 28px; }
+  .workflow { display: none; }
+  .introduction-note { margin-top: 22px; }
+  .auth-panel { min-height: auto; padding: 48px 40px 64px; }
 }
 
-/* 辅助选项 */
-.options {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: var(--space-7);
-  font-size: var(--text-sm);
-}
-
-.options .remember {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  cursor: pointer;
-  color: var(--color-text-secondary);
-}
-
-.options .remember input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--color-primary);
-  cursor: pointer;
-}
-
-/* --- 提交按钮 --- */
-.submit-btn {
-  width: 100%;
-  padding: var(--space-4);
-  background: var(--gradient-primary);
-  border: none;
-  border-radius: var(--radius-lg);
-  color: var(--color-primary-foreground);
-  font-size: var(--text-base);
-  font-weight: var(--font-semibold);
-  font-family: var(--font-sans);
-  cursor: pointer;
-  transition: transform var(--duration-normal) var(--ease),
-              box-shadow var(--duration-normal) var(--ease);
-  box-shadow: var(--shadow-primary);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-.submit-btn:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
-}
-
-.submit-btn:active {
-  transform: translateY(0);
-  box-shadow: var(--shadow-primary);
-}
-
-/* --- 动画定义 --- */
-.soft-transition-enter-active,
-.soft-transition-leave-active {
-  transition: all var(--duration-slow) var(--ease);
-}
-
-.soft-transition-enter-from {
-  opacity: 0;
-  transform: translateY(15px);
-}
-
-.soft-transition-leave-to {
-  opacity: 0;
-  transform: translateY(-15px);
-}
-
-.soft-transition-leave-active {
-  position: absolute;
-  width: 100%;
-  top: 0;
-  left: 0;
-}
-
-.form-wrapper {
-  position: relative;
-  width: 100%;
-}
-
-/* --- 响应式 --- */
-@media (max-width: 768px) {
-  .glass-card {
-    width: calc(100% - var(--space-6));
-    max-width: 420px;
-    padding: var(--space-5);
-  }
+@media (max-width: 540px) {
+  .auth-introduction { padding: 24px; }
+  .brand-lockup { margin-bottom: 32px; }
+  h1 { font-size: 34px; }
+  .introduction-copy > p:last-child { margin-bottom: 0; font-size: 16px; line-height: 26px; }
+  .introduction-note { display: none; }
+  .auth-panel { min-height: calc(100vh - 198px); padding: 40px 24px; }
+  .auth-heading { margin-bottom: 24px; }
+  .auth-heading h2 { font-size: 28px; line-height: 36px; }
 }
 </style>

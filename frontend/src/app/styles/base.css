@@ -7,7 +7,6 @@
   color: var(--text-primary);
   background: var(--surface-page);
   -webkit-font-smoothing: antialiased;
-  min-height: 100vh;
 }
 
 .sfx h1, .sfx h2, .sfx h3, .sfx h4, .sfx p {

@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
 import {
   GraduationCap,
@@ -13,6 +14,7 @@ import {
 } from 'lucide-vue-next'
 
 const counter = useCounterStore()
+const route = useRoute()
 const mobileMenuOpen = ref(false)
 
 const navItems = computed(() => {
@@ -31,9 +33,6 @@ const navItems = computed(() => {
   if (counter.isAdmin) {
     return [
       ...baseItems,
-      // Teacher and student workspaces enforce their respective roles, and
-      // their backing APIs do the same. Do not surface links that always
-      // redirect an administrator away from the intended destination.
       { path: '/admin', label: '系统管理', icon: Users },
       { path: '/profile', label: '个人中心', icon: User },
     ]
@@ -72,6 +71,17 @@ const toggleMobileMenu = () => {
 const closeMobileMenu = () => {
   mobileMenuOpen.value = false
 }
+
+// 路由切换时关闭移动端菜单
+watch(() => route.path, closeMobileMenu)
+
+// Esc 关闭移动端菜单
+function handleEsc(e) {
+  if (e.key === 'Escape') closeMobileMenu()
+}
+
+onMounted(() => document.addEventListener('keydown', handleEsc))
+onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
 </script>
 
 <template>
@@ -99,6 +109,7 @@ const closeMobileMenu = () => {
       <button
         class="menu-toggle"
         :aria-label="mobileMenuOpen ? '关闭菜单' : '打开菜单'"
+        :aria-expanded="mobileMenuOpen"
         @click="toggleMobileMenu"
       >
         <component :is="mobileMenuOpen ? X : Menu" :size="22" />
@@ -144,29 +155,30 @@ const closeMobileMenu = () => {
   min-height: 100vh;
 }
 
+/* sticky 而非 fixed：不脱离文档流，不需要 padding-top 补偿，
+   滚动时自然吸附顶部，且不产生内容遮挡 */
 .navbar {
-  position: fixed;
-  top: var(--space-2);
-  left: var(--space-2);
-  right: var(--space-2);
+  position: sticky;
+  top: 0;
   z-index: var(--z-fixed);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--space-3);
   padding: 0 var(--space-5);
   height: var(--navbar-height);
   background: rgba(255, 255, 255, 0.85);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
-  box-shadow: var(--shadow-sm);
+  border-bottom: 1px solid var(--color-border);
   flex-shrink: 0;
   transition: box-shadow var(--duration-normal) var(--ease);
 }
 
-.navbar:hover {
-  box-shadow: var(--shadow-md);
+/* 滚动时加阴影增强层级感 */
+.navbar:hover,
+.navbar.is-scrolled {
+  box-shadow: var(--shadow-sm);
 }
 
 .logo {
@@ -283,20 +295,19 @@ const closeMobileMenu = () => {
 .main-content {
   flex: 1;
   width: 100%;
+  min-width: 0;
   box-sizing: border-box;
-  padding-top: calc(var(--navbar-height) + var(--space-4));
 }
 
 /* 移动端菜单 */
 .mobile-menu {
   position: fixed;
-  top: calc(var(--navbar-height) + var(--space-4));
-  left: var(--space-2);
-  right: var(--space-2);
+  top: var(--navbar-height);
+  left: 0;
+  right: 0;
   z-index: var(--z-fixed);
   background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
+  border-bottom: 1px solid var(--color-border);
   box-shadow: var(--shadow-lg);
   padding: var(--space-3);
   display: flex;
@@ -378,8 +389,8 @@ const closeMobileMenu = () => {
     max-width: 60px;
   }
 
-  .main-content {
-    padding-top: calc(48px + var(--space-3));
+  .mobile-menu {
+    top: 48px;
   }
 }
 

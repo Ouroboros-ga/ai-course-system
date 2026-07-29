@@ -1,12 +1,25 @@
 <script setup>
+import { nextTick, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import PrimaryNav from './PrimaryNav.vue'
+
+const route = useRoute()
+const mainRef = ref(null)
+
+// Reset scroll position on route change (replaces vue-router scrollBehavior
+// which only works on window, not on our nested scroll container).
+watch(() => route.path, () => {
+  nextTick(() => {
+    if (mainRef.value) mainRef.value.scrollTo({ top: 0 })
+  })
+})
 </script>
 
 <template>
   <!-- .sfx 是影子前端令牌作用域根：design.md Academic Ink 体系只在此生效 -->
   <div class="sfx sfx-shell">
     <PrimaryNav />
-    <main class="sfx-shell-main">
+    <main ref="mainRef" class="sfx-shell-main">
       <router-view />
     </main>
   </div>
@@ -22,7 +35,8 @@ import PrimaryNav from './PrimaryNav.vue'
 .sfx-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .sfx-shell-main {
@@ -30,5 +44,7 @@ import PrimaryNav from './PrimaryNav.vue'
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 </style>
