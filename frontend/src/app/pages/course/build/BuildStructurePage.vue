@@ -1,10 +1,9 @@
 <script setup>
-import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { ChevronDown, ChevronUp, GripVertical, LockKeyhole, LockOpen, Plus, Save, Sparkles, Wand2 } from 'lucide-vue-next'
+import { ChevronDown, ChevronUp, GripVertical, LockKeyhole, LockOpen, Save, Sparkles } from 'lucide-vue-next'
 import { createOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, updateOutlineNode, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
-import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
@@ -77,29 +76,36 @@ async function organizeAll() {
   } catch (caught) { error.value = caught?.message || '一键整理失败，请稍后重试' }
   finally { organizing.value = false }
 }
-function openAgent() { if (workbench) workbench.agentOpen = true }
+function openAgent() {
+  if (!workbench) return
+  workbench.agentOpen = true
+  // 自动发送针对当前节点的调整指令
+  const node = selected.value
+  const nodeTitle = node?.title || '当前节点'
+  const nodeId = node?.outline_node_id
+  workbench.pendingInstruction = `请针对课程节点「${nodeTitle}」提出优化建议，改进其标题表述和知识覆盖。`
+  if (nodeId) workbench.pendingNodeId = nodeId
+}
 function refreshAfterProposal() { load() }
+
+// 通过 workbench.stageActions 把按钮操作暴露给 BuildLayout 的 stage-context
+watch([editable, nodes, organizing], () => {
+  if (workbench) {
+    workbench.stageActions = {
+      canOrganize: editable.value && nodes.value.length > 0,
+      organizing: organizing.value,
+      canAdd: editable.value,
+      onOrganize: organizeAll,
+      onAdd: addNode,
+    }
+  }
+}, { immediate: true })
 onMounted(() => { load(); window.addEventListener('course-build-proposal-decided', refreshAfterProposal) })
-onBeforeUnmount(() => window.removeEventListener('course-build-proposal-decided', refreshAfterProposal))
+onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decided', refreshAfterProposal); if (workbench) workbench.stageActions = null })
 </script>
 
 <template>
   <section class="structure-stage">
-    <header class="section-toolbar">
-      <div>
-        <h2>课程结构草稿</h2>
-        <p>材料解析提供候选；备课 Agent 组织建议；只有教师确认的调整才会写入草稿。</p>
-      </div>
-      <div class="toolbar-actions">
-        <SfxButton variant="secondary" :disabled="!editable || !nodes.length" :loading="organizing" @click="organizeAll">
-          <Wand2 :size="16" /> Agent 一键整理
-        </SfxButton>
-        <SfxButton :disabled="!editable" @click="addNode">
-          <Plus :size="16" /> 新增节点
-        </SfxButton>
-      </div>
-    </header>
-
     <SfxSkeleton v-if="state === 'loading'" :lines="6" block />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
     <div v-else-if="!nodes.length" class="empty-state">
@@ -141,7 +147,7 @@ onBeforeUnmount(() => window.removeEventListener('course-build-proposal-decided'
           <SfxButton variant="secondary" size="sm" :disabled="!editable || nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id) === nodes.length - 1" @click="move(nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id), 1)"><ChevronDown :size="15" /> 下移</SfxButton>
           <SfxButton v-if="!selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="toggleLock(selected)"><LockKeyhole :size="15" /> 锁定节点</SfxButton>
           <SfxButton v-else variant="secondary" size="sm" @click="toggleLock(selected)"><LockOpen :size="15" /> 取消锁定</SfxButton>
-          <SfxButton variant="tertiary" size="sm" @click="openAgent"><Sparkles :size="15" /> 让 Agent 调整</SfxButton>
+          <SfxButton variant="tertiary" size="sm" @click="openAgent"><Sparkles :size="15" /> 让智能体调整</SfxButton>
         </div>
         <p class="lock-note"><LockKeyhole :size="14" /> 锁定后不会进入后续 Agent 的可修改集合。</p>
       </article>
@@ -150,13 +156,9 @@ onBeforeUnmount(() => window.removeEventListener('course-build-proposal-decided'
 </template>
 
 <style scoped>
-.structure-stage{display:grid;gap:var(--space-4);padding:var(--space-5);background:var(--surface-panel);border:1px solid var(--border-default);border-radius:var(--radius-lg)}
-.section-toolbar{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-4);padding-bottom:var(--space-4);border-bottom:1px solid var(--border-default)}
-.section-toolbar h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}
-.section-toolbar p{max-width:680px;margin:var(--space-1) 0 0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
-.toolbar-actions{display:flex;gap:var(--space-2);flex-shrink:0}
-.structure-workbench{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.05fr);gap:var(--space-4);align-items:start}
-.outline-list{display:grid;align-content:start;border:1px solid var(--border-default);border-radius:var(--radius-md);overflow:hidden}
+.structure-stage{display:flex;flex-direction:column;gap:0;padding:0;height:100%;overflow:hidden}
+.structure-workbench{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.05fr);gap:var(--space-4);min-height:0;flex:1;overflow:hidden}
+.outline-list{display:grid;align-content:start;border:1px solid var(--border-default);border-radius:var(--radius-md);overflow-y:auto;min-height:0}
 .outline-row{display:grid;grid-template-columns:26px 18px minmax(0,1fr) auto;gap:var(--space-2);align-items:center;min-height:52px;padding:0 var(--space-3);border:0;border-bottom:1px solid var(--border-subtle);background:var(--surface-panel);color:var(--text-primary);text-align:left;cursor:pointer;font:inherit}
 .outline-row:last-child{border-bottom:0}
 .outline-row:hover{background:var(--surface-cool)}
@@ -167,7 +169,7 @@ onBeforeUnmount(() => window.removeEventListener('course-build-proposal-decided'
 .outline-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);font-weight:550}
 .lock-icon{color:var(--green-700);flex-shrink:0}
 .evidence-count{font-size:var(--caption-size);color:var(--ink-500);white-space:nowrap}
-.node-editor{display:grid;align-content:start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-canvas)}
+.node-editor{display:grid;align-content:start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-canvas);overflow-y:auto;min-height:0}
 .node-editor header{display:flex;justify-content:space-between;gap:var(--space-2);align-items:flex-start}
 .node-type{margin:0;color:var(--text-muted);font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
 .node-editor h3{margin:var(--space-1) 0 0;color:var(--text-primary);font-size:var(--title-3-size)}
@@ -177,11 +179,11 @@ onBeforeUnmount(() => window.removeEventListener('course-build-proposal-decided'
 .node-editor input:disabled{background:var(--surface-cool);color:var(--text-secondary)}
 .source-summary{margin:0;padding:var(--space-3);border-left:3px solid var(--ink-500);border-radius:0 var(--radius-sm) var(--radius-sm) 0;background:var(--surface-cool);color:var(--text-secondary);font-size:var(--caption-size);line-height:1.5;overflow-wrap:anywhere}
 .saving,.lock-note{display:flex;align-items:center;gap:var(--space-1);margin:0;color:var(--text-muted);font-size:var(--caption-size)}
-.node-actions{display:flex;flex-wrap:wrap;gap:var(--space-2);padding-top:var(--space-1)}
+.node-actions{display:flex;flex-wrap:wrap;gap:var(--space-3);padding-top:var(--space-1)}.node-actions :deep(.sfx-btn-label){display:inline-flex;align-items:center;gap:var(--space-2)}
 .lock-note{padding-top:var(--space-2);border-top:1px solid var(--border-default)}
 .empty-state{display:grid;justify-items:center;gap:var(--space-2);padding:var(--space-12) var(--space-5);color:var(--text-muted);text-align:center}
 .empty-state strong{color:var(--text-primary);font-size:var(--title-3-size)}
 .empty-state p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
-@media(max-width:880px){.structure-workbench{grid-template-columns:1fr}.outline-list{max-height:300px;overflow:auto}}
-@media(max-width:560px){.structure-stage{padding:var(--space-3)}.section-toolbar{align-items:stretch;flex-direction:column}.toolbar-actions{flex-direction:column}.toolbar-actions :deep(.sfx-btn){width:100%}.outline-row{padding:0 var(--space-2)}.evidence-count{display:none}.node-actions :deep(.sfx-btn){flex:1}}
+@media(max-width:880px){.structure-workbench{grid-template-columns:1fr;overflow:visible}.outline-list{max-height:300px;overflow-y:auto}}
+@media(max-width:560px){.structure-stage{padding:var(--space-3)}.outline-row{padding:0 var(--space-2)}.evidence-count{display:none}.node-actions :deep(.sfx-btn){flex:1}}
 </style>

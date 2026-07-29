@@ -1,13 +1,14 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { FilePlus2, RefreshCw, Upload } from 'lucide-vue-next'
+import { FilePlus2, Upload } from 'lucide-vue-next'
 import { listBuildMaterials, uploadCourseMaterials } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
+const workbench = inject('courseBuildWorkbench', null)
 const inputRef = ref(null)
 const loading = ref(true)
 const error = ref('')
@@ -93,23 +94,29 @@ function startPolling() {
     }, 4000)
   }
 }
+
+watch([loading], () => {
+  if (workbench) {
+    workbench.stageActions = {
+      canRefresh: true,
+      refreshing: loading.value,
+      onRefresh: () => load(),
+      refreshLabel: '刷新状态',
+    }
+  }
+}, { immediate: true })
 onMounted(async () => { await load(); startPolling() })
-onBeforeUnmount(() => window.clearInterval(pollTimer))
+onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbench.stageActions = null })
 </script>
 
 <template>
   <section class="materials-stage">
-    <header class="stage-head">
-      <div><h2>课程材料</h2><p class="muted">连续上传课件、教材或实验指导。每份材料独立保存并进入解析队列，不必等待上一份完成。</p></div>
-      <SfxButton variant="secondary" size="sm" :loading="loading" @click="load"><RefreshCw :size="15" /> 刷新状态</SfxButton>
-    </header>
-
     <section class="upload-panel" aria-labelledby="upload-title">
       <div class="upload-copy"><FilePlus2 :size="22" /><div><h3 id="upload-title" class="sfx-panel-title">添加课程材料</h3><p class="sfx-t-caption sfx-t-secondary">支持 PPT、PPTX、PDF、DOC、DOCX；单份最大 50MB。可为每份资料指定教学角色。</p></div></div>
       <input ref="inputRef" class="sr-only" type="file" multiple accept=".ppt,.pptx,.pdf,.doc,.docx" :disabled="uploading" @change="selectFiles" />
       <SfxButton variant="secondary" :disabled="uploading" @click="chooseFiles"><Upload :size="16" /> 选择文件</SfxButton>
       <div v-if="pendingFiles.length" class="pending-list">
-        <article v-for="item in pendingFiles" :key="item.id" class="pending-file"><div><strong>{{ item.file.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ Math.ceil(item.file.size / 1024) }} KB</p></div><label class="sfx-t-caption">材料角色<select v-model="item.role" class="sfx-select"><option v-for="option in roleOptions" :key="option[0]" :value="option[0]">{{ option[1] }}</option></select></label><button class="remove" type="button" :disabled="uploading" :aria-label="`移除 ${item.file.name}`" @click="removePending(item.id)">移除</button></article>
+        <article v-for="item in pendingFiles" :key="item.id" class="pending-file"><div><strong>{{ item.file.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ Math.ceil(item.file.size / 1024) }} KB</p></div><label class="sfx-t-caption">材料角色<select v-model="item.role" class="sfx-select"><option v-for="option in roleOptions" :key="option[0]" :value="option[0]">{{ option[1] }}</option></select></label><SfxButton variant="danger" size="sm" :disabled="uploading" :aria-label="`移除 ${item.file.name}`" @click="removePending(item.id)">移除</SfxButton></article>
       </div>
       <div v-if="uploading" class="upload-status" role="status"><span>正在上传 {{ pendingFiles.length }} 份材料</span><strong>{{ uploadPercent }}%</strong><progress :value="uploadPercent" max="100" /></div>
       <p v-if="uploadError" class="error" role="alert">{{ uploadError }}</p>
@@ -122,12 +129,41 @@ onBeforeUnmount(() => window.clearInterval(pollTimer))
       <p v-if="loading" class="empty">正在读取资料…</p>
       <div v-else-if="!materials.length" class="empty">还没有课程资料。添加主课件、教材或其他教学材料后，解析会在后台继续执行。</div>
       <div v-else class="materials">
-        <article v-for="item in materials" :key="item.material_id" class="material"><div><strong>{{ item.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ roleLabel[item.material_role] || item.material_role || '参考材料' }} · {{ item.material_type }}</p></div><span class="status" :class="`status-${item.status}`">{{ statusLabel[item.status] || item.status }}</span><small>当前版本：{{ item.current_version_id || '—' }}</small></article>
+        <article v-for="item in materials" :key="item.material_id" class="material"><div><strong>{{ item.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ roleLabel[item.material_role] || item.material_role || '参考材料' }} · {{ item.material_type }}</p></div><span class="status" :class="`status-${item.status}`">{{ statusLabel[item.status] || item.status }}</span><small>当前版本：{{ item.current_version_id || '-' }}</small></article>
       </div>
     </template>
   </section>
 </template>
 
 <style scoped>
-.materials-stage{padding:var(--space-5);background:var(--surface-panel);border:1px solid var(--border-default);border-radius:var(--radius-lg);min-height:520px}.stage-head{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start}.stage-head h2{margin:0 0 var(--space-1);color:var(--text-primary);font-size:var(--title-3-size)}.muted,small{color:var(--text-secondary);font-size:var(--ui-sm-size)}.muted{max-width:700px;margin:0;line-height:1.6}.upload-panel{margin:var(--space-5) 0;border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-4);display:grid;gap:var(--space-3);background:var(--surface-canvas)}.upload-copy{display:flex;gap:var(--space-2);color:var(--ink-700)}.upload-copy h3{margin:0;color:var(--text-primary);font-size:var(--ui-md-size)}.upload-copy p{margin:var(--space-1) 0 0}.pending-list,.materials{display:grid;gap:var(--space-2)}.pending-file,.material{display:grid;grid-template-columns:minmax(0,1fr) 170px auto;align-items:center;gap:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-panel)}.pending-file p,.material p{margin:var(--space-1) 0 0}.pending-file strong,.material strong{color:var(--text-primary);font-size:var(--ui-md-size)}.pending-file label{display:grid;gap:var(--space-1);color:var(--text-secondary)}.remove{border:0;background:transparent;color:var(--red-700);cursor:pointer;font:inherit;font-size:var(--ui-sm-size)}.remove:hover{text-decoration:underline}.upload-status{display:grid;grid-template-columns:1fr auto;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size)}.upload-status progress{grid-column:1/-1;width:100%;accent-color:var(--ink-700)}.upload-actions{display:flex;justify-content:flex-end}.materials-head{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);margin:var(--space-5) 0 var(--space-3)}.materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}.material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}.status{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--ui-sm-size);font-weight:600;color:var(--text-secondary)}.status::before{content:"◇"}.status-parsing{color:var(--ink-700)}.status-parsing::before{content:"◌"}.status-parsed{color:var(--green-700)}.status-parsed::before{content:"✓"}.status-failed{color:var(--red-700)}.status-failed::before{content:"×"}.status-uploaded,.status-needs_review{color:var(--amber-700)}.status-uploaded::before,.status-needs_review::before{content:"◷"}.empty{padding:var(--space-12) var(--space-5);text-align:center;color:var(--text-muted);font-size:var(--ui-md-size)}.error{margin:0;color:var(--red-700);font-size:var(--ui-sm-size)}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}@media(max-width:720px){.materials-stage{padding:var(--space-3)}.stage-head,.materials-head{align-items:stretch;flex-direction:column}.pending-file,.material{grid-template-columns:1fr}.material small{justify-self:start}.upload-actions{justify-content:stretch}.upload-actions :deep(button){width:100%}}
+.materials-stage{padding:0;height:100%;overflow-y:auto}
+.upload-panel{margin:var(--space-4) 0;border:1px solid var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-4);display:grid;gap:var(--space-3);background:var(--surface-canvas)}
+.upload-copy{display:flex;gap:var(--space-2);color:var(--ink-700)}
+.upload-copy h3{margin:0;color:var(--text-primary);font-size:var(--ui-md-size)}
+.upload-copy p{margin:var(--space-1) 0 0}
+.pending-list,.materials{display:grid;gap:var(--space-2)}
+.pending-file,.material{display:grid;grid-template-columns:minmax(0,1fr) 170px auto;align-items:center;gap:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-panel)}
+.pending-file p,.material p{margin:var(--space-1) 0 0}
+.pending-file strong,.material strong{color:var(--text-primary);font-size:var(--ui-md-size)}
+.pending-file label{display:grid;gap:var(--space-1);color:var(--text-secondary)}
+.upload-status{display:grid;grid-template-columns:1fr auto;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size)}
+.upload-status progress{grid-column:1/-1;width:100%;accent-color:var(--ink-700)}
+.upload-actions{display:flex;justify-content:flex-end}
+.materials-head{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);margin:var(--space-4) 0 var(--space-3)}
+.materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}
+.material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
+.status{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--ui-sm-size);font-weight:600;color:var(--text-secondary)}
+.status::before{content:"◇"}
+.status-parsing{color:var(--ink-700)}
+.status-parsing::before{content:"◌"}
+.status-parsed{color:var(--green-700)}
+.status-parsed::before{content:"✓"}
+.status-failed{color:var(--red-700)}
+.status-failed::before{content:"×"}
+.status-uploaded,.status-needs_review{color:var(--amber-700)}
+.status-uploaded::before,.status-needs_review::before{content:"◷"}
+.empty{padding:var(--space-12) var(--space-5);text-align:center;color:var(--text-muted);font-size:var(--ui-md-size)}
+.error{margin:0;color:var(--red-700);font-size:var(--ui-sm-size)}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+@media(max-width:720px){.materials-stage{padding:var(--space-3)}.materials-head{align-items:stretch;flex-direction:column}.pending-file,.material{grid-template-columns:1fr}.material small{justify-self:start}.upload-actions{justify-content:stretch}.upload-actions :deep(.sfx-btn){width:100%}}
 </style>

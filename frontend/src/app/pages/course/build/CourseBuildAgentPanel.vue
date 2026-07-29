@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { BookOpenText, Check, ChevronDown, CircleAlert, SendHorizontal, Sparkles, X } from 'lucide-vue-next'
 import { decideBuildProposal, getPrepAgentNodeEvidence, listBuildProposals, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
@@ -10,11 +10,21 @@ const props = defineProps({
   selectedNode: { type: Object, default: null },
 })
 const emit = defineEmits(['close'])
+const workbench = inject('courseBuildWorkbench', null)
 const proposals = ref([])
 const evidence = ref([])
 const instruction = ref('')
 const loading = ref(false)
 const sending = ref(false)
+const thinking = ref(false)
+const thinkingSteps = [
+  '正在分析课程材料…',
+  '检查知识点关联…',
+  '生成修改提案…',
+]
+const thinkingStep = ref(0)
+let thinkingTimer = null
+const thinkingText = computed(() => thinkingSteps[thinkingStep.value] || thinkingSteps[0])
 const deciding = ref('')
 const error = ref('')
 const lastResponse = ref(null)
@@ -49,7 +59,7 @@ function apiErrorMessage(caught, fallback) {
 async function loadProposals() {
   loading.value = true
   try { proposals.value = (await listBuildProposals(props.courseId))?.items ?? [] }
-  catch (caught) { error.value = apiErrorMessage(caught, '无法读取 Agent 提案') }
+  catch (caught) { error.value = apiErrorMessage(caught, '无法读取智能体提案') }
   finally { loading.value = false }
 }
 async function loadEvidence() {
@@ -66,12 +76,22 @@ async function send() {
   messages.value.push({ role: 'user', text: value })
   instruction.value = ''
   scrollToBottom()
+  // 启动思考动画
+  thinking.value = true
+  thinkingStep.value = 0
+  thinkingTimer = setInterval(() => {
+    thinkingStep.value = (thinkingStep.value + 1) % thinkingSteps.length
+  }, 2000)
+  scrollToBottom()
   try {
     const data = await runPrepAgentCommand(
       props.courseId,
       value,
       props.selectedNode?.outline_node_id ?? null,
     )
+    // 停止思考动画
+    thinking.value = false
+    clearInterval(thinkingTimer)
     lastResponse.value = data?.explanation ?? { reason: '已创建待教师审核的提案。', changed: [] }
     // Agent 回复（偏左）
     const reply = {
@@ -85,7 +105,9 @@ async function send() {
     scrollToBottom()
     await loadProposals()
   } catch (caught) {
-    error.value = apiErrorMessage(caught, '备课 Agent 暂时无法生成提案')
+    thinking.value = false
+    clearInterval(thinkingTimer)
+    error.value = apiErrorMessage(caught, '助教智能体暂时无法生成提案')
     messages.value.push({ role: 'agent', error: true, reason: error.value })
     scrollToBottom()
   } finally {
@@ -103,20 +125,30 @@ async function decide(proposal, accepted) {
 }
 function submitOnEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }
 onMounted(loadProposals)
+onBeforeUnmount(() => { if (thinkingTimer) clearInterval(thinkingTimer) })
 watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true })
+// 子页面通过 workbench.pendingInstruction 触发自动发送
+watch(() => workbench?.pendingInstruction, (text) => {
+  if (text) {
+    instruction.value = text
+    workbench.pendingInstruction = ''
+    workbench.pendingNodeId = null
+    nextTick(() => send())
+  }
+})
 </script>
 
 <template>
-  <aside class="course-build-agent" aria-label="备课 Agent">
+  <aside class="course-build-agent" aria-label="助教智能体">
     <header class="agent-header">
       <div class="agent-heading">
         <span class="agent-mark"><Sparkles :size="17" /></span>
         <div>
-          <h2>备课 Agent</h2>
+          <h2>助教智能体</h2>
           <p>受控提案模式</p>
         </div>
       </div>
-      <button type="button" class="close-agent" aria-label="关闭备课 Agent" @click="emit('close')">
+      <button type="button" class="close-agent" aria-label="关闭助教智能体" @click="emit('close')">
         <X :size="18" />
       </button>
     </header>
@@ -133,7 +165,7 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
       </button>
 
       <div v-show="!contextCollapsed" class="context-body">
-        <p v-if="selectedNode" class="context-desc">已选中课程节点。Agent 会排除所有已锁定的目录和讲稿，只生成待审核提案。</p>
+        <p v-if="selectedNode" class="context-desc">已选中课程节点。智能体会排除所有已锁定的目录和讲稿，只生成待审核提案。</p>
         <p v-else class="context-desc">你仍可提出全局调整；选择节点后可查看对应原文证据，并更准确地审核建议。</p>
 
         <section v-if="selectedNode" class="evidence-section">
@@ -156,7 +188,7 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
 
     <!-- 聊天消息区 -->
     <div ref="chatScroll" class="agent-chat">
-      <p v-if="!messages.length" class="chat-empty">向备课 Agent 说明你想调整什么，它会生成待审核的提案。</p>
+      <p v-if="!messages.length" class="chat-empty">向助教智能体说明你想调整什么，它会生成待审核的提案。</p>
 
       <template v-for="(msg, i) in messages" :key="i">
         <!-- 用户消息（偏右） -->
@@ -181,6 +213,15 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
         </div>
       </template>
 
+      <!-- 思考中气泡 -->
+      <div v-if="thinking" class="chat-msg chat-msg--agent">
+        <div class="chat-avatar thinking-avatar"><Sparkles :size="14" /></div>
+        <div class="chat-bubble chat-bubble--thinking">
+          <div class="thinking-dots"><span></span><span></span><span></span></div>
+          <p class="thinking-text">{{ thinkingText }}</p>
+        </div>
+      </div>
+
       <!-- 待审核提案区 -->
       <section v-if="pending.length" class="proposal-section">
         <div class="section-heading">
@@ -192,7 +233,7 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
             <span>{{ proposal.tool_name }}</span>
             <SfxBadge tone="amber">待审核</SfxBadge>
           </header>
-          <p class="proposal-reason">{{ proposal.reason || 'Agent 提出了一项课程草稿修改。' }}</p>
+          <p class="proposal-reason">{{ proposal.reason || '智能体提出了一项课程草稿修改。' }}</p>
           <div v-for="operation in proposal.operations" :key="operation.op_id" class="proposal-operation">
             <div><code>{{ operation.target }}</code><span>{{ operation.operation }}</span></div>
             <del v-if="operation.before">{{ operation.before }}</del>
@@ -217,7 +258,7 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
         v-model="instruction"
         rows="2"
         maxlength="8000"
-        placeholder="向备课 Agent 说明你想调整什么…"
+        placeholder="向助教智能体说明你想调整什么…"
         :disabled="sending"
         @keydown="submitOnEnter"
       />
@@ -346,14 +387,58 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-md);
 }
-.chat-bubble--agent p { margin: 0 0 var(--space-1); }
+.chat-bubble--agent p { margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
 .chat-bubble--agent p:last-child { margin-bottom: 0; }
-.chat-reason { color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
+.chat-reason { color: var(--text-primary); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 .chat-meta { color: var(--text-muted); font-size: var(--caption-size); }
 .chat-excluded { color: var(--amber-700); font-size: var(--caption-size); }
 .chat-error {
   display: flex; align-items: flex-start; gap: var(--space-1);
   color: var(--red-700); font-size: var(--caption-size);
+}
+
+/* ── 思考气泡 ── */
+.thinking-avatar {
+  animation: thinking-pulse 1.5s ease-in-out infinite;
+}
+.chat-bubble--thinking {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: var(--ink-100);
+  border: 1px solid var(--ink-300);
+  border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+}
+.thinking-dots {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.thinking-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-500);
+  animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.16s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.32s; }
+.thinking-text {
+  margin: 0;
+  color: var(--ink-700);
+  font-size: var(--caption-size);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+@keyframes thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
+  40% { transform: scale(1); opacity: 1; }
+}
+@keyframes thinking-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* ── 通用 ── */
@@ -418,9 +503,9 @@ watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true
 }
 .proposal-operation > div:first-child { display: flex; justify-content: space-between; gap: var(--space-2); color: var(--text-muted); }
 .proposal-operation > div:first-child span { font-size: var(--caption-size); }
-.proposal-operation del { color: var(--red-700); font-size: var(--ui-sm-size); white-space: pre-wrap; }
-.proposal-operation ins { color: var(--green-700); font-size: var(--ui-sm-size); text-decoration: none; white-space: pre-wrap; }
-.proposal-operation p { margin: 0; color: var(--text-secondary); font-size: var(--caption-size); line-height: 1.45; }
+.proposal-operation del { color: var(--red-700); font-size: var(--ui-sm-size); white-space: pre-wrap; overflow-wrap: anywhere; }
+.proposal-operation ins { color: var(--green-700); font-size: var(--ui-sm-size); text-decoration: none; white-space: pre-wrap; overflow-wrap: anywhere; }
+.proposal-operation p { margin: 0; color: var(--text-secondary); font-size: var(--caption-size); line-height: 1.45; overflow-wrap: anywhere; }
 .evidence-refs { color: var(--ink-500); font-size: var(--caption-size); }
 
 /* ── 输入区 ── */

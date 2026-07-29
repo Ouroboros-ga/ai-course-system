@@ -14,6 +14,10 @@ from .provider import ResearchR2Provider
 from .store import DemoRunStore
 
 
+PROJECT_ROOT = Path(__file__).resolve().parents[4]
+RESEARCH_ROOT = PROJECT_ROOT / "research" / "product1_graph_retrieval"
+
+
 def _percentile(values: list[float], percentile: float) -> float:
     ordered = sorted(values)
     if not ordered:

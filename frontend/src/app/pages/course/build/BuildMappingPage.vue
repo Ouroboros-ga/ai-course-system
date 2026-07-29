@@ -34,7 +34,6 @@ onMounted(load)
 
 <template>
   <section class="stage">
-    <p class="eyebrow">Step 7</p><h1>教学 PPT 映射</h1>
     <div v-if="loading" class="empty">正在读取映射状态…</div>
     <div v-else-if="!state?.has_ppt" class="frozen">
       <h2>当前课程尚无可映射的 PPT 文件</h2>
@@ -52,5 +51,15 @@ onMounted(load)
 </template>
 
 <style scoped>
-.stage{background:#fff;border:1px solid #dbe2ea;border-radius:12px;padding:24px;min-height:520px}h1{margin:4px 0 24px;font-size:24px}.eyebrow{color:#64748b;font-size:13px}.frozen,.ready{border:1px dashed #cbd5e1;border-radius:12px;padding:36px 24px;text-align:center;background:#f8fafc;color:#475569}.frozen h2,.ready h2{color:#334155}.actions{display:flex;justify-content:center;gap:10px;margin:24px 0 10px}.frozen small{color:#64748b}.empty{text-align:center;padding:56px;color:#64748b}.mapping-list{display:grid;gap:8px;text-align:left;margin:20px auto;max-width:720px}.mapping-list label{display:flex;align-items:center;gap:12px;padding:10px;background:#fff;border:1px solid #e2e8f0;border-radius:8px}.mapping-list span{flex:1}.mapping-list input{width:150px;padding:6px;border:1px solid #cbd5e1;border-radius:6px}.message{margin-top:16px;color:#1769aa}
+.stage{padding:0;height:100%;overflow-y:auto}
+.frozen,.ready{border:1px dashed var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-8) var(--space-6);text-align:center;background:var(--surface-cool);color:var(--text-secondary)}
+.frozen h2,.ready h2{color:var(--text-primary)}
+.actions{display:flex;justify-content:center;gap:var(--space-2);margin:var(--space-6) 0 var(--space-2)}
+.frozen small{color:var(--text-muted)}
+.empty{text-align:center;padding:var(--space-12);color:var(--text-muted)}
+.mapping-list{display:grid;gap:var(--space-2);text-align:left;margin:var(--space-6) auto;max-width:720px}
+.mapping-list label{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2);background:var(--surface-panel);border:1px solid var(--border-default);border-radius:var(--radius-sm)}
+.mapping-list span{flex:1}
+.mapping-list input{width:150px;padding:var(--space-1);border:1px solid var(--border-strong);border-radius:var(--radius-sm)}
+.message{margin-top:var(--space-4);color:var(--ink-700)}
 </style>
