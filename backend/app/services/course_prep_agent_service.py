@@ -63,6 +63,16 @@ class CoursePrepAgentPlanningError(RuntimeError):
 class CoursePrepAgentService:
     """Read course facts, plan safe modifications, return proposal-ready data."""
 
+    def __init__(self, *, llm: Any | None = None) -> None:
+        """Allow injecting an LLM client (constructor接缝 for PrepLLMAdapter).
+
+        When ``llm`` is ``None``, the service uses the module-level
+        ``llm_client`` singleton (backward compatible). When an object
+        with a ``chat()`` method is injected, ``_plan_with_llm`` calls
+        ``self._llm.chat(...)`` instead of ``llm_client.chat(...)``.
+        """
+        self._llm = llm
+
     async def plan(
         self,
         session: Session,
@@ -250,7 +260,8 @@ class CoursePrepAgentService:
             "如果教师要求只生成一项，operations 必须恰好包含一项。"
         )
         try:
-            response = await llm_client.chat([
+            client = self._llm or llm_client
+            response = await client.chat([
                 Message(role="system", content=system),
                 Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
             ], temperature=0.2, response_format={"type": "json_object"})

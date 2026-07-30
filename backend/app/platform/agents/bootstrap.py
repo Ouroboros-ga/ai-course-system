@@ -110,9 +110,26 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
                 profile=_prep_profile(),
                 builder=build_prep_graph_factory(session_factory=session_factory),
             )
-            logger.info("AgentPlatform: registered Prep agent.")
+            logger.info("AgentPlatform: registered Prep agent (Incremental pipeline).")
         except Exception as prep_error:  # noqa: BLE001 - never block app startup
             logger.warning("AgentPlatform: Prep agent registration failed: %s: %s", type(prep_error).__name__, prep_error)
+
+        # Phase 4: register Prep Initial and PPT-mapping pipelines via the
+        # definition-keyed AgentRuntimeRegistry. These share AgentType.PREP
+        # with the Incremental pipeline above but are distinct workflows
+        # routed via extras["graph_kind"] by the future AgentGateway.
+        # The Incremental pipeline registered via register_generic remains
+        # the platform's default for AgentType.PREP.
+        try:
+            _register_prep_pipeline_definitions(
+                platform=platform,
+                session_factory=session_factory,
+            )
+        except Exception as pipeline_error:  # noqa: BLE001 - never block app startup
+            logger.warning(
+                "AgentPlatform: Prep pipeline definition registration failed: %s: %s",
+                type(pipeline_error).__name__, pipeline_error,
+            )
 
         app.state.agent_platform = platform
         logger.info("TeachingAgent registry injected; AgentPlatform registered EDU agent.")
@@ -141,3 +158,136 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
     except Exception as error:  # noqa: BLE001 - never block app startup
         logger.warning("TeachingAgent bootstrap failed (endpoint stays 503): %s: %s", type(error).__name__, error)
         return False
+
+
+def _register_prep_pipeline_definitions(
+    *,
+    platform: Any,
+    session_factory: Any,
+) -> None:
+    """Register Prep Initial and PPT-mapping pipelines in the runtime registry.
+
+    These pipelines share ``AgentType.PREP`` with the Incremental pipeline
+    (registered via ``register_generic`` above) but are distinct workflows.
+    They are registered via the definition-keyed ``AgentRuntimeRegistry``
+    so the future ``AgentGateway`` can route to them via
+    ``extras["graph_kind"]``.
+
+    The Incremental pipeline is also registered here (using the new
+    ``prep/incremental/`` subpackage) so all three share a consistent
+    registration path for the gateway.
+    """
+    from .prep.common.dependencies import CommonPrepDependencies
+    from .prep.enums import PrepGraphKind
+    from .prep.initial.composition import build_initial_graph_factory
+    from .prep.initial.dependencies import InitialPrepDependencies
+    from .prep.initial.profile import build_initial_profile
+    from .prep.incremental.composition import build_incremental_graph_factory
+    from .prep.incremental.dependencies import IncrementalPrepDependencies
+    from .prep.incremental.profile import build_incremental_profile
+    from .prep.ppt_mapping.composition import build_ppt_mapping_graph_factory
+    from .prep.ppt_mapping.dependencies import PptMappingDependencies
+    from .prep.ppt_mapping.profile import build_ppt_mapping_profile
+    from .providers.llm.structured import SharedLLMStructuredProvider
+    from .providers.prep.initial_course_prep import InitialCoursePrepProvider
+    from .providers.prep.incremental_prep import IncrementalPrepProvider
+    from .providers.prep.ppt_mapping_optimization import PptMappingOptimizationProvider
+    from .runtime.dispatcher import BaseAgentRuntime
+    from .runtime.events import NullAgentRunEventPort, NullAgentRunStorePort
+    from .runtime.registry import AgentDefinitionKey
+
+    event_port = NullAgentRunEventPort()
+    run_store = NullAgentRunStorePort()
+    structured_llm = SharedLLMStructuredProvider()
+
+    common_deps = CommonPrepDependencies(
+        structured_llm=structured_llm,
+        run_store=run_store,
+        event_port=event_port,
+    )
+
+    # --- Initial pipeline ---
+    initial_provider = InitialCoursePrepProvider(session_factory=session_factory)
+    initial_deps = InitialPrepDependencies(common=common_deps, initial_prep=initial_provider)
+    initial_profile = build_initial_profile()
+    _register_pipeline_factory(
+        platform=platform,
+        key=AgentDefinitionKey(
+            agent_type=AgentType.PREP.value,
+            agent_version=PrepGraphKind.INITIAL.value,
+        ),
+        profile=initial_profile,
+        builder=build_initial_graph_factory(initial_deps),
+        event_port=event_port,
+    )
+
+    # --- Incremental pipeline (new subpackage version) ---
+    incremental_provider = IncrementalPrepProvider(session_factory=session_factory)
+    incremental_deps = IncrementalPrepDependencies(
+        common=common_deps, incremental_prep=incremental_provider,
+    )
+    incremental_profile = build_incremental_profile()
+    _register_pipeline_factory(
+        platform=platform,
+        key=AgentDefinitionKey(
+            agent_type=AgentType.PREP.value,
+            agent_version=PrepGraphKind.INCREMENTAL.value,
+        ),
+        profile=incremental_profile,
+        builder=build_incremental_graph_factory(incremental_deps),
+        event_port=event_port,
+    )
+
+    # --- PPT mapping pipeline ---
+    ppt_provider = PptMappingOptimizationProvider(session_factory=session_factory)
+    ppt_deps = PptMappingDependencies(common=common_deps, ppt_mapping=ppt_provider)
+    ppt_profile = build_ppt_mapping_profile()
+    _register_pipeline_factory(
+        platform=platform,
+        key=AgentDefinitionKey(
+            agent_type=AgentType.PREP.value,
+            agent_version=PrepGraphKind.PPT_MAPPING.value,
+        ),
+        profile=ppt_profile,
+        builder=build_ppt_mapping_graph_factory(ppt_deps),
+        event_port=event_port,
+    )
+
+    logger.info(
+        "AgentPlatform: registered 3 Prep pipeline definitions "
+        "(initial, incremental, ppt_mapping) in AgentRuntimeRegistry."
+    )
+
+
+def _register_pipeline_factory(
+    *,
+    platform: Any,
+    key: Any,
+    profile: Any,
+    builder: Any,
+    event_port: Any,
+) -> None:
+    """Register a single pipeline factory in the ``AgentRuntimeRegistry``.
+
+    The factory compiles the graph (via ``builder``) and wraps it in a
+    ``BaseAgentRuntime`` with the given profile. Compilation is deferred
+    to factory call-time (lazy), matching the registry's lazy contract.
+    """
+    from .runtime.dispatcher import BaseAgentRuntime
+
+    def factory() -> Any:
+        graph = builder(())
+        if graph is None:
+            from .runtime.errors import AgentNotAvailableError
+            raise AgentNotAvailableError(
+                f"Workflow compilation failed for {key}",
+            )
+        return BaseAgentRuntime(
+            profile=profile,
+            graph=graph,
+            event_port=event_port,
+            timeout_seconds=profile.default_timeout_seconds,
+        )
+
+    platform.runtime_registry.register_factory(key, factory)
+    logger.info("AgentPlatform: registered pipeline definition %s", key)
