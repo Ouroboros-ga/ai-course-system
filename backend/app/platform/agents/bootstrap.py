@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.feature_flags import TEACHING_AGENT_MODES
 from app.models.database import engine
 from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
-from app.platform.agents.platform import AgentPlatform
+from app.platform.agents.platform import LegacyAgentPlatform
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime.profile import AgentType
 from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
@@ -91,7 +91,10 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
 
         # Commit 5: register EDU agent with the unified AgentPlatform.
         # The platform wraps the legacy registry; existing endpoints are unaffected.
-        platform = AgentPlatform()
+        # Phase 1 fix: use LegacyAgentPlatform to mark that core infrastructure
+        # (Gateway, ProviderContainer) is NOT yet wired. Formal AgentPlatform
+        # will require these once Phase 3 completes EDU migration.
+        platform = LegacyAgentPlatform()
         platform.register_legacy(
             AgentType.EDU,
             resolver=registry.get_or_create,

@@ -43,6 +43,33 @@ class AgentRunContext:
     copies these into the initial state under domain-specific keys; it does
     NOT rename ``student_id`` to ``actor_id``. Agents that do not have a
     ``student_id`` (e.g. 备课 agent operating on a draft) leave it ``None``.
+
+    Identity fields (single source of truth):
+        - ``student_id`` / ``teacher_id`` / ``course_id`` / ``session_id``:
+          domain-specific identifiers. These ARE the facts; ``actor`` is
+          derived from them and MUST NOT be set independently.
+        - ``actor``: READ-ONLY property derived from teacher_id/student_id.
+          Governance/audit ports use ``ctx.actor``; domain nodes use the
+          domain IDs directly. Never pass ``actor`` to the constructor.
+
+    Runtime identity fields:
+        - ``run_id``: stable run identifier for audit/metrics. Auto-generated
+          if not provided.
+        - ``trace_id``: per-run trace identifier. Auto-generated if not
+          provided. This is a *property*, not a method, to avoid the
+          method/field name collision that occurred when both ``trace_id``
+          field and ``trace_id()`` method existed.
+        - ``config_version``: configuration version that built the runtime.
+
+    Optional execution hint fields (no domain semantics):
+        - ``idempotency_key``: optional idempotency key for deduplication.
+        - ``task_id``: optional task identifier for queued execution.
+
+    Domain-specific routing (Prep's initial vs incremental, Coding's hint
+    level, etc.) is NOT carried in this context. Domain payloads pass
+    through ``extras`` and are interpreted by the gateway/agent-specific
+    composition root. This prevents the generic context from accumulating
+    agent-specific fields.
     """
 
     __slots__ = (
@@ -57,6 +84,13 @@ class AgentRunContext:
         "exercise_id",
         "code_submission_id",
         "extras",
+        # Runtime identity (lazily generated)
+        "_run_id",
+        "_trace_id",
+        "config_version",
+        # Optional execution hints
+        "idempotency_key",
+        "task_id",
     )
 
     def __init__(
@@ -73,6 +107,13 @@ class AgentRunContext:
         exercise_id: str | None = None,
         code_submission_id: str | None = None,
         extras: Mapping[str, Any] | None = None,
+        # Runtime identity (all optional, backward compatible)
+        run_id: str | None = None,
+        trace_id: str | None = None,
+        config_version: str = "v1",
+        # Optional execution hints
+        idempotency_key: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         self.agent_type = agent_type
         self.scope = tuple(scope)
@@ -85,9 +126,49 @@ class AgentRunContext:
         self.exercise_id = exercise_id
         self.code_submission_id = code_submission_id
         self.extras: Mapping[str, Any] = dict(extras) if extras else {}
+        # Runtime identity
+        self._run_id = run_id
+        self._trace_id = trace_id
+        self.config_version = config_version
+        # Optional execution hints
+        self.idempotency_key = idempotency_key
+        self.task_id = task_id
 
+    @property
+    def run_id(self) -> str:
+        """Stable run identifier, lazily generated and cached."""
+        if self._run_id is None:
+            self._run_id = f"run_{uuid.uuid4().hex[:16]}"
+        return self._run_id
+
+    @property
     def trace_id(self) -> str:
-        return str(uuid.uuid4())
+        """Per-run trace identifier, lazily generated and cached.
+
+        This is a *property* (not a method) so that ``ctx.trace_id`` is
+        consistent with other field accesses and avoids the method/field
+        name collision that occurred when both existed.
+        """
+        if self._trace_id is None:
+            self._trace_id = str(uuid.uuid4())
+        return self._trace_id
+
+    @property
+    def actor(self) -> "AgentActor":
+        """Derive an ``AgentActor`` for governance/audit (READ-ONLY).
+
+        Derived from domain IDs; preference order: teacher_id > student_id
+        > system. This does NOT replace domain IDs; it only provides a
+        generic view for cross-cutting concerns. The actor is NOT settable
+        — to change the actor, set ``teacher_id`` or ``student_id``.
+        """
+        from .context import AgentActor  # local import to avoid cycle
+
+        if self.teacher_id:
+            return AgentActor.teacher(self.teacher_id)
+        if self.student_id:
+            return AgentActor.student(self.student_id)
+        return AgentActor.system()
 
 
 class LangGraphAgentRuntime:
@@ -123,7 +204,7 @@ class LangGraphAgentRuntime:
         context's domain-specific identifiers into the agent's state schema.
         The runtime only adds ``trace_id`` and fail-closed error handling.
         """
-        trace_id = ctx.trace_id()
+        trace_id = ctx.trace_id
         try:
             initial = self._profile.build_initial_state(ctx, trace_id=trace_id)
         except Exception as error:  # noqa: BLE001 - never raise to caller

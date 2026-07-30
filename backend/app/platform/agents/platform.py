@@ -1,20 +1,15 @@
-"""AgentPlatform: unified registry for all agent runtimes.
+"""AgentPlatform: unified platform for all agent runtimes.
 
 The platform is the single entry point for agent-runtime resolution across
-the three integrated agents (EDU, PREP, CODING). It supports two kinds of
-agents:
+the three integrated agents (EDU, PREP, CODING). It assembles:
 
-1. **Legacy agents** (EDU / TeachingAgent): backed by
-   ``TeachingAgentRuntimeRegistry``, which caches per-(student, course)
-   ``TeachingAgentRuntime`` instances. The platform delegates to the
-   registry's ``get_or_create`` and never replaces it.
+    - ``AgentRuntimeRegistry``: definition-keyed cache of stateless runtimes.
+    - ``AgentGateway``: unified run lifecycle entry point.
+    - ``ProviderContainer``: process-level provider assembly.
+    - ``ToolCatalog``: tool description and assembly metadata.
+    - Legacy resolver: for EDU agent until Phase 2b/3 migration.
 
-2. **Generic agents** (PREP, CODING): backed by ``AgentProfile`` +
-   ``LangGraphAgentRuntime``, cached per ``RuntimeKey``. The profile
-   describes the state schema; a builder callable compiles the LangGraph
-   workflow for a given scope.
-
-Design rules (per adopted migration plan):
+Design rules (per adopted migration plan + Phase 1 infrastructure):
     - The platform does NOT replace ``TeachingAgentRuntimeRegistry``; it
       wraps it. Existing endpoint code that calls ``registry.get_or_create``
       continues to work unchanged.
@@ -24,6 +19,8 @@ Design rules (per adopted migration plan):
       agents that do not need per-actor isolation use a coarser scope.
     - The platform is fail-closed: unavailable agents return ``None``,
       never raise.
+    - New components (Gateway, RuntimeRegistry, ProviderContainer) are
+      optional and nullable so the platform can be built incrementally.
 
 Registration is done at bootstrap time (see ``bootstrap.py``). The platform
 is stored on ``app.state.agent_platform`` and is optional — endpoints that
@@ -36,8 +33,13 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
 
+from .gateway import AgentGateway
 from .runtime.base import AgentRunContext, LangGraphAgentRuntime, RunnableGraph
+from .runtime.concurrency import AgentConcurrencyLimiter
+from .runtime.dispatcher import BaseAgentRuntime
+from .runtime.events import AgentRunEventPort, NullAgentRunEventPort
 from .runtime.profile import AgentProfile, AgentType, RuntimeKey
+from .runtime.registry import AgentDefinitionKey, AgentRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -78,11 +80,25 @@ class AgentPlatform:
     return ``None``, never raise.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        runtime_registry: AgentRuntimeRegistry | None = None,
+        gateway: AgentGateway | None = None,
+        provider_container: Any | None = None,  # ProviderContainer
+        concurrency_limiter: AgentConcurrencyLimiter | None = None,
+        event_port: AgentRunEventPort | None = None,
+    ) -> None:
         self._legacy_resolvers: dict[AgentType, LegacyResolver] = {}
         self._profiles: dict[AgentType, AgentProfile] = {}
         self._builders: dict[AgentType, RuntimeBuilder] = {}
         self._cache: dict[RuntimeKey, LangGraphAgentRuntime] = {}
+        # Phase 1 infrastructure (nullable for incremental adoption).
+        self._runtime_registry = runtime_registry or AgentRuntimeRegistry()
+        self._concurrency_limiter = concurrency_limiter or AgentConcurrencyLimiter()
+        self._event_port: AgentRunEventPort = event_port or NullAgentRunEventPort()
+        self._provider_container = provider_container
+        self._gateway = gateway
 
     # ------------------------------------------------------------------ #
     # Registration
@@ -226,7 +242,7 @@ class AgentPlatform:
         agent_type = AgentType(ctx.agent_type) if isinstance(ctx.agent_type, str) else ctx.agent_type
         runtime = self.get_runtime(agent_type, ctx.scope)
         if runtime is None:
-            trace_id = ctx.trace_id()
+            trace_id = ctx.trace_id
             return {
                 "trace_id": trace_id,
                 "errors": ["AGENT_NOT_AVAILABLE"],
@@ -257,9 +273,90 @@ class AgentPlatform:
         """Drop all cached generic runtimes."""
         self._cache.clear()
 
+    # ------------------------------------------------------------------ #
+    # Phase 1 infrastructure accessors
+    # ------------------------------------------------------------------ #
+
+    @property
+    def runtime_registry(self) -> AgentRuntimeRegistry:
+        """The definition-keyed runtime registry (Phase 1)."""
+        return self._runtime_registry
+
+    @property
+    def concurrency_limiter(self) -> AgentConcurrencyLimiter:
+        """The shared concurrency limiter (Phase 1)."""
+        return self._concurrency_limiter
+
+    @property
+    def event_port(self) -> AgentRunEventPort:
+        """The shared event port (Phase 1)."""
+        return self._event_port
+
+    @property
+    def gateway(self) -> AgentGateway | None:
+        """The agent gateway, if configured. None until bootstrap wires it."""
+        return self._gateway
+
+    def set_gateway(self, gateway: AgentGateway) -> None:
+        """Set the gateway after construction (for deferred bootstrap)."""
+        self._gateway = gateway
+
+    @property
+    def provider_container(self) -> Any | None:
+        """The provider container, if configured. None until bootstrap wires it."""
+        return self._provider_container
+
+    def set_provider_container(self, container: Any) -> None:
+        """Set the provider container after construction."""
+        self._provider_container = container
+
+    async def close(self) -> None:
+        """Release process-level resources.
+
+        Closes the provider container and clears all caches. Called
+        during application shutdown.
+        """
+        if self._provider_container is not None:
+            close_fn = getattr(self._provider_container, "close", None)
+            if close_fn is not None:
+                result = close_fn()
+                if hasattr(result, "__await__"):
+                    await result
+        self._cache.clear()
+        self._runtime_registry.clear()
+
+
+class LegacyAgentPlatform(AgentPlatform):
+    """Compatibility alias for the transitional platform.
+
+    During the migration, bootstrap builds a ``LegacyAgentPlatform`` that
+    allows all Phase 1 infrastructure components to be ``None``. This is
+    the only configuration in which ``gateway``, ``provider_container``,
+    etc. may be absent.
+
+    The formal ``AgentPlatform`` (target) will eventually require these
+    components, but that enforcement is deferred until Phase 3 completes
+    EDU migration. Until then, ``LegacyAgentPlatform`` is the safe default.
+
+    Usage::
+
+        # Transitional (Phase 1-2): all components optional
+        platform = LegacyAgentPlatform()
+
+        # Target (Phase 3+): core components required
+        platform = AgentPlatform(
+            runtime_registry=...,
+            gateway=...,
+            provider_container=...,
+        )
+    """
+
+    pass
+
 
 __all__ = [
     "AgentPlatform",
+    "LegacyAgentPlatform",
     "AgentRuntimeProtocol",
     "LegacyResolver",
     "RuntimeBuilder",
