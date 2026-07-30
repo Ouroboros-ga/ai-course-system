@@ -84,6 +84,13 @@ GraphRAG 的 entity ID、`human_readable_id` 和运行内顺序都可能变化�
 `CourseKnowledgeNode.id`，二者由同一身份表双向解析。每次 GraphRAG 运行通过
 `GraphRagEntityMapping` 记录临时实体到正式身份的映射和方法。
 
+从 `edu-graph-graphrag/2.0-zh` 起，新建 `standard` 运行使用以下语言契约：
+
+- 规范标题和实体/关系解释使用简体中文；
+- 专业英文缩写、公式、型号与标准英文术语作为别名保留；
+- 推荐格式为 `电子控制单元（ECU）`，身份对齐时规范标题与英文别名都可参与匹配；
+- 此策略只影响新运行，不回写、翻译或修改任何已经激活的历史 Bundle。
+
 ### 3.3 CourseKnowledgeBundle / Head / Activation
 
 Bundle 固定引用：
@@ -280,12 +287,24 @@ TeachingAgent 不修改 workflow/state/tool-governance。配置
 
 1. v4 有 808 个节点，现有画布缺少按社区/层级聚类和渐进展开，大图直接展示的可读性
    和渲染性能有限。
-2. GraphRAG 抽取保留大量英文课件标题；后端没有无证据自动翻译或改写正式节点。
+2. 当前 Active Bundle 仍保留其生成时的大量英文课件标题；新运行已切换到
+   `edu-graph-graphrag/2.0-zh`，但不会无证据回写或改写既有正式节点。
 3. 个别非明确占位的图片/OCR 实体仍可能语义较弱，需要未来通过可审计质量策略或重新
    生成处理，不能由前端静默隐藏。
 4. 教师治理 UI 尚未专门展示 refinement 的完整质量报告和“零模型调用”标识；数据已经
    由 API 返回。
 5. 现有前端文件中中断前已有的改动被保留，本轮没有追加、回退或重新验收前端页面。
+
+## 12. 课程永久删除边界
+
+课程设置页的永久删除只对 Course Access v1 中同时满足 `owner` 与
+`course.delete` 的成员显示。请求必须携带与当前课程标题完全一致的确认文本。
+
+删除服务会拒绝仍有解析、向量或 GraphRAG 活跃任务的课程，并清理课程专属数据库行、
+源材料版本及文件哈希、解析产物引用、GraphRAG 运行、GraphSnapshot、Bundle、Head、
+LanceDB 目录和对象存储文件。仍被其他课程引用的相同对象键会保留；数据库删除完成后
+若外部对象或目录清理失败，响应中的 `cleanup_complete=false` 和 `cleanup_errors` 会
+明确报告残留，不伪装成完整成功。课程 87 不会因策略升级自动触发删除或重建。
 
 因此当前后端可作为真实 Bundle 服务和治理接口使用；若要把 808 节点图作为面向普通
 用户的正式大图体验，还需要单独安排前端聚类、分层加载、搜索聚焦和性能验收。

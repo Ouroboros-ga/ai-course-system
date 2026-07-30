@@ -82,7 +82,7 @@ class Settings(BaseSettings):
     GRAPHRAG_EMBEDDING_LOCAL_PATH: str = ""
     GRAPHRAG_EMBEDDING_MAX_LENGTH: int = 512
     GRAPHRAG_EMBEDDING_QUERY_INSTRUCTION: str = ""
-    GRAPHRAG_PROMPT_POLICY: str = "edu-graph-graphrag/1.0"
+    GRAPHRAG_PROMPT_POLICY: str = "edu-graph-graphrag/2.0-zh"
     GRAPHRAG_MAX_GLEANINGS: int = 1
     GRAPHRAG_MAX_RETRIES: int = 2
     GRAPHRAG_RUN_TIMEOUT_SECONDS: int = 1800

@@ -63,6 +63,7 @@ class GraphRagIdentityService:
                 rejected_entity_ids.add(entity_id)
                 rejected_entity_titles.append(str(entity.get("title") or ""))
                 continue
+            canonical_title, entity_aliases = _entity_names(entity)
             anchor_ids = sorted({
                 anchor_id
                 for text_unit_id in entity.get("text_unit_ids") or []
@@ -80,7 +81,8 @@ class GraphRagIdentityService:
             else:
                 node, method, score = self._match(
                     nodes,
-                    title=str(entity.get("title") or ""),
+                    title=canonical_title,
+                    aliases=entity_aliases,
                     entity_type=str(entity.get("type") or "concept"),
                     anchor_ids=set(anchor_ids),
                 )
@@ -88,12 +90,13 @@ class GraphRagIdentityService:
                     node = CourseKnowledgeNode(
                         course_id=course_id,
                         node_key=f"kn_{uuid.uuid4().hex}",
-                        title=str(entity.get("title") or "").strip(),
+                        title=canonical_title,
                         kind=str(entity.get("type") or "concept").lower(),
                         status=CourseKnowledgeNodeStatus.CANDIDATE,
                         source_anchor_ids=anchor_ids,
                         extra_data={
                             "description": str(entity.get("description") or ""),
+                            "aliases": entity_aliases,
                             "identity_origin": "graphrag",
                         },
                     )
@@ -103,7 +106,7 @@ class GraphRagIdentityService:
                     method = "new_identity"
                     score = 1.0
                 fingerprint = _fingerprint(
-                    str(entity.get("title") or ""),
+                    canonical_title,
                     str(entity.get("type") or "concept"),
                     anchor_ids,
                 )
@@ -132,8 +135,9 @@ class GraphRagIdentityService:
                 snapshot_node = {
                     "id": node.node_key,
                     "identity_id": node.id,
-                    "title": str(entity.get("title") or node.title),
-                    "label": str(entity.get("title") or node.title),
+                    "title": canonical_title or node.title,
+                    "label": canonical_title or node.title,
+                    "aliases": entity_aliases,
                     "type": str(entity.get("type") or node.kind).lower(),
                     "description": str(entity.get("description") or ""),
                     "source_anchor_ids": [],
@@ -236,10 +240,15 @@ class GraphRagIdentityService:
         nodes: list[CourseKnowledgeNode],
         *,
         title: str,
+        aliases: list[str],
         entity_type: str,
         anchor_ids: set[str],
     ) -> tuple[CourseKnowledgeNode | None, str, float]:
-        normalized = _normalize_title(title)
+        incoming_names = {
+            normalized
+            for value in (title, *aliases)
+            if (normalized := _normalize_title(value))
+        }
         candidates: list[tuple[float, str, CourseKnowledgeNode]] = []
         for node in nodes:
             node_anchors = set(node.source_anchor_ids or [])
@@ -248,14 +257,14 @@ class GraphRagIdentityService:
                 if anchor_ids and node_anchors else 0.0
             )
             node_title = _normalize_title(node.title)
-            aliases = {
+            node_aliases = {
                 _normalize_title(str(alias))
                 for alias in (node.extra_data or {}).get("aliases", [])
             }
             same_type = str(node.kind).lower() == entity_type.lower()
-            if normalized and normalized == node_title and overlap > 0:
+            if node_title in incoming_names and overlap > 0:
                 candidates.append((0.98 + min(overlap, 0.02), "exact_title_anchor", node))
-            elif normalized and normalized in aliases and same_type and overlap > 0:
+            elif incoming_names & node_aliases and same_type and overlap > 0:
                 candidates.append((0.92 + min(overlap, 0.05), "alias_anchor", node))
         candidates.sort(key=lambda item: (-item[0], item[2].node_key))
         if not candidates:
@@ -299,6 +308,19 @@ def _source_lookup(
 
 def _normalize_title(value: str) -> str:
     return re.sub(r"[\W_]+", "", value.casefold(), flags=re.UNICODE)
+
+
+def _entity_names(entity: dict) -> tuple[str, list[str]]:
+    """Split a Chinese canonical title from trailing English terminology aliases."""
+    raw_title = str(entity.get("title") or "").strip()
+    aliases = [str(item).strip() for item in entity.get("aliases") or [] if str(item).strip()]
+    match = re.fullmatch(r"(.+?)[（(]([^()（）]+)[）)]", raw_title)
+    if match and re.search(r"[\u4e00-\u9fff]", match.group(1)) and re.search(r"[A-Za-z]", match.group(2)):
+        canonical_title = match.group(1).strip()
+        aliases.extend(part.strip() for part in re.split(r"[/,，;；]", match.group(2)) if part.strip())
+    else:
+        canonical_title = raw_title
+    return canonical_title, list(dict.fromkeys(aliases))
 
 
 def _is_placeholder_entity(entity: dict) -> bool:

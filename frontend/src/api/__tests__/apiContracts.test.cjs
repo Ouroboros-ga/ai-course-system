@@ -37,6 +37,21 @@ function extractFirstPath(src, fnName) {
   return m[2]
 }
 
+test('courses.js: deleteCourse 使用 DELETE body 精确确认课程名称', () => {
+  const src = read('frontend/src/api/courses.js')
+  const p = extractFirstPath(src, 'deleteCourse')
+  assert.equal(p, '/document/course/${courseId}')
+  assert.match(src, /function deleteCourse[\s\S]*?request\.delete[\s\S]*?confirmation_title:\s*confirmationTitle/)
+})
+
+test('SettingsProfilePage.vue: 删除入口由课程 owner 权限共同控制', () => {
+  const src = read('frontend/src/app/pages/course/settings/SettingsProfilePage.vue')
+  assert.match(src, /courseContext\.courseRole\.value\s*===\s*['"]owner['"]/)
+  assert.match(src, /courseContext\.allowed\.value\?\.\[['"]course\.delete['"]\]/)
+  assert.match(src, /v-if="canDelete"/)
+  assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
+})
+
 // ============================================================================
 // graph.js ↔ graph_production.py 契约
 // ============================================================================

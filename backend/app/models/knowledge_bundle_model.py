@@ -69,7 +69,7 @@ class GraphRagRun(SQLModel, table=True):
     task_id: Optional[str] = Field(default=None, index=True)
     status: GraphRagRunStatus = Field(default=GraphRagRunStatus.QUEUED, index=True)
     method: str = Field(default="standard", max_length=32)
-    prompt_policy_version: str = Field(default="edu-graph-graphrag/1.0", index=True)
+    prompt_policy_version: str = Field(default="edu-graph-graphrag/2.0-zh", index=True)
     completion_provider: str = Field(default="", max_length=80)
     completion_model: str = Field(default="", max_length=160)
     embedding_provider: str = Field(default="", max_length=80)

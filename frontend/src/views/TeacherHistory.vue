@@ -565,7 +565,11 @@ async function deleteCourse(course) {
   deletingId.value = course.id
 
   try {
-    await request({ url: `/document/course/${course.id}`, method: 'delete' })
+    await request({
+      url: `/document/course/${course.id}`,
+      method: 'delete',
+      data: { confirmation_title: course.title },
+    })
     showToast('课程已成功删除', 'success')
     courses.value = courses.value.filter(c => c.id !== course.id)
     if (selectedCourse.value?.id === course.id) {

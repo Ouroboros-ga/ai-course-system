@@ -374,6 +374,7 @@ class GraphRagRunner:
     ):
         from graphrag.config.models.graph_rag_config import GraphRagConfig
         from graphrag.prompts.index.extract_graph import GRAPH_EXTRACTION_PROMPT
+        from graphrag.prompts.index.summarize_descriptions import SUMMARIZE_PROMPT
 
         completion_provider = settings.GRAPHRAG_COMPLETION_PROVIDER or "openai"
         embedding_provider = settings.GRAPHRAG_EMBEDDING_PROVIDER or "openai"
@@ -392,6 +393,11 @@ class GraphRagRunner:
                 GRAPH_EXTRACTION_PROMPT,
                 policy_context or {},
             ),
+            encoding="utf-8",
+        )
+        summary_prompt_path = artifact_root / "input" / "edu_summarize_descriptions_prompt.txt"
+        summary_prompt_path.write_text(
+            _educational_summary_prompt(SUMMARIZE_PROMPT),
             encoding="utf-8",
         )
         return GraphRagConfig.model_validate({
@@ -451,6 +457,7 @@ class GraphRagRunner:
             },
             "summarize_descriptions": {
                 "completion_model_id": "default_completion_model",
+                "prompt": str(summary_prompt_path),
             },
             "community_reports": {
                 "completion_model_id": "default_completion_model",
@@ -588,11 +595,32 @@ def _educational_extraction_prompt(base_prompt: str, policy_context: dict[str, A
         "Do not infer prerequisite relations from chapter, page, or document order. "
         "A teacher's feedback below is extraction guidance only and is never evidence. "
         "Preserve source-grounded distinctions among concepts, principles, methods, "
-        "procedures, formulas, skills, misconceptions, examples, and assessments.\n"
+        "procedures, formulas, skills, misconceptions, examples, and assessments. "
+        "The canonical entity name and every entity or relationship description must be "
+        "written in Simplified Chinese. Preserve established English abbreviations and "
+        "standard English terms as parenthesized aliases after the Chinese canonical name, "
+        "for example: 发动机排量（Engine Displacement） or 电子控制单元（ECU）. "
+        "Do not translate formulas, symbols, model numbers, or acronyms into invented Chinese. "
+        "When the source only contains an English technical term, infer the conventional Chinese "
+        "technical name from that same source context without adding unsupported course facts.\n"
         f"Regeneration reason: {safe(reason) or 'not specified'}\n"
         f"Teacher guidance: {safe(instructions) or 'none'}\n"
         f"Concepts to ensure are considered when supported: "
         f"{safe(', '.join(required)) or 'none'}\n"
         f"Concepts to exclude from the graph: {safe(', '.join(forbidden)) or 'none'}\n"
+    )
+    prompt = base_prompt.replace(
+        "3. Return output in English as a single list",
+        "3. Return output in Simplified Chinese as a single list",
+    )
+    return policy + prompt
+
+
+def _educational_summary_prompt(base_prompt: str) -> str:
+    """Force GraphRAG's entity-description merge step to keep Chinese output."""
+    policy = (
+        "\n请使用简体中文合并实体描述。规范名称使用中文；已有英文缩写、公式、型号和"
+        "标准英文术语作为括号内别名保留。不得把英文描述原样作为最终输出，也不得添加"
+        "来源未支持的课程事实。\n"
     )
     return policy + base_prompt

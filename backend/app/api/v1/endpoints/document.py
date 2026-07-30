@@ -17,6 +17,7 @@ from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 from sqlmodel import Session, select, text, func
 
 from app.schemas.document_schema import (
@@ -58,6 +59,10 @@ from app.services.course_access_service import (
 from app.services import smart_course_service
 from app.services.course_build_service import source_material_service
 from app.services.course_creation_service import course_creation_service
+from app.services.course_deletion_service import (
+    CourseDeletionError,
+    course_deletion_service,
+)
 from app.services.course_material_upload_service import (
     ALLOWED_SOURCE_SUFFIXES,
     course_material_upload_service,
@@ -76,6 +81,10 @@ UPLOAD_DIR.mkdir(exist_ok=True)
 
 document_cache = {}
 tts_generation_status = {}
+
+
+class CourseDeleteRequest(BaseModel):
+    confirmation_title: str = Field(min_length=1, max_length=200)
 
 
 def _tts_batch_task_status(
@@ -1369,218 +1378,57 @@ async def unpublish_course(
 @router.delete("/course/{course_id}")
 async def delete_course(
     course_id: int,
+    payload: CourseDeleteRequest,
     session: Session = Depends(get_session),
     _access: CourseAccessContext = Depends(course_permission("course.delete")),
 ):
-    """
-    删除课程（老师操作）
-
-    完全删除课程及其所有关联数据（脚本、选课记录、学习进度等）
-    此操作不可恢复，需要二次确认
-    """
+    """Permanently delete one owner-controlled course and its private assets."""
     try:
-        course = session.get(Course, course_id)
-        if not course:
-            return unified_response(code=404, message="课程不存在")
-
-        # 检查是否有学生已选课
-        enrollments_count = session.exec(
-            select(func.count()).select_from(StudentEnrollment).where(
-                StudentEnrollment.course_id == course_id,
-                StudentEnrollment.is_active == True
-            )
-        ).one() or 0
-
-        # 删除所有相关数据（按依赖顺序）
-        try:
-            from app.models.progress_model import LearningProgress, NodeProgress, UnderstandingAnalysis
-            from app.models.course_model import CourseScript, ScriptNode, DoclingDocument, DoclingGroup, DoclingTable, DoclingTableCell, DoclingText, DoclingPicture
-            from app.models.video_generation_model import VideoGenerationTask
-            from app.models.qa_model import QASession, QAMessage
-            from app.models.user_model import ChatHistory, ChatMessage
-            from app.models.access_control_model import CourseCapability, CourseMembership
-            from app.models.question_bank_model import QuestionAttempt, QuestionBankItem, QuestionSourceMapping
-            from app.models.cognitive_state_model import CognitiveState, LearningEvidenceRecord, RecommendationRecord
-            from app.models.visualization_model import VisualizationPlanRecord
-            from app.models.safety_policy_model import CourseSafetyPolicy, CourseSandboxPolicy, SafetyAuditLog
-            from app.models.web_research_model import WebResearchConfig, WebResearchResult, ExternalReference
-            from app.models.media_timeline_model import MediaAsset, MediaTimelineCue
-            from app.models.graph_production_model import CourseEvidenceRecord, GraphSnapshotRecord, GraphNodeReview
-            from app.models.mapping_model import KnowledgePageMap
-            from app.models.note_model import Note
-            from app.models.confirmation_model import CourseConfirmation
-            from app.models.feedback_model import Feedback
-            from app.models.progress_model import LearningJumpHistory
-            from app.models.qa_model import QAContext
-            from app.services.graph_production_service import mark_evidence_stale
-
-            # Remove Phase B--E course-scoped records before their legacy
-            # parents (scripts and nodes).  SQLite test databases do not
-            # always enforce FKs; production databases do.
-            artifacts = session.exec(
-                select(DocumentArtifact).where(DocumentArtifact.course_id == course_id)
-            ).all()
-            for artifact in artifacts:
-                # Keep the lifecycle operation atomic.  The rows are then
-                # deleted with the course, so inaccessible citations cannot
-                # resolve to a replacement document.
-                mark_evidence_stale(
-                    session,
-                    course_id,
-                    artifact.document_id,
-                    reason="course_deleted",
-                    commit=False,
-                )
-
-            for model in (GraphNodeReview, GraphSnapshotRecord, CourseEvidenceRecord):
-                for record in session.exec(select(model).where(model.course_id == course_id)).all():
-                    session.delete(record)
-
-            for model in (ExternalReference, WebResearchResult, WebResearchConfig,
-                          MediaTimelineCue, MediaAsset, VisualizationPlanRecord,
-                          SafetyAuditLog, CourseSafetyPolicy, CourseSandboxPolicy,
-                          RecommendationRecord, LearningEvidenceRecord, CognitiveState,
-                          QuestionAttempt, QuestionSourceMapping, KnowledgePageMap,
-                          Note, CourseConfirmation, Feedback, LearningJumpHistory,
-                          QAContext):
-                for record in session.exec(select(model).where(model.course_id == course_id)).all():
-                    session.delete(record)
-
-            for item in session.exec(
-                select(QuestionBankItem).where(QuestionBankItem.course_id == course_id)
-            ).all():
-                session.delete(item)
-
-            for artifact in artifacts:
-                session.delete(artifact)
-
-            for model in (CourseCapability, CourseMembership):
-                for record in session.exec(select(model).where(model.course_id == course_id)).all():
-                    session.delete(record)
-
-            # 1. 删除理解度分析（依赖 learning_progress）
-            learning_progresses = session.exec(
-                select(LearningProgress).where(LearningProgress.course_id == course_id)
-            ).all()
-            for lp in learning_progresses:
-                analyses = session.exec(
-                    select(UnderstandingAnalysis).where(UnderstandingAnalysis.progress_id == lp.id)
-                ).all()
-                for analysis in analyses:
-                    session.delete(analysis)
-
-            # 2. 删除节点进度和学习进度
-            for lp in learning_progresses:
-                node_progresses = session.exec(
-                    select(NodeProgress).where(NodeProgress.progress_id == lp.id)
-                ).all()
-                for np in node_progresses:
-                    session.delete(np)
-                session.delete(lp)
-
-            # 3. 删除问答会话和消息
-            qa_sessions = session.exec(
-                select(QASession).where(QASession.course_id == course_id)
-            ).all()
-            for qs in qa_sessions:
-                qa_messages = session.exec(
-                    select(QAMessage).where(QAMessage.session_id == qs.id)
-                ).all()
-                for qm in qa_messages:
-                    session.delete(qm)
-                session.delete(qs)
-
-            # 4. 删除视频生成任务
-            video_tasks = session.exec(
-                select(VideoGenerationTask).where(VideoGenerationTask.course_id == course_id)
-            ).all()
-            for vt in video_tasks:
-                session.delete(vt)
-
-            # 5. 删除选课记录
-            all_enrollments = session.exec(
-                select(StudentEnrollment).where(StudentEnrollment.course_id == course_id)
-            ).all()
-            for enrollment in all_enrollments:
-                session.delete(enrollment)
-
-            # 6. 删除课程脚本节点和脚本
-            scripts = session.exec(
-                select(CourseScript).where(CourseScript.course_id == course_id)
-            ).all()
-            for script in scripts:
-                nodes = session.exec(
-                    select(ScriptNode).where(ScriptNode.script_id == script.id)
-                ).all()
-                for node in nodes:
-                    session.delete(node)
-                session.delete(script)
-
-            # 7. 删除 Docling 文档及其子表
-            docling_docs = session.exec(
-                select(DoclingDocument).where(DoclingDocument.course_id == course_id)
-            ).all()
-            for doc in docling_docs:
-                for group in session.exec(
-                    select(DoclingGroup).where(DoclingGroup.doc_id == doc.id)
-                ).all():
-                    session.delete(group)
-                for tbl in session.exec(
-                    select(DoclingTable).where(DoclingTable.doc_id == doc.id)
-                ).all():
-                    for cell in session.exec(
-                        select(DoclingTableCell).where(DoclingTableCell.table_id == tbl.id)
-                    ).all():
-                        session.delete(cell)
-                    session.delete(tbl)
-                for txt in session.exec(
-                    select(DoclingText).where(DoclingText.doc_id == doc.id)
-                ).all():
-                    session.delete(txt)
-                for pic in session.exec(
-                    select(DoclingPicture).where(DoclingPicture.doc_id == doc.id)
-                ).all():
-                    session.delete(pic)
-                session.delete(doc)
-
-            # 8. 删除关联的聊天历史（通过课程标题匹配）
-            chat_histories = session.exec(
-                select(ChatHistory).where(ChatHistory.content == course.title)
-            ).all()
-            for ch in chat_histories:
-                chat_msgs = session.exec(
-                    select(ChatMessage).where(ChatMessage.chat_id == ch.id)
-                ).all()
-                for cm in chat_msgs:
-                    session.delete(cm)
-                session.delete(ch)
-
-            # 9. 最后删除课程本身
-            session.delete(course)
-            session.commit()
-
-            # 10. 清理该课程的进程内 RAG 检索作用域（best-effort，不影响事务）
-            try:
-                from app.common.RAG import rag_pipeline
-                rag_pipeline.clear_course_index(course_id)
-            except Exception as clear_err:
-                print(f"[删除课程] 清理课程 RAG 索引失败（可忽略）: {clear_err}")
-
-            print(f"[删除课程] actor={_access.user_id} deleted course {course_id}; affected enrollments={enrollments_count}")
-
-            return unified_response(code=200, message=f"课程《{course.title}》已成功删除", data={
-                "deleted_course_id": course_id,
-                "affected_students": enrollments_count,
-            })
-
-        except Exception as e:
-            session.rollback()
-            raise e
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return unified_response(code=500, message=f"删除失败: {str(e)}", data=None)
+        report = course_deletion_service.delete(
+            session,
+            course_id=course_id,
+            expected_title=payload.confirmation_title,
+        )
+        document_cache.clear()
+        logger.warning(
+            "course_deleted actor=%s course=%s rows=%s objects=%s cleanup_complete=%s",
+            _access.user_id,
+            course_id,
+            sum(report.deleted_rows.values()),
+            len(report.deleted_object_keys),
+            report.cleanup_complete,
+        )
+        return unified_response(
+            code=200,
+            message=f"课程《{report.title}》已永久删除",
+            data=report.to_dict(),
+        )
+    except CourseDeletionError as exc:
+        session.rollback()
+        status_code = 404 if exc.code == "COURSE_NOT_FOUND" else 409
+        if exc.code == "COURSE_DELETE_CONFIRMATION_MISMATCH":
+            status_code = 400
+        messages = {
+            "COURSE_NOT_FOUND": "课程不存在",
+            "COURSE_DELETE_CONFIRMATION_MISMATCH": "输入的课程名称与当前课程不一致",
+            "COURSE_DELETE_TASKS_ACTIVE": "课程仍有解析或图谱任务运行，请等待任务结束后重试",
+            "COURSE_DELETE_SCHEMA_INCOMPLETE": "课程删除服务无法确认当前数据库结构",
+        }
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "error_code": exc.code,
+                "message": messages.get(exc.code, "课程暂时无法删除"),
+                **exc.details,
+            },
+        ) from exc
+    except Exception as exc:
+        session.rollback()
+        logger.exception("course deletion failed actor=%s course=%s", _access.user_id, course_id)
+        raise HTTPException(
+            status_code=500,
+            detail={"error_code": "COURSE_DELETE_FAILED"},
+        ) from exc
 
 
 @router.post("/course/{course_id}/enroll")

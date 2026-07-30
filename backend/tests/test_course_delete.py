@@ -14,9 +14,23 @@ from app.models.access_control_model import CourseCapability, CourseMembership
 from app.models.course_model import Course, CourseStatus
 from app.models.document_artifact_model import DocumentArtifact
 from app.models.graph_production_model import CourseEvidenceRecord
+from app.models.graph_production_model import CourseKnowledgeNode
+from app.models.knowledge_bundle_model import (
+    CourseKnowledgeBundle,
+    CourseKnowledgeHead,
+    CourseVectorIndex,
+    GraphRagEntityMapping,
+    GraphRagRun,
+    GraphRagRunStatus,
+    KnowledgeBundleStatus,
+    VectorIndexStatus,
+)
+from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.question_bank_model import QuestionBankItem, QuestionStatus
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
+from app.services.course_deletion_service import course_deletion_service
+from app.services.object_storage import LocalStorageProvider
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -218,10 +232,14 @@ def test_delete_course_removes_phase_b_to_e_course_rows(client, session):
         "username": teacher.username,
         "role": teacher.role.value,
     })
-    response = client.delete(
+    response = client.request(
+        "DELETE",
         f"/api/v1/document/course/{course_id}",
         headers={"Authorization": f"Bearer {token}"},
+        json={"confirmation_title": course.title},
     )
+    if response.status_code != 200:
+        pytest.fail(response.text)
     assert response.status_code == 200
     assert response.json()["code"] == 200
 
@@ -242,6 +260,149 @@ def test_delete_course_removes_phase_b_to_e_course_rows(client, session):
     assert not session.exec(
         select(CourseCapability).where(CourseCapability.course_id == course_id)
     ).all()
+
+
+def test_delete_course_removes_graph_bundle_hash_and_private_files(
+    session, teacher_user, tmp_path, monkeypatch,
+):
+    course = Course(
+        fanya_course_id="delete-bundle-course",
+        fanya_course_name="delete-bundle-course",
+        title="Delete bundle data",
+        teacher_id=teacher_user.id,
+        status=CourseStatus.DRAFT,
+    )
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    establish_course_access_baseline(session, course.id, teacher_user.id)
+
+    object_key = "course-source/test/private-course.pptx"
+    storage = LocalStorageProvider(str(tmp_path / "objects"), sign_key="test")
+    storage.put(object_key, b"private courseware")
+    material = SourceMaterial(course_id=course.id, name="private-course.pptx")
+    session.add(material)
+    session.flush()
+    version = SourceMaterialVersion(
+        material_id=material.material_id,
+        course_id=course.id,
+        file_path=object_key,
+        file_hash="same-file-can-be-uploaded-after-delete",
+    )
+    node = CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_delete_bundle",
+        title="待删除知识点",
+    )
+    run = GraphRagRun(
+        course_id=course.id,
+        run_id="grr_delete_bundle",
+        status=GraphRagRunStatus.AWAITING_REVIEW,
+    )
+    session.add(version)
+    session.add(node)
+    session.add(run)
+    session.flush()
+    session.add(GraphRagEntityMapping(
+        course_id=course.id,
+        graphrag_run_id=run.run_id,
+        graphrag_entity_id="entity-delete",
+        knowledge_node_id=node.id,
+        node_key=node.node_key,
+    ))
+    session.add(CourseVectorIndex(
+        vector_index_id="cvi_delete_bundle",
+        course_id=course.id,
+        graph_snapshot_id="snapshot-delete",
+        retrieval_snapshot_id="retrieval-delete",
+        status=VectorIndexStatus.READY,
+    ))
+    session.add(CourseKnowledgeBundle(
+        bundle_id="ckb_delete_bundle",
+        course_id=course.id,
+        version=1,
+        graph_snapshot_id="snapshot-delete",
+        retrieval_snapshot_id="retrieval-delete",
+        vector_index_id="cvi_delete_bundle",
+        status=KnowledgeBundleStatus.READY,
+    ))
+    session.add(CourseKnowledgeHead(
+        course_id=course.id,
+        active_bundle_id="ckb_delete_bundle",
+    ))
+    session.commit()
+    course_id = course.id
+    course_title = course.title
+    run_id = run.run_id
+
+    index_root = tmp_path / "knowledge-indexes"
+    index_dir = index_root / "courses" / str(course_id)
+    index_dir.mkdir(parents=True)
+    (index_dir / "COMPLETE").write_text("ok", encoding="utf-8")
+    monkeypatch.setattr("app.services.course_deletion_service.settings.GRAPHRAG_STORAGE_ROOT", str(index_root))
+    monkeypatch.setattr("app.services.course_deletion_service.settings.VECTOR_STORE_ROOT", str(index_root))
+
+    report = course_deletion_service.delete(
+        session,
+        course_id=course_id,
+        expected_title=course_title,
+        storage=storage,
+    )
+
+    assert report.cleanup_complete is True
+    assert not storage.exists(object_key)
+    assert not index_dir.exists()
+    assert session.get(Course, course_id) is None
+    assert not session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.file_hash == "same-file-can-be-uploaded-after-delete"
+    )).all()
+    assert not session.exec(select(GraphRagRun).where(GraphRagRun.run_id == run_id)).all()
+    assert not session.exec(select(CourseKnowledgeBundle).where(
+        CourseKnowledgeBundle.bundle_id == "ckb_delete_bundle"
+    )).all()
+
+
+def test_delete_course_preserves_object_referenced_by_another_course(
+    session, teacher_user, tmp_path,
+):
+    courses = []
+    for index in range(2):
+        course = Course(
+            fanya_course_id=f"shared-object-{index}",
+            fanya_course_name=f"shared-object-{index}",
+            title=f"Shared object {index}",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.DRAFT,
+        )
+        session.add(course)
+        session.flush()
+        material = SourceMaterial(course_id=course.id, name="shared.pptx")
+        session.add(material)
+        session.flush()
+        session.add(SourceMaterialVersion(
+            material_id=material.material_id,
+            course_id=course.id,
+            file_path="course-source/test/shared.pptx",
+            file_hash="shared-hash",
+        ))
+        courses.append(course)
+    session.commit()
+    deleted_course_id = courses[0].id
+    deleted_course_title = courses[0].title
+    preserved_course_id = courses[1].id
+    storage = LocalStorageProvider(str(tmp_path / "objects"), sign_key="test")
+    storage.put("course-source/test/shared.pptx", b"shared courseware")
+
+    report = course_deletion_service.delete(
+        session,
+        course_id=deleted_course_id,
+        expected_title=deleted_course_title,
+        storage=storage,
+    )
+
+    assert storage.exists("course-source/test/shared.pptx")
+    assert report.preserved_shared_object_keys == ["course-source/test/shared.pptx"]
+    assert session.get(Course, preserved_course_id) is not None
 
 
 class TestFrontendDeleteHandling:

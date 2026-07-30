@@ -28,6 +28,16 @@ export function getCourseAccess(courseId) {
 }
 
 /**
+ * 课程所有者永久删除课程及其课程专属产物。
+ * DELETE /document/course/{courseId}
+ */
+export function deleteCourse(courseId, confirmationTitle) {
+  return request.delete(`/document/course/${courseId}`, {
+    data: { confirmation_title: confirmationTitle },
+  })
+}
+
+/**
  * 课程大厅（已发布课程列表）。
  * GET /document/courses
  */
