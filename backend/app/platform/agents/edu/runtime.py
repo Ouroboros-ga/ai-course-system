@@ -1,13 +1,19 @@
-"""Application-facing runtime for the controlled TeachingAgent workflow."""
+"""Application-facing runtime for the controlled TeachingAgent workflow.
+
+Migrated from ``app.platform.agents.runtime.teaching_runtime``; the old
+module re-exports ``TeachingAgentRuntime`` verbatim for backward
+compatibility. The generic runtime (``LangGraphAgentRuntime``) lives in the
+``runtime/`` package and is not used by the TeachingAgent yet.
+"""
 
 from __future__ import annotations
 
 import uuid
 from typing import Any
 
-from .contracts import TeachingTools
+from ..contracts import TeachingTools
 from .state import TeachingState
-from .workflows.teaching import build_teaching_workflow
+from .workflow import build_teaching_workflow
 
 
 class TeachingAgentRuntime:

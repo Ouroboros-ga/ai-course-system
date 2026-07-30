@@ -169,7 +169,7 @@ def test_get_or_create_returns_none_when_runtime_build_raises(tmp_path):
     registry._store.write(student_id="s-1", course_id="c-1", report=_approved_report("c-1"))
 
     with patch(
-        "app.platform.agents.registry.build_kg_mest_shadow_sidecar_runtime",
+        "app.platform.agents.edu.registry.build_kg_mest_shadow_sidecar_runtime",
         side_effect=RuntimeError("build failed"),
     ):
         runtime = registry.get_or_create("s-1", "c-1")
