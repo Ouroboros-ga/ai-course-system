@@ -183,6 +183,66 @@ export function listCourseCitations(courseId, params = {}) {
 
 export { fetchProtectedImageUrl }
 
+// ---------------------------------------------------------------------------
+// Immutable CourseKnowledgeBundle
+// ---------------------------------------------------------------------------
+
+export function getKnowledgeBundleDraft(courseId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundle/draft`)
+}
+
+export function regenerateKnowledgeBundle(courseId, payload) {
+  return request.post(`/graph/course/${courseId}/knowledge-bundle/regenerate`, payload)
+}
+
+export function approveKnowledgeBundle(courseId, payload) {
+  return request.post(`/graph/course/${courseId}/knowledge-bundle/approve`, payload)
+}
+
+export function bootstrapKnowledgeBundle(courseId) {
+  return request.post(`/graph/course/${courseId}/knowledge-bundle/bootstrap`, {
+    confirm_existing_snapshot: true,
+  })
+}
+
+export function getKnowledgeBundleStatus(courseId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundle/status`)
+}
+
+export function listKnowledgeBundles(courseId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundles`)
+}
+
+export function diffKnowledgeBundles(courseId, fromBundleId, toBundleId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundles/diff`, {
+    params: { from_bundle_id: fromBundleId, to_bundle_id: toBundleId },
+  })
+}
+
+export function rollbackKnowledgeBundle(courseId, bundleId) {
+  return request.post(`/graph/course/${courseId}/knowledge-bundles/${bundleId}/rollback`)
+}
+
+export function getActiveKnowledgeBundle(courseId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundle/active`)
+}
+
+export function getActiveKnowledgeGraph(courseId) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundle/graph`)
+}
+
+export function getActiveKnowledgeNode(courseId, nodeKey) {
+  return request.get(
+    `/graph/course/${courseId}/knowledge-bundle/nodes/${encodeURIComponent(nodeKey)}`,
+  )
+}
+
+export function searchActiveKnowledge(courseId, query, topK = 6) {
+  return request.get(`/graph/course/${courseId}/knowledge-bundle/search`, {
+    params: { q: query, top_k: topK },
+  })
+}
+
 /**
  * 添加学习证据（关联课程与文档）。
  * POST /graph/course/{courseId}/evidence

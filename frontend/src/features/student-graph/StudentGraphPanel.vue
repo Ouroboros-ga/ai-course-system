@@ -1,1034 +1,316 @@
 <script setup>
-/**
- * 学生只读知识图谱面板（批次3）。
- *
- * 数据契约：
- * - 调用 getCourseSnapshot(courseId) 拉取已发布快照（学生视角，后端只返 published）；
- * - 当前知识点变化时调用 getNodePrerequisites 获取一跳先修/后继；
- * - 推荐理由来自上层（policy_version / reason_codes / 置信度 / 数据不足语义），
- *   通过 props 传入；本组件不直接调用认知 API，保持职责单一；
- * - 无已发布快照时显示「暂无已发布图谱快照」，不伪造节点；
- * - 低置信度显示「建议核验/需要更多证据」，不武断判弱。
- *
- * 样式参考 evidence-viewer，使用 sfx- 前缀的 BEM 风格。
- */
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowLeft,
-  CornerDownRight,
-  GitFork,
-  LoaderCircle,
   FileText,
-  X,
+  LoaderCircle,
+  Search,
   TriangleAlert,
+  X,
 } from 'lucide-vue-next'
 import {
-  getCourseSnapshot,
-  getNodePrerequisites,
-  listCourseCitations,
   fetchProtectedImageUrl,
+  getActiveKnowledgeGraph,
+  getActiveKnowledgeNode,
 } from '@/api/graph.js'
+import KnowledgeGraphCanvas from '@/features/knowledge-bundle/KnowledgeGraphCanvas.vue'
 
 const props = defineProps({
-  /** 课程 ID，所有 API 调用必须携带 */
   courseId: { type: [Number, String], required: true },
-  /** 当前知识点节点 ID（可选；缺失时仅展示快照概览） */
   nodeId: { type: [Number, String], default: null },
-  /** 当前知识点标题（用于面板头部展示） */
   nodeTitle: { type: String, default: '' },
-  /** 推荐理由上下文（来自认知层，可选） */
-  recommendationContext: {
-    type: Object,
-    default: null,
-  },
-  /**
-   * recommendationContext 形如：
-   * {
-   *   policy_version: 'v1.2',
-   *   reason_codes: ['low_quiz_accuracy', 'high_hint_dependency'],
-   *   confidence: 0.42,                  // 0..1，< 阈值视为低置信度
-   *   abstain: false,                    // true 表示数据完全不足
-   *   abstain_reason: 'evidence_count<3' // 可选
-   * }
-   */
+  recommendationContext: { type: Object, default: null },
 })
+const emit = defineEmits(['jump-node', 'return-anchor'])
 
-const emit = defineEmits([
-  /** 跳转到先修/后继节点，payload = node 对象 */
-  'jump-node',
-  /** 返回锚点（回到调用方记录的原学习位置） */
-  'return-anchor',
-])
-
-const status = ref('idle') // idle | loading | ready | empty | error
+const status = ref('loading')
 const errorMessage = ref('')
-const snapshot = ref(null)
-const neighbors = ref({ incoming: [], outgoing: [] })
-const neighborsStatus = ref('idle')
-const neighborsError = ref('')
-const citations = ref([])
-const citationsStatus = ref('idle')
+const graph = ref(null)
+const selectedKey = ref('')
+const selectedNode = ref(null)
+const query = ref('')
 const selectedCitation = ref(null)
 const citationImageUrl = ref('')
-const citationImageStatus = ref('idle')
+const imageStatus = ref('idle')
 
-const LOW_CONFIDENCE_THRESHOLD = 0.5
-
-const snapshotMeta = computed(() => {
-  if (!snapshot.value) return null
-  // P1-2: 修正字段契约——后端 GraphSnapshot 序列化为 relations / relation_count，
-  //   并包含 version / ontology_version；不存在 edges 与 policy_version。
-  //   policy_version 属于推荐上下文（recommendationContext），不属于快照。
-  const relations = snapshot.value.relations
-  return {
-    snapshotId: snapshot.value.snapshot_id ?? snapshot.value.id ?? null,
-    // 快照版本（int，递增）与本体版本（str，如 "edu-graph/1.0"）
-    snapshotVersion: snapshot.value.version ?? null,
-    ontologyVersion: snapshot.value.ontology_version ?? '',
-    publishedAt: snapshot.value.published_at ?? snapshot.value.created_at ?? '',
-    nodeCount:
-      Array.isArray(snapshot.value.nodes)
-        ? snapshot.value.nodes.length
-        : (snapshot.value.node_count ?? 0),
-    relationCount: Array.isArray(relations)
-      ? relations.length
-      : (snapshot.value.relation_count ?? 0),
-  }
-})
-
-const currentNodeInSnapshot = computed(() => {
-  if (!snapshot.value?.nodes || props.nodeId == null) return null
-  return (
-    snapshot.value.nodes.find((n) => n.id === props.nodeId) ??
-    snapshot.value.nodes.find((n) => String(n.id) === String(props.nodeId)) ??
-    null
+const nodes = computed(() => Array.isArray(graph.value?.nodes) ? graph.value.nodes : [])
+const relations = computed(() => Array.isArray(graph.value?.relations) ? graph.value.relations : [])
+const bundle = computed(() => graph.value?.bundle || null)
+const nodeByKey = computed(() =>
+  new Map(nodes.value.map((node) => [String(node.id), node])),
+)
+const filteredNodes = computed(() => {
+  const term = query.value.trim().toLocaleLowerCase()
+  if (!term) return nodes.value
+  return nodes.value.filter((node) =>
+    `${node.title || ''} ${node.label || ''} ${node.description || ''}`
+      .toLocaleLowerCase()
+      .includes(term),
   )
 })
+const prerequisiteNodes = computed(() =>
+  (selectedNode.value?.prerequisites || [])
+    .map((key) => nodeByKey.value.get(String(key)))
+    .filter(Boolean),
+)
+const successorNodes = computed(() =>
+  (selectedNode.value?.successors || [])
+    .map((key) => nodeByKey.value.get(String(key)))
+    .filter(Boolean),
+)
+const citations = computed(() => selectedNode.value?.citations || [])
 
-const snapshotNodes = computed(() => Array.isArray(snapshot.value?.nodes) ? snapshot.value.nodes : [])
-
-const currentNodeCitations = computed(() => {
-  const identityId = currentNodeInSnapshot.value?.identity_id
-  if (identityId == null) return []
-  return citations.value.filter((citation) => String(citation.node_id) === String(identityId))
-})
-
-const isLowConfidence = computed(() => {
-  const ctx = props.recommendationContext
-  if (!ctx) return false
-  if (ctx.abstain) return true
-  const c = Number(ctx.confidence)
-  return Number.isFinite(c) && c < LOW_CONFIDENCE_THRESHOLD
-})
-
-const isAbstained = computed(() => Boolean(props.recommendationContext?.abstain))
-
-const readableReasonCodes = computed(() => {
-  const codes = props.recommendationContext?.reason_codes
-  if (!Array.isArray(codes) || codes.length === 0) return []
-  return codes.map((code) => humanizeReasonCode(code))
-})
-
-function humanizeReasonCode(code) {
-  if (!code || typeof code !== 'string') return String(code ?? '')
-  const map = {
-    low_quiz_accuracy: '练习正确率偏低',
-    high_hint_dependency: '对提示依赖较高',
-    low_evidence_confidence: '证据置信度不足',
-    high_confusion_risk: '存在困惑信号',
-    low_inquiry_depth: '主动探究较少',
-    high_explanation_need: '需要更多讲解',
-    stale_evidence: '学习证据已陈旧',
-    insufficient_evidence: '可用证据不足',
-  }
-  return map[code] || code.replace(/_/g, ' ')
-}
-
-function mapLoadError(err) {
-  const msg = String(err?.message || '')
-  if (/403|401|forbidden|权限|拒绝/.test(msg)) return 'forbidden'
-  if (/503|unavailable|未配置|not configured/.test(msg)) return 'unavailable'
-  return 'error'
-}
-
-async function loadSnapshot() {
-  if (props.courseId == null || props.courseId === '') {
-    status.value = 'empty'
-    return
-  }
+async function loadGraph() {
   status.value = 'loading'
   errorMessage.value = ''
   try {
-    const res = await getCourseSnapshot(props.courseId)
-    // 后端可能返回 null（无已发布快照）—— 显式空态，不伪造
-    if (!res || (Array.isArray(res.nodes) && res.nodes.length === 0 && !res.snapshot_id && !res.id)) {
-      snapshot.value = null
+    const result = await getActiveKnowledgeGraph(props.courseId)
+    if (!result?.bundle || !Array.isArray(result.nodes) || !result.nodes.length) {
+      graph.value = null
       status.value = 'empty'
       return
     }
-    snapshot.value = res
+    graph.value = result
     status.value = 'ready'
-    await loadCitations()
-  } catch (err) {
-    status.value = mapLoadError(err)
-    errorMessage.value = err?.message || '快照加载失败'
+    const requested = props.nodeId ? String(props.nodeId) : ''
+    const initial = nodeByKey.value.has(requested)
+      ? requested
+      : String(result.nodes[0].id)
+    await selectNode(initial, false)
+  } catch (error) {
+    status.value = 'error'
+    errorMessage.value = error?.message || '知识图谱暂时无法读取。'
   }
 }
 
-async function loadCitations() {
-  citationsStatus.value = 'loading'
+async function selectNode(nodeOrKey, navigate = true) {
+  const key = String(nodeOrKey?.id || nodeOrKey || '')
+  if (!key.startsWith('kn_')) return
+  selectedKey.value = key
+  selectedNode.value = null
   try {
-    const res = await listCourseCitations(props.courseId)
-    citations.value = Array.isArray(res) ? res : (res?.items ?? [])
-    citationsStatus.value = 'ready'
-  } catch (err) {
-    citations.value = []
-    citationsStatus.value = 'error'
+    selectedNode.value = await getActiveKnowledgeNode(props.courseId, key)
+  } catch (error) {
+    errorMessage.value = error?.message || '知识节点暂时无法读取。'
   }
+  if (navigate) emit('jump-node', nodeByKey.value.get(key) || { id: key })
 }
 
 async function openCitation(citation) {
+  closeCitation()
   selectedCitation.value = citation
-  citationImageUrl.value = ''
-  citationImageStatus.value = 'idle'
-  if (!citation?.render_url) return
-  citationImageStatus.value = 'loading'
+  if (!citation.render_url) return
+  imageStatus.value = 'loading'
   try {
     citationImageUrl.value = await fetchProtectedImageUrl(citation.render_url)
-    citationImageStatus.value = 'ready'
+    imageStatus.value = 'ready'
   } catch {
-    citationImageStatus.value = 'error'
+    imageStatus.value = 'error'
   }
 }
 
 function closeCitation() {
   if (citationImageUrl.value) URL.revokeObjectURL(citationImageUrl.value)
-  selectedCitation.value = null
   citationImageUrl.value = ''
-  citationImageStatus.value = 'idle'
+  imageStatus.value = 'idle'
+  selectedCitation.value = null
 }
 
-async function loadNeighbors() {
-  if (props.nodeId == null || !snapshot.value) {
-    neighbors.value = { incoming: [], outgoing: [] }
-    return
-  }
-  neighborsStatus.value = 'loading'
-  neighborsError.value = ''
-  // 并行拉取先修与后继，互不阻塞
-  const [incomingRes, outgoingRes] = await Promise.allSettled([
-    getNodePrerequisites(props.courseId, props.nodeId, 'incoming'),
-    getNodePrerequisites(props.courseId, props.nodeId, 'outgoing'),
-  ])
-  const incoming =
-    incomingRes.status === 'fulfilled'
-      ? (incomingRes.value?.items ?? incomingRes.value?.nodes ?? [])
-      : []
-  const outgoing =
-    outgoingRes.status === 'fulfilled'
-      ? (outgoingRes.value?.items ?? outgoingRes.value?.nodes ?? [])
-      : []
-  neighbors.value = { incoming, outgoing }
-  if (incomingRes.status === 'rejected' && outgoingRes.status === 'rejected') {
-    neighborsStatus.value = 'error'
-    neighborsError.value =
-      incomingRes.reason?.message || '相邻节点加载失败'
-  } else {
-    neighborsStatus.value = 'ready'
-  }
-}
-
-function handleJump(node) {
-  if (!node) return
-  emit('jump-node', node)
-}
-
-function handleReturn() {
-  emit('return-anchor')
-}
-
-watch(
-  () => props.courseId,
-  () => loadSnapshot(),
-)
-
-watch(
-  () => props.nodeId,
-  () => loadNeighbors(),
-)
-
-onMounted(async () => {
-  await loadSnapshot()
-  if (props.nodeId != null) {
-    loadNeighbors()
-  }
+watch(() => props.courseId, loadGraph)
+watch(() => props.nodeId, (value) => {
+  if (value && graph.value) selectNode(String(value), false)
 })
+onMounted(loadGraph)
+onBeforeUnmount(closeCitation)
 </script>
 
 <template>
-  <section class="sfx-student-graph" aria-label="知识图谱">
-    <header class="sfx-student-graph__header">
-      <div class="sfx-student-graph__heading">
-        <GitFork :size="18" class="sfx-student-graph__icon" />
-        <div class="sfx-student-graph__title-block">
-          <h2 class="sfx-student-graph__title">知识图谱</h2>
-          <p class="sfx-student-graph__subtitle">
-            <span v-if="nodeTitle">{{ nodeTitle }}</span>
-            <span v-else>当前课程已发布快照</span>
-            <span
-              v-if="snapshotMeta?.snapshotVersion != null"
-              class="sfx-student-graph__policy"
-            >
-              · 快照 v{{ snapshotMeta.snapshotVersion }}
-            </span>
-            <span
-              v-if="snapshotMeta?.ontologyVersion"
-              class="sfx-student-graph__policy"
-            >
-              · 本体 {{ snapshotMeta.ontologyVersion }}
-            </span>
-          </p>
-        </div>
+  <section class="student-kg" aria-label="课程知识图谱">
+    <header class="student-kg__header">
+      <div>
+        <p class="eyebrow">ACTIVE KNOWLEDGE BUNDLE</p>
+        <h2>课程知识图谱</h2>
+        <p v-if="bundle" class="muted">
+          Bundle v{{ bundle.version }} · {{ nodes.length }} 个节点 ·
+          {{ relations.length }} 条语义关系
+        </p>
       </div>
-      <button
-        type="button"
-        class="sfx-student-graph__return-btn"
-        @click="handleReturn"
-      >
-        <ArrowLeft :size="15" /> 返回锚点
+      <button type="button" class="back" @click="emit('return-anchor')">
+        <ArrowLeft :size="15" /> 返回课程
       </button>
     </header>
 
-    <!-- 加载中 -->
-    <div v-if="status === 'loading'" class="sfx-student-graph__state" role="status">
-      <LoaderCircle :size="22" class="sfx-student-graph__spinner" />
-      <p class="sfx-student-graph__state-text">正在加载已发布图谱快照…</p>
+    <div v-if="status === 'loading'" class="state">
+      <LoaderCircle class="spin" :size="22" /> 正在读取已激活知识包…
+    </div>
+    <div v-else-if="status === 'error'" class="state state--error">
+      <TriangleAlert :size="21" /> {{ errorMessage }}
+      <button type="button" @click="loadGraph">重试</button>
+    </div>
+    <div v-else-if="status === 'empty'" class="state">
+      当前课程尚未激活可供学生读取的知识包。
     </div>
 
-    <!-- 错误 / 服务不可用 / 权限 -->
-    <div
-      v-else-if="status === 'error' || status === 'forbidden' || status === 'unavailable'"
-      class="sfx-student-graph__state sfx-student-graph__state--error"
-      role="alert"
-    >
-      <TriangleAlert :size="22" />
-      <p class="sfx-student-graph__state-text">
-        {{ errorMessage || '图谱快照暂时无法读取' }}
-      </p>
-      <button
-        type="button"
-        class="sfx-student-graph__retry"
-        @click="loadSnapshot"
-      >
-        重试
-      </button>
-    </div>
-
-    <!-- 空状态：无已发布快照 -->
-    <div v-else-if="status === 'empty'" class="sfx-student-graph__state sfx-student-graph__state--empty">
-      <GitFork :size="28" :stroke-width="1.6" />
-      <strong>暂无已发布图谱快照</strong>
-      <p class="sfx-student-graph__state-text">
-        教师尚未发布当前课程的知识图谱。系统不会展示未发布或未核验的节点关系。
-      </p>
-    </div>
-
-    <!-- 就绪 -->
-    <template v-else-if="status === 'ready'">
-      <!-- 推荐理由（可选） -->
-      <aside
-        v-if="recommendationContext"
-        class="sfx-student-graph__rationale"
-        :class="{
-          'is-low-confidence': isLowConfidence,
-          'is-abstained': isAbstained,
-        }"
-      >
-        <div class="sfx-student-graph__rationale-head">
-          <CornerDownRight :size="15" />
-          <span class="sfx-student-graph__rationale-title">推荐理由</span>
-          <span
-            v-if="recommendationContext.confidence != null && !isAbstained"
-            class="sfx-student-graph__confidence"
-          >
-            置信度 {{ Math.round((recommendationContext.confidence ?? 0) * 100) }}%
-          </span>
-        </div>
-        <ul v-if="readableReasonCodes.length" class="sfx-student-graph__reason-list">
-          <li v-for="(code, i) in readableReasonCodes" :key="i">{{ code }}</li>
-        </ul>
-        <p v-if="isAbstained" class="sfx-student-graph__rationale-note">
-          需要更多证据：当前可用学习证据不足以做出可靠判断，建议核验后再决策。
-        </p>
-        <p v-else-if="isLowConfidence" class="sfx-student-graph__rationale-note">
-          建议核验：当前置信度较低，结论可能不稳定，可结合原文或练习进一步确认。
-        </p>
-        <p
-          v-if="recommendationContext.policy_version"
-          class="sfx-student-graph__rationale-meta"
-        >
-          策略版本 v{{ recommendationContext.policy_version }}
-        </p>
-      </aside>
-
-      <!-- 快照概览 -->
-      <div class="sfx-student-graph__overview">
-        <span v-if="snapshotMeta?.nodeCount != null" class="sfx-student-graph__metric">
-          <strong>{{ snapshotMeta.nodeCount }}</strong> 节点
-        </span>
-        <span v-if="snapshotMeta?.relationCount != null" class="sfx-student-graph__metric">
-          <strong>{{ snapshotMeta.relationCount }}</strong> 关系
-        </span>
-        <span
-          v-if="snapshotMeta?.publishedAt"
-          class="sfx-student-graph__metric sfx-student-graph__metric--muted"
-        >
-          发布于 {{ snapshotMeta.publishedAt }}
-        </span>
-      </div>
-
-      <section class="sfx-student-graph__node-list" aria-labelledby="student-graph-node-list-title">
-        <header class="sfx-student-graph__section-head">
-          <span id="student-graph-node-list-title">全部知识点</span>
-          <small class="sfx-student-graph__section-count">{{ snapshotNodes.length }}</small>
-        </header>
-        <div v-if="snapshotNodes.length" class="sfx-student-graph__node-grid">
+    <div v-else class="workspace">
+      <aside class="rail">
+        <label class="search">
+          <Search :size="15" />
+          <input v-model="query" type="search" placeholder="搜索知识点" />
+        </label>
+        <div class="node-list">
           <button
-            v-for="node in snapshotNodes"
+            v-for="node in filteredNodes"
             :key="node.id"
             type="button"
-            class="sfx-student-graph__node-btn"
-            :class="{ 'is-current': String(node.id) === String(props.nodeId) }"
-            @click="handleJump(node)"
+            :class="{ active: String(node.id) === selectedKey }"
+            @click="selectNode(node)"
           >
-            <span class="sfx-student-graph__node-key">{{ node.id }}</span>
-            <span class="sfx-student-graph__node-title">{{ node.title || node.name || '未命名知识点' }}</span>
+            <span>{{ node.title || node.label || node.id }}</span>
+            <small>{{ node.type || node.kind || 'concept' }}</small>
           </button>
         </div>
-        <p v-else class="sfx-student-graph__neighbor-empty">当前快照没有可展示的知识点。</p>
-      </section>
+      </aside>
 
-      <!-- 当前知识点 -->
-      <article v-if="currentNodeInSnapshot" class="sfx-student-graph__current">
-        <header class="sfx-student-graph__section-head">
-          <span>当前知识点</span>
-        </header>
-        <h3 class="sfx-student-graph__current-title">
-          {{ currentNodeInSnapshot.title || currentNodeInSnapshot.name || `节点 #${currentNodeInSnapshot.id}` }}
-        </h3>
-        <p
-          v-if="currentNodeInSnapshot.summary || currentNodeInSnapshot.description"
-          class="sfx-student-graph__current-summary"
-        >
-          {{ currentNodeInSnapshot.summary || currentNodeInSnapshot.description }}
-        </p>
-        <div class="sfx-student-graph__citations">
-          <header class="sfx-student-graph__section-head">
-            <span>原文引用</span>
-            <small class="sfx-student-graph__section-count">{{ currentNodeCitations.length }}</small>
-          </header>
-          <p v-if="citationsStatus === 'loading'" class="sfx-student-graph__neighbor-empty">正在加载原文引用…</p>
-          <p v-else-if="citationsStatus === 'error'" class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error">原文引用暂时不可用。</p>
-          <p v-else-if="!currentNodeCitations.length" class="sfx-student-graph__neighbor-empty">该知识点暂无学生可读引用。</p>
-          <ul v-else class="sfx-student-graph__citation-list">
-            <li v-for="citation in currentNodeCitations" :key="citation.citation_id" class="sfx-student-graph__citation-item">
-              <button type="button" class="sfx-student-graph__citation-btn" @click="openCitation(citation)">
-                <FileText :size="15" />
-                <span>{{ citation.source_file || '课程材料' }} · 第 {{ citation.page_number || '—' }} 页</span>
-              </button>
-              <p class="sfx-student-graph__citation-snippet">{{ citation.text_snippet || '已确认原文引用' }}</p>
-            </li>
-          </ul>
-        </div>
-      </article>
-
-      <!-- 一跳先修 / 后继 -->
-      <div class="sfx-student-graph__neighbors">
-        <div class="sfx-student-graph__neighbor-col">
-          <header class="sfx-student-graph__section-head">
-            <span>先修节点</span>
-            <small class="sfx-student-graph__section-count">
-              {{ neighbors.incoming.length }}
-            </small>
-          </header>
-          <ul v-if="neighbors.incoming.length" class="sfx-student-graph__neighbor-list">
-            <li
-              v-for="node in neighbors.incoming"
-              :key="node.id"
-              class="sfx-student-graph__neighbor-item"
-            >
-              <button
-                type="button"
-                class="sfx-student-graph__neighbor-btn"
-                @click="handleJump(node)"
-              >
-                <span class="sfx-student-graph__neighbor-title">
-                  {{ node.title || node.name || `节点 #${node.id}` }}
-                </span>
-                <span v-if="node.summary" class="sfx-student-graph__neighbor-summary">
-                  {{ node.summary }}
-                </span>
-              </button>
-            </li>
-          </ul>
-          <p
-            v-else-if="neighborsStatus === 'loading'"
-            class="sfx-student-graph__neighbor-empty"
-          >
-            加载中…
-          </p>
-          <p
-            v-else-if="neighborsStatus === 'error'"
-            class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error"
-          >
-            {{ neighborsError || '相邻节点加载失败' }}
-          </p>
-          <p v-else class="sfx-student-graph__neighbor-empty">无先修节点</p>
-        </div>
-
-        <div class="sfx-student-graph__neighbor-col">
-          <header class="sfx-student-graph__section-head">
-            <span>后继节点</span>
-            <small class="sfx-student-graph__section-count">
-              {{ neighbors.outgoing.length }}
-            </small>
-          </header>
-          <ul v-if="neighbors.outgoing.length" class="sfx-student-graph__neighbor-list">
-            <li
-              v-for="node in neighbors.outgoing"
-              :key="node.id"
-              class="sfx-student-graph__neighbor-item"
-            >
-              <button
-                type="button"
-                class="sfx-student-graph__neighbor-btn"
-                @click="handleJump(node)"
-              >
-                <span class="sfx-student-graph__neighbor-title">
-                  {{ node.title || node.name || `节点 #${node.id}` }}
-                </span>
-                <span v-if="node.summary" class="sfx-student-graph__neighbor-summary">
-                  {{ node.summary }}
-                </span>
-              </button>
-            </li>
-          </ul>
-          <p
-            v-else-if="neighborsStatus === 'loading'"
-            class="sfx-student-graph__neighbor-empty"
-          >
-            加载中…
-          </p>
-          <p
-            v-else-if="neighborsStatus === 'error'"
-            class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error"
-          >
-            {{ neighborsError || '相邻节点加载失败' }}
-          </p>
-          <p v-else class="sfx-student-graph__neighbor-empty">无后继节点</p>
-        </div>
+      <div class="canvas">
+        <KnowledgeGraphCanvas
+          :nodes="nodes"
+          :relations="relations"
+          :selected-id="selectedKey"
+          @select="selectNode"
+        />
       </div>
-    </template>
 
-    <div v-if="selectedCitation" class="sfx-student-graph__drawer-backdrop" @click.self="closeCitation">
-      <aside class="sfx-student-graph__drawer" role="dialog" aria-modal="true" aria-labelledby="citation-drawer-title">
-        <header class="sfx-student-graph__drawer-head">
+      <aside class="detail">
+        <template v-if="selectedNode">
+          <p class="eyebrow">{{ selectedNode.entity_type }}</p>
+          <h3>{{ selectedNode.title }}</h3>
+          <p>{{ selectedNode.description || '该知识点暂无补充描述。' }}</p>
+
+          <section>
+            <h4>先修知识</h4>
+            <div v-if="prerequisiteNodes.length" class="chips">
+              <button
+                v-for="node in prerequisiteNodes"
+                :key="node.id"
+                type="button"
+                @click="selectNode(node)"
+              >
+                {{ node.title || node.label }}
+              </button>
+            </div>
+            <p v-else class="muted">没有已确认的先修节点</p>
+          </section>
+
+          <section>
+            <h4>后继知识</h4>
+            <div v-if="successorNodes.length" class="chips">
+              <button
+                v-for="node in successorNodes"
+                :key="node.id"
+                type="button"
+                @click="selectNode(node)"
+              >
+                {{ node.title || node.label }}
+              </button>
+            </div>
+            <p v-else class="muted">没有已确认的后继节点</p>
+          </section>
+
+          <section v-if="recommendationContext">
+            <h4>当前学习建议</h4>
+            <p>{{ recommendationContext.description || recommendationContext.title }}</p>
+            <small class="muted">
+              {{ recommendationContext.degraded_reason || '已基于当前知识包生成' }}
+            </small>
+          </section>
+
+          <section>
+            <h4>原文引用</h4>
+            <div v-if="citations.length" class="citations">
+              <button
+                v-for="citation in citations"
+                :key="citation.citation_id"
+                type="button"
+                @click="openCitation(citation)"
+              >
+                <FileText :size="14" />
+                <span>{{ citation.source_file || '课程文件' }} · 第 {{ citation.page_number }} 页</span>
+              </button>
+            </div>
+            <p v-else class="muted">该节点没有可公开的有效 Citation</p>
+          </section>
+        </template>
+      </aside>
+    </div>
+
+    <div v-if="selectedCitation" class="drawer-backdrop" @click.self="closeCitation">
+      <aside class="citation-drawer">
+        <header>
           <div>
-            <p class="sfx-student-graph__drawer-eyebrow">原文引用</p>
-            <h3 id="citation-drawer-title">{{ selectedCitation.source_file || '课程材料' }}</h3>
+            <p class="eyebrow">SOURCE CITATION</p>
+            <h3>{{ selectedCitation.source_file || '课程原文' }}</h3>
           </div>
-          <button type="button" class="sfx-student-graph__drawer-close" aria-label="关闭引用" @click="closeCitation"><X :size="18" /></button>
+          <button type="button" aria-label="关闭" @click="closeCitation"><X :size="18" /></button>
         </header>
-        <p class="sfx-student-graph__drawer-meta">第 {{ selectedCitation.page_number || '—' }} 页 · {{ selectedCitation.status || 'active' }}</p>
-        <img v-if="citationImageUrl" :src="citationImageUrl" alt="原文页面" class="sfx-student-graph__citation-image" />
-        <p v-else-if="citationImageStatus === 'loading'" class="sfx-student-graph__neighbor-empty">正在加载原文页面…</p>
-        <p v-else-if="citationImageStatus === 'error'" class="sfx-student-graph__neighbor-empty sfx-student-graph__neighbor-empty--error">原文页面暂时无法加载，但引用文本仍可查看。</p>
-        <blockquote class="sfx-student-graph__drawer-quote">{{ selectedCitation.text_snippet || '暂无文本片段' }}</blockquote>
-        <p v-if="selectedCitation.bbox" class="sfx-student-graph__drawer-meta">已记录原文框选区域，可用于教师复核。</p>
+        <p>第 {{ selectedCitation.page_number }} 页 · {{ selectedCitation.status }}</p>
+        <blockquote>{{ selectedCitation.text_snippet }}</blockquote>
+        <div v-if="imageStatus === 'loading'" class="state">正在加载受保护页图…</div>
+        <img
+          v-else-if="citationImageUrl"
+          :src="citationImageUrl"
+          alt="Citation 原文页"
+        />
+        <p v-else-if="imageStatus === 'error'" class="state state--error">
+          原文页图加载失败，但引用文本仍可审计。
+        </p>
+        <p v-else class="muted">当前引用尚无页面渲染资产。</p>
       </aside>
     </div>
   </section>
 </template>
 
 <style scoped>
-.sfx-student-graph {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3, 12px);
-  padding: 16px;
-  background: var(--surface-canvas, #fafbfc);
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: var(--radius-lg, 10px);
-  overflow-y: auto;
-}
-
-.sfx-student-graph__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--space-3, 12px);
-}
-
-.sfx-student-graph__heading {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-2, 8px);
-}
-
-.sfx-student-graph__icon {
-  color: var(--accent-primary, #4f8cf7);
-  margin-top: 2px;
-}
-
-.sfx-student-graph__title-block {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.sfx-student-graph__title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  color: var(--text-primary, #1f2937);
-}
-
-.sfx-student-graph__subtitle {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--text-secondary, #6b7280);
-}
-
-.sfx-student-graph__policy {
-  color: var(--text-muted, #9ca3af);
-}
-
-.sfx-student-graph__return-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1, 4px);
-  padding: 6px 12px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 6px;
-  background: var(--surface-panel, #fff);
-  color: var(--text-secondary, #374151);
-  font-size: 0.85rem;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.sfx-student-graph__return-btn:hover {
-  background: var(--surface-cool, #f5f5f5);
-  color: var(--ink-700, #1f2937);
-}
-
-.sfx-student-graph__state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2, 8px);
-  padding: 32px 16px;
-  text-align: center;
-  color: var(--text-muted, #6b7280);
-}
-
-.sfx-student-graph__state--error {
-  color: var(--red-700, #c62828);
-}
-
-.sfx-student-graph__state--empty {
-  color: var(--text-muted, #9ca3af);
-}
-
-.sfx-student-graph__state-text {
-  margin: 0;
-  font-size: 0.85rem;
-}
-
-.sfx-student-graph__node-list,
-.sfx-student-graph__citations {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 8px;
-  background: var(--surface-panel, #fff);
-}
-
-.sfx-student-graph__node-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-  max-height: 280px;
-  overflow-y: auto;
-}
-
-.sfx-student-graph__node-btn,
-.sfx-student-graph__citation-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 44px;
-  padding: 9px 10px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 7px;
-  background: var(--surface-panel, #fff);
-  color: var(--text-primary, #1f2937);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 180ms ease, background-color 180ms ease;
-}
-
-.sfx-student-graph__node-btn:hover,
-.sfx-student-graph__node-btn:focus-visible,
-.sfx-student-graph__citation-btn:hover,
-.sfx-student-graph__citation-btn:focus-visible {
-  border-color: var(--accent-primary, #4f8cf7);
-  background: var(--surface-cool, #f5f8ff);
-  outline: none;
-}
-
-.sfx-student-graph__node-btn.is-current {
-  border-color: var(--accent-primary, #4f8cf7);
-  box-shadow: inset 3px 0 var(--accent-primary, #4f8cf7);
-}
-
-.sfx-student-graph__node-key {
-  flex: 0 0 auto;
-  color: var(--text-muted, #6b7280);
-  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
-  font-size: 0.72rem;
-}
-
-.sfx-student-graph__node-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 0.86rem;
-}
-
-.sfx-student-graph__citation-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.sfx-student-graph__citation-item {
-  padding: 8px;
-  border-radius: 6px;
-  background: var(--surface-cool, #f8fafc);
-}
-
-.sfx-student-graph__citation-btn {
-  width: 100%;
-  min-height: 38px;
-  padding: 5px 0;
-  border: 0;
-  background: transparent;
-  color: var(--accent-primary, #2563eb);
-}
-
-.sfx-student-graph__citation-snippet {
-  margin: 5px 0 0 23px;
-  color: var(--text-secondary, #475569);
-  font-size: 0.8rem;
-  line-height: 1.55;
-}
-
-.sfx-student-graph__drawer-backdrop {
-  position: fixed;
-  z-index: 50;
-  inset: 0;
-  display: flex;
-  justify-content: flex-end;
-  background: rgba(15, 23, 42, 0.38);
-}
-
-.sfx-student-graph__drawer {
-  width: min(520px, 100vw);
-  height: 100%;
-  overflow-y: auto;
-  padding: 22px;
-  background: var(--surface-panel, #fff);
-  box-shadow: -12px 0 32px rgba(15, 23, 42, 0.16);
-}
-
-.sfx-student-graph__drawer-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.sfx-student-graph__drawer-head h3,
-.sfx-student-graph__drawer-eyebrow {
-  margin: 0;
-}
-
-.sfx-student-graph__drawer-eyebrow {
-  color: var(--text-muted, #64748b);
-  font-size: 0.78rem;
-}
-
-.sfx-student-graph__drawer-close {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px;
-  height: 44px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 7px;
-  background: #fff;
-  cursor: pointer;
-}
-
-.sfx-student-graph__drawer-meta {
-  margin: 10px 0;
-  color: var(--text-secondary, #475569);
-  font-size: 0.82rem;
-}
-
-.sfx-student-graph__citation-image {
-  display: block;
-  width: 100%;
-  max-height: 420px;
-  object-fit: contain;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 6px;
-  background: #f8fafc;
-}
-
-.sfx-student-graph__drawer-quote {
-  margin: 16px 0 0;
-  padding: 14px 16px;
-  border-left: 3px solid var(--accent-primary, #4f8cf7);
-  background: var(--surface-cool, #f8fafc);
-  color: var(--text-primary, #1f2937);
-  line-height: 1.65;
-}
-
-.sfx-student-graph__spinner {
-  animation: sfx-student-graph-spin 0.8s linear infinite;
-  color: var(--accent-primary, #4f8cf7);
-}
-
-@keyframes sfx-student-graph-spin {
-  to { transform: rotate(360deg); }
-}
-
-.sfx-student-graph__retry {
-  padding: 6px 16px;
-  border: 1px solid var(--border-default, #ddd);
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-  font-size: 0.85rem;
-  color: var(--ink-700, #1f2937);
-}
-
-.sfx-student-graph__retry:hover {
-  background: var(--surface-cool, #f5f5f5);
-}
-
-/* 推荐理由 */
-.sfx-student-graph__rationale {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  background: var(--surface-cool, #f5f7fa);
-  border: 1px solid var(--border-subtle, #e5e7eb);
-  border-radius: 8px;
-}
-
-.sfx-student-graph__rationale.is-low-confidence {
-  background: #fffbeb;
-  border-color: #fde68a;
-}
-
-.sfx-student-graph__rationale.is-abstained {
-  background: #fff7ed;
-  border-color: #fed7aa;
-}
-
-.sfx-student-graph__rationale-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.sfx-student-graph__rationale-title {
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary, #1f2937);
-}
-
-.sfx-student-graph__confidence {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: var(--text-secondary, #6b7280);
-}
-
-.sfx-student-graph__reason-list {
-  margin: 0;
-  padding-left: 18px;
-  font-size: 0.82rem;
-  line-height: 1.5;
-  color: var(--text-secondary, #374151);
-}
-
-.sfx-student-graph__rationale-note {
-  margin: 0;
-  font-size: 0.8rem;
-  color: var(--amber-700, #b45309);
-}
-
-.sfx-student-graph__rationale.is-abstained .sfx-student-graph__rationale-note {
-  color: #c2410c;
-}
-
-.sfx-student-graph__rationale-meta {
-  margin: 0;
-  font-size: 0.72rem;
-  color: var(--text-muted, #9ca3af);
-}
-
-/* 快照概览 */
-.sfx-student-graph__overview {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-3, 12px);
-  padding: 8px 12px;
-  background: var(--surface-panel, #fff);
-  border-radius: 6px;
-  font-size: 0.8rem;
-  color: var(--text-secondary, #6b7280);
-}
-
-.sfx-student-graph__metric strong {
-  color: var(--text-primary, #1f2937);
-  font-weight: 600;
-}
-
-.sfx-student-graph__metric--muted {
-  color: var(--text-muted, #9ca3af);
-}
-
-/* 当前知识点 */
-.sfx-student-graph__current {
-  padding: 12px;
-  background: var(--surface-panel, #fff);
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 8px;
-}
-
-.sfx-student-graph__section-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2, 8px);
-  margin-bottom: 6px;
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-muted, #6b7280);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.sfx-student-graph__section-count {
-  padding: 0 6px;
-  border-radius: 999px;
-  background: var(--surface-cool, #f0f0f0);
-  color: var(--text-secondary, #6b7280);
-  font-weight: 500;
-}
-
-.sfx-student-graph__current-title {
-  margin: 0 0 4px 0;
-  font-size: 1rem;
-  font-weight: 600;
-  color: var(--text-primary, #1f2937);
-}
-
-.sfx-student-graph__current-summary {
-  margin: 0;
-  font-size: 0.85rem;
-  line-height: 1.5;
-  color: var(--text-secondary, #4b5563);
-}
-
-/* 相邻节点 */
-.sfx-student-graph__neighbors {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-3, 12px);
-}
-
-@media (max-width: 720px) {
-  .sfx-student-graph__neighbors {
-    grid-template-columns: 1fr;
-  }
-}
-
-.sfx-student-graph__neighbor-col {
-  padding: 12px;
-  background: var(--surface-panel, #fff);
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 8px;
-}
-
-.sfx-student-graph__neighbor-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.sfx-student-graph__neighbor-btn {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px;
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 6px;
-  background: var(--surface-canvas, #fafbfc);
-  text-align: left;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.sfx-student-graph__neighbor-btn:hover {
-  border-color: var(--accent-primary, #4f8cf7);
-  background: var(--accent-bg, #e8f0fe);
-}
-
-.sfx-student-graph__neighbor-title {
-  font-size: 0.88rem;
-  font-weight: 500;
-  color: var(--text-primary, #1f2937);
-}
-
-.sfx-student-graph__neighbor-summary {
-  font-size: 0.78rem;
-  color: var(--text-secondary, #6b7280);
-  line-height: 1.4;
-}
-
-.sfx-student-graph__neighbor-empty {
-  margin: 0;
-  padding: 8px 10px;
-  font-size: 0.82rem;
-  color: var(--text-muted, #9ca3af);
-  text-align: center;
-}
-
-.sfx-student-graph__neighbor-empty--error {
-  color: var(--red-700, #c62828);
-}
+.student-kg { container-type: inline-size; display: flex; min-height: 620px; flex-direction: column; gap: 14px; color: #0f172a; }
+.student-kg__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.student-kg__header h2, .detail h3 { margin: 4px 0 6px; }
+.eyebrow { margin: 0; color: #0f766e; font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+.muted { color: #64748b; }
+.back, .state button, .chips button { border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; padding: 7px 10px; cursor: pointer; }
+.back { display: inline-flex; align-items: center; gap: 6px; }
+.state { display: flex; min-height: 360px; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #cbd5e1; border-radius: 14px; color: #64748b; }
+.state--error { color: #b91c1c; }
+.workspace { display: grid; min-height: 560px; grid-template-columns: 220px minmax(360px, 1fr) 300px; gap: 12px; }
+.rail, .detail { overflow: auto; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
+.rail { padding: 10px; }
+.search { display: flex; align-items: center; gap: 7px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 7px 9px; }
+.search input { min-width: 0; flex: 1; border: 0; outline: 0; }
+.node-list { display: grid; gap: 6px; margin-top: 9px; }
+.node-list button { display: grid; gap: 3px; border: 1px solid transparent; border-radius: 9px; background: #fff; padding: 9px; text-align: left; cursor: pointer; }
+.node-list button:hover, .node-list button.active { border-color: #5eead4; background: #f0fdfa; }
+.node-list small { color: #64748b; }
+.canvas { min-width: 0; overflow: hidden; border-radius: 14px; }
+.detail { padding: 15px; }
+.detail > p { line-height: 1.6; color: #475569; }
+.detail section { border-top: 1px solid #e2e8f0; padding-top: 12px; }
+.detail h4 { margin: 0 0 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.citations { display: grid; gap: 7px; }
+.citations button { display: flex; align-items: center; gap: 7px; border: 1px solid #dbeafe; border-radius: 9px; background: #eff6ff; padding: 8px; color: #1e40af; text-align: left; cursor: pointer; }
+.drawer-backdrop { position: fixed; z-index: 1200; inset: 0; display: flex; justify-content: flex-end; background: rgb(15 23 42 / 42%); }
+.citation-drawer { width: min(520px, 92vw); overflow: auto; background: #fff; padding: 20px; box-shadow: -12px 0 34px rgb(15 23 42 / 18%); }
+.citation-drawer header { display: flex; align-items: flex-start; justify-content: space-between; }
+.citation-drawer header button { border: 0; background: transparent; cursor: pointer; }
+.citation-drawer blockquote { margin: 14px 0; border-left: 3px solid #14b8a6; padding: 9px 12px; background: #f8fafc; line-height: 1.7; }
+.citation-drawer img { width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 1000px) {
+  .workspace { grid-template-columns: 190px 1fr; }
+  .detail { grid-column: 1 / -1; }
+}
+@container (max-width: 900px) {
+  .workspace { grid-template-columns: 190px minmax(0, 1fr); }
+  .detail { grid-column: 1 / -1; max-height: 420px; }
+}
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 </style>
