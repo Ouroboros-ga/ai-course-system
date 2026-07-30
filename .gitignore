@@ -94,6 +94,7 @@ generated/
 .codex_tmp/
 .pytest_tmp/
 .pytest-*/
+backend/.tmp/
 
 # P1 shadow trace stores (G3 shadow / G5A canary runtime artifacts)
 p1_shadow_artifacts/

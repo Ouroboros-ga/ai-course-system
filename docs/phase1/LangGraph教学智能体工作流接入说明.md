@@ -1,5 +1,17 @@
 # LangGraph 教学智能体工作流接入说明
 
+> **归档说明(2026-07-30)**:本文档反映的是 Agent 架构迁移前的接入说明,
+> 部分语义已与当前代码不一致:
+> (1) 文中"应用默认不构造运行时,返回 503"已不成立——
+> `backend/app/platform/agents/bootstrap.py` 在 `TEACHING_AGENT_MODE=enabled`
+> 且 LLM 配置齐全时已注入真实运行时;
+> (2) 文中测试命令 `unittest discover -s backend\tests\agents` 已失效,
+> 测试目录在迁移中已重组,实际入口在 `backend/tests/` 根目录与各子目录;
+> (3) 未反映 `edu/`、`prep/`、`coding/` 三目录已物理分离。
+> 本文保留仅用于历史追溯,**不再作为当前实现依据**。
+> 当前事实以 [AGENTS.md](../../AGENTS.md) §2.2 与 §5、
+> `backend/app/platform/agents/` 实际代码为准。
+
 ## 已实现的边界
 
 新增 `backend/app/platform/agents/`，以 LangGraph `StateGraph` 编排单一教学智能体。它维护结构化 `TeachingState`，而不是只拼接聊天记录；节点只通过 Port 调用领域能力，不直接访问 ORM、数据库、图数据库或系统命令。
