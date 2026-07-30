@@ -1,9 +1,12 @@
-# 教育智能体系统视觉设计规范
+# 教育智能体系统项目前端设计指南
 
-> **文件职责**：定义产品的视觉语言与基础组件外观，只回答“界面应该长什么样”。  
-> **不负责**：页面信息架构、业务流程、权限逻辑和具体页面内容，这些由 [`page-design.md`](./page-design.md) 负责。  
-> **版本**：v0.3  
+> **文件职责**：本文件是本项目前端的**唯一权威设计指南**，统一回答"前端界面应该长什么样、如何布局、如何过渡、如何交互"。
+> 覆盖范围：视觉语言、布局与滚动、页面过渡动画、组件外观、智能体面板、建设页面 stageActions 机制、按钮规范、常见反模式。
+> **不负责**：页面信息架构、业务流程、权限逻辑与具体页面内容，这些由 [`page-design.md`](./page-design.md) 负责。
+> **版本**：v0.4
 > **产品主张**：让课程回应学习
+> **配套令牌实现**：[`frontend/src/app/styles/tokens.css`](./frontend/src/app/styles/tokens.css) 1:1 实现本文件全部 CSS 令牌；[`frontend/src/app/styles/base.css`](./frontend/src/app/styles/base.css) 1:1 实现页面过渡动画与基础控件样式。
+> **冲突优先级**：本文件 > 历史前端文档（含 `frontend/docs/`）> 旧比赛材料。代码实际行为与本文件不一致时，以代码为准并同步更新本文件。
 
 ---
 
@@ -27,6 +30,7 @@
 2. **长期使用优先**：避免大面积纹理、霓虹、低对比文字、过多阴影和装饰性渐变。
 3. **状态可辨识**：颜色不能单独承担语义，必须同时配合文字、图标、线型或形状。
 4. **工具层稳定**：教师审核、课程建设、代码运行和安全设置应具有专业工具感，而不是宣传页式视觉。
+5. **页面整体不滚动，内部可滚动**：见 §5「布局与滚动规范」。
 
 ---
 
@@ -284,16 +288,16 @@ font-family:
 
 | 组件 | 展开尺寸 | 收缩 / 最小尺寸 |
 |---|---:|---:|
-| 一级顶部导航 | 56px 高 | 不收缩 |
-| 课程二级导航 | 44–48px 高 | 不增加第三行菜单 |
-| 课程上下文条 | 48–56px 高 | 沉浸模式可缩到 40px |
-| Local Rail | 220–240px 宽 | 56px |
-| 学习轨道 | 220–240px 宽 | 56px；沉浸时悬浮展开 |
-| AI 回应面板 | 420–480px 宽 | 小屏 360px |
+| 一级顶部导航（`--nav-l1-height`） | 56px 高 | 不收缩 |
+| 课程二级导航（`--nav-l2-height`） | 44px 高 | 不增加第三行菜单 |
+| Local Rail / 建设侧栏（`--rail-width`） | 232px 宽 | 56px（`--rail-width-collapsed`） |
+| 助教智能体面板（`--agent-panel-width`） | 460px 宽，可拖拽至 360–640px | 360px |
 | 普通详情抽屉 | 420 / 480 / 640px | 根据任务选择 |
-| 主按钮 | 40px 高 | 图标按钮不小于 40×40px |
-| 标准输入框 | 40px 高 | 提问输入 44–48px |
+| 主按钮 / 标准输入框（`--control-height`） | 40px 高 | 图标按钮不小于 40×40px |
+| 提问输入框 | 44–48px 高，可自动扩展为多行 | — |
 | 标准表格行 | 44px | Compact 36px |
+
+> 注：原"课程上下文条"已删除（详见 §11.2），不再计入布局尺寸。
 
 ## 3.4 密度模式
 
@@ -317,9 +321,397 @@ font-family:
 
 ---
 
-# 4. 组件样式
+# 4. 动效令牌
 
-## 4.1 圆角体系
+所有动效必须使用本节令牌，禁止在业务样式中硬编码 `transition-duration` 或 `cubic-bezier`。
+
+```css
+--duration-fast: 120ms;    /* 按钮、Hover、表单控件、页面过渡 */
+--duration-normal: 200ms;  /* 抽屉、模态、面板展开 */
+--duration-slow: 320ms;    /* 大型叙事动画、Hero */
+--ease-out: cubic-bezier(0.16, 1, 0.3, 1);  /* 全局唯一缓动 */
+```
+
+规则：
+
+- 全产品仅使用一条 `--ease-out` 缓动曲线，不引入 `ease-in`、`bounce`、`elastic` 等装饰性曲线（思考点动画除外，见 §8.3）。
+- 任何 transition 时长不得低于 `--duration-fast`（120ms），避免肉眼不可见的"闪现"。
+- 任何 transition 时长不得高于 `--duration-slow`（320ms），避免拖沓。
+- `prefers-reduced-motion: reduce` 下所有动画降级为 0.01ms（已在 [`base.css`](./frontend/src/app/styles/base.css) 中统一实现）。
+
+---
+
+# 5. 布局与滚动规范
+
+> 本节规则来源于长期开发中反复出现的滚动溢出、整页抖动、内部容器塌陷等问题。所有新建页面必须遵守。
+
+## 5.1 三层滚动容器模型
+
+产品采用三层嵌套的"整页不滚动 / 内部滚动"模型：
+
+| 层级 | 容器 | 滚动行为 |
+|---|---|---|
+| L1 应用 Shell | `.sfx-shell`（[AppShell.vue](./frontend/src/app/shell/AppShell.vue)） | `height: 100dvh; overflow: hidden`，自身永不滚动 |
+| L2 主内容区 | `.sfx-shell-main` | `flex: 1; overflow-y: auto`，承担整页滚动 |
+| L3 页面内部 | 各页面根容器 + 内部 list/panel | `min-height: 0; overflow-y: auto`，承担局部滚动 |
+
+**强制规则**：
+
+1. `.sfx-shell` 必须保持 `overflow: hidden`，任何情况下不允许整页出现浏览器滚动条。
+2. L2 `.sfx-shell-main` 是**唯一**的全页滚动容器；路由切换时由 [AppShell.vue](./frontend/src/app/shell/AppShell.vue) 中的 `mainRef.scrollTo({ top: 0 })` 重置滚动位置。
+3. L3 内部滚动容器必须显式设置 `min-height: 0`，否则 flex/grid 子元素会被内容撑爆，触发整页滚动。
+4. 任何使用 `grid-template-rows` 的容器必须用 `minmax(0, 1fr)` 限制可滚动行高，禁止直接写 `1fr`（会被内容撑开）。
+
+## 5.2 Grid 布局行高陷阱
+
+错误示例（会导致整页被内容撑爆）：
+
+```css
+.stage { display: grid; grid-template-rows: auto 1fr; } /* ❌ 1fr 会被撑开 */
+```
+
+正确示例：
+
+```css
+.stage { display: grid; grid-template-rows: auto minmax(0, 1fr); } /* ✅ */
+.stage-body { min-height: 0; overflow-y: auto; }
+```
+
+## 5.3 建设页面布局结构
+
+[BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) 是建设页面的标准布局参考：
+
+```text
+.build-workspace        ← flex column, overflow:hidden, 整个建设区不滚动
+└── .build-grid         ← grid: 236px | 1fr | 440px, grid-template-rows: minmax(0,1fr)
+    ├── .build-rail     ← overflow-y:auto，左侧步骤导航独立滚动
+    ├── .build-stage    ← flex column, overflow:hidden
+    │   ├── .stage-context   ← flex-shrink:0，标题与操作区固定
+    │   └── .stage-body      ← flex:1; min-height:0; overflow:hidden
+    │       └── <router-view/> ← 子页面内部管理自身滚动
+    └── CourseBuildAgentPanel ← overflow:hidden，内部消息区独立滚动
+```
+
+**强制规则**：
+
+- 建设页面根容器 `.build-workspace` 必须保持 `overflow: hidden`。
+- `.build-stage` 不得使用 `overflow-y: auto`（曾导致整页滚动）。
+- `.stage-body` 必须是 `flex: 1; min-height: 0; overflow: hidden`，由子页面内部决定滚动。
+- 子页面（BuildStructurePage / BuildScriptsPage / BuildMappingPage 等）的根节点必须自己设置 `height: 100%; overflow-y: auto` 或在内部 list/panel 上设置局部滚动。
+
+## 5.4 节点目录与编辑框独立滚动
+
+以 [BuildStructurePage.vue](./frontend/src/app/pages/course/build/BuildStructurePage.vue) 为参考，左侧节点目录树与右侧编辑区必须各自独立滚动，互不影响：
+
+```css
+.structure-stage {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);   /* 关键：限制行高 */
+  gap: var(--space-4);
+  height: 100%;
+  min-height: 0;
+}
+.node-list  { overflow-y: auto; min-height: 0; }
+.node-editor { overflow-y: auto; min-height: 0; }
+```
+
+---
+
+# 6. 页面过渡动画规范
+
+> 本节规则来源于一级/二级菜单切换时的页面抽搐抖动、菜单栏消失、视觉错位等问题。
+
+## 6.1 全局过渡方案
+
+所有 `<router-view>` 必须使用 `sfx-page` 过渡名，已在 [`base.css`](./frontend/src/app/styles/base.css) 中统一定义：
+
+```css
+.sfx-page-enter-active,
+.sfx-page-leave-active {
+  transition: opacity var(--duration-fast) var(--ease-out);
+  will-change: opacity;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.sfx-page-leave-active { pointer-events: none; }
+.sfx-page-enter-from,
+.sfx-page-leave-to { opacity: 0; }
+```
+
+## 6.2 过渡规则
+
+1. **仅使用 `opacity`，禁止使用 `transform` 位移**。曾有实现使用 `transform: translateY(8px)` 制造"滑入"效果，导致一级菜单点击时整个 main 区域上下错动、二级菜单被瞬时挤掉。
+2. **离开期间必须 `pointer-events: none`**，避免用户误触正在消失的旧组件触发额外路由或请求。
+3. **必须配合 `mode="out-in"`**：旧组件完全离开后再渲染新组件，避免两者同时存在导致 grid/flex 布局塌陷。
+4. **必须使用 `backface-visibility: hidden`** 强制独立合成层，避免过渡期间触发重绘。
+5. **总时长 = `--duration-fast` (120ms)**，配合 `mode="out-in"` 总感知约 240ms，既不生硬也不拖沓，符合 Quiet Technology 克制原则。
+
+## 6.3 router-view 模板标准写法
+
+```vue
+<router-view v-slot="{ Component, route }">
+  <Transition name="sfx-page" mode="out-in">
+    <component :is="Component" :key="route.path" />
+  </Transition>
+</router-view>
+```
+
+## 6.4 关键反模式：key 滥用导致组件重挂载
+
+[CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) 的 `<router-view>` **不得**使用 `:key="route.path"`：
+
+```vue
+<!-- ❌ 错误：BuildLayout 会被反复销毁重建，导致轮询定时器重置、动画抖动、菜单消失 -->
+<router-view v-slot="{ Component }">
+  <Transition name="sfx-page" mode="out-in">
+    <component :is="Component" :key="route.path" />
+  </Transition>
+</router-view>
+
+<!-- ✅ 正确：依赖组件类型自动复用，BuildLayout 只挂载一次 -->
+<router-view v-slot="{ Component }">
+  <Transition name="sfx-page" mode="out-in">
+    <component :is="Component" />
+  </Transition>
+</router-view>
+```
+
+`key` 只应在需要强制重挂载的最内层 `<router-view>` 上使用（如 [BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) 内部的 step 切换），中间层 `<router-view>` 必须保持无 key。
+
+## 6.5 可选升级：交叉淡入淡出
+
+如未来需要进一步消除"空白感"，可将 8 处 `<Transition>` 改为非 `out-in` 模式（交叉淡入淡出），并在父容器添加 `position: relative`，新组件 `position: absolute` 叠加渲染。**当前 240ms 总感知已足够流畅，非必要不升级**。
+
+---
+
+# 7. 助教智能体面板规范
+
+## 7.1 命名约定
+
+- **统一名称**：助教智能体（**禁止**使用"备课 Agent"、"AI 助手"、"Chat Bot"等别名）。
+- 前端触发按钮文案：`打开助教智能体`。
+- 面板组件：[CourseBuildAgentPanel.vue](./frontend/src/app/pages/course/build/CourseBuildAgentPanel.vue)。
+
+## 7.2 宽度与拖拽
+
+- 默认宽度：`--agent-panel-width: 460px`。
+- 可拖拽范围：360px – 640px。
+- 调整手柄必须作为面板左侧的独立元素，与面板共同作为 grid 的第三列；不得作为 grid 的独立第四列子元素（曾导致布局错乱）。
+
+参考结构：
+
+```text
+.build-grid (grid: 236px | 1fr | auto)
+└── 第三列 = flex row
+    ├── .agent-resizer（拖拽手柄，width:6px, cursor:col-resize）
+    └── CourseBuildAgentPanel
+```
+
+## 7.3 内容溢出与独立滚动
+
+- 面板根容器 `overflow: hidden`。
+- 消息列表区 `flex: 1; min-height: 0; overflow-y: auto`。
+- 输入区 `flex-shrink: 0`，固定在底部。
+- 输入框 `resize: none`，由内部 auto-expand 控制高度。
+
+## 7.4 思考气泡（Thought 气泡）
+
+智能体处理中时显示思考气泡，结构固定为：头像（脉冲动画） + 思考点动画 + 文案。
+
+```css
+.thinking-avatar { animation: thinking-pulse 1.5s ease-in-out infinite; }
+.thinking-dots span {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--ink-500);
+  animation: thinking-bounce 1.4s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.16s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.32s; }
+```
+
+> 思考点动画的 `thinking-bounce` 是 §4 中"装饰性曲线"的唯一例外，仅用于智能体状态指示。
+
+## 7.5 "让智能体调整"按钮行为
+
+按钮不得只打开面板而不发送指令。必须通过 `workbench.pendingInstruction` 传递指令字符串，并由 AgentPanel 监听后自动发送当前选中节点的调整请求。同时通过 `workbench.pendingNodeId` 标记目标节点，避免指令发送期间用户切换节点导致错位。
+
+---
+
+# 8. 建设页面 stageActions 机制
+
+[BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) 顶部 `.stage-context-actions` 区域通过 `workbench.stageActions` 与子页面解耦：
+
+```js
+// 子页面 onMounted 时注册
+const workbench = inject('courseBuildWorkbench')
+onMounted(() => {
+  workbench.stageActions.value = {
+    canAdd: true,
+    canDelete: selected.value !== null,
+    canOrganize: nodes.value.length > 0,
+    canRefresh: true,
+    onAdd: addNode,
+    onDelete: deleteNode,
+    onOrganize: organizeAll,
+    onRefresh: load,
+    organizing: false,
+    deleting: false,
+    refreshing: false,
+    addLabel: '新增节点',
+    organizeLabel: '智能体一键整理',
+    refreshLabel: '刷新状态',
+  }
+})
+onBeforeUnmount(() => { workbench.stageActions.value = null })
+```
+
+**强制规则**：
+
+1. 子页面必须在 `onMounted` 中注册 `stageActions`，在 `onBeforeUnmount` 中清空，避免泄露到下一页面。
+2. 按钮可见性由字段是否存在决定（`v-if="stageActions.canAdd !== undefined"`），子页面不展示的能力直接不设置该字段。
+3. 删除节点按钮必须实现二次确认（见 §9.2）。
+4. 智能体一键整理按钮文案默认为"智能体一键整理"，可通过 `organizeLabel` 覆盖。
+
+---
+
+# 9. 按钮与交互规范
+
+## 9.1 统一按钮组件
+
+**所有按钮必须使用 [SfxButton.vue](./frontend/src/app/ui/SfxButton.vue)**，禁止使用原生 `<button>` 元素或自造样式类（除导航链接、icon-only 按钮等特殊场景）。
+
+```vue
+<SfxButton variant="primary" size="md" :loading="saving" @click="save">保存</SfxButton>
+<SfxButton variant="secondary" size="sm" :disabled="!canEdit" @click="preview">预览</SfxButton>
+<SfxButton variant="danger" size="sm" :loading="deleting" @click="requestDelete">删除节点</SfxButton>
+<SfxButton variant="tertiary" size="sm" @click="cancel">取消</SfxButton>
+```
+
+| variant | 用途 | 视觉 |
+|---|---|---|
+| `primary` | 主操作（保存、提交、运行） | 墨蓝实心 |
+| `secondary` | 次级操作（预览、刷新、整理） | 白底墨蓝字 + 灰边 |
+| `tertiary` | 文字按钮（取消、查看原文） | 无背景无边框 |
+| `danger` | 不可逆高风险操作 | 白底红字红边；最终确认模态中才允许红色实心 |
+
+| size | 高度 | 用途 |
+|---|---|---|
+| `md` | 40px | 默认页面操作 |
+| `sm` | 32px | 工具条、stage actions、面板内操作 |
+
+## 9.2 二次确认模式
+
+删除节点等不可逆操作必须使用"两段式点击"二次确认，不使用 `window.confirm`：
+
+```js
+const confirmDelete = ref(false)
+watch([selectedNode, () => route.path], () => { confirmDelete.value = false })
+function requestDelete() {
+  if (!stageActions.value?.canDelete) return
+  if (!confirmDelete.value) { confirmDelete.value = true; return }  // 第一次点击：切换文案
+  confirmDelete.value = false
+  stageActions.value.onDelete?.()                                    // 第二次点击：执行
+}
+```
+
+按钮文案随状态切换：`删除节点` → `确认删除？`。切换选中节点或路由时自动重置 `confirmDelete`。
+
+## 9.3 锁定/解锁切换
+
+锁定按钮必须实现"锁定 / 取消锁定"双向切换，不得只支持单向锁定：
+
+```vue
+<SfxButton variant="secondary" size="sm" @click="toggleLock(node)">
+  <LockKeyhole v-if="node.locked" :size="14" /> 取消锁定
+  <LockOpen v-else :size="14" /> 锁定
+</SfxButton>
+```
+
+## 9.4 Icon Button
+
+- 36×36 或 40×40px
+- 点击目标不小于 40px
+- 必须提供 `aria-label` 或 Tooltip
+
+---
+
+# 10. 首次智慧备课等待状态
+
+当 `workbench.draftBuildPhase` 处于以下阶段时，structure / scripts / mapping 三个子页面必须显示"智能体首次智慧备课中"等待视图：
+
+```js
+const FIRST_PREP_PHASES = new Set([
+  'parsing_materials',
+  'assembling_corpus',
+  'submitting_build',
+  'building',
+])
+```
+
+## 10.1 轮询机制
+
+由 [BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) 统一通过 `getDraftBuildStatus(courseId)` 轮询，间隔 5000ms：
+
+- `onMounted` 启动轮询。
+- `onBeforeUnmount` 清理定时器。
+- `watch(courseId)` 切换课程时重置并重新轮询。
+- 轮询失败时 `draftBuildPhase` 静默置空，不阻塞页面渲染。
+
+## 10.2 等待视图样式
+
+```vue
+<div class="first-prep-pending" role="status" aria-live="polite">
+  <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
+  <h3>智能体首次智慧备课中</h3>
+  <p>助教智能体正在解析课程材料，并整理目录草稿与知识点结构。完成后此处会自动呈现可编辑的课程结构。</p>
+  <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+</div>
+```
+
+样式要点：
+
+- 居中栅格布局，`gap: var(--space-3)`，`padding: var(--space-12) var(--space-5)`。
+- 图标 56×56 圆形 `ink-100` 背景 + `ink-700` 图标色，配 `first-prep-pulse` 1.6s 脉冲动画。
+- 三个进度点 8×8 圆形，`first-prep-bounce` 1.2s 上下浮动，依次延迟 0/0.16/0.32s。
+- 必须有 `role="status"` 与 `aria-live="polite"`，供屏幕阅读器播报。
+
+---
+
+# 11. 已删除组件与历史决策
+
+> 本节记录为了空间利用或视觉一致性而删除的组件，避免后续 Agent 误恢复。
+
+## 11.1 LearnContextBar（学习上下文条）
+
+- **位置**：原 [`frontend/src/app/components/learn/LearnContextBar.vue`](./frontend/src/app/components/learn/LearnContextBar.vue)
+- **删除原因**：与二级菜单功能重叠，挤压页面空间，视觉冗余。
+- **DOM 选择器**：`document.querySelector("#app > div > main > div > div.sfx-learn > div.sfx-learn-bar")`。
+- **后续规则**：禁止以任何形式恢复学习上下文条；学习页面顶部直接由二级菜单承担课程上下文。
+
+## 11.2 --contextbar-height 令牌
+
+- **位置**：原 [`frontend/src/app/styles/tokens.css`](./frontend/src/app/styles/tokens.css) §3.3。
+- **删除原因**：上下文条删除后该令牌无消费者。
+- **后续规则**：禁止重新引入 `--contextbar-height` 令牌；二级菜单高度由 `--nav-l2-height` (44px) 统一承担。
+
+## 11.3 全屏模式（isFullscreen / toggleFullscreen）
+
+- **位置**：原 [LearnPage.vue](./frontend/src/app/pages/learn/LearnPage.vue) 中的 `isFullscreen` ref 与 `toggleFullscreen` 函数。
+- **删除原因**：与现代浏览器原生全屏（F11）功能重复，且维护成本高。
+- **后续规则**：禁止在前端引入自定义全屏切换；如需沉浸模式，通过二级菜单隐藏或路由布局调整实现。
+
+## 11.4 "备课 Agent" 命名
+
+- **替换**：全部替换为"助教智能体"。
+- **范围**：包括按钮文案、面板标题、状态提示、注释、变量名（`agentOpen` 保留，但 `备课Agent` 字符串必须替换）。
+- **后续规则**：禁止在新代码或注释中使用"备课 Agent"字样；所有面向用户的"Agent"统一改为"智能体"。
+
+---
+
+# 12. 组件样式细则
+
+## 12.1 圆角体系
 
 | Token | 数值 | 用途 |
 |---|---:|---|
@@ -336,7 +728,7 @@ font-family:
 - 表格、导航和代码区使用较小圆角或直角。
 - 原文引用块只在右侧使用圆角，保留编辑出版物感。
 
-## 4.2 阴影体系
+## 12.2 阴影体系
 
 ```css
 --shadow-xs: 0 1px 2px rgba(16, 26, 49, 0.04);
@@ -351,78 +743,26 @@ font-family:
 - 抽屉、悬浮 Local Rail、模态使用 `shadow-sm` 或 `shadow-md`。
 - 禁止发光、霓虹、多层重阴影和大面积玻璃拟态。
 
-## 4.3 按钮
+## 12.3 输入框与选择控件
 
-### Primary Button
-
-```css
-height: 40px;
-padding: 0 20px;
-border-radius: 10px;
-background: #14213D;
-color: #FFFFFF;
-font-size: 14px;
-font-weight: 500;
-```
-
-状态：
-
-- Hover：`#203A5F`
-- Active：向下压缩 1px 或降低亮度，不使用跳动动画
-- Focus：2px `#355C7D` 外轮廓
-- Disabled：`#C9CFD8` 背景 + `#7B8494` 文字
-
-用于：开始学习、运行代码、提交、发布、确认加入。
-
-### Secondary Button
-
-- 白色背景
-- `1px solid #C9CFD8`
-- 文字 `#203A5F`
-- Hover 背景 `#F7F8FA`
-
-用于：查看详情、打开预览、次级确认。
-
-### Tertiary / Text Button
-
-- 无背景、无边框
-- 文字 `#355C7D`
-- Hover 使用浅色背景或下划线
-
-用于：换种解释、取消、查看原文。
-
-### Danger Button
-
-- 仅用于不可逆或高风险操作。
-- 默认使用白底红字红边；最终确认模态中的主危险操作才允许红色实心。
-- “驳回候选”不默认使用大红实心按钮。
-
-### Icon Button
-
-- 36×36 或 40×40px
-- 点击目标不小于 40px
-- 必须提供 Tooltip 与可访问名称
-
-## 4.4 输入框与选择控件
-
-- 标准高度：40px
-- 圆角：10px
-- 默认边框：`#DDE2E8`
-- Hover 边框：`#C9CFD8`
-- Focus：`2px solid #355C7D`
-- Placeholder：`#7B8494`
+- 标准高度：40px（`--control-height`）
+- 圆角：10px（`--radius-md`）
+- 默认边框：`--border-default`
+- Hover 边框：`--border-strong`
+- Focus：`border-color: var(--color-focus); box-shadow: 0 0 0 2px var(--ink-100)`
+- Placeholder：`--text-muted`
 - 错误状态必须同时显示图标和错误文案
 - 大型智能体提问框高度：44–48px，可自动扩展为多行
 
-## 4.5 卡片与面板
+## 12.4 卡片与面板
 
 ### 普通卡片
 
 ```css
-background: #FFFFFF;
-border: 1px solid #DDE2E8;
-border-radius: 14px;
-padding: 20px;
+background: var(--surface-panel);
+border: 1px solid var(--border-default);
+border-radius: var(--radius-lg);
+padding: var(--space-6);
 ```
 
 使用场景：课程卡片、实验卡片、关键状态摘要。
@@ -435,8 +775,8 @@ padding: 20px;
 
 ### 主工作面板
 
-- 背景：`surface-panel`
-- 边框：`border-default`
+- 背景：`--surface-panel`
+- 边框：`--border-default`
 - 圆角：14–18px
 - 内边距：24px
 - 编辑器、知识画布可取消内边距，由内部工具条控制
@@ -446,9 +786,9 @@ padding: 20px;
 - 右侧滑入
 - 宽度：420–480px
 - 白色背景
-- 左边框 `1px solid #C9CFD8`
+- 左边框 `1px solid var(--border-strong)`
 - 左上和左下圆角：18px
-- 阴影：`shadow-sm`
+- 阴影：`--shadow-sm`
 
 视觉结构固定为：
 
@@ -464,10 +804,10 @@ padding: 20px;
 ### 原文引用块
 
 ```css
-background: #F7F8FA;
-border-left: 3px solid #355C7D;
-padding: 12px 16px;
-border-radius: 0 10px 10px 0;
+background: var(--surface-cool);
+border-left: 3px solid var(--color-focus);
+padding: var(--space-3) var(--space-4);
+border-radius: 0 var(--radius-md) var(--radius-md) 0;
 ```
 
 内部使用：
@@ -477,40 +817,40 @@ border-radius: 0 10px 10px 0;
 - 原文：`body-md`
 - 页码和状态：`caption`
 
-## 4.6 导航栏
+## 12.5 导航栏
 
 ### 一级导航
 
-- 高度：56px
-- 背景：白色或 `surface-page`
-- 底边框：`1px solid #DDE2E8`
+- 高度：56px（`--nav-l1-height`）
+- 背景：白色或 `--surface-page`
+- 底边框：`1px solid var(--border-default`
 - 当前项：`ink-900` 文字 + 2px 底部状态线
 - 不使用大胶囊包裹每一个菜单项
 
 ### 二级导航
 
-- 高度：44–48px
+- 高度：44px（`--nav-l2-height`）
 - 只承载当前空间的主要任务
 - 当前项使用墨蓝文字和底部短线
 - 页面顶部不得出现第三层横向菜单
 
-### Local Rail / 学习轨道
+### Local Rail / 学习轨道 / 建设侧栏
 
 展开：
 
-- 宽度 220–240px
-- 背景 `surface-soft` 或白色
-- 右边框 `border-default`
+- 宽度 232px（`--rail-width`）
+- 背景 `--surface-soft` 或白色
+- 右边框 `--border-default`
 - 当前项：浅墨蓝背景 + 左侧 3px 状态线
 
 收缩：
 
-- 宽度 56px
+- 宽度 56px（`--rail-width-collapsed`）
 - 只显示图标与状态点
 - Hover 展示名称
 - 沉浸任务中手动展开时以悬浮层覆盖，不挤压主舞台
 
-## 4.7 状态徽标
+## 12.6 状态徽标
 
 状态徽标必须包含：图标 + 文字 + 颜色。
 
@@ -528,13 +868,13 @@ border-radius: 0 10px 10px 0;
 - 不使用仅有颜色的小圆点表达关键状态。
 - 胶囊高度建议 24px，横向内边距 8px，圆角 6px。
 
-## 4.8 表格与任务列表
+## 12.7 表格与任务列表
 
 ### 表格
 
 - 默认行高：44px
 - Compact：36px
-- 表头使用弱背景 `surface-cool`
+- 表头使用弱背景 `--surface-cool`
 - 支持粘性表头
 - 批量操作固定在表格上方
 - 状态列使用图标 + 文字
@@ -553,7 +893,7 @@ border-radius: 0 10px 10px 0;
 - 一个主操作
 - 更多操作菜单
 
-## 4.9 抽屉和模态
+## 12.8 抽屉和模态
 
 ### Drawer
 
@@ -571,7 +911,7 @@ border-radius: 0 10px 10px 0;
 - 不用于长篇阅读和复杂编辑
 - 最大宽度 560–720px
 
-## 4.10 代码工作区
+## 12.9 代码工作区
 
 - 代码编辑器采用深色背景
 - 周围课程上下文、任务目标和安全状态保持浅色 App Shell
@@ -579,7 +919,7 @@ border-radius: 0 10px 10px 0;
 - 编译错误和运行错误使用砖红色，但不大面积铺红
 - 必须可见：运行按钮、测试结果、安全策略、Coding Agent 诊断、返回课程入口
 
-## 4.11 知识图谱
+## 12.10 知识图谱
 
 - 默认局部邻域，不显示全量毛线球
 - 当前节点视觉焦点唯一
@@ -601,7 +941,16 @@ border-radius: 0 10px 10px 0;
 
 ---
 
-## 视觉验收底线
+# 13. 路由与根路径跳转
+
+- 访问根路径 `/` 必须自动重定向到 `/app`，由 [router/index.js](./frontend/src/router/index.js) 配置。
+- `/app` 是登录后应用主入口，对应 [AppShell.vue](./frontend/src/app/shell/AppShell.vue)。
+- 课程相关路由前缀：`/app/course/:courseId/`，二级菜单由 [CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) 承载。
+- 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | scripts | mapping | media | validate | releases`。
+
+---
+
+# 14. 视觉验收底线
 
 任何页面交付前至少确认：
 
@@ -612,4 +961,28 @@ border-radius: 0 10px 10px 0;
 - 卡片、圆角和阴影是否被克制使用；
 - 页面是否能连续使用两小时而不过度疲劳；
 - 代码、知识图谱和原文引用是否仍属于同一个产品语言；
-- 页面实现是否引用本文件令牌，而不是随手增加新的 Hex、字号和圆角。
+- **整页是否不出现浏览器滚动条**（仅 `.sfx-shell-main` 滚动）；
+- **路由切换是否无抽搐抖动**（仅 opacity 过渡，无 transform 位移）；
+- **按钮是否全部使用 SfxButton**（无原生 `<button>` 散落）；
+- **删除类操作是否有二次确认**；
+- **页面实现是否引用本文件令牌**，而不是随手增加新的 Hex、字号和圆角。
+
+---
+
+# 15. 实现参考索引
+
+| 主题 | 文件 |
+|---|---|
+| 全局令牌 | [frontend/src/app/styles/tokens.css](./frontend/src/app/styles/tokens.css) |
+| 基础样式与页面过渡 | [frontend/src/app/styles/base.css](./frontend/src/app/styles/base.css) |
+| 应用 Shell | [frontend/src/app/shell/AppShell.vue](./frontend/src/app/shell/AppShell.vue) |
+| 一级导航 | [frontend/src/app/shell/PrimaryNav.vue](./frontend/src/app/shell/PrimaryNav.vue) |
+| 课程布局（二级导航） | [frontend/src/app/pages/course/CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) |
+| 建设布局 | [frontend/src/app/pages/course/build/BuildLayout.vue](./frontend/src/app/pages/course/build/BuildLayout.vue) |
+| 课程结构页 | [frontend/src/app/pages/course/build/BuildStructurePage.vue](./frontend/src/app/pages/course/build/BuildStructurePage.vue) |
+| 讲授脚本页 | [frontend/src/app/pages/course/build/BuildScriptsPage.vue](./frontend/src/app/pages/course/build/BuildScriptsPage.vue) |
+| PPT 映射页 | [frontend/src/app/pages/course/build/BuildMappingPage.vue](./frontend/src/app/pages/course/build/BuildMappingPage.vue) |
+| 助教智能体面板 | [frontend/src/app/pages/course/build/CourseBuildAgentPanel.vue](./frontend/src/app/pages/course/build/CourseBuildAgentPanel.vue) |
+| 按钮组件 | [frontend/src/app/ui/SfxButton.vue](./frontend/src/app/ui/SfxButton.vue) |
+| 路由配置 | [frontend/src/router/index.js](./frontend/src/router/index.js) |
+| 页面信息架构 | [page-design.md](./page-design.md) |
