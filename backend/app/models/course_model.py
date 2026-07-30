@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+from sqlalchemy import Index
 from sqlmodel import SQLModel, Field, JSON, Column
 from typing import Optional
 from datetime import datetime
@@ -383,6 +384,14 @@ class StudentEnrollment(SQLModel, table=True):
     """
 
     __tablename__ = "student_enrollments"
+    __table_args__ = (
+        Index(
+            "uq_student_enrollment_student_course",
+            "student_id",
+            "course_id",
+            unique=True,
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
 

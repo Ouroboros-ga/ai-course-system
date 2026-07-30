@@ -7,6 +7,12 @@ from typing import Any, Mapping, Optional, Protocol
 
 
 class ScopePort(Protocol):
+    """Validate the learner subject's course scope.
+
+    The HTTP layer authenticates the caller and resolves course membership.
+    Ports retain ``student_id`` for compatibility with persisted cognition
+    records, where it means the learner subject rather than the caller.
+    """
     async def validate_scope(self, *, student_id: str, course_id: str, resource_id: str | None) -> Mapping[str, Any]: ...
 
 
@@ -20,6 +26,7 @@ class CourseRetrievalPort(Protocol):
 
 
 class StudentModelingPort(Protocol):
+    """Read-only state for the learner subject in a course."""
     async def get_concept_state(self, *, student_id: str, course_id: str, concept_id: str) -> Mapping[str, Any]: ...
     async def get_weak_concepts(self, *, student_id: str, course_id: str) -> list[Mapping[str, Any]]: ...
 

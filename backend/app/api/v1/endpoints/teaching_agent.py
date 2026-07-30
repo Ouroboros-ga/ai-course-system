@@ -17,7 +17,15 @@ router = APIRouter()
 
 
 class TeachingAgentRequest(BaseModel):
-    student_id: str = Field(min_length=1, max_length=128)
+    """Self-service request.
+
+    ``student_id`` is retained as a deprecated compatibility field.  The
+    endpoint never trusts it; the authenticated user is always the learner
+    subject.  Teacher/admin impersonation uses the separate
+    ``/respond-for-learner`` contract.
+    """
+
+    student_id: str | None = Field(default=None, min_length=1, max_length=128)
     course_id: str = Field(min_length=1, max_length=128)
     session_id: str = Field(min_length=1, max_length=128)
     message: str = Field(min_length=1, max_length=4000)
@@ -36,6 +44,18 @@ def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRu
     return runtime
 
 
+class TeachingAgentLearnerRequest(BaseModel):
+    """Teacher-side request for a specific learner in the course."""
+
+    learner_user_id: str = Field(min_length=1, max_length=128)
+    course_id: str = Field(min_length=1, max_length=128)
+    session_id: str = Field(min_length=1, max_length=128)
+    message: str = Field(min_length=1, max_length=4000)
+    resource_id: str | None = Field(default=None, max_length=128)
+    exercise_id: str | None = Field(default=None, max_length=128)
+    code_submission_id: str | None = Field(default=None, max_length=128)
+
+
 def _resolve_runtime(runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry], student_id: str, course_id: str) -> TeachingAgentRuntime:
     """Resolve a runtime; KG-MEST is optional enrichment, not an availability gate."""
     if isinstance(runtime_source, TeachingAgentRuntimeRegistry):
@@ -46,36 +66,22 @@ def _resolve_runtime(runtime_source: Union[TeachingAgentRuntime, TeachingAgentRu
     return runtime_source
 
 
-@router.post("/respond", summary="Controlled LangGraph teaching response")
-async def respond(
-    body: TeachingAgentRequest,
-    request: Request,
-    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry] = Depends(get_runtime),
-    session: Session = Depends(get_session),
-    current_user: dict[str, Any] = Depends(get_current_user),
+async def _respond_for_subject(
+    *,
+    subject_user_id: int,
+    course_id: int,
+    session_id: str,
+    message: str,
+    resource_id: str | None,
+    exercise_id: str | None,
+    code_submission_id: str | None,
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry],
 ) -> dict[str, Any]:
-    try:
-        student_id = int(body.student_id)
-        course_id = int(body.course_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail={"code": "TEACHING_AGENT_SCOPE_INVALID", "message": "student_id and course_id must be numeric IDs"}) from exc
-
-    caller_id = int(current_user["user_id"])
-    if caller_id == student_id:
-        context = require_course_permission(session, current_user, course_id, "course.question.ask")
-        if not context.analytics_eligible:
-            raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_LEARNER_REQUIRED", "message": "Only an active course learner may request an individualized teaching response."})
-    else:
-        require_course_permission(session, current_user, course_id, "analytics.view_member")
-        target_context = resolve_course_access(session, {"user_id": str(student_id)}, course_id)
-        if not target_context.analytics_eligible:
-            raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_TARGET_NOT_LEARNER", "message": "Target is not an active learner in this course."})
-
-    runtime = _resolve_runtime(runtime_source, body.student_id, body.course_id)
+    runtime = _resolve_runtime(runtime_source, str(subject_user_id), str(course_id))
     state = await runtime.respond(
-        student_id=body.student_id, course_id=body.course_id, session_id=body.session_id,
-        message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
-        code_submission_id=body.code_submission_id,
+        student_id=str(subject_user_id), course_id=str(course_id), session_id=session_id,
+        message=message, resource_id=resource_id, exercise_id=exercise_id,
+        code_submission_id=code_submission_id,
     )
     if state.get("status") == "rejected":
         raise HTTPException(status_code=403, detail={"code": state["errors"][-1], "trace_id": state["trace_id"]})
@@ -84,7 +90,6 @@ async def respond(
 
     degraded = set(state.get("degraded_services", []))
     if {"knowledge_graph", "retrieval"} & degraded:
-        # The frontend calls V1 /chat/ask and shows this human-readable state.
         return {
             "trace_id": state["trace_id"], "status": "fallback_required",
             "fallback_reason": "COURSE_KNOWLEDGE_GRAPH_PENDING",
@@ -100,3 +105,52 @@ async def respond(
         "recommended_resources": [{"resource_id": resource_id} for resource_id in state.get("selected_resource_ids", [])],
         "warnings": state.get("warnings", []), "degraded_services": state.get("degraded_services", []),
     }
+
+
+@router.post("/respond", summary="Controlled LangGraph self-service teaching response")
+async def respond(
+    body: TeachingAgentRequest,
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry] = Depends(get_runtime),
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        course_id = int(body.course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "TEACHING_AGENT_SCOPE_INVALID", "message": "course_id must be a numeric ID"}) from exc
+
+    caller_id = int(current_user["user_id"])
+    if body.student_id is not None and str(body.student_id) != str(caller_id):
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_SELF_ID_MISMATCH", "message": "Self-service requests cannot select another learner."})
+    context = require_course_permission(session, current_user, course_id, "course.question.ask")
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_LEARNER_REQUIRED", "message": "Only an active course learner may request an individualized teaching response."})
+    return await _respond_for_subject(
+        subject_user_id=caller_id, course_id=course_id, session_id=body.session_id,
+        message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
+        code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+    )
+
+
+@router.post("/respond-for-learner", summary="Controlled teaching response for a selected learner")
+async def respond_for_learner(
+    body: TeachingAgentLearnerRequest,
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry] = Depends(get_runtime),
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    try:
+        learner_user_id = int(body.learner_user_id)
+        course_id = int(body.course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "TEACHING_AGENT_SCOPE_INVALID", "message": "learner_user_id and course_id must be numeric IDs"}) from exc
+
+    require_course_permission(session, current_user, course_id, "analytics.view_member")
+    target_context = resolve_course_access(session, {"user_id": str(learner_user_id)}, course_id)
+    if not target_context.analytics_eligible:
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_TARGET_NOT_LEARNER", "message": "Target is not an active learner in this course."})
+    return await _respond_for_subject(
+        subject_user_id=learner_user_id, course_id=course_id, session_id=body.session_id,
+        message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
+        code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+    )

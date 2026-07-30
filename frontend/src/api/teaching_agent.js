@@ -17,7 +17,7 @@ import request from '@/utils/request.js'
  * POST /teaching-agent/respond
  *
  * @param {Object} payload - 请求参数
- * @param {string} payload.student_id - 学生用户 ID（必须为当前登录用户）
+ * @param {string} [payload.student_id] - 旧兼容字段；后端会校验它只能等于当前登录用户
  * @param {string} payload.course_id - 课程 ID
  * @param {string} payload.session_id - 学习会话 ID（由前端生成，贯穿一次学习会话）
  * @param {string} payload.message - 学生提问内容
@@ -32,7 +32,7 @@ export function respondTeachingAgent(payload) {
     url: '/teaching-agent/respond',
     method: 'post',
     data: {
-      student_id: payload.student_id,
+      ...(payload.student_id != null ? { student_id: payload.student_id } : {}),
       course_id: payload.course_id,
       session_id: payload.session_id,
       message: payload.message,
@@ -42,6 +42,28 @@ export function respondTeachingAgent(payload) {
     },
     allowFlatResponse: true,
     // Agent 不可用属预期降级场景，调用方负责回退到 V1，不应弹错误提示。
+    skipErrorToast: payload.skipErrorToast ?? true,
+  })
+}
+
+/**
+ * 教师/课程管理员针对指定学习者的受控教学分析。
+ * 后端要求调用者拥有 analytics.view_member。
+ */
+export function respondTeachingAgentForLearner(payload) {
+  return request({
+    url: '/teaching-agent/respond-for-learner',
+    method: 'post',
+    data: {
+      learner_user_id: payload.learner_user_id,
+      course_id: payload.course_id,
+      session_id: payload.session_id,
+      message: payload.message,
+      resource_id: payload.resource_id ?? null,
+      exercise_id: payload.exercise_id ?? null,
+      code_submission_id: payload.code_submission_id ?? null,
+    },
+    allowFlatResponse: true,
     skipErrorToast: payload.skipErrorToast ?? true,
   })
 }

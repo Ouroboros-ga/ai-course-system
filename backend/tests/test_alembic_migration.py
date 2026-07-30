@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 
 
 def _alembic_config(db_url: str):
@@ -231,21 +232,21 @@ def test_legacy_sqlite_with_data_stamp_and_upgrade(tmp_path):
             # 应生成 1 条 owner membership（teacher -> course）
             owner_count = conn.execute(text(
                 "SELECT COUNT(*) FROM course_memberships "
-                "WHERE role = 'owner' AND migration_batch_id = 'access-control-v1'"
+                "WHERE role = 'OWNER' AND migration_batch_id = 'access-control-v1'"
             )).scalar()
             assert owner_count == 1, f"应有 1 条 owner membership，实际 {owner_count}"
 
             # 应生成 1 条 student membership
             student_count = conn.execute(text(
                 "SELECT COUNT(*) FROM course_memberships "
-                "WHERE role = 'student' AND migration_batch_id = 'access-control-v1'"
+                "WHERE role = 'STUDENT' AND migration_batch_id = 'access-control-v1'"
             )).scalar()
             assert student_count == 1, f"应有 1 条 student membership，实际 {student_count}"
 
             # 应生成 1 条 platform.course.create permission（teacher）
             perm_count = conn.execute(text(
                 "SELECT COUNT(*) FROM platform_permission_assignments "
-                "WHERE permission = 'platform.course.create' "
+                "WHERE permission = 'COURSE_CREATE' "
                 "AND migration_batch_id = 'access-control-v1'"
             )).scalar()
             assert perm_count == 1, f"应有 1 条 platform.course.create permission，实际 {perm_count}"
@@ -261,6 +262,98 @@ def test_legacy_sqlite_with_data_stamp_and_upgrade(tmp_path):
 
 
 # ==================== 场景3：PostgreSQL 迁移冒烟测试 ====================
+
+
+def test_course_access_data_repair_normalizes_grants_and_enrollments(tmp_path):
+    """Revision 0032 repairs the dirty-data shapes that broke ORM reads."""
+    db_path = tmp_path / "course_access_dirty.db"
+    db_url = f"sqlite:///{db_path}"
+    _run_alembic(db_url, "upgrade", "0031")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.begin() as conn:
+        conn.execute(text(
+            "INSERT INTO users "
+            "(id, username, hashed_password, role, is_active, is_fanya_verified, created_at) "
+            "VALUES "
+            "(91001, 'repair_admin', 'hash', 'admin', 1, 0, CURRENT_TIMESTAMP), "
+            "(91002, 'repair_teacher', 'hash', 'teacher', 1, 0, CURRENT_TIMESTAMP), "
+            "(91003, 'repair_student', 'hash', 'student', 1, 0, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO courses "
+            "(id, fanya_course_id, fanya_course_name, title, teacher_id, status, "
+            "is_ai_generated, total_duration, total_nodes, total_pages, created_at, updated_at) "
+            "VALUES "
+            "(92001, 'repair-course', 'Repair Course', 'Repair Course', 91002, 'draft', "
+            "0, 0, 0, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO course_memberships "
+            "(user_id, course_id, role, status, permission_overrides, analytics_excluded, "
+            "joined_at, updated_at) "
+            "VALUES (91003, 92001, 'student', 'active', '{}', 0, "
+            "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        ))
+        conn.execute(text(
+            "INSERT INTO student_enrollments "
+            "(student_id, course_id, enrolled_at, total_nodes_completed, total_nodes_count, "
+            "overall_progress, avg_understanding_score, avg_understanding_level, "
+            "total_study_minutes, last_study_time, is_active) "
+            "VALUES "
+            "(91003, 92001, '2026-01-02', 2, 10, 20.0, 0.4, 'developing', 12, "
+            "'2026-01-03', 0), "
+            "(91003, 92001, '2026-01-01', 4, 10, 40.0, 0.8, 'proficient', 30, "
+            "'2026-01-04', 1)"
+        ))
+        conn.execute(text(
+            "INSERT INTO platform_permission_assignments "
+            "(user_id, permission, granted_by_user_id, granted_at, migration_batch_id) "
+            "VALUES (91001, 'platform.admin', 91001, CURRENT_TIMESTAMP, 'legacy-alias')"
+        ))
+    engine.dispose()
+
+    _run_alembic(db_url, "upgrade", "head")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text(
+                "SELECT role || '/' || status FROM course_memberships "
+                "WHERE user_id = 91003 AND course_id = 92001"
+            )).scalar() == "STUDENT/ACTIVE"
+            permissions = set(conn.execute(text(
+                "SELECT permission FROM platform_permission_assignments "
+                "WHERE user_id IN (91001, 91002)"
+            )).scalars())
+            assert permissions == {"ADMIN", "COURSE_CREATE"}
+
+            rows = conn.execute(text(
+                "SELECT total_nodes_completed, overall_progress, "
+                "avg_understanding_score, avg_understanding_level, "
+                "total_study_minutes, is_active "
+                "FROM student_enrollments WHERE student_id = 91003 AND course_id = 92001"
+            )).mappings().all()
+            assert len(rows) == 1
+            assert rows[0]["total_nodes_completed"] == 4
+            assert rows[0]["overall_progress"] == 40.0
+            assert rows[0]["avg_understanding_score"] == 0.8
+            assert rows[0]["avg_understanding_level"] == "proficient"
+            assert rows[0]["total_study_minutes"] == 30
+            assert bool(rows[0]["is_active"]) is True
+
+        with pytest.raises(IntegrityError):
+            with engine.begin() as conn:
+                conn.execute(text(
+                    "INSERT INTO student_enrollments "
+                    "(student_id, course_id, enrolled_at, total_nodes_completed, "
+                    "total_nodes_count, overall_progress, avg_understanding_score, "
+                    "avg_understanding_level, total_study_minutes, is_active) "
+                    "VALUES (91003, 92001, CURRENT_TIMESTAMP, 0, 0, 0, 0, "
+                    "'unknown', 0, 1)"
+                ))
+    finally:
+        engine.dispose()
 
 
 def _postgres_available() -> bool:

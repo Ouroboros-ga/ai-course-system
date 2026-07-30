@@ -186,9 +186,9 @@ async def recover_durable_task_queues() -> None:
         logger.exception("Course draft build queue recovery failed")
 
 # P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
-# disabled -> no injection -> /api/v1/teaching-agent/respond stays 503. Only
-# injects when enabled AND an approved KG-MEST Shadow report is present AND
-# LLM is configured. Never blocks startup; see bootstrap.py.
+# disabled -> no injection -> the endpoint stays 503. KG-MEST reports and
+# course sidecars are optional enrichments; only runtime/LLM configuration
+# controls injection. Never blocks startup; see bootstrap.py.
 from app.platform.agents.bootstrap import bootstrap_teaching_agent
 bootstrap_teaching_agent(app)
 

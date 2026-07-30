@@ -229,7 +229,7 @@ test('VisualizationView.vue: playPlan/publishOne 使用 plan.plan_id（不是 pl
 test('VisualizationStage.vue: playPlan 使用 plan.plan_id（不是 plan.id）', () => {
   const src = read('frontend/src/app/components/learn/VisualizationStage.vue')
   assert.match(src, /async function playPlan[\s\S]*?if \(!plan\?\.plan_id[^)]*\)[\s\S]*?await getPlan\(plan\.plan_id\)/)
-  assert.match(src, /v-for="plan in publishedPlans"[\s\S]*?:key="plan\.plan_id"/)
+  assert.match(src, /v-for="plan in visiblePlans"[\s\S]*?:key="plan\.plan_id"/)
   // 禁止使用 plan.id 调用 API（防回归）
   assert.doesNotMatch(src, /await getPlan\(plan\.id\)/)
 })
@@ -405,6 +405,13 @@ test('teaching_agent.js: respondTeachingAgent 调用 POST /teaching-agent/respon
   assert.match(src, /skipErrorToast:\s*payload\.skipErrorToast\s*\?\?\s*true/)
 })
 
+test('teaching_agent.js: 教师代查使用独立 learner-target 契约', () => {
+  const src = read('frontend/src/api/teaching_agent.js')
+  assert.match(src, /export function respondTeachingAgentForLearner/)
+  assert.match(src, /url:\s*['"]\/teaching-agent\/respond-for-learner['"]/)
+  assert.match(src, /learner_user_id:\s*payload\.learner_user_id/)
+})
+
 test('backend: teaching_agent.py 注册 POST /respond 路由', () => {
   const src = read('backend/app/api/v1/endpoints/teaching_agent.py')
   assert.match(src, /@router\.post\(["']\/respond["']/)
@@ -442,10 +449,10 @@ test('useLearningWorkspace.js: 导入 respondTeachingAgent 并在能力开关保
   assert.match(src, /canUseTeachingAgent[\s\S]*?else[\s\S]*?askV1/)
 })
 
-test('useLearningWorkspace.js: TeachingAgent 调用传递 student_id/course_id/session_id', () => {
+test('useLearningWorkspace.js: TeachingAgent 自助调用不再从前端传 student_id', () => {
   const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
-  // askTeachingAgent 必须传递四个必填字段
-  assert.match(src, /respondTeachingAgent\(\{[\s\S]*?student_id:\s*String\(studentId\)/)
+  // learner subject is derived from the authenticated token by the backend
+  assert.doesNotMatch(src, /respondTeachingAgent\(\{[\s\S]*?student_id:/)
   assert.match(src, /course_id:\s*String\(course\.value\.courseId\)/)
   assert.match(src, /session_id:\s*teachingSessionId/)
   assert.match(src, /message:\s*question/)

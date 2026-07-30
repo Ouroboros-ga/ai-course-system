@@ -412,10 +412,9 @@ export function useLearningWorkspace(courseId, options = {}) {
   // TeachingAgent 受控接入（P1）：调用 /teaching-agent/respond 并归一化响应。
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
-  async function askTeachingAgent(question, studentId) {
+  async function askTeachingAgent(question) {
     const verifiedRunId = getCodeSubmissionId()
     const result = await respondTeachingAgent({
-      student_id: String(studentId),
       course_id: String(course.value.courseId),
       session_id: teachingSessionId,
       message: question,
@@ -488,7 +487,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       if (canUseTeachingAgent) {
         // Agent 503/失败属预期降级场景（skipErrorToast 已静默），回退 V1 不影响 Q&A。
         try {
-          result = await askTeachingAgent(question, studentId)
+          result = await askTeachingAgent(question)
           if (result.fallbackRequired) {
             const fallback = await askV1(question)
             result = { ...fallback, fallbackNotice: result.fallbackNotice }

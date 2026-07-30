@@ -33,25 +33,11 @@ depends_on: Union[str, Sequence[str], None] = None
 BATCH_ID = "access-control-v1"
 
 
-def _batch_already_applied(bind) -> bool:
-    """检查本批次是否已执行过（幂等）。"""
-    result = bind.execute(
-        sa.text(
-            "SELECT 1 FROM course_memberships "
-            "WHERE migration_batch_id = :batch_id LIMIT 1"
-        ),
-        {"batch_id": BATCH_ID},
-    )
-    return result.fetchone() is not None
-
-
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # 幂等检查：已执行过则跳过
-    if _batch_already_applied(bind):
-        return
-
+    # Each target row is checked independently. A partially applied batch must
+    # continue filling missing grants without overwriting explicit records.
     # 1. 为每个课程创建默认 capability（learning + course_building + cognitive_analysis）
     bind.execute(
         sa.text(
@@ -62,9 +48,9 @@ def upgrade() -> None:
                  updated_at, migration_batch_id)
             SELECT id, 1, 1, 0, 0, 0, 0, 1, 0, CURRENT_TIMESTAMP, :batch_id
             FROM courses
-            WHERE id NOT IN (
-                SELECT course_id FROM course_capabilities
-                WHERE migration_batch_id = :batch_id
+            WHERE NOT EXISTS (
+                SELECT 1 FROM course_capabilities c
+                WHERE c.course_id = courses.id
             )
             """
         ),
@@ -78,7 +64,7 @@ def upgrade() -> None:
             INSERT INTO course_memberships
                 (user_id, course_id, role, status, permission_overrides,
                  analytics_excluded, joined_at, updated_at, migration_batch_id)
-            SELECT teacher_id, id, 'owner', 'active', '{}', 1,
+            SELECT teacher_id, id, 'OWNER', 'ACTIVE', '{}', 1,
                    COALESCE(created_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, :batch_id
             FROM courses
             WHERE teacher_id IS NOT NULL
@@ -86,7 +72,6 @@ def upgrade() -> None:
                   SELECT 1 FROM course_memberships m
                   WHERE m.user_id = courses.teacher_id
                     AND m.course_id = courses.id
-                    AND m.migration_batch_id = :batch_id
               )
             """
         ),
@@ -100,7 +85,7 @@ def upgrade() -> None:
             INSERT INTO course_memberships
                 (user_id, course_id, role, status, permission_overrides,
                  analytics_excluded, joined_at, updated_at, migration_batch_id)
-            SELECT student_id, course_id, 'student', 'active', '{}', 0,
+            SELECT student_id, course_id, 'STUDENT', 'ACTIVE', '{}', 0,
                    COALESCE(enrolled_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, :batch_id
             FROM student_enrollments
             WHERE is_active = 1
@@ -108,7 +93,6 @@ def upgrade() -> None:
                   SELECT 1 FROM course_memberships m
                   WHERE m.user_id = student_enrollments.student_id
                     AND m.course_id = student_enrollments.course_id
-                    AND m.migration_batch_id = :batch_id
               )
             """
         ),
@@ -121,14 +105,13 @@ def upgrade() -> None:
             """
             INSERT INTO platform_permission_assignments
                 (user_id, permission, granted_by_user_id, granted_at, migration_batch_id)
-            SELECT id, 'platform.admin', id, CURRENT_TIMESTAMP, :batch_id
+            SELECT id, 'ADMIN', id, CURRENT_TIMESTAMP, :batch_id
             FROM users
-            WHERE role = 'admin'
+            WHERE role IN ('ADMIN', 'admin')
               AND NOT EXISTS (
                   SELECT 1 FROM platform_permission_assignments p
                   WHERE p.user_id = users.id
-                    AND p.permission = 'platform.admin'
-                    AND p.migration_batch_id = :batch_id
+                    AND p.permission = 'ADMIN'
               )
             """
         ),
@@ -141,14 +124,13 @@ def upgrade() -> None:
             """
             INSERT INTO platform_permission_assignments
                 (user_id, permission, granted_by_user_id, granted_at, migration_batch_id)
-            SELECT id, 'platform.course.create', id, CURRENT_TIMESTAMP, :batch_id
+            SELECT id, 'COURSE_CREATE', id, CURRENT_TIMESTAMP, :batch_id
             FROM users
-            WHERE role = 'teacher'
+            WHERE role IN ('TEACHER', 'teacher')
               AND NOT EXISTS (
                   SELECT 1 FROM platform_permission_assignments p
                   WHERE p.user_id = users.id
-                    AND p.permission = 'platform.course.create'
-                    AND p.migration_batch_id = :batch_id
+                    AND p.permission = 'COURSE_CREATE'
               )
             """
         ),

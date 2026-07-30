@@ -376,7 +376,7 @@ def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(
 
     验证：
     - alembic stamp 0001 + upgrade 0002 后，legacy 数据被回填到目标表（带 batch_id）。
-    - 再次 stamp 0001 + upgrade 0002 时，_batch_already_applied 检查使回填跳过，无重复行。
+    - 再次 stamp 0001 + upgrade 0002 时，逐行 NOT EXISTS 检查确保无重复行。
     - rollback_access_control_backfill 仅删除本批次记录，回滚边界为 batch_id。
     """
     path = tmp_path / "legacy.sqlite"
@@ -409,7 +409,7 @@ def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(
     assert perms == 1  # teacher -> platform.course.create
 
     # 3. 幂等性：重新 stamp 0001 + upgrade 0002。
-    #    _batch_already_applied 检测到已存在的 batch 行，应跳过回填，不产生重复。
+    #    逐行幂等检查应保留现有记录且不产生重复。
     run_alembic(str(path), "stamp", "0001")
     run_alembic(str(path), "upgrade", "0002")
 
@@ -436,3 +436,41 @@ def test_access_control_backfill_is_idempotent_and_rollback_is_batch_scoped(
     ).fetchone()[0]
     conn.close()
     assert remaining == 0
+
+
+def test_access_control_backfill_repairs_a_partially_applied_batch(
+    tmp_path, run_alembic
+):
+    """An existing batch row must not suppress unrelated missing grants."""
+    path = tmp_path / "partial_legacy.sqlite"
+    conn = _legacy_access_db(str(path))
+    conn.execute(
+        """
+        INSERT INTO course_memberships
+            (user_id, course_id, role, status, permission_overrides,
+             analytics_excluded, joined_at, updated_at, migration_batch_id)
+        VALUES (1, 10, 'OWNER', 'ACTIVE', '{}', 1,
+                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+        """,
+        (ACCESS_CONTROL_MIGRATION_BATCH,),
+    )
+    conn.commit()
+    conn.close()
+
+    run_alembic(str(path), "stamp", "0001")
+    run_alembic(str(path), "upgrade", "0002")
+
+    conn = sqlite3.connect(str(path))
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM course_memberships"
+        ).fetchone()[0] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) FROM course_capabilities"
+        ).fetchone()[0] == 1
+        assert conn.execute(
+            "SELECT COUNT(*) FROM platform_permission_assignments "
+            "WHERE permission = 'COURSE_CREATE'"
+        ).fetchone()[0] == 1
+    finally:
+        conn.close()
