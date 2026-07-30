@@ -1,10 +1,11 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 const props = defineProps({
   nodes: { type: Array, default: () => [] },
   relations: { type: Array, default: () => [] },
   selectedId: { type: String, default: '' },
+  rightInset: { type: Number, default: 0 },
 })
 const emit = defineEmits(['select'])
 
@@ -16,14 +17,14 @@ const CLUSTER_THRESHOLD = 120        // design.md §5 大图阈值：超过120�
 const SUBCLUSTER_LIMIT = 60          // 单聚类展开后内部仍超过60则二次分桶
 // design.md §1.1 Academic Ink 体系；不再使用 teal/紫色装饰色
 const relationColors = {
-  PREREQUISITE_OF: '#9B6618',  // amber-700 先修
-  PART_OF:         '#203A5F',  // ink-700 组成
-  EXPLAINS:        '#355C7D',  // ink-500 解释
-  CAUSES:          '#8B3A3A',  // red-700 因果
-  CONTRASTS_WITH:  '#B85C5C',  // red-500 对比
-  APPLIES_TO:      '#3F6B52',  // green-700 应用
-  EXAMPLE_OF:      '#5E8C61',  // green-500 举例
-  RELATED_TO:      '#8B98AA',  // 中性灰 关联
+  PREREQUISITE_OF: '#E58A00',
+  PART_OF:         '#3157D5',
+  EXPLAINS:        '#009DB5',
+  CAUSES:          '#D64545',
+  CONTRASTS_WITH:  '#C34D8C',
+  APPLIES_TO:      '#168C5E',
+  EXAMPLE_OF:      '#659E3E',
+  RELATED_TO:      '#73839B',
 }
 // 节点类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
 const TYPE_LABELS = {
@@ -58,6 +59,11 @@ const RELATION_LABELS = {
   EXAMPLE_OF: '举例',
   RELATED_TO: '关联',
 }
+
+const selectedLabel = computed(() => {
+  const selected = props.nodes.find((node) => String(node.id) === String(props.selectedId))
+  return selected?.title || selected?.label || ''
+})
 
 // 组件实例级状态（避免模块级共享导致跨实例污染/坐标爆炸）
 let graph = { nodes: [], relations: [], endpoint: new Map() }
@@ -320,26 +326,35 @@ function resize() {
   draw()
 }
 
-function worldToScreen(x, y) {
+function effectiveRightInset() {
+  const width = host.value?.clientWidth || 0
+  if (width < 760) return 0
+  return Math.min(Math.max(0, props.rightInset), width * .42)
+}
+
+function viewportCenterX() {
   const width = (canvas.value?.width || 0) / dpr
+  return (width - effectiveRightInset()) / 2
+}
+
+function worldToScreen(x, y) {
   const height = (canvas.value?.height || 0) / dpr
   const safeScale = Number.isFinite(view.scale) && view.scale > 0 ? view.scale : 1
   const safeX = Number.isFinite(view.x) ? view.x : 0
   const safeY = Number.isFinite(view.y) ? view.y : 0
   return [
-    width / 2 + (x + safeX) * safeScale,
+    viewportCenterX() + (x + safeX) * safeScale,
     height / 2 + (y + safeY) * safeScale,
   ]
 }
 
 function screenToWorld(x, y) {
-  const width = (canvas.value?.width || 0) / dpr
   const height = (canvas.value?.height || 0) / dpr
   const safeScale = Number.isFinite(view.scale) && view.scale > 0 ? view.scale : 1
   const safeX = Number.isFinite(view.x) ? view.x : 0
   const safeY = Number.isFinite(view.y) ? view.y : 0
   return [
-    (x - width / 2) / safeScale - safeX,
+    (x - viewportCenterX()) / safeScale - safeX,
     (y - height / 2) / safeScale - safeY,
   ]
 }
@@ -356,8 +371,9 @@ function fit() {
   const maxY = Math.max(...ys)
   const rangeX = Math.max(240, maxX - minX + 180)
   const rangeY = Math.max(180, maxY - minY + 180)
+  const availableWidth = Math.max(320, host.value.clientWidth - effectiveRightInset())
   view.scale = Math.max(.28, Math.min(1.5, Math.min(
-    host.value.clientWidth / rangeX,
+    availableWidth / rangeX,
     host.value.clientHeight / rangeY,
   )))
   view.x = -(minX + maxX) / 2
@@ -375,7 +391,7 @@ function drawArrow(context, edge, highlighted) {
   context.moveTo(startX, startY)
   context.lineTo(x, y)
   context.strokeStyle = relationColors[edge.type] || relationColors.RELATED_TO
-  context.globalAlpha = highlighted ? .95 : .25
+  context.globalAlpha = highlighted ? .98 : .2
   const weight = Math.min(1.8, 1 + Math.log2(edge.count || 1) * .12)
   context.lineWidth = (highlighted ? 2.2 : 1.1) * weight
   context.stroke()
@@ -411,20 +427,27 @@ function draw() {
     const [x, y] = worldToScreen(node.x, node.y)
     const active = node.id === selected
     const cluster = Boolean(node.source?._clusterType)
-    const radius = (cluster ? 19 : active ? 15 : 12) * Math.max(.72, Math.min(1.2, view.scale))
-    context.globalAlpha = selected && !connected.has(node.id) ? .28 : 1
+    const radius = (cluster ? 21 : active ? 17 : 13) * Math.max(.72, Math.min(1.2, view.scale))
+    context.globalAlpha = selected && !connected.has(node.id) ? .2 : 1
     context.beginPath()
     context.arc(x, y, radius, 0, Math.PI * 2)
     // design.md §1.1：节点填充使用 Academic Ink，聚类用 amber-500 标识"AI 当前关注"
-    context.fillStyle = cluster ? '#C68B2C' : active ? '#14213D' : '#203A5F'
+    context.fillStyle = cluster ? '#7C4DDB' : active ? '#F26A21' : '#3157B7'
     context.fill()
     if (active || node.id === hoverId) {
-      context.strokeStyle = '#E8EEF4'
-      context.lineWidth = 5
+      context.strokeStyle = active ? '#FFFFFF' : '#DCE5FF'
+      context.lineWidth = active ? 5 : 4
       context.stroke()
     }
-    context.fillStyle = '#172033'
-    context.font = `${active ? 600 : 500} 12px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
+    if (active) {
+      context.beginPath()
+      context.arc(x, y, radius + 9, 0, Math.PI * 2)
+      context.strokeStyle = 'rgba(242, 106, 33, .48)'
+      context.lineWidth = 4
+      context.stroke()
+    }
+    context.fillStyle = active ? '#9A3412' : '#172033'
+    context.font = `${active ? 700 : 550} ${active ? 13 : 12}px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
     context.textAlign = 'center'
     const label = node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label
     context.fillText(label, x, y + radius + 16)
@@ -520,52 +543,77 @@ onBeforeUnmount(() => {
 })
 watch(() => [props.nodes, props.relations], rebuild)
 watch(() => props.selectedId, draw)
+watch(() => props.rightInset, fit)
 </script>
 
 <template>
-  <div ref="host" class="canvas-host">
-    <canvas
-      ref="canvas"
-      aria-label="课程知识图谱，可拖拽节点、平移和缩放"
-      @pointerdown="onPointerDown"
-      @pointermove="onPointerMove"
-      @pointerup="onPointerUp"
-      @pointercancel="onPointerUp"
-      @wheel="onWheel"
-      @dblclick="fit"
-    />
-    <div class="actions">
-      <button
-        v-if="clusterMode && expandedClusterLabel"
-        type="button"
-        class="sfx-canvas-btn"
-        @click="collapseClusters"
-      >
-        收起「{{ expandedClusterLabel }}」聚类
-      </button>
-      <button type="button" class="sfx-canvas-btn" @click="fit">重置视图</button>
+  <div class="canvas-frame">
+    <div ref="host" class="canvas-host">
+      <canvas
+        ref="canvas"
+        aria-label="课程知识图谱，可拖拽节点、平移和缩放"
+        @pointerdown="onPointerDown"
+        @pointermove="onPointerMove"
+        @pointerup="onPointerUp"
+        @pointercancel="onPointerUp"
+        @wheel="onWheel"
+        @dblclick="fit"
+      />
+      <div class="actions">
+        <button
+          v-if="clusterMode && expandedClusterLabel"
+          type="button"
+          class="sfx-canvas-btn"
+          @click="collapseClusters"
+        >
+          收起「{{ expandedClusterLabel }}」聚类
+        </button>
+        <button type="button" class="sfx-canvas-btn" @click="fit">重置视图</button>
+      </div>
+      <div v-if="clusterMode" class="cluster-hint" aria-live="polite">
+        节点超过 {{ CLUSTER_THRESHOLD }} 个，已按类型聚类。点击聚类圆点可展开该类型；展开后若仍超过 {{ SUBCLUSTER_LIMIT }} 个，将自动二次分桶。
+      </div>
     </div>
-    <div v-if="clusterMode" class="cluster-hint" aria-live="polite">
-      节点超过 {{ CLUSTER_THRESHOLD }} 个，已按类型聚类。点击聚类圆点可展开该类型；展开后若仍超过 {{ SUBCLUSTER_LIMIT }} 个，将自动二次分桶。
-    </div>
-    <div class="legend">
-      <span v-for="(color, type) in relationColors" :key="type">
-        <i :style="{ background: color }" />{{ RELATION_LABELS[type] || type }}
-      </span>
-    </div>
+
+    <footer class="canvas-footer" aria-label="图谱阅读辅助">
+      <div class="focus-status">
+        <span class="focus-status__mark" aria-hidden="true" />
+        <span class="focus-status__label">当前聚焦</span>
+        <strong>{{ selectedLabel || '选择知识点查看关联' }}</strong>
+      </div>
+      <div class="legend" aria-label="关系类型">
+        <span v-for="(color, type) in relationColors" :key="type">
+          <i :style="{ background: color }" />{{ RELATION_LABELS[type] || type }}
+        </span>
+      </div>
+      <p class="canvas-help">拖拽节点 · 滚轮缩放 · 双击画布复位</p>
+    </footer>
   </div>
 </template>
 
 <style scoped>
-/* design.md §1.3 surface-canvas 画布背景；§4.2 卡片只使用边框不使用阴影 */
-.canvas-host {
-  position: relative;
+.canvas-frame {
+  display: grid;
+  grid-template-rows: minmax(560px, 1fr) auto;
   width: 100%;
-  min-height: 430px;
+  height: 100%;
+  min-height: 650px;
   overflow: hidden;
   border: 1px solid var(--border-default, #DDE2E8);
   border-radius: var(--radius-lg, 14px);
-  background: var(--surface-canvas, #FBFAF7);
+  background: #FFFFFF;
+}
+.canvas-host {
+  position: relative;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 42%, rgba(49, 87, 183, .08), transparent 34%),
+    linear-gradient(rgba(49, 87, 183, .045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(49, 87, 183, .045) 1px, transparent 1px),
+    #FAFBFE;
+  background-size: auto, 28px 28px, 28px 28px, auto;
   touch-action: none;
 }
 .canvas-host canvas { display: block; cursor: grab; }
@@ -603,22 +651,62 @@ watch(() => props.selectedId, draw)
   font-size: var(--caption-size, 12px);
   line-height: 1.5;
 }
-.legend {
-  position: absolute;
-  left: var(--space-3, 12px);
-  bottom: var(--space-3, 12px);
-  display: flex;
-  max-width: calc(100% - 24px);
-  flex-wrap: wrap;
-  gap: var(--space-2, 8px) var(--space-3, 12px);
-  border: 1px solid var(--border-default, #DDE2E8);
-  border-radius: var(--radius-sm, 6px);
-  padding: var(--space-2, 8px) var(--space-3, 12px);
-  background: rgba(255, 255, 255, 0.9);
-  color: var(--text-muted, #7B8494);
-  font-size: 10px;
-  pointer-events: none;
+.canvas-footer {
+  display: grid;
+  grid-template-columns: minmax(190px, auto) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 16px;
+  min-height: 76px;
+  padding: 12px 16px;
+  border-top: 1px solid #E4E9F2;
+  background: linear-gradient(90deg, #FFFFFF, #F7F9FD);
 }
-.legend span { display: inline-flex; align-items: center; gap: 4px; }
-.legend i { width: 8px; height: 8px; border-radius: 999px; }
+.focus-status {
+  display: grid;
+  grid-template-columns: 12px auto;
+  align-items: center;
+  column-gap: 8px;
+  min-width: 0;
+}
+.focus-status__mark {
+  grid-row: 1 / span 2;
+  width: 12px;
+  height: 12px;
+  border: 3px solid #FFFFFF;
+  border-radius: 999px;
+  background: #F26A21;
+  box-shadow: 0 0 0 3px rgba(242, 106, 33, .24);
+}
+.focus-status__label { color: #7A8799; font-size: 11px; }
+.focus-status strong {
+  max-width: 220px;
+  overflow: hidden;
+  color: #172033;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.legend {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  color: #536176;
+  font-size: 12px;
+}
+.legend span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.legend i {
+  width: 18px;
+  height: 5px;
+  border-radius: 999px;
+  box-shadow: 0 1px 3px rgba(20, 33, 61, .16);
+}
+.canvas-help { margin: 0; color: #7A8799; font-size: 11px; white-space: nowrap; }
+
+@container (max-width: 900px) {
+  .canvas-frame { grid-template-rows: minmax(520px, 1fr) auto; min-height: 620px; }
+  .canvas-footer { grid-template-columns: 1fr; gap: 10px; }
+  .legend { justify-content: flex-start; }
+  .canvas-help { display: none; }
+}
 </style>

@@ -5,6 +5,7 @@ import {
   FileText,
   LoaderCircle,
   Search,
+  Sparkles,
   TriangleAlert,
   X,
 } from 'lucide-vue-next'
@@ -34,6 +35,7 @@ const query = ref('')
 const selectedCitation = ref(null)
 const citationImageUrl = ref('')
 const imageStatus = ref('idle')
+const detailOpen = ref(true)
 
 const nodes = computed(() => Array.isArray(graph.value?.nodes) ? graph.value.nodes : [])
 const relations = computed(() => Array.isArray(graph.value?.relations) ? graph.value.relations : [])
@@ -97,6 +99,7 @@ async function selectNode(nodeOrKey, navigate = true) {
   }
   loadingKey.value = key
   selectedKey.value = key
+  detailOpen.value = true
   selectedNode.value = null
   try {
     selectedNode.value = await getActiveKnowledgeNode(props.courseId, key)
@@ -185,16 +188,18 @@ onBeforeUnmount(closeCitation)
         </div>
       </aside>
 
-      <div class="canvas">
+      <div class="canvas-shell">
         <KnowledgeGraphCanvas
           :nodes="nodes"
           :relations="relations"
           :selected-id="selectedKey"
+          :right-inset="selectedKey && detailOpen ? 388 : 0"
           @select="selectNode"
         />
-      </div>
-
-      <aside class="detail">
+        <aside v-if="selectedNode && detailOpen" class="detail">
+          <button type="button" class="detail__close" aria-label="收起节点详情" @click="detailOpen = false">
+            <X :size="16" />
+          </button>
         <template v-if="selectedNode">
           <p class="eyebrow">{{ selectedNode.entity_type }}</p>
           <h3 class="detail__title">{{ selectedNode.title }}</h3>
@@ -257,7 +262,11 @@ onBeforeUnmount(closeCitation)
             <p v-else class="muted">该节点没有可公开的有效 Citation</p>
           </section>
         </template>
-      </aside>
+        </aside>
+        <button v-else-if="selectedNode" type="button" class="detail-launcher" @click="detailOpen = true">
+          <Sparkles :size="15" /> 查看当前节点
+        </button>
+      </div>
     </div>
 
     <div v-if="selectedCitation" class="drawer-backdrop" @click.self="closeCitation">
@@ -297,7 +306,7 @@ onBeforeUnmount(closeCitation)
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  gap: var(--space-4, 16px);
+  gap: var(--space-3, 12px);
   color: var(--text-primary, #172033);
 }
 
@@ -341,17 +350,18 @@ onBeforeUnmount(closeCitation)
 }
 .state--error { color: var(--red-700, #8B3A3A); }
 
-/* design.md §5.4：左侧节点目录 + 中间画布 + 右侧详情，各自独立滚动 */
+/* 宽目录 + 主画布；节点详情作为画布上下文层，不再永久占用第三列。 */
 .workspace {
   display: grid;
-  grid-template-columns: 220px minmax(360px, 1fr) 300px;
+  grid-template-columns: 286px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   gap: var(--space-3, 12px);
   flex: 1;
   min-height: 0;
+  min-block-size: 650px;
 }
 
-.rail, .detail {
+.rail {
   overflow-y: auto;
   min-height: 0;
   border: 1px solid var(--border-default, #DDE2E8);
@@ -401,6 +411,7 @@ onBeforeUnmount(closeCitation)
   padding: var(--space-2, 8px) var(--space-3, 12px);
   text-align: left;
   cursor: pointer;
+  position: relative;
   transition: background var(--duration-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
 }
 .node-item:hover {
@@ -410,6 +421,7 @@ onBeforeUnmount(closeCitation)
   border-color: var(--ink-300, #8EA7BE);
   background: var(--ink-100, #E8EEF4);
   color: var(--ink-900, #14213D);
+  box-shadow: inset 3px 0 0 var(--ink-700, #203A5F);
 }
 .node-item__title {
   font-size: var(--ui-md-size, 14px);
@@ -420,14 +432,60 @@ onBeforeUnmount(closeCitation)
   font-size: var(--caption-size, 12px);
 }
 
-.canvas {
+.canvas-shell {
+  position: relative;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   border-radius: var(--radius-lg, 14px);
 }
 
-.detail { padding: var(--space-4, 16px); }
+.detail {
+  position: absolute;
+  z-index: 5;
+  top: 58px;
+  right: 14px;
+  bottom: 92px;
+  width: min(360px, calc(100% - 28px));
+  overflow-y: auto;
+  border: 1px solid rgba(142, 167, 190, .75);
+  border-radius: var(--radius-lg, 14px);
+  background: rgba(255, 255, 255, .94);
+  padding: var(--space-5, 20px);
+  box-shadow: 0 16px 36px rgba(20, 33, 61, .12);
+  backdrop-filter: blur(12px);
+}
+.detail__close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: inline-flex;
+  width: 30px;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: var(--text-muted, #7B8494);
+}
+.detail__close:hover { background: var(--surface-cool, #F7F8FA); color: var(--ink-700, #203A5F); }
+.detail-launcher {
+  position: absolute;
+  z-index: 5;
+  top: 62px;
+  right: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--ink-300, #8EA7BE);
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: rgba(255, 255, 255, .94);
+  color: var(--ink-700, #203A5F);
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 22px rgba(20, 33, 61, .10);
+}
 .detail__title {
   margin: var(--space-1, 4px) 0;
   font-size: var(--title-3-size, 18px);
@@ -531,12 +589,14 @@ onBeforeUnmount(closeCitation)
 @keyframes spin { to { transform: rotate(360deg); } }
 
 @media (max-width: 1000px) {
-  .workspace { grid-template-columns: 190px minmax(0, 1fr); }
-  .detail { grid-column: 1 / -1; max-height: 420px; }
+  .workspace { grid-template-columns: 236px minmax(0, 1fr); }
 }
 @container (max-width: 900px) {
-  .workspace { grid-template-columns: 190px minmax(0, 1fr); }
-  .detail { grid-column: 1 / -1; max-height: 420px; }
+  .workspace { grid-template-columns: 236px minmax(0, 1fr); }
+}
+@container (max-width: 680px) {
+  .workspace { grid-template-columns: 1fr; grid-template-rows: 250px minmax(430px, 1fr); }
+  .detail { top: 52px; bottom: 132px; }
 }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
 </style>

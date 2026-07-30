@@ -25,6 +25,7 @@ import StudentGraphPanel from '@/features/student-graph/StudentGraphPanel.vue'
 import CognitiveDashboard from '@/components/cognitive/CognitiveDashboard.vue'
 import RecommendationCard from '@/features/student-learning/components/RecommendationCard.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import { useCounterStore } from '@/stores/counter.js'
 import {
@@ -127,6 +128,8 @@ function handleReturnAnchor() {
 const refinementStatus = ref('idle') // idle | loading | ready | error
 const refinementReport = ref(null)
 const refinementError = ref('')
+const previewDrawerOpen = ref(false)
+const refinementDrawerOpen = ref(false)
 
 async function loadRefinementReport() {
   if (!isPreview.value) {
@@ -197,8 +200,19 @@ onMounted(() => {
       :retryable="false"
     />
 
-    <div v-else class="sfx-knowledge__body">
-      <!-- 主区：知识图谱 -->
+    <div v-else class="sfx-knowledge__body" :class="{ 'is-preview': isPreview }">
+      <section v-if="isPreview" class="sfx-knowledge__teacher-tools" aria-label="教师预览工具">
+        <button type="button" class="sfx-knowledge__mode-chip" @click="previewDrawerOpen = true">
+          <Eye :size="15" aria-hidden="true" />
+          {{ previewRoleLabel }}预览
+        </button>
+        <button type="button" class="sfx-knowledge__mode-chip" @click="refinementDrawerOpen = true">
+          <ShieldCheck :size="15" aria-hidden="true" />
+          质量报告
+          <span v-if="refinementRows.length" class="sfx-knowledge__mode-count">{{ refinementRows.length }}</span>
+        </button>
+      </section>
+
       <section class="sfx-knowledge__main">
         <StudentGraphPanel
           :course-id="courseId"
@@ -208,72 +222,7 @@ onMounted(() => {
         />
       </section>
 
-      <!-- 侧栏：认知仪表盘 + 推荐卡（仅学生视角；教师预览隐藏学生私有数据） -->
-      <aside class="sfx-knowledge__aside">
-        <template v-if="isPreview">
-          <!-- 教师预览模式：不加载学生私有认知与推荐，避免 422 与越权消费 -->
-          <section class="sfx-knowledge__preview-notice" role="note">
-            <Eye :size="20" aria-hidden="true" />
-            <h2 class="sfx-knowledge__preview-title">教师预览模式</h2>
-            <p class="sfx-knowledge__preview-text">
-              当前为{{ previewRoleLabel }}预览视角，仅查看已发布图谱快照。
-              学生私有认知状态与学习推荐属于学生个人数据，不在预览中展示。
-            </p>
-            <p class="sfx-knowledge__preview-hint">
-              如需查看某位学生的认知状态，请走「学生认知查看」流程（后续切片上线）。
-            </p>
-          </section>
-
-          <!-- refinement 质量报告：完整展示 Bundle 状态、节点/关系统计、质量指标 -->
-          <section class="sfx-knowledge__refinement" aria-label="Refinement 质量报告">
-            <header class="sfx-knowledge__refinement-head">
-              <ShieldCheck :size="16" aria-hidden="true" />
-              <h2>Refinement 质量报告</h2>
-              <SfxButton variant="tertiary" size="sm" :loading="refinementStatus === 'loading'" @click="loadRefinementReport">
-                刷新
-              </SfxButton>
-            </header>
-
-            <div
-              v-if="refinementStatus === 'loading'"
-              class="sfx-knowledge__refinement-state"
-              role="status"
-            >
-              <LoaderCircle :size="18" class="sfx-knowledge__spinner" />
-              <p>正在读取质量报告…</p>
-            </div>
-
-            <div
-              v-else-if="refinementStatus === 'error'"
-              class="sfx-knowledge__refinement-state sfx-knowledge__refinement-state--error"
-              role="alert"
-            >
-              <TriangleAlert :size="18" />
-              <p>{{ refinementError }}</p>
-              <SfxButton variant="secondary" size="sm" @click="loadRefinementReport">重试</SfxButton>
-            </div>
-
-            <div
-              v-else-if="refinementStatus === 'ready' && refinementRows.length"
-              class="sfx-knowledge__refinement-table"
-            >
-              <dl class="sfx-knowledge__refinement-dl">
-                <template v-for="row in refinementRows" :key="row.label">
-                  <dt :title="row.hint">{{ row.label }}</dt>
-                  <dd :title="row.hint">{{ row.value }}</dd>
-                </template>
-              </dl>
-            </div>
-
-            <div v-else class="sfx-knowledge__refinement-state" role="status">
-              <ShieldCheck :size="22" :stroke-width="1.6" />
-              <strong>暂无可展示的质量报告</strong>
-              <p>该课程尚未生成 refinement 报告，或后端尚未返回可解析字段。</p>
-            </div>
-          </section>
-        </template>
-
-        <template v-else>
+      <aside v-if="!isPreview" class="sfx-knowledge__aside">
           <CognitiveDashboard
             :course-id="courseId"
             :student-id="studentId"
@@ -328,9 +277,64 @@ onMounted(() => {
               </li>
             </ul>
           </section>
-        </template>
       </aside>
     </div>
+
+    <SfxDrawer
+      :open="previewDrawerOpen"
+      title="教师预览模式"
+      :width="480"
+      @close="previewDrawerOpen = false"
+    >
+      <section class="sfx-knowledge__preview-notice" role="note">
+        <Eye :size="24" aria-hidden="true" />
+        <p class="sfx-knowledge__preview-kicker">{{ previewRoleLabel }}视角</p>
+        <p class="sfx-knowledge__preview-text">
+          当前仅查看已发布图谱快照。学生私有认知状态与学习推荐属于学生个人数据，不在此视角展示。
+        </p>
+        <p class="sfx-knowledge__preview-hint">
+          如需查看某位学生的认知状态，请进入专门的学生认知查看流程。
+        </p>
+      </section>
+    </SfxDrawer>
+
+    <SfxDrawer
+      :open="refinementDrawerOpen"
+      title="Refinement 质量报告"
+      :width="480"
+      @close="refinementDrawerOpen = false"
+    >
+      <header class="sfx-knowledge__refinement-head">
+        <div>
+          <p class="sfx-knowledge__preview-kicker">当前知识包</p>
+          <p class="sfx-knowledge__refinement-copy">检查已发布图谱的版本、规模与质量门禁状态。</p>
+        </div>
+        <SfxButton variant="secondary" size="sm" :loading="refinementStatus === 'loading'" @click="loadRefinementReport">
+          刷新
+        </SfxButton>
+      </header>
+
+      <div v-if="refinementStatus === 'loading'" class="sfx-knowledge__refinement-state" role="status">
+        <LoaderCircle :size="18" class="sfx-knowledge__spinner" />
+        <p>正在读取质量报告…</p>
+      </div>
+      <div v-else-if="refinementStatus === 'error'" class="sfx-knowledge__refinement-state sfx-knowledge__refinement-state--error" role="alert">
+        <TriangleAlert :size="18" />
+        <p>{{ refinementError }}</p>
+        <SfxButton variant="secondary" size="sm" @click="loadRefinementReport">重试</SfxButton>
+      </div>
+      <dl v-else-if="refinementStatus === 'ready' && refinementRows.length" class="sfx-knowledge__refinement-dl">
+        <template v-for="row in refinementRows" :key="row.label">
+          <dt :title="row.hint">{{ row.label }}</dt>
+          <dd :title="row.hint">{{ row.value }}</dd>
+        </template>
+      </dl>
+      <div v-else class="sfx-knowledge__refinement-state" role="status">
+        <ShieldCheck :size="22" :stroke-width="1.6" />
+        <strong>暂无可展示的质量报告</strong>
+        <p>该课程尚未生成报告，或后端尚未返回可解析字段。</p>
+      </div>
+    </SfxDrawer>
   </div>
 </template>
 
@@ -355,14 +359,14 @@ onMounted(() => {
   min-height: 0;
 }
 
-@media (max-width: 1100px) {
-  .sfx-knowledge__body {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto minmax(0, 1fr);
-  }
+.sfx-knowledge__body.is-preview {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
 }
 
 .sfx-knowledge__main {
+  flex: 1;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -378,6 +382,38 @@ onMounted(() => {
   overflow-y: auto;
 }
 
+.sfx-knowledge__teacher-tools {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2, 8px);
+  flex-shrink: 0;
+}
+
+.sfx-knowledge__mode-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: 999px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, .94);
+  color: var(--ink-700, #203A5F);
+  font-size: var(--ui-sm-size, 13px);
+  font-weight: 560;
+  cursor: pointer;
+}
+.sfx-knowledge__mode-chip:hover { background: var(--ink-100, #E8EEF4); }
+.sfx-knowledge__mode-count {
+  min-width: 20px;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: var(--ink-700, #203A5F);
+  color: white;
+  font-size: 11px;
+  text-align: center;
+}
+
 /* 教师预览占位提示 — design.md §1.3 surface-cool + §1.5 border-default */
 .sfx-knowledge__preview-notice {
   display: flex;
@@ -386,16 +422,18 @@ onMounted(() => {
   gap: var(--space-2, 8px);
   padding: var(--space-5, 20px) var(--space-4, 16px);
   background: var(--surface-cool, #F7F8FA);
-  border: 1px dashed var(--border-default, #DDE2E8);
-  border-radius: var(--radius-md, 10px);
+  border-left: 3px solid var(--ink-500, #355C7D);
+  border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
   color: var(--text-secondary, #4E5969);
 }
 
-.sfx-knowledge__preview-title {
+.sfx-knowledge__preview-kicker {
   margin: 0;
-  font-size: var(--ui-md-size, 14px);
-  font-weight: 600;
-  color: var(--text-primary, #172033);
+  color: var(--ink-700, #203A5F);
+  font-size: var(--caption-size, 12px);
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 
 .sfx-knowledge__preview-text {
@@ -411,30 +449,15 @@ onMounted(() => {
 }
 
 /* Refinement 质量报告区 — design.md §4.5 主工作面板 */
-.sfx-knowledge__refinement {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3, 12px);
-  padding: var(--space-4, 16px);
-  background: var(--surface-panel, #FFFFFF);
-  border: 1px solid var(--border-default, #DDE2E8);
-  border-radius: var(--radius-lg, 14px);
-}
-
 .sfx-knowledge__refinement-head {
   display: flex;
   align-items: center;
   gap: var(--space-2, 8px);
-  color: var(--ink-700, #203A5F);
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-subtle, #EDF0F3);
+  padding-bottom: var(--space-4, 16px);
 }
-
-.sfx-knowledge__refinement-head h2 {
-  margin: 0;
-  flex: 1;
-  font-size: var(--ui-md-size, 14px);
-  font-weight: 600;
-  color: var(--text-primary, #172033);
-}
+.sfx-knowledge__refinement-copy { margin: 5px 0 0; color: var(--text-secondary, #4E5969); }
 
 .sfx-knowledge__refinement-state {
   display: flex;
@@ -451,16 +474,20 @@ onMounted(() => {
 .sfx-knowledge__refinement-dl {
   display: grid;
   grid-template-columns: 130px 1fr;
-  row-gap: var(--space-2, 8px);
+  row-gap: 0;
   column-gap: var(--space-3, 12px);
   margin: 0;
   font-size: var(--ui-sm-size, 13px);
 }
 .sfx-knowledge__refinement-dl dt {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-subtle, #EDF0F3);
   color: var(--text-muted, #7B8494);
   font-weight: 450;
 }
 .sfx-knowledge__refinement-dl dd {
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border-subtle, #EDF0F3);
   margin: 0;
   color: var(--text-primary, #172033);
   font-weight: 500;
@@ -520,4 +547,9 @@ onMounted(() => {
   gap: var(--space-2, 8px);
 }
 .sfx-knowledge__recs-item { min-width: 0; }
+
+@media (max-width: 760px) {
+  .sfx-knowledge__body { grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr); }
+  .sfx-knowledge__teacher-tools { justify-content: flex-start; flex-wrap: wrap; }
+}
 </style>
