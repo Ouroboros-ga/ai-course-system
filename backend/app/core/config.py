@@ -1,7 +1,7 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import model_validator
 from enum import Enum
-from typing import List, Optional
+from typing import List
 
 from app.core.feature_flags import LEGAL_VALUES, ALL_FLAGS, TEACHING_AGENT_MODES
 from app.platform.retrieval_demo.mode import DEMO_RETRIEVAL_MODES
@@ -59,6 +59,42 @@ class Settings(BaseSettings):
     # generic LLM client and a separate end-to-end budget for all stages.
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
     COURSE_BUILD_TOTAL_TIMEOUT_SECONDS: int = 900
+
+    # --------------------------
+    # Course Knowledge Bundle / GraphRAG / vector retrieval
+    # --------------------------
+    # GraphRAG is a durable teacher-side build pipeline.  It is never executed
+    # on a learner request and a failed build never replaces the active bundle.
+    KNOWLEDGE_BUNDLE_ENABLED: bool = True
+    GRAPHRAG_ENABLED: bool = False
+    GRAPHRAG_WORKER_PYTHON: str = ""
+    GRAPHRAG_STORAGE_ROOT: str = "./media/knowledge_indexes"
+    GRAPHRAG_COMPLETION_PROVIDER: str = ""
+    GRAPHRAG_COMPLETION_MODEL: str = ""
+    GRAPHRAG_COMPLETION_API_BASE: str = ""
+    GRAPHRAG_COMPLETION_API_KEY: str = ""
+    GRAPHRAG_EMBEDDING_PROVIDER: str = ""
+    GRAPHRAG_EMBEDDING_MODEL: str = ""
+    GRAPHRAG_EMBEDDING_API_BASE: str = ""
+    GRAPHRAG_EMBEDDING_API_KEY: str = ""
+    GRAPHRAG_EMBEDDING_DIMENSION: int = 0
+    GRAPHRAG_EMBEDDING_BATCH_SIZE: int = 64
+    GRAPHRAG_EMBEDDING_LOCAL_PATH: str = ""
+    GRAPHRAG_EMBEDDING_MAX_LENGTH: int = 512
+    GRAPHRAG_EMBEDDING_QUERY_INSTRUCTION: str = ""
+    GRAPHRAG_PROMPT_POLICY: str = "edu-graph-graphrag/1.0"
+    GRAPHRAG_MAX_GLEANINGS: int = 1
+    GRAPHRAG_MAX_RETRIES: int = 2
+    GRAPHRAG_RUN_TIMEOUT_SECONDS: int = 1800
+    GRAPHRAG_MAX_INPUT_TOKENS: int = 0
+    GRAPHRAG_MAX_ESTIMATED_COST: float = 0.0
+    VECTOR_STORE_PROVIDER: str = "lancedb"
+    VECTOR_STORE_ROOT: str = "./media/knowledge_indexes"
+    VECTOR_SEARCH_TOP_K: int = 20
+    VECTOR_RESULT_TOP_K: int = 6
+    # Agent composition may opt into the production read-only bundle adapter
+    # without changing the workflow graph under active refactoring.
+    TEACHING_AGENT_KNOWLEDGE_PROVIDER: str = "demo"
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

@@ -133,6 +133,8 @@ class RecommendationRecord(SQLModel, table=True):
     node_id: Optional[int] = Field(default=None)
     graph_snapshot_id: Optional[str] = Field(default=None, index=True)
     knowledge_node_id: Optional[int] = Field(default=None, index=True)
+    knowledge_bundle_id: Optional[str] = Field(default=None, index=True)
+    vector_index_id: Optional[str] = Field(default=None, index=True)
 
     recommendation_type: str = Field(index=True, description="推荐类型(RecommendationType枚举值)")
     priority: str = Field(default="low")
@@ -143,6 +145,9 @@ class RecommendationRecord(SQLModel, table=True):
     policy_version: str = Field(default=COGNITIVE_POLICY_VERSION)
     reason_codes: list = Field(default_factory=list, sa_column=Column(JSON), description="推荐原因码")
     evidence_refs: list = Field(default_factory=list, sa_column=Column(JSON), description="支撑证据ID列表")
+    retrieved_citation_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    retrieval_trace: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    degraded_reason: str = Field(default="")
 
     # 推荐目标
     question_id: Optional[int] = Field(default=None, foreign_key="question_bank_items.id", description="推荐题目ID")

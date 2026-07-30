@@ -67,7 +67,10 @@ from app.services.cognitive_service import (
     get_latest_cognitive_state,
     record_scored_evidence,
 )
-from app.services.recommendation_service import refresh_cognition_and_recommendation
+from app.services.learning_projection_outbox_service import (
+    dispatch_learning_projection,
+    enqueue_learning_projection,
+)
 from app.services.course_access_service import require_course_permission
 from app.services.practice_recommendation_service import (
     PRACTICE_POLICY_VERSION,
@@ -668,14 +671,16 @@ async def submit_attempt(
             },
         )
 
-    session.commit()
-    session.refresh(attempt)
-    cognitive_state, recommendation = refresh_cognition_and_recommendation(
+    projection_event = enqueue_learning_projection(
         session,
+        attempt_id=int(attempt.id),
         student_id=user_id,
         course_id=attempt.course_id,
-        node_id=evidence_record.node_id if evidence_record else None,
+        knowledge_node_id=evidence_record.node_id if evidence_record else None,
     )
+    session.commit()
+    session.refresh(attempt)
+    dispatch_learning_projection(projection_event.event_id if projection_event else None)
 
     return unified_response(
         code=200,
@@ -686,8 +691,10 @@ async def submit_attempt(
             "is_correct": attempt.is_correct,
             "score": attempt.score,
             "evidence_id": evidence_record.evidence_id if evidence_record else None,
-            "cognitive_state_id": cognitive_state.id if cognitive_state else None,
-            "recommendation_id": recommendation.recommendation_id if recommendation else None,
+            "cognitive_state_id": None,
+            "recommendation_id": None,
+            "projection_event_id": projection_event.event_id if projection_event else None,
+            "projection_status": "pending" if projection_event else "not_applicable",
             "writes_formal_evidence": evidence_record is not None,
         },
     )

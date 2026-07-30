@@ -10,6 +10,11 @@ from .demo import (
     RetrievalDemoScopePort,
     UnavailableSandboxPort,
 )
+from .active_bundle import (
+    ActiveBundleCourseRetrievalPort,
+    ActiveBundleKnowledgeGraphPort,
+    ActiveBundleScopePort,
+)
 
 __all__ = [
     "CallableLearningEventPort",
@@ -20,4 +25,7 @@ __all__ = [
     "RetrievalDemoKnowledgeGraphPort",
     "RetrievalDemoScopePort",
     "UnavailableSandboxPort",
+    "ActiveBundleCourseRetrievalPort",
+    "ActiveBundleKnowledgeGraphPort",
+    "ActiveBundleScopePort",
 ]

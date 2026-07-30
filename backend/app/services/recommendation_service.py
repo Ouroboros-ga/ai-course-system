@@ -41,8 +41,7 @@ from app.domain.learning.recommendation import (
     RECOMMENDATION_VERSION,
 )
 from app.services.cognitive_service import compute_cognitive_state, get_latest_cognitive_state
-from app.services.graph_production_service import get_prerequisite_nodes
-from app.services.graph_production_service import get_active_snapshot
+from app.platform.knowledge.sql_lance_provider import SqlLanceCourseKnowledgeProvider
 from app.services.knowledge_node_identity_service import (
     resolve_node_id,
     resolve_node_key,
@@ -115,8 +114,53 @@ def generate_recommendation(
     ]
 
     # 6. 创建推荐记录
-    active_snapshot = get_active_snapshot(session, course_id)
+    knowledge_provider = SqlLanceCourseKnowledgeProvider(
+        allow_legacy_graph_fallback=True
+    )
+    active_bundle = knowledge_provider.get_active_bundle(course_id)
     formal_node_id = resolve_node_id(session, course_id, node_id)
+    node_key = resolve_node_key(session, course_id, formal_node_id)
+    retrieved_citation_ids: list[str] = []
+    retrieval_trace: dict[str, Any] = {}
+    degraded_reason = ""
+    if active_bundle is None:
+        degraded_reason = "NO_ACTIVE_KNOWLEDGE_BUNDLE"
+    else:
+        try:
+            target_keys = tuple(dict.fromkeys([
+                *([node_key] if node_key else []),
+                *(str(item.get("node_id")) for item in prereq_weak if item.get("node_id")),
+            ]))
+            retrieval = knowledge_provider.search_evidence(
+                course_id,
+                f"{title} {description}",
+                top_k=6,
+                node_keys=target_keys,
+            )
+            if retrieval is not None:
+                retrieved_citation_ids = list(dict.fromkeys(
+                    citation_id
+                    for item in retrieval.items
+                    for citation_id in item.citation_ids
+                ))
+                retrieval_trace = {
+                    "bundle_id": retrieval.bundle.bundle_id,
+                    "vector_index_id": retrieval.bundle.vector_index_id,
+                    "query": retrieval.query,
+                    "items": [
+                        {
+                            "node_key": item.node_key,
+                            "score": item.score,
+                            "retrieval_sources": list(item.retrieval_sources),
+                            "citation_ids": list(item.citation_ids),
+                        }
+                        for item in retrieval.items
+                    ],
+                }
+            else:
+                degraded_reason = "NO_ACTIVE_VECTOR_INDEX"
+        except Exception as exc:
+            degraded_reason = f"KNOWLEDGE_RETRIEVAL_FAILED:{type(exc).__name__}"
     cognitive_snapshot = {
         "observed_performance_score": state.observed_performance_score,
         "evidence_confidence": state.evidence_confidence,
@@ -133,8 +177,15 @@ def generate_recommendation(
         student_id=student_id,
         course_id=course_id,
         node_id=node_id,
-        graph_snapshot_id=active_snapshot.snapshot_id if active_snapshot else None,
+        graph_snapshot_id=active_bundle.graph_snapshot_id if active_bundle else None,
         knowledge_node_id=formal_node_id,
+        knowledge_bundle_id=(
+            active_bundle.bundle_id if active_bundle and active_bundle.bundle_id else None
+        ),
+        vector_index_id=(
+            active_bundle.vector_index_id
+            if active_bundle and active_bundle.vector_index_id else None
+        ),
         recommendation_type=rec_type.value,
         priority=priority.value,
         title=title,
@@ -142,6 +193,9 @@ def generate_recommendation(
         policy_version=COGNITIVE_POLICY_VERSION,
         reason_codes=reason_codes,
         evidence_refs=evidence_refs,
+        retrieved_citation_ids=retrieved_citation_ids,
+        retrieval_trace=retrieval_trace,
+        degraded_reason=degraded_reason,
         question_id=question.id if question else None,
         knowledge_node_ids=question.knowledge_node_ids if question else [],
         cognitive_snapshot=cognitive_snapshot,
@@ -202,14 +256,22 @@ def _find_confirmed_weak_prerequisites(
     node_id_str = resolve_node_key(session, course_id, state.node_id) or str(state.node_id)
     if not node_id_str:
         return []
-    prereq_nodes = get_prerequisite_nodes(
-        session, course_id, node_id_str, direction="incoming"
+    provider = SqlLanceCourseKnowledgeProvider(
+        allow_legacy_graph_fallback=True
     )
-    if not prereq_nodes:
+    prereq_keys = provider.get_prerequisites(course_id, node_id_str)
+    if not prereq_keys:
         return []
+    graph = provider.get_graph(course_id)
+    if graph is None:
+        return []
+    node_by_key = {
+        str(node.get("id")): node for node in graph.nodes
+    }
     weak: list[dict] = []
-    for node in prereq_nodes:
-        prereq_id = str(node.get("id") or node.get("node_id") or "")
+    for prereq_key in prereq_keys:
+        node = node_by_key.get(str(prereq_key), {})
+        prereq_id = str(prereq_key)
         if not prereq_id:
             continue
         prereq_id_int = resolve_node_id(session, course_id, prereq_id)

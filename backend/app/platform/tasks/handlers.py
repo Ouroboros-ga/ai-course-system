@@ -1290,6 +1290,12 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("media.avatar_preprocess", media_avatar_preprocess_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
     worker.register("question_bank.import", question_bank_import_handler)
+    from app.platform.tasks.knowledge_handlers import (
+        knowledge_graphrag_build_handler,
+        knowledge_vector_index_handler,
+    )
+    worker.register("knowledge.graphrag_build", knowledge_graphrag_build_handler)
+    worker.register("knowledge.vector_index", knowledge_vector_index_handler)
 
     # 媒体生成任务类型（MediaGenerationJobType 枚举值）
     for job_type in ("tts", "subtitle", "avatar_preprocess", "dh_render",

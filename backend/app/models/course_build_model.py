@@ -493,6 +493,9 @@ class CourseRelease(SQLModel, table=True):
     document_ir_version_ids: list = Field(default_factory=list, sa_column=Column(JSON))
     corpus_snapshot_id: Optional[str] = Field(default=None, index=True)
     retrieval_snapshot_id: Optional[str] = Field(default=None, index=True)
+    # Optional compatibility reference only.  The independent knowledge
+    # bundle head, not CourseRelease, is authoritative for learner graph/RAG.
+    knowledge_bundle_id: Optional[str] = Field(default=None, index=True)
     outline_version_id: Optional[str] = Field(default=None, index=True)
     script_version_id: Optional[str] = Field(default=None, index=True)
 

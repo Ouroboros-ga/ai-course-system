@@ -86,6 +86,16 @@ from app.models.graph_production_model import (
     GraphSnapshotRecord,
     GraphNodeReview,
 )
+from app.models.knowledge_bundle_model import (
+    GraphRagRun,
+    GraphRagEntityMapping,
+    CourseVectorIndex,
+    CourseKnowledgeBundle,
+    CourseKnowledgeHead,
+    CourseKnowledgeActivation,
+    CourseKnowledgeBuildLease,
+    LearningProjectionOutbox,
+)
 from app.models.agent_log import (
     AgentLearningEvent,
     AgentTraceRecord,

@@ -110,6 +110,7 @@ from app.api.v1.endpoints import (
     web_research,       # G7 WebResearchTool
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
+    graphrag,           # GraphRAG + immutable CourseKnowledgeBundle
     tasks,              # 阶段0 统一任务中心
     course_lifecycle,   # 阶段2 成员/设置/加入申请/泛雅同步
     course_creation,    # P0 空课程创建与统一材料上传
@@ -184,6 +185,22 @@ async def recover_durable_task_queues() -> None:
         await recover_course_draft_build_queue(session_factory, local_task_worker)
     except Exception:
         logger.exception("Course draft build queue recovery failed")
+    try:
+        from app.models.database import session_factory
+        from app.platform.tasks.knowledge_build_queue import knowledge_build_queue
+        from app.platform.tasks.worker import local_task_worker
+
+        await knowledge_build_queue.recover(session_factory, local_task_worker)
+    except Exception:
+        logger.exception("Knowledge Bundle build queue recovery failed")
+    try:
+        from app.services.learning_projection_outbox_service import (
+            recover_learning_projection_outbox,
+        )
+
+        await recover_learning_projection_outbox()
+    except Exception:
+        logger.exception("Learning projection outbox recovery failed")
 
 # P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
 # disabled -> no injection -> the endpoint stays 503. KG-MEST reports and
@@ -267,6 +284,7 @@ app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒�
 
 # G9: Evidence与课程知识图谱生产化
 app.include_router(graph_production.router, prefix="/api/v1/graph", tags=["G9 Evidence与图谱"])
+app.include_router(graphrag.router, prefix="/api/v1/graph", tags=["GraphRAG Knowledge Bundle"])
 
 # P1-09 G3B: V2 shadow query router (independent, ADR-0006 §9). Admin/internal
 # only; 503 SHADOW_FEATURE_DISABLED when flag not v2_shadow. Does NOT touch V1

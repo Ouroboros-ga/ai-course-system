@@ -30,6 +30,12 @@ from ..contracts import (
     WebResearchPort,
 )
 from ..tools.integration import RetrievalDemoEvidencePort, RetrievalDemoKnowledgeGraphPort, RetrievalDemoScopePort
+from ..providers.retrieval.active_bundle import (
+    ActiveBundleCourseRetrievalPort,
+    ActiveBundleKnowledgeGraphPort,
+    ActiveBundleScopePort,
+)
+from app.core.config import settings
 from ..tools.kg_mest_shadow import KGMetShadowReportStudentModelingPort
 from .runtime import TeachingAgentRuntime
 
@@ -93,10 +99,20 @@ def build_course_sidecar_runtime(
     sandbox, event and LLM ports. This function does not register an API route,
     start a service, access a database, or make the sidecar visible by itself.
     """
+    use_active_bundle = (
+        getattr(settings, "TEACHING_AGENT_KNOWLEDGE_PROVIDER", "demo")
+        == "active_bundle"
+    )
     return build_teaching_runtime(
-        scope=RetrievalDemoScopePort(demo_service),
-        knowledge_graph=RetrievalDemoKnowledgeGraphPort(demo_service),
-        retrieval=RetrievalDemoEvidencePort(demo_service),
+        scope=(ActiveBundleScopePort() if use_active_bundle else RetrievalDemoScopePort(demo_service)),
+        knowledge_graph=(
+            ActiveBundleKnowledgeGraphPort()
+            if use_active_bundle else RetrievalDemoKnowledgeGraphPort(demo_service)
+        ),
+        retrieval=(
+            ActiveBundleCourseRetrievalPort()
+            if use_active_bundle else RetrievalDemoEvidencePort(demo_service)
+        ),
         student_modeling=student_modeling,
         recommendation=recommendation,
         sandbox=sandbox,

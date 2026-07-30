@@ -26,6 +26,9 @@ class CanonicalDocumentIRRetriever:
             return False
         try:
             with session_factory() as session:
+                from app.services.knowledge_bundle_service import knowledge_bundle_service
+                if knowledge_bundle_service.get_active_bundle(session, course_id) is not None:
+                    return True
                 return session.exec(select(CourseRelease).where(
                     CourseRelease.course_id == course_id,
                     CourseRelease.is_active == True,  # noqa: E712
@@ -50,6 +53,40 @@ class CanonicalDocumentIRRetriever:
         terms = _terms(query)
         if not terms:
             return []
+        # The independent knowledge Bundle is the authoritative student
+        # boundary.  Once present, index failures fail closed and must never
+        # fall through to candidate chunks or an unrelated CourseRelease.
+        from app.platform.knowledge.sql_lance_provider import SqlLanceCourseKnowledgeProvider
+        provider = SqlLanceCourseKnowledgeProvider()
+        active_bundle = provider.get_active_bundle(course_id)
+        if active_bundle is not None:
+            result = provider.search_evidence(course_id, query, top_k=top_k)
+            if result is None:
+                return []
+            return [
+                RetrievedChunk(
+                    chunk_id=f"{active_bundle.bundle_id}:{index}",
+                    content=item.content,
+                    scope=scope,
+                    retrieval_score=item.score,
+                    retrieval_source="+".join(item.retrieval_sources),
+                    document_id=item.document_id,
+                    unit_id=None,
+                    block_id=None,
+                    metadata={
+                        "bundle_id": active_bundle.bundle_id,
+                        "graph_snapshot_id": active_bundle.graph_snapshot_id,
+                        "vector_index_id": active_bundle.vector_index_id,
+                        "node_key": item.node_key,
+                        "knowledge_node_id": item.knowledge_node_id,
+                        "evidence_ids": list(item.evidence_ids),
+                        "citation_ids": list(item.citation_ids),
+                        "page_number": item.page_number,
+                        "citation_closed": bool(item.citation_ids),
+                    },
+                )
+                for index, item in enumerate(result.items)
+            ]
         with session_factory() as session:
             # A student-facing course must read the exact IR set frozen by its
             # active release. A later reparse may create a newer active

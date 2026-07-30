@@ -258,11 +258,24 @@ async def retry_task(
                 input_payload = _json.loads(record.input_payload) if record and record.input_payload else {}
             except (TypeError, ValueError):
                 input_payload = {}
-            local_task_worker.submit(
-                _session_factory,
-                view.task_id,
-                input_payload,
-            )
+            if view.task_type in {
+                "knowledge.graphrag_build",
+                "knowledge.vector_index",
+            }:
+                from app.platform.tasks.knowledge_build_queue import (
+                    knowledge_build_queue,
+                )
+                knowledge_build_queue.submit(
+                    _session_factory,
+                    local_task_worker,
+                    view.task_id,
+                )
+            else:
+                local_task_worker.submit(
+                    _session_factory,
+                    view.task_id,
+                    input_payload,
+                )
         else:
             _logger.warning(
                 "Retry: task %s (type=%s) has no registered handler; stays pending",
