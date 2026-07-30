@@ -60,7 +60,7 @@ const RELATION_LABELS = {
 }
 
 // 组件实例级状态（避免模块级共享导致跨实例污染/坐标爆炸）
-let graph = { nodes: [], relations: [] }
+let graph = { nodes: [], relations: [], endpoint: new Map() }
 let view = { x: 0, y: 0, scale: 1 }
 let pointer = null
 let hoverId = ''
@@ -147,8 +147,10 @@ function visibleGraphSources() {
 }
 
 function rebuild() {
+  cancelAnimationFrame(frame)
   const previous = new Map(graph.nodes.map((node) => [node.id, node]))
   const { sources, endpoint } = visibleGraphSources()
+  const sourceGraphIsLarge = props.nodes.length > CLUSTER_THRESHOLD
   const byId = new Map()
   const nodes = sources.map((source) => {
     const id = String(source.id)
@@ -159,8 +161,10 @@ function rebuild() {
       id,
       source,
       label: source.title || source.label || id,
-      x: old?.x ?? Math.cos(angle) * radius,
-      y: old?.y ?? Math.sin(angle) * radius,
+      // 大图重建时使用稳定位置，不能继承旧力导向留下的远距离坐标。
+      // 节点拖拽不触发 rebuild，因此正常交互中的手工位置仍会保留。
+      x: sourceGraphIsLarge ? Math.cos(angle) * radius : old?.x ?? Math.cos(angle) * radius,
+      y: sourceGraphIsLarge ? Math.sin(angle) * radius : old?.y ?? Math.sin(angle) * radius,
       vx: 0,
       vy: 0,
       fixed: false,
@@ -172,19 +176,29 @@ function rebuild() {
     byId.set(id, item)
     return item
   })
-  const relations = props.relations
-    .map((payload) => ({
-      source: byId.get(endpoint.get(String(payload.source))),
-      target: byId.get(endpoint.get(String(payload.target))),
-      type: String(payload.type || payload.relation_type || 'RELATED_TO').toUpperCase(),
-      payload,
-    }))
-    .filter((edge) => edge.source && edge.target && edge.source.id !== edge.target.id)
-  graph = { nodes, relations }
-  // 大图（已聚类）完全不跑力导向预迭代：节点位置用 hash 初始分布（圆环），
-  // 已存在节点复用旧坐标。避免 simulate 改变坐标 + fit 重置视图导致的抽搐跳变。
+  // 聚类后大量原始关系会落到同一对可见端点。若仍逐条参与绘制和力学计算，
+  // 同一对节点会被重复施力并出现平行长线，因此按端点和关系类型合并。
+  const relationByKey = new Map()
+  for (const payload of props.relations) {
+    const source = byId.get(endpoint.get(String(payload.source)))
+    const target = byId.get(endpoint.get(String(payload.target)))
+    if (!source || !target || source.id === target.id) continue
+    const type = String(payload.type || payload.relation_type || 'RELATED_TO').toUpperCase()
+    const key = `${source.id}\u0000${target.id}\u0000${type}`
+    const existing = relationByKey.get(key)
+    if (existing) {
+      existing.count += 1
+    } else {
+      relationByKey.set(key, { source, target, type, payload, count: 1 })
+    }
+  }
+  graph = { nodes, relations: [...relationByKey.values()], endpoint }
+  // 大图（已聚类）完全不跑力导向预迭代，并使用稳定 hash 初始位置。
+  // 避免 simulate 改变坐标 + fit 重置视图导致的抽搐跳变。
   // 小图保留力导向以呈现自然布局。
-  const isLargeGraph = graph.nodes.length > CLUSTER_THRESHOLD || graph.nodes.length > 200
+  // 大图判定必须基于原始拓扑。课程图谱即使聚类后只显示少量节点，仍然不能
+  // 被当成小图重新运行力导向动画，否则选择节点时会把整个布局拉出视口。
+  const isLargeGraph = sourceGraphIsLarge || graph.nodes.length > 200
   if (!isLargeGraph) {
     const preIterations = reducedMotion ? 35 : 100
     for (let tick = 0; tick < preIterations; tick += 1) {
@@ -362,7 +376,8 @@ function drawArrow(context, edge, highlighted) {
   context.lineTo(x, y)
   context.strokeStyle = relationColors[edge.type] || relationColors.RELATED_TO
   context.globalAlpha = highlighted ? .95 : .25
-  context.lineWidth = highlighted ? 2.2 : 1.1
+  const weight = Math.min(1.8, 1 + Math.log2(edge.count || 1) * .12)
+  context.lineWidth = (highlighted ? 2.2 : 1.1) * weight
   context.stroke()
   context.beginPath()
   context.moveTo(x, y)
@@ -379,7 +394,9 @@ function draw() {
   const context = canvas.value.getContext('2d')
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
   context.clearRect(0, 0, canvas.value.width / dpr, canvas.value.height / dpr)
-  const selected = String(props.selectedId || '')
+  const selectedKey = String(props.selectedId || '')
+  // 选中的真实节点处于收起聚类时，高亮其可见聚类节点，不改变聚类展开状态。
+  const selected = graph.endpoint.get(selectedKey) || selectedKey
   const connected = new Set([selected])
   for (const edge of graph.relations) {
     if (edge.source.id === selected) connected.add(edge.target.id)
@@ -501,20 +518,8 @@ onBeforeUnmount(() => {
   cancelAnimationFrame(frame)
   resizeObserver?.disconnect()
 })
-watch(() => [props.nodes, props.relations], rebuild, { deep: true })
-watch(() => props.selectedId, (selectedId) => {
-  if (props.nodes.length > CLUSTER_THRESHOLD && selectedId) {
-    const selected = props.nodes.find((node) => String(node.id) === String(selectedId))
-    const type = selected ? normalizeType(selected) : ''
-    if (type && type !== expandedCluster) {
-      expandedCluster = type
-      expandedClusterLabel.value = typeLabel(type)
-      rebuild()
-      return
-    }
-  }
-  draw()
-})
+watch(() => [props.nodes, props.relations], rebuild)
+watch(() => props.selectedId, draw)
 </script>
 
 <template>
