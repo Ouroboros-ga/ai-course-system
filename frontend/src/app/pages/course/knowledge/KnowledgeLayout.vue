@@ -32,9 +32,9 @@ const railItems = computed(() => {
   <div class="sfx-knowledge-layout">
     <SfxLocalRail :items="railItems" aria-label="知识空间工作区" storage-key="knowledge" />
     <div class="sfx-knowledge-main">
-      <router-view v-slot="{ Component, route }">
+      <router-view v-slot="{ Component }">
         <Transition name="sfx-page" mode="out-in">
-          <component :is="Component" :key="route.path" />
+          <component :is="Component" />
         </Transition>
       </router-view>
     </div>

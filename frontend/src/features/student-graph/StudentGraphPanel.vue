@@ -13,6 +13,7 @@ import {
   getActiveKnowledgeGraph,
   getActiveKnowledgeNode,
 } from '@/api/graph.js'
+import SfxButton from '@/app/ui/SfxButton.vue'
 import KnowledgeGraphCanvas from '@/features/knowledge-bundle/KnowledgeGraphCanvas.vue'
 
 const props = defineProps({
@@ -28,6 +29,7 @@ const errorMessage = ref('')
 const graph = ref(null)
 const selectedKey = ref('')
 const selectedNode = ref(null)
+const loadingKey = ref('')
 const query = ref('')
 const selectedCitation = ref(null)
 const citationImageUrl = ref('')
@@ -86,12 +88,22 @@ async function loadGraph() {
 async function selectNode(nodeOrKey, navigate = true) {
   const key = String(nodeOrKey?.id || nodeOrKey || '')
   if (!key.startsWith('kn_')) return
+  // 去重：点击节点列表会 emit('jump-node') 触发路由变化，路由 watch 又回调
+  // selectNode(key, false)。若 key 已是当前选中且正在加载或已加载，跳过重复请求，
+  // 避免 canvas 抖动。若该节点加载失败（selectedNode 为 null 且未在加载），允许重试。
+  if (key === selectedKey.value && (selectedNode.value || loadingKey.value === key)) {
+    if (navigate) emit('jump-node', nodeByKey.value.get(key) || { id: key })
+    return
+  }
+  loadingKey.value = key
   selectedKey.value = key
   selectedNode.value = null
   try {
     selectedNode.value = await getActiveKnowledgeNode(props.courseId, key)
   } catch (error) {
     errorMessage.value = error?.message || '知识节点暂时无法读取。'
+  } finally {
+    if (loadingKey.value === key) loadingKey.value = ''
   }
   if (navigate) emit('jump-node', nodeByKey.value.get(key) || { id: key })
 }
@@ -127,25 +139,26 @@ onBeforeUnmount(closeCitation)
 <template>
   <section class="student-kg" aria-label="课程知识图谱">
     <header class="student-kg__header">
-      <div>
-        <p class="eyebrow">ACTIVE KNOWLEDGE BUNDLE</p>
-        <h2>课程知识图谱</h2>
+      <div class="student-kg__heading">
+        <p class="eyebrow">已激活知识包</p>
+        <h2 class="student-kg__title">课程知识图谱</h2>
         <p v-if="bundle" class="muted">
           Bundle v{{ bundle.version }} · {{ nodes.length }} 个节点 ·
           {{ relations.length }} 条语义关系
         </p>
       </div>
-      <button type="button" class="back" @click="emit('return-anchor')">
-        <ArrowLeft :size="15" /> 返回课程
-      </button>
+      <SfxButton variant="secondary" size="sm" @click="emit('return-anchor')">
+        <template #icon><ArrowLeft :size="15" /></template>
+        返回课程
+      </SfxButton>
     </header>
 
-    <div v-if="status === 'loading'" class="state">
+    <div v-if="status === 'loading'" class="state" role="status">
       <LoaderCircle class="spin" :size="22" /> 正在读取已激活知识包…
     </div>
-    <div v-else-if="status === 'error'" class="state state--error">
+    <div v-else-if="status === 'error'" class="state state--error" role="alert">
       <TriangleAlert :size="21" /> {{ errorMessage }}
-      <button type="button" @click="loadGraph">重试</button>
+      <SfxButton variant="secondary" size="sm" @click="loadGraph">重试</SfxButton>
     </div>
     <div v-else-if="status === 'empty'" class="state">
       当前课程尚未激活可供学生读取的知识包。
@@ -154,19 +167,20 @@ onBeforeUnmount(closeCitation)
     <div v-else class="workspace">
       <aside class="rail">
         <label class="search">
-          <Search :size="15" />
-          <input v-model="query" type="search" placeholder="搜索知识点" />
+          <Search :size="15" aria-hidden="true" />
+          <input v-model="query" type="search" placeholder="搜索知识点" aria-label="搜索知识点" />
         </label>
         <div class="node-list">
           <button
             v-for="node in filteredNodes"
             :key="node.id"
             type="button"
+            class="node-item"
             :class="{ active: String(node.id) === selectedKey }"
             @click="selectNode(node)"
           >
-            <span>{{ node.title || node.label || node.id }}</span>
-            <small>{{ node.type || node.kind || 'concept' }}</small>
+            <span class="node-item__title">{{ node.title || node.label || node.id }}</span>
+            <small class="node-item__type">{{ node.type || node.kind || 'concept' }}</small>
           </button>
         </div>
       </aside>
@@ -183,40 +197,42 @@ onBeforeUnmount(closeCitation)
       <aside class="detail">
         <template v-if="selectedNode">
           <p class="eyebrow">{{ selectedNode.entity_type }}</p>
-          <h3>{{ selectedNode.title }}</h3>
-          <p>{{ selectedNode.description || '该知识点暂无补充描述。' }}</p>
+          <h3 class="detail__title">{{ selectedNode.title }}</h3>
+          <p class="detail__desc">{{ selectedNode.description || '该知识点暂无补充描述。' }}</p>
 
-          <section>
+          <section class="detail__section">
             <h4>先修知识</h4>
             <div v-if="prerequisiteNodes.length" class="chips">
-              <button
+              <SfxButton
                 v-for="node in prerequisiteNodes"
                 :key="node.id"
-                type="button"
+                variant="tertiary"
+                size="sm"
                 @click="selectNode(node)"
               >
                 {{ node.title || node.label }}
-              </button>
+              </SfxButton>
             </div>
             <p v-else class="muted">没有已确认的先修节点</p>
           </section>
 
-          <section>
+          <section class="detail__section">
             <h4>后继知识</h4>
             <div v-if="successorNodes.length" class="chips">
-              <button
+              <SfxButton
                 v-for="node in successorNodes"
                 :key="node.id"
-                type="button"
+                variant="tertiary"
+                size="sm"
                 @click="selectNode(node)"
               >
                 {{ node.title || node.label }}
-              </button>
+              </SfxButton>
             </div>
             <p v-else class="muted">没有已确认的后继节点</p>
           </section>
 
-          <section v-if="recommendationContext">
+          <section v-if="recommendationContext" class="detail__section">
             <h4>当前学习建议</h4>
             <p>{{ recommendationContext.description || recommendationContext.title }}</p>
             <small class="muted">
@@ -224,16 +240,17 @@ onBeforeUnmount(closeCitation)
             </small>
           </section>
 
-          <section>
+          <section class="detail__section">
             <h4>原文引用</h4>
             <div v-if="citations.length" class="citations">
               <button
                 v-for="citation in citations"
                 :key="citation.citation_id"
                 type="button"
+                class="citation-btn"
                 @click="openCitation(citation)"
               >
-                <FileText :size="14" />
+                <FileText :size="14" aria-hidden="true" />
                 <span>{{ citation.source_file || '课程文件' }} · 第 {{ citation.page_number }} 页</span>
               </button>
             </div>
@@ -244,21 +261,24 @@ onBeforeUnmount(closeCitation)
     </div>
 
     <div v-if="selectedCitation" class="drawer-backdrop" @click.self="closeCitation">
-      <aside class="citation-drawer">
-        <header>
+      <aside class="citation-drawer" role="dialog" aria-label="原文引用详情">
+        <header class="citation-drawer__header">
           <div>
-            <p class="eyebrow">SOURCE CITATION</p>
+            <p class="eyebrow">原文引用</p>
             <h3>{{ selectedCitation.source_file || '课程原文' }}</h3>
           </div>
-          <button type="button" aria-label="关闭" @click="closeCitation"><X :size="18" /></button>
+          <button type="button" class="icon-btn" aria-label="关闭" @click="closeCitation">
+            <X :size="18" />
+          </button>
         </header>
-        <p>第 {{ selectedCitation.page_number }} 页 · {{ selectedCitation.status }}</p>
-        <blockquote>{{ selectedCitation.text_snippet }}</blockquote>
+        <p class="muted">第 {{ selectedCitation.page_number }} 页 · {{ selectedCitation.status }}</p>
+        <blockquote class="quote">{{ selectedCitation.text_snippet }}</blockquote>
         <div v-if="imageStatus === 'loading'" class="state">正在加载受保护页图…</div>
         <img
           v-else-if="citationImageUrl"
           :src="citationImageUrl"
           alt="Citation 原文页"
+          class="citation-img"
         />
         <p v-else-if="imageStatus === 'error'" class="state state--error">
           原文页图加载失败，但引用文本仍可审计。
@@ -270,43 +290,249 @@ onBeforeUnmount(closeCitation)
 </template>
 
 <style scoped>
-.student-kg { container-type: inline-size; display: flex; min-height: 620px; flex-direction: column; gap: 14px; color: #0f172a; }
-.student-kg__header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.student-kg__header h2, .detail h3 { margin: 4px 0 6px; }
-.eyebrow { margin: 0; color: #0f766e; font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
-.muted { color: #64748b; }
-.back, .state button, .chips button { border: 1px solid #cbd5e1; border-radius: 9px; background: #fff; padding: 7px 10px; cursor: pointer; }
-.back { display: inline-flex; align-items: center; gap: 6px; }
-.state { display: flex; min-height: 360px; align-items: center; justify-content: center; gap: 8px; border: 1px dashed #cbd5e1; border-radius: 14px; color: #64748b; }
-.state--error { color: #b91c1c; }
-.workspace { display: grid; min-height: 560px; grid-template-columns: 220px minmax(360px, 1fr) 300px; gap: 12px; }
-.rail, .detail { overflow: auto; border: 1px solid #e2e8f0; border-radius: 14px; background: #fff; }
-.rail { padding: 10px; }
-.search { display: flex; align-items: center; gap: 7px; border: 1px solid #cbd5e1; border-radius: 9px; padding: 7px 9px; }
-.search input { min-width: 0; flex: 1; border: 0; outline: 0; }
-.node-list { display: grid; gap: 6px; margin-top: 9px; }
-.node-list button { display: grid; gap: 3px; border: 1px solid transparent; border-radius: 9px; background: #fff; padding: 9px; text-align: left; cursor: pointer; }
-.node-list button:hover, .node-list button.active { border-color: #5eead4; background: #f0fdfa; }
-.node-list small { color: #64748b; }
-.canvas { min-width: 0; overflow: hidden; border-radius: 14px; }
-.detail { padding: 15px; }
-.detail > p { line-height: 1.6; color: #475569; }
-.detail section { border-top: 1px solid #e2e8f0; padding-top: 12px; }
-.detail h4 { margin: 0 0 8px; }
-.chips { display: flex; flex-wrap: wrap; gap: 6px; }
-.citations { display: grid; gap: 7px; }
-.citations button { display: flex; align-items: center; gap: 7px; border: 1px solid #dbeafe; border-radius: 9px; background: #eff6ff; padding: 8px; color: #1e40af; text-align: left; cursor: pointer; }
-.drawer-backdrop { position: fixed; z-index: 1200; inset: 0; display: flex; justify-content: flex-end; background: rgb(15 23 42 / 42%); }
-.citation-drawer { width: min(520px, 92vw); overflow: auto; background: #fff; padding: 20px; box-shadow: -12px 0 34px rgb(15 23 42 / 18%); }
-.citation-drawer header { display: flex; align-items: flex-start; justify-content: space-between; }
-.citation-drawer header button { border: 0; background: transparent; cursor: pointer; }
-.citation-drawer blockquote { margin: 14px 0; border-left: 3px solid #14b8a6; padding: 9px 12px; background: #f8fafc; line-height: 1.7; }
-.citation-drawer img { width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; }
+/* design.md §5.3 / §5.4：建设页面布局参考；内部滚动容器 min-height:0 */
+.student-kg {
+  container-type: inline-size;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--space-4, 16px);
+  color: var(--text-primary, #172033);
+}
+
+.student-kg__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4, 16px);
+  flex-shrink: 0;
+}
+
+.student-kg__title {
+  margin: var(--space-1, 4px) 0;
+  font-size: var(--title-2-size, 24px);
+  line-height: var(--title-2-line, 32px);
+  font-weight: var(--title-2-weight, 600);
+  color: var(--text-primary, #172033);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--ink-500, #355C7D);
+  font-size: var(--caption-size, 12px);
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.muted { color: var(--text-muted, #7B8494); }
+
+/* design.md §5.1 L3：状态区独立，不参与整页滚动 */
+.state {
+  display: flex;
+  min-height: 360px;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2, 8px);
+  border: 1px dashed var(--border-default, #DDE2E8);
+  border-radius: var(--radius-lg, 14px);
+  color: var(--text-muted, #7B8494);
+}
+.state--error { color: var(--red-700, #8B3A3A); }
+
+/* design.md §5.4：左侧节点目录 + 中间画布 + 右侧详情，各自独立滚动 */
+.workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(360px, 1fr) 300px;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-3, 12px);
+  flex: 1;
+  min-height: 0;
+}
+
+.rail, .detail {
+  overflow-y: auto;
+  min-height: 0;
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--surface-panel, #FFFFFF);
+}
+.rail { padding: var(--space-3, 12px); }
+
+/* design.md §12.3 输入框：40px 高、10px 圆角、focus 2px 墨蓝 */
+.search {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  height: var(--control-height, 40px);
+  padding: 0 var(--space-3, 12px);
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-panel, #FFFFFF);
+  color: var(--text-secondary, #4E5969);
+  transition: border-color var(--duration-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.search:focus-within {
+  border-color: var(--color-focus, #355C7D);
+  box-shadow: 0 0 0 2px var(--ink-100, #E8EEF4);
+}
+.search input {
+  min-width: 0;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--text-primary, #172033);
+}
+
+.node-list {
+  display: grid;
+  gap: var(--space-2, 8px);
+  margin-top: var(--space-2, 8px);
+}
+.node-item {
+  display: grid;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md, 10px);
+  background: var(--surface-panel, #FFFFFF);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--duration-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.node-item:hover {
+  background: var(--surface-cool, #F7F8FA);
+}
+.node-item.active {
+  border-color: var(--ink-300, #8EA7BE);
+  background: var(--ink-100, #E8EEF4);
+  color: var(--ink-900, #14213D);
+}
+.node-item__title {
+  font-size: var(--ui-md-size, 14px);
+  font-weight: 500;
+}
+.node-item__type {
+  color: var(--text-muted, #7B8494);
+  font-size: var(--caption-size, 12px);
+}
+
+.canvas {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-radius: var(--radius-lg, 14px);
+}
+
+.detail { padding: var(--space-4, 16px); }
+.detail__title {
+  margin: var(--space-1, 4px) 0;
+  font-size: var(--title-3-size, 18px);
+  font-weight: var(--title-3-weight, 600);
+  color: var(--text-primary, #172033);
+}
+.detail__desc {
+  line-height: 1.6;
+  color: var(--text-secondary, #4E5969);
+}
+.detail__section {
+  border-top: 1px solid var(--border-subtle, #EDF0F3);
+  padding-top: var(--space-3, 12px);
+  margin-top: var(--space-3, 12px);
+}
+.detail__section h4 {
+  margin: 0 0 var(--space-2, 8px);
+  font-size: var(--ui-md-size, 14px);
+  font-weight: 600;
+  color: var(--text-primary, #172033);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px);
+}
+
+.citations {
+  display: grid;
+  gap: var(--space-2, 8px);
+}
+/* design.md §4.5 原文引用块：左边框 3px ink-500 */
+.citation-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  border: 1px solid var(--ink-300, #8EA7BE);
+  border-left: 3px solid var(--ink-500, #355C7D);
+  border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
+  background: var(--surface-cool, #F7F8FA);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  color: var(--ink-700, #203A5F);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.citation-btn:hover { background: var(--ink-100, #E8EEF4); }
+
+/* design.md §4.9 Drawer：右侧滑入，圆角 18px 0 0 18px */
+.drawer-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  background: var(--surface-overlay, rgba(16, 26, 49, 0.42));
+}
+.citation-drawer {
+  width: min(520px, 92vw);
+  overflow-y: auto;
+  background: var(--surface-panel, #FFFFFF);
+  padding: var(--space-6, 24px);
+  box-shadow: var(--shadow-md, 0 12px 32px rgba(16, 26, 49, 0.10));
+  border-radius: var(--radius-xl, 18px) 0 0 var(--radius-xl, 18px);
+}
+.citation-drawer__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: var(--space-3, 12px);
+}
+.icon-btn {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted, #7B8494);
+  padding: var(--space-2, 8px);
+  border-radius: var(--radius-sm, 6px);
+}
+.icon-btn:hover { background: var(--surface-cool, #F7F8FA); color: var(--ink-700, #203A5F); }
+
+/* design.md §4.5 原文引用块样式 */
+.quote {
+  margin: var(--space-4, 16px) 0;
+  border-left: 3px solid var(--ink-500, #355C7D);
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  background: var(--surface-cool, #F7F8FA);
+  border-radius: 0 var(--radius-md, 10px) var(--radius-md, 10px) 0;
+  line-height: 1.7;
+  color: var(--text-primary, #172033);
+}
+.citation-img {
+  width: 100%;
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-md, 10px);
+}
+
+/* design.md §4 动效令牌：思考点动画例外 */
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
 @media (max-width: 1000px) {
-  .workspace { grid-template-columns: 190px 1fr; }
-  .detail { grid-column: 1 / -1; }
+  .workspace { grid-template-columns: 190px minmax(0, 1fr); }
+  .detail { grid-column: 1 / -1; max-height: 420px; }
 }
 @container (max-width: 900px) {
   .workspace { grid-template-columns: 190px minmax(0, 1fr); }

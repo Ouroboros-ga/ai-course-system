@@ -12,17 +12,54 @@ const host = ref(null)
 const canvas = ref(null)
 const clusterMode = ref(false)
 const expandedClusterLabel = ref('')
+const CLUSTER_THRESHOLD = 120        // design.md §5 大图阈值：超过120节点即聚类
+const SUBCLUSTER_LIMIT = 60          // 单聚类展开后内部仍超过60则二次分桶
+// design.md §1.1 Academic Ink 体系；不再使用 teal/紫色装饰色
 const relationColors = {
-  PREREQUISITE_OF: '#d97706',
-  PART_OF: '#7c3aed',
-  EXPLAINS: '#2563eb',
-  CAUSES: '#dc2626',
-  CONTRASTS_WITH: '#db2777',
-  APPLIES_TO: '#059669',
-  EXAMPLE_OF: '#0891b2',
-  RELATED_TO: '#64748b',
+  PREREQUISITE_OF: '#9B6618',  // amber-700 先修
+  PART_OF:         '#203A5F',  // ink-700 组成
+  EXPLAINS:        '#355C7D',  // ink-500 解释
+  CAUSES:          '#8B3A3A',  // red-700 因果
+  CONTRASTS_WITH:  '#B85C5C',  // red-500 对比
+  APPLIES_TO:      '#3F6B52',  // green-700 应用
+  EXAMPLE_OF:      '#5E8C61',  // green-500 举例
+  RELATED_TO:      '#8B98AA',  // 中性灰 关联
+}
+// 节点类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
+const TYPE_LABELS = {
+  concept: '概念',
+  knowledge_point: '知识点',
+  skill: '技能',
+  topic: '主题',
+  chapter: '章节',
+  section: '小节',
+  method: '方法',
+  principle: '原理',
+  formula: '公式',
+  example: '示例',
+  definition: '定义',
+  theorem: '定理',
+  algorithm: '算法',
+  procedure: '流程',
+  assessment: '考核',
+  default: '节点',
+}
+function typeLabel(type) {
+  return TYPE_LABELS[String(type || '').toLowerCase()] || TYPE_LABELS.default
+}
+// 关系类型中文化（解决"部分标题仍为英文或语义较弱"遗留问题）
+const RELATION_LABELS = {
+  PREREQUISITE_OF: '先修',
+  PART_OF: '组成',
+  EXPLAINS: '解释',
+  CAUSES: '因果',
+  CONTRASTS_WITH: '对比',
+  APPLIES_TO: '应用',
+  EXAMPLE_OF: '举例',
+  RELATED_TO: '关联',
 }
 
+// 组件实例级状态（避免模块级共享导致跨实例污染/坐标爆炸）
 let graph = { nodes: [], relations: [] }
 let view = { x: 0, y: 0, scale: 1 }
 let pointer = null
@@ -34,6 +71,9 @@ let expandedCluster = ''
 const reducedMotion = typeof window !== 'undefined'
   ? (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
   : true
+// 坐标安全边界：超过此值视为坐标爆炸，重置该节点
+const COORD_LIMIT = 1e6
+const VELOCITY_LIMIT = 1e4
 
 function hash(value) {
   let result = 2166136261
@@ -44,18 +84,24 @@ function hash(value) {
   return result >>> 0
 }
 
+function normalizeType(source) {
+  return String(source.type || source.kind || 'concept').trim().toLowerCase()
+}
+
 function visibleGraphSources() {
-  if (props.nodes.length <= 200) {
+  if (props.nodes.length <= CLUSTER_THRESHOLD) {
     clusterMode.value = false
+    expandedClusterLabel.value = ''
     return {
       sources: props.nodes,
       endpoint: new Map(props.nodes.map((node) => [String(node.id), String(node.id)])),
     }
   }
   clusterMode.value = true
+  // 按 type 分组（一级聚类），统一小写避免 'concept' / 'Concept' 分裂成多个聚类
   const groups = new Map()
   for (const source of props.nodes) {
-    const type = String(source.type || source.kind || 'concept')
+    const type = normalizeType(source)
     if (!groups.has(type)) groups.set(type, [])
     groups.get(type).push(source)
   }
@@ -63,13 +109,34 @@ function visibleGraphSources() {
   const endpoint = new Map()
   for (const [type, members] of groups) {
     if (expandedCluster === type) {
-      sources.push(...members)
-      for (const member of members) endpoint.set(String(member.id), String(member.id))
+      // 渐进展开：展开后若仍超过 SUBCLUSTER_LIMIT，按 hash 二次分桶
+      if (members.length > SUBCLUSTER_LIMIT) {
+        const buckets = new Map()
+        for (const m of members) {
+          const idx = hash(`${type}:${m.id}`) % 4
+          if (!buckets.has(idx)) buckets.set(idx, [])
+          buckets.get(idx).push(m)
+        }
+        for (const [idx, bucket] of buckets) {
+          const clusterId = `cluster:${type}:${idx}`
+          sources.push({
+            id: clusterId,
+            title: `${typeLabel(type)} · 第${idx + 1}组 (${bucket.length})`,
+            type,
+            _clusterType: type,
+            _clusterSub: idx,
+          })
+          for (const m of bucket) endpoint.set(String(m.id), clusterId)
+        }
+      } else {
+        sources.push(...members)
+        for (const member of members) endpoint.set(String(member.id), String(member.id))
+      }
     } else {
       const clusterId = `cluster:${type}`
       sources.push({
         id: clusterId,
-        title: `${type} (${members.length})`,
+        title: `${typeLabel(type)} (${members.length})`,
         type,
         _clusterType: type,
       })
@@ -98,6 +165,10 @@ function rebuild() {
       vy: 0,
       fixed: false,
     }
+    // 旧坐标可能来自已爆炸的力导向状态，这里强制校验
+    if (!Number.isFinite(item.x) || !Number.isFinite(item.y) || Math.abs(item.x) > COORD_LIMIT || Math.abs(item.y) > COORD_LIMIT) {
+      resetExplodedNode(item)
+    }
     byId.set(id, item)
     return item
   })
@@ -110,11 +181,35 @@ function rebuild() {
     }))
     .filter((edge) => edge.source && edge.target && edge.source.id !== edge.target.id)
   graph = { nodes, relations }
-  for (let tick = 0; tick < (reducedMotion ? 35 : 100); tick += 1) {
-    simulate(0.55)
+  // 大图（已聚类）完全不跑力导向预迭代：节点位置用 hash 初始分布（圆环），
+  // 已存在节点复用旧坐标。避免 simulate 改变坐标 + fit 重置视图导致的抽搐跳变。
+  // 小图保留力导向以呈现自然布局。
+  const isLargeGraph = graph.nodes.length > CLUSTER_THRESHOLD || graph.nodes.length > 200
+  if (!isLargeGraph) {
+    const preIterations = reducedMotion ? 35 : 100
+    for (let tick = 0; tick < preIterations; tick += 1) {
+      simulate(0.55)
+    }
   }
   fit()
-  animate()
+  if (isLargeGraph) {
+    draw()
+  } else {
+    animate()
+  }
+}
+
+function resetExplodedNode(node) {
+  const angle = ((hash(node.id) % 360) / 180) * Math.PI
+  const radius = 80 + (hash(`${node.id}:radius`) % 220)
+  node.x = Math.cos(angle) * radius
+  node.y = Math.sin(angle) * radius
+  node.vx = 0
+  node.vy = 0
+}
+
+function clampVelocity(v) {
+  return Math.max(-VELOCITY_LIMIT, Math.min(VELOCITY_LIMIT, v))
 }
 
 function simulate(alpha) {
@@ -125,6 +220,13 @@ function simulate(alpha) {
     for (let right = left + 1; right < limit; right += 1) {
       const a = graph.nodes[left]
       const b = graph.nodes[right]
+      // 坐标安全检查：重置爆炸节点，防止后续计算产生 NaN/Inf
+      if (!Number.isFinite(a.x) || !Number.isFinite(a.y) || Math.abs(a.x) > COORD_LIMIT || Math.abs(a.y) > COORD_LIMIT) {
+        resetExplodedNode(a)
+      }
+      if (!Number.isFinite(b.x) || !Number.isFinite(b.y) || Math.abs(b.x) > COORD_LIMIT || Math.abs(b.y) > COORD_LIMIT) {
+        resetExplodedNode(b)
+      }
       let dx = a.x - b.x
       let dy = a.y - b.y
       let squared = dx * dx + dy * dy
@@ -135,10 +237,12 @@ function simulate(alpha) {
       }
       const distance = Math.sqrt(squared)
       const force = (3000 / squared) * alpha
-      a.vx += (dx / distance) * force
-      a.vy += (dy / distance) * force
-      b.vx -= (dx / distance) * force
-      b.vy -= (dy / distance) * force
+      const ax = (dx / distance) * force
+      const ay = (dy / distance) * force
+      a.vx = clampVelocity(a.vx + ax)
+      a.vy = clampVelocity(a.vy + ay)
+      b.vx = clampVelocity(b.vx - ax)
+      b.vy = clampVelocity(b.vy - ay)
     }
   }
   for (const edge of graph.relations) {
@@ -147,15 +251,22 @@ function simulate(alpha) {
     const distance = Math.max(1, Math.hypot(dx, dy))
     const desired = edge.type === 'PREREQUISITE_OF' ? 125 : 100
     const force = (distance - desired) * .018 * alpha
-    edge.source.vx += (dx / distance) * force
-    edge.source.vy += (dy / distance) * force
-    edge.target.vx -= (dx / distance) * force
-    edge.target.vy -= (dy / distance) * force
+    edge.source.vx = clampVelocity(edge.source.vx + (dx / distance) * force)
+    edge.source.vy = clampVelocity(edge.source.vy + (dy / distance) * force)
+    edge.target.vx = clampVelocity(edge.target.vx - (dx / distance) * force)
+    edge.target.vy = clampVelocity(edge.target.vy - (dy / distance) * force)
   }
   for (const node of graph.nodes) {
     if (node.fixed) continue
-    node.vx = (node.vx - node.x * .006 * alpha) * .84
-    node.vy = (node.vy - node.y * .006 * alpha) * .84
+    if (!Number.isFinite(node.x) || !Number.isFinite(node.y) || Math.abs(node.x) > COORD_LIMIT || Math.abs(node.y) > COORD_LIMIT) {
+      resetExplodedNode(node)
+      continue
+    }
+    // 增强中心引力，避免大图节点过度散开导致部分节点跑出可视区
+    const centerForce = .018 * alpha
+    const damping = .82
+    node.vx = clampVelocity((node.vx - node.x * centerForce) * damping)
+    node.vy = clampVelocity((node.vy - node.y * centerForce) * damping)
     node.x += node.vx
     node.y += node.vy
   }
@@ -164,6 +275,7 @@ function simulate(alpha) {
 function animate() {
   cancelAnimationFrame(frame)
   if (reducedMotion) {
+    fit()
     draw()
     return
   }
@@ -172,7 +284,12 @@ function animate() {
     simulate(Math.max(.08, 1 - tick / 220))
     draw()
     tick += 1
-    if (tick < 220) frame = requestAnimationFrame(step)
+    if (tick < 220) {
+      frame = requestAnimationFrame(step)
+    } else {
+      // 动画结束后重新适配视图，防止节点在动画中漂出可视区
+      fit()
+    }
   }
   frame = requestAnimationFrame(step)
 }
@@ -192,32 +309,42 @@ function resize() {
 function worldToScreen(x, y) {
   const width = (canvas.value?.width || 0) / dpr
   const height = (canvas.value?.height || 0) / dpr
+  const safeScale = Number.isFinite(view.scale) && view.scale > 0 ? view.scale : 1
+  const safeX = Number.isFinite(view.x) ? view.x : 0
+  const safeY = Number.isFinite(view.y) ? view.y : 0
   return [
-    width / 2 + (x + view.x) * view.scale,
-    height / 2 + (y + view.y) * view.scale,
+    width / 2 + (x + safeX) * safeScale,
+    height / 2 + (y + safeY) * safeScale,
   ]
 }
 
 function screenToWorld(x, y) {
   const width = (canvas.value?.width || 0) / dpr
   const height = (canvas.value?.height || 0) / dpr
+  const safeScale = Number.isFinite(view.scale) && view.scale > 0 ? view.scale : 1
+  const safeX = Number.isFinite(view.x) ? view.x : 0
+  const safeY = Number.isFinite(view.y) ? view.y : 0
   return [
-    (x - width / 2) / view.scale - view.x,
-    (y - height / 2) / view.scale - view.y,
+    (x - width / 2) / safeScale - safeX,
+    (y - height / 2) / safeScale - safeY,
   ]
 }
 
 function fit() {
   if (!graph.nodes.length || !host.value) return
-  const xs = graph.nodes.map((node) => node.x)
-  const ys = graph.nodes.map((node) => node.y)
+  // 再次过滤异常坐标，避免 Math.min/max 产生 Infinity/NaN 导致视图消失
+  const xs = graph.nodes.map((node) => node.x).filter(Number.isFinite)
+  const ys = graph.nodes.map((node) => node.y).filter(Number.isFinite)
+  if (!xs.length || !ys.length) return
   const minX = Math.min(...xs)
   const maxX = Math.max(...xs)
   const minY = Math.min(...ys)
   const maxY = Math.max(...ys)
+  const rangeX = Math.max(240, maxX - minX + 180)
+  const rangeY = Math.max(180, maxY - minY + 180)
   view.scale = Math.max(.28, Math.min(1.5, Math.min(
-    host.value.clientWidth / Math.max(240, maxX - minX + 180),
-    host.value.clientHeight / Math.max(180, maxY - minY + 180),
+    host.value.clientWidth / rangeX,
+    host.value.clientHeight / rangeY,
   )))
   view.x = -(minX + maxX) / 2
   view.y = -(minY + maxY) / 2
@@ -271,15 +398,16 @@ function draw() {
     context.globalAlpha = selected && !connected.has(node.id) ? .28 : 1
     context.beginPath()
     context.arc(x, y, radius, 0, Math.PI * 2)
-    context.fillStyle = cluster ? '#7c3aed' : active ? '#0f766e' : '#0d9488'
+    // design.md §1.1：节点填充使用 Academic Ink，聚类用 amber-500 标识"AI 当前关注"
+    context.fillStyle = cluster ? '#C68B2C' : active ? '#14213D' : '#203A5F'
     context.fill()
     if (active || node.id === hoverId) {
-      context.strokeStyle = '#ccfbf1'
+      context.strokeStyle = '#E8EEF4'
       context.lineWidth = 5
       context.stroke()
     }
-    context.fillStyle = '#0f172a'
-    context.font = `${active ? 600 : 500} 12px system-ui, sans-serif`
+    context.fillStyle = '#172033'
+    context.font = `${active ? 600 : 500} 12px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
     context.textAlign = 'center'
     const label = node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label
     context.fillText(label, x, y + radius + 16)
@@ -294,8 +422,10 @@ function eventPoint(event) {
 
 function pick(x, y) {
   const [worldX, worldY] = screenToWorld(x, y)
+  // 聚类节点半径更大，命中阈值随缩放动态调整，提升点击容错
+  const threshold = Math.max(28 / view.scale, 14)
   return graph.nodes.find(
-    (node) => Math.hypot(node.x - worldX, node.y - worldY) < 22 / view.scale,
+    (node) => Math.hypot(node.x - worldX, node.y - worldY) < threshold,
   ) || null
 }
 
@@ -334,7 +464,7 @@ function onPointerUp() {
     if (!pointer.moved) {
       if (pointer.node.source?._clusterType) {
         expandedCluster = pointer.node.source._clusterType
-        expandedClusterLabel.value = expandedCluster
+        expandedClusterLabel.value = typeLabel(expandedCluster)
         rebuild()
       } else {
         emit('select', pointer.node.source)
@@ -373,12 +503,12 @@ onBeforeUnmount(() => {
 })
 watch(() => [props.nodes, props.relations], rebuild, { deep: true })
 watch(() => props.selectedId, (selectedId) => {
-  if (props.nodes.length > 200 && selectedId) {
+  if (props.nodes.length > CLUSTER_THRESHOLD && selectedId) {
     const selected = props.nodes.find((node) => String(node.id) === String(selectedId))
-    const type = selected ? String(selected.type || selected.kind || 'concept') : ''
+    const type = selected ? normalizeType(selected) : ''
     if (type && type !== expandedCluster) {
       expandedCluster = type
-      expandedClusterLabel.value = type
+      expandedClusterLabel.value = typeLabel(type)
       rebuild()
       return
     }
@@ -403,26 +533,87 @@ watch(() => props.selectedId, (selectedId) => {
       <button
         v-if="clusterMode && expandedClusterLabel"
         type="button"
+        class="sfx-canvas-btn"
         @click="collapseClusters"
       >
-        收起聚类
+        收起「{{ expandedClusterLabel }}」聚类
       </button>
-      <button type="button" @click="fit">重置视图</button>
+      <button type="button" class="sfx-canvas-btn" @click="fit">重置视图</button>
+    </div>
+    <div v-if="clusterMode" class="cluster-hint" aria-live="polite">
+      节点超过 {{ CLUSTER_THRESHOLD }} 个，已按类型聚类。点击聚类圆点可展开该类型；展开后若仍超过 {{ SUBCLUSTER_LIMIT }} 个，将自动二次分桶。
     </div>
     <div class="legend">
       <span v-for="(color, type) in relationColors" :key="type">
-        <i :style="{ background: color }" />{{ type }}
+        <i :style="{ background: color }" />{{ RELATION_LABELS[type] || type }}
       </span>
     </div>
   </div>
 </template>
 
 <style scoped>
-.canvas-host { position: relative; width: 100%; min-height: 430px; overflow: hidden; border: 1px solid #dbe3ea; border-radius: 16px; background: radial-gradient(circle at 50% 45%, #fff 0, #f8fafc 68%, #eef6f5 100%); touch-action: none; }
+/* design.md §1.3 surface-canvas 画布背景；§4.2 卡片只使用边框不使用阴影 */
+.canvas-host {
+  position: relative;
+  width: 100%;
+  min-height: 430px;
+  overflow: hidden;
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-lg, 14px);
+  background: var(--surface-canvas, #FBFAF7);
+  touch-action: none;
+}
 .canvas-host canvas { display: block; cursor: grab; }
-.actions { position: absolute; top: 12px; right: 12px; display: flex; gap: 7px; }
-.actions button { border: 1px solid #cbd5e1; border-radius: 9px; padding: 7px 11px; background: rgb(255 255 255 / 92%); color: #334155; cursor: pointer; }
-.legend { position: absolute; left: 12px; bottom: 12px; display: flex; max-width: calc(100% - 24px); flex-wrap: wrap; gap: 8px 12px; border: 1px solid #e2e8f0; border-radius: 10px; padding: 7px 10px; background: rgb(255 255 255 / 90%); color: #64748b; font-size: 10px; pointer-events: none; }
+.actions {
+  position: absolute;
+  top: var(--space-3, 12px);
+  right: var(--space-3, 12px);
+  display: flex;
+  gap: var(--space-2, 8px);
+}
+/* design.md §9.1：所有按钮应用 SfxButton；canvas 内浮动按钮为图标按钮例外，
+   但仍需使用令牌色与圆角 */
+.sfx-canvas-btn {
+  border: 1px solid var(--border-strong, #C9CFD8);
+  border-radius: var(--radius-md, 10px);
+  padding: 6px var(--space-3, 12px);
+  background: rgba(255, 255, 255, 0.92);
+  color: var(--ink-700, #203A5F);
+  font-size: var(--ui-sm-size, 13px);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--duration-fast, 120ms) var(--ease-out, cubic-bezier(0.16, 1, 0.3, 1));
+}
+.sfx-canvas-btn:hover { background: var(--surface-cool, #F7F8FA); }
+.cluster-hint {
+  position: absolute;
+  top: var(--space-3, 12px);
+  left: var(--space-3, 12px);
+  max-width: 320px;
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  background: var(--amber-100, #FBF3DE);
+  border: 1px solid var(--amber-300, #E5B95C);
+  border-radius: var(--radius-sm, 6px);
+  color: var(--amber-700, #9B6618);
+  font-size: var(--caption-size, 12px);
+  line-height: 1.5;
+}
+.legend {
+  position: absolute;
+  left: var(--space-3, 12px);
+  bottom: var(--space-3, 12px);
+  display: flex;
+  max-width: calc(100% - 24px);
+  flex-wrap: wrap;
+  gap: var(--space-2, 8px) var(--space-3, 12px);
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-sm, 6px);
+  padding: var(--space-2, 8px) var(--space-3, 12px);
+  background: rgba(255, 255, 255, 0.9);
+  color: var(--text-muted, #7B8494);
+  font-size: 10px;
+  pointer-events: none;
+}
 .legend span { display: inline-flex; align-items: center; gap: 4px; }
 .legend i { width: 8px; height: 8px; border-radius: 999px; }
 </style>

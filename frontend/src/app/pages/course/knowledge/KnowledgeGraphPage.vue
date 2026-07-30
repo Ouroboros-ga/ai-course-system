@@ -20,16 +20,18 @@
  */
 import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Eye, Lightbulb, LoaderCircle, TriangleAlert } from 'lucide-vue-next'
+import { Eye, Lightbulb, LoaderCircle, TriangleAlert, ShieldCheck } from 'lucide-vue-next'
 import StudentGraphPanel from '@/features/student-graph/StudentGraphPanel.vue'
 import CognitiveDashboard from '@/components/cognitive/CognitiveDashboard.vue'
 import RecommendationCard from '@/features/student-learning/components/RecommendationCard.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import { useCounterStore } from '@/stores/counter.js'
 import {
   consumeRecommendation,
   getRecommendations,
 } from '@/api/cognitive.js'
+import { getKnowledgeBundleStatus } from '@/api/graph.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -121,13 +123,67 @@ function handleReturnAnchor() {
   router.push(`/app/course/${courseId.value}/overview`)
 }
 
+// 教师预览模式：加载 refinement 质量报告（解决"refinement 质量报告尚未在教师页面完整展示"遗留）
+const refinementStatus = ref('idle') // idle | loading | ready | error
+const refinementReport = ref(null)
+const refinementError = ref('')
+
+async function loadRefinementReport() {
+  if (!isPreview.value) {
+    refinementStatus.value = 'idle'
+    refinementReport.value = null
+    return
+  }
+  refinementStatus.value = 'loading'
+  refinementError.value = ''
+  try {
+    const data = await getKnowledgeBundleStatus(courseId.value)
+    refinementReport.value = data
+    refinementStatus.value = 'ready'
+  } catch (err) {
+    refinementStatus.value = 'error'
+    refinementError.value = err?.message || 'refinement 质量报告读取失败'
+  }
+}
+
+// 从 refinement 报告中提取展示字段（兼容后端不同字段命名）
+const refinementRows = computed(() => {
+  const r = refinementReport.value
+  if (!r || typeof r !== 'object') return []
+  const rows = []
+  const push = (label, value, hint = '') => {
+    if (value == null || value === '') return
+    rows.push({ label, value: String(value), hint })
+  }
+  push('Bundle 状态', r.status || r.bundle_status, r.phase ? `阶段：${r.phase}` : '')
+  push('Bundle 版本', r.version || r.bundle_version)
+  push('节点总数', r.node_count ?? r.total_nodes)
+  push('关系总数', r.relation_count ?? r.total_relations)
+  push('已确认节点', r.confirmed_nodes ?? r.confirmed_node_count)
+  push('待评审节点', r.pending_nodes ?? r.pending_node_count)
+  push('已发布快照', r.published_snapshot_id || r.active_snapshot_id || '—')
+  push('生成时间', r.generated_at || r.created_at)
+  push('最后评审', r.last_review_at || r.reviewed_at)
+  if (r.quality_metrics && typeof r.quality_metrics === 'object') {
+    for (const [key, val] of Object.entries(r.quality_metrics)) {
+      push(`质量·${key}`, val)
+    }
+  }
+  if (r.issues && Array.isArray(r.issues) && r.issues.length) {
+    rows.push({ label: '待处理问题', value: r.issues.length, hint: r.issues.join('；') })
+  }
+  return rows
+})
+
 watch(
   () => [courseId.value, studentId.value],
   () => loadRecommendations(),
 )
+watch(courseId, () => loadRefinementReport())
 
 onMounted(() => {
   loadRecommendations()
+  loadRefinementReport()
 })
 </script>
 
@@ -157,7 +213,7 @@ onMounted(() => {
         <template v-if="isPreview">
           <!-- 教师预览模式：不加载学生私有认知与推荐，避免 422 与越权消费 -->
           <section class="sfx-knowledge__preview-notice" role="note">
-            <Eye :size="20" />
+            <Eye :size="20" aria-hidden="true" />
             <h2 class="sfx-knowledge__preview-title">教师预览模式</h2>
             <p class="sfx-knowledge__preview-text">
               当前为{{ previewRoleLabel }}预览视角，仅查看已发布图谱快照。
@@ -166,6 +222,54 @@ onMounted(() => {
             <p class="sfx-knowledge__preview-hint">
               如需查看某位学生的认知状态，请走「学生认知查看」流程（后续切片上线）。
             </p>
+          </section>
+
+          <!-- refinement 质量报告：完整展示 Bundle 状态、节点/关系统计、质量指标 -->
+          <section class="sfx-knowledge__refinement" aria-label="Refinement 质量报告">
+            <header class="sfx-knowledge__refinement-head">
+              <ShieldCheck :size="16" aria-hidden="true" />
+              <h2>Refinement 质量报告</h2>
+              <SfxButton variant="tertiary" size="sm" :loading="refinementStatus === 'loading'" @click="loadRefinementReport">
+                刷新
+              </SfxButton>
+            </header>
+
+            <div
+              v-if="refinementStatus === 'loading'"
+              class="sfx-knowledge__refinement-state"
+              role="status"
+            >
+              <LoaderCircle :size="18" class="sfx-knowledge__spinner" />
+              <p>正在读取质量报告…</p>
+            </div>
+
+            <div
+              v-else-if="refinementStatus === 'error'"
+              class="sfx-knowledge__refinement-state sfx-knowledge__refinement-state--error"
+              role="alert"
+            >
+              <TriangleAlert :size="18" />
+              <p>{{ refinementError }}</p>
+              <SfxButton variant="secondary" size="sm" @click="loadRefinementReport">重试</SfxButton>
+            </div>
+
+            <div
+              v-else-if="refinementStatus === 'ready' && refinementRows.length"
+              class="sfx-knowledge__refinement-table"
+            >
+              <dl class="sfx-knowledge__refinement-dl">
+                <template v-for="row in refinementRows" :key="row.label">
+                  <dt :title="row.hint">{{ row.label }}</dt>
+                  <dd :title="row.hint">{{ row.value }}</dd>
+                </template>
+              </dl>
+            </div>
+
+            <div v-else class="sfx-knowledge__refinement-state" role="status">
+              <ShieldCheck :size="22" :stroke-width="1.6" />
+              <strong>暂无可展示的质量报告</strong>
+              <p>该课程尚未生成 refinement 报告，或后端尚未返回可解析字段。</p>
+            </div>
           </section>
         </template>
 
@@ -177,7 +281,7 @@ onMounted(() => {
 
           <section class="sfx-knowledge__recs" aria-label="学习推荐">
             <header class="sfx-knowledge__recs-head">
-              <Lightbulb :size="16" />
+              <Lightbulb :size="16" aria-hidden="true" />
               <h2 class="sfx-knowledge__recs-title">学习推荐</h2>
             </header>
 
@@ -197,13 +301,7 @@ onMounted(() => {
             >
               <TriangleAlert :size="18" />
               <p>{{ recommendationsError || '推荐暂时不可读' }}</p>
-              <button
-                type="button"
-                class="sfx-knowledge__retry"
-                @click="loadRecommendations"
-              >
-                重试
-              </button>
+              <SfxButton variant="secondary" size="sm" @click="loadRecommendations">重试</SfxButton>
             </div>
 
             <div
@@ -237,135 +335,181 @@ onMounted(() => {
 </template>
 
 <style scoped>
+/* design.md §5.1 三层滚动模型：页面根容器 flex+min-height:0；L2 由 .sfx-shell-main 滚动 */
 .sfx-knowledge {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 16px;
+  gap: var(--space-4, 16px);
+  padding: var(--space-4, 16px);
   min-height: 0;
   flex: 1;
 }
 
+/* design.md §5.2：grid 行高用 minmax(0,1fr) 限制，避免内容撑爆 */
 .sfx-knowledge__body {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(320px, 1fr);
-  gap: 16px;
-  align-items: start;
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--space-4, 16px);
+  flex: 1;
+  min-height: 0;
 }
 
 @media (max-width: 1100px) {
   .sfx-knowledge__body {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 }
 
 .sfx-knowledge__main {
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .sfx-knowledge__aside {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-4, 16px);
   min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
 }
 
-/* 教师预览占位提示 */
+/* 教师预览占位提示 — design.md §1.3 surface-cool + §1.5 border-default */
 .sfx-knowledge__preview-notice {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  padding: 20px 16px;
-  background: var(--surface-cool, #f5f7fa);
-  border: 1px dashed var(--border-default, #d1d5db);
-  border-radius: 10px;
-  color: var(--text-secondary, #6b7280);
+  gap: var(--space-2, 8px);
+  padding: var(--space-5, 20px) var(--space-4, 16px);
+  background: var(--surface-cool, #F7F8FA);
+  border: 1px dashed var(--border-default, #DDE2E8);
+  border-radius: var(--radius-md, 10px);
+  color: var(--text-secondary, #4E5969);
 }
 
 .sfx-knowledge__preview-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--ui-md-size, 14px);
   font-weight: 600;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-primary, #172033);
 }
 
 .sfx-knowledge__preview-text {
   margin: 0;
-  font-size: 0.85rem;
+  font-size: var(--ui-sm-size, 13px);
   line-height: 1.5;
 }
 
 .sfx-knowledge__preview-hint {
   margin: 0;
-  font-size: 0.78rem;
-  color: var(--text-muted, #9ca3af);
+  font-size: var(--caption-size, 12px);
+  color: var(--text-muted, #7B8494);
+}
+
+/* Refinement 质量报告区 — design.md §4.5 主工作面板 */
+.sfx-knowledge__refinement {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+  padding: var(--space-4, 16px);
+  background: var(--surface-panel, #FFFFFF);
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-lg, 14px);
+}
+
+.sfx-knowledge__refinement-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  color: var(--ink-700, #203A5F);
+}
+
+.sfx-knowledge__refinement-head h2 {
+  margin: 0;
+  flex: 1;
+  font-size: var(--ui-md-size, 14px);
+  font-weight: 600;
+  color: var(--text-primary, #172033);
+}
+
+.sfx-knowledge__refinement-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2, 8px);
+  padding: var(--space-6, 24px) var(--space-3, 12px);
+  text-align: center;
+  color: var(--text-muted, #7B8494);
+}
+.sfx-knowledge__refinement-state--error { color: var(--red-700, #8B3A3A); }
+
+/* design.md §4.8 描述列表：140px / 1fr 两列 */
+.sfx-knowledge__refinement-dl {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  row-gap: var(--space-2, 8px);
+  column-gap: var(--space-3, 12px);
+  margin: 0;
+  font-size: var(--ui-sm-size, 13px);
+}
+.sfx-knowledge__refinement-dl dt {
+  color: var(--text-muted, #7B8494);
+  font-weight: 450;
+}
+.sfx-knowledge__refinement-dl dd {
+  margin: 0;
+  color: var(--text-primary, #172033);
+  font-weight: 500;
+  word-break: break-all;
 }
 
 /* 推荐卡区 */
 .sfx-knowledge__recs {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--surface-canvas, #fafbfc);
-  border: 1px solid var(--border-default, #e5e7eb);
-  border-radius: 10px;
+  gap: var(--space-2, 8px);
+  padding: var(--space-3, 12px);
+  background: var(--surface-canvas, #FBFAF7);
+  border: 1px solid var(--border-default, #DDE2E8);
+  border-radius: var(--radius-md, 10px);
 }
 
 .sfx-knowledge__recs-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2, 8px);
+  color: var(--ink-700, #203A5F);
 }
 
 .sfx-knowledge__recs-title {
   margin: 0;
-  font-size: 0.95rem;
+  font-size: var(--ui-md-size, 14px);
   font-weight: 600;
-  color: var(--text-primary, #1f2937);
+  color: var(--text-primary, #172033);
 }
 
 .sfx-knowledge__recs-state {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 24px 12px;
+  gap: var(--space-2, 8px);
+  padding: var(--space-6, 24px) var(--space-3, 12px);
   text-align: center;
-  color: var(--text-muted, #6b7280);
+  color: var(--text-muted, #7B8494);
 }
+.sfx-knowledge__recs-state--error { color: var(--red-700, #8B3A3A); }
+.sfx-knowledge__recs-state--empty { color: var(--text-muted, #7B8494); }
 
-.sfx-knowledge__recs-state--error {
-  color: var(--red-700, #c62828);
-}
-
-.sfx-knowledge__recs-state--empty {
-  color: var(--text-muted, #9ca3af);
-}
-
+/* design.md §1.1 ink-500 替换原 accent-primary #4f8cf7 */
 .sfx-knowledge__spinner {
-  color: var(--accent-primary, #4f8cf7);
-  animation: sfx-knowledge-spin 0.8s linear infinite;
+  color: var(--ink-500, #355C7D);
+  animation: sfx-knowledge-spin 0.9s linear infinite;
 }
-
-@keyframes sfx-knowledge-spin {
-  to { transform: rotate(360deg); }
-}
-
-.sfx-knowledge__retry {
-  padding: 6px 16px;
-  border: 1px solid var(--border-default, #ddd);
-  border-radius: 6px;
-  background: none;
-  cursor: pointer;
-  font-size: 0.85rem;
-  color: var(--ink-700, #1f2937);
-}
-
-.sfx-knowledge__retry:hover {
-  background: var(--surface-cool, #f5f5f5);
-}
+@keyframes sfx-knowledge-spin { to { transform: rotate(360deg); } }
 
 .sfx-knowledge__recs-list {
   list-style: none;
@@ -373,10 +517,7 @@ onMounted(() => {
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2, 8px);
 }
-
-.sfx-knowledge__recs-item {
-  min-width: 0;
-}
+.sfx-knowledge__recs-item { min-width: 0; }
 </style>
