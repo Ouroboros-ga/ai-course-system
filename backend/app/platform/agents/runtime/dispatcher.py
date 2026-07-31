@@ -185,13 +185,39 @@ class BaseAgentRuntime:
 
         # Merge result with meta.
         result = dict(result)
+        meta = result.get("meta")
+        if isinstance(meta, Mapping):
+            # Initial state includes empty top-level runtime lists. LangGraph
+            # preserves those keys, so setdefault() would hide errors emitted
+            # only inside the canonical meta block.
+            for field in ("errors", "warnings", "degraded_services"):
+                combined: list[Any] = []
+                for item in [
+                    *list(result.get(field, [])),
+                    *list(meta.get(field, [])),
+                ]:
+                    if item not in combined:
+                        combined.append(item)
+                result[field] = combined
+            meta_status = meta.get("status")
+            if meta_status and meta_status != "ok":
+                result["status"] = meta_status
+            else:
+                result.setdefault("status", meta_status or "ok")
         result.setdefault("trace_id", trace_id)
         result.setdefault("status", "ok")
 
-        # Emit run.completed (best-effort).
+        # Emit the terminal event that matches the state. Workflow nodes use
+        # meta.errors for fail-closed failures, so those must not be reported
+        # as successful run.completed events.
+        event_type = (
+            RunEventType.RUN_FAILED
+            if result.get("errors")
+            else RunEventType.RUN_COMPLETED
+        )
         await self._safe_emit(
             run_id=run_id, trace_id=trace_id,
-            event_type=RunEventType.RUN_COMPLETED,
+            event_type=event_type,
             payload={"status": result.get("status", "ok")},
         )
         return result

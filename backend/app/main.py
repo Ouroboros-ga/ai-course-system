@@ -206,7 +206,8 @@ async def recover_durable_task_queues() -> None:
 # disabled -> no injection -> the endpoint stays 503. KG-MEST reports and
 # course sidecars are optional enrichments; only runtime/LLM configuration
 # controls injection. Never blocks startup; see bootstrap.py.
-from app.platform.agents.bootstrap import bootstrap_teaching_agent
+from app.platform.agents.bootstrap import bootstrap_prep_agent, bootstrap_teaching_agent
+bootstrap_prep_agent(app)
 bootstrap_teaching_agent(app)
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）

@@ -1,9 +1,10 @@
 <script setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, toRef, watch } from 'vue'
 import { BookOpenText, Check, ChevronDown, CircleAlert, SendHorizontal, Sparkles, X } from 'lucide-vue-next'
 import { decideBuildProposal, getPrepAgentNodeEvidence, listBuildProposals, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const props = defineProps({
   courseId: { type: Number, required: true },
@@ -36,8 +37,9 @@ const contextCollapsed = ref(false)
 function toggleContext() { contextCollapsed.value = !contextCollapsed.value }
 
 // 聊天消息列表
-const messages = ref([])
+const messages = workbench ? toRef(workbench, 'agentMessages') : ref([])
 const chatScroll = ref(null)
+const batchRunning = computed(() => Boolean(workbench?.batchRun))
 
 function scrollToBottom() {
   nextTick(() => {
@@ -45,20 +47,11 @@ function scrollToBottom() {
   })
 }
 
-function apiErrorMessage(caught, fallback) {
-  const payload = caught?.response?.data
-  const detail = payload?.detail
-  return (
-    (typeof detail === 'string' ? detail : detail?.message)
-    || payload?.message
-    || caught?.message
-    || fallback
-  )
-}
-
 async function loadProposals() {
   loading.value = true
-  try { proposals.value = (await listBuildProposals(props.courseId))?.items ?? [] }
+  try {
+    proposals.value = (await listBuildProposals(props.courseId, 'pending'))?.items ?? []
+  }
   catch (caught) { error.value = apiErrorMessage(caught, '无法读取智能体提案') }
   finally { loading.value = false }
 }
@@ -68,9 +61,12 @@ async function loadEvidence() {
   try { evidence.value = (await getPrepAgentNodeEvidence(props.courseId, props.selectedNode.outline_node_id))?.items ?? [] }
   catch (caught) { error.value = apiErrorMessage(caught, '无法读取此节点的原文证据') }
 }
-async function send() {
+async function send(targetNodeId = undefined) {
+  if (targetNodeId !== undefined && targetNodeId !== null && typeof targetNodeId !== 'string') {
+    targetNodeId = undefined
+  }
   const value = instruction.value.trim()
-  if (!value || sending.value) return
+  if (!value || sending.value || batchRunning.value) return
   sending.value = true; error.value = ''
   // 用户消息（偏右）
   messages.value.push({ role: 'user', text: value })
@@ -87,7 +83,9 @@ async function send() {
     const data = await runPrepAgentCommand(
       props.courseId,
       value,
-      props.selectedNode?.outline_node_id ?? null,
+      targetNodeId === undefined
+        ? (props.selectedNode?.outline_node_id ?? null)
+        : targetNodeId,
     )
     // 停止思考动画
     thinking.value = false
@@ -124,16 +122,22 @@ async function decide(proposal, accepted) {
   finally { deciding.value = '' }
 }
 function submitOnEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }
-onMounted(loadProposals)
-onBeforeUnmount(() => { if (thinkingTimer) clearInterval(thinkingTimer) })
+onMounted(() => {
+  loadProposals()
+})
+onBeforeUnmount(() => {
+  if (thinkingTimer) clearInterval(thinkingTimer)
+})
+watch(messages, scrollToBottom, { deep: true })
 watch(() => props.selectedNode?.outline_node_id, loadEvidence, { immediate: true })
-// 子页面通过 workbench.pendingInstruction 触发自动发送
+// 子页面通过 workbench.pendingInstruction 触发自动发送。
 watch(() => workbench?.pendingInstruction, (text) => {
   if (text) {
     instruction.value = text
+    const targetNodeId = workbench.pendingNodeId
     workbench.pendingInstruction = ''
     workbench.pendingNodeId = null
-    nextTick(() => send())
+    nextTick(() => send(targetNodeId))
   }
 })
 </script>
@@ -201,11 +205,12 @@ watch(() => workbench?.pendingInstruction, (text) => {
         <!-- Agent 回复（偏左） -->
         <div v-else class="chat-msg chat-msg--agent">
           <div class="chat-avatar"><Sparkles :size="14" /></div>
-          <div class="chat-bubble chat-bubble--agent">
-            <p v-if="msg.error" class="chat-error"><CircleAlert :size="14" /> {{ msg.reason }}</p>
+          <div class="chat-bubble chat-bubble--agent" :class="{ 'chat-bubble--running': msg.running }">
+            <p v-if="msg.running" class="chat-running"><span class="running-dot"></span>{{ msg.reason }}</p>
+            <p v-else-if="msg.error" class="chat-error"><CircleAlert :size="14" /> {{ msg.reason }}</p>
             <template v-else>
               <p class="chat-reason">{{ msg.reason }}</p>
-              <p v-if="msg.planner" class="chat-meta">生成方式：{{ msg.planner === 'llm' ? '在线模型' : '本地规则' }}</p>
+              <p v-if="msg.planner" class="chat-meta">生成方式：{{ msg.planner.startsWith('llm') ? '在线模型' : '本地规则' }}</p>
               <p v-if="msg.changed?.length" class="chat-meta">修改目标：{{ msg.changed.join('、') }}</p>
               <p v-if="msg.excluded?.length" class="chat-excluded">已排除锁定项：{{ msg.excluded.join('、') }}</p>
             </template>
@@ -259,12 +264,12 @@ watch(() => workbench?.pendingInstruction, (text) => {
         rows="2"
         maxlength="8000"
         placeholder="向助教智能体说明你想调整什么…"
-        :disabled="sending"
+        :disabled="sending || batchRunning"
         @keydown="submitOnEnter"
       />
       <div class="composer-bar">
-        <span class="composer-hint">Enter 发送，Shift + Enter 换行</span>
-        <SfxButton type="submit" :disabled="!instruction.trim()" :loading="sending">
+        <span class="composer-hint">{{ batchRunning ? '批量优化进行中' : 'Enter 发送，Shift + Enter 换行' }}</span>
+        <SfxButton type="submit" :disabled="!instruction.trim() || batchRunning" :loading="sending">
           <SendHorizontal :size="16" /> 发送
         </SfxButton>
       </div>
@@ -396,6 +401,9 @@ watch(() => workbench?.pendingInstruction, (text) => {
   display: flex; align-items: flex-start; gap: var(--space-1);
   color: var(--red-700); font-size: var(--caption-size);
 }
+.chat-running { display:flex; align-items:center; gap:var(--space-2); color:var(--ink-700); }
+.chat-bubble--running { background:var(--ink-100); border-color:var(--ink-300); }
+.running-dot { width:8px; height:8px; border-radius:var(--radius-full); background:var(--ink-500); animation:thinking-pulse 1.5s ease-in-out infinite; flex-shrink:0; }
 
 /* ── 思考气泡 ── */
 .thinking-avatar {

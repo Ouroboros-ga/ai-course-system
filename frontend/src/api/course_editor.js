@@ -14,7 +14,10 @@ export const getTeachingScripts = (courseId) => request.get(`${base(courseId)}/s
 export const updateTeachingScript = (courseId, scriptNodeId, payload) => request.patch(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}`, payload)
 export const lockTeachingScript = (courseId, scriptNodeId) => request.post(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}/lock`)
 
-export const listBuildProposals = (courseId) => request.get(`${base(courseId)}/proposals`)
+export const listBuildProposals = (courseId, status = null) => request.get(
+  `${base(courseId)}/proposals`,
+  status ? { params: { status } } : undefined,
+)
 export const createBuildProposal = (courseId, payload) => request.post(`${base(courseId)}/proposals`, payload)
 export const decideBuildProposal = (courseId, proposalId, accepted) => request.post(`${base(courseId)}/proposals/${encodeURIComponent(proposalId)}/decide`, { accepted })
 
@@ -28,10 +31,16 @@ export const runPrepAgentCommand = (courseId, instruction, outlineNodeId = null)
   },
   { skipErrorToast: true },
 )
+export const runPrepAgentBatchAction = (courseId, action) => request.post(
+  `${base(courseId)}/prep-agent/batch-actions`,
+  { action },
+  { timeout: 300000, skipErrorToast: true },
+)
 export const getPrepAgentNodeEvidence = (courseId, nodeId) => request.get(`${base(courseId)}/prep-agent/evidence/${encodeURIComponent(nodeId)}`)
 
 export const getPptMappingState = (courseId) => request.get(`${base(courseId)}/ppt-mapping`)
 export const updatePptMapping = (courseId, outlineNodeId, payload) => request.patch(`${base(courseId)}/ppt-mapping/${encodeURIComponent(outlineNodeId)}`, payload)
+export const optimizePptMapping = (courseId) => request.post(`${base(courseId)}/ppt-mapping/optimize`, {}, { timeout: 300000, skipErrorToast: true })
 export const generateCoursePpt = (courseId, payload = {}) => request.post(`${base(courseId)}/ppt/generate`, payload, { timeout: 300000 })
 export const uploadExistingPpt = (courseId, file, options = {}) => {
   const formData = new FormData()

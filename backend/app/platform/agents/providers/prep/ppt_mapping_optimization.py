@@ -71,8 +71,7 @@ class PptMappingOptimizationProvider:
         suggestions = [
             PptMappingSuggestion(
                 outline_node_id=s.outline_node_id,
-                page_start=s.page_start,
-                page_end=s.page_end,
+                page_refs=list(s.page_refs),
                 confidence=s.confidence,
                 reason=s.reason,
             )

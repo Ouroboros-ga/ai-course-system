@@ -208,6 +208,14 @@ class AgentGateway:
 
         status = result.get("status", "ok")
         errors = result.get("errors", [])
+        last_error = errors[-1] if errors else None
+        error_code = (
+            str(last_error.get("code") or ErrorCode.RUNTIME_INTERNAL_ERROR.value)
+            if isinstance(last_error, Mapping)
+            else str(last_error)
+            if last_error is not None
+            else None
+        )
 
         return AgentStartResult(
             run_id=run_id,
@@ -215,8 +223,12 @@ class AgentGateway:
             status="completed" if not errors else "failed",
             trace_id=trace_id,
             result=result,
-            error_code=errors[-1] if errors else None,
-            error_message="",
+            error_code=error_code,
+            error_message=(
+                str(last_error.get("message") or "")
+                if isinstance(last_error, Mapping)
+                else ""
+            ),
         )
 
     async def get_run_status(self, *, run_id: str) -> Mapping[str, Any] | None:

@@ -13,10 +13,12 @@ const agentOpen = ref(false)
 const stageActions = ref(null)
 const pendingInstruction = ref('')
 const pendingNodeId = ref(null)
+const batchRun = ref(null)
+const agentMessages = ref([])
 // 智能体首次智慧备课阶段：parsing_materials / assembling_corpus / submitting_build / building
 // 这些阶段下，structure/scripts/mapping 子页面需要提示"智能体首次智慧备课中"
 const draftBuildPhase = ref('')
-const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId, draftBuildPhase })
+const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId, batchRun, agentMessages, draftBuildPhase })
 
 provide('courseBuildWorkbench', workbench)
 
@@ -28,6 +30,10 @@ function requestDelete() {
   if (!confirmDelete.value) { confirmDelete.value = true; return }
   confirmDelete.value = false
   stageActions.value.onDelete?.()
+}
+function requestOrganize() {
+  if (batchRun.value) return
+  stageActions.value?.onOrganize?.()
 }
 
 // 轮询首次智慧备课状态：仅在与备课进度相关的子页面共享该状态
@@ -49,7 +55,14 @@ function startDraftBuildPolling() {
 onMounted(startDraftBuildPolling)
 onBeforeUnmount(() => { window.clearInterval(draftBuildPollTimer) })
 // 切换课程时重置并重新轮询
-watch(courseId, () => { startDraftBuildPolling() })
+watch(courseId, () => {
+  selectedNode.value = null
+  pendingInstruction.value = ''
+  pendingNodeId.value = null
+  batchRun.value = null
+  agentMessages.value = []
+  startDraftBuildPolling()
+})
 
 const steps = [
   { key: 'materials', label: '课程资料', description: '上传并解析教学材料', icon: FileText },
@@ -67,7 +80,7 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
   <div class="build-workspace">
     <div class="mobile-workbench-tabs" role="tablist" aria-label="课程建设面板">
       <button type="button" :class="{ active: !agentOpen }" @click="agentOpen = false">建设步骤</button>
-      <button type="button" :class="{ active: agentOpen }" @click="agentOpen = true">备课 Agent</button>
+      <button type="button" :class="{ active: agentOpen }" @click="agentOpen = true">助教智能体</button>
     </div>
 
     <div class="build-grid" :class="{ 'agent-is-open': agentOpen }">
@@ -96,7 +109,7 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
           </div>
           <div class="stage-context-actions">
             <template v-if="stageActions">
-              <SfxButton v-if="stageActions.canOrganize !== undefined" variant="secondary" size="sm" :disabled="!stageActions.canOrganize" :loading="stageActions.organizing" @click="stageActions.onOrganize">
+              <SfxButton v-if="stageActions.canOrganize !== undefined" variant="secondary" size="sm" :disabled="Boolean(batchRun)" :loading="stageActions.organizing || Boolean(batchRun)" @click="requestOrganize">
                 <Wand2 :size="16" /> {{ stageActions.organizeLabel || '智能体一键整理' }}
               </SfxButton>
               <SfxButton v-if="stageActions.canAdd !== undefined" size="sm" :disabled="!stageActions.canAdd" @click="stageActions.onAdd">
@@ -109,7 +122,7 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
                 <RefreshCw :size="16" /> {{ stageActions.refreshLabel || '刷新状态' }}
               </SfxButton>
             </template>
-            <SfxButton class="agent-trigger" variant="secondary" size="sm" @click="agentOpen = true"><Sparkles :size="17" /> 打开助教智能体</SfxButton>
+            <SfxButton class="agent-trigger" variant="secondary" size="sm" :disabled="Boolean(batchRun)" @click="agentOpen = true"><Sparkles :size="17" /> 打开助教智能体</SfxButton>
           </div>
         </header>
         <div class="stage-body">

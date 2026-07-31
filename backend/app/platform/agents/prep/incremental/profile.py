@@ -41,14 +41,17 @@ def build_incremental_profile() -> AgentProfile:
                 "course_id": ctx.course_id or "",
                 "instruction": ctx.user_message or "",
                 "outline_node_id": ctx.extras.get("outline_node_id"),
+                "action": ctx.extras.get("action"),
             },
         }
 
     return AgentProfile(
         agent_type=AgentType.PREP,
         build_initial_state=build_initial_state,
-        default_timeout_seconds=120.0,
-        max_concurrency=10,
+        default_timeout_seconds=240.0,
+        # Course-level batch edits hold a per-course endpoint lock; this
+        # profile limit protects the shared LLM provider across courses.
+        max_concurrency=3,
         execution_mode=ExecutionMode.INLINE,
         description=(
             "Prep Agent / Incremental pipeline: per-draft proposal planning "

@@ -379,6 +379,8 @@ service.interceptors.response.use(
     if (!error.config?.skipErrorToast) {
       showToast(message, 'error')
     }
+    // Callers that render their own status must receive the server detail too.
+    error.message = message
     return Promise.reject(error)
   }
 )

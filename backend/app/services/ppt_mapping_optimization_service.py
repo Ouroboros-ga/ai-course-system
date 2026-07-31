@@ -53,13 +53,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class PptMappingSuggestion:
-    """One LLM-produced mapping suggestion."""
+    """One LLM-produced mapping suggestion.
+
+    Uses ``page_refs`` (a list of page numbers) instead of a contiguous
+    ``page_start``/``page_end`` range, because PPT content for one
+    knowledge point often spans non-consecutive slides.
+    """
 
     outline_node_id: str
-    page_start: int
-    page_end: int
+    page_refs: list[int]
     confidence: float
     reason: str = ""
+
+    @property
+    def page_start(self) -> int:
+        return min(self.page_refs) if self.page_refs else 1
+
+    @property
+    def page_end(self) -> int:
+        return max(self.page_refs) if self.page_refs else 1
 
 
 @dataclass
@@ -126,11 +138,19 @@ class PptMappingOptimizationService:
             )
             return PptMappingOptimizationSummary(total_mappings=0, updated_count=0)
 
+        # 加载讲稿内容和父级标题，为 LLM 提供语义上下文
+        script_contents = self._load_script_contents(session, nodes=nodes)
+        parent_titles = self._load_parent_titles(session, nodes=nodes)
+
         existing = self._load_existing_mappings(
             session, course_id=course_id, material_version_id=material_version_id,
         )
 
-        suggestions = await self._call_llm(blocks, nodes, existing)
+        suggestions = await self._call_llm(
+            blocks, nodes, existing,
+            script_contents=script_contents,
+            parent_titles=parent_titles,
+        )
         valid_suggestions = self._validate_suggestions(suggestions, nodes)
 
         updated = self._apply_suggestions(
@@ -204,27 +224,120 @@ class PptMappingOptimizationService:
             )
         ).all())
 
+    @staticmethod
+    def _load_script_contents(
+        session: Session,
+        *,
+        nodes: list[CourseOutlineNode],
+    ) -> dict[str, str]:
+        """Load teaching script content for each knowledge-point node.
+
+        Returns a mapping ``outline_node_id -> script_content`` (truncated
+        to 500 chars to keep the LLM payload small). Nodes without a
+        script are absent from the dict.
+        """
+        from app.models.course_outline_model import TeachingScriptNode, TeachingScriptVersion
+        from app.models.course_outline_model import OutlineLifecycleStatus
+
+        outline_version_id = nodes[0].outline_version_id if nodes else None
+        if not outline_version_id:
+            return {}
+        # Find the latest draft script version aligned with the outline
+        script_version = session.exec(
+            select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == nodes[0].course_id,
+                TeachingScriptVersion.outline_version_id == outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(TeachingScriptVersion.version.desc())
+        ).first()
+        if script_version is None:
+            return {}
+        script_rows = list(session.exec(
+            select(TeachingScriptNode).where(
+                TeachingScriptNode.script_version_id == script_version.script_version_id,
+                TeachingScriptNode.outline_node_id.in_(
+                    [n.outline_node_id for n in nodes]
+                ),
+            )
+        ).all())
+        return {
+            row.outline_node_id: (row.content or "")[:500]
+            for row in script_rows
+            if (row.content or "").strip()
+        }
+
+    @staticmethod
+    def _load_parent_titles(
+        session: Session,
+        *,
+        nodes: list[CourseOutlineNode],
+    ) -> dict[str, str]:
+        """Load parent chapter/section titles for context.
+
+        Returns a mapping ``outline_node_id -> "父标题 / 祖父标题"``.
+        Nodes without a parent are absent from the dict.
+        """
+        parent_ids = {n.parent_node_id for n in nodes if n.parent_node_id}
+        if not parent_ids:
+            return {}
+        parent_rows = list(session.exec(
+            select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_node_id.in_(parent_ids)
+            )
+        ).all())
+        parent_map = {r.outline_node_id: r for r in parent_rows}
+        result: dict[str, str] = {}
+        for n in nodes:
+            if not n.parent_node_id:
+                continue
+            parent = parent_map.get(n.parent_node_id)
+            if parent is None:
+                continue
+            # Build hierarchical context: grandparent / parent
+            titles = [parent.title]
+            if parent.parent_node_id and parent.parent_node_id in parent_map:
+                titles.insert(0, parent_map[parent.parent_node_id].title)
+            result[n.outline_node_id] = " / ".join(titles)
+        return result
+
     async def _call_llm(
         self,
         blocks: list[DocumentBlock],
         nodes: list[CourseOutlineNode],
         existing: list[CoursePptMapping],
+        *,
+        script_contents: dict[str, str],
+        parent_titles: dict[str, str],
     ) -> list[PptMappingSuggestion]:
-        """Call the LLM (adapter or raw client) for mapping suggestions."""
+        """Call the LLM (adapter or raw client) for mapping suggestions.
+
+        ``nodes_payload`` carries full semantic context (script content,
+        parent chapter/section title, source_block_refs) so the LLM can
+        judge PPT-to-knowledge-point correspondence beyond title-only
+        matching.
+        """
         blocks_payload = [
             {"page": b.page_or_slide or b.page_number, "text": (b.text or "")[:500]}
             for b in blocks
         ]
         nodes_payload = [
-            {"outline_node_id": n.outline_node_id, "title": n.title}
+            {
+                "outline_node_id": n.outline_node_id,
+                "title": n.title,
+                "parent_title": parent_titles.get(n.outline_node_id, ""),
+                "script_content": script_contents.get(n.outline_node_id, ""),
+                "source_block_refs": n.source_block_refs or [],
+            }
             for n in nodes
         ]
+        # existing_payload includes source_block_refs so the LLM can see
+        # the first-pass mapping provenance as a reference input.
         existing_payload = [
             {
                 "outline_node_id": m.outline_node_id,
-                "page_start": m.page_start,
-                "page_end": m.page_end,
+                "page_refs": m.page_refs or list(range(m.page_start, m.page_end + 1)),
                 "teacher_locked": m.teacher_locked,
+                "source_block_refs": m.source_block_refs or [],
             }
             for m in existing
         ]
@@ -279,7 +392,12 @@ class PptMappingOptimizationService:
 
     @staticmethod
     def _parse_suggestions(raw: list[Any]) -> list[PptMappingSuggestion]:
-        """Parse raw LLM output into ``PptMappingSuggestion`` list."""
+        """Parse raw LLM output into ``PptMappingSuggestion`` list.
+
+        Accepts both the new ``page_refs: [int, ...]`` format and the
+        legacy ``page_start``/``page_end`` range format for backward
+        compatibility with older LLM responses.
+        """
         if not isinstance(raw, list):
             return []
         result: list[PptMappingSuggestion] = []
@@ -287,10 +405,20 @@ class PptMappingOptimizationService:
             if not isinstance(item, dict):
                 continue
             try:
+                page_refs_raw = item.get("page_refs")
+                if page_refs_raw is not None:
+                    # New format: page_refs list
+                    page_refs = [int(p) for p in page_refs_raw if p is not None]
+                else:
+                    # Legacy format: page_start + page_end range
+                    start = int(item.get("page_start", 1))
+                    end = int(item.get("page_end", start))
+                    page_refs = list(range(start, end + 1))
+                if not page_refs:
+                    continue
                 result.append(PptMappingSuggestion(
                     outline_node_id=str(item["outline_node_id"]),
-                    page_start=int(item.get("page_start", 1)),
-                    page_end=int(item.get("page_end", item.get("page_start", 1))),
+                    page_refs=page_refs,
                     confidence=float(item.get("confidence", 0.5)),
                     reason=str(item.get("reason", "")),
                 ))
@@ -318,25 +446,44 @@ class PptMappingOptimizationService:
     ) -> int:
         """Apply validated suggestions to ``CoursePptMapping`` rows.
 
-        Updates non-locked mappings in place. Returns the count of rows
-        actually updated.
+        Updates non-locked mappings in place AND creates new mappings
+        for knowledge-point nodes that have no existing row. This
+        ensures teacher-added nodes (post-structure-adjustment) receive
+        PPT mappings during optimization. Returns the count of rows
+        created or updated.
         """
         existing_by_node = {m.outline_node_id: m for m in existing}
-        updated = 0
+        touched = 0
         for suggestion in suggestions:
             mapping = existing_by_node.get(suggestion.outline_node_id)
             if mapping is None:
+                # Create a new mapping for nodes without an existing row
+                # (e.g. teacher-added knowledge points after structure
+                # adjustment).
+                mapping = CoursePptMapping(
+                    course_id=course_id,
+                    outline_node_id=suggestion.outline_node_id,
+                    material_version_id=material_version_id,
+                    page_refs=list(suggestion.page_refs),
+                    page_start=suggestion.page_start,
+                    page_end=suggestion.page_end,
+                    confidence=suggestion.confidence,
+                    status="draft",
+                    teacher_locked=False,
+                )
+                session.add(mapping)
+                touched += 1
                 continue
             if mapping.teacher_locked:
                 continue
+            mapping.page_refs = list(suggestion.page_refs)
             mapping.page_start = suggestion.page_start
             mapping.page_end = suggestion.page_end
-            mapping.page_refs = list(range(suggestion.page_start, suggestion.page_end + 1))
             mapping.confidence = suggestion.confidence
             mapping.status = "draft"
             session.add(mapping)
-            updated += 1
-        return updated
+            touched += 1
+        return touched
 
     @staticmethod
     def _llm_is_configured() -> bool:

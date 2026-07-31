@@ -37,6 +37,7 @@ class IncrementalPrepRequestState(TypedDict):
     course_id: str
     instruction: str
     outline_node_id: str | None
+    action: str | None
 
 
 class IncrementalPrepContextState(TypedDict, total=False):

@@ -5,6 +5,7 @@ versions; published outline/script data is immutable and exposed read-only.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -12,9 +13,9 @@ import os
 import re
 import tempfile
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -48,6 +49,7 @@ from app.services.document_parse_service import document_parse_service
 from app.services.object_storage import get_object_storage
 from app.services.task_service import TaskCreateRequest, task_service
 from app.platform.tasks.worker import local_task_worker
+from app.platform.tasks.document_parse_queue import document_parse_queue
 from app.models.database import session_factory
 from app.models.resource_model import ResourceItem, ResourceLifecycleStatus, ResourceVisibility
 from app.services.ppt_generation_service import ppt_generation_service
@@ -56,6 +58,31 @@ from app.services.controlled_prep_workflow import controlled_prep_workflow
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+# Demo-process guard for long-running Prep optimization. It makes a second
+# click fail fast instead of overlapping LLM plans and draft mutations. A
+# multi-worker deployment needs a distributed lock before making this claim.
+_prep_batch_locks: dict[int, asyncio.Lock] = {}
+_prep_batch_locks_guard = asyncio.Lock()
+
+
+async def _try_acquire_prep_batch_lock(course_id: int) -> asyncio.Lock | None:
+    async with _prep_batch_locks_guard:
+        lock = _prep_batch_locks.setdefault(course_id, asyncio.Lock())
+        if lock.locked():
+            return None
+        await lock.acquire()
+        return lock
+
+
+def _prep_agent_busy_error() -> HTTPException:
+    return HTTPException(
+        409,
+        detail={
+            "error_code": "PREP_AGENT_BUSY",
+            "message": "助教智能体正在处理该课程的一键优化，请完成后再发起其他智能优化",
+        },
+    )
 
 
 class OutlineNodeCreate(BaseModel):
@@ -136,6 +163,90 @@ class PrepAgentCommandRequest(BaseModel):
 
     instruction: str = Field(min_length=2, max_length=8_000)
     outline_node_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class PrepAgentBatchRequest(BaseModel):
+    """Explicit teacher-triggered batch action that applies without approval."""
+
+    action: Literal["organize_structure", "optimize_scripts"]
+
+
+async def _plan_incremental_prep(
+    *,
+    request: Request,
+    service: Any,
+    session: Session,
+    course_id: int,
+    teacher_id: int,
+    instruction: str,
+    outline_node_id: str | None,
+    action: str | None = None,
+):
+    """Use the registered Prep Runtime/Port, with a compatible service fallback."""
+    platform = getattr(request.app.state, "agent_platform", None)
+    gateway = getattr(platform, "gateway", None) if platform is not None else None
+    if gateway is not None:
+        from app.platform.agents.prep.enums import PrepGraphKind
+        from app.platform.agents.runtime.base import AgentRunContext
+        from app.platform.agents.runtime.profile import AgentType
+        from app.platform.agents.runtime.registry import AgentDefinitionKey
+        from app.platform.agents.prep.incremental.dependencies import IncrementalPrepResult
+
+        start = await gateway.start(
+            agent_type=AgentType.PREP,
+            definition_key=AgentDefinitionKey(
+                agent_type=AgentType.PREP.value,
+                agent_version=PrepGraphKind.INCREMENTAL.value,
+            ),
+            context=AgentRunContext(
+                agent_type=AgentType.PREP.value,
+                scope=(str(course_id),),
+                teacher_id=str(teacher_id),
+                course_id=str(course_id),
+                user_message=instruction,
+                extras={
+                    "outline_node_id": outline_node_id,
+                    "action": action,
+                },
+            ),
+        )
+        if start.status == "completed" and start.result:
+            result = start.result.get("result") or {}
+            return IncrementalPrepResult(
+                summary=result.get("summary", ""),
+                operations=list(result.get("operations") or []),
+                evidence=list(result.get("evidence") or []),
+                excluded_locked_targets=list(
+                    result.get("excluded_locked_targets") or []
+                ),
+                planner=result.get("planner", "llm"),
+            )
+        if start.error_code and start.error_code != "AGENT_NOT_AVAILABLE":
+            from app.services.course_prep_agent_service import CoursePrepAgentPlanningError
+
+            if start.error_code == "INCREMENTAL_PLAN_INVALID_REQUEST":
+                raise ValueError(start.error_message or "助教智能体没有可执行的草稿目标")
+            raise CoursePrepAgentPlanningError(
+                start.error_message or f"助教智能体运行失败（{start.error_code}）"
+            )
+        if start.error_code:
+            logger.warning(
+                "Prep Runtime unavailable; falling back to direct service: %s",
+                start.error_code,
+            )
+
+    if action is not None:
+        return await service.plan_batch(
+            session,
+            course_id=course_id,
+            action=action,
+        )
+    return await service.plan(
+        session,
+        course_id=course_id,
+        instruction=instruction,
+        outline_node_id=outline_node_id,
+    )
 
 
 class LegacyReleasePublishRequest(BaseModel):
@@ -757,6 +868,7 @@ async def run_controlled_prep(
 async def run_prep_agent_command(
     course_id: int,
     payload: PrepAgentCommandRequest,
+    request: Request,
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -767,15 +879,25 @@ async def run_prep_agent_command(
     the outline/script records.
     """
     context = require_course_permission(session, current_user, course_id, "course.edit")
+    # Both checks are inside the guard so a batch request cannot race this
+    # single-node command between observing and acquiring its course lock.
+    async with _prep_batch_locks_guard:
+        batch_lock = _prep_batch_locks.get(course_id)
+        batch_running = batch_lock is not None and batch_lock.locked()
+    if batch_running:
+        raise _prep_agent_busy_error()
     from app.services.course_prep_agent_service import (
         CoursePrepAgentPlanningError,
         course_prep_agent_service,
     )
 
     try:
-        result = await course_prep_agent_service.plan(
-            session,
+        result = await _plan_incremental_prep(
+            request=request,
+            service=course_prep_agent_service,
+            session=session,
             course_id=course_id,
+            teacher_id=context.user_id,
             instruction=payload.instruction,
             outline_node_id=payload.outline_node_id,
         )
@@ -848,6 +970,146 @@ async def run_prep_agent_command(
     })
 
 
+@router.post("/course/{course_id}/prep-agent/batch-actions")
+async def run_prep_agent_batch_action(
+    course_id: int,
+    payload: PrepAgentBatchRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Apply one teacher-authorized batch optimization to every editable node.
+
+    Clicking the one-click action is the teacher decision, so the generated
+    PatchProposal is persisted as already accepted for audit and is never
+    exposed as pending approval. Planning is completed and fully validated
+    before any row is mutated.
+    """
+    permission = (
+        "course.structure.edit"
+        if payload.action == "organize_structure"
+        else "course.script.edit"
+    )
+    context = require_course_permission(session, current_user, course_id, permission)
+    batch_lock = await _try_acquire_prep_batch_lock(course_id)
+    if batch_lock is None:
+        raise _prep_agent_busy_error()
+    from app.services.course_prep_agent_service import (
+        CoursePrepAgentPlanningError,
+        course_prep_agent_service,
+    )
+
+    try:
+        try:
+            result = await _plan_incremental_prep(
+                request=request,
+                service=course_prep_agent_service,
+                session=session,
+                course_id=course_id,
+                teacher_id=context.user_id,
+                instruction="",
+                outline_node_id=None,
+                action=payload.action,
+            )
+        except CoursePrepAgentPlanningError as exc:
+            raise HTTPException(
+                502,
+                detail={
+                    "error_code": "PREP_AGENT_BATCH_INCOMPLETE",
+                    "message": str(exc),
+                },
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PREP_AGENT_NO_EDITABLE_TARGET",
+                    "message": str(exc),
+                },
+            ) from exc
+
+        decided_at = utcnow_aware()
+        proposal = PatchProposal(
+            course_id=course_id,
+            tool_name=(
+                "CourseStructureBatchOptimizer"
+                if payload.action == "organize_structure"
+                else "TeachingScriptBatchOptimizer"
+            ),
+            policy_version="course-prep-agent/batch-1.1",
+            status=PatchProposalStatus.ACCEPTED,
+            reason=result.summary,
+            created_by=context.user_id,
+            decided_by=context.user_id,
+            decided_at=decided_at,
+        )
+        session.add(proposal)
+        session.flush()
+        operations: list[PatchProposalOperation] = []
+        for item in result.operations:
+            target_kind, target_id, field = item["target"].split(":", 2)
+            if payload.action == "organize_structure" and (
+                target_kind != "outline" or field != "title"
+            ):
+                raise ValueError(f"结构整理返回了不允许的目标: {item['target']}")
+            if payload.action == "optimize_scripts" and (
+                target_kind != "script" or field != "content"
+            ):
+                raise ValueError(f"讲稿优化返回了不允许的目标: {item['target']}")
+            if target_kind == "outline":
+                target = session.exec(select(CourseOutlineNode).where(
+                    CourseOutlineNode.course_id == course_id,
+                    CourseOutlineNode.outline_node_id == target_id,
+                )).first()
+            else:
+                target = session.exec(select(TeachingScriptNode).where(
+                    TeachingScriptNode.course_id == course_id,
+                    TeachingScriptNode.script_node_id == target_id,
+                )).first()
+            if target is None or target.locked_by is not None:
+                raise HTTPException(
+                    409,
+                    detail={
+                        "error_code": "PREP_AGENT_TARGET_CHANGED",
+                        "message": "批量优化期间节点已被锁定或删除，未应用任何修改",
+                    },
+                )
+            operation = PatchProposalOperation(
+                proposal_id=proposal.proposal_id,
+                course_id=course_id,
+                operation=PatchOperation.REPLACE,
+                target=item["target"],
+                before=str(getattr(target, field, "")),
+                after=item["after"],
+                reason=item["reason"],
+                evidence_refs=item["evidence_refs"],
+                policy_version="course-prep-agent/batch-1.1",
+                accepted=True,
+                decided_at=decided_at,
+            )
+            session.add(operation)
+            operations.append(operation)
+
+        for operation in operations:
+            _apply_operation(session, course_id, operation, context.user_id)
+        session.add(proposal)
+        session.commit()
+        return unified_response(200, "助教智能体已完成全量优化", {
+            "action": payload.action,
+            "proposal_id": proposal.proposal_id,
+            "status": PatchProposalStatus.ACCEPTED.value,
+            "updated_count": len(operations),
+            "excluded_locked_targets": result.excluded_locked_targets,
+            "planner": result.planner,
+            "summary": result.summary,
+        })
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        batch_lock.release()
+
+
 @router.get("/course/{course_id}/prep-agent/evidence/{node_id}")
 async def get_prep_agent_node_evidence(
     course_id: int,
@@ -890,9 +1152,17 @@ async def lock_script(course_id: int, script_node_id: str, session: Session = De
 
 
 @router.get("/course/{course_id}/proposals")
-async def list_proposals(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+async def list_proposals(
+    course_id: int,
+    status: PatchProposalStatus | None = None,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
     require_course_permission(session, current_user, course_id, "course.view")
-    proposals = session.exec(select(PatchProposal).where(PatchProposal.course_id == course_id).order_by(PatchProposal.created_at.desc())).all()
+    statement = select(PatchProposal).where(PatchProposal.course_id == course_id)
+    if status is not None:
+        statement = statement.where(PatchProposal.status == status)
+    proposals = session.exec(statement.order_by(PatchProposal.created_at.desc())).all()
     result = []
     for proposal in proposals:
         ops = session.exec(select(PatchProposalOperation).where(PatchProposalOperation.proposal_id == proposal.proposal_id).order_by(PatchProposalOperation.id)).all()
@@ -1124,6 +1394,93 @@ async def update_ppt_mapping(course_id: int, outline_node_id: str, payload: PptM
     return unified_response(200, "PPT 映射已保存", view)
 
 
+@router.post("/course/{course_id}/ppt-mapping/optimize")
+async def optimize_ppt_mapping(
+    course_id: int,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """一键优化 PPT 映射：通过 OCR 文本与知识点语义匹配自动调整映射。
+
+    调用 ``ppt_mapping_optimization_service.optimize_mappings()``，加载
+    PPT 每页 OCR 文本 + 最新草稿知识点节点 + 讲稿内容 + 父级标题，
+    由 LLM 生成映射建议并直接更新 ``CoursePptMapping`` 行
+    （teacher_locked=True 的映射不会被修改）。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
+    # 定位该课程最近一份 slide 类型材料的 material_version_id
+    slide_material = session.exec(
+        select(SourceMaterial).where(
+            SourceMaterial.course_id == course_id,
+            SourceMaterial.material_type == "slide",
+        ).order_by(SourceMaterial.id.desc())
+    ).first()
+    if not slide_material:
+        raise HTTPException(409, "课程尚未上传 PPT 材料，无法优化映射")
+    # 找到该材料最新已解析完成的版本
+    from app.models.course_build_model import SourceMaterialVersion, MaterialStatus
+    latest_version = session.exec(
+        select(SourceMaterialVersion).where(
+            SourceMaterialVersion.material_id == slide_material.material_id,
+            SourceMaterialVersion.parse_status == MaterialStatus.PARSED,
+        ).order_by(SourceMaterialVersion.id.desc())
+    ).first()
+    if not latest_version:
+        raise HTTPException(409, "PPT 材料尚未解析完成，无法优化映射")
+
+    batch_lock = await _try_acquire_prep_batch_lock(course_id)
+    if batch_lock is None:
+        raise _prep_agent_busy_error()
+    try:
+        platform = getattr(request.app.state, "agent_platform", None)
+        gateway = getattr(platform, "gateway", None) if platform is not None else None
+        if gateway is None:
+            raise HTTPException(
+                503,
+                detail={
+                    "error_code": "PREP_AGENT_UNAVAILABLE",
+                    "message": "助教智能体运行时未就绪，无法优化 PPT 映射",
+                },
+            )
+        from app.platform.agents.prep.enums import PrepGraphKind
+        from app.platform.agents.runtime.base import AgentRunContext
+        from app.platform.agents.runtime.profile import AgentType
+        from app.platform.agents.runtime.registry import AgentDefinitionKey
+
+        start = await gateway.start(
+            agent_type=AgentType.PREP,
+            definition_key=AgentDefinitionKey(
+                agent_type=AgentType.PREP.value,
+                agent_version=PrepGraphKind.PPT_MAPPING.value,
+            ),
+            context=AgentRunContext(
+                agent_type=AgentType.PREP.value,
+                scope=(str(course_id),),
+                teacher_id=str(context.user_id),
+                course_id=str(course_id),
+                extras={"material_version_id": latest_version.version_id},
+            ),
+        )
+        if start.status != "completed" or not start.result:
+            raise HTTPException(
+                502,
+                detail={
+                    "error_code": start.error_code or "PPT_MAPPING_FAILED",
+                    "message": start.error_message or "PPT 映射优化未完成",
+                },
+            )
+        summary = start.result.get("result") or {}
+    finally:
+        batch_lock.release()
+
+    return unified_response(200, "PPT 映射优化完成", {
+        "total_mappings": summary.get("total_mappings", 0),
+        "updated_count": summary.get("updated_count", 0),
+        "suggestions": list(summary.get("suggestions") or []),
+    })
+
+
 @router.post("/course/{course_id}/ppt/generate")
 async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     """Generate a PPT for the existing course, then re-enter the unified parser."""
@@ -1172,6 +1529,7 @@ async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, sessi
         task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
         input_summary=f"解析课程 {course_id} 的 AI PPT", input_payload={
             "course_id": course_id, "material_id": material.material_id, "material_version_id": version.version_id,
+            "pipeline": ParsePipeline.FULL.value,
             "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id,
         }, resource_links=[{"resource_kind": "course", "resource_id": str(course_id), "relation": "input"}],
     ))
@@ -1182,7 +1540,7 @@ async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, sessi
     session.add(version)
     session.commit()
     if local_task_worker.has_handler("document_parse"):
-        local_task_worker.submit(session_factory, task_view.task_id, {"course_id": course_id, "run_id": run.run_id, "material_id": material.material_id, "material_version_id": version.version_id, "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id})
+        document_parse_queue.submit(session_factory, local_task_worker, task_view.task_id)
     return unified_response(202, "AI PPT 已生成并进入统一解析链", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
 
 
@@ -1214,6 +1572,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
         task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
         input_summary=f"解析课程 {course_id} 的教学 PPT {filename}", input_payload={
             "course_id": course_id, "material_id": material.material_id, "material_version_id": version.version_id,
+            "pipeline": ParsePipeline.FULL.value,
             "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id,
         }, resource_links=[{"resource_kind":"course","resource_id":str(course_id),"relation":"input"}],
     ))
@@ -1224,11 +1583,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
     _mark_build_step(session, course_id, BuildStepName.MATERIALS, BuildStepStatus.IN_PROGRESS, context.user_id, task_view.task_id)
     session.add(version); session.commit()
     if local_task_worker.has_handler("document_parse"):
-        local_task_worker.submit(session_factory, task_view.task_id, {
-            "course_id": course_id, "run_id": run.run_id, "material_id": material.material_id,
-            "material_version_id": version.version_id, "stale_strategy": StaleStrategy.MARK_STALE.value,
-            "initiated_by": context.user_id,
-        })
+        document_parse_queue.submit(session_factory, local_task_worker, task_view.task_id)
     return unified_response(202, "PPT 已上传，正在重新解析并建立映射", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
 
 

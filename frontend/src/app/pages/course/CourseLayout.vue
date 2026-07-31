@@ -62,6 +62,12 @@ const activeKey = computed(() => {
   return 'overview'
 })
 
+// 返回按钮目标：建设子树回到「我建设的」，其余子页面回到「我学习的」。
+const backTarget = computed(() => {
+  if (route.path.includes('/build')) return '/app/courses/building'
+  return '/app/courses/learning'
+})
+
 async function load() {
   state.status = 'loading'
   try {
@@ -98,7 +104,7 @@ onMounted(load)
       <div class="sfx-l2nav-inner">
         <div class="sfx-l2nav-left">
           <button type="button" class="sfx-l2nav-back" aria-label="返回我的课程"
-                  @click="router.push('/app/courses/learning')">
+                  @click="router.push(backTarget)">
             <ArrowLeft :size="17" />
           </button>
           <div class="sfx-l2nav-course">

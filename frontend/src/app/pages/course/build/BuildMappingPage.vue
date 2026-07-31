@@ -1,17 +1,20 @@
 <script setup>
-import { computed, inject, onMounted, ref } from 'vue'
-import { generateCoursePpt, getPptMappingState, updatePptMapping, uploadExistingPpt } from '@/api/course_editor.js'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { generateCoursePpt, getPptMappingState, optimizePptMapping, updatePptMapping, uploadExistingPpt } from '@/api/course_editor.js'
 import { useRoute } from 'vue-router'
 import { Sparkles } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
 const workbench = inject('courseBuildWorkbench', null)
 const state = ref(null)
 const loading = ref(true)
+const optimizing = ref(false)
 const inputRef = ref(null)
 const message = ref('')
+const prepBatchRunning = computed(() => Boolean(workbench?.batchRun))
 
 // 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
 const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
@@ -32,10 +35,64 @@ async function onGenerate() {
   message.value = '正在请求 AI PPT 生成…'
   try { await generateCoursePpt(courseId.value); message.value = 'AI PPT 已生成并进入统一解析链'; await load() } catch (error) { message.value = error?.message || 'AI PPT 暂不可用' }
 }
+async function onOptimize() {
+  if (optimizing.value || prepBatchRunning.value) return
+  if (isFirstPrepInProgress.value) return reportOptimizeUnavailable('首次智能备课仍在进行，PPT 映射将在课程草稿生成后开放优化。')
+  if (!state.value?.has_ppt) return reportOptimizeUnavailable('尚未上传并完成解析的 PPT，暂无可优化的映射。')
+  optimizing.value = true; message.value = ''
+  const agentMessage = {
+    role: 'agent',
+    running: true,
+    reason: '正在基于 PPT OCR 文本优化全部未锁定映射，请勿发起其他智能优化。',
+    changed: [],
+  }
+  if (workbench) {
+    workbench.agentOpen = true
+    workbench.batchRun = { action: 'optimize_ppt_mapping', startedAt: Date.now() }
+    workbench.agentMessages.push(agentMessage)
+  }
+  try {
+    const result = await optimizePptMapping(courseId.value)
+    message.value = `优化完成：共更新 ${result.updated_count} 条映射`
+    await load()
+    Object.assign(agentMessage, {
+      running: false,
+      reason: 'PPT 映射优化已完成并直接应用。',
+      changed: [`已更新 ${result.updated_count || 0} 条映射`],
+    })
+  } catch (error) {
+    message.value = apiErrorMessage(error, 'PPT 映射优化失败')
+    Object.assign(agentMessage, { running: false, error: true, reason: message.value })
+  } finally {
+    if (workbench) workbench.batchRun = null
+    optimizing.value = false
+  }
+}
+function reportOptimizeUnavailable(reason) {
+  message.value = reason
+  if (!workbench) return
+  workbench.agentOpen = true
+  workbench.agentMessages.push({ role: 'agent', error: true, reason })
+}
 async function saveMapping(node) {
   try { await updatePptMapping(courseId.value, node.outline_node_id, { page_range: node.page_range, confidence: node.confidence }) } catch (error) { message.value = error?.message || '映射保存失败' }
 }
+
+// 通过 stageActions 把"一键优化映射"暴露给 BuildLayout 的 stage-context 工具栏
+const canOrganize = computed(() => Boolean(state.value?.has_ppt) && !optimizing.value && !prepBatchRunning.value)
+watch([canOrganize, optimizing, prepBatchRunning], () => {
+  if (workbench) {
+    workbench.stageActions = {
+      canOrganize: canOrganize.value,
+      organizing: optimizing.value,
+      onOrganize: onOptimize,
+      organizeLabel: '一键优化映射',
+    }
+  }
+}, { immediate: true })
+
 onMounted(load)
+onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 </script>
 
 <template>
@@ -56,6 +113,7 @@ onMounted(load)
     </div>
     <div v-else class="ready">
       <h2>已发现 PPT 文件</h2><p>可编辑课程节点对应的幻灯片页码。</p>
+      <div class="actions"><SfxButton variant="tertiary" size="sm" :disabled="optimizing || prepBatchRunning" @click="onOptimize"><Sparkles :size="14" /> 一键优化映射</SfxButton></div>
       <div class="mapping-list"><label v-for="node in state.nodes" :key="node.outline_node_id"><span>{{ node.display_label || node.title }}</span><input v-model="node.page_range" placeholder="页码，例如 1-3" @blur="saveMapping(node)" /></label></div>
     </div>
     <p v-if="message" class="message">{{ message }}</p>

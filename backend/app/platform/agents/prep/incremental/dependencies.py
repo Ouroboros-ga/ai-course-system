@@ -25,7 +25,7 @@ behaviour where ``CoursePrepAgentService.plan()`` returns a
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import Literal, Protocol
 
 from ..common.dependencies import CommonPrepDependencies
 
@@ -64,6 +64,13 @@ class IncrementalPrepPort(Protocol):
         course_id: str,
         instruction: str,
         outline_node_id: str | None,
+    ) -> IncrementalPrepResult: ...
+
+    async def plan_batch(
+        self,
+        *,
+        course_id: str,
+        action: Literal["organize_structure", "optimize_scripts"],
     ) -> IncrementalPrepResult: ...
 
 

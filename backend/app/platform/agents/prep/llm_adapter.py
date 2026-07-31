@@ -158,6 +158,39 @@ class PrepLLMAdapter:
             return response.parsed
         return model.model_validate_json(response.content)
 
+    async def chat(
+        self,
+        messages: list[Any],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """Expose the legacy chat surface for ControlledPrepWorkflow.
+
+        Initial preparation still owns its stage-level schema repair loop.
+        This bridge keeps that workflow on the registered StructuredLLMPort
+        instead of creating a second client path.
+        """
+        normalized_messages = [
+            {"role": str(message.role), "content": str(message.content)}
+            for message in messages
+        ]
+        response_format = kwargs.get("response_format") or {"type": "json_object"}
+        return await self._llm.complete(
+            messages=normalized_messages,
+            output_schema=None,
+            options=LLMOptions(
+                temperature=temperature if temperature is not None else 0.2,
+                max_tokens=max_tokens,
+                response_format=dict(response_format),
+                prompt_version="prep.controlled_workflow_bridge/1.0",
+            ),
+            trace_context=self._trace(
+                "controlled_prep_workflow",
+                "initial course preparation",
+            ),
+        )
+
     # -- Initial pipeline ------------------------------------------------
 
     async def segment_evidence(

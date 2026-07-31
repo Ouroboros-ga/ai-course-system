@@ -147,7 +147,7 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                         run_id=run_id,
                         material_id=payload.get("material_id", ""),
                         material_version_id=payload.get("material_version_id"),
-                        pipeline="standard",
+                        pipeline=str(payload.get("pipeline") or "full"),
                         stale_strategy=payload.get("stale_strategy", "mark_stale"),
                     )
                 )

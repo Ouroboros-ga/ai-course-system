@@ -166,7 +166,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .upload-copy h3{margin:0;color:var(--text-primary);font-size:var(--ui-md-size)}
 .upload-copy p{margin:var(--space-1) 0 0}
 .pending-list,.materials{display:grid;gap:var(--space-2)}
-.pending-file,.material{display:grid;grid-template-columns:minmax(0,1fr) 170px auto;align-items:center;gap:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-panel)}
+.pending-file,.material{display:grid;grid-template-columns:minmax(180px,1fr) 170px auto;align-items:center;gap:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-panel)}
 .pending-file p,.material p{margin:var(--space-1) 0 0}
 .pending-file strong,.material strong{color:var(--text-primary);font-size:var(--ui-md-size)}
 .pending-file label{display:grid;gap:var(--space-1);color:var(--text-secondary)}

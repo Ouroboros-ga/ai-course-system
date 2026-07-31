@@ -312,3 +312,128 @@ def test_llm_retry_exhausted_raises_planning_error(session, monkeypatch):
         ))
     # 验证 LLM 被调用 2 次（首次 + 1 次重试）
     assert fake_client.call_count == 2
+
+
+class _BatchPlanner:
+    def __init__(self):
+        self.payloads: list[dict] = []
+
+    async def plan_incremental(self, payload):
+        self.payloads.append(payload)
+        action = payload["batch_action"]
+        if action == "organize_structure":
+            operations = [{
+                "target_kind": "outline",
+                "target_id": item["id"],
+                "field": "title",
+                "after": f"{item['title']}（优化）",
+                "reason": "统一标题表达",
+                "downstream_impact": "检查关联讲稿",
+                "evidence_refs": [],
+            } for item in payload["editable_outline"]]
+        else:
+            scripts_by_id = {
+                item["id"]: item
+                for item in payload["course_context"]["scripts"]
+            }
+            operations = [{
+                "target_kind": "script",
+                "target_id": item["id"],
+                "field": "content",
+                "after": f"{scripts_by_id[item['id']]['content']}\n\n优化后的教学总结。",
+                "reason": "改善教学表达",
+                "downstream_impact": "媒体需要重新生成",
+                "evidence_refs": [],
+            } for item in payload["editable_scripts"]]
+        from app.services.course_prep_agent_service import AgentPlan
+        return AgentPlan.model_validate({"summary": "批量完成", "operations": operations})
+
+
+def test_batch_structure_planning_covers_every_unlocked_node(session):
+    teacher, course, node, _ = _setup_course_with_script(session)
+    second = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=node.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="第二知识点",
+        order_index=1,
+    )
+    locked = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=node.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="锁定知识点",
+        order_index=2,
+        locked_by=teacher.id,
+    )
+    session.add(second)
+    session.add(locked)
+    session.commit()
+    planner = _BatchPlanner()
+    service = CoursePrepAgentService(llm=planner)
+
+    result = asyncio.run(service.plan_batch(
+        session,
+        course_id=course.id,
+        action="organize_structure",
+    ))
+
+    targets = {item["target"] for item in result.operations}
+    assert targets == {
+        f"outline:{node.outline_node_id}:title",
+        f"outline:{second.outline_node_id}:title",
+    }
+    assert f"outline:{locked.outline_node_id}" in result.excluded_locked_targets
+    assert len(planner.payloads) == 1
+    payload = planner.payloads[0]
+    hierarchy = payload["course_context"]["hierarchy"]
+    assert {item["id"] for item in hierarchy} == {
+        node.outline_node_id,
+        second.outline_node_id,
+    }
+
+
+def test_batch_script_planning_keeps_full_scripts_in_one_course_context(session):
+    _, course, node, first_script = _setup_course_with_script(session)
+    outline_version_id = node.outline_version_id
+    script_version_id = first_script.script_version_id
+    long_content = "原始讲稿，包含完整教学事实。"
+    first_script.content = long_content
+    session.add(first_script)
+    for index in range(1, 25):
+        outline_node = CourseOutlineNode(
+            course_id=course.id,
+            outline_version_id=outline_version_id,
+            node_type=OutlineNodeType.KNOWLEDGE_POINT,
+            title=f"知识点 {index}",
+            order_index=index,
+        )
+        session.add(outline_node)
+        session.flush()
+        session.add(TeachingScriptNode(
+            course_id=course.id,
+            script_version_id=script_version_id,
+            outline_node_id=outline_node.outline_node_id,
+            content=f"讲稿 {index}" + long_content,
+            style="academic",
+        ))
+    session.commit()
+    planner = _BatchPlanner()
+    service = CoursePrepAgentService(llm=planner)
+
+    result = asyncio.run(service.plan_batch(
+        session,
+        course_id=course.id,
+        action="optimize_scripts",
+    ))
+
+    assert len(result.operations) == 25
+    assert len(planner.payloads) == 1
+    payload = planner.payloads[0]
+    assert len(payload["editable_scripts"]) == 25
+    assert len(payload["course_context"]["scripts"]) == 25
+    target_script = next(item for item in payload["editable_scripts"] if item["id"] == first_script.script_node_id)
+    context_script = next(item for item in payload["course_context"]["scripts"] if item["id"] == first_script.script_node_id)
+    assert "content" not in target_script
+    assert context_script["content"] == long_content
+    assert payload["retrieved_course_evidence"] == []

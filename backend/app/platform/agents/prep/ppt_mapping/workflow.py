@@ -73,7 +73,14 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
             return {
                 "meta": {
                     **meta,
-                    "errors": [*meta.get("errors", []), f"PPT_MAPPING_FAILED:{type(error).__name__}"],
+                    "errors": [
+                        *meta.get("errors", []),
+                        {
+                            "code": "PPT_MAPPING_FAILED",
+                            "message": str(error)[:500] or "PPT mapping optimization failed",
+                            "node": "optimize_ppt_mappings",
+                        },
+                    ],
                     "degraded_services": [*meta.get("degraded_services", []), "ppt_mapping"],
                     "status": "mapping_error",
                 },
@@ -82,8 +89,7 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
         suggestions_payload = [
             {
                 "outline_node_id": s.outline_node_id,
-                "page_start": s.page_start,
-                "page_end": s.page_end,
+                "page_refs": list(s.page_refs),
                 "confidence": s.confidence,
                 "reason": s.reason,
             }

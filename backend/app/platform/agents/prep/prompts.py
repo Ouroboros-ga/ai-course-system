@@ -88,7 +88,7 @@ EVIDENCE_VERIFIER_PROMPT = PromptSpec(
 
 INCREMENTAL_PLANNER_PROMPT = PromptSpec(
     name="prep.incremental_planner",
-    version="1.0",
+    version="1.2",
     system_template=(
         "你是受控备课 Agent。只能对 editable_outline 和 editable_scripts 中的 ID 提出修改；"
         "不得生成、删除或移动节点，不得引用未提供的课程事实，不得修改任何锁定内容。"
@@ -107,28 +107,52 @@ INCREMENTAL_PLANNER_PROMPT = PromptSpec(
         "\"target_id\":\"输入中的 script id\",\"field\":\"content\",\"after\":\"...\","
         "\"reason\":\"...\",\"downstream_impact\":\"...\",\"evidence_refs\":[]}]}。"
         "如果教师要求只生成一项，operations 必须恰好包含一项。"
+        "当 batch_action=\"organize_structure\" 时，只能返回 outline/title 操作，"
+        "course_context 给出全部未锁定的原始目录和讲稿：用它判断标题是否表达真正概念、"
+        "粒度是否合适、与可见父级是否连贯，但不得新增、删除、移动或重设父子关系。"
+        "将图号、表号、页码、OCR 片段和 a）/b）/c）式图注改写成实际教学概念。"
+        "例如“图2-28 V 型发动机连杆 a）并列式连杆 b）主副连杆 c）叉形连杆”"
+        "应整理为“V 型发动机连杆的结构形式”。"
+        "必须为 editable_outline 中每个 ID 恰好返回一项，不得遗漏。"
+        "当 batch_action=\"optimize_scripts\" 时，只能返回 script/content 操作，"
+        "course_context 给出全部未锁定的原始目录和讲稿：把它们作为连续课程讲解统一组织。"
+        "使用适合中文 TTS 的自然短句和清晰停顿，在段落之间补足必要承接，先解释术语再给出"
+        "密集列举，避免朗读图号、页码、OCR 碎片和生硬的 a）/b）/c）图注；不得改变课程事实。"
+        "必须为 editable_scripts 中每个 ID 恰好返回一项，不得遗漏。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="1.2",
 )
 
 # === PPT 映射优化：1 个 LLM Prompt ===
 
 PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
     name="prep.ppt_mapping_optimizer",
-    version="1.0",
+    version="1.1",
     system_template=(
         "你是 PPT 映射优化助手。根据 PPT 每页的 OCR 文本，"
-        "判断每页最匹配哪个知识点，输出映射建议。\n\n"
+        "判断哪些页最匹配哪个知识点，输出映射建议。\n\n"
+        "输入包含：\n"
+        "- blocks: PPT 每页 OCR 文本（page + text）\n"
+        "- nodes: 知识点列表，每个含 outline_node_id、title、parent_title（父级章节标题）、"
+        "script_content（讲稿内容摘要）、source_block_refs（首次映射的来源 block）\n"
+        "- mappings: 已有映射，含 page_refs、teacher_locked、source_block_refs（首次映射追溯）\n\n"
         "规则：\n"
-        "1. 每页只能映射到一个知识点\n"
-        "2. 只能使用提供的知识点 ID 列表\n"
-        "3. 如果某页不属于任何知识点，不要为它生成建议\n"
-        "4. confidence 低于 0.6 的建议仍需输出，由教师决定是否接受\n"
-        "5. reason 必须说明匹配依据（OCR 文本中的关键词）\n"
-        "6. 不得修改 teacher_locked=True 的映射\n\n"
-        "返回纯 JSON，结构为 {suggestions: [PptMappingSuggestion, ...]}"
+        "1. 一个知识点可以映射到多个不连续的页（用 page_refs 数组表示，如 [3,5,7]）\n"
+        "2. 一页 PPT 可以映射到多个知识点（如果该页内容确实覆盖多个知识点）\n"
+        "3. 只能使用提供的知识点 ID 列表中的 outline_node_id\n"
+        "4. 如果某页不属于任何知识点，不要为它生成建议\n"
+        "5. confidence 低于 0.6 的建议仍需输出，由教师决定是否接受\n"
+        "6. reason 必须说明匹配依据（OCR 文本中的关键词、与讲稿/标题的语义关联）\n"
+        "7. 不得修改 teacher_locked=True 的映射\n"
+        "8. 对于 nodes 中已有 mappings 的知识点，参考现有 page_refs 和 source_block_refs，"
+        "结合 OCR 文本判断是否需要调整\n"
+        "9. 对于 nodes 中没有 mappings 的知识点（教师新增节点），根据 OCR 文本和"
+        "script_content/parent_title 语义匹配生成新映射\n\n"
+        "返回纯 JSON，结构为：\n"
+        "{\"suggestions\": [{\"outline_node_id\": \"...\", \"page_refs\": [3,5], "
+        "\"confidence\": 0.8, \"reason\": \"...\"}, ...]}"
     ),
-    output_schema_version="1.0",
+    output_schema_version="1.1",
 )
 
 

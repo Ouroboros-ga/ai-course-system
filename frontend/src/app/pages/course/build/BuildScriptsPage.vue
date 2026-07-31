@@ -2,11 +2,12 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { LockKeyhole, Save, Sparkles } from 'lucide-vue-next'
-import { getOutline, getTeachingScripts, lockTeachingScript, updateTeachingScript } from '@/api/course_editor.js'
+import { getOutline, getTeachingScripts, lockTeachingScript, runPrepAgentBatchAction, updateTeachingScript } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
@@ -17,6 +18,7 @@ const items = ref([])
 const editable = ref(false)
 const selectedId = ref('')
 const saving = ref('')
+const organizing = ref(false)
 const selected = computed(() => items.value.find((item) => item.script_node_id === selectedId.value) ?? null)
 const outlineLabel = (item) => item?.outline_node?.display_label || item?.display_label || item?.outline_title || '未关联课程节点'
 const outlineBreadcrumb = (item) => {
@@ -81,7 +83,7 @@ async function lock(item) {
   catch (caught) { error.value = caught?.message || '锁定讲稿失败' }
 }
 function openAgent(customInstruction) {
-  if (!workbench) return
+  if (!workbench || workbench.batchRun) return
   workbench.agentOpen = true
   if (customInstruction) {
     workbench.pendingInstruction = customInstruction
@@ -89,17 +91,60 @@ function openAgent(customInstruction) {
 }
 function openAgentForNode() {
   const node = selected.value
+  if (workbench) workbench.pendingNodeId = node?.outline_node_id || null
   openAgent(`请针对讲稿节点「${outlineLabel(node)}」的内容和风格提出润色建议，使其更符合教学表达规范。`)
+}
+async function organizeAll() {
+  if (organizing.value || workbench?.batchRun) return
+  if (isFirstPrepInProgress.value) return reportOrganizeUnavailable('首次智能备课仍在进行，讲解脚本生成后才能统一优化。')
+  if (!editable.value) return reportOrganizeUnavailable('当前课程草稿不可编辑，无法一键优化讲解。')
+  if (!items.value.length) return reportOrganizeUnavailable('讲解脚本尚未生成，暂无可优化的内容。')
+  if (!items.value.some((item) => item.has_script && !item.locked)) return reportOrganizeUnavailable('没有可优化的未锁定讲稿；请先生成讲稿或解锁一个节点。')
+  organizing.value = true; error.value = ''
+  const message = {
+    role: 'agent',
+    running: true,
+    reason: '正在统一优化全部未锁定讲稿的讲解节奏，请勿发起其他智能优化。',
+    changed: [],
+  }
+  if (workbench) {
+    workbench.agentOpen = true
+    workbench.batchRun = { action: 'optimize_scripts', startedAt: Date.now() }
+    workbench.agentMessages.push(message)
+  }
+  try {
+    const result = await runPrepAgentBatchAction(courseId.value, 'optimize_scripts')
+    await load()
+    Object.assign(message, {
+      running: false,
+      reason: result.summary || '讲稿优化已完成并直接应用。',
+      changed: [`已更新 ${result.updated_count || 0} 个节点`],
+      excluded: result.excluded_locked_targets || [],
+      planner: result.planner,
+    })
+  } catch (caught) {
+    error.value = apiErrorMessage(caught, '一键优化讲解失败，请稍后重试')
+    Object.assign(message, { running: false, error: true, reason: error.value })
+  } finally {
+    if (workbench) workbench.batchRun = null
+    organizing.value = false
+  }
+}
+function reportOrganizeUnavailable(reason) {
+  error.value = reason
+  if (!workbench) return
+  workbench.agentOpen = true
+  workbench.agentMessages.push({ role: 'agent', error: true, reason })
 }
 function refreshAfterProposal() { load() }
 
-watch([editable, items], () => {
+watch([editable, items, organizing], () => {
   if (workbench) {
     workbench.stageActions = {
-      canOrganize: editable.value && items.value.length > 0,
-      organizing: false,
-      onOrganize: () => openAgentForNode(),
-      organizeLabel: '让智能体润色',
+      canOrganize: editable.value && items.value.some((item) => item.has_script && !item.locked),
+      organizing: organizing.value,
+      onOrganize: organizeAll,
+      organizeLabel: '一键优化讲解',
     }
   }
 }, { immediate: true })
@@ -132,7 +177,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
           <label>讲解风格<input v-model="selected.style" :disabled="!editable || selected.locked" placeholder="例如：面向大一学生，循序解释" @blur="save(selected)" /></label>
         </template>
         <p v-if="saving === selected.script_node_id" class="saving"><Save :size="14" /> 正在保存讲稿</p>
-        <div class="script-actions"><SfxButton v-if="!selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="lock(selected)"><LockKeyhole :size="15" /> 锁定讲稿</SfxButton><SfxButton variant="tertiary" size="sm" @click="openAgentForNode"><Sparkles :size="15" /> 生成调整提案</SfxButton></div>
+        <div class="script-actions"><SfxButton v-if="!selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="lock(selected)"><LockKeyhole :size="15" /> 锁定讲稿</SfxButton><SfxButton variant="tertiary" size="sm" :disabled="Boolean(workbench?.batchRun)" @click="openAgentForNode"><Sparkles :size="15" /> 智能优化讲解</SfxButton></div>
       </article>
     </div>
   </section>

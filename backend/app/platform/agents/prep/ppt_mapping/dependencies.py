@@ -35,14 +35,17 @@ from ..common.dependencies import CommonPrepDependencies
 class PptMappingSuggestion:
     """One LLM-produced mapping suggestion.
 
+    Uses ``page_refs`` (a list of page numbers) instead of a contiguous
+    ``page_start``/``page_end`` range, because PPT content for one
+    knowledge point often spans non-consecutive slides.
+
     The Service validates each suggestion against the course outline's
     knowledge-point IDs before applying it. Suggestions referencing
     unknown outline nodes are rejected (not silently dropped).
     """
 
     outline_node_id: str
-    page_start: int
-    page_end: int
+    page_refs: list[int]
     confidence: float
     reason: str = ""
 

@@ -51,8 +51,18 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
         instruction = (request.get("instruction") or "").strip()
         course_id = request.get("course_id", "")
         outline_node_id = request.get("outline_node_id")
+        action = request.get("action")
 
-        if not instruction:
+        if action not in (None, "organize_structure", "optimize_scripts"):
+            return {
+                "meta": {
+                    **meta,
+                    "errors": [*meta.get("errors", []), "INCREMENTAL_PLAN_INVALID_ACTION"],
+                    "status": "input_error",
+                },
+            }
+
+        if not instruction and action is None:
             return {
                 "meta": {
                     **meta,
@@ -71,20 +81,38 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
             }
 
         try:
-            result = await deps.incremental_prep.plan(
-                course_id=course_id,
-                instruction=instruction,
-                outline_node_id=outline_node_id,
-            )
+            if action is not None:
+                result = await deps.incremental_prep.plan_batch(
+                    course_id=course_id,
+                    action=action,
+                )
+            else:
+                result = await deps.incremental_prep.plan(
+                    course_id=course_id,
+                    instruction=instruction,
+                    outline_node_id=outline_node_id,
+                )
         except Exception as error:  # noqa: BLE001 - fail-closed
             logger.warning(
                 "IncrementalPrep: plan() raised: %s: %s",
                 type(error).__name__, error,
             )
+            error_code = (
+                "INCREMENTAL_PLAN_INVALID_REQUEST"
+                if isinstance(error, ValueError)
+                else "INCREMENTAL_PLAN_FAILED"
+            )
             return {
                 "meta": {
                     **meta,
-                    "errors": [*meta.get("errors", []), f"INCREMENTAL_PLAN_FAILED:{type(error).__name__}"],
+                    "errors": [
+                        *meta.get("errors", []),
+                        {
+                            "code": error_code,
+                            "message": str(error)[:500] or "incremental planning failed",
+                            "node": "execute_incremental_plan",
+                        },
+                    ],
                     "degraded_services": [*meta.get("degraded_services", []), "incremental_planner"],
                     "status": "planning_error",
                 },

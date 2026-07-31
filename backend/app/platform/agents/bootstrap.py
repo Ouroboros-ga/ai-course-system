@@ -41,6 +41,83 @@ from sqlmodel import Session
 logger = logging.getLogger(__name__)
 
 
+def bootstrap_prep_agent(app: Any) -> bool:
+    """Register Prep runtimes and inject the shared structured LLM adapter.
+
+    Prep is a teacher-side capability and must not disappear when the
+    student-facing TeachingAgent feature flag is disabled.
+    """
+    try:
+        base_url = (settings.LLM_API_BASE or "").strip()
+        api_key = (settings.LLM_API_KEY or "").strip()
+        model = (settings.LLM_MODEL_NAME or "").strip()
+        if not base_url or not api_key or not model:
+            logger.info("PrepAgent LLM is not configured; batch/agent endpoints remain unavailable.")
+            return False
+
+        from .platform import LegacyAgentPlatform
+        from .gateway import AgentGateway
+        from .prep.composition import build_prep_graph_factory
+        from .prep.llm_adapter import PrepLLMAdapter
+        from .prep.profile import build_prep_profile
+        from .providers.llm.structured import SharedLLMStructuredProvider
+        from app.services.controlled_prep_workflow import (
+            ControlledPrepWorkflow,
+            controlled_prep_workflow,
+        )
+        from app.services.course_prep_agent_service import (
+            CoursePrepAgentService,
+            course_prep_agent_service,
+        )
+        from app.services.ppt_mapping_optimization_service import (
+            PptMappingOptimizationService,
+            ppt_mapping_optimization_service,
+        )
+
+        session_factory = lambda: Session(engine)
+        structured_llm = SharedLLMStructuredProvider()
+        prep_llm = PrepLLMAdapter(structured_llm=structured_llm)
+        course_prep_agent_service._llm = prep_llm
+        ppt_mapping_optimization_service._llm = prep_llm
+        workflow = ControlledPrepWorkflow(client=prep_llm)
+        # The durable first-build handler uses the service singleton directly.
+        # Point its default workflow at the same registered port adapter.
+        controlled_prep_workflow.client = prep_llm
+
+        platform = getattr(app.state, "agent_platform", None)
+        if platform is None:
+            platform = LegacyAgentPlatform()
+        platform.register_generic(
+            profile=build_prep_profile(),
+            builder=build_prep_graph_factory(
+                session_factory=session_factory,
+                service=course_prep_agent_service,
+            ),
+        )
+        _register_prep_pipeline_definitions(
+            platform=platform,
+            session_factory=session_factory,
+            structured_llm=structured_llm,
+            incremental_service=CoursePrepAgentService(llm=prep_llm),
+            initial_workflow=workflow,
+            ppt_service=PptMappingOptimizationService(llm=prep_llm),
+        )
+        platform.set_gateway(AgentGateway(
+            registry=platform.runtime_registry,
+            event_port=platform.event_port,
+        ))
+        app.state.agent_platform = platform
+        logger.info("PrepAgent registered independently of TeachingAgent feature flags.")
+        return True
+    except Exception as error:  # noqa: BLE001 - never block app startup
+        logger.warning(
+            "PrepAgent bootstrap failed: %s: %s",
+            type(error).__name__,
+            error,
+        )
+        return False
+
+
 def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = None) -> bool:
     """Inject a request-scoped runtime registry without blocking application startup."""
     try:
@@ -94,42 +171,13 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         # Phase 1 fix: use LegacyAgentPlatform to mark that core infrastructure
         # (Gateway, ProviderContainer) is NOT yet wired. Formal AgentPlatform
         # will require these once Phase 3 completes EDU migration.
-        platform = LegacyAgentPlatform()
+        platform = getattr(app.state, "agent_platform", None)
+        if platform is None:
+            platform = LegacyAgentPlatform()
         platform.register_legacy(
             AgentType.EDU,
             resolver=registry.get_or_create,
         )
-
-        # Commit 6: register Prep agent with the unified AgentPlatform.
-        # The Prep agent wraps the existing CoursePrepAgentService in a thin
-        # LangGraph workflow. evidence_refs hard gate is preserved in the service.
-        try:
-            from .prep.composition import build_prep_graph_factory
-            from .prep.profile import build_prep_profile as _prep_profile
-            platform.register_generic(
-                profile=_prep_profile(),
-                builder=build_prep_graph_factory(session_factory=session_factory),
-            )
-            logger.info("AgentPlatform: registered Prep agent (Incremental pipeline).")
-        except Exception as prep_error:  # noqa: BLE001 - never block app startup
-            logger.warning("AgentPlatform: Prep agent registration failed: %s: %s", type(prep_error).__name__, prep_error)
-
-        # Phase 4: register Prep Initial and PPT-mapping pipelines via the
-        # definition-keyed AgentRuntimeRegistry. These share AgentType.PREP
-        # with the Incremental pipeline above but are distinct workflows
-        # routed via extras["graph_kind"] by the future AgentGateway.
-        # The Incremental pipeline registered via register_generic remains
-        # the platform's default for AgentType.PREP.
-        try:
-            _register_prep_pipeline_definitions(
-                platform=platform,
-                session_factory=session_factory,
-            )
-        except Exception as pipeline_error:  # noqa: BLE001 - never block app startup
-            logger.warning(
-                "AgentPlatform: Prep pipeline definition registration failed: %s: %s",
-                type(pipeline_error).__name__, pipeline_error,
-            )
 
         app.state.agent_platform = platform
         logger.info("TeachingAgent registry injected; AgentPlatform registered EDU agent.")
@@ -164,6 +212,10 @@ def _register_prep_pipeline_definitions(
     *,
     platform: Any,
     session_factory: Any,
+    structured_llm: Any | None = None,
+    incremental_service: Any | None = None,
+    initial_workflow: Any | None = None,
+    ppt_service: Any | None = None,
 ) -> None:
     """Register Prep Initial and PPT-mapping pipelines in the runtime registry.
 
@@ -198,7 +250,7 @@ def _register_prep_pipeline_definitions(
 
     event_port = NullAgentRunEventPort()
     run_store = NullAgentRunStorePort()
-    structured_llm = SharedLLMStructuredProvider()
+    structured_llm = structured_llm or SharedLLMStructuredProvider()
 
     common_deps = CommonPrepDependencies(
         structured_llm=structured_llm,
@@ -207,7 +259,10 @@ def _register_prep_pipeline_definitions(
     )
 
     # --- Initial pipeline ---
-    initial_provider = InitialCoursePrepProvider(session_factory=session_factory)
+    initial_provider = InitialCoursePrepProvider(
+        session_factory=session_factory,
+        workflow=initial_workflow,
+    )
     initial_deps = InitialPrepDependencies(common=common_deps, initial_prep=initial_provider)
     initial_profile = build_initial_profile()
     _register_pipeline_factory(
@@ -222,7 +277,10 @@ def _register_prep_pipeline_definitions(
     )
 
     # --- Incremental pipeline (new subpackage version) ---
-    incremental_provider = IncrementalPrepProvider(session_factory=session_factory)
+    incremental_provider = IncrementalPrepProvider(
+        session_factory=session_factory,
+        service=incremental_service,
+    )
     incremental_deps = IncrementalPrepDependencies(
         common=common_deps, incremental_prep=incremental_provider,
     )
@@ -239,7 +297,10 @@ def _register_prep_pipeline_definitions(
     )
 
     # --- PPT mapping pipeline ---
-    ppt_provider = PptMappingOptimizationProvider(session_factory=session_factory)
+    ppt_provider = PptMappingOptimizationProvider(
+        session_factory=session_factory,
+        service=ppt_service,
+    )
     ppt_deps = PptMappingDependencies(common=common_deps, ppt_mapping=ppt_provider)
     ppt_profile = build_ppt_mapping_profile()
     _register_pipeline_factory(

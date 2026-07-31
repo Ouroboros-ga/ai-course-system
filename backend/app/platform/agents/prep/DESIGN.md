@@ -2,6 +2,15 @@
 
 > Phase 4 实施基线。本文档固化三链路统一架构：共享基础设施，不共享业务状态机。
 
+> 2026-07-31 实现状态：Incremental 与 PPT Mapping 已接入
+> `AgentGateway`；运行事件与运行状态当前仍使用 Null Port，尚无 SQL
+> `AgentRunStore`、事件表或 SSE 断线续传端点。下文相关章节是目标设计，
+> 不应据此声明当前已具备持久化进度流或恢复能力。
+
+> 2026-07-31 批量编辑补充：场景 2/4 使用一次课程级 LLM 规划，输入为全部未锁定
+> 草稿目录层级与讲稿原文；它们不是逐 20 节点的独立分块。超过 500 个可编辑目标时
+> 失败关闭，避免截断或部分应用。单点场景仍保留 SQL 证据检索与待审核 Proposal。
+
 ## 一、定位与核心原则
 
 **定位**：Prep Agent 是教师侧的备课智能体，覆盖首次课程生成、增量草稿修改、PPT 映射优化三类场景。
@@ -22,9 +31,13 @@
 | 1 | 初始化课件解析与生成讲解稿 | outline + scripts | 全量新建 | QUEUED | InitialBuildGraph |
 | 2 | 知识点一键全部优化 | outline.title | 全量增量 | INLINE | IncrementalEditGraph |
 | 3 | 知识点选中优化 | outline.title | 单个增量 | INLINE | IncrementalEditGraph |
-| 4 | 所有讲解稿一键优化 | script.content/style | 全量增量 | INLINE | IncrementalEditGraph |
+| 4 | 所有讲解稿一键优化 | script.content | 全量增量 | INLINE | IncrementalEditGraph |
 | 5 | 讲解稿节点选中优化 | script.content/style | 单个增量 | INLINE | IncrementalEditGraph |
 | 6 | PPT映射OCR匹配优化 | ppt_mapping | 全量增量 | INLINE | PptMappingOptimizationGraph |
+
+场景 2 与场景 4 由教师点击一键动作即完成授权：系统在完整覆盖校验后直接更新草稿，
+同时保存状态为 `accepted` 的 PatchProposal 审计记录，不进入待审批列表。场景 3 与
+场景 5 仍生成 `pending` PatchProposal，由教师显式接受或拒绝。
 
 ### 场景 2-5 的参数区分
 
@@ -32,12 +45,13 @@
 
 | 场景 | outline_node_id | instruction 示例 | LLM 行为 |
 |------|----------------|-----------------|---------|
-| 2 | None | "优化所有知识点标题" | 生成 outline.title 类 operations |
+| 2 | None + action=organize_structure | 固定受控指令 | 每个未锁定节点恰好一个 outline.title operation |
 | 3 | "node_xxx" | "优化这个知识点" | 生成单个 outline.title operation |
-| 4 | None | "优化所有讲解稿" | 生成 script.content 类 operations |
+| 4 | None + action=optimize_scripts | 固定受控指令 | 每个未锁定讲稿恰好一个 script.content operation |
 | 5 | "node_xxx" | "优化这个讲解稿" | 生成单个 script.content operation |
 
-Graph 不区分"知识点优化"和"讲解稿优化"——这是 LLM 根据指令文本理解的职责。
+全量动作由受控 `action` 字段区分，不能依赖 LLM 猜测指令意图；单节点自然语言命令
+仍由指令与选中节点共同限定目标。
 
 ## 三、架构总览
 
@@ -60,7 +74,7 @@ AgentGateway
     │       ↓ (INLINE)
     │   IncrementalEditGraph
     │       ↓
-    │   IncrementalPrepPort.plan()
+    │   IncrementalPrepPort.plan() / plan_batch()
     │       ↓
     │   CoursePrepAgentService.plan()  ← 只返回 AgentPlan，不持久化
     │       ↓
@@ -182,7 +196,7 @@ class PptMappingState(PrepCommonState, total=False):
 | Workflow | 节点数 | 包装对象 | 持久化 | LLM 阶段 |
 |---------|--------|---------|--------|---------|
 | InitialBuildGraph | 1 | InitialCoursePrepService.build() | Service 内部 | 4 Prompt + 1 确定性编译 |
-| IncrementalEditGraph | 1 | CoursePrepAgentService.plan() | endpoint 层 | 1 Prompt |
+| IncrementalEditGraph | 1 | CoursePrepAgentService.plan()/plan_batch() | endpoint 层 | 1 Prompt，批量为单次课程级上下文 |
 | PptMappingOptimizationGraph | 1 | PptMappingOptimizationService | Service 内部 | 1 Prompt |
 
 ### Workflow 1：InitialBuildGraph
@@ -217,7 +231,8 @@ IncrementalPrepPort.plan(course_id, instruction, outline_node_id)
 返回 CoursePrepAgentResult（summary + operations + evidence）
 ```
 
-**持久化**：endpoint 层创建 PatchProposal。Graph 不持久化。
+**持久化**：单节点命令由 endpoint 创建 pending PatchProposal；全量一键动作在完整
+校验后直接应用，并创建 accepted PatchProposal 作为审计记录。Graph 不持久化。
 
 ### Workflow 3：PptMappingOptimizationGraph
 
@@ -365,7 +380,7 @@ class PromptSpec:
 ```text
 注入路径：
     bootstrap.py
-        → structured_llm = SharedLLMStructuredProvider(llm_client)
+        → structured_llm = SharedLLMStructuredProvider()
         → prep_llm_adapter = PrepLLMAdapter(structured_llm)
         → ControlledPrepWorkflow(llm=prep_llm_adapter)
         → CoursePrepAgentService(llm=prep_llm_adapter)
@@ -473,7 +488,7 @@ prep/
 | Runtime Definition | 执行模式 | 超时 | 并发 | Worker |
 |-------------------|---------|------|------|--------|
 | prep.initial | QUEUED | 600s | 3 | PrepWorker |
-| prep.incremental | INLINE | 120s | 10 | 无 |
+| prep.incremental | INLINE | 120s | 3 | 无 |
 | prep.ppt_mapping | INLINE | 60s | 5 | 无 |
 
 ## 十三、实施边界

@@ -11,12 +11,14 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from app.common.llm_client import Message, llm_client
+from app.core.config import settings
 from app.models.course_build_model import CourseCorpusSnapshot, CorpusSnapshotStatus
 from app.models.course_outline_model import (
     CourseOutlineNode,
@@ -28,13 +30,19 @@ from app.models.course_outline_model import (
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 
 
-PROMPT_VERSION = "course-prep-agent/1.1"
+PROMPT_VERSION = "course-prep-agent/1.2"
 logger = logging.getLogger(__name__)
 
 # 合法的 style 取值（与 TeachingScriptNode.style 字段对齐）
 _VALID_STYLE_VALUES = ("beginner", "academic", "concise")
 # 单次 LLM 调用的最大重试次数（首次 + 修复重试）
 _LLM_MAX_RETRIES = 1
+BatchAction = Literal["organize_structure", "optimize_scripts"]
+# A batch is one course-level editorial pass.  The response still has a hard
+# ceiling so an unexpectedly huge course fails closed instead of truncating.
+_BATCH_MAX_TARGETS = 500
+_BATCH_MAX_INPUT_CHARS = 120_000
+_BATCH_OUTPUT_CHARS_PER_TARGET = 1_200
 
 
 class AgentOperation(BaseModel):
@@ -49,7 +57,7 @@ class AgentOperation(BaseModel):
 
 class AgentPlan(BaseModel):
     summary: str = Field(min_length=1, max_length=2_000)
-    operations: list[AgentOperation] = Field(min_length=1, max_length=20)
+    operations: list[AgentOperation] = Field(min_length=1, max_length=_BATCH_MAX_TARGETS)
 
 
 @dataclass
@@ -152,6 +160,192 @@ class CoursePrepAgentService:
             planner = "deterministic_fallback"
 
         allowed_evidence_ids = {item["evidence_id"] for item in evidence if item.get("evidence_id")}
+        kept, excluded, discarded_invalid_or_noop = self._filter_operations(
+            plan=plan,
+            editable_outline=editable_outline,
+            editable_scripts=editable_scripts,
+            locked_targets=locked_targets,
+            allowed_evidence_ids=allowed_evidence_ids,
+        )
+        if not kept:
+            if discarded_invalid_or_noop:
+                raise ValueError("模型没有产生可应用的实质性修改，请补充更明确的调整要求后重试")
+            raise ValueError("指令没有可修改的未锁定课程节点；锁定内容不会进入 Agent 修改范围")
+        return CoursePrepAgentResult(
+            summary=plan.summary,
+            operations=kept,
+            evidence=evidence,
+            excluded_locked_targets=excluded,
+            planner=planner,
+        )
+
+    async def plan_batch(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        action: BatchAction,
+    ) -> CoursePrepAgentResult:
+        """Plan one coherent, complete batch action over the current draft.
+
+        One-click actions are editorial passes, not a series of unrelated
+        per-node rewrites.  The model receives every unlocked draft node and
+        script as course context, but may emit operations only for the field
+        selected by ``action``.  Complete coverage is verified before the
+        endpoint opens its mutation transaction.
+        """
+        if action not in {"organize_structure", "optimize_scripts"}:
+            raise ValueError(f"不支持的批量动作: {action}")
+        if not self._llm_is_configured():
+            raise CoursePrepAgentPlanningError("助教智能体模型尚未配置，无法执行批量优化")
+
+        outline, scripts = self._load_latest_draft_targets(session, course_id=course_id)
+        editable_course_outline = [node for node in outline if node.locked_by is None]
+        editable_course_scripts = [node for node in scripts if node.locked_by is None]
+        if action == "organize_structure":
+            editable_outline = editable_course_outline
+            editable_scripts: list[TeachingScriptNode] = []
+            locked = [
+                f"outline:{node.outline_node_id}"
+                for node in outline
+                if node.locked_by is not None
+            ]
+            target_kind = "outline"
+            required_field = "title"
+            targets: list[Any] = editable_outline
+            instruction = (
+                "整理本课程全部未锁定的结构节点标题。基于完整的未锁定目录和讲稿上下文，"
+                "统一命名粒度、术语与标题风格；保持节点数量、父子关系、顺序和课程事实不变。"
+            )
+        else:
+            editable_outline = []
+            editable_scripts = editable_course_scripts
+            locked = [
+                f"script:{node.script_node_id}"
+                for node in scripts
+                if node.locked_by is not None
+            ]
+            target_kind = "script"
+            required_field = "content"
+            targets = editable_scripts
+            instruction = (
+                "统一优化本课程全部未锁定讲稿。基于完整的未锁定目录和全部原始讲稿，"
+                "统一术语、衔接和教学节奏，保留原事实与证据含义不变；"
+                "每个讲稿都必须返回一项 content 修改。"
+            )
+
+        if not targets:
+            raise ValueError("当前草稿没有可执行该批量动作的未锁定节点")
+        if len(targets) > _BATCH_MAX_TARGETS:
+            raise CoursePrepAgentPlanningError(
+                f"当前草稿有 {len(targets)} 个可编辑目标，超过一次性课程级优化上限 "
+                f"{_BATCH_MAX_TARGETS}；为避免部分应用，未执行任何修改"
+            )
+
+        self._validate_batch_capacity(
+            action=action,
+            outline=editable_course_outline,
+            scripts=editable_course_scripts,
+            target_count=len(targets),
+        )
+
+        # Batch actions rely on the draft itself as their editable source of
+        # truth.  Single-node chat still does course evidence retrieval and
+        # produces a reviewable proposal.
+        evidence: list[dict[str, Any]] = []
+
+        plan = await self._plan_with_llm(
+            instruction=instruction,
+            outline=editable_outline,
+            scripts=editable_scripts,
+            evidence=evidence,
+            batch_action=action,
+            course_outline_context=editable_course_outline,
+            course_script_context=editable_course_scripts,
+        )
+        if plan is None:
+            raise CoursePrepAgentPlanningError("助教智能体模型未返回批量优化结果")
+        operations, _, discarded = self._filter_operations(
+            plan=plan,
+            editable_outline=editable_outline,
+            editable_scripts=editable_scripts,
+            locked_targets=set(),
+            allowed_evidence_ids=set(),
+        )
+        expected_ids = {
+            node.outline_node_id if target_kind == "outline" else node.script_node_id
+            for node in targets
+        }
+        covered_ids = {
+            item["target"].split(":", 2)[1]
+            for item in operations
+            if item["target"].endswith(f":{required_field}")
+        }
+        missing = sorted(expected_ids - covered_ids)
+        if missing or len(operations) != len(expected_ids) or discarded:
+            logger.warning(
+                "Course prep batch action %s returned incomplete or duplicate operations: "
+                "missing=%s kept=%d expected=%d discarded=%d",
+                action, missing[:10], len(operations), len(expected_ids), discarded,
+            )
+            raise CoursePrepAgentPlanningError(
+                "模型未按每个节点恰好一项修改完整覆盖本课程，未应用任何修改"
+            )
+
+        return CoursePrepAgentResult(
+            summary=plan.summary,
+            operations=operations,
+            evidence=evidence,
+            excluded_locked_targets=locked,
+            planner="llm_course_batch",
+        )
+
+    @staticmethod
+    def _load_latest_draft_targets(
+        session: Session,
+        *,
+        course_id: int,
+    ) -> tuple[list[CourseOutlineNode], list[TeachingScriptNode]]:
+        outline_version = session.exec(
+            select(CourseOutlineVersion).where(
+                CourseOutlineVersion.course_id == course_id,
+                CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(CourseOutlineVersion.version.desc())
+        ).first()
+        if outline_version is None:
+            raise ValueError("课程尚未有初始草稿；请先完成材料解析与首次智能备课")
+        outline = list(session.exec(
+            select(CourseOutlineNode).where(
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_version_id == outline_version.outline_version_id,
+            ).order_by(CourseOutlineNode.order_index)
+        ).all())
+        if not outline:
+            raise ValueError("课程尚未有初始草稿；请先完成材料解析与首次智能备课")
+        script_version = session.exec(
+            select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == course_id,
+                TeachingScriptVersion.outline_version_id == outline_version.outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            ).order_by(TeachingScriptVersion.version.desc())
+        ).first()
+        scripts = [] if script_version is None else list(session.exec(
+            select(TeachingScriptNode).where(
+                TeachingScriptNode.course_id == course_id,
+                TeachingScriptNode.script_version_id == script_version.script_version_id,
+            ).order_by(TeachingScriptNode.updated_at.desc())
+        ).all())
+        return outline, scripts
+
+    @staticmethod
+    def _filter_operations(
+        *,
+        plan: AgentPlan,
+        editable_outline: list[CourseOutlineNode],
+        editable_scripts: list[TeachingScriptNode],
+        locked_targets: set[str],
+        allowed_evidence_ids: set[str],
+    ) -> tuple[list[dict[str, Any]], list[str], int]:
         kept: list[dict[str, Any]] = []
         excluded: list[str] = []
         discarded_invalid_or_noop = 0
@@ -177,20 +371,15 @@ class CoursePrepAgentService:
             kept.append({
                 "target": f"{operation.target_kind}:{operation.target_id}:{operation.field}",
                 "after": operation.after,
-                "reason": f"{operation.reason}。下游影响：{operation.downstream_impact or '请在审核后检查关联讲稿、练习和映射。'}",
-                "evidence_refs": [item for item in operation.evidence_refs if item in allowed_evidence_ids],
+                "reason": (
+                    f"{operation.reason}。下游影响："
+                    f"{operation.downstream_impact or '请检查关联讲稿、练习和映射。'}"
+                ),
+                "evidence_refs": [
+                    item for item in operation.evidence_refs if item in allowed_evidence_ids
+                ],
             })
-        if not kept:
-            if discarded_invalid_or_noop:
-                raise ValueError("模型没有产生可应用的实质性修改，请补充更明确的调整要求后重试")
-            raise ValueError("指令没有可修改的未锁定课程节点；锁定内容不会进入 Agent 修改范围")
-        return CoursePrepAgentResult(
-            summary=plan.summary,
-            operations=kept,
-            evidence=evidence,
-            excluded_locked_targets=excluded,
-            planner=planner,
-        )
+        return kept, excluded, discarded_invalid_or_noop
 
     def retrieve_course_evidence(self, session: Session, *, course_id: int, instruction: str) -> list[dict[str, Any]]:
         """Course-scoped lexical retrieval over the current corpus projection.
@@ -207,19 +396,36 @@ class CoursePrepAgentService:
         if corpus is not None:
             stmt = stmt.where(DocumentBlock.run_id.in_(list(corpus.parse_run_ids or [])))
         terms = [term.lower() for term in re.findall(r"[\w\u4e00-\u9fff]{2,}", instruction)][:8]
-        blocks = list(session.exec(stmt.order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all())
+        candidate_stmt = stmt
+        if terms:
+            candidate_stmt = candidate_stmt.where(or_(*[
+                DocumentBlock.text.ilike(f"%{term}%") for term in terms
+            ]))
+        blocks = list(session.exec(
+            candidate_stmt.order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index).limit(64)
+        ).all())
+        if not blocks and terms:
+            blocks = list(session.exec(
+                stmt.order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index).limit(64)
+            ).all())
+        # This is lexical overlap ranking, not BM25, BERT reranking, or vector
+        # retrieval. Keep that distinction explicit in code and audit docs.
         ranked = sorted(
             blocks,
             key=lambda block: sum(term in (block.text or "").lower() for term in terms),
             reverse=True,
         )[:8]
+        spans = list(session.exec(select(EvidenceSpan).where(
+            EvidenceSpan.course_id == course_id,
+            EvidenceSpan.block_id.in_([block.block_id for block in ranked]),
+            EvidenceSpan.status == EvidenceSpanStatus.CONFIRMED,
+        )).all()) if ranked else []
+        spans_by_block: dict[str, EvidenceSpan] = {}
+        for span in spans:
+            spans_by_block.setdefault(span.block_id, span)
         result = []
         for block in ranked:
-            span = session.exec(select(EvidenceSpan).where(
-                EvidenceSpan.course_id == course_id,
-                EvidenceSpan.block_id == block.block_id,
-                EvidenceSpan.status == EvidenceSpanStatus.CONFIRMED,
-            )).first()
+            span = spans_by_block.get(block.block_id)
             result.append({
                 "block_id": block.block_id,
                 "evidence_id": span.span_id if span else None,
@@ -232,20 +438,30 @@ class CoursePrepAgentService:
     async def _plan_with_llm(
         self, *, instruction: str, outline: list[CourseOutlineNode],
         scripts: list[TeachingScriptNode], evidence: list[dict[str, Any]],
+        batch_action: BatchAction | None = None,
+        course_outline_context: list[CourseOutlineNode] | None = None,
+        course_script_context: list[TeachingScriptNode] | None = None,
     ) -> AgentPlan | None:
         if not self._llm_is_configured():
             return None
         payload = {
             "instruction": instruction,
+            "batch_action": batch_action,
             "editable_outline": [
-                {"id": item.outline_node_id, "title": item.title, "type": item.node_type.value, "order": item.order_index}
+                {
+                    "id": item.outline_node_id,
+                    "parent_id": item.parent_node_id,
+                    "title": item.title,
+                    "type": item.node_type.value,
+                    "order": item.order_index,
+                }
                 for item in outline
             ],
             "editable_scripts": [
                 {
                     "id": item.script_node_id,
                     "outline_node_id": item.outline_node_id,
-                    "content": item.content[:3000],
+                    "content": item.content,
                     "style": item.style or "",
                     "valid_style_values": list(_VALID_STYLE_VALUES),
                 }
@@ -253,6 +469,44 @@ class CoursePrepAgentService:
             ],
             "retrieved_course_evidence": evidence,
         }
+        if batch_action is not None:
+            context_outline = course_outline_context if course_outline_context is not None else outline
+            context_scripts = course_script_context if course_script_context is not None else scripts
+            context_outline_ids = {item.outline_node_id for item in context_outline}
+            # Full original text lives only in course_context. The editable
+            # lists are an allow-list, avoiding a second copy of every script.
+            editable_script_ids = {item.script_node_id for item in scripts}
+            if editable_script_ids:
+                payload["editable_scripts"] = [
+                    {
+                        "id": item.script_node_id,
+                        "outline_node_id": item.outline_node_id,
+                        "valid_style_values": list(_VALID_STYLE_VALUES),
+                    }
+                    for item in scripts
+                ]
+            payload["course_context"] = {
+                "hierarchy": [
+                    {
+                        "id": item.outline_node_id,
+                        # Do not expose locked-parent identifiers as context.
+                        "parent_id": item.parent_node_id if item.parent_node_id in context_outline_ids else None,
+                        "type": item.node_type.value,
+                        "order": item.order_index,
+                        "title": item.title,
+                    }
+                    for item in context_outline
+                ],
+                "scripts": [
+                    {
+                        "id": item.script_node_id,
+                        "outline_node_id": item.outline_node_id,
+                        "content": item.content,
+                        "style": item.style or "",
+                    }
+                    for item in context_scripts
+                ],
+            }
         system = (
             "你是受控备课 Agent。只能对 editable_outline 和 editable_scripts 中的 ID 提出修改；"
             "不得生成、删除或移动节点，不得引用未提供的课程事实，不得修改任何锁定内容。"
@@ -275,8 +529,56 @@ class CoursePrepAgentService:
             "如果教师要求只生成一项，operations 必须恰好包含一项。"
             "operations 数组不得为空，至少包含一项；summary 不得为空。"
         )
+        if batch_action == "organize_structure":
+            system += (
+                "这是一次完整课程结构整理。course_context 给出全部未锁定的原始目录和讲稿，"
+                "可据此判断知识点标题是否表达了真正概念、粒度是否合适、与可见父级是否连贯；"
+                "但仍不得新增、删除、移动或重设父子关系。遇到图号、表号、页码、OCR 片段或 "
+                "a）/b）/c）枚举式图注时，必须改为其实际教学概念的标题。例如 "
+                "“图2-28 V 型发动机连杆 a）并列式连杆 b）主副连杆 c）叉形连杆”应整理为 "
+                "“V 型发动机连杆的结构形式”。只能返回 outline/title 操作；"
+                "必须为 editable_outline 中每个 ID 恰好返回一项操作，不得遗漏。"
+            )
+        elif batch_action == "optimize_scripts":
+            system += (
+                "这是一次完整课程讲稿优化。course_context 给出全部未锁定的原始目录和讲稿，"
+                "要把它们作为一段连续课程讲解统一组织。使用适合中文 TTS 的自然短句和清晰停顿，"
+                "在段落之间补足必要的承接，先解释术语再给出密集列举，避免朗读图号、页码、"
+                "OCR 碎片和生硬的 a）/b）/c）图注；不得改变课程事实。只能返回 script/content 操作；"
+                "必须为 editable_scripts 中每个 ID 恰好返回一项操作，不得遗漏，不得返回 style 或 outline 操作。"
+            )
+        if self._llm is not None and hasattr(self._llm, "plan_incremental"):
+            return await self._llm.plan_incremental(payload)
         client = self._llm or llm_client
         return await self._call_llm_with_retry(client, system, payload)
+
+    @staticmethod
+    def _validate_batch_capacity(
+        *,
+        action: BatchAction,
+        outline: list[CourseOutlineNode],
+        scripts: list[TeachingScriptNode],
+        target_count: int,
+    ) -> None:
+        """Fail closed before a full-course response can be truncated."""
+        input_chars = sum(
+            len(item.title or "") + len(item.parent_node_id or "") + 64
+            for item in outline
+        ) + sum(
+            len(item.content or "") + len(item.style or "") + 64
+            for item in scripts
+        )
+        output_budget = (
+            sum(len(item.title or "") for item in outline)
+            if action == "organize_structure"
+            else sum(len(item.content or "") for item in scripts)
+        ) + target_count * _BATCH_OUTPUT_CHARS_PER_TARGET
+        output_limit = max(1, int(settings.LLM_MAX_TOKENS)) * 4
+        if input_chars > _BATCH_MAX_INPUT_CHARS or output_budget > output_limit:
+            raise CoursePrepAgentPlanningError(
+                "当前课程的未锁定原文或完整优化结果超过单次模型容量；"
+                "为避免截断和部分应用，未执行任何修改"
+            )
 
     async def _call_llm_with_retry(
         self, client: Any, system: str, payload: dict[str, Any],
@@ -373,10 +675,12 @@ class CoursePrepAgentService:
         # Unreachable: loop either returns or raises on the final attempt.
         raise CoursePrepAgentPlanningError("备课模型服务调用失败，请稍后重试")
 
-    @staticmethod
-    def _llm_is_configured() -> bool:
+    def _llm_is_configured(self) -> bool:
         from app.core.config import settings
-        return bool((settings.LLM_API_KEY or "").strip() and (settings.LLM_MODEL_NAME or "").strip())
+        return self._llm is not None or bool(
+            (settings.LLM_API_KEY or "").strip()
+            and (settings.LLM_MODEL_NAME or "").strip()
+        )
 
     @staticmethod
     def _deterministic_fallback(

@@ -16,7 +16,7 @@ planning method once its constructor accepts an optional ``llm`` parameter.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Callable, Literal
 
 from sqlmodel import Session
 
@@ -78,6 +78,35 @@ class IncrementalPrepProvider:
         finally:
             session.close()
 
+        return IncrementalPrepResult(
+            summary=result.summary,
+            operations=list(result.operations),
+            evidence=list(result.evidence),
+            excluded_locked_targets=list(result.excluded_locked_targets),
+            planner=result.planner,
+        )
+
+    async def plan_batch(
+        self,
+        *,
+        course_id: str,
+        action: Literal["organize_structure", "optimize_scripts"],
+    ) -> IncrementalPrepResult:
+        """Call the Service's complete-coverage batch planning path."""
+        try:
+            course_id_int = int(course_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Invalid course_id {course_id!r}: {error}") from error
+
+        session = self._session_factory()
+        try:
+            result = await self._service.plan_batch(
+                session,
+                course_id=course_id_int,
+                action=action,
+            )
+        finally:
+            session.close()
         return IncrementalPrepResult(
             summary=result.summary,
             operations=list(result.operations),

@@ -2,11 +2,12 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ChevronDown, ChevronUp, GripVertical, LockKeyhole, LockOpen, Save, Sparkles } from 'lucide-vue-next'
-import { createOutlineNode, deleteOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, updateOutlineNode, runPrepAgentCommand } from '@/api/course_editor.js'
+import { createOutlineNode, deleteOutlineNode, getOutline, lockOutlineNode, unlockOutlineNode, reorderOutline, runPrepAgentBatchAction, updateOutlineNode } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
@@ -85,19 +86,49 @@ async function move(index, delta) {
   catch (caught) { nodes.value = snapshot; error.value = caught?.message || '调整顺序失败' }
 }
 async function organizeAll() {
-  if (organizing.value || !nodes.value.length) return
+  if (organizing.value || workbench?.batchRun) return
+  if (isFirstPrepInProgress.value) return reportOrganizeUnavailable('首次智能备课仍在进行，课程结构生成后才能一键整理。')
+  if (!editable.value) return reportOrganizeUnavailable('当前课程草稿不可编辑，无法一键整理结构。')
+  if (!nodes.value.length) return reportOrganizeUnavailable('课程结构尚未生成，暂无可整理的节点。')
+  if (!nodes.value.some((node) => !node.locked)) return reportOrganizeUnavailable('所有课程节点都已锁定；解锁至少一个节点后再整理。')
   organizing.value = true; error.value = ''
+  const message = {
+    role: 'agent',
+    running: true,
+    reason: '正在整理全部未锁定的课程节点，请勿发起其他智能优化。',
+    changed: [],
+  }
+  if (workbench) {
+    workbench.agentOpen = true
+    workbench.batchRun = { action: 'organize_structure', startedAt: Date.now() }
+    workbench.agentMessages.push(message)
+  }
   try {
-    const unlockedCount = nodes.value.filter((n) => !n.locked).length
-    const instruction = `请一键整理所有未锁定节点的标题和内容，优化课程结构的逻辑性和连贯性。当前共 ${unlockedCount} 个可编辑节点，请统一优化它们的命名规范、层级关系和知识覆盖完整性。`
-    await runPrepAgentCommand(courseId.value, instruction, null)
-    if (workbench) workbench.agentOpen = true
+    const result = await runPrepAgentBatchAction(courseId.value, 'organize_structure')
     await load()
-  } catch (caught) { error.value = caught?.message || '一键整理失败，请稍后重试' }
-  finally { organizing.value = false }
+    Object.assign(message, {
+      running: false,
+      reason: result.summary || '课程结构已整理并直接应用。',
+      changed: [`已更新 ${result.updated_count || 0} 个节点`],
+      excluded: result.excluded_locked_targets || [],
+      planner: result.planner,
+    })
+  } catch (caught) {
+    error.value = apiErrorMessage(caught, '一键整理失败，请稍后重试')
+    Object.assign(message, { running: false, error: true, reason: error.value })
+  } finally {
+    if (workbench) workbench.batchRun = null
+    organizing.value = false
+  }
+}
+function reportOrganizeUnavailable(reason) {
+  error.value = reason
+  if (!workbench) return
+  workbench.agentOpen = true
+  workbench.agentMessages.push({ role: 'agent', error: true, reason })
 }
 function openAgent() {
-  if (!workbench) return
+  if (!workbench || workbench.batchRun) return
   workbench.agentOpen = true
   // 自动发送针对当前节点的调整指令
   const node = selected.value
@@ -112,12 +143,13 @@ function refreshAfterProposal() { load() }
 watch([editable, nodes, organizing, deleting, selectedId], () => {
   if (workbench) {
     workbench.stageActions = {
-      canOrganize: editable.value && nodes.value.length > 0,
+      canOrganize: editable.value && nodes.value.some((node) => !node.locked),
       organizing: organizing.value,
       canAdd: editable.value,
       canDelete: editable.value && Boolean(selected.value) && nodes.value.length > 0,
       deleting: deleting.value,
       onOrganize: organizeAll,
+      organizeLabel: '一键整理结构',
       onAdd: addNode,
       onDelete: deleteNode,
     }
@@ -176,7 +208,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
           <SfxButton variant="secondary" size="sm" :disabled="!editable || nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id) === nodes.length - 1" @click="move(nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id), 1)"><ChevronDown :size="15" /> 下移</SfxButton>
           <SfxButton v-if="!selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="toggleLock(selected)"><LockKeyhole :size="15" /> 锁定节点</SfxButton>
           <SfxButton v-else variant="secondary" size="sm" @click="toggleLock(selected)"><LockOpen :size="15" /> 取消锁定</SfxButton>
-          <SfxButton variant="tertiary" size="sm" @click="openAgent"><Sparkles :size="15" /> 让智能体调整</SfxButton>
+          <SfxButton variant="tertiary" size="sm" :disabled="Boolean(workbench?.batchRun)" @click="openAgent"><Sparkles :size="15" /> 智能优化节点</SfxButton>
         </div>
         <p class="lock-note"><LockKeyhole :size="14" /> 锁定后不会进入后续 Agent 的可修改集合。</p>
       </article>

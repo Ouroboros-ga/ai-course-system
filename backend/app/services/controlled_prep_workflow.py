@@ -165,6 +165,10 @@ class ControlledPrepWorkflow:
         )
 
     async def segment_evidence(self, request: ControlledPrepInput) -> EvidenceSegmenterResult:
+        if hasattr(self.client, "segment_evidence"):
+            result = await self.client.segment_evidence(request)
+            self._assert_evidence_ids(result, request.evidence)
+            return result
         result = await self._structured_call(
             "evidence_segmenter",
             EvidenceSegmenterResult,
@@ -182,6 +186,10 @@ class ControlledPrepWorkflow:
         request: ControlledPrepInput,
         segments: EvidenceSegmenterResult,
     ) -> OutlinePlannerResult:
+        if hasattr(self.client, "plan_outline"):
+            result = await self.client.plan_outline(request, segments)
+            self._assert_evidence_ids(result, request.evidence)
+            return result
         result = await self._structured_call(
             "outline_planner",
             OutlinePlannerResult,
@@ -216,6 +224,12 @@ class ControlledPrepWorkflow:
         candidate_evidence = [
             item for item in request.evidence if item.evidence_id in set(candidate.evidence_ids)
         ] or request.evidence
+        if hasattr(self.client, "write_script"):
+            result = await self.client.write_script(request, outline, candidate_id)
+            self._assert_evidence_ids(result, request.evidence)
+            if result.candidate_id != candidate_id:
+                raise StructuredOutputError("script_writer returned a different candidate_id")
+            return result
         result = await self._structured_call(
             "script_writer",
             TeachingScriptNodeDraft,
@@ -241,6 +255,14 @@ class ControlledPrepWorkflow:
     ) -> list[TeachingScriptNodeDraft]:
         """Generate all first-round scripts in one structured LLM request."""
         candidate_ids = {candidate.candidate_id for candidate in candidates}
+        if hasattr(self.client, "write_scripts_batch"):
+            scripts = await self.client.write_scripts_batch(request, outline, candidates)
+            returned_ids = {script.candidate_id for script in scripts}
+            if returned_ids != candidate_ids:
+                raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
+            for script in scripts:
+                self._assert_evidence_ids(script, request.evidence)
+            return scripts
         candidate_payload = []
         for candidate in candidates:
             prerequisites = [
@@ -281,6 +303,10 @@ class ControlledPrepWorkflow:
         script_evidence = [
             item for item in request.evidence if item.evidence_id in set(script.evidence_ids)
         ] or request.evidence
+        if hasattr(self.client, "verify_script"):
+            result = await self.client.verify_script(request, script)
+            self._assert_evidence_ids(result, request.evidence)
+            return result
         result = await self._structured_call(
             "evidence_verifier",
             EvidenceVerifierResult,

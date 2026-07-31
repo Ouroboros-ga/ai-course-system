@@ -44,7 +44,7 @@ def build_ppt_mapping_profile() -> AgentProfile:
     return AgentProfile(
         agent_type=AgentType.PREP,
         build_initial_state=build_initial_state,
-        default_timeout_seconds=60.0,
+        default_timeout_seconds=240.0,
         max_concurrency=5,
         execution_mode=ExecutionMode.INLINE,
         description=(
