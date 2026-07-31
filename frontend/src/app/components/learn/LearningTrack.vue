@@ -72,11 +72,13 @@ function nodeState(node, index, props) {
 <style scoped>
 .sfx-track {
   position: relative;
+  z-index: 1;
   width: var(--rail-width);
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
   background: var(--surface-soft);
   border-right: 1px solid var(--border-default);
-  overflow-y: auto;
   transition: width var(--duration-normal) var(--ease-out);
 }
 
@@ -84,23 +86,30 @@ function nodeState(node, index, props) {
   width: var(--rail-width-collapsed);
 }
 
+/* 收起按钮：与 BuildLayout .rail-toggle 一致的圆形浮按钮（浮在 rail 与 stage 边界上） */
 .sfx-track-toggle {
-  position: sticky;
-  top: 0;
-  z-index: 2;
-  width: 100%;
-  height: 36px;
-  display: flex;
+  position: absolute;
+  top: var(--space-3);
+  right: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-full);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-default);
+  color: var(--text-secondary);
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface-soft);
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
+  cursor: pointer;
+  z-index: 30;
 }
 
-.sfx-track-toggle:hover { color: var(--ink-700); }
+.sfx-track-toggle:hover { color: var(--ink-700); border-color: var(--border-strong); }
 
 .sfx-track-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
   padding: var(--space-2);

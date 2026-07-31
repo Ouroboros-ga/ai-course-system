@@ -41,10 +41,20 @@ const learnState = ref(machine.state)
 const branchContext = ref(null)
 const dockRef = ref(null)
 
-const trackManualOverride = ref(null)
+// 学习轨道收起状态（与 BuildLayout 一致：用户手动选择后按设备记忆）
+const TRACK_STORAGE_KEY = 'sfx:rail:learn'
+const readStoredTrack = () => {
+  try { return localStorage.getItem(TRACK_STORAGE_KEY) === '1' } catch { return null }
+}
+const trackManualOverride = ref(readStoredTrack())
 const trackCollapsed = computed(() =>
   trackManualOverride.value ?? (learnState.value !== LEARN_STATES.LEARN)
 )
+function handleTrackToggle() {
+  const next = !trackCollapsed.value
+  trackManualOverride.value = next
+  try { localStorage.setItem(TRACK_STORAGE_KEY, next ? '1' : '0') } catch {}
+}
 
 const evidenceDocumentId = computed(
   () => detail.value?.course?.document_id ?? detail.value?.document?.document_id ?? null
@@ -142,7 +152,7 @@ onMounted(() => {
           :completed-ids="ws.completedNodes.value"
           :collapsed="trackCollapsed"
           @select="(i) => ws.selectNode(i, { play: false })"
-          @toggle="trackManualOverride = !trackCollapsed"
+          @toggle="handleTrackToggle"
         />
 
         <main class="sfx-learn-stage">

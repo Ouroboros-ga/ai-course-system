@@ -167,7 +167,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-profile{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-6);max-width:860px}
+.sfx-profile{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-6);max-width:860px;margin:0 auto;width:100%}
 .sfx-profile-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-3)}
 .sfx-profile-form{display:grid;gap:var(--space-4)}
 .sfx-profile-form label,.sfx-delete-dialog label{display:grid;gap:var(--space-1)}
