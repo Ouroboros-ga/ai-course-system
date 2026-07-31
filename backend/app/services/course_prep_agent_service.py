@@ -28,8 +28,13 @@ from app.models.course_outline_model import (
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 
 
-PROMPT_VERSION = "course-prep-agent/1.0"
+PROMPT_VERSION = "course-prep-agent/1.1"
 logger = logging.getLogger(__name__)
+
+# 合法的 style 取值（与 TeachingScriptNode.style 字段对齐）
+_VALID_STYLE_VALUES = ("beginner", "academic", "concise")
+# 单次 LLM 调用的最大重试次数（首次 + 修复重试）
+_LLM_MAX_RETRIES = 1
 
 
 class AgentOperation(BaseModel):
@@ -237,7 +242,13 @@ class CoursePrepAgentService:
                 for item in outline
             ],
             "editable_scripts": [
-                {"id": item.script_node_id, "outline_node_id": item.outline_node_id, "content": item.content[:3000]}
+                {
+                    "id": item.script_node_id,
+                    "outline_node_id": item.outline_node_id,
+                    "content": item.content[:3000],
+                    "style": item.style or "",
+                    "valid_style_values": list(_VALID_STYLE_VALUES),
+                }
                 for item in scripts
             ],
             "retrieved_course_evidence": evidence,
@@ -252,47 +263,115 @@ class CoursePrepAgentService:
             "target_kind 必须严格使用英文字符串 \"outline\" 或 \"script\"，不能使用同义词、中文或节点类型；"
             "field 必须严格使用英文字符串 \"title\"、\"content\" 或 \"style\"；target_id 必须从输入中原样复制。"
             "editable_scripts.content 是允许改写的课程事实来源；可以在不改变事实含义的前提下重组、简化和改写其表达。"
+            "editable_scripts.style 是讲稿的解释风格，合法取值为 beginner/academic/concise；"
+            "当 field=\"style\" 时，after 必须是这三个合法值之一，且必须与原 style 不同。"
             "如果没有 confirmed evidence，evidence_refs 使用空数组即可，不得因此保留原文不变。"
             "当教师明确要求改写时，after 必须与原字段有实质差异，不能提交原文不变的空操作。"
+            "当教师要求同时修改\"内容和风格\"时，应生成两项操作：一项 field=\"content\"，一项 field=\"style\"，"
+            "target_id 均为该讲稿节点 id；不得把两个字段合并到一个操作里。"
             "示例：{\"summary\":\"...\",\"operations\":[{\"target_kind\":\"script\","
             "\"target_id\":\"输入中的 script id\",\"field\":\"content\",\"after\":\"...\","
             "\"reason\":\"...\",\"downstream_impact\":\"...\",\"evidence_refs\":[]}]}。"
             "如果教师要求只生成一项，operations 必须恰好包含一项。"
+            "operations 数组不得为空，至少包含一项；summary 不得为空。"
         )
-        try:
-            client = self._llm or llm_client
-            response = await client.chat([
-                Message(role="system", content=system),
-                Message(role="user", content=json.dumps(payload, ensure_ascii=False)),
-            ], temperature=0.2, response_format={"type": "json_object"})
-            plan = AgentPlan.model_validate_json(response.content)
-            logger.info(
-                "Course prep LLM succeeded: model=%s latency_ms=%.0f usage=%s operations=%d",
-                response.model,
-                response.latency_ms,
-                response.usage,
-                len(plan.operations),
-            )
-            return plan
-        except ValidationError as exc:
-            logger.warning(
-                "Course prep LLM returned an invalid plan: errors=%s",
-                exc.errors(include_input=False),
-            )
-            raise CoursePrepAgentPlanningError("模型返回的备课提案格式不符合安全协议，请重试") from exc
-        except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning(
-                "Course prep LLM returned invalid JSON: %s",
-                type(exc).__name__,
-            )
-            raise CoursePrepAgentPlanningError("模型返回的备课提案不是有效 JSON，请重试") from exc
-        except Exception as exc:
-            logger.warning(
-                "Course prep LLM request failed: %s: %s",
-                type(exc).__name__,
-                str(exc)[:500],
-            )
-            raise CoursePrepAgentPlanningError("备课模型服务调用失败，请稍后重试") from exc
+        client = self._llm or llm_client
+        return await self._call_llm_with_retry(client, system, payload)
+
+    async def _call_llm_with_retry(
+        self, client: Any, system: str, payload: dict[str, Any],
+    ) -> AgentPlan:
+        """Call the LLM with one structured-repair retry.
+
+        Mirrors ``ControlledPrepWorkflow._structured_call``'s retry pattern:
+        on ``ValidationError`` / ``JSONDecodeError``, send a repair prompt
+        containing the validation errors and retry once. Other exceptions
+        (network, auth) are not retried.
+        """
+        user_content = json.dumps(payload, ensure_ascii=False)
+        messages = [
+            Message(role="system", content=system),
+            Message(role="user", content=user_content),
+        ]
+        last_error: Exception | None = None
+        for attempt in range(_LLM_MAX_RETRIES + 1):
+            repair_hint = ""
+            if last_error is not None:
+                error_detail = ""
+                if isinstance(last_error, ValidationError):
+                    error_detail = json.dumps(
+                        last_error.errors(include_input=False), ensure_ascii=False,
+                    )[:800]
+                else:
+                    error_detail = str(last_error)[:800]
+                repair_hint = (
+                    "\n\n上一次输出未通过严格校验。只返回符合 JSON Schema 的 JSON，"
+                    f"不要 Markdown，不要解释。校验错误：{error_detail}"
+                )
+            try:
+                response = await client.chat(
+                    messages if repair_hint == "" else [
+                        *messages,
+                        Message(role="system", content=repair_hint),
+                    ],
+                    temperature=0.2,
+                    response_format={"type": "json_object"},
+                )
+                raw = response.content if hasattr(response, "content") else response
+                if not isinstance(raw, str):
+                    raise CoursePrepAgentPlanningError(
+                        "模型返回的备课提案不是文本，请重试"
+                    )
+                plan = AgentPlan.model_validate_json(raw)
+                logger.info(
+                    "Course prep LLM succeeded: model=%s latency_ms=%.0f usage=%s "
+                    "operations=%d attempt=%d repaired=%s",
+                    getattr(response, "model", "unknown"),
+                    getattr(response, "latency_ms", 0.0),
+                    getattr(response, "usage", {}),
+                    len(plan.operations),
+                    attempt + 1,
+                    last_error is not None,
+                )
+                return plan
+            except ValidationError as exc:
+                last_error = exc
+                logger.warning(
+                    "Course prep LLM returned invalid plan (attempt %d/%d): "
+                    "errors=%s raw_response_prefix=%.400s",
+                    attempt + 1, _LLM_MAX_RETRIES + 1,
+                    exc.errors(include_input=False),
+                    raw if isinstance(raw, str) else "",
+                )
+                if attempt >= _LLM_MAX_RETRIES:
+                    raise CoursePrepAgentPlanningError(
+                        "模型返回的备课提案格式不符合安全协议，请重试"
+                    ) from exc
+            except (json.JSONDecodeError, ValueError) as exc:
+                last_error = exc
+                logger.warning(
+                    "Course prep LLM returned invalid JSON (attempt %d/%d): "
+                    "%s raw_response_prefix=%.400s",
+                    attempt + 1, _LLM_MAX_RETRIES + 1,
+                    type(exc).__name__,
+                    raw if isinstance(raw, str) else "",
+                )
+                if attempt >= _LLM_MAX_RETRIES:
+                    raise CoursePrepAgentPlanningError(
+                        "模型返回的备课提案不是有效 JSON，请重试"
+                    ) from exc
+            except CoursePrepAgentPlanningError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "Course prep LLM request failed: %s: %s",
+                    type(exc).__name__, str(exc)[:500],
+                )
+                raise CoursePrepAgentPlanningError(
+                    "备课模型服务调用失败，请稍后重试"
+                ) from exc
+        # Unreachable: loop either returns or raises on the final attempt.
+        raise CoursePrepAgentPlanningError("备课模型服务调用失败，请稍后重试")
 
     @staticmethod
     def _llm_is_configured() -> bool:
