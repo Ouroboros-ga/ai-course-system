@@ -591,6 +591,7 @@ export function useLearningWorkspace(courseId, options = {}) {
     currentPage,
     currentSlide,
     currentPptPage,
+    currentNodeId,
     totalPages,
     currentVideoUrl,
     completedNodes,

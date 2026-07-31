@@ -110,3 +110,15 @@ test('工具坞动作顺序固定且目标状态已注册（§6.10）', () => {
     assert.ok(Object.values(LEARN_STATES).includes(action.target))
   }
 })
+
+test('学习页启用的全部工具坞分支都能从课程位置锚点进入', () => {
+  const machine = createLearnMachine({
+    enabledStates: Object.values(LEARN_STATES),
+  })
+
+  for (const action of DOCK_ACTIONS) {
+    const result = machine.enter(action.target, validContext)
+    assert.equal(result.ok, true, `${action.id} 应能进入分支`)
+    machine.exit()
+  }
+})

@@ -62,6 +62,8 @@ const evidenceDocumentId = computed(
 
 function buildBranchContext(triggerAction) {
   const anchor = ws.captureReturnAnchor(triggerAction)
+  // The workspace may expose playback time as either a ref or a scalar.
+  const currentPlaybackTime = Number(ws.currentTime?.value ?? ws.currentTime ?? 0)
   return {
     sourceCourseId: courseId,
     sourceNodeId: ws.currentNodeId.value,
@@ -71,12 +73,12 @@ function buildBranchContext(triggerAction) {
     learningGoal: ws.currentNode.value?.learning_goal ?? '',
     completionCondition: '完成当前教学行动后返回原学习位置',
     sourcePage: anchor?.currentPage ?? ws.currentPage.value,
-    sourceTime: anchor?.currentTime ?? ws.currentTime.value,
+    sourceTime: anchor?.currentTime ?? currentPlaybackTime,
     triggerAction,
     returnTarget: {
       nodeIndex: anchor?.nodeIndex ?? ws.currentNodeIndex.value,
       page: anchor?.currentPage ?? ws.currentPage.value,
-      time: anchor?.currentTime ?? ws.currentTime.value,
+      time: anchor?.currentTime ?? currentPlaybackTime,
     },
   }
 }
