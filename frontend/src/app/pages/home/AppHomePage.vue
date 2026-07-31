@@ -7,6 +7,7 @@ import { useCounterStore } from '@/stores/counter.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import ParticleBackground from '@/components/home/ui/ParticleBackground.vue'
 
 const router = useRouter()
 const counter = useCounterStore()
@@ -38,50 +39,72 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="sfx-home">
-    <header class="sfx-home-header">
-      <h1 class="sfx-t-title1">{{ counter.userData.username ? `${counter.userData.username}，欢迎回来` : '工作首页' }}</h1>
-      <p class="sfx-t-ui sfx-t-secondary">继续你中断的学习</p>
-    </header>
+  <div class="sfx-home-root">
+    <ParticleBackground class="sfx-home-particles" />
+    <div class="sfx-home">
+      <header class="sfx-home-header">
+        <h1 class="sfx-t-title1">{{ counter.userData.username ? `${counter.userData.username}，欢迎回来` : '工作首页' }}</h1>
+        <p class="sfx-t-ui sfx-t-secondary">继续你中断的学习</p>
+      </header>
 
-    <section aria-label="继续进行">
-      <h2 class="sfx-t-title2 sfx-home-section-title">继续进行</h2>
+      <section aria-label="继续进行">
+        <h2 class="sfx-t-title2 sfx-home-section-title">继续进行</h2>
 
-      <SfxSkeleton v-if="loading" :lines="3" />
+        <SfxSkeleton v-if="loading" :lines="3" />
 
-      <SfxEmpty
-        v-else-if="!recentCourses.length"
-        title="当前没有可继续的学习"
-        description="加入课程后，最近的学习进度会出现在这里。"
-      >
-        <template #icon><BookOpen :size="28" :stroke-width="1.8" /></template>
-        <SfxButton variant="secondary" size="sm" @click="router.push('/app/courses/learning')">
-          前往我的课程
-        </SfxButton>
-      </SfxEmpty>
-
-      <ul v-else class="sfx-home-continue">
-        <li v-for="course in recentCourses" :key="course.enrollment_id" class="sfx-home-item">
-          <div class="sfx-home-item-main">
-            <span class="sfx-t-title3">{{ course.title }}</span>
-            <span class="sfx-t-caption">进度 {{ Math.round(course.overall_progress || 0) }}% · {{ course.teacher_name || '未知教师' }}</span>
-          </div>
-          <SfxButton variant="primary" size="sm" @click="router.push(`/app/course/${course.course_id}/learn`)">
-            继续学习
-            <template #icon><ArrowRight :size="15" /></template>
+        <SfxEmpty
+          v-else-if="!recentCourses.length"
+          title="当前没有可继续的学习"
+          description="加入课程后，最近的学习进度会出现在这里。"
+        >
+          <template #icon><BookOpen :size="28" :stroke-width="1.8" /></template>
+          <SfxButton variant="secondary" size="sm" @click="router.push('/app/courses/learning')">
+            前往我的课程
           </SfxButton>
-        </li>
-      </ul>
+        </SfxEmpty>
 
-      <div class="sfx-home-more">
-        <RouterLink to="/app/courses/learning" class="sfx-t-ui">查看全部课程</RouterLink>
-      </div>
-    </section>
+        <ul v-else class="sfx-home-continue">
+          <li v-for="course in recentCourses" :key="course.enrollment_id" class="sfx-home-item">
+            <div class="sfx-home-item-main">
+              <span class="sfx-t-title3">{{ course.title }}</span>
+              <span class="sfx-t-caption">进度 {{ Math.round(course.overall_progress || 0) }}% · {{ course.teacher_name || '未知教师' }}</span>
+            </div>
+            <SfxButton variant="primary" size="sm" @click="router.push(`/app/course/${course.course_id}/learn`)">
+              继续学习
+              <template #icon><ArrowRight :size="15" /></template>
+            </SfxButton>
+          </li>
+        </ul>
+
+        <div class="sfx-home-more">
+          <RouterLink to="/app/courses/learning" class="sfx-t-ui">查看全部课程</RouterLink>
+        </div>
+      </section>
+    </div>
   </div>
 </template>
 
 <style scoped>
+/* 根容器：撑满 main 滚动区，作为粒子画布的定位上下文 */
+.sfx-home-root {
+  position: relative;
+  flex: 1;
+  width: 100%;
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 粒子背景层：覆盖整个首页内容区，置于内容之下 */
+.sfx-home-particles {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+
 .sfx-home {
+  position: relative;
+  z-index: 1;
   max-width: 960px;
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-16);
