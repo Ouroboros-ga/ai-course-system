@@ -175,9 +175,8 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .upload-actions{display:flex;justify-content:flex-end}
 .materials-head{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);margin:var(--space-4) 0 var(--space-3)}
 .materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}
-.draft-build-status{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-left:3px solid var(--ink-500);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
-.draft-build-ready_for_review{border-left-color:var(--green-700);background:var(--green-50);color:var(--green-700)}
-.draft-build-blocked_by_materials,.draft-build-build_failed{border-left-color:var(--amber-700);background:var(--amber-50);color:var(--amber-700)}
+.draft-build-status{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
+.draft-build-blocked_by_materials,.draft-build-build_failed{border-color:var(--amber-300);background:var(--amber-50);color:var(--amber-700)}
 .material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
 .status{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--ui-sm-size);font-weight:600;color:var(--text-secondary)}
 .status::before{content:"◇"}

@@ -117,6 +117,7 @@ function nodeState(node, index, props) {
 }
 
 .sfx-track-item {
+  position: relative;
   width: 100%;
   display: flex;
   align-items: center;
@@ -130,11 +131,28 @@ function nodeState(node, index, props) {
 
 .sfx-track-item:hover { background: var(--surface-cool); }
 
-/* 当前项：浅墨蓝背景 + 左侧 3px 状态线（design.md 4.6） */
+/* 当前项：浅墨蓝背景 + 左侧 3px 状态线（与 BuildLayout .build-link.active 一致，不再用阴影模拟） */
 .sfx-track-item.is-current {
   background: var(--ink-100);
   color: var(--ink-900);
-  box-shadow: inset 3px 0 0 var(--ink-900);
+}
+
+.sfx-track-item.is-current::before {
+  position: absolute;
+  left: 0;
+  top: var(--space-2);
+  bottom: var(--space-2);
+  width: 3px;
+  background: var(--ink-900);
+  content: "";
+  border-radius: var(--radius-full);
+}
+
+/* 左侧徽章：current 态 status 圆圈变实色反白徽章 */
+.sfx-track-item.is-current .sfx-track-item-status {
+  background: var(--ink-900);
+  color: var(--surface-panel);
+  border-radius: var(--radius-full);
 }
 
 .sfx-track-item.is-done { color: var(--green-700); }

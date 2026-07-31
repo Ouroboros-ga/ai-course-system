@@ -3,7 +3,7 @@
 > **文件职责**：本文件是本项目前端的**唯一权威设计指南**，统一回答"前端界面应该长什么样、如何布局、如何过渡、如何交互"。
 > 覆盖范围：视觉语言、布局与滚动、页面过渡动画、组件外观、智能体面板、建设页面 stageActions 机制、按钮规范、常见反模式。
 > **不负责**：页面信息架构、业务流程、权限逻辑与具体页面内容，这些由 [`page-design.md`](./page-design.md) 负责。
-> **版本**：v0.4
+> **版本**：v0.5
 > **产品主张**：让课程回应学习
 > **配套令牌实现**：[`frontend/src/app/styles/tokens.css`](./frontend/src/app/styles/tokens.css) 1:1 实现本文件全部 CSS 令牌；[`frontend/src/app/styles/base.css`](./frontend/src/app/styles/base.css) 1:1 实现页面过渡动画与基础控件样式。
 > **冲突优先级**：本文件 > 历史前端文档（含 `frontend/docs/`）> 旧比赛材料。代码实际行为与本文件不一致时，以代码为准并同步更新本文件。
@@ -683,6 +683,13 @@ const FIRST_PREP_PHASES = new Set([
 - 三个进度点 8×8 圆形，`first-prep-bounce` 1.2s 上下浮动，依次延迟 0/0.16/0.32s。
 - 必须有 `role="status"` 与 `aria-live="polite"`，供屏幕阅读器播报。
 
+`first-prep-pulse` 动画规范（v0.5 起统一，禁止用阴影模拟脉冲）：
+
+- 三个页面（BuildStructurePage / BuildScriptsPage / BuildMappingPage）共用同一 keyframes，必须保持一致
+- 不使用 `box-shadow: 0 0 0 Npx rgba(...)` 扩散阴影做脉冲（视觉噪点重，与 Quiet Technology 冲突）
+- 改用 `transform: scale(1) → scale(1.06)` 微缩放 + `opacity: 0.85 → 1` 透明度变化维持脉冲感
+- 完整 keyframes：`@keyframes first-prep-pulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.06);opacity:1}}`
+
 ---
 
 # 11. 已删除组件与历史决策
@@ -749,6 +756,38 @@ const FIRST_PREP_PHASES = new Set([
 - Hover 卡片可使用 `shadow-xs`。
 - 抽屉、悬浮 Local Rail、模态使用 `shadow-sm` 或 `shadow-md`。
 - 禁止发光、霓虹、多层重阴影和大面积玻璃拟态。
+
+### 禁止用 3px 色条作为状态高亮（v0.5 起）
+
+`border-left: 3px solid <color>` 和 `box-shadow: inset 3px 0 0 <color>` 在视觉上构成左侧 3px 实色条，等同阴影条，禁止用作"选中态/当前态/进行中态"等状态高亮。这类状态必须改用以下两种方式之一：
+
+1. **`::before` 伪元素状态线**（首选，用于行/项选中态）：
+   ```css
+   .row { position: relative; }
+   .row.selected { background: var(--ink-100); color: var(--ink-900); }
+   .row.selected::before {
+     position: absolute; left: 0; top: var(--space-2); bottom: var(--space-2);
+     width: 3px; background: var(--ink-900); content: ""; border-radius: var(--radius-full);
+   }
+   ```
+   `::before` 是独立伪元素，不参与 `overflow` 裁剪、不污染 `box-shadow`，且能配合 `border-radius` 形成圆角状态线，视觉比硬边色条更柔和。
+2. **整框语义色边框**（用于状态提示盒/警告盒）：
+   ```css
+   .status-box.failed { border: 1px solid var(--amber-300); background: var(--amber-50); color: var(--amber-700); }
+   ```
+
+**例外（保留 3px 左边框）**：原文引用块、Citation、Source Summary、Agent Citations 等"引用语义"块沿用 §12.4 原文引用块规范，仍用 `border-left: 3px solid var(--ink-500)` 表达引用语义，不属于状态高亮。
+
+**已清理的主代码位置**（v0.5）：
+
+- `BuildMaterialsPage.vue` `.draft-build-status` 系列状态条 → 整框中性/amber 边框
+- `BuildStructurePage.vue` `.outline-row.selected` → `::before` 状态线
+- `BuildScriptsPage.vue` `.script-row.selected` → `::before` 状态线
+- `LearningTrack.vue` `.sfx-track-item.is-current` → `::before` 状态线（见 §12.5）
+- `BuildLayout.vue` `.build-link.active` → `::before` 状态线（见 §12.5）
+- `first-prep-pulse` 动画 → 去掉 `box-shadow` 扩散，改用 `scale + opacity`（见 §10.2）
+
+**未清理的历史代码**（`prototypes/`、`views/`、`features/student-learning/styles/learning-workspace.css` 等非主代码）：在重构到主代码时一并清理，新代码不得复用其 3px 色条模式。
 
 ## 12.3 输入框与选择控件
 
@@ -843,19 +882,57 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 
 ### Local Rail / 学习轨道 / 建设侧栏
 
-展开：
+学习轨道（`.sfx-track` / LearningTrack.vue）与建设侧栏（`.build-rail` / BuildLayout.vue）共享同一套交互与视觉规范。
 
-- 宽度 232px（`--rail-width`）
-- 背景 `--surface-soft` 或白色
-- 右边框 `--border-default`
-- 当前项：浅墨蓝背景 + 左侧 3px 状态线
+**容器布局**（与 `.sfx-learn` 三层 flex 一致，不卡片化）：
 
-收缩：
+- 外层 `.sfx-learn` / `.build-workspace`：`flex:1; min-height:0; display:flex; flex-direction:column; overflow:hidden`，不设 `width:min(...)` / `margin:auto` / `padding`，直接撑满 main
+- 中间层 `.sfx-learn-body` / `.build-grid`：`flex:1; display:flex; overflow:hidden; position:relative`，rail 与 stage 直接相邻，由 `border-right` 分隔
+- 展开宽度：`--rail-width`（232px）；收缩宽度：`--rail-width-collapsed`（56px）
+- 背景 `--surface-soft`，右边框 `--border-default`
+- aside 容器加 `z-index:1` 建立 stacking context，让收起按钮能盖住右侧 stage
+- `transition: width var(--duration-normal) var(--ease-out)` 平滑收缩
 
-- 宽度 56px（`--rail-width-collapsed`）
+**收起按钮（圆形浮按钮，统一规范）**：
+
+- 不再用 sticky 全宽 36px 横条；改为 26×26 圆形浮按钮（`border-radius: var(--radius-full)`）
+- 位置：`position:absolute; top: var(--space-3)`，水平落在 rail 与 stage 边界上（学习轨道用 `right:-13px`，建设侧栏用 `left:calc(var(--rail-width) - 13px)` 并随收缩态切换 `left:calc(var(--rail-width-collapsed) - 13px)`）
+- 视觉：`background: var(--surface-panel)` + 1px `--border-default` 边框，hover 时边框加深为 `--border-strong`、文字变 `--ink-700`
+- 图标：展开态 `ChevronLeft`，收缩态 `ChevronRight`（lucide-vue-next，size 16）
+- `z-index: 30`，避免被相邻 stage 遮挡
+- 按钮必须是 rail 父级（`.build-grid` / `.sfx-track` 的定位上下文）的直接子元素，不能放在 `overflow-y:auto` 的滚动容器内部，否则会被横向裁剪
+
+**滚动职责**：
+
+- aside 容器不直接 `overflow-y:auto`（避免 `overflow-x` 隐式变 auto 裁掉浮按钮）
+- 滚动由内部列表承担：学习轨道 `.sfx-track-list` (`flex:1; min-height:0; overflow-y:auto`)，建设侧栏 `.build-rail` 内部 grid 仍可滚动
+
+**收起状态持久化**：
+
+- 用户手动选择后按设备记忆，避免刷新丢失
+- 学习轨道：`localStorage["sfx:rail:learn"]`（`'1'` = 收起，`'0'`/缺失 = 展开）
+- 建设侧栏：`localStorage["sfx:rail:build"]`（同上）
+- 首次访问（无 localStorage 值）回退到自动判断：学习轨道由 `learnState !== LEARN` 决定，建设侧栏默认展开
+
+**当前项高亮（统一规范，禁止用阴影模拟）**：
+
+- 背景：`var(--ink-100)`；文字：`var(--ink-900)`
+- 左侧 3px 状态线用 `::before` 伪元素实现（不用 `box-shadow: inset 3px 0 0`）：
+  - `position:absolute; left:0; top/bottom: var(--space-2); width:3px; background: var(--ink-900); border-radius: var(--radius-full)`
+- 学习轨道 current 态额外把左侧 status 圆圈变为实色反白徽章：`.sfx-track-item.is-current .sfx-track-item-status { background: var(--ink-900); color: var(--surface-panel); border-radius: var(--radius-full) }`
+- 建设侧栏 active 态保留原 step-index / step-copy / icon 视觉，仅在 `::before` 上对齐状态线规范
+
+**收缩态视觉**：
+
 - 只显示图标与状态点
-- Hover 展示名称
+- Hover 展示名称（`title` 属性）
 - 沉浸任务中手动展开时以悬浮层覆盖，不挤压主舞台
+- 760px 以下移动端隐藏收起按钮（移动端 rail 是横向滚动条，不收起）
+
+**响应式**：
+
+- `@media(max-width:1250px)`：建设侧栏 agent 面板 `display:none`（agent-is-open 时让 agent `flex:1; width:auto` 占满）
+- `@media(max-width:760px)`：`flex-direction:column`，rail 用 `width:100%`，隐藏收起按钮
 
 ## 12.6 状态徽标
 
@@ -946,6 +1023,43 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 | 易错关联 | Annotation Red | 短虚线 | 警示图标 |
 | 相似概念 | 中性灰 | 细线 | 圆点 |
 
+## 12.11 Toast / 轻提示
+
+全局轻提示（`frontend/src/utils/toast.js` 的 `showToast(message, type)`）用于网络错误、保存成功等短暂反馈。统一规范：
+
+**视觉（极简，禁止附加装饰）**：
+
+- 浅底深字：背景用语义色 `-100`，文字用语义色 `-700`
+- 不加阴影（`box-shadow: none`）
+- 不加左侧深色长条
+- 不加图标（含叉号、勾选、感叹等）
+- 仅保留 1px `--border-default` 边框 + `--radius-md` 圆角
+
+**类型映射**：
+
+| type | 背景 | 文字 |
+|---|---|---|
+| success | `--green-100` | `--green-700` |
+| error | `--red-100` | `--red-700` |
+| warning | `--amber-100` | `--amber-700` |
+| info | `--ink-100` | `--ink-700` |
+
+**位置与动效**：
+
+- 顶部居中：`top: 24px; left: 50%; transform: translateX(-50%)`
+- Quiet Technology：240ms `--ease-out`，仅 12px 微位移，加 `prefers-reduced-motion` 支持
+- 3 秒自动消失
+
+**无障碍**：
+
+- error 用 `role="alert"`，其他用 `role="status"`，配 `aria-live`
+- 文本走 `textContent` 防 XSS
+
+**调用约定**：
+
+- 签名 `showToast(message, type='warning')` 不变，所有调用方（request.js / useStudentLearning.js / CourseTaskPanel.vue 等）无需修改
+- 不用于关键教学决策反馈，关键决策走 [SfxError](./frontend/src/app/ui/SfxError.vue) 或模态
+
 ---
 
 # 13. 路由与根路径跳转
@@ -954,6 +1068,10 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 - `/app` 是登录后应用主入口，对应 [AppShell.vue](./frontend/src/app/shell/AppShell.vue)。
 - 课程相关路由前缀：`/app/course/:courseId/`，二级菜单由 [CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) 承载。
 - 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | scripts | mapping | media | validate | releases`。
+- CourseLayout 二级导航返回按钮（`.sfx-l2nav > div > div > button`）的目标必须按当前路由路径判断：
+  - 当前在 `/build/*` 下 → 回到 `/app/courses/building`（"我建设的"）
+  - 其他子页面（overview/learn/knowledge/experiments/members/settings）→ 回到 `/app/courses/learning`（"我学习的"）
+  - 不允许硬编码任一固定目标，否则教师在建设页点返回会被错误带去学习列表。
 
 ---
 
