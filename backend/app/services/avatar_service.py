@@ -29,6 +29,7 @@ from app.core.exceptions import (
     reject_validation_failed,
 )
 from app.core.time_utils import utcnow_aware
+from app.common.media_tools import ffprobe_binary
 from app.models.avatar_model import (
     AvatarAssetPackage,
     AvatarAssetPackageStatus,
@@ -763,12 +764,11 @@ def _ffprobe_probe(content: bytes) -> Optional[dict]:
     ffprobe 不可用时抛 FileNotFoundError。
     """
     import json as _json
-    import shutil as _shutil
     import subprocess as _subprocess
     import tempfile as _tempfile
 
-    ffprobe = _shutil.which("ffprobe")
-    if not ffprobe:
+    ffprobe = ffprobe_binary()
+    if not ffprobe or ffprobe == "ffprobe":
         raise FileNotFoundError("ffprobe not installed")
 
     with _tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:

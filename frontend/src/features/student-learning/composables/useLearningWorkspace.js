@@ -353,6 +353,16 @@ export function useLearningWorkspace(courseId, options = {}) {
     if (Number.isFinite(globalTime)) {
       const previousIndex = currentNodeIndex.value
       seekTo(globalTime)
+      // A frozen media release owns its cue-to-node/page mapping.  The legacy
+      // script timing remains a fallback while P0 still borrows its PPT assets.
+      const cueNodeIndex = nodes.value.findIndex(node => String(node.id) === String(payload?.nodeId))
+      if (cueNodeIndex >= 0) {
+        currentNodeIndex.value = cueNodeIndex
+      }
+      const cuePage = Number(payload?.page)
+      if (Number.isFinite(cuePage) && cuePage >= 1) {
+        currentPage.value = clamp(cuePage, 1, totalPages.value)
+      }
       if (currentNodeIndex.value > previousIndex) {
         const completedId = nodes.value[previousIndex]?.id
         if (completedId && !completedNodes.value.includes(completedId)) {

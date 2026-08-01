@@ -90,7 +90,34 @@ async function reload () { loading.value = true; try { const [nextOutline, nextS
 async function selectNode (node) { selectedNodeId.value = node.outline_node_id; draftTitle.value = node.title; draftScript.value = scriptByOutline.value[node.outline_node_id]?.content || ''; evidence.value = []; evidenceLoading.value = true; try { const result = await getPrepAgentNodeEvidence(courseId.value, node.outline_node_id); evidence.value = result?.items || [] } catch { evidence.value = [] } finally { evidenceLoading.value = false } }
 async function save () { if (!selectedNode.value) return; saving.value = true; try { if (!selectedNode.value.locked && draftTitle.value !== selectedNode.value.title) await updateOutlineNode(courseId.value, selectedNode.value.outline_node_id, { title: draftTitle.value }); if (selectedScript.value && !selectedScript.value.locked && draftScript.value !== selectedScript.value.content) await updateTeachingScript(courseId.value, selectedScript.value.script_node_id, { content: draftScript.value }); showToast('教师修改已保存。', 'success'); await reload() } catch { showToast('保存失败；已锁定内容不可被覆盖。', 'error') } finally { saving.value = false } }
 async function lockSelected () { if (!selectedNode.value) return; lockLoading.value = true; try { await lockOutlineNode(courseId.value, selectedNode.value.outline_node_id); if (selectedScript.value) await lockTeachingScript(courseId.value, selectedScript.value.script_node_id); showToast('节点已锁定，后续 Agent 不会修改。', 'success'); await reload() } catch { showToast('锁定失败，请重试。', 'error') } finally { lockLoading.value = false } }
-async function sendAgent () { agentLoading.value = true; agentFeedback.value = ''; try { const result = await runPrepAgentCommand(courseId.value, instruction.value); const excluded = result?.explanation?.excluded_locked_targets?.length || 0; agentFeedback.value = `${result?.explanation?.reason || '已生成待审核提案。'}${excluded ? ` 已排除 ${excluded} 个锁定目标。` : ''}`; instruction.value = ''; await reload() } catch (error) { agentFeedback.value = error?.response?.data?.detail?.message || '未能生成提案；请确认初始草稿已生成且仍有未锁定节点。' } finally { agentLoading.value = false } }
+async function sendAgent () {
+  agentLoading.value = true
+  agentFeedback.value = ''
+  try {
+    const result = await runPrepAgentCommand(
+      courseId.value,
+      instruction.value,
+      selectedNodeId.value || null,
+    )
+    if (result?.outcome === 'needs_clarification') {
+      agentFeedback.value = result.clarification || '请说明要优化的内容或先选中一个课程节点。'
+      return
+    }
+    const excluded = result?.explanation?.excluded_locked_targets?.length
+      || result?.excluded_locked_targets?.length
+      || 0
+    const reason = result?.explanation?.reason
+      || result?.summary
+      || (result?.status === 'accepted' ? '已完成一键优化并写入课程草稿。' : '已生成待审核提案。')
+    agentFeedback.value = `${reason}${excluded ? ` 已排除 ${excluded} 个锁定目标。` : ''}`
+    instruction.value = ''
+    await reload()
+  } catch (error) {
+    agentFeedback.value = error?.response?.data?.detail?.message || '未能生成提案；请确认初始草稿已生成且仍有未锁定节点。'
+  } finally {
+    agentLoading.value = false
+  }
+}
 async function decide (proposal, accepted) { try { await decideBuildProposal(courseId.value, proposal.proposal_id, accepted); showToast(accepted ? '提案已接受并写入课程草稿。' : '提案已拒绝。', 'success'); await reload() } catch { showToast('提案处理失败，可能包含已锁定的目标。', 'error') } }
 onMounted(reload)
 </script>

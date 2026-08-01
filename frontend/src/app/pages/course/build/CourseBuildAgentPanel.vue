@@ -61,7 +61,7 @@ async function loadEvidence() {
   try { evidence.value = (await getPrepAgentNodeEvidence(props.courseId, props.selectedNode.outline_node_id))?.items ?? [] }
   catch (caught) { error.value = apiErrorMessage(caught, '无法读取此节点的原文证据') }
 }
-async function send(targetNodeId = undefined) {
+async function send(targetNodeId = undefined, requestedAction = null) {
   if (targetNodeId !== undefined && targetNodeId !== null && typeof targetNodeId !== 'string') {
     targetNodeId = undefined
   }
@@ -86,11 +86,24 @@ async function send(targetNodeId = undefined) {
       targetNodeId === undefined
         ? (props.selectedNode?.outline_node_id ?? null)
         : targetNodeId,
+      requestedAction,
     )
     // 停止思考动画
     thinking.value = false
     clearInterval(thinkingTimer)
-    lastResponse.value = data?.explanation ?? { reason: '已创建待教师审核的提案。', changed: [] }
+    const needsClarification = data?.outcome === 'needs_clarification'
+    lastResponse.value = data?.explanation ?? {
+      reason: data?.summary || data?.clarification || (data?.outcome === 'no_change'
+        ? '未发现需要安全调整的内容，草稿保持不变。'
+        : data?.status === 'accepted'
+          ? '已完成一键优化并写入课程草稿。'
+          : '已创建待教师审核的提案。'),
+      changed: data?.status === 'accepted'
+        ? [`已更新 ${data?.updated_count || 0} 个目标`]
+        : [],
+      planner: data?.planner,
+      excluded_locked_targets: data?.excluded_locked_targets || [],
+    }
     // Agent 回复（偏左）
     const reply = {
       role: 'agent',
@@ -101,7 +114,7 @@ async function send(targetNodeId = undefined) {
     }
     messages.value.push(reply)
     scrollToBottom()
-    await loadProposals()
+    if (!needsClarification) await loadProposals()
   } catch (caught) {
     thinking.value = false
     clearInterval(thinkingTimer)
@@ -135,9 +148,11 @@ watch(() => workbench?.pendingInstruction, (text) => {
   if (text) {
     instruction.value = text
     const targetNodeId = workbench.pendingNodeId
+    const requestedAction = workbench.pendingAgentAction
     workbench.pendingInstruction = ''
     workbench.pendingNodeId = null
-    nextTick(() => send(targetNodeId))
+    workbench.pendingAgentAction = null
+    nextTick(() => send(targetNodeId, requestedAction))
   }
 })
 </script>

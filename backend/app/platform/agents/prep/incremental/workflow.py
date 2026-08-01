@@ -53,7 +53,15 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
         outline_node_id = request.get("outline_node_id")
         action = request.get("action")
 
-        if action not in (None, "organize_structure", "optimize_scripts"):
+        supported_actions = {
+            "optimize_node_title",
+            "organize_structure",
+            "optimize_node_script",
+            "optimize_all_scripts",
+            # Compatibility token emitted by existing buttons during rollout.
+            "optimize_scripts",
+        }
+        if action not in (None, *supported_actions):
             return {
                 "meta": {
                     **meta,
@@ -82,9 +90,11 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
 
         try:
             if action is not None:
-                result = await deps.incremental_prep.plan_batch(
+                result = await deps.incremental_prep.plan_action(
                     course_id=course_id,
                     action=action,
+                    instruction=instruction,
+                    outline_node_id=outline_node_id,
                 )
             else:
                 result = await deps.incremental_prep.plan(

@@ -61,6 +61,7 @@ def bootstrap_prep_agent(app: Any) -> bool:
         from .prep.llm_adapter import PrepLLMAdapter
         from .prep.profile import build_prep_profile
         from .providers.llm.structured import SharedLLMStructuredProvider
+        from .providers.retrieval.active_bundle import ActiveBundleCourseRetrievalPort
         from app.services.controlled_prep_workflow import (
             ControlledPrepWorkflow,
             controlled_prep_workflow,
@@ -77,7 +78,9 @@ def bootstrap_prep_agent(app: Any) -> bool:
         session_factory = lambda: Session(engine)
         structured_llm = SharedLLMStructuredProvider()
         prep_llm = PrepLLMAdapter(structured_llm=structured_llm)
+        prep_retrieval = ActiveBundleCourseRetrievalPort()
         course_prep_agent_service._llm = prep_llm
+        course_prep_agent_service._course_retrieval = prep_retrieval
         ppt_mapping_optimization_service._llm = prep_llm
         workflow = ControlledPrepWorkflow(client=prep_llm)
         # The durable first-build handler uses the service singleton directly.
@@ -98,7 +101,10 @@ def bootstrap_prep_agent(app: Any) -> bool:
             platform=platform,
             session_factory=session_factory,
             structured_llm=structured_llm,
-            incremental_service=CoursePrepAgentService(llm=prep_llm),
+            incremental_service=CoursePrepAgentService(
+                llm=prep_llm,
+                course_retrieval=prep_retrieval,
+            ),
             initial_workflow=workflow,
             ppt_service=PptMappingOptimizationService(llm=prep_llm),
         )

@@ -50,7 +50,7 @@ EXTERNAL_TOOLS = [
         "purpose": "音频时长精确计算、视频处理",
         "check_command": ["ffprobe", "-version"],
         "paths": [],
-        "env_var": None,
+        "env_var": "FFPROBE_PATH",
         "install_hint_windows": "下载安装: https://ffmpeg.org/download.html 或 winget install Gyan.FFmpeg",
         "install_hint_linux": "sudo apt install ffmpeg (Ubuntu/Debian) 或 sudo yum install ffmpeg (CentOS/RHEL)",
         "install_hint_mac": "brew install ffmpeg",

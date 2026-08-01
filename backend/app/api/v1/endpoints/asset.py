@@ -19,6 +19,7 @@ from PIL import Image
 from app.core.config import settings
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user, teacher_only
+from app.common.media_tools import ffmpeg_binary, ffprobe_binary
 from app.models.database import get_session
 from app.models.asset_model import TeacherAsset, AssetType, CloneStatus
 
@@ -52,7 +53,7 @@ def _extract_duration(file_path: Path) -> float:
     try:
         result = subprocess.run(
             [
-                "ffprobe",
+                ffprobe_binary(),
                 "-v", "error",
                 "-show_entries", "format=duration",
                 "-of", "default=noprint_wrappers=1:nokey=1",
@@ -74,7 +75,7 @@ def _extract_video_thumbnail(video_path: Path, output_path: Path) -> Optional[st
     try:
         result = subprocess.run(
             [
-                "ffmpeg",
+                ffmpeg_binary(),
                 "-y",
                 "-i", str(video_path),
                 "-ss", "00:00:01",

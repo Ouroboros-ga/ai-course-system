@@ -242,12 +242,14 @@ IncrementalPrepPort.plan(course_id, instruction, outline_node_id)
 并发：5
 节点：optimize_ppt_mappings
     ↓
-PptMappingOptimizationPort.optimize_mappings(course_id, material_version_id)
+PptMappingOptimizationPort.optimize_mappings(course_id, material_version_ids)
     ↓
 返回 PptMappingOptimizationResult
 ```
 
-**持久化**：Service 内部直接更新 CoursePptMapping（status=draft）。不创建 PatchProposal。不修改 teacher_locked=True 的映射。
+**持久化**：Service 内部直接更新 CoursePptMapping（status=draft）。每份当前 PPT
+材料版本独立匹配并携带 material_version_id，页码不跨文件复用；所有材料的 LLM
+计算完成后一次提交。不创建 PatchProposal。不修改 teacher_locked=True 的映射。
 
 ## 六、Port / Provider / Tool 映射
 
@@ -516,3 +518,45 @@ prep/
 4. 新增 3 个 Workflow 可独立编译
 5. Service 构造函数向后兼容（未注入 llm 时用原有逻辑）
 6. bootstrap.py 注册 3 个 Runtime Definition 不阻塞应用启动
+
+## 十五、教师助教动作 v2（2026-08）
+
+### 统一入口
+
+教师界面的按钮和聊天文字都先归一为一个 `PrepAction`，再进入固定的 Port/Workflow；
+模型不能自行选择数据库工具、删除接口或检索接口。
+
+| 动作令牌 | 教师意图 | 固定执行链路 |
+|---|---|---|
+| `optimize_node_title` | 优化当前课程节点标题 | `IncrementalPrepPort.plan_action` → 标题提案 |
+| `organize_structure` | 一键整理全部未锁定课程结构 | `IncrementalPrepPort.plan_action` → 结构提案/原子应用 |
+| `optimize_node_script` | 优化当前节点的讲解脚本 | `IncrementalPrepPort.plan_action` → 脚本提案 |
+| `optimize_all_scripts` | 一键优化全部未锁定讲解脚本 | `IncrementalPrepPort.plan_action` → 5 节点分组、最多 3 组并发 |
+| `match_ppt` | 一键匹配 PPT 与知识点 | `PptMappingOptimizationPort.optimize_mappings` |
+
+按钮携带显式令牌；聊天文本通过 `prep/actions.py` 的透明规则识别令牌，并保留教师的
+补充要求作为该动作的 Prompt 输入。单节点标题/讲解动作没有选中节点时返回
+`needs_clarification`，不得猜测节点。`OCR` 本身不是 PPT 意图，只有 PPT、课件、映射、页码等
+明确语义才进入 PPT 流程。
+
+聊天中明确包含“一键/全部/全量/批量”等全课程授权措辞的结构整理或讲解脚本优化，
+会复用对应按钮的批量锁、原子应用与 `accepted` 审计提案；单节点聊天动作仍生成
+`pending` 提案供教师核对。两种入口共享同一动作令牌、Port 和 Planner。
+
+### 安全与回退语义
+
+- 新动作链路在模型未配置、结构化输出无效、覆盖不完整或语义校验不通过时 fail-closed：
+  不生成“看似成功”的规则标题或占位脚本；草稿保持不变。
+- 标题必须是 2–40 字的教学概念，不能是图号、页码、OCR 枚举或完整句子。
+- 结构整理只允许改标题、移动、排序或删除既有的未锁定节点；不增加/拆分节点。
+  删除父节点前必须移动全部子节点，含锁定后代或锁定讲解脚本的分支不能删除。
+- 应用阶段先比对 Proposal 的 `before` 快照。结构变更先模拟最终父子关系并检查环，
+  再以临时排序号和最终兄弟排序两阶段写入；任一校验失败则整个提案不应用。
+- PPT 映射保留独立的“无可靠候选页”结果，不能用低置信度匹配替代。
+
+### 证据与性能
+
+单节点和脚本动作先读取当前课程的确认 `EvidenceSpan`，并在已激活知识包时经
+`ActiveBundleCourseRetrievalPort` 查询向量证据；向量检索不可用时只降级到课程内的
+词法证据，不伪造证据 ID。全量讲解脚本按每组 5 个、最多 3 个并发请求执行；每组必须完整
+返回本组所有脚本，任何一组失败都不会应用批量修改。

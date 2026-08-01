@@ -57,18 +57,29 @@ class TtsSynthesisRequest:
     course_id: int = 0
     resource_version: str = "v1"
 
-    def input_hash(self) -> str:
+    def input_hash(
+        self,
+        *,
+        provider_key: str = "",
+        provider_version: str = "",
+        provider_fingerprint: Optional[dict[str, Any]] = None,
+    ) -> str:
         """生成输入指纹，用于缓存命中判断"""
-        payload = "|".join([
-            self.script_text,
-            self.voice_id,
-            f"{self.speed:.2f}",
-            f"{self.pitch:.2f}",
-            f"{self.volume:.2f}",
-            self.output_format,
-            self.resource_version,
-        ])
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        payload = {
+            "script_text": self.script_text,
+            "voice_id": self.voice_id,
+            "speed": f"{self.speed:.2f}",
+            "pitch": f"{self.pitch:.2f}",
+            "volume": f"{self.volume:.2f}",
+            "output_format": self.output_format,
+            "resource_version": self.resource_version,
+            "provider_key": provider_key,
+            "provider_version": provider_version,
+            "provider_fingerprint": provider_fingerprint or {},
+        }
+        return hashlib.sha256(
+            json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
 
 
 @dataclass
@@ -90,6 +101,7 @@ class TtsSynthesisResult:
     provider_key: str = ""
     provider_version: str = ""
     warnings: list[str] = field(default_factory=list)
+    timing_metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -106,6 +118,8 @@ class TTSProvider(ABC):
 
     provider_key: str = "abstract"
     provider_version: str = "0.0.0"
+    # A real paid provider must not execute on the request/event-loop path.
+    requires_async_worker: bool = False
 
     @abstractmethod
     def synthesize(self, request: TtsSynthesisRequest) -> TtsSynthesisResult:
@@ -114,6 +128,17 @@ class TTSProvider(ABC):
     def health_check(self) -> bool:
         """健康检查；默认实现返回 True，子类可重写"""
         return True
+
+    def cache_fingerprint(self) -> dict[str, Any]:
+        """Return non-secret output-affecting configuration for cache keys."""
+        return {}
+
+    def cache_key(self, request: TtsSynthesisRequest) -> str:
+        return request.input_hash(
+            provider_key=self.provider_key,
+            provider_version=self.provider_version,
+            provider_fingerprint=self.cache_fingerprint(),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -491,6 +516,174 @@ class XfyunTtsProvider(TTSProvider):
 
 
 # ---------------------------------------------------------------------------
+# 豆包语音合成 2.0（v3 双向 WebSocket）
+# ---------------------------------------------------------------------------
+
+
+def _word_time_ms(value: Any) -> int | None:
+    """Normalize the public v3 word timestamp (seconds) to integer ms."""
+    if not isinstance(value, (int, float)):
+        return None
+    return int(round(value * 1000))
+
+
+def _subtitle_segments_from_doubao_words(words: list[dict[str, Any]]) -> list[SubtitleSegment]:
+    """Group provider word timings into readable sentence subtitle segments.
+
+    Exact word timing is retained in ``timing_metadata``.  The learner UI gets
+    sentence-sized segments so it does not flash one character at a time.
+    """
+    segments: list[SubtitleSegment] = []
+    buffer: list[str] = []
+    start_ms: int | None = None
+    end_ms: int | None = None
+    sentence_index = 0
+
+    def flush() -> None:
+        nonlocal buffer, start_ms, end_ms, sentence_index
+        text = "".join(buffer).strip()
+        if text and start_ms is not None and end_ms is not None and end_ms >= start_ms:
+            segments.append(SubtitleSegment(
+                text=text,
+                start_ms=start_ms,
+                end_ms=end_ms,
+                sentence_index=sentence_index,
+            ))
+            sentence_index += 1
+        buffer = []
+        start_ms = None
+        end_ms = None
+
+    for item in words:
+        word = str(item.get("word") or item.get("text") or "")
+        item_start = _word_time_ms(item.get("startTime"))
+        item_end = _word_time_ms(item.get("endTime"))
+        if not word or item_start is None or item_end is None or item_end < item_start:
+            continue
+        if start_ms is None:
+            start_ms = item_start
+        end_ms = item_end
+        buffer.append(word)
+        if any(punctuation in word for punctuation in "。！？!?；;\n"):
+            flush()
+    flush()
+    return segments
+
+
+class VolcengineDoubaoTtsProvider(TTSProvider):
+    """豆包语音合成 2.0 的正式 TTS Provider。
+
+    Configuration is loaded lazily and the provider is worker-only.  It stores
+    audio and normalized timing only; API keys, speaker IDs, and raw provider
+    frames are never persisted to task attempts or sent to clients.
+    """
+
+    provider_key = "volcengine_doubao_tts"
+    provider_version = "doubao-tts-v3"
+    requires_async_worker = True
+    _SUPPORTED_FORMATS = {"mp3", "pcm"}
+
+    def _settings(self):
+        from app.core.config import settings
+        return settings
+
+    def _configuration(self) -> dict[str, Any]:
+        settings = self._settings()
+        return {
+            "ws_url": (getattr(settings, "VOLCENGINE_DOUBAO_TTS_WS_URL", "") or "").strip(),
+            "api_key": (getattr(settings, "VOLCENGINE_DOUBAO_TTS_API_KEY", "") or "").strip(),
+            "resource_id": (getattr(settings, "VOLCENGINE_DOUBAO_TTS_RESOURCE_ID", "") or "").strip(),
+            "speaker": (getattr(settings, "VOLCENGINE_DOUBAO_TTS_SPEAKER", "") or "").strip(),
+            "audio_format": (getattr(settings, "VOLCENGINE_DOUBAO_TTS_FORMAT", "mp3") or "mp3").lower(),
+            "sample_rate": int(getattr(settings, "VOLCENGINE_DOUBAO_TTS_SAMPLE_RATE", 24000) or 24000),
+            "enable_subtitle": bool(getattr(settings, "VOLCENGINE_DOUBAO_TTS_ENABLE_SUBTITLE", True)),
+            "connect_timeout_seconds": int(getattr(settings, "VOLCENGINE_DOUBAO_TTS_CONNECT_TIMEOUT_SECONDS", 15) or 15),
+            "read_timeout_seconds": int(getattr(settings, "VOLCENGINE_DOUBAO_TTS_READ_TIMEOUT_SECONDS", 90) or 90),
+        }
+
+    def cache_fingerprint(self) -> dict[str, Any]:
+        config = self._configuration()
+        # Speaker identity changes the output, but its raw identifier is not
+        # written into jobs or attempt metadata.
+        speaker_hash = hashlib.sha256(config["speaker"].encode("utf-8")).hexdigest() if config["speaker"] else ""
+        return {
+            "ws_url": config["ws_url"],
+            "resource_id": config["resource_id"],
+            "speaker_sha256": speaker_hash,
+            "audio_format": config["audio_format"],
+            "sample_rate": config["sample_rate"],
+            "enable_subtitle": config["enable_subtitle"],
+        }
+
+    def health_check(self) -> bool:
+        config = self._configuration()
+        return bool(config["ws_url"] and config["api_key"] and config["resource_id"] and config["speaker"])
+
+    def synthesize(self, request: TtsSynthesisRequest) -> TtsSynthesisResult:
+        config = self._configuration()
+        missing = [name for name in ("ws_url", "api_key", "resource_id", "speaker") if not config[name]]
+        if missing:
+            reject_dependency_unavailable(
+                "豆包 TTS 凭据未配置（需要 VOLCENGINE_DOUBAO_TTS_WS_URL/API_KEY/RESOURCE_ID/SPEAKER）"
+            )
+        if config["audio_format"] not in self._SUPPORTED_FORMATS:
+            reject_dependency_unavailable("豆包 TTS 仅支持 mp3 或 pcm 输出格式")
+        if config["sample_rate"] <= 0:
+            reject_dependency_unavailable("豆包 TTS 采样率配置无效")
+        if request.voice_id not in ("", "default", config["speaker"]):
+            reject_dependency_unavailable("当前豆包 TTS Provider 只允许使用已配置的课程音色")
+
+        from app.services.volcengine_tts_v3 import (
+            VolcengineTtsV3Client,
+            VolcengineTtsV3Config,
+        )
+
+        result = VolcengineTtsV3Client(VolcengineTtsV3Config(**config)).synthesize(request.script_text)
+        subtitle_segments = _subtitle_segments_from_doubao_words(result.words)
+        warnings: list[str] = []
+        if config["enable_subtitle"] and not result.words:
+            warnings.append("doubao_tts: provider returned no word timing; precise subtitles are unavailable")
+        if result.phoneme_count == 0:
+            warnings.append("doubao_tts: provider returned no phonemes; do not use this release for precise lip-sync")
+        if config["audio_format"] != "pcm":
+            warnings.append("doubao_tts: duration uses provider word timing; browser audio remains the playback clock")
+
+        cache_key = self.cache_key(request)
+        object_key = f"tts/course_{request.course_id}/doubao/{cache_key}.{config['audio_format']}"
+        storage = get_object_storage()
+        content_sha = storage.put(
+            object_key,
+            result.audio_bytes,
+            mime_type="audio/mpeg" if config["audio_format"] == "mp3" else "audio/L16",
+        )
+        return TtsSynthesisResult(
+            audio_object_key=object_key,
+            duration_ms=result.duration_ms,
+            subtitle_segments=subtitle_segments,
+            audio_sha256=content_sha,
+            provider_key=self.provider_key,
+            provider_version=self.provider_version,
+            warnings=warnings,
+            timing_metadata={
+                "timing_source": result.duration_source,
+                "word_count": len(result.words),
+                "phoneme_count": result.phoneme_count,
+                "timing_error_ms": result.timing_error_ms,
+                "word_timings": [
+                    {
+                        "text": str(item.get("word") or item.get("text") or ""),
+                        "start_ms": _word_time_ms(item.get("startTime")),
+                        "end_ms": _word_time_ms(item.get("endTime")),
+                    }
+                    for item in result.words
+                    if _word_time_ms(item.get("startTime")) is not None
+                    and _word_time_ms(item.get("endTime")) is not None
+                ],
+            },
+        )
+
+
+# ---------------------------------------------------------------------------
 # 模拟讯飞 TTS Provider（用于自动化测试）
 # ---------------------------------------------------------------------------
 
@@ -587,10 +780,17 @@ _PROVIDER_REGISTRY: dict[str, TTSProvider] = {
     "xfyun_tts": XfyunTtsProvider(),
     "mock_xfyun": MockXfyunTtsProvider(),
     "mock_xfyun_tts": MockXfyunTtsProvider(),
+    "doubao": VolcengineDoubaoTtsProvider(),
+    "doubao_tts": VolcengineDoubaoTtsProvider(),
+    "volcengine_doubao_tts": VolcengineDoubaoTtsProvider(),
 }
 
 
-def get_tts_provider(provider_key: Optional[str] = None) -> TTSProvider:
+class TtsProviderConfigurationError(RuntimeError):
+    """A formal generation request selected an unknown TTS provider."""
+
+
+def get_tts_provider(provider_key: Optional[str] = None, *, strict: bool = False) -> TTSProvider:
     """获取 TTS Provider
 
     首版默认返回 FakeTtsProvider，确保自动化测试与离线演示不依赖外部服务。
@@ -601,6 +801,8 @@ def get_tts_provider(provider_key: Optional[str] = None) -> TTSProvider:
         from app.core.config import settings
         provider_key = getattr(settings, "STAGE8_TTS_PROVIDER", "fake") or "fake"
     provider = _PROVIDER_REGISTRY.get(provider_key.lower())
+    if provider is None and strict:
+        raise TtsProviderConfigurationError(f"Unsupported TTS provider: {provider_key}")
     if provider is None:
         # 未知 provider 回退到 fake，避免生产事故
         return _PROVIDER_REGISTRY["fake"]
@@ -622,4 +824,7 @@ def reset_tts_registry_for_tests() -> None:
         "xfyun_tts": XfyunTtsProvider(),
         "mock_xfyun": MockXfyunTtsProvider(),
         "mock_xfyun_tts": MockXfyunTtsProvider(),
+        "doubao": VolcengineDoubaoTtsProvider(),
+        "doubao_tts": VolcengineDoubaoTtsProvider(),
+        "volcengine_doubao_tts": VolcengineDoubaoTtsProvider(),
     })

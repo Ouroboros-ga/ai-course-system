@@ -50,8 +50,8 @@ class _BatchPort:
     async def plan(self, **kwargs):
         raise AssertionError("batch action must not use the single-command port")
 
-    async def plan_batch(self, *, course_id, action):
-        self.calls.append((course_id, action))
+    async def plan_action(self, *, course_id, action, instruction, outline_node_id):
+        self.calls.append((course_id, action, instruction, outline_node_id))
         return IncrementalPrepResult(
             summary="批量完成",
             operations=[{
@@ -205,7 +205,7 @@ def test_registered_incremental_runtime_dispatches_batch_action_to_port():
     ))
 
     assert result.status == "completed"
-    assert port.calls == [("42", "organize_structure")]
+    assert port.calls == [("42", "organize_structure", "", None)]
     assert result.result["result"]["planner"] == "llm_batched"
 
 

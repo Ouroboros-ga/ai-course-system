@@ -4,6 +4,7 @@ const base = (courseId) => `/course-build/course/${encodeURIComponent(courseId)}
 
 export const listBuildMaterials = (courseId) => request.get(`${base(courseId)}/materials`)
 export const getDraftBuildStatus = (courseId) => request.get(`${base(courseId)}/draft-build-status`)
+export const rebuildInitialDraft = (courseId) => request.post(`${base(courseId)}/initial-draft/rebuild`)
 export const createCourseWorkspace = (payload) => request.post('/courses', payload)
 
 /** Upload bytes through the single SourceMaterialVersion -> TaskRecord path. */

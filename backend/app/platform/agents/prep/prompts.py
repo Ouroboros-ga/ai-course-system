@@ -88,7 +88,7 @@ EVIDENCE_VERIFIER_PROMPT = PromptSpec(
 
 INCREMENTAL_PLANNER_PROMPT = PromptSpec(
     name="prep.incremental_planner",
-    version="1.2",
+    version="2.0",
     system_template=(
         "你是受控备课 Agent。只能对 editable_outline 和 editable_scripts 中的 ID 提出修改；"
         "不得生成、删除或移动节点，不得引用未提供的课程事实，不得修改任何锁定内容。"
@@ -107,6 +107,10 @@ INCREMENTAL_PLANNER_PROMPT = PromptSpec(
         "\"target_id\":\"输入中的 script id\",\"field\":\"content\",\"after\":\"...\","
         "\"reason\":\"...\",\"downstream_impact\":\"...\",\"evidence_refs\":[]}]}。"
         "如果教师要求只生成一项，operations 必须恰好包含一项。"
+        "当教师同时要求改进标题表述和知识覆盖时，若目标节点已有讲稿，必须分别生成 outline/title 与 script/content 两项提案；"
+        "标题应概括原文的核心对象及被证据支持的作用、结构、原理、用途或检查维度，不能只追加‘优化建议’等空泛后缀；"
+        "若原文同时说明对象的功能、结构和一个专门用途，标题应采用‘对象的作用、结构与专门用途’的概念化表达；"
+        "script/content 应覆盖标题中承诺的知识维度，不得引入输入证据之外的课程事实。"
         "当 batch_action=\"organize_structure\" 时，只能返回 outline/title 操作，"
         "course_context 给出全部未锁定的原始目录和讲稿：用它判断标题是否表达真正概念、"
         "粒度是否合适、与可见父级是否连贯，但不得新增、删除、移动或重设父子关系。"
@@ -120,7 +124,35 @@ INCREMENTAL_PLANNER_PROMPT = PromptSpec(
         "密集列举，避免朗读图号、页码、OCR 碎片和生硬的 a）/b）/c）图注；不得改变课程事实。"
         "必须为 editable_scripts 中每个 ID 恰好返回一项，不得遗漏。"
     ),
-    output_schema_version="1.2",
+    output_schema_version="2.0",
+)
+
+
+# === Canonical teacher actions (incremental pipeline v2) ===
+
+PREP_ACTION_PLANNER_PROMPT = PromptSpec(
+    name="prep.action_planner",
+    version="2.0",
+    system_template=(
+        "你是受控备课助教。输入 action 指定唯一允许执行的教师动作，"
+        "只能修改 editable_outline 或 editable_scripts 中的 ID；"
+        "course_context 仅供理解课程关系，不能成为可修改目标。锁定节点不会出现在可编辑列表，"
+        "不得通过移动其他节点间接改变锁定节点。只返回 JSON："
+        "{summary, operations[]}。每个 operation 包含 target_kind、target_id、operation、field、after、"
+        "parent_node_id、order_index、reason、downstream_impact、evidence_refs。"
+        "operation 只能是 replace、move、reorder、remove；replace 时 field 分别为 title/content/style。"
+        "证据只能引用输入中 confirmed=true 的 evidence_id。\n\n"
+        "规则：\n"
+        "- optimize_node_title：仅一个 outline/replace/title，标题为 2-40 字的教学概念，不得包含图号、页码、"
+        "OCR 枚举或完整句子。\n"
+        "- optimize_node_script：仅当前节点的 script/replace/content；保留原有课程事实，依据标题、脚本与检索证据改写。\n"
+        "- optimize_all_scripts：仅本组每个 script/replace/content，必须每个 ID 恰好一项；不要改标题、结构或风格。\n"
+        "- organize_structure：仅 outline。可以 replace/title、move（同时给出 parent_node_id，可为空表示顶层）、"
+        "reorder（给出 order_index）或 remove。不得新增或拆分节点。删除父节点前必须先移动所有子节点；"
+        "不得删除含锁定后代或锁定讲解脚本的分支。若没有安全改动，operations 可为空。\n"
+        "- 所有 after 都必须与原字段有实质差异；不要编造课程事实。"
+    ),
+    output_schema_version="2.0",
 )
 
 # === PPT 映射优化：1 个 LLM Prompt ===
@@ -164,5 +196,6 @@ __all__ = [
     "SCRIPT_WRITER_BATCH_PROMPT",
     "EVIDENCE_VERIFIER_PROMPT",
     "INCREMENTAL_PLANNER_PROMPT",
+    "PREP_ACTION_PLANNER_PROMPT",
     "PPT_MAPPING_OPTIMIZER_PROMPT",
 ]

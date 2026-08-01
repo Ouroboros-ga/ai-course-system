@@ -15,7 +15,8 @@ import tempfile
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -37,16 +38,17 @@ from app.models.course_outline_model import (
     TeachingScriptNode,
     TeachingScriptVersion,
 )
-from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, CourseCorpusSnapshot, MaterialStatus, SourceMaterial
+from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, CourseCorpusSnapshot, MaterialStatus, SourceMaterial, SourceMaterialVersion
+from app.models.media_release_model import MediaRelease
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
-from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
+from app.models.document_parse_model import DocumentBlock, EvidenceRenderAsset, EvidenceSpan, EvidenceSpanStatus
 from app.models.graph_production_model import CourseEvidenceRecord, EvidenceStatus
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
 from app.services.course_build_service import course_release_service, quality_gate_service, source_material_service
 from app.services.course_corpus_service import course_corpus_service
 from app.services.document_parse_service import document_parse_service
-from app.services.object_storage import get_object_storage
+from app.services.object_storage import LocalStorageProvider, get_object_storage
 from app.services.task_service import TaskCreateRequest, task_service
 from app.platform.tasks.worker import local_task_worker
 from app.platform.tasks.document_parse_queue import document_parse_queue
@@ -55,6 +57,7 @@ from app.models.resource_model import ResourceItem, ResourceLifecycleStatus, Res
 from app.services.ppt_generation_service import ppt_generation_service
 from app.schemas.controlled_prep import ControlledPrepInput, TeachingStyleConfig
 from app.services.controlled_prep_workflow import controlled_prep_workflow
+from app.platform.agents.prep.actions import PrepAction, canonical_prep_action, resolve_prep_intent
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -132,9 +135,37 @@ class ProposalDecision(BaseModel):
 
 
 class PptMappingUpdate(BaseModel):
+    material_version_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
     page_range: Optional[str] = Field(default=None, max_length=64)
+    page_refs: Optional[list[int]] = Field(default=None, min_length=1, max_length=200)
     confidence: Optional[float] = Field(default=None, ge=0, le=1)
     locked: Optional[bool] = None
+
+
+class PptMappingBulkItem(BaseModel):
+    """One teacher-edited deck/node mapping saved with the mapping workbench."""
+
+    outline_node_id: str = Field(min_length=1, max_length=128)
+    material_version_id: str = Field(min_length=1, max_length=128)
+    page_refs: list[int] = Field(min_length=1, max_length=200)
+    confidence: Optional[float] = Field(default=None, ge=0, le=1)
+    # A manual correction is protected from future one-click optimisations by
+    # default.  Teachers can explicitly save it unlocked when they want later
+    # AI passes to keep refining it.
+    locked: bool = True
+
+
+class PptMappingBulkUpdate(BaseModel):
+    mappings: list[PptMappingBulkItem] = Field(min_length=1, max_length=300)
+
+
+class PptMappingMatchRequest(BaseModel):
+    """Narrow, teacher-triggered automatic mapping scope."""
+
+    mode: Literal["all_unlocked", "node", "selected_pages"]
+    material_version_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    outline_node_id: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    page_refs: list[int] = Field(default_factory=list, max_length=200)
 
 
 class PptGenerateRequest(BaseModel):
@@ -161,14 +192,19 @@ class ControlledPrepRequest(BaseModel):
 class PrepAgentCommandRequest(BaseModel):
     """Natural-language instruction for the teacher-facing preparation agent."""
 
-    instruction: str = Field(min_length=2, max_length=8_000)
+    instruction: str = Field(default="", max_length=8_000)
     outline_node_id: Optional[str] = Field(default=None, max_length=100)
+    # Buttons send the action directly; chat leaves it empty and lets the
+    # transparent intent resolver select the same capability token.
+    action: Optional[str] = Field(default=None, max_length=64)
 
 
 class PrepAgentBatchRequest(BaseModel):
     """Explicit teacher-triggered batch action that applies without approval."""
 
-    action: Literal["organize_structure", "optimize_scripts"]
+    action: str = Field(min_length=1, max_length=64)
+    instruction: str = Field(default="", max_length=8_000)
+    outline_node_id: Optional[str] = Field(default=None, max_length=100)
 
 
 async def _plan_incremental_prep(
@@ -236,10 +272,12 @@ async def _plan_incremental_prep(
             )
 
     if action is not None:
-        return await service.plan_batch(
+        return await service.plan_action(
             session,
             course_id=course_id,
             action=action,
+            instruction=instruction,
+            outline_node_id=outline_node_id,
         )
     return await service.plan(
         session,
@@ -541,6 +579,128 @@ def _ppt_mapping_view(mapping: CoursePptMapping) -> dict[str, Any]:
         "teacher_locked": mapping.teacher_locked,
         "updated_at": mapping.updated_at.isoformat() if mapping.updated_at else None,
     }
+
+
+def _current_ppt_material_versions(
+    session: Session,
+    course_id: int,
+) -> list[tuple[SourceMaterial, SourceMaterialVersion]]:
+    """Resolve every current slide material version for a course.
+
+    PPT slide numbers are scoped to the material version, not to the course.
+    Keeping this selection in one helper prevents the mapping screen and the
+    optimizer from accidentally choosing whichever deck happened to upload
+    last.
+    """
+    materials = list(session.exec(
+        select(SourceMaterial).where(
+            SourceMaterial.course_id == course_id,
+            SourceMaterial.material_type == "slide",
+        ).order_by(SourceMaterial.id)
+    ).all())
+    result: list[tuple[SourceMaterial, SourceMaterialVersion]] = []
+    seen_content: set[str] = set()
+    for material in materials:
+        version = None
+        if material.current_version_id:
+            version = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.course_id == course_id,
+                SourceMaterialVersion.material_id == material.material_id,
+                SourceMaterialVersion.version_id == material.current_version_id,
+            )).first()
+        if version is None:
+            version = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.course_id == course_id,
+                SourceMaterialVersion.material_id == material.material_id,
+            ).order_by(
+                SourceMaterialVersion.is_current.desc(),
+                SourceMaterialVersion.id.desc(),
+            )).first()
+        if version is not None:
+            # Pre-idempotency uploads could create several current material
+            # rows for identical bytes.  PPT page references are per deck, so
+            # keep one stable deck per hash while retaining old rows intact.
+            content_key = (version.file_hash or version.version_id).strip()
+            if content_key in seen_content:
+                continue
+            seen_content.add(content_key)
+            result.append((material, version))
+    return result
+
+
+def _ppt_page_count(session: Session, *, course_id: int, material_version_id: str) -> int:
+    """Return the highest parsed slide number for one current PPT version."""
+    pages = session.exec(select(DocumentBlock.page_or_slide).where(
+        DocumentBlock.course_id == course_id,
+        DocumentBlock.material_version_id == material_version_id,
+    )).all()
+    return max((int(page or 0) for page in pages), default=0)
+
+
+def _ppt_material_view(
+    session: Session,
+    *,
+    course_id: int,
+    material: SourceMaterial,
+    version: SourceMaterialVersion,
+) -> dict[str, Any]:
+    return {
+        "material_id": material.material_id,
+        "material_version_id": version.version_id,
+        "name": material.name or version.version_id,
+        "page_count": _ppt_page_count(
+            session,
+            course_id=course_id,
+            material_version_id=version.version_id,
+        ),
+        "parse_status": version.parse_status.value,
+    }
+
+
+def _normalise_mapping_page_refs(
+    *,
+    page_range: str | None = None,
+    page_refs: list[int] | None = None,
+) -> list[int]:
+    """Accept the legacy range input and the workbench's non-contiguous pages."""
+    if page_refs is not None:
+        normalized = sorted({int(page) for page in page_refs})
+        if not normalized or normalized[0] < 1:
+            raise HTTPException(400, "页码必须为大于等于 1 的整数")
+        return normalized
+    if page_range is None:
+        return []
+    raw = page_range.strip()
+    parts = raw.split("-", 1)
+    if not raw or not all(part.strip().isdigit() for part in parts):
+        raise HTTPException(400, "页码格式应为 1、1-3 或多个页码数组")
+    page_start = max(1, int(parts[0].strip()))
+    page_end = max(page_start, int(parts[-1].strip()))
+    return list(range(page_start, page_end + 1))
+
+
+def _validate_mapping_pages(
+    session: Session,
+    *,
+    course_id: int,
+    material_version_id: str,
+    page_refs: list[int],
+) -> list[int]:
+    normalized = _normalise_mapping_page_refs(page_refs=page_refs)
+    page_count = _ppt_page_count(
+        session,
+        course_id=course_id,
+        material_version_id=material_version_id,
+    )
+    if page_count and normalized[-1] > page_count:
+        raise HTTPException(
+            400,
+            detail={
+                "error_code": "PPT_PAGE_OUT_OF_RANGE",
+                "message": f"This PPT has {page_count} parsed pages; page {normalized[-1]} is out of range.",
+            },
+        )
+    return normalized
 
 
 @router.get("/course/{course_id}/outline")
@@ -878,7 +1038,41 @@ async def run_prep_agent_command(
     PatchProposal persistence and decision endpoint, so it cannot double-write
     the outline/script records.
     """
-    context = require_course_permission(session, current_user, course_id, "course.edit")
+    intent = resolve_prep_intent(
+        payload.instruction,
+        selected_outline_node_id=payload.outline_node_id,
+        explicit_action=payload.action,
+    )
+    if intent.needs_clarification:
+        return unified_response(200, "需要补充操作范围", {
+            "outcome": "needs_clarification",
+            "clarification": intent.clarification,
+        })
+    assert intent.action is not None
+    if intent.action == PrepAction.MATCH_PPT:
+        # PPT mapping already has its own typed Port/workflow and trustworthy
+        # no-candidate outcome. Natural language reaches that same workflow.
+        return await optimize_ppt_mapping(course_id, request, session, current_user)
+    if intent.apply_immediately:
+        # "一键整理/优化全部" in chat is an explicit teacher authorization.
+        # Reuse the exact batch endpoint rather than duplicating validation,
+        # locking, auditing, or atomic-apply behaviour in the chat facade.
+        return await run_prep_agent_batch_action(
+            course_id,
+            PrepAgentBatchRequest(
+                action=intent.action.value,
+                instruction=intent.instruction,
+            ),
+            request,
+            session,
+            current_user,
+        )
+    permission = (
+        "course.structure.edit"
+        if intent.action in {PrepAction.OPTIMIZE_NODE_TITLE, PrepAction.ORGANIZE_STRUCTURE}
+        else "course.script.edit"
+    )
+    context = require_course_permission(session, current_user, course_id, permission)
     # Both checks are inside the guard so a batch request cannot race this
     # single-node command between observing and acquiring its course lock.
     async with _prep_batch_locks_guard:
@@ -898,8 +1092,9 @@ async def run_prep_agent_command(
             session=session,
             course_id=course_id,
             teacher_id=context.user_id,
-            instruction=payload.instruction,
+            instruction=intent.instruction,
             outline_node_id=payload.outline_node_id,
+            action=intent.action.value,
         )
     except CoursePrepAgentPlanningError as exc:
         raise HTTPException(
@@ -915,7 +1110,7 @@ async def run_prep_agent_command(
     proposal = PatchProposal(
         course_id=course_id,
         tool_name="CoursePrepAgent",
-        policy_version="course-prep-agent/1.0",
+        policy_version="course-prep-agent/actions-2.0",
         reason=result.summary,
         created_by=context.user_id,
     )
@@ -932,7 +1127,7 @@ async def run_prep_agent_command(
             )).first()
             if target is None or target.locked_by is not None:
                 continue
-            before = str(getattr(target, field, ""))
+            before = _proposal_before_value(target, field)
         else:
             target = session.exec(select(TeachingScriptNode).where(
                 TeachingScriptNode.course_id == course_id,
@@ -940,26 +1135,37 @@ async def run_prep_agent_command(
             )).first()
             if target is None or target.locked_by is not None:
                 continue
-            before = str(getattr(target, field, ""))
+            before = _proposal_before_value(target, field)
         session.add(PatchProposalOperation(
             proposal_id=proposal.proposal_id,
             course_id=course_id,
-            operation=PatchOperation.REPLACE,
+            operation=PatchOperation(item.get("operation", "replace")),
             target=item["target"],
             before=before,
             after=item["after"],
             reason=item["reason"],
             evidence_refs=item["evidence_refs"],
-            policy_version="course-prep-agent/1.0",
+            policy_version="course-prep-agent/actions-2.0",
         ))
         operation_count += 1
     if operation_count == 0:
         session.rollback()
-        raise HTTPException(409, "提案目标已在生成期间被锁定或删除，请刷新后重试")
+        return unified_response(200, "未发现需要安全调整的内容，课程草稿保持不变", {
+            "outcome": "no_change",
+            "action": intent.action.value,
+            "explanation": {
+                "changed": [],
+                "reason": result.summary,
+                "evidence": result.evidence,
+                "excluded_locked_targets": result.excluded_locked_targets,
+                "planner": result.planner,
+            },
+        })
     session.commit()
     return unified_response(201, "备课 Agent 已生成待教师审核的提案", {
         "proposal_id": proposal.proposal_id,
         "status": PatchProposalStatus.PENDING.value,
+        "action": intent.action.value,
         "explanation": {
             "changed": [item["target"] for item in result.operations],
             "reason": result.summary,
@@ -985,9 +1191,15 @@ async def run_prep_agent_batch_action(
     exposed as pending approval. Planning is completed and fully validated
     before any row is mutated.
     """
+    action = canonical_prep_action(payload.action)
+    if action not in {PrepAction.ORGANIZE_STRUCTURE, PrepAction.OPTIMIZE_ALL_SCRIPTS}:
+        raise HTTPException(422, detail={
+            "error_code": "PREP_AGENT_ACTION_INVALID",
+            "message": "批量入口只支持一键整理结构或一键优化讲解脚本。",
+        })
     permission = (
         "course.structure.edit"
-        if payload.action == "organize_structure"
+        if action == PrepAction.ORGANIZE_STRUCTURE
         else "course.script.edit"
     )
     context = require_course_permission(session, current_user, course_id, permission)
@@ -1007,9 +1219,9 @@ async def run_prep_agent_batch_action(
                 session=session,
                 course_id=course_id,
                 teacher_id=context.user_id,
-                instruction="",
-                outline_node_id=None,
-                action=payload.action,
+                instruction=payload.instruction,
+                outline_node_id=payload.outline_node_id,
+                action=action.value,
             )
         except CoursePrepAgentPlanningError as exc:
             raise HTTPException(
@@ -1028,15 +1240,25 @@ async def run_prep_agent_batch_action(
                 },
             ) from exc
 
+        if not result.operations:
+            return unified_response(200, "未发现需要安全调整的内容，课程草稿保持不变", {
+                "action": action.value,
+                "outcome": "no_change",
+                "updated_count": 0,
+                "excluded_locked_targets": result.excluded_locked_targets,
+                "planner": result.planner,
+                "summary": result.summary,
+            })
+
         decided_at = utcnow_aware()
         proposal = PatchProposal(
             course_id=course_id,
             tool_name=(
                 "CourseStructureBatchOptimizer"
-                if payload.action == "organize_structure"
+                if action == PrepAction.ORGANIZE_STRUCTURE
                 else "TeachingScriptBatchOptimizer"
             ),
-            policy_version="course-prep-agent/batch-1.1",
+            policy_version="course-prep-agent/actions-2.0",
             status=PatchProposalStatus.ACCEPTED,
             reason=result.summary,
             created_by=context.user_id,
@@ -1048,11 +1270,11 @@ async def run_prep_agent_batch_action(
         operations: list[PatchProposalOperation] = []
         for item in result.operations:
             target_kind, target_id, field = item["target"].split(":", 2)
-            if payload.action == "organize_structure" and (
-                target_kind != "outline" or field != "title"
+            if action == PrepAction.ORGANIZE_STRUCTURE and (
+                target_kind != "outline" or field not in {"title", "structure"}
             ):
                 raise ValueError(f"结构整理返回了不允许的目标: {item['target']}")
-            if payload.action == "optimize_scripts" and (
+            if action == PrepAction.OPTIMIZE_ALL_SCRIPTS and (
                 target_kind != "script" or field != "content"
             ):
                 raise ValueError(f"讲稿优化返回了不允许的目标: {item['target']}")
@@ -1077,25 +1299,24 @@ async def run_prep_agent_batch_action(
             operation = PatchProposalOperation(
                 proposal_id=proposal.proposal_id,
                 course_id=course_id,
-                operation=PatchOperation.REPLACE,
+                operation=PatchOperation(item.get("operation", "replace")),
                 target=item["target"],
-                before=str(getattr(target, field, "")),
+                before=_proposal_before_value(target, field),
                 after=item["after"],
                 reason=item["reason"],
                 evidence_refs=item["evidence_refs"],
-                policy_version="course-prep-agent/batch-1.1",
+                policy_version="course-prep-agent/actions-2.0",
                 accepted=True,
                 decided_at=decided_at,
             )
             session.add(operation)
             operations.append(operation)
 
-        for operation in operations:
-            _apply_operation(session, course_id, operation, context.user_id)
+        _apply_operations_atomically(session, course_id, operations, context.user_id)
         session.add(proposal)
         session.commit()
         return unified_response(200, "助教智能体已完成全量优化", {
-            "action": payload.action,
+            "action": action.value,
             "proposal_id": proposal.proposal_id,
             "status": PatchProposalStatus.ACCEPTED.value,
             "updated_count": len(operations),
@@ -1204,6 +1425,215 @@ def _filter_course_evidence_refs(session: Session, course_id: int, refs):
     return filtered
 
 
+def _proposal_before_value(target: Any, field: str) -> str:
+    if field == "structure":
+        return json.dumps({
+            "parent_node_id": target.parent_node_id,
+            "order_index": target.order_index,
+        }, ensure_ascii=False)
+    return str(getattr(target, field, ""))
+
+
+def _apply_operations_atomically(
+    session: Session,
+    course_id: int,
+    operations: list[PatchProposalOperation],
+    user_id: int,
+) -> None:
+    """Apply a proposal without exposing a transient invalid outline tree.
+
+    Title/script replacements retain the existing per-operation semantics.
+    Structure moves, reorders and removals are computed against one draft tree
+    and written in a two-phase order-index update, so the DB uniqueness rule
+    cannot observe duplicate sibling positions halfway through the operation.
+    """
+    structure_ops = [
+        op for op in operations
+        if op.target.startswith("outline:") and op.target.endswith(":structure")
+    ]
+    simple_ops = [op for op in operations if op not in structure_ops]
+    # Preflight every normal replace before mutating any row.  This makes an
+    # old proposal fail as a whole instead of overwriting a teacher edit that
+    # happened after the proposal was generated.
+    for operation in simple_ops:
+        if operation.operation != PatchOperation.REPLACE:
+            raise HTTPException(422, "非结构提案只能执行字段替换")
+        match = re.match(r"^(outline|script):([^:]+):(title|content|style)$", operation.target)
+        if match is None:
+            # Legacy initial-build proposals may still use the controlled
+            # ``new`` target, whose existing idempotent path validates itself.
+            continue
+        kind, target_id, field = match.groups()
+        if target_id == "new":
+            continue
+        model = CourseOutlineNode if kind == "outline" else TeachingScriptNode
+        id_field = "outline_node_id" if kind == "outline" else "script_node_id"
+        target = session.exec(select(model).where(
+            model.course_id == course_id,
+            getattr(model, id_field) == target_id,
+        )).first()
+        if target is None or target.locked_by is not None:
+            raise HTTPException(409, "提案目标已被锁定或删除，未应用任何修改")
+        if operation.before != _proposal_before_value(target, field):
+            raise HTTPException(409, "提案生成后目标内容已变化，请刷新后重新生成")
+    if structure_ops:
+        first_target_id = structure_ops[0].target.split(":", 2)[1]
+        first_target = session.exec(select(CourseOutlineNode).where(
+            CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_node_id == first_target_id,
+        )).first()
+        if first_target is None:
+            raise HTTPException(409, "结构提案目标已被删除，未应用任何修改")
+        nodes = list(session.exec(select(CourseOutlineNode).where(
+            CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_version_id == first_target.outline_version_id,
+        )).all())
+        by_id = {node.outline_node_id: node for node in nodes}
+        if not by_id:
+            raise HTTPException(409, "当前草稿目录已不存在")
+        version = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.outline_version_id == first_target.outline_version_id,
+        )).first()
+        if version is None or version.lifecycle_status != OutlineLifecycleStatus.DRAFT:
+            raise HTTPException(409, "结构提案目标不再是草稿")
+
+        # A course can retain published and historical script versions that
+        # refer to the same logical outline node.  Structural cleanup must
+        # affect only scripts in a draft version derived from this exact
+        # draft outline; published/history rows are immutable records.
+        draft_script_version_ids = {
+            item.script_version_id
+            for item in session.exec(select(TeachingScriptVersion).where(
+                TeachingScriptVersion.course_id == course_id,
+                TeachingScriptVersion.outline_version_id == version.outline_version_id,
+                TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+            )).all()
+        }
+        draft_scripts = [] if not draft_script_version_ids else list(session.exec(
+            select(TeachingScriptNode).where(
+                TeachingScriptNode.course_id == course_id,
+                TeachingScriptNode.script_version_id.in_(draft_script_version_ids),
+            )
+        ).all())
+
+        parent_by_id = {node.outline_node_id: node.parent_node_id for node in nodes}
+        order_by_id = {node.outline_node_id: node.order_index for node in nodes}
+        removals: set[str] = set()
+        for op in structure_ops:
+            _kind, target_id, _field = op.target.split(":", 2)
+            target = by_id.get(target_id)
+            if target is None or target.locked_by is not None:
+                raise HTTPException(409, "结构提案目标已被锁定或删除，未应用任何修改")
+            if op.before and op.before != _proposal_before_value(target, "structure"):
+                raise HTTPException(409, "结构提案生成后目标位置已变化，请刷新后重新生成")
+            op.evidence_refs = _filter_course_evidence_refs(session, course_id, op.evidence_refs)
+            if op.operation == PatchOperation.MOVE:
+                try:
+                    payload = json.loads(op.after or "{}")
+                except json.JSONDecodeError as exc:
+                    raise HTTPException(422, "结构移动提案格式无效") from exc
+                parent_id = payload.get("parent_node_id")
+                parent = by_id.get(parent_id) if parent_id else None
+                if parent_id and (parent is None or parent.locked_by is not None):
+                    raise HTTPException(409, "不能移动到锁定或不存在的父节点")
+                parent_by_id[target_id] = parent_id
+                if payload.get("order_index") is not None:
+                    order_by_id[target_id] = int(payload["order_index"])
+            elif op.operation == PatchOperation.REORDER:
+                try:
+                    payload = json.loads(op.after or "{}")
+                    order_by_id[target_id] = int(payload["order_index"])
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                    raise HTTPException(422, "结构排序提案格式无效") from exc
+            elif op.operation == PatchOperation.REMOVE:
+                removals.add(target_id)
+            else:
+                raise HTTPException(422, "结构提案包含不支持的操作")
+
+        for node_id in parent_by_id:
+            seen: set[str] = set()
+            cursor: str | None = node_id
+            while cursor is not None:
+                if cursor in seen:
+                    raise HTTPException(409, "结构提案会形成父子循环，未应用任何修改")
+                seen.add(cursor)
+                cursor = parent_by_id.get(cursor)
+        for node_id in removals:
+            descendants = _proposal_outline_descendants(node_id, parent_by_id)
+            if any(by_id[item].locked_by is not None for item in descendants):
+                raise HTTPException(409, "不能删除含锁定后代的课程分支")
+            surviving_children = {
+                child_id for child_id, parent_id in parent_by_id.items()
+                if parent_id == node_id and child_id not in removals
+            }
+            if surviving_children:
+                raise HTTPException(409, "删除父节点前必须先移动其全部子节点")
+            if any(
+                script.outline_node_id == node_id and script.locked_by is not None
+                for script in draft_scripts
+            ):
+                raise HTTPException(409, "不能删除关联了锁定讲解脚本的课程节点")
+
+        # Make every old sibling position temporarily unique before applying
+        # a new parent/order relation.  This avoids violating the unique
+        # (outline_version_id, parent_node_id, order_index) constraint midway.
+        for index, node in enumerate(nodes):
+            node.order_index = 1_000_000 + index
+            session.add(node)
+        session.flush()
+
+        remaining = [node for node in nodes if node.outline_node_id not in removals]
+        by_parent: dict[str | None, list[CourseOutlineNode]] = {}
+        for node in remaining:
+            node.parent_node_id = parent_by_id[node.outline_node_id]
+            by_parent.setdefault(node.parent_node_id, []).append(node)
+        for siblings in by_parent.values():
+            siblings.sort(key=lambda node: (order_by_id[node.outline_node_id], node.outline_node_id))
+            for index, node in enumerate(siblings):
+                node.order_index = index
+                node.updated_at = utcnow_aware()
+                session.add(node)
+        for node_id in removals:
+            for mapping in session.exec(select(CoursePptMapping).where(
+                CoursePptMapping.course_id == course_id,
+                CoursePptMapping.outline_node_id == node_id,
+                CoursePptMapping.status == "draft",
+            )).all():
+                mapping.status = "stale"
+                mapping.updated_by = user_id
+                mapping.updated_at = utcnow_aware()
+                session.add(mapping)
+            for script in [
+                item for item in draft_scripts
+                if item.outline_node_id == node_id
+            ]:
+                if script.locked_by is not None:
+                    raise HTTPException(409, "不能删除关联了锁定讲解脚本的课程节点")
+                session.delete(script)
+            session.delete(by_id[node_id])
+        _mark_teacher_edited(version)
+        session.add(version)
+
+    for operation in simple_ops:
+        _apply_operation(session, course_id, operation, user_id)
+
+
+def _proposal_outline_descendants(
+    node_id: str,
+    parent_by_id: dict[str, str | None],
+) -> set[str]:
+    result: set[str] = set()
+    frontier = [node_id]
+    while frontier:
+        parent = frontier.pop()
+        children = [child_id for child_id, parent_id in parent_by_id.items() if parent_id == parent]
+        for child_id in children:
+            if child_id not in result:
+                result.add(child_id)
+                frontier.append(child_id)
+    return result
+
+
 def _apply_operation(session: Session, course_id: int, op: PatchProposalOperation, user_id: int) -> None:
     # P1-B4: 校验 evidence_refs 课程归属，过滤跨课程引用。
     op.evidence_refs = _filter_course_evidence_refs(session, course_id, op.evidence_refs)
@@ -1305,7 +1735,8 @@ async def decide_proposal(course_id: int, proposal_id: str, payload: ProposalDec
     if proposal.status != PatchProposalStatus.PENDING: raise HTTPException(409, "提案已经处理")
     ops = session.exec(select(PatchProposalOperation).where(PatchProposalOperation.proposal_id == proposal_id).order_by(PatchProposalOperation.id)).all()
     if payload.accepted:
-        for op in ops: _apply_operation(session, course_id, op, context.user_id); op.accepted = True; op.decided_at = utcnow_aware(); session.add(op)
+        _apply_operations_atomically(session, course_id, list(ops), context.user_id)
+        for op in ops: op.accepted = True; op.decided_at = utcnow_aware(); session.add(op)
         proposal.status = PatchProposalStatus.ACCEPTED
     else:
         for op in ops: op.accepted = False; op.decided_at = utcnow_aware(); session.add(op)
@@ -1320,6 +1751,26 @@ async def get_ppt_mapping(course_id: int, session: Session = Depends(get_session
     outline = _draft_outline(session, course_id) or _published_outline(session, course_id)
     materials = session.exec(select(SourceMaterial).where(SourceMaterial.course_id == course_id)).all()
     has_ppt = any(m.material_type == "slide" for m in materials)
+    current_ppt_versions = _current_ppt_material_versions(session, course_id)
+    ppt_materials = [
+        _ppt_material_view(
+            session,
+            course_id=course_id,
+            material=material,
+            version=version,
+        )
+        for material, version in current_ppt_versions
+    ]
+    material_by_version = {
+        item["material_version_id"]: item
+        for item in ppt_materials
+    }
+    ppt_manifest_available = session.exec(
+        select(MediaRelease.id).where(
+            MediaRelease.course_id == course_id,
+            MediaRelease.ppt_manifest_object_key.is_not(None),
+        ).order_by(MediaRelease.version_number.desc(), MediaRelease.id.desc())
+    ).first() is not None
     nodes = list(session.exec(select(CourseOutlineNode).where(
         CourseOutlineNode.outline_version_id == outline.outline_version_id,
     )).all()) if outline else []
@@ -1328,23 +1779,207 @@ async def get_ppt_mapping(course_id: int, session: Session = Depends(get_session
     all_mappings = list(session.exec(select(CoursePptMapping).where(
         CoursePptMapping.course_id == course_id,
     )).all())
-    mappings = [item for item in all_mappings if item.outline_node_id in current_node_ids]
-    stale_mappings = [item for item in all_mappings if item.outline_node_id not in current_node_ids]
-    mapping_by_node = {item.outline_node_id: item for item in mappings}
+    current_version_ids = set(material_by_version)
+    mappings = [
+        item for item in all_mappings
+        if item.outline_node_id in current_node_ids
+        and item.material_version_id in current_version_ids
+    ]
+    stale_mappings = [
+        item for item in all_mappings
+        if item.outline_node_id not in current_node_ids
+        or item.material_version_id not in current_version_ids
+    ]
+    mappings_by_node: dict[str, list[CoursePptMapping]] = {}
+    for mapping in mappings:
+        mappings_by_node.setdefault(mapping.outline_node_id, []).append(mapping)
+
+    def mapping_view(mapping: CoursePptMapping) -> dict[str, Any]:
+        view = _ppt_mapping_view(mapping)
+        material = material_by_version.get(mapping.material_version_id or "")
+        if material:
+            page_count = material["page_count"]
+            view["material_name"] = material["name"]
+            view["page_count"] = page_count
+            view["out_of_bounds"] = bool(
+                page_count and (
+                    mapping.page_start < 1
+                    or mapping.page_end > page_count
+                    or any(
+                        int(page) < 1 or int(page) > page_count
+                        for page in (mapping.page_refs or [])
+                    )
+                )
+            )
+        return view
+
     node_views = []
     for node in ordered_nodes:
         view = _outline_node_view(node, displays[node.outline_node_id])
-        view["ppt_mapping"] = _ppt_mapping_view(mapping_by_node[node.outline_node_id]) if node.outline_node_id in mapping_by_node else None
+        node_mappings = sorted(
+            mappings_by_node.get(node.outline_node_id, []),
+            key=lambda mapping: (
+                ppt_materials.index(material_by_version[mapping.material_version_id])
+                if mapping.material_version_id in material_by_version else len(ppt_materials),
+                mapping.id or 0,
+            ),
+        )
+        # ``ppt_mapping`` remains as a compatibility summary for existing
+        # consumers. New mapping clients must consume ``ppt_mappings`` so
+        # page numbers always stay attached to their deck version.
+        view["ppt_mappings"] = [mapping_view(mapping) for mapping in node_mappings]
+        view["ppt_mapping"] = view["ppt_mappings"][0] if view["ppt_mappings"] else None
         node_views.append(view)
     return unified_response(200, "获取 PPT 映射状态成功", {
+        "mapping_contract_version": "ppt-mapping/v2",
         "has_ppt": has_ppt,
+        "content_source": "ppt_manifest" if ppt_manifest_available else "document_parse",
         "editable": bool(outline and outline.lifecycle_status == OutlineLifecycleStatus.DRAFT),
         "outline_version_id": outline.outline_version_id if outline else None,
+        "ppt_materials": ppt_materials,
         "nodes": node_views,
-        "mappings": [_ppt_mapping_view(item) for item in mappings],
+        "mappings": [mapping_view(item) for item in mappings],
         "stale_mappings": [_ppt_mapping_view(item) for item in stale_mappings],
         "actions": {"upload_existing": True, "generate_ai": bool(nodes)},
     })
+
+
+@router.get("/course/{course_id}/ppt-mapping/workspace")
+async def get_ppt_mapping_workspace(
+    course_id: int,
+    material_version_id: str,
+    page_start: int = Query(default=1, ge=1),
+    page_size: int = Query(default=12, ge=1, le=30),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return one material-version's small, visual mapping workbench slice.
+
+    Page images are never copied into the response.  The browser receives a
+    course-authorized content route for each persisted render asset, while OCR
+    text and source block IDs remain page-scoped for the matching workflow.
+    """
+    require_course_permission(session, current_user, course_id, "course.mapping.edit")
+    versions = {
+        version.version_id: (material, version)
+        for material, version in _current_ppt_material_versions(session, course_id)
+    }
+    if material_version_id not in versions:
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "PPT_MATERIAL_VERSION_INVALID",
+                "message": "The selected PPT file is not a current editable material version for this course.",
+            },
+        )
+
+    blocks = list(session.exec(select(DocumentBlock).where(
+        DocumentBlock.course_id == course_id,
+        DocumentBlock.material_version_id == material_version_id,
+    ).order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all())
+    blocks_by_page: dict[int, list[DocumentBlock]] = {}
+    run_ids_by_page: dict[int, set[str]] = {}
+    for block in blocks:
+        page = int(block.page_or_slide or block.page_number or 0)
+        if page < 1:
+            continue
+        blocks_by_page.setdefault(page, []).append(block)
+        if block.run_id:
+            run_ids_by_page.setdefault(page, set()).add(block.run_id)
+
+    page_count = max(blocks_by_page, default=0)
+    page_end = min(page_count, page_start + page_size - 1)
+    requested_pages = list(range(page_start, page_end + 1)) if page_start <= page_count else []
+    run_ids = {run_id for values in run_ids_by_page.values() for run_id in values}
+    assets = list(session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.run_id.in_(run_ids or {""}),
+        EvidenceRenderAsset.page_number.in_(requested_pages or {-1}),
+    ).order_by(EvidenceRenderAsset.created_at.desc(), EvidenceRenderAsset.id.desc())).all())
+    assets_by_page: dict[int, EvidenceRenderAsset] = {}
+    for asset in assets:
+        if (
+            asset.page_number not in assets_by_page
+            and asset.run_id in run_ids_by_page.get(asset.page_number, set())
+            and asset.object_key
+        ):
+            assets_by_page[asset.page_number] = asset
+
+    pages = []
+    for page in requested_pages:
+        page_blocks = blocks_by_page.get(page, [])
+        asset = assets_by_page.get(page)
+        text = "\n".join(
+            (block.text or "").strip()
+            for block in page_blocks
+            if (block.text or "").strip()
+        )
+        pages.append({
+            "page": page,
+            "image_url": (
+                f"/api/v1/course-editor/course/{course_id}/ppt-mapping/renders/{asset.asset_id}/content"
+                if asset else None
+            ),
+            "width": asset.width if asset else 0,
+            "height": asset.height if asset else 0,
+            "ocr_preview": text[:1000],
+            "ocr_available": bool(text),
+            "source_block_refs": [block.block_id for block in page_blocks if block.block_id],
+        })
+
+    material, version = versions[material_version_id]
+    return unified_response(200, "获取 PPT 映射工作区成功", {
+        "workspace_contract_version": "ppt-mapping-workspace/v1",
+        "material": _ppt_material_view(
+            session,
+            course_id=course_id,
+            material=material,
+            version=version,
+        ),
+        "page_count": page_count,
+        "page_start": page_start,
+        "page_size": page_size,
+        "next_page_start": page_end + 1 if page_end < page_count else None,
+        "pages": pages,
+        "rendered_page_count": len(assets_by_page),
+        "message": (
+            "部分 PPT 页图仍在解析中；OCR 文本可先用于智能匹配。"
+            if requested_pages and len(assets_by_page) < len(requested_pages)
+            else "PPT 页图与 OCR 已就绪。"
+        ),
+    })
+
+
+@router.get("/course/{course_id}/ppt-mapping/renders/{asset_id}/content")
+async def get_ppt_mapping_render_content(
+    course_id: int,
+    asset_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Serve one page rendition after the mapping permission check."""
+    context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
+    asset = session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.asset_id == asset_id,
+        EvidenceRenderAsset.course_id == course_id,
+    )).first()
+    if asset is None or not asset.object_key:
+        raise HTTPException(404, "PPT 页图不存在或尚未生成")
+    try:
+        storage = get_object_storage()
+        if isinstance(storage, LocalStorageProvider):
+            from pathlib import Path
+            file_path = storage._safe_full_path(asset.object_key)
+            if not Path(file_path).is_file():
+                raise FileNotFoundError(asset.object_key)
+            return FileResponse(file_path, media_type=asset.mime_type)
+        return RedirectResponse(storage.sign_read_url(
+            asset.object_key,
+            expires_in=900,
+            scope={"course_id": course_id, "user_id": context.user_id, "purpose": "ppt_mapping"},
+        ), status_code=307)
+    except FileNotFoundError as error:
+        raise HTTPException(404, "PPT 页图文件不存在") from error
 
 
 @router.patch("/course/{course_id}/ppt-mapping/{outline_node_id}")
@@ -1363,21 +1998,60 @@ async def update_ppt_mapping(course_id: int, outline_node_id: str, payload: PptM
         raise HTTPException(409, "已发布课程结构不可直接编辑")
     if node.locked_by is not None and node.locked_by != context.user_id:
         raise HTTPException(409, "节点已被教师锁定")
+    current_ppt_versions = _current_ppt_material_versions(session, course_id)
+    if not current_ppt_versions:
+        raise HTTPException(409, "No editable PPT material version exists for this course")
+    versions_by_id = {
+        item_version.version_id: (item_material, item_version)
+        for item_material, item_version in current_ppt_versions
+    }
+    target_version_id = payload.material_version_id
+    if target_version_id is None:
+        if len(versions_by_id) != 1:
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PPT_MATERIAL_VERSION_REQUIRED",
+                    "message": "This course has multiple PPT files; choose the PPT file before saving page numbers.",
+                    "material_version_ids": list(versions_by_id),
+                },
+            )
+        target_version_id = next(iter(versions_by_id))
+    if target_version_id not in versions_by_id:
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "PPT_MATERIAL_VERSION_INVALID",
+                "message": "The selected PPT file is not a current editable material version for this course.",
+            },
+        )
     mapping = session.exec(select(CoursePptMapping).where(
         CoursePptMapping.course_id == course_id,
         CoursePptMapping.outline_node_id == outline_node_id,
+        CoursePptMapping.material_version_id == target_version_id,
         CoursePptMapping.status == "draft",
     )).first()
     if not mapping:
-        mapping = CoursePptMapping(course_id=course_id, outline_node_id=outline_node_id, created_by=context.user_id)
-    if payload.page_range is not None:
-        raw = payload.page_range.strip()
-        parts = raw.split("-", 1)
-        if not all(part.strip().isdigit() for part in parts):
-            raise HTTPException(400, "页码格式应为 1 或 1-3")
-        mapping.page_start = max(1, int(parts[0].strip()))
-        mapping.page_end = max(mapping.page_start, int(parts[-1].strip()))
-        mapping.page_refs = list(range(mapping.page_start, mapping.page_end + 1))
+        mapping = CoursePptMapping(
+            course_id=course_id,
+            outline_node_id=outline_node_id,
+            material_version_id=target_version_id,
+            created_by=context.user_id,
+        )
+    if payload.page_range is not None or payload.page_refs is not None:
+        page_refs = _normalise_mapping_page_refs(
+            page_range=payload.page_range,
+            page_refs=payload.page_refs,
+        )
+        page_refs = _validate_mapping_pages(
+            session,
+            course_id=course_id,
+            material_version_id=target_version_id,
+            page_refs=page_refs,
+        )
+        mapping.page_start = page_refs[0]
+        mapping.page_end = page_refs[-1]
+        mapping.page_refs = page_refs
     if payload.confidence is not None:
         mapping.confidence = payload.confidence
     if payload.locked is True:
@@ -1391,7 +2065,177 @@ async def update_ppt_mapping(course_id: int, outline_node_id: str, payload: PptM
     session.refresh(mapping)
     view = _outline_node_view(node)
     view["ppt_mapping"] = _ppt_mapping_view(mapping)
+    view["ppt_mappings"] = [view["ppt_mapping"]]
     return unified_response(200, "PPT 映射已保存", view)
+
+
+@router.put("/course/{course_id}/ppt-mapping")
+async def save_ppt_mappings(
+    course_id: int,
+    payload: PptMappingBulkUpdate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Atomically save the teacher's visible mapping edits from one workbench pass."""
+    context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
+    outline = _draft_outline(session, course_id)
+    if outline is None or outline.lifecycle_status != OutlineLifecycleStatus.DRAFT:
+        raise HTTPException(409, "已发布课程结构不可直接编辑")
+    items_by_key: dict[tuple[str, str], PptMappingBulkItem] = {}
+    for item in payload.mappings:
+        key = (item.outline_node_id, item.material_version_id)
+        if key in items_by_key:
+            raise HTTPException(400, "同一知识点与 PPT 文件只能保存一条映射")
+        items_by_key[key] = item
+
+    current_versions = {
+        version.version_id
+        for _material, version in _current_ppt_material_versions(session, course_id)
+    }
+    invalid_versions = sorted({
+        item.material_version_id
+        for item in payload.mappings
+        if item.material_version_id not in current_versions
+    })
+    if invalid_versions:
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "PPT_MATERIAL_VERSION_INVALID",
+                "message": "The selected PPT file is not a current editable material version for this course.",
+                "material_version_ids": invalid_versions,
+            },
+        )
+    nodes = list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.course_id == course_id,
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+        CourseOutlineNode.outline_node_id.in_([item.outline_node_id for item in payload.mappings]),
+    )).all())
+    nodes_by_id = {node.outline_node_id: node for node in nodes}
+    missing_nodes = sorted({
+        item.outline_node_id
+        for item in payload.mappings
+        if item.outline_node_id not in nodes_by_id
+    })
+    if missing_nodes:
+        raise HTTPException(404, detail={"message": "课程结构节点不存在", "outline_node_ids": missing_nodes})
+    protected_nodes = sorted(
+        node.outline_node_id
+        for node in nodes
+        if node.locked_by is not None and node.locked_by != context.user_id
+    )
+    if protected_nodes:
+        raise HTTPException(409, detail={"message": "部分节点已被其他教师锁定", "outline_node_ids": protected_nodes})
+
+    existing = list(session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course_id,
+        CoursePptMapping.status == "draft",
+    )).all())
+    existing_by_key = {
+        (mapping.outline_node_id, mapping.material_version_id): mapping
+        for mapping in existing
+    }
+    normalized_pages = {
+        key: _validate_mapping_pages(
+            session,
+            course_id=course_id,
+            material_version_id=item.material_version_id,
+            page_refs=item.page_refs,
+        )
+        for key, item in items_by_key.items()
+    }
+
+    saved: list[CoursePptMapping] = []
+    for key, item in items_by_key.items():
+        page_refs = normalized_pages[key]
+        mapping = existing_by_key.get(key)
+        if mapping is None:
+            mapping = CoursePptMapping(
+                course_id=course_id,
+                outline_node_id=item.outline_node_id,
+                material_version_id=item.material_version_id,
+                created_by=context.user_id,
+                status="draft",
+            )
+        mapping.page_refs = page_refs
+        mapping.page_start = page_refs[0]
+        mapping.page_end = page_refs[-1]
+        if item.confidence is not None:
+            mapping.confidence = item.confidence
+        mapping.teacher_locked = item.locked
+        mapping.updated_by = context.user_id
+        mapping.updated_at = utcnow_aware()
+        session.add(mapping)
+        saved.append(mapping)
+
+    _mark_teacher_edited(outline)
+    session.add(outline)
+    session.commit()
+    for mapping in saved:
+        session.refresh(mapping)
+    return unified_response(200, "PPT 映射已保存", {
+        "mapping_contract_version": "ppt-mapping/v2",
+        "saved_count": len(saved),
+        "mappings": [_ppt_mapping_view(mapping) for mapping in saved],
+    })
+
+
+async def _run_ppt_mapping_agent(
+    *,
+    request: Request,
+    course_id: int,
+    teacher_id: int,
+    material_version_ids: list[str],
+    outline_node_ids: list[str] | None = None,
+    page_refs_by_material: dict[str, list[int]] | None = None,
+    seed_from_evidence: bool = True,
+) -> dict[str, Any]:
+    """Start the registered Prep pipeline with an intentionally small scope."""
+    platform = getattr(request.app.state, "agent_platform", None)
+    gateway = getattr(platform, "gateway", None) if platform is not None else None
+    if gateway is None:
+        raise HTTPException(
+            503,
+            detail={
+                "error_code": "PREP_AGENT_UNAVAILABLE",
+                "message": "助教智能体运行时未就绪，无法优化 PPT 映射",
+            },
+        )
+    from app.platform.agents.prep.enums import PrepGraphKind
+    from app.platform.agents.runtime.base import AgentRunContext
+    from app.platform.agents.runtime.profile import AgentType
+    from app.platform.agents.runtime.registry import AgentDefinitionKey
+
+    extras: dict[str, Any] = {"material_version_ids": material_version_ids}
+    if outline_node_ids:
+        extras["outline_node_ids"] = outline_node_ids
+    if page_refs_by_material:
+        extras["page_refs_by_material"] = page_refs_by_material
+    if not seed_from_evidence:
+        extras["seed_from_evidence"] = False
+    start = await gateway.start(
+        agent_type=AgentType.PREP,
+        definition_key=AgentDefinitionKey(
+            agent_type=AgentType.PREP.value,
+            agent_version=PrepGraphKind.PPT_MAPPING.value,
+        ),
+        context=AgentRunContext(
+            agent_type=AgentType.PREP.value,
+            scope=(str(course_id),),
+            teacher_id=str(teacher_id),
+            course_id=str(course_id),
+            extras=extras,
+        ),
+    )
+    if start.status != "completed" or not start.result:
+        raise HTTPException(
+            502,
+            detail={
+                "error_code": start.error_code or "PPT_MAPPING_FAILED",
+                "message": start.error_message or "PPT 映射优化未完成",
+            },
+        )
+    return dict(start.result.get("result") or {})
 
 
 @router.post("/course/{course_id}/ppt-mapping/optimize")
@@ -1409,75 +2253,175 @@ async def optimize_ppt_mapping(
     （teacher_locked=True 的映射不会被修改）。
     """
     context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
-    # 定位该课程最近一份 slide 类型材料的 material_version_id
-    slide_material = session.exec(
-        select(SourceMaterial).where(
-            SourceMaterial.course_id == course_id,
-            SourceMaterial.material_type == "slide",
-        ).order_by(SourceMaterial.id.desc())
-    ).first()
-    if not slide_material:
+    # Each deck has its own slide number space. Resolve all current versions
+    # before the Prep runtime starts, rather than letting the newest upload
+    # define the mapping scope.
+    slide_materials = list(session.exec(select(SourceMaterial).where(
+        SourceMaterial.course_id == course_id,
+        SourceMaterial.material_type == "slide",
+    )).all())
+    current_ppt_versions = _current_ppt_material_versions(session, course_id)
+    unresolved = []
+    for material in slide_materials:
+        version_id = material.current_version_id
+        version_exists = bool(version_id and session.exec(select(SourceMaterialVersion).where(
+            SourceMaterialVersion.course_id == course_id,
+            SourceMaterialVersion.material_id == material.material_id,
+            SourceMaterialVersion.version_id == version_id,
+        )).first())
+        if not version_exists:
+            unresolved.append(material.name or material.material_id)
+    if unresolved:
+        raise HTTPException(
+            409,
+            detail={
+                "error_code": "PPT_MATERIAL_VERSION_MISSING",
+                "message": "One or more PPT files have no current material version.",
+                "materials": unresolved,
+            },
+        )
+    if not current_ppt_versions:
         raise HTTPException(409, "课程尚未上传 PPT 材料，无法优化映射")
-    # 找到该材料最新已解析完成的版本
-    from app.models.course_build_model import SourceMaterialVersion, MaterialStatus
-    latest_version = session.exec(
-        select(SourceMaterialVersion).where(
-            SourceMaterialVersion.material_id == slide_material.material_id,
-            SourceMaterialVersion.parse_status == MaterialStatus.PARSED,
-        ).order_by(SourceMaterialVersion.id.desc())
-    ).first()
-    if not latest_version:
-        raise HTTPException(409, "PPT 材料尚未解析完成，无法优化映射")
+    material_version_ids = [version.version_id for _material, version in current_ppt_versions]
 
     batch_lock = await _try_acquire_prep_batch_lock(course_id)
     if batch_lock is None:
         raise _prep_agent_busy_error()
     try:
-        platform = getattr(request.app.state, "agent_platform", None)
-        gateway = getattr(platform, "gateway", None) if platform is not None else None
-        if gateway is None:
-            raise HTTPException(
-                503,
-                detail={
-                    "error_code": "PREP_AGENT_UNAVAILABLE",
-                    "message": "助教智能体运行时未就绪，无法优化 PPT 映射",
-                },
-            )
-        from app.platform.agents.prep.enums import PrepGraphKind
-        from app.platform.agents.runtime.base import AgentRunContext
-        from app.platform.agents.runtime.profile import AgentType
-        from app.platform.agents.runtime.registry import AgentDefinitionKey
-
-        start = await gateway.start(
-            agent_type=AgentType.PREP,
-            definition_key=AgentDefinitionKey(
-                agent_type=AgentType.PREP.value,
-                agent_version=PrepGraphKind.PPT_MAPPING.value,
-            ),
-            context=AgentRunContext(
-                agent_type=AgentType.PREP.value,
-                scope=(str(course_id),),
-                teacher_id=str(context.user_id),
-                course_id=str(course_id),
-                extras={"material_version_id": latest_version.version_id},
-            ),
+        summary = await _run_ppt_mapping_agent(
+            request=request,
+            course_id=course_id,
+            teacher_id=context.user_id,
+            material_version_ids=material_version_ids,
         )
-        if start.status != "completed" or not start.result:
-            raise HTTPException(
-                502,
-                detail={
-                    "error_code": start.error_code or "PPT_MAPPING_FAILED",
-                    "message": start.error_message or "PPT 映射优化未完成",
-                },
-            )
-        summary = start.result.get("result") or {}
     finally:
         batch_lock.release()
 
+    updated_count = int(summary.get("updated_count") or 0)
+    suggestions = list(summary.get("suggestions") or [])
+    # A completed runtime only means the workflow returned a result.  It does
+    # not mean that any mapping row was actually changed.  Reporting this as a
+    # successful optimisation misleads teachers and hides empty/locked model
+    # output behind a green assistant bubble.
+    if updated_count == 0:
+        if suggestions:
+            message = "PPT 映射未修改：模型建议均对应教师锁定的映射，系统已保留原页码。"
+            reason = "ALL_SUGGESTIONS_LOCKED"
+        else:
+            message = (
+                "未找到可信候选页，可直接在页图中选择，或对当前知识点重新匹配。"
+            )
+            reason = "NO_RELIABLE_MATCH"
+        return unified_response(200, message, {
+            "outcome": "no_change",
+            "reason": reason,
+            "total_mappings": summary.get("total_mappings", 0),
+            "updated_count": 0,
+            "suggestions": suggestions,
+            "material_version_ids": list(summary.get("material_version_ids") or material_version_ids),
+            "manual_next_steps": ["select_pages", "match_current_node"],
+        })
+
     return unified_response(200, "PPT 映射优化完成", {
+        "outcome": "updated",
         "total_mappings": summary.get("total_mappings", 0),
-        "updated_count": summary.get("updated_count", 0),
-        "suggestions": list(summary.get("suggestions") or []),
+        "updated_count": updated_count,
+        "suggestions": suggestions,
+        "material_version_ids": list(summary.get("material_version_ids") or material_version_ids),
+    })
+
+
+@router.post("/course/{course_id}/ppt-mapping/match")
+async def match_ppt_mapping_scope(
+    course_id: int,
+    payload: PptMappingMatchRequest,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Run one of the workbench's three direct-apply matching actions."""
+    context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
+    current_versions = {
+        version.version_id
+        for _material, version in _current_ppt_material_versions(session, course_id)
+    }
+    if not current_versions:
+        raise HTTPException(409, "课程尚未上传可用 PPT 材料，无法匹配")
+    if payload.material_version_id and payload.material_version_id not in current_versions:
+        raise HTTPException(
+            422,
+            detail={
+                "error_code": "PPT_MATERIAL_VERSION_INVALID",
+                "message": "The selected PPT file is not a current editable material version for this course.",
+            },
+        )
+
+    material_version_ids = (
+        [payload.material_version_id]
+        if payload.material_version_id else sorted(current_versions)
+    )
+    outline_node_ids: list[str] | None = None
+    page_refs_by_material: dict[str, list[int]] | None = None
+    seed_from_evidence = payload.mode == "all_unlocked"
+
+    if payload.mode == "node":
+        if not payload.outline_node_id:
+            raise HTTPException(422, "请选择要重新匹配的知识点")
+        node = session.exec(select(CourseOutlineNode).where(
+            CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_node_id == payload.outline_node_id,
+            CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+        )).first()
+        if node is None:
+            raise HTTPException(404, "知识点不存在或不可用于 PPT 映射")
+        outline_node_ids = [node.outline_node_id]
+    elif payload.mode == "selected_pages":
+        if not payload.material_version_id:
+            raise HTTPException(422, "请先选择 PPT 文件")
+        if not payload.page_refs:
+            raise HTTPException(422, "请先选择至少一页 PPT")
+        page_refs_by_material = {
+            payload.material_version_id: _validate_mapping_pages(
+                session,
+                course_id=course_id,
+                material_version_id=payload.material_version_id,
+                page_refs=payload.page_refs,
+            ),
+        }
+
+    batch_lock = await _try_acquire_prep_batch_lock(course_id)
+    if batch_lock is None:
+        raise _prep_agent_busy_error()
+    try:
+        summary = await _run_ppt_mapping_agent(
+            request=request,
+            course_id=course_id,
+            teacher_id=context.user_id,
+            material_version_ids=material_version_ids,
+            outline_node_ids=outline_node_ids,
+            page_refs_by_material=page_refs_by_material,
+            seed_from_evidence=seed_from_evidence,
+        )
+    finally:
+        batch_lock.release()
+
+    updated_count = int(summary.get("updated_count") or 0)
+    suggestions = list(summary.get("suggestions") or [])
+    if updated_count == 0:
+        return unified_response(200, "未找到可信候选页，可直接在页图中选择，或调整范围后重新匹配。", {
+            "outcome": "no_reliable_match",
+            "mode": payload.mode,
+            "updated_count": 0,
+            "suggestions": suggestions,
+            "material_version_ids": material_version_ids,
+            "manual_next_steps": ["select_pages", "match_current_node"],
+        })
+    return unified_response(200, "PPT 映射匹配完成并已写入草稿", {
+        "outcome": "updated",
+        "mode": payload.mode,
+        "updated_count": updated_count,
+        "suggestions": suggestions,
+        "material_version_ids": material_version_ids,
     })
 
 

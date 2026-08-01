@@ -29,6 +29,7 @@ from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user, _get_user_id, _get_user_identity
 from app.core.config import settings
+from app.common.media_tools import ffprobe_binary
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -2182,7 +2183,7 @@ async def synthesize_node_audio(
         import subprocess
         try:
             result = subprocess.run(
-                ["ffprobe", "-v", "quiet", "-show_entries", "format=duration",
+                [ffprobe_binary(), "-v", "quiet", "-show_entries", "format=duration",
                  "-of", "default=noprint_wrappers=1:nokey=1", str(audio_path)],
                 capture_output=True, text=True, timeout=10,
             )

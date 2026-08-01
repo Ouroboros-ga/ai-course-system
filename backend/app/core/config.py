@@ -227,6 +227,18 @@ class Settings(BaseSettings):
     XFYUN_TTS_CONNECT_TIMEOUT_MS: int = 10000
     XFYUN_TTS_READ_TIMEOUT_MS: int = 30000
 
+    # 豆包语音合成 2.0（v3 双向 WebSocket）。仅由 Media Worker 使用，
+    # API Key 绝不进入前端、日志、测试 fixture 或发布快照。
+    VOLCENGINE_DOUBAO_TTS_WS_URL: str = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
+    VOLCENGINE_DOUBAO_TTS_API_KEY: str = ""
+    VOLCENGINE_DOUBAO_TTS_RESOURCE_ID: str = ""
+    VOLCENGINE_DOUBAO_TTS_SPEAKER: str = ""
+    VOLCENGINE_DOUBAO_TTS_FORMAT: str = "mp3"
+    VOLCENGINE_DOUBAO_TTS_SAMPLE_RATE: int = 24000
+    VOLCENGINE_DOUBAO_TTS_ENABLE_SUBTITLE: bool = True
+    VOLCENGINE_DOUBAO_TTS_CONNECT_TIMEOUT_SECONDS: int = 15
+    VOLCENGINE_DOUBAO_TTS_READ_TIMEOUT_SECONDS: int = 90
+
     # --------------------------
     # 阶段8 M2 TTS 任务重试与限额
     # --------------------------

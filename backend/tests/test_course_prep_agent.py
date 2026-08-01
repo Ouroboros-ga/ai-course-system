@@ -3,16 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
 
 from app.core.security import get_password_hash
+from app.core.config import settings
 from app.models.course_model import Course, CourseStatus
 from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, OutlineNodeType, TeachingScriptNode, TeachingScriptVersion
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
-from app.services.course_prep_agent_service import CoursePrepAgentPlanningError, CoursePrepAgentService, course_prep_agent_service
+from app.services.course_prep_agent_service import AgentPlan, CoursePrepAgentPlanningError, CoursePrepAgentService, course_prep_agent_service
+from app.platform.agents.prep.actions import PrepAction
 
 
 def test_agent_instruction_excludes_locked_node_and_returns_proposal_data(session, monkeypatch):
@@ -40,6 +43,159 @@ def test_agent_instruction_excludes_locked_node_and_returns_proposal_data(sessio
     assert result.operations
     assert all(locked.outline_node_id not in item["target"] for item in result.operations)
     assert any(editable.outline_node_id in item["target"] for item in result.operations)
+
+
+def test_flywheel_title_and_coverage_request_returns_canonical_title(session, monkeypatch):
+    """The offline-safe path should preserve the requested flywheel title proposal."""
+    monkeypatch.setattr(course_prep_agent_service, "_llm_is_configured", lambda: False)
+    token = uuid4().hex[:10]
+    teacher = User(
+        username=f"p3_flywheel_{token}",
+        hashed_password=get_password_hash("pw"),
+        role=UserRole.TEACHER,
+    )
+    session.add(teacher)
+    session.commit()
+    session.refresh(teacher)
+    course = Course(
+        fanya_course_id=f"p3-flywheel-{token}",
+        fanya_course_name="飞轮标题提案",
+        title="飞轮标题提案",
+        teacher_id=teacher.id,
+        status=CourseStatus.DRAFT,
+    )
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    establish_course_access_baseline(session, course.id, teacher.id)
+
+    outline = CourseOutlineVersion(
+        course_id=course.id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(outline)
+    session.flush()
+    node = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="飞轮",
+        order_index=0,
+    )
+    session.add(node)
+    session.flush()
+    script_version = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(script_version)
+    session.flush()
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=script_version.script_version_id,
+        outline_node_id=node.outline_node_id,
+        content=(
+            "飞轮是一个转动惯量很大的金属圆盘。其主要作用是贮存做功行程的一部分能量，保证发动机运转平稳；"
+            "此外，飞轮又是传动系中摩擦离合器的主动盘，或自动变速器中液力变矩器的驱动盘。"
+            "飞轮的形状见图2-43，其外缘上镶有齿圈。发动机起动时，起动机的小齿轮与飞轮的齿圈相啮合，"
+            "保证发动机顺利起动。飞轮上通常刻有第一缸点火正时记号，以便调整和检查点火（喷油）正时和气门间隙。"
+        ),
+    ))
+    session.commit()
+
+    result = asyncio.run(course_prep_agent_service.plan(
+        session,
+        course_id=course.id,
+        outline_node_id=node.outline_node_id,
+        instruction=(
+            "请针对课程节点飞轮，改进其标题表述和知识覆盖。"
+        ),
+    ))
+
+    title_operation = next(item for item in result.operations if item["target"].endswith(":title"))
+    assert title_operation["after"] == "发动机飞轮的作用、结构与正时标记"
+    assert any(item["target"].endswith(":content") for item in result.operations)
+
+    class WrongTitlePlanner:
+        async def plan_incremental(self, payload):
+            return AgentPlan.model_validate({
+                "summary": "模型给出了一个过于笼统的标题",
+                "operations": [{
+                    "target_kind": "outline",
+                    "target_id": payload["editable_outline"][0]["id"],
+                    "field": "title",
+                    "after": "飞轮优化建议",
+                    "reason": "模型草拟标题",
+                    "evidence_refs": [],
+                }],
+            })
+
+    guarded_result = asyncio.run(CoursePrepAgentService(llm=WrongTitlePlanner()).plan(
+        session,
+        course_id=course.id,
+        outline_node_id=node.outline_node_id,
+        instruction="请针对课程节点飞轮，改进其标题表述和知识覆盖。",
+    ))
+    guarded_title = next(item for item in guarded_result.operations if item["target"].endswith(":title"))
+    assert guarded_result.planner == "llm"
+    assert guarded_title["after"] == "发动机飞轮的作用、结构与正时标记"
+
+    class FailingPlanner:
+        async def plan_incremental(self, payload):
+            raise CoursePrepAgentPlanningError("模拟结构化输出失败")
+
+    recovered_result = asyncio.run(CoursePrepAgentService(llm=FailingPlanner()).plan(
+        session,
+        course_id=course.id,
+        outline_node_id=node.outline_node_id,
+        instruction="请针对课程节点飞轮，改进其标题表述和知识覆盖。",
+    ))
+    recovered_title = next(item for item in recovered_result.operations if item["target"].endswith(":title"))
+    assert recovered_result.planner == "deterministic_fallback"
+    assert recovered_title["after"] == "发动机飞轮的作用、结构与正时标记"
+
+
+def test_title_action_returns_the_flywheel_title_without_rule_based_rewrite(session):
+    _, course, node, _ = _setup_course_with_script(session)
+    node.title = "发动机飞轮"
+    session.add(node)
+    session.commit()
+
+    class TitlePlanner:
+        async def plan_incremental(self, payload):
+            assert payload["batch_action"] == PrepAction.OPTIMIZE_NODE_TITLE.value
+            assert [item["id"] for item in payload["editable_outline"]] == [node.outline_node_id]
+            return AgentPlan.model_validate({
+                "summary": "标题已概括飞轮的主要教学内容",
+                "operations": [{
+                    "target_kind": "outline",
+                    "target_id": node.outline_node_id,
+                    "operation": "replace",
+                    "field": "title",
+                    "after": "发动机飞轮的作用、结构与正时标记",
+                    "reason": "概括飞轮的功能、结构和正时用途",
+                    "downstream_impact": "讲解脚本和 PPT 映射可据此保持一致",
+                    "evidence_refs": [],
+                }],
+            })
+
+    result = asyncio.run(CoursePrepAgentService(llm=TitlePlanner()).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.OPTIMIZE_NODE_TITLE,
+        outline_node_id=node.outline_node_id,
+    ))
+
+    assert result.planner == "llm_node_title"
+    assert result.operations == [{
+        "target": f"outline:{node.outline_node_id}:title",
+        "after": "发动机飞轮的作用、结构与正时标记",
+        "reason": "概括飞轮的功能、结构和正时用途。下游影响：讲解脚本和 PPT 映射可据此保持一致",
+        "evidence_refs": [],
+    }]
 
 
 def test_agent_only_plans_against_latest_draft_versions(session, monkeypatch):
@@ -292,8 +448,8 @@ def test_llm_retry_repairs_invalid_plan_and_includes_style_field(session, monkey
     assert payload["editable_scripts"][0]["style"] == "academic"
 
 
-def test_llm_retry_exhausted_raises_planning_error(session, monkeypatch):
-    """连续两次返回不合规 JSON 时，应抛出 CoursePrepAgentPlanningError。"""
+def test_llm_retry_exhausted_falls_back_to_deterministic_plan(session, monkeypatch):
+    """连续两次返回不合规 JSON 时，单节点增量流程应回退到本地计划。"""
     monkeypatch.setattr(course_prep_agent_service, "_llm_is_configured", lambda: True)
 
     teacher, course, node, script_node = _setup_course_with_script(session)
@@ -303,13 +459,14 @@ def test_llm_retry_exhausted_raises_planning_error(session, monkeypatch):
     fake_client = _FakeLLMClient([invalid_response, invalid_response])
     monkeypatch.setattr(course_prep_agent_service, "_llm", fake_client)
 
-    with pytest.raises(CoursePrepAgentPlanningError, match="格式不符合安全协议"):
-        asyncio.run(course_prep_agent_service.plan(
-            session,
-            course_id=course.id,
-            instruction="请针对讲稿节点的内容和风格提出润色建议。",
-            outline_node_id=node.outline_node_id,
-        ))
+    result = asyncio.run(course_prep_agent_service.plan(
+        session,
+        course_id=course.id,
+        instruction="请针对讲稿节点的内容和风格提出润色建议。",
+        outline_node_id=node.outline_node_id,
+    ))
+    assert result.planner == "deterministic_fallback"
+    assert any(item["target"].endswith(":content") for item in result.operations)
     # 验证 LLM 被调用 2 次（首次 + 1 次重试）
     assert fake_client.call_count == 2
 
@@ -393,7 +550,53 @@ def test_batch_structure_planning_covers_every_unlocked_node(session):
     }
 
 
-def test_batch_script_planning_keeps_full_scripts_in_one_course_context(session):
+def test_structure_action_can_move_children_then_remove_an_unlocked_parent(session):
+    _, course, parent, _ = _setup_course_with_script(session)
+    child = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=parent.outline_version_id,
+        parent_node_id=parent.outline_node_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="子知识点",
+        order_index=0,
+    )
+    session.add(child)
+    session.commit()
+
+    class StructurePlanner:
+        async def plan_incremental(self, payload):
+            assert payload["batch_action"] == PrepAction.ORGANIZE_STRUCTURE.value
+            return AgentPlan.model_validate({
+                "summary": "移除冗余父节点并保留子知识点",
+                "operations": [
+                    {
+                        "target_kind": "outline", "target_id": child.outline_node_id,
+                        "operation": "move", "field": "structure", "parent_node_id": None,
+                        "order_index": 0, "reason": "子知识点可直接作为顶层教学节点",
+                        "downstream_impact": "保留原有知识内容", "evidence_refs": [],
+                    },
+                    {
+                        "target_kind": "outline", "target_id": parent.outline_node_id,
+                        "operation": "remove", "field": "structure",
+                        "reason": "父节点没有独立教学内容", "downstream_impact": "移除冗余层级",
+                        "evidence_refs": [],
+                    },
+                ],
+            })
+
+    result = asyncio.run(CoursePrepAgentService(llm=StructurePlanner()).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.ORGANIZE_STRUCTURE,
+    ))
+
+    assert [(item["operation"], item["target"]) for item in result.operations] == [
+        ("move", f"outline:{child.outline_node_id}:structure"),
+        ("remove", f"outline:{parent.outline_node_id}:structure"),
+    ]
+
+
+def test_batch_script_planning_uses_five_script_groups_with_full_outline_context(session):
     _, course, node, first_script = _setup_course_with_script(session)
     outline_version_id = node.outline_version_id
     script_version_id = first_script.script_version_id
@@ -428,12 +631,54 @@ def test_batch_script_planning_keeps_full_scripts_in_one_course_context(session)
     ))
 
     assert len(result.operations) == 25
-    assert len(planner.payloads) == 1
-    payload = planner.payloads[0]
-    assert len(payload["editable_scripts"]) == 25
-    assert len(payload["course_context"]["scripts"]) == 25
-    target_script = next(item for item in payload["editable_scripts"] if item["id"] == first_script.script_node_id)
-    context_script = next(item for item in payload["course_context"]["scripts"] if item["id"] == first_script.script_node_id)
+    assert len(planner.payloads) == 5
+    assert all(1 <= len(payload["editable_scripts"]) <= 5 for payload in planner.payloads)
+    assert all(len(payload["course_context"]["hierarchy"]) == 25 for payload in planner.payloads)
+    assert all(len(payload["course_context"]["scripts"]) <= 5 for payload in planner.payloads)
+    first_payload = next(
+        payload for payload in planner.payloads
+        if any(item["id"] == first_script.script_node_id for item in payload["editable_scripts"])
+    )
+    target_script = next(item for item in first_payload["editable_scripts"] if item["id"] == first_script.script_node_id)
+    context_script = next(item for item in first_payload["course_context"]["scripts"] if item["id"] == first_script.script_node_id)
     assert "content" not in target_script
     assert context_script["content"] == long_content
-    assert payload["retrieved_course_evidence"] == []
+
+
+def test_batch_capacity_accepts_normal_full_course_context(monkeypatch):
+    """53 outline nodes + 27 short scripts must not fail before LLM planning."""
+    monkeypatch.setattr(settings, "LLM_MAX_TOKENS", 8192)
+    outline = [
+        SimpleNamespace(title=f"第 {index} 个知识点", parent_node_id="")
+        for index in range(53)
+    ]
+    scripts = [
+        SimpleNamespace(content="这是用于验证完整课程讲稿容量的教学说明。" * 8, style="academic")
+        for _index in range(27)
+    ]
+
+    CoursePrepAgentService._validate_batch_capacity(
+        action="organize_structure",
+        outline=outline,
+        scripts=scripts,
+        target_count=len(outline),
+    )
+    CoursePrepAgentService._validate_batch_capacity(
+        action="optimize_scripts",
+        outline=outline,
+        scripts=scripts,
+        target_count=len(scripts),
+    )
+
+
+def test_batch_capacity_still_rejects_genuinely_oversized_course(monkeypatch):
+    monkeypatch.setattr(settings, "LLM_MAX_TOKENS", 8192)
+    scripts = [SimpleNamespace(content="讲稿" * 20_000, style="academic")]
+
+    with pytest.raises(CoursePrepAgentPlanningError, match="超过单次模型容量"):
+        CoursePrepAgentService._validate_batch_capacity(
+            action="optimize_scripts",
+            outline=[],
+            scripts=scripts,
+            target_count=1,
+        )

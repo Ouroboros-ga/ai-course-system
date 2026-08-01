@@ -44,6 +44,11 @@ def test_course_import_persists_draft_material_and_parse_task(client, session, m
     storage = _MemoryObjectStorage()
     import app.services.course_material_upload_service as upload_service
     monkeypatch.setattr(upload_service, "get_object_storage", lambda: storage)
+    # This test verifies the durable submitted state; leave the queued task
+    # untouched instead of allowing the in-process worker to parse deliberately
+    # synthetic PPT bytes concurrently with the assertion below.
+    from app.platform.tasks.worker import local_task_worker
+    monkeypatch.setattr(local_task_worker, "has_handler", lambda _task_type: False)
 
     response = client.post(
         "/api/v1/document/course-imports",
@@ -133,8 +138,10 @@ def test_empty_course_then_multiple_material_uploads_share_one_workspace(client,
     )
     assert reused.status_code == 200
     assert reused.json()["data"]["items"][0]["source_object_reused"] is True
+    assert reused.json()["data"]["items"][0]["deduplicated"] is True
     versions = session.exec(select(SourceMaterialVersion).where(
         SourceMaterialVersion.course_id == course_id,
         SourceMaterialVersion.file_hash == "c35b21d6ca39aa7cc3b79a705d989f1a6e88b99ab43988d74048799e3db926a3",
     )).all()
+    assert len(versions) == 1
     assert len({version.file_path for version in versions}) == 1

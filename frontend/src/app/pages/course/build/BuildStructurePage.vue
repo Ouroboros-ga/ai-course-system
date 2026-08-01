@@ -134,8 +134,9 @@ function openAgent() {
   const node = selected.value
   const nodeTitle = node?.title || '当前节点'
   const nodeId = node?.outline_node_id
-  workbench.pendingInstruction = `请针对课程节点「${nodeTitle}」提出优化建议，改进其标题表述和知识覆盖。`
+  workbench.pendingInstruction = `请优化课程节点「${nodeTitle}」的标题，纠正不准确的 OCR 文本和用词，但不要修改其他节点或讲解脚本。`
   if (nodeId) workbench.pendingNodeId = nodeId
+  workbench.pendingAgentAction = 'optimize_node_title'
 }
 function refreshAfterProposal() { load() }
 

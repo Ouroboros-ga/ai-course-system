@@ -23,9 +23,11 @@
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
@@ -35,6 +37,7 @@ from app.core.exceptions import (
 from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.media_release_model import (
+    MediaGenerationJob,
     MediaGenerationJobType,
     MediaGenerationStatus,
     MediaReleaseStatus,
@@ -48,6 +51,7 @@ from app.services.media_release_service import (
     media_release_service,
     tts_execution_service,
 )
+from app.services.tts_provider import TtsProviderConfigurationError, get_tts_provider
 
 
 media_release_router = APIRouter(tags=["阶段8 媒体生成与发布"])
@@ -72,7 +76,7 @@ class GenerationJobCreateRequest(BaseModel):
 
 
 class TtsJobExecuteRequest(BaseModel):
-    """TTS 任务执行请求（M1 阶段同步执行 Fake）"""
+    """TTS 任务执行请求（真实 Provider 交由 Media Worker 异步执行）"""
     script_text: str = Field(min_length=1, max_length=200_000)
     voice_id: str = Field(default="default", max_length=100)
     resource_version: str = Field(default="v1", max_length=20)
@@ -96,6 +100,18 @@ class ReleaseCreateRequest(BaseModel):
 class FreezeCuesRequest(BaseModel):
     """冻结时间轴 Cue 到发布版本"""
     cue_ids: list[int] = Field(default_factory=list, description="MediaTimelineCue.id 列表；为空则冻结全部")
+
+
+class AvatarCuesBuildRequest(BaseModel):
+    """Freeze one successful TTS job into release-scoped P2 cue assets."""
+    tts_job_id: str = Field(min_length=1, max_length=100)
+    outline_node_id: Optional[str] = Field(None, max_length=100)
+    idempotency_key: Optional[str] = Field(None, min_length=1, max_length=100)
+
+
+class PptManifestBuildRequest(BaseModel):
+    """Build the release-scoped PPT image manifest from the course source deck."""
+    force: bool = Field(default=False, description="仅允许对当前草稿重新生成")
 
 
 class SwitchPlaybackModeRequest(BaseModel):
@@ -226,9 +242,10 @@ async def execute_tts_job(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """同步执行 TTS 任务（M1 阶段使用 Fake Provider）
+    """执行或派发 TTS 任务。
 
-    M2 接入真实讯飞后将改为异步 worker，本端点仅用于端到端测试。
+    Fake/Mock 可为离线回归同步执行；真实付费 Provider 返回 202 并交由
+    ``media.tts`` Worker 消费，避免在 FastAPI 请求路径持有长连接。
     """
     require_course_permission(
         session, current_user, course_id, "course.media.generate",
@@ -238,6 +255,38 @@ async def execute_tts_job(
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed(f"任务类型 {job.job_type.value} 不是 tts，无法执行 TTS")
 
+    selected_provider_key = payload.provider_key or job.provider_key or None
+    try:
+        provider = get_tts_provider(selected_provider_key, strict=True)
+    except TtsProviderConfigurationError:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("所选 TTS Provider 未注册，任务未调用任何外部服务")
+
+    if provider.requires_async_worker:
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if not local_task_worker.has_handler("media.tts"):
+            from app.core.exceptions import reject_dependency_unavailable
+            reject_dependency_unavailable("media.tts Worker 未注册，未发起任何 TTS 调用")
+        prepared, worker_payload = tts_execution_service.prepare_tts_job_for_dispatch(
+            session,
+            course_id=course_id,
+            job_id=job_id,
+            script_text=payload.script_text,
+            voice_id=payload.voice_id,
+            resource_version=payload.resource_version,
+            provider_key=selected_provider_key,
+            max_retries=payload.max_retries,
+        )
+        session.commit()
+        local_task_worker.submit(session_factory, prepared.task_id or "", worker_payload)
+        return unified_response(
+            code=202, message="豆包 TTS 任务已提交至 Media Worker",
+            data={**_serialize_job(prepared), "async": True},
+        )
+
+    # Fake/Mock compatibility path: no paid provider is contacted here.  This
+    # remains useful for offline demos and automated regression tests.
     updated = tts_execution_service.execute_tts_job(
         session,
         course_id=course_id,
@@ -275,6 +324,37 @@ async def retry_tts_job(
     if job.job_type != MediaGenerationJobType.TTS:
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed(f"任务类型 {job.job_type.value} 不是 tts，无法重跑")
+
+    selected_provider_key = payload.provider_key or job.provider_key or None
+    try:
+        provider = get_tts_provider(selected_provider_key, strict=True)
+    except TtsProviderConfigurationError:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("所选 TTS Provider 未注册，任务未调用任何外部服务")
+
+    if provider.requires_async_worker:
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+        if not local_task_worker.has_handler("media.tts"):
+            from app.core.exceptions import reject_dependency_unavailable
+            reject_dependency_unavailable("media.tts Worker 未注册，未发起任何 TTS 调用")
+        prepared, worker_payload = tts_execution_service.prepare_tts_job_for_dispatch(
+            session,
+            course_id=course_id,
+            job_id=job_id,
+            script_text=payload.script_text,
+            voice_id=payload.voice_id,
+            resource_version=payload.resource_version,
+            provider_key=selected_provider_key,
+            max_retries=payload.max_retries,
+            retry=True,
+        )
+        session.commit()
+        local_task_worker.submit(session_factory, prepared.task_id or "", worker_payload)
+        return unified_response(
+            code=202, message="豆包 TTS 重跑任务已提交至 Media Worker",
+            data={**_serialize_job(prepared), "async": True},
+        )
 
     updated = tts_execution_service.retry_job(
         session,
@@ -450,6 +530,141 @@ async def freeze_cues(
     )
 
 
+@media_release_router.post("/course/{course_id}/releases/{release_id}/avatar-cues")
+async def build_avatar_cues(
+    course_id: int,
+    release_id: str,
+    payload: AvatarCuesBuildRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Submit the non-billable P2 Cue Worker for a completed TTS job.
+
+    The endpoint never calls a speech Provider.  It only reads an existing
+    TTS object, normalizes its persisted timing metadata, and writes immutable
+    ``subtitle-manifest/v1`` / ``avatar-cues/v1`` assets for the draft release.
+    """
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    release = media_release_service.get_release(
+        session, course_id=course_id, release_id=release_id,
+    )
+    if release.status != MediaReleaseStatus.DRAFT:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("仅从未激活的媒体草稿可生成数字人时间轴")
+    source_job = media_generation_job_service.get_job(
+        session, course_id=course_id, job_id=payload.tts_job_id,
+    )
+    if source_job.job_type != MediaGenerationJobType.TTS or source_job.status != MediaGenerationStatus.SUCCEEDED:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("请先完成指定 TTS 任务，再生成数字人时间轴")
+    if source_job.node_id is None:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("TTS 任务未绑定讲稿节点，无法形成可导航的播放 Cue")
+
+    worker_payload = {
+        "course_id": course_id,
+        "release_id": release_id,
+        "source_tts_job_id": source_job.job_id,
+        "outline_node_id": payload.outline_node_id,
+    }
+    input_hash = hashlib.sha256(
+        json.dumps(worker_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    idempotency_key = payload.idempotency_key or f"cue:{release_id}:{source_job.job_id}"
+    existing = session.exec(select(MediaGenerationJob).where(
+        MediaGenerationJob.course_id == course_id,
+        MediaGenerationJob.idempotency_key == idempotency_key,
+    )).first()
+    if existing is not None:
+        if existing.status == MediaGenerationStatus.FAILED:
+            from app.core.exceptions import reject_state_conflict
+            reject_state_conflict(
+                "此前的 Cue Worker 已失败；请使用新的幂等键重新提交",
+                details={"cue_job_id": existing.job_id, "error_code": existing.error_code},
+            )
+        return unified_response(
+            code=202,
+            message="相同 Cue Worker 已存在",
+            data={**_serialize_job(existing), "async": existing.status == MediaGenerationStatus.RUNNING},
+        )
+    job, task_id = media_generation_job_service.create_job(
+        session,
+        course_id=course_id,
+        job_type=MediaGenerationJobType.TIMELINE_PUBLISH,
+        created_by=int(current_user["user_id"]),
+        provider_key="avatar-cues",
+        provider_version="v1",
+        node_id=source_job.node_id,
+        input_summary="冻结 TTS 字幕与数字人时间轴",
+        input_payload=worker_payload,
+        input_hash=input_hash,
+        idempotency_key=idempotency_key,
+        media_release_id=release_id,
+    )
+    from app.models.database import session_factory
+    from app.platform.tasks.worker import local_task_worker
+    if not local_task_worker.has_handler("media.timeline_publish"):
+        from app.core.exceptions import reject_dependency_unavailable
+        reject_dependency_unavailable("Cue Worker 未注册，未修改发布版本")
+    worker_payload = {**worker_payload, "job_id": job.job_id}
+    session.commit()
+    local_task_worker.submit(session_factory, task_id, worker_payload)
+    return unified_response(
+        code=202,
+        message="Cue Worker 已提交，未调用任何 TTS Provider",
+        data={**_serialize_job(job), "async": True},
+    )
+
+
+@media_release_router.post("/course/{course_id}/releases/{release_id}/ppt-manifest")
+async def build_ppt_manifest(
+    course_id: int,
+    release_id: str,
+    payload: PptManifestBuildRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Render and bind an immutable ``ppt-manifest/v1`` to a draft release."""
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    release = media_release_service.get_release(session, course_id=course_id, release_id=release_id)
+    if release.status not in (MediaReleaseStatus.DRAFT, MediaReleaseStatus.WITHDRAWN):
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("仅草稿或撤回版本可生成 PPT manifest")
+    if release.ppt_manifest_object_key and not payload.force:
+        return unified_response(
+            code=200,
+            message="PPT manifest 已存在",
+            data={"release_id": release_id, "ppt_manifest_object_key": release.ppt_manifest_object_key},
+        )
+    from app.services.ppt_manifest_service import PptManifestGenerationError, build_ppt_manifest
+    try:
+        manifest = build_ppt_manifest(session, course_id=course_id, release=release)
+    except PptManifestGenerationError as exc:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict(
+            "PPT manifest generation failed",
+            details={"error_code": "PPT_MANIFEST_GENERATION_FAILED", "cause": str(exc)[:200]},
+        )
+    if manifest is None:
+        return unified_response(
+            code=409,
+            message="当前课程没有可渲染的 PPT/PDF 源文件",
+            data={"release_id": release_id, "reason": "ppt_source_unavailable"},
+        )
+    session.commit()
+    return unified_response(
+        code=200,
+        message="ppt-manifest/v1 已生成",
+        data={
+            "release_id": release_id,
+            "schema": manifest["schema"],
+            "ppt_manifest_object_key": release.ppt_manifest_object_key,
+            "source_sha256": manifest["source_sha256"],
+            "page_count": len(manifest["pages"]),
+        },
+    )
+
+
 @media_release_router.post("/course/{course_id}/releases/{release_id}/activate")
 async def activate_release(
     course_id: int,
@@ -464,6 +679,27 @@ async def activate_release(
     require_course_permission(
         session, current_user, course_id, "course.publish",
     )
+    # A release may be audio-only, but when a PPT/PDF source exists we freeze
+    # the rendered pages before students can observe the release.
+    try:
+        media_release_service.ensure_ppt_manifest(
+            session, course_id=course_id, release_id=release_id,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A declared PPT/PDF source is part of the release contract. Do not
+        # activate a release that would silently fall back to stale slides.
+        from app.core.exceptions import reject_state_conflict
+        logger = __import__("logging").getLogger(__name__)
+        logger.exception("PPT manifest generation failed during activation")
+        reject_state_conflict(
+            "PPT manifest generation failed; release was not activated",
+            details={
+                "error_code": "PPT_MANIFEST_GENERATION_FAILED",
+                "cause": str(exc)[:200],
+            },
+        )
     release = media_release_service.activate_release(
         session, course_id=course_id, release_id=release_id,
     )
@@ -580,6 +816,7 @@ def _serialize_release(release) -> dict[str, Any]:
         "audio_object_key": release.audio_object_key,
         "subtitle_manifest_object_key": release.subtitle_manifest_object_key,
         "ppt_manifest_object_key": release.ppt_manifest_object_key,
+        "avatar_cues_object_key": release.avatar_cues_object_key,
         "avatar_binding_id": release.avatar_binding_id,
         "digital_human_manifest_object_key": release.digital_human_manifest_object_key,
         "default_playback_mode": release.default_playback_mode.value,

@@ -75,8 +75,26 @@ class CourseCorpusService:
         ).where(
             SourceMaterialVersion.course_id == course_id,
             SourceMaterialVersion.is_current == True,  # noqa: E712
-        )).all())
-        included_rows = [(version, material) for version, material in rows if material.include_in_course_corpus]
+        ).order_by(SourceMaterial.id, SourceMaterialVersion.id)).all())
+        # Older builds may already contain duplicate material rows created by
+        # the pre-idempotency uploader.  Their bytes are identical, so retain
+        # one deterministic current version per content hash rather than
+        # feeding the same document to retrieval and initial prep repeatedly.
+        included_rows: list[tuple[SourceMaterialVersion, SourceMaterial]] = []
+        included_content_keys: set[str] = set()
+        for version, material in rows:
+            if not material.include_in_course_corpus:
+                continue
+            content_key = (version.file_hash or version.version_id).strip()
+            if content_key in included_content_keys:
+                logger.info(
+                    "Skipping duplicate current course material in corpus: course_id=%s version_id=%s",
+                    course_id,
+                    version.version_id,
+                )
+                continue
+            included_content_keys.add(content_key)
+            included_rows.append((version, material))
         if not included_rows:
             return None
 

@@ -37,6 +37,7 @@ Backward compatibility:
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from typing import Any, Mapping
@@ -61,6 +62,11 @@ _REPAIR_SYSTEM = (
     "explanation, markdown, or code fences."
 )
 
+_RESPONSE_FORMAT_FALLBACK_SYSTEM = (
+    "The model gateway does not support response_format for this request. "
+    "Return ONLY one valid JSON object. Do not include an explanation, markdown, or code fences."
+)
+
 
 class SharedLLMStructuredProvider:
     """Structured LLM provider delegating to the shared ``llm_client``.
@@ -70,13 +76,15 @@ class SharedLLMStructuredProvider:
     It does NOT create its own HTTP client, ensuring configuration stays
     single-sourced.
 
-    The provider is stateless and safe for concurrent use. The underlying
-    ``llm_client`` manages its own HTTP connection pool.
+    The provider keeps only the gateway's response-format capability. It never
+    stores course content, prompts, or responses; the capability cache avoids
+    paying for the same rejected request at every preparation stage.
     """
 
     def __init__(self, *, client: Any | None = None) -> None:
         # Allow injecting a mock client for tests; default to the shared client.
         self._client = client or llm_client
+        self._response_format_supported: bool | None = None
 
     async def complete(
         self,
@@ -95,19 +103,51 @@ class SharedLLMStructuredProvider:
             for msg in messages
         ]
 
-        # Build kwargs for the shared client from LLMOptions.
+        # Build kwargs for the shared client from LLMOptions.  A number of
+        # OpenAI-compatible gateways implement chat completions but reject all
+        # response_format variants.  Once detected, omit it for the remaining
+        # calls through this provider and rely on the schema validator/repair
+        # loop below instead.
         kwargs: dict[str, Any] = {"temperature": options.temperature}
         if options.max_tokens is not None:
             kwargs["max_tokens"] = options.max_tokens
-        if options.response_format is not None:
+        use_response_format = (
+            options.response_format is not None
+            and self._response_format_supported is not False
+        )
+        if use_response_format:
             kwargs["response_format"] = dict(options.response_format)
 
-        # First attempt via the shared client.
-        first_response = await self._call_shared(
-            messages=shared_messages,
-            kwargs=kwargs,
-            trace_context=trace_context,
-        )
+        request_messages = shared_messages
+        try:
+            # First attempt via the shared client.
+            first_response = await self._call_shared(
+                messages=request_messages,
+                kwargs=kwargs,
+                trace_context=trace_context,
+            )
+        except StructuredOutputError as error:
+            if not use_response_format or not _response_format_unsupported(error):
+                raise
+            self._response_format_supported = False
+            request_messages = [
+                *shared_messages,
+                Message(
+                    role="system",
+                    content=_response_format_fallback_instruction(output_schema),
+                ),
+            ]
+            kwargs = {key: value for key, value in kwargs.items() if key != "response_format"}
+            logger.info(
+                "StructuredLLM[%s]: gateway rejected response_format; "
+                "using prompt-constrained JSON fallback.",
+                trace_context.purpose or "unknown",
+            )
+            first_response = await self._call_shared(
+                messages=request_messages,
+                kwargs=kwargs,
+                trace_context=trace_context,
+            )
 
         # If no schema, return raw text.
         if output_schema is None:
@@ -126,12 +166,10 @@ class SharedLLMStructuredProvider:
             )
 
         # Repair retry: send the original messages + repair instruction.
-        repair_messages = [*shared_messages, Message(role="system", content=_REPAIR_SYSTEM)]
-        if options.response_format is None:
-            repair_kwargs = dict(kwargs)
-            repair_kwargs["response_format"] = {"type": "json_object"}
-        else:
-            repair_kwargs = kwargs
+        repair_messages = [*request_messages, Message(role="system", content=_REPAIR_SYSTEM)]
+        # Preserve the successful request's capability set.  In particular,
+        # do not re-add json_object after the compatibility fallback.
+        repair_kwargs = dict(kwargs)
 
         repair_response = await self._call_shared(
             messages=repair_messages,
@@ -196,11 +234,20 @@ def _merge_responses(first: SharedLLMResponse, second: SharedLLMResponse) -> Sha
     """Merge two shared responses for usage aggregation.
 
     Returns the second response (the successful one) with merged usage.
+
+    OpenAI-compatible gateways do not agree on the shape of ``usage``.  The
+    top-level token counters are numeric, while fields such as
+    ``prompt_tokens_details`` and ``completion_tokens_details`` are nested
+    mappings.  Merge numeric counters arithmetically, recurse into mappings,
+    and keep the successful response's value for incompatible shapes.
     """
-    merged_usage: dict[str, int] = dict(first.usage) if first.usage else {}
+    merged_usage: dict[str, Any] = dict(first.usage) if first.usage else {}
     if second.usage:
         for key, value in second.usage.items():
-            merged_usage[key] = merged_usage.get(key, 0) + value
+            if key not in merged_usage:
+                merged_usage[key] = value
+            else:
+                merged_usage[key] = _merge_usage_values(merged_usage[key], value)
     return SharedLLMResponse(
         content=second.content,
         usage=merged_usage,
@@ -208,6 +255,55 @@ def _merge_responses(first: SharedLLMResponse, second: SharedLLMResponse) -> Sha
         finish_reason=second.finish_reason,
         latency_ms=first.latency_ms + second.latency_ms,
     )
+
+
+def _merge_usage_values(first: Any, second: Any) -> Any:
+    """Merge one usage field without assuming that it is numeric."""
+    if isinstance(first, Mapping) and isinstance(second, Mapping):
+        merged: dict[str, Any] = dict(first)
+        for key, value in second.items():
+            merged[key] = (
+                value
+                if key not in merged
+                else _merge_usage_values(merged[key], value)
+            )
+        return merged
+    if (
+        isinstance(first, (int, float))
+        and not isinstance(first, bool)
+        and isinstance(second, (int, float))
+        and not isinstance(second, bool)
+    ):
+        return first + second
+    # The successful response is the safest value when a provider changes the
+    # type of an optional usage field between attempts.
+    return second
+
+
+def _response_format_unsupported(error: BaseException) -> bool:
+    """Read only the safe reason classification preserved in an error chain."""
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if getattr(current, "reason_code", "") == "response_format_unsupported":
+            return True
+        message = str(current).lower()
+        if "response_format" in message and any(
+            marker in message
+            for marker in ("unavailable", "unsupported", "not support", "invalid_request")
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _response_format_fallback_instruction(output_schema: type[BaseModel] | None) -> str:
+    """Build a JSON-only fallback instruction without retaining gateway text."""
+    if output_schema is None:
+        return _RESPONSE_FORMAT_FALLBACK_SYSTEM
+    schema = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
+    return f"{_RESPONSE_FORMAT_FALLBACK_SYSTEM}\nJSON Schema:\n{schema}"
 
 
 __all__ = ["SharedLLMStructuredProvider"]

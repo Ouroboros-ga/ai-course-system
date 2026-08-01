@@ -14,8 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
-from typing import Any
+from datetime import timezone
+from typing import Any, Optional
 
 from app.platform.tasks.worker import (
     LocalTaskWorker,
@@ -26,6 +26,22 @@ from app.platform.tasks.worker import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _course_build_failure_message(error: BaseException) -> str:
+    """Return a safe, actionable message for a failed intelligent-prep task."""
+    current: BaseException | None = error
+    visited: set[int] = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if getattr(current, "reason_code", "") == "response_format_unsupported":
+            return "模型网关不支持结构化输出，系统已尝试兼容模式但仍未完成；请检查模型网关兼容性后重新智能备课"
+        if getattr(current, "status_code", None) == 400:
+            return "模型服务拒绝了智能备课请求（HTTP 400）；请检查模型名称、网关兼容性和请求限制后重新智能备课"
+        current = current.__cause__ or current.__context__
+    if "PREP_STRUCTURED_PORT_UNAVAILABLE" in str(error):
+        return "智能备课结构化服务未就绪；请检查后端 LLM 配置后重新智能备课"
+    return str(error)[:500]
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +583,7 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 session.commit()
         raise TaskExecutionError("COURSE_BUILD_STAGE_TIMEOUT", str(exc), retryable=True) from exc
     except Exception as exc:
+        failure_message = _course_build_failure_message(exc)
         with ctx.session_factory() as session:
             build = session.exec(select(CourseDraftBuildTask).where(
                 CourseDraftBuildTask.build_task_id == build_task_id,
@@ -575,11 +592,11 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
             if build:
                 build.status = CourseDraftBuildStatus.FAILED
                 build.error_code = "COURSE_DRAFT_BUILD_FAILED"
-                build.error_message = str(exc)[:500]
+                build.error_message = failure_message
                 build.finished_at = utcnow_aware()
                 session.add(build)
                 session.commit()
-        raise TaskExecutionError("COURSE_DRAFT_BUILD_FAILED", str(exc), retryable=True) from exc
+        raise TaskExecutionError("COURSE_DRAFT_BUILD_FAILED", failure_message, retryable=True) from exc
 
     with ctx.session_factory() as session:
         ctx.service.mark_succeeded(
@@ -874,6 +891,143 @@ async def media_generic_handler(ctx: TaskHandlerContext) -> None:
             result_ref=f"media_task://{ctx.task_id}",
             result_data={"course_id": course_id, "consumed_by": "media_generic_handler"},
         )
+
+
+async def media_tts_handler(ctx: TaskHandlerContext) -> None:
+    """Consume a paid TTS task outside the FastAPI request event loop.
+
+    The real Provider has a synchronous public contract, so the blocking v3
+    WebSocket session runs in a worker thread with its own database session.
+    Fake/Mock providers remain available through the legacy synchronous test
+    endpoint and never cause a paid network request in automated tests.
+    """
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    job_id = str(payload.get("job_id") or "")
+    script_text = str(payload.get("script_text") or "")
+    if not course_id or not job_id or not script_text:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "media.tts handler 缺少 course_id/job_id/script_text",
+            retryable=False,
+        )
+
+    def run_in_worker_thread() -> None:
+        from sqlmodel import select
+        from app.models.media_release_model import MediaGenerationJob
+        from app.services.media_release_service import tts_execution_service
+
+        with ctx.session_factory() as session:
+            job = session.exec(select(MediaGenerationJob).where(
+                MediaGenerationJob.job_id == job_id,
+                MediaGenerationJob.course_id == course_id,
+                MediaGenerationJob.task_id == ctx.task_id,
+            )).first()
+            if job is None:
+                raise TaskExecutionError(
+                    "RESOURCE_NOT_FOUND",
+                    "media.tts 任务与课程或统一任务记录不匹配",
+                    retryable=False,
+                )
+            tts_execution_service.execute_tts_job(
+                session,
+                course_id=course_id,
+                job_id=job_id,
+                script_text=script_text,
+                voice_id=str(payload.get("voice_id") or "default"),
+                resource_version=str(payload.get("resource_version") or "v1"),
+                provider_key=str(payload.get("provider_key") or job.provider_key or ""),
+                max_retries=payload.get("max_retries"),
+            )
+            session.commit()
+
+    await asyncio.to_thread(run_in_worker_thread)
+
+
+# ---------------------------------------------------------------------------
+# media.timeline_publish handler (P2 cue manifest freeze)
+# ---------------------------------------------------------------------------
+
+
+async def media_timeline_publish_handler(ctx: TaskHandlerContext) -> None:
+    """Build release-scoped subtitle and avatar cue manifests.
+
+    This is intentionally a separate worker task from TTS: a successful audio
+    file can be inspected/reused without ever asking the Provider to speak
+    again, while a failed cue build remains auditable as its own media job.
+    """
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    release_id = str(payload.get("release_id") or "")
+    source_tts_job_id = str(payload.get("source_tts_job_id") or "")
+    if not course_id or not release_id or not source_tts_job_id:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "media.timeline_publish handler 缺少 course_id/release_id/source_tts_job_id",
+            retryable=False,
+        )
+
+    from sqlmodel import select
+    from app.models.media_release_model import MediaGenerationJob, MediaGenerationStatus
+    from app.services.avatar_cue_service import AvatarCueBuildError, build_avatar_cues_from_tts_job
+    from app.services.media_release_service import media_generation_job_service
+
+    with ctx.session_factory() as session:
+        job = session.exec(select(MediaGenerationJob).where(
+            MediaGenerationJob.course_id == course_id,
+            MediaGenerationJob.task_id == ctx.task_id,
+        )).first()
+        if job is None:
+            raise TaskExecutionError(
+                "RESOURCE_NOT_FOUND",
+                "Cue Worker 任务与课程或统一任务记录不匹配",
+                retryable=False,
+            )
+        job_id = job.job_id
+        if job.status == MediaGenerationStatus.SUCCEEDED:
+            return
+        media_generation_job_service.mark_running(
+            session, course_id=course_id, job_id=job_id, stage="freeze_avatar_cues",
+        )
+        try:
+            result = build_avatar_cues_from_tts_job(
+                session,
+                course_id=course_id,
+                release_id=release_id,
+                tts_job_id=source_tts_job_id,
+                outline_node_id=payload.get("outline_node_id") or None,
+            )
+        except AvatarCueBuildError as exc:
+            media_generation_job_service.mark_failed(
+                session,
+                course_id=course_id,
+                job_id=job_id,
+                error_code=exc.error_code,
+                error_message_safe=exc.safe_message,
+                retryable=False,
+            )
+            session.commit()
+            return
+        media_generation_job_service.mark_succeeded(
+            session,
+            course_id=course_id,
+            job_id=job_id,
+            output_object_key=result.avatar_cues_object_key,
+            output_metadata={
+                "avatar_cues_schema": "avatar-cues/v1",
+                "avatar_cues_object_key": result.avatar_cues_object_key,
+                "subtitle_manifest_object_key": result.subtitle_manifest_object_key,
+                "audio_object_key": result.audio_object_key,
+                "audio_sha256": result.audio_sha256,
+                "duration_ms": result.duration_ms,
+                "cue_count": result.cue_count,
+                "viseme_count": result.viseme_count,
+                "timing_source": result.timing_source,
+                "content_hash": result.content_hash,
+                "warnings": result.warnings,
+            },
+        )
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -1297,9 +1451,11 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("knowledge.graphrag_build", knowledge_graphrag_build_handler)
     worker.register("knowledge.vector_index", knowledge_vector_index_handler)
 
-    # 媒体生成任务类型（MediaGenerationJobType 枚举值）
-    for job_type in ("tts", "subtitle", "avatar_preprocess", "dh_render",
-                     "video_package", "timeline_publish"):
+    # Paid TTS and P2 cue freezing have real worker handlers.  Other media
+    # generation task types stay on their existing generic compatibility path.
+    worker.register("media.tts", media_tts_handler)
+    worker.register("media.timeline_publish", media_timeline_publish_handler)
+    for job_type in ("subtitle", "avatar_preprocess", "dh_render", "video_package"):
         task_type = f"media.{job_type}"
         if not worker.has_handler(task_type):
             worker.register(task_type, media_generic_handler)

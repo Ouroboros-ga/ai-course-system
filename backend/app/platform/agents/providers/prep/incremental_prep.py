@@ -115,5 +115,37 @@ class IncrementalPrepProvider:
             planner=result.planner,
         )
 
+    async def plan_action(
+        self,
+        *,
+        course_id: str,
+        action: str,
+        instruction: str,
+        outline_node_id: str | None,
+    ) -> IncrementalPrepResult:
+        """Run one canonical teacher action through the domain service."""
+        try:
+            course_id_int = int(course_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Invalid course_id {course_id!r}: {error}") from error
+        session = self._session_factory()
+        try:
+            result = await self._service.plan_action(
+                session,
+                course_id=course_id_int,
+                action=action,
+                instruction=instruction,
+                outline_node_id=outline_node_id,
+            )
+        finally:
+            session.close()
+        return IncrementalPrepResult(
+            summary=result.summary,
+            operations=list(result.operations),
+            evidence=list(result.evidence),
+            excluded_locked_targets=list(result.excluded_locked_targets),
+            planner=result.planner,
+        )
+
 
 __all__ = ["IncrementalPrepProvider"]

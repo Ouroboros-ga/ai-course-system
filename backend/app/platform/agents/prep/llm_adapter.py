@@ -13,11 +13,9 @@ business layer, exposing the seven LLM operations the Prep pipelines need:
     - optimize_ppt_mappings   (PPT mapping pipeline)
 
 Design notes:
-    - The first version is a thin wrapper. ``ControlledPrepWorkflow`` already
-      owns a ``_structured_call`` seam with its own client injection, so this
-      adapter only standardises the prompt-lookup + ``StructuredLLMPort``
-      invocation shape. Full migration of the Service onto this adapter is a
-      later phase; the Service remains the business-logic source of truth.
+    - ``ControlledPrepWorkflow`` calls these typed stage methods directly.
+      There is intentionally no generic ``chat`` bridge: every preparation
+      request follows the same prompt, schema, fallback, and audit path.
     - Service-layer schema types (``EvidenceSegmenterResult``,
       ``OutlinePlannerResult``, ``TeachingScriptNodeDraft``,
       ``TeachingScriptBatchResult``, ``EvidenceVerifierResult``,
@@ -50,6 +48,7 @@ from .prompts import (
     EVIDENCE_SEGMENTER_PROMPT,
     EVIDENCE_VERIFIER_PROMPT,
     INCREMENTAL_PLANNER_PROMPT,
+    PREP_ACTION_PLANNER_PROMPT,
     OUTLINE_PLANNER_PROMPT,
     PPT_MAPPING_OPTIMIZER_PROMPT,
     SCRIPT_WRITER_BATCH_PROMPT,
@@ -157,39 +156,6 @@ class PrepLLMAdapter:
         if response.parsed is not None:
             return response.parsed
         return model.model_validate_json(response.content)
-
-    async def chat(
-        self,
-        messages: list[Any],
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        """Expose the legacy chat surface for ControlledPrepWorkflow.
-
-        Initial preparation still owns its stage-level schema repair loop.
-        This bridge keeps that workflow on the registered StructuredLLMPort
-        instead of creating a second client path.
-        """
-        normalized_messages = [
-            {"role": str(message.role), "content": str(message.content)}
-            for message in messages
-        ]
-        response_format = kwargs.get("response_format") or {"type": "json_object"}
-        return await self._llm.complete(
-            messages=normalized_messages,
-            output_schema=None,
-            options=LLMOptions(
-                temperature=temperature if temperature is not None else 0.2,
-                max_tokens=max_tokens,
-                response_format=dict(response_format),
-                prompt_version="prep.controlled_workflow_bridge/1.0",
-            ),
-            trace_context=self._trace(
-                "controlled_prep_workflow",
-                "initial course preparation",
-            ),
-        )
 
     # -- Initial pipeline ------------------------------------------------
 
@@ -351,8 +317,9 @@ class PrepLLMAdapter:
             if isinstance(payload, str)
             else json.dumps(payload, ensure_ascii=False, default=str)
         )
+        action = payload.get("batch_action") if isinstance(payload, Mapping) else None
         response = await self._complete(
-            spec=INCREMENTAL_PLANNER_PROMPT,
+            spec=PREP_ACTION_PLANNER_PROMPT if action else INCREMENTAL_PLANNER_PROMPT,
             user_prompt=user_prompt,
             node="plan_incremental",
             purpose="incremental edit planning",

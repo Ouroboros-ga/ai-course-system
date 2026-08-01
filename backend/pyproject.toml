@@ -20,6 +20,9 @@ dependencies = [
     "python-multipart>=0.0.22",
     "uvicorn>=0.41.0",
     "httpx>=0.28.1",
+    # Doubao TTS v3 bidirectional WebSocket client.  The Provider loads it
+    # only inside the server-side Media Worker; frontend code never sees it.
+    "websockets>=16.1,<17",
     "boto3>=1.34.0",
     "docling>=2.81.0",
     "transformers>=4.57.6",

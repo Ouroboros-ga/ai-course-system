@@ -10,3 +10,6 @@ export const listMediaReleases = (courseId) => request.get(`${base(courseId)}/re
 export const createMediaRelease = (courseId, payload) => request.post(`${base(courseId)}/releases`, payload)
 export const activateMediaRelease = (courseId, releaseId) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/activate`)
 export const withdrawMediaRelease = (courseId, releaseId) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/withdraw`)
+// Learner-facing immutable media release.  This is intentionally separate
+// from the authoring release APIs above so the player consumes its own contract.
+export const getCoursePlayback = (courseId, config = {}) => request.get(`${base(courseId)}/playback`, config)

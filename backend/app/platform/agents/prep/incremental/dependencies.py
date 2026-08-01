@@ -73,6 +73,15 @@ class IncrementalPrepPort(Protocol):
         action: Literal["organize_structure", "optimize_scripts"],
     ) -> IncrementalPrepResult: ...
 
+    async def plan_action(
+        self,
+        *,
+        course_id: str,
+        action: str,
+        instruction: str,
+        outline_node_id: str | None,
+    ) -> IncrementalPrepResult: ...
+
 
 @dataclass(frozen=True)
 class IncrementalPrepDependencies:

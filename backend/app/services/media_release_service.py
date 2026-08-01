@@ -48,6 +48,7 @@ from app.services.object_storage import get_object_storage
 from app.services.task_service import TaskCreateRequest, task_service
 from app.services.tts_provider import (
     TtsSynthesisRequest,
+    TtsProviderConfigurationError,
     get_tts_provider,
 )
 
@@ -391,6 +392,10 @@ class MediaReleaseService:
                 details={"current_status": release.status.value},
             )
 
+        self._validate_avatar_cues_binding(
+            session, course_id=course_id, release=release,
+        )
+
         # 旧 active 标记 superseded
         old_actives = session.exec(
             select(MediaRelease).where(
@@ -409,6 +414,23 @@ class MediaReleaseService:
         session.add(release)
         session.flush()
         return release
+
+    def ensure_ppt_manifest(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        release_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Build the immutable PPT manifest once before a release is activated."""
+        release = self.get_release(session, course_id=course_id, release_id=release_id)
+        if release.ppt_manifest_object_key:
+            storage = get_object_storage()
+            if not storage.exists(release.ppt_manifest_object_key):
+                raise RuntimeError("bound PPT manifest object is unavailable")
+            return None
+        from app.services.ppt_manifest_service import build_ppt_manifest
+        return build_ppt_manifest(session, course_id=course_id, release=release)
 
     def withdraw_release(
         self, session: Session, *, course_id: int, release_id: str,
@@ -472,56 +494,155 @@ class MediaReleaseService:
         release_id: str,
         cues: list[MediaTimelineCue],
     ) -> list[MediaReleaseCue]:
-        """将编辑中的 MediaTimelineCue 冻结为发布版本快照 MediaReleaseCue"""
+        """将编辑中的 MediaTimelineCue 冻结为发布版本快照 MediaReleaseCue.
+
+        The legacy editor may still create ``MediaTimelineCue`` rows, but it
+        must not be able to mutate an active learner release.  P2's Provider
+        cue builder uses the same immutable replacement primitive below.
+        """
+        return self.freeze_cue_snapshot(
+            session,
+            course_id=course_id,
+            release_id=release_id,
+            cue_rows=[
+                {
+                    "node_id": c.node_id,
+                    "cue_index": c.cue_index,
+                    "start_time": c.start_time,
+                    "end_time": c.end_time,
+                    "cue_type": c.cue_type.value if hasattr(c.cue_type, "value") else str(c.cue_type),
+                    "ppt_page": c.ppt_page,
+                    "subtitle_text": c.subtitle_text,
+                    "script_reference": c.script_reference,
+                    "audio_object_key": c.audio_object_key,
+                    "video_object_key": c.video_object_key,
+                    "cue_metadata": c.cue_metadata or {},
+                }
+                for c in cues
+            ],
+        )
+
+    def freeze_cue_snapshot(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        release_id: str,
+        cue_rows: list[dict[str, Any]],
+    ) -> list[MediaReleaseCue]:
+        """Replace a *draft* release's full cue snapshot atomically.
+
+        Input rows are already provider-neutral.  This is deliberately the
+        only mutation path for ``MediaReleaseCue`` so the stored content hash
+        covers all timing, audio references and mapping provenance.
+        """
         release = self.get_release(session, course_id=course_id, release_id=release_id)
-        # 计算内容哈希
-        hash_payload = json.dumps([
-            {
-                "node_id": c.node_id,
-                "cue_index": c.cue_index,
-                "start_time": c.start_time,
-                "end_time": c.end_time,
-                "cue_type": c.cue_type.value if hasattr(c.cue_type, "value") else str(c.cue_type),
-                "ppt_page": c.ppt_page,
-                "subtitle_text": c.subtitle_text,
-                "audio_object_key": c.audio_object_key,
-                "video_object_key": c.video_object_key,
-            }
-            for c in cues
-        ], ensure_ascii=False, sort_keys=True)
-        release.timeline_content_hash = hashlib.sha256(
-            hash_payload.encode("utf-8")
-        ).hexdigest()
+        self._require_release_mutable(release, action="冻结 Cue")
+
+        normalized = []
+        for raw in cue_rows:
+            node_id = raw.get("node_id")
+            start_time = float(raw.get("start_time", 0))
+            end_time = float(raw.get("end_time", 0))
+            if not isinstance(node_id, int) or node_id < 1 or start_time < 0 or end_time <= start_time:
+                reject_validation_failed("Cue 快照包含无效节点或时间范围")
+            metadata = raw.get("cue_metadata") or {}
+            if not isinstance(metadata, dict):
+                reject_validation_failed("Cue 元数据必须为对象")
+            normalized.append({
+                "node_id": node_id,
+                "cue_index": int(raw.get("cue_index", 0)),
+                "start_time": start_time,
+                "end_time": end_time,
+                "cue_type": str(raw.get("cue_type") or "narration"),
+                "ppt_page": raw.get("ppt_page"),
+                "subtitle_text": str(raw.get("subtitle_text") or ""),
+                "script_reference": raw.get("script_reference"),
+                "audio_object_key": raw.get("audio_object_key"),
+                "video_object_key": raw.get("video_object_key"),
+                "cue_metadata": metadata,
+            })
+        normalized.sort(key=lambda item: (
+            item["node_id"], item["cue_index"], item["start_time"], item["end_time"],
+        ))
+        try:
+            hash_payload = json.dumps(normalized, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        except (TypeError, ValueError) as exc:
+            reject_validation_failed("Cue 元数据必须可序列化")
+            raise AssertionError("unreachable") from exc
+        release.timeline_content_hash = hashlib.sha256(hash_payload.encode("utf-8")).hexdigest()
         session.add(release)
 
-        # 删除该 release 已有的 cue 快照（支持重做）
         existing = session.exec(
-            select(MediaReleaseCue).where(MediaReleaseCue.release_id == release_id)
+            select(MediaReleaseCue).where(
+                MediaReleaseCue.release_id == release_id,
+                MediaReleaseCue.course_id == course_id,
+            )
         ).all()
         for old in existing:
             session.delete(old)
 
-        new_cues: list[MediaReleaseCue] = []
-        for c in cues:
-            rc = MediaReleaseCue(
+        frozen: list[MediaReleaseCue] = []
+        for row in normalized:
+            cue = MediaReleaseCue(
                 release_id=release_id,
                 course_id=course_id,
-                node_id=c.node_id,
-                cue_index=c.cue_index,
-                start_time=c.start_time,
-                end_time=c.end_time,
-                cue_type=c.cue_type.value if hasattr(c.cue_type, "value") else str(c.cue_type),
-                ppt_page=c.ppt_page,
-                subtitle_text=c.subtitle_text,
-                script_reference=c.script_reference,
-                audio_object_key=c.audio_object_key,
-                video_object_key=c.video_object_key,
-                cue_metadata=c.cue_metadata or {},
+                **row,
             )
-            session.add(rc)
-            new_cues.append(rc)
+            session.add(cue)
+            frozen.append(cue)
         session.flush()
-        return new_cues
+        return frozen
+
+    @staticmethod
+    def _require_release_mutable(release: MediaRelease, *, action: str) -> None:
+        # A withdrawn release may be reactivated unchanged, but it may already
+        # be referenced by an immutable CourseRelease.  Re-freezing it would
+        # silently change historical learner media, so only never-activated
+        # drafts are writable.
+        if release.status != MediaReleaseStatus.DRAFT:
+            reject_state_conflict(
+                f"版本状态 {release.status.value} 不允许{action}",
+                details={"current_status": release.status.value},
+            )
+
+    def _validate_avatar_cues_binding(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        release: MediaRelease,
+    ) -> None:
+        """Fail closed only when P2 cue assets are declared on a release.
+
+        Legacy audio-only releases remain compatible.  A release that claims a
+        cue asset, however, must carry the same immutable audio binding and a
+        frozen subtitle/Cue snapshot before learners can observe it.
+        """
+        if not release.avatar_cues_object_key:
+            return
+        from app.services.avatar_cue_service import AvatarCueBuildError, load_avatar_cue_manifest
+
+        storage = get_object_storage()
+        try:
+            manifest = load_avatar_cue_manifest(storage, release.avatar_cues_object_key)
+        except AvatarCueBuildError as exc:
+            reject_state_conflict(
+                "数字人时间轴资产不可用，发布未激活",
+                details={"error_code": exc.error_code},
+            )
+        audio = manifest["audio"]
+        expected_sha = str((release.release_metadata or {}).get("audio_sha256") or "")
+        if audio.get("object_key") != release.audio_object_key or not expected_sha or audio.get("sha256") != expected_sha:
+            reject_state_conflict(
+                "数字人时间轴与发布音频不匹配，发布未激活",
+                details={"error_code": "AVATAR_CUES_AUDIO_MISMATCH"},
+            )
+        if not self.list_release_cues(session, course_id=course_id, release_id=release.release_id):
+            reject_state_conflict(
+                "数字人时间轴缺少冻结字幕 Cue，发布未激活",
+                details={"error_code": "RELEASE_CUES_REQUIRED"},
+            )
 
     def list_release_cues(
         self,
@@ -604,6 +725,24 @@ class MediaPlaybackService:
                 scope={"course_id": course_id, "purpose": "lecture_playback"},
             )
 
+        ppt_manifest = None
+        if release.ppt_manifest_object_key:
+            try:
+                from app.services.ppt_manifest_service import load_manifest, sign_manifest_pages
+                raw_manifest = load_manifest(storage, release.ppt_manifest_object_key)
+                ppt_manifest = sign_manifest_pages(
+                    raw_manifest,
+                    storage,
+                    course_id=course_id,
+                    release_id=release.release_id,
+                )
+                ppt_manifest["manifest_url"] = storage.sign_read_url(
+                    release.ppt_manifest_object_key,
+                    scope={"course_id": course_id, "purpose": "ppt_manifest", "release_id": release.release_id},
+                )
+            except Exception as e:
+                logger.warning("签发 PPT manifest 失败，降级为旧课件回退: %s", e)
+
         # 字幕与 PPT 时间轴
         subtitle_segments = []
         ppt_timeline = []
@@ -641,6 +780,32 @@ class MediaPlaybackService:
                 logger.warning("签发数字人 manifest 失败，降级为兼容模式: %s", e)
                 digital_human_manifest = None
 
+        # P2 timeline is exposed independently from the avatar package.  P3
+        # may consume it when a renderer is available; all existing learners
+        # safely ignore it and keep audio/PPT/subtitles as the primary path.
+        avatar_cues = None
+        if release.avatar_cues_object_key:
+            try:
+                from app.services.avatar_cue_service import load_avatar_cue_manifest
+
+                cue_manifest = load_avatar_cue_manifest(storage, release.avatar_cues_object_key)
+                audio_binding = cue_manifest["audio"]
+                expected_sha = str((release.release_metadata or {}).get("audio_sha256") or "")
+                if audio_binding.get("object_key") != release.audio_object_key or audio_binding.get("sha256") != expected_sha:
+                    raise ValueError("avatar cue audio binding mismatch")
+                avatar_cues = {
+                    "schema": cue_manifest["schema"],
+                    "manifest_url": storage.sign_read_url(
+                        release.avatar_cues_object_key,
+                        scope={"course_id": course_id, "purpose": "avatar_cues", "release_id": release.release_id},
+                    ),
+                    "timing_source": (cue_manifest.get("timing") or {}).get("source", ""),
+                    "precision": (cue_manifest.get("timing") or {}).get("precision", ""),
+                    "content_sha256": cue_manifest.get("content_sha256", ""),
+                }
+            except Exception as e:
+                logger.warning("签发数字人 Cue manifest 失败，播放继续走兼容模式: %s", e)
+
         return {
             "available": True,
             "course_release_id": course_release.release_id if course_release else None,
@@ -651,7 +816,9 @@ class MediaPlaybackService:
             "duration_ms": self._estimate_total_duration_ms(cues),
             "subtitle_segments": subtitle_segments,
             "ppt_timeline": ppt_timeline,
+            "ppt": ppt_manifest,
             "digital_human_manifest": digital_human_manifest,
+            "avatar_cues": avatar_cues,
             "default_playback_mode": release.default_playback_mode.value,
             "fallback_mode": "compatibility" if digital_human_manifest is None else release.default_playback_mode.value,
             "timeline_content_hash": release.timeline_content_hash,
@@ -665,15 +832,15 @@ class MediaPlaybackService:
 
 
 # ---------------------------------------------------------------------------
-# TTS 合成执行器（同步执行 Fake；M2 接讯飞时改为异步 worker）
+# TTS 合成执行器（Fake/Mock 可同步；真实 Provider 仅由异步 worker 调用）
 # ---------------------------------------------------------------------------
 
 
 class TtsExecutionService:
     """TTS 合成执行器
 
-    - M1 阶段：同步执行 Fake Provider，验证端到端流程
-    - M2 阶段：实现重试、限额、人工重跑；真实讯飞仅人工验收
+    - Fake/Mock Provider 保留同步执行，服务于离线演示与自动化测试
+    - 真实付费 Provider 由 media.tts Worker 在独立线程/会话中调用
     - 失败时通过 mark_failed 保留原始 error_code，禁止伪装成功
     - 限额：基于内存滑动窗口，按 course_id 限制每分钟调用次数
     """
@@ -704,139 +871,267 @@ class TtsExecutionService:
             session, course_id=course_id, job_id=job_id, stage="tts_synthesizing",
         )
 
-        # 脚本字节限制
         from app.core.config import settings
         max_script_bytes = getattr(settings, "TTS_MAX_SCRIPT_BYTES", 8000)
         if len(script_text.encode("utf-8")) > max_script_bytes:
-            error_code = "TTS_SCRIPT_TOO_LONG"
-            error_message_safe = (
-                f"讲稿超过最大字节限制 {max_script_bytes}，当前 {len(script_text.encode('utf-8'))}"
+            return self._fail_job(
+                session, course_id=course_id, job_id=job_id,
+                error_code="TTS_SCRIPT_TOO_LONG",
+                error_message_safe=(
+                    f"讲稿超过最大字节限制 {max_script_bytes}，当前 {len(script_text.encode('utf-8'))}"
+                ),
             )
+
+        try:
+            provider = get_tts_provider(provider_key or job.provider_key or None, strict=True)
+        except TtsProviderConfigurationError:
+            return self._fail_job(
+                session, course_id=course_id, job_id=job_id,
+                error_code="TTS_PROVIDER_UNSUPPORTED",
+                error_message_safe="所选 TTS Provider 未注册，任务未调用任何外部服务",
+            )
+
+        request = TtsSynthesisRequest(
+            script_text=script_text,
+            voice_id=voice_id,
+            course_id=course_id,
+            resource_version=resource_version,
+            idempotency_key=job.idempotency_key,
+        )
+        cache_key = provider.cache_key(request)
+        job.provider_key = provider.provider_key
+        job.provider_version = provider.provider_version
+        job.input_hash = cache_key
+        session.add(job)
+        session.flush()
+
+        cached = self._find_cached_success(
+            session,
+            course_id=course_id,
+            job_id=job_id,
+            cache_key=cache_key,
+            provider_key=provider.provider_key,
+            provider_version=provider.provider_version,
+        )
+        if cached is not None:
+            metadata = dict(cached.output_metadata or {})
+            metadata.update({
+                "cache_hit": True,
+                "cache_source_job_id": cached.job_id,
+                "provider_key": provider.provider_key,
+                "provider_version": provider.provider_version,
+                "attempts_used": 0,
+            })
             job_service.record_attempt(
                 session, course_id=course_id, job_id=job_id,
                 attempt_number=self._next_attempt_number(session, job_id=job_id),
-                provider_key="",
-                provider_version="",
-                status=MediaGenerationStatus.FAILED,
-                error_code=error_code,
-                error_message_safe=error_message_safe,
+                provider_key=provider.provider_key,
+                provider_version=provider.provider_version,
+                status=MediaGenerationStatus.SUCCEEDED,
+                duration_ms=0,
+                attempt_metadata={"cache_hit": True, "cache_source_job_id": cached.job_id},
             )
-            return job_service.mark_failed(
+            return job_service.mark_succeeded(
                 session, course_id=course_id, job_id=job_id,
-                error_code=error_code,
-                error_message_safe=error_message_safe,
+                output_object_key=cached.output_object_key or "",
+                output_metadata=metadata,
             )
 
-        # 限额检查
         rate_limit_error = self._check_rate_limit(course_id)
         if rate_limit_error:
-            job_service.record_attempt(
+            return self._fail_job(
                 session, course_id=course_id, job_id=job_id,
-                attempt_number=self._next_attempt_number(session, job_id=job_id),
-                provider_key="",
-                provider_version="",
-                status=MediaGenerationStatus.FAILED,
-                error_code=rate_limit_error[0],
-                error_message_safe=rate_limit_error[1],
-            )
-            return job_service.mark_failed(
-                session, course_id=course_id, job_id=job_id,
-                error_code=rate_limit_error[0],
-                error_message_safe=rate_limit_error[1],
+                error_code=rate_limit_error[0], error_message_safe=rate_limit_error[1],
+                provider_key=provider.provider_key, provider_version=provider.provider_version,
             )
 
-        provider = get_tts_provider(provider_key or job.provider_key or None)
         max_attempts = max_retries if max_retries is not None else getattr(
             settings, "TTS_MAX_RETRY_ATTEMPTS", 3,
         )
-
         last_error_code = ""
         last_error_message = ""
-
         for attempt_idx in range(max_attempts):
             attempt_number = self._next_attempt_number(session, job_id=job_id)
-
+            started = time.monotonic()
             try:
-                request = TtsSynthesisRequest(
-                    script_text=script_text,
-                    voice_id=voice_id,
-                    course_id=course_id,
-                    resource_version=resource_version,
-                    idempotency_key=job.idempotency_key,
-                )
                 result = provider.synthesize(request)
-            except Exception as e:
-                # 保留原始失败原因
-                last_error_code = "TTS_PROVIDER_FAILED"
-                last_error_message = str(e)[:500]
+            except Exception as exc:
+                last_error_code = getattr(exc, "error_code", "TTS_PROVIDER_FAILED")
+                last_error_message = str(getattr(exc, "safe_message", str(exc)))[:500]
                 job_service.record_attempt(
                     session, course_id=course_id, job_id=job_id,
                     attempt_number=attempt_number,
                     provider_key=provider.provider_key,
                     provider_version=provider.provider_version,
                     status=MediaGenerationStatus.FAILED,
+                    duration_ms=int((time.monotonic() - started) * 1000),
                     error_code=last_error_code,
                     error_message_safe=last_error_message,
                 )
-                # 还有重试机会则继续
-                if attempt_idx < max_attempts - 1:
+                if attempt_idx < max_attempts - 1 and getattr(exc, "retryable", True):
                     continue
-                # 重试耗尽
                 return job_service.mark_failed(
                     session, course_id=course_id, job_id=job_id,
                     error_code=last_error_code,
-                    error_message_safe=(
-                        f"{last_error_message}（已重试 {max_attempts} 次）"
-                    ),
+                    error_message_safe=f"{last_error_message}（已重试 {attempt_idx + 1} 次）",
+                    retryable=getattr(exc, "retryable", True),
                 )
 
-            # 记录成功 attempt
+            metadata = self._result_metadata(result, attempts_used=attempt_idx + 1)
             job_service.record_attempt(
                 session, course_id=course_id, job_id=job_id,
                 attempt_number=attempt_number,
                 provider_key=result.provider_key,
                 provider_version=result.provider_version,
                 status=MediaGenerationStatus.SUCCEEDED,
-                attempt_metadata={
-                    "audio_object_key": result.audio_object_key,
-                    "duration_ms": result.duration_ms,
-                    "audio_sha256": result.audio_sha256,
-                    "subtitle_segments": [
-                        {
-                            "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
-                            "sentence_index": s.sentence_index,
-                        } for s in result.subtitle_segments
-                    ],
-                    "warnings": result.warnings,
-                    "attempt_index": attempt_idx,
-                },
+                duration_ms=int((time.monotonic() - started) * 1000),
+                attempt_metadata={**metadata, "attempt_index": attempt_idx, "cache_hit": False},
             )
-
             return job_service.mark_succeeded(
                 session, course_id=course_id, job_id=job_id,
                 output_object_key=result.audio_object_key,
-                output_metadata={
-                    "audio_object_key": result.audio_object_key,
-                    "duration_ms": result.duration_ms,
-                    "audio_sha256": result.audio_sha256,
-                    "subtitle_segments": [
-                        {
-                            "text": s.text, "start_ms": s.start_ms, "end_ms": s.end_ms,
-                            "sentence_index": s.sentence_index,
-                        } for s in result.subtitle_segments
-                    ],
-                    "warnings": result.warnings,
-                    "provider_key": result.provider_key,
-                    "provider_version": result.provider_version,
-                    "attempts_used": attempt_idx + 1,
-                },
+                output_metadata=metadata,
             )
 
-        # 理论上不会走到这里
         return job_service.mark_failed(
             session, course_id=course_id, job_id=job_id,
             error_code=last_error_code or "TTS_UNKNOWN_FAILURE",
             error_message_safe=last_error_message or "未知失败",
+        )
+
+    def prepare_tts_job_for_dispatch(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        job_id: str,
+        script_text: str,
+        voice_id: str = "default",
+        resource_version: str = "v1",
+        provider_key: Optional[str] = None,
+        max_retries: Optional[int] = None,
+        retry: bool = False,
+    ) -> tuple[MediaGenerationJob, dict[str, Any]]:
+        """Persist a worker payload before a paid TTS task is submitted.
+
+        The payload is stored on the job itself; credentials are resolved only
+        by the Provider inside the worker.  The returned dict is safe to hand
+        to ``LocalTaskWorker.submit`` and contains course script text only.
+        """
+        job = media_generation_job_service.get_job(session, course_id=course_id, job_id=job_id)
+        if retry:
+            if job.status != MediaGenerationStatus.FAILED:
+                reject_state_conflict(f"仅 failed 任务可重跑，当前状态 {job.status.value}")
+            job.status = MediaGenerationStatus.PENDING
+            job.error_code = ""
+            job.error_message_safe = ""
+            job.finished_at = None
+        elif job.status != MediaGenerationStatus.PENDING:
+            reject_state_conflict(f"仅 pending 任务可派发，当前状态 {job.status.value}")
+
+        provider = get_tts_provider(provider_key or job.provider_key or None, strict=True)
+        request = TtsSynthesisRequest(
+            script_text=script_text,
+            voice_id=voice_id,
+            course_id=course_id,
+            resource_version=resource_version,
+            idempotency_key=job.idempotency_key,
+        )
+        job.provider_key = provider.provider_key
+        job.provider_version = provider.provider_version
+        job.input_hash = provider.cache_key(request)
+        job.input_payload = {
+            **(job.input_payload or {}),
+            "script_text": script_text,
+            "voice_id": voice_id,
+            "resource_version": resource_version,
+            "provider_key": provider.provider_key,
+            "max_retries": max_retries,
+        }
+        job.updated_at = utcnow_aware()
+        session.add(job)
+        session.flush()
+        return job, {
+            "course_id": course_id,
+            "job_id": job.job_id,
+            "script_text": script_text,
+            "voice_id": voice_id,
+            "resource_version": resource_version,
+            "provider_key": provider.provider_key,
+            "max_retries": max_retries,
+        }
+
+    def _find_cached_success(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        job_id: str,
+        cache_key: str,
+        provider_key: str,
+        provider_version: str,
+    ) -> Optional[MediaGenerationJob]:
+        candidates = session.exec(
+            select(MediaGenerationJob).where(
+                MediaGenerationJob.course_id == course_id,
+                MediaGenerationJob.job_type == MediaGenerationJobType.TTS,
+                MediaGenerationJob.status == MediaGenerationStatus.SUCCEEDED,
+                MediaGenerationJob.input_hash == cache_key,
+                MediaGenerationJob.provider_key == provider_key,
+                MediaGenerationJob.provider_version == provider_version,
+                MediaGenerationJob.job_id != job_id,
+            ).order_by(MediaGenerationJob.finished_at.desc())
+        ).all()
+        storage = get_object_storage()
+        for candidate in candidates:
+            if candidate.output_object_key and storage.exists(candidate.output_object_key):
+                return candidate
+        return None
+
+    def _result_metadata(self, result: Any, *, attempts_used: int) -> dict[str, Any]:
+        return {
+            "audio_object_key": result.audio_object_key,
+            "duration_ms": result.duration_ms,
+            "audio_sha256": result.audio_sha256,
+            "subtitle_segments": [
+                {
+                    "text": segment.text,
+                    "start_ms": segment.start_ms,
+                    "end_ms": segment.end_ms,
+                    "sentence_index": segment.sentence_index,
+                }
+                for segment in result.subtitle_segments
+            ],
+            "timing_metadata": result.timing_metadata,
+            "warnings": result.warnings,
+            "provider_key": result.provider_key,
+            "provider_version": result.provider_version,
+            "attempts_used": attempts_used,
+            "cache_hit": False,
+        }
+
+    def _fail_job(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        job_id: str,
+        error_code: str,
+        error_message_safe: str,
+        provider_key: str = "",
+        provider_version: str = "",
+    ) -> MediaGenerationJob:
+        job_service = media_generation_job_service
+        job_service.record_attempt(
+            session, course_id=course_id, job_id=job_id,
+            attempt_number=self._next_attempt_number(session, job_id=job_id),
+            provider_key=provider_key, provider_version=provider_version,
+            status=MediaGenerationStatus.FAILED,
+            error_code=error_code, error_message_safe=error_message_safe,
+        )
+        return job_service.mark_failed(
+            session, course_id=course_id, job_id=job_id,
+            error_code=error_code, error_message_safe=error_message_safe,
         )
 
     def retry_job(

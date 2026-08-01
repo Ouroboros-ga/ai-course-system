@@ -8,16 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-import asyncio
-from typing import Any, Awaitable, Callable, Generic, TypeVar
+from typing import Any, Awaitable, Callable
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
-from app.common.llm_client import LLMClient, Message, llm_client
-from app.core.config import settings
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
-    EvidenceFinding,
     EvidenceReference,
     EvidenceSegmenterResult,
     EvidenceVerifierResult,
@@ -25,12 +21,9 @@ from app.schemas.controlled_prep import (
     PatchOperationDraft,
     PatchProposalDraft,
     TeachingScriptNodeDraft,
-    TeachingScriptBatchResult,
-    TeachingStyleConfig,
 )
 
 logger = logging.getLogger(__name__)
-ModelT = TypeVar("ModelT", bound=BaseModel)
 
 
 class StructuredOutputError(ValueError):
@@ -46,138 +39,29 @@ class CourseBuildCancelled(StructuredOutputError):
 
 
 class ControlledPrepWorkflow:
-    def __init__(self, client: Any = llm_client, max_retries: int = 1):
+    def __init__(self, client: Any | None = None, max_retries: int = 1):
+        # ``max_retries`` remains accepted for constructor compatibility.  The
+        # registered StructuredLLMPort owns repair/retry policy.
+        del max_retries
         self.client = client
-        self.max_retries = max(0, max_retries)
-        # Some OpenAI-compatible gateways implement chat completions but reject
-        # every ``response_format`` variant.  Capability is remembered for one
-        # workflow run so the four preparation stages do not each make a known
-        # failing request.
-        self._json_schema_supported: bool | None = None
 
-    async def _structured_call(
-        self,
-        stage: str,
-        output_model: type[ModelT],
-        system_prompt: str,
-        user_prompt: str,
-    ) -> ModelT:
-        schema = output_model.model_json_schema()
-        correction = ""
-        last_error: Exception | None = None
-        use_json_schema = self._json_schema_supported is not False
-        attempt = 0
-        while attempt <= self.max_retries:
-            messages = [
-                Message(role="system", content=system_prompt),
-                Message(
-                    role="user",
-                    content=(
-                        user_prompt + correction
-                        + (
-                            "\n\n你的服务不支持 response_format。只返回一个合法 JSON 对象，"
-                            "不得使用 Markdown、代码围栏或解释文字；它必须严格符合以下 JSON Schema：\n"
-                            + json.dumps(schema, ensure_ascii=False)
-                            if not use_json_schema else ""
-                        )
-                    ),
-                ),
-            ]
-            try:
-                kwargs: dict[str, Any] = {"temperature": 0.2}
-                if use_json_schema:
-                    kwargs["response_format"] = {
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": f"controlled_prep_{stage}",
-                            "strict": True,
-                            "schema": schema,
-                        },
-                    }
-                try:
-                    response = await asyncio.wait_for(
-                        self.client.chat(messages, **kwargs),
-                        timeout=max(1, int(settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS)),
-                    )
-                except asyncio.TimeoutError as exc:
-                    raise CourseBuildStageTimeout(
-                        f"{stage}: LLM 阶段超时（{settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS} 秒）"
-                    ) from exc
-                raw = response.content if hasattr(response, "content") else response
-                if not isinstance(raw, str):
-                    raise StructuredOutputError(f"{stage}: LLM response is not text")
-                result = output_model.model_validate_json(self._json_text(raw))
-                if use_json_schema:
-                    self._json_schema_supported = True
-                return result
-            except (ValidationError, json.JSONDecodeError, StructuredOutputError) as exc:
-                last_error = exc
-                attempt += 1
-                if isinstance(exc, CourseBuildStageTimeout):
-                    break
-                correction = (
-                    "\n\n上一次输出未通过严格校验。只返回符合给定 JSON Schema 的 JSON，"
-                    f"不要 Markdown，不要解释。校验错误：{str(exc)[:500]}"
-                )
-                logger.warning("Structured stage %s failed on attempt %s", stage, attempt + 1)
-            except Exception as exc:
-                if use_json_schema and self._response_format_unsupported(exc):
-                    self._json_schema_supported = False
-                    use_json_schema = False
-                    correction = "\n\n请严格遵循上面的 JSON Schema。"
-                    logger.info(
-                        "LLM gateway does not support json_schema response_format; "
-                        "using prompt-constrained JSON fallback for controlled preparation"
-                    )
-                    continue
-                last_error = exc
-                logger.exception("Structured stage %s failed", stage)
-                break
-        if isinstance(last_error, CourseBuildStageTimeout):
-            raise last_error
-        raise StructuredOutputError(f"{stage} output validation failed: {last_error}") from last_error
+    def _stage_method(self, stage: str) -> Callable[..., Awaitable[Any]]:
+        """Resolve an operation from the registered prep stage adapter.
 
-    @staticmethod
-    def _response_format_unsupported(exc: Exception) -> bool:
-        message = str(exc).lower()
-        return "response_format" in message and any(
-            marker in message
-            for marker in ("unavailable", "unsupported", "not support", "invalid_request")
-        )
-
-    @staticmethod
-    def _json_text(raw: str) -> str:
-        """Accept a single fenced JSON object from a gateway fallback.
-
-        The resulting object still goes through the exact Pydantic contract,
-        evidence-ID checks and initial-outline validation below.
+        Course preparation must use the structured Prep port.  A generic
+        ``client.chat`` fallback creates a second workflow, bypasses provider
+        capability handling, and was the source of incompatible
+        ``response_format`` retries.
         """
-        text = raw.strip()
-        if text.startswith("```") and text.endswith("```"):
-            lines = text.splitlines()
-            text = "\n".join(lines[1:-1]).strip()
-        return text
-
-    def _evidence_text(self, evidence: list[EvidenceReference]) -> str:
-        return "\n".join(
-            f"[{item.evidence_id}] page={item.page or '-'}: {item.text}"
-            for item in evidence
-        )
+        method = getattr(self.client, stage, None) if self.client is not None else None
+        if not callable(method):
+            raise StructuredOutputError(
+                "PREP_STRUCTURED_PORT_UNAVAILABLE: 智能备课结构化端口未注册"
+            )
+        return method
 
     async def segment_evidence(self, request: ControlledPrepInput) -> EvidenceSegmenterResult:
-        if hasattr(self.client, "segment_evidence"):
-            result = await self.client.segment_evidence(request)
-            self._assert_evidence_ids(result, request.evidence)
-            return result
-        result = await self._structured_call(
-            "evidence_segmenter",
-            EvidenceSegmenterResult,
-            "你是 EvidenceSegmenter。只根据材料确定主题边界、标题、例子和练习。每个 evidence_id 必须来自输入。",
-            # Evidence already carries the selected block text and page.  Do
-            # not repeat the complete source corpus here: doing so doubles the
-            # request size and can stall compatible gateway implementations.
-            f"可引用 Evidence：\n{self._evidence_text(request.evidence)}",
-        )
+        result = await self._stage_method("segment_evidence")(request)
         self._assert_evidence_ids(result, request.evidence)
         return result
 
@@ -186,21 +70,7 @@ class ControlledPrepWorkflow:
         request: ControlledPrepInput,
         segments: EvidenceSegmenterResult,
     ) -> OutlinePlannerResult:
-        if hasattr(self.client, "plan_outline"):
-            result = await self.client.plan_outline(request, segments)
-            self._assert_evidence_ids(result, request.evidence)
-            return result
-        result = await self._structured_call(
-            "outline_planner",
-            OutlinePlannerResult,
-            (
-                "你是 OutlinePlanner。为首次智能备课生成 chapter → section → knowledge_point "
-                "的课程树和 prerequisite 候选，不生成讲稿。chapter 必须无父节点，section 必须归属 "
-                "chapter，knowledge_point 必须归属 section。不要把图号、图注、零件清单、整段正文、"
-                "页眉页脚或重复标题当作知识点。所有候选必须引用输入 Evidence。"
-            ),
-            f"Evidence：\n{self._evidence_text(request.evidence)}\n\n分段结果：\n{segments.model_dump_json()}",
-        )
+        result = await self._stage_method("plan_outline")(request, segments)
         self._assert_evidence_ids(result, request.evidence)
         return result
 
@@ -216,32 +86,7 @@ class ControlledPrepWorkflow:
         )
         if candidate is None or candidate.node_type != "knowledge_point":
             raise ValueError(f"knowledge point candidate not found: {candidate_id}")
-        prerequisites = [
-            item.prerequisite_title
-            for item in outline.prerequisites
-            if item.knowledge_point_candidate_id == candidate_id
-        ]
-        candidate_evidence = [
-            item for item in request.evidence if item.evidence_id in set(candidate.evidence_ids)
-        ] or request.evidence
-        if hasattr(self.client, "write_script"):
-            result = await self.client.write_script(request, outline, candidate_id)
-            self._assert_evidence_ids(result, request.evidence)
-            if result.candidate_id != candidate_id:
-                raise StructuredOutputError("script_writer returned a different candidate_id")
-            return result
-        result = await self._structured_call(
-            "script_writer",
-            TeachingScriptNodeDraft,
-            "你是 ScriptWriter。只为一个知识点生成 TeachingScriptNode。段落之间用两个换行分隔，paragraph_evidence 必须逐段对应，不能写无证据课程事实。",
-            (
-                f"课程定位：{request.course_positioning}\n"
-                f"教学风格：{request.style.model_dump_json()}\n"
-                f"知识点：{candidate.model_dump_json()}\n"
-                f"前置知识：{json.dumps(prerequisites, ensure_ascii=False)}\n"
-                f"Evidence：\n{self._evidence_text(candidate_evidence)}"
-            ),
-        )
+        result = await self._stage_method("write_script")(request, outline, candidate_id)
         self._assert_evidence_ids(result, request.evidence)
         if result.candidate_id != candidate_id:
             raise StructuredOutputError("script_writer returned a different candidate_id")
@@ -255,64 +100,20 @@ class ControlledPrepWorkflow:
     ) -> list[TeachingScriptNodeDraft]:
         """Generate all first-round scripts in one structured LLM request."""
         candidate_ids = {candidate.candidate_id for candidate in candidates}
-        if hasattr(self.client, "write_scripts_batch"):
-            scripts = await self.client.write_scripts_batch(request, outline, candidates)
-            returned_ids = {script.candidate_id for script in scripts}
-            if returned_ids != candidate_ids:
-                raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
-            for script in scripts:
-                self._assert_evidence_ids(script, request.evidence)
-            return scripts
-        candidate_payload = []
-        for candidate in candidates:
-            prerequisites = [
-                item.prerequisite_title
-                for item in outline.prerequisites
-                if item.knowledge_point_candidate_id == candidate.candidate_id
-            ]
-            candidate_evidence = [
-                item for item in request.evidence if item.evidence_id in set(candidate.evidence_ids)
-            ] or request.evidence
-            candidate_payload.append({
-                "candidate": candidate.model_dump(),
-                "prerequisites": prerequisites,
-                "evidence": self._evidence_text(candidate_evidence),
-            })
-        result = await self._structured_call(
-            "script_writer_batch",
-            TeachingScriptBatchResult,
-            "你是 ScriptWriter。一次为给定的全部知识点生成 TeachingScriptNode。每个脚本必须绑定输入 Evidence；不要生成候选列表之外的知识点。",
-            (
-                f"课程定位：{request.course_positioning}\n"
-                f"教学风格：{request.style.model_dump_json()}\n"
-                f"知识点脚本任务：{json.dumps(candidate_payload, ensure_ascii=False)}"
-            ),
-        )
-        returned_ids = {script.candidate_id for script in result.scripts}
+        scripts = await self._stage_method("write_scripts_batch")(request, outline, candidates)
+        returned_ids = {script.candidate_id for script in scripts}
         if returned_ids != candidate_ids:
             raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
-        for script in result.scripts:
+        for script in scripts:
             self._assert_evidence_ids(script, request.evidence)
-        return result.scripts
+        return scripts
 
     async def verify_script(
         self,
         request: ControlledPrepInput,
         script: TeachingScriptNodeDraft,
     ) -> EvidenceVerifierResult:
-        script_evidence = [
-            item for item in request.evidence if item.evidence_id in set(script.evidence_ids)
-        ] or request.evidence
-        if hasattr(self.client, "verify_script"):
-            result = await self.client.verify_script(request, script)
-            self._assert_evidence_ids(result, request.evidence)
-            return result
-        result = await self._structured_call(
-            "evidence_verifier",
-            EvidenceVerifierResult,
-            "你是 EvidenceVerifier。逐项检查结论和段落是否被 Evidence 支撑。无法支撑就标记 needs_review 或 failed，不得替作者补证据。",
-            f"TeachingScriptNode：\n{script.model_dump_json()}\n\nEvidence：\n{self._evidence_text(script_evidence)}",
-        )
+        result = await self._stage_method("verify_script")(request, script)
         self._assert_evidence_ids(result, request.evidence)
         return result
 

@@ -49,9 +49,12 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
         meta = dict(state.get("meta") or {})
         request = state.get("request") or {}
         course_id = request.get("course_id", "")
-        material_version_id = request.get("material_version_id", "")
+        material_version_ids = list(request.get("material_version_ids") or [])
+        outline_node_ids = list(request.get("outline_node_ids") or [])
+        page_refs_by_material = dict(request.get("page_refs_by_material") or {})
+        seed_from_evidence = bool(request.get("seed_from_evidence", True))
 
-        if not course_id or not material_version_id:
+        if not course_id or not material_version_ids:
             return {
                 "meta": {
                     **meta,
@@ -61,10 +64,20 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
             }
 
         try:
-            result = await deps.ppt_mapping.optimize_mappings(
-                course_id=course_id,
-                material_version_id=material_version_id,
-            )
+            optimization_kwargs: dict[str, Any] = {
+                "course_id": course_id,
+                "material_version_ids": material_version_ids,
+            }
+            # Preserve the original minimal Port call for course-wide runs;
+            # this keeps existing adapters/fakes compatible while scoped UI
+            # actions explicitly opt into their additional constraints.
+            if outline_node_ids:
+                optimization_kwargs["outline_node_ids"] = outline_node_ids
+            if page_refs_by_material:
+                optimization_kwargs["page_refs_by_material"] = page_refs_by_material
+            if not seed_from_evidence:
+                optimization_kwargs["seed_from_evidence"] = False
+            result = await deps.ppt_mapping.optimize_mappings(**optimization_kwargs)
         except Exception as error:  # noqa: BLE001 - fail-closed
             logger.warning(
                 "PptMapping: optimize_mappings() raised: %s: %s",
@@ -76,7 +89,7 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
                     "errors": [
                         *meta.get("errors", []),
                         {
-                            "code": "PPT_MAPPING_FAILED",
+                            "code": getattr(error, "error_code", "PPT_MAPPING_FAILED"),
                             "message": str(error)[:500] or "PPT mapping optimization failed",
                             "node": "optimize_ppt_mappings",
                         },
@@ -92,6 +105,7 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
                 "page_refs": list(s.page_refs),
                 "confidence": s.confidence,
                 "reason": s.reason,
+                "material_version_id": s.material_version_id,
             }
             for s in result.suggestions
         ]
@@ -100,6 +114,7 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
                 "total_mappings": result.total_mappings,
                 "updated_count": result.updated_count,
                 "suggestions": suggestions_payload,
+                "material_version_ids": list(result.material_version_ids),
             },
         }
 

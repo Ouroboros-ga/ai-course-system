@@ -23,7 +23,11 @@ export default defineConfig(async ({ mode }) => {
       strictPort: false,
       proxy: {
         '/api': {
-          target: 'http://localhost:8000',
+          // Windows can reserve a development port even when no process is
+          // listening.  Keep the normal 8000 default, while letting a local
+          // developer point this proxy at the active backend without editing
+          // committed source again.
+          target: env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
         },
       },

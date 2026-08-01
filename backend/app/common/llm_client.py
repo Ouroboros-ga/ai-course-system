@@ -32,7 +32,47 @@ class Message:
 
 
 class LLMError(Exception):
-    pass
+    """A safe, classifiable failure returned by an LLM gateway.
+
+    The exception text is allowed to reach a task status or the teacher UI, so
+    it must never contain the gateway response body.  The small metadata set
+    below lets callers make a compatible fallback decision without exposing
+    provider-specific request ids, account details, or prompt echoes.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        reason_code: str = "",
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.reason_code = reason_code
+
+
+def _llm_http_error_reason(*, status_code: int, body: str) -> str:
+    """Classify only the one safe HTTP-400 fallback we support.
+
+    Different OpenAI-compatible gateways reject ``json_schema`` with
+    different messages.  We intentionally retain no response text; a stable
+    capability classification is sufficient for callers to retry with their
+    prompt-constrained JSON path.  Other 400s stay unclassified so invalid
+    credentials, models, and request payloads cannot be hidden by a retry.
+    """
+    if status_code != 400:
+        return ""
+    normalized = body.casefold()
+    if any(marker in normalized for marker in (
+        "response_format",
+        "json_schema",
+        "json schema",
+        "structured_output",
+        "structured output",
+    )):
+        return "response_format_unsupported"
+    return ""
 
 
 class BaseLLMClient(ABC):
@@ -76,20 +116,25 @@ class BaseLLMClient(ABC):
             raise LLMError(f"LLM API请求超时 ({timeout}秒)")
         except httpx.HTTPStatusError as e:
             # P1-B2: 响应体可能含账户标识、请求 ID、回显内容等敏感信息，
-            # 不得写入异常消息（会冒泡到客户端/日志）。仅保留 status_code，
-            # 完整响应体仅记录到服务端日志（warning 级别，不输出到客户端）。
+            # 不得写入异常消息或日志。仅保留 status_code 与无敏感信息的
+            # 能力分类，供上层选择兼容性降级路径。
             try:
                 body = e.response.text
             except Exception:
                 body = "<unreadable>"
+            status_code = e.response.status_code
+            reason_code = _llm_http_error_reason(status_code=status_code, body=body)
             logger.warning(
-                "LLM API请求失败: status=%s url=%s body_len=%d body_preview=%r",
-                e.response.status_code,
+                "LLM API请求失败: status=%s url=%s reason=%s",
+                status_code,
                 url,
-                len(body) if body else 0,
-                (body[:200] if body else ""),
+                reason_code or "unclassified",
             )
-            raise LLMError(f"LLM API请求失败: {e.response.status_code}") from None
+            raise LLMError(
+                f"LLM API请求失败: {status_code}",
+                status_code=status_code,
+                reason_code=reason_code,
+            ) from None
         except Exception as e:
             raise LLMError(f"LLM API请求异常: {str(e)}")
 

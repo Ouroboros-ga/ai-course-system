@@ -10,10 +10,6 @@ integrated agents (EDU, PREP, CODING). It wraps the legacy
 ``LangGraphAgentRuntime`` registration for PREP and CODING.
 """
 
-from .composition import build_course_sidecar_runtime, build_kg_mest_shadow_sidecar_runtime, build_teaching_runtime
-from .platform import AgentPlatform
-from .runtime import TeachingAgentRuntime
-
 __all__ = [
     "TeachingAgentRuntime",
     "AgentPlatform",
@@ -21,3 +17,38 @@ __all__ = [
     "build_course_sidecar_runtime",
     "build_kg_mest_shadow_sidecar_runtime",
 ]
+
+
+def __getattr__(name: str):
+    """Load public compatibility exports only when a caller actually needs them.
+
+    Importing a narrow Prep submodule must not eagerly build the EDU composition
+    chain, because that chain may include optional GraphRAG dependencies.  The
+    package remains backwards compatible for callers that import its public
+    exports directly.
+    """
+    if name in {
+        "build_teaching_runtime",
+        "build_course_sidecar_runtime",
+        "build_kg_mest_shadow_sidecar_runtime",
+    }:
+        from .composition import (
+            build_course_sidecar_runtime,
+            build_kg_mest_shadow_sidecar_runtime,
+            build_teaching_runtime,
+        )
+
+        return {
+            "build_teaching_runtime": build_teaching_runtime,
+            "build_course_sidecar_runtime": build_course_sidecar_runtime,
+            "build_kg_mest_shadow_sidecar_runtime": build_kg_mest_shadow_sidecar_runtime,
+        }[name]
+    if name == "AgentPlatform":
+        from .platform import AgentPlatform
+
+        return AgentPlatform
+    if name == "TeachingAgentRuntime":
+        from .runtime import TeachingAgentRuntime
+
+        return TeachingAgentRuntime
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

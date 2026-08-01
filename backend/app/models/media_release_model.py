@@ -212,6 +212,10 @@ class MediaRelease(SQLModel, table=True):
     subtitle_manifest_object_key: Optional[str] = Field(default=None)
     ppt_manifest_object_key: Optional[str] = Field(default=None)
 
+    # P2: 与音频 SHA 绑定的厂商无关数字人时间轴。它不同于形象资产包 manifest：
+    # 前者描述本次讲解何时说话/可用何种 viseme，后者描述浏览器可加载的形象资源。
+    avatar_cues_object_key: Optional[str] = Field(default=None)
+
     # 数字人 manifest（可选，未绑定时为空，学生端走兼容模式）
     avatar_binding_id: Optional[str] = Field(
         default=None, index=True,

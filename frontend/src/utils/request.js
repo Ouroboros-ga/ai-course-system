@@ -323,7 +323,7 @@ service.interceptors.response.use(
 
         // 清除所有认证信息并跳转登录页
         _handleUnauthorized()
-      } else {
+      } else if (!res.config?.skipErrorToast && !response.config?.skipErrorToast) {
         // 普通业务错误，直接弹出后端返回的错误信息
         showToast(res.message || '请求失败', 'error')
       }

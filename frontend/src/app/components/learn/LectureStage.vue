@@ -18,6 +18,7 @@ import {
 } from 'lucide-vue-next'
 
 import SfxButton from '@/app/ui/SfxButton.vue'
+import AvatarViewport from '@/features/student-learning/components/AvatarViewport.vue'
 import { resolvePptPageAtTime } from '@/features/student-learning/adapters/mediaPlaybackAdapter.js'
 
 /**
@@ -41,6 +42,10 @@ const props = defineProps({
   subtitleSegments: { type: Array, default: () => [] },
   pptTimeline: { type: Array, default: () => [] },
   pptManifest: { type: Object, default: null },
+  avatarCues: { type: Object, default: null },
+  avatarSpriteManifest: { type: Object, default: null },
+  avatarAssetSource: { type: String, default: 'platform' },
+  defaultPlaybackMode: { type: String, default: 'compatibility' },
   mediaStatus: { type: String, default: 'idle' },
   mediaMessage: { type: String, default: '' },
   legacyVideoUrl: { type: String, default: '' },
@@ -276,6 +281,14 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             {{ activeSubtitle.text }}
           </p>
         </div>
+        <AvatarViewport
+          v-if="hasAudio && avatarCues && avatarSpriteManifest"
+          :cues="avatarCues"
+          :sprite-manifest="avatarSpriteManifest"
+          :current-time="currentTime"
+          :default-playback-mode="defaultPlaybackMode"
+          :asset-source="avatarAssetSource"
+        />
 
         <video
           v-else-if="hasLegacyVideo"

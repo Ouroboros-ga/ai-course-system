@@ -11,8 +11,8 @@ from typing import Optional
 from fastapi import UploadFile
 from sqlmodel import Session, select
 
-from app.models.course_build_model import MaterialStatus, SourceMaterialVersion
-from app.models.document_parse_model import ParsePipeline, StaleStrategy
+from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
+from app.models.document_parse_model import DocumentParseRun, ParsePipeline, StaleStrategy
 from app.services.course_build_service import source_material_service
 from app.services.document_parse_service import document_parse_service
 from app.services.object_storage import get_object_storage
@@ -70,6 +70,53 @@ class CourseMaterialUploadService:
                 raise ValueError("不能上传空文件")
 
             source_hash = digest.hexdigest()
+            # Uploading identical bytes to the same course is idempotent.  A
+            # global object-store dedupe is useful, but it must not create a
+            # second SourceMaterial / parse run in this course: that would
+            # duplicate retrieval evidence and make PPT page mapping ambiguous.
+            existing_in_course = session.exec(
+                select(SourceMaterial, SourceMaterialVersion)
+                .join(
+                    SourceMaterialVersion,
+                    SourceMaterialVersion.material_id == SourceMaterial.material_id,
+                )
+                .where(
+                    SourceMaterial.course_id == course_id,
+                    SourceMaterialVersion.course_id == course_id,
+                    SourceMaterialVersion.is_current == True,  # noqa: E712
+                    SourceMaterialVersion.file_hash == source_hash,
+                )
+                .order_by(SourceMaterial.id, SourceMaterialVersion.id)
+            ).first()
+            if existing_in_course is not None:
+                material, version = existing_in_course
+                latest_run = session.exec(
+                    select(DocumentParseRun)
+                    .where(
+                        DocumentParseRun.course_id == course_id,
+                        DocumentParseRun.material_version_id == version.version_id,
+                    )
+                    .order_by(DocumentParseRun.created_at.desc())
+                ).first()
+                logger.info(
+                    "course source upload deduplicated: course_id=%s sha256=%s material_version_id=%s",
+                    course_id,
+                    source_hash[:16],
+                    version.version_id,
+                )
+                return {
+                    "material_id": material.material_id,
+                    "material_version_id": version.version_id,
+                    "run_id": latest_run.run_id if latest_run else None,
+                    "task_id": version.parse_task_id,
+                    "task_status": None,
+                    "parse_status": version.parse_status.value,
+                    "name": material.name,
+                    "material_role": material.material_role,
+                    "source_object_reused": True,
+                    "deduplicated": True,
+                }
+
             existing = session.exec(select(SourceMaterialVersion).where(
                 SourceMaterialVersion.file_hash == source_hash,
             ).order_by(SourceMaterialVersion.created_at.desc())).first()
@@ -165,6 +212,7 @@ class CourseMaterialUploadService:
             "name": original_name,
             "material_role": material.material_role,
             "source_object_reused": object_reused,
+            "deduplicated": False,
         }
 
     @staticmethod

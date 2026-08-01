@@ -27,6 +27,8 @@ from app.models.course_build_model import (
     CourseDraftBuildTask,
     CorpusSnapshotStatus,
     MaterialStatus,
+    SourceMaterial,
+    SourceMaterialVersion,
 )
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
@@ -77,6 +79,59 @@ class MaterialCorpusSelectionRequest(BaseModel):
     include_in_course_corpus: bool
 
 
+def _unique_current_materials(
+    session: Session,
+    *,
+    course_id: int,
+    items: list[SourceMaterial],
+) -> tuple[list[SourceMaterial], int]:
+    """Collapse legacy duplicate uploads for the workspace read model.
+
+    The uploader is now idempotent.  This read-side safeguard keeps courses
+    created before that fix from displaying identical files and from making a
+    teacher believe six independent parse jobs exist when there are only three
+    distinct source documents.
+    """
+    material_ids = [item.material_id for item in items]
+    if not material_ids:
+        return [], 0
+    versions = list(session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.is_current == True,  # noqa: E712
+        SourceMaterialVersion.material_id.in_(material_ids),
+    )).all())
+    version_by_material_id = {version.material_id: version for version in versions}
+    unique: list[SourceMaterial] = []
+    seen_content: set[str] = set()
+    # Keep the first original material as the canonical row.  Choosing the
+    # newest duplicate could accidentally hide a teacher's earlier corpus
+    # selection state when an old duplicate was later excluded.
+    for item in sorted(items, key=lambda item: item.id or 0):
+        version = version_by_material_id.get(item.material_id)
+        content_key = ((version.file_hash if version else "") or item.material_id).strip()
+        if content_key in seen_content:
+            continue
+        seen_content.add(content_key)
+        unique.append(item)
+    return unique, len(items) - len(unique)
+
+
+def _logical_content_keys(
+    session: Session,
+    *,
+    course_id: int,
+    version_ids: list[str],
+) -> set[str]:
+    """Compare corpus selections by bytes, not legacy duplicate row IDs."""
+    if not version_ids:
+        return set()
+    versions = list(session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.version_id.in_(version_ids),
+    )).all())
+    return {((version.file_hash or version.version_id).strip()) for version in versions}
+
+
 @course_build_router.get("/course/{course_id}/materials")
 async def list_materials(
     course_id: int,
@@ -85,7 +140,12 @@ async def list_materials(
 ):
     """列出课程的所有源材料。"""
     require_course_permission(session, current_user, course_id, "course.view")
-    items = source_material_service.list_materials(session, course_id=course_id)
+    all_items = source_material_service.list_materials(session, course_id=course_id)
+    items, duplicate_count = _unique_current_materials(
+        session,
+        course_id=course_id,
+        items=all_items,
+    )
     return unified_response(
         code=200,
         message="获取源材料列表成功",
@@ -93,6 +153,7 @@ async def list_materials(
             "course_id": course_id,
             "items": [_serialize_material(m) for m in items],
             "total": len(items),
+            "duplicate_items_merged": duplicate_count,
         },
     )
 
@@ -111,7 +172,12 @@ async def get_draft_build_status(
     durable course-build task is queued/running/finished.
     """
     require_course_permission(session, current_user, course_id, "course.view")
-    materials = source_material_service.list_materials(session, course_id=course_id)
+    all_materials = source_material_service.list_materials(session, course_id=course_id)
+    materials, _duplicate_count = _unique_current_materials(
+        session,
+        course_id=course_id,
+        items=all_materials,
+    )
     included = [item for item in materials if item.include_in_course_corpus]
     if not included:
         return unified_response(code=200, message="等待上传课程材料", data={
@@ -149,12 +215,20 @@ async def get_draft_build_status(
             "error_message": "存在解析失败的已纳入材料；请重试或明确排除后再自动构建课程。",
         })
 
-    expected_version_ids = sorted(item.current_version_id for item in included if item.current_version_id)
+    expected_content_keys = _logical_content_keys(
+        session,
+        course_id=course_id,
+        version_ids=[item.current_version_id for item in included if item.current_version_id],
+    )
     corpus = session.exec(select(CourseCorpusSnapshot).where(
         CourseCorpusSnapshot.course_id == course_id,
         CourseCorpusSnapshot.status == CorpusSnapshotStatus.READY,
     ).order_by(CourseCorpusSnapshot.created_at.desc())).first()
-    if corpus is None or sorted(corpus.material_version_ids or []) != expected_version_ids:
+    if corpus is None or _logical_content_keys(
+        session,
+        course_id=course_id,
+        version_ids=corpus.material_version_ids or [],
+    ) != expected_content_keys:
         return unified_response(code=200, message="正在汇总课程材料", data={
             "course_id": course_id,
             "phase": "assembling_corpus",

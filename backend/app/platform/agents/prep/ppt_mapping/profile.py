@@ -8,7 +8,7 @@ of 5, matching the design's Runtime Definition configuration.
 Request field mapping from ``AgentRunContext``:
     - ``teacher_id``  -> ``ctx.teacher_id``
     - ``course_id``   -> ``ctx.course_id``
-    - ``material_version_id`` -> ``ctx.extras["material_version_id"]``
+    - ``material_version_ids`` -> ``ctx.extras["material_version_ids"]``
 """
 
 from __future__ import annotations
@@ -37,7 +37,13 @@ def build_ppt_mapping_profile() -> AgentProfile:
             "request": {
                 "teacher_id": ctx.teacher_id or "",
                 "course_id": ctx.course_id or "",
-                "material_version_id": ctx.extras.get("material_version_id") or "",
+                "material_version_ids": list(ctx.extras.get("material_version_ids") or []),
+                "outline_node_ids": list(ctx.extras.get("outline_node_ids") or []),
+                "page_refs_by_material": {
+                    str(version_id): list(page_refs or [])
+                    for version_id, page_refs in dict(ctx.extras.get("page_refs_by_material") or {}).items()
+                },
+                "seed_from_evidence": bool(ctx.extras.get("seed_from_evidence", True)),
             },
         }
 

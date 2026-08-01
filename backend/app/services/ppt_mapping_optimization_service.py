@@ -30,10 +30,11 @@ singleton with a prompt-constrained JSON call, mirroring
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
-from typing import Any, Callable
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Sequence
 
 from sqlmodel import Session, select
 
@@ -51,6 +52,26 @@ from app.models.document_parse_model import DocumentBlock
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class PptTextBlock:
+    """Ephemeral page text obtained from a rendered ``ppt-manifest/v1`` page.
+
+    This is deliberately not persisted as a ``DocumentBlock``: manifest OCR is
+    an optimization-time fallback, while durable parse output must still be
+    produced through the document-parse pipeline with its normal provenance.
+    """
+
+    page: int
+    text: str
+    source_kind: str = "ppt_manifest_ocr"
+
+
+class PptMappingContentUnavailable(RuntimeError):
+    """No trustworthy course-scoped text source is available for matching."""
+
+    error_code = "PPT_MAPPING_CONTENT_UNAVAILABLE"
+
+
 @dataclass
 class PptMappingSuggestion:
     """One LLM-produced mapping suggestion.
@@ -64,6 +85,10 @@ class PptMappingSuggestion:
     page_refs: list[int]
     confidence: float
     reason: str = ""
+    # Mapping pages are meaningful only inside one source-material version.
+    # The service attaches this after each per-deck LLM call; the model never
+    # chooses it itself.
+    material_version_id: str = ""
 
     @property
     def page_start(self) -> int:
@@ -81,6 +106,7 @@ class PptMappingOptimizationSummary:
     total_mappings: int
     updated_count: int
     suggestions: list[PptMappingSuggestion] = field(default_factory=list)
+    material_version_ids: list[str] = field(default_factory=list)
 
 
 class PptMappingOptimizationService:
@@ -91,6 +117,8 @@ class PptMappingOptimizationService:
         *,
         llm: Any | None = None,
         client: Any | None = None,
+        ocr_port: Any | None = None,
+        storage: Any | None = None,
     ) -> None:
         """
         Args:
@@ -100,37 +128,51 @@ class PptMappingOptimizationService:
             client: Optional raw LLM client (e.g. ``llm_client``). Used
                 when ``llm`` is not injected. Defaults to the module-level
                 ``llm_client`` singleton.
+            ocr_port: The deterministic ``DocumentOcrPort`` dependency used
+                only when no durable document blocks are available and a
+                course-scoped ``ppt-manifest/v1`` is present.
+            storage: Optional object-storage dependency.  This seam keeps
+                manifest/OCR tests local and prevents a model-facing tool.
         """
         self._llm = llm
         self._client = client or llm_client
+        self._ocr_port = ocr_port
+        self._storage = storage
 
     async def optimize_mappings(
         self,
         session: Session,
         *,
         course_id: int,
-        material_version_id: str,
+        material_version_id: str | None = None,
+        material_version_ids: Sequence[str] | None = None,
+        outline_node_ids: Sequence[str] | None = None,
+        page_refs_by_material: dict[str, Sequence[int]] | None = None,
+        seed_from_evidence: bool = True,
     ) -> PptMappingOptimizationSummary:
-        """Optimise ``CoursePptMapping`` rows for a material version.
+        """Optimise ``CoursePptMapping`` rows for one or more PPT versions.
 
         Args:
             session: SQLModel ``Session`` for DB access.
             course_id: Integer course ID.
-            material_version_id: The ``SourceMaterialVersion.version_id``
-                identifying the PPT material version to optimise.
+            material_version_id: Backward-compatible single
+                ``SourceMaterialVersion.version_id`` input.
+            material_version_ids: Current PPT material versions to optimise.
+                Each version is matched independently, because slide page
+                numbers restart for every uploaded deck.
 
         Returns:
             Summary with total/updated counts and the suggestions applied.
         """
-        blocks = self._load_blocks(session, course_id=course_id, material_version_id=material_version_id)
-        if not blocks:
-            logger.info(
-                "PptMappingOptimization: no OCR blocks for course=%s material=%s",
-                course_id, material_version_id,
-            )
-            return PptMappingOptimizationSummary(total_mappings=0, updated_count=0)
-
-        nodes = self._load_knowledge_nodes(session, course_id=course_id)
+        version_ids = self._normalise_material_version_ids(
+            material_version_id=material_version_id,
+            material_version_ids=material_version_ids,
+        )
+        nodes = self._load_knowledge_nodes(
+            session,
+            course_id=course_id,
+            outline_node_ids=outline_node_ids,
+        )
         if not nodes:
             logger.info(
                 "PptMappingOptimization: no knowledge_point nodes for course=%s",
@@ -138,37 +180,154 @@ class PptMappingOptimizationService:
             )
             return PptMappingOptimizationSummary(total_mappings=0, updated_count=0)
 
+        # Initial course preparation already records the evidence block IDs
+        # that produced each knowledge point.  They are a stronger source of
+        # truth than asking the model to rediscover the same page, especially
+        # for legacy courses whose first-pass rows were all accidentally
+        # assigned to the first uploaded PPT.  Repair those draft mappings
+        # before the semantic LLM pass so every deck starts from the OCR
+        # provenance that actually belongs to it.
+        source_seeded_count, source_seeded_suggestions = (0, [])
+        if seed_from_evidence:
+            source_seeded_count, source_seeded_suggestions = (
+                self._seed_mappings_from_outline_evidence(
+                    session,
+                    course_id=course_id,
+                    nodes=nodes,
+                    material_version_ids=version_ids,
+                )
+            )
+        if source_seeded_count:
+            session.flush()
+
         # 加载讲稿内容和父级标题，为 LLM 提供语义上下文
         script_contents = self._load_script_contents(session, nodes=nodes)
         parent_titles = self._load_parent_titles(session, nodes=nodes)
 
-        existing = self._load_existing_mappings(
-            session, course_id=course_id, material_version_id=material_version_id,
-        )
+        # Read all database inputs before starting LLM work and before adding
+        # any mappings. This gives a multi-deck run all-or-nothing persistence
+        # semantics: unavailable content in one deck cannot leave other decks
+        # half-applied.
+        prepared: list[tuple[str, list[DocumentBlock | PptTextBlock], list[CoursePptMapping]]] = []
+        for version_id in version_ids:
+            blocks = self._load_blocks(
+                session,
+                course_id=course_id,
+                material_version_id=version_id,
+            )
+            if not blocks:
+                if len(version_ids) != 1:
+                    raise PptMappingContentUnavailable(
+                        "PPT 材料缺少可用解析文本，无法在多文件映射中安全确定 "
+                        f"ppt-manifest/v1 的归属：{version_id}"
+                    )
+                # A release-side ppt-manifest is a valid rendered source when
+                # there is exactly one deck. With multiple materials the
+                # release manifest has no material-version provenance, so it
+                # must not be applied to an arbitrary deck.
+                blocks = await self._load_manifest_ocr_blocks(session, course_id=course_id)
+            requested_pages = {
+                int(page)
+                for page in (page_refs_by_material or {}).get(version_id, [])
+                if int(page) > 0
+            }
+            if requested_pages:
+                blocks = [
+                    block for block in blocks
+                    if int(
+                        block.page if isinstance(block, PptTextBlock)
+                        else (block.page_or_slide or block.page_number or 0)
+                    ) in requested_pages
+                ]
+                if not blocks:
+                    raise PptMappingContentUnavailable(
+                        f"所选 PPT 页没有可用于匹配的 OCR 文本：{version_id}"
+                    )
+            existing = self._load_existing_mappings(
+                session,
+                course_id=course_id,
+                material_version_id=version_id,
+            )
+            prepared.append((version_id, blocks, existing))
 
-        suggestions = await self._call_llm(
-            blocks, nodes, existing,
-            script_contents=script_contents,
-            parent_titles=parent_titles,
-        )
-        valid_suggestions = self._validate_suggestions(suggestions, nodes)
+        # Three concurrent deck plans keep ordinary multi-PPT courses fast
+        # without allowing a large upload batch to fan out unbounded LLM work.
+        planner_semaphore = asyncio.Semaphore(3)
 
-        updated = self._apply_suggestions(
-            session,
-            course_id=course_id,
-            material_version_id=material_version_id,
-            suggestions=valid_suggestions,
-            existing=existing,
-        )
+        async def plan_deck(
+            blocks: list[DocumentBlock | PptTextBlock],
+            existing: list[CoursePptMapping],
+        ) -> list[PptMappingSuggestion]:
+            async with planner_semaphore:
+                return await self._call_llm(
+                    blocks,
+                    nodes,
+                    existing,
+                    script_contents=script_contents,
+                    parent_titles=parent_titles,
+                )
+
+        raw_suggestion_batches = await asyncio.gather(*(
+            plan_deck(blocks, existing)
+            for _version_id, blocks, existing in prepared
+        ))
+
+        total_mappings = 0
+        updated = source_seeded_count
+        all_suggestions: list[PptMappingSuggestion] = list(source_seeded_suggestions)
+        for (version_id, blocks, existing), suggestions in zip(prepared, raw_suggestion_batches):
+            valid_suggestions = [
+                replace(suggestion, material_version_id=version_id)
+                for suggestion in self._validate_suggestions(
+                    suggestions,
+                    nodes,
+                    max_page=self._max_page(blocks),
+                    allowed_pages=(page_refs_by_material or {}).get(version_id),
+                )
+            ]
+            total_mappings += len(existing)
+            updated += self._apply_suggestions(
+                session,
+                course_id=course_id,
+                material_version_id=version_id,
+                suggestions=valid_suggestions,
+                existing=existing,
+            )
+            all_suggestions.extend(valid_suggestions)
 
         session.commit()
         return PptMappingOptimizationSummary(
-            total_mappings=len(existing),
+            total_mappings=total_mappings,
             updated_count=updated,
-            suggestions=valid_suggestions,
+            suggestions=all_suggestions,
+            material_version_ids=version_ids,
         )
 
     # -- internal helpers ------------------------------------------------
+
+    @staticmethod
+    def _normalise_material_version_ids(
+        *,
+        material_version_id: str | None,
+        material_version_ids: Sequence[str] | None,
+    ) -> list[str]:
+        """Return a stable, non-empty, de-duplicated set of version IDs."""
+        candidates = list(material_version_ids or [])
+        if material_version_id:
+            candidates.append(material_version_id)
+        result = list(dict.fromkeys(str(value).strip() for value in candidates if str(value).strip()))
+        if not result:
+            raise ValueError("PPT mapping requires at least one material_version_id")
+        return result
+
+    @staticmethod
+    def _max_page(blocks: Sequence[DocumentBlock | PptTextBlock]) -> int:
+        """Infer the highest valid slide number from one deck's source text."""
+        pages = [
+            int(block.page if isinstance(block, PptTextBlock) else (block.page_or_slide or block.page_number or 0))
+            for block in blocks
+        ]
+        return max(pages, default=0)
 
     def _load_blocks(
         self,
@@ -186,11 +345,105 @@ class PptMappingOptimizationService:
         ).all())
         return [b for b in rows if (b.text or "").strip()]
 
+    async def _load_manifest_ocr_blocks(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+    ) -> list[PptTextBlock]:
+        """Recognize the newest course-scoped ``ppt-manifest/v1`` pages.
+
+        ``DocumentBlock`` remains the preferred, durable source.  This
+        fallback exists for the real transition case where the course already
+        has an immutable rendered PPT manifest but the material parser has not
+        yet projected text blocks.  It fails closed rather than returning a
+        partial mapping from an unavailable OCR service.
+        """
+        from app.models.media_release_model import MediaRelease
+        from app.platform.document_intelligence.ocr_port import (
+            OcrUnavailable,
+            get_ocr_port,
+        )
+        from app.services.object_storage import get_object_storage
+        from app.services.ppt_manifest_service import load_manifest
+
+        release = session.exec(
+            select(MediaRelease).where(
+                MediaRelease.course_id == course_id,
+                MediaRelease.ppt_manifest_object_key.is_not(None),
+            ).order_by(MediaRelease.version_number.desc(), MediaRelease.id.desc())
+        ).first()
+        if release is None or not release.ppt_manifest_object_key:
+            raise PptMappingContentUnavailable(
+                "PPT 尚无可用的解析文本或 ppt-manifest/v1 页面；请等待材料解析完成，"
+                "或先生成 PPT manifest。"
+            )
+
+        storage = self._storage or get_object_storage()
+        try:
+            manifest = load_manifest(storage, release.ppt_manifest_object_key)
+        except Exception as error:  # noqa: BLE001 - surface the actionable source issue
+            raise PptMappingContentUnavailable(
+                f"ppt-manifest/v1 无法读取，暂不能优化映射：{type(error).__name__}: {error}"
+            ) from error
+
+        pages = [
+            item for item in manifest.get("pages", [])
+            if isinstance(item, dict) and item.get("image_object_key")
+        ]
+        if not pages:
+            raise PptMappingContentUnavailable("ppt-manifest/v1 不含可供 OCR 识别的页面。")
+
+        ocr_port = self._ocr_port or get_ocr_port()
+        if not getattr(ocr_port, "is_available", False):
+            raise PptMappingContentUnavailable(
+                "已发现 ppt-manifest/v1，但 OCR 服务当前不可用；请启动 OCR 服务后重试。"
+            )
+
+        semaphore = asyncio.Semaphore(3)
+
+        async def recognize(item: dict[str, Any]) -> PptTextBlock:
+            page = int(item.get("page") or 1)
+            object_key = str(item["image_object_key"])
+            async with semaphore:
+                try:
+                    image_bytes = await asyncio.to_thread(storage.get, object_key)
+                    result = await asyncio.to_thread(
+                        ocr_port.ocr_image,
+                        image_bytes,
+                        lang="ch",
+                        page=page,
+                    )
+                except OcrUnavailable as error:
+                    raise PptMappingContentUnavailable(
+                        f"PPT 第 {page} 页 OCR 失败（{error.error_code}）：{error.message}"
+                    ) from error
+                except Exception as error:  # noqa: BLE001 - no partial mapping on failed pages
+                    raise PptMappingContentUnavailable(
+                        f"PPT 第 {page} 页 OCR 失败：{type(error).__name__}: {error}"
+                    ) from error
+            text = "\n".join(
+                block.text.strip()
+                for result_page in result.pages
+                for block in result_page.blocks
+                if (block.text or "").strip()
+            )
+            return PptTextBlock(page=page, text=text)
+
+        recognized = await asyncio.gather(*(recognize(item) for item in pages))
+        text_blocks = [item for item in recognized if item.text]
+        if not text_blocks:
+            raise PptMappingContentUnavailable(
+                "ppt-manifest/v1 页面已完成 OCR，但未识别到可用于知识点匹配的文本。"
+            )
+        return text_blocks
+
     def _load_knowledge_nodes(
         self,
         session: Session,
         *,
         course_id: int,
+        outline_node_ids: Sequence[str] | None = None,
     ) -> list[CourseOutlineNode]:
         """Load knowledge_point nodes from the latest draft outline version."""
         outline_version = session.exec(
@@ -201,13 +454,15 @@ class PptMappingOptimizationService:
         ).first()
         if outline_version is None:
             return []
-        return list(session.exec(
-            select(CourseOutlineNode).where(
-                CourseOutlineNode.course_id == course_id,
-                CourseOutlineNode.outline_version_id == outline_version.outline_version_id,
-                CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
-            ).order_by(CourseOutlineNode.order_index)
-        ).all())
+        requested_ids = [str(node_id).strip() for node_id in (outline_node_ids or []) if str(node_id).strip()]
+        statement = select(CourseOutlineNode).where(
+            CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_version_id == outline_version.outline_version_id,
+            CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+        )
+        if requested_ids:
+            statement = statement.where(CourseOutlineNode.outline_node_id.in_(requested_ids))
+        return list(session.exec(statement.order_by(CourseOutlineNode.order_index)).all())
 
     def _load_existing_mappings(
         self,
@@ -223,6 +478,145 @@ class PptMappingOptimizationService:
                 CoursePptMapping.material_version_id == material_version_id,
             )
         ).all())
+
+    @staticmethod
+    def _seed_mappings_from_outline_evidence(
+        session: Session,
+        *,
+        course_id: int,
+        nodes: Sequence[CourseOutlineNode],
+        material_version_ids: Sequence[str],
+    ) -> tuple[int, list[PptMappingSuggestion]]:
+        """Restore draft mapping rows from authoritative OCR provenance.
+
+        ``CourseOutlineNode.source_block_refs`` originates from the course
+        corpus.  A referenced ``DocumentBlock`` already knows both its PPT
+        material version and slide number, making it a deterministic mapping
+        seed.  This also repairs the old single-deck bug where mappings for
+        several decks were stored under the first PPT version.
+
+        Teacher-locked mappings are never moved or overwritten.  The method
+        returns only rows that were actually created, moved, or changed, so
+        callers can distinguish a completed runtime from a real write.
+        """
+        current_versions = {
+            str(version_id).strip()
+            for version_id in material_version_ids
+            if str(version_id).strip()
+        }
+        if not current_versions:
+            return 0, []
+
+        blocks = list(session.exec(
+            select(DocumentBlock).where(
+                DocumentBlock.course_id == course_id,
+                DocumentBlock.material_version_id.in_(current_versions),
+            )
+        ).all())
+        block_lookup = {
+            block.block_id: (block.material_version_id, int(block.page_or_slide or block.page_number or 0))
+            for block in blocks
+            if block.block_id and block.material_version_id and int(block.page_or_slide or block.page_number or 0) > 0
+        }
+        if not block_lookup:
+            return 0, []
+
+        mappings = list(session.exec(
+            select(CoursePptMapping).where(
+                CoursePptMapping.course_id == course_id,
+                CoursePptMapping.status == "draft",
+            )
+        ).all())
+        mappings_by_key = {
+            (mapping.outline_node_id, mapping.material_version_id): mapping
+            for mapping in mappings
+            if mapping.material_version_id in current_versions
+        }
+        mappings_by_node: dict[str, list[CoursePptMapping]] = {}
+        for mapping in mappings:
+            mappings_by_node.setdefault(mapping.outline_node_id, []).append(mapping)
+
+        changed = 0
+        suggestions: list[PptMappingSuggestion] = []
+        for node in nodes:
+            refs = [
+                str(ref).strip()
+                for ref in (node.source_block_refs or [])
+                if str(ref).strip() in block_lookup
+            ]
+            if not refs:
+                continue
+            refs_by_version: dict[str, list[str]] = {}
+            pages_by_version: dict[str, set[int]] = {}
+            for ref in refs:
+                version_id, page = block_lookup[ref]
+                refs_by_version.setdefault(version_id, []).append(ref)
+                pages_by_version.setdefault(version_id, set()).add(page)
+
+            source_versions = set(refs_by_version)
+            for version_id, source_refs in refs_by_version.items():
+                page_refs = sorted(pages_by_version[version_id])
+                mapping = mappings_by_key.get((node.outline_node_id, version_id))
+                moved = False
+                if mapping is not None and mapping.teacher_locked:
+                    continue
+                if mapping is None:
+                    # Prefer moving a legacy row that carries the same source
+                    # evidence instead of leaving an incorrect duplicate in
+                    # another deck's page-number space.
+                    mapping = next(
+                        (
+                            candidate
+                            for candidate in mappings_by_node.get(node.outline_node_id, [])
+                            if not candidate.teacher_locked
+                            and candidate.material_version_id not in source_versions
+                            and set(candidate.source_block_refs or []).intersection(source_refs)
+                        ),
+                        None,
+                    )
+                    if mapping is not None:
+                        old_key = (mapping.outline_node_id, mapping.material_version_id)
+                        mappings_by_key.pop(old_key, None)
+                        mapping.material_version_id = version_id
+                        moved = True
+                        mappings_by_key[(node.outline_node_id, version_id)] = mapping
+                    else:
+                        mapping = CoursePptMapping(
+                            course_id=course_id,
+                            outline_node_id=node.outline_node_id,
+                            material_version_id=version_id,
+                            confidence=0.95,
+                            status="draft",
+                        )
+                        mappings.append(mapping)
+                        mappings_by_node.setdefault(node.outline_node_id, []).append(mapping)
+                        mappings_by_key[(node.outline_node_id, version_id)] = mapping
+
+                is_changed = (
+                    moved
+                    or mapping.page_refs != page_refs
+                    or mapping.page_start != page_refs[0]
+                    or mapping.page_end != page_refs[-1]
+                    or list(mapping.source_block_refs or []) != source_refs
+                    or mapping.status != "draft"
+                )
+                if not is_changed:
+                    continue
+                mapping.page_refs = page_refs
+                mapping.page_start = page_refs[0]
+                mapping.page_end = page_refs[-1]
+                mapping.source_block_refs = source_refs
+                mapping.status = "draft"
+                session.add(mapping)
+                changed += 1
+                suggestions.append(PptMappingSuggestion(
+                    outline_node_id=node.outline_node_id,
+                    page_refs=page_refs,
+                    confidence=mapping.confidence,
+                    reason="根据课程原始 OCR 证据块定位到对应 PPT 页码",
+                    material_version_id=version_id,
+                ))
+        return changed, suggestions
 
     @staticmethod
     def _load_script_contents(
@@ -302,7 +696,7 @@ class PptMappingOptimizationService:
 
     async def _call_llm(
         self,
-        blocks: list[DocumentBlock],
+        blocks: list[DocumentBlock | PptTextBlock],
         nodes: list[CourseOutlineNode],
         existing: list[CoursePptMapping],
         *,
@@ -317,8 +711,18 @@ class PptMappingOptimizationService:
         matching.
         """
         blocks_payload = [
-            {"page": b.page_or_slide or b.page_number, "text": (b.text or "")[:500]}
-            for b in blocks
+            {
+                "page": (
+                    block.page if isinstance(block, PptTextBlock)
+                    else block.page_or_slide or block.page_number
+                ),
+                "text": (block.text or "")[:500],
+                "source_kind": (
+                    block.source_kind if isinstance(block, PptTextBlock)
+                    else block.source_kind or "document_parse"
+                ),
+            }
+            for block in blocks
         ]
         nodes_payload = [
             {
@@ -430,10 +834,32 @@ class PptMappingOptimizationService:
     def _validate_suggestions(
         suggestions: list[PptMappingSuggestion],
         nodes: list[CourseOutlineNode],
+        *,
+        max_page: int,
+        allowed_pages: Sequence[int] | None = None,
     ) -> list[PptMappingSuggestion]:
-        """Reject suggestions referencing unknown outline nodes."""
+        """Reject unknown nodes and slide numbers outside this deck.
+
+        A mapping row stores a material-version ID, so page 40 from one PPT
+        must never be accepted merely because another PPT in the course has
+        forty slides. Normalising here also keeps ``page_start`` and
+        ``page_end`` deterministic for non-contiguous suggestions.
+        """
         valid_ids = {n.outline_node_id for n in nodes}
-        return [s for s in suggestions if s.outline_node_id in valid_ids]
+        allowed_page_set = {int(page) for page in (allowed_pages or []) if int(page) > 0}
+        valid: list[PptMappingSuggestion] = []
+        for suggestion in suggestions:
+            page_refs = sorted(set(suggestion.page_refs))
+            if (
+                suggestion.outline_node_id not in valid_ids
+                or not page_refs
+                or max_page < 1
+                or any(page < 1 or page > max_page for page in page_refs)
+                or (allowed_page_set and not set(page_refs).issubset(allowed_page_set))
+            ):
+                continue
+            valid.append(replace(suggestion, page_refs=page_refs))
+        return valid
 
     @staticmethod
     def _apply_suggestions(
@@ -498,6 +924,7 @@ ppt_mapping_optimization_service = PptMappingOptimizationService()
 
 
 __all__ = [
+    "PptMappingContentUnavailable",
     "PptMappingSuggestion",
     "PptMappingOptimizationSummary",
     "PptMappingOptimizationService",

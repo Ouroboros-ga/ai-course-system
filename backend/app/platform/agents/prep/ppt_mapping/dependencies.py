@@ -3,7 +3,7 @@
 ``PptMappingOptimizationPort`` is an adapted view of the planned
 ``PptMappingOptimizationService.optimize_mappings()`` method. The raw
 service signature takes a SQLModel ``Session`` plus integer ``course_id``
-and a string ``material_version_id``; the agent runtime cannot carry those
+and one or more ``material_version_ids``; the agent runtime cannot carry those
 across the LangGraph boundary, so an adapter (registered in the agent
 composition root) translates the string-typed request fields from
 ``PptMappingRequestState`` into the service call and returns a plain
@@ -48,6 +48,7 @@ class PptMappingSuggestion:
     page_refs: list[int]
     confidence: float
     reason: str = ""
+    material_version_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -62,13 +63,14 @@ class PptMappingOptimizationResult:
     total_mappings: int
     updated_count: int
     suggestions: list[PptMappingSuggestion] = field(default_factory=list)
+    material_version_ids: list[str] = field(default_factory=list)
 
 
 class PptMappingOptimizationPort(Protocol):
     """Adapted port around ``PptMappingOptimizationService.optimize_mappings()``.
 
     Implementations translate the string-typed request fields into the
-    service's native call (session, integer course_id, material_version_id)
+    service's native call (session, integer course_id, material_version_ids)
     and wrap the returned result into a ``PptMappingOptimizationResult``.
 
     The port DOES persist: the Service updates ``CoursePptMapping`` rows
@@ -79,7 +81,10 @@ class PptMappingOptimizationPort(Protocol):
         self,
         *,
         course_id: str,
-        material_version_id: str,
+        material_version_ids: list[str],
+        outline_node_ids: list[str] | None = None,
+        page_refs_by_material: dict[str, list[int]] | None = None,
+        seed_from_evidence: bool = True,
     ) -> PptMappingOptimizationResult: ...
 
 

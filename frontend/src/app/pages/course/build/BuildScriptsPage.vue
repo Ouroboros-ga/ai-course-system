@@ -91,7 +91,10 @@ function openAgent(customInstruction) {
 }
 function openAgentForNode() {
   const node = selected.value
-  if (workbench) workbench.pendingNodeId = node?.outline_node_id || null
+  if (workbench) {
+    workbench.pendingNodeId = node?.outline_node_id || null
+    workbench.pendingAgentAction = 'optimize_node_script'
+  }
   openAgent(`请针对讲稿节点「${outlineLabel(node)}」的内容和风格提出润色建议，使其更符合教学表达规范。`)
 }
 async function organizeAll() {
@@ -109,11 +112,11 @@ async function organizeAll() {
   }
   if (workbench) {
     workbench.agentOpen = true
-    workbench.batchRun = { action: 'optimize_scripts', startedAt: Date.now() }
+    workbench.batchRun = { action: 'optimize_all_scripts', startedAt: Date.now() }
     workbench.agentMessages.push(message)
   }
   try {
-    const result = await runPrepAgentBatchAction(courseId.value, 'optimize_scripts')
+    const result = await runPrepAgentBatchAction(courseId.value, 'optimize_all_scripts')
     await load()
     Object.assign(message, {
       running: false,

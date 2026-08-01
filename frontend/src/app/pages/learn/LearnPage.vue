@@ -1,8 +1,9 @@
 <script setup>
-import { computed, inject, nextTick, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
+import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
@@ -34,6 +35,7 @@ const ws = useLearningWorkspace(courseId, {
   getCapabilities: () => capabilities.value,
 })
 const media = useMediaPlayback(courseId)
+const avatar = useAvatarPlayback()
 
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
@@ -134,6 +136,10 @@ function handleAgentAction(action) { handleDockAction({ id: action, target: acti
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
 })
+
+watch([media.avatarCues, media.digitalHumanManifest], ([avatarCues, digitalHumanManifest]) => {
+  avatar.load({ avatarCues, digitalHumanManifest })
+})
 </script>
 
 <template>
@@ -184,6 +190,10 @@ onMounted(async () => {
             :subtitle-segments="media.subtitleSegments.value"
             :ppt-timeline="media.pptTimeline.value"
             :ppt-manifest="media.ppt.value"
+            :avatar-cues="avatar.cues.value"
+            :avatar-sprite-manifest="avatar.spriteManifest.value"
+            :avatar-asset-source="avatar.assetSource.value"
+            :default-playback-mode="media.manifest.value.defaultPlaybackMode"
             :media-status="media.status.value"
             :media-message="media.manifest.value.message || media.error.value"
             :legacy-video-url="ws.currentVideoUrl.value"

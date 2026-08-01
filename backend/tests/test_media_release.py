@@ -300,6 +300,33 @@ class TestTtsGenerationJob:
         )
         assert first["job_id"] == second["job_id"]
 
+    def test_same_tts_input_reuses_persisted_media_cache(self, client, session, teacher_user):
+        """A new job with the same normalized TTS input must not synthesize twice."""
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        token = _token(teacher_user)
+        script = "相同讲稿应命中同一份已生成音频。"
+
+        first_job = _create_tts_job_via_api(
+            client, token, course.id, idempotency_key="cache-first",
+        )
+        first = _execute_tts_job_via_api(
+            client, token, course.id, first_job["job_id"], script_text=script,
+        )
+        assert first["status"] == "succeeded"
+        assert first["output_metadata"]["cache_hit"] is False
+
+        second_job = _create_tts_job_via_api(
+            client, token, course.id, idempotency_key="cache-second",
+        )
+        second = _execute_tts_job_via_api(
+            client, token, course.id, second_job["job_id"], script_text=script,
+        )
+        assert second["status"] == "succeeded"
+        assert second["output_metadata"]["cache_hit"] is True
+        assert second["output_metadata"]["cache_source_job_id"] == first_job["job_id"]
+        assert second["output_object_key"] == first["output_object_key"]
+
     def test_student_cannot_create_tts_job(self, client, session, teacher_user, student_user):
         course = _course(session, teacher_user.id)
         _enable_media_capabilities(session, course.id)
@@ -441,6 +468,57 @@ class TestMediaReleaseLifecycle:
         assert len(cues) == 2
         assert cues[0]["ppt_page"] == 1
         assert "二分查找" in cues[0]["subtitle_text"]
+
+    def test_avatar_cues_endpoint_submits_one_non_billable_worker(
+        self, client, session, teacher_user, monkeypatch,
+    ):
+        """P2 endpoint only dispatches a Cue Worker; it never re-runs TTS."""
+        from app.platform.tasks.worker import local_task_worker
+
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        token = _token(teacher_user)
+        source = client.post(
+            f"{MEDIA}/course/{course.id}/generation-jobs",
+            json={
+                "job_type": "tts",
+                "node_id": 1,
+                "input_payload": {"script_text": "P2 cue fixture"},
+                "idempotency_key": "p2-cue-source",
+            },
+            headers=_auth(token),
+        ).json()["data"]
+        _execute_tts_job_via_api(
+            client, token, course.id, source["job_id"], script_text="P2 Cue 讲解。",
+        )
+        release = _create_release_via_api(client, token, course.id, label="P2 Cue")
+
+        submitted: list[tuple[str, dict]] = []
+
+        def capture_submit(_session_factory, task_id, payload):
+            submitted.append((task_id, payload))
+            return None
+
+        monkeypatch.setattr(local_task_worker, "submit", capture_submit)
+        endpoint = f"{MEDIA}/course/{course.id}/releases/{release['release_id']}/avatar-cues"
+        resp = client.post(
+            endpoint,
+            json={"tts_job_id": source["job_id"]},
+            headers=_auth(token),
+        )
+        body = resp.json()
+        assert resp.status_code == 200, resp.text
+        assert body["code"] == 202
+        assert body["data"]["job_type"] == "timeline_publish"
+        assert body["data"]["async"] is True
+        assert len(submitted) == 1
+        assert submitted[0][1]["source_tts_job_id"] == source["job_id"]
+
+        # Same release/source pair is idempotent and must not enqueue a second
+        # worker before the first queued task has been claimed.
+        second = client.post(endpoint, json={"tts_job_id": source["job_id"]}, headers=_auth(token))
+        assert second.json()["data"]["job_id"] == body["data"]["job_id"]
+        assert len(submitted) == 1
 
     def test_student_can_read_releases_but_not_create(self, client, session, teacher_user, student_user):
         course = _course(session, teacher_user.id)

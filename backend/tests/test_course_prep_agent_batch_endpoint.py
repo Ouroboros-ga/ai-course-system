@@ -11,15 +11,20 @@ from sqlmodel import select
 from app.api.v1.endpoints import course_build_editor
 from app.core.security import get_password_hash
 from app.models.course_model import Course, CourseStatus
+from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
 from app.models.course_outline_model import (
     CourseOutlineNode,
     CourseOutlineVersion,
+    CoursePptMapping,
     OutlineLifecycleStatus,
     OutlineNodeType,
     PatchProposal,
     PatchProposalOperation,
     PatchProposalStatus,
+    TeachingScriptNode,
+    TeachingScriptVersion,
 )
+from app.models.document_parse_model import DocumentBlock
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.platform.agents.prep.incremental.dependencies import IncrementalPrepResult
@@ -157,6 +162,118 @@ def test_batch_endpoint_applies_every_planned_node_without_pending_approval(
     )).all()
 
 
+def test_natural_language_one_click_command_reuses_the_atomic_batch_action(
+    session,
+    monkeypatch,
+):
+    teacher, course, first, second, _ = _setup_outline(session)
+
+    async def fake_plan(**kwargs):
+        assert kwargs["action"] == "organize_structure"
+        assert "一键" in kwargs["instruction"]
+        return _result(first, second)
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+
+    response = asyncio.run(course_build_editor.run_prep_agent_command(
+        course.id,
+        course_build_editor.PrepAgentCommandRequest(
+            instruction="请一键整理整个课程结构，并保留锁定节点。",
+        ),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    session.expire_all()
+    assert response["data"]["action"] == "organize_structure"
+    assert response["data"]["status"] == PatchProposalStatus.ACCEPTED.value
+    assert session.get(CourseOutlineNode, first.id).title == "新标题一"
+    assert session.get(CourseOutlineNode, second.id).title == "新标题二"
+    assert not session.exec(select(PatchProposal).where(
+        PatchProposal.course_id == course.id,
+        PatchProposal.status == PatchProposalStatus.PENDING,
+    )).all()
+
+
+def test_structure_batch_applies_move_and_remove_as_one_atomic_tree_change(session, monkeypatch):
+    teacher, course, parent, child, _ = _setup_outline(session)
+    child.parent_node_id = parent.outline_node_id
+    child.order_index = 0
+    draft_scripts = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=parent.outline_version_id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    historical_scripts = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=parent.outline_version_id,
+        lifecycle_status=OutlineLifecycleStatus.PUBLISHED,
+        created_by=teacher.id,
+    )
+    session.add(draft_scripts)
+    session.add(historical_scripts)
+    session.flush()
+    draft_script = TeachingScriptNode(
+        script_version_id=draft_scripts.script_version_id,
+        course_id=course.id,
+        outline_node_id=parent.outline_node_id,
+        content="current draft script",
+    )
+    historical_script = TeachingScriptNode(
+        script_version_id=historical_scripts.script_version_id,
+        course_id=course.id,
+        outline_node_id=parent.outline_node_id,
+        content="published historical script",
+    )
+    session.add(draft_script)
+    session.add(historical_script)
+    session.add(child)
+    session.commit()
+
+    async def fake_plan(**_kwargs):
+        return IncrementalPrepResult(
+            summary="移除冗余父节点",
+            operations=[
+                {
+                    "operation": "move",
+                    "target": f"outline:{child.outline_node_id}:structure",
+                    "after": '{"parent_node_id": null, "order_index": 0}',
+                    "reason": "子节点直接作为顶层知识点",
+                    "evidence_refs": [],
+                },
+                {
+                    "operation": "remove",
+                    "target": f"outline:{parent.outline_node_id}:structure",
+                    "after": "",
+                    "reason": "父节点没有独立教学内容",
+                    "evidence_refs": [],
+                },
+            ],
+            planner="llm_structure",
+        )
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+    response = asyncio.run(course_build_editor.run_prep_agent_batch_action(
+        course.id,
+        _payload(),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    session.expire_all()
+    assert session.get(CourseOutlineNode, parent.id) is None
+    moved_child = session.get(CourseOutlineNode, child.id)
+    assert moved_child is not None
+    assert moved_child.parent_node_id is None
+    assert moved_child.order_index == 0
+    assert session.get(TeachingScriptNode, draft_script.id) is None
+    assert session.get(TeachingScriptNode, historical_script.id) is not None
+    assert response["data"]["updated_count"] == 2
+
+
 def test_batch_endpoint_rolls_back_when_one_planned_target_changed(
     session,
     monkeypatch,
@@ -214,3 +331,424 @@ def test_batch_endpoint_rejects_overlapping_course_optimization(session):
     error = asyncio.run(run())
     assert error.status_code == 409
     assert error.detail["error_code"] == "PREP_AGENT_BUSY"
+
+
+def test_ppt_mapping_endpoint_allows_unprojected_version_for_manifest_ocr(session):
+    """A pending material version may still be mapped through ppt-manifest/OCR."""
+    teacher, course, _, _, _ = _setup_outline(session)
+    material = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_manifest_ready",
+        status=MaterialStatus.PARSING,
+        name="courseware.pptx",
+    )
+    version = SourceMaterialVersion(
+        version_id="smv_manifest_ready",
+        course_id=course.id,
+        material_id=material.material_id,
+        parse_status=MaterialStatus.PARSING,
+        is_current=True,
+    )
+    session.add(material)
+    session.add(version)
+    session.commit()
+
+    class FakeGateway:
+        async def start(self, **kwargs):
+            assert kwargs["context"].extras["material_version_ids"] == [version.version_id]
+            return SimpleNamespace(
+                status="completed",
+                result={"result": {
+                    "total_mappings": 0,
+                    "updated_count": 2,
+                    "suggestions": [],
+                    "material_version_ids": [version.version_id],
+                }},
+                error_code=None,
+                error_message="",
+            )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(
+            agent_platform=SimpleNamespace(gateway=FakeGateway()),
+        )),
+    )
+    response = asyncio.run(course_build_editor.optimize_ppt_mapping(
+        course.id,
+        request,
+        session,
+        _current_user(teacher),
+    ))
+
+    assert response["data"]["updated_count"] == 2
+    assert response["data"]["material_version_ids"] == [version.version_id]
+
+
+def test_ppt_mapping_endpoint_returns_manual_recovery_for_zero_change_run(session):
+    """No model match is actionable, but it is not a broken mapping workflow."""
+    teacher, course, _, _, _ = _setup_outline(session)
+    material = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_no_change",
+        name="no-change.pptx",
+    )
+    version = SourceMaterialVersion(
+        version_id="smv_no_change",
+        course_id=course.id,
+        material_id=material.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    )
+    session.add(material)
+    session.add(version)
+    session.commit()
+
+    class FakeGateway:
+        async def start(self, **_kwargs):
+            return SimpleNamespace(
+                status="completed",
+                result={"result": {
+                    "total_mappings": 0,
+                    "updated_count": 0,
+                    "suggestions": [],
+                    "material_version_ids": [version.version_id],
+                }},
+                error_code=None,
+                error_message="",
+            )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(
+            agent_platform=SimpleNamespace(gateway=FakeGateway()),
+        )),
+    )
+
+    response = asyncio.run(course_build_editor.optimize_ppt_mapping(
+        course.id,
+        request,
+        session,
+        _current_user(teacher),
+    ))
+
+    assert response["data"]["outcome"] == "no_change"
+    assert response["data"]["reason"] == "NO_RELIABLE_MATCH"
+    assert response["data"]["manual_next_steps"] == ["select_pages", "match_current_node"]
+    assert response["data"]["material_version_ids"] == [version.version_id]
+
+
+def test_ppt_mapping_workbench_bulk_save_preserves_non_contiguous_teacher_pages(session):
+    """The visual editor saves one explicit teacher mapping, not blur events."""
+    teacher, course, first_node, _, _ = _setup_outline(session)
+    material = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_manual_pages",
+        name="manual-pages.pptx",
+    )
+    version = SourceMaterialVersion(
+        version_id="smv_manual_pages",
+        course_id=course.id,
+        material_id=material.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    )
+    session.add(material)
+    session.add(version)
+    for page in (1, 2, 3):
+        session.add(DocumentBlock(
+            course_id=course.id,
+            material_version_id=version.version_id,
+            run_id=f"run_manual_{page}",
+            block_id=f"blk_manual_{page}",
+            page_or_slide=page,
+            text=f"PPT page {page}",
+        ))
+    session.commit()
+
+    response = asyncio.run(course_build_editor.save_ppt_mappings(
+        course.id,
+        course_build_editor.PptMappingBulkUpdate(mappings=[
+            course_build_editor.PptMappingBulkItem(
+                outline_node_id=first_node.outline_node_id,
+                material_version_id=version.version_id,
+                page_refs=[3, 1],
+                locked=True,
+            ),
+        ]),
+        session,
+        _current_user(teacher),
+    ))
+
+    mapping = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.course_id == course.id,
+        CoursePptMapping.outline_node_id == first_node.outline_node_id,
+        CoursePptMapping.material_version_id == version.version_id,
+    )).one()
+    assert response["data"]["saved_count"] == 1
+    assert mapping.page_refs == [1, 3]
+    assert mapping.page_start == 1
+    assert mapping.page_end == 3
+    assert mapping.teacher_locked is True
+
+
+def test_selected_page_matching_scopes_agent_to_visible_pages(session):
+    teacher, course, first_node, _, _ = _setup_outline(session)
+    material = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_selected_page",
+        name="selected-page.pptx",
+    )
+    version = SourceMaterialVersion(
+        version_id="smv_selected_page",
+        course_id=course.id,
+        material_id=material.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    )
+    session.add(material)
+    session.add(version)
+    session.add(DocumentBlock(
+        course_id=course.id,
+        material_version_id=version.version_id,
+        run_id="run_selected_page",
+        block_id="blk_selected_page",
+        page_or_slide=3,
+        text="selected page OCR",
+    ))
+    session.commit()
+
+    class FakeGateway:
+        async def start(self, **kwargs):
+            extras = kwargs["context"].extras
+            assert extras["material_version_ids"] == [version.version_id]
+            assert extras["page_refs_by_material"] == {version.version_id: [3]}
+            assert extras["seed_from_evidence"] is False
+            return SimpleNamespace(
+                status="completed",
+                result={"result": {"updated_count": 0, "suggestions": []}},
+                error_code=None,
+                error_message="",
+            )
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        agent_platform=SimpleNamespace(gateway=FakeGateway()),
+    )))
+    response = asyncio.run(course_build_editor.match_ppt_mapping_scope(
+        course.id,
+        course_build_editor.PptMappingMatchRequest(
+            mode="selected_pages",
+            material_version_id=version.version_id,
+            page_refs=[3],
+        ),
+        request,
+        session,
+        _current_user(teacher),
+    ))
+    assert response["data"]["outcome"] == "no_reliable_match"
+
+
+def test_ppt_mapping_endpoint_sends_all_current_ppt_versions_to_runtime(session):
+    """One-click mapping must not select only the most recently uploaded deck."""
+    teacher, course, _, _, _ = _setup_outline(session)
+    first = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_deck_one",
+        name="deck-one.pptx",
+    )
+    second = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_deck_two",
+        name="deck-two.pptx",
+    )
+    session.add(first)
+    session.add(second)
+    session.add(SourceMaterialVersion(
+        version_id="smv_deck_one",
+        course_id=course.id,
+        material_id=first.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.add(SourceMaterialVersion(
+        version_id="smv_deck_two",
+        course_id=course.id,
+        material_id=second.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.commit()
+
+    class FakeGateway:
+        async def start(self, **kwargs):
+            assert kwargs["context"].extras["material_version_ids"] == [
+                "smv_deck_one",
+                "smv_deck_two",
+            ]
+            return SimpleNamespace(
+                status="completed",
+                result={"result": {
+                    "total_mappings": 0,
+                    "updated_count": 4,
+                    "suggestions": [],
+                    "material_version_ids": ["smv_deck_one", "smv_deck_two"],
+                }},
+                error_code=None,
+                error_message="",
+            )
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(
+            agent_platform=SimpleNamespace(gateway=FakeGateway()),
+        )),
+    )
+    response = asyncio.run(course_build_editor.optimize_ppt_mapping(
+        course.id,
+        request,
+        session,
+        _current_user(teacher),
+    ))
+
+    assert response["data"]["updated_count"] == 4
+    assert response["data"]["material_version_ids"] == ["smv_deck_one", "smv_deck_two"]
+
+
+def test_ppt_mapping_state_keeps_page_ranges_bound_to_each_ppt_file(session):
+    """The mapping screen receives one input per node per current deck."""
+    teacher, course, first_node, _, _ = _setup_outline(session)
+    first = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_display_one",
+        name="deck-one.pptx",
+    )
+    second = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_display_two",
+        name="deck-two.pptx",
+    )
+    session.add(first)
+    session.add(second)
+    session.add(SourceMaterialVersion(
+        version_id="smv_display_one",
+        course_id=course.id,
+        material_id=first.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.add(SourceMaterialVersion(
+        version_id="smv_display_two",
+        course_id=course.id,
+        material_id=second.material_id,
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.add(DocumentBlock(
+        course_id=course.id,
+        material_version_id="smv_display_one",
+        run_id="run_display_one",
+        block_id="display_one_page_3",
+        block_type="TEXT",
+        page_or_slide=3,
+        text="first deck",
+    ))
+    session.add(DocumentBlock(
+        course_id=course.id,
+        material_version_id="smv_display_two",
+        run_id="run_display_two",
+        block_id="display_two_page_8",
+        block_type="TEXT",
+        page_or_slide=8,
+        text="second deck",
+    ))
+    session.add(CoursePptMapping(
+        course_id=course.id,
+        outline_node_id=first_node.outline_node_id,
+        material_version_id="smv_display_one",
+        page_start=2,
+        page_end=3,
+        page_refs=[2, 3],
+        status="draft",
+    ))
+    session.add(CoursePptMapping(
+        course_id=course.id,
+        outline_node_id=first_node.outline_node_id,
+        material_version_id="smv_display_two",
+        page_start=8,
+        page_end=8,
+        page_refs=[8],
+        status="draft",
+    ))
+    session.commit()
+
+    response = asyncio.run(course_build_editor.get_ppt_mapping(
+        course.id,
+        session,
+        _current_user(teacher),
+    ))
+    data = response["data"]
+    assert data["mapping_contract_version"] == "ppt-mapping/v2"
+    assert [item["material_version_id"] for item in data["ppt_materials"]] == [
+        "smv_display_one",
+        "smv_display_two",
+    ]
+    assert [item["page_count"] for item in data["ppt_materials"]] == [3, 8]
+    node = next(item for item in data["nodes"] if item["outline_node_id"] == first_node.outline_node_id)
+    assert {
+        item["material_version_id"]: item["page_range"]
+        for item in node["ppt_mappings"]
+    } == {
+        "smv_display_one": "2-3",
+        "smv_display_two": "8",
+    }
+
+
+def test_ppt_mapping_state_collapses_legacy_duplicate_decks(session):
+    """Same bytes uploaded before idempotency remain one logical PPT deck."""
+    teacher, course, _first_node, _, _ = _setup_outline(session)
+    original = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_original",
+        name="engine.pptx",
+    )
+    duplicate = SourceMaterial(
+        course_id=course.id,
+        material_type="slide",
+        current_version_id="smv_duplicate",
+        name="engine-copy.pptx",
+    )
+    session.add(original)
+    session.add(duplicate)
+    session.add(SourceMaterialVersion(
+        version_id="smv_original",
+        course_id=course.id,
+        material_id=original.material_id,
+        file_hash="identical-ppt-bytes",
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.add(SourceMaterialVersion(
+        version_id="smv_duplicate",
+        course_id=course.id,
+        material_id=duplicate.material_id,
+        file_hash="identical-ppt-bytes",
+        parse_status=MaterialStatus.NEEDS_REVIEW,
+        is_current=True,
+    ))
+    session.commit()
+
+    response = asyncio.run(course_build_editor.get_ppt_mapping(
+        course.id,
+        session,
+        _current_user(teacher),
+    ))
+
+    assert [item["material_version_id"] for item in response["data"]["ppt_materials"]] == [
+        "smv_original",
+    ]

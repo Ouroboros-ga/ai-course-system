@@ -10,7 +10,7 @@
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
-    "test:unit": "node --test src/app/lib/__tests__/learnMachine.test.js src/app/lib/__tests__/citationStatus.test.js",
+    "test:unit": "node --test src/app/lib/__tests__/learnMachine.test.js src/app/lib/__tests__/citationStatus.test.js src/features/student-learning/__tests__/playerWorkspaceAdapter.test.js src/features/student-learning/__tests__/mediaPlaybackAdapter.test.js src/features/student-learning/__tests__/avatarPlaybackAdapter.test.js",
     "smoke:app": "node scripts/smoke-shadow-app.mjs"
   },
   "dependencies": {
@@ -25,6 +25,7 @@
     "marked": "^17.0.5",
     "marked-highlight": "^2.2.3",
     "pinia": "^3.0.4",
+    "pixi.js": "^8.16.0",
     "vue": "^3.5.29",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^5.0.3"

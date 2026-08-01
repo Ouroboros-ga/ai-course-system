@@ -50,7 +50,10 @@ class PptMappingOptimizationProvider:
         self,
         *,
         course_id: str,
-        material_version_id: str,
+        material_version_ids: list[str],
+        outline_node_ids: list[str] | None = None,
+        page_refs_by_material: dict[str, list[int]] | None = None,
+        seed_from_evidence: bool = True,
     ) -> PptMappingOptimizationResult:
         """Call ``PptMappingOptimizationService.optimize_mappings()`` and wrap the result."""
         try:
@@ -63,7 +66,10 @@ class PptMappingOptimizationProvider:
             summary = await self._service.optimize_mappings(
                 session,
                 course_id=course_id_int,
-                material_version_id=material_version_id,
+                material_version_ids=material_version_ids,
+                outline_node_ids=outline_node_ids,
+                page_refs_by_material=page_refs_by_material,
+                seed_from_evidence=seed_from_evidence,
             )
         finally:
             session.close()
@@ -74,6 +80,7 @@ class PptMappingOptimizationProvider:
                 page_refs=list(s.page_refs),
                 confidence=s.confidence,
                 reason=s.reason,
+                material_version_id=s.material_version_id,
             )
             for s in summary.suggestions
         ]
@@ -81,6 +88,7 @@ class PptMappingOptimizationProvider:
             total_mappings=summary.total_mappings,
             updated_count=summary.updated_count,
             suggestions=suggestions,
+            material_version_ids=list(summary.material_version_ids),
         )
 
 

@@ -2,7 +2,7 @@
 
 The state extends ``PrepCommonState`` with two pipeline-specific blocks:
     - ``request``: the optimization request (teacher / course /
-      material_version_id).
+      material_version_ids).
     - ``result``: the optimization summary (total/updated counts plus
       per-suggestion details).
 
@@ -30,7 +30,10 @@ class PptMappingRequestState(TypedDict):
 
     teacher_id: str
     course_id: str
-    material_version_id: str
+    material_version_ids: list[str]
+    outline_node_ids: list[str]
+    page_refs_by_material: dict[str, list[int]]
+    seed_from_evidence: bool
 
 
 class PptMappingResultState(TypedDict, total=False):
@@ -39,6 +42,7 @@ class PptMappingResultState(TypedDict, total=False):
     total_mappings: int
     updated_count: int
     suggestions: list[dict]
+    material_version_ids: list[str]
 
 
 class PptMappingState(PrepCommonState, total=False):

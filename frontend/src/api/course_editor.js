@@ -23,11 +23,12 @@ export const decideBuildProposal = (courseId, proposalId, accepted) => request.p
 
 // Teacher-facing controlled preparation Agent.  It only returns/persists a
 // PatchProposal; accepting a proposal remains a separate explicit action.
-export const runPrepAgentCommand = (courseId, instruction, outlineNodeId = null) => request.post(
+export const runPrepAgentCommand = (courseId, instruction, outlineNodeId = null, action = null) => request.post(
   `${base(courseId)}/prep-agent/commands`,
   {
     instruction,
     ...(outlineNodeId ? { outline_node_id: outlineNodeId } : {}),
+    ...(action ? { action } : {}),
   },
   { skipErrorToast: true },
 )
@@ -40,6 +41,16 @@ export const getPrepAgentNodeEvidence = (courseId, nodeId) => request.get(`${bas
 
 export const getPptMappingState = (courseId) => request.get(`${base(courseId)}/ppt-mapping`)
 export const updatePptMapping = (courseId, outlineNodeId, payload) => request.patch(`${base(courseId)}/ppt-mapping/${encodeURIComponent(outlineNodeId)}`, payload)
+export const getPptMappingWorkspace = (courseId, materialVersionId, params = {}) => request.get(
+  `${base(courseId)}/ppt-mapping/workspace`,
+  { params: { material_version_id: materialVersionId, ...params } },
+)
+export const savePptMappings = (courseId, mappings) => request.put(`${base(courseId)}/ppt-mapping`, { mappings })
+export const matchPptMapping = (courseId, payload) => request.post(
+  `${base(courseId)}/ppt-mapping/match`,
+  payload,
+  { timeout: 300000, skipErrorToast: true },
+)
 export const optimizePptMapping = (courseId) => request.post(`${base(courseId)}/ppt-mapping/optimize`, {}, { timeout: 300000, skipErrorToast: true })
 export const generateCoursePpt = (courseId, payload = {}) => request.post(`${base(courseId)}/ppt/generate`, payload, { timeout: 300000 })
 export const uploadExistingPpt = (courseId, file, options = {}) => {

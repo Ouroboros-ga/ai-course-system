@@ -1,6 +1,9 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
-> 状态：架构基线已冻结，实施尚未开始。最后核对：2026-07-31。
+> 状态：P0 播放、正式 PPT manifest，P1 豆包 TTS Worker 与 P2 Cue 发布冻结均已
+> 完成代码接入；P3 PixiJS 2D 渲染器已开始接入学生端，使用平台预制角色和已冻结
+> `avatar-cues/v1`。课程 87 尚无可播放的已发布媒体快照，也没有冻结的 PPT 映射，
+> 因此不能据此宣称已完成真实学生端或设备性能验收。最后核对：2026-08-01。
 >
 > 本文以实际注册路由、调用链、模型和一次真实 Provider POC 为证据，不把历史
 > Demo、Fake Provider 或未接入的 API 写成已对学生生效的能力。与历史阶段8说明
@@ -418,6 +421,14 @@ dispose()
 **完成门槛**：发布版媒体可在真实学习页用音频完整播放；PPT、字幕和讲稿高亮与音频
 同步；课程 87 无发布资产时保持诚实空态。
 
+### P0 当前实现状态（2026-08-01）
+
+- 已完成前端 `getCoursePlayback`、`useMediaPlayback` 与播放清单归一化适配；学习页并行保留旧 `/player/init`，媒体发布清单独立加载。
+- `LectureStage` 已改为发布音频优先：原生 `<audio>` 作为唯一时钟，驱动进度、PPT 时间轴、字幕高亮、倍速、音量和前后知识点控制；无发布音频时明确显示空态，旧视频仅兼容回退。
+- 正式 `ppt-manifest/v1` 已接入发布链路：草稿可显式生成，激活时若声明了 PPT/PDF 源文件则 fail-closed；播放 API 返回签发后的页面清单，学习页优先使用发布页面，旧 `/player/init` 仅作为无正式页面时的兼容回退。
+- 页面对象键按 `course/release/source_sha` 不可变写入并登记 `MediaAsset`；浏览器通过带登录 token 的签名 URL 读取，服务端不向学习端暴露源文件路径。
+- 已通过前端 22 项单测、Vite 生产构建和后端 `tests/test_media_release.py` 播放清单测试；浏览器入口可到达但当前无登录会话，且课程 87 为 draft、无 PPT/PDF 源文件、无 MediaRelease 和无 CourseRelease。因此只能确认诚实空态，尚不能进行真实媒体播放手工验收。
+
 ### P1：豆包 / 讯飞 Provider POC 与可计费任务接入
 
 **目标**：把真实调用从手工脚本收敛为安全、可审计、可复用的后端能力。
@@ -435,6 +446,28 @@ dispose()
 **完成门槛**：一份已授权测试讲稿只生成一次，结果含真实音频 SHA、精确字幕时序和
 已脱敏用量摘要；重复调用命中缓存；失败保留可理解错误码。
 
+### P1 当前实现状态（2026-08-01）
+
+- 已新增 `VolcengineDoubaoTtsProvider` 和独立 v3 协议客户端；Provider 仅消费
+  服务端 `VOLCENGINE_DOUBAO_TTS_*` 配置，音频写入对象存储，任务记录不写入 API
+  Key、speaker ID 或原始 Provider 帧。
+- 真实 Provider 被标记为 worker-only。`execute-tts` / `retry` 在选中豆包时只返回
+  `202` 并交给 `media.tts` Worker；Fake / Mock 保留同步兼容路径，确保自动化测试
+  不会产生付费调用。
+- 缓存键包含讲稿、音色、输出参数、资源版本、Provider 版本和非敏感的输出配置指纹；
+  同课程的成功任务会复用已存在的对象存储音频，并在 attempt/output metadata 中标记
+  `cache_hit` 和来源任务。未知 Provider 在正式执行路径 fail-closed，不会静默回退
+  Fake。
+- 豆包 `words` 被保留为非敏感的毫秒时间轴并归并为可读字幕段；`phonemes` 只记录
+  数量。没有音素时明确警告，不能将该结果用作精确口型数据。MP3 版本的最终播放时钟
+  仍由浏览器原生 audio 决定。
+- 本地纯 Mock 回归覆盖 Provider 时序归一化、密钥/音色不落库、worker-thread 执行、
+  缓存命中以及 v3 协议帧；未在本次开发回归中调用付费 Provider。
+- 已将 `websockets` 明确写入后端部署依赖清单；Provider 仍仅在 Media Worker 中按需
+  导入它，运行时缺失会以 `TTS_DEPENDENCY_UNAVAILABLE` 失败，不会伪造音频。
+- 尚未完成：对长文本做一次新的人工授权限量 POC，以及接入教师端的“确认后生成”
+  界面（P4）。
+
 ### P2：Cue Worker 与发布冻结
 
 **目标**：把 Provider 时序变成厂商无关的数字人播放数据。
@@ -449,6 +482,28 @@ dispose()
 **完成门槛**：替换讲稿、声音或音频后产生新 Cue 和新 Release；旧 Cue 无法被新音频
 复用；回滚恢复完整旧资产组合。
 
+### P2 当前实现状态（2026-08-01）
+
+- 已新增非计费 `media.timeline_publish` Cue Worker。它只读取已经成功的 TTS 对象和
+  已持久化的安全时序，不会重新调用 TTS Provider；任务、失败码和产物均独立留痕。
+- Worker 只在从未激活的 `MediaRelease` 草稿上生成不可变的 `subtitle-manifest/v1` 与
+  `avatar-cues/v1`，对象键同时含 release、音频 SHA 和内容 SHA。迁移 `0034` 增加
+  `avatar_cues_object_key`，避免将可复用形象资产包与本次讲解的时间轴混为同一个
+  manifest。
+- Cue 的哈希覆盖时间、PPT 页、字幕、音频 object key 和来源元数据；激活时会重新
+  验证 Cue manifest 的音频 object key/SHA 与 Release 一致。active、withdrawn、
+  superseded、stale 版本不能再通过 `freeze-cues` 或 Worker 改写；撤回版本只可原样
+  重新激活，需变更资产时必须新建 Release。
+- Provider 有音素时才产出 8 类 viseme（`sil/a/e/i/o/u/fv/mbp`）；当前豆包 POC 的
+  音素为空，因此只输出字级/字幕驱动的 `speaking` / `silence` 区间，并在 manifest
+  标为 `word` 或 `subtitle` 精度，禁止作为精确口型承诺。
+- 现有 PPT 映射只有“知识点 → 页集合”而没有页内时间锚点。Cue Worker 会冻结当时的
+  页集合；多页节点按字幕顺序作明确标记的 `mapping_sequence_estimate`，单页为
+  `teacher_mapping_single_page`。这不会绕过 PPT 映射冻结；课程 87 仍需完成实际映射
+  才能做端到端验收。
+- 本地测试覆盖 Cue Worker、音频 SHA 绑定、PPT 映射快照、无音素降级、发布后拒绝
+  改写和 API 幂等提交；均使用本地 fixture，未调用任何付费 Provider。
+
 ### P3：PixiJS 2D 数字人
 
 **目标**：在不依赖服务器实时合成的前提下让数字人跟随音频。
@@ -461,6 +516,24 @@ dispose()
 
 **完成门槛**：数字人失败时教学媒体仍完整播放；满足设备可保持可接受同步，不满足
 设备可立即降级且不反复初始化。
+
+**本轮 P3 实现状态（代码已接入，真实媒体验收待解锁）**：
+
+- 用户已批准加入 `pixi.js@8.16.0`。`Sprite2DRenderer` 仅在收到已签名的
+  `avatar-cues/v1` 后按需加载，不把 PixiJS 放进无数字人课程的主播放初始化路径。
+- 学习页通过 `useAvatarPlayback` 读取 Cue 清单；`avatarPlaybackAdapter` 只接受带
+  音频 object key/SHA 的标准 Cue，不接收 Provider 原始帧。嘴型、眨眼、三类表情与
+  两类手势都由 `HTMLAudioElement.currentTime` 推导，PixiJS 不持有第二时钟。
+- P3 首版采用仓库内的平台预制通用讲师图形（`sprite2d-manifest/v1`，无教师人像、
+  授权视频或声音样本）。如果后续 Release 携带有效 `sprite2d` 资产清单，播放器优先
+  使用发布版资产；无效、缺失或旧 Provider 清单则明确回退平台预制角色。
+- `auto`、`low_resource` 和 `compatibility` 已实现：低内存设备降低像素比和抗锯齿；
+  `prefers-reduced-motion`、无 WebGL、初始化失败或用户指定兼容模式时不初始化 WebGL，
+  直接显示静态头像。数字人不会阻塞音频、PPT、字幕或讲稿。
+- 本地前端单测覆盖 Cue SHA 契约、音频时钟选帧、无音素的通用嘴型退化、模式选择和
+  平台资产清单校验；Vite 构建通过。尚未把 P3 标为完成：课程 87 没有可签发 Cue，
+  也未在目标 Windows 设备完成 480p/24fps、seek、倍速与连续 10 分钟的实测，更没有
+  可写入的 `PlaybackCapabilityProfile` 性能记录。
 
 ### P4：教师建设页、运营和发布流程
 
@@ -508,9 +581,13 @@ dispose()
 
 ## 10. 当前下一步
 
-1. 用户在火山控制台核对本地 `speaker` 与 `seed-tts-2.0` 的音色类型匹配后，授权
-   一次带安全错误码记录的单次 POC；不需要提供任何密钥。
-2. POC 成功后先实施 P0 的播放清单和音频主时钟，再接真实 Provider；这能优先解决
-   当前学习页“有媒体底座但无法播放”的实际问题。
-3. 讯飞 `x5_clone` 与豆包 `seed-icl-2.0` 分别做口型时序 POC；通过前不将任何一方
-   写入“精确口型已支持”的对外承诺。
+1. 在课程 87 完成 PPT 源文件确认与教师映射冻结；随后以最小讲解节点创建草稿
+   Release、执行一次受控 TTS，再冻结 Cue/PPT manifest。这是 P0–P3 首次真实联调的
+   前置条件，不可由浏览器端伪造。
+2. 使用已登录的学生会话在目标 Windows 浏览器执行 P3 验收：播放/暂停、seek、
+   0.75x/1x/1.5x、刷新续播、480p 小窗与连续 10 分钟播放；记录初始化时间、FPS、
+   掉帧率和同步偏差，未达标即保留兼容模式。
+3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增
+   受控写入接口；在这之前不虚构设备性能数据。
+4. P3 的真实验收通过后实施 P4，把 `/build/media` 的占位页面替换为教师受控的媒体
+   生成、Cue 冻结、PPT 映射检查、发布和回滚流程。
