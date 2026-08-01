@@ -24,12 +24,13 @@ watch(railCollapsed, (value) => {
 const stageActions = ref(null)
 const pendingInstruction = ref('')
 const pendingNodeId = ref(null)
+const pendingAgentAction = ref(null)
 const batchRun = ref(null)
 const agentMessages = ref([])
 // 智能体首次智慧备课阶段：parsing_materials / assembling_corpus / submitting_build / building
 // 这些阶段下，structure/scripts/mapping 子页面需要提示"智能体首次智慧备课中"
 const draftBuildPhase = ref('')
-const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId, batchRun, agentMessages, draftBuildPhase })
+const workbench = reactive({ selectedNode, agentOpen, stageActions, pendingInstruction, pendingNodeId, pendingAgentAction, batchRun, agentMessages, draftBuildPhase })
 
 provide('courseBuildWorkbench', workbench)
 
@@ -70,6 +71,7 @@ watch(courseId, () => {
   selectedNode.value = null
   pendingInstruction.value = ''
   pendingNodeId.value = null
+  pendingAgentAction.value = null
   batchRun.value = null
   agentMessages.value = []
   startDraftBuildPolling()
@@ -178,8 +180,8 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
 .step-copy strong{font-size:var(--ui-md-size);font-weight:600}
 .step-copy small{font-size:11px;line-height:15px;color:var(--text-muted)}
 .rail-note{margin:var(--space-5) var(--space-3) 0;padding-top:var(--space-4);border-top:1px solid var(--border-default);font-size:var(--caption-size);line-height:1.55;color:var(--text-muted)}
-.build-stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:var(--space-5);background:var(--surface-page);overflow:hidden}
-.stage-context{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;margin-bottom:var(--space-4);flex-shrink:0}
+.build-stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:var(--space-6);background:var(--surface-panel);overflow:hidden}
+.stage-context{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;margin-bottom:var(--space-6);flex-shrink:0}
 .stage-body{flex:1;min-height:0;overflow:hidden}
 .eyebrow{margin:0 0 var(--space-1);font-size:var(--caption-size);font-weight:650;letter-spacing:.08em;color:var(--ink-500)}
 h1{margin:0;color:var(--text-primary);font-size:var(--title-2-size);line-height:var(--title-2-line);font-weight:var(--title-2-weight)}

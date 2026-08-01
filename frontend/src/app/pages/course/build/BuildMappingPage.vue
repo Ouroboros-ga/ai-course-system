@@ -1,145 +1,473 @@
 <script setup>
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { generateCoursePpt, getPptMappingState, optimizePptMapping, updatePptMapping, uploadExistingPpt } from '@/api/course_editor.js'
+import {
+  generateCoursePpt,
+  getPptMappingState,
+  getPptMappingWorkspace,
+  matchPptMapping,
+  savePptMappings,
+  uploadExistingPpt,
+} from '@/api/course_editor.js'
 import { useRoute } from 'vue-router'
-import { Sparkles } from 'lucide-vue-next'
+import { Check, FileImage, Layers3, Sparkles, Wand2 } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
 const workbench = inject('courseBuildWorkbench', null)
+
 const state = ref(null)
+const workspace = ref(null)
 const loading = ref(true)
-const optimizing = ref(false)
+const workspaceLoading = ref(false)
+const matching = ref(false)
+const saving = ref(false)
 const inputRef = ref(null)
 const message = ref('')
-const prepBatchRunning = computed(() => Boolean(workbench?.batchRun))
+const selectedMaterialVersionId = ref('')
+const selectedNodeId = ref('')
+const selectedPages = ref([])
+const currentPage = ref(1)
+const manualEdits = ref({})
 
-// 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
+const prepBatchRunning = computed(() => Boolean(workbench?.batchRun))
+const hasCurrentPptVersions = computed(() => Boolean(state.value?.ppt_materials?.length))
+const mappingContractReady = computed(() => state.value?.mapping_contract_version === 'ppt-mapping/v2')
+const mappingNodes = computed(() => (state.value?.nodes || []).filter(node => node.node_type === 'knowledge_point'))
+const selectedNode = computed(() => mappingNodes.value.find(node => node.outline_node_id === selectedNodeId.value) || null)
+const selectedMaterial = computed(() => (
+  state.value?.ppt_materials?.find(item => item.material_version_id === selectedMaterialVersionId.value) || null
+))
+const workspacePages = computed(() => workspace.value?.pages || [])
+const currentWorkspacePage = computed(() => (
+  workspacePages.value.find(page => page.page === currentPage.value) || workspacePages.value[0] || null
+))
+const selectedPageLabel = computed(() => selectedPages.value.length ? `第 ${selectedPages.value.join('、')} 页` : '尚未选择页面')
+const pendingEditCount = computed(() => Object.keys(manualEdits.value).length)
+const canMatchCurrentNode = computed(() => Boolean(selectedNode.value && selectedMaterial.value && !matching.value && !prepBatchRunning.value))
+const canMatchSelectedPages = computed(() => Boolean(
+  selectedMaterial.value && selectedPages.value.length && !matching.value && !prepBatchRunning.value,
+))
+const canOrganize = computed(() => (
+  mappingContractReady.value && hasCurrentPptVersions.value && !matching.value && !prepBatchRunning.value
+))
+
 const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
 const isFirstPrepInProgress = computed(() => FIRST_PREP_PHASES.has(workbench?.draftBuildPhase))
 
-async function load() {
-  loading.value = true
-  try { state.value = await getPptMappingState(courseId.value) } catch (error) { message.value = error?.message || '映射状态读取失败' } finally { loading.value = false }
+function mappingKey(nodeId = selectedNodeId.value, materialVersionId = selectedMaterialVersionId.value) {
+  return `${nodeId}:${materialVersionId}`
 }
-async function onUpload(event) {
-  const file = event.target.files?.[0]
-  if (!file) return
-  message.value = '正在上传并创建解析任务…'
-  try { await uploadExistingPpt(courseId.value, file); message.value = '上传成功，解析任务已进入任务中心'; await load() } catch (error) { message.value = error?.message || '上传失败' }
-  event.target.value = ''
+
+function existingMapping(nodeId = selectedNodeId.value, materialVersionId = selectedMaterialVersionId.value) {
+  const node = mappingNodes.value.find(item => item.outline_node_id === nodeId)
+  return (node?.ppt_mappings || []).find(item => item.material_version_id === materialVersionId) || null
 }
-async function onGenerate() {
-  message.value = '正在请求 AI PPT 生成…'
-  try { await generateCoursePpt(courseId.value); message.value = 'AI PPT 已生成并进入统一解析链'; await load() } catch (error) { message.value = error?.message || 'AI PPT 暂不可用' }
+
+function resetSelectedPagesFromMapping() {
+  const edit = manualEdits.value[mappingKey()]
+  const mapping = existingMapping()
+  selectedPages.value = [...(edit?.page_refs || mapping?.page_refs || [])]
+  currentPage.value = selectedPages.value[0] || workspacePages.value[0]?.page || 1
 }
-async function onOptimize() {
-  if (optimizing.value || prepBatchRunning.value) return
-  if (isFirstPrepInProgress.value) return reportOptimizeUnavailable('首次智能备课仍在进行，PPT 映射将在课程草稿生成后开放优化。')
-  if (!state.value?.has_ppt) return reportOptimizeUnavailable('尚未上传并完成解析的 PPT，暂无可优化的映射。')
-  optimizing.value = true; message.value = ''
-  const agentMessage = {
-    role: 'agent',
-    running: true,
-    reason: '正在基于 PPT OCR 文本优化全部未锁定映射，请勿发起其他智能优化。',
-    changed: [],
+
+function prepareState(data) {
+  const materials = data.ppt_materials || []
+  for (const node of data.nodes || []) {
+    node.ppt_mappings = node.ppt_mappings || (node.ppt_mapping ? [node.ppt_mapping] : [])
   }
+  state.value = data
+  if (!materials.some(item => item.material_version_id === selectedMaterialVersionId.value)) {
+    selectedMaterialVersionId.value = materials[0]?.material_version_id || ''
+  }
+  if (!mappingNodes.value.some(node => node.outline_node_id === selectedNodeId.value)) {
+    selectedNodeId.value = mappingNodes.value[0]?.outline_node_id || ''
+  }
+}
+
+async function load({ keepEdits = true } = {}) {
+  loading.value = true
+  try {
+    prepareState(await getPptMappingState(courseId.value))
+    if (!keepEdits) manualEdits.value = {}
+    await loadWorkspace({ reset: true })
+  } catch (error) {
+    message.value = apiErrorMessage(error, '映射状态读取失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadWorkspace({ reset = false } = {}) {
+  if (!selectedMaterialVersionId.value) {
+    workspace.value = null
+    return
+  }
+  workspaceLoading.value = true
+  try {
+    const pageStart = reset ? 1 : workspace.value?.next_page_start
+    if (!pageStart) return
+    const data = await getPptMappingWorkspace(courseId.value, selectedMaterialVersionId.value, {
+      page_start: pageStart,
+      page_size: 12,
+    })
+    workspace.value = reset
+      ? data
+      : { ...data, pages: [...(workspace.value?.pages || []), ...(data.pages || [])] }
+    if (reset) resetSelectedPagesFromMapping()
+    if (!currentPage.value && workspace.value.pages?.length) currentPage.value = workspace.value.pages[0].page
+  } catch (error) {
+    message.value = apiErrorMessage(error, 'PPT 页图读取失败')
+  } finally {
+    workspaceLoading.value = false
+  }
+}
+
+function authorizedImageUrl(url) {
+  if (!url) return ''
+  const token = localStorage.getItem('token')
+  if (!token) return url
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(token)}`
+}
+
+function selectNode(nodeId) {
+  selectedNodeId.value = nodeId
+  resetSelectedPagesFromMapping()
+}
+
+function selectMaterial(versionId) {
+  if (selectedMaterialVersionId.value === versionId) return
+  selectedMaterialVersionId.value = versionId
+  currentPage.value = 1
+  loadWorkspace({ reset: true })
+}
+
+function togglePage(page) {
+  const current = new Set(selectedPages.value)
+  if (current.has(page)) current.delete(page)
+  else current.add(page)
+  selectedPages.value = [...current].sort((left, right) => left - right)
+  currentPage.value = page
+  if (selectedNode.value && selectedMaterial.value && selectedPages.value.length) {
+    const mapping = existingMapping()
+    manualEdits.value = {
+      ...manualEdits.value,
+      [mappingKey()]: {
+        outline_node_id: selectedNode.value.outline_node_id,
+        material_version_id: selectedMaterial.value.material_version_id,
+        page_refs: [...selectedPages.value],
+        confidence: mapping?.confidence ?? 1,
+        locked: true,
+      },
+    }
+  } else {
+    delete manualEdits.value[mappingKey()]
+    manualEdits.value = { ...manualEdits.value }
+  }
+}
+
+function clearSelectedPages() {
+  selectedPages.value = []
+  delete manualEdits.value[mappingKey()]
+  manualEdits.value = { ...manualEdits.value }
+}
+
+async function saveManualMappings() {
+  const mappings = Object.values(manualEdits.value)
+  if (!mappings.length || saving.value) return
+  saving.value = true
+  message.value = ''
+  try {
+    const result = await savePptMappings(courseId.value, mappings)
+    manualEdits.value = {}
+    message.value = `已保存 ${result.saved_count || mappings.length} 条教师映射；后续一键匹配不会覆盖锁定项。`
+    await load({ keepEdits: false })
+  } catch (error) {
+    message.value = apiErrorMessage(error, '映射保存失败')
+  } finally {
+    saving.value = false
+  }
+}
+
+function startAgentMessage(reason) {
+  const agentMessage = { role: 'agent', running: true, reason, changed: [] }
   if (workbench) {
     workbench.agentOpen = true
-    workbench.batchRun = { action: 'optimize_ppt_mapping', startedAt: Date.now() }
+    workbench.batchRun = { action: 'ppt_mapping_match', startedAt: Date.now() }
     workbench.agentMessages.push(agentMessage)
   }
+  return agentMessage
+}
+
+async function runMatch(mode) {
+  if (matching.value || prepBatchRunning.value) return
+  if (!state.value?.has_ppt || !mappingContractReady.value || !hasCurrentPptVersions.value) {
+    reportUnavailable('PPT 材料尚未形成可编辑版本，请等待解析完成后再匹配。')
+    return
+  }
+  if (mode === 'node' && !selectedNode.value) {
+    reportUnavailable('请先从目录选择一个知识点。')
+    return
+  }
+  if (mode === 'selected_pages' && !selectedPages.value.length) {
+    reportUnavailable('请先在 PPT 页图中选择至少一页。')
+    return
+  }
+  const labels = {
+    all_unlocked: '正在匹配全部未锁定知识点与当前 PPT 页图 OCR，请勿进行其他智能优化。',
+    node: `正在重新匹配“${selectedNode.value?.display_label || selectedNode.value?.title}”。`,
+    selected_pages: `正在为所选 ${selectedPageLabel.value} 查找最合适的知识点。`,
+  }
+  const agentMessage = startAgentMessage(labels[mode])
+  matching.value = true
+  message.value = ''
   try {
-    const result = await optimizePptMapping(courseId.value)
-    message.value = `优化完成：共更新 ${result.updated_count} 条映射`
-    await load()
+    const payload = {
+      mode,
+      ...(mode !== 'all_unlocked' ? { material_version_id: selectedMaterialVersionId.value } : {}),
+      ...(mode === 'node' ? { outline_node_id: selectedNodeId.value } : {}),
+      ...(mode === 'selected_pages' ? { page_refs: selectedPages.value } : {}),
+    }
+    const result = await matchPptMapping(courseId.value, payload)
+    const noReliableMatch = result.outcome === 'no_reliable_match'
+    message.value = noReliableMatch
+      ? '未找到可信候选页，可直接在页图中选择，或对当前知识点重新匹配。'
+      : `匹配完成：已更新 ${result.updated_count || 0} 条未锁定映射。`
     Object.assign(agentMessage, {
       running: false,
-      reason: 'PPT 映射优化已完成并直接应用。',
-      changed: [`已更新 ${result.updated_count || 0} 条映射`],
+      error: false,
+      reason: message.value,
+      changed: noReliableMatch ? [] : [`已更新 ${result.updated_count || 0} 条映射`],
     })
+    await load({ keepEdits: true })
   } catch (error) {
-    message.value = apiErrorMessage(error, 'PPT 映射优化失败')
+    message.value = apiErrorMessage(error, 'PPT 映射匹配失败')
     Object.assign(agentMessage, { running: false, error: true, reason: message.value })
   } finally {
     if (workbench) workbench.batchRun = null
-    optimizing.value = false
+    matching.value = false
   }
 }
-function reportOptimizeUnavailable(reason) {
+
+function reportUnavailable(reason) {
   message.value = reason
   if (!workbench) return
   workbench.agentOpen = true
   workbench.agentMessages.push({ role: 'agent', error: true, reason })
 }
-async function saveMapping(node) {
-  try { await updatePptMapping(courseId.value, node.outline_node_id, { page_range: node.page_range, confidence: node.confidence }) } catch (error) { message.value = error?.message || '映射保存失败' }
+
+async function onUpload(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  message.value = '正在上传并创建解析任务…'
+  try {
+    const uploaded = await uploadExistingPpt(courseId.value, file)
+    message.value = uploaded?.deduplicated
+      ? '相同 PPT 已在本课程中，已保留已有解析结果。'
+      : '上传成功，PPT 解析完成后将显示逐页图片。'
+    await load({ keepEdits: false })
+  } catch (error) {
+    message.value = apiErrorMessage(error, '上传失败')
+  }
+  event.target.value = ''
 }
 
-// 通过 stageActions 把"一键优化映射"暴露给 BuildLayout 的 stage-context 工具栏
-const canOrganize = computed(() => Boolean(state.value?.has_ppt) && !optimizing.value && !prepBatchRunning.value)
-watch([canOrganize, optimizing, prepBatchRunning], () => {
-  if (workbench) {
-    workbench.stageActions = {
-      canOrganize: canOrganize.value,
-      organizing: optimizing.value,
-      onOrganize: onOptimize,
-      organizeLabel: '一键优化映射',
-    }
+async function onGenerate() {
+  message.value = '正在请求 AI PPT 生成…'
+  try {
+    await generateCoursePpt(courseId.value)
+    message.value = 'AI PPT 已生成并进入统一解析链路。'
+    await load({ keepEdits: false })
+  } catch (error) {
+    message.value = apiErrorMessage(error, 'AI PPT 暂不可用')
+  }
+}
+
+watch([canOrganize, matching, prepBatchRunning], () => {
+  if (!workbench) return
+  workbench.stageActions = {
+    canOrganize: canOrganize.value,
+    organizing: matching.value,
+    onOrganize: () => runMatch('all_unlocked'),
+    organizeLabel: '一键初配全部',
   }
 }, { immediate: true })
 
-onMounted(load)
+watch([selectedNodeId, selectedMaterialVersionId], () => {
+  if (!loading.value && selectedNodeId.value && selectedMaterialVersionId.value) resetSelectedPagesFromMapping()
+})
+
+onMounted(() => load({ keepEdits: false }))
 onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 </script>
 
 <template>
   <section class="stage">
-    <div v-if="loading" class="empty">正在读取映射状态…</div>
-    <div v-else-if="isFirstPrepInProgress && !state?.has_ppt" class="first-prep-pending" role="status" aria-live="polite">
-      <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
-      <h3>智能体首次智慧备课中</h3>
-      <p>助教智能体正在解析课程材料，并整理课程结构与讲授脚本。完成首次备课后，PPT 映射才能基于已确认的节点生成。</p>
-      <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div v-if="loading" class="empty">正在读取 PPT 映射工作区…</div>
+
+    <div v-else-if="isFirstPrepInProgress && !state?.has_ppt" class="first-prep-pending" role="status">
+      <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" /></div>
+      <h3>助教智能体首次备课中</h3>
+      <p>课程结构和材料解析完成后，即可基于每页 PPT 图像和 OCR 文本进行映射。</p>
     </div>
+
     <div v-else-if="!state?.has_ppt" class="frozen">
       <h2>当前课程尚无可映射的 PPT 文件</h2>
-      <p>PDF、DOCX 和 DOC 的页码仍可用于原文引用，但不会自动成为教学 PPT 映射。</p>
+      <p>上传后将生成按材料版本区分的 PPT 页图；相同页码不会跨文件混用。</p>
       <input ref="inputRef" hidden type="file" accept=".ppt,.pptx" @change="onUpload" />
-      <div class="actions"><SfxButton variant="primary" size="sm" @click="inputRef?.click()">上传现有 PPT</SfxButton><SfxButton variant="tertiary" size="sm" :disabled="!state?.actions?.generate_ai" @click="onGenerate">AI 智慧生成 PPT</SfxButton></div>
-      <small>根据已经确认的课程结构和讲授脚本生成</small>
+      <div class="actions">
+        <SfxButton variant="primary" size="sm" @click="inputRef?.click()">上传现有 PPT</SfxButton>
+        <SfxButton variant="tertiary" size="sm" :disabled="!state?.actions?.generate_ai" @click="onGenerate">AI 生成 PPT</SfxButton>
+      </div>
     </div>
-    <div v-else class="ready">
-      <h2>已发现 PPT 文件</h2><p>可编辑课程节点对应的幻灯片页码。</p>
-      <div class="actions"><SfxButton variant="tertiary" size="sm" :disabled="optimizing || prepBatchRunning" @click="onOptimize"><Sparkles :size="14" /> 一键优化映射</SfxButton></div>
-      <div class="mapping-list"><label v-for="node in state.nodes" :key="node.outline_node_id"><span>{{ node.display_label || node.title }}</span><input v-model="node.page_range" placeholder="页码，例如 1-3" @blur="saveMapping(node)" /></label></div>
-    </div>
-    <p v-if="message" class="message">{{ message }}</p>
+
+    <template v-else>
+      <div class="deck-tabs" role="tablist" aria-label="PPT 文件">
+        <SfxButton
+          v-for="material in state.ppt_materials"
+          :key="material.material_version_id"
+          class="deck-tab"
+          size="sm"
+          :variant="material.material_version_id === selectedMaterialVersionId ? 'primary' : 'tertiary'"
+          :aria-selected="material.material_version_id === selectedMaterialVersionId"
+          @click="selectMaterial(material.material_version_id)"
+        >
+          <FileImage :size="14" /> {{ material.name }}<small>{{ material.page_count || '解析中' }} 页</small>
+        </SfxButton>
+      </div>
+
+      <div class="mapping-workbench">
+        <aside class="node-rail" aria-label="知识点目录">
+          <div class="rail-heading"><span>知识点目录</span><small>{{ mappingNodes.length }} 个</small></div>
+          <div class="node-list">
+            <SfxButton
+              v-for="node in mappingNodes"
+              :key="node.outline_node_id"
+              class="node-item"
+              size="sm"
+              :variant="node.outline_node_id === selectedNodeId ? 'primary' : 'tertiary'"
+              :aria-pressed="node.outline_node_id === selectedNodeId"
+              @click="selectNode(node.outline_node_id)"
+            >
+              <span>{{ node.display_label || node.title }}</span>
+              <small v-if="existingMapping(node.outline_node_id, selectedMaterialVersionId)?.page_refs?.length">
+                {{ existingMapping(node.outline_node_id, selectedMaterialVersionId).page_range }}
+              </small>
+            </SfxButton>
+          </div>
+        </aside>
+
+        <main class="ppt-canvas">
+          <div class="selection-summary">
+            <div>
+              <span>当前知识点</span>
+              <strong>{{ selectedNode?.display_label || selectedNode?.title || '请选择知识点' }}</strong>
+            </div>
+            <div>
+              <span>已选页面</span>
+              <strong>{{ selectedPageLabel }}</strong>
+            </div>
+            <div class="selection-actions">
+              <SfxButton variant="tertiary" size="sm" :disabled="!canMatchCurrentNode" @click="runMatch('node')">
+                <Wand2 :size="14" /> 匹配当前知识点
+              </SfxButton>
+              <SfxButton variant="tertiary" size="sm" :disabled="!canMatchSelectedPages" @click="runMatch('selected_pages')">
+                <Layers3 :size="14" /> 为所选页找节点
+              </SfxButton>
+              <SfxButton variant="tertiary" size="sm" :disabled="!selectedPages.length" @click="clearSelectedPages">清除选择</SfxButton>
+            </div>
+          </div>
+
+          <div v-if="workspaceLoading && !workspacePages.length" class="canvas-empty">正在加载 PPT 页图…</div>
+          <div v-else-if="!workspacePages.length" class="canvas-empty">
+            <FileImage :size="28" />
+            <span>该 PPT 尚无可显示的页图；材料解析完成后会自动出现。</span>
+          </div>
+          <template v-else>
+            <section class="page-preview">
+              <img
+                v-if="currentWorkspacePage?.image_url"
+                :src="authorizedImageUrl(currentWorkspacePage.image_url)"
+                :alt="`PPT 第 ${currentWorkspacePage.page} 页`"
+              />
+              <div v-else class="render-pending">
+                <FileImage :size="34" />
+                <strong>第 {{ currentWorkspacePage?.page }} 页图正在生成</strong>
+                <p>OCR 文本已经可用于匹配；稍后刷新即可查看页图。</p>
+              </div>
+            </section>
+
+            <section class="ocr-panel">
+              <strong>当前页 OCR 摘要</strong>
+              <p>{{ currentWorkspacePage?.ocr_preview || '该页尚无可用 OCR 文本。' }}</p>
+            </section>
+
+            <section class="thumbnails" aria-label="PPT 页面选择">
+              <SfxButton
+                v-for="page in workspacePages"
+                :key="page.page"
+                class="thumbnail"
+                size="sm"
+                :variant="selectedPages.includes(page.page) ? 'primary' : 'tertiary'"
+                :aria-pressed="selectedPages.includes(page.page)"
+                @click="togglePage(page.page)"
+              >
+                <span>第 {{ page.page }} 页</span>
+                <small>{{ page.ocr_available ? 'OCR 就绪' : '无 OCR' }}</small>
+                <Check v-if="selectedPages.includes(page.page)" :size="14" />
+              </SfxButton>
+            </section>
+            <SfxButton
+              v-if="workspace?.next_page_start"
+              variant="tertiary"
+              size="sm"
+              :disabled="workspaceLoading"
+              @click="loadWorkspace()"
+            >加载更多页面</SfxButton>
+          </template>
+        </main>
+      </div>
+
+      <footer class="save-bar">
+        <div>
+          <strong>{{ pendingEditCount ? `待保存 ${pendingEditCount} 条映射` : '尚无待保存的手工修改' }}</strong>
+          <span>保存后可在目录中继续修订；默认锁定以保护教师选择。</span>
+        </div>
+        <SfxButton variant="primary" size="sm" :disabled="!pendingEditCount || saving || matching" @click="saveManualMappings">
+          <Check :size="14" /> {{ saving ? '正在保存…' : '保存映射' }}
+        </SfxButton>
+      </footer>
+    </template>
+
+    <p v-if="message" class="message" role="status">{{ message }}</p>
   </section>
 </template>
 
 <style scoped>
-.stage{padding:0;height:100%;overflow-y:auto}
-.frozen,.ready{border:1px dashed var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-8) var(--space-6);text-align:center;background:var(--surface-cool);color:var(--text-secondary)}
-.frozen h2,.ready h2{color:var(--text-primary)}
-.actions{display:flex;justify-content:center;gap:var(--space-2);margin:var(--space-6) 0 var(--space-2)}
-.frozen small{color:var(--text-muted)}
-.empty{text-align:center;padding:var(--space-12);color:var(--text-muted)}
-.mapping-list{display:grid;gap:var(--space-2);text-align:left;margin:var(--space-6) auto;max-width:720px}
-.mapping-list label{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-2);background:var(--surface-panel);border:1px solid var(--border-default);border-radius:var(--radius-sm)}
-.mapping-list span{flex:1}
-.mapping-list input{width:150px;padding:var(--space-1);border:1px solid var(--border-strong);border-radius:var(--radius-sm)}
-.message{margin-top:var(--space-4);color:var(--ink-700)}
-.first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);padding:var(--space-12) var(--space-5);color:var(--text-secondary);text-align:center}
-.first-prep-pending h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);font-weight:var(--title-3-weight)}
-.first-prep-pending p{max-width:440px;margin:0;font-size:var(--ui-md-size);line-height:1.6}
-.first-prep-icon{width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700);display:flex;align-items:center;justify-content:center;animation:first-prep-pulse 1.6s ease-in-out infinite}
-.first-prep-progress{display:flex;gap:var(--space-2)}
-.first-prep-progress span{width:8px;height:8px;border-radius:var(--radius-full);background:var(--ink-500);opacity:.4;animation:first-prep-bounce 1.2s ease-in-out infinite}
-.first-prep-progress span:nth-child(2){animation-delay:.15s}
-.first-prep-progress span:nth-child(3){animation-delay:.3s}
-@keyframes first-prep-pulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.06);opacity:1}}
-@keyframes first-prep-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}
+.stage{height:100%;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:var(--space-4);padding:0}
+.empty,.canvas-empty{display:grid;place-items:center;min-height:220px;color:var(--text-muted);text-align:center}
+.frozen{margin:auto;border:1px dashed var(--border-strong);border-radius:var(--radius-lg);padding:var(--space-8) var(--space-6);text-align:center;background:var(--surface-cool);color:var(--text-secondary)}
+.frozen h2{margin-top:0;color:var(--text-primary)}
+.actions,.deck-tabs{display:flex;flex-wrap:wrap;gap:var(--space-2)}
+.actions{justify-content:center;margin-top:var(--space-5)}
+.deck-tabs{flex-shrink:0}.deck-tab{max-width:220px}.deck-tab small{display:block;opacity:.78}
+.mapping-workbench{display:grid;grid-template-columns:260px minmax(0,1fr);grid-template-rows:minmax(0,1fr);flex:1;min-height:0;border:1px solid var(--border-default);border-radius:var(--radius-md);overflow:hidden;background:var(--surface-canvas)}
+.node-rail{display:flex;flex-direction:column;min-height:0;border-right:1px solid var(--border-default);background:var(--surface-panel)}
+.rail-heading{display:flex;justify-content:space-between;align-items:center;padding:var(--space-3);border-bottom:1px solid var(--border-subtle);font-size:var(--ui-md-size);font-weight:var(--ui-md-weight);color:var(--text-primary)}
+.rail-heading small{color:var(--text-muted);font-size:var(--caption-size)}
+.node-list{display:grid;align-content:start;gap:var(--space-1);overflow-y:auto;min-height:0;padding:var(--space-2)}
+.node-item{justify-content:space-between;width:100%;min-height:40px;text-align:left}.node-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node-item small{margin-left:var(--space-2);white-space:nowrap;opacity:.8}
+.ppt-canvas{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3)}
+.selection-summary{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-panel)}
+.selection-summary>div:not(.selection-actions){display:grid;gap:2px;min-width:0;flex:1}.selection-summary span{font-size:var(--caption-size);color:var(--text-muted)}.selection-summary strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);color:var(--text-primary)}
+.selection-actions{display:flex;gap:var(--space-2);flex-shrink:0}
+.page-preview{display:flex;align-items:center;justify-content:center;flex:1;min-height:280px;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:#202938}.page-preview img{display:block;max-width:100%;max-height:560px;object-fit:contain;box-shadow:0 8px 24px rgba(16,26,49,.28)}
+.render-pending{display:grid;justify-items:center;gap:var(--space-2);max-width:360px;color:var(--text-inverse);text-align:center}.render-pending p{margin:0;color:#d6dde6;font-size:var(--ui-sm-size);line-height:1.5}
+.ocr-panel{padding:var(--space-3);border-left:3px solid var(--ink-500);background:var(--surface-cool);color:var(--text-secondary)}.ocr-panel strong{font-size:var(--ui-sm-size);color:var(--text-primary)}.ocr-panel p{margin:var(--space-1) 0 0;white-space:pre-wrap;font-size:var(--caption-size);line-height:1.5}
+.thumbnails{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:var(--space-2)}.thumbnail{position:relative;display:grid!important;justify-items:start;gap:2px;min-height:54px;text-align:left}.thumbnail small{opacity:.76}.thumbnail svg{position:absolute;right:var(--space-2);top:50%;transform:translateY(-50%)}
+.save-bar{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-shrink:0;padding:var(--space-3) var(--space-4);border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-panel)}.save-bar>div{display:grid;gap:2px}.save-bar strong{font-size:var(--ui-md-size);color:var(--text-primary)}.save-bar span{font-size:var(--caption-size);color:var(--text-muted)}
+.message{margin:0;padding:var(--space-3);border-radius:var(--radius-sm);background:var(--ink-100);color:var(--ink-700);font-size:var(--ui-sm-size);line-height:var(--ui-sm-line)}
+.first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);margin:auto;text-align:center;color:var(--text-secondary)}.first-prep-pending h3{margin:0;color:var(--text-primary)}.first-prep-pending p{max-width:440px;margin:0}.first-prep-icon{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700)}
+@media (max-width:1100px){.mapping-workbench{grid-template-columns:220px minmax(0,1fr)}}
 </style>
