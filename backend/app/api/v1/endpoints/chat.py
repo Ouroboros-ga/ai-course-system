@@ -4,8 +4,7 @@
 需要用户登录认证
 """
 
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Body
 from sqlmodel import Session, select
@@ -93,7 +92,9 @@ async def get_chat_history(
         )
 
 
-@router.get("/messages/{chat_id}", response_model=UnifiedResponse)
+# No source-tree consumer remains.  Kept only as a deprecated public-API
+# compatibility window; new clients must not use this route.
+@router.get("/messages/{chat_id}", response_model=UnifiedResponse, deprecated=True)
 async def get_chat_messages(
     chat_id: int,
     session: Session = Depends(get_session),
@@ -171,6 +172,10 @@ async def ask_question(
     strictMode: bool = Body(False, description="是否使用严格知识库模式（带引用标注）"),
 ):
     """
+    Compatibility boundary: the new learning workspace must fall back here
+    when TeachingAgent is unavailable. Do not remove or repurpose this route
+    until that workspace has a separately verified, always-available fallback.
+
     AI问答接口
     
     需要用户登录认证
@@ -392,7 +397,8 @@ async def _get_course_context(session: Session, course_id: int) -> str:
     return "\n\n".join(context_parts)
 
 
-@router.post("/create", response_model=UnifiedResponse)
+# No source-tree consumer remains.  /chat/ask owns session creation now.
+@router.post("/create", response_model=UnifiedResponse, deprecated=True)
 async def create_chat_record(
     userId: int = Query(..., description="用户ID"),
     content: str = Query(..., description="聊天内容"),

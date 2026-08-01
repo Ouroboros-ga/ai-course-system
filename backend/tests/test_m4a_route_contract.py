@@ -97,12 +97,17 @@ def test_route_contract_locks_video_gen_and_known_absent_old_routes(fastapi_app)
     assert "/api/v1/video-generation/course/{course_id}/generate" not in paths
 
 
-def test_route_contract_locks_frontend_chat_path_mismatch(fastapi_app):
+def test_route_contract_marks_unconsumed_legacy_chat_session_routes_deprecated(fastapi_app):
     rows = _route_rows(fastapi_app)
     paths = {row["path"] for row in rows}
 
+    assert "/api/v1/chat/create" in paths
     assert "/api/v1/chat/messages/{chat_id}" in paths
     assert "/api/v1/chat/{chat_id}" not in paths
+
+    openapi_paths = fastapi_app.openapi()["paths"]
+    assert openapi_paths["/api/v1/chat/create"]["post"]["deprecated"] is True
+    assert openapi_paths["/api/v1/chat/messages/{chat_id}"]["get"]["deprecated"] is True
 
 def test_route_contract_document_my_courses_precedes_document_id(fastapi_app):
     rows = _route_rows(fastapi_app)
