@@ -2,6 +2,7 @@
 import { computed, inject, nextTick, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
+import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
@@ -32,10 +33,12 @@ const ws = useLearningWorkspace(courseId, {
   getAnalyticsEligible: () => analyticsEligible.value,
   getCapabilities: () => capabilities.value,
 })
+const media = useMediaPlayback(courseId)
 
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
   enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
+  initialState: LEARN_STATES.UNDERSTAND,
 })
 const learnState = ref(machine.state)
 const branchContext = ref(null)
@@ -48,12 +51,14 @@ const readStoredTrack = () => {
 }
 const trackManualOverride = ref(readStoredTrack())
 const trackCollapsed = computed(() =>
-  trackManualOverride.value ?? (learnState.value !== LEARN_STATES.LEARN)
+  trackManualOverride.value ?? ![LEARN_STATES.LEARN, LEARN_STATES.UNDERSTAND].includes(learnState.value)
 )
 function handleTrackToggle() {
   const next = !trackCollapsed.value
   trackManualOverride.value = next
-  try { localStorage.setItem(TRACK_STORAGE_KEY, next ? '1' : '0') } catch {}
+  try { localStorage.setItem(TRACK_STORAGE_KEY, next ? '1' : '0') } catch {
+    // A blocked storage quota should not disable the learning rail.
+  }
 }
 
 const evidenceDocumentId = computed(
@@ -121,10 +126,13 @@ async function exitBranch() {
 function handlePlayback(payload) {
   ws.updatePlayback(payload)
 }
+function handleNodeChange(direction) {
+  ws.selectNode(ws.currentNodeIndex.value + Number(direction), { play: ws.isPlaying.value })
+}
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
-onMounted(() => {
-  ws.load()
+onMounted(async () => {
+  await Promise.all([ws.load(), media.load()])
 })
 </script>
 
@@ -161,15 +169,41 @@ onMounted(() => {
           <LectureStage
             v-if="![LEARN_STATES.CITATION, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE].includes(learnState)"
             :current-node="ws.currentNode.value"
-            :current-video-url="ws.currentVideoUrl.value"
+            :current-time="ws.currentTime.value"
             :current-slide="ws.currentSlide.value"
             :current-ppt-page="ws.currentPptPage.value"
             :current-page="ws.currentPage.value"
-            :total-pages="ws.totalPages.value"
+            :total-pages="Math.max(ws.totalPages.value, media.ppt.value?.pages?.at(-1)?.page ?? 0)"
             :is-playing="ws.isPlaying.value"
+            :playback-rate="ws.playbackRate.value"
+            :volume="ws.volume.value"
+            :is-muted="ws.isMuted.value"
+            :captions-enabled="ws.captionsEnabled.value"
+            :audio-url="media.audioUrl.value"
+            :duration="media.manifest.value.durationMs / 1000"
+            :subtitle-segments="media.subtitleSegments.value"
+            :ppt-timeline="media.pptTimeline.value"
+            :ppt-manifest="media.ppt.value"
+            :media-status="media.status.value"
+            :media-message="media.manifest.value.message || media.error.value"
+            :legacy-video-url="ws.currentVideoUrl.value"
             @playback="handlePlayback"
             @page-change="ws.setPage"
-          />
+            @node-change="handleNodeChange"
+            @rate-change="ws.playbackRate.value = $event"
+            @volume-change="ws.volume.value = $event"
+            @mute-change="ws.isMuted.value = $event"
+            @captions-change="ws.captionsEnabled.value = $event"
+          >
+            <template v-if="learnState === LEARN_STATES.UNDERSTAND" #secondary>
+              <CourseAgentPanel
+                :ws="ws"
+                :anchor="branchContext"
+                @exit="exitBranch"
+                @action="handleAgentAction"
+              />
+            </template>
+          </LectureStage>
 
           <CitationStage
             v-else-if="learnState === LEARN_STATES.CITATION"
@@ -189,14 +223,6 @@ onMounted(() => {
           />
           <NoteStage v-else-if="learnState === LEARN_STATES.NOTE" :ws="ws" :anchor="branchContext" @exit="exitBranch" />
         </main>
-
-        <CourseAgentPanel
-          v-if="learnState === LEARN_STATES.UNDERSTAND"
-          :ws="ws"
-          :anchor="branchContext"
-          @exit="exitBranch"
-          @action="handleAgentAction"
-        />
 
         <PracticePanel
           v-if="learnState === LEARN_STATES.PRACTICE"

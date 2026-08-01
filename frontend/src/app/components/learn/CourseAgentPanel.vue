@@ -187,23 +187,14 @@ function formatTime(seconds) {
 
 <style scoped>
 .sfx-agent {
-  width: var(--agent-panel-width);
-  max-width: 44vw;
-  min-width: 360px;
-  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  min-height: 0;
   background: var(--surface-panel);
-  border-left: 1px solid var(--border-strong);
-  border-radius: var(--radius-xl) 0 0 var(--radius-xl);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   overflow: hidden;
-  animation: sfx-agent-in var(--duration-normal) var(--ease-out);
-}
-
-@keyframes sfx-agent-in {
-  from { transform: translateX(24px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
 }
 
 .sfx-agent-header {
@@ -406,8 +397,4 @@ function formatTime(seconds) {
 }
 .sfx-agent-send:hover:not(:disabled) { background: var(--color-brand-hover); }
 .sfx-agent-send:disabled { background: var(--border-strong); cursor: not-allowed; }
-
-@media (max-width: 1024px) {
-  .sfx-agent { min-width: 0; max-width: none; width: 100%; border-left: none; border-top: 1px solid var(--border-strong); border-radius: var(--radius-xl) var(--radius-xl) 0 0; }
-}
 </style>

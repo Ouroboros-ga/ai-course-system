@@ -69,8 +69,11 @@ function normalizeBranchContext(raw) {
 
 export function createLearnMachine(options = {}) {
   const enabled = new Set(options.enabledStates ?? SLICE_ENABLED_STATES)
+  const initial = options.initialState && enabled.has(options.initialState)
+    ? options.initialState
+    : LEARN_STATES.LEARN
 
-  let state = LEARN_STATES.LEARN
+  let state = initial
   let branchContext = null
 
   function isEnabled(target) {
