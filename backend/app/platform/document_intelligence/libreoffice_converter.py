@@ -25,7 +25,7 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,14 @@ class LibreOfficeHeadlessConverter:
             duration_ms=elapsed,
         )
 
-    def render_pages(self, pdf_path: str, *, dpi: int = 150, output_dir: Optional[str] = None) -> list[str]:
+    def render_pages(
+        self,
+        pdf_path: str,
+        *,
+        dpi: int = 150,
+        output_dir: Optional[str] = None,
+        pages: Optional[Iterable[int]] = None,
+    ) -> list[str]:
         """Render a PDF to per-page PNG images (for OCR enrichment).
 
         Raises ``ConversionError`` if rendering fails.
@@ -119,7 +126,7 @@ class LibreOfficeHeadlessConverter:
         if output_dir is None:
             output_dir = tempfile.mkdtemp(prefix="ocr_pages_")
         try:
-            images = render_pdf_to_images(pdf_path, output_dir, dpi=dpi)
+            images = render_pdf_to_images(pdf_path, output_dir, dpi=dpi, pages=pages)
         except Exception as exc:
             raise ConversionError(
                 "CONVERSION_FAILED",

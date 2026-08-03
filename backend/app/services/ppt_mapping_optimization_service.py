@@ -216,16 +216,24 @@ class PptMappingOptimizationService:
                 material_version_id=version_id,
             )
             if not blocks:
-                if len(version_ids) != 1:
-                    raise PptMappingContentUnavailable(
-                        "PPT 材料缺少可用解析文本，无法在多文件映射中安全确定 "
-                        f"ppt-manifest/v1 的归属：{version_id}"
+                # Parse text is an optimization cache, not the visual source
+                # of truth.  When it is missing (including multi-deck courses),
+                # OCR the already-rendered teacher slide assets directly.  The
+                # material version stays attached to every ephemeral block, so
+                # page 1 from one upload can never be matched as page 1 of
+                # another upload.
+                try:
+                    blocks = await self._load_original_slide_ocr_blocks(
+                        session,
+                        course_id=course_id,
+                        material_version_id=version_id,
                     )
-                # A release-side ppt-manifest is a valid rendered source when
-                # there is exactly one deck. With multiple materials the
-                # release manifest has no material-version provenance, so it
-                # must not be applied to an arbitrary deck.
-                blocks = await self._load_manifest_ocr_blocks(session, course_id=course_id)
+                except PptMappingContentUnavailable:
+                    if len(version_ids) != 1:
+                        raise
+                    # Keep the existing single-deck manifest fallback for
+                    # releases created before original-slide assets existed.
+                    blocks = await self._load_manifest_ocr_blocks(session, course_id=course_id)
             requested_pages = {
                 int(page)
                 for page in (page_refs_by_material or {}).get(version_id, [])
@@ -344,6 +352,82 @@ class PptMappingOptimizationService:
             ).order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)
         ).all())
         return [b for b in rows if (b.text or "").strip()]
+
+    async def _load_original_slide_ocr_blocks(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        material_version_id: str,
+    ) -> list[PptTextBlock]:
+        """OCR teacher-original slide images while preserving deck identity."""
+        from app.platform.document_intelligence.ocr_port import OcrUnavailable, get_ocr_port
+        from app.services.object_storage import get_object_storage
+        from app.services.ppt_slide_render_service import PptSlideRenderError, ensure_ppt_source_slide_renders
+
+        try:
+            assets = ensure_ppt_source_slide_renders(
+                session,
+                course_id=course_id,
+                material_version_id=material_version_id,
+                force_full=True,
+            )
+        except PptSlideRenderError as error:
+            raise PptMappingContentUnavailable(
+                f"教师原始 PPT 页图暂不可用：{material_version_id} ({error.error_code})"
+            ) from error
+        except Exception as error:  # noqa: BLE001 - preserve actionable mapping failure
+            raise PptMappingContentUnavailable(
+                f"教师原始 PPT 页图暂不可用：{material_version_id} ({type(error).__name__})"
+            ) from error
+        if not assets:
+            raise PptMappingContentUnavailable(
+                f"教师原始 PPT 未生成可供 OCR 的页图：{material_version_id}"
+            )
+
+        ocr_port = self._ocr_port or get_ocr_port()
+        if not getattr(ocr_port, "is_available", False):
+            raise PptMappingContentUnavailable(
+                "已生成教师原始 PPT 页图，但 OCR tool 当前不可用；请启动 OCR 服务后重试。"
+            )
+        storage = self._storage or get_object_storage()
+        semaphore = asyncio.Semaphore(3)
+
+        async def recognize(page: int, asset: Any) -> PptTextBlock | None:
+            async with semaphore:
+                try:
+                    image_bytes = await asyncio.to_thread(storage.get, asset.object_key)
+                    result = await asyncio.to_thread(
+                        ocr_port.ocr_image,
+                        image_bytes,
+                        lang="ch",
+                        page=page,
+                    )
+                except OcrUnavailable as error:
+                    raise PptMappingContentUnavailable(
+                        f"PPT 第 {page} 页 OCR 失败（{error.error_code}）：{error.message}"
+                    ) from error
+                except Exception as error:  # noqa: BLE001 - no partial page matching
+                    raise PptMappingContentUnavailable(
+                        f"PPT 第 {page} 页 OCR 失败：{type(error).__name__}: {error}"
+                    ) from error
+            text = "\n".join(
+                block.text.strip()
+                for result_page in result.pages
+                for block in result_page.blocks
+                if (block.text or "").strip()
+            )
+            return PptTextBlock(page=page, text=text, source_kind="ppt_original_slide_ocr") if text else None
+
+        recognized = await asyncio.gather(*(
+            recognize(page, asset) for page, asset in sorted(assets.items())
+        ))
+        text_blocks = [block for block in recognized if block is not None]
+        if not text_blocks:
+            raise PptMappingContentUnavailable(
+                f"PPT 原始页图 OCR 未识别到可用于知识点匹配的文本：{material_version_id}"
+            )
+        return text_blocks
 
     async def _load_manifest_ocr_blocks(
         self,

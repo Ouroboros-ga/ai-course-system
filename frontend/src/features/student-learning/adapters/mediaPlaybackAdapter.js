@@ -23,12 +23,21 @@ function normalizeSubtitles(value) {
 function normalizePptTimeline(value) {
   if (!Array.isArray(value)) return []
   return value
-    .map((cue, index) => ({
-      index,
-      nodeId: cue?.node_id ?? cue?.nodeId ?? null,
-      page: Math.max(1, Math.round(numberOr(cue?.ppt_page ?? cue?.pptPage, 1))),
-      startMs: nonNegativeInteger(cue?.start_ms ?? cue?.startMs),
-    }))
+    .map((cue, index) => {
+      const rawPage = cue?.ppt_page ?? cue?.pptPage
+      const parsedPage = Number(rawPage)
+      return {
+        index,
+        nodeId: cue?.node_id ?? cue?.nodeId ?? null,
+        outlineNodeId: cue?.outline_node_id ?? cue?.outlineNodeId ?? null,
+        // An unmapped cue must not silently become page 1. Keep the null so
+        // the player can retain its normal fallback surface.
+        page: Number.isFinite(parsedPage) && parsedPage >= 1 ? Math.round(parsedPage) : null,
+        materialVersionId: cue?.material_version_id ?? cue?.materialVersionId ?? null,
+        startMs: nonNegativeInteger(cue?.start_ms ?? cue?.startMs),
+        endMs: nonNegativeInteger(cue?.end_ms ?? cue?.endMs),
+      }
+    })
     .sort((left, right) => left.startMs - right.startMs || left.index - right.index)
 }
 
@@ -36,7 +45,7 @@ function normalizePptManifest(value) {
   if (!value || value.schema !== 'ppt-manifest/v1' || !Array.isArray(value.pages)) {
     return null
   }
-  const pages = value.pages
+  const normalizePages = pages => pages
     .map((page, index) => ({
       index,
       page: Math.max(1, Math.round(numberOr(page?.page, index + 1))),
@@ -46,11 +55,24 @@ function normalizePptManifest(value) {
     }))
     .filter(page => page.imageUrl)
     .sort((left, right) => left.page - right.page || left.index - right.index)
+  const pages = normalizePages(value.pages)
+  const decks = Array.isArray(value.decks)
+    ? value.decks
+      .map(deck => ({
+        materialVersionId: String(deck?.material_version_id ?? deck?.materialVersionId ?? ''),
+        materialName: String(deck?.material_name ?? deck?.materialName ?? 'PPT'),
+        sourceSha256: String(deck?.source_sha256 ?? deck?.sourceSha256 ?? ''),
+        pages: normalizePages(Array.isArray(deck?.pages) ? deck.pages : []),
+      }))
+      .filter(deck => deck.materialVersionId && deck.pages.length)
+    : []
   return {
     schema: 'ppt-manifest/v1',
     manifestUrl: String(value.manifest_url ?? value.manifestUrl ?? ''),
     sourceSha256: String(value.source_sha256 ?? value.sourceSha256 ?? ''),
+    primaryMaterialVersionId: String(value.primary_material_version_id ?? value.primaryMaterialVersionId ?? ''),
     pages,
+    decks,
   }
 }
 
@@ -106,15 +128,19 @@ export function normalizeMediaPlayback(rawResponse) {
   }
 }
 
-export function resolvePptPageAtTime(timeline, timeMs) {
+export function resolvePptCueAtTime(timeline, timeMs) {
   if (!Array.isArray(timeline) || !timeline.length) return null
   const target = Math.max(0, numberOr(timeMs))
-  let page = null
-  for (const cue of timeline) {
-    if (cue.startMs > target) break
-    page = cue.page
+  let activeCue = null
+  for (const candidate of timeline) {
+    if (candidate.startMs > target) break
+    activeCue = candidate
   }
-  return page
+  return activeCue
+}
+
+export function resolvePptPageAtTime(timeline, timeMs) {
+  return resolvePptCueAtTime(timeline, timeMs)?.page ?? null
 }
 
 export function findActiveSubtitleIndex(segments, timeMs) {

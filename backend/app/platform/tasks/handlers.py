@@ -39,9 +39,66 @@ def _course_build_failure_message(error: BaseException) -> str:
         if getattr(current, "status_code", None) == 400:
             return "模型服务拒绝了智能备课请求（HTTP 400）；请检查模型名称、网关兼容性和请求限制后重新智能备课"
         current = current.__cause__ or current.__context__
+    current = error
+    visited.clear()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        if getattr(current, "reason_code", "") == "structured_output_invalid":
+            stage = getattr(current, "stage", "") or ""
+            stage_label = {
+                "segment_evidence": "材料证据整理",
+                "plan_outline": "课程结构规划",
+                "write_script": "讲授脚本生成",
+                "write_scripts_batch": "批量讲授脚本生成",
+                "verify_script": "讲授脚本核验",
+            }.get(stage, stage or "未知阶段")
+            return f"模型返回内容不符合格式，系统已重试 1 次；失败阶段：{stage_label}。原课程草稿未覆盖，请重新智能备课。"
+        current = current.__cause__ or current.__context__
     if "PREP_STRUCTURED_PORT_UNAVAILABLE" in str(error):
         return "智能备课结构化服务未就绪；请检查后端 LLM 配置后重新智能备课"
     return str(error)[:500]
+
+
+def _initial_runtime_failure(result: Any) -> BaseException | None:
+    """Turn an Initial runtime's fail-closed error state into a task error."""
+    errors = result.get("errors") if isinstance(result, dict) else None
+    if not errors:
+        if isinstance(result, dict) and result.get("status") in {"timeout", "runtime_error"}:
+            return TaskExecutionError(
+                "COURSE_BUILD_RUNTIME_FAILED",
+                "备课智能体运行失败，请稍后重试。",
+                retryable=True,
+            )
+        return None
+    detail = errors[-1]
+    if isinstance(detail, dict):
+        error_type = str(detail.get("error_type") or "")
+        if error_type == "CourseBuildCancelled":
+            from app.services.controlled_prep_workflow import CourseBuildCancelled
+            return CourseBuildCancelled(str(detail.get("message") or "课程材料已变化，旧备课任务已取消"))
+        if error_type == "CourseBuildStageTimeout":
+            from app.services.controlled_prep_workflow import CourseBuildStageTimeout
+            return CourseBuildStageTimeout(str(detail.get("message") or "备课阶段超时"))
+        code = str(detail.get("code") or "COURSE_DRAFT_BUILD_FAILED")
+        stage = str(detail.get("stage") or "")
+        reason_code = str(detail.get("reason_code") or "")
+        if reason_code == "structured_output_invalid":
+            stage_label = {
+                "segment_evidence": "材料证据整理",
+                "plan_outline": "课程结构规划",
+                "write_script": "讲授脚本生成",
+                "write_scripts_batch": "批量讲授脚本生成",
+                "verify_script": "讲授脚本核验",
+            }.get(stage, stage or "未知阶段")
+            message = f"模型返回内容不符合格式，系统已重试 1 次；失败阶段：{stage_label}。原课程草稿未覆盖，请重新智能备课。"
+        else:
+            message = str(detail.get("message") or "备课智能体未能完成本次整理")[:500]
+        return TaskExecutionError(code, message, retryable=True)
+    return TaskExecutionError(
+        "COURSE_DRAFT_BUILD_FAILED",
+        str(detail)[:500],
+        retryable=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -481,9 +538,9 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
             )).first()
             if corpus is None:
                 raise ValueError("课程语料快照不存在")
-            retrieval = course_corpus_service.ensure_retrieval_snapshot(session, corpus=corpus)
             if build.generation_mode == "proposal":
                 # Later agent executions never overwrite a teacher's draft.
+                retrieval = course_corpus_service.ensure_retrieval_snapshot(session, corpus=corpus)
                 proposal = course_corpus_service.create_update_proposal(
                     session,
                     corpus=corpus,
@@ -495,18 +552,89 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 # The first teacher-visible draft must be organized by the
                 # controlled preparation agent; never expose the legacy raw
                 # block-to-node fallback as a completed course structure.
-                result = await asyncio.wait_for(
-                    initial_course_prep_service.build(
-                        session,
-                        course_id=course_id,
-                        created_by=build.owner_user_id,
-                        corpus_snapshot_id=corpus_snapshot_id,
-                        build_task_id=build.build_task_id,
-                        replace_unreviewed_initial=(build.trigger == "teacher_restart_unreviewed_initial"),
-                        on_stage=on_stage,
-                    ),
-                    timeout=max(1, int(settings.COURSE_BUILD_TOTAL_TIMEOUT_SECONDS)),
-                )
+                # Release this read-only transaction before the runtime opens
+                # its own provider session. Otherwise SQLite can hold a lock
+                # across the LLM wait and make the course build look flaky.
+                session.commit()
+                result = None
+                platform = ctx.agent_platform
+                if platform is not None:
+                    from app.platform.agents.prep.enums import PrepGraphKind
+                    from app.platform.agents.runtime.base import AgentRunContext
+                    from app.platform.agents.runtime.profile import AgentType
+                    from app.platform.agents.runtime.registry import AgentDefinitionKey
+
+                    try:
+                        runtime = await platform.runtime_registry.get_or_create(
+                            AgentDefinitionKey(
+                                agent_type=AgentType.PREP.value,
+                                agent_version=PrepGraphKind.INITIAL.value,
+                            )
+                        )
+                        runtime_result = await asyncio.wait_for(
+                            runtime.run(
+                                context=AgentRunContext(
+                                    agent_type=AgentType.PREP.value,
+                                    scope=(str(course_id),),
+                                    course_id=str(course_id),
+                                    teacher_id=str(build.owner_user_id or ""),
+                                    extras={
+                                        "corpus_snapshot_id": corpus_snapshot_id,
+                                        "build_task_id": build.build_task_id,
+                                        "replace_unreviewed_initial": build.trigger == "teacher_restart_unreviewed_initial",
+                                        "stage_callback": on_stage,
+                                    },
+                                    run_id=f"prep_initial_{build.build_task_id}",
+                                )
+                            ),
+                            timeout=max(1, int(settings.COURSE_BUILD_TOTAL_TIMEOUT_SECONDS)),
+                        )
+                        failure = _initial_runtime_failure(runtime_result)
+                        if failure is not None:
+                            raise failure
+                        result_payload = runtime_result.get("result") or {}
+                        from app.services.document_draft_builders import DraftAssetResult
+                        result = DraftAssetResult(
+                            course_id=course_id,
+                            run_id=f"prep_initial_{build.build_task_id}",
+                            material_version_id=None,
+                            corpus_snapshot_id=corpus_snapshot_id,
+                            outline_version_id=result_payload.get("outline_version_id") or None,
+                            script_version_id=result_payload.get("script_version_id") or None,
+                            graph_candidate_batch_id=result_payload.get("graph_candidate_batch_id") or None,
+                            warnings=list(result_payload.get("warnings") or []),
+                            rag_indexed_chunks=int(result_payload.get("rag_indexed_chunks") or 0),
+                            graph_node_candidates=int(result_payload.get("graph_node_candidates") or 0),
+                            graph_relation_candidates=int(result_payload.get("graph_relation_candidates") or 0),
+                            outline_node_count=int(result_payload.get("outline_node_count") or 0),
+                            script_node_count=int(result_payload.get("script_node_count") or 0),
+                            markdown_resource_id=result_payload.get("markdown_resource_id") or None,
+                            markdown_resource_version_id=result_payload.get("markdown_resource_version_id") or None,
+                        )
+                    except Exception as runtime_error:
+                        # Keep the old direct call as a controlled compatibility
+                        # fallback only when the registered Initial runtime is
+                        # unavailable, not when the runtime reports a build
+                        # failure (which must remain visible to the teacher).
+                        from app.platform.agents.runtime.errors import AgentNotAvailableError
+                        if isinstance(runtime_error, AgentNotAvailableError):
+                            logger.warning("Initial Prep runtime unavailable; using service compatibility path: %s", runtime_error)
+                        else:
+                            raise
+                if result is None:
+                    result = await asyncio.wait_for(
+                        initial_course_prep_service.build(
+                            session,
+                            course_id=course_id,
+                            created_by=build.owner_user_id,
+                            corpus_snapshot_id=corpus_snapshot_id,
+                            build_task_id=build.build_task_id,
+                            replace_unreviewed_initial=(build.trigger == "teacher_restart_unreviewed_initial"),
+                            on_stage=on_stage,
+                        ),
+                        timeout=max(1, int(settings.COURSE_BUILD_TOTAL_TIMEOUT_SECONDS)),
+                    )
+                retrieval = course_corpus_service.ensure_retrieval_snapshot(session, corpus=corpus)
                 build.result_outline_version_id = result.outline_version_id
                 build.result_script_version_id = result.script_version_id
                 result_data = result.to_progress_data()

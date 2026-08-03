@@ -34,10 +34,11 @@ function select(item) { selectedId.value = item.script_node_id }
 async function load() {
   state.value = 'loading'; error.value = ''
   try {
-    const [data, outlineData] = await Promise.all([
-      getTeachingScripts(courseId.value),
-      getOutline(courseId.value),
-    ])
+    // Load the outline first.  For legacy courses that only have a published
+    // version, this request seeds the teacher's next editable draft; scripts
+    // must then read that same draft instead of racing a second copy request.
+    const outlineData = await getOutline(courseId.value)
+    const data = await getTeachingScripts(courseId.value)
     const outlineById = new Map((outlineData?.nodes ?? []).map((node) => [node.outline_node_id, node]))
     // The course structure is authoritative for numbering and titles.  The
     // scripts endpoint remains the source of editable content, but its

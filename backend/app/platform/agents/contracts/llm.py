@@ -49,6 +49,11 @@ class LLMOptions:
     timeout_seconds: float | None = None
     response_format: Mapping[str, Any] | None = None
     prompt_version: str = ""
+    # Provider-specific, non-sensitive request knobs.  These are kept out of
+    # the generic Port contract except as an opaque mapping so a caller can
+    # disable a reasoning mode for a short structured task without creating a
+    # second LLM client or leaking prompt/content into diagnostics.
+    provider_options: Mapping[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -66,6 +71,7 @@ class LLMTraceContext:
     agent_type: str = ""
     node: str = ""
     purpose: str = ""
+    course_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -86,14 +92,51 @@ class LLMResponse:
     latency_ms: float = 0.0
     usage: Mapping[str, Any] = field(default_factory=dict)
     repaired: bool = False
+    finish_reason: str = ""
+    response_format_fallback: bool = False
+    input_chars: int = 0
+    output_chars: int = 0
+    truncated: bool = False
 
 
 class StructuredOutputError(Exception):
     """The LLM response could not satisfy the output schema after one retry.
 
-    This is a hard-gate error (``ErrorCode.INVALID_MODEL_OUTPUT``). The
-    caller should surface it as a user-facing error, not retry silently.
+    The optional metadata is deliberately structured and redacted. It lets
+    the Prep workflow report the failed stage and validation fields without
+    exposing the full prompt or model output to the teacher.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason_code: str = "",
+        stage: str = "",
+        validation_errors: list[Mapping[str, Any]] | None = None,
+        attempts: int = 0,
+        schema_name: str = "",
+        finish_reason: str = "",
+        usage: Mapping[str, Any] | None = None,
+        model: str = "",
+        input_chars: int = 0,
+        output_chars: int = 0,
+        truncated: bool = False,
+        response_format_fallback: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
+        self.stage = stage
+        self.validation_errors = list(validation_errors or [])
+        self.attempts = attempts
+        self.schema_name = schema_name
+        self.finish_reason = finish_reason
+        self.usage = dict(usage or {})
+        self.model = model
+        self.input_chars = input_chars
+        self.output_chars = output_chars
+        self.truncated = truncated
+        self.response_format_fallback = response_format_fallback
 
 
 @runtime_checkable

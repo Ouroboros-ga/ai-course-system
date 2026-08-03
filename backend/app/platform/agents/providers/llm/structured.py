@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+import hashlib
 from typing import Any, Mapping
 
 from pydantic import BaseModel, ValidationError
@@ -52,6 +53,7 @@ from ...contracts.llm import (
     LLMTraceContext,
     StructuredOutputError,
 )
+from ...runtime.diagnostic_context import current_diagnostic_context
 
 logger = logging.getLogger(__name__)
 
@@ -81,10 +83,11 @@ class SharedLLMStructuredProvider:
     paying for the same rejected request at every preparation stage.
     """
 
-    def __init__(self, *, client: Any | None = None) -> None:
+    def __init__(self, *, client: Any | None = None, diagnostic_sink: Any | None = None) -> None:
         # Allow injecting a mock client for tests; default to the shared client.
         self._client = client or llm_client
         self._response_format_supported: bool | None = None
+        self._diagnostic_sink = diagnostic_sink
 
     async def complete(
         self,
@@ -111,6 +114,11 @@ class SharedLLMStructuredProvider:
         kwargs: dict[str, Any] = {"temperature": options.temperature}
         if options.max_tokens is not None:
             kwargs["max_tokens"] = options.max_tokens
+        if options.provider_options:
+            # These are bounded provider request knobs (for example disabling
+            # hidden reasoning on a tiny JSON compiler call). Keep them out of
+            # diagnostics and do not merge them into the prompt.
+            kwargs.update(dict(options.provider_options))
         use_response_format = (
             options.response_format is not None
             and self._response_format_supported is not False
@@ -119,6 +127,7 @@ class SharedLLMStructuredProvider:
             kwargs["response_format"] = dict(options.response_format)
 
         request_messages = shared_messages
+        response_format_fallback = False
         try:
             # First attempt via the shared client.
             first_response = await self._call_shared(
@@ -130,6 +139,7 @@ class SharedLLMStructuredProvider:
             if not use_response_format or not _response_format_unsupported(error):
                 raise
             self._response_format_supported = False
+            response_format_fallback = True
             request_messages = [
                 *shared_messages,
                 Message(
@@ -151,13 +161,47 @@ class SharedLLMStructuredProvider:
 
         # If no schema, return raw text.
         if output_schema is None:
-            return _to_structured_response(first_response, started, repaired=False)
+            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            return _to_structured_response(first_response, started, repaired=False, response_format_fallback=response_format_fallback)
+
+        if _is_truncated(first_response.finish_reason):
+            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            raise StructuredOutputError(
+                "LLM structured output was truncated before validation",
+                reason_code="MODEL_OUTPUT_TRUNCATED",
+                stage=trace_context.node,
+                attempts=1,
+                schema_name=output_schema.__name__,
+                finish_reason=first_response.finish_reason,
+                usage=first_response.usage,
+                model=first_response.model,
+                output_chars=len(first_response.content or ""),
+                truncated=True,
+                response_format_fallback=response_format_fallback,
+            )
 
         # Validate against schema; repair once if needed.
         try:
             parsed = output_schema.model_validate_json(first_response.content)
-            return _to_structured_response(first_response, started, repaired=False, parsed=parsed)
+            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            return _to_structured_response(first_response, started, repaired=False, parsed=parsed, response_format_fallback=response_format_fallback)
         except ValidationError as first_error:
+            await self._record_diagnostic(
+                response=first_response,
+                trace_context=trace_context,
+                options=options,
+                output_schema=output_schema,
+                attempt=1,
+                repaired=False,
+                response_format_fallback=response_format_fallback,
+                validation_errors=_validation_errors(first_error),
+                input_chars=sum(len(item.content) for item in request_messages),
+            )
+            repair_instruction = _repair_instruction(
+                output_schema=output_schema,
+                validation_error=first_error,
+                trace_context=trace_context,
+            )
             logger.warning(
                 "StructuredLLM[%s]: first response failed schema validation (%s); "
                 "attempting one repair retry.",
@@ -166,7 +210,10 @@ class SharedLLMStructuredProvider:
             )
 
         # Repair retry: send the original messages + repair instruction.
-        repair_messages = [*request_messages, Message(role="system", content=_REPAIR_SYSTEM)]
+        repair_messages = [
+            *request_messages,
+            Message(role="system", content=repair_instruction),
+        ]
         # Preserve the successful request's capability set.  In particular,
         # do not re-add json_object after the compatibility fallback.
         repair_kwargs = dict(kwargs)
@@ -176,10 +223,35 @@ class SharedLLMStructuredProvider:
             kwargs=repair_kwargs,
             trace_context=trace_context,
         )
-
+        if _is_truncated(repair_response.finish_reason):
+            await self._record_diagnostic(response=repair_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
+            raise StructuredOutputError(
+                "LLM structured output repair was truncated before validation",
+                reason_code="MODEL_OUTPUT_TRUNCATED",
+                stage=trace_context.node,
+                attempts=2,
+                schema_name=output_schema.__name__,
+                finish_reason=repair_response.finish_reason,
+                usage=_merge_usage(first_response.usage, repair_response.usage),
+                model=repair_response.model or first_response.model,
+                output_chars=len(repair_response.content or ""),
+                truncated=True,
+                response_format_fallback=response_format_fallback,
+            )
         try:
             parsed = output_schema.model_validate_json(repair_response.content)
         except ValidationError as second_error:
+            await self._record_diagnostic(
+                response=repair_response,
+                trace_context=trace_context,
+                options=options,
+                output_schema=output_schema,
+                attempt=2,
+                repaired=True,
+                response_format_fallback=response_format_fallback,
+                validation_errors=_validation_errors(second_error),
+                input_chars=sum(len(item.content) for item in repair_messages),
+            )
             logger.warning(
                 "StructuredLLM[%s]: repair retry also failed schema validation: %s",
                 trace_context.purpose or "unknown",
@@ -188,11 +260,67 @@ class SharedLLMStructuredProvider:
             raise StructuredOutputError(
                 f"LLM response did not match schema after one repair retry: "
                 f"{second_error.__class__.__name__}",
+                reason_code="structured_output_invalid",
+                stage=trace_context.node,
+                validation_errors=_validation_errors(second_error),
+                attempts=2,
+                schema_name=output_schema.__name__,
+                finish_reason=repair_response.finish_reason or first_response.finish_reason,
+                usage=_merge_usage(first_response.usage, repair_response.usage),
+                model=repair_response.model or first_response.model,
+                input_chars=sum(len(item.content) for item in repair_messages),
+                output_chars=len(repair_response.content or ""),
+                truncated=_is_truncated(repair_response.finish_reason),
+                response_format_fallback=response_format_fallback,
             ) from second_error
 
+        await self._record_diagnostic(response=repair_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
         # Merge usage from both calls.
         merged_response = _merge_responses(first_response, repair_response)
-        return _to_structured_response(merged_response, started, repaired=True, parsed=parsed)
+        return _to_structured_response(merged_response, started, repaired=True, parsed=parsed, response_format_fallback=response_format_fallback)
+
+    async def _record_diagnostic(self, *, response: SharedLLMResponse,
+                                 trace_context: LLMTraceContext, options: LLMOptions,
+                                 output_schema: type[BaseModel] | None = None,
+                                 attempt: int, repaired: bool,
+                                 response_format_fallback: bool,
+                                 validation_errors: list[Mapping[str, Any]] | None = None,
+                                 input_chars: int = 0) -> None:
+        if self._diagnostic_sink is None or not hasattr(self._diagnostic_sink, "record"):
+            return
+        context = current_diagnostic_context.get()
+        usage = dict(response.usage or {})
+        # Keep the provider response usage plus the bounded request budget so
+        # a diagnostic can prove which code path handled a request. No prompt,
+        # response text, or provider option values are persisted.
+        usage.setdefault("requested_max_tokens", options.max_tokens)
+        usage.setdefault("provider_option_keys", sorted(options.provider_options.keys()))
+        await self._diagnostic_sink.record(
+            run_id=trace_context.run_id or context.run_id,
+            trace_id=trace_context.trace_id or context.trace_id,
+            course_id=trace_context.course_id or context.course_id or None,
+            agent_type=trace_context.agent_type or "prep",
+            stage=trace_context.node,
+            node=trace_context.node,
+            purpose=trace_context.purpose,
+            prompt_version=options.prompt_version,
+            schema_name=getattr(output_schema, "__name__", ""),
+            model=response.model,
+            attempt=attempt,
+            repaired=repaired,
+            finish_reason=response.finish_reason or "",
+            input_tokens=usage.get("prompt_tokens") or usage.get("input_tokens"),
+            output_tokens=usage.get("completion_tokens") or usage.get("output_tokens"),
+            input_chars=input_chars,
+            output_chars=len(response.content or ""),
+            response_hash=hashlib.sha256((response.content or "").encode("utf-8")).hexdigest(),
+            truncated=_is_truncated(response.finish_reason),
+            response_format_requested=bool(options.response_format),
+            response_format_fallback=response_format_fallback,
+            validation_errors=list(validation_errors or []),
+            usage_metadata=usage,
+            latency_ms=float(getattr(response, "latency_ms", 0.0) or 0.0),
+        )
 
     async def _call_shared(
         self,
@@ -218,6 +346,7 @@ def _to_structured_response(
     *,
     repaired: bool,
     parsed: BaseModel | None = None,
+    response_format_fallback: bool = False,
 ) -> LLMResponse:
     """Convert the shared client's LLMResponse to the contracts LLMResponse."""
     return LLMResponse(
@@ -227,6 +356,11 @@ def _to_structured_response(
         latency_ms=(time.monotonic() - started) * 1000,
         usage=dict(shared.usage) if shared.usage else {},
         repaired=repaired,
+        finish_reason=shared.finish_reason,
+        response_format_fallback=response_format_fallback,
+        input_chars=0,
+        output_chars=len(shared.content or ""),
+        truncated=_is_truncated(shared.finish_reason),
     )
 
 
@@ -304,6 +438,52 @@ def _response_format_fallback_instruction(output_schema: type[BaseModel] | None)
         return _RESPONSE_FORMAT_FALLBACK_SYSTEM
     schema = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
     return f"{_RESPONSE_FORMAT_FALLBACK_SYSTEM}\nJSON Schema:\n{schema}"
+
+
+def _validation_errors(error: ValidationError) -> list[dict[str, Any]]:
+    """Return a compact, input-redacted form of Pydantic errors."""
+    items: list[dict[str, Any]] = []
+    for item in error.errors(include_input=False):
+        items.append({
+            "loc": [str(part) for part in item.get("loc", ())],
+            "type": str(item.get("type", "validation_error")),
+            "msg": str(item.get("msg", "invalid value"))[:240],
+        })
+    return items[:20]
+
+
+def _is_truncated(finish_reason: str | None) -> bool:
+    return str(finish_reason or "").lower() in {"length", "max_tokens", "token_limit"}
+
+
+def _merge_usage(first: Mapping[str, Any] | None, second: Mapping[str, Any] | None) -> dict[str, Any]:
+    merged = dict(first or {})
+    for key, value in (second or {}).items():
+        if isinstance(value, (int, float)) and isinstance(merged.get(key), (int, float)):
+            merged[key] += value
+        else:
+            merged[key] = value
+    return merged
+
+
+def _repair_instruction(
+    *,
+    output_schema: type[BaseModel],
+    validation_error: ValidationError,
+    trace_context: LLMTraceContext,
+) -> str:
+    """Give the repair call the exact contract and field-level failures."""
+    schema = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
+    errors = json.dumps(_validation_errors(validation_error), ensure_ascii=False)
+    stage = trace_context.node or trace_context.purpose or "structured output"
+    return (
+        f"{_REPAIR_SYSTEM}\n"
+        f"Failed stage: {stage}\n"
+        f"JSON Schema:\n{schema}\n"
+        f"Validation errors from the previous response:\n{errors}\n"
+        "Rebuild the complete object. Do not omit required fields and do not "
+        "return a partial object."
+    )
 
 
 __all__ = ["SharedLLMStructuredProvider"]

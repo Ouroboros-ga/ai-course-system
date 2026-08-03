@@ -476,6 +476,11 @@ class EvidenceCitation(SQLModel, table=True):
 
 class RenderAssetType(str, Enum):
     PAGE_IMAGE = "page_image"
+    # A visual rendition of the teacher-uploaded PPT/PPTX source.  This is
+    # deliberately distinct from a generic OCR/evidence page image: course
+    # mapping and learner playback must never substitute a text reconstruction
+    # for the teacher's actual slide.
+    PPT_SLIDE_IMAGE = "ppt_slide_image"
     REGION_IMAGE = "region_image"
     THUMBNAIL = "thumbnail"
 

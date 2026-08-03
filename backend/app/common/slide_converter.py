@@ -4,7 +4,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Optional
+from typing import Iterable, Optional
 
 import fitz
 
@@ -117,6 +117,7 @@ def render_pdf_to_images(
     output_dir: str,
     dpi: int = 150,
     image_format: str = "png",
+    pages: Optional[Iterable[int]] = None,
 ) -> list[str]:
     pdf_file = Path(pdf_path)
     if not pdf_file.exists():
@@ -133,11 +134,21 @@ def render_pdf_to_images(
         zoom = dpi / 72.0
         mat = fitz.Matrix(zoom, zoom)
 
+        selected_pages = None
+        if pages is not None:
+            selected_pages = {
+                int(page)
+                for page in pages
+                if isinstance(page, int) or (isinstance(page, str) and page.isdigit())
+            }
         for page_num in range(len(doc)):
+            page_number = page_num + 1
+            if selected_pages is not None and page_number not in selected_pages:
+                continue
             page = doc.load_page(page_num)
             pix = page.get_pixmap(matrix=mat)
 
-            img_filename = f"slide_{page_num + 1}.{image_format}"
+            img_filename = f"slide_{page_number}.{image_format}"
             img_path = output_path / img_filename
             pix.save(str(img_path))
             image_paths.append(str(img_path))

@@ -42,6 +42,9 @@ class TaskHandlerContext:
     input_payload: dict[str, Any]
     session_factory: SessionFactory
     service: TaskService
+    # Optional platform reference lets durable handlers invoke a registered
+    # runtime without importing the FastAPI app or creating a second graph.
+    agent_platform: Any | None = None
 
 
 TaskHandler = Callable[[TaskHandlerContext], Awaitable[None]]
@@ -84,9 +87,14 @@ class LocalTaskWorker:
     failed + DEPENDENCY_UNAVAILABLE，避免任务无限 pending。
     """
 
-    def __init__(self, service: TaskService = task_service) -> None:
+    def __init__(self, service: TaskService = task_service, agent_platform: Any | None = None) -> None:
         self._service = service
         self._handlers: dict[str, TaskHandler] = {}
+        self._agent_platform = agent_platform
+
+    def set_agent_platform(self, platform: Any | None) -> None:
+        """Inject the process-level AgentPlatform after application bootstrap."""
+        self._agent_platform = platform
 
     def register(self, task_type: str, handler: TaskHandler) -> None:
         if not task_type:
@@ -157,6 +165,7 @@ class LocalTaskWorker:
                 input_payload=input_payload,
                 session_factory=session_factory,
                 service=self._service,
+                agent_platform=self._agent_platform,
             )
             try:
                 await handler(ctx)

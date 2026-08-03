@@ -34,6 +34,9 @@ export const unlockBuildStep = (courseId, stepName) => request.post(`${base(cour
 export const runBuildValidation = (courseId) => request.post(`${base(courseId)}/validate`)
 export const getBuildValidation = (courseId, gateRunId) => request.get(`${base(courseId)}/validate/${encodeURIComponent(gateRunId)}`)
 export const confirmBuildWarnings = (courseId, gateRunId, reason) => request.post(`${base(courseId)}/validate/${encodeURIComponent(gateRunId)}/confirm-warnings`, { reason })
+// Compatibility alias: the endpoint now confirms all teacher-reviewable
+// findings (ERROR and WARNING), not warnings only.
+export const confirmBuildReview = confirmBuildWarnings
 export const listBuildReleases = (courseId) => request.get(`${base(courseId)}/releases`)
 export const createBuildRelease = (courseId, payload) => request.post(`${base(courseId)}/releases`, payload)
 export const publishBuildRelease = (courseId, releaseId, payload = {}) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/publish`, payload)

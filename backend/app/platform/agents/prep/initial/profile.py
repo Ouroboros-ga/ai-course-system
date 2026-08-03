@@ -44,6 +44,10 @@ def build_initial_profile() -> AgentProfile:
                 "course_id": ctx.course_id or "",
                 "corpus_snapshot_id": ctx.extras.get("corpus_snapshot_id") or "",
                 "build_task_id": build_task_id,
+                "replace_unreviewed_initial": bool(
+                    ctx.extras.get("replace_unreviewed_initial", False)
+                ),
+                "stage_callback": ctx.extras.get("stage_callback"),
             },
         }
 

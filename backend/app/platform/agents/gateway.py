@@ -40,6 +40,7 @@ from .runtime.events import (
     NullAgentRunEventPort,
     RunStatus,
 )
+from .runtime.diagnostic_context import DiagnosticContext, current_diagnostic_context
 from .runtime.profile import AgentType, ExecutionMode
 from .runtime.registry import AgentDefinitionKey, AgentRuntimeRegistry
 
@@ -170,6 +171,18 @@ class AgentGateway:
             )
 
         # Inline execution.
+        if self._run_store is not None:
+            try:
+                await self._run_store.create_run(
+                    run_id=run_id, trace_id=trace_id, agent_type=agent_type_str,
+                    actor_id=context.teacher_id or context.student_id or "system",
+                    actor_type="teacher" if context.teacher_id else "student" if context.student_id else "system",
+                    course_id=context.course_id,
+                    config_version=context.config_version,
+                    idempotency_key=context.idempotency_key,
+                )
+            except Exception:
+                logger.debug("AgentGateway: unable to create run record", exc_info=True)
         return await self._execute_inline(
             runtime=runtime,
             context=context,
@@ -190,6 +203,9 @@ class AgentGateway:
         initial_state: Mapping[str, Any] | None,
     ) -> AgentStartResult:
         """Execute the runtime inline and return the completed result."""
+        token = current_diagnostic_context.set(DiagnosticContext(
+            run_id=run_id, trace_id=trace_id, course_id=context.course_id or "",
+        ))
         try:
             result = await runtime.run(context=context, initial_state=initial_state)
         except Exception as error:  # noqa: BLE001 - gateway is fail-closed
@@ -197,6 +213,9 @@ class AgentGateway:
                 "AgentGateway: inline execution failed for %s: %s: %s",
                 agent_type_str, type(error).__name__, error,
             )
+            if self._run_store is not None:
+                await self._safe_update_run(run_id, RunStatus.FAILED, errors=[{"code": ErrorCode.RUNTIME_INTERNAL_ERROR.value}], result={"stage": "runtime"})
+            current_diagnostic_context.reset(token)
             return AgentStartResult(
                 run_id=run_id,
                 agent_type=agent_type_str,
@@ -217,6 +236,13 @@ class AgentGateway:
             else None
         )
 
+        await self._safe_update_run(
+            run_id,
+            RunStatus.COMPLETED if not errors else RunStatus.FAILED,
+            errors=[item for item in errors if isinstance(item, Mapping)],
+            result={"stage": "execute_incremental_plan", "status": status},
+        )
+        current_diagnostic_context.reset(token)
         return AgentStartResult(
             run_id=run_id,
             agent_type=agent_type_str,
@@ -230,6 +256,15 @@ class AgentGateway:
                 else ""
             ),
         )
+
+
+    async def _safe_update_run(self, run_id: str, status: RunStatus, *, errors: list[Mapping[str, Any]], result: Mapping[str, Any]) -> None:
+        if self._run_store is None:
+            return
+        try:
+            await self._run_store.update_status(run_id=run_id, status=status, errors=errors, result=result)
+        except Exception:
+            logger.debug("AgentGateway: unable to update run record", exc_info=True)
 
     async def get_run_status(self, *, run_id: str) -> Mapping[str, Any] | None:
         """Poll the status of a run (for queued execution).

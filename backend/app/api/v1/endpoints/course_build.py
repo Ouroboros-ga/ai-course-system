@@ -624,7 +624,9 @@ async def run_validation(
             "blocker_count": run.blocker_count,
             "error_count": run.error_count,
             "warning_count": run.warning_count,
-            "requires_warning_confirmation": bool(run.warning_count and run.warning_override_at is None),
+            "requires_warning_confirmation": bool((run.warning_count or run.error_count) and not (run.teacher_confirmation_at or run.warning_override_at)),
+            "requires_teacher_confirmation": bool((run.warning_count or run.error_count) and not (run.teacher_confirmation_at or run.warning_override_at)),
+            "has_blockers": bool(run.blocker_count),
             "checks": run.checks,
             "created_at": run.created_at.isoformat() if run.created_at else None,
         },
@@ -652,10 +654,15 @@ async def get_validation_run(
             "blocker_count": run.blocker_count,
             "error_count": run.error_count,
             "warning_count": run.warning_count,
-            "requires_warning_confirmation": bool(run.warning_count and run.warning_override_at is None),
+            "requires_warning_confirmation": bool((run.warning_count or run.error_count) and not (run.teacher_confirmation_at or run.warning_override_at)),
+            "requires_teacher_confirmation": bool((run.warning_count or run.error_count) and not (run.teacher_confirmation_at or run.warning_override_at)),
+            "has_blockers": bool(run.blocker_count),
             "warning_override_confirmed_by": run.warning_override_confirmed_by,
             "warning_override_reason": run.warning_override_reason,
             "warning_override_at": run.warning_override_at.isoformat() if run.warning_override_at else None,
+            "teacher_confirmation_confirmed_by": run.teacher_confirmation_confirmed_by or run.warning_override_confirmed_by,
+            "teacher_confirmation_reason": run.teacher_confirmation_reason or run.warning_override_reason,
+            "teacher_confirmation_at": (run.teacher_confirmation_at or run.warning_override_at).isoformat() if (run.teacher_confirmation_at or run.warning_override_at) else None,
             "checks": run.checks,
             "target_release_id": run.target_release_id,
             "created_at": run.created_at.isoformat() if run.created_at else None,
@@ -676,7 +683,7 @@ async def confirm_validation_warnings(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Record the teacher's explicit acknowledgement of publish warnings."""
+    """Record the teacher's explicit acknowledgement of publish findings."""
     context = require_course_permission(session, current_user, course_id, "course.publish")
     run = quality_gate_service.confirm_warning_override(
         session,
@@ -693,6 +700,10 @@ async def confirm_validation_warnings(
         "warning_override_confirmed_by": run.warning_override_confirmed_by,
         "warning_override_reason": run.warning_override_reason,
         "warning_override_at": run.warning_override_at.isoformat() if run.warning_override_at else None,
+        "requires_teacher_confirmation": False,
+        "teacher_confirmation_confirmed_by": run.teacher_confirmation_confirmed_by or run.warning_override_confirmed_by,
+        "teacher_confirmation_reason": run.teacher_confirmation_reason or run.warning_override_reason,
+        "teacher_confirmation_at": (run.teacher_confirmation_at or run.warning_override_at).isoformat() if (run.teacher_confirmation_at or run.warning_override_at) else None,
     })
 
 

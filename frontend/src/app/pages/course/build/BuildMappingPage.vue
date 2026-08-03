@@ -115,6 +115,9 @@ async function loadWorkspace({ reset = false } = {}) {
     workspace.value = reset
       ? data
       : { ...data, pages: [...(workspace.value?.pages || []), ...(data.pages || [])] }
+    if (data.render_warning) {
+      message.value = '教师原始 PPT 页图暂时不可用；可稍后重试，OCR 摘要仍可用于辅助匹配。'
+    }
     if (reset) resetSelectedPagesFromMapping()
     if (!currentPage.value && workspace.value.pages?.length) currentPage.value = workspace.value.pages[0].page
   } catch (error) {
@@ -394,8 +397,11 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
               <div v-else class="render-pending">
                 <FileImage :size="34" />
                 <strong>第 {{ currentWorkspacePage?.page }} 页图正在生成</strong>
-                <p>OCR 文本已经可用于匹配；稍后刷新即可查看页图。</p>
+                <p>正在生成教师上传原课件的真实幻灯片；OCR 只保留为下方摘要。</p>
               </div>
+              <span v-if="currentWorkspacePage?.image_source === 'teacher_original_ppt'" class="source-badge">
+                教师原始 PPT 幻灯片
+              </span>
             </section>
 
             <section class="ocr-panel">
@@ -432,15 +438,13 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
       <footer class="save-bar">
         <div>
           <strong>{{ pendingEditCount ? `待保存 ${pendingEditCount} 条映射` : '尚无待保存的手工修改' }}</strong>
-          <span>保存后可在目录中继续修订；默认锁定以保护教师选择。</span>
+          <p v-if="message" class="message" role="status">{{ message }}</p>
         </div>
         <SfxButton variant="primary" size="sm" :disabled="!pendingEditCount || saving || matching" @click="saveManualMappings">
           <Check :size="14" /> {{ saving ? '正在保存…' : '保存映射' }}
         </SfxButton>
       </footer>
     </template>
-
-    <p v-if="message" class="message" role="status">{{ message }}</p>
   </section>
 </template>
 
@@ -462,12 +466,12 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 .selection-summary{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-panel)}
 .selection-summary>div:not(.selection-actions){display:grid;gap:2px;min-width:0;flex:1}.selection-summary span{font-size:var(--caption-size);color:var(--text-muted)}.selection-summary strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);color:var(--text-primary)}
 .selection-actions{display:flex;gap:var(--space-2);flex-shrink:0}
-.page-preview{display:flex;align-items:center;justify-content:center;flex:1;min-height:280px;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:#202938}.page-preview img{display:block;max-width:100%;max-height:560px;object-fit:contain;box-shadow:0 8px 24px rgba(16,26,49,.28)}
+.page-preview{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 clamp(320px,50vh,560px);min-height:320px;max-height:560px;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:#202938}.page-preview img{display:block;max-width:100%;max-height:560px;object-fit:contain;box-shadow:0 8px 24px rgba(16,26,49,.28)}.source-badge{position:absolute;top:var(--space-3);left:var(--space-3);padding:2px var(--space-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-panel);color:var(--text-secondary);font-size:var(--caption-size)}
 .render-pending{display:grid;justify-items:center;gap:var(--space-2);max-width:360px;color:var(--text-inverse);text-align:center}.render-pending p{margin:0;color:#d6dde6;font-size:var(--ui-sm-size);line-height:1.5}
-.ocr-panel{padding:var(--space-3);border-left:3px solid var(--ink-500);background:var(--surface-cool);color:var(--text-secondary)}.ocr-panel strong{font-size:var(--ui-sm-size);color:var(--text-primary)}.ocr-panel p{margin:var(--space-1) 0 0;white-space:pre-wrap;font-size:var(--caption-size);line-height:1.5}
+.ocr-panel{display:flex;flex-direction:column;flex:0 0 132px;min-height:132px;max-height:132px;box-sizing:border-box;overflow-y:auto;padding:var(--space-3);border-left:3px solid var(--ink-500);background:var(--surface-cool);color:var(--text-secondary)}.ocr-panel strong{flex:0 0 auto;font-size:var(--ui-sm-size);color:var(--text-primary)}.ocr-panel p{margin:var(--space-1) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--caption-size);line-height:1.5}
 .thumbnails{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:var(--space-2)}.thumbnail{position:relative;display:grid!important;justify-items:start;gap:2px;min-height:54px;text-align:left}.thumbnail small{opacity:.76}.thumbnail svg{position:absolute;right:var(--space-2);top:50%;transform:translateY(-50%)}
-.save-bar{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-shrink:0;padding:var(--space-3) var(--space-4);border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-panel)}.save-bar>div{display:grid;gap:2px}.save-bar strong{font-size:var(--ui-md-size);color:var(--text-primary)}.save-bar span{font-size:var(--caption-size);color:var(--text-muted)}
-.message{margin:0;padding:var(--space-3);border-radius:var(--radius-sm);background:var(--ink-100);color:var(--ink-700);font-size:var(--ui-sm-size);line-height:var(--ui-sm-line)}
+.save-bar{display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);flex-shrink:0;padding:var(--space-2) var(--space-3);border:1px solid var(--border-strong);border-radius:var(--radius-md);background:var(--surface-panel)}.save-bar>div{display:grid;gap:1px;min-width:0}.save-bar strong{font-size:var(--ui-md-size);color:var(--text-primary)}
+.message{margin:0;color:var(--ink-700);font-size:var(--caption-size);line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .first-prep-pending{display:grid;justify-items:center;gap:var(--space-3);margin:auto;text-align:center;color:var(--text-secondary)}.first-prep-pending h3{margin:0;color:var(--text-primary)}.first-prep-pending p{max-width:440px;margin:0}.first-prep-icon{display:flex;align-items:center;justify-content:center;width:56px;height:56px;border-radius:var(--radius-full);background:var(--ink-100);color:var(--ink-700)}
 @media (max-width:1100px){.mapping-workbench{grid-template-columns:220px minmax(0,1fr)}}
 </style>

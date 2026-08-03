@@ -23,6 +23,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from ...shared.error_messages import prep_error_details
 from .dependencies import IncrementalPrepDependencies
 from .state import IncrementalPrepState
 
@@ -52,6 +53,8 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
         course_id = request.get("course_id", "")
         outline_node_id = request.get("outline_node_id")
         action = request.get("action")
+        meta_run_id = str(meta.get("run_id") or "")
+        meta_trace_id = str(meta.get("trace_id") or "")
 
         supported_actions = {
             "optimize_node_title",
@@ -112,16 +115,24 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
                 if isinstance(error, ValueError)
                 else "INCREMENTAL_PLAN_FAILED"
             )
+            for current in _exception_chain(error):
+                if getattr(current, "reason_code", "") == "MODEL_OUTPUT_TRUNCATED":
+                    error_code = "PREP_AGENT_OUTPUT_TRUNCATED"
+                    break
+                if getattr(current, "reason_code", "") == "structured_output_invalid":
+                    error_code = "PREP_AGENT_OUTPUT_INVALID"
+                    break
+            error_details = prep_error_details(
+                error,
+                code=error_code,
+                node="execute_incremental_plan",
+            )
             return {
                 "meta": {
                     **meta,
                     "errors": [
                         *meta.get("errors", []),
-                        {
-                            "code": error_code,
-                            "message": str(error)[:500] or "incremental planning failed",
-                            "node": "execute_incremental_plan",
-                        },
+                        error_details,
                     ],
                     "degraded_services": [*meta.get("degraded_services", []), "incremental_planner"],
                     "status": "planning_error",
@@ -136,10 +147,11 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
                 "excluded_locked_targets": list(result.excluded_locked_targets),
                 "planner": result.planner,
             },
-            "context": {
+                "context": {
                 "excluded_locked_targets": list(result.excluded_locked_targets),
-            },
-        }
+                },
+                "meta": {**meta, "run_id": meta_run_id, "trace_id": meta_trace_id},
+            }
 
     graph = StateGraph(IncrementalPrepState)
     graph.add_node("execute_incremental_plan", execute_incremental_plan)
@@ -149,3 +161,12 @@ def build_incremental_workflow(deps: IncrementalPrepDependencies):
 
 
 __all__ = ["build_incremental_workflow"]
+
+
+def _exception_chain(error: BaseException):
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield current
+        current = current.__cause__ or current.__context__

@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
@@ -31,6 +31,8 @@ from app.models.course_outline_model import (
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
 from app.platform.agents.prep.actions import PrepAction, canonical_prep_action
+from app.platform.agents.contracts.llm import StructuredOutputError
+from app.platform.agents.shared.error_messages import safe_prep_error_message
 
 
 PROMPT_VERSION = "course-prep-agent/2.0"
@@ -86,6 +88,33 @@ class AgentPlan(BaseModel):
     # that promise a selected-node or all-script rewrite enforce their own
     # coverage requirement after target validation.
     operations: list[AgentOperation] = Field(default_factory=list, max_length=_BATCH_MAX_TARGETS)
+
+
+class StructurePlanOperation(BaseModel):
+    node_id: str = Field(min_length=1, max_length=128)
+    operation: Literal["replace_title", "move", "reorder", "remove"]
+    title: str | None = Field(default=None, max_length=300)
+    new_parent_id: str | None = Field(default=None, max_length=128)
+    new_order: int | None = Field(default=None, ge=0, le=10_000)
+    reason: str = Field(default="结构整理", max_length=2_000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=50)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "StructurePlanOperation":
+        if self.operation == "replace_title" and not self.title:
+            raise ValueError("replace_title requires title")
+        if self.operation == "reorder" and self.new_order is None:
+            raise ValueError("reorder requires new_order")
+        if self.operation == "move" and self.new_parent_id == self.node_id:
+            raise ValueError("move cannot target itself")
+        if self.operation != "replace_title" and self.title is not None:
+            raise ValueError("title is only valid for replace_title")
+        return self
+
+
+class StructurePlan(BaseModel):
+    summary: str = Field(min_length=1, max_length=2_000)
+    operations: list[StructurePlanOperation] = Field(default_factory=list, max_length=_BATCH_MAX_TARGETS)
 
 
 @dataclass
@@ -188,7 +217,7 @@ class CoursePrepAgentService:
                 scripts=editable_scripts,
                 evidence=evidence,
             )
-        except CoursePrepAgentPlanningError as exc:
+        except (CoursePrepAgentPlanningError, StructuredOutputError) as exc:
             # A single-node incremental proposal has a safe, reviewable local
             # fallback.  Do not turn a transient provider/schema failure into
             # a user-visible 500 when the requested edit can be derived from
@@ -247,7 +276,10 @@ class CoursePrepAgentService:
         resolved_action = canonical_prep_action(action)
         if resolved_action is None or resolved_action == PrepAction.MATCH_PPT:
             raise ValueError("该动作不属于讲解/课程结构规划链路")
-        if not self._llm_is_configured():
+        # Title cleanup has a deterministic, source-backed fallback.  Keep
+        # that capability usable when the model is unavailable or returns an
+        # unsafe title; the broader structure/script actions remain fail-closed.
+        if resolved_action != PrepAction.OPTIMIZE_NODE_TITLE and not self._llm_is_configured():
             raise CoursePrepAgentPlanningError("助教模型未配置，未生成任何修改")
 
         outline, scripts = self._load_latest_draft_targets(session, course_id=course_id)
@@ -263,24 +295,48 @@ class CoursePrepAgentService:
             selected = self._selected_outline_node(outline, outline_node_id)
             if selected.locked_by is not None:
                 raise ValueError("当前课程节点已被教师锁定，不能由助教优化标题")
+            title_scripts = [
+                script for script in scripts
+                if script.outline_node_id == selected.outline_node_id
+            ]
             evidence = await self.retrieve_action_evidence(
                 session,
                 course_id=course_id,
                 instruction=f"{selected.title}\n{instruction}",
                 concept_id=selected.knowledge_graph_node_id,
             )
-            plan = await self._required_llm_plan(
-                action=resolved_action,
-                instruction=instruction,
-                outline=[selected],
-                scripts=[],
-                evidence=evidence,
-                course_outline_context=editable_outline,
-                course_script_context=[
-                    script for script in scripts
-                    if script.outline_node_id == selected.outline_node_id
-                ],
+            title_source = "\n".join(
+                part for part in (
+                    instruction,
+                    selected.title or "",
+                    *(script.content or "" for script in title_scripts),
+                    *(str(item.get("text") or "") for item in evidence),
+                ) if part
             )
+            fallback_title = self._build_title_suggestion(selected, title_source)
+
+            try:
+                plan = await self._required_llm_plan(
+                    action=resolved_action,
+                    instruction=instruction,
+                    outline=[selected],
+                    scripts=[],
+                    evidence=evidence,
+                    course_outline_context=editable_outline,
+                    course_script_context=title_scripts,
+                )
+            except CoursePrepAgentPlanningError as exc:
+                logger.warning(
+                    "Course prep title plan failed; using source-backed fallback: %s: %s",
+                    type(exc).__name__, str(exc)[:300],
+                )
+                return self._title_fallback_result(
+                    selected=selected,
+                    title=fallback_title,
+                    evidence=evidence,
+                    reason="模型标题提案未通过校验，已依据当前节点原文生成安全标题",
+                )
+
             operations, excluded, discarded = self._filter_operations(
                 plan=plan,
                 editable_outline=[selected],
@@ -290,7 +346,12 @@ class CoursePrepAgentService:
             )
             operations = [item for item in operations if item["target"] == f"outline:{selected.outline_node_id}:title"]
             if discarded or len(operations) != 1 or not self._safe_title(operations[0]["after"], selected, evidence):
-                raise CoursePrepAgentPlanningError("模型未给出可安全应用的节点标题，草稿未修改")
+                return self._title_fallback_result(
+                    selected=selected,
+                    title=fallback_title,
+                    evidence=evidence,
+                    reason="模型标题提案未通过安全校验，已依据当前节点原文生成安全标题",
+                )
             return CoursePrepAgentResult(
                 summary=plan.summary,
                 operations=operations,
@@ -405,18 +466,46 @@ class CoursePrepAgentService:
         evidence: list[dict[str, Any]],
         course_outline_context: list[CourseOutlineNode],
         course_script_context: list[TeachingScriptNode],
-    ) -> AgentPlan:
-        plan = await self._plan_with_llm(
-            instruction=instruction,
-            outline=outline,
-            scripts=scripts,
-            evidence=evidence,
-            batch_action=action.value,
-            course_outline_context=course_outline_context,
-            course_script_context=course_script_context,
-        )
+        ) -> AgentPlan:
+        try:
+            plan = await self._plan_with_llm(
+                instruction=instruction,
+                outline=outline,
+                scripts=scripts,
+                evidence=evidence,
+                batch_action=action.value,
+                course_outline_context=course_outline_context,
+                course_script_context=course_script_context,
+                structure_mode=action == PrepAction.ORGANIZE_STRUCTURE,
+            )
+        except StructuredOutputError as exc:
+            # Keep the structured provider metadata in the exception chain,
+            # while giving legacy/direct callers the same safe Prep message.
+            planning_error = CoursePrepAgentPlanningError(
+                safe_prep_error_message(exc),
+            )
+            planning_error.reason_code = getattr(exc, "reason_code", "")
+            planning_error.stage = getattr(exc, "stage", "")
+            planning_error.validation_errors = getattr(exc, "validation_errors", [])
+            planning_error.attempts = getattr(exc, "attempts", 0)
+            planning_error.schema_name = getattr(exc, "schema_name", "")
+            planning_error.finish_reason = getattr(exc, "finish_reason", "")
+            planning_error.truncated = getattr(exc, "truncated", False)
+            raise planning_error from exc
         if plan is None:
             raise CoursePrepAgentPlanningError("助教模型不可用，草稿未修改")
+        if isinstance(plan, StructurePlan):
+            return AgentPlan(
+                summary=plan.summary,
+                operations=[AgentOperation(
+                    target_kind="outline", target_id=item.node_id,
+                    operation={"replace_title": "replace", "move": "move", "reorder": "reorder", "remove": "remove"}[item.operation],
+                    field="title" if item.operation == "replace_title" else "structure",
+                    after=(item.title or "") if item.operation == "replace_title" else json.dumps({"parent_node_id": item.new_parent_id, "order_index": item.new_order}, ensure_ascii=False),
+                    parent_node_id=item.new_parent_id, order_index=item.new_order,
+                    reason=item.reason, evidence_refs=item.evidence_refs,
+                ) for item in plan.operations],
+            )
         return plan
 
     async def _plan_all_scripts(
@@ -431,7 +520,14 @@ class CoursePrepAgentService:
     ) -> CoursePrepAgentResult:
         if not editable_scripts:
             raise ValueError("当前草稿没有可优化的未锁定讲解脚本")
-        groups = [editable_scripts[index:index + 5] for index in range(0, len(editable_scripts), 5)]
+        # Keep each request bounded and let the dedicated script budget cap
+        # the rewritten text. The previous path inherited the global 8192
+        # budget and allowed hidden reasoning to consume it before JSON was
+        # emitted. The default five-node grouping remains compatible with the
+        # existing audit path; the provider now disables reasoning and uses a
+        # dedicated 4096-token completion budget.
+        batch_size = max(1, int(getattr(settings, "PREP_SCRIPT_BATCH_SIZE", 3)))
+        groups = [editable_scripts[index:index + batch_size] for index in range(0, len(editable_scripts), batch_size)]
         semaphore = asyncio.Semaphore(3)
 
         async def plan_group(group: list[TeachingScriptNode]) -> tuple[list[TeachingScriptNode], AgentPlan, list[dict[str, Any]]]:
@@ -445,13 +541,14 @@ class CoursePrepAgentService:
                 instruction=f"{instruction}\n{query}",
             )
             async with semaphore:
+                compact_outline = self._compact_script_outline_context(outline, group)
                 plan = await self._required_llm_plan(
                     action=PrepAction.OPTIMIZE_ALL_SCRIPTS,
                     instruction=instruction,
                     outline=[],
                     scripts=group,
                     evidence=evidence,
-                    course_outline_context=[node for node in outline if node.locked_by is None],
+                    course_outline_context=compact_outline,
                     course_script_context=group,
                 )
             return group, plan, evidence
@@ -480,7 +577,7 @@ class CoursePrepAgentService:
             operations=operations,
             evidence=_dedupe_evidence(all_evidence),
             excluded_locked_targets=sorted(set(excluded)),
-            planner="llm_script_batches_5x3",
+            planner=f"llm_script_batches_{batch_size}x3",
         )
 
     @staticmethod
@@ -655,6 +752,7 @@ class CoursePrepAgentService:
                 "整理本课程全部未锁定的结构节点标题。基于完整的未锁定目录和讲稿上下文，"
                 "统一命名粒度、术语与标题风格；保持节点数量、父子关系、顺序和课程事实不变。"
             )
+            structure_sparse = getattr(settings, "PREP_SPARSE_STRUCTURE_PLAN", True)
         else:
             editable_outline = []
             editable_scripts = editable_course_scripts
@@ -700,6 +798,7 @@ class CoursePrepAgentService:
             batch_action=action,
             course_outline_context=editable_course_outline,
             course_script_context=editable_course_scripts,
+            structure_mode=(action == "organize_structure" and structure_sparse),
         )
         if plan is None:
             raise CoursePrepAgentPlanningError("助教智能体模型未返回批量优化结果")
@@ -720,7 +819,7 @@ class CoursePrepAgentService:
             if item["target"].endswith(f":{required_field}")
         }
         missing = sorted(expected_ids - covered_ids)
-        if missing or len(operations) != len(expected_ids) or discarded:
+        if action != "organize_structure" and (missing or len(operations) != len(expected_ids) or discarded):
             logger.warning(
                 "Course prep batch action %s returned incomplete or duplicate operations: "
                 "missing=%s kept=%d expected=%d discarded=%d",
@@ -774,6 +873,24 @@ class CoursePrepAgentService:
             ).order_by(TeachingScriptNode.updated_at.desc())
         ).all())
         return outline, scripts
+
+    @staticmethod
+    def _compact_script_outline_context(
+        outline: list[CourseOutlineNode],
+        scripts: list[TeachingScriptNode],
+    ) -> list[CourseOutlineNode]:
+        """Keep only selected script nodes and their editable ancestors."""
+        by_id = {node.outline_node_id: node for node in outline}
+        needed: set[str] = set()
+        for script in scripts:
+            cursor: str | None = script.outline_node_id
+            while cursor is not None and cursor not in needed:
+                node = by_id.get(cursor)
+                if node is None or node.locked_by is not None:
+                    break
+                needed.add(cursor)
+                cursor = node.parent_node_id
+        return [node for node in outline if node.outline_node_id in needed]
 
     @staticmethod
     def _filter_operations(
@@ -925,9 +1042,12 @@ class CoursePrepAgentService:
         batch_action: BatchAction | None = None,
         course_outline_context: list[CourseOutlineNode] | None = None,
         course_script_context: list[TeachingScriptNode] | None = None,
-    ) -> AgentPlan | None:
+        structure_mode: bool = False,
+    ) -> AgentPlan | StructurePlan | None:
         if not self._llm_is_configured():
             return None
+        if batch_action == "organize_structure" and not getattr(settings, "PREP_SPARSE_STRUCTURE_PLAN", True):
+            structure_mode = False
         payload = {
             "instruction": instruction,
             "batch_action": batch_action,
@@ -936,8 +1056,9 @@ class CoursePrepAgentService:
                     "id": item.outline_node_id,
                     "parent_id": item.parent_node_id,
                     "title": item.title,
-                    "type": item.node_type.value,
+                    "level": _outline_level(item, outline),
                     "order": item.order_index,
+                    "locked": item.locked_by is not None,
                 }
                 for item in outline
             ],
@@ -951,8 +1072,14 @@ class CoursePrepAgentService:
                 }
                 for item in scripts
             ],
-            "retrieved_course_evidence": evidence,
+            "retrieved_course_evidence": (
+                [{"evidence_id": item.get("evidence_id"), "confirmed": item.get("confirmed", False)} for item in evidence]
+                if structure_mode else evidence
+            ),
         }
+        if structure_mode:
+            payload["structure_mode"] = True
+            payload.pop("editable_scripts", None)
         if batch_action is not None:
             context_outline = course_outline_context if course_outline_context is not None else outline
             context_scripts = course_script_context if course_script_context is not None else scripts
@@ -969,28 +1096,45 @@ class CoursePrepAgentService:
                     }
                     for item in scripts
                 ]
-            payload["course_context"] = {
-                "hierarchy": [
-                    {
-                        "id": item.outline_node_id,
-                        # Do not expose locked-parent identifiers as context.
-                        "parent_id": item.parent_node_id if item.parent_node_id in context_outline_ids else None,
-                        "type": item.node_type.value,
-                        "order": item.order_index,
-                        "title": item.title,
-                    }
-                    for item in context_outline
-                ],
-                "scripts": [
-                    {
-                        "id": item.script_node_id,
-                        "outline_node_id": item.outline_node_id,
-                        "content": item.content,
-                        "style": item.style or "",
-                    }
-                    for item in context_scripts
-                ],
-            }
+            if not structure_mode:
+                payload["course_context"] = {
+                    "hierarchy": [
+                        {
+                            "id": item.outline_node_id,
+                            # Do not expose locked-parent identifiers as context.
+                            "parent_id": item.parent_node_id if item.parent_node_id in context_outline_ids else None,
+                            "type": item.node_type.value,
+                            "order": item.order_index,
+                            "title": item.title,
+                        }
+                        for item in context_outline
+                    ],
+                    "scripts": [
+                        {
+                            "id": item.script_node_id,
+                            "outline_node_id": item.outline_node_id,
+                            "content": item.content,
+                            "style": item.style or "",
+                        }
+                        for item in context_scripts
+                    ],
+                }
+            else:
+                # Structure planning needs only the compact outline snapshot;
+                # never include script bodies or duplicate hierarchy fields.
+                payload["course_context"] = {
+                    "hierarchy": [
+                        {
+                            "id": item.outline_node_id,
+                            "parent_id": item.parent_node_id if item.parent_node_id in context_outline_ids else None,
+                            "type": item.node_type.value,
+                            "order": item.order_index,
+                            "title": item.title,
+                        }
+                        for item in context_outline
+                    ],
+                    "scripts": [],
+                }
         system = (
             "你是受控备课 Agent。只能对 editable_outline 和 editable_scripts 中的 ID 提出修改；"
             "不得生成、删除或移动节点，不得引用未提供的课程事实，不得修改任何锁定内容。"
@@ -1055,7 +1199,21 @@ class CoursePrepAgentService:
                 "or remove a branch containing locked descendants."
             )
         if self._llm is not None and hasattr(self._llm, "plan_incremental"):
-            return await self._llm.plan_incremental(payload)
+            result = await self._llm.plan_incremental(payload)
+            if structure_mode and isinstance(result, AgentPlan):
+                result = StructurePlan(
+                    summary=result.summary,
+                    operations=[StructurePlanOperation(
+                        node_id=item.target_id,
+                        operation={"replace": "replace_title", "move": "move", "reorder": "reorder", "remove": "remove"}[item.operation],
+                        title=item.after if item.operation == "replace" and item.field == "title" else None,
+                        new_parent_id=item.parent_node_id,
+                        new_order=item.order_index,
+                        reason=item.reason,
+                        evidence_refs=item.evidence_refs,
+                    ) for item in result.operations],
+                )
+            return result
         client = self._llm or llm_client
         return await self._call_llm_with_retry(client, system, payload)
 
@@ -1119,20 +1277,40 @@ class CoursePrepAgentService:
                     f"不要 Markdown，不要解释。校验错误：{error_detail}"
                 )
             try:
+                request_kwargs: dict[str, Any] = {
+                    "temperature": 0.2,
+                    "response_format": {"type": "json_object"},
+                }
+                if payload.get("structure_mode"):
+                    # Keep the legacy direct-client path bounded as well. The
+                    # registered Prep adapter uses the same knobs; this is a
+                    # rollback-safe fallback for local/demo callers.
+                    request_kwargs.update({
+                        "max_tokens": 2048,
+                        "thinking": {"type": "disabled"},
+                    })
+                elif payload.get("batch_action") in {
+                    "optimize_all_scripts",
+                    "optimize_node_script",
+                }:
+                    request_kwargs.update({
+                        "max_tokens": 4096,
+                        "thinking": {"type": "disabled"},
+                    })
                 response = await client.chat(
                     messages if repair_hint == "" else [
                         *messages,
                         Message(role="system", content=repair_hint),
                     ],
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
+                    **request_kwargs,
                 )
                 raw = response.content if hasattr(response, "content") else response
                 if not isinstance(raw, str):
                     raise CoursePrepAgentPlanningError(
                         "模型返回的备课提案不是文本，请重试"
                     )
-                plan = AgentPlan.model_validate_json(raw)
+                schema = StructurePlan if payload.get("structure_mode") else AgentPlan
+                plan = schema.model_validate_json(raw)
                 if not plan.operations and payload.get("batch_action") != PrepAction.ORGANIZE_STRUCTURE.value:
                     raise ValueError("operations must not be empty for this preparation action")
                 logger.info(
@@ -1204,6 +1382,12 @@ class CoursePrepAgentService:
     def _title_subject(node: CourseOutlineNode, source: str) -> str:
         """Infer the stable knowledge object without relying on a topic name."""
         subject = re.sub(r"^(?:图|表)\s*[0-9A-Za-z._-]+\s*", "", (node.title or "").strip())
+        # OCR often drops the linking "的" in titles such as
+        # "发动机结构基本术语". Keep the object (发动机结构) separate from
+        # the teaching facet (基本术语), so the fallback can restore it.
+        terminology_match = re.match(r"^(.+?)(?:的)?基本术语$", subject)
+        if terminology_match:
+            subject = terminology_match.group(1).strip()
         if not subject or subject in {"知识点", "章节", "未命名"}:
             first_sentence = re.split(r"[。！？\n]", source, maxsplit=1)[0]
             match = re.match(r"(.{1,20}?)(?:是|为|包括|指)", first_sentence)
@@ -1223,8 +1407,8 @@ class CoursePrepAgentService:
             if (
                 count < 2
                 or candidate == subject
+                or candidate in subject
                 or candidate in _TITLE_CONTEXT_STOP_WORDS
-                or subject in candidate
             ):
                 continue
             if len(candidate) <= 6:
@@ -1235,6 +1419,8 @@ class CoursePrepAgentService:
     def _title_facets(source: str) -> list[str]:
         """Extract teachable dimensions in a fixed, human-readable order."""
         facets: list[str] = []
+        if re.search(r"基本术语|术语|名词|称谓", source):
+            facets.append("基本术语" if re.search(r"基本术语", source) else "术语")
         if re.search(r"作用|功能|用途|负责|保证|实现", source):
             facets.append("作用")
         if re.search(r"结构|组成|形状|部件|外缘|内缘|齿圈|包括", source):
@@ -1252,12 +1438,45 @@ class CoursePrepAgentService:
     @classmethod
     def _build_title_suggestion(cls, node: CourseOutlineNode, source: str) -> str:
         subject = cls._title_subject(node, source)
-        facets = cls._title_facets(source)
+        # Do not append a facet that is already part of the subject. This is
+        # common with OCR headings such as "发动机结构基本术语" and prevents
+        # awkward results like "发动机结构的基本术语与结构".
+        facets = [facet for facet in cls._title_facets(source) if facet not in subject]
         if not facets:
             return f"{subject}的核心概念与教学要点"
         if len(facets) == 1:
             return f"{subject}的{facets[0]}"
         return f"{subject}的{'、'.join(facets[:-1])}与{facets[-1]}"
+
+    @classmethod
+    def _title_fallback_result(
+        cls,
+        *,
+        selected: CourseOutlineNode,
+        title: str,
+        evidence: list[dict[str, Any]],
+        reason: str,
+    ) -> CoursePrepAgentResult:
+        """Return one source-backed title operation and nothing else."""
+        candidate = (title or "").strip()
+        if not cls._safe_title(candidate, selected, evidence):
+            raise CoursePrepAgentPlanningError("当前节点原文不足以生成可安全应用的标题，草稿未修改")
+        return CoursePrepAgentResult(
+            summary="已依据当前节点标题与课程原文生成可审阅的标题优化建议",
+            operations=[{
+                "target": f"outline:{selected.outline_node_id}:title",
+                "after": candidate,
+                "reason": reason,
+                "evidence_refs": [
+                    item["evidence_id"]
+                    for item in evidence
+                    if item.get("evidence_id")
+                ],
+            }],
+            evidence=evidence,
+            excluded_locked_targets=[],
+            planner="deterministic_title_fallback",
+        )
 
     @classmethod
     def _guard_title_plan(
@@ -1390,6 +1609,18 @@ def _outline_descendants(node_id: str, parent_by_id: dict[str, str | None]) -> s
                 descendants.add(child_id)
                 frontier.append(child_id)
     return descendants
+
+
+def _outline_level(node: CourseOutlineNode, nodes: list[CourseOutlineNode]) -> int:
+    by_id = {item.outline_node_id: item.parent_node_id for item in nodes}
+    level = 0
+    cursor = node.parent_node_id
+    seen: set[str] = set()
+    while cursor and cursor not in seen:
+        seen.add(cursor)
+        level += 1
+        cursor = by_id.get(cursor)
+    return level
 
 
 course_prep_agent_service = CoursePrepAgentService()

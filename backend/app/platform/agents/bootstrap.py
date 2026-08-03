@@ -76,7 +76,10 @@ def bootstrap_prep_agent(app: Any) -> bool:
         )
 
         session_factory = lambda: Session(engine)
-        structured_llm = SharedLLMStructuredProvider()
+        from .providers.persistence import SqlAgentLLMDiagnosticStore
+        structured_llm = SharedLLMStructuredProvider(
+            diagnostic_sink=SqlAgentLLMDiagnosticStore(session_factory),
+        )
         prep_llm = PrepLLMAdapter(structured_llm=structured_llm)
         prep_retrieval = ActiveBundleCourseRetrievalPort()
         course_prep_agent_service._llm = prep_llm
@@ -108,11 +111,20 @@ def bootstrap_prep_agent(app: Any) -> bool:
             initial_workflow=workflow,
             ppt_service=PptMappingOptimizationService(llm=prep_llm),
         )
+        # _register_prep_pipeline_definitions owns the durable ports shared by
+        # the Prep runtimes; wire the same store into the gateway for lifecycle
+        # status and diagnostic lookup.
+        from .providers.persistence import SqlAgentRunStorePort
         platform.set_gateway(AgentGateway(
             registry=platform.runtime_registry,
             event_port=platform.event_port,
+            run_store=SqlAgentRunStorePort(session_factory),
         ))
         app.state.agent_platform = platform
+        # The durable course-build worker is already the queue boundary for
+        # Initial Prep, so it invokes the registered runtime directly.
+        from app.platform.tasks.worker import local_task_worker
+        local_task_worker.set_agent_platform(platform)
         logger.info("PrepAgent registered independently of TeachingAgent feature flags.")
         return True
     except Exception as error:  # noqa: BLE001 - never block app startup
@@ -251,12 +263,13 @@ def _register_prep_pipeline_definitions(
     from .providers.prep.incremental_prep import IncrementalPrepProvider
     from .providers.prep.ppt_mapping_optimization import PptMappingOptimizationProvider
     from .runtime.dispatcher import BaseAgentRuntime
-    from .runtime.events import NullAgentRunEventPort, NullAgentRunStorePort
+    from .providers.persistence import SqlAgentLLMDiagnosticStore, SqlAgentRunEventPort, SqlAgentRunStorePort
     from .runtime.registry import AgentDefinitionKey
 
-    event_port = NullAgentRunEventPort()
-    run_store = NullAgentRunStorePort()
-    structured_llm = structured_llm or SharedLLMStructuredProvider()
+    event_port = SqlAgentRunEventPort(session_factory)
+    run_store = SqlAgentRunStorePort(session_factory)
+    diagnostic_sink = SqlAgentLLMDiagnosticStore(session_factory)
+    structured_llm = structured_llm or SharedLLMStructuredProvider(diagnostic_sink=diagnostic_sink)
 
     common_deps = CommonPrepDependencies(
         structured_llm=structured_llm,

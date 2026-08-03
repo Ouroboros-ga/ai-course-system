@@ -41,7 +41,13 @@ from app.models.course_outline_model import (
 from app.models.course_build_model import BuildStepName, BuildStepStatus, CourseBuildStep, CourseCorpusSnapshot, MaterialStatus, SourceMaterial, SourceMaterialVersion
 from app.models.media_release_model import MediaRelease
 from app.models.document_parse_model import ParsePipeline, StaleStrategy
-from app.models.document_parse_model import DocumentBlock, EvidenceRenderAsset, EvidenceSpan, EvidenceSpanStatus
+from app.models.document_parse_model import (
+    DocumentBlock,
+    EvidenceRenderAsset,
+    EvidenceSpan,
+    EvidenceSpanStatus,
+    RenderAssetType,
+)
 from app.models.graph_production_model import CourseEvidenceRecord, EvidenceStatus
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
@@ -54,10 +60,12 @@ from app.platform.tasks.worker import local_task_worker
 from app.platform.tasks.document_parse_queue import document_parse_queue
 from app.models.database import session_factory
 from app.models.resource_model import ResourceItem, ResourceLifecycleStatus, ResourceVisibility
+from app.models.agent_run_model import AgentRunRecord, AgentRunEventRecord, AgentLLMDiagnosticRecord
 from app.services.ppt_generation_service import ppt_generation_service
 from app.schemas.controlled_prep import ControlledPrepInput, TeachingStyleConfig
 from app.services.controlled_prep_workflow import controlled_prep_workflow
 from app.platform.agents.prep.actions import PrepAction, canonical_prep_action, resolve_prep_intent
+from app.platform.agents.shared.error_messages import safe_prep_error_message
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -256,15 +264,25 @@ async def _plan_incremental_prep(
                     result.get("excluded_locked_targets") or []
                 ),
                 planner=result.get("planner", "llm"),
+                run_id=start.run_id,
+                trace_id=start.trace_id,
+                error_code=start.error_code or "",
             )
         if start.error_code and start.error_code != "AGENT_NOT_AVAILABLE":
             from app.services.course_prep_agent_service import CoursePrepAgentPlanningError
 
             if start.error_code == "INCREMENTAL_PLAN_INVALID_REQUEST":
                 raise ValueError(start.error_message or "助教智能体没有可执行的草稿目标")
-            raise CoursePrepAgentPlanningError(
-                start.error_message or f"助教智能体运行失败（{start.error_code}）"
+            planning_error = CoursePrepAgentPlanningError(
+                safe_prep_error_message(
+                    RuntimeError(start.error_message),
+                    default=f"助教智能体运行失败（{start.error_code}）",
+                )
             )
+            planning_error.run_id = start.run_id
+            planning_error.trace_id = start.trace_id
+            planning_error.error_code = start.error_code
+            raise planning_error
         if start.error_code:
             logger.warning(
                 "Prep Runtime unavailable; falling back to direct service: %s",
@@ -322,6 +340,27 @@ def _published_outline(session: Session, course_id: int) -> CourseOutlineVersion
         .where(CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.PUBLISHED)
         .order_by(CourseOutlineVersion.version.desc())
     ).first()
+
+
+def _try_structure_edit_context(
+    session: Session,
+    current_user: dict,
+    course_id: int,
+    permission: str = "course.structure.edit",
+):
+    """Return an edit context when the caller may seed a working draft.
+
+    The read endpoints are also used by learners.  Only a caller with the
+    relevant explicit Course Access v1 edit capability may cause a published
+    version to be copied into a draft; everyone else remains read-only.
+    """
+    try:
+        context = require_course_permission(session, current_user, course_id, permission)
+        return context.user_id
+    except HTTPException as exc:
+        if exc.status_code == 403:
+            return None
+        raise
 
 
 def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> CourseOutlineVersion:
@@ -629,12 +668,26 @@ def _current_ppt_material_versions(
 
 
 def _ppt_page_count(session: Session, *, course_id: int, material_version_id: str) -> int:
-    """Return the highest parsed slide number for one current PPT version."""
+    """Return the highest known slide number for one current PPT version.
+
+    OCR may be delayed or unavailable while the original PPTX renders are
+    already usable.  The mapping UI must still expose the complete deck in
+    that state, so count both parsed blocks and persisted source-slide assets.
+    """
     pages = session.exec(select(DocumentBlock.page_or_slide).where(
         DocumentBlock.course_id == course_id,
         DocumentBlock.material_version_id == material_version_id,
     )).all()
-    return max((int(page or 0) for page in pages), default=0)
+    parsed_page_count = max((int(page or 0) for page in pages), default=0)
+    rendered_pages = session.exec(select(EvidenceRenderAsset.page_number).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.asset_type == RenderAssetType.PPT_SLIDE_IMAGE,
+        EvidenceRenderAsset.object_key.like(
+            f"ppt-slide-render/course{course_id}/{material_version_id}/%"
+        ),
+    )).all()
+    rendered_page_count = max((int(page or 0) for page in rendered_pages), default=0)
+    return max(parsed_page_count, rendered_page_count)
 
 
 def _ppt_material_view(
@@ -709,6 +762,11 @@ async def get_outline(course_id: int, session: Session = Depends(get_session), c
     version = _draft_outline(session, course_id) or _published_outline(session, course_id)
     if not version:
         return unified_response(200, "课程目录尚未生成", {"version": None, "nodes": []})
+    if version.lifecycle_status == OutlineLifecycleStatus.PUBLISHED:
+        editor_id = _try_structure_edit_context(session, current_user, course_id, "course.structure.edit")
+        if editor_id is not None:
+            version = _ensure_draft_outline(session, course_id, editor_id)
+            session.commit()
     nodes = list(session.exec(select(CourseOutlineNode).where(
         CourseOutlineNode.outline_version_id == version.outline_version_id,
     )).all())
@@ -874,6 +932,11 @@ async def get_scripts(course_id: int, session: Session = Depends(get_session), c
     require_course_permission(session, current_user, course_id, "course.view")
     outline = _draft_outline(session, course_id) or _published_outline(session, course_id)
     if not outline: return unified_response(200, "讲稿尚未生成", {"version": None, "items": []})
+    if outline.lifecycle_status == OutlineLifecycleStatus.PUBLISHED:
+        editor_id = _try_structure_edit_context(session, current_user, course_id, "course.script.edit")
+        if editor_id is not None:
+            outline = _ensure_draft_outline(session, course_id, editor_id)
+            session.commit()
     script = session.exec(select(TeachingScriptVersion).where(
         TeachingScriptVersion.course_id == course_id,
         TeachingScriptVersion.outline_version_id == outline.outline_version_id,
@@ -1101,7 +1164,7 @@ async def run_prep_agent_command(
             502,
             detail={
                 "error_code": "PREP_AGENT_LLM_INVALID_RESPONSE",
-                "message": str(exc),
+                "message": safe_prep_error_message(exc),
             },
         ) from exc
     except ValueError as exc:
@@ -1227,8 +1290,10 @@ async def run_prep_agent_batch_action(
             raise HTTPException(
                 502,
                 detail={
-                    "error_code": "PREP_AGENT_BATCH_INCOMPLETE",
-                    "message": str(exc),
+                    "error_code": getattr(exc, "error_code", "") or "PREP_AGENT_BATCH_INCOMPLETE",
+                    "run_id": getattr(exc, "run_id", "") or None,
+                    "trace_id": getattr(exc, "trace_id", "") or None,
+                    "message": safe_prep_error_message(exc),
                 },
             ) from exc
         except ValueError as exc:
@@ -1248,6 +1313,8 @@ async def run_prep_agent_batch_action(
                 "excluded_locked_targets": result.excluded_locked_targets,
                 "planner": result.planner,
                 "summary": result.summary,
+                "run_id": result.run_id or None,
+                "trace_id": result.trace_id or None,
             })
 
         decided_at = utcnow_aware()
@@ -1323,6 +1390,8 @@ async def run_prep_agent_batch_action(
             "excluded_locked_targets": result.excluded_locked_targets,
             "planner": result.planner,
             "summary": result.summary,
+            "run_id": result.run_id or None,
+            "trace_id": result.trace_id or None,
         })
     except Exception:
         session.rollback()
@@ -1360,6 +1429,57 @@ async def get_prep_agent_node_evidence(
             "confidence": block.confidence,
             "source_kind": block.source_kind,
         } for block in blocks],
+    })
+
+
+@router.get("/course/{course_id}/prep-agent/runs/{run_id}/diagnostic")
+async def get_prep_agent_run_diagnostic(
+    course_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "course.view")
+    run = session.exec(select(AgentRunRecord).where(
+        AgentRunRecord.run_id == run_id,
+        AgentRunRecord.course_id == course_id,
+        AgentRunRecord.agent_type == "prep",
+    )).first()
+    if run is None:
+        raise HTTPException(404, detail={"error_code": "PREP_AGENT_RUN_NOT_FOUND", "message": "运行记录不存在"})
+    diagnostics = session.exec(select(AgentLLMDiagnosticRecord).where(
+        AgentLLMDiagnosticRecord.run_id == run_id,
+        AgentLLMDiagnosticRecord.course_id == course_id,
+    ).order_by(AgentLLMDiagnosticRecord.created_at, AgentLLMDiagnosticRecord.attempt)).all()
+    events = session.exec(select(AgentRunEventRecord).where(
+        AgentRunEventRecord.run_id == run_id,
+    ).order_by(AgentRunEventRecord.created_at, AgentRunEventRecord.id)).all()
+    return unified_response(200, "获取备课 Agent 诊断成功", {
+        "run": {
+            "run_id": run.run_id, "trace_id": run.trace_id,
+            "agent_type": run.agent_type, "status": run.status,
+            "stage": run.stage, "error_code": run.error_code or None,
+            "errors": run.error_details or [],
+            "started_at": run.started_at.isoformat(),
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "updated_at": run.updated_at.isoformat(),
+        },
+        "llm_calls": [{
+            "stage": item.stage, "node": item.node, "purpose": item.purpose,
+            "prompt_version": item.prompt_version, "schema_name": item.schema_name,
+            "model": item.model, "attempt": item.attempt, "repaired": item.repaired,
+            "finish_reason": item.finish_reason, "input_tokens": item.input_tokens,
+            "output_tokens": item.output_tokens, "input_chars": item.input_chars,
+            "output_chars": item.output_chars, "response_hash": item.response_hash,
+            "truncated": item.truncated, "response_format_fallback": item.response_format_fallback,
+            "validation_errors": item.validation_errors or [], "usage": item.usage_metadata or {},
+            "latency_ms": item.latency_ms, "created_at": item.created_at.isoformat(),
+        } for item in diagnostics],
+        "events": [{
+            "event_type": item.event_type,
+            "created_at": item.created_at.isoformat(),
+            "payload": item.payload or {},
+        } for item in events],
     })
 
 
@@ -1887,26 +2007,49 @@ async def get_ppt_mapping_workspace(
         if block.run_id:
             run_ids_by_page.setdefault(page, set()).add(block.run_id)
 
-    page_count = max(blocks_by_page, default=0)
-    page_end = min(page_count, page_start + page_size - 1)
-    requested_pages = list(range(page_start, page_end + 1)) if page_start <= page_count else []
-    run_ids = {run_id for values in run_ids_by_page.values() for run_id in values}
-    assets = list(session.exec(select(EvidenceRenderAsset).where(
+    # OCR can be delayed or fail independently of a perfectly usable PPTX.
+    # Always let the original source render establish a page window, rather
+    # than hiding the visual mapper because ``DocumentBlock`` rows do not yet
+    # exist.  Existing original-slide assets provide the best known extent;
+    # an exactly-full final batch makes one additional lightweight request to
+    # confirm the end of a deck whose OCR is not available.
+    ocr_page_count = max(blocks_by_page, default=0)
+    persisted_source_pages = list(session.exec(select(EvidenceRenderAsset.page_number).where(
         EvidenceRenderAsset.course_id == course_id,
-        EvidenceRenderAsset.run_id.in_(run_ids or {""}),
-        EvidenceRenderAsset.page_number.in_(requested_pages or {-1}),
-    ).order_by(EvidenceRenderAsset.created_at.desc(), EvidenceRenderAsset.id.desc())).all())
+        EvidenceRenderAsset.asset_type == RenderAssetType.PPT_SLIDE_IMAGE,
+        EvidenceRenderAsset.object_key.like(f"ppt-slide-render/course{course_id}/{material_version_id}/%"),
+    )).all())
+    known_source_page_count = max((int(page or 0) for page in persisted_source_pages), default=0)
+    known_page_count = max(ocr_page_count, known_source_page_count)
+    page_end = page_start + page_size - 1
+    requested_pages = list(range(page_start, page_end + 1))
+    # Mapping previews deliberately use only native renders of the uploaded
+    # deck. Generic evidence renders can be OCR reconstructions and must not
+    # become the teacher-visible or learner-visible courseware image.
     assets_by_page: dict[int, EvidenceRenderAsset] = {}
-    for asset in assets:
-        if (
-            asset.page_number not in assets_by_page
-            and asset.run_id in run_ids_by_page.get(asset.page_number, set())
-            and asset.object_key
-        ):
-            assets_by_page[asset.page_number] = asset
+    render_warning = ""
+    if requested_pages:
+        try:
+            from app.services.ppt_slide_render_service import ensure_ppt_source_slide_renders
 
+            assets_by_page = ensure_ppt_source_slide_renders(
+                session,
+                course_id=course_id,
+                material_version_id=material_version_id,
+                page_numbers=requested_pages,
+                run_id=next(iter(run_ids_by_page.get(requested_pages[0], set())), None),
+            )
+            session.commit()
+        except Exception as exc:
+            session.rollback()
+            render_warning = f"Original PPT slide render unavailable: {type(exc).__name__}"
+
+    visible_page_numbers = [
+        page for page in requested_pages
+        if page in assets_by_page or page in blocks_by_page
+    ]
     pages = []
-    for page in requested_pages:
+    for page in visible_page_numbers:
         page_blocks = blocks_by_page.get(page, [])
         asset = assets_by_page.get(page)
         text = "\n".join(
@@ -1922,6 +2065,7 @@ async def get_ppt_mapping_workspace(
             ),
             "width": asset.width if asset else 0,
             "height": asset.height if asset else 0,
+            "image_source": "teacher_original_ppt" if asset else None,
             "ocr_preview": text[:1000],
             "ocr_available": bool(text),
             "source_block_refs": [block.block_id for block in page_blocks if block.block_id],
@@ -1936,12 +2080,18 @@ async def get_ppt_mapping_workspace(
             material=material,
             version=version,
         ),
-        "page_count": page_count,
+        "page_count": max(known_page_count, max(assets_by_page, default=0)),
         "page_start": page_start,
         "page_size": page_size,
-        "next_page_start": page_end + 1 if page_end < page_count else None,
+        "next_page_start": (
+            page_end + 1
+            if len(assets_by_page) == page_size or page_end < known_page_count
+            else None
+        ),
         "pages": pages,
         "rendered_page_count": len(assets_by_page),
+        "render_source": "teacher_original_ppt",
+        "render_warning": render_warning or None,
         "message": (
             "部分 PPT 页图仍在解析中；OCR 文本可先用于智能匹配。"
             if requested_pages and len(assets_by_page) < len(requested_pages)
@@ -2573,8 +2723,11 @@ async def publish_course_build(
             target_release_id=release.release_id,
         )
     )
-    if not gate.passed:
-        raise HTTPException(status_code=409, detail={"error_code": "QUALITY_GATE_FAILED", "message": "发布前质量检查未通过", "details": {"gate_run_id": gate.gate_run_id, "error_count": gate.error_count, "blocker_count": gate.blocker_count, "warning_count": gate.warning_count, "requires_warning_confirmation": gate.warning_count > 0 and gate.warning_override_at is None}})
+    teacher_confirmed_at = gate.teacher_confirmation_at or gate.warning_override_at
+    if gate.blocker_count or not gate.passed or (
+        gate.error_count + gate.warning_count > 0 and not teacher_confirmed_at
+    ):
+        raise HTTPException(status_code=409, detail={"error_code": "QUALITY_GATE_FAILED", "message": "发布前检查仍有未确认的问题", "details": {"gate_run_id": gate.gate_run_id, "error_count": gate.error_count, "blocker_count": gate.blocker_count, "warning_count": gate.warning_count, "requires_teacher_confirmation": gate.error_count + gate.warning_count > 0 and not teacher_confirmed_at, "has_blockers": bool(gate.blocker_count)}})
     mappings = session.exec(select(CoursePptMapping).where(
         CoursePptMapping.course_id == course_id,
         CoursePptMapping.outline_node_id.in_([node.outline_node_id for node in nodes]),
@@ -2592,9 +2745,37 @@ async def publish_course_build(
         mapping.status = "published"
         mapping.updated_at = utcnow_aware()
         session.add(mapping)
-    outline.lifecycle_status = OutlineLifecycleStatus.PUBLISHED; scripts.lifecycle_status = OutlineLifecycleStatus.PUBLISHED
-    course.status = CourseStatus.PUBLISHED; course.updated_at = utcnow_aware(); session.add(outline); session.add(scripts); session.add(course); session.commit()
-    return unified_response(200, "课程已发布", {"course_id": course_id, "release_id": release.release_id, "status": course.status.value})
+    outline.lifecycle_status = OutlineLifecycleStatus.PUBLISHED
+    scripts.lifecycle_status = OutlineLifecycleStatus.PUBLISHED
+    course.status = CourseStatus.PUBLISHED
+    course.updated_at = utcnow_aware()
+    session.add(outline)
+    session.add(scripts)
+    session.add(course)
+
+    # A release snapshot must never be edited in place.  Seed the next
+    # editable draft before the transaction is committed so that the editor
+    # immediately reads the new working copy after publication.
+    next_draft = _ensure_draft_outline(session, course_id, context.user_id)
+    next_draft_script = session.exec(
+        select(TeachingScriptVersion)
+        .where(
+            TeachingScriptVersion.course_id == course_id,
+            TeachingScriptVersion.outline_version_id == next_draft.outline_version_id,
+        )
+        .order_by(TeachingScriptVersion.version.desc())
+    ).first()
+    session.commit()
+    return unified_response(200, "课程已发布", {
+        "course_id": course_id,
+        "release_id": release.release_id,
+        "status": course.status.value,
+        "draft": {
+            "outline_version_id": next_draft.outline_version_id,
+            "script_version_id": next_draft_script.script_version_id if next_draft_script else None,
+            "editable": True,
+        },
+    })
 
 
 @router.get("/course/{course_id}/published-content")

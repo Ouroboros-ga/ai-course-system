@@ -840,6 +840,8 @@ def _serialize_release_cue(cue) -> dict[str, Any]:
         "end_time": cue.end_time,
         "cue_type": cue.cue_type,
         "ppt_page": cue.ppt_page,
+        "material_version_id": (cue.cue_metadata or {}).get("material_version_id"),
+        "outline_node_id": (cue.cue_metadata or {}).get("outline_node_id"),
         "subtitle_text": cue.subtitle_text,
         "script_reference": cue.script_reference,
         "audio_object_key": cue.audio_object_key,

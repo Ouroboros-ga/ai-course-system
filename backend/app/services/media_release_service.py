@@ -500,26 +500,51 @@ class MediaReleaseService:
         must not be able to mutate an active learner release.  P2's Provider
         cue builder uses the same immutable replacement primitive below.
         """
+        # Legacy editor cues can opt into the modern mapping snapshot through
+        # cue metadata.  Expand all mapped pages (including multiple decks)
+        # before freezing so old callers do not collapse same-numbered pages.
+        enriched_rows = []
+        from app.services.avatar_cue_service import _freeze_ppt_mapping_snapshot, _non_negative_int
+        cues_by_node: dict[int, list[MediaTimelineCue]] = {}
+        for item in cues:
+            cues_by_node.setdefault(item.node_id, []).append(item)
+        for cue in cues:
+            metadata = dict(cue.cue_metadata or {})
+            slides = []
+            outline_node_id = metadata.get("outline_node_id")
+            if outline_node_id:
+                _, slides = _freeze_ppt_mapping_snapshot(
+                    session, course_id=course_id, outline_node_id=str(outline_node_id),
+                )
+            if slides:
+                node_cues = cues_by_node.get(cue.node_id, [cue])
+                position = min(
+                    (int(cue.cue_index) * len(slides)) // max(1, len(node_cues)),
+                    len(slides) - 1,
+                )
+                selected = slides[position]
+                metadata["material_version_id"] = selected.get("material_version_id")
+                ppt_page = _non_negative_int(selected.get("page")) or None
+            else:
+                ppt_page = cue.ppt_page
+            enriched_rows.append({
+                "node_id": cue.node_id,
+                "cue_index": cue.cue_index,
+                "start_time": cue.start_time,
+                "end_time": cue.end_time,
+                "cue_type": cue.cue_type.value if hasattr(cue.cue_type, "value") else str(cue.cue_type),
+                "ppt_page": ppt_page,
+                "subtitle_text": cue.subtitle_text,
+                "script_reference": cue.script_reference,
+                "audio_object_key": cue.audio_object_key,
+                "video_object_key": cue.video_object_key,
+                "cue_metadata": metadata,
+            })
         return self.freeze_cue_snapshot(
             session,
             course_id=course_id,
             release_id=release_id,
-            cue_rows=[
-                {
-                    "node_id": c.node_id,
-                    "cue_index": c.cue_index,
-                    "start_time": c.start_time,
-                    "end_time": c.end_time,
-                    "cue_type": c.cue_type.value if hasattr(c.cue_type, "value") else str(c.cue_type),
-                    "ppt_page": c.ppt_page,
-                    "subtitle_text": c.subtitle_text,
-                    "script_reference": c.script_reference,
-                    "audio_object_key": c.audio_object_key,
-                    "video_object_key": c.video_object_key,
-                    "cue_metadata": c.cue_metadata or {},
-                }
-                for c in cues
-            ],
+            cue_rows=enriched_rows,
         )
 
     def freeze_cue_snapshot(
@@ -758,9 +783,16 @@ class MediaPlaybackService:
             if cue.ppt_page is not None:
                 ppt_timeline.append({
                     "node_id": cue.node_id,
+                    "outline_node_id": (cue.cue_metadata or {}).get("outline_node_id"),
                     "ppt_page": cue.ppt_page,
+                    "material_version_id": (cue.cue_metadata or {}).get("material_version_id"),
                     "start_ms": int(cue.start_time * 1000),
+                    "end_ms": int(cue.end_time * 1000),
                 })
+        # The persisted Cue snapshot is authoritative.  Sort by the audio
+        # clock here so callers that use independent node audio still receive
+        # a deterministic cross-deck sequence.
+        ppt_timeline.sort(key=lambda item: (item["start_ms"], item["node_id"]))
 
         # 数字人 manifest（仅在绑定时）
         digital_human_manifest = None

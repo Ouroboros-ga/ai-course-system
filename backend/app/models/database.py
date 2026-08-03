@@ -214,6 +214,11 @@ from app.models.agent_governance_model import (
     AgentActionDecision,
     AgentToolInvocation,
 )
+from app.models.agent_run_model import (
+    AgentRunRecord,
+    AgentRunEventRecord,
+    AgentLLMDiagnosticRecord,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

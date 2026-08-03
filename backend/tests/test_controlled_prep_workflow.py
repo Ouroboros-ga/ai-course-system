@@ -138,6 +138,35 @@ def test_wrapped_response_format_rejection_uses_adapter_fallback_without_format(
     assert "JSON Schema" in gateway.calls[1]["messages"][-1].content
 
 
+def test_structure_planner_uses_sparse_schema_and_disables_reasoning_budget():
+    class CapturingStructured:
+        def __init__(self):
+            self.options = None
+            self.schema = None
+
+        async def complete(self, *, options, output_schema, **_kwargs):
+            self.options = options
+            self.schema = output_schema
+            return type("Response", (), {
+                "parsed": output_schema.model_validate({"summary": "no change", "operations": []}),
+                "content": '{"summary":"no change","operations":[]}',
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    result = asyncio_run(adapter.plan_incremental({
+        "batch_action": "organize_structure",
+        "structure_mode": True,
+        "editable_outline": [],
+        "course_context": {},
+    }))
+
+    assert result.operations == []
+    assert port.schema.__name__ == "StructurePlan"
+    assert port.options.max_tokens == 2048
+    assert port.options.provider_options == {"thinking": {"type": "disabled"}}
+
+
 def test_structured_repair_merges_nested_usage_without_type_error():
     """Repair success must not fail when the gateway returns usage details."""
 
@@ -184,6 +213,44 @@ def test_structured_repair_merges_nested_usage_without_type_error():
     assert response.usage["prompt_tokens"] == 3
     assert response.usage["prompt_tokens_details"]["cached_tokens"] == 3
     assert response.usage["completion_tokens_details"]["reasoning_tokens"] == 3
+
+
+def test_structured_repair_prompt_contains_schema_and_field_errors():
+    """A repair attempt must explain the exact contract violation."""
+
+    class GatewayWithInvalidRepair:
+        def __init__(self):
+            self.calls = []
+
+        async def chat(self, messages, **_kwargs):
+            self.calls.append(messages)
+            return LLMResponse(
+                content='{"invalid":true}',
+                usage={},
+                model="gateway",
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+    gateway = GatewayWithInvalidRepair()
+    provider = SharedLLMStructuredProvider(client=gateway)
+    with pytest.raises(StructuredOutputError) as captured:
+        asyncio_run(provider.complete(
+            messages=[{"role": "user", "content": "请返回 JSON"}],
+            output_schema=EvidenceSegmenterResult,
+            options=LLMOptions(response_format={"type": "json_object"}),
+            trace_context=LLMTraceContext(node="segment_evidence"),
+        ))
+
+    assert len(gateway.calls) == 2
+    repair_prompt = gateway.calls[1][-1].content
+    assert "JSON Schema" in repair_prompt
+    assert "Validation errors" in repair_prompt
+    assert "segment_evidence" in repair_prompt
+    assert captured.value.reason_code == "structured_output_invalid"
+    assert captured.value.stage == "segment_evidence"
+    assert captured.value.attempts == 2
+    assert captured.value.validation_errors
 
 
 def test_schema_forbids_arbitrary_markdown_shape():

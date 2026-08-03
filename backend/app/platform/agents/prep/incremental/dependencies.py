@@ -44,6 +44,9 @@ class IncrementalPrepResult:
     evidence: list[dict] = field(default_factory=list)
     excluded_locked_targets: list[str] = field(default_factory=list)
     planner: str = "llm"
+    run_id: str = ""
+    trace_id: str = ""
+    error_code: str = ""
 
 
 class IncrementalPrepPort(Protocol):

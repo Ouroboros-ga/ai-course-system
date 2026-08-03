@@ -72,6 +72,8 @@ def create_timeline_cues_from_node(
     script_content: str,
     audio_duration: float,
     ppt_pages: list[int],
+    outline_node_id: Optional[str] = None,
+    material_version_id: Optional[str] = None,
     video_object_key: Optional[str] = None,
     audio_object_key: Optional[str] = None,
 ) -> list[MediaTimelineCue]:
@@ -153,7 +155,12 @@ def create_timeline_cues_from_node(
             resource_version=resource_version,
             content_hash=content_hash,
             is_active=True,
-            cue_metadata={"total_segments": len(segments), "segment_index": i},
+            cue_metadata={
+                "total_segments": len(segments),
+                "segment_index": i,
+                "outline_node_id": outline_node_id,
+                "material_version_id": material_version_id,
+            },
         )
         session.add(cue)
         cues.append(cue)
@@ -265,6 +272,8 @@ def get_course_timeline(
             "end_time": cue.end_time,
             "cue_type": cue.cue_type.value,
             "ppt_page": cue.ppt_page,
+            "material_version_id": (cue.cue_metadata or {}).get("material_version_id"),
+            "outline_node_id": (cue.cue_metadata or {}).get("outline_node_id"),
             "subtitle_text": cue.subtitle_text,
             "script_reference": cue.script_reference,
             "video_url": video_url,
@@ -308,6 +317,8 @@ def serialize_cue(cue: MediaTimelineCue, session: Session) -> dict[str, Any]:
         "end_time": cue.end_time,
         "cue_type": cue.cue_type.value,
         "ppt_page": cue.ppt_page,
+        "material_version_id": (cue.cue_metadata or {}).get("material_version_id"),
+        "outline_node_id": (cue.cue_metadata or {}).get("outline_node_id"),
         "subtitle_text": cue.subtitle_text,
         "script_reference": cue.script_reference,
         "video_url": video_url,

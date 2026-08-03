@@ -37,6 +37,15 @@ const ws = useLearningWorkspace(courseId, {
 const media = useMediaPlayback(courseId)
 const avatar = useAvatarPlayback()
 
+const mediaTotalPages = computed(() => {
+  const manifestPages = media.ppt.value?.decks?.flatMap(deck => deck.pages || []) || []
+  return Math.max(
+    0,
+    media.ppt.value?.pages?.at(-1)?.page ?? 0,
+    ...manifestPages.map(page => Number(page.page) || 0),
+  )
+})
+
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
   enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
@@ -179,7 +188,7 @@ watch([media.avatarCues, media.digitalHumanManifest], ([avatarCues, digitalHuman
             :current-slide="ws.currentSlide.value"
             :current-ppt-page="ws.currentPptPage.value"
             :current-page="ws.currentPage.value"
-            :total-pages="Math.max(ws.totalPages.value, media.ppt.value?.pages?.at(-1)?.page ?? 0)"
+            :total-pages="Math.max(ws.totalPages.value, mediaTotalPages)"
             :is-playing="ws.isPlaying.value"
             :playback-rate="ws.playbackRate.value"
             :volume="ws.volume.value"

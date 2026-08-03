@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import Session, select
 
+from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.course_model import Course, CourseStatus
 from app.models.course_outline_model import CoursePptMapping
 from app.models.media_release_model import (
@@ -19,7 +20,11 @@ from app.models.media_release_model import (
 )
 from app.platform.tasks.handlers import media_timeline_publish_handler
 from app.platform.tasks.worker import TaskHandlerContext
-from app.services.avatar_cue_service import AVATAR_CUES_SCHEMA, load_avatar_cue_manifest
+from app.services.avatar_cue_service import (
+    AVATAR_CUES_SCHEMA,
+    build_avatar_cues_from_tts_job,
+    load_avatar_cue_manifest,
+)
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.media_release_service import (
     media_generation_job_service,
@@ -51,6 +56,38 @@ def _course(session: Session, teacher_id: int) -> Course:
     establish_course_access_baseline(session, course.id, teacher_id)
     session.commit()
     return course
+
+
+def _slide_material(
+    session: Session,
+    course_id: int,
+    *,
+    created_by: int,
+    name: str,
+    role: str,
+    version_id: str,
+) -> SourceMaterialVersion:
+    material = SourceMaterial(
+        course_id=course_id,
+        name=name,
+        material_type="slide",
+        material_role=role,
+        created_by=created_by,
+    )
+    session.add(material)
+    session.flush()
+    version = SourceMaterialVersion(
+        course_id=course_id,
+        material_id=material.material_id,
+        version_id=version_id,
+        file_path=f"course-source/{version_id}/source.pptx",
+        is_current=True,
+    )
+    material.current_version_id = version.version_id
+    session.add(material)
+    session.add(version)
+    session.flush()
+    return version
 
 
 def test_cue_worker_freezes_audio_bound_manifests_and_blocks_active_mutation(session, teacher_user):
@@ -192,6 +229,97 @@ def test_cue_worker_freezes_audio_bound_manifests_and_blocks_active_mutation(ses
             cue_rows=[],
         )
     assert exc_info.value.status_code == 409
+
+
+def test_cue_worker_flattens_one_knowledge_point_across_ppt_decks(session, teacher_user):
+    course = _course(session, teacher_user.id)
+    primary = _slide_material(
+        session, course.id, created_by=teacher_user.id, name="Primary", role="primary_courseware", version_id="smv_primary",
+    )
+    appendix = _slide_material(
+        session, course.id, created_by=teacher_user.id, name="Appendix", role="reference", version_id="smv_appendix",
+    )
+    session.add_all([
+        CoursePptMapping(
+            course_id=course.id,
+            outline_node_id="outline-cross-deck",
+            material_version_id=appendix.version_id,
+            page_refs=[8, 9], page_start=8, page_end=9, created_by=teacher_user.id,
+        ),
+        CoursePptMapping(
+            course_id=course.id,
+            outline_node_id="outline-cross-deck",
+            material_version_id=primary.version_id,
+            page_refs=[3, 4], page_start=3, page_end=4, created_by=teacher_user.id,
+        ),
+    ])
+    storage = get_object_storage()
+    audio_key = f"tts/course_{course.id}/cross-deck.mp3"
+    audio_sha = storage.put(audio_key, b"cross-deck-audio", mime_type="audio/mpeg")
+    source_job, _ = media_generation_job_service.create_job(
+        session,
+        course_id=course.id,
+        job_type=MediaGenerationJobType.TTS,
+        created_by=teacher_user.id,
+        node_id=1,
+        idempotency_key="cross-deck-source",
+    )
+    media_generation_job_service.mark_running(session, course_id=course.id, job_id=source_job.job_id, stage="fixture_tts")
+    media_generation_job_service.mark_succeeded(
+        session,
+        course_id=course.id,
+        job_id=source_job.job_id,
+        output_object_key=audio_key,
+        output_metadata={
+            "audio_object_key": audio_key,
+            "audio_sha256": audio_sha,
+            "duration_ms": 4_000,
+            "subtitle_segments": [
+                {"text": f"segment {index}", "start_ms": index * 900, "end_ms": index * 900 + 800}
+                for index in range(4)
+            ],
+        },
+    )
+    release = media_release_service.create_release(session, course_id=course.id, created_by=teacher_user.id)
+    result = build_avatar_cues_from_tts_job(
+        session,
+        course_id=course.id,
+        release_id=release.release_id,
+        tts_job_id=source_job.job_id,
+        outline_node_id="outline-cross-deck",
+        storage=storage,
+    )
+
+    assert result.cue_count == 4
+    cues = media_release_service.list_release_cues(session, course_id=course.id, release_id=release.release_id)
+    assert [(cue.cue_metadata["material_version_id"], cue.ppt_page) for cue in cues] == [
+        ("smv_primary", 3),
+        ("smv_primary", 4),
+        ("smv_appendix", 8),
+        ("smv_appendix", 9),
+    ]
+    release = media_release_service.get_release(session, course_id=course.id, release_id=release.release_id)
+    slides = release.release_metadata["ppt_mapping_snapshot"]["playback_slides"]
+    assert [(slide["material_version_id"], slide["page"]) for slide in slides] == [
+        ("smv_primary", 3),
+        ("smv_primary", 4),
+        ("smv_appendix", 8),
+        ("smv_appendix", 9),
+    ]
+    media_release_service.activate_release(
+        session, course_id=course.id, release_id=release.release_id,
+    )
+    playback = media_playback_service.get_current_playback(session, course_id=course.id)
+    assert [
+        (item["material_version_id"], item["ppt_page"])
+        for item in playback["ppt_timeline"]
+    ] == [
+        ("smv_primary", 3),
+        ("smv_primary", 4),
+        ("smv_appendix", 8),
+        ("smv_appendix", 9),
+    ]
+    assert all(item["outline_node_id"] == "outline-cross-deck" for item in playback["ppt_timeline"])
 
 
 def test_cue_worker_keeps_failure_honest_when_tts_has_no_node(session, teacher_user):

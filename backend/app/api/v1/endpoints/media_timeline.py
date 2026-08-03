@@ -41,6 +41,8 @@ class CreateCuesRequest(BaseModel):
     script_content: str = Field(min_length=1, max_length=200_000)
     audio_duration: float = Field(gt=0, le=86_400)
     ppt_pages: list[int] = Field(default_factory=list, max_length=500)
+    outline_node_id: Optional[str] = Field(None, max_length=100)
+    material_version_id: Optional[str] = Field(None, max_length=100)
     video_object_key: Optional[str] = None
     audio_object_key: Optional[str] = None
 
@@ -104,6 +106,8 @@ async def create_cues(
             script_content=payload.script_content,
             audio_duration=payload.audio_duration,
             ppt_pages=payload.ppt_pages,
+            outline_node_id=payload.outline_node_id,
+            material_version_id=payload.material_version_id,
             video_object_key=payload.video_object_key,
             audio_object_key=payload.audio_object_key,
         )

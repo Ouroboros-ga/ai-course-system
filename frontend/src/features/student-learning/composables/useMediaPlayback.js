@@ -5,6 +5,7 @@ import { withAccessToken } from '../adapters/playerWorkspaceAdapter.js'
 import {
   findActiveSubtitleIndex,
   normalizeMediaPlayback,
+  resolvePptCueAtTime,
   resolvePptPageAtTime,
 } from '../adapters/mediaPlaybackAdapter.js'
 
@@ -41,6 +42,13 @@ export function useMediaPlayback(courseId) {
             pages: value.ppt.pages.map(page => ({
               ...page,
               imageUrl: withLocalAccessToken(page.imageUrl),
+            })),
+            decks: (value.ppt.decks || []).map(deck => ({
+              ...deck,
+              pages: (deck.pages || []).map(page => ({
+                ...page,
+                imageUrl: withLocalAccessToken(page.imageUrl),
+              })),
             })),
           }
         : null,
@@ -79,6 +87,10 @@ export function useMediaPlayback(courseId) {
     return resolvePptPageAtTime(pptTimeline.value, Number(timeSeconds) * 1000)
   }
 
+  function resolvePptCue(timeSeconds) {
+    return resolvePptCueAtTime(pptTimeline.value, Number(timeSeconds) * 1000)
+  }
+
   function activeSubtitleIndex(timeSeconds) {
     return findActiveSubtitleIndex(subtitleSegments.value, Number(timeSeconds) * 1000)
   }
@@ -96,6 +108,7 @@ export function useMediaPlayback(courseId) {
     digitalHumanManifest,
     load,
     resolvePptPage,
+    resolvePptCue,
     activeSubtitleIndex,
   }
 }

@@ -19,7 +19,7 @@ import {
 
 import SfxButton from '@/app/ui/SfxButton.vue'
 import AvatarViewport from '@/features/student-learning/components/AvatarViewport.vue'
-import { resolvePptPageAtTime } from '@/features/student-learning/adapters/mediaPlaybackAdapter.js'
+import { resolvePptCueAtTime } from '@/features/student-learning/adapters/mediaPlaybackAdapter.js'
 
 /**
  * The frozen release audio is the only P0 clock.  Legacy video is retained as
@@ -91,13 +91,36 @@ const fallbackTranscript = computed(() => {
 
 const visibleTranscript = computed(() => props.subtitleSegments.length ? props.subtitleSegments : fallbackTranscript.value)
 
+const releasePptCue = computed(() => resolvePptCueAtTime(
+  props.pptTimeline,
+  Math.max(0, Number(props.currentTime) || 0) * 1000,
+))
+
+const activePptDeck = computed(() => {
+  const decks = props.pptManifest?.decks || []
+  const versionId = releasePptCue.value?.materialVersionId || props.pptManifest?.primaryMaterialVersionId
+  return decks.find(deck => deck.materialVersionId === versionId) || null
+})
+
 const releasePptPage = computed(() => {
-  const page = resolvePptPageAtTime(props.pptTimeline, Math.max(0, Number(props.currentTime) || 0) * 1000)
-    ?? Math.max(1, Number(props.currentPage) || 1)
-  return page ? props.pptManifest?.pages?.find(item => item.page === page) ?? null : null
+  const page = releasePptCue.value?.page ?? Math.max(1, Number(props.currentPage) || 1)
+  const materialVersionId = releasePptCue.value?.materialVersionId
+  const pages = activePptDeck.value?.pages?.length
+    ? activePptDeck.value.pages
+    : (!materialVersionId || materialVersionId === props.pptManifest?.primaryMaterialVersionId)
+      ? props.pptManifest?.pages
+      : []
+  return page ? pages?.find(item => item.page === page) ?? null : null
 })
 
 const effectiveSlide = computed(() => releasePptPage.value || props.currentSlide)
+const displayedPage = computed(() => releasePptCue.value?.page ?? Math.max(1, Number(props.currentPage) || 1))
+const displayedTotalPages = computed(() => {
+  const pages = activePptDeck.value?.pages || []
+  return pages.length
+    ? Math.max(...pages.map(item => Number(item.page) || 0))
+    : props.totalPages
+})
 
 function sourceTimeForGlobal(globalTime) {
   const timestamp = Math.max(0, Number(globalTime) || 0)
@@ -115,20 +138,15 @@ function globalTimeFromElement() {
 function emitPlayback(isPlaying = !mediaElement.value?.paused) {
   const globalTime = globalTimeFromElement()
   const currentMs = globalTime * 1000
-  const pptPage = hasAudio.value ? resolvePptPageAtTime(props.pptTimeline, currentMs) : null
-  const activeCue = hasAudio.value
-    ? props.pptTimeline.find((item, index) => {
-      const next = props.pptTimeline[index + 1]
-      return item.startMs <= currentMs && (!next || currentMs < next.startMs)
-    })
-    : null
+  const activeCue = hasAudio.value ? resolvePptCueAtTime(props.pptTimeline, currentMs) : null
   const activeSegment = hasAudio.value
     ? props.subtitleSegments.find(segment => currentMs >= segment.startMs && currentMs <= segment.endMs)
     : null
   emit('playback', {
     globalTime,
     isPlaying,
-    page: pptPage,
+    page: activeCue?.page ?? null,
+    materialVersionId: activeCue?.materialVersionId ?? null,
     nodeId: activeCue?.nodeId ?? activeSegment?.nodeId ?? null,
   })
 }
@@ -281,15 +299,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             {{ activeSubtitle.text }}
           </p>
         </div>
-        <AvatarViewport
-          v-if="hasAudio && avatarCues && avatarSpriteManifest"
-          :cues="avatarCues"
-          :sprite-manifest="avatarSpriteManifest"
-          :current-time="currentTime"
-          :default-playback-mode="defaultPlaybackMode"
-          :asset-source="avatarAssetSource"
-        />
-
         <video
           v-else-if="hasLegacyVideo"
           ref="legacyVideoRef"
@@ -319,7 +328,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             <SfxButton variant="tertiary" size="sm" :disabled="currentPage <= 1" aria-label="上一页课件" @click="handlePageChange(currentPage - 1)">
               <template #icon><ChevronLeft :size="16" /></template>
             </SfxButton>
-            <span class="sfx-t-caption">{{ currentPage }} / {{ totalPages }}</span>
+            <span class="sfx-t-caption">{{ displayedPage }} / {{ displayedTotalPages }}</span>
             <SfxButton variant="tertiary" size="sm" :disabled="currentPage >= totalPages" aria-label="下一页课件" @click="handlePageChange(currentPage + 1)">
               <template #icon><ChevronRight :size="16" /></template>
             </SfxButton>
@@ -342,7 +351,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
       <section class="sfx-stage-pane" aria-label="同步课件">
         <header class="sfx-stage-pane-label">
           <span><Presentation :size="15" /> 同步课件</span>
-          <small class="sfx-t-caption">第 {{ currentPage }} / {{ totalPages }} 页</small>
+          <small class="sfx-t-caption">第 {{ displayedPage }} / {{ displayedTotalPages }} 页</small>
         </header>
 
         <div class="sfx-stage-slide-frame">
@@ -350,11 +359,11 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             v-if="effectiveSlide && !slideError"
             :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
             :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
-            :alt="`课程课件第 ${currentPage} 页`"
+            :alt="`课程课件第 ${displayedPage} 页`"
             @error="slideError = true"
           />
           <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
-            <span class="sfx-t-caption">第 {{ currentPage }} 页</span>
+            <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
             <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
             <p class="sfx-t-body">{{ currentPptPage.content }}</p>
           </div>
@@ -363,6 +372,14 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             <strong>当前页暂无可显示的课件</strong>
             <p class="sfx-t-caption">可从学习轨道切换其他知识点。</p>
           </div>
+          <AvatarViewport
+            v-if="hasAudio && avatarCues && avatarSpriteManifest"
+            :cues="avatarCues"
+            :sprite-manifest="avatarSpriteManifest"
+            :current-time="currentTime"
+            :default-playback-mode="defaultPlaybackMode"
+            :asset-source="avatarAssetSource"
+          />
         </div>
       </section>
     </slot>
@@ -425,7 +442,10 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  /* The teacher's original slide is the primary learning surface.  Audio,
+     transcript and the avatar remain supporting layers rather than competing
+     content panes. */
+  grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
   grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--space-4);
   padding: var(--space-4);
@@ -527,8 +547,9 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 .sfx-stage-transcript-list li.is-active { border-left-color: var(--amber-500); background: var(--amber-100); color: var(--text-primary); }
 .sfx-stage-transcript > .sfx-t-caption { padding: var(--space-4); }
 
-.sfx-stage-slide-frame { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-cool); overflow: hidden; }
-.sfx-stage-slide-frame img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.sfx-stage-slide-frame { position:relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-cool); overflow: hidden; }
+.sfx-stage-slide-frame img { width:100%; height:100%; max-width:100%; max-height:100%; object-fit:contain; }
+.sfx-stage-slide-frame :deep(.avatar-viewport) { z-index:2; }
 .sfx-stage-slide-text { padding: var(--space-8); display: flex; flex-direction: column; gap: var(--space-3); overflow-y: auto; max-height: 100%; }
 .sfx-stage-slide-nav { display: flex; align-items: center; gap: var(--space-2); }
 

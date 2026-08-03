@@ -393,18 +393,18 @@ class CourseDraftBuildCheckpoint(SQLModel, table=True):
 
 
 class GateSeverity(str, Enum):
-    """门禁问题严重级别"""
+    """发布前检查问题严重级别。"""
     INFO = "info"
     WARNING = "warning"
-    ERROR = "error"          # 阻断发布
+    ERROR = "error"          # 教师确认后可发布
     BLOCKER = "blocker"      # 不可绕过
 
 
 class CourseQualityGateRun(SQLModel, table=True):
-    """课程质量门禁运行记录
+    """课程发布前检查记录。
 
-    发布前必须通过质量门禁；error/blocker 级别问题阻断发布。
-    每次校验生成一个 run，记录所有检查项结果。
+    ``blocker`` 必须先处理；``error`` 和 ``warning`` 可由具备发布权限的
+    教师明确确认后用于正式发布。每次检查均保留完整结果与确认记录。
     """
 
     __tablename__ = "course_quality_gate_runs"
@@ -425,11 +425,17 @@ class CourseQualityGateRun(SQLModel, table=True):
     error_count: int = Field(default=0)
     warning_count: int = Field(default=0)
 
-    # Warnings never become an implicit bypass.  A teacher must explicitly
-    # acknowledge the exact gate run before it can be used for publication.
+    # Kept for API/database compatibility with the earlier warning-only
+    # confirmation flow. New callers should use teacher_confirmation_*.
     warning_override_confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
     warning_override_reason: str = Field(default="")
     warning_override_at: Optional[datetime] = Field(default=None)
+
+    # An explicit teacher acknowledgement is required for any non-blocking
+    # problem (ERROR or WARNING) before this exact check result can publish.
+    teacher_confirmation_confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    teacher_confirmation_reason: str = Field(default="")
+    teacher_confirmation_at: Optional[datetime] = Field(default=None)
 
     # 关联发布
     target_release_id: Optional[str] = Field(default=None, description="目标发布 ID")
@@ -499,9 +505,14 @@ class CourseRelease(SQLModel, table=True):
     outline_version_id: Optional[str] = Field(default=None, index=True)
     script_version_id: Optional[str] = Field(default=None, index=True)
 
-    # 质量门禁
+    # 发布前检查
     quality_gate_run_id: Optional[str] = Field(default=None)
     quality_gate_passed: bool = Field(default=False)
+    publication_check_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    publication_issues: list = Field(default_factory=list, sa_column=Column(JSON))
+    teacher_confirmation_confirmed_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    teacher_confirmation_reason: str = Field(default="")
+    teacher_confirmation_at: Optional[datetime] = Field(default=None)
 
     # 元数据
     label: str = Field(default="")

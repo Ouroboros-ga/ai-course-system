@@ -56,8 +56,28 @@ def test_warning_needs_explicit_teacher_confirmation(session):
     assert confirmed.warning_override_at is not None
 
 
-def test_blocker_and_error_can_never_use_warning_override(session):
+def test_error_can_be_confirmed_but_blocker_cannot(session):
     course, teacher = _course_and_teacher(session)
+    error_run = CourseQualityGateRun(
+        course_id=course.id,
+        error_count=1,
+        passed=False,
+        checks=[{"check_id": "structure.no_isolated_nodes", "severity": "error", "passed": False}],
+    )
+    session.add(error_run)
+    session.commit()
+
+    confirmed = quality_gate_service.confirm_warning_override(
+        session,
+        course_id=course.id,
+        gate_run_id=error_run.gate_run_id,
+        confirmed_by=teacher.id,
+        reason="教师已检查空 section，并确认当前版本可继续发布",
+    )
+    assert confirmed.passed is True
+    assert confirmed.teacher_confirmation_confirmed_by == teacher.id
+    assert confirmed.teacher_confirmation_reason
+
     run = CourseQualityGateRun(
         course_id=course.id,
         blocker_count=1,
@@ -73,7 +93,7 @@ def test_blocker_and_error_can_never_use_warning_override(session):
             course_id=course.id,
             gate_run_id=run.gate_run_id,
             confirmed_by=teacher.id,
-            reason="不能绕过 blocker",
+            reason="教师不能绕过必须先处理的问题",
         )
 
 

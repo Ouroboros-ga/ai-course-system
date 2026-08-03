@@ -16,6 +16,7 @@ from typing import Any, Optional
 from PIL import Image
 from sqlmodel import Session, select
 
+from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.course_model import Course
 from app.models.media_release_model import MediaRelease
 from app.models.media_timeline_model import MediaAsset, StorageBackend
@@ -28,6 +29,21 @@ PPT_MANIFEST_SCHEMA = "ppt-manifest/v1"
 
 class PptManifestGenerationError(RuntimeError):
     """Raised when a declared PPT/PDF source cannot be rendered."""
+
+
+def material_deck_sort_key(
+    material: SourceMaterial | None,
+    version: SourceMaterialVersion | None,
+    *,
+    fallback_id: str = "",
+) -> tuple[Any, ...]:
+    """Return the canonical teacher-deck ordering used by mapping and playback."""
+    return (
+        bool(material and material.material_role != "primary_courseware"),
+        version.created_at.isoformat() if version and version.created_at else "",
+        version.version_id if version else fallback_id,
+        fallback_id,
+    )
 
 
 def _read_course_source(course: Course, storage: ObjectStorageProvider) -> tuple[bytes, str] | None:
@@ -45,6 +61,67 @@ def _read_course_source(course: Course, storage: ObjectStorageProvider) -> tuple
     except Exception:
         logger.debug("Unable to read course source object", exc_info=True)
     return None
+
+
+def _current_uploaded_slide_versions(
+    session: Session,
+    *,
+    course_id: int,
+) -> list[tuple[SourceMaterial, SourceMaterialVersion]]:
+    """Return deduplicated current teacher-uploaded decks in playback order."""
+    rows = list(session.exec(select(SourceMaterial, SourceMaterialVersion).where(
+        SourceMaterial.course_id == course_id,
+        SourceMaterial.material_id == SourceMaterialVersion.material_id,
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.is_current == True,  # noqa: E712
+        SourceMaterial.material_type == "slide",
+    )).all())
+    rows.sort(key=lambda item: material_deck_sort_key(item[0], item[1]))
+    deduplicated: list[tuple[SourceMaterial, SourceMaterialVersion]] = []
+    seen_hashes: set[str] = set()
+    for material, version in rows:
+        fingerprint = version.file_hash or version.version_id
+        if not version.file_path or fingerprint in seen_hashes:
+            continue
+        seen_hashes.add(fingerprint)
+        deduplicated.append((material, version))
+    return deduplicated
+
+
+def _manifest_deck_from_uploaded_source(
+    session: Session,
+    *,
+    course_id: int,
+    material: SourceMaterial,
+    version: SourceMaterialVersion,
+) -> dict[str, Any]:
+    """Build one deck entry from the shared original-slide render cache."""
+    from app.services.ppt_slide_render_service import ensure_ppt_source_slide_renders
+
+    assets = ensure_ppt_source_slide_renders(
+        session,
+        course_id=course_id,
+        material_version_id=version.version_id,
+        force_full=True,
+    )
+    pages = [
+        {
+            "page": page,
+            "image_object_key": asset.object_key,
+            "width": asset.width,
+            "height": asset.height,
+        }
+        for page, asset in sorted(assets.items())
+        if asset.object_key
+    ]
+    if not pages:
+        raise PptManifestGenerationError("teacher PPT source rendered no usable slide images")
+    return {
+        "material_version_id": version.version_id,
+        "material_name": material.name,
+        "source_sha256": version.file_hash,
+        "pages": pages,
+    }
 
 
 def _register_asset(
@@ -94,29 +171,44 @@ def sign_manifest_pages(
     release_id: str,
 ) -> dict[str, Any]:
     """Materialize short-lived image URLs from immutable object keys."""
-    pages = []
-    for item in manifest.get("pages", []):
-        object_key = item.get("image_object_key")
-        if not object_key:
+    def sign_pages(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        pages = []
+        for item in items:
+            object_key = item.get("image_object_key")
+            if not object_key:
+                continue
+            pages.append({
+                "page": int(item.get("page") or 1),
+                "image_url": storage.sign_read_url(
+                    object_key,
+                    scope={
+                        "course_id": course_id,
+                        "purpose": "ppt_playback",
+                        "release_id": release_id,
+                    },
+                ),
+                "width": int(item.get("width") or 0),
+                "height": int(item.get("height") or 0),
+            })
+        return pages
+
+    pages = sign_pages(manifest.get("pages", []))
+    decks = []
+    for deck in manifest.get("decks", []):
+        if not isinstance(deck, dict) or not deck.get("material_version_id"):
             continue
-        page = {
-            "page": int(item.get("page") or 1),
-            "image_url": storage.sign_read_url(
-                object_key,
-                scope={
-                    "course_id": course_id,
-                    "purpose": "ppt_playback",
-                    "release_id": release_id,
-                },
-            ),
-            "width": int(item.get("width") or 0),
-            "height": int(item.get("height") or 0),
-        }
-        pages.append(page)
+        decks.append({
+            "material_version_id": str(deck["material_version_id"]),
+            "material_name": str(deck.get("material_name") or "PPT"),
+            "source_sha256": str(deck.get("source_sha256") or ""),
+            "pages": sign_pages(deck.get("pages") or []),
+        })
     return {
         "schema": PPT_MANIFEST_SCHEMA,
         "source_sha256": manifest.get("source_sha256", ""),
+        "primary_material_version_id": manifest.get("primary_material_version_id"),
         "pages": pages,
+        "decks": decks,
     }
 
 
@@ -136,6 +228,62 @@ def build_ppt_manifest(
     if course is None:
         return None
     storage = storage or get_object_storage()
+
+    # The course build workspace stores teacher uploads as material versions.
+    # Prefer those exact PPTX sources over legacy ``Course.source_file_path``
+    # so mapping and learner playback share the same visual assets.
+    uploaded_decks = [
+        _manifest_deck_from_uploaded_source(
+            session,
+            course_id=course_id,
+            material=material,
+            version=version,
+        )
+        for material, version in _current_uploaded_slide_versions(session, course_id=course_id)
+    ]
+    if uploaded_decks:
+        primary_deck = uploaded_decks[0]
+        manifest = {
+            "schema": PPT_MANIFEST_SCHEMA,
+            "source_sha256": primary_deck["source_sha256"],
+            "primary_material_version_id": primary_deck["material_version_id"],
+            # Existing players consume top-level pages.  Keep those bound to
+            # the designated primary deck while new players select a deck from
+            # the additive ``decks`` collection via the PPT mapping snapshot.
+            "pages": primary_deck["pages"],
+            "decks": uploaded_decks,
+        }
+        manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+        manifest_key = (
+            f"ppt-manifest/course{course_id}/{release.release_id}/"
+            f"manifest-{manifest_hash[:16]}.json"
+        )
+        if not storage.exists(manifest_key):
+            storage.put(manifest_key, manifest_bytes, mime_type="application/json")
+        _register_asset(
+            session,
+            storage=storage,
+            course_id=course_id,
+            object_key=manifest_key,
+            asset_type="ppt_manifest",
+            mime_type="application/json",
+            size_bytes=len(manifest_bytes),
+            content_hash=manifest_hash,
+        )
+        release.ppt_manifest_object_key = manifest_key
+        release.release_metadata = {
+            **(release.release_metadata or {}),
+            "ppt_manifest_schema": PPT_MANIFEST_SCHEMA,
+            "ppt_source_sha256": primary_deck["source_sha256"],
+            "ppt_page_count": len(primary_deck["pages"]),
+            "ppt_deck_count": len(uploaded_decks),
+            "ppt_primary_material_version_id": primary_deck["material_version_id"],
+        }
+        session.add(release)
+        session.flush()
+        return manifest
+
     source = _read_course_source(course, storage)
     if source is None:
         if course.source_file_path or course.pdf_file_path:

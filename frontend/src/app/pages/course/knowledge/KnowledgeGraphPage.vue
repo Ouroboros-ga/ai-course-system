@@ -307,7 +307,7 @@ onMounted(() => {
       <header class="sfx-knowledge__refinement-head">
         <div>
           <p class="sfx-knowledge__preview-kicker">当前知识包</p>
-          <p class="sfx-knowledge__refinement-copy">检查已发布图谱的版本、规模与质量门禁状态。</p>
+          <p class="sfx-knowledge__refinement-copy">检查已发布图谱的版本、规模与发布前检查状态。</p>
         </div>
         <SfxButton variant="secondary" size="sm" :loading="refinementStatus === 'loading'" @click="loadRefinementReport">
           刷新

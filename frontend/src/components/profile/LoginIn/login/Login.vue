@@ -127,7 +127,7 @@ watch(() => props.serverError, (value) => {
         </li>
         <li>
           <span class="workflow-index">03</span>
-          <div><strong>冻结发布</strong><small>让学生只读取已确认的课程版本</small></div>
+          <div><strong>正式发布</strong><small>让学生只读取教师确认的课程版本</small></div>
         </li>
       </ol>
 

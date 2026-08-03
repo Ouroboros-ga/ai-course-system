@@ -4,6 +4,12 @@ import asyncio
 
 from app.platform.agents.gateway import AgentGateway
 from app.platform.agents.prep.common.dependencies import CommonPrepDependencies
+from app.platform.agents.prep.initial.composition import build_initial_graph_factory
+from app.platform.agents.prep.initial.dependencies import (
+    InitialPrepDependencies,
+    InitialPrepResult,
+)
+from app.platform.agents.prep.initial.profile import build_initial_profile
 from app.platform.agents.prep.incremental.composition import (
     build_incremental_graph_factory,
 )
@@ -21,6 +27,8 @@ from app.platform.agents.runtime.events import (
 from app.platform.agents.runtime.profile import AgentProfile, AgentType
 from app.platform.agents.runtime.registry import AgentDefinitionKey, AgentRuntimeRegistry
 from app.platform.agents.shared.state import empty_meta
+from app.platform.agents.contracts.llm import StructuredOutputError
+from app.platform.agents.prep.incremental.workflow import build_incremental_workflow
 
 
 class _FailingGraph:
@@ -67,6 +75,21 @@ class _BatchPort:
 class _UnusedStructuredLLM:
     async def complete(self, **kwargs):
         raise AssertionError("workflow should call the incremental port")
+
+
+class _StructuredFailurePort:
+    async def plan(self, **_kwargs):
+        raise StructuredOutputError(
+            "LLM response did not match schema after one repair retry: ValidationError",
+            reason_code="structured_output_invalid",
+            stage="plan_incremental",
+            attempts=2,
+            schema_name="AgentPlan",
+            validation_errors=[{"loc": ["operations"], "type": "missing", "msg": "Field required"}],
+        )
+
+    async def plan_action(self, **_kwargs):
+        return await self.plan(**_kwargs)
 
 
 def _profile():
@@ -209,6 +232,94 @@ def test_registered_incremental_runtime_dispatches_batch_action_to_port():
     assert result.result["result"]["planner"] == "llm_batched"
 
 
+def test_incremental_workflow_hides_raw_structured_output_error():
+    dependencies = IncrementalPrepDependencies(
+        common=CommonPrepDependencies(
+            structured_llm=_UnusedStructuredLLM(),
+            run_store=NullAgentRunStorePort(),
+            event_port=_CapturingEvents(),
+        ),
+        incremental_prep=_StructuredFailurePort(),
+    )
+    graph = build_incremental_workflow(dependencies)
+    result = asyncio.run(graph.ainvoke({
+        "request": {
+            "course_id": "42",
+            "instruction": "优化标题",
+            "outline_node_id": "node-1",
+            "action": "optimize_node_title",
+        },
+        "meta": {"errors": [], "degraded_services": []},
+    }))
+
+    error = result["meta"]["errors"][-1]
+    assert error["reason_code"] == "structured_output_invalid"
+    assert "LLM response did not match schema" not in error["message"]
+    assert "ValidationError" not in error["message"]
+    assert "课程节点优化" in error["message"]
+
+
 def test_incremental_profile_limits_shared_llm_runs_to_three():
     assert build_incremental_profile().max_concurrency == 3
     assert build_incremental_profile().default_timeout_seconds == 240.0
+
+
+def test_registered_initial_runtime_executes_initial_prep_port():
+    class _InitialPort:
+        def __init__(self):
+            self.calls = []
+
+        async def build(self, **kwargs):
+            self.calls.append(kwargs)
+            return InitialPrepResult(
+                outline_version_id="ov_1",
+                script_version_id="sv_1",
+                graph_candidate_batch_id="gb_1",
+                warnings=["需要教师复核"],
+            )
+
+    port = _InitialPort()
+    events = _CapturingEvents()
+    dependencies = InitialPrepDependencies(
+        common=CommonPrepDependencies(
+            structured_llm=_UnusedStructuredLLM(),
+            run_store=NullAgentRunStorePort(),
+            event_port=events,
+        ),
+        initial_prep=port,
+    )
+    key = AgentDefinitionKey(
+        agent_type=AgentType.PREP.value,
+        agent_version="initial",
+    )
+    registry = AgentRuntimeRegistry()
+    builder = build_initial_graph_factory(dependencies)
+    profile = build_initial_profile()
+    registry.register_factory(
+        key,
+        lambda: BaseAgentRuntime(
+            profile=profile,
+            graph=builder(()),
+            event_port=events,
+        ),
+    )
+    runtime = asyncio.run(registry.get_or_create(key))
+
+    result = asyncio.run(runtime.run(
+        context=AgentRunContext(
+            agent_type=AgentType.PREP.value,
+            course_id="42",
+            teacher_id="7",
+            scope=("42",),
+            extras={
+                "corpus_snapshot_id": "cs_1",
+                "build_task_id": "bt_1",
+                "replace_unreviewed_initial": True,
+            },
+        ),
+    ))
+
+    assert result["status"] == "ok"
+    assert result["result"]["outline_version_id"] == "ov_1"
+    assert port.calls[0]["teacher_id"] == "7"
+    assert port.calls[0]["replace_unreviewed_initial"] is True

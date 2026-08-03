@@ -37,6 +37,8 @@ class InitialPrepRequestState(TypedDict):
     course_id: str
     corpus_snapshot_id: str
     build_task_id: str | None
+    replace_unreviewed_initial: bool
+    stage_callback: object | None
 
 
 class PrepProgressState(TypedDict, total=False):
@@ -54,6 +56,13 @@ class InitialPrepResultState(TypedDict, total=False):
     script_version_id: str
     graph_candidate_batch_id: str
     warnings: list[str]
+    rag_indexed_chunks: int
+    graph_node_candidates: int
+    graph_relation_candidates: int
+    outline_node_count: int
+    script_node_count: int
+    markdown_resource_id: str
+    markdown_resource_version_id: str
 
 
 class InitialPrepState(PrepCommonState, total=False):

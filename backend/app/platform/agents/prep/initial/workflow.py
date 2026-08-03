@@ -21,6 +21,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from ...shared.error_messages import prep_error_details
 from ..stage_emitter import StageEmitter
 from .dependencies import InitialPrepDependencies
 from .state import InitialPrepState
@@ -50,6 +51,8 @@ def build_initial_workflow(deps: InitialPrepDependencies):
         course_id = request.get("course_id", "")
         corpus_snapshot_id = request.get("corpus_snapshot_id", "")
         build_task_id = request.get("build_task_id")
+        replace_unreviewed_initial = bool(request.get("replace_unreviewed_initial", False))
+        stage_callback = request.get("stage_callback")
 
         if not (teacher_id and course_id and corpus_snapshot_id):
             return {
@@ -68,7 +71,14 @@ def build_initial_workflow(deps: InitialPrepDependencies):
             run_id=run_id,
             trace_id=trace_id,
         )
-        on_stage = emitter.make_callback()
+        emitter_callback = emitter.make_callback()
+
+        async def on_stage(stage: str, progress: int, value: Any) -> None:
+            await emitter_callback(stage, progress, value)
+            if callable(stage_callback):
+                outcome = stage_callback(stage, progress, value)
+                if outcome is not None:
+                    await outcome
 
         try:
             result = await deps.initial_prep.build(
@@ -77,17 +87,18 @@ def build_initial_workflow(deps: InitialPrepDependencies):
                 corpus_snapshot_id=corpus_snapshot_id,
                 build_task_id=build_task_id,
                 on_stage=on_stage,
-                replace_unreviewed_initial=False,
+                replace_unreviewed_initial=replace_unreviewed_initial,
             )
         except Exception as error:  # noqa: BLE001 - fail-closed
             logger.warning(
                 "InitialPrep: build() raised: %s: %s",
                 type(error).__name__, error,
             )
+            error_details = _initial_error_details(error)
             return {
                 "meta": {
                     **meta,
-                    "errors": [*meta.get("errors", []), f"INITIAL_BUILD_FAILED:{type(error).__name__}"],
+                    "errors": [*meta.get("errors", []), error_details],
                     "degraded_services": [*meta.get("degraded_services", []), "initial_build"],
                     "status": "build_error",
                 },
@@ -100,6 +111,13 @@ def build_initial_workflow(deps: InitialPrepDependencies):
                 "script_version_id": result.script_version_id,
                 "graph_candidate_batch_id": result.graph_candidate_batch_id,
                 "warnings": build_warnings,
+                "rag_indexed_chunks": result.rag_indexed_chunks,
+                "graph_node_candidates": result.graph_node_candidates,
+                "graph_relation_candidates": result.graph_relation_candidates,
+                "outline_node_count": result.outline_node_count,
+                "script_node_count": result.script_node_count,
+                "markdown_resource_id": result.markdown_resource_id,
+                "markdown_resource_version_id": result.markdown_resource_version_id,
             },
             "meta": {
                 **meta,
@@ -112,6 +130,20 @@ def build_initial_workflow(deps: InitialPrepDependencies):
     graph.add_edge(START, "execute_initial_build")
     graph.add_edge("execute_initial_build", END)
     return graph.compile()
+
+
+def _initial_error_details(error: BaseException) -> dict[str, Any]:
+    """Convert a service/provider error into a safe workflow error entry."""
+    reason_code = getattr(error, "reason_code", "")
+    return prep_error_details(
+        error,
+        code=(
+            "INITIAL_BUILD_STRUCTURED_OUTPUT_INVALID"
+            if reason_code == "structured_output_invalid"
+            else "INITIAL_BUILD_FAILED"
+        ),
+        node="execute_initial_build",
+    )
 
 
 __all__ = ["build_initial_workflow"]

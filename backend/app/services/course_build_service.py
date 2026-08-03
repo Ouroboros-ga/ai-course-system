@@ -55,6 +55,7 @@ from app.models.course_outline_model import (
 )
 from app.models.document_parse_model import RetrievalChunk
 from app.models.graph_production_model import GraphSnapshotRecord, SnapshotStatus
+from app.services.course_corpus_service import course_corpus_service
 
 
 # ---------------------------------------------------------------------------
@@ -372,13 +373,21 @@ class CourseBuildService:
         }
 
     def _serialize_gate(self, g: CourseQualityGateRun) -> dict:
+        teacher_confirmed_at = g.teacher_confirmation_at or g.warning_override_at
+        teacher_confirmed_by = g.teacher_confirmation_confirmed_by or g.warning_override_confirmed_by
+        teacher_reason = g.teacher_confirmation_reason or g.warning_override_reason
         return {
             "gate_run_id": g.gate_run_id,
             "passed": g.passed,
             "blocker_count": g.blocker_count,
             "error_count": g.error_count,
             "warning_count": g.warning_count,
-            "requires_warning_confirmation": bool(g.warning_count and g.warning_override_at is None),
+            "requires_warning_confirmation": bool((g.warning_count or g.error_count) and not teacher_confirmed_at),
+            "requires_teacher_confirmation": bool((g.warning_count or g.error_count) and not teacher_confirmed_at),
+            "has_blockers": bool(g.blocker_count),
+            "teacher_confirmation_confirmed_by": teacher_confirmed_by,
+            "teacher_confirmation_reason": teacher_reason,
+            "teacher_confirmation_at": teacher_confirmed_at.isoformat() if teacher_confirmed_at else None,
             "warning_override_confirmed_by": g.warning_override_confirmed_by,
             "warning_override_reason": g.warning_override_reason,
             "warning_override_at": g.warning_override_at.isoformat() if g.warning_override_at else None,
@@ -407,6 +416,11 @@ class CourseBuildService:
             "script_version_id": r.script_version_id,
             "quality_gate_passed": r.quality_gate_passed,
             "quality_gate_run_id": r.quality_gate_run_id,
+            "publication_check_snapshot": r.publication_check_snapshot or {},
+            "publication_issues": r.publication_issues or [],
+            "teacher_confirmation_confirmed_by": r.teacher_confirmation_confirmed_by,
+            "teacher_confirmation_reason": r.teacher_confirmation_reason,
+            "teacher_confirmation_at": r.teacher_confirmation_at.isoformat() if r.teacher_confirmation_at else None,
             "published_by": r.published_by,
             "published_at": r.published_at.isoformat() if r.published_at else None,
             "created_at": r.created_at.isoformat() if r.created_at else None,
@@ -691,7 +705,13 @@ class QualityGateService:
             })
 
         # 检查 2：所有材料必须已解析
-        unparsed = [m for m in materials if m.status not in (MaterialStatus.PARSED,)]
+        # ``needs_review`` is a terminal parse outcome: the parser produced a
+        # usable IR and the teacher still has to acknowledge quality warnings.
+        # It must not also be reported as an unfinished parse.
+        unparsed = [m for m in materials if m.status not in (
+            MaterialStatus.PARSED,
+            MaterialStatus.NEEDS_REVIEW,
+        )]
         if unparsed:
             checks.append({
                 "check_id": "materials.parsed",
@@ -728,7 +748,6 @@ class QualityGateService:
             # The same learner-safe selection is used for a pre-publish gate
             # and the final CourseRelease; validate must not report a false
             # failure merely because publication has not happened yet.
-            from app.services.course_corpus_service import course_corpus_service
             retrieval = course_corpus_service.freeze_release_retrieval_snapshot(
                 session, corpus=corpus,
             )
@@ -751,25 +770,42 @@ class QualityGateService:
                 if missing_chunks:
                     checks.append({
                         "check_id": "retrieval.release_chunks_available",
-                        "name": "学生 RAG 冻结 chunk 可用性",
+                        "name": "学生检索内容可用",
                         "severity": GateSeverity.ERROR.value,
                         "passed": False,
-                        "message": f"冻结检索快照缺少 {len(missing_chunks)} 个 chunk",
+                        "message": f"学生检索内容缺少 {len(missing_chunks)} 个数据块",
                     })
                     error_count += 1
                 else:
                     checks.append({
                         "check_id": "retrieval.release_chunks_available",
-                        "name": "学生 RAG 冻结 chunk 可用性",
+                        "name": "学生检索内容可用",
                         "severity": GateSeverity.INFO.value,
                         "passed": True,
                         "message": f"{len(frozen_ids)} 个已确认 chunk 可供学生检索",
                     })
 
-            parse_warnings = list(corpus.warnings or []) + [
-                f"{material.name}: 需要人工检查"
-                for material in materials if material.status == MaterialStatus.NEEDS_REVIEW
-            ]
+            # A legacy uploader could create duplicate material rows for the
+            # same bytes.  The corpus already records one warning per logical
+            # source item, so adding one more warning per duplicate inflated
+            # the teacher's review count (e.g. 6 materials -> 12 warnings).
+            parse_warnings = list(dict.fromkeys(corpus.warnings or []))
+            warning_names = {item.split(":", 1)[0].strip() for item in parse_warnings}
+            seen_review_hashes: set[str] = set()
+            current_versions = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.course_id == course_id,
+                SourceMaterialVersion.is_current == True,  # noqa: E712
+            )).all()
+            version_by_material = {item.material_id: item for item in current_versions}
+            for material in materials:
+                if material.status != MaterialStatus.NEEDS_REVIEW:
+                    continue
+                version = version_by_material.get(material.material_id)
+                content_key = (version.file_hash if version else material.material_id).strip()
+                if content_key in seen_review_hashes or material.name in warning_names:
+                    continue
+                seen_review_hashes.add(content_key)
+                parse_warnings.append(f"{material.name}: 需要人工检查")
             if parse_warnings:
                 checks.append({
                     "check_id": "materials.parse_warnings_resolved",
@@ -785,10 +821,29 @@ class QualityGateService:
             select(CourseBuildStep).where(CourseBuildStep.course_id == course_id)
         ).all()
         steps_map = {s.step_name: s for s in steps}
+        draft_outline_for_steps = session.exec(select(CourseOutlineVersion).where(
+            CourseOutlineVersion.course_id == course_id,
+            CourseOutlineVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+        ).order_by(CourseOutlineVersion.version.desc())).first()
+        draft_script_for_steps = session.exec(select(TeachingScriptVersion).where(
+            TeachingScriptVersion.course_id == course_id,
+            TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+        ).order_by(TeachingScriptVersion.version.desc())).first()
         required_steps = [BuildStepName.MATERIALS, BuildStepName.STRUCTURE, BuildStepName.SCRIPTS]
         for req_step in required_steps:
             s = steps_map.get(req_step)
-            if s is None or s.status == BuildStepStatus.NOT_STARTED:
+            # Older local-demo courses may have durable outline/script
+            # artifacts while their seven step rows were never backfilled.
+            # Treat those artifacts as proof that the step started; do not
+            # manufacture a blocking error for a bookkeeping gap.
+            artifact_started = (
+                req_step == BuildStepName.MATERIALS and bool(materials)
+            ) or (
+                req_step == BuildStepName.STRUCTURE and draft_outline_for_steps is not None
+            ) or (
+                req_step == BuildStepName.SCRIPTS and draft_script_for_steps is not None
+            )
+            if s is None or (s.status == BuildStepStatus.NOT_STARTED and not artifact_started):
                 checks.append({
                     "check_id": f"steps.{req_step.value}.started",
                     "name": f"步骤 {req_step.value} 已启动",
@@ -797,6 +852,14 @@ class QualityGateService:
                     "message": f"步骤 {req_step.value} 尚未启动",
                 })
                 error_count += 1
+            elif s.status == BuildStepStatus.NOT_STARTED and artifact_started:
+                checks.append({
+                    "check_id": f"steps.{req_step.value}.started",
+                    "name": f"步骤 {req_step.value} 已启动",
+                    "severity": GateSeverity.INFO.value,
+                    "passed": True,
+                    "message": "已检测到对应的课程产物；兼容回填旧课程步骤记录",
+                })
             elif s.status == BuildStepStatus.FAILED:
                 checks.append({
                     "check_id": f"steps.{req_step.value}.succeeded",
@@ -885,9 +948,19 @@ class QualityGateService:
 
             if corpus is not None and script_version is not None:
                 lineage_errors = []
-                if outline.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                outline_same_materials = course_corpus_service.snapshots_have_same_material_set(
+                    session,
+                    left_snapshot_id=outline.corpus_snapshot_id,
+                    right_snapshot=corpus,
+                )
+                script_same_materials = course_corpus_service.snapshots_have_same_material_set(
+                    session,
+                    left_snapshot_id=script_version.corpus_snapshot_id,
+                    right_snapshot=corpus,
+                )
+                if outline.corpus_snapshot_id != corpus.corpus_snapshot_id and not outline_same_materials:
                     lineage_errors.append("outline corpus 与当前材料快照不一致")
-                if script_version.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                if script_version.corpus_snapshot_id != corpus.corpus_snapshot_id and not script_same_materials:
                     lineage_errors.append("script corpus 与当前材料快照不一致")
                 if outline.build_task_id != script_version.build_task_id:
                     lineage_errors.append("outline/script build_task 不一致")
@@ -896,7 +969,15 @@ class QualityGateService:
                         CourseDraftBuildTask.course_id == course_id,
                         CourseDraftBuildTask.build_task_id == outline.build_task_id,
                     )).first()
-                    if build is None or build.corpus_snapshot_id != corpus.corpus_snapshot_id:
+                    build_same_materials = bool(build and course_corpus_service.snapshots_have_same_material_set(
+                        session,
+                        left_snapshot_id=build.corpus_snapshot_id,
+                        right_snapshot=corpus,
+                    ))
+                    if build is None or (
+                        build.corpus_snapshot_id != corpus.corpus_snapshot_id
+                        and not build_same_materials
+                    ):
                         lineage_errors.append("build task 不属于当前 corpus")
                 if lineage_errors:
                     checks.append({"check_id": "release.same_build_lineage", "name": "发布版本构建血缘一致性", "severity": GateSeverity.ERROR.value, "passed": False, "message": "；".join(lineage_errors)})
@@ -999,25 +1080,34 @@ class QualityGateService:
         confirmed_by: int,
         reason: str,
     ) -> CourseQualityGateRun:
-        """Explicitly acknowledge warnings on one immutable gate result.
+        """Compatibility entry point for teacher confirmation.
 
-        Errors and blockers are never overrideable.  The acknowledgement is
-        recorded on the run subsequently supplied to the publish call.
+        Despite the historical route/name, this confirms ERROR and WARNING
+        results together. BLOCKER remains non-bypassable.
         """
         run = self.get_run(session, course_id=course_id, gate_run_id=gate_run_id)
-        if run.blocker_count or run.error_count:
-            reject_state_conflict("存在 BLOCKER 或 ERROR，不能以 Warning 确认绕过")
-        if run.warning_count <= 0:
-            reject_state_conflict("该质量门禁不存在需要确认的 Warning")
+        if run.blocker_count:
+            reject_state_conflict("存在必须先处理的问题，不能直接发布")
+        if run.warning_count <= 0 and run.error_count <= 0:
+            reject_state_conflict("本次检查没有需要教师确认的问题")
         if len((reason or "").strip()) < 3:
-            reject_validation_failed("Warning 确认原因至少需要 3 个字符")
+            reject_validation_failed("确认原因至少需要 3 个字符")
+        confirmed_at = utcnow_aware()
+        normalized_reason = reason.strip()[:1000]
+        run.teacher_confirmation_confirmed_by = confirmed_by
+        run.teacher_confirmation_reason = normalized_reason
+        run.teacher_confirmation_at = confirmed_at
+        # Preserve the old fields for clients and audit rows written before
+        # the generic confirmation terminology was introduced.
         run.warning_override_confirmed_by = confirmed_by
-        run.warning_override_reason = reason.strip()[:1000]
-        run.warning_override_at = utcnow_aware()
+        run.warning_override_reason = normalized_reason
+        run.warning_override_at = confirmed_at
         run.passed = True
         session.add(run)
         session.flush()
         return run
+
+    confirm_teacher_review = confirm_warning_override
 
 
 quality_gate_service = QualityGateService()
@@ -1031,7 +1121,7 @@ quality_gate_service = QualityGateService()
 class CourseReleaseService:
     """课程发布服务
 
-    - 发布前必须通过质量门禁（error/blocker = 0）
+    - 发布前必须完成检查；BLOCKER 需先处理，ERROR/WARNING 可由教师确认后发布
     - 发布后 release 不可变（status=published）
     - 回滚产生新激活版本而非破坏历史（旧 published → superseded）
     - 学生只读 published 且 is_active 的 release
@@ -1154,7 +1244,7 @@ class CourseReleaseService:
             session, corpus=corpus,
         )
         if retrieval is None:
-            reject_state_conflict("没有已确认的课程证据，无法冻结学生检索快照")
+            reject_state_conflict("没有已确认的课程证据，无法生成学生可见的检索内容")
 
         # The release must not mix a draft generated from an earlier corpus
         # with a newer material set. Students only see one coherent snapshot.
@@ -1170,7 +1260,20 @@ class CourseReleaseService:
         )).first() if script_id else None
         if outline is None or script is None:
             reject_state_conflict("发布必须指定同一草稿版本的课程结构与讲稿")
-        if outline.corpus_snapshot_id != corpus.corpus_snapshot_id or script.corpus_snapshot_id != corpus.corpus_snapshot_id:
+        outline_same_materials = course_corpus_service.snapshots_have_same_material_set(
+            session,
+            left_snapshot_id=outline.corpus_snapshot_id,
+            right_snapshot=corpus,
+        )
+        script_same_materials = course_corpus_service.snapshots_have_same_material_set(
+            session,
+            left_snapshot_id=script.corpus_snapshot_id,
+            right_snapshot=corpus,
+        )
+        if (
+            (outline.corpus_snapshot_id != corpus.corpus_snapshot_id and not outline_same_materials)
+            or (script.corpus_snapshot_id != corpus.corpus_snapshot_id and not script_same_materials)
+        ):
             reject_state_conflict("课程结构或讲稿不属于当前课程材料快照；请重新生成或选择对应材料版本")
 
         # Freeze the currently published graph with this release.  The caller
@@ -1182,7 +1285,7 @@ class CourseReleaseService:
             GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
         ).order_by(GraphSnapshotRecord.version.desc())).first()
         if active_graph is None:
-            reject_state_conflict("没有已发布的课程知识图谱，无法冻结发布版本")
+            reject_state_conflict("没有已发布的课程知识图谱，无法正式发布")
         if graph_snapshot_ref is not None and graph_snapshot_ref != active_graph.snapshot_id:
             reject_state_conflict("发布只能冻结当前已发布的活动知识图谱快照")
         graph_snapshot_ref = active_graph.snapshot_id
@@ -1194,19 +1297,29 @@ class CourseReleaseService:
             gate_run = quality_gate_service.get_run(
                 session, course_id=course_id, gate_run_id=quality_gate_run_id,
             )
-            if gate_run.blocker_count or gate_run.error_count or not gate_run.passed:
+            teacher_confirmed_at = gate_run.teacher_confirmation_at or gate_run.warning_override_at
+            if gate_run.blocker_count or not gate_run.passed or (
+                gate_run.error_count + gate_run.warning_count > 0 and not teacher_confirmed_at
+            ):
                 reject_state_conflict(
-                    "质量门禁未通过，无法发布",
+                    "发布前检查仍有未确认的问题，无法正式发布",
                     details={
                         "blocker_count": gate_run.blocker_count,
                         "error_count": gate_run.error_count,
                         "warning_count": gate_run.warning_count,
                         "gate_run_id": gate_run.gate_run_id,
-                        "requires_warning_confirmation": gate_run.warning_count > 0 and gate_run.warning_override_at is None,
+                        "requires_teacher_confirmation": bool(
+                            gate_run.error_count + gate_run.warning_count > 0 and not teacher_confirmed_at
+                        ),
                     },
                 )
             release.quality_gate_run_id = gate_run.gate_run_id
             release.quality_gate_passed = True
+            release.publication_check_snapshot = {"gate_run_id": gate_run.gate_run_id, "checks": gate_run.checks}
+            release.publication_issues = [item for item in gate_run.checks if not item.get("passed")]
+            release.teacher_confirmation_confirmed_by = gate_run.teacher_confirmation_confirmed_by or gate_run.warning_override_confirmed_by
+            release.teacher_confirmation_reason = gate_run.teacher_confirmation_reason or gate_run.warning_override_reason
+            release.teacher_confirmation_at = teacher_confirmed_at
         elif run_quality_gate:
             gate_run = quality_gate_service.run_checks(
                 session,
@@ -1217,11 +1330,13 @@ class CourseReleaseService:
             )
             release.quality_gate_run_id = gate_run.gate_run_id
             release.quality_gate_passed = gate_run.passed
+            release.publication_check_snapshot = {"gate_run_id": gate_run.gate_run_id, "checks": gate_run.checks}
+            release.publication_issues = [item for item in gate_run.checks if not item.get("passed")]
             if not gate_run.passed:
                 session.add(release)
                 session.flush()
                 reject_state_conflict(
-                    "质量门禁未通过，无法发布",
+                        "发布前检查未通过，无法正式发布",
                     details={
                         "blocker_count": gate_run.blocker_count,
                         "error_count": gate_run.error_count,
@@ -1229,7 +1344,7 @@ class CourseReleaseService:
                     },
                 )
         else:
-            reject_state_conflict("发布必须运行质量门禁或指定已通过的门禁记录")
+            reject_state_conflict("正式发布必须先完成发布前检查，或指定已确认的检查记录")
 
         # 旧 active release 标记为 superseded
         old_active = self.get_active_release(session, course_id=course_id)

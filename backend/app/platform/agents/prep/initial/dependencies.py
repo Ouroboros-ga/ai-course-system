@@ -35,6 +35,13 @@ class InitialPrepResult:
     script_version_id: str
     graph_candidate_batch_id: str
     warnings: list[str] = field(default_factory=list)
+    rag_indexed_chunks: int = 0
+    graph_node_candidates: int = 0
+    graph_relation_candidates: int = 0
+    outline_node_count: int = 0
+    script_node_count: int = 0
+    markdown_resource_id: str = ""
+    markdown_resource_version_id: str = ""
 
 
 class InitialCoursePrepPort(Protocol):

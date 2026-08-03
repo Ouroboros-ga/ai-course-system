@@ -59,7 +59,7 @@
 AgentGateway
     │
     ├── graph_kind=initial
-    │       ↓ (QUEUED, Worker)
+    │       ↓ (durable Worker resolves the registered runtime)
     │   InitialBuildGraph
     │       ↓
     │   InitialCoursePrepPort.build()
@@ -210,7 +210,7 @@ class PptMappingState(PrepCommonState, total=False):
 InitialCoursePrepPort.build(
     teacher_id, course_id, corpus_snapshot_id,
     build_task_id, on_stage=stage_emitter.callback,
-    replace_unreviewed_initial=False,
+    replace_unreviewed_initial=teacher_restart_flag,
 )
     ↓
 返回 DraftAssetResult
@@ -281,8 +281,14 @@ Service 或 DB/LLM
 | Port | 职责 | Provider 实现 |
 |------|------|-------------|
 | StructuredLLMPort | 底层结构化 LLM 调用 | SharedLLMStructuredProvider（已有） |
-| AgentRunStorePort | 运行状态持久化 | SqlAgentRunStore / NullAgentRunStore |
-| AgentRunEventPort | 事件流持久化 + SSE | SqlAgentRunEventStore / NullAgentRunEventPort |
+| AgentRunStorePort | 运行状态持久化 | SqlAgentRunStorePort / NullAgentRunStore |
+| AgentRunEventPort | 事件流持久化 + SSE | SqlAgentRunEventPort / NullAgentRunEventPort |
+
+结构整理使用稀疏 `StructurePlan`：模型只返回确实需要调整的节点，空
+`operations` 表示 `no_change`。服务端补齐 before/target/policy 字段并继续
+执行树结构、锁定节点、证据引用和原子事务校验。每次运行的状态、事件和
+LLM 诊断写入 `agent_run_records`、`agent_run_event_records`、
+`agent_llm_diagnostic_records`；诊断不保存 prompt、模型原文或课程全文。
 
 ### Initial 专用 Port
 

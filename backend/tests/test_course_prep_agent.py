@@ -198,6 +198,38 @@ def test_title_action_returns_the_flywheel_title_without_rule_based_rewrite(sess
     }]
 
 
+def test_title_action_falls_back_to_one_source_backed_title_only_operation(session, monkeypatch):
+    """An unsafe/empty model title must not block the title-only capability."""
+    _, course, node, script = _setup_course_with_script(session)
+    node.title = "发动机结构基本术语"
+    script.content = "发动机结构基本术语包括气缸体、气缸盖、曲轴箱和配气机构等。"
+    session.add(node)
+    session.add(script)
+    session.commit()
+    monkeypatch.setattr(CoursePrepAgentService, "_llm_is_configured", lambda _self: True)
+
+    class EmptyTitlePlanner:
+        async def plan_incremental(self, _payload):
+            return AgentPlan.model_validate({
+                "summary": "未生成有效标题",
+                "operations": [],
+            })
+
+    result = asyncio.run(CoursePrepAgentService(llm=EmptyTitlePlanner()).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.OPTIMIZE_NODE_TITLE,
+        outline_node_id=node.outline_node_id,
+        instruction="纠正不准确的 OCR 文本和用词",
+    ))
+
+    assert result.planner == "deterministic_title_fallback"
+    assert len(result.operations) == 1
+    assert result.operations[0]["target"] == f"outline:{node.outline_node_id}:title"
+    assert result.operations[0]["after"] == "发动机结构的基本术语"
+    assert all("script:" not in item["target"] for item in result.operations)
+
+
 def test_agent_only_plans_against_latest_draft_versions(session, monkeypatch):
     monkeypatch.setattr(course_prep_agent_service, "_llm_is_configured", lambda: False)
     token = uuid4().hex[:10]
@@ -596,7 +628,7 @@ def test_structure_action_can_move_children_then_remove_an_unlocked_parent(sessi
     ]
 
 
-def test_batch_script_planning_uses_five_script_groups_with_full_outline_context(session):
+def test_batch_script_planning_uses_five_script_groups_with_compact_outline_context(session):
     _, course, node, first_script = _setup_course_with_script(session)
     outline_version_id = node.outline_version_id
     script_version_id = first_script.script_version_id
@@ -633,7 +665,10 @@ def test_batch_script_planning_uses_five_script_groups_with_full_outline_context
     assert len(result.operations) == 25
     assert len(planner.payloads) == 5
     assert all(1 <= len(payload["editable_scripts"]) <= 5 for payload in planner.payloads)
-    assert all(len(payload["course_context"]["hierarchy"]) == 25 for payload in planner.payloads)
+    # Script rewrites only need the selected nodes and editable ancestors;
+    # sending the full 25-node tree to every group adds prompt tokens without
+    # improving the rewrite.
+    assert all(1 <= len(payload["course_context"]["hierarchy"]) <= 5 for payload in planner.payloads)
     assert all(len(payload["course_context"]["scripts"]) <= 5 for payload in planner.payloads)
     first_payload = next(
         payload for payload in planner.payloads

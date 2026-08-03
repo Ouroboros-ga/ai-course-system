@@ -22,6 +22,7 @@ from typing import Any, Iterable, Optional
 
 from sqlmodel import Session, select
 
+from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.course_outline_model import CoursePptMapping
 from app.models.media_release_model import (
     MediaGenerationJob,
@@ -152,7 +153,7 @@ def build_avatar_cues_from_tts_job(
         precision = "subtitle"
         warnings.append("avatar-cues: no phoneme or word timing; mouth activity follows subtitle segments and is estimated")
 
-    mapping_snapshot, page_refs = _freeze_ppt_mapping_snapshot(
+    mapping_snapshot, playback_slides = _freeze_ppt_mapping_snapshot(
         session,
         course_id=course_id,
         outline_node_id=outline_node_id,
@@ -163,8 +164,9 @@ def build_avatar_cues_from_tts_job(
         audio_object_key=audio_object_key,
         tts_job_id=job.job_id,
         timing_source=timing_source,
-        page_refs=page_refs,
+        playback_slides=playback_slides,
         outline_node_id=outline_node_id,
+        material_version_id=mapping_snapshot.get("material_version_id"),
     )
 
     mouth_activity = _with_silence(
@@ -197,6 +199,7 @@ def build_avatar_cues_from_tts_job(
                 "end_ms": row["end_ms"],
                 "text": row["subtitle_text"],
                 "ppt_page": row["ppt_page"],
+                "material_version_id": (row.get("cue_metadata") or {}).get("material_version_id"),
                 "script_reference": row["script_reference"],
             }
             for row in release_cues
@@ -357,18 +360,34 @@ def _release_cue_rows(
     audio_object_key: str,
     tts_job_id: str,
     timing_source: str,
-    page_refs: list[int],
-    outline_node_id: Optional[str],
+    playback_slides: list[dict[str, Any]] | None = None,
+    page_refs: list[int] | None = None,
+    outline_node_id: Optional[str] = None,
+    material_version_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     total = len(subtitles)
+    # ``playback_slides`` is the release-time flattened sequence.  The legacy
+    # page_refs/material_version_id arguments remain for callers that only
+    # have a single-deck mapping or an old timeline.
+    slides = list(playback_slides or [])
+    if not slides and page_refs:
+        slides = [
+            {"page": page, "material_version_id": material_version_id}
+            for page in page_refs
+        ]
     for cue_index, segment in enumerate(subtitles):
         ppt_page: Optional[int] = None
+        cue_material_version_id = material_version_id
         ppt_timing_source = "unmapped"
-        if page_refs:
-            page_position = min((cue_index * len(page_refs)) // total, len(page_refs) - 1)
-            ppt_page = page_refs[page_position]
-            ppt_timing_source = "teacher_mapping_single_page" if len(page_refs) == 1 else "mapping_sequence_estimate"
+        if slides:
+            page_position = min((cue_index * len(slides)) // total, len(slides) - 1)
+            slide = slides[page_position]
+            ppt_page = _non_negative_int(slide.get("page")) or None
+            cue_material_version_id = str(
+                slide.get("material_version_id") or cue_material_version_id or ""
+            ) or None
+            ppt_timing_source = "teacher_mapping_single_page" if len(slides) == 1 else "mapping_sequence_estimate"
         rows.append({
             "node_id": node_id,
             "cue_index": cue_index,
@@ -384,6 +403,7 @@ def _release_cue_rows(
                 "timing_source": timing_source,
                 "ppt_timing_source": ppt_timing_source,
                 "outline_node_id": outline_node_id,
+                "material_version_id": cue_material_version_id,
                 "source_tts_job_id": tts_job_id,
                 "sentence_index": segment.get("sentence_index"),
             },
@@ -398,30 +418,86 @@ def _freeze_ppt_mapping_snapshot(
     *,
     course_id: int,
     outline_node_id: Optional[str],
-) -> tuple[dict[str, Any], list[int]]:
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if not outline_node_id:
-        return {"status": "unmapped", "outline_node_id": None, "page_refs": []}, []
-    mapping = session.exec(select(CoursePptMapping).where(
+        return {"status": "unmapped", "outline_node_id": None, "page_refs": [], "playback_slides": []}, []
+    mappings = list(session.exec(select(CoursePptMapping).where(
         CoursePptMapping.course_id == course_id,
         CoursePptMapping.outline_node_id == outline_node_id,
         CoursePptMapping.status.in_(["draft", "published"]),
-    ).order_by(CoursePptMapping.updated_at.desc())).first()
-    if mapping is None:
-        return {"status": "unmapped", "outline_node_id": outline_node_id, "page_refs": []}, []
-    page_refs = sorted({int(page) for page in (mapping.page_refs or []) if _valid_page(page)})
-    if not page_refs:
-        page_refs = list(range(max(1, mapping.page_start), max(1, mapping.page_end) + 1))
+    )).all())
+    if not mappings:
+        return {"status": "unmapped", "outline_node_id": outline_node_id, "page_refs": [], "playback_slides": []}, []
+
+    # Match the release manifest's deck order: primary courseware first, then
+    # teacher-upload order. Page order is always ascending inside one deck.
+    version_ids = {mapping.material_version_id for mapping in mappings if mapping.material_version_id}
+    versions = list(session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.version_id.in_(version_ids or {""}),
+    )).all())
+    version_by_id = {version.version_id: version for version in versions}
+    material_ids = {version.material_id for version in versions}
+    materials = list(session.exec(select(SourceMaterial).where(
+        SourceMaterial.course_id == course_id,
+        SourceMaterial.material_id.in_(material_ids or {""}),
+    )).all())
+    material_by_id = {material.material_id: material for material in materials}
+
+    def deck_key(mapping: CoursePptMapping) -> tuple[Any, ...]:
+        version = version_by_id.get(mapping.material_version_id or "")
+        material = material_by_id.get(version.material_id) if version else None
+        from app.services.ppt_manifest_service import material_deck_sort_key
+        return material_deck_sort_key(
+            material,
+            version,
+            fallback_id=mapping.material_version_id or str(mapping.id or ""),
+        )
+
+    mappings.sort(key=deck_key)
+    playback_slides: list[dict[str, Any]] = []
+    mapping_views: list[dict[str, Any]] = []
+    seen_slides: set[tuple[Optional[str], int]] = set()
+    for mapping in mappings:
+        page_refs = sorted({int(page) for page in (mapping.page_refs or []) if _valid_page(page)})
+        if not page_refs:
+            page_refs = list(range(max(1, mapping.page_start), max(1, mapping.page_end) + 1))
+        mapping_views.append({
+            "mapping_id": mapping.mapping_id,
+            "material_version_id": mapping.material_version_id,
+            "page_refs": page_refs,
+            "confidence": mapping.confidence,
+            "teacher_locked": mapping.teacher_locked,
+            "mapping_status_at_freeze": mapping.status,
+        })
+        for page in page_refs:
+            key = (mapping.material_version_id, page)
+            if key in seen_slides:
+                continue
+            seen_slides.add(key)
+            playback_slides.append({
+                "material_version_id": mapping.material_version_id,
+                "page": page,
+                "mapping_id": mapping.mapping_id,
+            })
+
+    page_refs = [int(slide["page"]) for slide in playback_slides]
+    primary_mapping = mappings[0]
     snapshot = {
         "status": "frozen",
-        "mapping_id": mapping.mapping_id,
-        "outline_node_id": mapping.outline_node_id,
-        "material_version_id": mapping.material_version_id,
+        "mapping_id": primary_mapping.mapping_id,
+        "outline_node_id": primary_mapping.outline_node_id,
+        # Retain the legacy scalar fields for old readers. New readers use the
+        # ordered playback_slides list, which can span multiple PPT decks.
+        "material_version_id": primary_mapping.material_version_id,
         "page_refs": page_refs,
-        "confidence": mapping.confidence,
-        "teacher_locked": mapping.teacher_locked,
-        "mapping_status_at_freeze": mapping.status,
+        "confidence": min((mapping.confidence for mapping in mappings), default=0.0),
+        "teacher_locked": all(mapping.teacher_locked for mapping in mappings),
+        "mapping_status_at_freeze": primary_mapping.status,
+        "mappings": mapping_views,
+        "playback_slides": playback_slides,
     }
-    return snapshot, page_refs
+    return snapshot, playback_slides
 
 
 def _with_silence(entries: Iterable[dict[str, Any]], *, duration_ms: int, source: str) -> list[dict[str, Any]]:

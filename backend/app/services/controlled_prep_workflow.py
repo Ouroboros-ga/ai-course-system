@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
 
+from app.platform.agents.contracts.llm import StructuredOutputError
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
     EvidenceReference,
@@ -24,10 +25,6 @@ from app.schemas.controlled_prep import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-class StructuredOutputError(ValueError):
-    """Raised when an LLM response cannot satisfy the stage contract."""
 
 
 class CourseBuildStageTimeout(StructuredOutputError):
@@ -61,18 +58,30 @@ class ControlledPrepWorkflow:
         return method
 
     async def segment_evidence(self, request: ControlledPrepInput) -> EvidenceSegmenterResult:
-        result = await self._stage_method("segment_evidence")(request)
-        self._assert_evidence_ids(result, request.evidence)
-        return result
+        def validate(result: EvidenceSegmenterResult) -> EvidenceSegmenterResult:
+            self._assert_evidence_ids(result, request.evidence)
+            return result
+
+        return await self._run_stage(
+            "segment_evidence",
+            self._call_stage("segment_evidence", request),
+            validate,
+        )
 
     async def plan_outline(
         self,
         request: ControlledPrepInput,
         segments: EvidenceSegmenterResult,
     ) -> OutlinePlannerResult:
-        result = await self._stage_method("plan_outline")(request, segments)
-        self._assert_evidence_ids(result, request.evidence)
-        return result
+        def validate(result: OutlinePlannerResult) -> OutlinePlannerResult:
+            self._assert_evidence_ids(result, request.evidence)
+            return result
+
+        return await self._run_stage(
+            "plan_outline",
+            self._call_stage("plan_outline", request, segments),
+            validate,
+        )
 
     async def write_script(
         self,
@@ -86,11 +95,17 @@ class ControlledPrepWorkflow:
         )
         if candidate is None or candidate.node_type != "knowledge_point":
             raise ValueError(f"knowledge point candidate not found: {candidate_id}")
-        result = await self._stage_method("write_script")(request, outline, candidate_id)
-        self._assert_evidence_ids(result, request.evidence)
-        if result.candidate_id != candidate_id:
-            raise StructuredOutputError("script_writer returned a different candidate_id")
-        return result
+        async def validate(result: TeachingScriptNodeDraft) -> TeachingScriptNodeDraft:
+            self._assert_evidence_ids(result, request.evidence)
+            if result.candidate_id != candidate_id:
+                raise StructuredOutputError("script_writer returned a different candidate_id")
+            return result
+
+        return await self._run_stage(
+            "write_script",
+            self._call_stage("write_script", request, outline, candidate_id),
+            validate,
+        )
 
     async def write_scripts_batch(
         self,
@@ -100,22 +115,67 @@ class ControlledPrepWorkflow:
     ) -> list[TeachingScriptNodeDraft]:
         """Generate all first-round scripts in one structured LLM request."""
         candidate_ids = {candidate.candidate_id for candidate in candidates}
-        scripts = await self._stage_method("write_scripts_batch")(request, outline, candidates)
-        returned_ids = {script.candidate_id for script in scripts}
-        if returned_ids != candidate_ids:
-            raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
-        for script in scripts:
-            self._assert_evidence_ids(script, request.evidence)
-        return scripts
+        async def validate(scripts: list[TeachingScriptNodeDraft]) -> list[TeachingScriptNodeDraft]:
+            returned_ids = {script.candidate_id for script in scripts}
+            if returned_ids != candidate_ids:
+                raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
+            for script in scripts:
+                self._assert_evidence_ids(script, request.evidence)
+            return scripts
+
+        return await self._run_stage(
+            "write_scripts_batch",
+            self._call_stage("write_scripts_batch", request, outline, candidates),
+            validate,
+        )
 
     async def verify_script(
         self,
         request: ControlledPrepInput,
         script: TeachingScriptNodeDraft,
     ) -> EvidenceVerifierResult:
-        result = await self._stage_method("verify_script")(request, script)
-        self._assert_evidence_ids(result, request.evidence)
-        return result
+        def validate(result: EvidenceVerifierResult) -> EvidenceVerifierResult:
+            self._assert_evidence_ids(result, request.evidence)
+            return result
+
+        return await self._run_stage(
+            "verify_script",
+            self._call_stage("verify_script", request, script),
+            validate,
+        )
+
+    async def _call_stage(self, stage: str, *args: Any) -> Any:
+        """Call one stage and attach its name to errors for diagnosis."""
+        try:
+            return await self._stage_method(stage)(*args)
+        except Exception as error:  # noqa: BLE001 - preserve original type
+            if not getattr(error, "stage", ""):
+                try:
+                    setattr(error, "stage", stage)
+                except Exception:  # pragma: no cover - unusual exception type
+                    pass
+            raise
+
+    async def _run_stage(
+        self,
+        stage: str,
+        result_awaitable: Awaitable[Any],
+        validator: Callable[[Any], Any],
+    ) -> Any:
+        """Attach a stage to both provider and post-parse validation errors."""
+        try:
+            result = await result_awaitable
+            validated = validator(result)
+            if hasattr(validated, "__await__"):
+                return await validated
+            return validated
+        except Exception as error:  # noqa: BLE001 - preserve original type
+            if not getattr(error, "stage", ""):
+                try:
+                    setattr(error, "stage", stage)
+                except Exception:  # pragma: no cover - unusual exception type
+                    pass
+            raise
 
     def compile_patch(
         self,

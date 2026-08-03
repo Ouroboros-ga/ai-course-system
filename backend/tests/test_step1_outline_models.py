@@ -102,6 +102,70 @@ def test_course_can_have_draft_and_published_outline(session):
         assert OutlineLifecycleStatus.PUBLISHED in statuses
 
 
+def test_published_outline_can_seed_next_editable_draft(session):
+    """Publishing keeps the snapshot immutable while creating a new work copy."""
+    from app.api.v1.endpoints.course_build_editor import _ensure_draft_outline
+
+    user = _user(session, "s1_publish_copy_user")
+    course = _course(session, user.id, "Published copy course")
+    published = CourseOutlineVersion(
+        course_id=course.id, version=1,
+        lifecycle_status=OutlineLifecycleStatus.PUBLISHED,
+        created_by=user.id,
+    )
+    session.add(published)
+    session.commit()
+    session.refresh(published)
+    old_node = CourseOutlineNode(
+        outline_version_id=published.outline_version_id,
+        course_id=course.id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="Immutable published title",
+        order_index=0,
+    )
+    session.add(old_node)
+    session.flush()
+    published_script = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=published.outline_version_id,
+        version=1,
+        lifecycle_status=OutlineLifecycleStatus.PUBLISHED,
+        created_by=user.id,
+    )
+    session.add(published_script)
+    session.flush()
+    session.add(TeachingScriptNode(
+        script_version_id=published_script.script_version_id,
+        course_id=course.id,
+        outline_node_id=old_node.outline_node_id,
+        content="Published script",
+    ))
+    session.commit()
+
+    draft = _ensure_draft_outline(session, course.id, user.id)
+    session.commit()
+    draft_nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == draft.outline_version_id,
+    )).all()
+    draft_script = session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.outline_version_id == draft.outline_version_id,
+    )).first()
+    draft_scripts = session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.script_version_id == draft_script.script_version_id,
+    )).all()
+
+    assert draft.lifecycle_status == OutlineLifecycleStatus.DRAFT
+    assert draft.version == published.version + 1
+    assert len(draft_nodes) == 1
+    assert draft_nodes[0].outline_node_id != old_node.outline_node_id
+    assert draft_nodes[0].title == old_node.title
+    assert draft_script is not None
+    assert draft_script.lifecycle_status == OutlineLifecycleStatus.DRAFT
+    assert len(draft_scripts) == 1
+    assert draft_scripts[0].outline_node_id == draft_nodes[0].outline_node_id
+    assert session.get(CourseOutlineNode, old_node.id).title == "Immutable published title"
+
+
 # ---------------------------------------------------------------------------
 # 2. 课程树是真正的有序树（parent_node_id FK 自引用）
 # ---------------------------------------------------------------------------

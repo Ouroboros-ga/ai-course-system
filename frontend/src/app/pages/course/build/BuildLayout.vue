@@ -83,8 +83,8 @@ const steps = [
   { key: 'scripts', label: '讲授脚本', description: '完善教学表达', icon: BookOpenCheck },
   { key: 'mapping', label: '教学 PPT 映射', description: '关联教学演示页', icon: MonitorPlay },
   { key: 'media', label: '媒体与数字人', description: '准备课堂媒体', icon: Video },
-  { key: 'validate', label: '检查', description: '运行发布前质量门禁', icon: ShieldCheck },
-  { key: 'releases', label: '发布', description: '冻结学生可见版本', icon: Waypoints },
+  { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck },
+  { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints },
 ]
 const activeStep = computed(() => steps.find((step) => route.name === `app-course-build-${step.key}`) ?? steps[0])
 </script>
@@ -111,7 +111,7 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
           <component :is="step.icon" :size="17" aria-hidden="true" />
           <span class="step-copy"><strong>{{ step.label }}</strong><small>{{ step.description }}</small></span>
         </RouterLink>
-        <p class="rail-note">建设中的内容仅对课程成员可见；学生端只读取已发布的冻结版本。</p>
+        <p class="rail-note">建设中的内容仅对课程成员可见；学生端只读取正式发布的课程版本。</p>
       </aside>
       <button
         type="button"
@@ -129,7 +129,6 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
           <div>
             <p class="eyebrow">STEP {{ String(steps.findIndex((step) => step.key === activeStep.key) + 1).padStart(2, '0') }} · {{ activeStep.key.toUpperCase() }}</p>
             <h1>{{ activeStep.label }}</h1>
-            <p>{{ activeStep.description }}</p>
           </div>
           <div class="stage-context-actions">
             <template v-if="stageActions">
@@ -185,7 +184,6 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
 .stage-body{flex:1;min-height:0;overflow:hidden}
 .eyebrow{margin:0 0 var(--space-1);font-size:var(--caption-size);font-weight:650;letter-spacing:.08em;color:var(--ink-500)}
 h1{margin:0;color:var(--text-primary);font-size:var(--title-2-size);line-height:var(--title-2-line);font-weight:var(--title-2-weight)}
-.stage-context p:not(.eyebrow){margin:var(--space-1) 0 0;color:var(--text-secondary);font-size:var(--ui-md-size);line-height:1.5}
 .stage-context-actions{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}
 .agent-trigger{display:none}
 .mobile-workbench-tabs{display:none}

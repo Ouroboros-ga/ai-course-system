@@ -337,11 +337,12 @@ service.interceptors.response.use(
   error => {
     // 处理 HTTP 网络错误 (如 404, 500, 超时)
     let message = '网络连接异常，请稍后再试'
+    let backendMessage = ''
 
     if (error.response) {
       const responseData = error.response.data
       const detail = responseData?.detail
-      const backendMessage = (
+      backendMessage = (
         (typeof detail === 'string' ? detail : detail?.message)
         || responseData?.message
       )
@@ -357,7 +358,7 @@ service.interceptors.response.use(
           message = '请求资源不存在'
           break
         case 500:
-          message = backendMessage || '服务器开小差了'
+          message = backendMessage || '服务器暂时出了点问题，请稍后重试'
           break
         case 503:
           message = backendMessage || '服务暂不可用，请稍后重试'
@@ -380,7 +381,9 @@ service.interceptors.response.use(
       showToast(message, 'error')
     }
     // Callers that render their own status must receive the server detail too.
-    error.message = message
+    // Keep the structured backend message available for publish/check flows;
+    // only use the generic text when the server supplied no useful detail.
+    error.message = backendMessage || message
     return Promise.reject(error)
   }
 )

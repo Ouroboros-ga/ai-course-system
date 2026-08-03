@@ -252,7 +252,7 @@ async function togglePublication() {
   if (!isPublished.value && !canPublish.value) return
   const wasPublished = isPublished.value
   if (!wasPublished) {
-    showToast('请在课程建设的“发布”步骤运行质量门禁，并按需确认 Warning 后发布。', 'info')
+    showToast('请在课程建设的“正式发布”步骤运行发布前检查；如有问题，确认后再发布。', 'info')
     router.push(`/app/course/${courseId.value}/build/releases`)
     return
   }

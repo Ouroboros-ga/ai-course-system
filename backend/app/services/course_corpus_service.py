@@ -62,6 +62,52 @@ ROLE_PRIORITY = {
 
 
 class CourseCorpusService:
+    def snapshots_have_same_material_set(
+        self,
+        session: Session,
+        *,
+        left_snapshot_id: str | None,
+        right_snapshot: CourseCorpusSnapshot | None,
+    ) -> bool:
+        """Return whether two corpus snapshots contain the same source bytes.
+
+        Snapshot IDs are intentionally immutable and normally form a strict
+        lineage.  Older local-demo data can, however, contain duplicate
+        material rows for the same uploaded bytes.  The deduplicated corpus
+        then receives a new snapshot ID even though an existing outline/script
+        was built from the exact same source documents.  Comparing immutable
+        file hashes gives that migration case a narrow, auditable compatibility
+        path without allowing a genuinely different material set through.
+        """
+        if not left_snapshot_id or right_snapshot is None:
+            return False
+        if left_snapshot_id == right_snapshot.corpus_snapshot_id:
+            return True
+        left = session.exec(select(CourseCorpusSnapshot).where(
+            CourseCorpusSnapshot.corpus_snapshot_id == left_snapshot_id,
+            CourseCorpusSnapshot.course_id == right_snapshot.course_id,
+        )).first()
+        if left is None:
+            return False
+
+        def material_keys(snapshot: CourseCorpusSnapshot) -> set[str]:
+            version_ids = list(snapshot.material_version_ids or [])
+            if not version_ids:
+                return set()
+            versions = session.exec(select(SourceMaterialVersion).where(
+                SourceMaterialVersion.course_id == snapshot.course_id,
+                SourceMaterialVersion.version_id.in_(version_ids),
+            )).all()
+            return {
+                (version.file_hash or version.version_id).strip()
+                for version in versions
+                if (version.file_hash or version.version_id).strip()
+            }
+
+        left_keys = material_keys(left)
+        right_keys = material_keys(right_snapshot)
+        return bool(left_keys) and left_keys == right_keys
+
     def create_ready_snapshot(
         self, session: Session, *, course_id: int, owner_user_id: int,
     ) -> Optional[CourseCorpusSnapshot]:

@@ -44,11 +44,13 @@ from ..contracts.llm import (
     LLMTraceContext,
     StructuredLLMPort,
 )
+from app.core.config import settings
 from .prompts import (
     EVIDENCE_SEGMENTER_PROMPT,
     EVIDENCE_VERIFIER_PROMPT,
     INCREMENTAL_PLANNER_PROMPT,
     PREP_ACTION_PLANNER_PROMPT,
+    STRUCTURE_PLANNER_PROMPT,
     OUTLINE_PLANNER_PROMPT,
     PPT_MAPPING_OPTIMIZER_PROMPT,
     SCRIPT_WRITER_BATCH_PROMPT,
@@ -115,12 +117,25 @@ class PrepLLMAdapter:
         )
 
     @staticmethod
-    def _options(spec: PromptSpec, *, temperature: float = 0.2) -> LLMOptions:
-        """Build ``LLMOptions`` from a ``PromptSpec``."""
+    def _options(
+        spec: PromptSpec,
+        *,
+        temperature: float = 0.2,
+        provider_options: Mapping[str, Any] | None = None,
+        max_tokens: int | None = None,
+    ) -> LLMOptions:
+        """Build ``LLMOptions`` from a ``PromptSpec``.
+
+        Provider options are deliberately supplied only by the adapter for
+        bounded structured tasks.  They are not persisted with prompts or
+        responses.
+        """
         return LLMOptions(
             temperature=temperature,
+            max_tokens=max_tokens,
             response_format={"type": "json_object"},
             prompt_version=spec.version,
+            provider_options=dict(provider_options or {}),
         )
 
     @staticmethod
@@ -141,12 +156,18 @@ class PrepLLMAdapter:
         output_schema: type | None = None,
         run_id: str = "",
         trace_id: str = "",
+        provider_options: Mapping[str, Any] | None = None,
+        max_tokens: int | None = None,
     ) -> LLMResponse:
         """Invoke the underlying ``StructuredLLMPort.complete``."""
         return await self._llm.complete(
             messages=self._messages(spec, user_prompt),
             output_schema=output_schema,
-            options=self._options(spec),
+            options=self._options(
+                spec,
+                provider_options=provider_options,
+                max_tokens=max_tokens,
+            ),
             trace_context=self._trace(node, purpose, run_id=run_id, trace_id=trace_id),
         )
 
@@ -310,7 +331,7 @@ class PrepLLMAdapter:
         exact shape is owned by ``CoursePrepAgentService``; the adapter
         serialises it for the user message when it is not already a string.
         """
-        from app.services.course_prep_agent_service import AgentPlan as _Result
+        from app.services.course_prep_agent_service import AgentPlan as _Result, StructurePlan as _StructureResult
 
         user_prompt = (
             payload
@@ -318,16 +339,42 @@ class PrepLLMAdapter:
             else json.dumps(payload, ensure_ascii=False, default=str)
         )
         action = payload.get("batch_action") if isinstance(payload, Mapping) else None
+        result_schema = _StructureResult if action == "organize_structure" else _Result
         response = await self._complete(
-            spec=PREP_ACTION_PLANNER_PROMPT if action else INCREMENTAL_PLANNER_PROMPT,
+            spec=(
+                STRUCTURE_PLANNER_PROMPT
+                if action == "organize_structure"
+                else PREP_ACTION_PLANNER_PROMPT
+                if action
+                else INCREMENTAL_PLANNER_PROMPT
+            ),
             user_prompt=user_prompt,
             node="plan_incremental",
             purpose="incremental edit planning",
-            output_schema=_Result,
+            output_schema=result_schema,
+            # Structure planning is intentionally sparse and must return a
+            # small JSON object. DeepSeek otherwise spends the entire output
+            # budget on hidden reasoning and returns no JSON (finish_reason=
+            # length). Disable reasoning for this bounded edit compiler when
+            # the gateway supports the OpenAI-compatible switch.
+            provider_options=(
+                {"thinking": {"type": "disabled"}}
+                if action in {"organize_structure", "optimize_all_scripts", "optimize_node_script"}
+                else None
+            ),
+            # A script batch carries the rewritten text, so it needs more
+            # room than the sparse structure plan, but it must still be
+            # bounded. Without this explicit budget DeepSeek can spend all
+            # 8192 tokens on hidden reasoning and return no JSON.
+            max_tokens=(
+                int(settings.PREP_STRUCTURE_MAX_TOKENS) if action == "organize_structure"
+                else int(settings.PREP_SCRIPT_MAX_TOKENS) if action in {"optimize_all_scripts", "optimize_node_script"}
+                else None
+            ),
             run_id=run_id,
             trace_id=trace_id,
         )
-        return self._parsed_or_validate(response, _Result)
+        return self._parsed_or_validate(response, result_schema)
 
     # -- PPT mapping pipeline --------------------------------------------
 

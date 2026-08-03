@@ -90,6 +90,10 @@ class InitialCoursePrepProvider:
                 replace_unreviewed_initial=replace_unreviewed_initial,
                 on_stage=on_stage,
             )
+            # The provider owns this short-lived session. The service waits
+            # for the LLM before mutating records, so commit only a complete
+            # build and roll back automatically on any failure.
+            session.commit()
         finally:
             session.close()
 
@@ -98,6 +102,13 @@ class InitialCoursePrepProvider:
             script_version_id=result.script_version_id or "",
             graph_candidate_batch_id=result.graph_candidate_batch_id or "",
             warnings=list(result.warnings or []),
+            rag_indexed_chunks=result.rag_indexed_chunks,
+            graph_node_candidates=result.graph_node_candidates,
+            graph_relation_candidates=result.graph_relation_candidates,
+            outline_node_count=result.outline_node_count,
+            script_node_count=result.script_node_count,
+            markdown_resource_id=result.markdown_resource_id or "",
+            markdown_resource_version_id=result.markdown_resource_version_id or "",
         )
 
 
