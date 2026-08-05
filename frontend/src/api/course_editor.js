@@ -18,7 +18,6 @@ export const listBuildProposals = (courseId, status = null) => request.get(
   `${base(courseId)}/proposals`,
   status ? { params: { status } } : undefined,
 )
-export const createBuildProposal = (courseId, payload) => request.post(`${base(courseId)}/proposals`, payload)
 export const decideBuildProposal = (courseId, proposalId, accepted) => request.post(`${base(courseId)}/proposals/${encodeURIComponent(proposalId)}/decide`, { accepted })
 
 // Teacher-facing controlled preparation Agent.  It only returns/persists a

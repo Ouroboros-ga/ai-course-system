@@ -62,10 +62,9 @@ from app.models.database import session_factory
 from app.models.resource_model import ResourceItem, ResourceLifecycleStatus, ResourceVisibility
 from app.models.agent_run_model import AgentRunRecord, AgentRunEventRecord, AgentLLMDiagnosticRecord
 from app.services.ppt_generation_service import ppt_generation_service
-from app.schemas.controlled_prep import ControlledPrepInput, TeachingStyleConfig
-from app.services.controlled_prep_workflow import controlled_prep_workflow
 from app.platform.agents.prep.actions import PrepAction, canonical_prep_action, resolve_prep_intent
 from app.platform.agents.shared.error_messages import safe_prep_error_message
+from app.platform.agents.providers.llm.debug_capture import prep_llm_debug_capture_store
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -181,22 +180,6 @@ class PptGenerateRequest(BaseModel):
     search: bool = False
 
 
-class ControlledPrepRequest(BaseModel):
-    """Input for one controlled preparation run.
-
-    Evidence text is resolved server-side from course-scoped records. This
-    prevents callers from smuggling arbitrary text into an auditable proposal.
-    """
-
-    source_text: str = Field(min_length=1, max_length=200_000)
-    evidence_ids: list[str] = Field(min_length=1, max_length=500)
-    course_positioning: str = Field(default="", max_length=2_000)
-    style: TeachingStyleConfig = Field(default_factory=TeachingStyleConfig)
-    candidate_id: Optional[str] = Field(default=None, max_length=100)
-    existing_outline_ids: dict[str, str] = Field(default_factory=dict)
-    existing_script_ids: dict[str, str] = Field(default_factory=dict)
-
-
 class PrepAgentCommandRequest(BaseModel):
     """Natural-language instruction for the teacher-facing preparation agent."""
 
@@ -213,6 +196,12 @@ class PrepAgentBatchRequest(BaseModel):
     action: str = Field(min_length=1, max_length=64)
     instruction: str = Field(default="", max_length=8_000)
     outline_node_id: Optional[str] = Field(default=None, max_length=100)
+
+
+class PrepLLMDebugCaptureRequest(BaseModel):
+    """Explicit local-only opt-in for raw Prep LLM request/response capture."""
+
+    enabled: bool
 
 
 async def _plan_incremental_prep(
@@ -1003,90 +992,6 @@ async def update_script(course_id: int, script_node_id: str, payload: ScriptUpda
     return unified_response(200, "讲稿已保存", _script_node_view(node))
 
 
-@router.post("/course/{course_id}/controlled-prep/run")
-async def run_controlled_prep(
-    course_id: int,
-    payload: ControlledPrepRequest,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """Run five structured stages and persist only a teacher-review proposal."""
-    context = require_course_permission(session, current_user, course_id, "course.edit")
-    if len(payload.evidence_ids) != len(set(payload.evidence_ids)):
-        raise HTTPException(422, "evidence_ids 不能重复")
-
-    formal = session.exec(select(CourseEvidenceRecord).where(
-        CourseEvidenceRecord.course_id == course_id,
-        CourseEvidenceRecord.evidence_id.in_(payload.evidence_ids),
-        CourseEvidenceRecord.status == EvidenceStatus.ACTIVE,
-    )).all()
-    formal_by_id = {item.evidence_id: item for item in formal}
-    spans = session.exec(select(EvidenceSpan).where(
-        EvidenceSpan.course_id == course_id,
-        EvidenceSpan.span_id.in_(payload.evidence_ids),
-        EvidenceSpan.status == EvidenceSpanStatus.CONFIRMED,
-    )).all()
-    span_by_id = {item.span_id: item for item in spans}
-    missing = [item for item in payload.evidence_ids if item not in formal_by_id and item not in span_by_id]
-    if missing:
-        raise HTTPException(422, detail={"error_code": "INVALID_COURSE_EVIDENCE", "evidence_ids": missing})
-
-    evidence = []
-    for evidence_id in payload.evidence_ids:
-        item = formal_by_id.get(evidence_id)
-        if item:
-            evidence.append({"evidence_id": item.evidence_id, "text": item.text_snippet, "page": item.page_number})
-        else:
-            span = span_by_id[evidence_id]
-            evidence.append({"evidence_id": span.span_id, "text": span.text_snippet, "page": span.page_number, "block_id": span.block_id})
-
-    request = ControlledPrepInput(
-        source_text=payload.source_text,
-        evidence=evidence,
-        course_positioning=payload.course_positioning,
-        style=payload.style,
-    )
-    try:
-        result = await controlled_prep_workflow.run(
-            request,
-            candidate_id=payload.candidate_id,
-            existing_outline_ids=payload.existing_outline_ids,
-            existing_script_ids=payload.existing_script_ids,
-        )
-    except Exception as exc:
-        logger.exception("Controlled prep failed for course %s", course_id)
-        raise HTTPException(422, detail={"error_code": "CONTROLLED_PREP_FAILED", "message": "受控备课流水线执行失败，请检查输入参数或稍后重试"}) from exc
-
-    proposal = result["proposal"]
-    db_proposal = PatchProposal(
-        course_id=course_id, tool_name=proposal.tool_name,
-        policy_version=proposal.policy_version, reason=proposal.reason,
-        created_by=context.user_id,
-    )
-    session.add(db_proposal)
-    session.flush()
-    for operation in proposal.operations:
-        session.add(PatchProposalOperation(
-            proposal_id=db_proposal.proposal_id, course_id=course_id,
-            operation=PatchOperation(operation.operation), target=operation.target,
-            before=operation.before, after=operation.after, reason=operation.reason,
-            evidence_refs=operation.evidence_refs, external_ref=operation.external_ref,
-            policy_version=proposal.policy_version,
-        ))
-    session.commit()
-    return unified_response(201, "受控备课完成，提案等待教师审核", {
-        "proposal_id": db_proposal.proposal_id,
-        "status": db_proposal.status.value,
-        "stages": {
-            "evidence_segmenter": result["segments"].model_dump(),
-            "outline_planner": result["outline"].model_dump(),
-            "script_writer": [item.model_dump() for item in result["scripts"]],
-            "evidence_verifier": [item.model_dump() for item in result["verifications"]],
-            "patch_compiler": proposal.model_dump(),
-        },
-    })
-
-
 @router.post("/course/{course_id}/prep-agent/commands")
 async def run_prep_agent_command(
     course_id: int,
@@ -1480,6 +1385,53 @@ async def get_prep_agent_run_diagnostic(
             "created_at": item.created_at.isoformat(),
             "payload": item.payload or {},
         } for item in events],
+    })
+
+
+@router.post("/course/{course_id}/prep-agent/debug-capture")
+async def set_prep_agent_llm_debug_capture(
+    course_id: int,
+    payload: PrepLLMDebugCaptureRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Enable or disable raw local LLM capture for one editable course.
+
+    This route is deliberately teacher/editor-only.  It controls a local
+    ignored file store intended for the next manual troubleshooting run; it
+    never exposes prompt/model text from this endpoint.
+    """
+    require_course_permission(session, current_user, course_id, "course.edit")
+    enabled = prep_llm_debug_capture_store.set_enabled(
+        course_id=course_id,
+        enabled=payload.enabled,
+    )
+    return unified_response(200, "Prep LLM 本地调试备份已更新", {
+        "course_id": course_id,
+        "enabled": enabled,
+        "storage": "local_ignored_debug_store",
+    })
+
+
+@router.get("/course/{course_id}/prep-agent/runs/{run_id}/debug-capture")
+async def get_prep_agent_llm_debug_capture(
+    course_id: int,
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Read explicitly captured raw Prep request/response records for one run."""
+    require_course_permission(session, current_user, course_id, "course.edit")
+    records = prep_llm_debug_capture_store.read_run(course_id=course_id, run_id=run_id)
+    if not records:
+        raise HTTPException(404, detail={
+            "error_code": "PREP_AGENT_DEBUG_CAPTURE_NOT_FOUND",
+            "message": "该运行没有本地调试备份；请先开启备份后重新发起请求。",
+        })
+    return unified_response(200, "获取 Prep LLM 本地调试备份成功", {
+        "course_id": course_id,
+        "run_id": run_id,
+        "records": records,
     })
 
 

@@ -60,12 +60,16 @@ class Settings(BaseSettings):
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
     COURSE_BUILD_TOTAL_TIMEOUT_SECONDS: int = 900
     PREP_SPARSE_STRUCTURE_PLAN: bool = True
-    # Prep-specific completion budgets. These are intentionally lower than
-    # the global LLM_MAX_TOKENS because batch edit contracts must reserve
-    # output for JSON instead of hidden reasoning.
-    PREP_STRUCTURE_MAX_TOKENS: int = 2048
+    # A full-course structure pass can legitimately touch most titles.  Keep
+    # enough completion room for the exceptional full plan while the sparse
+    # schema/prompt keeps ordinary calls short.
+    PREP_STRUCTURE_MAX_TOKENS: int = 12000
     PREP_SCRIPT_MAX_TOKENS: int = 4096
     PREP_SCRIPT_BATCH_SIZE: int = 5
+    # Local-only, explicit debugging aid.  The per-course enable state and
+    # captured prompts/responses are stored under this ignored directory; raw
+    # model content never enters normal logs or durable diagnostics.
+    PREP_LLM_DEBUG_CAPTURE_DIR: str = "./temp/prep-llm-debug"
 
     # --------------------------
     # Course Knowledge Bundle / GraphRAG / vector retrieval

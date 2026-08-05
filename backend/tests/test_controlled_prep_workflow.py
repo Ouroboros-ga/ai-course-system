@@ -163,8 +163,60 @@ def test_structure_planner_uses_sparse_schema_and_disables_reasoning_budget():
 
     assert result.operations == []
     assert port.schema.__name__ == "StructurePlan"
-    assert port.options.max_tokens == 2048
+    assert port.options.max_tokens == 12000
     assert port.options.provider_options == {"thinking": {"type": "disabled"}}
+
+
+def test_structure_planner_passes_deepseek_thinking_disabled_to_shared_gateway():
+    """The raw provider request must retain the vendor switch, not just the Port option."""
+    class CapturingGateway:
+        def __init__(self):
+            self.kwargs = None
+
+        async def chat(self, _messages, **kwargs):
+            self.kwargs = kwargs
+            return LLMResponse(
+                content='{"summary":"no change","operations":[]}',
+                usage={}, model="gateway", finish_reason="stop", latency_ms=1,
+            )
+
+    gateway = CapturingGateway()
+    adapter = PrepLLMAdapter(
+        structured_llm=SharedLLMStructuredProvider(client=gateway),
+    )
+    result = asyncio_run(adapter.plan_incremental({
+        "batch_action": "organize_structure",
+        "structure_mode": True,
+        "editable_outline": [],
+        "course_context": {},
+    }))
+
+    assert result.operations == []
+    assert gateway.kwargs["thinking"] == {"type": "disabled"}
+    assert gateway.kwargs["max_tokens"] == 12000
+
+
+def test_sparse_structure_schema_accepts_minimal_title_and_rejects_audit_fields():
+    from app.services.course_prep_agent_service import StructurePlan
+
+    plan = StructurePlan.model_validate({
+        "summary": "clean titles",
+        "operations": [{"node_id": "node_1", "title": "发动机结构"}],
+    })
+    assert plan.operations[0].title == "发动机结构"
+    with pytest.raises(ValidationError):
+        StructurePlan.model_validate({
+            "summary": "invalid",
+            "operations": [{
+                "node_id": "node_1", "title": "发动机结构", "reason": "should be server owned",
+            }],
+        })
+    with pytest.raises(ValidationError):
+        StructurePlan.model_validate({
+            "summary": "invalid root metadata",
+            "operations": [],
+            "reason": "root-level audit metadata is not allowed",
+        })
 
 
 def test_structured_repair_merges_nested_usage_without_type_error():

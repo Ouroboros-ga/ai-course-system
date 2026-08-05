@@ -13,9 +13,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Any, Literal, Union
 
-from pydantic import BaseModel, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import or_
 from sqlmodel import Session, select
 
@@ -90,29 +90,58 @@ class AgentPlan(BaseModel):
     operations: list[AgentOperation] = Field(default_factory=list, max_length=_BATCH_MAX_TARGETS)
 
 
-class StructurePlanOperation(BaseModel):
+class StructureTitleOperation(BaseModel):
+    """Minimal title edit: the server owns all audit metadata."""
+
+    model_config = ConfigDict(extra="forbid")
     node_id: str = Field(min_length=1, max_length=128)
-    operation: Literal["replace_title", "move", "reorder", "remove"]
-    title: str | None = Field(default=None, max_length=300)
+    title: str = Field(min_length=1, max_length=300)
+
+
+class StructureMoveOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    node_id: str = Field(min_length=1, max_length=128)
+    operation: Literal["move"]
     new_parent_id: str | None = Field(default=None, max_length=128)
-    new_order: int | None = Field(default=None, ge=0, le=10_000)
-    reason: str = Field(default="结构整理", max_length=2_000)
-    evidence_refs: list[str] = Field(default_factory=list, max_length=50)
 
     @model_validator(mode="after")
-    def validate_shape(self) -> "StructurePlanOperation":
-        if self.operation == "replace_title" and not self.title:
-            raise ValueError("replace_title requires title")
-        if self.operation == "reorder" and self.new_order is None:
-            raise ValueError("reorder requires new_order")
-        if self.operation == "move" and self.new_parent_id == self.node_id:
+    def validate_shape(self) -> "StructureMoveOperation":
+        if self.new_parent_id == self.node_id:
             raise ValueError("move cannot target itself")
-        if self.operation != "replace_title" and self.title is not None:
-            raise ValueError("title is only valid for replace_title")
         return self
 
 
+class StructureReorderOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    node_id: str = Field(min_length=1, max_length=128)
+    operation: Literal["reorder"]
+    new_order: int | None = Field(default=None, ge=0, le=10_000)
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> "StructureReorderOperation":
+        if self.new_order is None:
+            raise ValueError("reorder requires new_order")
+        return self
+
+
+class StructureRemoveOperation(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    node_id: str = Field(min_length=1, max_length=128)
+    operation: Literal["remove"]
+
+
+StructurePlanOperation = Union[
+    StructureTitleOperation,
+    StructureMoveOperation,
+    StructureReorderOperation,
+    StructureRemoveOperation,
+]
+
+
 class StructurePlan(BaseModel):
+    # This is a dedicated model-facing contract.  Reject root-level prose or
+    # legacy AgentPlan fields as well as extra fields in individual operations.
+    model_config = ConfigDict(extra="forbid")
     summary: str = Field(min_length=1, max_length=2_000)
     operations: list[StructurePlanOperation] = Field(default_factory=list, max_length=_BATCH_MAX_TARGETS)
 
@@ -391,8 +420,12 @@ class CoursePrepAgentService:
                 allowed_evidence_ids={item["evidence_id"] for item in evidence if item.get("evidence_id")},
             )
             expected = {script.script_node_id for script in target_scripts}
-            actual = {item["target"].split(":", 2)[1] for item in operations if item["target"].endswith(":content")}
-            if discarded or actual != expected or len(operations) != len(expected):
+            covered = {
+                op.target_id for op in plan.operations
+                if op.target_kind == "script" and op.field == "content"
+                and op.target_id in expected
+            }
+            if discarded or covered != expected:
                 raise CoursePrepAgentPlanningError("模型未完整返回当前节点的讲解脚本优化，草稿未修改")
             return CoursePrepAgentResult(plan.summary, operations, evidence, excluded, "llm_node_script")
 
@@ -495,18 +528,70 @@ class CoursePrepAgentService:
         if plan is None:
             raise CoursePrepAgentPlanningError("助教模型不可用，草稿未修改")
         if isinstance(plan, StructurePlan):
-            return AgentPlan(
-                summary=plan.summary,
-                operations=[AgentOperation(
-                    target_kind="outline", target_id=item.node_id,
-                    operation={"replace_title": "replace", "move": "move", "reorder": "reorder", "remove": "remove"}[item.operation],
-                    field="title" if item.operation == "replace_title" else "structure",
-                    after=(item.title or "") if item.operation == "replace_title" else json.dumps({"parent_node_id": item.new_parent_id, "order_index": item.new_order}, ensure_ascii=False),
-                    parent_node_id=item.new_parent_id, order_index=item.new_order,
-                    reason=item.reason, evidence_refs=item.evidence_refs,
-                ) for item in plan.operations],
-            )
+            return self._structure_plan_to_agent_plan(plan)
         return plan
+
+    @staticmethod
+    def _structure_plan_to_agent_plan(plan: StructurePlan) -> AgentPlan:
+        """Fill audit-only PatchProposal fields after compact LLM planning."""
+        mapped_operations: list[AgentOperation] = []
+        for item in plan.operations:
+            if isinstance(item, StructureTitleOperation):
+                mapped_operations.append(AgentOperation(
+                    target_kind="outline", target_id=item.node_id,
+                    operation="replace", field="title", after=item.title,
+                    reason="结构整理：标题去除序号、图号或冗余表述",
+                    evidence_refs=[],
+                ))
+            elif isinstance(item, StructureMoveOperation):
+                mapped_operations.append(AgentOperation(
+                    target_kind="outline", target_id=item.node_id,
+                    operation="move", field="structure",
+                    after=json.dumps({"parent_node_id": item.new_parent_id}, ensure_ascii=False),
+                    parent_node_id=item.new_parent_id,
+                    reason="结构整理：调整父子层级",
+                    evidence_refs=[],
+                ))
+            elif isinstance(item, StructureReorderOperation):
+                mapped_operations.append(AgentOperation(
+                    target_kind="outline", target_id=item.node_id,
+                    operation="reorder", field="structure",
+                    after=json.dumps({"order_index": item.new_order}, ensure_ascii=False),
+                    order_index=item.new_order,
+                    reason="结构整理：调整教学顺序",
+                    evidence_refs=[],
+                ))
+            elif isinstance(item, StructureRemoveOperation):
+                mapped_operations.append(AgentOperation(
+                    target_kind="outline", target_id=item.node_id,
+                    operation="remove", field="structure", after="",
+                    reason="结构整理：移除冗余节点",
+                    evidence_refs=[],
+                ))
+        return AgentPlan(summary=plan.summary, operations=mapped_operations)
+
+    @staticmethod
+    def _agent_plan_to_structure_plan(plan: AgentPlan) -> StructurePlan:
+        """Compatibility mapping for injected legacy planner implementations."""
+        compact_operations: list[StructurePlanOperation] = []
+        for item in plan.operations:
+            if item.operation == "replace" and item.field == "title":
+                compact_operations.append(StructureTitleOperation(
+                    node_id=item.target_id, title=item.after,
+                ))
+            elif item.operation == "move":
+                compact_operations.append(StructureMoveOperation(
+                    node_id=item.target_id, operation="move", new_parent_id=item.parent_node_id,
+                ))
+            elif item.operation == "reorder":
+                compact_operations.append(StructureReorderOperation(
+                    node_id=item.target_id, operation="reorder", new_order=item.order_index,
+                ))
+            elif item.operation == "remove":
+                compact_operations.append(StructureRemoveOperation(
+                    node_id=item.target_id, operation="remove",
+                ))
+        return StructurePlan(summary=plan.summary, operations=compact_operations)
 
     async def _plan_all_scripts(
         self,
@@ -566,9 +651,38 @@ class CoursePrepAgentService:
                 allowed_evidence_ids={item["evidence_id"] for item in evidence if item.get("evidence_id")},
             )
             expected = {script.script_node_id for script in group}
-            actual = {item["target"].split(":", 2)[1] for item in kept if item["target"].endswith(":content")}
-            if discarded or actual != expected or len(kept) != len(expected):
-                raise CoursePrepAgentPlanningError("至少一组讲解脚本未完整通过校验，未应用任何批量修改")
+            # Coverage: every script must have been addressed by the LLM.
+            # A no-op (unchanged content) is a valid decision; it is covered
+            # when the plan contains a script/content operation for that id
+            # even if _filter_operations skipped it as unchanged.
+            covered = {
+                op.target_id for op in plan.operations
+                if op.target_kind == "script" and op.field == "content"
+                and op.target_id in expected
+            }
+            if discarded or covered != expected:
+                missing = expected - covered
+                extra = covered - expected
+                detail = (
+                    f"discarded={discarded}, expected={len(expected)}, "
+                    f"covered={len(covered)}, kept={len(kept)}"
+                )
+                if missing:
+                    detail += f", missing={sorted(missing)}"
+                if extra:
+                    detail += f", extra={sorted(extra)}"
+                logger.warning(
+                    "Script batch validation failed: %s; "
+                    "plan_operations=%d group_ids=%s "
+                    "kept_targets=%s",
+                    detail,
+                    len(plan.operations),
+                    sorted(expected),
+                    [item["target"] for item in kept],
+                )
+                raise CoursePrepAgentPlanningError(
+                    f"至少一组讲解脚本未完整通过校验，未应用任何批量修改（{detail}）"
+                )
             operations.extend(kept)
             all_evidence.extend(evidence)
             excluded.extend(group_excluded)
@@ -630,14 +744,17 @@ class CoursePrepAgentService:
             if item.operation == "replace":
                 if item.field != "title" or not item.after.strip() or not CoursePrepAgentService._safe_title(item.after, by_id[item.target_id], []):
                     raise CoursePrepAgentPlanningError("结构整理返回了不安全的标题修改，未应用任何修改")
-                if item.after.strip() != by_id[item.target_id].title:
-                    normalized.append({
-                        "operation": "replace",
-                        "target": f"outline:{item.target_id}:title",
-                        "after": item.after.strip(),
-                        "reason": item.reason,
-                        "evidence_refs": [ref for ref in item.evidence_refs if ref in allowed_evidence_ids],
-                    })
+                if item.after.strip() == by_id[item.target_id].title:
+                    # A sparse-plan no-op is a model contract violation but
+                    # not a reason to discard independent safe edits.
+                    continue
+                normalized.append({
+                    "operation": "replace",
+                    "target": f"outline:{item.target_id}:title",
+                    "after": item.after.strip(),
+                    "reason": item.reason,
+                    "evidence_refs": [ref for ref in item.evidence_refs if ref in allowed_evidence_ids],
+                })
             elif item.operation == "move":
                 parent_id = item.parent_node_id
                 if parent_id is not None and parent_id not in editable_ids:
@@ -683,7 +800,15 @@ class CoursePrepAgentService:
                 seen.add(cursor)
                 cursor = parent_by_id.get(cursor)
 
-        if any(parent_id in removed for parent_id in parent_by_id.values() if parent_id is not None):
+        # A surviving (non-removed) node must never end up under a parent that
+        # is itself being removed. Nodes that are removed together with their
+        # parent form a valid branch removal and must be excluded here; the
+        # remaining-children check below already guards surviving children.
+        if any(
+            node_id not in removed and parent_id in removed
+            for node_id, parent_id in parent_by_id.items()
+            if parent_id is not None
+        ):
             raise CoursePrepAgentPlanningError("结构整理把节点移动到了将被删除的父节点下")
         title_targets = {
             item["target"].split(":", 2)[1]
@@ -921,7 +1046,10 @@ class CoursePrepAgentService:
                 discarded_invalid_or_noop += 1
                 continue
             if str(getattr(target_node, operation.field, "")) == operation.after:
-                discarded_invalid_or_noop += 1
+                # A no-op (unchanged content) is a valid model decision that
+                # the field is already optimal, not an invalid operation. Skip
+                # it without counting toward the discarded tally so batch
+                # coverage checks don't fail when some scripts need no change.
                 continue
             kept.append({
                 "target": f"{operation.target_kind}:{operation.target_id}:{operation.field}",
@@ -1048,39 +1176,53 @@ class CoursePrepAgentService:
             return None
         if batch_action == "organize_structure" and not getattr(settings, "PREP_SPARSE_STRUCTURE_PLAN", True):
             structure_mode = False
-        payload = {
-            "instruction": instruction,
-            "batch_action": batch_action,
-            "editable_outline": [
-                {
-                    "id": item.outline_node_id,
-                    "parent_id": item.parent_node_id,
-                    "title": item.title,
-                    "level": _outline_level(item, outline),
-                    "order": item.order_index,
-                    "locked": item.locked_by is not None,
-                }
-                for item in outline
-            ],
-            "editable_scripts": [
-                {
-                    "id": item.script_node_id,
-                    "outline_node_id": item.outline_node_id,
-                    "content": item.content,
-                    "style": item.style or "",
-                    "valid_style_values": list(_VALID_STYLE_VALUES),
-                }
-                for item in scripts
-            ],
-            "retrieved_course_evidence": (
-                [{"evidence_id": item.get("evidence_id"), "confirmed": item.get("confirmed", False)} for item in evidence]
-                if structure_mode else evidence
-            ),
-        }
         if structure_mode:
-            payload["structure_mode"] = True
-            payload.pop("editable_scripts", None)
-        if batch_action is not None:
+            # Keep this payload deliberately small.  In particular, outline
+            # titles may already contain OCR noise, so duplicating the tree or
+            # adding all script bodies dramatically raises input tokens without
+            # giving a title/structure planner any additional authority.
+            payload: dict[str, Any] = {
+                "instruction": instruction,
+                "batch_action": batch_action,
+                "structure_mode": True,
+                "editable_outline": [
+                    {
+                        "id": item.outline_node_id,
+                        "parent_id": item.parent_node_id,
+                        "title": item.title,
+                        "level": _outline_level(item, outline),
+                        "order": item.order_index,
+                    }
+                    for item in outline
+                ],
+            }
+        else:
+            payload = {
+                "instruction": instruction,
+                "batch_action": batch_action,
+                "editable_outline": [
+                    {
+                        "id": item.outline_node_id,
+                        "parent_id": item.parent_node_id,
+                        "title": item.title,
+                        "level": _outline_level(item, outline),
+                        "order": item.order_index,
+                    }
+                    for item in outline
+                ],
+                "editable_scripts": [
+                    {
+                        "id": item.script_node_id,
+                        "outline_node_id": item.outline_node_id,
+                        "content": item.content,
+                        "style": item.style or "",
+                        "valid_style_values": list(_VALID_STYLE_VALUES),
+                    }
+                    for item in scripts
+                ],
+                "retrieved_course_evidence": evidence,
+            }
+        if batch_action is not None and not structure_mode:
             context_outline = course_outline_context if course_outline_context is not None else outline
             context_scripts = course_script_context if course_script_context is not None else scripts
             context_outline_ids = {item.outline_node_id for item in context_outline}
@@ -1119,22 +1261,8 @@ class CoursePrepAgentService:
                         for item in context_scripts
                     ],
                 }
-            else:
-                # Structure planning needs only the compact outline snapshot;
-                # never include script bodies or duplicate hierarchy fields.
-                payload["course_context"] = {
-                    "hierarchy": [
-                        {
-                            "id": item.outline_node_id,
-                            "parent_id": item.parent_node_id if item.parent_node_id in context_outline_ids else None,
-                            "type": item.node_type.value,
-                            "order": item.order_index,
-                            "title": item.title,
-                        }
-                        for item in context_outline
-                    ],
-                    "scripts": [],
-                }
+            # In structure mode editable_outline is already the complete,
+            # compact tree snapshot.  Do not duplicate it as course_context.
         system = (
             "你是受控备课 Agent。只能对 editable_outline 和 editable_scripts 中的 ID 提出修改；"
             "不得生成、删除或移动节点，不得引用未提供的课程事实，不得修改任何锁定内容。"
@@ -1161,7 +1289,16 @@ class CoursePrepAgentService:
             "script/content 应覆盖标题中承诺的知识维度，不得引入输入证据之外的课程事实。"
             "operations 数组不得为空，至少包含一项；summary 不得为空。"
         )
-        if batch_action == "organize_structure":
+        if structure_mode:
+            system = (
+                "Return one JSON object with summary and operations. This is a sparse course-tree edit. "
+                "Input editable_outline is the complete editable tree; return only actual safe changes. "
+                "For a title edit use {node_id,title}; do not include operation, reason, evidence_refs, or an "
+                "unchanged title. For other edits use exactly {node_id,operation:'move',new_parent_id}, "
+                "{node_id,operation:'reorder',new_order}, or {node_id,operation:'remove'}. "
+                "Never add nodes, create cycles, modify locked nodes, or return markdown."
+            )
+        elif batch_action == "organize_structure":
             system += (
                 "这是一次完整课程结构整理。course_context 给出全部未锁定的原始目录和讲稿，"
                 "可据此判断知识点标题是否表达了真正概念、粒度是否合适、与可见父级是否连贯；"
@@ -1181,7 +1318,7 @@ class CoursePrepAgentService:
                 "reason 与 downstream_impact 各不超过 80 个汉字；"
                 "必须为 editable_scripts 中每个 ID 恰好返回一项操作，不得遗漏，不得返回 style 或 outline 操作。"
             )
-        if batch_action is not None:
+        if batch_action is not None and not structure_mode:
             # The adapter uses the equivalent registered PromptSpec.  Keep a
             # complete direct-client prompt here for local diagnostics and
             # backwards-compatible service injection.
@@ -1201,18 +1338,7 @@ class CoursePrepAgentService:
         if self._llm is not None and hasattr(self._llm, "plan_incremental"):
             result = await self._llm.plan_incremental(payload)
             if structure_mode and isinstance(result, AgentPlan):
-                result = StructurePlan(
-                    summary=result.summary,
-                    operations=[StructurePlanOperation(
-                        node_id=item.target_id,
-                        operation={"replace": "replace_title", "move": "move", "reorder": "reorder", "remove": "remove"}[item.operation],
-                        title=item.after if item.operation == "replace" and item.field == "title" else None,
-                        new_parent_id=item.parent_node_id,
-                        new_order=item.order_index,
-                        reason=item.reason,
-                        evidence_refs=item.evidence_refs,
-                    ) for item in result.operations],
-                )
+                result = self._agent_plan_to_structure_plan(result)
             return result
         client = self._llm or llm_client
         return await self._call_llm_with_retry(client, system, payload)
@@ -1229,17 +1355,30 @@ class CoursePrepAgentService:
         input_chars = sum(
             len(item.title or "") + len(item.parent_node_id or "") + 64
             for item in outline
-        ) + sum(
-            len(item.content or "") + len(item.style or "") + 64
-            for item in scripts
         )
+        # A sparse structure pass never sends script bodies.  Counting them
+        # here made capacity validation disagree with the actual request and
+        # could reject an otherwise small directory-only planning call.
+        if action != "organize_structure":
+            input_chars += sum(
+                len(item.content or "") + len(item.style or "") + 64
+                for item in scripts
+            )
         if action == "organize_structure":
             output_budget = sum(len(item.title or "") for item in outline)
             output_budget += target_count * _BATCH_TITLE_OUTPUT_OVERHEAD
         else:
             output_budget = sum(len(item.content or "") for item in scripts)
             output_budget += target_count * _BATCH_SCRIPT_OUTPUT_OVERHEAD
-        output_limit = max(1, int(settings.LLM_MAX_TOKENS)) * 4
+        output_tokens = (
+            int(settings.PREP_STRUCTURE_MAX_TOKENS)
+            if action == "organize_structure"
+            # Script batches are planned in small groups.  Preserve the legacy
+            # course-level preflight ceiling here instead of rejecting a normal
+            # course by comparing all groups to one 4096-token call.
+            else int(settings.LLM_MAX_TOKENS)
+        )
+        output_limit = max(1, output_tokens) * 4
         if input_chars > _BATCH_MAX_INPUT_CHARS or output_budget > output_limit:
             raise CoursePrepAgentPlanningError(
                 "当前课程的未锁定原文或完整优化结果超过单次模型容量；"
@@ -1286,7 +1425,7 @@ class CoursePrepAgentService:
                     # registered Prep adapter uses the same knobs; this is a
                     # rollback-safe fallback for local/demo callers.
                     request_kwargs.update({
-                        "max_tokens": 2048,
+                        "max_tokens": int(settings.PREP_STRUCTURE_MAX_TOKENS),
                         "thinking": {"type": "disabled"},
                     })
                 elif payload.get("batch_action") in {

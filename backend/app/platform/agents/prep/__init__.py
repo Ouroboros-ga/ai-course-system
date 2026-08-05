@@ -12,10 +12,12 @@ unified ``AgentPlatform`` can serve Prep agent runtimes alongside EDU and
 CODING.
 
 Layout:
-    - ``state``: the ``PrepState`` TypedDict
-    - ``workflow``: a thin LangGraph workflow that calls the service
-    - ``profile``: the ``AgentProfile`` for the Prep agent
-    - ``composition``: the composition root (build_prep_graph_factory)
+    - ``incremental/``: draft modification pipeline (``PrepGraphKind.INCREMENTAL``)
+    - ``initial/``: first-build pipeline (``PrepGraphKind.INITIAL``)
+    - ``ppt_mapping/``: PPT mapping optimization pipeline (``PrepGraphKind.PPT_MAPPING``)
+    - ``common/``: shared state/dependencies across the three pipelines
+    - ``llm_adapter``: PrepLLMAdapter (StructuredLLMPort adapter)
+    - ``actions``/``enums``/``validation``: canonical action tokens and plan validation
 """
 
 from __future__ import annotations

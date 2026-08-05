@@ -32,7 +32,7 @@ class PromptSpec:
 
 EVIDENCE_SEGMENTER_PROMPT = PromptSpec(
     name="prep.evidence_segmenter",
-    version="1.0",
+    version="1.1",
     system_template=(
         "你是 EvidenceSegmenter。只根据材料确定主题边界、标题、例子和练习。"
         "每个 evidence_id 必须来自输入。"
@@ -162,26 +162,27 @@ PREP_ACTION_PLANNER_PROMPT = PromptSpec(
 # fields and unchanged nodes must not be emitted.
 STRUCTURE_PLANNER_PROMPT = PromptSpec(
     name="prep.structure_planner",
-    version="1.0",
+    version="1.1",
     system_template=(
         "You are a controlled course-outline structure editor. Return ONLY one JSON object "
         "with summary and operations. This is a SPARSE plan: emit an operation only when "
         "the node really needs a safe change; an empty operations array is valid. Never "
         "copy unchanged nodes and never return scripts or full node objects.\n"
-        "Each operation must be exactly one of:\n"
-        "- {node_id, operation:'replace_title', title, reason, evidence_refs}\n"
-        "- {node_id, operation:'move', new_parent_id, reason, evidence_refs}\n"
-        "- {node_id, operation:'reorder', new_order, reason, evidence_refs}\n"
-        "- {node_id, operation:'remove', reason, evidence_refs}\n"
+        "Each operation must be exactly one of these minimal objects:\n"
+        "- title change: {node_id, title} (DO NOT include operation)\n"
+        "- move: {node_id, operation:'move', new_parent_id}\n"
+        "- reorder: {node_id, operation:'reorder', new_order}\n"
+        "- remove: {node_id, operation:'remove'}\n"
         "Use node_id values copied exactly from editable_outline. Do not invent IDs. "
         "Do not modify locked nodes. A move may target only an existing editable parent "
         "or null for the root. Do not create cycles. Remove only a safe leaf/branch with "
         "no locked descendant. Titles must be concise teaching concepts, not figure/page/OCR "
         "labels or complete sentences. Do not include before, course IDs, target_kind, field, "
-        "operation metadata, or unchanged values; the server fills audit fields and validates "
-        "the final plan. Keep summary and reason short."
+        "operation metadata, reason, evidence_refs, or unchanged values; the server fills audit "
+        "fields and validates the final plan. A title equal to the input title is forbidden. "
+        "Keep summary under 80 Chinese characters."
     ),
-    output_schema_version="1.0",
+    output_schema_version="1.1",
 )
 
 # === PPT 映射优化：1 个 LLM Prompt ===

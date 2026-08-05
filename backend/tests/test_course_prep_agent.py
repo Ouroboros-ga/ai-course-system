@@ -575,11 +575,35 @@ def test_batch_structure_planning_covers_every_unlocked_node(session):
     assert f"outline:{locked.outline_node_id}" in result.excluded_locked_targets
     assert len(planner.payloads) == 1
     payload = planner.payloads[0]
-    hierarchy = payload["course_context"]["hierarchy"]
-    assert {item["id"] for item in hierarchy} == {
+    assert "course_context" not in payload
+    assert "editable_scripts" not in payload
+    assert "retrieved_course_evidence" not in payload
+    assert {item["id"] for item in payload["editable_outline"]} == {
         node.outline_node_id,
         second.outline_node_id,
     }
+
+
+def test_sparse_structure_drops_unchanged_title_operations(session):
+    _, course, node, _ = _setup_course_with_script(session)
+
+    class SparsePlanner:
+        async def plan_incremental(self, _payload):
+            from app.services.course_prep_agent_service import StructurePlan
+            return StructurePlan.model_validate({
+                "summary": "clean titles",
+                "operations": [
+                    {"node_id": node.outline_node_id, "title": node.title},
+                ],
+            })
+
+    result = asyncio.run(CoursePrepAgentService(llm=SparsePlanner()).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.ORGANIZE_STRUCTURE,
+    ))
+
+    assert result.operations == []
 
 
 def test_structure_action_can_move_children_then_remove_an_unlocked_parent(session):
@@ -626,6 +650,91 @@ def test_structure_action_can_move_children_then_remove_an_unlocked_parent(sessi
         ("move", f"outline:{child.outline_node_id}:structure"),
         ("remove", f"outline:{parent.outline_node_id}:structure"),
     ]
+
+
+def test_structure_action_accepts_removing_a_parent_and_its_children_together(session):
+    """Removing a whole branch (parent + child) must not be rejected as
+    'moved under a deleted parent': the removed child's parent is itself
+    being removed, which is a valid branch removal."""
+    _, course, parent, _ = _setup_course_with_script(session)
+    child = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=parent.outline_version_id,
+        parent_node_id=parent.outline_node_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="子知识点",
+        order_index=0,
+    )
+    session.add(child)
+    session.commit()
+
+    class BranchRemovePlanner:
+        async def plan_incremental(self, payload):
+            return AgentPlan.model_validate({
+                "summary": "整支删除冗余分支",
+                "operations": [
+                    {
+                        "target_kind": "outline", "target_id": child.outline_node_id,
+                        "operation": "remove", "field": "structure",
+                        "reason": "子节点无独立教学内容", "downstream_impact": "随父节点一并移除",
+                        "evidence_refs": [],
+                    },
+                    {
+                        "target_kind": "outline", "target_id": parent.outline_node_id,
+                        "operation": "remove", "field": "structure",
+                        "reason": "冗余父节点", "downstream_impact": "移除冗余层级",
+                        "evidence_refs": [],
+                    },
+                ],
+            })
+
+    result = asyncio.run(CoursePrepAgentService(llm=BranchRemovePlanner()).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.ORGANIZE_STRUCTURE,
+    ))
+
+    assert [(item["operation"], item["target"]) for item in result.operations] == [
+        ("remove", f"outline:{child.outline_node_id}:structure"),
+        ("remove", f"outline:{parent.outline_node_id}:structure"),
+    ]
+
+
+def test_structure_action_rejects_surviving_child_under_deleted_parent(session):
+    """A surviving (non-removed) node whose parent is removed must still be
+    rejected, preserving the original safety guard."""
+    _, course, parent, _ = _setup_course_with_script(session)
+    child = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=parent.outline_version_id,
+        parent_node_id=parent.outline_node_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="子知识点",
+        order_index=0,
+    )
+    session.add(child)
+    session.commit()
+
+    class UnsafePlanner:
+        async def plan_incremental(self, payload):
+            return AgentPlan.model_validate({
+                "summary": "删父但保留子",
+                "operations": [
+                    {
+                        "target_kind": "outline", "target_id": parent.outline_node_id,
+                        "operation": "remove", "field": "structure",
+                        "reason": "冗余父节点", "downstream_impact": "移除冗余层级",
+                        "evidence_refs": [],
+                    },
+                ],
+            })
+
+    with pytest.raises(CoursePrepAgentPlanningError, match="结构整理把节点移动到了将被删除的父节点下"):
+        asyncio.run(CoursePrepAgentService(llm=UnsafePlanner()).plan_action(
+            session,
+            course_id=course.id,
+            action=PrepAction.ORGANIZE_STRUCTURE,
+        ))
 
 
 def test_batch_script_planning_uses_five_script_groups_with_compact_outline_context(session):

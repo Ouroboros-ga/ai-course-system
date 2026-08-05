@@ -139,6 +139,19 @@ class PrepLLMAdapter:
         )
 
     @staticmethod
+    def _structured_prep_provider_options(action: str | None) -> Mapping[str, Any] | None:
+        """Disable reasoning for bounded Prep JSON calls.
+
+        ``thinking={type: disabled}`` is the DeepSeek-compatible request
+        switch.  The captured raw request lets a local debug run verify that
+        the gateway received it; we deliberately do not replace the configured
+        model with a different model name behind the teacher's back.
+        """
+        if action not in {"organize_structure", "optimize_all_scripts", "optimize_node_script"}:
+            return None
+        return {"thinking": {"type": "disabled"}}
+
+    @staticmethod
     def _messages(spec: PromptSpec, user_prompt: str) -> list[Mapping[str, str]]:
         """Build the ``[system, user]`` message list for one call."""
         return [
@@ -357,15 +370,10 @@ class PrepLLMAdapter:
             # budget on hidden reasoning and returns no JSON (finish_reason=
             # length). Disable reasoning for this bounded edit compiler when
             # the gateway supports the OpenAI-compatible switch.
-            provider_options=(
-                {"thinking": {"type": "disabled"}}
-                if action in {"organize_structure", "optimize_all_scripts", "optimize_node_script"}
-                else None
-            ),
-            # A script batch carries the rewritten text, so it needs more
-            # room than the sparse structure plan, but it must still be
-            # bounded. Without this explicit budget DeepSeek can spend all
-            # 8192 tokens on hidden reasoning and return no JSON.
+            provider_options=self._structured_prep_provider_options(action),
+            # A script batch carries rewritten text.  A structure plan is
+            # normally sparse, yet it must also accommodate a genuine
+            # course-wide title cleanup without truncating its JSON.
             max_tokens=(
                 int(settings.PREP_STRUCTURE_MAX_TOKENS) if action == "organize_structure"
                 else int(settings.PREP_SCRIPT_MAX_TOKENS) if action in {"optimize_all_scripts", "optimize_node_script"}

@@ -54,6 +54,7 @@ from ...contracts.llm import (
     StructuredOutputError,
 )
 from ...runtime.diagnostic_context import current_diagnostic_context
+from .debug_capture import prep_llm_debug_capture_store
 
 logger = logging.getLogger(__name__)
 
@@ -161,11 +162,11 @@ class SharedLLMStructuredProvider:
 
         # If no schema, return raw text.
         if output_schema is None:
-            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            await self._record_diagnostic(response=first_response, request_messages=request_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
             return _to_structured_response(first_response, started, repaired=False, response_format_fallback=response_format_fallback)
 
         if _is_truncated(first_response.finish_reason):
-            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            await self._record_diagnostic(response=first_response, request_messages=request_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
             raise StructuredOutputError(
                 "LLM structured output was truncated before validation",
                 reason_code="MODEL_OUTPUT_TRUNCATED",
@@ -183,11 +184,12 @@ class SharedLLMStructuredProvider:
         # Validate against schema; repair once if needed.
         try:
             parsed = output_schema.model_validate_json(first_response.content)
-            await self._record_diagnostic(response=first_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
+            await self._record_diagnostic(response=first_response, request_messages=request_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=1, repaired=False, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in request_messages))
             return _to_structured_response(first_response, started, repaired=False, parsed=parsed, response_format_fallback=response_format_fallback)
         except ValidationError as first_error:
             await self._record_diagnostic(
                 response=first_response,
+                request_messages=request_messages,
                 trace_context=trace_context,
                 options=options,
                 output_schema=output_schema,
@@ -224,7 +226,7 @@ class SharedLLMStructuredProvider:
             trace_context=trace_context,
         )
         if _is_truncated(repair_response.finish_reason):
-            await self._record_diagnostic(response=repair_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
+            await self._record_diagnostic(response=repair_response, request_messages=repair_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
             raise StructuredOutputError(
                 "LLM structured output repair was truncated before validation",
                 reason_code="MODEL_OUTPUT_TRUNCATED",
@@ -243,6 +245,7 @@ class SharedLLMStructuredProvider:
         except ValidationError as second_error:
             await self._record_diagnostic(
                 response=repair_response,
+                request_messages=repair_messages,
                 trace_context=trace_context,
                 options=options,
                 output_schema=output_schema,
@@ -274,12 +277,13 @@ class SharedLLMStructuredProvider:
                 response_format_fallback=response_format_fallback,
             ) from second_error
 
-        await self._record_diagnostic(response=repair_response, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
+        await self._record_diagnostic(response=repair_response, request_messages=repair_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
         # Merge usage from both calls.
         merged_response = _merge_responses(first_response, repair_response)
         return _to_structured_response(merged_response, started, repaired=True, parsed=parsed, response_format_fallback=response_format_fallback)
 
     async def _record_diagnostic(self, *, response: SharedLLMResponse,
+                                 request_messages: list[Message],
                                  trace_context: LLMTraceContext, options: LLMOptions,
                                  output_schema: type[BaseModel] | None = None,
                                  attempt: int, repaired: bool,
@@ -295,6 +299,31 @@ class SharedLLMStructuredProvider:
         # response text, or provider option values are persisted.
         usage.setdefault("requested_max_tokens", options.max_tokens)
         usage.setdefault("provider_option_keys", sorted(options.provider_options.keys()))
+        # This is intentionally a local, course-editor enabled capture.  The
+        # ordinary SQL diagnostic below remains metadata-only.  Capture errors
+        # must never turn a valid Prep operation into a failed one.
+        try:
+            prep_llm_debug_capture_store.capture(
+                course_id=trace_context.course_id or context.course_id,
+                run_id=trace_context.run_id or context.run_id,
+                trace_id=trace_context.trace_id or context.trace_id,
+                agent_type=trace_context.agent_type or "prep",
+                stage=trace_context.node,
+                purpose=trace_context.purpose,
+                attempt=attempt,
+                messages=[{"role": item.role, "content": item.content} for item in request_messages],
+                response_content=response.content or "",
+                model=response.model,
+                finish_reason=response.finish_reason or "",
+                usage=usage,
+                requested_max_tokens=options.max_tokens,
+                temperature=options.temperature,
+                response_format=options.response_format,
+                provider_options=options.provider_options,
+                response_format_fallback=response_format_fallback,
+            )
+        except Exception:  # noqa: BLE001 - local debugging must stay optional
+            logger.warning("Prep local LLM debug capture failed", exc_info=True)
         await self._diagnostic_sink.record(
             run_id=trace_context.run_id or context.run_id,
             trace_id=trace_context.trace_id or context.trace_id,

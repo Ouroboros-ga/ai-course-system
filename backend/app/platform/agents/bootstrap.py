@@ -57,9 +57,7 @@ def bootstrap_prep_agent(app: Any) -> bool:
 
         from .platform import LegacyAgentPlatform
         from .gateway import AgentGateway
-        from .prep.composition import build_prep_graph_factory
         from .prep.llm_adapter import PrepLLMAdapter
-        from .prep.profile import build_prep_profile
         from .providers.llm.structured import SharedLLMStructuredProvider
         from .providers.retrieval.active_bundle import ActiveBundleCourseRetrievalPort
         from app.services.controlled_prep_workflow import (
@@ -93,13 +91,6 @@ def bootstrap_prep_agent(app: Any) -> bool:
         platform = getattr(app.state, "agent_platform", None)
         if platform is None:
             platform = LegacyAgentPlatform()
-        platform.register_generic(
-            profile=build_prep_profile(),
-            builder=build_prep_graph_factory(
-                session_factory=session_factory,
-                service=course_prep_agent_service,
-            ),
-        )
         _register_prep_pipeline_definitions(
             platform=platform,
             session_factory=session_factory,
@@ -235,17 +226,12 @@ def _register_prep_pipeline_definitions(
     initial_workflow: Any | None = None,
     ppt_service: Any | None = None,
 ) -> None:
-    """Register Prep Initial and PPT-mapping pipelines in the runtime registry.
+    """Register Prep Initial, Incremental and PPT-mapping pipelines in the runtime registry.
 
-    These pipelines share ``AgentType.PREP`` with the Incremental pipeline
-    (registered via ``register_generic`` above) but are distinct workflows.
-    They are registered via the definition-keyed ``AgentRuntimeRegistry``
-    so the future ``AgentGateway`` can route to them via
-    ``extras["graph_kind"]``.
-
-    The Incremental pipeline is also registered here (using the new
-    ``prep/incremental/`` subpackage) so all three share a consistent
-    registration path for the gateway.
+    The three pipelines share ``AgentType.PREP`` but are distinct workflows,
+    registered via the definition-keyed ``AgentRuntimeRegistry`` so the
+    ``AgentGateway`` can route to them via ``extras["graph_kind"]``
+    (``PrepGraphKind.INITIAL`` / ``INCREMENTAL`` / ``PPT_MAPPING``).
     """
     from .prep.common.dependencies import CommonPrepDependencies
     from .prep.enums import PrepGraphKind
