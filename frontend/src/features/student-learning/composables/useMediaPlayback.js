@@ -20,6 +20,7 @@ export function useMediaPlayback(courseId) {
 
   const isAudioReady = computed(() => manifest.value.available && Boolean(manifest.value.audioUrl))
   const audioUrl = computed(() => manifest.value.audioUrl)
+  const playlist = computed(() => manifest.value.playlist)
   const subtitleSegments = computed(() => manifest.value.subtitleSegments)
   const pptTimeline = computed(() => manifest.value.pptTimeline)
   const ppt = computed(() => manifest.value.ppt)
@@ -35,6 +36,17 @@ export function useMediaPlayback(courseId) {
     return {
       ...value,
       audioUrl: withLocalAccessToken(value.audioUrl),
+      playlist: value.playlist
+        ? {
+            ...value.playlist,
+            items: value.playlist.items.map(item => ({
+              ...item,
+              audioUrl: withLocalAccessToken(item.audioUrl),
+              subtitleManifestUrl: withLocalAccessToken(item.subtitleManifestUrl),
+              avatarCuesUrl: withLocalAccessToken(item.avatarCuesUrl),
+            })),
+          }
+        : null,
       ppt: value.ppt
         ? {
             ...value.ppt,
@@ -101,6 +113,7 @@ export function useMediaPlayback(courseId) {
     manifest,
     isAudioReady,
     audioUrl,
+    playlist,
     subtitleSegments,
     pptTimeline,
     ppt,

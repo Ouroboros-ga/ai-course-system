@@ -37,15 +37,19 @@ from app.core.exceptions import (
 from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.media_release_model import (
+    MediaBuildBatch,
+    MediaBuildBatchStatus,
     MediaGenerationJob,
     MediaGenerationJobType,
     MediaGenerationStatus,
     MediaReleaseStatus,
+    MediaReleaseItem,
     PlaybackMode,
 )
 from app.models.access_control_model import PlatformPermission
 from app.services.course_access_service import require_course_permission, require_platform_permission
 from app.services.media_release_service import (
+    ensure_release_tts_assets_registered,
     media_generation_job_service,
     media_playback_service,
     media_release_service,
@@ -53,6 +57,14 @@ from app.services.media_release_service import (
 )
 from app.models.course_outline_model import TeachingScriptNode
 from app.services.tts_provider import TtsProviderConfigurationError, get_tts_provider
+from app.services.media_batch_service import (
+    build_media_plan,
+    confirm_media_batch,
+    enqueue_batch_cue,
+    freeze_playlist,
+    project_tts_result_to_batch_item,
+    refresh_batch_status,
+)
 
 
 media_release_router = APIRouter(tags=["阶段8 媒体生成与发布"])
@@ -83,6 +95,23 @@ class TtsJobExecuteRequest(BaseModel):
     resource_version: str = Field(default="v1", max_length=20)
     provider_key: str = Field(default="", max_length=50)
     max_retries: Optional[int] = Field(None, ge=1, le=10, description="最大重试次数，默认从配置读取")
+
+
+class MediaBatchPlanRequest(BaseModel):
+    node_ids: list[int] = Field(default_factory=list, max_length=20)
+    provider_key: str = Field(default="", max_length=50)
+    provider_version: str = Field(default="", max_length=50)
+    voice_id: str = Field(default="default", max_length=100)
+
+
+class MediaBatchConfirmRequest(MediaBatchPlanRequest):
+    idempotency_key: str = Field(min_length=1, max_length=200)
+    label: str = Field(default="", max_length=200)
+    paid_tts_confirmed: bool = Field(default=False)
+
+
+class MediaPlaylistFreezeRequest(BaseModel):
+    batch_id: Optional[str] = Field(default=None, max_length=128)
 
 
 class ReleaseCreateRequest(BaseModel):
@@ -123,6 +152,299 @@ class SwitchPlaybackModeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 # 媒体生成任务
 # ---------------------------------------------------------------------------
+
+
+@media_release_router.post("/course/{course_id}/batch/plan")
+async def plan_media_batch(course_id: int, payload: MediaBatchPlanRequest,
+                           session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    plan = build_media_plan(session, course_id=course_id, node_ids=payload.node_ids,
+                            provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id)
+    return unified_response(code=200, message="媒体批量计划已生成", data=plan)
+
+
+@media_release_router.post("/course/{course_id}/batch/confirm")
+async def confirm_media_batch_endpoint(course_id: int, payload: MediaBatchConfirmRequest,
+                                       session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    if not payload.paid_tts_confirmed:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("批量 TTS 必须先明确确认可能产生 Provider 费用")
+    plan = build_media_plan(session, course_id=course_id, node_ids=payload.node_ids,
+                            provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id)
+    provider = get_tts_provider(plan["provider_key"], strict=True)
+    if provider.requires_async_worker:
+        from app.platform.tasks.worker import local_task_worker
+        if not local_task_worker.has_handler("media.tts"):
+            from app.core.exceptions import reject_dependency_unavailable
+            reject_dependency_unavailable("media.tts Worker 未注册，未创建批量任务或发起任何 TTS 调用")
+    batch, release, jobs = confirm_media_batch(session, course_id=course_id, created_by=int(current_user["user_id"]),
+                                               plan=plan, idempotency_key=payload.idempotency_key, label=payload.label)
+    # Confirmation is the only batch operation allowed to dispatch TTS.  Fake
+    # providers execute inline for local demos; paid providers go through the
+    # existing media.tts worker path and never run on the request event loop.
+    from app.models.course_outline_model import TeachingScriptNode
+    from app.models.database import session_factory
+    from app.platform.tasks.worker import local_task_worker
+    pending_dispatches: list[tuple[str, dict]] = []
+
+    def schedule_cue(source_job: MediaGenerationJob) -> None:
+        """Create the non-billable Cue task after a batch TTS result.
+
+        The Cue job is persisted together with the batch before its worker is
+        submitted.  This keeps a fast local worker from racing the transaction
+        that created the job, while ensuring Fake-provider batch results use
+        exactly the same item/Cue projection as paid worker results.
+        """
+        cue_job, cue_task_id = enqueue_batch_cue(
+            session,
+            course_id=course_id,
+            release_id=release.release_id,
+            source_tts_job=source_job,
+            created_by=int(current_user["user_id"]),
+        )
+        if cue_job.status != MediaGenerationStatus.PENDING:
+            return
+        if not local_task_worker.has_handler("media.timeline_publish"):
+            from app.services.media_batch_service import project_cue_result_to_batch_item
+            project_cue_result_to_batch_item(
+                session,
+                course_id=course_id,
+                release_id=release.release_id,
+                source_tts_job=source_job,
+                error_code="DEPENDENCY_UNAVAILABLE",
+                error_message_safe="Cue Worker 未注册，未冻结字幕与数字人时间轴",
+            )
+            return
+        pending_dispatches.append((cue_task_id, {
+            **(cue_job.input_payload or {}),
+            "job_id": cue_job.job_id,
+        }))
+
+    for job in jobs:
+        node = session.get(TeachingScriptNode, job.node_id) if job.node_id else None
+        if node is None:
+            continue
+        if job.status == MediaGenerationStatus.SUCCEEDED:
+            project_tts_result_to_batch_item(session, job=job)
+            schedule_cue(job)
+            continue
+        provider = get_tts_provider(job.provider_key or None, strict=True)
+        if provider.requires_async_worker:
+            prepared, worker_payload = tts_execution_service.prepare_tts_job_for_dispatch(
+                session, course_id=course_id, job_id=job.job_id, script_text=node.content,
+                voice_id="default", resource_version="v1", provider_key=job.provider_key, max_retries=1,
+            )
+            pending_dispatches.append((prepared.task_id or "", worker_payload))
+        else:
+            completed = tts_execution_service.execute_tts_job(
+                session, course_id=course_id, job_id=job.job_id, script_text=node.content,
+                voice_id="default", resource_version="v1", provider_key=job.provider_key, max_retries=1,
+            )
+            project_tts_result_to_batch_item(session, job=completed)
+            if completed.status == MediaGenerationStatus.SUCCEEDED:
+                schedule_cue(completed)
+    refresh_batch_status(session, course_id=course_id, release_id=release.release_id)
+    session.commit()
+    for task_id, worker_payload in pending_dispatches:
+        local_task_worker.submit(session_factory, task_id, worker_payload)
+    return unified_response(code=202, message="批量媒体任务已确认", data={
+        "batch_id": batch.batch_id, "release_id": release.release_id, "estimate": batch.estimate,
+        "jobs": [_serialize_job(job) for job in jobs], "status": batch.status.value,
+    })
+
+
+@media_release_router.get("/course/{course_id}/batch/{batch_id}")
+async def get_media_batch(course_id: int, batch_id: str, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    batch = session.exec(select(MediaBuildBatch).where(MediaBuildBatch.course_id == course_id, MediaBuildBatch.batch_id == batch_id)).first()
+    if not batch:
+        from app.core.exceptions import reject_resource_not_found
+        reject_resource_not_found("批量媒体批次不存在")
+    refresh_batch_status(session, course_id=course_id, release_id=batch.release_id or "")
+    session.commit()
+    items = list(session.exec(select(MediaReleaseItem).where(MediaReleaseItem.release_id == batch.release_id).order_by(MediaReleaseItem.order_index)).all())
+    jobs = list(session.exec(select(MediaGenerationJob).where(MediaGenerationJob.media_release_id == batch.release_id).order_by(MediaGenerationJob.created_at.desc())).all())
+    return unified_response(code=200, message="批量媒体状态获取成功", data={
+        "batch_id": batch.batch_id, "release_id": batch.release_id, "status": batch.status.value,
+        "estimate": batch.estimate, "items": [_serialize_release_item(item) for item in items],
+        "jobs": [_serialize_job(job) for job in jobs],
+    })
+
+
+@media_release_router.get("/course/{course_id}/releases/{release_id}/items/{item_id}/preview")
+async def preview_draft_release_item(
+    course_id: int,
+    release_id: str,
+    item_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Sign a completed batch item only for the authorised construction UI.
+
+    This intentionally has no student-readable equivalent: draft audio may be
+    listened to by a course builder but cannot leak into the learner playback
+    route until the complete playlist has been frozen and published.
+    """
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    release = media_release_service.get_release(session, course_id=course_id, release_id=release_id)
+    if release.status != MediaReleaseStatus.DRAFT:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("仅媒体草稿可试听批量知识点")
+    item = session.exec(select(MediaReleaseItem).where(
+        MediaReleaseItem.course_id == course_id,
+        MediaReleaseItem.release_id == release_id,
+        MediaReleaseItem.item_id == item_id,
+    )).first()
+    if item is None:
+        from app.core.exceptions import reject_resource_not_found
+        reject_resource_not_found("批量媒体条目不存在")
+    if not item.audio_object_key:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("该知识点的音频尚未生成完成")
+    from app.services.object_storage import get_object_storage
+    # Local drafts created before the audio ledger was introduced remain
+    # immutable, but they still need a course-scoped MediaAsset record for the
+    # guarded content route.  This does not call a Provider or modify bytes.
+    repaired_assets = ensure_release_tts_assets_registered(
+        session, course_id=course_id, release_id=release_id,
+    )
+    if repaired_assets:
+        session.commit()
+    storage = get_object_storage()
+    if not storage.exists(item.audio_object_key):
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("草稿音频对象不可用")
+    scope = {
+        "course_id": course_id,
+        "purpose": "media_draft_preview",
+        "release_id": release_id,
+        "item_id": item_id,
+    }
+    return unified_response(code=200, message="草稿媒体试听地址已签发", data={
+        "release_id": release_id,
+        "item_id": item.item_id,
+        "node_id": item.node_id,
+        "status": item.status,
+        "duration_ms": item.duration_ms,
+        "audio_url": storage.sign_read_url(item.audio_object_key, scope=scope),
+        "subtitle_manifest_url": storage.sign_read_url(
+            item.subtitle_manifest_object_key,
+            scope={**scope, "purpose": "media_draft_preview_subtitle"},
+        ) if item.subtitle_manifest_object_key else None,
+        "avatar_cues_url": storage.sign_read_url(
+            item.avatar_cues_object_key,
+            scope={**scope, "purpose": "media_draft_preview_avatar_cues"},
+        ) if item.avatar_cues_object_key else None,
+    })
+
+
+@media_release_router.get("/course/{course_id}/releases/{release_id}/items/{item_id}/preview-playback")
+async def preview_draft_release_item_playback(
+    course_id: int,
+    release_id: str,
+    item_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a builder-only playback surface for one completed draft item.
+
+    The response intentionally uses the same audio/PPT/subtitle/Cue fields as
+    the learner-facing adapter, but it is available only to a media builder
+    and only while the MediaRelease remains a draft.  This lets the build
+    page reuse the production player components without exposing a partial
+    playlist to students.
+    """
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    release = media_release_service.get_release(session, course_id=course_id, release_id=release_id)
+    if release.status != MediaReleaseStatus.DRAFT:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("仅媒体草稿可预览批量知识点")
+    item = session.exec(select(MediaReleaseItem).where(
+        MediaReleaseItem.course_id == course_id,
+        MediaReleaseItem.release_id == release_id,
+        MediaReleaseItem.item_id == item_id,
+    )).first()
+    if item is None:
+        from app.core.exceptions import reject_resource_not_found
+        reject_resource_not_found("批量媒体条目不存在")
+    if not item.audio_object_key:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("该知识点的音频尚未生成完成")
+    from app.services.object_storage import get_object_storage
+    repaired_assets = ensure_release_tts_assets_registered(
+        session, course_id=course_id, release_id=release_id,
+    )
+    if repaired_assets:
+        session.commit()
+    storage = get_object_storage()
+    if not storage.exists(item.audio_object_key):
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("草稿音频对象不可用")
+    scope = {
+        "course_id": course_id,
+        "purpose": "media_draft_playback_preview",
+        "release_id": release_id,
+        "item_id": item_id,
+    }
+    subtitle_segments: list[dict[str, Any]] = []
+    if item.subtitle_manifest_object_key and storage.exists(item.subtitle_manifest_object_key):
+        try:
+            subtitle_segments = list(json.loads(storage.get(item.subtitle_manifest_object_key).decode("utf-8")).get("segments") or [])
+        except Exception:
+            subtitle_segments = []
+    ppt_timeline: list[dict[str, Any]] = []
+    for mapping in (item.ppt_mapping_snapshot or {}).get("mappings") or []:
+        refs = [int(page) for page in (mapping.get("page_refs") or []) if str(page).isdigit()]
+        if not refs:
+            refs = list(range(int(mapping.get("page_start") or 1), int(mapping.get("page_end") or 1) + 1))
+        for index, page in enumerate(refs):
+            ppt_timeline.append({
+                "ppt_page": page,
+                "material_version_id": mapping.get("material_version_id"),
+                "start_ms": int(item.duration_ms * index / max(len(refs), 1)),
+            })
+    return unified_response(code=200, message="草稿统一播放器预览数据已签发", data={
+        "schema": "draft-media-preview/v1",
+        "release_id": release_id,
+        "item_id": item.item_id,
+        "node_id": item.node_id,
+        "audio_url": storage.sign_read_url(item.audio_object_key, scope=scope),
+        "duration_ms": item.duration_ms,
+        "subtitle_manifest_url": storage.sign_read_url(
+            item.subtitle_manifest_object_key,
+            scope={**scope, "purpose": "media_draft_playback_preview_subtitle"},
+        ) if item.subtitle_manifest_object_key else None,
+        "subtitle_segments": subtitle_segments,
+        "avatar_cues_url": storage.sign_read_url(
+            item.avatar_cues_object_key,
+            scope={**scope, "purpose": "media_draft_playback_preview_avatar_cues"},
+        ) if item.avatar_cues_object_key else None,
+        "ppt_manifest_url": storage.sign_read_url(
+            release.ppt_manifest_object_key,
+            scope={**scope, "purpose": "media_draft_playback_preview_ppt"},
+        ) if release.ppt_manifest_object_key and storage.exists(release.ppt_manifest_object_key) else None,
+        "ppt_timeline": ppt_timeline,
+        "avatar_preset_id": release.avatar_preset_id or "platform-instructor-v1",
+    })
+
+
+@media_release_router.post("/course/{course_id}/releases/{release_id}/audio-playlist")
+async def freeze_audio_playlist(course_id: int, release_id: str, payload: MediaPlaylistFreezeRequest,
+                                session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    if payload.batch_id:
+        batch = session.exec(select(MediaBuildBatch).where(
+            MediaBuildBatch.course_id == course_id,
+            MediaBuildBatch.batch_id == payload.batch_id,
+            MediaBuildBatch.release_id == release_id,
+        )).first()
+        if batch is None:
+            from app.core.exceptions import reject_validation_failed
+            reject_validation_failed("批量媒体批次与待冻结的媒体版本不匹配")
+    result = freeze_playlist(session, course_id=course_id, release_id=release_id)
+    session.commit()
+    return unified_response(code=200, message="audio-playlist/v1 已冻结", data=result)
 
 
 @media_release_router.post("/course/{course_id}/generation-jobs")
@@ -495,8 +817,13 @@ async def get_release(
     cues = media_release_service.list_release_cues(
         session, course_id=course_id, release_id=release_id,
     )
+    items = list(session.exec(select(MediaReleaseItem).where(
+        MediaReleaseItem.course_id == course_id,
+        MediaReleaseItem.release_id == release_id,
+    ).order_by(MediaReleaseItem.order_index)).all())
     data = _serialize_release(release)
     data["cues"] = [_serialize_release_cue(c) for c in cues]
+    data["items"] = [_serialize_release_item(item) for item in items]
     return unified_response(
         code=200, message="获取媒体版本详情成功",
         data=data,
@@ -834,6 +1161,9 @@ def _serialize_release(release) -> dict[str, Any]:
         "audio_object_key": release.audio_object_key,
         "subtitle_manifest_object_key": release.subtitle_manifest_object_key,
         "ppt_manifest_object_key": release.ppt_manifest_object_key,
+        "audio_playlist_object_key": release.audio_playlist_object_key,
+        "audio_playlist_sha256": release.audio_playlist_sha256,
+        "avatar_preset_id": release.avatar_preset_id,
         "avatar_cues_object_key": release.avatar_cues_object_key,
         "avatar_binding_id": release.avatar_binding_id,
         "digital_human_manifest_object_key": release.digital_human_manifest_object_key,
@@ -844,6 +1174,20 @@ def _serialize_release(release) -> dict[str, Any]:
         "activated_at": release.activated_at.isoformat() if release.activated_at else None,
         "superseded_at": release.superseded_at.isoformat() if release.superseded_at else None,
         "withdrawn_at": release.withdrawn_at.isoformat() if release.withdrawn_at else None,
+        "release_metadata": release.release_metadata or {},
+    }
+
+
+def _serialize_release_item(item) -> dict[str, Any]:
+    return {
+        "item_id": item.item_id, "release_id": item.release_id, "course_id": item.course_id,
+        "node_id": item.node_id, "outline_node_id": item.outline_node_id, "order_index": item.order_index,
+        "script_hash": item.script_hash, "status": item.status, "audio_object_key": item.audio_object_key,
+        "audio_sha256": item.audio_sha256, "duration_ms": item.duration_ms,
+        "subtitle_manifest_object_key": item.subtitle_manifest_object_key,
+        "avatar_cues_object_key": item.avatar_cues_object_key,
+        "ppt_mapping_snapshot": item.ppt_mapping_snapshot, "tts_job_id": item.tts_job_id,
+        "error_code": item.error_code, "error_message_safe": item.error_message_safe,
     }
 
 

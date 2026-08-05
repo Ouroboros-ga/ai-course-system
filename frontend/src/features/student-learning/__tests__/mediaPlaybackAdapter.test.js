@@ -111,3 +111,37 @@ test('keeps an unmapped PPT cue unmapped instead of defaulting to page one', () 
   assert.equal(result.pptTimeline[0].page, null)
   assert.equal(resolvePptPageAtTime(result.pptTimeline, 500), null)
 })
+
+test('normalizes a course playlist as independent audio items with global subtitle offsets', () => {
+  const result = normalizeMediaPlayback({
+    available: true,
+    playlist: {
+      schema: 'audio-playlist/v1', duration_ms: 3_000,
+      items: [
+        { node_id: 10, offset_ms: 0, duration_ms: 1_000, audio_url: '/first.mp3', subtitle_segments: [{ start_ms: 0, end_ms: 900, text: '第一段' }] },
+        { node_id: 11, offset_ms: 1_000, duration_ms: 2_000, audio_url: '/second.mp3', subtitle_segments: [{ start_ms: 100, end_ms: 1_200, text: '第二段' }] },
+      ],
+    },
+  })
+  assert.equal(result.playlist.schema, 'audio-playlist/v1')
+  assert.equal(result.playlist.items[1].offsetMs, 1_000)
+  assert.equal(result.subtitleSegments[1].startMs, 1_100)
+  assert.equal(findActiveSubtitleIndex(result.subtitleSegments, 1_150), 1)
+})
+
+test('does not add a playlist offset twice when the server already returns global PPT timing', () => {
+  const result = normalizeMediaPlayback({
+    available: true,
+    playlist: {
+      schema: 'audio-playlist/v1', duration_ms: 3_000,
+      items: [
+        {
+          node_id: 11, offset_ms: 1_000, duration_ms: 2_000, audio_url: '/second.mp3',
+          ppt_timeline: [{ node_id: 11, ppt_page: 6, start_ms: 1_500, end_ms: 3_000 }],
+        },
+      ],
+    },
+  })
+  assert.equal(result.pptTimeline[0].startMs, 1_500)
+  assert.equal(resolvePptPageAtTime(result.pptTimeline, 1_600), 6)
+})

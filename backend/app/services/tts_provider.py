@@ -22,7 +22,9 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
+import struct
 import time
 import uuid
 from abc import ABC, abstractmethod
@@ -183,17 +185,34 @@ def _split_script_into_sentences(script_text: str, *, max_bytes: int = 800) -> l
     return sentences
 
 
+# Windows 文件系统不允许出现在路径段中的字符（<>:"/\|?* 与 C0 控制字符）。
+# 幂等键等外部字符串会被拼入 object_key 作为最终路径段，必须替换为安全字符，
+# 否则本地存储落盘时会抛 OSError [Errno 22] Invalid argument。
+_INVALID_OBJECT_KEY_SEGMENT_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _safe_path_segment(segment: str) -> str:
+    """将 object_key 的单个路径段替换为跨平台文件系统安全字符。
+
+    替换是确定性的（不改变缓存指纹与幂等去重语义），只影响落盘路径。
+    """
+    cleaned = _INVALID_OBJECT_KEY_SEGMENT_RE.sub("_", segment)
+    cleaned = cleaned.rstrip(" .")
+    return cleaned or "unnamed"
+
+
 class FakeTtsProvider(TTSProvider):
     """假 TTS Provider
 
     - 不调用真实讯飞，自动化测试与离线演示使用
-    - 生成的"音频"是包含文本与时间元数据的占位字节
+    - 生成可由浏览器解码的本地 WAV 节拍轨，便于验证播放器时间轴
+    - 节拍轨不包含讲稿语音，不能作为真实 TTS 或声音效果验收
     - 字幕分段按句切分，duration_ms 按字数估算（约 200 字/分钟）
     - 产物写入对象存储，返回 object_key
     """
 
     provider_key = "fake_tts"
-    provider_version = "fake-v1.0"
+    provider_version = "fake-v1.1-playable"
 
     # 估算语速：中文 200 字/分钟 = 3.33 字/秒
     CHARS_PER_SECOND = 3.33
@@ -220,26 +239,15 @@ class FakeTtsProvider(TTSProvider):
 
         total_duration_ms = cursor_ms
 
-        # 生成占位音频内容：包含文本与时间元数据，便于测试断言
-        audio_payload_parts = [
-            b"FAKE_TTS_AUDIO_V1\n",
-            f"provider={self.provider_key}\n".encode(),
-            f"version={self.provider_version}\n".encode(),
-            f"voice={request.voice_id}\n".encode(),
-            f"duration_ms={total_duration_ms}\n".encode(),
-            f"format={request.output_format}\n".encode(),
-            f"course_id={request.course_id}\n".encode(),
-            f"resource_version={request.resource_version}\n".encode(),
-            f"input_hash={request.input_hash()}\n".encode(),
-            b"---\n",
-            request.script_text.encode("utf-8"),
-        ]
-        audio_bytes = b"".join(audio_payload_parts)
+        # Fake output is intentionally a short chime at every subtitle start,
+        # with silence between them.  It has the same duration as the frozen
+        # subtitle timeline but never represents the teacher's voice.
+        audio_bytes = build_fake_tts_wav(total_duration_ms, segments)
 
         # 写入对象存储
         audio_object_key = self._build_object_key(request)
         storage = get_object_storage()
-        content_sha = storage.put(audio_object_key, audio_bytes, mime_type="audio/mpeg")
+        content_sha = storage.put(audio_object_key, audio_bytes, mime_type="audio/wav")
 
         return TtsSynthesisResult(
             audio_object_key=audio_object_key,
@@ -248,20 +256,53 @@ class FakeTtsProvider(TTSProvider):
             audio_sha256=content_sha,
             provider_key=self.provider_key,
             provider_version=self.provider_version,
-            warnings=["fake_tts: 生成的是占位音频，非真实 TTS 产物"],
+            warnings=["fake_tts: 本地产生的是节拍试听轨，不含讲稿语音，非真实 TTS 产物"],
+            timing_metadata={
+                "timing_source": "synthetic_subtitle_segments",
+                "fake_audio_kind": "diagnostic_chime",
+                "audio_format": "wav",
+            },
         )
 
     def _build_object_key(self, request: TtsSynthesisRequest) -> str:
         """构造稳定的 object_key，便于幂等去重"""
         if request.idempotency_key:
-            key_part = request.idempotency_key
+            key_part = _safe_path_segment(request.idempotency_key)
         else:
             key_part = request.input_hash()[:16]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
         return (
-            f"tts/course_{request.course_id}/{timestamp}/{key_part}."
-            f"{request.output_format}"
+            f"tts/course_{request.course_id}/{timestamp}/{key_part}.wav"
         )
+
+
+def build_fake_tts_wav(duration_ms: int, segments: list[SubtitleSegment]) -> bytes:
+    """Build deterministic, browser-playable diagnostic audio without TTS.
+
+    The 8-bit mono PCM track stays small enough for the local demo while
+    matching the subtitle timeline exactly.  A tone is emitted at each segment
+    boundary so seek/playback tests have an audible, non-speech signal.
+    """
+    sample_rate = 8_000
+    total_samples = max(1, math.ceil(max(1, duration_ms) * sample_rate / 1_000))
+    samples = bytearray(b"\x80") * total_samples
+    chime_samples = min(int(sample_rate * 0.16), total_samples)
+    for index, segment in enumerate(segments):
+        start = min(total_samples - 1, max(0, int(segment.start_ms * sample_rate / 1_000)))
+        end = min(total_samples, start + chime_samples)
+        frequency = 440 if index % 2 == 0 else 660
+        angular_step = (2 * math.pi * frequency) / sample_rate
+        for offset in range(end - start):
+            # A short raised-cosine envelope prevents an abrupt click at the
+            # end of each local test cue.
+            envelope = min(1.0, offset / 80, (end - start - offset) / 80)
+            samples[start + offset] = int(128 + 52 * envelope * math.sin(angular_step * offset))
+    header = struct.pack(
+        "<4sI4s4sIHHIIHH4sI",
+        b"RIFF", 36 + len(samples), b"WAVE", b"fmt ", 16,
+        1, 1, sample_rate, sample_rate, 1, 8, b"data", len(samples),
+    )
+    return header + bytes(samples)
 
 
 # ---------------------------------------------------------------------------
@@ -505,7 +546,7 @@ class XfyunTtsProvider(TTSProvider):
     def _build_object_key(self, request: TtsSynthesisRequest) -> str:
         """构造稳定的 object_key，便于幂等去重"""
         if request.idempotency_key:
-            key_part = request.idempotency_key
+            key_part = _safe_path_segment(request.idempotency_key)
         else:
             key_part = request.input_hash()[:16]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")
@@ -758,7 +799,7 @@ class MockXfyunTtsProvider(TTSProvider):
 
     def _build_object_key(self, request: TtsSynthesisRequest) -> str:
         if request.idempotency_key:
-            key_part = request.idempotency_key
+            key_part = _safe_path_segment(request.idempotency_key)
         else:
             key_part = request.input_hash()[:16]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d")

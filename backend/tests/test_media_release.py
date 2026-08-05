@@ -29,6 +29,7 @@ from app.models.media_release_model import (
 )
 from app.models.media_timeline_model import (
     CueType,
+    MediaAsset,
     MediaTimelineCue,
 )
 from app.models.user_model import User, UserRole
@@ -36,7 +37,13 @@ from app.services.course_access_service import (
     activate_student_membership,
     establish_course_access_baseline,
 )
-from app.services.object_storage import reset_object_storage_for_tests
+from app.services.object_storage import (
+    LocalStorageProvider,
+    build_object_storage_provider,
+    get_object_storage,
+    reset_object_storage_for_tests,
+    resolve_local_storage_root,
+)
 from app.services.tts_provider import (
     FakeTtsProvider,
     reset_tts_registry_for_tests,
@@ -173,6 +180,20 @@ def _execute_tts_job_via_api(
     return body["data"]
 
 
+def test_relative_local_storage_path_is_backend_rooted(monkeypatch, tmp_path):
+    """Starting the API at the repo root or backend/ must address one tree."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "MEDIA_STORAGE_PATH", "./media")
+    resolved = resolve_local_storage_root(settings.MEDIA_STORAGE_PATH)
+    assert resolved.replace("\\", "/").endswith("/backend/media")
+    assert build_object_storage_provider("local").root_dir == resolved
+
+    explicit = str(tmp_path / "isolated-media")
+    assert resolve_local_storage_root(explicit) == explicit
+    assert LocalStorageProvider(explicit).root_dir == explicit
+
+
 def _create_release_via_api(
     client, token: str, course_id: int,
     *,
@@ -287,6 +308,30 @@ class TestTtsGenerationJob:
         assert len(result["output_metadata"]["subtitle_segments"]) >= 2
         assert result["output_metadata"]["audio_sha256"]
         assert result["output_metadata"]["provider_key"] == "fake_tts"
+        assert result["output_metadata"]["provider_version"] == "fake-v1.1-playable"
+        assert result["output_object_key"].endswith(".wav")
+
+        # Fake TTS is intentionally not speech, but the emitted diagnostic
+        # track must be a real browser-decodable WAV and remain course-scoped.
+        asset = session.exec(select(MediaAsset).where(
+            MediaAsset.object_key == result["output_object_key"],
+        )).first()
+        assert asset is not None
+        assert asset.course_id == course.id
+        assert asset.mime_type == "audio/wav"
+        raw_audio = get_object_storage().get(asset.object_key)
+        assert raw_audio[:4] == b"RIFF"
+        assert raw_audio[8:12] == b"WAVE"
+
+        content = client.get(
+            f"{MEDIA}/assets/{asset.object_key}/content",
+            params={"token": _token(teacher_user)},
+        )
+        assert content.status_code == 200, content.text
+        assert content.headers["content-type"].startswith("audio/wav")
+        assert content.content[:4] == b"RIFF"
+        assert content.content[8:12] == b"WAVE"
+
 
     def test_idempotency_key_deduplicates(self, client, session, teacher_user):
         course = _course(session, teacher_user.id)
@@ -326,6 +371,31 @@ class TestTtsGenerationJob:
         assert second["output_metadata"]["cache_hit"] is True
         assert second["output_metadata"]["cache_source_job_id"] == first_job["job_id"]
         assert second["output_object_key"] == first["output_object_key"]
+
+    def test_cache_hit_restores_missing_media_asset_ledger(self, client, session, teacher_user):
+        """A cache hit must repair pre-ledger rows without resynthesizing audio."""
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        token = _token(teacher_user)
+        script = "缓存资产台账兼容验证。"
+
+        first_job = _create_tts_job_via_api(client, token, course.id, idempotency_key="ledger-first")
+        first = _execute_tts_job_via_api(client, token, course.id, first_job["job_id"], script_text=script)
+        asset = session.exec(select(MediaAsset).where(
+            MediaAsset.object_key == first["output_object_key"],
+        )).first()
+        assert asset is not None
+        session.delete(asset)
+        session.commit()
+
+        second_job = _create_tts_job_via_api(client, token, course.id, idempotency_key="ledger-second")
+        second = _execute_tts_job_via_api(client, token, course.id, second_job["job_id"], script_text=script)
+        assert second["output_metadata"]["cache_hit"] is True
+        repaired = session.exec(select(MediaAsset).where(
+            MediaAsset.object_key == first["output_object_key"],
+        )).first()
+        assert repaired is not None
+        assert repaired.course_id == course.id
 
     def test_student_cannot_create_tts_job(self, client, session, teacher_user, student_user):
         course = _course(session, teacher_user.id)

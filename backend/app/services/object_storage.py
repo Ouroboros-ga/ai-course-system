@@ -23,6 +23,23 @@ from urllib.parse import quote
 from app.core.config import settings
 
 
+# ``MEDIA_STORAGE_PATH`` is a deployment setting, not a working-directory
+# relative path.  The local development server is commonly started from the
+# repository root while maintenance commands are started from ``backend/``;
+# resolving a relative value against ``cwd`` made those two invocations write
+# and read different media trees.  Keep explicit absolute paths untouched so
+# tests and deployments can still choose an isolated storage location.
+_BACKEND_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+
+
+def resolve_local_storage_root(root_dir: str) -> str:
+    """Resolve a local storage root consistently across process cwd values."""
+    configured = str(root_dir or "./media")
+    if os.path.isabs(configured):
+        return os.path.abspath(configured)
+    return os.path.abspath(os.path.join(_BACKEND_ROOT, configured))
+
+
 # ---------------------------------------------------------------------------
 # 抽象接口
 # ---------------------------------------------------------------------------
@@ -321,7 +338,7 @@ def build_object_storage_provider(backend: str) -> ObjectStorageProvider:
     """按显式后端构造 Provider，供迁移工具同时持有源与目标存储。"""
     backend = (backend or "local").lower()
     if backend == "local":
-        return LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
+        return LocalStorageProvider(resolve_local_storage_root(settings.MEDIA_STORAGE_PATH))
     elif backend in {"s3", "minio", "oss"}:
         try:
             from app.services.s3_object_storage import S3ObjectStorageProvider
@@ -329,7 +346,7 @@ def build_object_storage_provider(backend: str) -> ObjectStorageProvider:
             return S3ObjectStorageProvider.from_settings(settings)
         except Exception as exc:
             if settings.OBJECT_STORAGE_ALLOW_DEMO_LOCAL_FALLBACK:
-                return LocalStorageProvider(settings.MEDIA_STORAGE_PATH)
+                return LocalStorageProvider(resolve_local_storage_root(settings.MEDIA_STORAGE_PATH))
             else:
                 raise ObjectStorageConfigurationError(
                     f"对象存储后端 {backend!r} 初始化失败；不会静默回退到本地存储: {exc}"

@@ -111,6 +111,7 @@ deploy/judge0-source/
 
 # 阶段8 本地对象存储目录（仅开发环境运行时数据，不入 Git）
 backend/media/
+/media/
 
 # Local presentation inspection artifacts
 /presentation.pptx

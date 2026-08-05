@@ -38,6 +38,8 @@ const props = defineProps({
   isMuted: { type: Boolean, default: false },
   captionsEnabled: { type: Boolean, default: true },
   audioUrl: { type: String, default: '' },
+  playlist: { type: Object, default: null },
+  playlistIndex: { type: Number, default: 0 },
   duration: { type: Number, default: 0 },
   subtitleSegments: { type: Array, default: () => [] },
   pptTimeline: { type: Array, default: () => [] },
@@ -59,6 +61,8 @@ const emit = defineEmits([
   'volume-change',
   'mute-change',
   'captions-change',
+  'playlist-next',
+  'playlist-previous',
 ])
 
 const audioRef = ref(null)
@@ -69,7 +73,11 @@ const legacyVideoError = ref('')
 const mediaDuration = ref(0)
 let applyingExternalTime = false
 
-const hasAudio = computed(() => Boolean(props.audioUrl) && !audioError.value)
+const activePlaylistItem = computed(() => props.playlist?.items?.[props.playlistIndex] ?? null)
+const activeAudioUrl = computed(() => activePlaylistItem.value?.audioUrl || props.audioUrl)
+const playlistOffset = computed(() => Number(activePlaylistItem.value?.offsetMs || 0) / 1000)
+const hasPlaylist = computed(() => Boolean(activePlaylistItem.value))
+const hasAudio = computed(() => Boolean(activeAudioUrl.value) && !audioError.value)
 const hasLegacyVideo = computed(() => !hasAudio.value && Boolean(props.legacyVideoUrl) && !legacyVideoError.value)
 const mediaElement = computed(() => hasAudio.value ? audioRef.value : legacyVideoRef.value)
 const effectiveDuration = computed(() => Math.max(Number(props.duration) || 0, mediaDuration.value))
@@ -124,14 +132,14 @@ const displayedTotalPages = computed(() => {
 
 function sourceTimeForGlobal(globalTime) {
   const timestamp = Math.max(0, Number(globalTime) || 0)
-  if (hasAudio.value) return timestamp
+  if (hasAudio.value) return hasPlaylist.value ? Math.max(0, timestamp - playlistOffset.value) : timestamp
   return Math.max(0, timestamp - Number(props.currentNode?.timestampStart || 0))
 }
 
 function globalTimeFromElement() {
   const element = mediaElement.value
   if (!element) return Math.max(0, Number(props.currentTime) || 0)
-  if (hasAudio.value) return element.currentTime
+  if (hasAudio.value) return (hasPlaylist.value ? playlistOffset.value : 0) + element.currentTime
   return Number(props.currentNode?.timestampStart || 0) + element.currentTime
 }
 
@@ -212,6 +220,10 @@ function skipBy(seconds) {
 }
 
 function handleEnded() {
+  if (hasPlaylist.value && props.playlistIndex < (props.playlist?.items?.length || 0) - 1) {
+    emit('playlist-next')
+    return
+  }
   emitPlayback(false)
 }
 
@@ -229,7 +241,7 @@ function formatTime(value) {
     : `${minutes}:${String(remain).padStart(2, '0')}`
 }
 
-watch(() => props.audioUrl, async () => {
+watch([() => props.audioUrl, () => props.playlistIndex], async () => {
   audioError.value = ''
   mediaDuration.value = 0
   await nextTick()
@@ -280,8 +292,8 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         <audio
           v-if="hasAudio"
           ref="audioRef"
-          :key="audioUrl"
-          :src="audioUrl"
+          :key="activeAudioUrl"
+          :src="activeAudioUrl"
           preload="metadata"
           @loadedmetadata="handleLoadedMetadata"
           @timeupdate="handleTimeUpdate"
@@ -393,7 +405,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         <template #icon><SkipBack :size="16" /></template>
         后退 10 秒
       </SfxButton>
-      <SfxButton variant="tertiary" size="sm" :disabled="!currentNode || currentNode.index <= 0" @click="emit('node-change', -1)">
+      <SfxButton variant="tertiary" size="sm" :disabled="hasPlaylist ? playlistIndex <= 0 : !currentNode || currentNode.index <= 0" @click="hasPlaylist ? emit('playlist-previous') : emit('node-change', -1)">
         上一知识点
       </SfxButton>
 
@@ -404,7 +416,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
       </label>
       <span class="sfx-stage-time">{{ formatTime(effectiveDuration) }}</span>
 
-      <SfxButton variant="tertiary" size="sm" :disabled="!currentNode" @click="emit('node-change', 1)">
+      <SfxButton variant="tertiary" size="sm" :disabled="hasPlaylist ? playlistIndex >= (playlist?.items?.length || 0) - 1 : !currentNode" @click="hasPlaylist ? emit('playlist-next') : emit('node-change', 1)">
         下一知识点
       </SfxButton>
       <SfxButton variant="tertiary" size="sm" :disabled="!mediaElement" @click="skipBy(10)">

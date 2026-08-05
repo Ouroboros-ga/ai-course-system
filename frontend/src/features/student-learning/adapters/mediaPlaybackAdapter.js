@@ -15,6 +15,8 @@ function normalizeSubtitles(value) {
       endMs: nonNegativeInteger(segment?.end_ms ?? segment?.endMs),
       text: String(segment?.text ?? ''),
       scriptReference: segment?.script_reference ?? segment?.scriptReference ?? null,
+      ...(segment?.ppt_page != null || segment?.pptPage != null ? { pptPage: segment?.ppt_page ?? segment?.pptPage } : {}),
+      ...(segment?.material_version_id != null || segment?.materialVersionId != null ? { materialVersionId: segment?.material_version_id ?? segment?.materialVersionId } : {}),
     }))
     .filter(segment => segment.text && segment.endMs >= segment.startMs)
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs)
@@ -97,6 +99,46 @@ function normalizeDigitalHumanManifest(value) {
   }
 }
 
+function normalizePlaylist(value) {
+  if (!value || value.schema !== 'audio-playlist/v1' || !Array.isArray(value.items)) return null
+  return {
+    schema: 'audio-playlist/v1',
+    durationMs: nonNegativeInteger(value.duration_ms ?? value.durationMs),
+    contentSha256: String(value.content_sha256 ?? value.contentSha256 ?? ''),
+    items: value.items.map((item, index) => ({
+      index,
+      nodeId: item?.node_id ?? item?.nodeId ?? null,
+      outlineNodeId: item?.outline_node_id ?? item?.outlineNodeId ?? null,
+      offsetMs: nonNegativeInteger(item?.offset_ms ?? item?.offsetMs),
+      durationMs: nonNegativeInteger(item?.duration_ms ?? item?.durationMs),
+      audioUrl: String(item?.audio_url ?? item?.audioUrl ?? ''),
+      subtitleManifestUrl: String(item?.subtitle_manifest_url ?? item?.subtitleManifestUrl ?? ''),
+      avatarCuesUrl: String(item?.avatar_cues_url ?? item?.avatarCuesUrl ?? ''),
+      pptMappingSnapshot: item?.ppt_mapping_snapshot ?? item?.pptMappingSnapshot ?? {},
+      pptTimeline: normalizePptTimeline(item?.ppt_timeline ?? item?.pptTimeline).map(cue => ({
+        ...cue,
+        // The server playlist already serializes PPT timing in the global
+        // course clock.  Older fixtures may still send item-local timing, so
+        // add the offset only when the cue clearly precedes its item.
+        startMs: cue.startMs < nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)
+          ? cue.startMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)
+          : cue.startMs,
+        endMs: cue.endMs < nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)
+          ? cue.endMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)
+          : cue.endMs,
+      })),
+      subtitleSegments: normalizeSubtitles(item?.subtitle_segments ?? item?.subtitleSegments).map(segment => ({
+        ...segment,
+        startMs: nonNegativeInteger(segment.startMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)),
+        endMs: nonNegativeInteger(segment.endMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)),
+      })),
+      avatarCues: (item?.avatar_cues_url ?? item?.avatarCuesUrl)
+        ? { schema: 'avatar-cues/v1', manifestUrl: String(item?.avatar_cues_url ?? item?.avatarCuesUrl) }
+        : null,
+    })).filter(item => item.audioUrl && item.durationMs > 0),
+  }
+}
+
 /**
  * Normalize only the public playback manifest. Provider-specific source data
  * never crosses this boundary into the browser player.
@@ -108,6 +150,7 @@ export function normalizeMediaPlayback(rawResponse) {
   const ppt = normalizePptManifest(raw.ppt)
   const avatarCues = normalizeAvatarCues(raw.avatar_cues ?? raw.avatarCues)
   const digitalHumanManifest = normalizeDigitalHumanManifest(raw.digital_human_manifest ?? raw.digitalHumanManifest)
+  const playlist = normalizePlaylist(raw.playlist)
   const durationMs = nonNegativeInteger(raw.duration_ms ?? raw.durationMs)
 
   return {
@@ -117,14 +160,19 @@ export function normalizeMediaPlayback(rawResponse) {
     releaseId: raw.release_id ?? raw.releaseId ?? null,
     label: String(raw.label ?? ''),
     audioUrl: String(raw.audio_url ?? raw.audioUrl ?? ''),
-    durationMs,
-    subtitleSegments,
-    pptTimeline,
+    durationMs: playlist?.durationMs || durationMs,
+    subtitleSegments: playlist
+      ? playlist.items.flatMap(item => item.subtitleSegments)
+      : subtitleSegments,
+    pptTimeline: playlist
+      ? playlist.items.flatMap(item => item.pptTimeline)
+      : pptTimeline,
     ppt,
     defaultPlaybackMode: String(raw.default_playback_mode ?? raw.defaultPlaybackMode ?? 'compatibility'),
     fallbackMode: String(raw.fallback_mode ?? raw.fallbackMode ?? 'compatibility'),
     avatarCues,
     digitalHumanManifest,
+    playlist,
   }
 }
 

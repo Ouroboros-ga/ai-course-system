@@ -17,3 +17,9 @@ export const getMediaProviderHealth = () => request.get('/media/providers/health
 // Learner-facing immutable media release.  This is intentionally separate
 // from the authoring release APIs above so the player consumes its own contract.
 export const getCoursePlayback = (courseId, config = {}) => request.get(`${base(courseId)}/playback`, config)
+export const planMediaBatch = (courseId, payload) => request.post(`${base(courseId)}/batch/plan`, payload)
+export const confirmMediaBatch = (courseId, payload) => request.post(`${base(courseId)}/batch/confirm`, payload)
+export const getMediaBatch = (courseId, batchId) => request.get(`${base(courseId)}/batch/${encodeURIComponent(batchId)}`)
+export const previewMediaReleaseItem = (courseId, releaseId, itemId) => request.get(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/items/${encodeURIComponent(itemId)}/preview`)
+export const previewMediaReleaseItemPlayback = (courseId, releaseId, itemId) => request.get(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/items/${encodeURIComponent(itemId)}/preview-playback`)
+export const freezeAudioPlaylist = (courseId, releaseId, payload = {}) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/audio-playlist`, payload)

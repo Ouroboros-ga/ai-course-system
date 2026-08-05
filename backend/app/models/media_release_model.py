@@ -68,6 +68,15 @@ class MediaReleaseStatus(str, Enum):
     STALE = "stale"           # 因依赖资产失效被标记
 
 
+class MediaBuildBatchStatus(str, Enum):
+    PLANNED = "planned"
+    CONFIRMED = "confirmed"
+    RUNNING = "running"
+    READY = "ready"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
 class PlaybackMode(str, Enum):
     """播放模式三档"""
     AUTO = "auto"                 # 自动模式：默认，能力探测后启用数字人
@@ -211,6 +220,9 @@ class MediaRelease(SQLModel, table=True):
     audio_object_key: Optional[str] = Field(default=None, index=True)
     subtitle_manifest_object_key: Optional[str] = Field(default=None)
     ppt_manifest_object_key: Optional[str] = Field(default=None)
+    audio_playlist_object_key: Optional[str] = Field(default=None, index=True)
+    audio_playlist_sha256: str = Field(default="", index=True)
+    avatar_preset_id: Optional[str] = Field(default=None, max_length=100)
 
     # P2: 与音频 SHA 绑定的厂商无关数字人时间轴。它不同于形象资产包 manifest：
     # 前者描述本次讲解何时说话/可用何种 viseme，后者描述浏览器可加载的形象资源。
@@ -238,6 +250,57 @@ class MediaRelease(SQLModel, table=True):
     withdrawn_at: Optional[datetime] = Field(default=None)
 
     release_metadata: dict = Field(default_factory=dict, sa_column=Column(JSON))
+
+
+class MediaBuildBatch(SQLModel, table=True):
+    """一次教师明确确认的批量媒体建设批次。"""
+    __tablename__ = "media_build_batches"
+    __table_args__ = (UniqueConstraint("course_id", "idempotency_key", name="uq_media_batch_idempotency"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    batch_id: str = Field(default_factory=lambda: "mbatch_" + uuid.uuid4().hex, unique=True, index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    release_id: Optional[str] = Field(default=None, index=True)
+    created_by: int = Field(foreign_key="users.id")
+    status: MediaBuildBatchStatus = Field(default=MediaBuildBatchStatus.PLANNED, index=True)
+    idempotency_key: str = Field(default="", index=True)
+    node_ids: list = Field(default_factory=list, sa_column=Column(JSON))
+    node_snapshot: list = Field(default_factory=list, sa_column=Column(JSON))
+    estimate: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    voice_config: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    confirmed_at: Optional[datetime] = Field(default=None)
+    completed_at: Optional[datetime] = Field(default=None)
+    error_code: str = Field(default="")
+    error_message_safe: str = Field(default="")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class MediaReleaseItem(SQLModel, table=True):
+    """课程级播放清单中的不可变知识点媒体条目。"""
+    __tablename__ = "media_release_items"
+    __table_args__ = (UniqueConstraint("release_id", "node_id", name="uq_media_release_item_node"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    item_id: str = Field(default_factory=lambda: "mrit_" + uuid.uuid4().hex, unique=True, index=True)
+    release_id: str = Field(index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    node_id: int = Field(foreign_key="script_nodes.id", index=True)
+    outline_node_id: Optional[str] = Field(default=None, index=True)
+    order_index: int = Field(default=0, index=True)
+    script_hash: str = Field(default="", index=True)
+    status: str = Field(default="pending", index=True)
+    audio_object_key: Optional[str] = Field(default=None)
+    audio_sha256: str = Field(default="")
+    duration_ms: int = Field(default=0)
+    subtitle_manifest_object_key: Optional[str] = Field(default=None)
+    avatar_cues_object_key: Optional[str] = Field(default=None)
+    ppt_mapping_snapshot: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    tts_job_id: Optional[str] = Field(default=None, index=True)
+    error_code: str = Field(default="")
+    error_message_safe: str = Field(default="")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class MediaReleaseCue(SQLModel, table=True):

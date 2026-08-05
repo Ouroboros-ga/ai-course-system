@@ -128,7 +128,8 @@ def build_avatar_cues_from_tts_job(
     duration_ms = _non_negative_int(metadata.get("duration_ms"))
     if not audio_object_key or not audio_sha256 or duration_ms <= 0:
         raise AvatarCueBuildError("TTS_OUTPUT_INCOMPLETE", "TTS 成功记录缺少音频 SHA 或有效时长")
-    if release.audio_object_key and release.audio_object_key != audio_object_key:
+    playlist_mode = bool((release.release_metadata or {}).get("audio_playlist_mode"))
+    if release.audio_object_key and release.audio_object_key != audio_object_key and not playlist_mode:
         raise AvatarCueBuildError("RELEASE_AUDIO_MISMATCH", "发布草稿已绑定另一份音频，不能混用时间轴")
 
     storage = storage or get_object_storage()
@@ -265,15 +266,16 @@ def build_avatar_cues_from_tts_job(
     # rule and content fingerprint stay the single source of truth.
     from app.services.media_release_service import media_release_service
 
-    media_release_service.freeze_cue_snapshot(
-        session,
-        course_id=course_id,
-        release_id=release_id,
-        cue_rows=release_cues,
-    )
-    release.audio_object_key = audio_object_key
-    release.subtitle_manifest_object_key = subtitle_key
-    release.avatar_cues_object_key = avatar_key
+    if not playlist_mode:
+        media_release_service.freeze_cue_snapshot(
+            session,
+            course_id=course_id,
+            release_id=release_id,
+            cue_rows=release_cues,
+        )
+        release.audio_object_key = audio_object_key
+        release.subtitle_manifest_object_key = subtitle_key
+        release.avatar_cues_object_key = avatar_key
     release.release_metadata = {
         **(release.release_metadata or {}),
         "audio_sha256": audio_sha256,

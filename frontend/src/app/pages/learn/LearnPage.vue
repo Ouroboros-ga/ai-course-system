@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
+import { usePlaylistPlayback } from '@/features/student-learning/composables/usePlaylistPlayback.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
@@ -36,6 +37,7 @@ const ws = useLearningWorkspace(courseId, {
 })
 const media = useMediaPlayback(courseId)
 const avatar = useAvatarPlayback()
+const playlistPlayback = usePlaylistPlayback(media.playlist)
 
 const mediaTotalPages = computed(() => {
   const manifestPages = media.ppt.value?.decks?.flatMap(deck => deck.pages || []) || []
@@ -140,15 +142,35 @@ function handlePlayback(payload) {
 function handleNodeChange(direction) {
   ws.selectNode(ws.currentNodeIndex.value + Number(direction), { play: ws.isPlaying.value })
 }
+function handlePlaylistNext() {
+  if (!playlistPlayback.next()) return
+  const item = playlistPlayback.activeItem.value
+  if (item?.nodeId != null) {
+    const index = ws.nodes.value.findIndex(node => String(node.id) === String(item.nodeId))
+    if (index >= 0) ws.selectNode(index, { play: true })
+  }
+}
+function handlePlaylistPrevious() {
+  if (!playlistPlayback.previous()) return
+  const item = playlistPlayback.activeItem.value
+  if (item?.nodeId != null) {
+    const index = ws.nodes.value.findIndex(node => String(node.id) === String(item.nodeId))
+    if (index >= 0) ws.selectNode(index, { play: true })
+  }
+}
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
 })
 
-watch([media.avatarCues, media.digitalHumanManifest], ([avatarCues, digitalHumanManifest]) => {
-  avatar.load({ avatarCues, digitalHumanManifest })
-})
+watch(
+  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => playlistPlayback.activeItem.value?.avatarCues],
+  ([avatarCues, digitalHumanManifest, playlistAvatarCues]) => {
+    avatar.load({ avatarCues: playlistAvatarCues || avatarCues, digitalHumanManifest })
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -195,6 +217,8 @@ watch([media.avatarCues, media.digitalHumanManifest], ([avatarCues, digitalHuman
             :is-muted="ws.isMuted.value"
             :captions-enabled="ws.captionsEnabled.value"
             :audio-url="media.audioUrl.value"
+            :playlist="media.playlist.value"
+            :playlist-index="playlistPlayback.activeIndex.value"
             :duration="media.manifest.value.durationMs / 1000"
             :subtitle-segments="media.subtitleSegments.value"
             :ppt-timeline="media.pptTimeline.value"
@@ -209,6 +233,8 @@ watch([media.avatarCues, media.digitalHumanManifest], ([avatarCues, digitalHuman
             @playback="handlePlayback"
             @page-change="ws.setPage"
             @node-change="handleNodeChange"
+            @playlist-next="handlePlaylistNext"
+            @playlist-previous="handlePlaylistPrevious"
             @rate-change="ws.playbackRate.value = $event"
             @volume-change="ws.volume.value = $event"
             @mute-change="ws.isMuted.value = $event"

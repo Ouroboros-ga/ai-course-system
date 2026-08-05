@@ -197,6 +197,8 @@ from app.models.media_release_model import (
     MediaGenerationAttempt,
     MediaRelease,
     MediaReleaseCue,
+    MediaBuildBatch,
+    MediaReleaseItem,
     PlaybackCapabilityProfile,
 )
 from app.models.avatar_model import (

@@ -1482,6 +1482,9 @@ class CourseReleaseService:
             "audio_object_key": media.audio_object_key,
             "subtitle_manifest_object_key": media.subtitle_manifest_object_key,
             "ppt_manifest_object_key": media.ppt_manifest_object_key,
+            "audio_playlist_object_key": media.audio_playlist_object_key,
+            "playlist_content_hash": media.audio_playlist_sha256,
+            "avatar_preset_id": media.avatar_preset_id,
             "avatar_cues_object_key": media.avatar_cues_object_key,
             "digital_human_manifest_object_key": media.digital_human_manifest_object_key,
         }

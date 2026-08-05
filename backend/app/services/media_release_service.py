@@ -39,12 +39,12 @@ from app.models.media_release_model import (
     PlaybackCapabilityProfile,
     PlaybackMode,
 )
-from app.models.media_timeline_model import MediaTimelineCue
+from app.models.media_timeline_model import MediaAsset, MediaTimelineCue, StorageBackend
 from app.services.digital_human_provider import (
     DigitalHumanPlaybackRequest,
     get_digital_human_provider,
 )
-from app.services.object_storage import get_object_storage
+from app.services.object_storage import get_object_storage, mime_type_for
 from app.services.task_service import TaskCreateRequest, task_service
 from app.services.tts_provider import (
     TtsSynthesisRequest,
@@ -54,6 +54,97 @@ from app.services.tts_provider import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class TtsAssetRegistrationError(RuntimeError):
+    error_code = "TTS_ASSET_REGISTRATION_FAILED"
+    safe_message = "TTS 音频已生成但无法登记为受课程权限保护的媒体资产"
+
+
+def _register_tts_audio_asset(
+    session: Session,
+    *,
+    course_id: int,
+    object_key: str,
+    duration_ms: int = 0,
+    audio_sha256: str = "",
+    provider_key: str = "",
+    provider_version: str = "",
+) -> None:
+    """Keep the media ledger in sync before a TTS job becomes successful."""
+    object_key = str(object_key or "")
+    if not object_key:
+        raise TtsAssetRegistrationError("TTS 音频缺少 object_key")
+    existing = session.exec(select(MediaAsset).where(MediaAsset.object_key == object_key)).first()
+    if existing is not None:
+        if existing.course_id != course_id:
+            raise TtsAssetRegistrationError("TTS 音频对象与课程归属不一致")
+        return
+    storage = get_object_storage()
+    try:
+        head = storage.head(object_key)
+    except Exception as exc:
+        raise TtsAssetRegistrationError("TTS 音频对象无法读取") from exc
+    backend = StorageBackend.LOCAL if getattr(storage, "backend_name", "local") == "local" else StorageBackend.OSS
+    session.add(MediaAsset(
+        course_id=course_id,
+        object_key=object_key,
+        asset_type="audio",
+        backend=backend,
+        mime_type=mime_type_for(object_key),
+        size_bytes=int(head.get("size_bytes") or 0),
+        duration_seconds=max(0, int(duration_ms or 0)) / 1_000,
+        content_hash=str(audio_sha256 or ""),
+        resource_version=f"tts/{provider_key}/{provider_version}",
+    ))
+    session.flush()
+
+
+def ensure_release_tts_assets_registered(
+    session: Session,
+    *,
+    course_id: int,
+    release_id: str,
+) -> int:
+    """Backfill ledger entries for immutable, previously-generated draft audio.
+
+    Some local Demo batches were created before TTS audio began to be entered
+    in ``media_assets``.  The signed content endpoint deliberately refuses
+    unregistered object keys, so a builder could see a completed draft but
+    receive a 404 when trying to listen.  This function only registers an
+    existing object after checking its immutable key, course ownership and
+    bytes; it never synthesizes, copies, or overwrites media.
+    """
+    from app.models.media_release_model import MediaReleaseItem
+
+    storage = get_object_storage()
+    repaired = 0
+    items = session.exec(select(MediaReleaseItem).where(
+        MediaReleaseItem.course_id == course_id,
+        MediaReleaseItem.release_id == release_id,
+    )).all()
+    for item in items:
+        object_key = str(item.audio_object_key or "")
+        if not object_key or not storage.exists(object_key):
+            continue
+        existing = session.exec(select(MediaAsset).where(
+            MediaAsset.object_key == object_key,
+        )).first()
+        if existing is not None:
+            if existing.course_id != course_id:
+                raise TtsAssetRegistrationError("TTS 音频对象与课程归属不一致")
+            continue
+        _register_tts_audio_asset(
+            session,
+            course_id=course_id,
+            object_key=object_key,
+            duration_ms=int(item.duration_ms or 0),
+            audio_sha256=str(item.audio_sha256 or ""),
+            provider_key="legacy_draft",
+            provider_version="asset-ledger-backfill-v1",
+        )
+        repaired += 1
+    return repaired
 
 
 # ---------------------------------------------------------------------------
@@ -644,6 +735,32 @@ class MediaReleaseService:
         cue asset, however, must carry the same immutable audio binding and a
         frozen subtitle/Cue snapshot before learners can observe it.
         """
+        playlist_mode = bool((release.release_metadata or {}).get("audio_playlist_mode"))
+        if playlist_mode:
+            if not release.audio_playlist_object_key or not release.audio_playlist_sha256:
+                reject_state_conflict(
+                    "课程级播放清单尚未冻结，发布未激活",
+                    details={"error_code": "AUDIO_PLAYLIST_REQUIRED"},
+                )
+            from app.models.media_release_model import MediaReleaseItem
+
+            items = list(session.exec(select(MediaReleaseItem).where(
+                MediaReleaseItem.course_id == course_id,
+                MediaReleaseItem.release_id == release.release_id,
+            )).all())
+            if not items or any(item.status != "ready" for item in items):
+                reject_state_conflict(
+                    "课程级播放清单存在未完成知识点，发布未激活",
+                    details={"error_code": "AUDIO_PLAYLIST_ITEMS_REQUIRED"},
+                )
+            storage = get_object_storage()
+            if not storage.exists(release.audio_playlist_object_key):
+                reject_state_conflict(
+                    "课程级播放清单对象不可用，发布未激活",
+                    details={"error_code": "AUDIO_PLAYLIST_UNAVAILABLE"},
+                )
+            return
+
         if not release.avatar_cues_object_key:
             return
         from app.services.avatar_cue_service import AvatarCueBuildError, load_avatar_cue_manifest
@@ -736,6 +853,21 @@ class MediaPlaybackService:
                 "fallback_mode": "compatibility",
             }
 
+        if course_release is not None:
+            frozen_playlist_hash = str((course_release.media_snapshot or {}).get("playlist_content_hash") or "")
+            if frozen_playlist_hash and frozen_playlist_hash != str(release.audio_playlist_sha256 or ""):
+                logger.error(
+                    "Course release %s media playlist hash mismatch for course %s",
+                    course_release.release_id, course_id,
+                )
+                return {
+                    "available": False,
+                    "reason": "media_snapshot_integrity_failed",
+                    "message": "课程发布的媒体播放清单完整性校验失败",
+                    "fallback_mode": "compatibility",
+                    "course_release_id": course_release.release_id,
+                }
+
         # 获取冻结 cue
         cues = media_release_service.list_release_cues(
             session, course_id=course_id, release_id=release.release_id,
@@ -771,6 +903,55 @@ class MediaPlaybackService:
         # 字幕与 PPT 时间轴
         subtitle_segments = []
         ppt_timeline = []
+        playlist = None
+        if release.audio_playlist_object_key:
+            try:
+                raw_playlist = json.loads(storage.get(release.audio_playlist_object_key).decode("utf-8"))
+                if raw_playlist.get("schema") == "audio-playlist/v1":
+                    playlist = {"schema": "audio-playlist/v1", "release_id": release.release_id,
+                                "duration_ms": int(raw_playlist.get("duration_ms") or 0),
+                                "content_sha256": release.audio_playlist_sha256, "items": []}
+                    for raw_item in raw_playlist.get("items") or []:
+                        item = dict(raw_item)
+                        item_offset_ms = int(item.get("offset_ms") or 0)
+                        item_duration_ms = int(item.get("duration_ms") or 0)
+                        if item.get("audio_object_key"):
+                            item["audio_url"] = storage.sign_read_url(item["audio_object_key"], scope={"course_id": course_id, "purpose": "lecture_playlist", "release_id": release.release_id})
+                        if item.get("subtitle_manifest_object_key"):
+                            item["subtitle_manifest_url"] = storage.sign_read_url(item["subtitle_manifest_object_key"], scope={"course_id": course_id, "purpose": "playlist_subtitle", "release_id": release.release_id})
+                            try:
+                                subtitle = json.loads(storage.get(item["subtitle_manifest_object_key"]).decode("utf-8"))
+                                item["subtitle_segments"] = subtitle.get("segments") or []
+                            except Exception:
+                                item["subtitle_segments"] = []
+                        if item.get("avatar_cues_object_key"):
+                            item["avatar_cues_url"] = storage.sign_read_url(item["avatar_cues_object_key"], scope={"course_id": course_id, "purpose": "playlist_avatar_cues", "release_id": release.release_id})
+                        mapping = (item.get("ppt_mapping_snapshot") or {}).get("mappings") or []
+                        # ``audio-playlist/v1`` is a global course clock at
+                        # the boundary.  Inside one node, map its frozen pages
+                        # across the node duration so slides do not all
+                        # collapse to the same start instant.
+                        playback_pages = [
+                            {"page": page, "material_version_id": row.get("material_version_id")}
+                            for row in mapping
+                            for page in (row.get("page_refs") or [row.get("page_start") or 1])
+                        ]
+                        item["ppt_timeline"] = [
+                            {
+                                "node_id": item.get("node_id"),
+                                "ppt_page": page["page"],
+                                "material_version_id": page["material_version_id"],
+                                "start_ms": item_offset_ms + int(item_duration_ms * index / len(playback_pages)),
+                                "end_ms": item_offset_ms + int(item_duration_ms * (index + 1) / len(playback_pages)),
+                            }
+                            for index, page in enumerate(playback_pages)
+                        ]
+                        for segment in item.get("subtitle_segments") or []:
+                            segment["ppt_page"] = item["ppt_timeline"][0]["ppt_page"] if item["ppt_timeline"] else None
+                            segment["material_version_id"] = item["ppt_timeline"][0]["material_version_id"] if item["ppt_timeline"] else None
+                        playlist["items"].append(item)
+            except Exception as exc:
+                logger.warning("签发 audio-playlist/v1 失败，回退旧媒体字段: %s", exc)
         for cue in cues:
             subtitle_segments.append({
                 "node_id": cue.node_id,
@@ -854,6 +1035,7 @@ class MediaPlaybackService:
             "default_playback_mode": release.default_playback_mode.value,
             "fallback_mode": "compatibility" if digital_human_manifest is None else release.default_playback_mode.value,
             "timeline_content_hash": release.timeline_content_hash,
+            "playlist": playlist,
         }
 
     def _estimate_total_duration_ms(self, cues: list[MediaReleaseCue]) -> int:
@@ -954,6 +1136,29 @@ class TtsExecutionService:
                 "provider_version": provider.provider_version,
                 "attempts_used": 0,
             })
+            # Historic cache rows can predate MediaAsset bookkeeping.  Reuse
+            # their immutable object without a second synthesis, then restore
+            # the course-scoped ledger entry required by direct <audio> reads.
+            try:
+                _register_tts_audio_asset(
+                    session,
+                    course_id=course_id,
+                    object_key=str(cached.output_object_key or ""),
+                    duration_ms=int(metadata.get("duration_ms") or 0),
+                    audio_sha256=str(metadata.get("audio_sha256") or ""),
+                    provider_key=provider.provider_key,
+                    provider_version=provider.provider_version,
+                )
+            except Exception as exc:
+                return self._fail_job(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    error_code=getattr(exc, "error_code", "TTS_ASSET_REGISTRATION_FAILED"),
+                    error_message_safe=str(getattr(exc, "safe_message", str(exc)))[:500],
+                    provider_key=provider.provider_key,
+                    provider_version=provider.provider_version,
+                )
             job_service.record_attempt(
                 session, course_id=course_id, job_id=job_id,
                 attempt_number=self._next_attempt_number(session, job_id=job_id),
@@ -987,6 +1192,15 @@ class TtsExecutionService:
             started = time.monotonic()
             try:
                 result = provider.synthesize(request)
+                _register_tts_audio_asset(
+                    session,
+                    course_id=course_id,
+                    object_key=result.audio_object_key,
+                    duration_ms=result.duration_ms,
+                    audio_sha256=result.audio_sha256,
+                    provider_key=result.provider_key,
+                    provider_version=result.provider_version,
+                )
             except Exception as exc:
                 last_error_code = getattr(exc, "error_code", "TTS_PROVIDER_FAILED")
                 last_error_message = str(getattr(exc, "safe_message", str(exc)))[:500]

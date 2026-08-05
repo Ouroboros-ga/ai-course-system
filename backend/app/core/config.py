@@ -258,6 +258,11 @@ class Settings(BaseSettings):
     TTS_RATE_LIMIT_BURST: int = 5
     TTS_MAX_SCRIPT_BYTES: int = 8000
 
+    # P4 批量媒体建设。前端只能展示计划，所有限制均由服务端重新计算。
+    MEDIA_BATCH_MAX_NODES: int = 20
+    MEDIA_BATCH_MAX_BILLABLE_CHARS: int = 10_000
+    MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER: int = 2
+
     # --------------------------
     # 阶段8 M5 数字人 Provider 开关与健康检查
     # --------------------------

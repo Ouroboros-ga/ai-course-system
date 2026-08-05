@@ -1,7 +1,7 @@
 <script setup>
-import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { AudioLines, Captions, Check, ChevronDown, CircleAlert, FileImage, RefreshCw, Send, Sparkles, Volume2, X } from 'lucide-vue-next'
+import { Captions, Check, CircleAlert, FileImage, RefreshCw, Send, Sparkles, Volume2 } from 'lucide-vue-next'
 import { getTeachingScripts } from '@/api/course_editor.js'
 import {
   activateMediaRelease,
@@ -11,6 +11,12 @@ import {
   createMediaRelease,
   executeMediaTtsJob,
   getMediaProviderHealth,
+  planMediaBatch,
+  confirmMediaBatch,
+  getMediaBatch,
+  previewMediaReleaseItem,
+  previewMediaReleaseItemPlayback,
+  freezeAudioPlaylist,
   getMediaRelease,
   listMediaGenerationJobs,
   listMediaReleases,
@@ -21,6 +27,7 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
+import { withAccessToken } from '@/features/student-learning/adapters/playerWorkspaceAdapter.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -42,16 +49,12 @@ const selectedReleaseId = ref('')
 const paidTtsConfirmed = ref(false)
 const acting = ref('')
 const refreshing = ref(false)
-
-// 顶部介绍卡可折叠：折叠后给下方工作区让出垂直空间（状态按设备记忆）
-const BRIEF_STORAGE_KEY = 'sfx:build:media-brief-hidden'
-const briefHidden = ref(false)
-try {
-  if (localStorage.getItem(BRIEF_STORAGE_KEY) === '1') briefHidden.value = true
-} catch { /* localStorage 不可用时保持默认 */ }
-watch(briefHidden, (value) => {
-  try { localStorage.setItem(BRIEF_STORAGE_KEY, value ? '1' : '0') } catch { /* ignore */ }
-})
+const batchNodeIds = ref([])
+const batchPlan = ref(null)
+const batchState = ref(null)
+const previewItem = ref(null)
+const previewPlayback = ref(null)
+const previewAudio = ref(null)
 
 const allowed = computed(() => courseContext?.allowed?.value ?? {})
 const canGenerate = computed(() => Boolean(allowed.value['course.media.generate']))
@@ -81,7 +84,17 @@ const hasFrozenCues = computed(() => Boolean(
   workingRelease.value?.avatar_cues_object_key && workingRelease.value?.subtitle_manifest_object_key,
 ))
 const hasPptManifest = computed(() => Boolean(workingRelease.value?.ppt_manifest_object_key))
+const isPlaylistRelease = computed(() => Boolean(workingRelease.value?.release_metadata?.audio_playlist_mode))
+const hasFrozenPlaylist = computed(() => Boolean(workingRelease.value?.audio_playlist_object_key && workingRelease.value?.audio_playlist_sha256))
+const canActivateWorkingRelease = computed(() => {
+  if (!workingRelease.value || workingRelease.value.status !== 'draft') return false
+  return isPlaylistRelease.value
+    ? hasFrozenPlaylist.value
+    : hasFrozenCues.value
+})
 const hasPendingJobs = computed(() => jobs.value.some((job) => ['pending', 'running'].includes(job.status)))
+const activeBatchId = computed(() => batchState.value?.batch_id || workingRelease.value?.release_metadata?.media_build_batch_id || '')
+const batchItems = computed(() => batchState.value?.items ?? workingRelease.value?.items ?? [])
 const canCreateDraft = computed(() => Boolean(canGenerate.value && selectedNodeDbId.value && selectedScript.value?.content?.trim()))
 const canSubmitTts = computed(() => Boolean(
   canCreateDraft.value
@@ -91,6 +104,9 @@ const canSubmitTts = computed(() => Boolean(
   && paidTtsConfirmed.value
   && !['pending', 'running'].includes(selectedTtsJob.value?.status),
 ))
+const batchSelectedScripts = computed(() => scripts.value.filter(item => batchNodeIds.value.includes(Number(item.script_node_db_id))))
+const canPlanBatch = computed(() => canGenerate.value && batchSelectedScripts.value.length > 0 && batchSelectedScripts.value.length <= 20)
+const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm) && paidTtsConfirmed.value)
 
 function jobTone(job) {
   if (job?.status === 'succeeded') return 'green'
@@ -135,7 +151,7 @@ function makeTtsIdempotencyKey() {
   const revision = String(selectedScript.value?.updated_at || selectedCharCount.value)
     .replace(/[^a-zA-Z0-9]/g, '')
     .slice(-24)
-  return `tts:${workingRelease.value.release_id}:${selectedNodeDbId.value}:${revision || 'initial'}`
+  return `tts-${workingRelease.value.release_id}-${selectedNodeDbId.value}-${revision || 'initial'}`
 }
 
 function makeCueIdempotencyKey() {
@@ -153,6 +169,12 @@ async function refreshReleaseDetail(releaseId = selectedReleaseId.value) {
     return
   }
   releaseDetail.value = await getMediaRelease(courseId.value, releaseId)
+}
+
+async function refreshBatchState(batchId = activeBatchId.value) {
+  if (!batchId) return null
+  batchState.value = await getMediaBatch(courseId.value, batchId)
+  return batchState.value
 }
 
 async function load({ quiet = false } = {}) {
@@ -180,8 +202,10 @@ async function load({ quiet = false } = {}) {
     if (!scripts.value.some((item) => item.script_node_id === selectedScriptId.value)) {
       selectedScriptId.value = scripts.value[0]?.script_node_id || ''
     }
+    if (!batchNodeIds.value.length) batchNodeIds.value = scripts.value.slice(0, 20).map(item => Number(item.script_node_db_id))
     selectedReleaseId.value = chooseDefaultRelease(releases.value)
     await refreshReleaseDetail()
+    await refreshBatchState()
     state.value = 'ready'
   } catch (caught) {
     error.value = apiErrorMessage(caught, '媒体创建中心暂时无法读取课程数据。')
@@ -189,6 +213,89 @@ async function load({ quiet = false } = {}) {
   } finally {
     refreshing.value = false
   }
+}
+
+function toggleBatchNode(script) {
+  const id = Number(script?.script_node_db_id)
+  if (!id) return
+  batchNodeIds.value = batchNodeIds.value.includes(id)
+    ? batchNodeIds.value.filter(item => item !== id)
+    : [...batchNodeIds.value, id].slice(0, 20)
+}
+
+function withPreviewAccessToken(url) {
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : ''
+  // Local object storage is served by the application, whose native audio
+  // request cannot carry Axios' Authorization header.  Remote presigned URLs
+  // must remain byte-for-byte intact.
+  return String(url || '').startsWith('/') ? withAccessToken(url, token) : url
+}
+
+async function createBatchPlan() {
+  if (!canPlanBatch.value || acting.value) return
+  acting.value = 'batch-plan'; error.value = ''; notice.value = ''
+  try {
+    batchPlan.value = await planMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default' })
+    notice.value = `已核算 ${batchPlan.value.node_count} 个知识点：${batchPlan.value.billable_chars} 个待计费字符，${batchPlan.value.cache_hit_count} 个缓存命中。`
+  } catch (caught) { error.value = apiErrorMessage(caught, '批量计划生成失败。') } finally { acting.value = '' }
+}
+
+async function confirmBatch() {
+  if (!canConfirmBatch.value || acting.value) return
+  acting.value = 'batch-confirm'; error.value = ''; notice.value = ''
+  try {
+    const response = await confirmMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', idempotency_key: `batch-${courseId.value}-${Date.now()}`, label: '批量媒体建设草稿', paid_tts_confirmed: true })
+    batchState.value = response
+    selectedReleaseId.value = response.release_id
+    await load({ quiet: true })
+    await refreshReleaseDetail(response.release_id)
+    await refreshBatchState(response.batch_id)
+    notice.value = '批量媒体任务已确认并提交；不会在页面轮询中重复调用付费 Provider。'
+  } catch (caught) { error.value = apiErrorMessage(caught, '批量媒体确认失败。') } finally { acting.value = '' }
+}
+
+async function previewBatchItem(item) {
+  if (!item?.item_id || !workingRelease.value || acting.value) return
+  acting.value = `preview-${item.item_id}`
+  error.value = ''
+  notice.value = ''
+  try {
+    // The first request also repairs the guarded MediaAsset ledger for
+    // legacy local drafts.  Keep the follow-up player projection sequential
+    // so two browser requests never race to create the same immutable record.
+    const audioPreview = await previewMediaReleaseItem(
+      courseId.value, workingRelease.value.release_id, item.item_id,
+    )
+    const playbackPreview = await previewMediaReleaseItemPlayback(
+      courseId.value, workingRelease.value.release_id, item.item_id,
+    )
+    previewItem.value = {
+      ...audioPreview,
+      audio_url: withPreviewAccessToken(audioPreview?.audio_url),
+    }
+    previewPlayback.value = playbackPreview
+    await nextTick()
+    previewAudio.value?.play().catch(() => {
+      notice.value = '草稿音频已准备好；浏览器阻止自动播放时，请点击播放器的播放键。'
+    })
+    notice.value = '正在使用学习端同款音频/字幕/PPT/Cue 数据预览草稿。该地址仅对当前建设者有效，学生端不可见。'
+  } catch (caught) {
+    error.value = apiErrorMessage(caught, '该知识点尚不能试听。')
+  } finally {
+    acting.value = ''
+  }
+}
+
+async function freezeBatchPlaylist() {
+  if (!workingRelease.value || acting.value) return
+  acting.value = 'batch-freeze'; error.value = ''; notice.value = ''
+  try {
+    const result = await freezeAudioPlaylist(courseId.value, workingRelease.value.release_id, {
+      batch_id: batchState.value?.batch_id || undefined,
+    })
+    notice.value = `已冻结 audio-playlist/v1，共 ${result.items?.length || 0} 个知识点。`
+    await refreshReleaseDetail()
+  } catch (caught) { error.value = apiErrorMessage(caught, '播放清单尚未满足全量成功与 PPT 映射门槛。') } finally { acting.value = '' }
 }
 
 async function selectRelease(release) {
@@ -323,7 +430,7 @@ async function createPptManifest() {
 }
 
 async function activateRelease() {
-  if (!canPublish.value || !hasFrozenCues.value || workingRelease.value?.status !== 'draft' || acting.value) return
+  if (!canPublish.value || !canActivateWorkingRelease.value || acting.value) return
   acting.value = 'activate'
   error.value = ''
   notice.value = ''
@@ -366,7 +473,7 @@ let pollTimer = null
 onMounted(() => {
   load()
   pollTimer = window.setInterval(() => {
-    if (hasPendingJobs.value) load({ quiet: true })
+    if (hasPendingJobs.value || activeBatchId.value) load({ quiet: true })
   }, 5000)
 })
 onBeforeUnmount(() => {
@@ -377,29 +484,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="media-stage">
-    <div v-if="!briefHidden" class="media-brief">
-      <div class="media-brief-copy">
-        <p class="media-eyebrow"><AudioLines :size="15" /> 单知识点媒体验收链路</p>
-        <h2>从已确认讲稿生成可发布的课堂媒体</h2>
-        <p>选择一个知识点，创建不可变媒体草稿，再按 TTS、字幕与数字人时间轴、PPT manifest、激活的顺序完成处理。</p>
-      </div>
-      <div class="brief-status" aria-label="媒体服务状态">
-        <SfxBadge v-if="providerReady" tone="green">语音服务可用</SfxBadge>
-        <SfxBadge v-else-if="providerError" tone="red">语音服务未确认</SfxBadge>
-        <SfxBadge v-else tone="amber">正在确认语音服务</SfxBadge>
-        <span v-if="provider?.provider_key" class="provider-name">{{ provider.provider_key }}</span>
-      </div>
-      <SfxButton variant="tertiary" size="sm" class="brief-close" aria-label="折叠介绍" title="折叠介绍" @click="briefHidden = true"><X :size="15" /></SfxButton>
-    </div>
-    <div v-else class="brief-restore">
-      <SfxButton variant="tertiary" size="sm" @click="briefHidden = false"><ChevronDown :size="14" /> 展开介绍</SfxButton>
-      <div class="brief-restore-status" aria-label="媒体服务状态">
-        <SfxBadge v-if="providerReady" tone="green">语音服务可用</SfxBadge>
-        <SfxBadge v-else-if="providerError" tone="red">语音服务未确认</SfxBadge>
-        <SfxBadge v-else tone="amber">正在确认语音服务</SfxBadge>
-      </div>
-    </div>
-
     <SfxSkeleton v-if="state === 'loading'" :lines="7" block />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
 
@@ -432,9 +516,57 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="media-main">
+        <div class="provider-bar" aria-label="语音服务状态">
+          <SfxBadge v-if="providerReady" tone="green">语音服务可用</SfxBadge>
+          <SfxBadge v-else-if="providerError" tone="red">语音服务未确认</SfxBadge>
+          <SfxBadge v-else tone="amber">正在确认语音服务</SfxBadge>
+          <span v-if="provider?.provider_key" class="provider-bar-name">{{ provider.provider_key }}</span>
+        </div>
         <p v-if="notice" class="notice" role="status">{{ notice }}</p>
         <p v-if="error" class="action-error" role="alert"><CircleAlert :size="16" /> {{ error }}</p>
         <p v-if="providerError" class="action-error" role="alert"><CircleAlert :size="16" /> {{ providerError }}</p>
+
+        <section class="release-panel batch-panel" aria-labelledby="batch-title">
+          <header class="panel-heading">
+            <div><p>P4 批量媒体建设</p><h3 id="batch-title">选择知识点，一次确认后生成</h3></div>
+            <SfxBadge tone="ink">{{ batchNodeIds.length }} / 20</SfxBadge>
+          </header>
+          <div class="batch-list">
+            <SfxButton
+              v-for="script in scripts"
+              :key="`batch-${script.script_node_id}`"
+              size="sm"
+              :variant="batchNodeIds.includes(Number(script.script_node_db_id)) ? 'primary' : 'tertiary'"
+              :aria-pressed="batchNodeIds.includes(Number(script.script_node_db_id))"
+              @click="toggleBatchNode(script)"
+            >{{ batchNodeIds.includes(Number(script.script_node_db_id)) ? '已选' : '选择' }} · {{ scriptLabel(script) }}</SfxButton>
+          </div>
+          <div v-if="batchPlan" class="batch-estimate">
+            <span>节点 {{ batchPlan.node_count }}</span><span>总字符 {{ batchPlan.total_chars }}</span><span>待计费 {{ batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
+            <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new Set(batchPlan.blocking_reasons)].join('；') }}；试听不受阻，冻结播放清单前必须完成映射。</p>
+          </div>
+          <div class="tts-actions">
+            <SfxButton :disabled="!canPlanBatch" :loading="acting === 'batch-plan'" @click="createBatchPlan">核算批量费用</SfxButton>
+            <label class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
+            <SfxButton :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'" @click="confirmBatch">确认并提交批量任务</SfxButton>
+          </div>
+          <div v-if="batchState" class="batch-status" role="status">
+            <span>批次状态：{{ batchState.status }}</span>
+            <span>已完成 {{ batchItems.filter(item => item.status === 'ready').length }} / {{ batchItems.length }}</span>
+          </div>
+          <div v-if="batchItems.length" class="batch-item-list" aria-label="批量媒体节点状态">
+            <article v-for="item in batchItems" :key="item.item_id || item.node_id" class="batch-item-row">
+              <div><strong>{{ scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id)) ? scriptLabel(scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id))) : `知识点 ${item.node_id}` }}</strong><small>{{ item.status }}{{ item.error_message_safe ? ` · ${item.error_message_safe}` : '' }}</small></div>
+              <SfxButton v-if="item.audio_object_key" variant="secondary" size="sm" :loading="acting === `preview-${item.item_id}`" @click="previewBatchItem(item)">试听</SfxButton>
+            </article>
+          </div>
+          <div v-if="previewPlayback" class="draft-preview-surface" aria-label="草稿统一播放器预览">
+            <div><strong>学习端同款预览</strong><small>{{ previewPlayback.avatar_preset_id }} · {{ previewPlayback.duration_ms }} ms</small></div>
+            <p v-if="previewPlayback.ppt_timeline?.length">PPT：{{ previewPlayback.ppt_timeline.map(item => `第 ${item.ppt_page} 页`).join('、') }}</p>
+            <p v-if="previewPlayback.subtitle_segments?.length">字幕：{{ previewPlayback.subtitle_segments.map(item => item.text).join('') }}</p>
+            <p v-else>字幕与数字人 Cue 尚未冻结；试听不会受阻，正式清单仍受发布门限制。</p>
+          </div>
+        </section>
 
         <template v-if="selectedScript">
           <section class="selected-script" aria-labelledby="selected-script-title">
@@ -449,7 +581,7 @@ onBeforeUnmount(() => {
           <section class="release-panel" aria-labelledby="release-title">
             <header class="panel-heading">
               <div>
-                <p>工作中的版本</p>
+                <p>媒体版本与处理流程</p>
                 <h3 id="release-title">{{ workingRelease ? workingRelease.label || `媒体版本 ${workingRelease.version_number}` : '尚未创建媒体草稿' }}</h3>
               </div>
               <SfxBadge v-if="workingRelease" :tone="releaseTone(workingRelease)">{{ releaseStatusLabel(workingRelease) }}</SfxBadge>
@@ -507,13 +639,18 @@ onBeforeUnmount(() => {
                   <SfxBadge :tone="hasPptManifest ? 'green' : 'amber'">{{ hasPptManifest ? '已冻结' : '可选但建议完成' }}</SfxBadge>
                 </article>
                 <div v-if="hasFrozenCues && !hasPptManifest" class="workflow-action"><SfxButton variant="secondary" :disabled="!canGenerate" :loading="acting === 'ppt-manifest'" @click="createPptManifest">生成 PPT manifest</SfxButton></div>
+                <div v-if="isPlaylistRelease" class="workflow-action">
+                  <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已冻结；已固定到此媒体草稿，之后不可静默替换。</p>
+                  <SfxButton v-else variant="secondary" :disabled="!canGenerate || !hasPptManifest" :loading="acting === 'batch-freeze'" @click="freezeBatchPlaylist">冻结课程播放清单</SfxButton>
+                  <small v-if="!hasPptManifest">需先冻结 PPT manifest；任一知识点未成功或映射缺失时，服务端会阻止冻结。</small>
+                </div>
 
                 <article class="workflow-row" :class="{ complete: workingRelease.status === 'active', active: hasFrozenCues && workingRelease.status === 'draft' }">
                   <div class="workflow-icon"><Check :size="18" /></div>
                   <div class="workflow-copy"><span>04 · 激活并固化到课程发布</span><strong>激活媒体版本，再重新正式发布课程</strong><p v-if="workingRelease.status === 'active'">媒体已激活；课程正式发布时会把它写入不可变媒体快照。</p><p v-else>激活不会自动改写学生当前课程版本。完成激活后仍需到第 07 步重新正式发布。</p></div>
                   <SfxBadge :tone="workingRelease.status === 'active' ? 'green' : 'amber'">{{ workingRelease.status === 'active' ? '已激活' : '等待激活' }}</SfxBadge>
                 </article>
-                <div v-if="workingRelease.status === 'draft'" class="workflow-action"><SfxButton :disabled="!canPublish || !hasFrozenCues" :loading="acting === 'activate'" @click="activateRelease">激活媒体版本</SfxButton></div>
+                <div v-if="workingRelease.status === 'draft'" class="workflow-action"><SfxButton :disabled="!canPublish || !canActivateWorkingRelease" :loading="acting === 'activate'" @click="activateRelease">激活媒体版本</SfxButton></div>
                 <div v-else-if="workingRelease.status === 'active'" class="workflow-action"><SfxButton @click="goToRelease">前往正式发布</SfxButton></div>
               </div>
             </template>
@@ -521,7 +658,7 @@ onBeforeUnmount(() => {
 
           <section class="task-panel" aria-labelledby="task-title">
             <header class="panel-heading">
-              <div><p>任务留痕</p><h3 id="task-title">媒体任务队列</h3></div>
+              <div><p>已提交的合成与冻结任务</p><h3 id="task-title">媒体任务记录</h3></div>
               <SfxButton variant="tertiary" size="sm" :loading="refreshing" @click="load"><RefreshCw :size="14" /> 刷新</SfxButton>
             </header>
             <div v-if="jobs.length" class="task-list">
@@ -536,24 +673,29 @@ onBeforeUnmount(() => {
             <p v-else class="task-empty">还没有媒体任务。创建草稿并明确提交 TTS 后，状态会在这里保留。</p>
           </section>
 
-          <aside class="scope-note"><CircleAlert :size="17" /><div><strong>当前首版边界</strong><p>此工作台完成的是「一个知识点 → 一段音频 → Cue/PPT → 媒体版本」的受控验收链路。全课程多知识点连续音频播放列表尚未实现，不能把单知识点草稿当作整门课程媒体。</p></div></aside>
         </template>
         <div v-else class="main-empty"><Sparkles :size="28" /><strong>先生成讲稿，再创建课堂媒体</strong><p>媒体中心只处理已确认的讲稿节点，因此不会凭空生成或猜测教学内容。</p></div>
+
+        <div v-if="previewItem?.audio_url" class="preview-dock" role="region" aria-label="试听播放器">
+          <span class="preview-dock-label">试听</span>
+          <audio ref="previewAudio" :key="previewItem.audio_url" :src="previewItem.audio_url" controls preload="metadata" />
+        </div>
       </main>
     </div>
   </section>
 </template>
 
 <style scoped>
-.media-stage{height:100%;min-height:0;display:grid;grid-template-rows:auto minmax(0,1fr);gap:var(--space-4);overflow:hidden}
-.media-brief{position:relative;display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-6);padding:var(--space-4) var(--space-5);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-cool);flex-shrink:0}.brief-close{position:absolute;top:var(--space-2);right:var(--space-2)}.brief-restore{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);flex-shrink:0}.brief-restore-status{display:flex;align-items:center;gap:var(--space-2)}.media-brief-copy{min-width:0}.media-eyebrow{display:flex;align-items:center;gap:var(--space-1);margin:0;color:var(--ink-700);font-size:var(--caption-size);font-weight:650;letter-spacing:.06em}.media-brief h2{margin:var(--space-1) 0 0;color:var(--text-primary);font-size:var(--title-3-size);line-height:var(--title-3-line)}.media-brief p:not(.media-eyebrow){max-width:680px;margin:var(--space-1) 0 0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.55}.brief-status{display:grid;justify-items:end;gap:var(--space-1);flex-shrink:0}.provider-name{max-width:180px;overflow:hidden;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;text-overflow:ellipsis;white-space:nowrap}
+.batch-panel{border:1px solid var(--border-strong);background:var(--surface-soft)}.batch-list{display:flex;flex-wrap:wrap;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.batch-estimate{display:flex;flex-wrap:wrap;gap:var(--space-4);padding:var(--space-3) var(--space-4);color:var(--text-secondary);font-size:var(--ui-sm-size)}.batch-estimate p{flex-basis:100%;margin:0}.batch-status{display:flex;flex-wrap:wrap;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-top:1px solid var(--border-subtle);color:var(--text-secondary);font-size:var(--caption-size)}.batch-item-list{display:grid;border-top:1px solid var(--border-subtle)}.batch-item-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-bottom:1px solid var(--border-subtle)}.batch-item-row>div{display:grid;gap:2px;min-width:0}.batch-item-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.batch-item-row small{color:var(--text-secondary);font-size:var(--caption-size);overflow-wrap:anywhere}
+.media-stage{height:100%;min-height:0;display:grid;grid-template-rows:minmax(0,1fr);overflow:hidden}
 .media-workbench{display:grid;grid-template-columns:272px minmax(0,1fr);grid-template-rows:minmax(0,1fr);min-height:0;border:1px solid var(--border-default);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface-canvas)}
 .script-rail{display:flex;flex-direction:column;min-height:0;background:var(--surface-panel);border-right:1px solid var(--border-default)}.rail-header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-3);border-bottom:1px solid var(--border-subtle)}.rail-header>div{display:grid;gap:1px}.rail-header span{color:var(--text-primary);font-size:var(--ui-md-size);font-weight:650}.rail-header small,.rail-note{color:var(--text-muted);font-size:var(--caption-size)}.rail-note{margin:0;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle);line-height:1.45}.script-list{display:grid;align-content:start;gap:var(--space-1);min-height:0;overflow-y:auto;padding:var(--space-2)}.script-item{width:100%;min-height:54px;justify-content:space-between;text-align:left}.script-item>span{display:grid;min-width:0;gap:2px}.script-item strong,.script-item small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.script-item strong{font-size:var(--ui-sm-size)}.script-item small{font-size:11px;opacity:.8}.rail-empty{display:grid;justify-items:center;gap:var(--space-2);margin:auto;padding:var(--space-6);color:var(--text-muted);text-align:center}.rail-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.rail-empty p{margin:0;font-size:var(--caption-size);line-height:1.5}
-.media-main{display:flex;flex-direction:column;gap:var(--space-4);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-4) var(--space-5)}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
-.selected-script{display:grid;grid-template-columns:minmax(210px,.72fr) minmax(0,1.28fr);gap:var(--space-4);padding:var(--space-4);border-left:3px solid var(--ink-500);background:var(--surface-cool);max-height:320px;min-height:160px;overflow:hidden}.selected-script-heading{display:grid;align-content:start;gap:var(--space-1);overflow-y:auto;min-height:0}.selected-script-heading>span,.panel-heading p,.workflow-copy>span{color:var(--text-muted);font-size:var(--caption-size);font-weight:600;letter-spacing:.04em}.selected-script-heading h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);line-height:var(--title-3-line)}.selected-script-heading p{margin:0;color:var(--text-secondary);font-size:var(--caption-size);line-height:1.5}.script-preview{max-height:100%;overflow-y:auto;color:var(--text-primary);font-size:var(--ui-sm-size);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
-.release-panel,.task-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden}.release-panel{max-width:760px;width:100%;margin-inline:auto}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.panel-heading p{margin:0}.panel-heading h3{margin:2px 0 0;color:var(--text-primary);font-size:var(--ui-md-size)}.release-picker{display:flex;gap:var(--space-1);overflow-x:auto;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle)}.release-empty{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-5);color:var(--text-muted)}.release-empty>div{display:grid;gap:var(--space-1);min-width:0;flex:1}.release-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.release-empty p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}.binding-warning{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:var(--space-2);padding:var(--space-4);background:var(--amber-100);color:var(--amber-700)}.binding-warning div{display:grid;gap:var(--space-1)}.binding-warning strong{color:var(--text-primary);font-size:var(--ui-md-size)}.binding-warning p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}
-.workflow-list{display:grid}.workflow-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:var(--space-4);border-bottom:1px solid var(--border-subtle)}.workflow-row.active{background:var(--ink-100)}.workflow-row.complete{background:var(--green-100)}.workflow-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--radius-full);background:var(--surface-cool);color:var(--ink-700)}.workflow-row.complete .workflow-icon{background:var(--surface-panel);color:var(--green-700)}.workflow-copy{display:grid;gap:2px;min-width:0}.workflow-copy strong{color:var(--text-primary);font-size:var(--ui-md-size);line-height:1.45}.workflow-copy p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.tts-confirmation,.workflow-action{margin:0 var(--space-4) var(--space-4);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-cool)}.confirmation-check{display:flex;align-items:flex-start;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.confirmation-check input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--ink-700);flex-shrink:0}.tts-actions{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-3)}.tts-actions small{color:var(--text-muted);font-size:var(--caption-size)}.workflow-action{display:flex;justify-content:flex-end;padding:0;border:0;background:transparent}
-.task-list{display:grid}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto 150px;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.task-row:last-child{border-bottom:0}.task-row>div{display:grid;gap:2px;min-width:0}.task-row strong,.task-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.task-row span{color:var(--text-muted);font-size:var(--caption-size)}.task-time{justify-self:end}.task-row .task-error,.task-row .task-output{grid-column:1/-1;margin:0;font-size:var(--caption-size);line-height:1.45}.task-error{color:var(--red-700)}.task-output{color:var(--green-700)}.task-empty{margin:0;padding:var(--space-5);color:var(--text-muted);font-size:var(--ui-sm-size);text-align:center}.scope-note{display:grid;grid-template-columns:20px minmax(0,1fr);gap:var(--space-2);padding:var(--space-3);border:1px solid var(--amber-300);border-radius:var(--radius-md);background:var(--amber-100);color:var(--amber-700)}.scope-note strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.scope-note p{margin:var(--space-1) 0 0;color:var(--text-secondary);font-size:var(--caption-size);line-height:1.55}.main-empty{display:grid;place-items:center;align-content:center;gap:var(--space-2);min-height:300px;color:var(--text-muted);text-align:center}.main-empty strong{color:var(--text-primary);font-size:var(--title-3-size)}.main-empty p{max-width:380px;margin:0;font-size:var(--ui-sm-size);line-height:1.5}
-@media(max-width:960px){.media-brief{align-items:stretch;flex-direction:column}.brief-status{justify-items:start}.media-workbench{grid-template-columns:220px minmax(0,1fr)}.selected-script{grid-template-columns:1fr;max-height:none}.release-panel{max-width:none}.task-row{grid-template-columns:minmax(0,1fr) auto}.task-time{display:none}}
-@media(max-width:700px){.media-stage{height:auto;overflow:visible}.media-workbench{grid-template-columns:1fr;grid-template-rows:auto auto;overflow:visible}.script-rail{max-height:260px;border-right:0;border-bottom:1px solid var(--border-default)}.media-main{overflow:visible;padding:var(--space-3)}.selected-script{max-height:none;overflow:visible}.selected-script-heading{overflow:visible}.workflow-row{grid-template-columns:34px minmax(0,1fr)}.workflow-row>.sfx-badge{grid-column:2}.binding-warning{grid-template-columns:20px minmax(0,1fr)}.binding-warning .sfx-btn{grid-column:2;justify-self:start}.release-empty{align-items:flex-start;flex-wrap:wrap}.release-empty .sfx-btn{margin-left:35px}.tts-actions{align-items:flex-start;flex-direction:column}.media-brief{padding:var(--space-4)}.task-row{grid-template-columns:minmax(0,1fr) auto}}
+.media-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-5)}.provider-bar{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}.provider-bar-name{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5;flex-shrink:0}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
+.preview-dock{position:sticky;bottom:calc(var(--space-3) * -1);display:flex;align-items:center;gap:var(--space-3);margin:0 calc(var(--space-5) * -1) calc(var(--space-3) * -1);padding:var(--space-2) var(--space-4);background:var(--surface-panel);border-top:1px solid var(--border-default);flex-shrink:0;z-index:5}.preview-dock-label{font-size:var(--caption-size);font-weight:600;letter-spacing:.04em;color:var(--text-muted);flex-shrink:0}.preview-dock audio{flex:1;min-width:0;height:36px}
+.selected-script{display:grid;grid-template-columns:minmax(180px,.6fr) minmax(0,1.4fr);gap:var(--space-4);padding:var(--space-4);border-left:3px solid var(--ink-500);background:var(--surface-cool);max-height:340px;min-height:140px;overflow:hidden;flex-shrink:0}.selected-script-heading{display:grid;align-content:start;gap:var(--space-1);overflow-y:auto;min-height:0}.selected-script-heading>span,.panel-heading p,.workflow-copy>span{color:var(--text-muted);font-size:var(--caption-size);font-weight:600;letter-spacing:.04em}.selected-script-heading h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);line-height:var(--title-3-line)}.selected-script-heading p{margin:0;color:var(--text-secondary);font-size:var(--caption-size);line-height:1.5}.script-preview{max-height:100%;overflow-y:auto;color:var(--text-primary);font-size:var(--ui-sm-size);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+.release-panel,.task-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden;flex-shrink:0}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.panel-heading p{margin:0}.panel-heading h3{margin:2px 0 0;color:var(--text-primary);font-size:var(--ui-md-size)}.release-picker{display:flex;gap:var(--space-1);overflow-x:auto;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle)}.release-empty{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-5);color:var(--text-muted)}.release-empty>div{display:grid;gap:var(--space-1);min-width:0;flex:1}.release-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.release-empty p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}.binding-warning{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:var(--space-2);padding:var(--space-4);background:var(--amber-100);color:var(--amber-700)}.binding-warning div{display:grid;gap:var(--space-1)}.binding-warning strong{color:var(--text-primary);font-size:var(--ui-md-size)}.binding-warning p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}
+.workflow-list{display:grid}.workflow-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:var(--space-4);border-bottom:1px solid var(--border-subtle)}.workflow-row.active{background:var(--ink-100)}.workflow-row.complete{background:var(--green-100)}.workflow-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--radius-full);background:var(--surface-cool);color:var(--ink-700)}.workflow-row.complete .workflow-icon{background:var(--surface-panel);color:var(--green-700)}.workflow-copy{display:grid;gap:2px;min-width:0}.workflow-copy strong{color:var(--text-primary);font-size:var(--ui-md-size);line-height:1.45}.workflow-copy p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.tts-confirmation,.workflow-action{margin:0 0 var(--space-3);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-cool)}.confirmation-check{display:flex;align-items:flex-start;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.confirmation-check input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--ink-700);flex-shrink:0}.tts-actions{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-3)}.tts-actions small{color:var(--text-muted);font-size:var(--caption-size)}.workflow-action{display:flex;justify-content:flex-end;padding:0;border:0;background:transparent}
+.task-list{display:grid;max-height:280px;overflow-y:auto}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.task-row:last-child{border-bottom:0}.task-row>div{display:grid;gap:2px;min-width:0}.task-row strong,.task-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.task-row span{color:var(--text-muted);font-size:var(--caption-size)}.task-time{justify-self:end;white-space:nowrap}.task-row .task-error,.task-row .task-output{grid-column:1/-1;margin:0;font-size:var(--caption-size);line-height:1.45}.task-error{color:var(--red-700)}.task-output{color:var(--green-700)}.task-empty{margin:0;padding:var(--space-5);color:var(--text-muted);font-size:var(--ui-sm-size);text-align:center}.main-empty{display:grid;place-items:center;align-content:center;gap:var(--space-2);min-height:300px;color:var(--text-muted);text-align:center}.main-empty strong{color:var(--text-primary);font-size:var(--title-3-size)}.main-empty p{max-width:380px;margin:0;font-size:var(--ui-sm-size);line-height:1.5}
+@media(max-width:960px){.media-workbench{grid-template-columns:220px minmax(0,1fr)}.selected-script{grid-template-columns:1fr;max-height:none}.task-row{grid-template-columns:minmax(0,1fr) auto}.task-time{display:none}}
+@media(max-width:700px){.media-stage{height:auto;overflow:visible}.media-workbench{grid-template-columns:1fr;grid-template-rows:auto auto;overflow:visible}.script-rail{max-height:260px;border-right:0;border-bottom:1px solid var(--border-default)}.media-main{overflow:visible;padding:var(--space-3)}.selected-script{max-height:none;overflow:visible}.selected-script-heading{overflow:visible}.workflow-row{grid-template-columns:34px minmax(0,1fr)}.workflow-row>.sfx-badge{grid-column:2}.binding-warning{grid-template-columns:20px minmax(0,1fr)}.binding-warning .sfx-btn{grid-column:2;justify-self:start}.release-empty{align-items:flex-start;flex-wrap:wrap}.release-empty .sfx-btn{margin-left:35px}.tts-actions{align-items:flex-start;flex-direction:column}.task-list{max-height:none;overflow:visible}.task-row{grid-template-columns:minmax(0,1fr) auto}}
 </style>

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 from datetime import timezone
 from typing import Any, Optional
 
@@ -26,6 +27,26 @@ from app.platform.tasks.worker import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_tts_provider_semaphores: dict[str, threading.BoundedSemaphore] = {}
+_tts_provider_semaphores_lock = threading.Lock()
+
+
+def _tts_provider_semaphore(provider_key: str, limit: int) -> threading.BoundedSemaphore:
+    """Return a process-local semaphore for live provider sessions.
+
+    The worker runs synchronous provider SDK calls in threads.  A thread-safe
+    semaphore therefore enforces the configured per-provider ceiling without
+    changing the API request's event loop semantics.
+    """
+    key = provider_key or "default"
+    with _tts_provider_semaphores_lock:
+        current = _tts_provider_semaphores.get(key)
+        if current is None:
+            current = threading.BoundedSemaphore(limit)
+            _tts_provider_semaphores[key] = current
+        return current
 
 
 def _course_build_failure_message(error: BaseException) -> str:
@@ -1040,7 +1061,9 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
             retryable=False,
         )
 
-    def run_in_worker_thread() -> None:
+    provider_key = str(payload.get("provider_key") or "")
+
+    def run_in_worker_thread() -> tuple[str | None, str | None]:
         from sqlmodel import select
         from app.models.media_release_model import MediaGenerationJob
         from app.services.media_release_service import tts_execution_service
@@ -1068,8 +1091,51 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
                 max_retries=payload.get("max_retries"),
             )
             session.commit()
+            session.refresh(job)
+            return job.media_release_id, job.job_id
 
-    await asyncio.to_thread(run_in_worker_thread)
+    # Provider calls are bounded independently from request concurrency.  A
+    # batch may queue many nodes, but at most the configured number can hold a
+    # live paid WebSocket for the same provider.
+    from app.core.config import settings
+    from app.services.media_batch_service import enqueue_batch_cue, project_tts_result_to_batch_item
+    limit = max(1, int(getattr(settings, "MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER", 2) or 2))
+    semaphore = _tts_provider_semaphore(provider_key, limit)
+    await asyncio.to_thread(semaphore.acquire)
+    try:
+        release_id, completed_job_id = await asyncio.to_thread(run_in_worker_thread)
+    finally:
+        semaphore.release()
+
+    if not release_id or not completed_job_id:
+        return
+    with ctx.session_factory() as session:
+        source = media_generation_job_service.get_job(session, course_id=course_id, job_id=completed_job_id)
+        if source.status != MediaGenerationStatus.SUCCEEDED:
+            project_tts_result_to_batch_item(session, job=source)
+            session.commit()
+            return
+        project_tts_result_to_batch_item(session, job=source)
+        cue_job, cue_task_id = enqueue_batch_cue(
+            session, course_id=course_id, release_id=release_id,
+            source_tts_job=source, created_by=source.created_by,
+        )
+        session.commit()
+    if cue_job.status == MediaGenerationStatus.PENDING:
+        if not local_task_worker.has_handler("media.timeline_publish"):
+            with ctx.session_factory() as session:
+                source = media_generation_job_service.get_job(session, course_id=course_id, job_id=completed_job_id)
+                from app.services.media_batch_service import project_cue_result_to_batch_item
+                project_cue_result_to_batch_item(
+                    session, course_id=course_id, release_id=release_id,
+                    source_tts_job=source, error_code="DEPENDENCY_UNAVAILABLE",
+                    error_message_safe="Cue Worker 未注册，未冻结字幕与数字人时间轴",
+                )
+                session.commit()
+            return
+        local_task_worker.submit(ctx.session_factory, cue_task_id, {
+            **(cue_job.input_payload or {}), "job_id": cue_job.job_id,
+        })
 
 
 # ---------------------------------------------------------------------------
@@ -1134,6 +1200,15 @@ async def media_timeline_publish_handler(ctx: TaskHandlerContext) -> None:
                 error_message_safe=exc.safe_message,
                 retryable=False,
             )
+            source_tts = media_generation_job_service.get_job(
+                session, course_id=course_id, job_id=source_tts_job_id,
+            )
+            from app.services.media_batch_service import project_cue_result_to_batch_item
+            project_cue_result_to_batch_item(
+                session, course_id=course_id, release_id=release_id,
+                source_tts_job=source_tts, error_code=exc.error_code,
+                error_message_safe=exc.safe_message,
+            )
             session.commit()
             return
         media_generation_job_service.mark_succeeded(
@@ -1154,6 +1229,14 @@ async def media_timeline_publish_handler(ctx: TaskHandlerContext) -> None:
                 "content_hash": result.content_hash,
                 "warnings": result.warnings,
             },
+        )
+        source_tts = media_generation_job_service.get_job(
+            session, course_id=course_id, job_id=source_tts_job_id,
+        )
+        from app.services.media_batch_service import project_cue_result_to_batch_item
+        project_cue_result_to_batch_item(
+            session, course_id=course_id, release_id=release_id,
+            source_tts_job=source_tts, result=result,
         )
         session.commit()
 
