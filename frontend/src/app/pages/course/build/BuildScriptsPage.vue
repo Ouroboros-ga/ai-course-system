@@ -30,7 +30,13 @@ const outlineBreadcrumb = (item) => {
 const FIRST_PREP_PHASES = new Set(['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'])
 const isFirstPrepInProgress = computed(() => FIRST_PREP_PHASES.has(workbench?.draftBuildPhase))
 
-function select(item) { selectedId.value = item.script_node_id }
+function select(item) {
+  selectedId.value = item.script_node_id
+  // The shared assistant scopes single-node actions by outline_node_id, not
+  // the script row's own ID.  Keep the layout-level selection synchronized so
+  // opening the assistant from a lecture-script row always carries its target.
+  if (workbench) workbench.selectedNode = item.outline_node || null
+}
 async function load() {
   state.value = 'loading'; error.value = ''
   try {
@@ -68,6 +74,7 @@ async function load() {
     })
     editable.value = Boolean(data?.editable)
     if (!items.value.some((item) => item.script_node_id === selectedId.value)) selectedId.value = items.value[0]?.script_node_id ?? ''
+    if (workbench) workbench.selectedNode = selected.value?.outline_node || null
     state.value = 'ready'
   } catch (caught) { error.value = caught?.message || '讲稿读取失败'; state.value = 'error' }
 }

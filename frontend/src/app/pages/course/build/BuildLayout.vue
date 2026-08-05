@@ -180,15 +180,16 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
 .step-copy small{font-size:11px;line-height:15px;color:var(--text-muted)}
 .rail-note{margin:var(--space-5) var(--space-3) 0;padding-top:var(--space-4);border-top:1px solid var(--border-default);font-size:var(--caption-size);line-height:1.55;color:var(--text-muted)}
 .build-stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:var(--space-6);background:var(--surface-panel);overflow:hidden}
-.stage-context{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;margin-bottom:var(--space-6);flex-shrink:0}
+.stage-context{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;margin-bottom:var(--space-6);flex-shrink:0;flex-wrap:wrap}
+.stage-context>div:first-child{min-width:0;flex:1 1 220px}
 .stage-body{flex:1;min-height:0;overflow:hidden}
 .eyebrow{margin:0 0 var(--space-1);font-size:var(--caption-size);font-weight:650;letter-spacing:.08em;color:var(--ink-500)}
 h1{margin:0;color:var(--text-primary);font-size:var(--title-2-size);line-height:var(--title-2-line);font-weight:var(--title-2-weight)}
-.stage-context-actions{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}
+.stage-context-actions{display:flex;align-items:center;gap:var(--space-2);flex:0 1 auto;flex-wrap:wrap;justify-content:flex-end}
 .agent-trigger{display:none}
 .mobile-workbench-tabs{display:none}
-/* 助教面板：原本是 grid 第三列，改 flex 后用 :deep 显式给宽度 */
-.build-grid :deep(.course-build-agent){width:440px;flex-shrink:0}
+/* 助教面板：原本是 grid 第三列，改 flex 后用 :deep 显式给宽度（对齐 design.md §7.2 --agent-panel-width） */
+.build-grid :deep(.course-build-agent){width:var(--agent-panel-width);flex-shrink:0}
 /* 收缩态：rail 宽度收到 --rail-width-collapsed，仅显示图标（参考 SfxLocalRail） */
 .build-grid.rail-collapsed .build-rail{width:var(--rail-width-collapsed)}
 .build-grid.rail-collapsed .rail-toggle{left:calc(var(--rail-width-collapsed) - 13px)}

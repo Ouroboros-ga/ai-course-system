@@ -51,6 +51,7 @@ from app.services.media_release_service import (
     media_release_service,
     tts_execution_service,
 )
+from app.models.course_outline_model import TeachingScriptNode
 from app.services.tts_provider import TtsProviderConfigurationError, get_tts_provider
 
 
@@ -149,6 +150,23 @@ async def create_generation_job(
             f"不支持的 job_type: {payload.job_type}",
             details={"allowed": [t.value for t in MediaGenerationJobType]},
         )
+
+    # ``node_id`` is the database FK consumed by MediaReleaseCue, rather than
+    # the public ``tsn_*`` editor identifier.  Validate an optional binding
+    # when the course has formal teaching-script rows.  Legacy timeline-only
+    # courses do not carry this table yet and retain their existing media
+    # migration path.
+    if payload.node_id is not None:
+        script_node = session.exec(select(TeachingScriptNode).where(
+            TeachingScriptNode.id == payload.node_id,
+            TeachingScriptNode.course_id == course_id,
+        )).first()
+        has_formal_scripts = session.exec(select(TeachingScriptNode.id).where(
+            TeachingScriptNode.course_id == course_id,
+        )).first() is not None
+        if script_node is None and has_formal_scripts:
+            from app.core.exceptions import reject_validation_failed
+            reject_validation_failed("媒体任务绑定的讲稿节点不存在或不属于当前课程")
 
     # 计算输入哈希
     import hashlib

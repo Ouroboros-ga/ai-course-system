@@ -569,6 +569,11 @@ def _script_node_view(
     ppt_mapping: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     view = {
+        # ``script_node_id`` is the stable editor identifier.  The media job
+        # contract deliberately uses the database identity because its Cue
+        # snapshot has a foreign key to ``script_nodes.id``.  Expose the two
+        # values under distinct names so a teacher client never guesses.
+        "script_node_db_id": node.id,
         "script_node_id": node.script_node_id,
         "outline_node_id": node.outline_node_id,
         "course_id": node.course_id,
