@@ -737,6 +737,11 @@ class MediaReleaseService:
         """
         playlist_mode = bool((release.release_metadata or {}).get("audio_playlist_mode"))
         if playlist_mode:
+            if not release.ppt_manifest_object_key:
+                reject_state_conflict(
+                    "课程 PPT manifest 尚未冻结，发布未激活",
+                    details={"error_code": "PPT_MANIFEST_REQUIRED"},
+                )
             if not release.audio_playlist_object_key or not release.audio_playlist_sha256:
                 reject_state_conflict(
                     "课程级播放清单尚未冻结，发布未激活",
@@ -758,6 +763,11 @@ class MediaReleaseService:
                 reject_state_conflict(
                     "课程级播放清单对象不可用，发布未激活",
                     details={"error_code": "AUDIO_PLAYLIST_UNAVAILABLE"},
+                )
+            if not storage.exists(release.ppt_manifest_object_key):
+                reject_state_conflict(
+                    "课程 PPT manifest 对象不可用，发布未激活",
+                    details={"error_code": "PPT_MANIFEST_UNAVAILABLE"},
                 )
             return
 
@@ -854,6 +864,14 @@ class MediaPlaybackService:
             }
 
         if course_release is not None:
+            if release is None or release.status != MediaReleaseStatus.ACTIVE:
+                return {
+                    "available": False,
+                    "reason": "media_snapshot_not_active",
+                    "message": "课程发布快照指向的媒体版本已不再激活",
+                    "fallback_mode": "compatibility",
+                    "course_release_id": course_release.release_id,
+                }
             frozen_playlist_hash = str((course_release.media_snapshot or {}).get("playlist_content_hash") or "")
             if frozen_playlist_hash and frozen_playlist_hash != str(release.audio_playlist_sha256 or ""):
                 logger.error(
@@ -1026,7 +1044,7 @@ class MediaPlaybackService:
             "version_number": release.version_number,
             "label": release.label,
             "audio_url": audio_url,
-            "duration_ms": self._estimate_total_duration_ms(cues),
+            "duration_ms": int((playlist or {}).get("duration_ms") or self._estimate_total_duration_ms(cues)),
             "subtitle_segments": subtitle_segments,
             "ppt_timeline": ppt_timeline,
             "ppt": ppt_manifest,

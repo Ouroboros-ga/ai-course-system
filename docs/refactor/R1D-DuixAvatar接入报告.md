@@ -1,5 +1,9 @@
 # R1D-DuixAvatar 接入报告
 
+> **已废弃（2026-08-06，仅历史追溯）**：DuixAvatar/服务端视频合成不属于当前阶段八
+> 学习端主链。请以 `docs/phase1/阶段8_媒体TTS数字人PPT_实施规划.md` 的 PixiJS 2D
+> 播放方案和发布门为准。
+
 ## 1. 范围
 
 本次 R1D 只接入 Duix.Avatar 数字人视频生成 provider，不改变公开 API、数据库结构、前端调用方式、主项目启动流程，也不删除原有 Gradio 数字人 provider。

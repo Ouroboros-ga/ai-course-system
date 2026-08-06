@@ -1,15 +1,51 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
-> 状态：P0 播放、正式 PPT manifest，P1 豆包 TTS Worker、P2 Cue 发布冻结、P3 PixiJS
-> 2D 渲染器，以及 P4 批量媒体建设/`audio-playlist/v1` 均已完成代码接入。课程 87
-> 仍没有可冻结的 PPT 映射和已发布媒体快照；因此不得将代码和 Fake Provider 验证表述为
-> 真实学生端或设备性能验收。部署或本地升级必须显式执行 `alembic upgrade head`，否则
-> P4 新字段缺失会使媒体版本列表请求失败。最后核对：2026-08-05。
+> 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程级真实
+> 媒体发布仍须通过 PPT 映射、Fake/受控 TTS 资产、playlist、激活和正式课程发布门。
+> 课程 87 当前尚无 active `MediaRelease`，不能把代码或 Fake 试听写成学生端正式播放。
+> 部署或本地升级必须显式执行 `alembic upgrade head`。最后核对：2026-08-06。
 >
 > 本文以实际注册路由、调用链、模型和一次真实 Provider POC 为证据，不把历史
 > Demo、Fake Provider 或未接入的 API 写成已对学生生效的能力。与历史阶段8说明
 > 冲突时，以本文和代码实际行为为准；功能完成度仍须以代码、迁移、测试和手工
 > 验收共同确认。
+
+## 现行路线（2026-08-06 冻结）
+
+本节是阶段八的唯一现行方案；后文若与本节冲突，以本节和代码为准。
+
+```text
+BuildMediaPage
+  → POST /media/course/{id}/batch/plan（只读估算）
+  → POST /media/course/{id}/batch/confirm（教师一次确认）
+  → MediaBuildBatch / MediaReleaseItem
+  → Fake WAV 或 Media Worker TTS（缓存优先、无自动付费重试）
+  → subtitle-manifest/v1 + avatar-cues/v1
+  → ppt-manifest/v1
+  → audio-playlist/v1
+  → MediaRelease activate
+  → CourseRelease.media_snapshot = {media_release_id, playlist_content_hash}
+  → GET /media/course/{id}/playback
+  → LearnPage / LectureStage
+```
+
+每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，首版使用平台预制 `platform-instructor-v1`，失败时按 `PixiJS → 静态头像 → 无数字人` 降级。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
+
+### 当前代码证据
+
+- 批量模型：`backend/app/models/media_release_model.py` 的 `MediaBuildBatch`、`MediaReleaseItem`、`MediaRelease.audio_playlist_*`。
+- 批量编排：`backend/app/services/media_batch_service.py` 的计划、确认、Cue 状态、PPT 校验和 playlist 冻结。
+- 公开路由：`backend/app/api/v1/endpoints/media_release.py` 的 batch、ppt-manifest、audio-playlist、activate、playback 路由。
+- 学习端：`frontend/src/features/student-learning/composables/useMediaPlayback.js`、`usePlaylistPlayback.js`、`frontend/src/app/components/learn/LectureStage.vue`。
+- 数字人：`AvatarViewport.vue`、`useAvatarPlayback.js`、`Sprite2DRenderer.js` 和 `platformSprite2dAssets.js`。
+
+### 课程 87 的真实阻塞
+
+课程 87 可以先生成和试听 `fake-v1.1-playable` WAV；但 PPT 映射或 manifest 缺失会阻止
+`audio-playlist/v1`、MediaRelease 激活和正式课程发布。正式发布还必须固定
+`release_id + playlist_content_hash`，不能沿用当前空的 `media_snapshot`。
+
+教师真人形象与声音授权属于后续扩展，见[阶段8附加：教师数字人资产中心](阶段8_附加_教师数字人资产中心.md)。该文档不改变当前平台预制角色和课程级发布门。
 
 ## 0. 本次结论
 
@@ -62,43 +98,41 @@
 | 媒体播放清单 | 已注册 `GET /api/v1/media/course/{course_id}/playback` | `backend/app/api/v1/endpoints/media_release.py` |
 | 对象存储和签名 URL | 已有 local / S3-compatible 抽象 | `backend/app/services/object_storage.py` |
 | 数字人授权、原始素材、资产包、课程绑定 | 已有模型与服务 | `backend/app/models/avatar_model.py`、`backend/app/services/avatar_service.py` |
-| Fake / 在线讯飞 TTS Provider | 已有，但不是声音复刻 Provider | `backend/app/services/tts_provider.py` |
+| Fake / 豆包 / 在线讯飞 TTS Provider | 已注册；Fake 用于本地验收，豆包仅 Worker 受控调用 | `backend/app/services/tts_provider.py`、`backend/app/core/config.py` |
 
-`/media/course/{id}/playback` 已能返回音频 URL、字幕段、PPT 页时间轴和可选数字人
-manifest。但是它尚未提供可消费的 PPT 图片 manifest，且前端没有调用它；因此不能
-表述为“学生已经走新媒体播放链”。
+`/media/course/{id}/playback` 已能返回签名音频 URL、`audio-playlist/v1` 条目、字幕、
+`ppt-manifest/v1` 页面和可选数字人 manifest；学习端由 `useMediaPlayback` 消费该接口。
+课程没有 active 媒体版本时仍显示诚实空态，不能把草稿或 Fake 试听当作正式学生播放。
 
 ### 1.2 当前学生学习页的真实链路
 
 ```text
 LearnPage.vue
-  -> useLearningWorkspace.js
-     -> GET /api/v1/player/init/{courseId}
-        -> playerWorkspaceAdapter.js
-           -> LectureStage.vue <video>
+  -> useLearningWorkspace.js       # 节点、笔记、旧进度兼容
+  -> useMediaPlayback.js            # GET /api/v1/media/course/{id}/playback
+  -> usePlaylistPlayback.js         # 条目选择与全局 offset 投影
+  -> LectureStage.vue <audio>       # 活动条目的唯一主时钟
+       -> PPT / 字幕 / 原文
+       -> AvatarViewport -> PixiJS（可选、失败降级）
 ```
 
-- `LearnPage.vue` 仍向 `LectureStage` 传入 `currentVideoUrl`。
-- `useLearningWorkspace.js` 只请求旧 `/player/init`；没有请求 `/media/course/{id}/playback`。
-- `LectureStage.vue` 以 `<video>` 的 `timeupdate` 作为进度来源，音频、字幕和数字人
-  尚未接入。
-- 课程 87 的旧播放器数据中没有可用视频/PPT 图片时，会显示空态。这是媒体未发布
-  或旧链无资产的真实结果，不是应由前端伪造填充的状态。
+旧 `/player/init` 只保留节点、笔记和历史进度迁移；旧 `<video>` 不是新媒体发布主链。
+课程没有可播放发布快照时，学习端必须显示“尚未发布”，不能由前端拼接草稿资产。
 
 ### 1.3 现有 TTS 实现的边界
 
-- 阶段8正式路径以 `STAGE8_TTS_PROVIDER` 选 Provider，默认是 `fake`；当前只注册
-  `fake`、`xfyun_tts` 与 `mock_xfyun`。
+- 阶段8正式路径以 `STAGE8_TTS_PROVIDER` 选 Provider，默认是 `fake`；当前注册
+  `fake`、`xfyun_tts`、`mock_xfyun` 与 `volcengine_doubao_tts`。批量建设默认使用
+  `fake-v1.1-playable`，真实 Provider 只能由 Worker 在教师确认后调用。
 - `XfyunTtsProvider` 使用在线标准 TTS `wss://tts-api.xfyun.cn/v2/tts` 与 `ora12`，
   不支持 `x5_clone / res_id`，也没有保存或解析 `pybuf`。
 - 旧 `backend/app/common/tts_client.py` 的火山 HTTP 客户端及声音复刻训练路径是
   历史兼容代码；它没有实现豆包 v3 双向 WebSocket、`TTSSubtitle` 或时序归一化。
-- `backend/app/core/config.py` 尚未声明 `VOLCENGINE_DOUBAO_TTS_*` Settings 字段；
-  `backend/.env.example` 中的模板变量不能被正式 Provider 自动消费，必须先补齐。
-
-因此应新增独立的 `VolcengineDoubaoTtsProvider` 与将来的
-`XfyunVoiceCloneProvider`，而不是把声音复刻硬塞进现有在线讯飞类，也不把旧火山
-HTTP 客户端当作 v3 实现。
+- `backend/app/core/config.py` 已声明 `VOLCENGINE_DOUBAO_TTS_*`，但配置存在不等于
+  允许自动计费；未明确授权、配置缺失或 Worker 不可用时必须 fail-closed。
+- 旧 `backend/app/common/tts_client.py` 的火山 HTTP/声音复刻路径只作历史兼容，已不再
+  是阶段八主链。教师声音复刻和真人形象生成不属于首版验收范围，后续接入必须新建
+  Provider、授权记录、资产版本和独立 POC。
 
 ## 2. 豆包 v3 限量 POC 记录
 
@@ -422,7 +456,10 @@ dispose()
 **完成门槛**：发布版媒体可在真实学习页用音频完整播放；PPT、字幕和讲稿高亮与音频
 同步；课程 87 无发布资产时保持诚实空态。
 
-### P0 当前实现状态（2026-08-01）
+> **历史状态说明**：以下 P0/P1/P2/P3/P4 小节保留各阶段的执行记录。若其中的“尚未
+> 接入”“计划新增”与本文“现行路线”冲突，以现行路线、当前代码和最新审计为准。
+
+### P0 当前实现状态（历史记录，最新状态见现行路线）
 
 - 已完成前端 `getCoursePlayback`、`useMediaPlayback` 与播放清单归一化适配；学习页并行保留旧 `/player/init`，媒体发布清单独立加载。
 - `LectureStage` 已改为发布音频优先：原生 `<audio>` 作为唯一时钟，驱动进度、PPT 时间轴、字幕高亮、倍速、音量和前后知识点控制；无发布音频时明确显示空态，旧视频仅兼容回退。
@@ -447,7 +484,7 @@ dispose()
 **完成门槛**：一份已授权测试讲稿只生成一次，结果含真实音频 SHA、精确字幕时序和
 已脱敏用量摘要；重复调用命中缓存；失败保留可理解错误码。
 
-### P1 当前实现状态（2026-08-01）
+### P1 当前实现状态（历史记录，最新状态见现行路线）
 
 - 已新增 `VolcengineDoubaoTtsProvider` 和独立 v3 协议客户端；Provider 仅消费
   服务端 `VOLCENGINE_DOUBAO_TTS_*` 配置，音频写入对象存储，任务记录不写入 API
@@ -483,7 +520,7 @@ dispose()
 **完成门槛**：替换讲稿、声音或音频后产生新 Cue 和新 Release；旧 Cue 无法被新音频
 复用；回滚恢复完整旧资产组合。
 
-### P2 当前实现状态（2026-08-01）
+### P2 当前实现状态（历史记录，最新状态见现行路线）
 
 - 已新增非计费 `media.timeline_publish` Cue Worker。它只读取已经成功的 TTS 对象和
   已持久化的安全时序，不会重新调用 TTS Provider；任务、失败码和产物均独立留痕。
@@ -518,7 +555,7 @@ dispose()
 **完成门槛**：数字人失败时教学媒体仍完整播放；满足设备可保持可接受同步，不满足
 设备可立即降级且不反复初始化。
 
-**本轮 P3 实现状态（代码已接入，真实媒体验收待解锁）**：
+**本轮 P3 实现状态（历史记录；代码已接入，真实媒体验收待解锁）**：
 
 - 用户已批准加入 `pixi.js@8.16.0`。`Sprite2DRenderer` 仅在收到已签名的
   `avatar-cues/v1` 后按需加载，不把 PixiJS 放进无数字人课程的主播放初始化路径。
@@ -558,7 +595,7 @@ dispose()
 **完成门槛**：教师可在不泄露凭据、不破坏旧 Release 的情况下完成一条批量媒体发布链，
 并能回滚和撤销未授权资产。
 
-### P4 当前实现状态（2026-08-05）
+### P4 当前实现状态（历史记录；代码已接入，真实验收仍受课程 87 阻塞）
 
 - 迁移 `0037_batch_media_playlist` 增加 `MediaBuildBatch`、`MediaReleaseItem` 与
   `MediaRelease.audio_playlist_*` 字段；升级/降级均做存在性检查，应用启动不会通过

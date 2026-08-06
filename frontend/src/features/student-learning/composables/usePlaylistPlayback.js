@@ -8,7 +8,10 @@ export function usePlaylistPlayback(playlist) {
   const globalOffsetSeconds = computed(() => (activeItem.value?.offsetMs ?? 0) / 1000)
 
   function selectByNode(nodeId) {
-    const index = playlist.value?.items?.findIndex(item => String(item.nodeId) === String(nodeId)) ?? -1
+    const index = playlist.value?.items?.findIndex(item => (
+      String(item.nodeId) === String(nodeId)
+      || String(item.outlineNodeId) === String(nodeId)
+    )) ?? -1
     if (index >= 0) activeIndex.value = index
     return index >= 0
   }

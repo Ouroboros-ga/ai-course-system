@@ -15,6 +15,7 @@ function normalizeNode(raw, index) {
 
   return {
     id: raw?.id ?? raw?.node_id ?? index + 1,
+    outlineNodeId: raw?.outline_node_id ?? raw?.outlineNodeId ?? null,
     index,
     sourceIndex: numberOr(raw?.node_index ?? raw?.nodeIndex, index + 1),
     type: raw?.node_type ?? raw?.nodeType ?? 'lecture',

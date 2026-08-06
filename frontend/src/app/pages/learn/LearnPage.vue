@@ -145,19 +145,39 @@ function handleNodeChange(direction) {
 function handlePlaylistNext() {
   if (!playlistPlayback.next()) return
   const item = playlistPlayback.activeItem.value
-  if (item?.nodeId != null) {
-    const index = ws.nodes.value.findIndex(node => String(node.id) === String(item.nodeId))
+  if (item?.nodeId != null || item?.outlineNodeId) {
+    const index = ws.nodes.value.findIndex(node => (
+      String(node.id) === String(item.nodeId)
+      || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
+    ))
     if (index >= 0) ws.selectNode(index, { play: true })
   }
 }
 function handlePlaylistPrevious() {
   if (!playlistPlayback.previous()) return
   const item = playlistPlayback.activeItem.value
-  if (item?.nodeId != null) {
-    const index = ws.nodes.value.findIndex(node => String(node.id) === String(item.nodeId))
+  if (item?.nodeId != null || item?.outlineNodeId) {
+    const index = ws.nodes.value.findIndex(node => (
+      String(node.id) === String(item.nodeId)
+      || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
+    ))
     if (index >= 0) ws.selectNode(index, { play: true })
   }
 }
+
+watch(
+  [() => ws.currentNode.value?.id, () => ws.currentNode.value?.outlineNodeId, () => media.playlist.value],
+  () => {
+    const node = ws.currentNode.value
+    if (!node || !media.playlist.value?.items?.length) return
+    const matched = media.playlist.value.items.find(item => (
+      String(item.nodeId) === String(node.id)
+      || (node.outlineNodeId && String(item.outlineNodeId) === String(node.outlineNodeId))
+    ))
+    if (matched) playlistPlayback.selectByNode(matched.outlineNodeId || matched.nodeId)
+  },
+  { immediate: true },
+)
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
 onMounted(async () => {
