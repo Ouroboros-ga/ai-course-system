@@ -11,6 +11,7 @@ import {
   createMediaRelease,
   executeMediaTtsJob,
   getMediaProviderHealth,
+  getPlatformMediaPresets,
   planMediaBatch,
   confirmMediaBatch,
   getMediaBatch,
@@ -44,6 +45,11 @@ const jobs = ref([])
 const releases = ref([])
 const releaseDetail = ref(null)
 const providerHealth = ref(null)
+const presetCatalog = ref({ voices: [], avatars: [] })
+const selectedVoicePresetId = ref('')
+const selectedVoicePresetVersion = ref('')
+const selectedAvatarPresetId = ref('')
+const selectedAvatarPresetVersion = ref('')
 const selectedScriptId = ref('')
 const selectedReleaseId = ref('')
 const paidTtsConfirmed = ref(false)
@@ -67,7 +73,12 @@ const selectedNodeDbId = computed(() => Number(selectedScript.value?.script_node
 const workingRelease = computed(() => releaseDetail.value ?? releases.value.find((item) => item.release_id === selectedReleaseId.value) ?? null)
 const provider = computed(() => providerHealth.value?.tts ?? null)
 const providerKey = computed(() => provider.value?.provider_key || '')
-const providerReady = computed(() => Boolean(provider.value?.healthy && providerKey.value))
+const providerDisplayName = computed(() => provider.value?.effective_provider || '未配置')
+const providerReady = computed(() => provider.value?.status === 'ready' && Boolean(providerKey.value))
+const providerNeedsConfirmation = computed(() => Boolean(provider.value?.requires_confirmation))
+const providerIsDemo = computed(() => Boolean(provider.value?.demo_mode))
+const selectedVoicePreset = computed(() => presetCatalog.value.voices.find(item => item.preset_id === selectedVoicePresetId.value && item.version === selectedVoicePresetVersion.value) ?? null)
+const selectedAvatarPreset = computed(() => presetCatalog.value.avatars.find(item => item.preset_id === selectedAvatarPresetId.value && item.version === selectedAvatarPresetVersion.value) ?? null)
 const selectedCharCount = computed(() => Array.from(selectedScript.value?.content || '').length)
 const selectedByteCount = computed(() => new TextEncoder().encode(selectedScript.value?.content || '').length)
 
@@ -103,14 +114,23 @@ const canSubmitTts = computed(() => Boolean(
   && workingRelease.value?.status === 'draft'
   && releaseMatchesSelection.value
   && providerReady.value
-  && paidTtsConfirmed.value
+  && (!providerNeedsConfirmation.value || paidTtsConfirmed.value)
   && !['pending', 'running'].includes(selectedTtsJob.value?.status),
 ))
 const batchSelectedScripts = computed(() => scripts.value.filter(item => batchNodeIds.value.includes(Number(item.script_node_db_id))))
 // 左侧 rail 当前选中的知识点在批量媒体结果里对应的 item；有 audio_object_key 才能自动试听。
 const selectedBatchItem = computed(() => findBatchItemForScript(selectedScript.value))
 const canPlanBatch = computed(() => canGenerate.value && batchSelectedScripts.value.length > 0 && batchSelectedScripts.value.length <= 20)
-const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm) && paidTtsConfirmed.value)
+const batchPlanMatchesSelections = computed(() => Boolean(
+  batchPlan.value
+  && batchPlan.value.voice_preset?.preset_id === selectedVoicePresetId.value
+  && batchPlan.value.voice_preset?.version === selectedVoicePresetVersion.value
+  && batchPlan.value.avatar_preset?.preset_id === selectedAvatarPresetId.value
+  && batchPlan.value.avatar_preset?.version === selectedAvatarPresetVersion.value
+))
+const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm)
+  && batchPlanMatchesSelections.value
+  && (!providerNeedsConfirmation.value || paidTtsConfirmed.value))
 // Playlist (batch) releases freeze Cue assets per MediaReleaseItem, not on the
 // release row.  ``hasFrozenCues`` therefore stays false for the whole batch
 // while every item is already ``ready``.  Gate the PPT manifest step on the
@@ -251,11 +271,12 @@ async function load({ quiet = false } = {}) {
   error.value = ''
   providerError.value = ''
   try {
-    const [scriptData, jobData, releaseData, healthResult] = await Promise.all([
+    const [scriptData, jobData, releaseData, healthResult, presetResult] = await Promise.all([
       getTeachingScripts(courseId.value),
       listMediaGenerationJobs(courseId.value),
       listMediaReleases(courseId.value),
       getMediaProviderHealth().catch((caught) => ({ __error: caught })),
+      getPlatformMediaPresets(courseId.value).catch((caught) => ({ __error: caught })),
     ])
     scripts.value = (scriptData?.items ?? []).filter((item) => (
       Number(item.script_node_db_id) > 0 && Boolean(item.content?.trim())
@@ -263,6 +284,19 @@ async function load({ quiet = false } = {}) {
     jobs.value = jobData?.items ?? []
     releases.value = releaseData?.items ?? []
     providerHealth.value = healthResult?.__error ? null : healthResult
+    if (!presetResult?.__error) {
+      presetCatalog.value = { voices: presetResult.voices ?? [], avatars: presetResult.avatars ?? [] }
+      if (!selectedVoicePresetId.value || !presetCatalog.value.voices.some(item => item.preset_id === selectedVoicePresetId.value && item.version === selectedVoicePresetVersion.value)) {
+        const voice = presetCatalog.value.voices[0]
+        selectedVoicePresetId.value = voice?.preset_id || ''
+        selectedVoicePresetVersion.value = voice?.version || ''
+      }
+      if (!selectedAvatarPresetId.value || !presetCatalog.value.avatars.some(item => item.preset_id === selectedAvatarPresetId.value && item.version === selectedAvatarPresetVersion.value)) {
+        const avatar = presetCatalog.value.avatars[0]
+        selectedAvatarPresetId.value = avatar?.preset_id || ''
+        selectedAvatarPresetVersion.value = avatar?.version || ''
+      }
+    }
     providerError.value = healthResult?.__error
       ? apiErrorMessage(healthResult.__error, '无法确认语音服务状态，已阻止提交合成。')
       : ''
@@ -307,7 +341,7 @@ async function createBatchPlan() {
   if (!canPlanBatch.value || acting.value) return
   acting.value = 'batch-plan'; error.value = ''; notice.value = ''
   try {
-    batchPlan.value = await planMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default' })
+    batchPlan.value = await planMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', voice_preset_id: selectedVoicePresetId.value, voice_preset_version: selectedVoicePresetVersion.value, avatar_preset_id: selectedAvatarPresetId.value, avatar_preset_version: selectedAvatarPresetVersion.value })
     notice.value = `已核算 ${batchPlan.value.node_count} 个知识点：${batchPlan.value.billable_chars} 个待计费字符，${batchPlan.value.cache_hit_count} 个缓存命中。`
   } catch (caught) { error.value = apiErrorMessage(caught, '批量计划生成失败。') } finally { acting.value = '' }
 }
@@ -316,7 +350,7 @@ async function confirmBatch() {
   if (!canConfirmBatch.value || acting.value) return
   acting.value = 'batch-confirm'; error.value = ''; notice.value = ''
   try {
-    const response = await confirmMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', idempotency_key: `batch-${courseId.value}-${Date.now()}`, label: '批量媒体建设草稿', paid_tts_confirmed: true })
+    const response = await confirmMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', voice_preset_id: selectedVoicePresetId.value, voice_preset_version: selectedVoicePresetVersion.value, avatar_preset_id: selectedAvatarPresetId.value, avatar_preset_version: selectedAvatarPresetVersion.value, idempotency_key: `batch-${courseId.value}-${Date.now()}`, label: '批量媒体建设草稿', paid_tts_confirmed: paidTtsConfirmed.value })
     batchState.value = response
     selectedReleaseId.value = response.release_id
     await load({ quiet: true })
@@ -652,12 +686,19 @@ onBeforeUnmount(() => {
       </aside>
 
       <main class="media-main">
+        <div class="provider-runtime-banner" role="status">
+          <SfxBadge v-if="providerReady" :tone="providerIsDemo ? 'ink' : 'green'">{{ providerDisplayName }}</SfxBadge>
+          <SfxBadge v-else tone="red">Stage 8 Provider 未就绪</SfxBadge>
+          <span>{{ provider?.message || providerError || '正在读取服务端 Provider 状态' }}</span>
+        </div>
         <div class="provider-bar" aria-label="语音服务状态">
           <SfxBadge v-if="providerReady" tone="green">语音服务可用</SfxBadge>
           <SfxBadge v-else-if="providerError" tone="red">语音服务未确认</SfxBadge>
           <SfxBadge v-else tone="amber">正在确认语音服务</SfxBadge>
-          <span v-if="provider?.provider_key" class="provider-bar-name">{{ provider.provider_key }}</span>
+          <span v-if="providerReady" class="provider-bar-name">{{ providerDisplayName }}</span>
         </div>
+        <p v-if="providerReady" class="provider-runtime-status" role="status">{{ providerDisplayName }}：{{ provider?.message }}</p>
+        <p v-else-if="provider?.message" class="provider-runtime-status is-blocked" role="alert">{{ provider?.message }}</p>
         <p v-if="notice" class="notice" role="status">{{ notice }}</p>
         <p v-if="error" class="action-error" role="alert"><CircleAlert :size="16" /> {{ error }}</p>
         <p v-if="providerError" class="action-error" role="alert"><CircleAlert :size="16" /> {{ providerError }}</p>
@@ -667,13 +708,31 @@ onBeforeUnmount(() => {
             <div><p>P4 批量媒体建设</p><h3 id="batch-title">在左侧勾选知识点，一次确认后批量生成</h3></div>
             <SfxBadge tone="ink">{{ batchNodeIds.length }} / 20</SfxBadge>
           </header>
+          <div v-if="presetCatalog.voices.length || presetCatalog.avatars.length" class="preset-selection">
+            <div class="preset-group">
+              <span class="preset-label">平台音色</span>
+              <label v-for="voice in presetCatalog.voices" :key="`voice-${voice.preset_id}-${voice.version}`" class="preset-option" :class="{ selected: selectedVoicePresetId === voice.preset_id && selectedVoicePresetVersion === voice.version }">
+                <input v-model="selectedVoicePresetId" type="radio" name="media-voice-preset" :value="voice.preset_id" @change="selectedVoicePresetVersion = voice.version" />
+                <span><strong>{{ voice.display_name }}</strong><small>{{ voice.version }} · {{ voice.provider_key }}</small></span>
+              </label>
+            </div>
+            <div class="preset-group">
+              <span class="preset-label">平台 2D 角色</span>
+              <label v-for="avatarPreset in presetCatalog.avatars" :key="`avatar-${avatarPreset.preset_id}-${avatarPreset.version}`" class="preset-option" :class="{ selected: selectedAvatarPresetId === avatarPreset.preset_id && selectedAvatarPresetVersion === avatarPreset.version }">
+                <input v-model="selectedAvatarPresetId" type="radio" name="media-avatar-preset" :value="avatarPreset.preset_id" @change="selectedAvatarPresetVersion = avatarPreset.version" />
+                <span><strong>{{ avatarPreset.display_name }}</strong><small>{{ avatarPreset.version }} · {{ avatarPreset.manifest_available ? 'manifest 可用' : 'manifest 缺失' }}</small></span>
+              </label>
+            </div>
+          </div>
           <div v-if="batchPlan" class="batch-estimate">
             <span>节点 {{ batchPlan.node_count }}</span><span>总字符 {{ batchPlan.total_chars }}</span><span>待计费 {{ batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
             <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new Set(batchPlan.blocking_reasons)].join('；') }}；试听不受阻，冻结播放清单前必须完成映射。</p>
+            <p v-if="!batchPlanMatchesSelections" class="task-error">音色或角色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
           </div>
           <div class="tts-actions">
+            <span v-if="providerIsDemo" class="provider-demo-note">fake-demo：本地演示，不调用付费 TTS。</span>
             <SfxButton :disabled="!canPlanBatch" :loading="acting === 'batch-plan'" @click="createBatchPlan">核算批量费用</SfxButton>
-            <label class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
+            <label v-if="providerNeedsConfirmation" class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
             <SfxButton :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'" @click="confirmBatch">确认并提交批量任务</SfxButton>
           </div>
           <div v-if="batchState" class="batch-status" role="status">
@@ -765,7 +824,8 @@ onBeforeUnmount(() => {
                 </article>
 
                 <div v-if="!selectedTtsJob || selectedTtsJob.status === 'failed'" class="tts-confirmation">
-                  <label class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!providerReady || !canGenerate" /><span>我确认本次将提交一次语音合成；若当前服务为付费 Provider，将产生相应调用费用。</span></label>
+                  <label v-if="providerNeedsConfirmation" class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!providerReady || !canGenerate" /><span>我确认本次将提交一次语音合成，并承担正式 Provider 调用费用。</span></label>
+                  <span v-else-if="providerIsDemo" class="provider-demo-note">fake-demo：无需费用确认，仅生成可试听的本地演示音频。</span>
                   <div class="tts-actions">
                     <SfxButton v-if="selectedTtsJob?.status === 'failed'" :disabled="!canSubmitTts" :loading="acting === 'retry-tts'" @click="retryTts">确认并重试一次</SfxButton>
                     <SfxButton v-else :disabled="!canSubmitTts" :loading="acting === 'submit-tts'" @click="submitTts"><Send :size="16" /> 提交语音合成</SfxButton>
@@ -847,8 +907,9 @@ onBeforeUnmount(() => {
 .script-item-copy small{font-size:11px;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .script-item-listen{flex-shrink:0}
 .rail-empty{display:grid;justify-items:center;gap:var(--space-2);margin:auto;padding:var(--space-6);color:var(--text-muted);text-align:center}.rail-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.rail-empty p{margin:0;font-size:var(--caption-size);line-height:1.5}
-.media-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-6)}.provider-bar{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}.provider-bar-name{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5;flex-shrink:0}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
+.media-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-6)}.provider-runtime-banner{display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-cool);color:var(--text-secondary);font-size:var(--ui-sm-size)}.provider-runtime-status{margin:0;color:var(--text-secondary);font-size:var(--caption-size)}.provider-runtime-status.is-blocked{color:var(--red-700)}.provider-demo-note{color:var(--ink-700);font-size:var(--caption-size)}.provider-bar{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}.provider-bar-name{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5;flex-shrink:0}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
 .preview-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden;flex-shrink:0;scroll-margin-top:var(--space-3)}
+.preset-selection{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle);background:var(--surface-cool)}.preset-group{display:grid;gap:var(--space-2);min-width:0}.preset-label{color:var(--text-muted);font-size:var(--caption-size);font-weight:600;letter-spacing:.04em}.preset-option{display:flex;align-items:flex-start;gap:var(--space-2);padding:var(--space-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-panel);cursor:pointer}.preset-option.selected{border-color:var(--ink-500);background:var(--ink-100)}.preset-option input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--ink-700);flex-shrink:0}.preset-option span{display:grid;gap:2px;min-width:0}.preset-option strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.preset-option small{color:var(--text-secondary);font-size:var(--caption-size);overflow-wrap:anywhere}
 .preview-body{display:grid;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
 .preview-body p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.55;overflow-wrap:anywhere}
 .preview-empty{display:flex;align-items:flex-start;gap:var(--space-2);padding:var(--space-4);color:var(--text-muted);font-size:var(--ui-sm-size);line-height:1.5}
@@ -860,4 +921,5 @@ onBeforeUnmount(() => {
 .task-list{display:grid;max-height:280px;overflow-y:auto}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.task-row:last-child{border-bottom:0}.task-row>div{display:grid;gap:2px;min-width:0}.task-row strong,.task-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.task-row span{color:var(--text-muted);font-size:var(--caption-size)}.task-time{justify-self:end;white-space:nowrap}.task-row .task-error,.task-row .task-output{grid-column:1/-1;margin:0;font-size:var(--caption-size);line-height:1.45}.task-error{color:var(--red-700)}.task-output{color:var(--green-700)}.task-empty{margin:0;padding:var(--space-6);color:var(--text-muted);font-size:var(--ui-sm-size);text-align:center}.main-empty{display:grid;place-items:center;align-content:center;gap:var(--space-2);min-height:300px;color:var(--text-muted);text-align:center}.main-empty strong{color:var(--text-primary);font-size:var(--title-3-size)}.main-empty p{max-width:380px;margin:0;font-size:var(--ui-sm-size);line-height:1.5}
 @media(max-width:960px){.media-workbench{grid-template-columns:220px minmax(0,1fr)}.selected-script{grid-template-columns:1fr;max-height:none}.task-row{grid-template-columns:minmax(0,1fr) auto}.task-time{display:none}}
 @media(max-width:700px){.media-stage{height:auto;overflow:visible}.media-workbench{grid-template-columns:1fr;grid-template-rows:auto auto;overflow:visible}.script-rail{max-height:260px;border-right:0;border-bottom:1px solid var(--border-default)}.media-main{overflow:visible;padding:var(--space-3)}.selected-script{max-height:none;overflow:visible}.selected-script-heading{overflow:visible}.workflow-row{grid-template-columns:34px minmax(0,1fr)}.workflow-row>.sfx-badge{grid-column:2}.binding-warning{grid-template-columns:20px minmax(0,1fr)}.binding-warning .sfx-btn{grid-column:2;justify-self:start}.release-empty{align-items:flex-start;flex-wrap:wrap}.release-empty .sfx-btn{margin-left:35px}.tts-actions{align-items:flex-start;flex-direction:column}.task-list{max-height:none;overflow:visible}.task-row{grid-template-columns:minmax(0,1fr) auto}}
+@media(max-width:700px){.preset-selection{grid-template-columns:1fr}}
 </style>

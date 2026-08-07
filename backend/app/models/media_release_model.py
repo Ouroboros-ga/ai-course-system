@@ -222,7 +222,10 @@ class MediaRelease(SQLModel, table=True):
     ppt_manifest_object_key: Optional[str] = Field(default=None)
     audio_playlist_object_key: Optional[str] = Field(default=None, index=True)
     audio_playlist_sha256: str = Field(default="", index=True)
+    voice_preset_id: Optional[str] = Field(default=None, max_length=100)
+    voice_preset_version: Optional[str] = Field(default=None, max_length=40)
     avatar_preset_id: Optional[str] = Field(default=None, max_length=100)
+    avatar_preset_version: Optional[str] = Field(default=None, max_length=40)
 
     # P2: 与音频 SHA 绑定的厂商无关数字人时间轴。它不同于形象资产包 manifest：
     # 前者描述本次讲解何时说话/可用何种 viseme，后者描述浏览器可加载的形象资源。
@@ -268,6 +271,10 @@ class MediaBuildBatch(SQLModel, table=True):
     node_snapshot: list = Field(default_factory=list, sa_column=Column(JSON))
     estimate: dict = Field(default_factory=dict, sa_column=Column(JSON))
     voice_config: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    voice_preset_id: Optional[str] = Field(default=None, max_length=100)
+    voice_preset_version: Optional[str] = Field(default=None, max_length=40)
+    avatar_preset_id: Optional[str] = Field(default=None, max_length=100)
+    avatar_preset_version: Optional[str] = Field(default=None, max_length=40)
     confirmed_at: Optional[datetime] = Field(default=None)
     completed_at: Optional[datetime] = Field(default=None)
     error_code: str = Field(default="")

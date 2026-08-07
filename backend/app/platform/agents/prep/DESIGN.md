@@ -566,3 +566,14 @@ prep/
 `ActiveBundleCourseRetrievalPort` 查询向量证据；向量检索不可用时只降级到课程内的
 词法证据，不伪造证据 ID。全量讲解脚本按每组 5 个、最多 3 个并发请求执行；每组必须完整
 返回本组所有脚本，任何一组失败都不会应用批量修改。
+# 学习数据边界（2026-08-07）
+
+统一学习链当前已由学习 facade 和学生/课程投影承载，但 Prep Agent 不接入该链路。
+Prep 只消费课程建设上下文、草稿和证据引用，不新增 LLM-facing learning Tool，不读取或写入
+`LearningEvent`、`StudentLearningProjection`、`LearningEvidenceContext`、认知或推荐记录。
+相关 `LearningContextPort` / `LearningProjectionPort` 等接口仅作为未来 Teaching/Coding 适配
+契约，状态为 `planned/unimplemented`。
+
+Prep Agent 不新增 LLM-facing learning Tool，不读取或写入学生学习事件、投影、认知或
+推荐记录。统一学习数据的 planned Port/Provider 仅供 Teaching/Coding 运行时未来适配；
+Prep 保持确定性 Dependencies 与 PatchProposal 边界。

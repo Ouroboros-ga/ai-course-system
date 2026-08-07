@@ -28,11 +28,6 @@ def _sort_params(params: Dict[str, Any]) -> str:
     }
     sorted_keys = sorted(filtered_params.keys())
     result = "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])
-    
-    logger.debug("MD5签名校验 - 原始参数: %s", params)
-    logger.debug("MD5签名校验 - 过滤后参数: %s", filtered_params)
-    logger.debug("MD5签名校验 - 排序后键: %s", sorted_keys)
-    logger.debug("MD5签名校验 - 拼接字符串: %s", result)
 
     return result
 
@@ -60,12 +55,10 @@ def _verify_signature_core(params: Dict[str, Any], time_str: str, enc: str) -> b
     sorted_str = _sort_params(params)
     raw_sign = f"{sorted_str}{settings.STATIC_KEY}{time_str}"
     calculated_enc = hashlib.md5(raw_sign.encode("utf-8")).hexdigest().upper()
-    
-    logger.debug("MD5签名校验 - 原始签名串: %s", raw_sign)
-    logger.debug("MD5签名校验 - 计算的签名: %s", calculated_enc)
-    logger.debug("MD5签名校验 - 收到的签名: %s", enc.upper())
+
+    # SEC-03: 仅记录脱敏的"是否匹配"，绝不输出 raw_sign / 收到的签名 / 请求体
     logger.debug("MD5签名校验 - 签名匹配: %s", calculated_enc == enc.upper())
-    
+
     return calculated_enc == enc.upper()
 
 
@@ -87,19 +80,17 @@ async def verify_request_signature(request: Request):
     # 获取POST参数
     if request.method in ["POST", "PUT", "DELETE"]:
         content_type = request.headers.get("content-type", "")
-        logger.debug("MD5签名校验 - Content-Type: %s", content_type)
         if "application/json" in content_type:
             try:
                 body_json = await request.json()
-                logger.debug("MD5签名校验 - POST JSON 数据: %s", body_json)
                 all_params.update(body_json)
-            except Exception as e:
-                logger.debug("MD5签名校验 - 读取 JSON 失败: %s", e)
+            except Exception:
+                pass
         elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
             form_data = await request.form()
             all_params.update(dict(form_data))
 
-    logger.debug("MD5签名校验 - 所有参数: %s", all_params)
+    # SEC-03: 不记录请求体/参数明细，避免 PII 落入日志
 
     # 校验必填参数
     time_str = all_params.get("time")
@@ -175,16 +166,39 @@ async def get_current_user(
         )
         user_id: str = payload.get("sub")
         user_role: Optional[str] = payload.get("role")
+        if user_role in {"teacher", "student"}:
+            user_role = "user"
         if user_id is None:
             raise credentials_exception
     except JWTError:
         raise credentials_exception
 
     # 模拟用户数据（实际项目中替换为数据库查询）
+    try:
+        from app.models.database import session_factory
+        from app.models.user_model import User
+        with session_factory() as session:
+            db_user = session.get(User, int(user_id))
+            if db_user is None:
+                import os
+                if os.getenv("AI_COURSE_TESTING") != "1":
+                    raise credentials_exception
+            elif not db_user.is_active:
+                raise credentials_exception
+            if db_user is None:
+                raise LookupError("test token without database fixture")
+            if payload.get("auth_version") is not None and int(payload["auth_version"]) != int(db_user.auth_version):
+                raise credentials_exception
+            user_role = "admin" if getattr(db_user.role, "value", db_user.role) == "admin" else "user"
+    except LookupError:
+        pass
+    except (ValueError, TypeError):
+        raise credentials_exception
+
     return {
         "user_id": user_id,
         "username": payload.get("username", "user"),
-        "role": user_role,
+        "role": user_role or "user",
         "school_id": payload.get("school_id", "sch10001"),
     }
 
@@ -211,8 +225,8 @@ def role_required(allowed_roles: List[UserRole]):
 
 
 # 预定义常用权限依赖
-teacher_only = role_required([UserRole.TEACHER, UserRole.ADMIN])
-student_only = role_required([UserRole.STUDENT, UserRole.ADMIN])
+teacher_only = role_required([UserRole.USER, UserRole.ADMIN])
+student_only = role_required([UserRole.USER, UserRole.ADMIN])
 
 
 # --------------------------
@@ -261,5 +275,5 @@ async def _get_username(current_user: dict = Depends(get_current_user)) -> str:
 async def _get_user_identity(current_user: dict = Depends(get_current_user)) -> tuple[int, str]:
     """同时返回 (user_id, username) 元组"""
     return int(current_user["user_id"]), current_user.get("username", "user")
-teacher_student_allowed = role_required([UserRole.TEACHER, UserRole.STUDENT, UserRole.ADMIN])
+teacher_student_allowed = role_required([UserRole.USER, UserRole.ADMIN])
 admin_only = role_required([UserRole.ADMIN])

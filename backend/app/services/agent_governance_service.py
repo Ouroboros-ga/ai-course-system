@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 
 # 内置工具名清单；防止教师配置未知工具导致 Agent 异常
 BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({
-    "graph", "retrieval", "question_bank", "experiment",
+    "graph", "retrieval", "question_bank", "question_generation", "experiment",
     "visualization", "learning_event", "web_research", "sandbox",
     "cognition", "student_modeling", "recommendation", "conversation_context",
     # Read-only teaching context exposed by the CodingEduAgent integration.

@@ -6,6 +6,12 @@ re-exports ``build_teaching_workflow`` verbatim for backward compatibility.
 阶段9 改造：在每个可选工具节点前插入 ToolGovernance 检查；高风险动作通过
 TeacherSafetyValve 生成提案，等待教师决策。被禁用的工具跳过执行并记录到
 governance_skipped_tools；沙箱不可用时 CodingAction 标记不可用而非虚构执行。
+
+六维认知采集：detect_intent 节点在意图解析时由 LLM 实时标定 inquiry_depth
+（提问深度 0-1），随回答落库为 QuestionDepthRecord（追加型）；load_cognitive_state
+节点读取认知状态与推荐。听课时长（NodeProgress.time_spent）与提示使用
+（QuestionAttempt.cognitive_context.hint_used）由前端埋点上报，供认知引擎
+cognitive_service 计算 evidence_confidence 佐证与 hint_dependency。
 """
 
 from __future__ import annotations
@@ -30,6 +36,19 @@ def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any
         "warnings": [*state.get("warnings", []), code],
         "degraded_services": [*state.get("degraded_services", []), service],
     }
+
+
+def _parse_inquiry_depth(value: Any) -> float | None:
+    """解析 LLM 标定的提问深度（0-1）；缺失/非法/越界时返回 None。"""
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if parsed < 0.0 or parsed > 1.0:
+        return None
+    return parsed
 
 
 async def _governance_check(tools: TeachingTools, state: TeachingState, tool_name: str) -> tuple[bool, dict[str, Any]]:
@@ -106,7 +125,13 @@ def build_teaching_workflow(tools: TeachingTools):
             intent = str(result.get("intent", "course_question"))
             confidence = float(result.get("confidence", 0.0))
             candidates = await tools.llm.extract_concept_candidates(message=state["user_message"], course_id=state["course_id"])
-            return {"intent": intent, "intent_confidence": confidence, "concept_candidates": [dict(item) for item in candidates], "trace": _trace(state, "detect_intent", intent=intent)}
+            return {
+                "intent": intent, "intent_confidence": confidence,
+                # LLM 实时标定提问深度（0-1）；缺失/非法时保持 None，不影响流程
+                "inquiry_depth": _parse_inquiry_depth(result.get("inquiry_depth")),
+                "concept_candidates": [dict(item) for item in candidates],
+                "trace": _trace(state, "detect_intent", intent=intent),
+            }
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "detect_intent", error=type(error).__name__)}
 
@@ -219,6 +244,48 @@ def build_teaching_workflow(tools: TeachingTools):
         except Exception as error:
             payload = _degrade(state, "question_bank", "QUESTION_BANK_PORT_UNAVAILABLE")
             payload.update({"question_bank_items": [], "trace": _trace(state, "load_question_bank", error=type(error).__name__)})
+            return payload
+
+    async def load_question_generation(state: TeachingState) -> dict[str, Any]:
+        # 可选节点：未注入 QuestionGenerationPort 时直接跳过
+        if tools.question_generation is None:
+            return {"trace": _trace(state, "load_question_generation", skipped=True)}
+        # 阶段9：ToolGovernance 检查
+        allowed, gov_meta = await _governance_check(tools, state, "question_generation")
+        if not allowed:
+            return {
+                "question_generation_draft": None,
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "trace": _trace(state, "load_question_generation", governance="disabled"),
+            }
+        try:
+            node_id = state.get("current_concept_id")
+            # 从已加载的认知状态提取快照与六维（load_cognitive_state 节点已填充 state）
+            cognitive_state = state.get("cognitive_state") or {}
+            six_dim_keys = (
+                "observed_performance_score", "evidence_confidence", "confusion_risk",
+                "inquiry_depth", "hint_dependency", "explanation_need",
+            )
+            six_dimensions = {k: cognitive_state[k] for k in six_dim_keys if k in cognitive_state} or None
+            cognitive_snapshot = dict(cognitive_state) if cognitive_state else None
+            reason_codes = list(cognitive_state.get("reason_codes") or [])
+            draft = await tools.question_generation.generate_question(
+                course_id=state["course_id"],
+                node_id=node_id,
+                student_id=state.get("student_id"),
+                purpose="remediation",
+                difficulty="medium",
+                cognitive_snapshot=cognitive_snapshot,
+                six_dimensions=six_dimensions,
+                reason_codes=reason_codes or None,
+            )
+            return {
+                "question_generation_draft": dict(draft) if draft else None,
+                "trace": _trace(state, "load_question_generation", count=1 if draft and draft.get("draft_id") else 0),
+            }
+        except Exception as error:
+            payload = _degrade(state, "question_generation", "QUESTION_GENERATION_PORT_UNAVAILABLE")
+            payload.update({"question_generation_draft": None, "trace": _trace(state, "load_question_generation", error=type(error).__name__)})
             return payload
 
     async def retrieve_evidence(state: TeachingState) -> dict[str, Any]:
@@ -483,7 +550,10 @@ def build_teaching_workflow(tools: TeachingTools):
         return {"citations": citations, "warnings": warnings, "trace": _trace(state, "validate_response", citation_count=len(citations), citations_removed=removed_count)}
 
     async def record_event(state: TeachingState) -> dict[str, Any]:
-        # Audit/context records never carry raw question text, answer text, prompt or full trace.
+        # Audit-domain records never carry raw question text, answer text, prompt or full trace.
+        # Full user/agent messages are persisted in the separate Conversation Domain
+        # (conversation_service) at the TeachingAgent endpoint, not here; this node
+        # only writes the minimized audit/context rows (AGENTS.md §5.1).
         event = {"event_type": "teaching_agent_response", "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"], "concept_id": state.get("current_concept_id"), "teaching_action": state.get("teaching_action"), "warnings": state.get("warnings", []), "errors": state.get("errors", [])}
         replay = {
             "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"],
@@ -526,6 +596,7 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("load_cognitive_state", load_cognitive_state)
     graph.add_node("load_graph_context", load_graph_context)
     graph.add_node("load_question_bank", load_question_bank)
+    graph.add_node("load_question_generation", load_question_generation)
     graph.add_node("retrieve_evidence", retrieve_evidence)
     graph.add_node("research_web", research_web)
     graph.add_node("load_sandbox_context", load_sandbox_context)
@@ -547,7 +618,8 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_edge("load_student_state", "load_cognitive_state")
     graph.add_edge("load_cognitive_state", "load_graph_context")
     graph.add_edge("load_graph_context", "load_question_bank")
-    graph.add_edge("load_question_bank", "retrieve_evidence")
+    graph.add_edge("load_question_bank", "load_question_generation")
+    graph.add_edge("load_question_generation", "retrieve_evidence")
     graph.add_edge("retrieve_evidence", "research_web")
     graph.add_edge("research_web", "load_sandbox_context")
     # 阶段9：在 sandbox 之后插入 experiment/visualization 节点

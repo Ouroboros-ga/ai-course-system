@@ -48,7 +48,7 @@ test('compatibility is terminal and low-resource is selected before Pixi initial
 test('the approved platform role has a complete sprite2d manifest', () => {
   const result = normalizeSprite2dManifest(PLATFORM_SPRITE2D_MANIFEST)
   assert.equal(result.schema, 'sprite2d-manifest/v1')
-  assert.equal(result.label, '平台预制讲师')
+  assert.equal(result.label, '知性讲师')
   assert.equal(result.sprites.mouths.mbp.startsWith('data:image/svg+xml'), true)
   assert.equal(normalizeSprite2dManifest({ schema: 'sprite2d-manifest/v1', sprites: {} }), null)
 })

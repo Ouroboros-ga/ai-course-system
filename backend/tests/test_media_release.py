@@ -323,9 +323,15 @@ class TestTtsGenerationJob:
         assert raw_audio[:4] == b"RIFF"
         assert raw_audio[8:12] == b"WAVE"
 
+        signed_url = get_object_storage().sign_read_url(
+            asset.object_key,
+            scope={"course_id": course.id, "purpose": "media_asset"},
+        )
+        from urllib.parse import urlsplit, parse_qs
+        parsed = urlsplit(signed_url)
         content = client.get(
-            f"{MEDIA}/assets/{asset.object_key}/content",
-            params={"token": _token(teacher_user)},
+            f"{parsed.path}",
+            params={"token": _token(teacher_user), **{key: values[0] for key, values in parse_qs(parsed.query).items()}},
         )
         assert content.status_code == 200, content.text
         assert content.headers["content-type"].startswith("audio/wav")

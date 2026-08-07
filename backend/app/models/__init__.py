@@ -40,6 +40,16 @@ from app.models.progress_model import (
     UnderstandingLevel,
 )
 from app.models.database import get_session, create_tables, engine
+from app.models.conversation_model import (
+    ConversationMessage,
+    CONVERSATION_DATA_POLICY_VERSION,
+    DEFAULT_CONVERSATION_RETENTION_DAYS,
+)
+from app.models.platform_media_preset_model import (
+    PlatformAvatarPreset,
+    PlatformPresetStatus,
+    PlatformVoicePreset,
+)
 
 __all__ = [
     "User",
@@ -80,4 +90,10 @@ __all__ = [
     "get_session",
     "create_tables",
     "engine",
+    "ConversationMessage",
+    "CONVERSATION_DATA_POLICY_VERSION",
+    "DEFAULT_CONVERSATION_RETENTION_DAYS",
+    "PlatformAvatarPreset",
+    "PlatformPresetStatus",
+    "PlatformVoicePreset",
 ]

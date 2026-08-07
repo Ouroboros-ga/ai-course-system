@@ -1,0 +1,286 @@
+"""Service for canonical learning events and deterministic projections."""
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+from typing import Any
+
+from sqlmodel import Session, select
+
+from app.core.time_utils import utcnow_aware
+from app.models.course_build_model import CourseRelease, ReleaseStatus
+from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
+from app.models.access_control_model import CourseMembership, MembershipStatus
+from app.models.cognitive_state_model import CognitiveState, RecommendationRecord
+from app.models.graph_production_model import CourseKnowledgeNode
+from app.models.unified_learning_model import (
+    CourseLearningStatsProjection,
+    ExposureStatus,
+    LearningEvent,
+    LearningEventType,
+    StudentLearningProjection,
+)
+
+COMPLETION_THRESHOLD = 0.8
+
+
+def active_release(session: Session, course_id: int) -> CourseRelease | None:
+    return session.exec(select(CourseRelease).where(
+        CourseRelease.course_id == course_id,
+        CourseRelease.status == ReleaseStatus.PUBLISHED,
+        CourseRelease.is_active == True,
+    )).first()
+
+
+def release_nodes(session: Session, release: CourseRelease) -> list[CourseOutlineNode]:
+    return list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == release.outline_version_id,
+        CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+    ).order_by(CourseOutlineNode.order_index.asc())).all())
+
+
+def _node(session: Session, release: CourseRelease, outline_node_id: str) -> CourseOutlineNode | None:
+    return session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == release.outline_version_id,
+        CourseOutlineNode.outline_node_id == outline_node_id,
+        CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+    )).first()
+
+
+def _ratio(payload: dict[str, Any], event_type: LearningEventType) -> float:
+    if event_type == LearningEventType.EXPLICIT_COMPLETE:
+        return 1.0
+    for key in ("completion_ratio", "progress_ratio", "ratio"):
+        if key in payload:
+            try:
+                return max(0.0, min(1.0, float(payload[key])))
+            except (TypeError, ValueError):
+                pass
+    if "duration" in payload and "position" in payload:
+        try:
+            duration = float(payload["duration"])
+            return max(0.0, min(1.0, float(payload["position"]) / duration)) if duration > 0 else 0.0
+        except (TypeError, ValueError, ZeroDivisionError):
+            pass
+    return 0.0
+
+
+def record_event(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    release_id: str,
+    outline_node_id: str,
+    event_type: LearningEventType,
+    idempotency_key: str,
+    payload: dict[str, Any] | None = None,
+    occurred_at: datetime | None = None,
+    source: str = "learn_page",
+) -> tuple[LearningEvent, StudentLearningProjection]:
+    release = session.exec(select(CourseRelease).where(
+        CourseRelease.course_id == course_id,
+        CourseRelease.release_id == release_id,
+        CourseRelease.status.in_([ReleaseStatus.PUBLISHED, ReleaseStatus.SUPERSEDED, ReleaseStatus.ROLLED_BACK]),
+    )).first()
+    if release is None:
+        raise ValueError("RELEASE_NOT_FOUND")
+    node = _node(session, release, outline_node_id)
+    if node is None:
+        raise ValueError("NODE_NOT_IN_RELEASE")
+    existing = session.exec(select(LearningEvent).where(
+        LearningEvent.student_id == student_id,
+        LearningEvent.idempotency_key == idempotency_key,
+    )).first()
+    if existing:
+        projection = session.exec(select(StudentLearningProjection).where(
+            StudentLearningProjection.student_id == student_id,
+            StudentLearningProjection.course_id == course_id,
+            StudentLearningProjection.release_id == release_id,
+            StudentLearningProjection.outline_node_id == outline_node_id,
+        )).first()
+        if projection is None:
+            projection = _ensure_projection(session, student_id, course_id, release, node)
+        return existing, projection
+    payload = dict(payload or {})
+    occurred_at = occurred_at or utcnow_aware()
+    if occurred_at > utcnow_aware() + timedelta(minutes=5):
+        raise ValueError("OCCURRED_AT_IN_FUTURE")
+    event = LearningEvent(
+        idempotency_key=idempotency_key,
+        student_id=student_id,
+        course_id=course_id,
+        release_id=release_id,
+        outline_node_id=outline_node_id,
+        knowledge_node_key=node.knowledge_graph_node_id,
+        event_type=event_type,
+        occurred_at=occurred_at,
+        payload=payload,
+        source=source,
+    )
+    session.add(event)
+    session.flush()
+    projection = _ensure_projection(session, student_id, course_id, release, node)
+    now = occurred_at
+    if projection.first_accessed_at is None:
+        projection.first_accessed_at = now
+    projection.last_accessed_at = max(projection.last_accessed_at or now, now)
+    projection.visit_count += 1 if event_type == LearningEventType.NODE_OPENED else 0
+    projection.exposure_seconds += max(0, min(60, int(float(payload.get("time_spent_delta", 0) or 0))))
+    projection.current_timestamp = max(projection.current_timestamp, float(payload.get("current_timestamp", 0) or 0))
+    projection.current_page = max(1, int(payload.get("current_page", projection.current_page) or projection.current_page))
+    ratio = _ratio(payload, event_type)
+    projection.completion_ratio = max(projection.completion_ratio, ratio)
+    if event_type == LearningEventType.EXPLICIT_COMPLETE or ratio >= COMPLETION_THRESHOLD:
+        projection.exposure_status = ExposureStatus.COMPLETED
+        projection.completion_ratio = 1.0
+        projection.completion_reason = "explicit" if event_type == LearningEventType.EXPLICIT_COMPLETE else "threshold"
+        projection.completed_at = projection.completed_at or now
+    elif projection.first_accessed_at is not None:
+        projection.exposure_status = ExposureStatus.IN_PROGRESS
+    projection.last_event_id = event.event_id
+    projection.updated_at = utcnow_aware()
+    session.add(projection)
+    return event, projection
+
+
+def _ensure_projection(session: Session, student_id: int, course_id: int, release: CourseRelease, node: CourseOutlineNode) -> StudentLearningProjection:
+    projection = session.exec(select(StudentLearningProjection).where(
+        StudentLearningProjection.student_id == student_id,
+        StudentLearningProjection.course_id == course_id,
+        StudentLearningProjection.release_id == release.release_id,
+        StudentLearningProjection.outline_node_id == node.outline_node_id,
+    )).first()
+    if projection is None:
+        projection = StudentLearningProjection(
+            student_id=student_id,
+            course_id=course_id,
+            release_id=release.release_id,
+            outline_node_id=node.outline_node_id,
+            knowledge_node_key=node.knowledge_graph_node_id,
+        )
+        session.add(projection)
+        session.flush()
+    return projection
+
+
+def student_context(session: Session, *, student_id: int, course_id: int, release_id: str | None = None) -> dict[str, Any]:
+    release = active_release(session, course_id) if release_id is None else session.exec(select(CourseRelease).where(
+        CourseRelease.course_id == course_id,
+        CourseRelease.release_id == release_id,
+    )).first()
+    if release is None:
+        return {"course_id": course_id, "release_id": None, "items": [], "total": 0, "completed": 0}
+    nodes = release_nodes(session, release)
+    projections = session.exec(select(StudentLearningProjection).where(
+        StudentLearningProjection.student_id == student_id,
+        StudentLearningProjection.course_id == course_id,
+        StudentLearningProjection.release_id == release.release_id,
+    )).all()
+    by_id = {p.outline_node_id: p for p in projections}
+    items = []
+    for node in nodes:
+        p = by_id.get(node.outline_node_id)
+        items.append({
+            "outline_node_id": node.outline_node_id,
+            "title": node.title,
+            "node_type": node.node_type.value,
+            "knowledge_node_key": node.knowledge_graph_node_id,
+            "learning": {
+                "status": p.exposure_status.value if p else ExposureStatus.NOT_STARTED.value,
+                "completion_ratio": p.completion_ratio if p else 0.0,
+                "exposure_seconds": p.exposure_seconds if p else 0,
+                "current_timestamp": p.current_timestamp if p else 0.0,
+                "current_page": p.current_page if p else 1,
+                "completion_reason": p.completion_reason if p else None,
+            },
+            "cognition": {"status": "not_available" if not node.knowledge_graph_node_id else "unknown"},
+            "recommendation": {"status": "not_available" if not node.knowledge_graph_node_id else "pending"},
+        })
+    completed = sum(1 for item in items if item["learning"]["status"] == ExposureStatus.COMPLETED.value)
+    latest = max((p for p in projections if p.last_accessed_at), key=lambda p: p.last_accessed_at, default=None)
+    return {
+        "course_id": course_id,
+        "release_id": release.release_id,
+        "items": items,
+        "total": len(items),
+        "completed": completed,
+        "completion_rate": completed / len(items) if items else 0.0,
+        "recent_anchor": {
+            "outline_node_id": latest.outline_node_id,
+            "current_timestamp": latest.current_timestamp,
+            "current_page": latest.current_page,
+            "last_accessed_at": latest.last_accessed_at.isoformat() if latest and latest.last_accessed_at else None,
+        } if latest else None,
+    }
+
+
+def refresh_course_stats(session: Session, *, course_id: int, release_id: str) -> None:
+    release = session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id, CourseRelease.release_id == release_id)).first()
+    if release is None:
+        return
+    nodes = release_nodes(session, release)
+    memberships = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.status == MembershipStatus.ACTIVE)).all()
+    student_ids = [m.user_id for m in memberships if m.role.value == "student" and not m.analytics_excluded]
+    for node in nodes:
+        rows = session.exec(select(StudentLearningProjection).where(
+            StudentLearningProjection.course_id == course_id,
+            StudentLearningProjection.release_id == release_id,
+            StudentLearningProjection.outline_node_id == node.outline_node_id,
+        )).all()
+        counts = {status.value: 0 for status in ExposureStatus}
+        for row in rows:
+            counts[row.exposure_status.value] += 1
+        stat = session.exec(select(CourseLearningStatsProjection).where(
+            CourseLearningStatsProjection.course_id == course_id,
+            CourseLearningStatsProjection.release_id == release_id,
+            CourseLearningStatsProjection.outline_node_id == node.outline_node_id,
+        )).first()
+        if stat is None:
+            stat = CourseLearningStatsProjection(course_id=course_id, release_id=release_id, outline_node_id=node.outline_node_id)
+        stat.student_count = len(student_ids)
+        stat.not_started_count = max(
+            0,
+            len(student_ids)
+            - counts[ExposureStatus.IN_PROGRESS.value]
+            - counts[ExposureStatus.COMPLETED.value],
+        )
+        stat.in_progress_count = counts[ExposureStatus.IN_PROGRESS.value]
+        stat.completed_count = counts[ExposureStatus.COMPLETED.value]
+        mastery_distribution: dict[str, int] = {}
+        unknown_mastery_count = 0
+        low_confidence_count = 0
+        pending_recommendation_count = 0
+        knowledge = None
+        if node.knowledge_graph_node_id:
+            knowledge = session.exec(select(CourseKnowledgeNode).where(
+                CourseKnowledgeNode.course_id == course_id,
+                CourseKnowledgeNode.node_key == node.knowledge_graph_node_id,
+            )).first()
+        if knowledge is not None:
+            states = session.exec(select(CognitiveState).where(
+                CognitiveState.course_id == course_id,
+                CognitiveState.node_id == knowledge.id,
+                CognitiveState.is_latest == True,
+                CognitiveState.student_id.in_(student_ids) if student_ids else CognitiveState.student_id == -1,
+            )).all()
+            for state in states:
+                level = state.mastery_level or "unknown"
+                mastery_distribution[level] = mastery_distribution.get(level, 0) + 1
+                if level == "unknown":
+                    unknown_mastery_count += 1
+                if state.evidence_confidence is None or state.evidence_confidence < 0.5:
+                    low_confidence_count += 1
+            recommendations = session.exec(select(RecommendationRecord).where(
+                RecommendationRecord.course_id == course_id,
+                RecommendationRecord.knowledge_node_id == knowledge.id,
+                RecommendationRecord.consumed == False,
+                RecommendationRecord.student_id.in_(student_ids) if student_ids else RecommendationRecord.student_id == -1,
+            )).all()
+            pending_recommendation_count = len({item.student_id for item in recommendations})
+        unknown_mastery_count += max(0, len(student_ids) - sum(mastery_distribution.values()))
+        stat.mastery_distribution = mastery_distribution
+        stat.unknown_mastery_count = unknown_mastery_count
+        stat.low_confidence_count = low_confidence_count
+        stat.pending_recommendation_count = pending_recommendation_count
+        stat.computed_at = utcnow_aware()
+        session.add(stat)

@@ -36,7 +36,7 @@ export function deleteAsset(assetId) {
 
 // 获取素材预览URL
 export function getAssetPreviewUrl(assetId) {
-  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1'
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
   return `${baseUrl}/asset/${assetId}/preview`
 }
 

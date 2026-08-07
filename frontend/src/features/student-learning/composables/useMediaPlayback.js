@@ -32,6 +32,7 @@ export function useMediaPlayback(courseId) {
   const pptTimeline = computed(() => manifest.value.pptTimeline)
   const ppt = computed(() => manifest.value.ppt)
   const avatarCues = computed(() => manifest.value.avatarCues)
+  const avatarManifestUrl = computed(() => manifest.value.avatarManifestUrl)
   const digitalHumanManifest = computed(() => manifest.value.digitalHumanManifest)
 
   function addMediaAccessToken(value) {
@@ -51,6 +52,7 @@ export function useMediaPlayback(courseId) {
               audioUrl: withLocalAccessToken(item.audioUrl),
               subtitleManifestUrl: withLocalAccessToken(item.subtitleManifestUrl),
               avatarCuesUrl: withLocalAccessToken(item.avatarCuesUrl),
+              avatarManifestUrl: withLocalAccessToken(item.avatarManifestUrl),
               // `useAvatarPlayback` consumes the normalized nested object,
               // rather than the compatibility `avatarCuesUrl` field.  Keep
               // its signed local route authenticated too; otherwise audio
@@ -94,6 +96,7 @@ export function useMediaPlayback(courseId) {
             manifestUrl: withLocalAccessToken(value.digitalHumanManifest.manifestUrl),
           }
         : null,
+      avatarManifestUrl: withLocalAccessToken(value.avatarManifestUrl),
     }
   }
 
@@ -136,6 +139,7 @@ export function useMediaPlayback(courseId) {
     pptTimeline,
     ppt,
     avatarCues,
+    avatarManifestUrl,
     digitalHumanManifest,
     load,
     resolvePptPage,

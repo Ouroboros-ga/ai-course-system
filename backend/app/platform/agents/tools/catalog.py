@@ -118,6 +118,12 @@ def build_default_catalog() -> ToolCatalog:
             name=name, risk=ToolRisk.MEDIUM,
             description=f"{name} audit/context recording tool",
         ))
+    # 出题工具（MEDIUM risk）：写 question_generation_drafts 草稿，须经教师审核 approve
+    catalog.register(ToolDescriptor(
+        name="question_generation", risk=ToolRisk.MEDIUM,
+        default_enabled=True,
+        description="AI 出题工具：依据知识点/认知/提问信号生成草稿，教师审核后进题库",
+    ))
     # High-risk tools that trigger the teacher safety valve
     for name in ("web_research", "trigger_experiment", "change_topic"):
         catalog.register(ToolDescriptor(

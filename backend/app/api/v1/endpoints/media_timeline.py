@@ -177,6 +177,9 @@ async def register_asset(
 @router.get("/assets/{object_key:path}/content")
 async def get_asset_content(
     object_key: str,
+    exp: int = Query(..., ge=1),
+    sig: str = Query(..., min_length=8, max_length=128),
+    scope: str = Query(..., min_length=3, max_length=1000),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -185,30 +188,59 @@ async def get_asset_content(
     本地 Provider 由应用安全地流式返回；远程 Provider 在完成课程权限校验后
     返回短期预签名 URL。数据库中的 object_key 在迁移前后保持不变。
     """
+    storage = get_object_storage()
+    # Verify the signed URL before looking up or returning the object.  The
+    # canonical scope is included in local signed URLs and is part of the
+    # signature; an omitted/modified purpose or course scope therefore fails
+    # closed instead of being treated as an unsigned asset request.
+    if not isinstance(storage, LocalStorageProvider):
+        raise HTTPException(status_code=400, detail="远程对象存储应直接使用 presigned URL")
+    signed_scope = _parse_scope(scope)
+    if not signed_scope.get("course_id") or not signed_scope.get("purpose"):
+        raise HTTPException(status_code=403, detail="媒体签名 scope 缺少课程或用途")
+    if not storage.verify_read_signature(
+        object_key,
+        exp,
+        sig,
+        signed_scope,
+    ):
+        raise HTTPException(status_code=403, detail="媒体签名无效或已过期")
+    try:
+        storage._safe_full_path(object_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="object_key 不安全") from exc
+
     asset = session.exec(
         select(MediaAsset).where(MediaAsset.object_key == object_key)
     ).first()
     if asset is None or asset.course_id is None:
         raise HTTPException(status_code=404, detail="媒体资产不存在")
+    if signed_scope.get("course_id") not in {None, "", str(asset.course_id)}:
+        raise HTTPException(status_code=403, detail="媒体签名课程范围不匹配")
     require_course_permission(
         session, current_user, asset.course_id, "course.content.read"
     )
-    storage = get_object_storage()
     try:
-        if isinstance(storage, LocalStorageProvider):
-            file_path = storage._safe_full_path(object_key)
-            if not Path(file_path).is_file():
-                raise FileNotFoundError(object_key)
-            return FileResponse(path=file_path, media_type=asset.mime_type or None, filename=None)
-        return RedirectResponse(
-            url=storage.sign_read_url(
-                object_key,
-                scope={"course_id": asset.course_id, "user_id": current_user["user_id"], "purpose": "media"},
-            ),
-            status_code=307,
-        )
+        file_path = storage._safe_full_path(object_key)
+        if not Path(file_path).is_file():
+            raise FileNotFoundError(object_key)
+        return FileResponse(path=file_path, media_type=asset.mime_type or None, filename=None)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail="媒体文件不存在") from exc
+
+
+def _parse_scope(raw: str) -> dict[str, str]:
+    if not raw:
+        return {}
+    result: dict[str, str] = {}
+    for pair in raw.split(";"):
+        if "=" not in pair:
+            raise HTTPException(status_code=403, detail="媒体签名 scope 无效")
+        key, value = pair.split("=", 1)
+        if not key or key in result:
+            raise HTTPException(status_code=403, detail="媒体签名 scope 无效")
+        result[key] = value
+    return result
 
 
 @router.get("/assets/{object_key:path}")

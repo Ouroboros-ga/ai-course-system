@@ -1,4 +1,4 @@
-﻿"""
+"""
 分屏视频播放器API接口
 提供学生端分屏播放所需的数据接口，包括：
 - 播放器初始化数据（课程信息、节点列表、视频URL等）
@@ -23,8 +23,9 @@ from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVers
 from app.models.access_control_model import CourseRole
 from app.services.course_build_service import course_release_service
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
-from app.models.progress_model import LearningProgress, LearningStatus
+from app.models.progress_model import LearningProgress, LearningStatus, NodeProgress
 from app.models.mapping_model import KnowledgePageMap
+from app.models.unified_learning_model import StudentLearningProjection, ExposureStatus
 from app.core.config import settings
 from app.services.course_access_service import CourseAccessContext, course_permission, require_course_permission
 
@@ -36,6 +37,7 @@ logger = logging.getLogger(__name__)
 class PlayerInitData(BaseModel):
     """播放器初始化数据响应模型"""
     course_id: int
+    release_id: Optional[str] = None
     course_title: str
     script_id: int
     total_duration: float = Field(description="总时长(秒)")
@@ -71,6 +73,10 @@ class ProgressSaveRequest(BaseModel):
     current_timestamp: float = Field(..., description="当前播放时间(秒)")
     current_page: int = Field(1, description="当前PPT页码")
     completed_nodes: List[int] = Field(default=[], description="已完成节点ID列表")
+    # 听课时长埋点：本次保存周期内新增的听课秒数（仅 playing 时累计）。
+    # 后端累加到 NodeProgress.time_spent，供认知引擎 evidence_confidence 佐证使用。
+    # 上限 60 秒，避免后台标签页长时间未保存造成的一次性跳变。
+    time_spent_delta: float = Field(default=0.0, ge=0.0, le=60.0, description="本次保存周期新增听课时长(秒)")
 
 
 def _unavailable_player_data(course: Course, message: str) -> PlayerInitData:
@@ -107,6 +113,7 @@ def _versioned_player_data(
     page_mappings_snapshot: Optional[dict] = None,
     content_status: str = "ready",
     content_message: Optional[str] = None,
+    release_id: Optional[str] = None,
 ) -> PlayerInitData:
     """Build learner data from an immutable release or an authorized draft.
 
@@ -142,7 +149,7 @@ def _versioned_player_data(
         page_start = page_range.split("-")[0]
         page_end = page_range.split("-")[-1]
         nodes_data.append({
-            "id": index + 1,
+            "id": outline_node.outline_node_id,
             "outline_node_id": outline_node.outline_node_id,
             "node_index": index,
             "node_type": outline_node.node_type.value,
@@ -159,12 +166,55 @@ def _versioned_player_data(
             "status": "preview" if content_status == "preview" else "published",
         })
 
-    progress = session.exec(select(LearningProgress).where(
-        LearningProgress.user_id == user_id,
-        LearningProgress.course_id == course.id,
-    )).first()
-    saved_progress = None
-    if progress:
+    # A released learner page restores its anchor only from the canonical
+    # release-scoped projection.  The legacy LearningProgress row is kept for
+    # the old direct-publication/teacher-preview path, but must not influence a
+    # new release's learner state.
+    progress = None
+    latest_projection = None
+    if release_id:
+        latest_projection = session.exec(
+            select(StudentLearningProjection)
+            .where(
+                StudentLearningProjection.student_id == user_id,
+                StudentLearningProjection.course_id == course.id,
+                StudentLearningProjection.release_id == release_id,
+                StudentLearningProjection.last_accessed_at.is_not(None),
+            )
+            .order_by(StudentLearningProjection.last_accessed_at.desc())
+        ).first()
+    else:
+        progress = session.exec(select(LearningProgress).where(LearningProgress.user_id == user_id, LearningProgress.course_id == course.id)).first()
+    completed_nodes: list[str] = []
+    if release_id:
+        rows = session.exec(select(StudentLearningProjection).where(
+            StudentLearningProjection.student_id == user_id,
+            StudentLearningProjection.course_id == course.id,
+            StudentLearningProjection.release_id == release_id,
+            StudentLearningProjection.exposure_status == ExposureStatus.COMPLETED,
+        )).all()
+        completed_nodes = [row.outline_node_id for row in rows]
+    saved_progress = {
+        "current_node_id": None,
+        "current_node_index": 0,
+        "current_timestamp": 0.0,
+        "current_page": 1,
+        "completion_rate": 0.0,
+        "completed_node_ids": completed_nodes,
+        "last_accessed_at": None,
+    }
+    if latest_projection is not None:
+        current_index = next((i for i, item in enumerate(nodes_data) if item["outline_node_id"] == latest_projection.outline_node_id), 0)
+        saved_progress = {
+            "current_node_id": latest_projection.outline_node_id,
+            "current_node_index": current_index,
+            "current_timestamp": latest_projection.current_timestamp,
+            "current_page": latest_projection.current_page,
+            "completion_rate": 0.0,
+            "last_accessed_at": latest_projection.last_accessed_at.isoformat() if latest_projection.last_accessed_at else None,
+            "completed_node_ids": completed_nodes,
+        }
+    elif progress:
         saved_progress = {
             "current_node_id": progress.current_node_id,
             "current_node_index": progress.current_node_index,
@@ -172,9 +222,11 @@ def _versioned_player_data(
             "current_page": progress.current_page,
             "completion_rate": progress.completion_rate,
             "last_accessed_at": progress.last_accessed_at.isoformat() if progress.last_accessed_at else None,
+            "completed_node_ids": completed_nodes,
         }
     return PlayerInitData(
         course_id=course.id,
+        release_id=release_id,
         course_title=course.title,
         script_id=script.id if script and script.id else 0,
         total_duration=0,
@@ -248,6 +300,7 @@ async def get_player_init_data(
                     outline=draft_outline,
                     script=draft_script,
                     content_status="preview",
+                    release_id=None,
                     content_message="教师预览：正在使用未发布的课程草稿。",
                 )
 
@@ -279,6 +332,7 @@ async def get_player_init_data(
                 outline=frozen_outline,
                 script=frozen_script,
                 page_mappings_snapshot=frozen_release.page_mappings_snapshot,
+                release_id=frozen_release.release_id,
             )
 
         # Legacy direct-publication compatibility path. New courses always
@@ -327,6 +381,7 @@ async def get_player_init_data(
                 user_id=user_id,
                 outline=published_outline,
                 script=published_script,
+                release_id=None,
             )
 
         # 3. 查询所有脚本节点（按node_index排序）
@@ -683,6 +738,30 @@ async def save_player_progress(
         progress.status = LearningStatus.IN_PROGRESS
         progress.last_accessed_at = utcnow_aware()
         progress.updated_at = utcnow_aware()
+
+        # 听课时长埋点：把本次保存周期新增的听课秒数累加到当前节点的 NodeProgress.time_spent。
+        # 认知引擎 _node_watch_seconds 读取该字段作为 evidence_confidence 的佐证。
+        # current_node_id 为空或 delta 为 0 时跳过，避免空写。
+        if request.current_node_id is not None and request.time_spent_delta > 0:
+            node_progress = session.exec(
+                select(NodeProgress).where(
+                    NodeProgress.progress_id == progress.id,
+                    NodeProgress.node_id == request.current_node_id,
+                )
+            ).first()
+            if node_progress is None:
+                # node_index 取节点序号；无法解析时回退 0，仅用于排序展示
+                script_node = session.get(ScriptNode, request.current_node_id)
+                node_progress = NodeProgress(
+                    progress_id=progress.id,
+                    node_id=request.current_node_id,
+                    node_index=script_node.node_index if script_node else 0,
+                    first_accessed_at=utcnow_aware(),
+                )
+                session.add(node_progress)
+            node_progress.time_spent = int(node_progress.time_spent or 0) + int(round(request.time_spent_delta))
+            node_progress.last_timestamp = request.current_timestamp
+            node_progress.last_accessed_at = utcnow_aware()
 
         session.commit()
         session.refresh(progress)

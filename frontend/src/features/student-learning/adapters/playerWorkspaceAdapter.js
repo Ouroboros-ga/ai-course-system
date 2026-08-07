@@ -148,7 +148,11 @@ export function normalizePlayerData(rawResponse) {
         saved.completion_rate ?? saved.completionRate
       ),
       lastAccessedAt: saved.last_accessed_at ?? saved.lastAccessedAt ?? null,
+      completedNodeIds: Array.isArray(saved.completed_node_ids ?? saved.completedNodeIds)
+        ? (saved.completed_node_ids ?? saved.completedNodeIds)
+        : [],
     },
+    releaseId: raw.release_id ?? raw.releaseId ?? null,
   }
 }
 
@@ -158,7 +162,7 @@ export function withAccessToken(url, token) {
 }
 
 export function buildProgressPayload(state) {
-  return {
+  const payload = {
     course_id: numberOr(state.courseId),
     current_node_id: state.currentNodeId ?? null,
     current_timestamp: Math.max(0, numberOr(state.currentTime)),
@@ -166,5 +170,12 @@ export function buildProgressPayload(state) {
     completed_nodes: Array.isArray(state.completedNodes)
       ? state.completedNodes.filter(id => id !== null && id !== undefined)
       : [],
+    // 听课时长埋点：本次保存周期内新增的听课秒数（仅 playing 时累计）。
+    // 后端累加到 NodeProgress.time_spent，供认知引擎 evidence_confidence 佐证。
+    // 上限 60 秒，与后端校验一致，避免后台标签页长时间未保存的跳变。
   }
+  if (state.timeSpentDelta !== undefined && state.timeSpentDelta !== null) {
+    payload.time_spent_delta = clamp(numberOr(state.timeSpentDelta, 0), 0, 60)
+  }
+  return payload
 }

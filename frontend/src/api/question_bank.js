@@ -84,10 +84,13 @@ export function searchCourseQuestions(courseId, data) {
  * @param {number} courseId
  * @param {number} questionId
  * @param {string|Object} studentAnswer
+ * @param {Object} [options]
+ * @param {boolean} [options.hintUsed=false] - 作答前是否查看过提示（写入 cognitive_context，供认知引擎计算 hint_dependency）
  */
-export function submitAttempt(courseId, questionId, studentAnswer) {
+export function submitAttempt(courseId, questionId, studentAnswer, options = {}) {
   return request.post(`/question-bank/course/${courseId}/${questionId}/attempt`, {
     student_answer: studentAnswer,
+    hint_used: Boolean(options.hintUsed),
   })
 }
 
@@ -143,4 +146,40 @@ export function updateMappingStatus(courseId, mappingId, data) {
  */
 export function getMappingVersions(courseId, mappingId) {
   return request.get(`/question-mapping/course/${courseId}/${mappingId}/versions`)
+}
+
+// ── AI 出题草稿审核 ──────────────────────────────────────
+// 对接 /api/v1/practice/course/{courseId}/drafts 端点。
+// 教育智能体生成的题目先入 question_generation_drafts 表，经教师 approve 后升级为正式 QuestionBankItem。
+
+/**
+ * AI 生成草稿列表（教师审核用）。
+ * GET /practice/course/{courseId}/drafts
+ * @param {number} courseId
+ * @param {Object} [params] - { status: 'draft'|'approved'|'rejected'|'stale', node_id: number }
+ */
+export function listDrafts(courseId, params = {}) {
+  return request.get(`/practice/course/${courseId}/drafts`, { params })
+}
+
+/**
+ * 审核通过 AI 草稿：升级为正式题库题目。
+ * POST /practice/course/{courseId}/drafts/{draftId}/approve
+ * @param {number} courseId
+ * @param {string} draftId
+ * @param {Object} [data] - { review_comment: string, publish_status: 'published'|'draft' }（默认 published）
+ */
+export function approveDraft(courseId, draftId, data = {}) {
+  return request.post(`/practice/course/${courseId}/drafts/${draftId}/approve`, data)
+}
+
+/**
+ * 拒绝 AI 草稿。
+ * POST /practice/course/{courseId}/drafts/{draftId}/reject
+ * @param {number} courseId
+ * @param {string} draftId
+ * @param {Object} [data] - { review_comment: string }
+ */
+export function rejectDraft(courseId, draftId, data = {}) {
+  return request.post(`/practice/course/${courseId}/drafts/${draftId}/reject`, data)
 }

@@ -21,7 +21,12 @@ from app.models.media_release_model import (
     MediaReleaseStatus,
 )
 from app.services.object_storage import get_object_storage
-from app.services.tts_provider import TtsSynthesisRequest, get_tts_provider
+from app.services.platform_media_preset_service import (
+    resolve_avatar_preset,
+    resolve_voice_preset,
+)
+from app.services.tts_provider import TtsSynthesisRequest
+from app.services.stage8_provider_runtime import get_stage8_tts_provider
 
 
 def _script_hash(node: TeachingScriptNode) -> str:
@@ -62,8 +67,16 @@ def _server_provider(*, requested_key: str = "", requested_version: str = ""):
     UI may echo the health endpoint's provider identity solely to prevent a
     stale confirmation, but may not use the batch API as a provider selector.
     """
-    provider = get_tts_provider(None, strict=True)
-    if requested_key and requested_key != provider.provider_key:
+    try:
+        provider = get_stage8_tts_provider()
+    except Exception as exc:
+        reject_validation_failed(str(exc))
+    accepted_keys = {provider.provider_key}
+    if provider.provider_key == "fake_tts":
+        accepted_keys.update({"fake", "fake_tts"})
+    elif provider.provider_key == "volcengine_doubao_tts":
+        accepted_keys.update({"doubao", "doubao_tts", "volcengine_doubao_tts"})
+    if requested_key and requested_key not in accepted_keys:
         reject_validation_failed("当前媒体批次只能使用服务器已配置的 TTS Provider")
     if requested_version and requested_version != provider.provider_version:
         reject_validation_failed("页面语音服务版本已变更，请重新核算批量计划")
@@ -255,7 +268,9 @@ def refresh_batch_status(
 
 
 def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | None = None,
-                     provider_key: str = "", provider_version: str = "", voice_id: str = "default") -> dict[str, Any]:
+                     provider_key: str = "", provider_version: str = "", voice_id: str = "default",
+                     voice_preset_id: str = "", voice_preset_version: str = "",
+                     avatar_preset_id: str = "", avatar_preset_version: str = "") -> dict[str, Any]:
     # The browser cannot choose an arbitrary provider voice.  ``default`` is
     # an opaque server-side alias for the configured platform voice; rejecting
     # other values keeps cache/price estimates and actual generation aligned.
@@ -287,6 +302,26 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
     provider = _server_provider(requested_key=provider_key, requested_version=provider_version)
     provider_key = provider.provider_key
     provider_version = provider.provider_version
+    voice_preset = resolve_voice_preset(
+        session,
+        preset_id=voice_preset_id,
+        version=voice_preset_version,
+        active_tts_provider_key=provider_key,
+    )
+    avatar_preset = resolve_avatar_preset(
+        session,
+        preset_id=avatar_preset_id,
+        version=avatar_preset_version,
+    )
+    # Calls from the pre-P5.1 single-node/batch API may omit a preset.  Keep
+    # their historical ``v1`` cache namespace readable so old immutable audio
+    # can be reused without resynthesis.  The media builder always sends the
+    # selected preset identity, so new batches use the strict preset-bound key.
+    voice_resource_version = (
+        f"preset:{voice_preset.preset_id}@{voice_preset.version}"
+        if voice_preset_id
+        else "v1"
+    )
     latest = _latest_jobs(session, course_id)
     prior_items = _latest_release_items(session, course_id)
     items = []
@@ -296,8 +331,8 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         text = node.content or ""
         char_count = len(text)
         total_chars += char_count
-        req = TtsSynthesisRequest(script_text=text, voice_id=voice_id, course_id=course_id,
-                                  resource_version="v1", idempotency_key=f"plan:{node.id}")
+        req = TtsSynthesisRequest(script_text=text, voice_id="default", course_id=course_id,
+                                  resource_version=voice_resource_version, idempotency_key=f"plan:{node.id}")
         cache_key = provider.cache_key(req)
         cached = _find_cached_job(
             latest.get(int(node.id), []) if node.id else [],
@@ -355,7 +390,22 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         reject_validation_failed(f"单批预计计费字符数不能超过 {max_chars}")
     return {
         "course_id": course_id, "provider_key": provider_key, "provider_version": provider_version,
-        "voice_id": "default", "max_nodes": max_nodes, "max_chars": max_chars,
+        "voice_id": "default", "voice_resource_version": voice_resource_version,
+        "voice_preset": {
+            "preset_id": voice_preset.preset_id,
+            "version": voice_preset.version,
+            "display_name": voice_preset.display_name,
+            "provider_key": voice_preset.provider_key,
+            "content_hash": voice_preset.content_hash,
+        },
+        "avatar_preset": {
+            "preset_id": avatar_preset.preset_id,
+            "version": avatar_preset.version,
+            "display_name": avatar_preset.display_name,
+            "provider_key": avatar_preset.provider_key,
+            "content_hash": avatar_preset.content_hash,
+        },
+        "max_nodes": max_nodes, "max_chars": max_chars,
         "node_count": len(items), "total_chars": total_chars,
         "cache_hit_count": cache_hits, "billable_chars": billable_chars,
         "items": items, "can_confirm": bool(items),
@@ -382,11 +432,27 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
         reject_validation_failed("至少选择一个有讲稿的知识点")
     latest = _latest_jobs(session, course_id)
     max_version = session.exec(select(func.max(MediaRelease.version_number)).where(MediaRelease.course_id == course_id)).one() or 0
+    voice_preset = dict(plan.get("voice_preset") or {})
+    avatar_preset = dict(plan.get("avatar_preset") or {})
+    if not voice_preset.get("preset_id") or not avatar_preset.get("preset_id"):
+        reject_validation_failed("批量媒体计划缺少已解析的平台音色或数字人角色")
     release = MediaRelease(course_id=course_id, version_number=int(max_version) + 1,
                             label=label or "批量媒体草稿", status=MediaReleaseStatus.DRAFT,
-                            avatar_preset_id="platform-instructor-v1", notes="批量媒体建设草稿",
+                            notes="批量媒体建设草稿",
                             created_by=created_by,
                             release_metadata={"audio_playlist_mode": True, "audio_playlist_schema": "audio-playlist/v1"})
+    # Freeze the concrete preset/version selected in this server-recomputed
+    # plan.  Do not seed a legacy avatar id here: doing so would make a batch
+    # appear bound to a role before its registry snapshot is validated.
+    release.voice_preset_id = str(voice_preset["preset_id"])
+    release.voice_preset_version = str(voice_preset["version"])
+    release.avatar_preset_id = str(avatar_preset["preset_id"])
+    release.avatar_preset_version = str(avatar_preset["version"])
+    release.release_metadata = {
+        **(release.release_metadata or {}),
+        "voice_preset": voice_preset,
+        "avatar_preset": avatar_preset,
+    }
     session.add(release); session.flush()
     batch = MediaBuildBatch(course_id=course_id, release_id=release.release_id, created_by=created_by,
                             status=MediaBuildBatchStatus.CONFIRMED, idempotency_key=idempotency_key,
@@ -394,6 +460,14 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
                             estimate={k: plan.get(k) for k in ("node_count", "total_chars", "cache_hit_count", "billable_chars")},
                              voice_config={"voice_id": "default", "provider_key": plan.get("provider_key"), "provider_version": plan.get("provider_version")},
                              confirmed_at=utcnow_aware())
+    batch.voice_preset_id = str(voice_preset["preset_id"])
+    batch.voice_preset_version = str(voice_preset["version"])
+    batch.avatar_preset_id = str(avatar_preset["preset_id"])
+    batch.avatar_preset_version = str(avatar_preset["version"])
+    batch.voice_config = {
+        **(batch.voice_config or {}),
+        "resource_version": plan.get("voice_resource_version"),
+    }
     session.add(batch); session.flush()
     release.release_metadata = {
         **(release.release_metadata or {}),
@@ -411,7 +485,8 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
         if item["cache_hit"]:
             request = TtsSynthesisRequest(
                 script_text=(session.get(TeachingScriptNode, item["node_id"]).content or ""),
-                voice_id="default", course_id=course_id, resource_version="v1",
+                voice_id="default", course_id=course_id,
+                resource_version=str(plan.get("voice_resource_version") or "v1"),
                 idempotency_key=f"batch:{batch.batch_id}:{item['node_id']}",
             )
             provider = _server_provider(

@@ -26,7 +26,7 @@ from __future__ import annotations
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
 from .experiment import ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
-from .research import QuestionBankPort, WebResearchPort
+from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
@@ -47,6 +47,7 @@ __all__ = [
     "WebResearchPort",
     "CognitionPort",
     "QuestionBankPort",
+    "QuestionGenerationPort",
     "ToolGovernancePort",
     "TeacherSafetyValvePort",
     "ExperimentPort",

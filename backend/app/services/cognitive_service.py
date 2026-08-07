@@ -1,4 +1,4 @@
-﻿"""G2 六维认知状态计算引擎
+"""G2 六维认知状态计算引擎
 
 从 QuestionAttempt 记录计算六维认知状态，复用已有的：
   - RuleBasedMasteryProvider 的加权计算思路
@@ -26,6 +26,7 @@ from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
     LearningEvidenceRecord,
+    QuestionDepthRecord,
     COGNITIVE_POLICY_VERSION,
 )
 from app.models.question_bank_model import QuestionAttempt, QuestionBankItem
@@ -40,6 +41,13 @@ MIN_SAMPLE_FOR_CONFIDENCE = 5
 MIN_SAMPLE_FOR_CONFUSION = 3
 MIN_SAMPLE_FOR_HINT = 2
 PERFORMANCE_WINDOW_SIZE = 5
+# 提问深度：LLM 标定记录的最少条数，不足时保持 unknown（不武断判断）
+MIN_SAMPLE_FOR_INQUIRY = 2
+INQUIRY_WINDOW_SIZE = 10
+# 观看时长佐证：该节点累计观看达到阈值时小幅提升证据置信度（不直接进入表现分）
+MIN_WATCH_SECONDS_FOR_BOOST = 300  # 5 分钟
+WATCH_TIME_CONFIDENCE_BOOST = 0.05
+MAX_EVIDENCE_CONFIDENCE = 0.95
 
 
 def _attempt_ref(attempt: QuestionAttempt) -> str:
@@ -145,7 +153,7 @@ def compute_cognitive_state(
     else:
         reason_codes.append("no_attempt_data")
 
-    # 3. 计算 evidence_confidence（基于样本量）
+    # 3. 计算 evidence_confidence（基于样本量 + 观看时长佐证）
     evidence_confidence: Optional[float] = None
     if total_attempts >= MIN_SAMPLE_FOR_CONFIDENCE:
         evidence_confidence = 0.85
@@ -153,7 +161,18 @@ def compute_cognitive_state(
     elif total_attempts > 0:
         evidence_confidence = 0.3
         reason_codes.append("low_sample_size")
-    # else: None = unknown
+    # 观看时长佐证：该节点累计观看秒数达标时小幅提升置信度，不直接进入表现分。
+    watch_seconds = _node_watch_seconds(session, student_id, course_id, node_id)
+    if (
+        evidence_confidence is not None
+        and watch_seconds is not None
+        and watch_seconds >= MIN_WATCH_SECONDS_FOR_BOOST
+    ):
+        evidence_confidence = min(
+            evidence_confidence + WATCH_TIME_CONFIDENCE_BOOST,
+            MAX_EVIDENCE_CONFIDENCE,
+        )
+        reason_codes.append("confidence_boosted_by_watch_time")
 
     # 4. 计算 confusion_risk（重复错误 + 纠正频率）
     confusion_risk: Optional[float] = None
@@ -184,10 +203,29 @@ def compute_cognitive_state(
         _persist_evidence(session, evidence, question_attempt_id=None)
         reason_codes.append("confusion_from_error_pattern")
 
-    # 5. inquiry_depth 只能来自结构化语义标签。提问次数不是深度证据；
-    # 当前生产事件尚未携带冻结的语义标签，因此必须保持 unknown。
+    # 5. 计算 inquiry_depth（来自教学 Agent 实时 LLM 标定的提问深度记录）
+    #    每次提问由 LLM 标定一条 QuestionDepthRecord；此处取最近窗口的均值。
+    #    样本不足时保持 unknown，不武断判断提问深度。
     inquiry_depth: Optional[float] = None
-    reason_codes.append("inquiry_unknown_without_semantic_evidence")
+    depth_stmt = select(QuestionDepthRecord).where(
+        QuestionDepthRecord.student_id == student_id,
+        QuestionDepthRecord.course_id == course_id,
+    )
+    if node_id:
+        depth_stmt = depth_stmt.where(QuestionDepthRecord.node_id == node_id)
+    else:
+        depth_stmt = depth_stmt.where(QuestionDepthRecord.node_id.is_(None))
+    depth_stmt = depth_stmt.order_by(
+        QuestionDepthRecord.created_at.desc()
+    ).limit(INQUIRY_WINDOW_SIZE)
+    depth_records = list(session.exec(depth_stmt).all())
+    if len(depth_records) >= MIN_SAMPLE_FOR_INQUIRY:
+        inquiry_depth = sum(r.depth_score for r in depth_records) / len(depth_records)
+        reason_codes.append("inquiry_depth_from_llm_calibration")
+    elif depth_records:
+        reason_codes.append("inquiry_insufficient_samples")
+    else:
+        reason_codes.append("inquiry_no_calibration_records")
 
     # 6. 计算 hint_dependency（提示依赖度）
     # 从 cognitive_context 中读取 hint 使用情况
@@ -283,6 +321,66 @@ def get_latest_cognitive_state(
     else:
         stmt = stmt.where(CognitiveState.node_id.is_(None))
     return session.exec(stmt).first()
+
+
+def record_question_depth(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    node_id: Optional[int],
+    depth_score: float,
+    trace_id: str = "",
+    depth_label: str = "",
+    source: str = "teaching_agent",
+) -> QuestionDepthRecord:
+    """写入一条 LLM 标定的提问深度记录（追加型）。
+
+    由教学 Agent 在回答学生问题时随请求实时调用；只保存深度分数与标签，
+    不保存原始问题全文（数据最小化）。失败不抛出：深度标定记录缺失不应
+    影响学生提问的正常回答。
+    """
+    record = QuestionDepthRecord(
+        student_id=student_id,
+        course_id=course_id,
+        node_id=node_id,
+        depth_score=max(0.0, min(float(depth_score), 1.0)),
+        depth_label=depth_label,
+        trace_id=trace_id,
+        source=source,
+    )
+    session.add(record)
+    session.commit()
+    session.refresh(record)
+    return record
+
+
+def _node_watch_seconds(
+    session: Session,
+    student_id: int,
+    course_id: int,
+    node_id: Optional[int],
+) -> Optional[int]:
+    """读取该节点累计观看时长（秒）。
+
+    从 NodeProgress.time_spent 汇总（前端上报的听课时间）。node_id 为空或
+    无记录时返回 None，表示无法确认观看时长（不参与置信度佐证）。
+    """
+    if node_id is None:
+        return None
+    stmt = (
+        select(NodeProgress)
+        .join(LearningProgress, NodeProgress.progress_id == LearningProgress.id)
+        .where(
+            LearningProgress.user_id == student_id,
+            LearningProgress.course_id == course_id,
+            NodeProgress.node_id == node_id,
+        )
+    )
+    progresses = list(session.exec(stmt).all())
+    if not progresses:
+        return None
+    return sum(int(np.time_spent or 0) for np in progresses)
 
 
 def _create_evidence(

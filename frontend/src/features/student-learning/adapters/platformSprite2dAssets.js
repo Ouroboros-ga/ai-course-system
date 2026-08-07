@@ -14,8 +14,8 @@ const mouth = shape => svg(`<path d="${shape}" fill="#8B3A3A"/>`, '0 0 100 56')
 export const PLATFORM_SPRITE2D_MANIFEST = Object.freeze({
   schema: 'sprite2d-manifest/v1',
   provider: 'platform_sprite2d',
-  version: 'platform-instructor-v1',
-  label: '平台预制讲师',
+  version: 'platform-instructor-v2@1.0.0',
+  label: '知性讲师',
   stage: { width: 480, height: 480 },
   expressions: ['neutral', 'warm', 'attentive'],
   gestures: ['rest', 'emphasis'],

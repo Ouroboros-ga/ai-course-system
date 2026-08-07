@@ -38,6 +38,7 @@ const navItems = computed(() => {
   const base = [
     { key: 'overview', label: '概览', to: `/app/course/${courseId.value}/overview`, enabled: true },
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
+    { key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: allowed.value['analytics.view_course'] },
     { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
     { key: 'experiments', label: '实验任务', to: `/app/course/${courseId.value}/experiments`, enabled: true },
   ]
@@ -53,6 +54,7 @@ const navItems = computed(() => {
 
 const activeKey = computed(() => {
   if (route.path.endsWith('/learn')) return 'learn'
+  if (route.path.includes('/analytics')) return 'analytics'
   if (route.path.includes('/knowledge')) return 'knowledge'
   if (route.path.includes('/visualize')) return 'learn'
   if (route.path.includes('/build')) return 'build'

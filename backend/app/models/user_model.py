@@ -11,9 +11,10 @@ from app.core.time_utils import utcnow_aware
 
 
 class UserRole(str, Enum):
-    TEACHER = "teacher"
-    STUDENT = "student"
+    USER = "user"
     ADMIN = "admin"
+    STUDENT = "user"
+    TEACHER = "user"
 
 
 class User(SQLModel, table=True):
@@ -70,12 +71,13 @@ class User(SQLModel, table=True):
 
     # --- 业务角色 ---
     role: UserRole = Field(
-        default=UserRole.STUDENT,
-        description="用户角色：teacher (课件生产者) 或 student (消费者)",
+        default=UserRole.USER,
+        description="平台全局角色：user 或 admin；课程内教学身份由 Course Access 表达",
     )
 
     # --- 状态控制 ---
     is_active: bool = Field(default=True, description="账号是否激活 (软删除/封禁)")
+    auth_version: int = Field(default=1, index=True)
 
     # --- 业务上下文辅助字段 (优化体验) ---
     # 记录用户最后学习的课程ID，用于"进度智能续接"功能的快速入口

@@ -86,6 +86,12 @@ from app.models.graph_production_model import (
     GraphSnapshotRecord,
     GraphNodeReview,
 )
+from app.models.unified_learning_model import (
+    LearningEvent,
+    StudentLearningProjection,
+    CourseLearningStatsProjection,
+    LearningEvidenceContext,
+)
 from app.models.knowledge_bundle_model import (
     GraphRagRun,
     GraphRagEntityMapping,
@@ -201,6 +207,10 @@ from app.models.media_release_model import (
     MediaReleaseItem,
     PlaybackCapabilityProfile,
 )
+from app.models.platform_media_preset_model import (
+    PlatformVoicePreset,
+    PlatformAvatarPreset,
+)
 from app.models.avatar_model import (
     AvatarProfile,
     AvatarSourceMedia,
@@ -221,6 +231,7 @@ from app.models.agent_run_model import (
     AgentRunEventRecord,
     AgentLLMDiagnosticRecord,
 )
+from app.models.platform_admin_model import PlatformIntegrationConfig, PlatformAdminAuditEvent
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

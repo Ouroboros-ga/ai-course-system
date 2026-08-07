@@ -15,6 +15,14 @@ export function listNotes(courseId) {
 }
 
 /**
+ * 获取当前用户的课程笔记汇总（资源库「课程笔记」课程列表）。
+ * GET /notes/summary → { items: [{ course_id, course_title, note_count, last_updated_at }] }
+ */
+export function listNoteSummaries() {
+  return request.get('/notes/summary')
+}
+
+/**
  * 创建笔记。
  * POST /notes
  */

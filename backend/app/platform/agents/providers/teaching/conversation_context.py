@@ -1,4 +1,10 @@
-"""Privacy-minimized continuity adapter for TeachingAgent sessions."""
+"""Privacy-minimized continuity adapter for TeachingAgent sessions (Audit domain).
+
+This persists only bounded structured scalars (current concept, last intent,
+last teaching action) with a 30-minute TTL so the agent can resume *context*.
+It is NOT a chat transcript: full user/agent messages live in the separate
+Conversation Domain (``conversation_service`` / ``conversation_messages``).
+"""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-﻿"""Phase B 题库管理 API
+"""Phase B 题库管理 API
 
 使用统一权限解析器(require_course_permission)进行课程级权限校验。
 - 教师管理: question_bank.manage
@@ -520,6 +520,7 @@ async def submit_attempt(
     course_id: int,
     question_id: int,
     student_answer: str = Body(..., embed=True, min_length=1, max_length=20_000),
+    hint_used: bool = Body(False, embed=True, description="作答前是否查看过提示"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -527,6 +528,8 @@ async def submit_attempt(
 
     需要 question_bank.read 权限(学生可答题)。
     仅 published 题目可作答。
+    hint_used 埋点：作答前查看过提示时传 True，写入 cognitive_context，
+    供认知引擎计算 hint_dependency（提示依赖度）。
     """
     context = require_course_permission(session, current_user, course_id, "question_bank.read")
     user_id = int(current_user["user_id"])
@@ -572,7 +575,7 @@ async def submit_attempt(
         student_answer=student_answer,
         is_correct=is_correct,
         score=float(is_correct) if is_correct is not None else None,
-        cognitive_context={},
+        cognitive_context={"hint_used": bool(hint_used)},
         judged_by="auto" if automatically_judged else "teacher",
         judged_at=utcnow_aware() if automatically_judged else None,
     )

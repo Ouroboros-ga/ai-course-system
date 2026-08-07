@@ -14,7 +14,9 @@
 
     <div class="task-footer">
       <p><Info :size="15" />任务状态来自现有 TTS 与数字人接口；离开页面后重新进入仍会重新读取。</p>
-      <button v-if="showVideoGeneration" type="button" class="video-button" :disabled="startingVideo" @click="startVideo"><Video :size="15" />{{ startingVideo ? '正在提交…' : '生成课程数字人视频' }}</button>
+      <div v-if="showVideoGeneration" class="legacy-video-notice">
+        <Video :size="15" />旧版数字人视频入口仅用于历史任务兼容，不会写入 MediaRelease 或正式播放清单。
+      </div>
     </div>
   </section>
 </template>
@@ -23,13 +25,13 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { AlertTriangle, Info, LoaderCircle, RefreshCw, Video } from 'lucide-vue-next'
 import LongTaskCard from './LongTaskCard.vue'
-import { getCourseTtsStatus, getCourseVideoTasks, generateCourseVideos } from '@/api/generation_tasks.js'
+import { getCourseTtsStatus, getCourseVideoTasks } from '@/api/generation_tasks.js'
 import { normalizeLongTask } from '../taskStatus.js'
 import { showToast } from '@/utils/toast.js'
 
 const props = defineProps({ courseId: { type: [Number, String], required: true }, showVideoGeneration: Boolean })
 const emit = defineEmits(['summary', 'open-legacy'])
-const tasks = ref([]); const loading = ref(false); const loadError = ref(''); const startingVideo = ref(false); const retryingIds = ref(new Set()); const confirmedIds = ref(new Set()); let timerId = null
+const tasks = ref([]); const loading = ref(false); const loadError = ref(''); const retryingIds = ref(new Set()); const confirmedIds = ref(new Set()); let timerId = null
 
 function ttsTask(payload) {
   const status = String(payload?.status || 'not_started').toLowerCase()
@@ -102,28 +104,8 @@ async function refresh() {
   } finally { loading.value = false }
 }
 
-async function startVideo() {
-  startingVideo.value = true
-  try {
-    await generateCourseVideos(props.courseId, { force: false })
-    showToast('数字人视频任务已提交，可离开此页后回来查看。', 'success')
-    await refresh()
-  } catch { showToast('提交数字人视频任务失败，请检查脚本、素材与数字人服务后重试。', 'error') } finally { startingVideo.value = false }
-}
-
 async function retry(task) {
-  if (!task.id.startsWith('video-')) {
-    showToast('当前后端未提供课程级 TTS 重试接口；请在原编辑器重新发起生成。', 'info')
-    emit('open-legacy')
-    return
-  }
-  const source = tasks.value.find(item => item.id === task.id)
-  const nodeId = Number(source?.source?.node_id)
-  retryingIds.value = new Set([...retryingIds.value, task.id])
-  try {
-    await generateCourseVideos(props.courseId, { node_ids: Number.isFinite(nodeId) ? [nodeId] : undefined, force: true })
-    showToast('已重新提交数字人视频任务。', 'success'); await refresh()
-  } catch { showToast('重新提交失败，请检查数字人服务后重试。', 'error') } finally { const next = new Set(retryingIds.value); next.delete(task.id); retryingIds.value = next }
+  showToast('旧版视频任务仅供查看；请在媒体建设中心创建新的 MediaRelease 批次。', 'info')
 }
 
 function confirm(task) { const next = new Set(confirmedIds.value); next.add(task.id); confirmedIds.value = next; showToast('已标记为本次会话已检查。当前后端尚未提供教师确认的持久化接口。', 'info'); emit('summary', { ...summary.value, known: true }) }
@@ -132,5 +114,5 @@ onBeforeUnmount(() => { if (timerId) window.clearInterval(timerId) })
 </script>
 
 <style scoped>
-.course-tasks{margin-top:16px;padding-top:16px;border-top:1px solid #e2e8f0}.task-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.eyebrow{margin:0;color:#64748b;font-size:11px}.task-heading h2{margin:3px 0 0;font-size:15px;color:#1e293b}.refresh-button,.video-button{min-height:34px;border-radius:7px;padding:0 9px;display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer}.refresh-button{border:1px solid #cbd5e1;background:#fff;color:#334155}.video-button{border:1px solid #1769aa;background:#1769aa;color:#fff}.refresh-button:disabled,.video-button:disabled{opacity:.55;cursor:not-allowed}.task-list{display:grid;gap:9px;margin-top:12px;max-height:420px;overflow:auto;padding-right:2px}.task-empty{min-height:82px;display:flex;align-items:center;justify-content:center;text-align:center;color:#64748b;font-size:12px;line-height:1.5}.task-error{margin:12px 0 0;border-radius:7px;background:#fef2f2;color:#991b1b;padding:9px;display:flex;gap:6px;align-items:flex-start;font-size:12px;line-height:1.45}.task-footer{margin-top:12px;color:#64748b;font-size:12px;line-height:1.5}.task-footer p{margin:0;display:flex;gap:5px}.video-button{margin-top:10px}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}@media(prefers-reduced-motion:reduce){.spin{animation:none}}
+.course-tasks{margin-top:16px;padding-top:16px;border-top:1px solid #e2e8f0}.task-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}.eyebrow{margin:0;color:#64748b;font-size:11px}.task-heading h2{margin:3px 0 0;font-size:15px;color:#1e293b}.refresh-button{min-height:34px;border-radius:7px;padding:0 9px;display:inline-flex;align-items:center;gap:5px;font-size:12px;cursor:pointer;border:1px solid #cbd5e1;background:#fff;color:#334155}.refresh-button:disabled{opacity:.55;cursor:not-allowed}.task-list{display:grid;gap:9px;margin-top:12px;max-height:420px;overflow:auto;padding-right:2px}.task-empty{min-height:82px;display:flex;align-items:center;justify-content:center;text-align:center;color:#64748b;font-size:12px;line-height:1.5}.task-error{margin:12px 0 0;border-radius:7px;background:#fef2f2;color:#991b1b;padding:9px;display:flex;gap:6px;align-items:flex-start;font-size:12px;line-height:1.45}.task-footer{margin-top:12px;color:#64748b;font-size:12px;line-height:1.5}.task-footer p{margin:0;display:flex;gap:5px}.legacy-video-notice{margin-top:10px;border:1px dashed #cbd5e1;border-radius:7px;padding:8px;display:flex;gap:5px;align-items:flex-start;color:#64748b}.spin{animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}button:focus-visible{outline:3px solid #93c5fd;outline-offset:2px}@media(prefers-reduced-motion:reduce){.spin{animation:none}}
 </style>

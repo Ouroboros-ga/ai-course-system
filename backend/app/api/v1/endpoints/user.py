@@ -26,8 +26,22 @@ from app.core.exceptions import unified_response
 from sqlmodel import Session, select
 from app.models.database import get_session
 from app.models.user_model import User, UserRole
+from app.models.access_control_model import PlatformPermissionAssignment
 
 router = APIRouter()
+
+
+def _platform_permissions(session: Session, user_id: int) -> list[str]:
+    assignments = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == user_id,
+            PlatformPermissionAssignment.revoked_at.is_(None),
+        )
+    ).all()
+    return sorted({
+        getattr(assignment.permission, "value", str(assignment.permission))
+        for assignment in assignments
+    })
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -51,6 +65,7 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
             "username": user.username,
             "role": user.role.value if hasattr(user.role, "value") else user.role,
             "school_id": user.school_id,
+            "auth_version": user.auth_version,
         },
         expires_delta=access_token_expires,
     )
@@ -64,6 +79,7 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
                 id=str(user.id),
                 username=user.username,
                 role=user.role.value if hasattr(user.role, "value") else user.role,
+                platform_permissions=_platform_permissions(session, int(user.id)),
             ),
         ),
     )
@@ -94,6 +110,7 @@ async def user_register(
             if hasattr(new_user.role, "value")
             else new_user.role,
             "school_id": new_user.school_id,
+            "auth_version": new_user.auth_version,
         },
         expires_delta=access_token_expires,
     )
@@ -107,14 +124,24 @@ async def user_register(
                 id=str(new_user.id),
                 username=new_user.username,
                 role=new_user.role.value if hasattr(new_user.role, "value") else new_user.role,
+                platform_permissions=_platform_permissions(session, int(new_user.id)),
             ),
         ),
     )
 
 
 @router.get("/me", response_model=UnifiedResponse)
-async def get_my_info(current_user=Depends(teacher_student_allowed)):
-    return unified_response(code=200, message="获取成功", data=current_user)
+async def get_my_info(
+    current_user=Depends(teacher_student_allowed),
+    session: Session = Depends(get_session),
+):
+    """Return identity plus explicit platform permissions for capability views."""
+    data = {
+        **current_user,
+        "role": "admin" if current_user.get("role") == "admin" else "user",
+        "platform_permissions": _platform_permissions(session, int(current_user["user_id"])),
+    }
+    return unified_response(code=200, message="获取成功", data=data)
 
 
 @router.post("/modify", response_model=LoginResponse)
@@ -148,6 +175,7 @@ async def user_modify(
     # 4. 修改密码
     if request.newPassword:
         user.hashed_password = get_password_hash(request.newPassword)
+        user.auth_version += 1
 
     # 5. 保存修改
     session.add(user)
@@ -162,6 +190,7 @@ async def user_modify(
             "username": user.username,
             "role": user.role.value if hasattr(user.role, "value") else user.role,
             "school_id": user.school_id,
+            "auth_version": user.auth_version,
         },
         expires_delta=access_token_expires,
     )
@@ -176,7 +205,7 @@ async def user_modify(
     )
 
 
-@router.get("/list", response_model=UnifiedResponse)
+@router.get("/list", response_model=UnifiedResponse, deprecated=True)
 async def list_users(
     current_user=Depends(admin_only),
     session: Session = Depends(get_session),
@@ -195,7 +224,7 @@ async def list_users(
     return unified_response(code=200, message="获取成功", data={"users": user_list})
 
 
-@router.put("/role", response_model=UnifiedResponse)
+@router.put("/role", response_model=UnifiedResponse, deprecated=True)
 async def change_user_role(
     request: dict,
     current_user=Depends(admin_only),

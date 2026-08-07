@@ -105,7 +105,10 @@ services:
       PADDLEOCR_TIMEOUT_S: "300"
       # Judge0 保持独立栈，通过 host 网关访问
       JUDGE0_API_URL: "http://host.docker.internal:2358"
-      # 其余密钥通过 .env 注入，不写入镜像
+    # CFG-01: 密钥（JWT_SECRET_KEY/STATIC_KEY/各 *_API_KEY 等）必须经 env_file 注入容器，
+    # 否则 config.py 会回退到 dev 默认值（SEC-02 fail-fast 已兜底，直接拒绝启动）。
+    env_file:
+      - ../backend/.env
     volumes:
       - backend_data:/app/data
     depends_on:

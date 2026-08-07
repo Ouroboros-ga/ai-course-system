@@ -366,6 +366,10 @@ def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> Cou
         version=(latest.version + 1) if latest else 1,
         lifecycle_status=OutlineLifecycleStatus.DRAFT,
         source_parse_run_id=published.source_parse_run_id if published else None,
+        # A copy of the published outline keeps its corpus lineage; otherwise
+        # the next publish would fail the same-build-lineage gate because the
+        # draft's corpus_snapshot_id stays NULL.
+        corpus_snapshot_id=published.corpus_snapshot_id if published else None,
         created_by=user_id,
     )
     session.add(draft)
@@ -427,6 +431,7 @@ def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> Cou
                 version=published_script.version + 1,
                 lifecycle_status=OutlineLifecycleStatus.DRAFT,
                 source_parse_run_id=published_script.source_parse_run_id,
+                corpus_snapshot_id=published_script.corpus_snapshot_id,
                 created_by=user_id,
             )
             session.add(new_script)

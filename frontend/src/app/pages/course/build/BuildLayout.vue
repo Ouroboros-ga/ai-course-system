@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BookOpenCheck, ChevronLeft, ChevronRight, FileText, ListTree, MonitorPlay, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
+import { BookOpenCheck, ChevronLeft, ChevronRight, ClipboardList, FileText, ListTree, MonitorPlay, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
 import { getDraftBuildStatus } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
@@ -85,6 +85,7 @@ const steps = [
   { key: 'media', label: '媒体与数字人', description: '准备课堂媒体', icon: Video },
   { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck },
   { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints },
+  { key: 'drafts', label: '题库草稿审核', description: '审核 AI 生成的题目', icon: ClipboardList },
 ]
 const activeStep = computed(() => steps.find((step) => route.name === `app-course-build-${step.key}`) ?? steps[0])
 </script>

@@ -57,3 +57,15 @@
 - 规则诊断不会自动替代教师审核，也不会直接发布提示或修改学生认知状态。
 - 真实 Judge0、真实学生数据和付费模型不进入自动化测试；部署验收需单独做沙箱健康、
   超时/内存限制、恢复和跨课程权限验证。
+# 统一学习投影边界（2026-08-07）
+
+当前学习页的曝光/完成事实已由统一 facade 事件链承载；CodingEduAgent 不写入学习投影。
+后续 `LearningProjectionPort` 读取 `release_id`、`outline_node_id`、`exposure_status`、
+`completion_ratio` 和最近锚点，仍是 `planned/unimplemented`。Judge0 服务端评分才可形成正式
+认知证据；代码诊断、观看和访问不能直接抬高 mastery。
+
+CodingEduAgent 与 TeachingAgent 后续只消费统一学习上下文，不修改学习投影表。
+planned/unimplemented 的 `LearningProjectionPort` 返回 `release_id`、
+`outline_node_id`、`exposure_status`、`completion_ratio`；正式评分结果仍由服务端
+写入认知证据。沙箱、认知和推荐不可用时必须返回 `unknown/pending/degraded`，不能
+伪造掌握结论。

@@ -157,6 +157,7 @@ from app.api.v1.endpoints import (
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
     historical_rebuild, # 阶段10 历史课程补建清单编排
     storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
+    admin_platform,     # 平台 Provider 配置与用户管理
 )
 from app.schemas import UnifiedResponse
 
@@ -265,6 +266,7 @@ _mount_optional_fanya_chaoxing_ai_compat(app)
 
 # 注册路由
 app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])
+app.include_router(admin_platform.router, prefix="/api/v1/admin", tags=["平台管理员"])
 app.include_router(document.router, prefix="/api/v1/document", tags=["文档处理"])
 app.include_router(chat.router, prefix="/api/v1/chat", tags=["聊天模块"])
 app.include_router(progress.router, prefix="/api/v1/progress", tags=["进度续接"])

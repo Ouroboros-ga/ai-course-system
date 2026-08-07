@@ -32,6 +32,10 @@ const error = ref('')
 const selectedAnswer = ref(null)
 const typedAnswer = ref('')
 const lastResult = ref(null) // { is_correct, score, judgement_status }
+// 提示使用埋点：作答前查看过提示则记 hint_used=true，随 attempt 上报，
+// 写入 cognitive_context 供认知引擎计算 hint_dependency（提示依赖度）。
+const hintUsed = ref(false)
+const hintVisible = ref(false)
 
 // 本次练习统计（用于 VERIFY 阶段）
 const attempted = ref([]) // [{ questionId, isCorrect, score, judgementStatus }]
@@ -60,6 +64,8 @@ watch(currentQuestion, (q) => {
   selectedAnswer.value = q && q.question_type === 'multi_choice' ? [] : null
   typedAnswer.value = ''
   lastResult.value = null
+  hintUsed.value = false
+  hintVisible.value = false
 })
 
 // VERIFY 阶段统计
@@ -98,6 +104,15 @@ function resetAnswer() {
   selectedAnswer.value = isMultiChoice.value ? [] : null
   typedAnswer.value = ''
   lastResult.value = null
+  hintUsed.value = false
+  hintVisible.value = false
+}
+
+// 查看提示：标记 hint_used=true（随本次 attempt 上报），并展示一条通用提示。
+// QuestionBankItem 暂无专用提示字段，故给出指向当前知识点讲解的通用引导。
+function showHint() {
+  hintUsed.value = true
+  hintVisible.value = true
 }
 
 async function submitAnswer() {
@@ -132,7 +147,7 @@ async function submitAnswer() {
   error.value = ''
   submitting.value = true
   try {
-    const res = await submitAttempt(props.courseId, q.id, answer)
+    const res = await submitAttempt(props.courseId, q.id, answer, { hintUsed: hintUsed.value })
     lastResult.value = res
     // 记录到本次统计（按 questionId 去重，保留最新结果）
     const idx = attempted.value.findIndex(a => a.questionId === q.id)
@@ -295,6 +310,17 @@ onMounted(() => {
             placeholder="在此输入你的答案…"
             rows="3"
           ></textarea>
+        </div>
+
+        <!-- 提示使用埋点：作答前可查看提示，查看后本次 attempt 记 hint_used=true -->
+        <div v-if="!lastResult" class="sfx-practice-hint">
+          <button v-if="!hintVisible" type="button" class="sfx-practice-hint-btn" @click="showHint">
+            查看提示
+          </button>
+          <p v-else class="sfx-practice-hint-text">
+            提示：回顾当前知识点讲解中的关键概念与示例，再结合题干作答。
+            <span class="sfx-practice-hint-tag">已记录提示使用</span>
+          </p>
         </div>
 
         <!-- 判分结果与错题反馈 -->
@@ -531,6 +557,43 @@ onMounted(() => {
   border-radius: 6px;
   font-size: 0.95rem;
   resize: vertical;
+}
+.sfx-practice-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.sfx-practice-hint-btn {
+  align-self: flex-start;
+  padding: 4px 12px;
+  border: 1px dashed var(--border-default, #ccc);
+  border-radius: 6px;
+  background: var(--surface-muted, #f7f7f7);
+  color: var(--text-secondary, #666);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.sfx-practice-hint-btn:hover {
+  background: var(--surface-hover, #efefef);
+}
+.sfx-practice-hint-text {
+  margin: 0;
+  padding: 8px 12px;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #5d4037;
+}
+.sfx-practice-hint-tag {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #ffe082;
+  color: #5d4037;
+  font-size: 0.75rem;
 }
 .sfx-practice-result {
   padding: 12px;

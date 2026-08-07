@@ -309,12 +309,21 @@ class AvatarSourceMediaService:
             max_size_bytes=max_bytes,
             upload_path=upload_path,
         )
+        upload_headers = dict(storage_intent.get("headers") or {})
+        if storage_intent["method"] == "PUT":
+            # The controlled local endpoint validates the actual MIME type.
+            upload_headers["Content-Type"] = client_mime_type
+        else:
+            # Presigned POST is multipart/form-data; do not force the source
+            # MIME here or the browser will lose its multipart boundary.
+            upload_headers.pop("Content-Type", None)
         intent = {
             "object_key": object_key,
             "source_media_id": source.source_media_id,
             "upload_url": storage_intent["upload_url"],
             "method": storage_intent["method"],
-            "headers": {"Content-Type": client_mime_type},
+            "headers": upload_headers,
+            "fields": storage_intent.get("fields") or {},
             "expires_at": storage_intent["expires_at"],
             "max_size_bytes": max_bytes,
             "allowed_mime_types": sorted(self._allowed_mimes_for(media_type)),
@@ -391,6 +400,16 @@ class AvatarSourceMediaService:
         except Exception as exc:
             source.upload_status = AvatarSourceMediaStatus.INVALID
             source.validation_notes = f"hash_compute_failed: {type(exc).__name__}"
+            session.add(source)
+            session.flush()
+            return source
+
+        # Legacy registrations may carry a client-declared digest.  It is
+        # never trusted as the source of truth, but a mismatch must fail
+        # closed instead of silently accepting a different uploaded object.
+        if source.content_sha256 and source.content_sha256 != server_sha:
+            source.upload_status = AvatarSourceMediaStatus.INVALID
+            source.validation_notes = "sha256_mismatch"
             session.add(source)
             session.flush()
             return source

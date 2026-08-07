@@ -44,13 +44,13 @@ const courseTypeOptions = [
 
 const statusOptions = [
   { value: 'draft', label: '策略草稿' },
-  { value: 'dry_run', label: 'Dry-run 观察' },
+  { value: 'dry_run', label: '试运行观察' },
   { value: 'active', label: '正式启用' },
 ]
 
 const statusMeta = {
   draft: { label: '策略草稿', tone: 'amber' },
-  dry_run: { label: 'Dry-run 观察', tone: 'ink' },
+  dry_run: { label: '试运行观察', tone: 'ink' },
   active: { label: '正式启用', tone: 'green' },
   conflict: { label: '存在冲突', tone: 'red' },
 }
@@ -179,7 +179,7 @@ onMounted(load)
             <textarea v-model="form.required_citation_topics" class="sfx-textarea" rows="3" placeholder="例如：复杂度证明"></textarea>
           </SfxField>
 
-          <SfxField label="策略状态" hint="Dry-run 只观察不阻断；正式启用后才执行阻断。">
+          <SfxField label="策略状态" hint="试运行只观察不阻断；正式启用后才执行阻断。">
             <select v-model="form.status" class="sfx-select">
               <option v-for="opt in statusOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
@@ -192,7 +192,7 @@ onMounted(load)
 
           <label class="sfx-safety-check">
             <input v-model="form.keyword_assist_enabled" type="checkbox" />
-            <span class="sfx-t-ui">启用关键词辅助规则（结合课程类型与意图，不单独决定阻断）</span>
+            <span class="sfx-t-ui">启用关键词辅助判定（结合课程类型与提问内容，仅作参考，不单独决定是否阻断）</span>
           </label>
         </div>
 

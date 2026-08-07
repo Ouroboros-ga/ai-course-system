@@ -17,6 +17,7 @@ import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
 import NoteStage from '@/app/components/learn/NoteStage.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 
 const route = useRoute()
 const counter = useCounterStore()
@@ -181,14 +182,18 @@ watch(
 )
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
+async function completeNode() {
+  await ws.completeCurrentNode()
+}
+
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
 })
 
 watch(
-  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => playlistPlayback.activeItem.value?.avatarCues],
-  ([avatarCues, digitalHumanManifest, playlistAvatarCues]) => {
-    avatar.load({ avatarCues: playlistAvatarCues || avatarCues, digitalHumanManifest })
+  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => media.avatarManifestUrl.value, () => playlistPlayback.activeItem.value?.avatarCues, () => playlistPlayback.activeItem.value?.avatarManifestUrl],
+  ([avatarCues, digitalHumanManifest, avatarManifestUrl, playlistAvatarCues, playlistAvatarManifestUrl]) => {
+    avatar.load({ avatarCues: playlistAvatarCues || avatarCues, digitalHumanManifest, avatarManifestUrl: playlistAvatarManifestUrl || avatarManifestUrl })
   },
   { immediate: true },
 )
@@ -304,6 +309,13 @@ watch(
         :enabled-states="machine.isEnabled"
         @action="handleDockAction"
       />
+      <SfxButton
+        v-if="!previewMode && ws.currentNode.value?.outlineNodeId && !ws.completedNodes.value.includes(ws.currentNode.value.id)"
+        variant="primary"
+        size="sm"
+        class="sfx-learn-complete"
+        @click="completeNode"
+      >完成本知识点</SfxButton>
     </template>
   </div>
 </template>
@@ -322,6 +334,7 @@ watch(
   display: flex;
   overflow: hidden;
 }
+.sfx-learn-complete { align-self: center; margin: 0 0 16px; padding: 8px 14px; border: var(--border-default); border-radius: 8px; background: var(--color-brand); color: var(--text-inverse); }
 
 .sfx-learn-stage {
   flex: 1;

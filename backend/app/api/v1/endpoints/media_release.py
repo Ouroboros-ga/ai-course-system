@@ -56,7 +56,9 @@ from app.services.media_release_service import (
     tts_execution_service,
 )
 from app.models.course_outline_model import TeachingScriptNode
-from app.services.tts_provider import TtsProviderConfigurationError, get_tts_provider
+from app.services.tts_provider import TtsProviderConfigurationError
+from app.services.stage8_provider_runtime import get_stage8_tts_provider, resolve_stage8_tts_runtime
+from app.services.platform_media_preset_service import list_public_presets, sign_avatar_manifest_for_release
 from app.services.media_batch_service import (
     build_media_plan,
     confirm_media_batch,
@@ -102,6 +104,10 @@ class MediaBatchPlanRequest(BaseModel):
     provider_key: str = Field(default="", max_length=50)
     provider_version: str = Field(default="", max_length=50)
     voice_id: str = Field(default="default", max_length=100)
+    voice_preset_id: str = Field(default="", max_length=100)
+    voice_preset_version: str = Field(default="", max_length=40)
+    avatar_preset_id: str = Field(default="", max_length=100)
+    avatar_preset_version: str = Field(default="", max_length=40)
 
 
 class MediaBatchConfirmRequest(MediaBatchPlanRequest):
@@ -154,12 +160,33 @@ class SwitchPlaybackModeRequest(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+@media_release_router.get("/course/{course_id}/platform-presets")
+async def get_platform_media_presets(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return safe platform preset choices for the course media builder."""
+    require_course_permission(session, current_user, course_id, "course.media.generate")
+    runtime = resolve_stage8_tts_runtime()
+    data = list_public_presets(session, active_tts_provider_key=runtime.provider_key)
+    session.commit()
+    return unified_response(code=200, message="平台音色与数字人角色已加载", data={
+        **data,
+        "effective_provider": runtime.effective_provider,
+    })
+
+
 @media_release_router.post("/course/{course_id}/batch/plan")
 async def plan_media_batch(course_id: int, payload: MediaBatchPlanRequest,
                            session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.media.generate")
-    plan = build_media_plan(session, course_id=course_id, node_ids=payload.node_ids,
-                            provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id)
+    plan = build_media_plan(
+        session, course_id=course_id, node_ids=payload.node_ids,
+        provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id,
+        voice_preset_id=payload.voice_preset_id, voice_preset_version=payload.voice_preset_version,
+        avatar_preset_id=payload.avatar_preset_id, avatar_preset_version=payload.avatar_preset_version,
+    )
     return unified_response(code=200, message="媒体批量计划已生成", data=plan)
 
 
@@ -167,12 +194,21 @@ async def plan_media_batch(course_id: int, payload: MediaBatchPlanRequest,
 async def confirm_media_batch_endpoint(course_id: int, payload: MediaBatchConfirmRequest,
                                        session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "course.media.generate")
-    if not payload.paid_tts_confirmed:
+    runtime = resolve_stage8_tts_runtime()
+    if runtime.requires_confirmation and not payload.paid_tts_confirmed:
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed("批量 TTS 必须先明确确认可能产生 Provider 费用")
-    plan = build_media_plan(session, course_id=course_id, node_ids=payload.node_ids,
-                            provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id)
-    provider = get_tts_provider(plan["provider_key"], strict=True)
+    plan = build_media_plan(
+        session, course_id=course_id, node_ids=payload.node_ids,
+        provider_key=payload.provider_key, provider_version=payload.provider_version, voice_id=payload.voice_id,
+        voice_preset_id=payload.voice_preset_id, voice_preset_version=payload.voice_preset_version,
+        avatar_preset_id=payload.avatar_preset_id, avatar_preset_version=payload.avatar_preset_version,
+    )
+    try:
+        provider = get_stage8_tts_provider(plan["provider_key"])
+    except TtsProviderConfigurationError:
+        from app.core.exceptions import reject_validation_failed
+        reject_validation_failed("Stage 8 TTS Provider 未正确配置，未创建或派发任务")
     if provider.requires_async_worker:
         from app.platform.tasks.worker import local_task_worker
         if not local_task_worker.has_handler("media.tts"):
@@ -180,6 +216,19 @@ async def confirm_media_batch_endpoint(course_id: int, payload: MediaBatchConfir
             reject_dependency_unavailable("media.tts Worker 未注册，未创建批量任务或发起任何 TTS 调用")
     batch, release, jobs = confirm_media_batch(session, course_id=course_id, created_by=int(current_user["user_id"]),
                                                plan=plan, idempotency_key=payload.idempotency_key, label=payload.label)
+    voice_resource_version = str(plan.get("voice_resource_version") or "v1")
+    for job in jobs:
+        # Preserve safe preset identities on every durable job.  The raw
+        # provider speaker remains server configuration and is never present.
+        job.input_payload = {
+            **(job.input_payload or {}),
+            "voice_preset_id": release.voice_preset_id,
+            "voice_preset_version": release.voice_preset_version,
+            "voice_resource_version": voice_resource_version,
+            "avatar_preset_id": release.avatar_preset_id,
+            "avatar_preset_version": release.avatar_preset_version,
+        }
+        session.add(job)
     # Confirmation is the only batch operation allowed to dispatch TTS.  Fake
     # providers execute inline for local demos; paid providers go through the
     # existing media.tts worker path and never run on the request event loop.
@@ -229,17 +278,17 @@ async def confirm_media_batch_endpoint(course_id: int, payload: MediaBatchConfir
             project_tts_result_to_batch_item(session, job=job)
             schedule_cue(job)
             continue
-        provider = get_tts_provider(job.provider_key or None, strict=True)
+        provider = get_stage8_tts_provider(job.provider_key or None)
         if provider.requires_async_worker:
             prepared, worker_payload = tts_execution_service.prepare_tts_job_for_dispatch(
                 session, course_id=course_id, job_id=job.job_id, script_text=node.content,
-                voice_id="default", resource_version="v1", provider_key=job.provider_key, max_retries=1,
+                voice_id="default", resource_version=voice_resource_version, provider_key=job.provider_key, max_retries=1,
             )
             pending_dispatches.append((prepared.task_id or "", worker_payload))
         else:
             completed = tts_execution_service.execute_tts_job(
                 session, course_id=course_id, job_id=job.job_id, script_text=node.content,
-                voice_id="default", resource_version="v1", provider_key=job.provider_key, max_retries=1,
+                voice_id="default", resource_version=voice_resource_version, provider_key=job.provider_key, max_retries=1,
             )
             project_tts_result_to_batch_item(session, job=completed)
             if completed.status == MediaGenerationStatus.SUCCEEDED:
@@ -267,7 +316,12 @@ async def get_media_batch(course_id: int, batch_id: str, session: Session = Depe
     jobs = list(session.exec(select(MediaGenerationJob).where(MediaGenerationJob.media_release_id == batch.release_id).order_by(MediaGenerationJob.created_at.desc())).all())
     return unified_response(code=200, message="批量媒体状态获取成功", data={
         "batch_id": batch.batch_id, "release_id": batch.release_id, "status": batch.status.value,
-        "estimate": batch.estimate, "items": [_serialize_release_item(item) for item in items],
+        "estimate": batch.estimate,
+        "voice_preset_id": batch.voice_preset_id,
+        "voice_preset_version": batch.voice_preset_version,
+        "avatar_preset_id": batch.avatar_preset_id,
+        "avatar_preset_version": batch.avatar_preset_version,
+        "items": [_serialize_release_item(item) for item in items],
         "jobs": [_serialize_job(job) for job in jobs],
     })
 
@@ -404,6 +458,13 @@ async def preview_draft_release_item_playback(
                 "material_version_id": mapping.get("material_version_id"),
                 "start_ms": int(item.duration_ms * index / max(len(refs), 1)),
             })
+    _, avatar_manifest_url = sign_avatar_manifest_for_release(
+        session,
+        course_id=course_id,
+        release_id=release_id,
+        preset_id=release.avatar_preset_id,
+        preset_version=release.avatar_preset_version,
+    )
     return unified_response(code=200, message="草稿统一播放器预览数据已签发", data={
         "schema": "draft-media-preview/v1",
         "release_id": release_id,
@@ -425,7 +486,9 @@ async def preview_draft_release_item_playback(
             scope={**scope, "purpose": "media_draft_playback_preview_ppt"},
         ) if release.ppt_manifest_object_key and storage.exists(release.ppt_manifest_object_key) else None,
         "ppt_timeline": ppt_timeline,
-        "avatar_preset_id": release.avatar_preset_id or "platform-instructor-v1",
+        "avatar_preset_id": release.avatar_preset_id,
+        "avatar_preset_version": release.avatar_preset_version,
+        "avatar_manifest_url": avatar_manifest_url,
     })
 
 
@@ -597,7 +660,7 @@ async def execute_tts_job(
 
     selected_provider_key = payload.provider_key or job.provider_key or None
     try:
-        provider = get_tts_provider(selected_provider_key, strict=True)
+        provider = get_stage8_tts_provider(selected_provider_key)
     except TtsProviderConfigurationError:
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed("所选 TTS Provider 未注册，任务未调用任何外部服务")
@@ -667,7 +730,7 @@ async def retry_tts_job(
 
     selected_provider_key = payload.provider_key or job.provider_key or None
     try:
-        provider = get_tts_provider(selected_provider_key, strict=True)
+        provider = get_stage8_tts_provider(selected_provider_key)
     except TtsProviderConfigurationError:
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed("所选 TTS Provider 未注册，任务未调用任何外部服务")
@@ -1163,7 +1226,10 @@ def _serialize_release(release) -> dict[str, Any]:
         "ppt_manifest_object_key": release.ppt_manifest_object_key,
         "audio_playlist_object_key": release.audio_playlist_object_key,
         "audio_playlist_sha256": release.audio_playlist_sha256,
+        "voice_preset_id": release.voice_preset_id,
+        "voice_preset_version": release.voice_preset_version,
         "avatar_preset_id": release.avatar_preset_id,
+        "avatar_preset_version": release.avatar_preset_version,
         "avatar_cues_object_key": release.avatar_cues_object_key,
         "avatar_binding_id": release.avatar_binding_id,
         "digital_human_manifest_object_key": release.digital_human_manifest_object_key,
@@ -1226,25 +1292,17 @@ async def get_providers_health(
     不需要课程权限，仅限已登录用户。
     """
     from app.services.digital_human_provider import get_digital_human_provider
-    from app.services.tts_provider import get_tts_provider
-
     from app.core.config import settings
 
-    tts_provider = get_tts_provider()
+    tts_runtime = resolve_stage8_tts_runtime()
     dh_provider = get_digital_human_provider()
 
-    tts_health = tts_provider.health_check()
     dh_health = dh_provider.health_check()
 
     return unified_response(
         code=200, message="Provider 健康状态查询成功",
         data={
-            "tts": {
-                "provider_key": tts_provider.provider_key,
-                "provider_version": tts_provider.provider_version,
-                "healthy": tts_health,
-                "configured_provider": getattr(settings, "STAGE8_TTS_PROVIDER", "fake"),
-            },
+            "tts": tts_runtime.as_public_dict(),
             "digital_human": {
                 "provider_key": dh_provider.provider_key,
                 "provider_version": dh_provider.provider_version,

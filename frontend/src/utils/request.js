@@ -5,7 +5,7 @@ import { useCounterStore } from '@/stores/counter.js'
 
 // 创建 axios 实例
 const service = axios.create({
-  baseURL: import.meta.env.DEV ? '/api/v1' : 'http://localhost:8000/api/v1',
+  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
   timeout: 180000
 })
 

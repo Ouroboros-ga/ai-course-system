@@ -1,4 +1,4 @@
-﻿"""
+"""
 笔记管理API接口
 提供学生笔记的创建、查询、更新、删除功能
 """
@@ -7,12 +7,13 @@ from typing import Optional
 from app.core.time_utils import utcnow_aware
 
 from fastapi import APIRouter, Depends, Query, Body
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 
 from app.schemas.common_schema import UnifiedResponse
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.database import get_session
+from app.models.course_model import Course
 from app.models.note_model import (
     Note,
     NoteTriggerSource,
@@ -71,7 +72,7 @@ async def list_notes(
         return unified_response(
             code=200,
             message="获取成功",
-            data=[_note_to_dict(n) for n in notes]
+            data={"items": [_note_to_dict(n) for n in notes], "total": len(notes)}
         )
 
     except Exception as e:
@@ -80,6 +81,65 @@ async def list_notes(
         return unified_response(
             code=500,
             message=f"获取笔记列表失败: {str(e)}",
+            data=None
+        )
+
+
+# 注意：/summary 必须在 /{note_id} 之前注册，否则 "summary" 会被当作 note_id 解析。
+@router.get("/summary", response_model=UnifiedResponse)
+async def note_course_summary(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    获取当前用户的课程笔记汇总（资源库「课程笔记」课程列表用）。
+
+    返回 items：[{ course_id, course_title, note_count, last_updated_at }]，
+    仅包含该用户写过笔记的课程，按最后更新时间倒序。
+    """
+    try:
+        user_id = int(current_user["user_id"])
+
+        rows = session.exec(
+            select(
+                Note.course_id,
+                func.count(Note.id),
+                func.max(Note.updated_at),
+            )
+            .where(Note.user_id == user_id)
+            .group_by(Note.course_id)
+            .order_by(func.max(Note.updated_at).desc())
+        ).all()
+
+        course_ids = [int(row[0]) for row in rows if row[0] is not None]
+        titles: dict[int, str] = {}
+        if course_ids:
+            courses = session.exec(
+                select(Course.id, Course.title).where(Course.id.in_(course_ids))
+            ).all()
+            titles = {int(course.id): course.title for course in courses}
+
+        items = [
+            {
+                "course_id": int(row[0]),
+                "course_title": titles.get(int(row[0])) or f"课程 {row[0]}",
+                "note_count": int(row[1]),
+                "last_updated_at": row[2].isoformat() if row[2] else None,
+            }
+            for row in rows
+        ]
+        return unified_response(
+            code=200,
+            message="获取成功",
+            data={"items": items, "total": len(items)},
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return unified_response(
+            code=500,
+            message=f"获取课程笔记汇总失败: {str(e)}",
             data=None
         )
 

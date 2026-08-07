@@ -109,6 +109,8 @@ async function uploadSource(profile, kind) {
     const source = intentResponse?.source_media
     if (!intent?.upload_url || !source?.source_media_id) throw new Error('服务器没有返回有效的受控上传地址。')
     await uploadAvatarSourceMedia(intent.upload_url, file, intent.headers ?? {}, {
+      method: intent.method,
+      fields: intent.fields,
       onUploadProgress: (event) => {
         if (event.total) uploadProgress.value = { ...uploadProgress.value, [key]: Math.round((event.loaded / event.total) * 100) }
       },

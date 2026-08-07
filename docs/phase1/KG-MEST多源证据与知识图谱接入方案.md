@@ -216,3 +216,15 @@ TeachingAgent 的 `StudentModelingPort` 和 `RecommendationPort` 只读取 P3 �
 4. 输出综合 Research Iteration Report 后，决定是否具备 P3 Shadow 条件。
 
 在第 1 项完成前，不宣称主应用已完成 KG-MEST 接入；在第 2 和第 3 项完成前，不向教学智能体注入真实学生建模或推荐 Port。
+# 统一学习身份补充（2026-08-07）
+
+当前实现已将学习曝光、完成和教师统计统一到 `LearningEvent -> StudentLearningProjection ->
+CourseLearningStatsProjection` 链路；这不是 KG-MEST 的正式认知实现。观看、访问和停留时间只
+形成 exposure/context，不能形成 mastery。相同 `knowledge_node_key` 的正式评分证据可在
+`LearningEvidenceContext` 中记录来源 release，未映射节点继续返回 `not_available`。
+
+学习曝光身份使用 `course_id + release_id + outline_node_id`；知识图谱的
+`CourseKnowledgeNode.node_key` 为可选认知关联。未映射图谱身份时学习与统计仍可用，
+认知/推荐必须返回 `not_available`。planned `LearningEvidenceContextPort` 将正式
+evidence 记录其 source release 与 outline node，以支持同一 node_key 跨发布版本
+复用而不把观看行为当成掌握证据。

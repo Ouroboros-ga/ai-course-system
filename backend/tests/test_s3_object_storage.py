@@ -81,6 +81,7 @@ def test_s3_provider_crud_presign_and_prefix_listing(fake_s3):
     intent = fake_s3.sign_upload_intent("avatars/7/source/video.mp4", max_size_bytes=123)
     assert intent["method"] == "POST"
     assert intent["max_size_bytes"] == 123
+    assert intent["fields"] == {"key": "avatars/7/source/video.mp4", "policy": "fake"}
     assert fake_s3.delete("courses/1/audio/intro.mp3") is True
     assert fake_s3.exists("courses/1/audio/intro.mp3") is False
 

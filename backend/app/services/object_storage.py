@@ -18,7 +18,7 @@ import secrets
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from typing import IO, Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from app.core.config import settings
 
@@ -204,10 +204,16 @@ class LocalStorageProvider(ObjectStorageProvider):
         self, object_key: str, *, expires_in: int = 3600, scope: Optional[dict] = None,
     ) -> str:
         exp = int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())
+        scope_value = _stringify_scope(scope)
         sig = self._sign(object_key, exp, scope)
-        # scope 不放 URL，由调用方在 cookie/header 携带；这里只签 object_key+exp+scope_hash
         quoted = quote(object_key, safe="/")
-        url = f"/api/v1/media/assets/{quoted}/content?exp={exp}&sig={sig}"
+        query = {"exp": exp, "sig": sig}
+        if scope_value:
+            # The local content route has no access to the original caller's
+            # Python scope.  Carry the canonical scope in the signed URL so it
+            # can verify purpose/course/release before authorizing the file.
+            query["scope"] = scope_value
+        url = f"/api/v1/media/assets/{quoted}/content?{urlencode(query)}"
         return url
 
     def sign_upload_intent(

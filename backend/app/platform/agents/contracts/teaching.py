@@ -21,7 +21,12 @@ class LearningEventPort(Protocol):
 
 
 class ConversationContextPort(Protocol):
-    """Read/write bounded structured continuity state, never a transcript."""
+    """Read/write bounded structured continuity state (Audit domain), never a transcript.
+
+    Full chat messages are persisted in the separate Conversation Domain
+    (``conversation_service``); this port only carries the few scalars the
+    agent needs to resume within-session context.
+    """
 
     async def load_context(self, *, student_id: str, course_id: str, session_id: str) -> Mapping[str, Any] | None: ...
     async def save_context(self, *, student_id: str, course_id: str, session_id: str, context: Mapping[str, Any]) -> None: ...

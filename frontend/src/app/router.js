@@ -98,6 +98,16 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 component: () => import('./pages/resources/CourseMaterialsLibraryPage.vue'),
               },
               {
+                path: 'notes',
+                name: 'app-resources-notes',
+                component: () => import('./pages/resources/CourseNotesLibraryPage.vue'),
+              },
+              {
+                path: 'notes/:courseId(\\d+)',
+                name: 'app-resources-notes-course',
+                component: () => import('./pages/resources/CourseNotesPage.vue'),
+              },
+              {
                 path: 'course-links',
                 name: 'app-resources-course-links',
                 component: () => import('./pages/resources/ResourceCourseLinksPage.vue'),
@@ -148,6 +158,7 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
             path: 'admin',
             name: 'app-admin',
             component: () => import('./pages/admin/PlatformAdminPage.vue'),
+            meta: { requiredPlatformPermission: 'platform.user.manage' },
           },
           {
             path: 'account',
@@ -174,6 +185,12 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 path: 'learn',
                 name: 'app-course-learn',
                 component: () => import('./pages/learn/LearnPage.vue'),
+              },
+              {
+                path: 'analytics',
+                name: 'app-course-analytics',
+                component: () => import('./pages/course/CourseAnalyticsPage.vue'),
+                meta: { requiredPermission: 'analytics.view_course' },
               },
 
               // 知识空间（§15）：Local Rail 结构视图｜原文引用｜候选审核｜版本记录
@@ -245,6 +262,11 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                     path: 'releases',
                     name: 'app-course-build-releases',
                     component: () => import('./pages/course/build/BuildReleasesPage.vue'),
+                  },
+                  {
+                    path: 'drafts',
+                    name: 'app-course-build-drafts',
+                    component: () => import('./pages/course/build/QuestionDraftReviewPage.vue'),
                   },
                 ],
               },

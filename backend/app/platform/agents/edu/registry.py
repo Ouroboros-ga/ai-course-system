@@ -26,6 +26,7 @@ from ..contracts import (
     ExperimentPort,
     LearningEventPort,
     QuestionBankPort,
+    QuestionGenerationPort,
     RecommendationPort,
     SandboxPort,
     StudentHistoryPort,
@@ -70,6 +71,7 @@ class TeachingAgentRuntimeRegistry:
         web_research: Optional[WebResearchPort] = None,
         cognition: Optional[CognitionPort] = None,
         question_bank: Optional[QuestionBankPort] = None,
+        question_generation: Optional[QuestionGenerationPort] = None,
         conversation_context: Optional[ConversationContextPort] = None,
         tool_governance: Optional[ToolGovernancePort] = None,
         teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
@@ -87,6 +89,7 @@ class TeachingAgentRuntimeRegistry:
         self._web_research = web_research
         self._cognition = cognition
         self._question_bank = question_bank
+        self._question_generation = question_generation
         self._conversation_context = conversation_context
         self._tool_governance = tool_governance
         self._teacher_safety_valve = teacher_safety_valve
@@ -126,7 +129,7 @@ class TeachingAgentRuntimeRegistry:
                     runtime = build_kg_mest_shadow_sidecar_runtime(
                         demo_service=self._demo_service, shadow_report=report, expected_student_id=key[0], expected_course_id=key[1],
                         recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
-                        web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
+                        web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank, question_generation=self._question_generation,
                         conversation_context=self._conversation_context,
                         tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                         experiment=self._experiment, visualization=self._visualization,
@@ -140,7 +143,7 @@ class TeachingAgentRuntimeRegistry:
                 runtime = build_course_sidecar_runtime(
                     demo_service=self._demo_service, student_modeling=CognitionStudentModelingPort(self._cognition),
                     recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
-                    web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank,
+                    web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank, question_generation=self._question_generation,
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, visualization=self._visualization,
@@ -150,7 +153,7 @@ class TeachingAgentRuntimeRegistry:
                 runtime = build_course_sidecar_runtime(
                     demo_service=self._demo_service, student_modeling=UnknownStudentModelingPort(),
                     recommendation=self._recommendation, sandbox=self._sandbox, learning_events=self._learning_events, llm=self._llm,
-                    web_research=self._web_research, cognition=None, question_bank=self._question_bank,
+                    web_research=self._web_research, cognition=None, question_bank=self._question_bank, question_generation=self._question_generation,
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, visualization=self._visualization,

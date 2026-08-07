@@ -30,6 +30,7 @@ from app.platform.agents.tools.integration import Judge0SandboxPort
 from app.platform.agents.tools.learning_event import make_session_scoped_learning_event_port
 from app.platform.agents.tools.openai_compatible import OpenAICompatibleTeachingLLM
 from app.platform.agents.tools.question_bank import make_session_scoped_question_bank_port
+from app.platform.agents.tools.question_generation import make_session_scoped_question_generation_port
 from app.platform.agents.tools.recommendation import make_session_scoped_recommendation_port
 from app.platform.agents.tools.teacher_safety_valve import make_session_scoped_teacher_safety_valve_port
 from app.platform.agents.tools.tool_governance import make_session_scoped_tool_governance_port
@@ -164,6 +165,7 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             store=KGMestShadowReportStore(),
             cognition=make_session_scoped_cognition_port(session_factory),
             question_bank=make_session_scoped_question_bank_port(session_factory),
+            question_generation=make_session_scoped_question_generation_port(session_factory),
             web_research=make_session_scoped_web_research_port(session_factory),
             # 阶段9：工具治理、教师安全阀、实验与可视化只读端口
             tool_governance=make_session_scoped_tool_governance_port(session_factory),

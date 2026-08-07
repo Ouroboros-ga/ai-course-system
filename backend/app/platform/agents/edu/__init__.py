@@ -2,7 +2,7 @@
 
 Houses the agent-specific artifacts for the student-facing teaching agent:
     - ``state``: the ``TeachingState`` TypedDict
-    - ``workflow``: the 18-node LangGraph workflow
+    - ``workflow``: the 19-node LangGraph workflow
     - ``policy``: deterministic teaching-action policy
     - ``prompts``: versioned LLM prompts
     - ``kg_mest_report_store``: isolated KG-MEST Shadow report store

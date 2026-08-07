@@ -21,6 +21,15 @@ const ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const FRONTEND_API = path.join(ROOT, 'frontend', 'src', 'api')
 const BACKEND_EP = path.join(ROOT, 'backend', 'app', 'api', 'v1', 'endpoints')
 
+test('avatar.js: uploadAvatarSourceMedia 分支支持 PUT 与 presigned POST fields', () => {
+  const src = read('frontend/src/api/avatar.js')
+  assert.match(src, /const method = String\(options\.method \|\| ['"]PUT['"]\)\.toUpperCase\(\)/)
+  assert.match(src, /if \(method === ['"]POST['"]\)/)
+  assert.match(src, /Object\.entries\(options\.fields \|\| \{\}\)/)
+  assert.match(src, /form\.append\(['"]file['"], file\)/)
+  assert.match(src, /request\.put\(relativeUrl, file/)
+})
+
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8')
 }
@@ -494,4 +503,121 @@ test('request.js: 支持 skipErrorToast 配置（Agent 503 回退时不弹错误
   // 错误拦截器必须检查 skipErrorToast
   assert.match(src, /skipErrorToast/)
   assert.match(src, /if\s*\(!error\.config\?\.skipErrorToast\)/)
+})
+
+// ============================================================================
+// P5.1: 平台音色/角色注册表契约
+// ============================================================================
+
+test('media_release.js: getPlatformMediaPresets 使用课程级 platform-presets 路径', () => {
+  const src = read('frontend/src/api/media_release.js')
+  assert.match(src, /export const getPlatformMediaPresets\s*=\s*\(courseId\)\s*=>\s*request\.get\(`\$\{base\(courseId\)\}\/platform-presets`\)/)
+})
+
+test('media_release.py: 注册表路由与 media.generate 权限一致', () => {
+  const src = read('backend/app/api/v1/endpoints/media_release.py')
+  assert.match(src, /@media_release_router\.get\("\/course\/\{course_id\}\/platform-presets"\)/)
+  assert.match(src, /get_platform_media_presets[\s\S]*?course\.media\.generate/)
+  assert.match(src, /list_public_presets\(session[\s\S]*?effective_provider/)
+})
+
+// ============================================================================
+// 变更 3: TeachingAgent warning code → 可读文案映射（防回归）
+// ============================================================================
+
+test('useLearningWorkspace.js: 将 warning code 映射为可读 fallbackNotice', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  // 必须存在 warning → 文案映射表
+  assert.match(src, /TEACHING_AGENT_WARNING_NOTICES\s*=\s*\{/)
+  // 三个 warning code 都必须有对应文案
+  assert.match(src, /COURSE_KNOWLEDGE_GRAPH_PENDING:\s*['"]课程知识图谱正在解析或暂不可用/)
+  assert.match(src, /WEB_RESEARCH_PENDING_TEACHER_CONFIRMATION:\s*['"]联网资料检索需教师确认/)
+  assert.match(src, /TOOL_LOCKED_BY_TEACHER:\s*['"]该能力已被教师关闭/)
+  // 必须透传 warnings 数组（供未来面板展示）
+  assert.match(src, /warnings,/)
+})
+
+// ============================================================================
+// 听课时长埋点：NodeProgress.time_spent 上报契约
+// ============================================================================
+
+test('playerWorkspaceAdapter.js: buildProgressPayload 包含 time_spent_delta（上限60）', () => {
+  const src = read('frontend/src/features/student-learning/adapters/playerWorkspaceAdapter.js')
+  assert.match(src, /time_spent_delta:\s*clamp\(numberOr\(state\.timeSpentDelta/)
+})
+
+test('useLearningWorkspace.js: 仅 playing 时累计听课时长并随进度上报', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  assert.match(src, /lastProgressSaveAt/)
+  assert.match(src, /if\s*\(isPlaying\.value\s*&&\s*lastProgressSaveAt\s*>\s*0\)/)
+  assert.match(src, /timeSpentDelta/)
+  assert.match(src, /timeSpentDelta,/)
+})
+
+test('backend: player.py ProgressSaveRequest 接受 time_spent_delta 并写入 NodeProgress.time_spent', () => {
+  const src = read('backend/app/api/v1/endpoints/player.py')
+  assert.match(src, /time_spent_delta:\s*float\s*=\s*Field\(default=0\.0/)
+  assert.match(src, /NodeProgress\.time_spent/)
+})
+
+// ============================================================================
+// 提示使用埋点：cognitive_context.hint_used 上报契约
+// ============================================================================
+
+test('question_bank.js: submitAttempt 支持 hintUsed 选项', () => {
+  const src = read('frontend/src/api/question_bank.js')
+  assert.match(src, /hint_used:\s*Boolean\(options\.hintUsed\)/)
+})
+
+test('PracticePanel.vue: 查看提示后记 hint_used 并随 attempt 上报', () => {
+  const src = read('frontend/src/app/components/learn/PracticePanel.vue')
+  assert.match(src, /hintUsed\s*=\s*ref\(false\)/)
+  assert.match(src, /function showHint\(\)/)
+  assert.match(src, /submitAttempt\(props\.courseId,\s*q\.id,\s*answer,\s*\{\s*hintUsed:\s*hintUsed\.value\s*\}\)/)
+})
+
+test('backend: question_bank.py submit_attempt 接受 hint_used 写入 cognitive_context', () => {
+  const src = read('backend/app/api/v1/endpoints/question_bank.py')
+  assert.match(src, /hint_used:\s*bool\s*=\s*Body\(False/)
+  assert.match(src, /cognitive_context=\{"hint_used":\s*bool\(hint_used\)\}/)
+})
+
+// ============================================================================
+// note.js ↔ note.py 契约（资源库「课程笔记」）
+// ============================================================================
+
+test('note.js: listNotes 调用 GET /notes（按课程筛选）', () => {
+  const src = read('frontend/src/api/note.js')
+  const p = extractFirstPath(src, 'listNotes')
+  assert.equal(p, '/notes')
+  assert.match(src, /listNotes\(courseId\)[\s\S]*?params:\s*\{\s*course_id:\s*courseId\s*\}/)
+})
+
+test('note.js: listNoteSummaries 调用 GET /notes/summary', () => {
+  const src = read('frontend/src/api/note.js')
+  const p = extractFirstPath(src, 'listNoteSummaries')
+  assert.equal(p, '/notes/summary')
+})
+
+test('note.js: createNote/updateNote/deleteNote 路由模板与后端一致', () => {
+  const src = read('frontend/src/api/note.js')
+  assert.equal(extractFirstPath(src, 'createNote'), '/notes')
+  assert.equal(extractFirstPath(src, 'updateNote'), '/notes/${noteId}')
+  assert.equal(extractFirstPath(src, 'deleteNote'), '/notes/${noteId}')
+})
+
+test('backend: note.py 列表返回 items/total 形状（与平台列表惯例一致）', () => {
+  const src = read('backend/app/api/v1/endpoints/note.py')
+  assert.match(src, /data=\{"items":\s*\[_note_to_dict\(n\) for n in notes\],\s*"total":\s*len\(notes\)\}/)
+})
+
+test('backend: note.py 注册 /summary 且位于 /{note_id} 之前（避免路由吞参）', () => {
+  const src = read('backend/app/api/v1/endpoints/note.py')
+  const summaryIdx = src.indexOf('@router.get("/summary"')
+  const detailIdx = src.indexOf('@router.get("/{note_id}"')
+  assert.ok(summaryIdx >= 0, 'note.py 未注册 /summary')
+  assert.ok(summaryIdx < detailIdx, '/summary 必须注册在 /{note_id} 之前')
+  assert.match(src, /func\.count\(Note\.id\)/)
+  assert.match(src, /func\.max\(Note\.updated_at\)/)
+  assert.match(src, /group_by\(Note\.course_id\)/)
 })

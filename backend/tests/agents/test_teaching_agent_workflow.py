@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import unittest
 from pathlib import Path
+from typing import Any, Mapping
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -200,3 +201,41 @@ class TeachingAgentWorkflowTests(unittest.TestCase):
     def test_explicit_composition(self): test_explicit_composition_root_requires_every_domain_port()
     def test_kg_mest_shadow_port(self): test_kg_mest_shadow_port_drives_existing_prerequisite_action_without_writes()
     def test_kg_mest_scope_mismatch(self): test_kg_mest_shadow_port_scope_mismatch_returns_unknown_not_another_student_state()
+
+
+# ---------------------------------------------------------------------------
+# 认知采集：意图解析时 LLM 实时标定提问深度（inquiry_depth）
+# ---------------------------------------------------------------------------
+
+
+class _DepthLLM(FakeLLM):
+    """Fake LLM 额外返回 inquiry_depth 标定值（实例属性动态赋值）。"""
+
+    async def detect_intent(self, **_: Any) -> Mapping[str, Any]:
+        if self.fail:
+            raise RuntimeError("fake llm unavailable")
+        return {"intent": "concept_question", "confidence": 0.9, "inquiry_depth": getattr(self, "depth", None)}
+
+
+def _depth_llm(depth: float) -> FakeLLM:
+    llm = _DepthLLM()
+    llm.depth = depth
+    return llm
+
+
+def test_detect_intent_calibrates_inquiry_depth():
+    runtime, _ = build_runtime(llm=_depth_llm(0.7))
+    state = run(runtime)
+    assert state.get("inquiry_depth") == 0.7
+
+
+def test_detect_intent_without_depth_stays_none():
+    runtime, _ = build_runtime()
+    state = run(runtime)
+    assert state.get("inquiry_depth") is None
+
+
+def test_detect_intent_out_of_range_depth_stays_none():
+    runtime, _ = build_runtime(llm=_depth_llm(1.7))
+    state = run(runtime)
+    assert state.get("inquiry_depth") is None

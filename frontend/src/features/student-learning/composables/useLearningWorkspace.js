@@ -1,9 +1,10 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { askQuestion } from '@/api/chat.js'
-import { respondTeachingAgent } from '@/api/teaching_agent.js'
+import { respondTeachingAgent, getConversationHistory } from '@/api/teaching_agent.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
-import { listNotes, createNote, updateNote } from '@/api/note.js'
+import { getLearningContext, recordLearningEvent, completeLearningAction } from '@/api/facade.js'
+import { listNotes, createNote, updateNote, deleteNote } from '@/api/note.js'
 import {
   buildProgressPayload,
   clamp,
@@ -55,8 +56,9 @@ export function useLearningWorkspace(courseId, options = {}) {
   )
   const getCodeSubmissionId = options?.getCodeSubmissionId ?? (() => codeSubmissionId.value)
   // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
-  // Reuse a per-learner/course ID. The server keeps only a bounded structured
-  // summary and expires it after 30 minutes; no transcript is persisted.
+  // Reuse a per-learner/course ID. The Audit-domain session context is still
+  // bounded and expires after 30 minutes; full chat messages are now persisted
+  // in the separate Conversation Domain and resumed via loadConversationHistory().
   const teachingSessionStorageKey = `teaching-agent-session:${courseId}:${getStudentId() ?? 'anonymous'}`
   let teachingSessionId = window.localStorage.getItem(teachingSessionStorageKey)
   if (!teachingSessionId) {
@@ -72,6 +74,10 @@ export function useLearningWorkspace(courseId, options = {}) {
   const currentTime = ref(0)
   const currentPage = ref(1)
   const completedNodes = ref([])
+  const releaseId = ref(null)
+  const learningContext = ref(null)
+  const pendingLearningEvents = ref([])
+  const openedNodeKeys = ref(new Set())
   const isPlaying = ref(false)
   const playbackRate = ref(1)
   const volume = ref(0.85)
@@ -99,8 +105,13 @@ export function useLearningWorkspace(courseId, options = {}) {
   const storagePrefix = 'student-learning-workspace:' + courseId
   const viewStorageKey = storagePrefix + ':view'
   const notesStorageKey = storagePrefix + ':notes'
+  const learningQueueStorageKey = storagePrefix + ':learning-events'
   let viewPersistTimer = null
   let progressTimer = null
+  // 听课时长埋点：记录上次进度保存时间戳，用于计算本次保存周期内的听课秒数。
+  // 仅在 isPlaying 时累计 delta，后端累加到 NodeProgress.time_spent。
+  let lastProgressSaveAt = 0
+  let flushingLearningEvents = false
 
   const nodes = computed(() => course.value?.nodes ?? [])
   const slides = computed(() => course.value?.slides ?? [])
@@ -170,6 +181,20 @@ export function useLearningWorkspace(courseId, options = {}) {
     const nodeId = match && match[1] !== 'course' ? Number(match[1]) : null
     const page = match ? Number(match[2]) : null
     const existingId = noteIdMap.value[anchorKey]
+    // 数据卫生：清空内容时不落库；已有笔记则删除，避免资源库「课程笔记」出现空条目
+    if (!String(content).trim()) {
+      if (existingId) {
+        try {
+          await deleteNote(existingId)
+          noteIdMap.value = { ...noteIdMap.value, [anchorKey]: undefined }
+        } catch (e) {
+          noteSyncError.value = '笔记删除失败：' + (e?.message || '网络或服务异常')
+          return
+        }
+      }
+      noteSyncError.value = ''
+      return
+    }
 
     try {
       if (existingId) {
@@ -183,6 +208,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           node_id: nodeId,
           page: page,
           timestamp: currentTime.value || null,
+          title: currentNode.value?.title || '',
           content: String(content),
           trigger_source: 'learn',
           is_draft: false,
@@ -252,6 +278,33 @@ export function useLearningWorkspace(courseId, options = {}) {
     }
   }
 
+  // Conversation Domain：恢复学生教学智能体对话历史。
+  // 仅在 TeachingAgent 受控条件齐备（cognitive_analysis + analytics_eligible +
+  // studentId）时拉取；失败静默（skipErrorToast），不影响学习页面就绪态。
+  // 刷新 / 重新进入课程后，历史消息重建到 messages，学生可继续上下文对话。
+  async function loadConversationHistory() {
+    if (previewMode) return
+    const studentId = getStudentId()
+    const analyticsEligible = getAnalyticsEligible()
+    const capabilities = getCapabilities()
+    if (!capabilities?.cognitive_analysis || !analyticsEligible || studentId == null) return
+    try {
+      const data = await getConversationHistory(courseId, { limit: 200 })
+      const items = Array.isArray(data?.messages) ? data.messages : []
+      if (!items.length) return
+      messages.value = items.map(msg => ({
+        id: 'restored-' + msg.id,
+        role: msg.role === 'assistant' ? 'assistant' : 'user',
+        content: String(msg.content || ''),
+        citations: Array.isArray(msg.citations) ? msg.citations : [],
+        conceptId: msg.concept_id ?? null,
+        restored: true,
+      }))
+    } catch {
+      // 历史拉取失败不阻断学习；学生仍可发起新提问。
+    }
+  }
+
   function restoreViewState() {
     const saved = readJson(viewStorageKey, {})
     mode.value = Object.values(LEARNING_MODES).includes(saved.mode)
@@ -291,8 +344,20 @@ export function useLearningWorkspace(courseId, options = {}) {
     mediaError.value = ''
 
     try {
+      pendingLearningEvents.value = readJson(learningQueueStorageKey, [])
       const response = await getPlayerInitData(courseId)
       const normalized = normalizePlayerData(response)
+      releaseId.value = normalized.releaseId
+      try {
+        const context = await getLearningContext(courseId)
+        learningContext.value = context?.data ?? context
+        releaseId.value = learningContext.value?.release_id || releaseId.value
+        completedNodes.value = (learningContext.value?.items || [])
+          .filter(item => item?.learning?.status === 'completed')
+          .map(item => item.outline_node_id)
+      } catch {
+        completedNodes.value = normalized.savedProgress.completedNodeIds || []
+      }
       course.value = normalized
       if (!normalized.nodes.length) {
         error.value = normalized.contentMessage || '课程学习内容尚未就绪，请稍后再试。'
@@ -305,9 +370,21 @@ export function useLearningWorkspace(courseId, options = {}) {
       currentPage.value = normalized.savedProgress.currentPage
       restoreViewState()
       status.value = 'ready'
+      if (!previewMode && releaseId.value && currentNode.value?.outlineNodeId) {
+        const key = `${releaseId.value}:${currentNode.value.outlineNodeId}`
+        if (!openedNodeKeys.value.has(key)) {
+          openedNodeKeys.value.add(key)
+          queueLearningEvent(currentNode.value.outlineNodeId, 'node_opened', {
+            current_timestamp: currentTime.value,
+            current_page: currentPage.value,
+          })
+        }
+      }
       startProgressTimer()
       // 批次1：笔记持久化--从后端加载笔记（失败时回退 localStorage）
       loadNotesFromBackend()
+      // Conversation Domain：恢复教学智能体对话历史（刷新 / 重进课程后重建聊天面板）
+      loadConversationHistory()
     } catch (loadError) {
       error.value = loadError?.message || '课程内容加载失败，请稍后重试'
       status.value = 'error'
@@ -330,6 +407,13 @@ export function useLearningWorkspace(courseId, options = {}) {
     currentPage.value = options.page ?? resolvePageAtTime(node, currentTime.value)
     mediaError.value = ''
     if (options.play === true) isPlaying.value = true
+    if (releaseId.value && node?.outlineNodeId && !openedNodeKeys.value.has(`${releaseId.value}:${node.outlineNodeId}`)) {
+      openedNodeKeys.value.add(`${releaseId.value}:${node.outlineNodeId}`)
+      queueLearningEvent(node.outlineNodeId, 'node_opened', {
+        current_timestamp: currentTime.value,
+        current_page: currentPage.value,
+      })
+    }
   }
 
   function seekTo(globalTime) {
@@ -368,6 +452,16 @@ export function useLearningWorkspace(courseId, options = {}) {
         if (completedId && !completedNodes.value.includes(completedId)) {
           completedNodes.value = [...completedNodes.value, completedId]
         }
+      }
+      const node = currentNode.value
+      if (node?.outlineNodeId && releaseId.value) {
+        queueLearningEvent(node.outlineNodeId, 'media_progress', {
+          progress_ratio: node.timestampEnd > node.timestampStart
+            ? clamp((currentTime.value - node.timestampStart) / (node.timestampEnd - node.timestampStart), 0, 1)
+            : 0,
+          current_timestamp: currentTime.value,
+          current_page: currentPage.value,
+        })
       }
     }
     if (typeof payload?.isPlaying === 'boolean') {
@@ -419,6 +513,16 @@ export function useLearningWorkspace(courseId, options = {}) {
     return true
   }
 
+  // TeachingAgent warning code → 可读文案映射（变更 3）。
+  // 让"web 研究待教师确认""工具被教师关闭"等受控代理行为对学生可见，
+  // 避免学生误以为回答缺失。COURSE_KNOWLEDGE_GRAPH_PENDING 由 fallback_reason 触发，
+  // 其余 warning 由 result.warnings 数组携带。
+  const TEACHING_AGENT_WARNING_NOTICES = {
+    COURSE_KNOWLEDGE_GRAPH_PENDING: '课程知识图谱正在解析或暂不可用，本次已使用普通课程问答。',
+    WEB_RESEARCH_PENDING_TEACHER_CONFIRMATION: '联网资料检索需教师确认，本次已跳过该环节。',
+    TOOL_LOCKED_BY_TEACHER: '该能力已被教师关闭。',
+  }
+
   // TeachingAgent 受控接入（P1）：调用 /teaching-agent/respond 并归一化响应。
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
@@ -431,16 +535,27 @@ export function useLearningWorkspace(courseId, options = {}) {
       resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
       code_submission_id: verifiedRunId ? String(verifiedRunId) : null,
     })
+    const warnings = Array.isArray(result?.warnings) ? result.warnings : []
+    // 合并 fallback_reason 与 warnings 去重后的可读文案
+    const noticeCodes = []
+    if (result?.fallback_reason) noticeCodes.push(result.fallback_reason)
+    for (const code of warnings) {
+      if (!noticeCodes.includes(code)) noticeCodes.push(code)
+    }
+    const fallbackNotice = noticeCodes
+      .map(code => TEACHING_AGENT_WARNING_NOTICES[code])
+      .filter(Boolean)
+      .join(' ')
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
       citations: Array.isArray(result?.citations) ? result.citations : [],
       fallbackRequired: result?.status === 'fallback_required',
-      fallbackNotice: result?.fallback_reason === 'COURSE_KNOWLEDGE_GRAPH_PENDING'
-        ? '课程知识图谱正在解析或暂不可用，本次已使用普通课程问答。'
-        : '',
+      fallbackNotice,
+      // 透传 warnings 数组，供未来面板展示（本次面板已有 fallbackNotice 展示位）。
+      warnings,
       // TeachingAgent 不返回 confidence 数值；有 warnings/degraded_services 时标低置信。
       lowConfidence:
-        Boolean(result?.warnings?.length) || Boolean(result?.degraded_services?.length),
+        Boolean(warnings.length) || Boolean(result?.degraded_services?.length),
     }
   }
 
@@ -500,9 +615,13 @@ export function useLearningWorkspace(courseId, options = {}) {
           result = await askTeachingAgent(question)
           if (result.fallbackRequired) {
             const fallback = await askV1(question)
-            result = { ...fallback, fallbackNotice: result.fallbackNotice }
+            result = {
+              ...fallback,
+              fallbackNotice: result.fallbackNotice,
+              warnings: result.warnings,
+            }
           }
-        } catch (agentError) {
+        } catch {
           result = await askV1(question)
         }
       } else {
@@ -542,7 +661,32 @@ export function useLearningWorkspace(courseId, options = {}) {
     if (!course.value || status.value !== 'ready') return
     if (!options.silent) saveState.value = 'saving'
 
+    // 听课时长埋点：计算自上次保存以来的听课秒数（仅 playing 时累计）。
+    // 后端把 delta 累加到当前节点的 NodeProgress.time_spent。
+    const now = Date.now()
+    let timeSpentDelta = 0
+    if (isPlaying.value && lastProgressSaveAt > 0) {
+      timeSpentDelta = Math.min(60, Math.max(0, (now - lastProgressSaveAt) / 1000))
+    }
+    lastProgressSaveAt = now
+
     try {
+      if (releaseId.value) {
+        const node = currentNode.value
+        if (node?.outlineNodeId) {
+          queueLearningEvent(node.outlineNodeId, 'media_progress', {
+            progress_ratio: node.timestampEnd > node.timestampStart
+              ? clamp((currentTime.value - node.timestampStart) / (node.timestampEnd - node.timestampStart), 0, 1)
+              : 0,
+            current_timestamp: currentTime.value,
+            current_page: currentPage.value,
+            time_spent_delta: timeSpentDelta,
+          })
+        }
+        await flushLearningEvents()
+        saveState.value = 'saved'
+        return
+      }
       await savePlayerProgress(
         buildProgressPayload({
           courseId: course.value.courseId,
@@ -550,6 +694,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           currentTime: currentTime.value,
           currentPage: currentPage.value,
           completedNodes: completedNodes.value,
+          timeSpentDelta,
         })
       )
       saveState.value = 'saved'
@@ -558,8 +703,59 @@ export function useLearningWorkspace(courseId, options = {}) {
     }
   }
 
+  function queueLearningEvent(outlineNodeId, eventType, payload = {}) {
+    if (previewMode || !releaseId.value || !outlineNodeId) return
+    const nonce = (typeof crypto !== 'undefined' && crypto?.randomUUID?.()) || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const idempotencyKey = `learn:${courseId}:${releaseId.value}:${outlineNodeId}:${eventType}:${nonce}`
+    const event = { release_id: releaseId.value, outline_node_id: outlineNodeId, event_type: eventType, idempotency_key: idempotencyKey, payload }
+    pendingLearningEvents.value = [...pendingLearningEvents.value, event].slice(-20)
+    writeJson(learningQueueStorageKey, pendingLearningEvents.value)
+    flushLearningEvents()
+  }
+
+  async function completeCurrentNode() {
+    const node = currentNode.value
+    if (previewMode || !node?.outlineNodeId || !releaseId.value) return false
+    const idempotencyKey = `complete:${courseId}:${releaseId.value}:${node.outlineNodeId}`
+    try {
+      await completeLearningAction(courseId, {
+        release_id: releaseId.value,
+        outline_node_id: node.outlineNodeId,
+        idempotency_key: idempotencyKey,
+      })
+      if (!completedNodes.value.includes(node.id)) {
+        completedNodes.value = [...completedNodes.value, node.id]
+      }
+      return true
+    } catch {
+      saveState.value = 'error'
+      return false
+    }
+  }
+
+  async function flushLearningEvents() {
+    if (previewMode || flushingLearningEvents || !pendingLearningEvents.value.length) return
+    flushingLearningEvents = true
+    try {
+      const queue = [...pendingLearningEvents.value]
+      for (const event of queue) {
+        try {
+          await recordLearningEvent(courseId, event)
+          pendingLearningEvents.value = pendingLearningEvents.value.filter(item => item.idempotency_key !== event.idempotency_key)
+          writeJson(learningQueueStorageKey, pendingLearningEvents.value)
+        } catch {
+          break
+        }
+      }
+    } finally {
+      flushingLearningEvents = false
+    }
+  }
+
   function startProgressTimer() {
     window.clearInterval(progressTimer)
+    // 进入就绪态后初始化时间戳，避免首次保存计入加载耗时。
+    lastProgressSaveAt = Date.now()
     progressTimer = window.setInterval(() => {
       if (isPlaying.value) saveProgress({ silent: true })
     }, 10000)
@@ -605,6 +801,12 @@ export function useLearningWorkspace(courseId, options = {}) {
     totalPages,
     currentVideoUrl,
     completedNodes,
+    releaseId,
+    learningContext,
+    pendingLearningEvents,
+    queueLearningEvent,
+    flushLearningEvents,
+    completeCurrentNode,
     progressPercent,
     isPlaying,
     playbackRate,

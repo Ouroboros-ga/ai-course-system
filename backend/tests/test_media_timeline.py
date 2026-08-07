@@ -9,8 +9,9 @@
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from sqlmodel import select
@@ -32,6 +33,7 @@ from app.services.media_timeline_service import (
     create_timeline_cues_from_node, get_node_timeline, get_course_timeline,
     register_media_asset, serialize_cue,
 )
+from app.services.object_storage import LocalStorageProvider, reset_object_storage_for_tests
 
 
 def _user(session, name, role=UserRole.TEACHER):
@@ -46,6 +48,14 @@ def _course(session, teacher_id):
     )
     session.add(course); session.commit(); session.refresh(course)
     return course
+
+
+@pytest.fixture
+def signed_media_storage(tmp_path):
+    provider = LocalStorageProvider(str(tmp_path / "media"), sign_key="media-test-sign-key")
+    reset_object_storage_for_tests(provider)
+    yield provider
+    reset_object_storage_for_tests(None)
 
 def _setup(session, teacher, student=None):
     course = _course(session, teacher.id)
@@ -162,9 +172,9 @@ class TestMediaTimelineService:
         )
         assert asset.object_key == "videos/course_1/node_5/segment_3.mp4"
         assert asset.backend == StorageBackend.LOCAL
-        assert asset.resolve_url().endswith(
-            "/assets/videos/course_1/node_5/segment_3.mp4/content"
-        )
+        resolved = asset.resolve_url()
+        assert "/assets/videos/course_1/node_5/segment_3.mp4/content?" in resolved
+        assert "exp=" in resolved and "sig=" in resolved and "scope=" in resolved
 
     def test_cue_with_video_object_key(self, session):
         """提示关联视频资产的 object_key"""
@@ -287,3 +297,45 @@ class TestMediaTimelineAPI:
             headers={"Authorization": f"Bearer {_token(teacher_b)}"},
         )
         assert response.status_code == 403
+
+    def test_local_content_requires_signed_scope_and_rejects_tampering(
+        self, client, session, signed_media_storage,
+    ):
+        teacher = _user(session, "mt_signed_content")
+        course = _setup(session, teacher)
+        object_key = "audio/signed/course-1.mp3"
+        payload = b"signed media bytes"
+        signed_media_storage.put(object_key, payload, mime_type="audio/mpeg")
+        register_media_asset(
+            session, course_id=course.id, object_key=object_key,
+            asset_type="audio", mime_type="audio/mpeg", size_bytes=len(payload),
+        )
+        session.commit()
+        url = signed_media_storage.sign_read_url(
+            object_key, scope={"course_id": course.id, "purpose": "media_asset"},
+        )
+        parsed = urlsplit(url)
+        query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
+        headers = {"Authorization": f"Bearer {_token(teacher)}"}
+
+        ok = client.get(parsed.path, params=query, headers=headers)
+        assert ok.status_code == 200
+        assert ok.content == payload
+
+        missing = client.get(parsed.path, params={"exp": query["exp"], "sig": query["sig"]}, headers=headers)
+        assert missing.status_code in (403, 422)
+
+        tampered = {**query, "scope": "course_id=999;purpose=media_asset"}
+        rejected = client.get(parsed.path, params=tampered, headers=headers)
+        assert rejected.status_code == 403
+
+        expired_exp = str(int((datetime.now(timezone.utc) - timedelta(seconds=5)).timestamp()))
+        expired_sig = signed_media_storage._sign(
+            object_key, int(expired_exp), {"course_id": course.id, "purpose": "media_asset"},
+        )
+        expired = client.get(
+            parsed.path,
+            params={"exp": expired_exp, "sig": expired_sig, "scope": query["scope"]},
+            headers=headers,
+        )
+        assert expired.status_code == 403

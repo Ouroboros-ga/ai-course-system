@@ -1,6 +1,13 @@
 # AI 互动智课系统
 
+> **2026-08-07 管理员与 Provider 配置**：新增 `/app/admin`，用于用户检索、昵称/密码/启用状态管理，以及 LLM、TTS、PPT 的 Base URL、模型和密钥配置。平台全局角色已收敛为 `user/admin`；课程教师能力继续由 Course Access v1 决定。外部“泛雅·超星 AI”示例协议通过可移除的 `/api/v1/compat/*` 参考兼容包接入；未配置 Provider 或未映射外部资源时会 fail-closed。删除 `backend/app/external_apis/fanya_chaoxing_ai/` 不影响内部 API。详见 [现行实施说明](docs/phase1/平台管理员Provider与开放API兼容层.md)。
+
 本仓库是本地原型 Demo。当前实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。
+
+> **2026-08-07 Stage 8 Provider**：本地媒体 Demo 必须显式 `MEDIA_DEMO_MODE=true`，页面
+> 显示 `fake-demo` 且不会调用付费 TTS；正式媒体生成须设置 `MEDIA_DEMO_MODE=false` 与
+> `STAGE8_TTS_PROVIDER=doubao`，缺失配置时 fail-closed。详见
+> [`docs/phase1/阶段8_P5.0_Provider配置基线.md`](docs/phase1/阶段8_P5.0_Provider配置基线.md)。
 
 ## 当前媒体与数字人方案
 
@@ -20,19 +27,32 @@
   → 学习端 playback API
 ```
 
-学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版固定使用平台预制 PixiJS 2D 角色 `platform-instructor-v1`，按 `avatar-cues/v1` 驱动；Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
+### P5.1：平台音色与 2D 角色注册表（2026-08-07）
+
+当前实现已将媒体版本绑定从前端硬编码提升为服务端注册表：
+
+- `PlatformVoicePreset` 与 `PlatformAvatarPreset` 由服务端维护，批量计划重新解析并在 `MediaBuildBatch` / `MediaRelease` 中冻结 `preset_id + version`。
+- `GET /api/v1/media/course/{course_id}/platform-presets` 只返回安全的显示信息和内容哈希，不暴露 Doubao speaker、resource ID 或密钥。
+- 首版已注册 1 个 fake-demo 音色和 3 个平台预制 Sprite2D 角色；角色 manifest 按版本写入对象存储并通过发布版本签名下发。
+- 学习端按发布版本加载 manifest；加载失败依次降级为本地平台默认角色、静态头像、无数字人，音频/PPT/字幕不被阻断。
+
+P5.1/P5.2 已通过本地 fake provider、SQLite 迁移、上传隔离和前端构建验证。P5.3 的单次豆包短文本 POC 已有脱敏历史结果：音频与 `words` 返回，时间误差约 191.583ms，但 `phonemes` 为空，因此不能承诺精确口型；本回合重新调用被外部付费请求审批拦截，未重试。详见 [`阶段8_P5.3_一次受控豆包验收`](docs/phase1/阶段8_P5.3_一次受控豆包验收.md)。
+
+学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版使用发布版本冻结的平台注册角色（当前默认 `platform-instructor-v2@1.0.0`），按 `avatar-cues/v1` 驱动；Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
 
 服务端只负责权限、批次编排、缓存复用、时序归一化、对象存储和版本发布。媒体数据只保存 `object_key`、SHA 和签名 URL，不保存绝对路径。Local storage 与 S3/OSS presigned PUT/POST 通过同一适配层切换。
 
-## 课程 87 当前状态
+### P5.2：OSS 与旧链隔离（2026-08-07）
 
-2026-08-07 已核对本地数据库和播放服务：课程 87 的 `mrel_623ac854…` 为 active，正式课程版本 `cr_4ca1bc01…` 为 published，并冻结了相同的 `playlist_content_hash=e78973d2…`。该版本含 20 个 `ready` 的 `MediaReleaseItem`、44 页已渲染 PPT、20 段可签名读取的 WAV/字幕/Cue 和 `audio-playlist/v1`（总时长 880448ms）。`GET /api/v1/media/course/87/playback` 返回 `available=true`；这是 Fake WAV 的课程级端到端发布验收，不是仅停在草稿。
+上传意图按对象存储协议返回：Local 使用受控 `PUT`，S3/OSS 使用 `POST fields + file`；两者上传完成后都必须调用服务端 `confirm`，由服务端重新 HEAD、计算 SHA、探测 MIME/时长。Local 媒体读取 URL 强制携带并校验 `exp/sig/object_key/scope`，scope 绑定课程和用途。旧 `/video-gen` 仅保留历史 `VideoGenerationTask` 兼容，带弃用响应和 Sunset，不得写入新的 `MediaRelease` 或正式播放清单。
 
-按 2026-08-07 验收记录，浏览器侧播放、seek、倍速、跨知识点、PPT/字幕同步和左侧数字人布局已完成手工验收。仍未完成的是性能指标记录，以及经本次授权完成的豆包真实音频质量评估；真实 TTS 版本必须新建媒体版本，不能覆盖当前 Fake 发布版本。
 
-Fake TTS 使用 `fake-v1.1-playable` 生成浏览器可解码 WAV，仅用于本地链路和试听，不代表真实音质、字级时间戳或数字人口型效果；自动化测试禁止调用豆包、讯飞或其他付费服务。
 
 ## 课程系统总链路
+
+### 2026-08-07 统一学习数据链
+
+学习页面现在以 `course_id + release_id + outline_node_id` 作为知识点学习身份。学习事件写入不可变 `learning_events`，再投影到学生学习状态和教师课程统计；曝光/完成与评分型认知证据分离，认知或推荐不可用时显示 `unknown/pending/not_available`。新学习页已接入 `learning-context`、事件写入和显式完成接口，刷新后从当前 release 投影恢复最近锚点；失败事件暂存浏览器待发队列。教师 `/app/course/:courseId/analytics` 已读取统一统计投影，展示学习状态、掌握分布、低置信度、待推荐人数和学生下钻。接口与 Agent planned Port/Tool 边界见 [统一学习进度认知推荐统计契约](docs/phase1/统一学习进度认知推荐统计契约.md)。
 
 ```text
 课程资料 → 统一上传与版本化对象存储 → 解析任务 / DocumentIR / Evidence
@@ -41,6 +61,16 @@ Fake TTS 使用 `fake-v1.1-playable` 生成浏览器可解码 WAV，仅用于本
 ```
 
 课程授权统一遵循 Course Access v1；学生代码只通过独立 Judge0 沙箱执行。外部 LLM、OCR、TTS、PPT 和数字人服务只能经独立适配层或任务服务接入。
+
+### 2026-08-07 Conversation Domain 与提问反推
+
+TeachingAgent 的数据持久化按三个相互独立的域划分（AGENTS.md §5.1）：
+
+1. **Agent Runtime Context / Audit 域**仍保持数据最小化。`agent_learning_events`、`agent_trace_records`、`agent_conversation_sessions` 由白名单 sanitize 函数强制最小化，不持久化原始问题、完整答案、Prompt 或完整 LLM Trace。
+2. **Conversation Domain（产品体验域）**独立持久化学生与教学智能体的完整消息（`conversation_messages` 表 + `conversation_service`），用于刷新 / 重新进入课程后恢复对话。写入在 TeachingAgent 端点回答成功后非阻塞进行；读取经 `GET /api/v1/teaching-agent/conversations/{course_id}`，仅限学习者本人，带独立 `data_policy_version="conversation-domain/1"` 与 `retention_until` 保留窗口（默认 90 天）。
+3. **学习分析不得直接依赖完整 Conversation**。提问反推经 `derive_question_inference_signals` / `GET /api/v1/teaching-agent/conversations/{course_id}/inference` 把近期提问聚合成结构化信号（计数、平均提问深度、薄弱标记、trace 引用），不返回原文；认知/推荐/出题只消费此结构化投影。
+
+前端 `useLearningWorkspace.load()` 在 TeachingAgent 受控条件齐备时调用 `getConversationHistory` 重建聊天面板，学生可在刷新后继续上下文对话。
 
 ## 开发入口
 

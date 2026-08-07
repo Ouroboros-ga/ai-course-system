@@ -18,7 +18,7 @@ const navItems = [
 // page-design §2.1「智能体」一级空间尚无对应页面与后端能力，
 // 按 §1.5「未具备能力的入口直接隐藏」不在本切片渲染。
 const adminItem = computed(() =>
-  counter.isAdmin ? { label: '平台管理', to: '/admin', icon: ShieldCheck } : null
+  counter.canManageUsers ? { label: '平台管理', to: '/app/admin', icon: ShieldCheck } : null
 )
 
 function isActive(item) {

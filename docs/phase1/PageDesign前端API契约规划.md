@@ -145,6 +145,16 @@ type HomeViewModel = {
 
 ### 3.4 `/app/course/:courseId/learn`：Adaptive Learning Canvas
 
+> 2026-08-07 状态修订：统一学习链已接入新学习页。`/player/init` 只提供 active release 的课程内容和正式 `outline_node_id`；学习事实、断点续学和事件同步统一使用下列 facade 接口。
+
+| 新接口 | 状态 | 权限/语义 |
+|---|---|---|
+| `GET /facade/course/{course_id}/learning-context` | `available` | `course.learn`；返回 active `release_id`、知识点学习状态、完成原因、认知/推荐状态和 `recent_anchor`。|
+| `POST /facade/course/{course_id}/learning-events` | `available` | `course.learn`；记录 `node_opened`、`media_progress`、`read_progress`、`explicit_complete` 等规范化事件，要求幂等键。|
+| `POST /facade/course/{course_id}/learning-actions/complete` | `available` | `course.learn`；仅允许当前 active release 的显式完成动作，不产生 mastery 证据。|
+
+旧表中将上述三个接口标记为 `planned` 的文字均由本段状态修订覆盖。
+
 | 子状态 | 接口 | 状态 | 说明 |
 |---|---|---|---|
 | LEARN | `GET /player/init/{course_id}`、进度保存 | `adapter_needed` | 后续新增 `GET /facade/course/{id}/learning-context` 统一节点、PPT、视频和 return anchor。 |
@@ -166,6 +176,15 @@ POST /api/v1/practice/attempts/{attempt_id}/submit
 
 首接口返回 `policy_version, six_dimensions, reason_codes, evidence_refs, confidence,
 question_source=bank|generated_draft`。无匹配题时创建 `generated_draft`，**不可直接面向学生发布**。
+
+### 3.4.1 `/app/course/:courseId/analytics`：教师学习分析
+
+| 接口 | 状态 | 权限/语义 |
+|---|---|---|
+| `GET /facade/course/{course_id}/analytics` | `available` | `analytics.view_course`；返回当前或指定 release 的知识点学习人数、完成率、掌握等级分布、未知/低置信度和待推荐人数，并提供学生完成摘要。|
+| `GET /facade/course/{course_id}/analytics/students/{student_id}` | `available` | `analytics.view_member`；返回学生知识点学习矩阵、认知摘要、推荐状态和审计引用，不返回原始聊天、完整答案或 LLM trace。|
+
+教师统计只读取统一学习投影和认知/推荐摘要，不读取 `StudentEnrollment.overall_progress`、旧脚本节点汇总或旧页面统计字段。
 
 ### 3.5 `/app/course/:courseId/build`：教师课程建设
 

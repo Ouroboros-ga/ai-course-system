@@ -15,6 +15,7 @@ ViewModel 契约:
 from __future__ import annotations
 
 from typing import Optional, Any
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
@@ -44,8 +45,152 @@ from app.services.course_access_service import (
     ALL_PERMISSIONS,
 )
 from app.services.facade_home_service import facade_home_service
+from app.models.course_build_model import CourseRelease
+from app.models.access_control_model import MembershipStatus
+from app.models.unified_learning_model import LearningEventType, StudentLearningProjection, CourseLearningStatsProjection, ExposureStatus
+from app.models.cognitive_state_model import CognitiveState, RecommendationRecord
+from app.models.graph_production_model import CourseKnowledgeNode
+from app.services.unified_learning_service import active_release, release_nodes, record_event, student_context, refresh_course_stats
+from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["Phase A 门面层"])
+
+class LearningEventRequest(BaseModel):
+    release_id: str
+    outline_node_id: str
+    event_type: LearningEventType
+    idempotency_key: str = Field(min_length=8, max_length=200)
+    payload: dict[str, Any] = Field(default_factory=dict)
+    occurred_at: Optional[datetime] = None
+    source: str = Field(default="learn_page", max_length=64)
+
+
+def _attach_cognition(session: Session, *, student_id: int, course_id: int, item: dict[str, Any]) -> None:
+    key = item.get("knowledge_node_key")
+    if not key:
+        return
+    knowledge = session.exec(select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course_id, CourseKnowledgeNode.node_key == key)).first()
+    if knowledge is None:
+        return
+    state = session.exec(select(CognitiveState).where(CognitiveState.student_id == student_id, CognitiveState.course_id == course_id, CognitiveState.node_id == knowledge.id, CognitiveState.is_latest == True).order_by(CognitiveState.computed_at.desc())).first()
+    recommendation = session.exec(select(RecommendationRecord).where(RecommendationRecord.student_id == student_id, RecommendationRecord.course_id == course_id, RecommendationRecord.node_id == knowledge.id, RecommendationRecord.consumed == False).order_by(RecommendationRecord.created_at.desc())).first()
+    if state:
+        item["cognition"] = {"status": "available", "mastery_level": state.mastery_level, "mastery_score": state.mastery_score, "evidence_confidence": state.evidence_confidence, "reason_codes": state.reason_codes, "sample_size": state.sample_size, "computed_at": state.computed_at.isoformat() if state.computed_at else None}
+    if recommendation:
+        item["recommendation"] = {"status": "available", "recommendation_id": recommendation.recommendation_id, "type": recommendation.recommendation_type, "priority": recommendation.priority, "title": recommendation.title, "description": recommendation.description, "reason_codes": recommendation.reason_codes, "evidence_refs": recommendation.evidence_refs}
+
+
+@router.get("/course/{course_id}/learning-context")
+async def get_learning_context(course_id: int, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    context = require_course_permission(session, current_user, course_id, "course.learn")
+    data = student_context(session, student_id=context.user_id, course_id=course_id)
+    for item in data.get("items", []):
+        _attach_cognition(session, student_id=context.user_id, course_id=course_id, item=item)
+    return unified_response(200, "获取统一学习上下文成功", data)
+
+
+@router.post("/course/{course_id}/learning-events")
+async def create_learning_event(course_id: int, payload: LearningEventRequest, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    context = require_course_permission(session, current_user, course_id, "course.learn")
+    release = active_release(session, course_id)
+    if release is None or release.release_id != payload.release_id:
+        raise HTTPException(status_code=409, detail="RELEASE_NOT_ACTIVE")
+    try:
+        event, projection = record_event(session, student_id=context.user_id, course_id=course_id, release_id=payload.release_id, outline_node_id=payload.outline_node_id, event_type=payload.event_type, idempotency_key=payload.idempotency_key, payload=payload.payload, occurred_at=payload.occurred_at, source=payload.source)
+        refresh_course_stats(session, course_id=course_id, release_id=payload.release_id)
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
+    return unified_response(200, "学习事件已记录", {"event_id": event.event_id, "release_id": projection.release_id, "outline_node_id": projection.outline_node_id, "status": projection.exposure_status.value, "completion_ratio": projection.completion_ratio, "completion_reason": projection.completion_reason})
+
+
+@router.post("/course/{course_id}/learning-actions/complete")
+async def complete_learning_action(course_id: int, release_id: str, outline_node_id: str, idempotency_key: str, session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    context = require_course_permission(session, current_user, course_id, "course.learn")
+    release = active_release(session, course_id)
+    if release is None or release.release_id != release_id:
+        raise HTTPException(status_code=409, detail="RELEASE_NOT_ACTIVE")
+    try:
+        event, projection = record_event(session, student_id=context.user_id, course_id=course_id, release_id=release_id, outline_node_id=outline_node_id, event_type=LearningEventType.EXPLICIT_COMPLETE, idempotency_key=idempotency_key, payload={"action": "complete"}, source="learn_page")
+        refresh_course_stats(session, course_id=course_id, release_id=release_id)
+        session.commit()
+    except ValueError as exc:
+        session.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
+    return unified_response(200, "知识点已完成", {"event_id": event.event_id, "outline_node_id": projection.outline_node_id, "status": projection.exposure_status.value})
+
+
+@router.get("/course/{course_id}/analytics")
+async def get_learning_analytics(course_id: int, release_id: Optional[str] = Query(None), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "analytics.view_course")
+    release = active_release(session, course_id) if release_id is None else session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id, CourseRelease.release_id == release_id)).first()
+    if release is None:
+        raise HTTPException(status_code=409, detail="RELEASE_NOT_FOUND")
+    nodes = release_nodes(session, release)
+    memberships = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.status == MembershipStatus.ACTIVE)).all()
+    students = [m for m in memberships if m.role.value == "student" and not m.analytics_excluded]
+    projections = session.exec(select(StudentLearningProjection).where(StudentLearningProjection.course_id == course_id, StudentLearningProjection.release_id == release.release_id)).all()
+    stats_rows = session.exec(select(CourseLearningStatsProjection).where(
+        CourseLearningStatsProjection.course_id == course_id,
+        CourseLearningStatsProjection.release_id == release.release_id,
+    )).all()
+    stats_by_node = {row.outline_node_id: row for row in stats_rows}
+    by_node: dict[str, list[StudentLearningProjection]] = {}
+    for row in projections:
+        by_node.setdefault(row.outline_node_id, []).append(row)
+    items = []
+    for node in nodes:
+        rows = by_node.get(node.outline_node_id, [])
+        counts = {status.value: 0 for status in ExposureStatus}
+        for row in rows:
+            counts[row.exposure_status.value] += 1
+        stat = stats_by_node.get(node.outline_node_id)
+        not_started = stat.not_started_count if stat else max(0, len(students) - counts["in_progress"] - counts["completed"])
+        completed = stat.completed_count if stat else counts["completed"]
+        items.append({
+            "outline_node_id": node.outline_node_id,
+            "title": node.title,
+            "total_students": len(students),
+            "not_started": not_started,
+            "in_progress": stat.in_progress_count if stat else counts["in_progress"],
+            "completed": completed,
+            "completion_rate": completed / len(students) if students else 0.0,
+            "mastery_distribution": stat.mastery_distribution if stat else {},
+            "unknown_mastery_count": stat.unknown_mastery_count if stat else 0,
+            "low_confidence_count": stat.low_confidence_count if stat else 0,
+            "pending_recommendation_count": stat.pending_recommendation_count if stat else 0,
+        })
+    student_summaries = []
+    for membership in students:
+        student_rows = [row for row in projections if row.student_id == membership.user_id]
+        completed = sum(row.exposure_status == ExposureStatus.COMPLETED for row in student_rows)
+        student_summaries.append({
+            "student_id": membership.user_id,
+            "completed": completed,
+            "total": len(nodes),
+            "completion_rate": completed / len(nodes) if nodes else 0.0,
+        })
+    return unified_response(200, "获取课程学习统计成功", {
+        "course_id": course_id,
+        "release_id": release.release_id,
+        "student_count": len(students),
+        "knowledge_points": items,
+        "students": student_summaries,
+    })
+
+
+@router.get("/course/{course_id}/analytics/students/{student_id}")
+async def get_student_learning_analytics(course_id: int, student_id: int, release_id: Optional[str] = Query(None), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+    require_course_permission(session, current_user, course_id, "analytics.view_member")
+    membership = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.user_id == student_id, CourseMembership.status == MembershipStatus.ACTIVE)).first()
+    if membership is None or membership.role.value != "student":
+        raise HTTPException(status_code=404, detail="STUDENT_NOT_FOUND")
+    data = student_context(session, student_id=student_id, course_id=course_id, release_id=release_id)
+    for item in data.get("items", []):
+        _attach_cognition(session, student_id=student_id, course_id=course_id, item=item)
+    data["student_id"] = student_id
+    return unified_response(200, "获取学生学习统计成功", data)
 
 
 # ==================== HomeViewModel（阶段1） ====================

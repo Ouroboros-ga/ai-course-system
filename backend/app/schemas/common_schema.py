@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any, Optional
 
 
@@ -26,7 +26,8 @@ class UnifiedResponse(BaseModel):
 class UserInfo(BaseModel):
     id: str
     username: str = ""
-    role: str = "student"
+    role: str = "user"
+    platform_permissions: list[str] = Field(default_factory=list)
 
 
 class LoginResponseData(BaseModel):

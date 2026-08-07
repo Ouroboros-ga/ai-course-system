@@ -184,7 +184,16 @@ function deriveParseStage(parseInfo) {
   if (raw.includes('fail') || raw.includes('error')) return { state: 'failed', label: '解析失败', note: '请在原编辑器检查源文件' }
   return { state: 'running', label: raw ? '解析中' : '处理中', note: '解析服务仍在处理资料' }
 }
-function goLegacy() { router.push(`/teacher/course/${courseId.value}`) }
+function goMediaBuild() { router.push(`/app/course/${courseId.value}/build/media`) }
+function goLegacy() {
+  // Media generation and avatar preview now live in the batch media center;
+  // keep the old editor route only for non-media production steps.
+  if (activeStep.value === 'audio' || activeStep.value === 'avatar') {
+    goMediaBuild()
+    return
+  }
+  router.push(`/teacher/course/${courseId.value}`)
+}
 function goMapping() { router.push('/teacher/course/' + courseId.value + '/mapping') }
 function selectStep(stepId) { activeStep.value = stepId; stepChosenByTeacher.value = true }
 function selectRecommendedStep() {

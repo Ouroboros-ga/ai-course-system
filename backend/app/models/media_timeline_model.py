@@ -9,7 +9,6 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Optional
-from urllib.parse import quote
 
 from sqlalchemy import Column, JSON
 from sqlmodel import Field, SQLModel
@@ -54,10 +53,15 @@ class MediaAsset(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow_aware)
 
     def resolve_url(self) -> str:
-        """解析为可访问的URL"""
+        """Return a short-lived signed URL for the immutable object key."""
+        from app.services.object_storage import get_object_storage
+
         if self.backend == StorageBackend.OSS and self.oss_url:
             return self.oss_url
-        return f"/api/v1/media/assets/{quote(self.object_key, safe='/')}/content"
+        return get_object_storage().sign_read_url(
+            self.object_key,
+            scope={"course_id": self.course_id, "purpose": "media_asset"},
+        )
 
 
 class MediaTimelineCue(SQLModel, table=True):

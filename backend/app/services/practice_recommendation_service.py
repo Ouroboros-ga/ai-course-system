@@ -1,4 +1,4 @@
-﻿"""阶段5 服务层：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
+"""阶段5 服务层：题库导入、AI 生成草稿、个性化练习推荐与正式学习证据链接
 
 完成"题库优先检索 → 无匹配题则约束生成草稿 → 教师审核/发布"的编排链路。
 
@@ -718,6 +718,21 @@ class PracticeRecommendationService:
 
         # 题库不足时通过 LLM 生成个性化草稿（不直接发布）
         if items_created < item_count and allow_generation:
+            # 读取学生近期提问反推信号（来自 Conversation Domain 的结构化投影，不含原文）。
+            # 失败不阻塞出题：inference 不可用时降级为不带提问信号。
+            question_signals: Optional[list] = None
+            try:
+                from app.services.conversation_service import derive_question_inference_signals
+                inference = derive_question_inference_signals(
+                    session,
+                    student_id=student_id,
+                    course_id=course_id,
+                    concept_id=str(node_id) if node_id else None,
+                    lookback_days=14,
+                )
+                question_signals = inference.get("signals") or None
+            except Exception:
+                question_signals = None
             remaining = item_count - items_created
             for i in range(remaining):
                 # P1-5: 调用 LLM 生成个性化题目；LLM 不可用时返回带明确标记的占位草稿
@@ -730,6 +745,7 @@ class PracticeRecommendationService:
                     cognitive_snapshot=cognitive_snapshot,
                     six_dimensions=six_dimensions,
                     reason_codes=reason_codes,
+                    question_signals=question_signals,
                 )
                 # 合并 LLM 返回的 reason_codes 与运行级 reason_codes
                 merged_reasons = list(reason_codes)

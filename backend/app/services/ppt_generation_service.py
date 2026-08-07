@@ -44,6 +44,13 @@ class XfyunPPTClient:
     def __init__(self):
         self.app_id = settings.XFYUN_PPT_APP_ID
         self.api_secret = settings.XFYUN_PPT_API_SECRET
+        self.base_url = getattr(settings, "XFYUN_PPT_BASE_URL", self.BASE_URL) or self.BASE_URL
+
+    def configure(self, *, base_url: str, api_key: str, extra_config: dict[str, Any] | None = None) -> None:
+        self.base_url = (base_url or self.BASE_URL).rstrip("/")
+        self.api_secret = api_key or self.api_secret
+        if extra_config:
+            self.app_id = str(extra_config.get("app_id") or self.app_id)
 
     def _get_signature(self, ts: int) -> str:
         """生成鉴权签名: MD5(appId + ts) -> HMAC-SHA1(md5_result, secret) -> Base64"""
@@ -78,7 +85,7 @@ class XfyunPPTClient:
         page_size: int = 20,
     ) -> Dict[str, Any]:
         """获取PPT模板列表"""
-        url = f"{self.BASE_URL}/template/list"
+        url = f"{self.base_url}/template/list"
         headers = self._get_headers()
         body = {
             "payType": pay_type,
@@ -104,7 +111,7 @@ class XfyunPPTClient:
         search: bool = False,
     ) -> Dict[str, Any]:
         """根据文本内容生成PPT大纲"""
-        url = f"{self.BASE_URL}/outline/create"
+        url = f"{self.base_url}/outline/create"
         headers = self._get_headers()
         body = {
             "text": text,
@@ -128,7 +135,7 @@ class XfyunPPTClient:
         ai_image: str = "normal",
     ) -> Dict[str, Any]:
         """创建PPT生成任务（通过文本描述）"""
-        url = f"{self.BASE_URL}/create"
+        url = f"{self.base_url}/create"
         ts = int(time.time())
         signature = self._get_signature(ts)
 
@@ -168,7 +175,7 @@ class XfyunPPTClient:
         ai_image: str = "normal",
     ) -> Dict[str, Any]:
         """根据大纲创建PPT生成任务"""
-        url = f"{self.BASE_URL}/outline/create"
+        url = f"{self.base_url}/outline/create"
         ts = int(time.time())
         signature = self._get_signature(ts)
 
@@ -198,7 +205,7 @@ class XfyunPPTClient:
 
     async def get_task_progress(self, sid: str) -> Dict[str, Any]:
         """查询PPT生成任务进度"""
-        url = f"{self.BASE_URL}/progress?sid={sid}"
+        url = f"{self.base_url}/progress?sid={sid}"
         headers = self._get_headers()
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -217,7 +224,7 @@ class XfyunPPTClient:
             try:
                 async with httpx.AsyncClient(timeout=30) as client:
                     response = await client.get(
-                        f"{self.BASE_URL}/progress?sid={sid}",
+                        f"{self.base_url}/progress?sid={sid}",
                         headers=headers,
                     )
                     response.raise_for_status()

@@ -8,9 +8,12 @@ from app.platform.retrieval_demo.mode import DEMO_RETRIEVAL_MODES
 
 
 class UserRole(str, Enum):
-    STUDENT = "student"
-    TEACHER = "teacher"
+    USER = "user"
     ADMIN = "admin"
+    # Legacy read/code aliases. They serialize as the new `user` value and
+    # must not be used for creating new records.
+    STUDENT = "user"
+    TEACHER = "user"
 
 
 class LLMProvider(str, Enum):
@@ -42,6 +45,10 @@ class Settings(BaseSettings):
     # JWT身份认证配置
     # --------------------------
     JWT_SECRET_KEY: str = "dev-jwt-secret-key-change-in-prod-very-long"
+    # Fernet key material for platform integration secrets. Set a dedicated
+    # deployment secret in real environments; JWT_SECRET_KEY is only a
+    # development fallback for backwards-compatible local prototypes.
+    PLATFORM_CONFIG_ENCRYPTION_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
 
@@ -224,7 +231,11 @@ class Settings(BaseSettings):
     # 阶段8 M2 讯飞在线 TTS 配置
     # 密钥只留在服务端；自动化测试不调用真实讯飞
     # --------------------------
-    STAGE8_TTS_PROVIDER: str = "fake"
+    # Stage 8 is fail-closed by default.  Local demos must explicitly set
+    # MEDIA_DEMO_MODE=true; formal operation must explicitly select doubao.
+    MEDIA_DEMO_MODE: bool = False
+    STAGE8_TTS_PROVIDER: str = ""
+    ALLOW_DEMO_PROVIDERS: bool = False
     XFYUN_TTS_APP_ID: str = ""
     XFYUN_TTS_API_KEY: str = ""
     XFYUN_TTS_API_SECRET: str = ""
@@ -387,6 +398,19 @@ class Settings(BaseSettings):
                 f"Invalid TEACHING_AGENT_MODE={self.TEACHING_AGENT_MODE!r}; "
                 f"legal values: {list(TEACHING_AGENT_MODES)}"
             )
+        # SEC-02: 签名/JWT 密钥缺失时禁止静默回退到 dev 默认值，否则攻击者可用
+        # 已知默认值伪造任意 JWT（任意 sub/role）并重算请求签名。缺失即拒绝启动。
+        for name, default in {
+            "STATIC_KEY": "dev-static-key-change-in-prod",
+            "JWT_SECRET_KEY": "dev-jwt-secret-key-change-in-prod-very-long",
+        }.items():
+            if not getattr(self, name) or getattr(self, name) == default:
+                raise ValueError(
+                    f"{name} 未配置或仍在使用 dev 默认值，拒绝启动。"
+                    f"请通过 .env 或环境变量注入强随机密钥"
+                    f"（生成示例：python -c \"import secrets; print(secrets.token_urlsafe(48))\"）。"
+                    f"注意：.env.example 中的 'your-*-here' 占位值同样不安全，部署前必须替换。"
+                )
         return self
 
 

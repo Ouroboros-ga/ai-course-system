@@ -3,14 +3,22 @@ from __future__ import annotations
 
 from typing import Any, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from app.core.security import get_current_user
 from app.models.database import get_session
+from app.platform.agents.platform import AgentPlatform
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime import TeachingAgentRuntime
+from app.platform.agents.runtime.profile import AgentType
+from app.services.cognitive_service import record_question_depth
+from app.services.conversation_service import (
+    derive_question_inference_signals,
+    list_conversation_messages,
+    persist_conversation_turn,
+)
 from app.services.course_access_service import require_course_permission, resolve_course_access
 
 router = APIRouter()
@@ -34,7 +42,12 @@ class TeachingAgentRequest(BaseModel):
     code_submission_id: str | None = Field(default=None, max_length=128)
 
 
-def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry]:
+def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform]:
+    # 统一入口：优先经 AgentPlatform 解析（Prep/Coding/EDU 同一入口）。
+    # 向后兼容：仅注入 legacy registry 的环境（如部分测试）回退到 registry。
+    platform = getattr(request.app.state, "agent_platform", None)
+    if platform is not None and getattr(platform, "is_legacy", lambda _t: False)(AgentType.EDU):
+        return platform
     registry = getattr(request.app.state, "teaching_agent_runtime_registry", None)
     if registry is not None:
         return registry
@@ -56,8 +69,13 @@ class TeachingAgentLearnerRequest(BaseModel):
     code_submission_id: str | None = Field(default=None, max_length=128)
 
 
-def _resolve_runtime(runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry], student_id: str, course_id: str) -> TeachingAgentRuntime:
+def _resolve_runtime(runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform], student_id: str, course_id: str) -> TeachingAgentRuntime:
     """Resolve a runtime; KG-MEST is optional enrichment, not an availability gate."""
+    if isinstance(runtime_source, AgentPlatform):
+        runtime = runtime_source.get_legacy_runtime(AgentType.EDU, student_id, course_id)
+        if runtime is None:
+            raise HTTPException(status_code=503, detail={"code": "TEACHING_AGENT_RUNTIME_UNAVAILABLE", "message": "TeachingAgent runtime could not be built."})
+        return runtime
     if isinstance(runtime_source, TeachingAgentRuntimeRegistry):
         runtime = runtime_source.get_or_create(student_id, course_id)
         if runtime is None:
@@ -75,7 +93,8 @@ async def _respond_for_subject(
     resource_id: str | None,
     exercise_id: str | None,
     code_submission_id: str | None,
-    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry],
+    runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform],
+    session: Session,
 ) -> dict[str, Any]:
     runtime = _resolve_runtime(runtime_source, str(subject_user_id), str(course_id))
     state = await runtime.respond(
@@ -88,6 +107,22 @@ async def _respond_for_subject(
     if state.get("status") == "llm_unavailable":
         raise HTTPException(status_code=503, detail={"code": "TEACHING_LLM_UNAVAILABLE", "trace_id": state["trace_id"]})
 
+    # 认知采集：LLM 已在意图解析时实时标定提问深度，随本次回答落库（追加型）。
+    # 记录失败不影响回答本身（数据最小化，只存深度分数与标签）。
+    depth = state.get("inquiry_depth")
+    if depth is not None:
+        try:
+            record_question_depth(
+                session,
+                student_id=subject_user_id,
+                course_id=course_id,
+                node_id=_safe_node_id(state.get("current_concept_id")),
+                depth_score=float(depth),
+                trace_id=str(state.get("trace_id", "")),
+            )
+        except Exception:  # noqa: BLE001 - 深度标定记录失败不阻断回答
+            pass
+
     degraded = set(state.get("degraded_services", []))
     if {"knowledge_graph", "retrieval"} & degraded:
         return {
@@ -98,13 +133,34 @@ async def _respond_for_subject(
         }
 
     concept = next((item for item in state.get("concept_candidates", []) if item.get("concept_id") == state.get("current_concept_id")), None)
-    return {
+    response = {
         "trace_id": state["trace_id"], "status": "ok", "intent": state.get("intent"), "concept": concept,
         "teaching_action": state.get("teaching_action"), "answer": state.get("final_answer"),
         "citations": state.get("citations", []),
         "recommended_resources": [{"resource_id": resource_id} for resource_id in state.get("selected_resource_ids", [])],
         "warnings": state.get("warnings", []), "degraded_services": state.get("degraded_services", []),
     }
+
+    # Conversation Domain (AGENTS.md §5.1): persist the question/answer turn so
+    # the learner can resume the conversation. This is the product-experience
+    # domain, independent from the data-minimized Agent Runtime Context / Audit
+    # tables. Only persisted when a final answer exists (atomic Q/A turn).
+    # Non-blocking: a persistence failure must never break the teaching response.
+    final_answer = state.get("final_answer")
+    if final_answer:
+        persist_conversation_turn(
+            session,
+            student_id=subject_user_id,
+            course_id=course_id,
+            session_id=session_id,
+            trace_id=str(state.get("trace_id", "")),
+            user_message=message,
+            assistant_answer=final_answer,
+            concept_id=state.get("current_concept_id"),
+            resource_id=resource_id,
+            citations=state.get("citations", []),
+        )
+    return response
 
 
 @router.post("/respond", summary="Controlled LangGraph self-service teaching response")
@@ -129,6 +185,7 @@ async def respond(
         subject_user_id=caller_id, course_id=course_id, session_id=body.session_id,
         message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
         code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+        session=session,
     )
 
 
@@ -153,4 +210,86 @@ async def respond_for_learner(
         subject_user_id=learner_user_id, course_id=course_id, session_id=body.session_id,
         message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
         code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+        session=session,
+    )
+
+
+def _safe_node_id(value: Any) -> int | None:
+    """把概念/节点 ID 转成 int；缺失或非法时返回 None（对应课程级）。"""
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+@router.get("/conversations/{course_id}", summary="Resume a learner's teaching-agent conversation")
+async def list_conversation_history(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+    session_id: str | None = Query(default=None, description="可选：限定某个学习会话"),
+    limit: int = Query(default=200, ge=1, le=500, description="返回消息上限"),
+) -> dict[str, Any]:
+    """Conversation Domain: return the calling learner's conversation history.
+
+    Scoped to the authenticated learner via ``course.question.ask``. Returns
+    messages oldest-first so the workspace can rebuild the chat panel after a
+    refresh / re-entry. Expired rows (past retention) are excluded server-side.
+    This is the product-experience domain; the Agent Runtime Context / Audit
+    tables remain data-minimized and never expose raw messages.
+    """
+    context = require_course_permission(session, current_user, course_id, "course.question.ask")
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_LEARNER_REQUIRED", "message": "Only an active course learner may read their own conversation history."})
+    messages = list_conversation_messages(
+        session,
+        student_id=int(current_user["user_id"]),
+        course_id=course_id,
+        session_id=session_id,
+        limit=limit,
+    )
+    return {
+        "course_id": course_id,
+        "session_id": session_id,
+        "messages": [
+            {
+                "id": msg.id,
+                "role": msg.role,
+                "content": msg.content,
+                "concept_id": msg.concept_id,
+                "resource_id": msg.resource_id,
+                "trace_id": msg.trace_id,
+                "citations": msg.citations,
+                "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            for msg in messages
+        ],
+    }
+
+
+@router.get("/conversations/{course_id}/inference", summary="Question-derived learning signals (提问反推)")
+async def get_question_inference_signals(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+    concept_id: str | None = Query(default=None, description="可选：限定某个知识点概念 ID"),
+    lookback_days: int = Query(default=14, ge=1, le=90, description="回看窗口天数"),
+) -> dict[str, Any]:
+    """提问反推：把学生近期提问聚合成结构化学习证据信号。
+
+    学习分析不得直接依赖完整 Conversation（AGENTS.md §5.1）；本接口返回的是
+    结构化投影（计数、平均提问深度、薄弱标记、trace 引用），不返回原始问题
+    全文。学习者读取自己的信号；教师读取需走 analytics.view_member 的受控路径。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.question.ask")
+    if not context.analytics_eligible:
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_LEARNER_REQUIRED", "message": "Only an active course learner may read their own inference signals."})
+    return derive_question_inference_signals(
+        session,
+        student_id=int(current_user["user_id"]),
+        course_id=course_id,
+        concept_id=concept_id,
+        lookback_days=lookback_days,
     )

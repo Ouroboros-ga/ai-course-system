@@ -14,6 +14,7 @@ export const buildPptManifest = (courseId, releaseId, payload = {}) => request.p
 export const activateMediaRelease = (courseId, releaseId) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/activate`)
 export const withdrawMediaRelease = (courseId, releaseId) => request.post(`${base(courseId)}/releases/${encodeURIComponent(releaseId)}/withdraw`)
 export const getMediaProviderHealth = () => request.get('/media/providers/health')
+export const getPlatformMediaPresets = (courseId) => request.get(`${base(courseId)}/platform-presets`)
 // Learner-facing immutable media release.  This is intentionally separate
 // from the authoring release APIs above so the player consumes its own contract.
 export const getCoursePlayback = (courseId, config = {}) => request.get(`${base(courseId)}/playback`, config)

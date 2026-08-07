@@ -93,6 +93,8 @@ function normalizeDigitalHumanManifest(value) {
   if (!value || !(value.manifest_url ?? value.manifestUrl)) return null
   return {
     manifestUrl: String(value.manifest_url ?? value.manifestUrl),
+    avatarPresetId: String(value.avatar_preset_id ?? value.avatarPresetId ?? ''),
+    avatarPresetVersion: String(value.avatar_preset_version ?? value.avatarPresetVersion ?? ''),
     renderMode: String(value.render_mode ?? value.renderMode ?? ''),
     recommendedQuality: String(value.recommended_quality ?? value.recommendedQuality ?? 'auto'),
     fallbackSupported: Boolean(value.fallback_supported ?? value.fallbackSupported),
@@ -132,6 +134,9 @@ function normalizePlaylist(value) {
         startMs: nonNegativeInteger(segment.startMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)),
         endMs: nonNegativeInteger(segment.endMs + nonNegativeInteger(item?.offset_ms ?? item?.offsetMs)),
       })),
+      avatarPresetId: String(item?.avatar_preset_id ?? item?.avatarPresetId ?? ''),
+      avatarPresetVersion: String(item?.avatar_preset_version ?? item?.avatarPresetVersion ?? ''),
+      avatarManifestUrl: String(item?.avatar_manifest_url ?? item?.avatarManifestUrl ?? ''),
       avatarCues: (item?.avatar_cues_url ?? item?.avatarCuesUrl)
         ? { schema: 'avatar-cues/v1', manifestUrl: String(item?.avatar_cues_url ?? item?.avatarCuesUrl) }
         : null,
@@ -171,6 +176,9 @@ export function normalizeMediaPlayback(rawResponse) {
     defaultPlaybackMode: String(raw.default_playback_mode ?? raw.defaultPlaybackMode ?? 'compatibility'),
     fallbackMode: String(raw.fallback_mode ?? raw.fallbackMode ?? 'compatibility'),
     avatarCues,
+    avatarPresetId: String(raw.avatar_preset_id ?? raw.avatarPresetId ?? digitalHumanManifest?.avatarPresetId ?? ''),
+    avatarPresetVersion: String(raw.avatar_preset_version ?? raw.avatarPresetVersion ?? digitalHumanManifest?.avatarPresetVersion ?? ''),
+    avatarManifestUrl: String(raw.avatar_manifest_url ?? raw.avatarManifestUrl ?? digitalHumanManifest?.manifestUrl ?? ''),
     digitalHumanManifest,
     playlist,
   }

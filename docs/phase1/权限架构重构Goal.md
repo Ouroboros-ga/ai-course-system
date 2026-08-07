@@ -1,5 +1,7 @@
 # Product 1 权限架构重构 Goal
 
+> 2026-08-07 更新：平台全局身份已收敛为 `user/admin`；`teacher/student` 仅作为历史输入兼容读取后归一。历史库中实际保存为大写 `TEACHER` 的账号由迁移 `0043` 升级为全局管理员并补齐 `platform.admin`，课程内的 owner/teacher/student 继续通过 Course Access v1 解析，不得用全局 role 代替课程授权。实施证据见 [平台管理员、Provider 与开放 API 兼容层](平台管理员Provider与开放API兼容层.md)。
+
 ## 目标
 
 将系统从“用户全局 `student / teacher / admin` + `Course.teacher_id` +

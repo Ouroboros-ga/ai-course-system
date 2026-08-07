@@ -22,6 +22,7 @@ export const useCounterStore = defineStore('counter', () => {
     username: null,
     id: null,
     role: null,
+    platform_permissions: [],
   })
 
   const token = ref(localStorage.getItem('token') || null)
@@ -30,24 +31,22 @@ export const useCounterStore = defineStore('counter', () => {
     return !!token.value && !!userData.value.id
   })
 
-  const isTeacher = computed(() => {
-    return userData.value.role === 'teacher'
-  })
-
-  const isStudent = computed(() => {
-    return userData.value.role === 'student'
-  })
-
-  const isAdmin = computed(() => {
-    return userData.value.role === 'admin'
-  })
+  const platformPermissions = computed(() => userData.value.platform_permissions || [])
+  const hasPlatformPermission = (permission) =>
+    platformPermissions.value.includes(permission) || platformPermissions.value.includes('platform.admin')
+  const canManageUsers = computed(() => hasPlatformPermission('platform.admin') || hasPlatformPermission('platform.user.manage'))
+  const canCreateCourses = computed(() => hasPlatformPermission('platform.admin') || hasPlatformPermission('platform.course.create'))
+  const isTeacher = computed(() => false)
+  const isStudent = computed(() => false)
+  const isAdmin = computed(() => canManageUsers.value)
 
   function setAuth(authData) {
     token.value = authData.token
     userData.value = {
       username: authData.username || authData.userInfo?.username || null,
       id: authData.id || authData.userInfo?.id || null,
-      role: authData.role || null,
+      role: authData.role || authData.userInfo?.role || null,
+      platform_permissions: authData.platform_permissions || authData.userInfo?.platform_permissions || [],
     }
     if (authData.token) {
       localStorage.setItem('token', authData.token)
@@ -55,6 +54,7 @@ export const useCounterStore = defineStore('counter', () => {
     if (authData.role) {
       localStorage.setItem('userRole', authData.role)
     }
+    localStorage.setItem('platformPermissions', JSON.stringify(userData.value.platform_permissions))
     if (userData.value.id) {
       localStorage.setItem('userId', userData.value.id)
     }
@@ -69,9 +69,11 @@ export const useCounterStore = defineStore('counter', () => {
       username: null,
       id: null,
       role: null,
+      platform_permissions: [],
     }
     localStorage.removeItem('token')
     localStorage.removeItem('userRole')
+    localStorage.removeItem('platformPermissions')
     localStorage.removeItem('userId')
     localStorage.removeItem('username')
   }
@@ -81,6 +83,7 @@ export const useCounterStore = defineStore('counter', () => {
     const savedRole = localStorage.getItem('userRole')
     const savedUserId = localStorage.getItem('userId')
     const savedUsername = localStorage.getItem('username')
+    const savedPlatformPermissions = localStorage.getItem('platformPermissions')
 
     if (savedToken) {
       token.value = savedToken
@@ -94,7 +97,15 @@ export const useCounterStore = defineStore('counter', () => {
     if (savedUsername) {
       userData.value.username = savedUsername
     }
+    if (savedPlatformPermissions) {
+      try { userData.value.platform_permissions = JSON.parse(savedPlatformPermissions) || [] } catch { userData.value.platform_permissions = [] }
+    }
     return !!savedToken
+  }
+
+  function setPlatformPermissions(permissions) {
+    userData.value.platform_permissions = Array.isArray(permissions) ? permissions : []
+    localStorage.setItem('platformPermissions', JSON.stringify(userData.value.platform_permissions))
   }
 
   return {
@@ -108,6 +119,11 @@ export const useCounterStore = defineStore('counter', () => {
     isTeacher,
     isStudent,
     isAdmin,
+    platformPermissions,
+    hasPlatformPermission,
+    canManageUsers,
+    canCreateCourses,
+    setPlatformPermissions,
     setAuth,
     clearAuth,
     checkAuth,

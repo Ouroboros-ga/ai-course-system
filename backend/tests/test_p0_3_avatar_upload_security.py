@@ -175,6 +175,9 @@ def test_request_upload_intent_generates_namespaced_object_key(client, session, 
     assert "video/mp4" in intent["allowed_mime_types"]
     assert intent["method"] == "PUT"
     assert intent["expires_at"] > 0
+    assert intent["method"] == "PUT"
+    assert intent["fields"] == {}
+    assert intent["headers"]["Content-Type"] == "video/mp4"
 
 
 def test_request_upload_intent_rejects_invalid_mime(client, session, temp_storage):
@@ -781,3 +784,43 @@ def test_put_upload_then_confirm_reaches_verified(client, session, temp_storage)
     assert source["upload_status"] == "verified", source
     expected_sha = hashlib.sha256(_MIN_MP4).hexdigest()
     assert source["server_content_sha256"] == expected_sha
+
+
+def test_confirm_rejects_client_sha256_mismatch(client, session, temp_storage):
+    """confirm 必须以服务端重算 SHA 为准，并拒绝旧登记中的错误摘要。"""
+    teacher = _user(session, "p03_sha_mismatch")
+    profile = _create_profile(client, _token(teacher))
+    data = _request_intent_and_get_params(client, _token(teacher), profile["avatar_id"])
+    source = data["source_media"]
+    intent = data["upload_intent"]
+    content = _MIN_MP4
+
+    uploaded = client.put(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source['source_media_id']}/upload",
+        params={"exp": intent["exp"], "sig": intent["sig"]},
+        content=content,
+        headers={**_auth(_token(teacher)), "Content-Type": "video/mp4"},
+    )
+    assert uploaded.status_code == 200, uploaded.text
+
+    # Simulate a legacy/client-declared digest that does not match the object.
+    from sqlmodel import select
+    from app.models.avatar_model import AvatarSourceMedia
+    record = session.exec(
+        select(AvatarSourceMedia).where(
+            AvatarSourceMedia.source_media_id == source["source_media_id"]
+        )
+    ).one()
+    record.content_sha256 = "0" * 64
+    session.add(record)
+    session.commit()
+
+    confirmed = client.post(
+        f"{AVATAR}/{profile['avatar_id']}/source-media/{source['source_media_id']}/confirm",
+        headers=_auth(_token(teacher)),
+    )
+    assert confirmed.status_code == 200, confirmed.text
+    body = confirmed.json()["data"]
+    assert body["upload_status"] == "invalid"
+    assert body["validation_notes"] == "sha256_mismatch"
+    assert body["server_content_sha256"] == hashlib.sha256(content).hexdigest()

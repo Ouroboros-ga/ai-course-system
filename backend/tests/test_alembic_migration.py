@@ -356,6 +356,60 @@ def test_course_access_data_repair_normalizes_grants_and_enrollments(tmp_path):
         engine.dispose()
 
 
+def test_legacy_global_teacher_role_is_promoted_to_admin(tmp_path):
+    """The current ORM must be able to read accounts stored as legacy roles."""
+    import asyncio
+    from sqlmodel import Session
+    from app.api.v1.endpoints.user import user_login
+    from app.schemas.common_schema import LoginRequest
+    from app.core.security import get_password_hash
+    from app.models.user_model import User, UserRole
+
+    db_path = tmp_path / "legacy_teacher_roles.db"
+    db_url = f"sqlite:///{db_path}"
+
+    # Stop immediately before the corrective migration, seed values that a
+    # previously deployed database can contain, then advance to head.
+    _run_alembic(db_url, "upgrade", "0042")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with Session(engine) as session:
+            teacher = User(username="legacy_teacher", hashed_password=get_password_hash("legacy-password"), role=UserRole.USER)
+            student = User(username="legacy_student", hashed_password=get_password_hash("student-password"), role=UserRole.USER)
+            session.add(teacher)
+            session.add(student)
+            session.commit()
+            session.refresh(teacher)
+            session.refresh(student)
+            teacher_id, student_id = teacher.id, student.id
+
+        with engine.begin() as conn:
+            conn.execute(text("UPDATE users SET role = 'TEACHER' WHERE id = :id"), {"id": teacher_id})
+            conn.execute(text("UPDATE users SET role = 'STUDENT' WHERE id = :id"), {"id": student_id})
+
+        _run_alembic(db_url, "upgrade", "head")
+
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT role FROM users WHERE id = :id"), {"id": teacher_id}).scalar() == "ADMIN"
+            assert conn.execute(text("SELECT role FROM users WHERE id = :id"), {"id": student_id}).scalar() == "USER"
+            assert conn.execute(text(
+                "SELECT COUNT(*) FROM platform_permission_assignments "
+                "WHERE user_id = :id AND permission = 'ADMIN'"
+            ), {"id": teacher_id}).scalar() == 1
+
+        # Loading through SQLModel is the regression check for the login error.
+        with Session(engine) as session:
+            teacher = session.get(User, teacher_id)
+            student = session.get(User, student_id)
+            assert teacher is not None and teacher.role == UserRole.ADMIN
+            assert student is not None and student.role == UserRole.USER
+            login = asyncio.run(user_login(LoginRequest(username="legacy_teacher", password="legacy-password"), session))
+            assert login.code == 200
+            assert login.data is not None and login.data.userInfo.role == "admin"
+    finally:
+        engine.dispose()
+
+
 def _postgres_available() -> bool:
     """检查 PostgreSQL 测试数据库是否可用。"""
     pg_url = os.environ.get("AI_COURSE_TEST_POSTGRES_URL", "")

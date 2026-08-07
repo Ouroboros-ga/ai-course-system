@@ -20,6 +20,8 @@ class TeachingState(TypedDict, total=False):
     current_code_submission_id: str | None
     intent: str
     intent_confidence: float
+    # LLM 标定的提问深度（0-1，随意图解析实时标定；供认知状态采集）
+    inquiry_depth: float | None
     concept_candidates: list[dict[str, Any]]
     current_concept_id: str | None
     concept_grounding_confidence: float
@@ -47,6 +49,8 @@ class TeachingState(TypedDict, total=False):
     cognitive_state: dict[str, Any] | None
     cognitive_recommendation: dict[str, Any] | None
     question_bank_items: list[dict[str, Any]]
+    # 出题工具产出的草稿（仅在 QuestionGenerationPort 注入时填充；草稿态，须经教师审核）
+    question_generation_draft: dict[str, Any] | None
     web_research_results: dict[str, Any] | None
     session_context: dict[str, Any] | None
     # 阶段9新增：工具治理与教师安全阀产出字段

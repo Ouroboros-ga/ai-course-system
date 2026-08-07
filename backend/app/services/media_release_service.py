@@ -45,12 +45,13 @@ from app.services.digital_human_provider import (
     get_digital_human_provider,
 )
 from app.services.object_storage import get_object_storage, mime_type_for
+from app.services.platform_media_preset_service import sign_avatar_manifest_for_release
 from app.services.task_service import TaskCreateRequest, task_service
 from app.services.tts_provider import (
     TtsSynthesisRequest,
     TtsProviderConfigurationError,
-    get_tts_provider,
 )
+from app.services.stage8_provider_runtime import get_stage8_tts_provider
 
 
 logger = logging.getLogger(__name__)
@@ -994,8 +995,24 @@ class MediaPlaybackService:
         ppt_timeline.sort(key=lambda item: (item["start_ms"], item["node_id"]))
 
         # 数字人 manifest（仅在绑定时）
+        avatar_manifest_url = None
+        _avatar_preset, avatar_manifest_url = sign_avatar_manifest_for_release(
+            session,
+            course_id=course_id,
+            release_id=release.release_id,
+            preset_id=release.avatar_preset_id,
+            preset_version=release.avatar_preset_version,
+        )
         digital_human_manifest = None
-        if release.digital_human_manifest_object_key:
+        if avatar_manifest_url:
+            digital_human_manifest = {
+                "manifest_url": avatar_manifest_url,
+                "render_mode": "browser_realtime",
+                "recommended_quality": release.default_playback_mode.value,
+                "fallback_supported": True,
+                "source": "platform_preset",
+            }
+        elif release.digital_human_manifest_object_key:
             try:
                 manifest_url = storage.sign_read_url(
                     release.digital_human_manifest_object_key,
@@ -1010,6 +1027,12 @@ class MediaPlaybackService:
             except Exception as e:
                 logger.warning("签发数字人 manifest 失败，降级为兼容模式: %s", e)
                 digital_human_manifest = None
+        if playlist is not None:
+            for item in playlist["items"]:
+                item.setdefault("avatar_preset_id", release.avatar_preset_id)
+                item.setdefault("avatar_preset_version", release.avatar_preset_version)
+                if avatar_manifest_url:
+                    item.setdefault("avatar_manifest_url", avatar_manifest_url)
 
         # P2 timeline is exposed independently from the avatar package.  P3
         # may consume it when a renderer is available; all existing learners
@@ -1048,6 +1071,9 @@ class MediaPlaybackService:
             "subtitle_segments": subtitle_segments,
             "ppt_timeline": ppt_timeline,
             "ppt": ppt_manifest,
+            "avatar_preset_id": release.avatar_preset_id,
+            "avatar_preset_version": release.avatar_preset_version,
+            "avatar_manifest_url": avatar_manifest_url,
             "digital_human_manifest": digital_human_manifest,
             "avatar_cues": avatar_cues,
             "default_playback_mode": release.default_playback_mode.value,
@@ -1115,7 +1141,7 @@ class TtsExecutionService:
             )
 
         try:
-            provider = get_tts_provider(provider_key or job.provider_key or None, strict=True)
+            provider = get_stage8_tts_provider(provider_key or job.provider_key or None)
         except TtsProviderConfigurationError:
             return self._fail_job(
                 session, course_id=course_id, job_id=job_id,
@@ -1293,7 +1319,7 @@ class TtsExecutionService:
         elif job.status != MediaGenerationStatus.PENDING:
             reject_state_conflict(f"仅 pending 任务可派发，当前状态 {job.status.value}")
 
-        provider = get_tts_provider(provider_key or job.provider_key or None, strict=True)
+        provider = get_stage8_tts_provider(provider_key or job.provider_key or None)
         request = TtsSynthesisRequest(
             script_text=script_text,
             voice_id=voice_id,

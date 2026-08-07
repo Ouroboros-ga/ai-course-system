@@ -67,3 +67,56 @@ export function respondTeachingAgentForLearner(payload) {
     skipErrorToast: payload.skipErrorToast ?? true,
   })
 }
+
+/**
+ * 恢复学生学习会话的教学智能体对话历史（Conversation Domain）。
+ * GET /teaching-agent/conversations/{course_id}
+ *
+ * 返回该学习者在本课程内的历史消息（按时间升序），用于刷新 / 重新进入课程后
+ * 重建聊天面板。这是产品体验域；Agent Runtime Context / Audit 表仍保持数据
+ * 最小化，不暴露原始消息。
+ *
+ * @param {string|number} courseId - 课程 ID
+ * @param {Object} [options]
+ * @param {string} [options.sessionId] - 可选：限定某个学习会话
+ * @param {number} [options.limit=200] - 返回消息上限
+ * @returns {Promise<Object>} { course_id, session_id, messages: [{id, role, content, concept_id, citations, created_at}] }
+ */
+export function getConversationHistory(courseId, options = {}) {
+  return request({
+    url: `/teaching-agent/conversations/${courseId}`,
+    method: 'get',
+    params: {
+      session_id: options.sessionId ?? null,
+      limit: options.limit ?? 200,
+    },
+    allowFlatResponse: true,
+    skipErrorToast: options.skipErrorToast ?? true,
+  })
+}
+
+/**
+ * 提问反推：把学生近期提问聚合成结构化学习证据信号。
+ * GET /teaching-agent/conversations/{course_id}/inference
+ *
+ * 学习分析不得直接依赖完整 Conversation（AGENTS.md §5.1）；本接口返回结构化
+ * 投影（计数、平均提问深度、薄弱标记、trace 引用），不返回原始问题全文。
+ *
+ * @param {string|number} courseId - 课程 ID
+ * @param {Object} [options]
+ * @param {string} [options.conceptId] - 可选：限定某个知识点概念 ID
+ * @param {number} [options.lookbackDays=14] - 回看窗口天数
+ * @returns {Promise<Object>} { student_id, course_id, total_questions, signals: [{concept_id, question_count, avg_inquiry_depth, inferred_weak, ...}] }
+ */
+export function getQuestionInference(courseId, options = {}) {
+  return request({
+    url: `/teaching-agent/conversations/${courseId}/inference`,
+    method: 'get',
+    params: {
+      concept_id: options.conceptId ?? null,
+      lookback_days: options.lookbackDays ?? 14,
+    },
+    allowFlatResponse: true,
+    skipErrorToast: options.skipErrorToast ?? true,
+  })
+}

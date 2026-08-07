@@ -17,7 +17,7 @@ from typing import Optional
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
 from .experiment import ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
-from .research import QuestionBankPort, WebResearchPort
+from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
@@ -39,6 +39,8 @@ class TeachingTools:
     web_research: Optional[WebResearchPort] = None
     cognition: Optional[CognitionPort] = None
     question_bank: Optional[QuestionBankPort] = None
+    # 出题工具：依据知识点/认知/提问信号生成草稿，教师 approve 后才进题库
+    question_generation: Optional[QuestionGenerationPort] = None
     conversation_context: Optional[ConversationContextPort] = None
     # 阶段9新增可选工具治理与教师安全阀端口；未注入时 workflow 节点跳过治理与提案
     tool_governance: Optional[ToolGovernancePort] = None

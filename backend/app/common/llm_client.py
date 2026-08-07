@@ -422,6 +422,15 @@ class LLMClient:
         logger.info(f"初始化LLM客户端: {provider}")
         return client_class()
 
+    def replace_from_config(self, *, provider: str, base_url: str, model_name: str, api_key: str, extra_config: dict | None = None) -> None:
+        if not api_key or not base_url or not model_name:
+            raise LLMError("PROVIDER_NOT_CONFIGURED", reason_code="PROVIDER_NOT_CONFIGURED")
+        settings.LLM_PROVIDER = provider
+        settings.LLM_API_BASE = base_url.rstrip("/")
+        settings.LLM_MODEL_NAME = model_name
+        settings.LLM_API_KEY = api_key
+        self._client = self._create_client()
+
     async def chat(
         self,
         messages: List[Message],

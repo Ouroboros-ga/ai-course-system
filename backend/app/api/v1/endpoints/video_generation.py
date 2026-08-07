@@ -8,6 +8,7 @@ from typing import Optional, List
 
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from pydantic import BaseModel
+from fastapi.responses import JSONResponse
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
@@ -92,15 +93,20 @@ async def generate_course_videos(
 
     background_tasks.add_task(_generate)
 
-    return unified_response(
+    response = JSONResponse(content=unified_response(
         code=200,
-        message=f"已提交视频生成任务，共{len(nodes)}个节点",
+        message=f"已提交兼容视频生成任务，共{len(nodes)}个节点；该入口不会进入 MediaRelease",
         data={
             "course_id": course_id,
             "total_nodes": len(nodes),
             "status": "processing",
+            "legacy": True,
+            "deprecation": "/video-gen 仅保留历史 VideoGenerationTask 兼容，不作为课程正式媒体发布入口",
         },
-    )
+    ))
+    response.headers["Sunset"] = "Wed, 31 Dec 2026 23:59:59 GMT"
+    response.headers["Deprecation"] = "true"
+    return response
 
 
 @router.post("/node/{node_id}/generate")
@@ -140,11 +146,14 @@ async def generate_node_video(
             session=session,
             force=force,
         )
-        return unified_response(
+        response = JSONResponse(content=unified_response(
             code=200,
-            message="视频生成完成" if task.status == GenerationStatus.COMPLETED else "视频生成失败",
-            data=_task_to_dict(task),
-        )
+            message=("视频生成完成" if task.status == GenerationStatus.COMPLETED else "视频生成失败") + "（兼容入口）",
+            data={**_task_to_dict(task), "legacy": True, "deprecation": "/video-gen 任务不会写入 MediaRelease/audio-playlist/v1"},
+        ))
+        response.headers["Sunset"] = "Wed, 31 Dec 2026 23:59:59 GMT"
+        response.headers["Deprecation"] = "true"
+        return response
     except (TTSError, DigitalHumanError, ValueError) as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -164,11 +173,14 @@ async def get_task_status(
         raise HTTPException(status_code=404, detail="生成任务不存在")
     require_course_permission(session, current_user, task.course_id, "course.content.read")
 
-    return unified_response(
+    response = JSONResponse(content=unified_response(
         code=200,
         message="查询成功",
-        data=_task_to_dict(task),
-    )
+        data={**_task_to_dict(task), "legacy": True, "deprecation": "/video-gen 任务仅保存于 VideoGenerationTask"},
+    ))
+    response.headers["Sunset"] = "Wed, 31 Dec 2026 23:59:59 GMT"
+    response.headers["Deprecation"] = "true"
+    return response
 
 
 @router.get("/course/{course_id}/tasks")
@@ -180,7 +192,7 @@ async def get_course_tasks(
     """查询课程所有视频生成任务"""
     tasks = video_generation_service.get_course_tasks(course_id, session)
 
-    return unified_response(
+    response = JSONResponse(content=unified_response(
         code=200,
         message="查询成功",
         data={
@@ -195,8 +207,13 @@ async def get_course_tasks(
                 GenerationStatus.TTS_COMPLETED,
                 GenerationStatus.DH_GENERATING,
             )),
+            "legacy": True,
+            "deprecation": "/video-gen 仅供历史任务查询；正式发布必须使用 MediaRelease + audio-playlist/v1",
         },
-    )
+    ))
+    response.headers["Sunset"] = "Wed, 31 Dec 2026 23:59:59 GMT"
+    response.headers["Deprecation"] = "true"
+    return response
 
 
 @router.get("/health")
@@ -206,11 +223,14 @@ async def check_digital_human_health():
     health_result = await adapter.check_health()
     available = health_result.success
     api_url = getattr(adapter.client, "api_url", None) or getattr(adapter.client, "base_url", "")
-    return unified_response(
+    response = JSONResponse(content=unified_response(
         code=200 if available else 503,
         message="数字人服务可用" if available else "数字人服务不可用",
         data={"available": available, "api_url": api_url},
-    )
+    ), status_code=200 if available else 503)
+    response.headers["Sunset"] = "Wed, 31 Dec 2026 23:59:59 GMT"
+    response.headers["Deprecation"] = "true"
+    return response
 
 
 def _task_to_dict(task: VideoGenerationTask) -> dict:

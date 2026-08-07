@@ -30,18 +30,15 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         )
         if any(current_path.startswith(path) for path in signature_owned_prefixes):
             return await call_next(request)
-        print(f"【签名中间件】收到请求: {request.method} {current_path}")
 
         # 白名单路径跳过验证
         if any(current_path.startswith(path) for path in self.whitelist_paths):
-            print(f"【签名中间件】白名单路径，跳过验证")
             return await call_next(request)
 
         # GET请求的媒体资源路径跳过签名验证（仍需JWT认证）
         if request.method == "GET" and any(
             current_path.startswith(p) for p in getattr(settings, 'MEDIA_RESOURCE_PATHS', [])
         ):
-            print(f"【签名中间件】媒体资源GET请求，跳过签名验证")
             return await call_next(request)
 
         # 获取查询参数
@@ -50,7 +47,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         # 对于 POST/PUT/DELETE 请求，读取请求体
         if request.method in ["POST", "PUT", "DELETE"]:
             content_type = request.headers.get("content-type", "")
-            print(f"【签名中间件】Content-Type: {content_type}")
 
             if "application/json" in content_type:
                 # 读取请求体
@@ -58,7 +54,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
                 if body:
                     try:
                         body_json = json.loads(body.decode("utf-8"))
-                        print(f"【签名中间件】POST JSON 数据: {body_json}")
                         all_params.update(body_json)
 
                         # 重要：重新构建请求，让后续处理器能读取请求体
@@ -66,8 +61,7 @@ class SignatureMiddleware(BaseHTTPMiddleware):
                             return {"type": "http.request", "body": body}
 
                         request = Request(request.scope, receive, request._send)
-                    except json.JSONDecodeError as e:
-                        print(f"【签名中间件】JSON 解析失败: {e}")
+                    except json.JSONDecodeError:
                         return JSONResponse(
                             status_code=403,
                             content={"code": 403, "message": "签名验证失败：无效的JSON格式", "data": None}
@@ -75,8 +69,6 @@ class SignatureMiddleware(BaseHTTPMiddleware):
             elif "multipart/form-data" in content_type or "application/x-www-form-urlencoded" in content_type:
                 form_data = await request.form()
                 all_params.update(dict(form_data))
-
-        print(f"【签名中间件】所有参数: {all_params}")
 
         # 校验必填参数
         time_str = all_params.get("time")
@@ -104,26 +96,18 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         try:
             request_time = datetime.strptime(time_str, settings.TIME_FORMAT)
         except ValueError:
-            print(f"【签名中间件】时间格式错误: {time_str}")
             return False
 
         # 防重放攻击
         server_time = datetime.now()
         time_diff = abs((server_time - request_time).total_seconds() / 60)
         if time_diff > settings.SIGN_TIMEOUT_MINUTES:
-            print(f"【签名中间件】请求超时: {time_diff}分钟")
             return False
 
         # 计算签名
         sorted_str = self._sort_params(params)
         raw_sign = f"{sorted_str}{settings.STATIC_KEY}{time_str}"
         calculated_enc = hashlib.md5(raw_sign.encode("utf-8")).hexdigest().upper()
-
-        # 调试日志
-        print(f"【签名中间件】原始签名串: {raw_sign}")
-        print(f"【签名中间件】计算的签名: {calculated_enc}")
-        print(f"【签名中间件】收到的签名: {enc.upper()}")
-        print(f"【签名中间件】签名匹配: {calculated_enc == enc.upper()}")
 
         return calculated_enc == enc.upper()
 
@@ -136,11 +120,5 @@ class SignatureMiddleware(BaseHTTPMiddleware):
         }
         sorted_keys = sorted(filtered_params.keys())
         result = "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])
-
-        # 调试日志
-        print(f"【签名中间件】原始参数: {params}")
-        print(f"【签名中间件】过滤后参数: {filtered_params}")
-        print(f"【签名中间件】排序后键: {sorted_keys}")
-        print(f"【签名中间件】拼接字符串: {result}")
 
         return result

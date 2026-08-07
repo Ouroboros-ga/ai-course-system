@@ -80,7 +80,7 @@ async function permanentlyDeleteCourse() {
     if (report?.cleanup_complete === false) {
       showToast('课程数据已删除，但部分外部文件清理失败，请查看服务端日志。', 'warning')
     } else {
-      showToast('课程及其专属图谱、向量索引和课件已永久删除。', 'success')
+      showToast('课程及其全部数据已永久删除。', 'success')
     }
     await router.replace('/app/courses/building')
   } catch (e) {
@@ -99,7 +99,7 @@ onMounted(load)
     <header class="sfx-profile-head">
       <div>
         <h1 class="sfx-t-title2">基础信息</h1>
-        <p class="sfx-t-ui sfx-t-secondary">课程名称、简介与展示资料。保存采用版本校验，避免覆盖其他教师修改。</p>
+        <p class="sfx-t-ui sfx-t-secondary">课程名称、简介与展示资料。多人同时编辑时，后保存的人不会覆盖他人修改。</p>
       </div>
       <SfxBadge :tone="course.status === 'published' ? 'green' : 'amber'">
         {{ course.status || 'draft' }}
@@ -124,7 +124,7 @@ onMounted(load)
       <div>
         <p class="sfx-danger-kicker">危险操作</p>
         <h2 id="danger-zone-title">永久删除课程</h2>
-        <p>删除课程数据库记录、专属课件、解析缓存、图谱 Bundle 和 LanceDB 索引。共享对象不会被删除。</p>
+        <p>删除后课程将永久移除，学生无法再访问，课程数据无法恢复。</p>
       </div>
       <SfxButton variant="danger" @click="openDeleteDialog">
         <template #icon><Trash2 :size="16" /></template>
@@ -138,7 +138,7 @@ onMounted(load)
           <TriangleAlert :size="22" aria-hidden="true" />
           <div>
             <strong>此操作不可恢复</strong>
-            <p>运行中的解析或图谱任务会阻止删除。删除成功后，同一课件可重新上传并重新解析。</p>
+            <p>课程正在处理中时会阻止删除；删除成功后，可重新上传课件并重建课程。</p>
           </div>
         </div>
         <label>

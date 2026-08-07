@@ -1,4 +1,4 @@
-﻿"""G2 六维认知状态与学习证据持久化模型
+"""G2 六维认知状态与学习证据持久化模型
 
 六维冻结为：
   observed_performance_score  -- 评分型显性证据聚合（不含提问次数/观看时长）
@@ -167,3 +167,28 @@ class RecommendationRecord(SQLModel, table=True):
     is_locked: bool = Field(default=False, index=True, description="教师锁定推荐项")
     locked_by: Optional[int] = Field(default=None, foreign_key="users.id")
     locked_at: Optional[datetime] = Field(default=None)
+
+
+class QuestionDepthRecord(SQLModel, table=True):
+    """LLM 标定的提问深度记录（追加型，每次提问标定一条）
+
+    由教学 Agent 在回答学生问题时随请求实时标定写入（source=teaching_agent）；
+    cognitive_service 计算 inquiry_depth 时读取该学生+课程+节点最近 N 条的
+    depth_score 均值（样本不足时保持 unknown，不武断判断）。
+
+    数据最小化：只保存深度分数与标签，不保存原始问题全文。
+    """
+
+    __tablename__ = "question_depth_records"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    node_id: Optional[int] = Field(default=None, index=True, description="节点ID(空=课程级)")
+
+    depth_score: float = Field(default=0.5, ge=0.0, le=1.0, description="提问深度 0-1")
+    depth_label: str = Field(default="", description="深度标签(如 recall/apply/analyze)")
+    trace_id: str = Field(default="", description="来源教学 Agent 的 trace_id")
+    source: str = Field(default="teaching_agent", description="标定来源")
+
+    created_at: datetime = Field(default_factory=utcnow_aware)

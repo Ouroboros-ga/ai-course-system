@@ -27,13 +27,13 @@ export function useAvatarPlayback() {
   const available = computed(() => status.value === 'ready' && Boolean(cues.value))
   const usesPlatformAsset = computed(() => assetSource.value === 'platform')
 
-  async function load({ avatarCues, digitalHumanManifest } = {}) {
+  async function load({ avatarCues, digitalHumanManifest, avatarManifestUrl } = {}) {
     status.value = 'loading'
     error.value = ''
-    cues.value = null
-    spriteManifest.value = null
-    assetSource.value = 'none'
     if (!avatarCues?.manifestUrl) {
+      cues.value = null
+      spriteManifest.value = null
+      assetSource.value = 'none'
       status.value = 'unavailable'
       return null
     }
@@ -43,9 +43,10 @@ export function useAvatarPlayback() {
       if (!parsedCues) throw new Error('AVATAR_CUES_SCHEMA_INVALID')
       cues.value = parsedCues
 
-      if (digitalHumanManifest?.manifestUrl) {
+      const releaseManifestUrl = avatarManifestUrl || digitalHumanManifest?.manifestUrl
+      if (releaseManifestUrl) {
         try {
-          const remoteManifest = normalizeSprite2dManifest(await readManifest(digitalHumanManifest.manifestUrl))
+          const remoteManifest = normalizeSprite2dManifest(await readManifest(releaseManifestUrl))
           if (remoteManifest) {
             spriteManifest.value = remoteManifest
             assetSource.value = 'release'

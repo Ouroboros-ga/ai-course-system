@@ -1,9 +1,13 @@
-"""Sanitized audit adapter for TeachingAgent.
+"""Sanitized audit adapter for TeachingAgent (Agent Runtime Context / Audit domain).
 
 Despite their legacy names, ``AgentLearningEvent`` and ``AgentTraceRecord``
 are not formal ``LearningEvent`` or scoring ``LearningEvidence``. They never
 change mastery or cognition. Raw messages, answers, prompts and model traces
 are excluded before persistence.
+
+Full user/agent messages are persisted in the separate Conversation Domain
+(``conversation_service``), called from the TeachingAgent endpoint after a
+response is produced. This adapter only writes the minimized audit rows.
 """
 from __future__ import annotations
 

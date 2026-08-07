@@ -40,3 +40,17 @@ Evidence/图谱，但不需要为每名学生重复执行 KG-MEST。
 `agent-log-minimization-v1` 先做 SQLite 预检，再将历史原始日志替换为最小化
 红删标记，并记录幂等批次。回滚函数仅删除迁移账本；出于隐私原则，已清除的
 原始内容不可恢复。
+# 统一学习数据适配契约（2026-08-07）
+
+学生学习页当前已通过 facade 写入 `LearningEvent`，并从 `StudentLearningProjection` 恢复
+`release_id + outline_node_id` 的学习状态和最近锚点。TeachingAgent 仍不直接读取这些表；
+`StudentStateTool`、`CognitionTool`、`LearningEventTool` 以及 `LearningContextPort` 等适配
+接口继续标记为 `planned/unimplemented`。没有正式评分证据时只能返回 `unknown`，没有图谱映射
+时返回 `not_available`，学习链路不可因认知/推荐刷新失败而阻断。
+
+TeachingAgent 不直接访问学习表。未来通过 planned/unimplemented 的
+`LearningContextPort`、`LearningProjectionPort`、`LearningEvidenceContextPort`
+读取当前 `release_id + outline_node_id` 的学习摘要；`StudentStateTool` 只返回
+exposure、cognition、recommendation 三段最小字段，`LearningEventTool` 只记录经过
+治理的教学动作和幂等键。当前实现仍由学习门面 API 负责接线，不能把这些 Port/Tool
+描述为已完成能力。

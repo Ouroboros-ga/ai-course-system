@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
@@ -19,50 +19,45 @@ const mobileMenuOpen = ref(false)
 
 const navItems = computed(() => {
   const baseItems = [
-    { path: '/', label: '首页', icon: HomeIcon },
-    { path: '/about', label: '关于', icon: Info },
+    { path: '/', label: '棣栭〉', icon: HomeIcon },
+    { path: '/about', label: '鍏充簬', icon: Info },
   ]
 
   if (!counter.isLoggedIn) {
     return [
       ...baseItems,
-      { path: '/profile', label: '个人中心', icon: User },
+      { path: '/profile', label: '涓汉涓績', icon: User },
     ]
   }
 
-  if (counter.isAdmin) {
+  if (counter.canManageUsers) {
     return [
       ...baseItems,
-      { path: '/admin', label: '系统管理', icon: Users },
-      { path: '/profile', label: '个人中心', icon: User },
+      { path: '/admin', label: '绯荤粺绠＄悊', icon: Users },
+      { path: '/profile', label: '涓汉涓績', icon: User },
     ]
   }
 
-  if (counter.isTeacher) {
+  if (counter.canCreateCourses) {
     return [
       ...baseItems,
-      { path: '/teacher', label: '智课管理', icon: BookOpen },
-      { path: '/profile', label: '个人中心', icon: User },
+      { path: '/teacher', label: '鏅鸿绠＄悊', icon: BookOpen },
+      { path: '/profile', label: '涓汉涓績', icon: User },
     ]
   }
 
-  if (counter.isStudent) {
+  if (!counter.canCreateCourses) {
     return [
       ...baseItems,
-      { path: '/student', label: '课程大厅', icon: BookOpen },
-      { path: '/profile', label: '个人中心', icon: User },
+      { path: '/student', label: '璇剧▼澶у巺', icon: BookOpen },
+      { path: '/profile', label: '涓汉涓績', icon: User },
     ]
   }
 
   return baseItems
 })
 
-const roleLabel = computed(() => {
-  if (counter.isAdmin) return '管理员'
-  if (counter.isTeacher) return '教师'
-  if (counter.isStudent) return '学生'
-  return ''
-})
+const roleLabel = computed(() => counter.canManageUsers ? '管理员' : '用户')
 
 const toggleMobileMenu = () => {
   mobileMenuOpen.value = !mobileMenuOpen.value
@@ -72,10 +67,10 @@ const closeMobileMenu = () => {
   mobileMenuOpen.value = false
 }
 
-// 路由切换时关闭移动端菜单
+// 璺敱鍒囨崲鏃跺叧闂Щ鍔ㄧ鑿滃崟
 watch(() => route.path, closeMobileMenu)
 
-// Esc 关闭移动端菜单
+// Esc 鍏抽棴绉诲姩绔彍鍗�
 function handleEsc(e) {
   if (e.key === 'Escape') closeMobileMenu()
 }
@@ -92,7 +87,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
         <span class="logo-text">Smartrab</span>
       </router-link>
 
-      <!-- 桌面导航 -->
+      <!-- 妗岄潰瀵艰埅 -->
       <div class="nav-links">
         <router-link
           v-for="item in navItems"
@@ -105,24 +100,24 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
         </router-link>
       </div>
 
-      <!-- 移动端汉堡按钮 -->
+      <!-- 绉诲姩绔眽鍫℃寜閽?-->
       <button
         class="menu-toggle"
-        :aria-label="mobileMenuOpen ? '关闭菜单' : '打开菜单'"
+        :aria-label="mobileMenuOpen ? '鍏抽棴鑿滃崟' : '鎵撳紑鑿滃崟'"
         :aria-expanded="mobileMenuOpen"
         @click="toggleMobileMenu"
       >
         <component :is="mobileMenuOpen ? X : Menu" :size="22" />
       </button>
 
-      <!-- 用户徽章 -->
+      <!-- 鐢ㄦ埛寰界珷 -->
       <div v-if="counter.isLoggedIn" class="user-badge">
-        <span class="role-tag" :class="{ 'admin-tag': counter.isAdmin }">{{ roleLabel }}</span>
+        <span class="role-tag" :class="{ 'admin-tag': counter.canManageUsers }">{{ roleLabel }}</span>
         <span class="username">{{ counter.userData.username }}</span>
       </div>
     </nav>
 
-    <!-- 移动端抽屉菜单 -->
+    <!-- 绉诲姩绔娊灞夎彍鍗?-->
     <Transition name="mobile-menu">
       <div v-if="mobileMenuOpen" class="mobile-menu">
         <router-link
@@ -155,8 +150,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   min-height: 100vh;
 }
 
-/* sticky 而非 fixed：不脱离文档流，不需要 padding-top 补偿，
-   滚动时自然吸附顶部，且不产生内容遮挡 */
+/* sticky 鑰岄潪 fixed锛氫笉鑴辩鏂囨。娴侊紝涓嶉渶瑕?padding-top 琛ュ伩锛?   婊氬姩鏃惰嚜鐒跺惛闄勯《閮紝涓斾笉浜х敓鍐呭閬尅 */
 .navbar {
   position: sticky;
   top: 0;
@@ -175,7 +169,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   transition: box-shadow var(--duration-normal) var(--ease);
 }
 
-/* 滚动时加阴影增强层级感 */
+/* 婊氬姩鏃跺姞闃村奖澧炲己灞傜骇鎰?*/
 .navbar:hover,
 .navbar.is-scrolled {
   box-shadow: var(--shadow-sm);
@@ -299,7 +293,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   box-sizing: border-box;
 }
 
-/* 移动端菜单 */
+/* 绉诲姩绔彍鍗?*/
 .mobile-menu {
   position: fixed;
   top: var(--navbar-height);
@@ -339,7 +333,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   flex-shrink: 0;
 }
 
-/* 过渡动画 */
+/* 杩囨浮鍔ㄧ敾 */
 .mobile-menu-enter-active,
 .mobile-menu-leave-active {
   transition: opacity var(--duration-normal) var(--ease), transform var(--duration-normal) var(--ease);
@@ -361,7 +355,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   opacity: 0;
 }
 
-/* 响应式 */
+/* 鍝嶅簲寮?*/
 @media (max-width: 768px) {
   .navbar {
     padding: 0 var(--space-3);
@@ -394,7 +388,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
   }
 }
 
-/* 暗色模式导航栏 */
+/* 鏆楄壊妯″紡瀵艰埅鏍?*/
 [data-theme="dark"] .navbar {
   background: rgba(30, 41, 59, 0.85);
 }

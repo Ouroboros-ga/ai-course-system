@@ -26,4 +26,25 @@ class QuestionBankPort(Protocol):
     async def list_questions(self, *, course_id: str, node_id: str | None = None, limit: int = 10) -> list[Mapping[str, Any]]: ...
 
 
-__all__ = ["WebResearchPort", "QuestionBankPort"]
+class QuestionGenerationPort(Protocol):
+    """题目生成端口：依据知识点/认知/提问信号调用 LLM 生成题目草稿。
+
+    产物为草稿（question_generation_drafts），须经教师审核 approve 后才升级为
+    正式 QuestionBankItem；本端口不直接发布题目。
+    """
+
+    async def generate_question(
+        self,
+        *,
+        course_id: str,
+        node_id: str | None = None,
+        student_id: str | None = None,
+        purpose: str = "remediation",
+        difficulty: str = "medium",
+        cognitive_snapshot: Mapping[str, Any] | None = None,
+        six_dimensions: Mapping[str, Any] | None = None,
+        reason_codes: list | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
+__all__ = ["WebResearchPort", "QuestionBankPort", "QuestionGenerationPort"]

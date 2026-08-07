@@ -138,6 +138,7 @@ BUILTIN_TOOL_NAMES: list[str] = [
     "graph",
     "retrieval",
     "question_bank",
+    "question_generation",
     "experiment",
     "visualization",
     "learning_event",

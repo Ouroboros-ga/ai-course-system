@@ -483,12 +483,21 @@ class TTSClient:
         }
 
         client_class = clients.get(provider)
+        import os
+        if provider == "mock" and os.getenv("AI_COURSE_TESTING") != "1" and not settings.ALLOW_DEMO_PROVIDERS:
+            raise TTSError("PROVIDER_NOT_CONFIGURED")
         if not client_class:
             logger.warning(f"未知的TTS提供商: {provider}，使用Mock客户端")
-            return MockTTSClient()
+            raise TTSError("PROVIDER_NOT_CONFIGURED")
 
         logger.info(f"初始化TTS客户端: {provider}")
         return client_class()
+
+    def replace_from_config(self, *, provider: str, api_key: str, extra_config: dict | None = None) -> None:
+        if not provider or not api_key:
+            raise TTSError("PROVIDER_NOT_CONFIGURED")
+        settings.TTS_PROVIDER = provider
+        self._client = self._create_client()
 
     async def synthesize(
         self,

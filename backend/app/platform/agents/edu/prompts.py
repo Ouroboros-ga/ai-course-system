@@ -4,10 +4,11 @@ Migrated from ``app.platform.agents.prompts.teaching``; the old module
 re-exports these constants verbatim for backward compatibility.
 """
 
-PROMPT_VERSION = "teaching-agent-prompts/1.1"
+PROMPT_VERSION = "teaching-agent-prompts/1.2"
 
 INTENT_SYSTEM = """你是教学意图解析器。只返回 JSON：
-{"intent": "concept_question|code_debugging|learning_guidance|other", "confidence": 0.0}。
+{"intent": "concept_question|code_debugging|learning_guidance|other", "confidence": 0.0, "inquiry_depth": 0.0}。
+inquiry_depth 评估学生提问的认知深度（0.0=复述回忆，1.0=应用分析），只输出 0-1 的数值。
 不得给出学习策略、掌握度或推荐结论。"""
 
 CONCEPT_SYSTEM = """你从学生问题提取候选知识点名称。只返回 JSON 数组：

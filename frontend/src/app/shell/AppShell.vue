@@ -2,9 +2,27 @@
 import { nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import PrimaryNav from './PrimaryNav.vue'
+import { getMyInfo } from '@/api/user.js'
+import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
 const mainRef = ref(null)
+const counter = useCounterStore()
+
+async function hydratePlatformPermissions() {
+  if (!counter.isLoggedIn) return
+  try {
+    const data = await getMyInfo()
+    counter.userData.username = data.username || counter.userData.username
+    counter.userData.id = data.user_id || counter.userData.id
+    counter.userData.role = data.role || 'user'
+    counter.setPlatformPermissions(data.platform_permissions)
+  } catch {
+    // Visibility is advisory; backend permissions remain authoritative.
+  }
+}
+
+hydratePlatformPermissions()
 
 // Reset scroll position on route change (replaces vue-router scrollBehavior
 // which only works on window, not on our nested scroll container).

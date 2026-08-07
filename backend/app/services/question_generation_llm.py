@@ -115,6 +115,7 @@ def build_generation_prompt(
     cognitive_snapshot: dict,
     six_dimensions: dict,
     reason_codes: list,
+    question_signals: Optional[list] = None,
 ) -> tuple[str, str]:
     """Build (system, user) prompts for the LLM question generator."""
     intent = PURPOSE_INTENT.get(purpose, purpose)
@@ -161,15 +162,37 @@ def build_generation_prompt(
     dims_block = json.dumps(six_dimensions or {}, ensure_ascii=False, indent=2)
     snapshot_block = json.dumps(cognitive_snapshot or {}, ensure_ascii=False, indent=2)
 
-    user_prompt = (
-        f"{context_block}\n\n"
-        f"难度档位：{difficulty}\n"
-        f"推荐目的：{purpose}（{intent}）\n\n"
-        f"学生认知状态快照：\n{snapshot_block}\n\n"
-        f"六维诊断：\n{dims_block}\n\n"
-        f"已有 reason_codes：{reason_codes}\n\n"
-        "请基于上述信息生成一道题目。"
-    )
+    # 学生近期提问反推信号（来自 derive_question_inference_signals，结构化、不含原文）。
+    # 深度标签 recall/apply/analyze 对应 Bloom 层级，inferred_weak=True 时优先基础巩固题。
+    student_signals_block = ""
+    if question_signals:
+        lines = []
+        for sig in question_signals:
+            concept = sig.get("concept_id") or "课程级"
+            count = sig.get("question_count", 0)
+            avg_depth = sig.get("avg_inquiry_depth")
+            label = sig.get("depth_label_mode") or "未知"
+            weak_tag = "（薄弱，优先基础巩固）" if sig.get("inferred_weak") else ""
+            depth_str = f"{avg_depth:.2f}" if isinstance(avg_depth, (int, float)) else "无"
+            lines.append(f"- 概念 {concept}：提问 {count} 次，平均深度 {depth_str}，深度标签 {label}{weak_tag}")
+        student_signals_block = (
+            "学生近期提问反推信号如下，出题时据此调整难度与考查角度"
+            "（深度标签 recall→基础理解题、apply→应用题、analyze→分析题）：\n"
+            + "\n".join(lines)
+        )
+
+    parts = [
+        context_block,
+        f"难度档位：{difficulty}",
+        f"推荐目的：{purpose}（{intent}）",
+        f"学生认知状态快照：\n{snapshot_block}",
+        f"六维诊断：\n{dims_block}",
+    ]
+    if student_signals_block:
+        parts.append(student_signals_block)
+    parts.append(f"已有 reason_codes：{reason_codes}")
+    parts.append("请基于上述信息生成一道题目。")
+    user_prompt = "\n\n".join(parts)
     return system_prompt, user_prompt
 
 
@@ -287,6 +310,7 @@ async def generate_question_via_llm(
     cognitive_snapshot: Optional[dict] = None,
     six_dimensions: Optional[dict] = None,
     reason_codes: Optional[list] = None,
+    question_signals: Optional[list] = None,
 ) -> dict[str, Any]:
     """Async entry point: generate one personalized question via LLM.
 
@@ -325,6 +349,7 @@ async def generate_question_via_llm(
         cognitive_snapshot=cognitive_snapshot,
         six_dimensions=six_dimensions,
         reason_codes=reason_codes,
+        question_signals=question_signals,
     )
 
     try:
@@ -385,6 +410,7 @@ def generate_question_sync(
     cognitive_snapshot: Optional[dict] = None,
     six_dimensions: Optional[dict] = None,
     reason_codes: Optional[list] = None,
+    question_signals: Optional[list] = None,
 ) -> dict[str, Any]:
     """Sync wrapper around ``generate_question_via_llm``.
 
@@ -406,6 +432,7 @@ def generate_question_sync(
             cognitive_snapshot=cognitive_snapshot,
             six_dimensions=six_dimensions,
             reason_codes=reason_codes,
+            question_signals=question_signals,
         )
 
     try:

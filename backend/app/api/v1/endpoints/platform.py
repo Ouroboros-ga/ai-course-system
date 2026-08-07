@@ -4,6 +4,7 @@ import httpx
 import hashlib
 import time
 import logging
+from uuid import uuid4
 from app.core.time_utils import utcnow_aware
 from typing import Optional
 
@@ -25,18 +26,45 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["泛雅平台对接"])
 
 
-def _sync_platform_permissions(session: Session, user: User) -> None:
+def _compat_envelope(response: dict, request_id: str | None = None) -> dict:
+    """Add the OpenAPI-compatible ``msg/requestId`` aliases to legacy sync APIs.
+
+    Existing consumers keep ``message`` while SuperStar-compatible clients can
+    consume the standard envelope without a duplicate route registration.
+    """
+    response = dict(response)
+    response.setdefault("msg", response.get("message", ""))
+    data = response.get("data") or {}
+    response.setdefault("requestId", request_id or data.get("requestId") or uuid4().hex)
+    return response
+
+
+def _compat_response(code: int, message: str, data=None, request_id: str | None = None) -> dict:
+    return _compat_envelope(unified_response(code=code, message=message, data=data), request_id=request_id)
+
+
+def _sync_platform_permissions(session: Session, user: User, upstream_role: str | None = None) -> None:
     """Persist platform abilities granted by the trusted upstream sync policy."""
-    if user.role != UserRole.TEACHER:
+    # Fanya's historical teacher flag is no longer a global account role.
+    # Course ownership/membership and explicit platform permissions express
+    # teaching capability; sync never creates a global `teacher` role.
+    permission = (
+        PlatformPermission.ADMIN
+        if upstream_role == "admin"
+        else PlatformPermission.COURSE_CREATE
+        if upstream_role == "teacher"
+        else None
+    )
+    if permission is None:
         return
     assignment = session.exec(select(PlatformPermissionAssignment).where(
         PlatformPermissionAssignment.user_id == user.id,
-        PlatformPermissionAssignment.permission == PlatformPermission.COURSE_CREATE,
+        PlatformPermissionAssignment.permission == permission,
     )).first()
     if assignment is None:
         session.add(PlatformPermissionAssignment(
             user_id=user.id,
-            permission=PlatformPermission.COURSE_CREATE,
+            permission=permission,
             granted_by_user_id=user.id,
         ))
 
@@ -123,8 +151,7 @@ async def sso_callback(
         else:
             username = user_info.get("username") or f"fanya_{fanya_id}"
             real_name = user_info.get("realName") or user_info.get("name")
-            role_str = user_info.get("role", "student")
-            role = UserRole.TEACHER if role_str == "teacher" else UserRole.STUDENT
+            role = UserRole.USER
 
             new_user = User(
                 username=username,
@@ -183,15 +210,17 @@ async def sync_user(
                 existing_user.real_name = request.real_name
             if request.email:
                 existing_user.email = request.email
-            if request.role and request.role in ["teacher", "student"]:
-                existing_user.role = UserRole(request.role)
+            if request.role == "admin":
+                existing_user.role = UserRole.ADMIN
+            elif request.role in {"teacher", "student", "user"}:
+                existing_user.role = UserRole.USER
             existing_user.is_fanya_verified = True
-            _sync_platform_permissions(session, existing_user)
+            _sync_platform_permissions(session, existing_user, request.role)
             session.add(existing_user)
             session.commit()
             session.refresh(existing_user)
 
-            return unified_response(
+            return _compat_response(
                 code=200,
                 message="用户信息更新成功",
                 data={
@@ -202,7 +231,7 @@ async def sync_user(
             )
 
         username = request.username or f"fanya_{request.fanya_user_id}"
-        role = UserRole.TEACHER if request.role == "teacher" else UserRole.STUDENT
+        role = UserRole.ADMIN if request.role == "admin" else UserRole.USER
 
         new_user = User(
             username=username,
@@ -218,10 +247,10 @@ async def sync_user(
         session.add(new_user)
         session.commit()
         session.refresh(new_user)
-        _sync_platform_permissions(session, new_user)
+        _sync_platform_permissions(session, new_user, request.role)
         session.commit()
 
-        return unified_response(
+        return _compat_response(
             code=200,
             message="用户同步成功",
             data={
@@ -232,7 +261,7 @@ async def sync_user(
         )
     except Exception as e:
         logger.error(f"用户同步异常: {e}")
-        return unified_response(code=500, message=f"同步失败: {str(e)}", data=None)
+        return _compat_response(code=500, message=f"同步失败: {str(e)}", data=None)
 
 
 @router.post("/syncCourse")
@@ -248,7 +277,7 @@ async def sync_course(
         teacher = session.exec(teacher_stmt).first()
 
         if not teacher:
-            return unified_response(
+            return _compat_response(
                 code=404,
                 message=f"未找到泛雅ID为 {request.teacher_fanya_id} 的教师",
                 data=None,
@@ -272,7 +301,7 @@ async def sync_course(
             if request.student_list:
                 _sync_enrollments(session, existing_course.id, request.student_list)
 
-            return unified_response(
+            return _compat_response(
                 code=200,
                 message="课程更新成功",
                 data={
@@ -300,7 +329,7 @@ async def sync_course(
         if request.student_list:
             _sync_enrollments(session, new_course.id, request.student_list)
 
-        return unified_response(
+        return _compat_response(
             code=200,
             message="课程同步成功",
             data={
@@ -311,7 +340,7 @@ async def sync_course(
         )
     except Exception as e:
         logger.error(f"课程同步异常: {e}")
-        return unified_response(code=500, message=f"同步失败: {str(e)}", data=None)
+        return _compat_response(code=500, message=f"同步失败: {str(e)}", data=None)
 
 
 @router.post("/syncEnrollment")
@@ -345,7 +374,7 @@ async def sync_enrollment(
         )
     except Exception as e:
         logger.error(f"选课同步异常: {e}")
-        return unified_response(code=500, message=f"同步失败: {str(e)}", data=None)
+        return _compat_response(code=500, message=f"同步失败: {str(e)}", data=None)
 
 
 def _sync_enrollments(

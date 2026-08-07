@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
 import { featureFlags } from '@/config/featureFlags.js'
 import { shadowAppRoutes } from '@/app/router.js'
+import { getMyInfo } from '@/api/user.js'
 
 const loadView = (view) => {
   return () => import(`../views/${view}.vue`)
@@ -154,7 +155,7 @@ const router = createRouter({
       path: '/admin',
       name: 'admin-panel',
       component: loadView('AdminPanel'),
-      meta: { requiresAuth: true, role: 'admin' }
+      meta: { requiresAuth: true, requiredPlatformPermission: 'platform.admin' }
     },
     {
       // Production Viewer reads Canonical DocumentIR by course and parse run.
@@ -195,14 +196,32 @@ const router = createRouter({
   }
 })
 
-router.beforeEach((to) => {
+router.beforeEach(async (to) => {
   const counter = useCounterStore()
   counter.checkAuth()
 
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
     return { path: '/profile', query: { redirect: to.fullPath } }
   }
-  if (to.meta.role && counter.userData.role !== to.meta.role) return { path: '/' }
+
+  const legacyRolePermission = to.meta.role === 'admin'
+    ? 'platform.admin'
+    : to.meta.role === 'teacher'
+      ? 'platform.course.create'
+      : null
+  const requiredPermission = to.meta.requiredPlatformPermission || legacyRolePermission
+  if (requiredPermission && counter.isLoggedIn && !counter.hasPlatformPermission(requiredPermission)) {
+    try {
+      const data = await getMyInfo()
+      counter.userData.username = data.username || counter.userData.username
+      counter.userData.id = data.user_id || counter.userData.id
+      counter.userData.role = data.role || 'user'
+      counter.setPlatformPermissions(data.platform_permissions)
+    } catch {
+      return { path: '/app' }
+    }
+  }
+  if (requiredPermission && !counter.hasPlatformPermission(requiredPermission)) return { path: '/app' }
   return true
 })
 

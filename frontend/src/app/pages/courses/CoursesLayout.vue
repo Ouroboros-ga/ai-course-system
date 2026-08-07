@@ -23,7 +23,7 @@ const tabs = [
 const activeKey = computed(() => tabs.find((t) => route.path.startsWith(t.to))?.key ?? 'learning')
 
 const joinOpen = ref(false)
-const canImportCourses = computed(() => counter.isTeacher || counter.isAdmin)
+const canImportCourses = computed(() => counter.canCreateCourses)
 function openJoin() { joinOpen.value = true }
 function closeJoin() { joinOpen.value = false }
 function openCreateCourse() { router.push('/app/courses/create') }

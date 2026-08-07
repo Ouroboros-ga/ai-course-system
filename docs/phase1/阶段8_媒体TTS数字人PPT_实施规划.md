@@ -1,5 +1,7 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
+> 2026-08-07 P5.2 更新：对象存储上传已统一为 Local PUT / S3-OSS presigned POST + confirm 校验；Local 内容读取必须携带签名 scope；旧 `/video-gen` 仅为兼容/历史入口，不作为正式 MediaRelease 或 audio-playlist/v1 发布依据。详见 [P5.2 文档](阶段8_P5.2_OSS与旧链隔离.md)。
+
 > 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程 87 已以
 > Fake WAV 完成 PPT 映射、playlist、MediaRelease 激活和正式课程发布门。它证明本地课程级
 > 发布链路，而不证明真实 TTS 音质、字级时序质量、精确口型或目标浏览器性能。
@@ -29,7 +31,7 @@ BuildMediaPage
   → LearnPage / LectureStage
 ```
 
-每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，首版使用平台预制 `platform-instructor-v1`，失败时按 `PixiJS → 静态头像 → 无数字人` 降级。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
+每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，角色由 P5.1 平台注册表按发布版本冻结（当前默认 `platform-instructor-v2@1.0.0`），失败时按 `PixiJS → 静态头像 → 无数字人` 降级。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
 
 ### 当前代码证据
 
@@ -48,7 +50,8 @@ BuildMediaPage
 `CourseReleaseService._current_media_snapshot`；运行证据见 `功能现状审计表.md` 的 2026-08-06 记录。
 
 剩余阻塞是浏览器现场验收（含左侧数字人位置、跨知识点和性能记录）与经教师明确授权的真实
-豆包短文本 POC；后者必须新建 MediaRelease，不得覆盖当前 Fake 版本。
+豆包短文本 POC；P5.3 脱敏记录见 [阶段8_P5.3_一次受控豆包验收](阶段8_P5.3_一次受控豆包验收.md)。
+该 POC 不创建 MediaRelease，不得覆盖当前 Fake 版本。
 
 教师真人形象与声音授权属于后续扩展，见[阶段8附加：教师数字人资产中心](阶段8_附加_教师数字人资产中心.md)。该文档不改变当前平台预制角色和课程级发布门。
 
@@ -126,7 +129,8 @@ LearnPage.vue
 
 ### 1.3 现有 TTS 实现的边界
 
-- 阶段8正式路径以 `STAGE8_TTS_PROVIDER` 选 Provider，默认是 `fake`；当前注册
+- 阶段8正式路径由 `MEDIA_DEMO_MODE` 与 `STAGE8_TTS_PROVIDER` 共同决定：Demo 必须显式
+  开启并显示 `fake-demo`；正式模式必须显式选择 `doubao`，配置缺失时 fail-closed；当前注册
   `fake`、`xfyun_tts`、`mock_xfyun` 与 `volcengine_doubao_tts`。批量建设默认使用
   `fake-v1.1-playable`，真实 Provider 只能由 Worker 在教师确认后调用。
 - `XfyunTtsProvider` 使用在线标准 TTS `wss://tts-api.xfyun.cn/v2/tts` 与 `ora12`，

@@ -1,9 +1,14 @@
-﻿"""Minimal, course-scoped TeachingAgent audit and session records.
+"""Minimal, course-scoped TeachingAgent audit and session records (Agent Runtime Context / Audit domain).
 
 These records deliberately exclude raw learner messages, generated answers,
 prompts, and full model traces.  They are operational audit/context data only:
 they never create ``LearningEvent`` / ``LearningEvidence`` and never update a
 formal cognition or mastery result.
+
+Full user/agent messages now live in the **separate** Conversation Domain
+(``conversation_model.ConversationMessage`` + ``conversation_service``), per
+AGENTS.md §5.1.  This Audit domain stays data-minimized; the Conversation
+Domain carries its own data policy, retention and deletion strategy.
 """
 from __future__ import annotations
 
@@ -51,7 +56,12 @@ class AgentTraceRecord(SQLModel, table=True):
 
 
 class AgentConversationSession(SQLModel, table=True):
-    """Bounded structured continuity state; it is never a chat transcript."""
+    """Bounded structured continuity state; it is never a chat transcript.
+
+    Full chat transcripts live in the Conversation Domain
+    (``conversation_messages``); this Audit-domain row only carries the few
+    scalars the agent needs to resume context within its 30-minute TTL.
+    """
 
     __tablename__ = "agent_conversation_sessions"
 
