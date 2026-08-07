@@ -18,7 +18,14 @@ export function useMediaPlayback(courseId) {
   const error = ref('')
   const manifest = ref(normalizeMediaPlayback(null))
 
-  const isAudioReady = computed(() => manifest.value.available && Boolean(manifest.value.audioUrl))
+  // A course-level `audio-playlist/v1` intentionally keeps audio URLs on its
+  // immutable items instead of duplicating one at the release root.  Treat a
+  // playable first item as media-ready so playlist releases do not report an
+  // inaccurate unavailable status while LectureStage is already playing it.
+  const isAudioReady = computed(() => manifest.value.available && Boolean(
+    manifest.value.audioUrl
+    || manifest.value.playlist?.items?.some(item => item.audioUrl),
+  ))
   const audioUrl = computed(() => manifest.value.audioUrl)
   const playlist = computed(() => manifest.value.playlist)
   const subtitleSegments = computed(() => manifest.value.subtitleSegments)
@@ -44,6 +51,17 @@ export function useMediaPlayback(courseId) {
               audioUrl: withLocalAccessToken(item.audioUrl),
               subtitleManifestUrl: withLocalAccessToken(item.subtitleManifestUrl),
               avatarCuesUrl: withLocalAccessToken(item.avatarCuesUrl),
+              // `useAvatarPlayback` consumes the normalized nested object,
+              // rather than the compatibility `avatarCuesUrl` field.  Keep
+              // its signed local route authenticated too; otherwise audio
+              // plays but Cue loading receives a 401 and silently falls back
+              // to no avatar.
+              avatarCues: item.avatarCues
+                ? {
+                    ...item.avatarCues,
+                    manifestUrl: withLocalAccessToken(item.avatarCues.manifestUrl),
+                  }
+                : null,
             })),
           }
         : null,

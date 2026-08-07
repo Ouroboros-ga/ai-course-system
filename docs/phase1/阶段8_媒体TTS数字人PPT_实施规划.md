@@ -1,9 +1,9 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
-> 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程级真实
-> 媒体发布仍须通过 PPT 映射、Fake/受控 TTS 资产、playlist、激活和正式课程发布门。
-> 课程 87 当前尚无 active `MediaRelease`，不能把代码或 Fake 试听写成学生端正式播放。
-> 部署或本地升级必须显式执行 `alembic upgrade head`。最后核对：2026-08-06。
+> 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程 87 已以
+> Fake WAV 完成 PPT 映射、playlist、MediaRelease 激活和正式课程发布门。它证明本地课程级
+> 发布链路，而不证明真实 TTS 音质、字级时序质量、精确口型或目标浏览器性能。
+> 部署或本地升级必须显式执行 `alembic upgrade head`。最后核对：2026-08-07。
 >
 > 本文以实际注册路由、调用链、模型和一次真实 Provider POC 为证据，不把历史
 > Demo、Fake Provider 或未接入的 API 写成已对学生生效的能力。与历史阶段8说明
@@ -39,11 +39,16 @@ BuildMediaPage
 - 学习端：`frontend/src/features/student-learning/composables/useMediaPlayback.js`、`usePlaylistPlayback.js`、`frontend/src/app/components/learn/LectureStage.vue`。
 - 数字人：`AvatarViewport.vue`、`useAvatarPlayback.js`、`Sprite2DRenderer.js` 和 `platformSprite2dAssets.js`。
 
-### 课程 87 的真实阻塞
+### 课程 87 已完成链路与剩余验收
 
-课程 87 可以先生成和试听 `fake-v1.1-playable` WAV；但 PPT 映射或 manifest 缺失会阻止
-`audio-playlist/v1`、MediaRelease 激活和正式课程发布。正式发布还必须固定
-`release_id + playlist_content_hash`，不能沿用当前空的 `media_snapshot`。
+课程 87 的 `mrel_623ac854…` 已处于 active，`cr_4ca1bc01…` 已处于 published；该课程快照固定
+`release_id + playlist_content_hash=e78973d2…`。本地数据库核对到 20 个 `ready` 条目、44 页 PPT、
+20 份 WAV/字幕/Cue 与 880448ms 的 `audio-playlist/v1`，播放服务返回 `available=true`。代码证据为
+`media_batch_service.freeze_playlist`、`media_release_service.get_current_playback` 和
+`CourseReleaseService._current_media_snapshot`；运行证据见 `功能现状审计表.md` 的 2026-08-06 记录。
+
+剩余阻塞是浏览器现场验收（含左侧数字人位置、跨知识点和性能记录）与经教师明确授权的真实
+豆包短文本 POC；后者必须新建 MediaRelease，不得覆盖当前 Fake 版本。
 
 教师真人形象与声音授权属于后续扩展，见[阶段8附加：教师数字人资产中心](阶段8_附加_教师数字人资产中心.md)。该文档不改变当前平台预制角色和课程级发布门。
 
@@ -595,7 +600,7 @@ dispose()
 **完成门槛**：教师可在不泄露凭据、不破坏旧 Release 的情况下完成一条批量媒体发布链，
 并能回滚和撤销未授权资产。
 
-### P4 当前实现状态（历史记录；代码已接入，真实验收仍受课程 87 阻塞）
+### P4 当前实现状态（2026-08-07 复核）
 
 - 迁移 `0037_batch_media_playlist` 增加 `MediaBuildBatch`、`MediaReleaseItem` 与
   `MediaRelease.audio_playlist_*` 字段；升级/降级均做存在性检查，应用启动不会通过
@@ -609,8 +614,8 @@ dispose()
 - 本地验证已覆盖批量只读计划、缓存复用、发布门、播放全局时间轴、Cue/Provider 回归；
   前端 API 契约测试与 Vite 构建通过。所有自动化验证使用 Fake/本地对象，不产生付费
   调用。
-- 真实验收仍被课程 87 的 PPT 映射和真实媒体资产阻塞：可先核算、生成并试听草稿音频，
-  但在映射/manifest 均冻结前，服务端会拒绝清单冻结和激活；不发布半成品课程。
+- 课程 87 已用 `fake-v1.1-playable` 通过映射、manifest、清单、激活与正式发布门；仍需把
+  “浏览器真实播放体验”和“真实 Provider 质量”分别验收。测试与 Fake WAV 不能替代后二者。
 
 ### Fake TTS 本地试听边界（2026-08-05）
 
@@ -656,13 +661,11 @@ dispose()
 
 ## 10. 当前下一步
 
-1. 在课程 87 完成 PPT 源文件确认与教师映射冻结；随后选择最小的一批讲解节点，先核算
-   再由教师明确确认一次受控 TTS，试听草稿音频后冻结 Cue/PPT manifest/播放清单。这是
-   P0–P4 首次真实联调的前置条件，不可由浏览器端伪造。
-2. 使用已登录的学生会话在目标 Windows 浏览器执行 P3 验收：播放/暂停、seek、
-   0.75x/1x/1.5x、刷新续播、480p 小窗与连续 10 分钟播放；记录初始化时间、FPS、
-   掉帧率和同步偏差，未达标即保留兼容模式。
-3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增
-   受控写入接口；在这之前不虚构设备性能数据。
-4. 在目标浏览器完成 P3 的真实 480p/24fps 记录后，补 `PlaybackCapabilityProfile` 的
-   受控写入与审核入口；P4 建设/发布主链已就绪，无需等待该性能记录才能冻结媒体。
+1. 使用已登录的学生会话完成课程 87 浏览器验收：播放/暂停、seek、0.75x/1x/1.5x、跨知识点、
+   PPT/字幕同步、刷新续播，以及数字人仅显示在左侧音频讲解区。记录 480p 小窗、连续 10 分钟的
+   初始化时间、FPS、掉帧率与音频同步偏差；不达标即保留 compatibility 降级。
+2. 将 `STAGE8_TTS_PROVIDER` 在本地受控切换为 `volcengine_doubao_tts` 后，由教师明确授权一次
+   最小文本调用；核对音频、`words`、`phonemes`、时长误差、缓存复用和草稿/正式发布隔离。通过后
+   再建设一个新的真实 TTS MediaRelease，绝不覆盖 Fake 版本。
+3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增受控写入接口；
+   在这之前不虚构设备性能数据。

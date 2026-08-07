@@ -5,7 +5,6 @@ import {
   ChevronLeft,
   ChevronRight,
   FileQuestion,
-  Headphones,
   MonitorPlay,
   Pause,
   Play,
@@ -288,49 +287,49 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         <small v-else-if="hasLegacyVideo" class="sfx-t-caption">兼容模式</small>
       </header>
 
-      <div class="sfx-stage-media-frame">
-        <audio
-          v-if="hasAudio"
-          ref="audioRef"
-          :key="activeAudioUrl"
-          :src="activeAudioUrl"
-          preload="metadata"
-          @loadedmetadata="handleLoadedMetadata"
-          @timeupdate="handleTimeUpdate"
-          @play="emitPlayback(true)"
-          @pause="emitPlayback(false)"
-          @ended="handleEnded"
-          @error="handleAudioError"
-        />
+      <audio
+        v-if="hasAudio"
+        ref="audioRef"
+        :key="activeAudioUrl"
+        :src="activeAudioUrl"
+        preload="metadata"
+        class="sfx-stage-clock"
+        @loadedmetadata="handleLoadedMetadata"
+        @timeupdate="handleTimeUpdate"
+        @play="emitPlayback(true)"
+        @pause="emitPlayback(false)"
+        @ended="handleEnded"
+        @error="handleAudioError"
+      />
 
-        <div v-if="hasAudio" class="sfx-stage-audio-identity">
-          <span class="sfx-stage-audio-orbit" aria-hidden="true"><Headphones :size="30" /></span>
-          <strong>{{ currentNode?.title || '课程讲解' }}</strong>
-          <p class="sfx-t-caption">PPT 与讲解原文跟随音频时间轴同步。</p>
-          <p v-if="captionsEnabled && activeSubtitle" class="sfx-stage-live-caption" aria-live="polite">
-            {{ activeSubtitle.text }}
-          </p>
-        </div>
-        <video
-          v-else-if="hasLegacyVideo"
-          ref="legacyVideoRef"
-          :key="legacyVideoUrl"
-          :src="legacyVideoUrl"
-          playsinline
-          preload="metadata"
-          @loadedmetadata="handleLoadedMetadata"
-          @timeupdate="handleTimeUpdate"
-          @play="emitPlayback(true)"
-          @pause="emitPlayback(false)"
-          @ended="handleEnded"
-          @error="handleLegacyVideoError"
-        />
+      <AvatarViewport
+        v-if="hasAudio && avatarCues && avatarSpriteManifest"
+        :cues="avatarCues"
+        :sprite-manifest="avatarSpriteManifest"
+        :current-time="currentTime"
+        :default-playback-mode="defaultPlaybackMode"
+        :asset-source="avatarAssetSource"
+      />
+      <video
+        v-if="!hasAudio && hasLegacyVideo"
+        ref="legacyVideoRef"
+        class="sfx-stage-video"
+        :key="legacyVideoUrl"
+        :src="legacyVideoUrl"
+        playsinline
+        preload="metadata"
+        @loadedmetadata="handleLoadedMetadata"
+        @timeupdate="handleTimeUpdate"
+        @play="emitPlayback(true)"
+        @pause="emitPlayback(false)"
+        @ended="handleEnded"
+        @error="handleLegacyVideoError"
+      />
 
-        <div v-else class="sfx-stage-fallback">
-          <VideoOff :size="32" :stroke-width="1.6" />
-          <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
-          <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
-        </div>
+      <div v-if="!hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
+        <VideoOff :size="32" :stroke-width="1.6" />
+        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
+        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
       </div>
 
       <section class="sfx-stage-transcript" aria-label="讲解原文">
@@ -384,14 +383,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             <strong>当前页暂无可显示的课件</strong>
             <p class="sfx-t-caption">可从学习轨道切换其他知识点。</p>
           </div>
-          <AvatarViewport
-            v-if="hasAudio && avatarCues && avatarSpriteManifest"
-            :cues="avatarCues"
-            :sprite-manifest="avatarSpriteManifest"
-            :current-time="currentTime"
-            :default-playback-mode="defaultPlaybackMode"
-            :asset-source="avatarAssetSource"
-          />
         </div>
       </section>
     </slot>
@@ -494,51 +485,26 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   font-weight: 500;
 }
 
-.sfx-stage-media-frame {
+.sfx-stage-clock { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); opacity: 0; pointer-events: none; }
+
+.sfx-stage-lecture :deep(.avatar-viewport) {
   position: relative;
-  min-height: 210px;
+  right: auto;
+  bottom: auto;
+  width: 100%;
+  min-width: 0;
+  aspect-ratio: auto;
   flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--code-bg);
-  overflow: hidden;
+  min-height: 180px;
+  border-radius: 0;
+  border: 0;
 }
 
-.sfx-stage-media-frame video { width: 100%; height: 100%; object-fit: contain; }
-
-.sfx-stage-audio-identity {
-  width: min(78%, 420px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--text-inverse);
-  text-align: center;
-}
-
-.sfx-stage-audio-orbit {
-  width: 64px;
-  height: 64px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid rgb(232 238 244 / 38%);
-  border-radius: var(--radius-full);
-  color: var(--ink-100);
-  box-shadow: 0 0 0 12px rgb(232 238 244 / 6%);
-}
-
-.sfx-stage-live-caption {
-  margin: var(--space-2) 0 0;
-  padding: var(--space-2) var(--space-3);
-  border-left: 2px solid var(--amber-300);
-  background: rgb(255 255 255 / 9%);
-  color: var(--text-inverse);
-  line-height: 1.65;
-}
+.sfx-stage-video { flex: 1; min-height: 0; width: 100%; height: 100%; object-fit: contain; background: var(--code-bg); }
 
 .sfx-stage-fallback {
+  flex: 1;
+  min-height: 180px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -547,6 +513,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   padding: var(--space-8);
   text-align: center;
   color: var(--code-muted);
+  background: var(--code-bg);
 }
 
 .sfx-stage-fallback.is-light { color: var(--text-muted); }
@@ -561,7 +528,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 
 .sfx-stage-slide-frame { position:relative; flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-cool); overflow: hidden; }
 .sfx-stage-slide-frame img { width:100%; height:100%; max-width:100%; max-height:100%; object-fit:contain; }
-.sfx-stage-slide-frame :deep(.avatar-viewport) { z-index:2; }
 .sfx-stage-slide-text { padding: var(--space-8); display: flex; flex-direction: column; gap: var(--space-3); overflow-y: auto; max-height: 100%; }
 .sfx-stage-slide-nav { display: flex; align-items: center; gap: var(--space-2); }
 

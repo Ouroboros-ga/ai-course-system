@@ -232,15 +232,21 @@ def build_ppt_manifest(
     # The course build workspace stores teacher uploads as material versions.
     # Prefer those exact PPTX sources over legacy ``Course.source_file_path``
     # so mapping and learner playback share the same visual assets.
-    uploaded_decks = [
-        _manifest_deck_from_uploaded_source(
-            session,
-            course_id=course_id,
-            material=material,
-            version=version,
-        )
-        for material, version in _current_uploaded_slide_versions(session, course_id=course_id)
-    ]
+    uploaded_decks: list[dict[str, Any]] = []
+    for material, version in _current_uploaded_slide_versions(session, course_id=course_id):
+        from app.services.ppt_slide_render_service import PptSlideRenderError
+        try:
+            uploaded_decks.append(_manifest_deck_from_uploaded_source(
+                session,
+                course_id=course_id,
+                material=material,
+                version=version,
+            ))
+        except PptSlideRenderError as exc:
+            # Surface the renderer's stable, actionable cause (for example
+            # CONVERTER_UNAVAILABLE when LibreOffice is missing) to the caller
+            # instead of leaking an unhandled 500.
+            raise PptManifestGenerationError(f"{exc.error_code}: {exc.message}") from exc
     if uploaded_decks:
         primary_deck = uploaded_decks[0]
         manifest = {

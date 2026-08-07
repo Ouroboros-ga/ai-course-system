@@ -31,8 +31,9 @@
 
 ### 媒体与数字人文档状态
 
-- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：现行方案与实施基线。
+- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：现行方案与实施基线；2026-08-07 已复核课程 87 的 Fake WAV 课程级发布完成，后续入口是浏览器现场验收与受控真实 TTS POC。
 - `phase1/阶段8_附加_教师数字人资产中心.md`：后续教师授权资产扩展；当前不是首版发布前置。
+- `phase1/阶段8_附加_DH_live浏览器实时渲染PoC验证报告.md`：DH_live 浏览器本地实时渲染与素材预处理的独立 PoC 实测记录（2026-08-06）；不改变主链，作为 M4 引擎接入评估依据。
 - `backend/docs/数字人合成api.md`、`backend/docs/video_create.md`、`docs/refactor/R1D-DuixAvatar*`、`docs/refactor/R2B数字人与PPT任务迁移报告.md`：已废弃/仅历史追溯，不得作为当前数字人路线或完成度依据。
 
 ## 已删除的过期活动文档

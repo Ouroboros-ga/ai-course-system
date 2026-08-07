@@ -157,6 +157,26 @@ def ensure_ppt_source_slide_renders(
             )
             session.add(asset)
             session.flush()
+        # The guarded media content route serves objects only when they are
+        # present in the MediaAsset ledger.  Without this registration the
+        # learner playback manifests sign URLs that 404 even though the bytes
+        # exist in object storage.
+        from app.models.media_timeline_model import MediaAsset, StorageBackend
+        existing_media = session.exec(select(MediaAsset).where(
+            MediaAsset.object_key == object_key,
+        )).first()
+        if existing_media is None:
+            storage_backend = getattr(storage, "backend_name", "local")
+            session.add(MediaAsset(
+                course_id=course_id,
+                object_key=object_key,
+                asset_type="ppt_image",
+                backend=StorageBackend.LOCAL if storage_backend == "local" else StorageBackend.OSS,
+                mime_type="image/png",
+                size_bytes=len(image_bytes),
+                content_hash=content_hash,
+                resource_version="ppt-manifest/v1",
+            ))
         existing_by_page[page_number] = asset
 
     if page_numbers is not None:

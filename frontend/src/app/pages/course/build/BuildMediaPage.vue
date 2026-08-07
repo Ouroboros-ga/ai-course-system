@@ -108,7 +108,7 @@ const canSubmitTts = computed(() => Boolean(
 ))
 const batchSelectedScripts = computed(() => scripts.value.filter(item => batchNodeIds.value.includes(Number(item.script_node_db_id))))
 // 左侧 rail 当前选中的知识点在批量媒体结果里对应的 item；有 audio_object_key 才能自动试听。
-const selectedBatchItem = computed(() => batchItems.value.find((item) => Number(item.node_id) === Number(selectedNodeDbId.value)) ?? null)
+const selectedBatchItem = computed(() => findBatchItemForScript(selectedScript.value))
 const canPlanBatch = computed(() => canGenerate.value && batchSelectedScripts.value.length > 0 && batchSelectedScripts.value.length <= 20)
 const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm) && paidTtsConfirmed.value)
 // Playlist (batch) releases freeze Cue assets per MediaReleaseItem, not on the
@@ -178,6 +178,28 @@ function batchItemStatusLabel(status) {
 
 function scriptLabel(script) {
   return script?.display_label || script?.outline_title || script?.script_node_id || '未关联知识点'
+}
+
+// MediaReleaseItem keeps the script node DB id from the generation run.  A
+// subsequent script edit can create a new TeachingScriptNode row while the
+// knowledge point keeps its stable outline_node_id.  Match the durable id
+// first, then fall back to that stable knowledge-point identity so an already
+// ready audio item remains discoverable after a draft refresh.
+function sameMediaNode(item, script) {
+  if (!item || !script) return false
+  const itemNodeId = Number(item.node_id)
+  const scriptNodeId = Number(script.script_node_db_id)
+  if (itemNodeId > 0 && scriptNodeId > 0 && itemNodeId === scriptNodeId) return true
+  return Boolean(item.outline_node_id && script.outline_node_id
+    && String(item.outline_node_id) === String(script.outline_node_id))
+}
+
+function findBatchItemForScript(script) {
+  return batchItems.value.find((item) => sameMediaNode(item, script)) ?? null
+}
+
+function findScriptForBatchItem(item) {
+  return scripts.value.find((script) => sameMediaNode(item, script)) ?? null
 }
 
 function jobLabel(job) {
@@ -270,7 +292,7 @@ function toggleBatchNode(script) {
 
 // 返回某知识点在批量结果中可试听的 item（无音频时为 null）。试听入口统一在左侧列表。
 function scriptItemAudio(script) {
-  return batchItems.value.find((item) => Number(item.node_id) === Number(script?.script_node_db_id)) ?? null
+  return findBatchItemForScript(script)
 }
 
 function withPreviewAccessToken(url) {
@@ -310,7 +332,7 @@ function applyPreview(audioPreview, playbackPreview, item) {
     audio_url: withPreviewAccessToken(audioPreview?.audio_url),
   }
   previewPlayback.value = playbackPreview
-  const script = scripts.value.find((s) => Number(s.script_node_db_id) === Number(item?.node_id))
+  const script = findScriptForBatchItem(item)
   previewNodeLabel.value = script ? scriptLabel(script) : `知识点 ${item?.node_id ?? ''}`
 }
 
@@ -338,7 +360,7 @@ async function previewBatchItem(item) {
   notice.value = ''
   try {
     // 先同步左侧选择，让“左侧选谁 = 试听谁”成立，不再出现选 A 显 B 的错位。
-    const script = scripts.value.find((s) => Number(s.script_node_db_id) === Number(item.node_id))
+    const script = findScriptForBatchItem(item)
     if (script) selectedScriptId.value = script.script_node_id
     const { audioPreview, playbackPreview } = await fetchPreview(item)
     applyPreview(audioPreview, playbackPreview, item)
@@ -358,7 +380,7 @@ async function previewBatchItem(item) {
 
 // 左侧选择即预览：当前选中知识点在批量结果中已有音频时自动加载学习端同款预览。
 watch([selectedNodeDbId, batchItems], async ([nodeId]) => {
-  const item = batchItems.value.find((it) => Number(it.node_id) === Number(nodeId))
+  const item = findBatchItemForScript(selectedScript.value)
   if (!item?.audio_object_key || !workingRelease.value) {
     // 选中节点没有可试听的音频，清空残留预览，避免展示上一个节点的内容。
     if (!item?.audio_object_key) {
@@ -666,7 +688,7 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="batchItems.length" class="batch-item-list" aria-label="批量媒体节点状态">
             <article v-for="item in batchItems" :key="item.item_id || item.node_id" class="batch-item-row">
-              <div><strong>{{ scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id)) ? scriptLabel(scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id))) : `知识点 ${item.node_id}` }}</strong><small>{{ batchItemStatusLabel(item.status) }}{{ item.error_message_safe ? ` · ${item.error_message_safe}` : '' }}</small></div>
+              <div><strong>{{ findScriptForBatchItem(item) ? scriptLabel(findScriptForBatchItem(item)) : `知识点 ${item.node_id}` }}</strong><small>{{ batchItemStatusLabel(item.status) }}{{ item.error_message_safe ? ` · ${item.error_message_safe}` : '' }}</small></div>
               <SfxBadge :tone="item.status === 'ready' ? 'green' : item.status === 'failed' || item.status === 'blocked' ? 'red' : 'amber'">{{ batchItemStatusLabel(item.status) }}</SfxBadge>
             </article>
           </div>
