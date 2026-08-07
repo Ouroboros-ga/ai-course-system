@@ -17,6 +17,8 @@
 
 迁移 `0041` 将已有 `student/teacher` 统一为 `user`，并添加 `auth_version`、平台集成配置和管理员审计表。针对早期数据库实际保存的大写 `TEACHER/STUDENT`，纠正迁移 `0043` 会把 `TEACHER` 账号升级为全局 `ADMIN`，补齐 `platform.admin` 授权，并把 `STUDENT` 归一为 `USER`；迁移可重复执行且不改课程成员的 `CourseRole.TEACHER`。回滚会把 `user` 降为旧系统可识别但最低权限的 `student`，不会尝试伪造已无法恢复的 teacher 区分。
 
+全局角色与显式平台授权必须保持一致：管理后台把用户提升为 `admin` 时同步补发有效的 `platform.admin` 分配，降级为 `user` 时撤销该分配（`platform_admin_service._sync_admin_assignment`）；`init_users.py` 创建的演示管理员同样补齐分配。迁移 `0044`（可重入）为 `role=ADMIN` 但缺 `platform.admin` 的存量账号回填分配，并撤销已降级账号遗留的 `ADMIN` 授权。课程内加入（邀请码/选课）不再校验 `user.role`，任何活跃用户（含管理员）都可作为学习者加入课程。
+
 ## Provider 运行时边界
 
 管理员保存的配置先做无内容的可达性探针，探针失败不会写入新配置；成功后进程内 Provider Manager 再原子替换 LLM/TTS/PPT 客户端。PPT 的 Base URL 不再固定为代码常量。多进程实例的配置通知/轮询尚未实现，当前每个进程需在自身内执行刷新。

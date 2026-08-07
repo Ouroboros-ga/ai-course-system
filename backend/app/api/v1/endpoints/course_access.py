@@ -1,4 +1,4 @@
-﻿"""Course access and capability View Models used by the rebuilt frontend."""
+"""Course access and capability View Models used by the rebuilt frontend."""
 from __future__ import annotations
 
 import logging
@@ -20,7 +20,7 @@ from app.models.access_control_model import (
     MembershipStatus,
 )
 from app.models.course_model import Course, CourseStatus, StudentEnrollment
-from app.models.user_model import User, UserRole
+from app.models.user_model import User
 from app.services.course_access_service import (
     ALL_PERMISSIONS,
     activate_student_membership,
@@ -276,9 +276,9 @@ async def join_by_code(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """学生通过邀请码加入课程。
+    """通过邀请码加入课程。
 
-    - 仅学生角色可调用。
+    - 任何活跃平台用户（含管理员）可调用；管理员同样拥有学习课程的权限。
     - 课程必须为 PUBLISHED 状态（CLOSED/DRAFT/ARCHIVED 拒绝新加入）。
     - 邀请码必须匹配。
     - 重复加入返回 already_enrolled；退课后重新加入返回 reactivated。
@@ -287,8 +287,6 @@ async def join_by_code(
     user = session.get(User, user_id)
     if user is None or not user.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="用户不存在或已停用")
-    if user.role != UserRole.STUDENT:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="仅学生账号可通过邀请码加入课程")
 
     course = session.exec(select(Course).where(Course.invite_code == payload.invite_code)).first()
     if course is None:

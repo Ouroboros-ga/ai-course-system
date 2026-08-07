@@ -1439,24 +1439,20 @@ async def enroll_course(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    学生选择/加入课程
+    用户选择/加入课程
 
-    学生可以加入老师发布的课程
+    用户可加入老师发布的课程
     选课成功后会自动初始化学习进度记录
     """
     try:
         student_id = int(current_user["user_id"])
 
         # Enrollment is the lifecycle entrypoint for learner membership.
-        # Allowing a teacher/owner token here would create a legacy
-        # StudentEnrollment row that Course Access v1 correctly refuses to
-        # treat as learner participation.
-        from app.models.user_model import User, UserRole
+        # 平台身份已收敛为 user/admin：任何活跃用户（含管理员）都可作为学习者加入。
+        from app.models.user_model import User
         user = session.get(User, student_id)
         if user is None or not user.is_active:
             raise HTTPException(status_code=401, detail="Account is unavailable")
-        if user.role != UserRole.STUDENT:
-            raise HTTPException(status_code=403, detail="Only student accounts can enroll in a course")
 
         course = session.get(Course, course_id)
         if not course:

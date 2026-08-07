@@ -35,7 +35,8 @@ export const useCounterStore = defineStore('counter', () => {
   const hasPlatformPermission = (permission) =>
     platformPermissions.value.includes(permission) || platformPermissions.value.includes('platform.admin')
   const canManageUsers = computed(() => hasPlatformPermission('platform.admin') || hasPlatformPermission('platform.user.manage'))
-  const canCreateCourses = computed(() => hasPlatformPermission('platform.admin') || hasPlatformPermission('platform.course.create'))
+  // 目标模型：任何登录用户都可以创建课程；课程内教学身份由 Course Access 决定。
+  const canCreateCourses = computed(() => isLoggedIn.value)
   const isTeacher = computed(() => false)
   const isStudent = computed(() => false)
   const isAdmin = computed(() => canManageUsers.value)

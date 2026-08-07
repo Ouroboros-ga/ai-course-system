@@ -204,11 +204,9 @@ router.beforeEach(async (to) => {
     return { path: '/profile', query: { redirect: to.fullPath } }
   }
 
-  const legacyRolePermission = to.meta.role === 'admin'
-    ? 'platform.admin'
-    : to.meta.role === 'teacher'
-      ? 'platform.course.create'
-      : null
+  // 目标模型：平台只有 user/admin；任何用户都可创建/建设课程，遗留 teacher 路由不再
+  // 要求平台级 course.create 权限（课程内教学权限由 Course Access 决定）。
+  const legacyRolePermission = to.meta.role === 'admin' ? 'platform.admin' : null
   const requiredPermission = to.meta.requiredPlatformPermission || legacyRolePermission
   if (requiredPermission && counter.isLoggedIn && !counter.hasPlatformPermission(requiredPermission)) {
     try {

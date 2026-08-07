@@ -80,7 +80,7 @@ onMounted(load)
         <h1 class="sfx-t-title1">我建设的</h1>
         <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">作为教师建设或共同建设的课程</p>
       </div>
-      <!-- §9.2 主操作「创建课程」：创建流程未在本期契约内（planned），按 §1.5 隐藏 -->
+      <!-- 主操作「创建课程」位于「我的课程」L2 顶栏，任何登录用户均可创建 -->
     </header>
 
     <div v-if="status === 'ready'" class="sfx-toolbar" role="search">

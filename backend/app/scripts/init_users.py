@@ -9,6 +9,7 @@ import bcrypt
 
 from app.models.database import engine
 from app.models.user_model import User, UserRole
+from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 
 
 def get_password_hash(password: str) -> str:
@@ -16,6 +17,28 @@ def get_password_hash(password: str) -> str:
     salt = bcrypt.gensalt()
     hashed = bcrypt.hashpw(password.encode('utf-8'), salt)
     return hashed.decode('utf-8')
+
+
+def ensure_platform_admin(session: Session, user: User) -> None:
+    """平台管理员必须同时拥有显式 platform.admin 分配，否则管理端点会 403。
+
+    平台权限解析只读取 platform_permission_assignments（见
+    course_access_service.require_platform_permission），与 users.role 解耦。
+    """
+    if user.id is None:
+        session.flush()
+    assignment = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == user.id,
+            PlatformPermissionAssignment.permission == PlatformPermission.ADMIN,
+        )
+    ).first()
+    if assignment is None:
+        session.add(PlatformPermissionAssignment(
+            user_id=user.id,
+            permission=PlatformPermission.ADMIN,
+            granted_by_user_id=user.id,
+        ))
 
 
 def init_users():
@@ -35,8 +58,10 @@ def init_users():
                 is_active=True,
             )
             session.add(teacher)
+            ensure_platform_admin(session, teacher)
             print("[OK] 创建平台管理员账号: TTT / 123456")
         else:
+            ensure_platform_admin(session, existing_teacher)
             print("[INFO] 平台管理员账号 TTT 已存在")
         
         existing_student = session.exec(

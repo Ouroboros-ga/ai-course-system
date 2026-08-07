@@ -12,6 +12,7 @@ from sqlmodel import Session, select, func
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.core.time_utils import utcnow_aware
+from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 from app.models.platform_admin_model import PlatformAdminAuditEvent, PlatformIntegrationConfig
 from app.models.user_model import User, UserRole
 from app.services.platform_provider_manager import provider_manager
@@ -123,6 +124,36 @@ def list_users(session: Session, *, user_id: int | None = None, query: str = "",
     return {"items": [{"id": u.id, "username": u.username, "nickname": u.real_name, "role": "admin" if str(u.role) == "UserRole.ADMIN" or getattr(u.role, "value", u.role) == "admin" else "user", "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users], "total": int(total), "page": page, "page_size": page_size}
 
 
+def _sync_admin_assignment(session: Session, user_id: int, is_admin: bool) -> None:
+    """Keep ``platform.admin`` in sync with the global ``admin`` role.
+
+    The platform role is ``user/admin``; course and platform enforcement read
+    ``PlatformPermissionAssignment`` (see ``require_platform_permission``), so
+    promoting/demoting must add/revoke the explicit grant instead of only
+    touching ``users.role``.
+    """
+    assignment = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == user_id,
+            PlatformPermissionAssignment.permission == PlatformPermission.ADMIN,
+        )
+    ).first()
+    if is_admin:
+        if assignment is None:
+            session.add(PlatformPermissionAssignment(
+                user_id=user_id,
+                permission=PlatformPermission.ADMIN,
+                granted_by_user_id=user_id,
+            ))
+        elif assignment.revoked_at is not None:
+            assignment.revoked_at = None
+            assignment.granted_by_user_id = user_id
+            session.add(assignment)
+    elif assignment is not None and assignment.revoked_at is None:
+        assignment.revoked_at = utcnow_aware()
+        session.add(assignment)
+
+
 def update_user(session: Session, actor_id: int, target_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     user = session.get(User, target_id)
     if user is None:
@@ -134,7 +165,9 @@ def update_user(session: Session, actor_id: int, target_id: int, payload: dict[s
     if "is_active" in payload:
         user.is_active = bool(payload["is_active"])
     if payload.get("role") is not None:
-        user.role = UserRole.ADMIN if payload["role"] == "admin" else UserRole.USER
+        is_admin = payload["role"] == "admin"
+        user.role = UserRole.ADMIN if is_admin else UserRole.USER
+        _sync_admin_assignment(session, target_id, is_admin)
     user.updated_at = utcnow_aware()
     session.add(user)
     audit(session, actor_id, "user.update", "user", str(target_id), {"fields": sorted(payload.keys())})
