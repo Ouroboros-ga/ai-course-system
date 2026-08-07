@@ -180,13 +180,10 @@ watch(() => workbench?.pendingInstruction, (text) => {
           <strong v-if="selectedNode">{{ selectedTitle }}</strong>
           <strong v-else>未选择节点</strong>
         </div>
-        <ChevronDown :size="16" class="context-chevron" :class="{ 'is-open': !contextCollapsed }" />
+        <ChevronDown :size="20" class="context-chevron" :class="{ 'is-open': !contextCollapsed }" />
       </button>
 
       <div v-show="!contextCollapsed" class="context-body">
-        <p v-if="selectedNode" class="context-desc">已选中课程节点。智能体会排除所有已锁定的目录和讲稿，只生成待审核提案。</p>
-        <p v-else class="context-desc">你仍可提出全局调整；选择节点后可查看对应原文证据，并更准确地审核建议。</p>
-
         <section v-if="selectedNode" class="evidence-section">
           <div class="section-heading">
             <div><p class="panel-kicker">原文证据</p><h3>节点来源</h3></div>
@@ -340,16 +337,19 @@ watch(() => workbench?.pendingInstruction, (text) => {
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: var(--space-3) var(--space-4);
+  min-height: 56px;
+  padding: var(--space-4) var(--space-4);
   border: 0;
   background: transparent;
   cursor: pointer;
   text-align: left;
+  transition: background var(--duration-fast) var(--ease-out);
 }
+.context-toggle:hover { background: var(--ink-100); }
 .context-toggle-left { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .context-toggle-left strong {
   color: var(--text-primary);
-  font-size: var(--ui-sm-size);
+  font-size: var(--ui-md-size);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -357,7 +357,6 @@ watch(() => workbench?.pendingInstruction, (text) => {
 .context-chevron { color: var(--text-muted); transition: transform var(--duration-fast) var(--ease-out); flex-shrink: 0; }
 .context-chevron.is-open { transform: rotate(180deg); }
 .context-body { padding: 0 var(--space-4) var(--space-3); }
-.context-desc { margin: 0 0 var(--space-3); color: var(--text-secondary); font-size: var(--caption-size); line-height: 1.5; }
 
 /* ── 聊天消息区 ── */
 .agent-chat {
@@ -485,7 +484,16 @@ watch(() => workbench?.pendingInstruction, (text) => {
 }
 
 /* ── 证据卡片 ── */
-.evidence-section { display: grid; gap: var(--space-2); margin-top: var(--space-3); }
+.evidence-section {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  /* 证据多时面板内独立滚动,避免撑爆上下文区导致无法滚动 */
+  max-height: 40vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: var(--space-1);
+}
 .evidence-card {
   padding: var(--space-3);
   background: var(--surface-panel);

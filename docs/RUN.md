@@ -14,7 +14,7 @@ npm run dev
 
 Press Key `o` on your keyboard.
 or
-visit [here](http://localhost:5173)
+visit [here](http://localhost:5300)
 
 # ABOUT
 - API 服务: http://localhost:8000

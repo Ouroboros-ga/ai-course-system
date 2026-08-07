@@ -51,7 +51,7 @@ const toggleLike = (index) => {
 }
 
 const goToChat = () => {
-  window.location.href = 'http://localhost:5173/chat#/chat'
+  window.location.href = 'http://localhost:5300/chat#/chat'
 }
 </script>
 

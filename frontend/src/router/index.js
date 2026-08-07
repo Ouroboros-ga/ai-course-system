@@ -41,9 +41,16 @@ const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
+      // 正式首页为 /app(shadow 前端工作台),根路径统一重定向,不再渲染旧首页。
+      // shadowFrontend 关闭时回退到 /home(旧首页),避免 / 与 /app/** 互相重定向成环。
       path: '/',
+      redirect: featureFlags.shadowFrontend ? '/app' : '/home',
+    },
+    {
+      // 旧首页(landing)仅作为 shadowFrontend 关闭时的回退挂载,不再是根路径页面。
+      path: '/home',
       name: 'home',
-      component: loadView('Home')
+      component: loadView('Home'),
     },
     {
       path: '/chat',
@@ -180,7 +187,7 @@ const router = createRouter({
     {
       path: '/:pathMatch(.*)*',
       name: 'not-found',
-      component: loadView('Home')
+      redirect: featureFlags.shadowFrontend ? '/app' : '/home',
     }
   ],
   scrollBehavior() {
@@ -191,11 +198,6 @@ const router = createRouter({
 router.beforeEach((to) => {
   const counter = useCounterStore()
   counter.checkAuth()
-
-  // 已登录用户访问首页时直接进入 shadow 前端工作台
-  if (to.path === '/' && counter.isLoggedIn && featureFlags.shadowFrontend) {
-    return { path: '/app', replace: true }
-  }
 
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
     return { path: '/profile', query: { redirect: to.fullPath } }

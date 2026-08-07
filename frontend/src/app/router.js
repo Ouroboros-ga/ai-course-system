@@ -331,7 +331,8 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
     ]
   : [
       {
+        // shadowFrontend 关闭时,旧前端作为默认:回退到 /home(旧首页)。
         path: '/app/:pathMatch(.*)*',
-        redirect: '/',
+        redirect: '/home',
       },
     ]

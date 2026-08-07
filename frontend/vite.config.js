@@ -19,7 +19,9 @@ export default defineConfig(async ({ mode }) => {
     },
     server: {
       host: '0.0.0.0',
-      port: 5173,
+      // 5173 落在 Windows 端口排除范围(5156-5255,Hyper-V/WinNAT 动态保留)内,
+      // bind 会报 EACCES。5300 不在任何排除范围内。
+      port: 5300,
       strictPort: false,
       proxy: {
         '/api': {

@@ -22,7 +22,11 @@
 
 **解决方案**:
 1. 检查端口是否被占用: `netstat -ano | findstr :5173`
-2. 更换端口: 在 `vite.config.js` 中配置端口
+2. 若报 `listen EACCES: permission denied` 且端口无进程占用,通常是端口落在 Windows
+   端口排除范围内(Hyper-V/WinNAT 动态保留,可用
+   `netsh interface ipv4 show excludedportrange protocol=tcp` 查看)。
+   本项目已默认改用 5300(不在排除范围内),无需再使用 5173。
+3. 更换端口: 在 `vite.config.js` 中配置端口
    ```javascript
    export default {
      server: {
@@ -30,7 +34,7 @@
      }
    }
    ```
-3. 检查防火墙设置，确保端口允许访问
+4. 检查防火墙设置，确保端口允许访问
 
 ### 1.3 模块导入错误
 

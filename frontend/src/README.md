@@ -102,7 +102,7 @@ VITE_APP_BASE_API=http://localhost:8000/api
 npm run dev
 ```
 
-访问 http://localhost:5173 查看项目
+访问 http://localhost:5300 查看项目
 
 ### 构建生产版本
 
