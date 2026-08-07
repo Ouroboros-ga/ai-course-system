@@ -51,7 +51,8 @@ const mediaTotalPages = computed(() => {
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
   enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
-  initialState: LEARN_STATES.UNDERSTAND,
+  // 初始为 LEARN（听讲），不自动激活任何 dock 动作；提问模块需用户主动点击。
+  initialState: LEARN_STATES.LEARN,
 })
 const learnState = ref(machine.state)
 const branchContext = ref(null)
