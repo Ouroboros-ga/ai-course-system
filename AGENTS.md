@@ -191,8 +191,25 @@ Agent 在以下场景**必须**先读 `design.md` 再动手:
 
 ### 5.1 通用
 
-1. Runtime 按 course/student 创建,不全局共享;Agent 上下文不得持久化原始
-   问题、完整答案或完整 LLM trace,只能保留会话摘要。
+1. Runtime 按 course/student 创建,不全局共享。数据持久化按三个相互独立的
+   域划分,各域有自己的数据策略、写入路径与消费规则:
+
+   - **Agent Runtime Context / Audit 数据不得持久化完整原始消息、完整模型输出、
+     Prompt 与完整 LLM Trace**。`agent_learning_events`、`agent_trace_records`、
+     `agent_conversation_sessions` 仍由 `_sanitize_event` / `_sanitize_trace` /
+     `normalize_context` 白名单强制最小化,只保留结构化标识符与运行结果码。
+   - **面向学生产品体验的 Conversation Domain 可以独立持久化用户与教学智能体
+     消息,并采用独立的数据权限、保留周期与删除策略**。`conversation_messages`
+     表 + `conversation_service` 是该域的唯一写入/读取入口;写入在 TeachingAgent
+     端点回答成功后进行(非阻塞),读取经 `GET /teaching-agent/conversations/{course_id}`
+     且仅限学习者本人(`course.question.ask` + `analytics_eligible`)。该域带
+     `data_policy_version = "conversation-domain/1"` 与 `retention_until` 保留窗口。
+   - **学习分析不得直接依赖完整 Conversation,而应通过 LearningEvidence 建立可追溯
+     的结构化学习证据**。提问反推(`derive_question_inference_signals` /
+     `GET /teaching-agent/conversations/{course_id}/inference`)把近期提问聚合成
+     结构化信号(计数、平均提问深度、薄弱标记、trace 引用),不返回原始问题全文;
+     认知/推荐/出题只消费此结构化投影,不得直接读 `conversation_messages` 原文。
+
 2. 每个 Tool 在执行前自做 course/role 校验,不依赖调用方传参保证;被禁用的
    Tool 跳过并写审计日志。
 3. Tool 治理实现 per-tool policy check,在每个 tool node 之前执行。
@@ -203,10 +220,23 @@ Agent 在以下场景**必须**先读 `design.md` 再动手:
 ### 5.2 TeachingAgent(edu/)
 
 - 工作流固定:`ScopeValidator → StudentState → Cognition → Optional Tools →
-  TeacherPolicy → Response`。
+  TeacherPolicy → Response`。Optional Tools 段当前节点顺序为
+  `load_question_bank → load_question_generation → retrieve_evidence → ...`
+  (新增节点只插入边,不改已有节点逻辑)。
 - 初始连接的 Tool 仅限:`StudentStateTool`、`CognitionTool`、课程检索、图谱
   读取、题库。BKT/HMM/LSTM/GraphRAG 不得在初始版本中实现或上线,保持当前
   可解释证据规则方式。
+- 出题工具(`question_generation`, MEDIUM 风险):依据当前知识点 + 六维认知
+  快照 + 提问反推信号(`derive_question_inference_signals`,结构化投影不读原文,
+  见 §5.1)调用 LLM 生成草稿,写入 `question_generation_drafts` 表。
+  `ToolCatalog` 标记 `default_enabled=True`,经 `ToolGovernance` per-tool 检查;
+  Port 未注入或被治理禁用时节点 skip,不阻塞主流程。
+- 草稿闸门:`question_generation` 产物为草稿(`status=draft`),不经教师 approve
+  不进题库,也不对学生侧 `listCourseQuestions` 可见。教师 approve 后草稿升级为
+  `QuestionBankItem`(`generated_by=ai_constrained`, `status=published`),
+  供全课程学生作答;reject 需填理由,草稿标记 `rejected`。审核界面:
+  `/app/course/:courseId/build/drafts`(`QuestionDraftReviewPage.vue`),对接
+  `POST /practice/course/{courseId}/drafts/{draftId}/approve|reject`。
 - 低置信度推荐只能进入"需要更多证据"状态,不得直接断言薄弱。
 - JSAV 可视化只支持白名单算法。
 - WebResearch 默认禁用;启用时必须 fail-closed:若安全阀 `create_proposal`
