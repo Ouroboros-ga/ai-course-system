@@ -55,13 +55,15 @@ const batchState = ref(null)
 const previewItem = ref(null)
 const previewPlayback = ref(null)
 const previewAudio = ref(null)
+const previewPanel = ref(null)
+const previewNodeLabel = ref('')
+const lastAutoPreviewId = ref('')
 
 const allowed = computed(() => courseContext?.allowed?.value ?? {})
 const canGenerate = computed(() => Boolean(allowed.value['course.media.generate']))
 const canPublish = computed(() => Boolean(allowed.value['course.publish']))
 const selectedScript = computed(() => scripts.value.find((item) => item.script_node_id === selectedScriptId.value) ?? null)
 const selectedNodeDbId = computed(() => Number(selectedScript.value?.script_node_db_id) || null)
-const draftReleases = computed(() => releases.value.filter((item) => item.status === 'draft'))
 const workingRelease = computed(() => releaseDetail.value ?? releases.value.find((item) => item.release_id === selectedReleaseId.value) ?? null)
 const provider = computed(() => providerHealth.value?.tts ?? null)
 const providerKey = computed(() => provider.value?.provider_key || '')
@@ -105,8 +107,43 @@ const canSubmitTts = computed(() => Boolean(
   && !['pending', 'running'].includes(selectedTtsJob.value?.status),
 ))
 const batchSelectedScripts = computed(() => scripts.value.filter(item => batchNodeIds.value.includes(Number(item.script_node_db_id))))
+// 左侧 rail 当前选中的知识点在批量媒体结果里对应的 item；有 audio_object_key 才能自动试听。
+const selectedBatchItem = computed(() => batchItems.value.find((item) => Number(item.node_id) === Number(selectedNodeDbId.value)) ?? null)
 const canPlanBatch = computed(() => canGenerate.value && batchSelectedScripts.value.length > 0 && batchSelectedScripts.value.length <= 20)
 const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm) && paidTtsConfirmed.value)
+// Playlist (batch) releases freeze Cue assets per MediaReleaseItem, not on the
+// release row.  ``hasFrozenCues`` therefore stays false for the whole batch
+// while every item is already ``ready``.  Gate the PPT manifest step on the
+// batch-level readiness instead of the single-node release fields.
+const batchReady = computed(() => {
+  const items = batchItems.value
+  if (!items.length) return false
+  return batchState.value?.status === 'ready' || items.every((item) => item.status === 'ready')
+})
+const batchAudioReady = computed(() => {
+  const items = batchItems.value
+  return items.length > 0 && items.every((item) => Boolean(item.audio_object_key))
+})
+const coursePublished = computed(() => courseContext?.course?.value?.status === 'published')
+const canBuildPptManifest = computed(() => isPlaylistRelease.value ? batchReady.value : hasFrozenCues.value)
+const releaseActive = computed(() => workingRelease.value?.status === 'active')
+const batchSteps = computed(() => {
+  const audioDone = batchAudioReady.value
+  const cueDone = batchReady.value
+  const pptDone = hasPptManifest.value
+  const playlistDone = hasFrozenPlaylist.value
+  const activeDone = releaseActive.value
+  const publishDone = coursePublished.value && activeDone
+  const started = batchItems.value.length > 0
+  return [
+    { key: '01', label: 'Fake WAV', done: audioDone, active: started && !audioDone },
+    { key: '02', label: 'Cue 冻结', done: cueDone, active: audioDone && !cueDone },
+    { key: '03', label: 'PPT manifest', done: pptDone, active: cueDone && !pptDone },
+    { key: '04', label: 'audio-playlist/v1', done: playlistDone, active: pptDone && !playlistDone },
+    { key: '05', label: '激活', done: activeDone, active: playlistDone && !activeDone },
+    { key: '06', label: '正式发布', done: publishDone, active: activeDone && !publishDone },
+  ]
+})
 
 function jobTone(job) {
   if (job?.status === 'succeeded') return 'green'
@@ -129,6 +166,14 @@ function releaseStatusLabel(release) {
 
 function jobStatusLabel(job) {
   return ({ pending: '等待处理', running: '处理中', succeeded: '已完成', failed: '失败', cancelled: '已取消', partial_success: '部分完成', degraded: '降级完成' })[job?.status] || job?.status || '未知状态'
+}
+
+function batchStatusLabel(status) {
+  return ({ planned: '已计划', confirmed: '已确认', running: '处理中', ready: '全部就绪', failed: '失败', cancelled: '已取消' })[status] || status || '—'
+}
+
+function batchItemStatusLabel(status) {
+  return ({ pending: '等待生成', tts_succeeded: '音频已生成', cached: '复用缓存', ready: '就绪（含字幕/Cue）', failed: '失败', blocked: '被阻塞' })[status] || status || '未知状态'
 }
 
 function scriptLabel(script) {
@@ -223,6 +268,11 @@ function toggleBatchNode(script) {
     : [...batchNodeIds.value, id].slice(0, 20)
 }
 
+// 返回某知识点在批量结果中可试听的 item（无音频时为 null）。试听入口统一在左侧列表。
+function scriptItemAudio(script) {
+  return batchItems.value.find((item) => Number(item.node_id) === Number(script?.script_node_db_id)) ?? null
+}
+
 function withPreviewAccessToken(url) {
   const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : ''
   // Local object storage is served by the application, whose native audio
@@ -254,30 +304,50 @@ async function confirmBatch() {
   } catch (caught) { error.value = apiErrorMessage(caught, '批量媒体确认失败。') } finally { acting.value = '' }
 }
 
+function applyPreview(audioPreview, playbackPreview, item) {
+  previewItem.value = {
+    ...audioPreview,
+    audio_url: withPreviewAccessToken(audioPreview?.audio_url),
+  }
+  previewPlayback.value = playbackPreview
+  const script = scripts.value.find((s) => Number(s.script_node_db_id) === Number(item?.node_id))
+  previewNodeLabel.value = script ? scriptLabel(script) : `知识点 ${item?.node_id ?? ''}`
+}
+
+async function fetchPreview(item) {
+  // The first request also repairs the guarded MediaAsset ledger for
+  // legacy local drafts.  Keep the follow-up player projection sequential
+  // so two browser requests never race to create the same immutable record.
+  // Batch items belong to the batch's own release; workingRelease may have
+  // been switched to a different draft, so never use it as the pairing key.
+  const releaseId = batchState.value?.release_id || workingRelease.value?.release_id
+  if (!releaseId) throw new Error('media_release_missing')
+  const audioPreview = await previewMediaReleaseItem(
+    courseId.value, releaseId, item.item_id,
+  )
+  const playbackPreview = await previewMediaReleaseItemPlayback(
+    courseId.value, releaseId, item.item_id,
+  )
+  return { audioPreview, playbackPreview }
+}
+
 async function previewBatchItem(item) {
-  if (!item?.item_id || !workingRelease.value || acting.value) return
+  if (!item?.item_id || acting.value) return
   acting.value = `preview-${item.item_id}`
   error.value = ''
   notice.value = ''
   try {
-    // The first request also repairs the guarded MediaAsset ledger for
-    // legacy local drafts.  Keep the follow-up player projection sequential
-    // so two browser requests never race to create the same immutable record.
-    const audioPreview = await previewMediaReleaseItem(
-      courseId.value, workingRelease.value.release_id, item.item_id,
-    )
-    const playbackPreview = await previewMediaReleaseItemPlayback(
-      courseId.value, workingRelease.value.release_id, item.item_id,
-    )
-    previewItem.value = {
-      ...audioPreview,
-      audio_url: withPreviewAccessToken(audioPreview?.audio_url),
-    }
-    previewPlayback.value = playbackPreview
+    // 先同步左侧选择，让“左侧选谁 = 试听谁”成立，不再出现选 A 显 B 的错位。
+    const script = scripts.value.find((s) => Number(s.script_node_db_id) === Number(item.node_id))
+    if (script) selectedScriptId.value = script.script_node_id
+    const { audioPreview, playbackPreview } = await fetchPreview(item)
+    applyPreview(audioPreview, playbackPreview, item)
+    lastAutoPreviewId.value = item.item_id
     await nextTick()
     previewAudio.value?.play().catch(() => {
       notice.value = '草稿音频已准备好；浏览器阻止自动播放时，请点击播放器的播放键。'
     })
+    previewPanel.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
     notice.value = '正在使用学习端同款音频/字幕/PPT/Cue 数据预览草稿。该地址仅对当前建设者有效，学生端不可见。'
   } catch (caught) {
     error.value = apiErrorMessage(caught, '该知识点尚不能试听。')
@@ -285,6 +355,35 @@ async function previewBatchItem(item) {
     acting.value = ''
   }
 }
+
+// 左侧选择即预览：当前选中知识点在批量结果中已有音频时自动加载学习端同款预览。
+watch([selectedNodeDbId, batchItems], async ([nodeId]) => {
+  const item = batchItems.value.find((it) => Number(it.node_id) === Number(nodeId))
+  if (!item?.audio_object_key || !workingRelease.value) {
+    // 选中节点没有可试听的音频，清空残留预览，避免展示上一个节点的内容。
+    if (!item?.audio_object_key) {
+      previewItem.value = null
+      previewPlayback.value = null
+    }
+    return
+  }
+  if (acting.value || workbench?.batchRun) return
+  // 轮询刷新 batch 数据时避免对同一节点重复调用预览接口
+  if (lastAutoPreviewId.value === item.item_id && previewPlayback.value) return
+  lastAutoPreviewId.value = item.item_id
+  acting.value = `preview-${item.item_id}`
+  try {
+    const { audioPreview, playbackPreview } = await fetchPreview(item)
+    applyPreview(audioPreview, playbackPreview, item)
+    previewAudio.value?.play().catch(() => {})
+  } catch {
+    // 自动预览失败不打断页面；预览区会显示未生成空态。
+    previewItem.value = null
+    previewPlayback.value = null
+  } finally {
+    acting.value = ''
+  }
+})
 
 async function freezeBatchPlaylist() {
   if (!workingRelease.value || acting.value) return
@@ -493,20 +592,35 @@ onBeforeUnmount(() => {
           <div><span>讲稿知识点</span><small>{{ scripts.length }} 个可用</small></div>
           <SfxBadge :tone="canGenerate ? 'ink' : 'red'">{{ canGenerate ? '可创建' : '无生成权限' }}</SfxBadge>
         </header>
-        <p class="rail-note">只显示已有正文且可绑定 TTS 的讲稿节点。</p>
+        <p class="rail-note">点击行选中并自动试听；行首勾选参与批量生成。</p>
         <div v-if="scripts.length" class="script-list">
-          <SfxButton
+          <div
             v-for="script in scripts"
             :key="script.script_node_id"
-            class="script-item"
-            size="sm"
-            :variant="selectedScriptId === script.script_node_id ? 'primary' : 'tertiary'"
-            :aria-pressed="selectedScriptId === script.script_node_id"
+            class="script-item-row"
+            :class="{ selected: selectedScriptId === script.script_node_id }"
             @click="selectedScriptId = script.script_node_id"
           >
-            <span><strong>{{ scriptLabel(script) }}</strong><small>{{ Array.from(script.content || '').length }} 字 · {{ script.locked ? '已锁定讲稿' : '草稿讲稿' }}</small></span>
-            <Check v-if="releaseBoundNodeId === script.script_node_db_id" :size="15" />
-          </SfxButton>
+            <label class="script-check" aria-label="批量生成勾选" @click.stop>
+              <input
+                type="checkbox"
+                :checked="batchNodeIds.includes(Number(script.script_node_db_id))"
+                @change="toggleBatchNode(script)"
+              />
+            </label>
+            <div class="script-item-copy">
+              <strong>{{ scriptLabel(script) }}</strong>
+              <small>{{ Array.from(script.content || '').length }} 字 · {{ script.locked ? '已锁定讲稿' : '草稿讲稿' }}</small>
+            </div>
+            <SfxButton
+              v-if="scriptItemAudio(script)"
+              variant="secondary"
+              size="sm"
+              :loading="acting === `preview-${scriptItemAudio(script).item_id}`"
+              class="script-item-listen"
+              @click.stop="previewBatchItem(scriptItemAudio(script))"
+            ><Volume2 :size="14" /> 试听</SfxButton>
+          </div>
         </div>
         <div v-else class="rail-empty">
           <Sparkles :size="22" />
@@ -528,19 +642,9 @@ onBeforeUnmount(() => {
 
         <section class="release-panel batch-panel" aria-labelledby="batch-title">
           <header class="panel-heading">
-            <div><p>P4 批量媒体建设</p><h3 id="batch-title">选择知识点，一次确认后生成</h3></div>
+            <div><p>P4 批量媒体建设</p><h3 id="batch-title">在左侧勾选知识点，一次确认后批量生成</h3></div>
             <SfxBadge tone="ink">{{ batchNodeIds.length }} / 20</SfxBadge>
           </header>
-          <div class="batch-list">
-            <SfxButton
-              v-for="script in scripts"
-              :key="`batch-${script.script_node_id}`"
-              size="sm"
-              :variant="batchNodeIds.includes(Number(script.script_node_db_id)) ? 'primary' : 'tertiary'"
-              :aria-pressed="batchNodeIds.includes(Number(script.script_node_db_id))"
-              @click="toggleBatchNode(script)"
-            >{{ batchNodeIds.includes(Number(script.script_node_db_id)) ? '已选' : '选择' }} · {{ scriptLabel(script) }}</SfxButton>
-          </div>
           <div v-if="batchPlan" class="batch-estimate">
             <span>节点 {{ batchPlan.node_count }}</span><span>总字符 {{ batchPlan.total_chars }}</span><span>待计费 {{ batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
             <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new Set(batchPlan.blocking_reasons)].join('；') }}；试听不受阻，冻结播放清单前必须完成映射。</p>
@@ -551,20 +655,20 @@ onBeforeUnmount(() => {
             <SfxButton :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'" @click="confirmBatch">确认并提交批量任务</SfxButton>
           </div>
           <div v-if="batchState" class="batch-status" role="status">
-            <span>批次状态：{{ batchState.status }}</span>
+            <span>批次状态：{{ batchStatusLabel(batchState.status) }}</span>
             <span>已完成 {{ batchItems.filter(item => item.status === 'ready').length }} / {{ batchItems.length }}</span>
+          </div>
+          <div v-if="batchState || batchItems.length" class="step-pipeline" aria-label="媒体建设六步流程">
+            <div v-for="step in batchSteps" :key="step.key" class="step" :class="{ done: step.done, active: step.active }">
+              <span class="step-index">{{ step.key }}</span>
+              <span class="step-label">{{ step.label }}</span>
+            </div>
           </div>
           <div v-if="batchItems.length" class="batch-item-list" aria-label="批量媒体节点状态">
             <article v-for="item in batchItems" :key="item.item_id || item.node_id" class="batch-item-row">
-              <div><strong>{{ scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id)) ? scriptLabel(scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id))) : `知识点 ${item.node_id}` }}</strong><small>{{ item.status }}{{ item.error_message_safe ? ` · ${item.error_message_safe}` : '' }}</small></div>
-              <SfxButton v-if="item.audio_object_key" variant="secondary" size="sm" :loading="acting === `preview-${item.item_id}`" @click="previewBatchItem(item)">试听</SfxButton>
+              <div><strong>{{ scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id)) ? scriptLabel(scripts.find(script => Number(script.script_node_db_id) === Number(item.node_id))) : `知识点 ${item.node_id}` }}</strong><small>{{ batchItemStatusLabel(item.status) }}{{ item.error_message_safe ? ` · ${item.error_message_safe}` : '' }}</small></div>
+              <SfxBadge :tone="item.status === 'ready' ? 'green' : item.status === 'failed' || item.status === 'blocked' ? 'red' : 'amber'">{{ batchItemStatusLabel(item.status) }}</SfxBadge>
             </article>
-          </div>
-          <div v-if="previewPlayback" class="draft-preview-surface" aria-label="草稿统一播放器预览">
-            <div><strong>学习端同款预览</strong><small>{{ previewPlayback.avatar_preset_id }} · {{ previewPlayback.duration_ms }} ms</small></div>
-            <p v-if="previewPlayback.ppt_timeline?.length">PPT：{{ previewPlayback.ppt_timeline.map(item => `第 ${item.ppt_page} 页`).join('、') }}</p>
-            <p v-if="previewPlayback.subtitle_segments?.length">字幕：{{ previewPlayback.subtitle_segments.map(item => item.text).join('') }}</p>
-            <p v-else>字幕与数字人 Cue 尚未冻结；试听不会受阻，正式清单仍受发布门限制。</p>
           </div>
         </section>
 
@@ -576,6 +680,27 @@ onBeforeUnmount(() => {
               <p>{{ selectedCharCount }} 字 · {{ selectedByteCount }} UTF-8 字节 · {{ selectedScript.locked ? '已锁定，不会在媒体处理中改写' : '草稿内容将按本次提交冻结' }}</p>
             </div>
             <div class="script-preview">{{ selectedScript.content }}</div>
+          </section>
+
+          <!-- 学习端同款预览：跟随左侧选中的知识点；批量列表“试听”会同步左侧选择并定位到这里 -->
+          <section ref="previewPanel" class="preview-panel" aria-labelledby="preview-title">
+            <header class="panel-heading">
+              <div>
+                <p>学习端同款预览</p>
+                <h3 id="preview-title">{{ previewPlayback ? previewNodeLabel : scriptLabel(selectedScript) }}</h3>
+              </div>
+              <SfxBadge :tone="previewPlayback ? 'green' : 'neutral'">{{ previewPlayback ? '可试听' : '未生成' }}</SfxBadge>
+            </header>
+            <div v-if="previewPlayback" class="preview-body">
+              <p v-if="previewPlayback.ppt_timeline?.length">PPT：{{ previewPlayback.ppt_timeline.map(item => `第 ${item.ppt_page} 页`).join('、') }}</p>
+              <p v-else>PPT 映射尚未冻结；试听不受阻，正式清单仍受发布门限制。</p>
+              <p v-if="previewPlayback.subtitle_segments?.length">字幕：{{ previewPlayback.subtitle_segments.map(item => item.text).join('') }}</p>
+              <p v-else>字幕与数字人 Cue 尚未冻结；试听不会受阻，正式清单仍受发布门限制。</p>
+            </div>
+            <div v-else class="preview-empty">
+              <Volume2 :size="20" />
+              <p>{{ selectedBatchItem?.audio_object_key ? '正在准备学习端同款预览…' : '该知识点尚未生成音频。在批量面板完成生成后，选中节点即可自动试听；也可在批量列表中点击“试听”。' }}</p>
+            </div>
           </section>
 
           <section class="release-panel" aria-labelledby="release-title">
@@ -633,12 +758,12 @@ onBeforeUnmount(() => {
                 </article>
                 <div v-if="selectedTtsJob?.status === 'succeeded' && !hasFrozenCues && (!cueJob || cueJob.status === 'failed')" class="workflow-action"><SfxButton :disabled="!canGenerate" :loading="acting === 'freeze-cues'" @click="freezeCues">冻结字幕与数字人时间轴</SfxButton></div>
 
-                <article class="workflow-row" :class="{ complete: hasPptManifest, active: hasFrozenCues && !hasPptManifest }">
+                <article class="workflow-row" :class="{ complete: hasPptManifest, active: canBuildPptManifest && !hasPptManifest }">
                   <div class="workflow-icon"><FileImage :size="18" /></div>
-                  <div class="workflow-copy"><span>03 · PPT manifest</span><strong>冻结学生端播放所需的 PPT 页图清单</strong><p v-if="hasPptManifest">PPT manifest 已绑定到此媒体草稿。</p><p v-else>如果第 04 步尚无可渲染 PPT/PDF 源文件，本步骤会明确返回阻塞原因；可先回到映射页处理。</p></div>
+                  <div class="workflow-copy"><span>03 · PPT manifest</span><strong>冻结学生端播放所需的 PPT 页图清单</strong><p v-if="hasPptManifest">PPT manifest 已绑定到此媒体草稿。</p><p v-else-if="isPlaylistRelease">批量模式：需全部知识点音频与 Cue 就绪后生成；缺少 PPT 源文件时服务端会返回明确阻塞原因。</p><p v-else>如果第 04 步尚无可渲染 PPT/PDF 源文件，本步骤会明确返回阻塞原因；可先回到映射页处理。</p></div>
                   <SfxBadge :tone="hasPptManifest ? 'green' : 'amber'">{{ hasPptManifest ? '已冻结' : '可选但建议完成' }}</SfxBadge>
                 </article>
-                <div v-if="hasFrozenCues && !hasPptManifest" class="workflow-action"><SfxButton variant="secondary" :disabled="!canGenerate" :loading="acting === 'ppt-manifest'" @click="createPptManifest">生成 PPT manifest</SfxButton></div>
+                <div v-if="canBuildPptManifest && !hasPptManifest" class="workflow-action"><SfxButton variant="secondary" :disabled="!canGenerate" :loading="acting === 'ppt-manifest'" @click="createPptManifest">生成 PPT manifest</SfxButton></div>
                 <div v-if="isPlaylistRelease" class="workflow-action">
                   <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已冻结；已固定到此媒体草稿，之后不可静默替换。</p>
                   <SfxButton v-else variant="secondary" :disabled="!canGenerate || !hasPptManifest" :loading="acting === 'batch-freeze'" @click="freezeBatchPlaylist">冻结课程播放清单</SfxButton>
@@ -686,16 +811,31 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.batch-panel{border:1px solid var(--border-strong);background:var(--surface-soft)}.batch-list{display:flex;flex-wrap:wrap;gap:var(--space-2);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.batch-estimate{display:flex;flex-wrap:wrap;gap:var(--space-4);padding:var(--space-3) var(--space-4);color:var(--text-secondary);font-size:var(--ui-sm-size)}.batch-estimate p{flex-basis:100%;margin:0}.batch-status{display:flex;flex-wrap:wrap;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-top:1px solid var(--border-subtle);color:var(--text-secondary);font-size:var(--caption-size)}.batch-item-list{display:grid;border-top:1px solid var(--border-subtle)}.batch-item-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-bottom:1px solid var(--border-subtle)}.batch-item-row>div{display:grid;gap:2px;min-width:0}.batch-item-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.batch-item-row small{color:var(--text-secondary);font-size:var(--caption-size);overflow-wrap:anywhere}
+.batch-panel{border:1px solid var(--border-strong);background:var(--surface-soft)}.batch-estimate{display:flex;flex-wrap:wrap;gap:var(--space-4);padding:var(--space-3) var(--space-4);color:var(--text-secondary);font-size:var(--ui-sm-size)}.batch-estimate p{flex-basis:100%;margin:0}.batch-status{display:flex;flex-wrap:wrap;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-top:1px solid var(--border-subtle);color:var(--text-secondary);font-size:var(--caption-size)}.step-pipeline{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:var(--space-2);padding:var(--space-3) var(--space-4);border-top:1px solid var(--border-subtle)}.step{display:grid;gap:3px;padding:var(--space-2);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-panel)}.step-index{color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:.04em}.step-label{color:var(--text-secondary);font-size:var(--caption-size);font-weight:600;line-height:1.3;overflow-wrap:anywhere}.step.active{border-color:var(--ink-400);background:var(--ink-100)}.step.active .step-index{color:var(--ink-700)}.step.done{border-color:var(--green-300);background:var(--green-100)}.step.done .step-index{color:var(--green-700)}.step.done .step-label{color:var(--green-800)}.batch-item-list{display:grid;border-top:1px solid var(--border-subtle)}.batch-item-row{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);padding:var(--space-2) var(--space-4);border-bottom:1px solid var(--border-subtle)}.batch-item-row>div{display:grid;gap:2px;min-width:0}.batch-item-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.batch-item-row small{color:var(--text-secondary);font-size:var(--caption-size);overflow-wrap:anywhere}
 .media-stage{height:100%;min-height:0;display:grid;grid-template-rows:minmax(0,1fr);overflow:hidden}
 .media-workbench{display:grid;grid-template-columns:272px minmax(0,1fr);grid-template-rows:minmax(0,1fr);min-height:0;border:1px solid var(--border-default);border-radius:var(--radius-lg);overflow:hidden;background:var(--surface-canvas)}
-.script-rail{display:flex;flex-direction:column;min-height:0;background:var(--surface-panel);border-right:1px solid var(--border-default)}.rail-header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-3);border-bottom:1px solid var(--border-subtle)}.rail-header>div{display:grid;gap:1px}.rail-header span{color:var(--text-primary);font-size:var(--ui-md-size);font-weight:650}.rail-header small,.rail-note{color:var(--text-muted);font-size:var(--caption-size)}.rail-note{margin:0;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle);line-height:1.45}.script-list{display:grid;align-content:start;gap:var(--space-1);min-height:0;overflow-y:auto;padding:var(--space-2)}.script-item{width:100%;min-height:54px;justify-content:space-between;text-align:left}.script-item>span{display:grid;min-width:0;gap:2px}.script-item strong,.script-item small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.script-item strong{font-size:var(--ui-sm-size)}.script-item small{font-size:11px;opacity:.8}.rail-empty{display:grid;justify-items:center;gap:var(--space-2);margin:auto;padding:var(--space-6);color:var(--text-muted);text-align:center}.rail-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.rail-empty p{margin:0;font-size:var(--caption-size);line-height:1.5}
-.media-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-5)}.provider-bar{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}.provider-bar-name{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5;flex-shrink:0}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
-.preview-dock{position:sticky;bottom:calc(var(--space-3) * -1);display:flex;align-items:center;gap:var(--space-3);margin:0 calc(var(--space-5) * -1) calc(var(--space-3) * -1);padding:var(--space-2) var(--space-4);background:var(--surface-panel);border-top:1px solid var(--border-default);flex-shrink:0;z-index:5}.preview-dock-label{font-size:var(--caption-size);font-weight:600;letter-spacing:.04em;color:var(--text-muted);flex-shrink:0}.preview-dock audio{flex:1;min-width:0;height:36px}
+.script-rail{display:flex;flex-direction:column;min-height:0;background:var(--surface-panel);border-right:1px solid var(--border-default)}.rail-header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-3);border-bottom:1px solid var(--border-subtle)}.rail-header>div{display:grid;gap:1px}.rail-header span{color:var(--text-primary);font-size:var(--ui-md-size);font-weight:650}.rail-header small,.rail-note{color:var(--text-muted);font-size:var(--caption-size)}.rail-note{margin:0;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle);line-height:1.45}.script-list{display:grid;align-content:start;gap:var(--space-1);min-height:0;overflow-y:auto;padding:var(--space-2)}
+.script-item-row{display:flex;align-items:center;gap:var(--space-2);min-height:54px;padding:var(--space-2);border:1px solid transparent;border-radius:var(--radius-md);cursor:pointer;transition:background var(--duration-fast) var(--ease-out)}
+.script-item-row:hover{background:var(--surface-cool)}
+.script-item-row.selected{background:var(--ink-100);border-color:var(--ink-300)}
+.script-check{display:grid;place-items:center;flex-shrink:0}
+.script-check input{width:16px;height:16px;margin:0;accent-color:var(--ink-700);cursor:pointer}
+.script-item-copy{display:grid;min-width:0;flex:1;gap:2px}
+.script-item-copy strong{font-size:var(--ui-sm-size);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.script-item-copy small{font-size:11px;opacity:.8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.script-item-listen{flex-shrink:0}
+.rail-empty{display:grid;justify-items:center;gap:var(--space-2);margin:auto;padding:var(--space-6);color:var(--text-muted);text-align:center}.rail-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.rail-empty p{margin:0;font-size:var(--caption-size);line-height:1.5}
+.media-main{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3) var(--space-6)}.provider-bar{display:flex;align-items:center;gap:var(--space-2);flex-shrink:0}.provider-bar-name{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}.notice,.action-error{display:flex;align-items:flex-start;gap:var(--space-2);margin:0;padding:var(--space-3);border-radius:var(--radius-md);font-size:var(--ui-sm-size);line-height:1.5;flex-shrink:0}.notice{border:1px solid var(--ink-300);background:var(--ink-100);color:var(--ink-700)}.action-error{border:1px solid var(--red-300);background:var(--red-100);color:var(--red-700)}
+.preview-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden;flex-shrink:0;scroll-margin-top:var(--space-3)}
+.preview-body{display:grid;gap:var(--space-2);padding:var(--space-3) var(--space-4)}
+.preview-body p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.55;overflow-wrap:anywhere}
+.preview-empty{display:flex;align-items:flex-start;gap:var(--space-2);padding:var(--space-4);color:var(--text-muted);font-size:var(--ui-sm-size);line-height:1.5}
+.preview-empty p{margin:0}
+.preview-dock{position:sticky;bottom:calc(var(--space-3) * -1);display:flex;align-items:center;gap:var(--space-3);margin:0 calc(var(--space-6) * -1) calc(var(--space-3) * -1);padding:var(--space-2) var(--space-4);background:var(--surface-panel);border-top:1px solid var(--border-default);flex-shrink:0;z-index:5}.preview-dock-label{font-size:var(--caption-size);font-weight:600;letter-spacing:.04em;color:var(--text-muted);flex-shrink:0}.preview-dock audio{flex:1;min-width:0;height:36px}
 .selected-script{display:grid;grid-template-columns:minmax(180px,.6fr) minmax(0,1.4fr);gap:var(--space-4);padding:var(--space-4);border-left:3px solid var(--ink-500);background:var(--surface-cool);max-height:340px;min-height:140px;overflow:hidden;flex-shrink:0}.selected-script-heading{display:grid;align-content:start;gap:var(--space-1);overflow-y:auto;min-height:0}.selected-script-heading>span,.panel-heading p,.workflow-copy>span{color:var(--text-muted);font-size:var(--caption-size);font-weight:600;letter-spacing:.04em}.selected-script-heading h3{margin:0;color:var(--text-primary);font-size:var(--title-3-size);line-height:var(--title-3-line)}.selected-script-heading p{margin:0;color:var(--text-secondary);font-size:var(--caption-size);line-height:1.5}.script-preview{max-height:100%;overflow-y:auto;color:var(--text-primary);font-size:var(--ui-sm-size);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
-.release-panel,.task-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden;flex-shrink:0}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.panel-heading p{margin:0}.panel-heading h3{margin:2px 0 0;color:var(--text-primary);font-size:var(--ui-md-size)}.release-picker{display:flex;gap:var(--space-1);overflow-x:auto;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle)}.release-empty{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-5);color:var(--text-muted)}.release-empty>div{display:grid;gap:var(--space-1);min-width:0;flex:1}.release-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.release-empty p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}.binding-warning{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:var(--space-2);padding:var(--space-4);background:var(--amber-100);color:var(--amber-700)}.binding-warning div{display:grid;gap:var(--space-1)}.binding-warning strong{color:var(--text-primary);font-size:var(--ui-md-size)}.binding-warning p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}
+.release-panel,.task-panel{border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);overflow:hidden;flex-shrink:0}.panel-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-3);padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.panel-heading p{margin:0}.panel-heading h3{margin:2px 0 0;color:var(--text-primary);font-size:var(--ui-md-size)}.release-picker{display:flex;gap:var(--space-1);overflow-x:auto;padding:var(--space-2) var(--space-3);border-bottom:1px solid var(--border-subtle)}.release-empty{display:flex;align-items:center;gap:var(--space-3);padding:var(--space-6);color:var(--text-muted)}.release-empty>div{display:grid;gap:var(--space-1);min-width:0;flex:1}.release-empty strong{color:var(--text-primary);font-size:var(--ui-md-size)}.release-empty p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}.binding-warning{display:grid;grid-template-columns:20px minmax(0,1fr) auto;align-items:start;gap:var(--space-2);padding:var(--space-4);background:var(--amber-100);color:var(--amber-700)}.binding-warning div{display:grid;gap:var(--space-1)}.binding-warning strong{color:var(--text-primary);font-size:var(--ui-md-size)}.binding-warning p{margin:0;font-size:var(--ui-sm-size);line-height:1.5}
 .workflow-list{display:grid}.workflow-row{display:grid;grid-template-columns:34px minmax(0,1fr) auto;gap:var(--space-3);align-items:start;padding:var(--space-4);border-bottom:1px solid var(--border-subtle)}.workflow-row.active{background:var(--ink-100)}.workflow-row.complete{background:var(--green-100)}.workflow-icon{display:grid;place-items:center;width:32px;height:32px;border-radius:var(--radius-full);background:var(--surface-cool);color:var(--ink-700)}.workflow-row.complete .workflow-icon{background:var(--surface-panel);color:var(--green-700)}.workflow-copy{display:grid;gap:2px;min-width:0}.workflow-copy strong{color:var(--text-primary);font-size:var(--ui-md-size);line-height:1.45}.workflow-copy p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.tts-confirmation,.workflow-action{margin:0 0 var(--space-3);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-cool)}.confirmation-check{display:flex;align-items:flex-start;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}.confirmation-check input{width:16px;height:16px;margin:2px 0 0;accent-color:var(--ink-700);flex-shrink:0}.tts-actions{display:flex;align-items:center;gap:var(--space-3);margin-top:var(--space-3)}.tts-actions small{color:var(--text-muted);font-size:var(--caption-size)}.workflow-action{display:flex;justify-content:flex-end;padding:0;border:0;background:transparent}
-.task-list{display:grid;max-height:280px;overflow-y:auto}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.task-row:last-child{border-bottom:0}.task-row>div{display:grid;gap:2px;min-width:0}.task-row strong,.task-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.task-row span{color:var(--text-muted);font-size:var(--caption-size)}.task-time{justify-self:end;white-space:nowrap}.task-row .task-error,.task-row .task-output{grid-column:1/-1;margin:0;font-size:var(--caption-size);line-height:1.45}.task-error{color:var(--red-700)}.task-output{color:var(--green-700)}.task-empty{margin:0;padding:var(--space-5);color:var(--text-muted);font-size:var(--ui-sm-size);text-align:center}.main-empty{display:grid;place-items:center;align-content:center;gap:var(--space-2);min-height:300px;color:var(--text-muted);text-align:center}.main-empty strong{color:var(--text-primary);font-size:var(--title-3-size)}.main-empty p{max-width:380px;margin:0;font-size:var(--ui-sm-size);line-height:1.5}
+.task-list{display:grid;max-height:280px;overflow-y:auto}.task-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:var(--space-3);align-items:center;padding:var(--space-3) var(--space-4);border-bottom:1px solid var(--border-subtle)}.task-row:last-child{border-bottom:0}.task-row>div{display:grid;gap:2px;min-width:0}.task-row strong,.task-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.task-row strong{color:var(--text-primary);font-size:var(--ui-sm-size)}.task-row span{color:var(--text-muted);font-size:var(--caption-size)}.task-time{justify-self:end;white-space:nowrap}.task-row .task-error,.task-row .task-output{grid-column:1/-1;margin:0;font-size:var(--caption-size);line-height:1.45}.task-error{color:var(--red-700)}.task-output{color:var(--green-700)}.task-empty{margin:0;padding:var(--space-6);color:var(--text-muted);font-size:var(--ui-sm-size);text-align:center}.main-empty{display:grid;place-items:center;align-content:center;gap:var(--space-2);min-height:300px;color:var(--text-muted);text-align:center}.main-empty strong{color:var(--text-primary);font-size:var(--title-3-size)}.main-empty p{max-width:380px;margin:0;font-size:var(--ui-sm-size);line-height:1.5}
 @media(max-width:960px){.media-workbench{grid-template-columns:220px minmax(0,1fr)}.selected-script{grid-template-columns:1fr;max-height:none}.task-row{grid-template-columns:minmax(0,1fr) auto}.task-time{display:none}}
 @media(max-width:700px){.media-stage{height:auto;overflow:visible}.media-workbench{grid-template-columns:1fr;grid-template-rows:auto auto;overflow:visible}.script-rail{max-height:260px;border-right:0;border-bottom:1px solid var(--border-default)}.media-main{overflow:visible;padding:var(--space-3)}.selected-script{max-height:none;overflow:visible}.selected-script-heading{overflow:visible}.workflow-row{grid-template-columns:34px minmax(0,1fr)}.workflow-row>.sfx-badge{grid-column:2}.binding-warning{grid-template-columns:20px minmax(0,1fr)}.binding-warning .sfx-btn{grid-column:2;justify-self:start}.release-empty{align-items:flex-start;flex-wrap:wrap}.release-empty .sfx-btn{margin-left:35px}.tts-actions{align-items:flex-start;flex-direction:column}.task-list{max-height:none;overflow:visible}.task-row{grid-template-columns:minmax(0,1fr) auto}}
 </style>
