@@ -1,6 +1,7 @@
 # app/main.py
 import logging
 import os
+from importlib.util import find_spec
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,6 +22,37 @@ def _env_flag(name: str) -> bool:
 
 def _startup_side_effects_disabled() -> bool:
     return _env_flag("AI_COURSE_SKIP_STARTUP_SIDE_EFFECTS")
+
+
+def _mount_optional_fanya_chaoxing_ai_compat(application: FastAPI) -> None:
+    """Mount the removable external compatibility package when it exists.
+
+    The core app intentionally has no hard import of this optional package.
+    Removing ``app/external_apis/fanya_chaoxing_ai`` therefore only removes
+    ``/api/v1/compat/*``; all internal APIs still start normally.
+    """
+    module_name = "app.external_apis.fanya_chaoxing_ai"
+    try:
+        available = find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        available = False
+    if not available:
+        logger.info("Optional Fanya/Chaoxing AI compatibility package is absent; not mounting it")
+        return
+    from app.external_apis.fanya_chaoxing_ai import router as compat_router
+
+    compat_prefix = "/api/v1/compat"
+    owned_prefixes = set(getattr(application.state, "signature_owned_path_prefixes", ()))
+    owned_prefixes.add(f"{compat_prefix}/")
+    # The global middleware reads this state for every request.  It is set only
+    # while an optional adapter is mounted, so removing the adapter directory
+    # does not leave a permanently unauthenticated path behind.
+    application.state.signature_owned_path_prefixes = tuple(sorted(owned_prefixes))
+    application.include_router(
+        compat_router,
+        prefix=compat_prefix,
+        tags=["泛雅·超星 AI 开放 API 参考兼容层"],
+    )
 
 
 def run_startup_side_effects():
@@ -229,6 +261,7 @@ app.state.error_monitor = error_monitor
 
 # 注册全局异常处理
 app.add_exception_handler(HTTPException, global_exception_handler)
+_mount_optional_fanya_chaoxing_ai_compat(app)
 
 # 注册路由
 app.include_router(user.router, prefix="/api/v1/user", tags=["用户模块"])

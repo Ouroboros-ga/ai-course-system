@@ -20,6 +20,16 @@ class SignatureMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         current_path = request.url.path
+
+        # Optional external adapters may own a reference protocol with a
+        # different signature canonicalisation and response envelope.  The
+        # adapter registration is runtime state, not a permanent whitelist:
+        # if the optional package is absent there is no bypass.
+        signature_owned_prefixes = getattr(
+            request.app.state, "signature_owned_path_prefixes", ()
+        )
+        if any(current_path.startswith(path) for path in signature_owned_prefixes):
+            return await call_next(request)
         print(f"【签名中间件】收到请求: {request.method} {current_path}")
 
         # 白名单路径跳过验证

@@ -3,21 +3,36 @@ from collections import Counter
 from fastapi.routing import APIRoute
 
 
+def _iter_effective_api_routes(routes, prefix=""):
+    """Flatten FastAPI's eager and 0.141+ lazy router registrations."""
+    for route in routes:
+        if isinstance(route, APIRoute):
+            yield f"{prefix}{route.path}", route
+            continue
+
+        original_router = getattr(route, "original_router", None)
+        include_context = getattr(route, "include_context", None)
+        included_prefix = getattr(include_context, "prefix", None)
+        if original_router is not None and included_prefix is not None:
+            yield from _iter_effective_api_routes(
+                original_router.routes,
+                prefix=f"{prefix}{included_prefix}",
+            )
+
+
 def _route_rows(app):
     openapi_paths = set(app.openapi()["paths"].keys())
     rows = []
-    for index, route in enumerate(app.routes):
-        if not isinstance(route, APIRoute):
-            continue
+    for index, (path, route) in enumerate(_iter_effective_api_routes(app.routes)):
         methods = sorted(method for method in route.methods if method not in {"HEAD", "OPTIONS"})
         for method in methods:
             rows.append({
                 "index": index,
                 "method": method,
-                "path": route.path,
+                "path": path,
                 "endpoint": route.endpoint.__name__,
                 "module": route.endpoint.__module__,
-                "in_openapi": route.path in openapi_paths,
+                "in_openapi": path in openapi_paths,
             })
     return rows
 
