@@ -173,6 +173,25 @@ WebSocket 探测。测试使用：
 响应中的 `phonemes` 为空，因此豆包 `seed-tts-2.0` 当前已验证为“预置音色音频 +
 字级字幕时间轴”来源，**不**是当前数字人精确口型的时序来源。
 
+### 2.2.1 2026-08-07 授权短文本复测（当前有效记录）
+
+教师明确授权后，使用 `backend/scripts/volcengine_tts_poc.py --allow-billable-call`
+执行了**一次**最小短文本调用（30 UTF-8 bytes，PCM 24kHz/16-bit，字幕开启）。探针只在内存中
+计算摘要，不保存音频、Key、Speaker 或原始 Provider 帧。
+
+| 项目 | 结果 |
+| --- | --- |
+| 会话/协议 | ConnectionStarted、SessionStarted、SessionFinished、ConnectionFinished 均成功；无 Provider 错误 |
+| 音频 | 94,876 bytes；PCM 计算时长 1,976.583ms；SHA `fb15e0f1…`（仅用于本次诊断，不进入课程发布） |
+| `words` | 返回 9 条；最后结束时间 1,785.000ms |
+| `phonemes` | 空，0 条；不能据此做精确口型 |
+| 字级末尾与 PCM 时长误差 | 191.583ms |
+| 资产/课程影响 | 未写入对象存储，未创建或修改 `MediaRelease`，课程 87 Fake 版本不变 |
+
+该复测确认豆包当前配置可生成短文本音频和字级时间轴，但仍不提供非空音素；长文本、复杂公式、
+音色质量和目标设备性能不能由这一次调用外推。后续真实 TTS 版本必须由教师再次确认批次费用并新建
+不可变 MediaRelease。
+
 ### 2.3 当前阻塞与下次 POC 门槛
 
 1. 保持已消除的 Resource ID / speaker 不匹配状态；若后续改用复刻音色，必须同时
@@ -614,8 +633,9 @@ dispose()
 - 本地验证已覆盖批量只读计划、缓存复用、发布门、播放全局时间轴、Cue/Provider 回归；
   前端 API 契约测试与 Vite 构建通过。所有自动化验证使用 Fake/本地对象，不产生付费
   调用。
-- 课程 87 已用 `fake-v1.1-playable` 通过映射、manifest、清单、激活与正式发布门；仍需把
-  “浏览器真实播放体验”和“真实 Provider 质量”分别验收。测试与 Fake WAV 不能替代后二者。
+- 课程 87 已用 `fake-v1.1-playable` 通过映射、manifest、清单、激活与正式发布门；用户已确认
+  浏览器播放体验与左侧数字人布局手工验收完成。测试与 Fake WAV 不能替代真实 Provider 质量和
+  480p/24fps 性能记录。
 
 ### Fake TTS 本地试听边界（2026-08-05）
 
@@ -661,11 +681,9 @@ dispose()
 
 ## 10. 当前下一步
 
-1. 使用已登录的学生会话完成课程 87 浏览器验收：播放/暂停、seek、0.75x/1x/1.5x、跨知识点、
-   PPT/字幕同步、刷新续播，以及数字人仅显示在左侧音频讲解区。记录 480p 小窗、连续 10 分钟的
-   初始化时间、FPS、掉帧率与音频同步偏差；不达标即保留 compatibility 降级。
-2. 将 `STAGE8_TTS_PROVIDER` 在本地受控切换为 `volcengine_doubao_tts` 后，由教师明确授权一次
-   最小文本调用；核对音频、`words`、`phonemes`、时长误差、缓存复用和草稿/正式发布隔离。通过后
-   再建设一个新的真实 TTS MediaRelease，绝不覆盖 Fake 版本。
+1. 补做目标浏览器的 480p/24fps 性能记录：初始化时间、平均 FPS、掉帧率、连续播放时长与音频同步偏差；
+   不达标即保留 compatibility 降级。
+2. 将本次豆包 POC 结论纳入 Provider 选择：`words` 可用于字幕/Cue，`phonemes` 为空，不能宣称精确口型。
+   若要创建真实 TTS 课程版本，必须由教师重新确认批次费用并新建 MediaRelease，绝不覆盖 Fake 版本。
 3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增受控写入接口；
    在这之前不虚构设备性能数据。
