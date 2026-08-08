@@ -26,6 +26,7 @@ class UnifiedResponse(BaseModel):
 class UserInfo(BaseModel):
     id: str
     username: str = ""
+    nickname: str = ""
     role: str = "user"
     platform_permissions: list[str] = Field(default_factory=list)
 
@@ -56,3 +57,16 @@ class ModifyUserRequest(BaseModel):
     password: str
     newUsername: str = ""
     newPassword: str = ""
+
+
+class ProfileUpdateRequest(BaseModel):
+    """Authenticated self-service profile update.
+
+    The login username remains the stable account identifier.  ``nickname`` is
+    the single user-facing name and can be changed without changing that ID or
+    login identifier.  A password change always requires the current password.
+    """
+
+    nickname: Optional[str] = Field(default=None, max_length=50)
+    current_password: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    new_password: Optional[str] = Field(default=None, min_length=8, max_length=200)

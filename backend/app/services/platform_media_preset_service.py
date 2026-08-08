@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from typing import Any
 from urllib.parse import quote
 
@@ -24,8 +25,10 @@ from app.models.platform_media_preset_model import (
 )
 from app.services.object_storage import get_object_storage
 
+logger = logging.getLogger(__name__)
 
-DEFAULT_AVATAR_PRESET_ID = "platform-instructor-v2"
+
+DEFAULT_AVATAR_PRESET_ID = "platform-instructor-real-v1"
 DEFAULT_AVATAR_PRESET_VERSION = "1.0.0"
 
 
@@ -39,7 +42,7 @@ def _svg_data_url(content: str, *, view_box: str = "0 0 480 480") -> str:
     return f"data:image/svg+xml;charset=utf-8,{quote(raw, safe='')}"
 
 
-def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[str, str]) -> dict[str, Any]:
+def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[str, str], realistic: bool = False) -> dict[str, Any]:
     """Build a self-contained Sprite2D manifest safe for object storage.
 
     The renderer already loads data URLs through Pixi.  Keeping the artwork
@@ -50,6 +53,50 @@ def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[
     def mouth(path: str) -> str:
         return _svg_data_url(f'<path d="{path}" fill="{palette["mouth"]}"/>', view_box="0 0 100 56")
 
+    if realistic:
+        body_svg = (
+            f'<defs><linearGradient id="j" x1="0" y1="0" x2="1" y2="1"><stop stop-color="{palette["jacket_light"]}"/><stop offset="1" stop-color="{palette["jacket"]}"/></linearGradient>'
+            f'<linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop stop-color="{palette["shirt"]}"/><stop offset="1" stop-color="#D9E0E8"/></linearGradient></defs>'
+            '<path d="M70 480c11-127 70-196 170-196s159 69 170 196H70Z" fill="url(#j)"/>'
+            '<path d="M161 480c11-91 38-151 79-171 41 20 68 80 79 171H161Z" fill="url(#s)"/>'
+            f'<path d="M240 308 205 480h70Z" fill="{palette["tie"]}" opacity=".92"/>'
+            '<path d="M164 316 214 480h-46l-43-112c10-25 22-40 39-52Zm152 0-50 164h46l43-112c-10-25-22-40-39-52Z" fill="#172941" opacity=".55"/>'
+            '<path d="M104 390c25-19 46-29 62-34M376 390c-25-19-46-29-62-34" fill="none" stroke="#9FB0C2" stroke-width="5" opacity=".55"/>'
+        )
+        head_svg = (
+            f'<defs><linearGradient id="skin" x1="0" y1="0" x2="1" y2="1"><stop stop-color="{palette["skin_light"]}"/><stop offset="1" stop-color="{palette["skin"]}"/></linearGradient>'
+            f'<linearGradient id="hair" x1="0" y1="0" x2="0" y2="1"><stop stop-color="{palette["hair_light"]}"/><stop offset="1" stop-color="{palette["hair"]}"/></linearGradient></defs>'
+            '<path d="M151 170c0-73 39-119 89-119s89 46 89 119v76c0 62-37 108-89 108s-89-46-89-108v-76Z" fill="url(#skin)"/>'
+            '<path d="M151 174c-6-65 29-137 92-137 64 0 101 47 87 139-29-31-59-47-105-48-18 29-40 43-74 46Z" fill="url(#hair)"/>'
+            '<path d="M164 255c8 20 22 34 40 42M316 255c-8 20-22 34-40 42" fill="none" stroke="#A76F58" stroke-width="5" stroke-linecap="round" opacity=".35"/>'
+            '<path d="M224 245c7 5 15 5 22 0l-6 30c-5 4-11 4-16 0Z" fill="#B67D67" opacity=".56"/>'
+            '<path d="M208 302c21 13 43 13 64 0" fill="none" stroke="#7E3F45" stroke-width="6" stroke-linecap="round" opacity=".75"/>'
+            '<circle cx="153" cy="237" r="15" fill="url(#skin)"/><circle cx="327" cy="237" r="15" fill="url(#skin)"/>'
+        )
+        eyes_svg = (
+            '<path d="M177 217c15-15 40-15 55 0-15 17-40 17-55 0Zm71 0c15-15 40-15 55 0-15 17-40 17-55 0Z" fill="#FFF"/>'
+            f'<circle cx="212" cy="218" r="8" fill="{palette["eye"]}"/><circle cx="268" cy="218" r="8" fill="{palette["eye"]}"/>'
+            f'<path d="M174 197c17-10 39-10 57 0M249 197c18-10 40-10 57 0" fill="none" stroke="{palette["hair"]}" stroke-width="7" stroke-linecap="round"/>'
+            '<path d="M174 214h57M249 214h57M231 216h18" fill="none" stroke="#4A5666" stroke-width="3" opacity=".85"/>'
+            '<path d="M176 213c0-14 14-22 29-22h8c12 0 19 8 19 22s-8 23-22 23h-13c-13 0-21-9-21-23Zm73 0c0-14 8-22 20-22h8c15 0 29 8 29 22s-8 23-21 23h-13c-14 0-23-9-23-23Z" fill="none" stroke="#25384F" stroke-width="4"/>'
+        )
+    else:
+        body_svg = (
+            f'<path d="M90 480c16-136 69-190 150-190s134 54 150 190H90Z" fill="{palette["jacket"]}"/>'
+            f'<path d="M156 480c13-109 45-160 84-160s71 51 84 160H156Z" fill="{palette["shirt"]}"/>'
+            f'<path d="M214 311h52v73h-52z" fill="{palette["skin"]}"/><path d="M178 480h124l-62-73-62 73Z" fill="#F7F8FA"/>'
+        )
+        head_svg = (
+            f'<path d="M148 164c0-73 40-119 92-119s92 46 92 119v80c0 60-38 104-92 104s-92-44-92-104v-80Z" fill="{palette["skin"]}"/>'
+            f'<path d="M145 174c-2-67 31-133 95-133 54 0 98 38 96 120-25-29-51-43-97-44-18 31-49 49-94 57Z" fill="{palette["hair"]}"/>'
+            f'<circle cx="156" cy="239" r="14" fill="{palette["skin"]}"/><circle cx="324" cy="239" r="14" fill="{palette["skin"]}"/>'
+        )
+        eyes_svg = (
+            '<path d="M184 217c14-13 38-13 52 0-14 16-38 16-52 0Zm60 0c14-13 38-13 52 0-14 16-38 16-52 0Z" fill="#FFFFFF"/>'
+            f'<circle cx="210" cy="217" r="7" fill="{palette["eye"]}"/><circle cx="270" cy="217" r="7" fill="{palette["eye"]}"/>'
+            f'<path d="M183 196c15-8 34-8 50 0M247 196c15-8 34-8 50 0" fill="none" stroke="{palette["hair"]}" stroke-width="7" stroke-linecap="round"/>'
+        )
+
     return {
         "schema": "sprite2d-manifest/v1",
         "provider": "platform_sprite2d",
@@ -59,23 +106,9 @@ def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[
         "expressions": ["neutral", "warm", "attentive"],
         "gestures": ["rest", "emphasis"],
         "sprites": {
-            "body": _svg_data_url(
-                f'<path d="M90 480c16-136 69-190 150-190s134 54 150 190H90Z" fill="{palette["jacket"]}"/>'
-                f'<path d="M156 480c13-109 45-160 84-160s71 51 84 160H156Z" fill="{palette["shirt"]}"/>'
-                f'<path d="M214 311h52v73h-52z" fill="{palette["skin"]}"/>'
-                '<path d="M178 480h124l-62-73-62 73Z" fill="#F7F8FA"/>',
-            ),
-            "head": _svg_data_url(
-                f'<path d="M148 164c0-73 40-119 92-119s92 46 92 119v80c0 60-38 104-92 104s-92-44-92-104v-80Z" fill="{palette["skin"]}"/>'
-                f'<path d="M145 174c-2-67 31-133 95-133 54 0 98 38 96 120-25-29-51-43-97-44-18 31-49 49-94 57Z" fill="{palette["hair"]}"/>'
-                f'<path d="M151 164c5 38 18 54 32 66v-49c-14-3-25-9-32-17Zm178 0c-7 8-18 14-32 17v49c14-12 27-28 32-66Z" fill="{palette["hair"]}"/>'
-                f'<circle cx="156" cy="239" r="14" fill="{palette["skin"]}"/><circle cx="324" cy="239" r="14" fill="{palette["skin"]}"/>',
-            ),
-            "eyes": _svg_data_url(
-                '<path d="M184 217c14-13 38-13 52 0-14 16-38 16-52 0Zm60 0c14-13 38-13 52 0-14 16-38 16-52 0Z" fill="#FFFFFF"/>'
-                f'<circle cx="210" cy="217" r="7" fill="{palette["eye"]}"/><circle cx="270" cy="217" r="7" fill="{palette["eye"]}"/>'
-                f'<path d="M183 196c15-8 34-8 50 0M247 196c15-8 34-8 50 0" fill="none" stroke="{palette["hair"]}" stroke-width="7" stroke-linecap="round"/>',
-            ),
+            "body": _svg_data_url(body_svg),
+            "head": _svg_data_url(head_svg),
+            "eyes": _svg_data_url(eyes_svg),
             "mouths": {
                 "sil": mouth("M30 28c12 5 28 5 40 0 12 5 28 5 40 0-20 12-60 12-80 0Z"),
                 "a": mouth("M27 26c5-18 41-23 46-2 5-21 41-16 46 2-13 25-80 25-92 0Z"),
@@ -92,8 +125,19 @@ def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[
 
 _AVATAR_DEFINITIONS = (
     {
-        "preset_id": "platform-instructor-v2",
+        "preset_id": "platform-instructor-real-v1",
         "version": "1.0.0",
+        "display_name": "半写实汽车教师",
+        "realistic": True,
+        "palette": {"jacket": "#203A5F", "jacket_light": "#486B92", "shirt": "#F7F8FA", "tie": "#B34B4B", "skin": "#D59B78", "skin_light": "#F0C5A5", "hair": "#1A2230", "hair_light": "#46556A", "eye": "#182235", "mouth": "#8B3A3A"},
+    },
+    {
+        "preset_id": "platform-instructor-v2",
+        # v2.1.0 carries a rewritten SVG body/head/eyes.  The manifest content
+        # changed, so the version must move (1.0.0 stays archived for older
+        # releases that froze it); the same preset_id@version pair is treated
+        # as immutable by ``ensure_platform_presets``.
+        "version": "1.1.0",
         "display_name": "知性讲师",
         "palette": {"jacket": "#203A5F", "shirt": "#355C7D", "skin": "#E8BA96", "hair": "#14213D", "eye": "#172033", "mouth": "#8B3A3A"},
     },
@@ -178,27 +222,48 @@ def ensure_platform_presets(session: Session) -> None:
             ))
 
     for definition in _AVATAR_DEFINITIONS:
+        # Retire superseded versions of the same preset.  The manifest object
+        # and DB row are kept (a release that froze the old version still
+        # resolves it through ``allow_inactive``), but the old version stops
+        # appearing in the public/active registry.
+        for superseded in session.exec(select(PlatformAvatarPreset).where(
+            PlatformAvatarPreset.preset_id == definition["preset_id"],
+            PlatformAvatarPreset.version != definition["version"],
+            PlatformAvatarPreset.status == PlatformPresetStatus.ACTIVE,
+        )).all():
+            superseded.status = PlatformPresetStatus.RETIRED
+            session.add(superseded)
         manifest = _avatar_manifest(
             preset_id=definition["preset_id"],
             version=definition["version"],
             label=definition["display_name"],
             palette=definition["palette"],
+            realistic=bool(definition.get("realistic", False)),
         )
         manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         content_hash = _sha256(manifest_bytes)
         object_key = _manifest_key(definition["preset_id"], definition["version"])
-        if storage.exists(object_key):
-            stored_hash = _sha256(storage.get(object_key))
-            if stored_hash != content_hash:
-                raise RuntimeError(
-                    f"平台角色 manifest 已存在但内容不匹配: {definition['preset_id']}@{definition['version']}"
-                )
-        else:
-            storage.put(object_key, manifest_bytes, mime_type="application/json")
         existing = session.exec(select(PlatformAvatarPreset).where(
             PlatformAvatarPreset.preset_id == definition["preset_id"],
             PlatformAvatarPreset.version == definition["version"],
         )).first()
+        if storage.exists(object_key):
+            stored_bytes = storage.get(object_key)
+            stored_hash = _sha256(stored_bytes)
+            if stored_hash != content_hash:
+                if existing is not None:
+                    logger.warning(
+                        "保留存量平台角色 manifest %s@%s；代码生成内容已变化，请升版本",
+                        definition["preset_id"], definition["version"],
+                    )
+                    continue
+                # An object without a registry row is an untracked historical
+                # asset. Preserve that immutable object and register its
+                # actual hash instead of failing every preset lookup with 500.
+                manifest_bytes = stored_bytes
+                content_hash = stored_hash
+        else:
+            storage.put(object_key, manifest_bytes, mime_type="application/json")
         if existing is None:
             session.add(PlatformAvatarPreset(
                 preset_id=definition["preset_id"],
@@ -264,13 +329,16 @@ def resolve_avatar_preset(
         stmt = stmt.where(PlatformAvatarPreset.preset_id == preset_id)
     else:
         stmt = stmt.where(PlatformAvatarPreset.preset_id == DEFAULT_AVATAR_PRESET_ID)
+        # Only the default preset defaults its version; an explicit preset_id
+        # without a version must resolve to that preset's active latest version
+        # instead of being forced onto the default version.
+        if not version:
+            version = DEFAULT_AVATAR_PRESET_VERSION
     if version:
         stmt = stmt.where(PlatformAvatarPreset.version == version)
-    else:
-        stmt = stmt.where(PlatformAvatarPreset.version == DEFAULT_AVATAR_PRESET_VERSION)
     if not allow_inactive:
         stmt = stmt.where(PlatformAvatarPreset.status == PlatformPresetStatus.ACTIVE)
-    preset = session.exec(stmt).first()
+    preset = session.exec(stmt.order_by(PlatformAvatarPreset.version.desc())).first()
     if preset is None:
         reject_resource_not_found("所选平台数字人角色不存在或已停用")
     storage = get_object_storage()

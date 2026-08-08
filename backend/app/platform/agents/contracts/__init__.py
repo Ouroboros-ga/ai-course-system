@@ -15,7 +15,8 @@ Submodule layout:
     - ``sandbox``:      SandboxPort, CodingDiagnosisPort
     - ``teaching``:     RecommendationPort, LearningEventPort,
                         ConversationContextPort, TeachingLLMPort
-    - ``research``:     WebResearchPort, QuestionBankPort
+    - ``research``:     PaperSearchPort, WebResearchPort, QuestionBankPort
+    - ``writing``:      LiteratureReviewPort, PaperStructurePort
     - ``governance``:   ToolGovernancePort, TeacherSafetyValvePort
     - ``experiment``:   ExperimentPort, VisualizationPort
     - ``tools``:        TeachingTools (assembly container)
@@ -26,11 +27,20 @@ from __future__ import annotations
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
 from .experiment import ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
-from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
+from .research import (
+    CodeReproductionPort,
+    PaperSearchPort,
+    QuestionBankPort,
+    QuestionGenerationPort,
+    ResearchScopePort,
+    TrendAnalysisPort,
+    WebResearchPort,
+)
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
 from .tools import TeachingTools
+from .writing import LiteratureReviewPort, PaperStructurePort
 
 __all__ = [
     "ScopePort",
@@ -45,6 +55,12 @@ __all__ = [
     "ConversationContextPort",
     "TeachingLLMPort",
     "WebResearchPort",
+    "PaperSearchPort",
+    "ResearchScopePort",
+    "TrendAnalysisPort",
+    "CodeReproductionPort",
+    "LiteratureReviewPort",
+    "PaperStructurePort",
     "CognitionPort",
     "QuestionBankPort",
     "QuestionGenerationPort",

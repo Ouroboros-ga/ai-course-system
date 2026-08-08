@@ -31,7 +31,7 @@ BuildMediaPage
   → LearnPage / LectureStage
 ```
 
-每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，角色由 P5.1 平台注册表按发布版本冻结（当前默认 `platform-instructor-v2@1.0.0`），失败时按 `PixiJS → 静态头像 → 无数字人` 降级。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
+每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，角色由 P5.1 平台注册表按发布版本冻结（当前默认 `platform-instructor-real-v1@1.0.0`，半写实虚构汽车教师），失败时按 `PixiJS → 静态头像 → 无数字人` 降级。该角色不是教师本人肖像；真实教师素材需另行授权、版本化和资产预处理。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
 
 ### 当前代码证据
 
@@ -590,7 +590,7 @@ dispose()
 - 学习页通过 `useAvatarPlayback` 读取 Cue 清单；`avatarPlaybackAdapter` 只接受带
   音频 object key/SHA 的标准 Cue，不接收 Provider 原始帧。嘴型、眨眼、三类表情与
   两类手势都由 `HTMLAudioElement.currentTime` 推导，PixiJS 不持有第二时钟。
-- P3 首版采用仓库内的平台预制通用讲师图形（`sprite2d-manifest/v1`，无教师人像、
+- P3 首版采用仓库内的平台预制半写实虚构汽车教师图形（`sprite2d-manifest/v1`，无真实教师肖像、
   授权视频或声音样本）。如果后续 Release 携带有效 `sprite2d` 资产清单，播放器优先
   使用发布版资产；无效、缺失或旧 Provider 清单则明确回退平台预制角色。
 - `auto`、`low_resource` 和 `compatibility` 已实现：低内存设备降低像素比和抗锯齿；

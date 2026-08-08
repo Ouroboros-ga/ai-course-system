@@ -7,35 +7,39 @@ const svg = (content, viewBox = '0 0 480 480') => svgDataUrl(
 const mouth = shape => svg(`<path d="${shape}" fill="#8B3A3A"/>`, '0 0 100 56')
 
 /**
- * Platform-owned, generic instructor artwork.  It carries no teacher image,
+ * Platform-owned, semi-realistic fictional instructor artwork.  It carries no teacher image,
  * voice sample, or external provider material, so P3 can be tested before the
  * teacher-facing P4 asset-selection flow exists.
  */
 export const PLATFORM_SPRITE2D_MANIFEST = Object.freeze({
   schema: 'sprite2d-manifest/v1',
   provider: 'platform_sprite2d',
-  version: 'platform-instructor-v2@1.0.0',
-  label: '知性讲师',
+  version: 'platform-instructor-real-v1@1.0.0',
+  label: '半写实汽车教师',
   stage: { width: 480, height: 480 },
   expressions: ['neutral', 'warm', 'attentive'],
   gestures: ['rest', 'emphasis'],
   sprites: {
     body: svg(`
-      <path d="M98 480c13-132 65-186 142-186s129 54 142 186H98Z" fill="#203A5F"/>
-      <path d="M161 480c11-105 41-158 79-158s68 53 79 158H161Z" fill="#355C7D"/>
-      <path d="M214 315h52v70h-52z" fill="#D9A983"/>
-      <path d="M178 480h124l-62-73-62 73Z" fill="#F7F8FA"/>
+      <defs><linearGradient id="j" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#486B92"/><stop offset="1" stop-color="#203A5F"/></linearGradient><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#F7F8FA"/><stop offset="1" stop-color="#D9E0E8"/></linearGradient></defs>
+      <path d="M70 480c11-127 70-196 170-196s159 69 170 196H70Z" fill="url(#j)"/>
+      <path d="M161 480c11-91 38-151 79-171 41 20 68 80 79 171H161Z" fill="url(#s)"/>
+      <path d="M240 308 205 480h70Z" fill="#B34B4B" opacity=".92"/>
+      <path d="M164 316 214 480h-46l-43-112c10-25 22-40 39-52Zm152 0-50 164h46l43-112c-10-25-22-40-39-52Z" fill="#172941" opacity=".55"/>
     `),
     head: svg(`
-      <path d="M150 163c0-71 39-117 90-117s90 46 90 117v80c0 61-38 105-90 105s-90-44-90-105v-80Z" fill="#E8BA96"/>
-      <path d="M147 176c-3-66 30-132 93-132 53 0 96 37 94 118-24-28-49-43-95-44-18 31-48 49-92 58Z" fill="#14213D"/>
-      <path d="M153 165c5 38 18 54 32 66v-49c-14-3-25-9-32-17Zm174 0c-7 8-18 14-32 17v49c14-12 27-28 32-66Z" fill="#14213D"/>
-      <circle cx="158" cy="239" r="14" fill="#E8BA96"/><circle cx="322" cy="239" r="14" fill="#E8BA96"/>
+      <defs><linearGradient id="skin" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#F0C5A5"/><stop offset="1" stop-color="#D59B78"/></linearGradient><linearGradient id="hair" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#46556A"/><stop offset="1" stop-color="#1A2230"/></linearGradient></defs>
+      <path d="M151 170c0-73 39-119 89-119s89 46 89 119v76c0 62-37 108-89 108s-89-46-89-108v-76Z" fill="url(#skin)"/>
+      <path d="M151 174c-6-65 29-137 92-137 64 0 101 47 87 139-29-31-59-47-105-48-18 29-40 43-74 46Z" fill="url(#hair)"/>
+      <path d="M164 255c8 20 22 34 40 42M316 255c-8 20-22 34-40 42" fill="none" stroke="#A76F58" stroke-width="5" stroke-linecap="round" opacity=".35"/>
+      <circle cx="153" cy="237" r="15" fill="url(#skin)"/><circle cx="327" cy="237" r="15" fill="url(#skin)"/>
     `),
     eyes: svg(`
-      <path d="M184 217c14-13 38-13 52 0-14 16-38 16-52 0Zm60 0c14-13 38-13 52 0-14 16-38 16-52 0Z" fill="#FFFFFF"/>
-      <circle cx="210" cy="217" r="7" fill="#172033"/><circle cx="270" cy="217" r="7" fill="#172033"/>
-      <path d="M183 196c15-8 34-8 50 0M247 196c15-8 34-8 50 0" fill="none" stroke="#14213D" stroke-width="7" stroke-linecap="round"/>
+      <path d="M177 217c15-15 40-15 55 0-15 17-40 17-55 0Zm71 0c15-15 40-15 55 0-15 17-40 17-55 0Z" fill="#FFFFFF"/>
+      <circle cx="212" cy="218" r="8" fill="#182235"/><circle cx="268" cy="218" r="8" fill="#182235"/>
+      <path d="M174 197c17-10 39-10 57 0M249 197c18-10 40-10 57 0" fill="none" stroke="#1A2230" stroke-width="7" stroke-linecap="round"/>
+      <path d="M174 214h57M249 214h57M231 216h18" fill="none" stroke="#4A5666" stroke-width="3" opacity=".85"/>
+      <path d="M176 213c0-14 14-22 29-22h8c12 0 19 8 19 22s-8 23-22 23h-13c-13 0-21-9-21-23Zm73 0c0-14 8-22 20-22h8c15 0 29 8 29 22s-8 23-21 23h-13c-14 0-23-9-23-23Z" fill="none" stroke="#25384F" stroke-width="4"/>
     `),
     mouths: {
       sil: mouth('M30 28c12 5 28 5 40 0 12 5 28 5 40 0-20 12-60 12-80 0Z'),

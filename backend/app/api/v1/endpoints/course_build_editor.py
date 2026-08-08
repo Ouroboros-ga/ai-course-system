@@ -2614,7 +2614,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
             chunk = await file.read(1024 * 1024)
             if not chunk: break
             total += len(chunk)
-            if total > 50 * 1024 * 1024: raise HTTPException(413, "PPT 文件超过 50MB")
+            if total > 100 * 1024 * 1024: raise HTTPException(413, "PPT 文件超过 100MB")
             digest.update(chunk); staged.write(chunk)
         if total == 0: raise HTTPException(400, "不能上传空 PPT")
         object_key = f"course-source/course{course_id}/ppt_{digest.hexdigest()[:16]}/source.{suffix}"

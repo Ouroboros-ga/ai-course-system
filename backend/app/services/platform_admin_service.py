@@ -121,7 +121,7 @@ def list_users(session: Session, *, user_id: int | None = None, query: str = "",
         statement = statement.where(User.is_active == is_active)
     total = session.exec(select(func.count()).select_from(statement.subquery())).one()
     users = session.exec(statement.order_by(User.id).offset((page - 1) * page_size).limit(page_size)).all()
-    return {"items": [{"id": u.id, "username": u.username, "nickname": u.real_name, "role": "admin" if str(u.role) == "UserRole.ADMIN" or getattr(u.role, "value", u.role) == "admin" else "user", "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users], "total": int(total), "page": page, "page_size": page_size}
+    return {"items": [{"id": u.id, "username": u.username, "nickname": u.real_name or u.username, "role": "admin" if str(u.role) == "UserRole.ADMIN" or getattr(u.role, "value", u.role) == "admin" else "user", "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users], "total": int(total), "page": page, "page_size": page_size}
 
 
 def _sync_admin_assignment(session: Session, user_id: int, is_admin: bool) -> None:
@@ -172,7 +172,7 @@ def update_user(session: Session, actor_id: int, target_id: int, payload: dict[s
     session.add(user)
     audit(session, actor_id, "user.update", "user", str(target_id), {"fields": sorted(payload.keys())})
     session.commit(); session.refresh(user)
-    return {"id": user.id, "username": user.username, "nickname": user.real_name, "role": "admin" if getattr(user.role, "value", user.role) == "admin" else "user", "is_active": user.is_active}
+    return {"id": user.id, "username": user.username, "nickname": user.real_name or user.username, "role": "admin" if getattr(user.role, "value", user.role) == "admin" else "user", "is_active": user.is_active}
 
 
 def reset_password(session: Session, actor_id: int, target_id: int, password: str) -> None:

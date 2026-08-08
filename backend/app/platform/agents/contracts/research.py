@@ -1,4 +1,4 @@
-"""Supplementary knowledge ports: web research and course question bank.
+"""Supplementary knowledge ports used by teaching and research agents.
 
 Both ports are read-only knowledge-acquisition ports. ``WebResearchPort``
 results are always supplementary reference and must never modify mastery,
@@ -9,6 +9,61 @@ questions, isolated by ``course_id``.
 from __future__ import annotations
 
 from typing import Any, Mapping, Protocol
+
+
+class ResearchScopePort(Protocol):
+    """Re-authorize a research run inside the agent boundary."""
+
+    async def authorize(
+        self,
+        *,
+        course_id: str,
+        actor_user_id: str,
+        permission: str,
+    ) -> Mapping[str, Any]: ...
+
+
+class PaperSearchPort(Protocol):
+    """Search scholarly metadata without turning it into course truth.
+
+    Implementations must return normalized paper metadata and stamp every item
+    as supplementary.  A metadata hit is not a verified claim, a mastery
+    signal, or a knowledge-graph edge.
+    """
+
+    async def search(
+        self,
+        *,
+        query: str,
+        limit: int = 10,
+        cursor: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
+class TrendAnalysisPort(Protocol):
+    """Build an auditable trend projection from a frozen paper corpus."""
+
+    async def analyze(
+        self,
+        *,
+        course_id: str,
+        paper_ids: list[str],
+        dimensions: list[str] | None = None,
+    ) -> Mapping[str, Any]: ...
+
+
+class CodeReproductionPort(Protocol):
+    """Read or request an isolated reproduction run; never execute in-process."""
+
+    async def reproduce(
+        self,
+        *,
+        course_id: str,
+        actor_user_id: str,
+        repository_url: str,
+        revision: str,
+        reproduction_spec: Mapping[str, Any],
+    ) -> Mapping[str, Any]: ...
 
 
 class WebResearchPort(Protocol):
@@ -47,4 +102,12 @@ class QuestionGenerationPort(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
-__all__ = ["WebResearchPort", "QuestionBankPort", "QuestionGenerationPort"]
+__all__ = [
+    "PaperSearchPort",
+    "ResearchScopePort",
+    "TrendAnalysisPort",
+    "CodeReproductionPort",
+    "WebResearchPort",
+    "QuestionBankPort",
+    "QuestionGenerationPort",
+]

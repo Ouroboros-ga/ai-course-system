@@ -76,6 +76,7 @@ const activePlaylistItem = computed(() => props.playlist?.items?.[props.playlist
 const activeAudioUrl = computed(() => activePlaylistItem.value?.audioUrl || props.audioUrl)
 const playlistOffset = computed(() => Number(activePlaylistItem.value?.offsetMs || 0) / 1000)
 const hasPlaylist = computed(() => Boolean(activePlaylistItem.value))
+const avatarPlaybackTime = computed(() => sourceTimeForGlobal(props.currentTime))
 const hasAudio = computed(() => Boolean(activeAudioUrl.value) && !audioError.value)
 const hasLegacyVideo = computed(() => !hasAudio.value && Boolean(props.legacyVideoUrl) && !legacyVideoError.value)
 const mediaElement = computed(() => hasAudio.value ? audioRef.value : legacyVideoRef.value)
@@ -209,6 +210,33 @@ function seekTo(value) {
   const element = mediaElement.value
   if (!element) return
   const globalTime = Math.max(0, Number(value) || 0)
+  if (hasPlaylist.value) {
+    const targetMs = globalTime * 1000
+    const targetIndex = props.playlist?.items?.findIndex(item => {
+      const start = Math.max(0, Number(item?.offsetMs) || 0)
+      const end = start + Math.max(0, Number(item?.durationMs) || 0)
+      return end > start && targetMs >= start && targetMs < end
+    }) ?? -1
+    if (targetIndex >= 0 && targetIndex !== props.playlistIndex) {
+      const targetItem = props.playlist.items[targetIndex]
+      // Seek the underlying element as well.  The parent switches the active
+      // playlist index and re-syncs, but when the target item shares the same
+      // audio file the src does not reload, so without this the position
+      // would stay where it was before the drag.
+      const localTime = sourceTimeForGlobal(globalTime)
+      element.currentTime = Math.min(localTime, element.duration || localTime)
+      const targetCue = hasAudio.value ? resolvePptCueAtTime(props.pptTimeline, targetMs) : null
+      emit('playback', {
+        globalTime,
+        isPlaying: !element.paused,
+        nodeId: targetItem?.nodeId ?? null,
+        outlineNodeId: targetItem?.outlineNodeId ?? null,
+        page: targetCue?.page ?? null,
+        materialVersionId: targetCue?.materialVersionId ?? null,
+      })
+      return
+    }
+  }
   const target = sourceTimeForGlobal(globalTime)
   element.currentTime = Math.min(target, element.duration || target)
   emitPlayback(!element.paused)
@@ -290,7 +318,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
       <audio
         v-if="hasAudio"
         ref="audioRef"
-        :key="activeAudioUrl"
+        :key="`${playlistIndex}:${activeAudioUrl}`"
         :src="activeAudioUrl"
         preload="metadata"
         class="sfx-stage-clock"
@@ -306,7 +334,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         v-if="hasAudio && avatarCues && avatarSpriteManifest"
         :cues="avatarCues"
         :sprite-manifest="avatarSpriteManifest"
-        :current-time="currentTime"
+        :current-time="avatarPlaybackTime"
         :default-playback-mode="defaultPlaybackMode"
         :asset-source="avatarAssetSource"
       />

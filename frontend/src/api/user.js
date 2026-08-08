@@ -74,6 +74,14 @@ export function modify(data) {
   })
 }
 
+export function updateMyProfile(data) {
+  return request({
+    url: '/user/me/profile',
+    method: 'patch',
+    data,
+  })
+}
+
 export function getUserList() {
   return request({
     url: '/user/list',
@@ -95,4 +103,3 @@ export function getUserStats() {
     method: 'get'
   })
 }
-

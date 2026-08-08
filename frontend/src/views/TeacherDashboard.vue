@@ -41,7 +41,7 @@
               <div v-if="!isUploading" class="upload-placeholder">
                 <FileText class="upload-icon" :size="48" />
                 <div class="upload-text">点击或拖拽上传文档</div>
-                <div class="upload-hint">支持 PDF、DOCX、PPTX（最大50MB）</div>
+                <div class="upload-hint">支持 PDF、DOCX、PPTX（最大100MB）</div>
               </div>
               <div v-else class="uploading-state">
                 <div class="spinner"></div>
@@ -818,9 +818,9 @@ const processFile = async (file) => {
     return
   }
 
-  // 验证文件大小（最大50MB）
-  if (file.size > 50 * 1024 * 1024) {
-    showToast('文件大小超过限制（最大50MB）', 'error')
+  // 验证文件大小（最大100MB）
+  if (file.size > 100 * 1024 * 1024) {
+    showToast('文件大小超过限制（最大100MB）', 'error')
     return
   }
 

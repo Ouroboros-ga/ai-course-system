@@ -22,6 +22,7 @@ class SequencedPrepStages:
     def __init__(self, payloads):
         self.payloads = iter(payloads)
         self.calls = []
+        self.kwargs = []
 
     def _next(self, stage):
         self.calls.append(stage)
@@ -33,10 +34,16 @@ class SequencedPrepStages:
     async def plan_outline(self, _request, _segments):
         return OutlinePlannerResult.model_validate_json(self._next("plan_outline"))
 
-    async def write_script(self, _request, _outline, _candidate_id):
+    async def write_script(self, _request, _outline, _candidate_id, **_kwargs):
+        self.kwargs.append(("write_script", _candidate_id, dict(_kwargs)))
         return TeachingScriptNodeDraft.model_validate_json(self._next("write_script"))
 
-    async def write_scripts_batch(self, _request, _outline, _candidates):
+    async def write_scripts_batch(self, _request, _outline, _candidates, **_kwargs):
+        self.kwargs.append((
+            "write_scripts_batch",
+            [candidate.candidate_id for candidate in _candidates],
+            dict(_kwargs),
+        ))
         return TeachingScriptBatchResult.model_validate_json(
             self._next("write_scripts_batch")
         ).scripts
@@ -308,6 +315,227 @@ def test_structured_repair_prompt_contains_schema_and_field_errors():
 def test_schema_forbids_arbitrary_markdown_shape():
     with pytest.raises(ValidationError):
         EvidenceReference(evidence_id="es_1", text="x", unexpected="nope")
+
+
+def _script_json(candidate_id: str, evidence_id: str = "es_1") -> str:
+    return (
+        '{"stage":"script_writer","candidate_id":"%s","title":"概念",'
+        '"evidence_ids":["%s"],"course_positioning":"算法课","prerequisites":[],'
+        '"style":{"level":"beginner","tone":"conversational","language":"zh-CN",'
+        '"include_examples":true,"include_practice_prompt":true},'
+        '"content":"概念讲解。","claims":["概念"],"paragraph_evidence":[["%s"]]}'
+    ) % (candidate_id, evidence_id, evidence_id)
+
+
+def _verifier_json(evidence_id: str = "es_1") -> str:
+    return (
+        '{"stage":"evidence_verifier","verdict":"passed","findings":'
+        '[{"claim":"概念","evidence_ids":["%s"],"supported":true,"reason":""}],'
+        '"unsupported_paragraph_indexes":[]}'
+    ) % evidence_id
+
+
+def test_truncated_batch_splits_in_half_and_recovers():
+    """P2: a batch truncated by the completion budget must split and retry
+    instead of failing the whole first draft."""
+    from app.platform.agents.contracts.llm import StructuredOutputError
+
+    class TruncateOnceBatchStages:
+        def __init__(self, payloads):
+            self.payloads = iter(payloads)
+            self.calls = []
+            self.batch_attempts = 0
+
+        def _next(self, stage):
+            self.calls.append(stage)
+            return next(self.payloads)
+
+        async def segment_evidence(self, _request):
+            return EvidenceSegmenterResult.model_validate_json(self._next("segment_evidence"))
+
+        async def plan_outline(self, _request, _segments):
+            return OutlinePlannerResult.model_validate_json(self._next("plan_outline"))
+
+        async def write_script(self, _request, _outline, _candidate_id, **_kwargs):
+            self.calls.append("write_script")
+            return TeachingScriptNodeDraft.model_validate_json(self._next("write_script"))
+
+        async def write_scripts_batch(self, _request, _outline, _candidates, **_kwargs):
+            self.calls.append("write_scripts_batch")
+            self.batch_attempts += 1
+            if self.batch_attempts == 1:
+                raise StructuredOutputError(
+                    "truncated",
+                    reason_code="MODEL_OUTPUT_TRUNCATED",
+                    stage="write_scripts_batch",
+                    attempts=1,
+                    truncated=True,
+                )
+            return TeachingScriptBatchResult.model_validate_json(
+                self._next("write_scripts_batch")
+            ).scripts
+
+        async def verify_script(self, _request, _script):
+            return EvidenceVerifierResult.model_validate_json(self._next("verify_script"))
+
+    kp_ids = [f"kp_{index}" for index in range(1, 4)]
+    outline_payload = {
+        "stage": "outline_planner",
+        "candidates": [
+            {
+                "candidate_id": "sec",
+                "node_type": "section",
+                "title": "基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_1"],
+                "rationale": "",
+            },
+            *[
+                {
+                    "candidate_id": kp_id,
+                    "node_type": "knowledge_point",
+                    "title": f"概念{index}",
+                    "parent_candidate_id": "sec",
+                    "evidence_ids": ["es_1"],
+                    "rationale": "",
+                }
+                for index, kp_id in enumerate(kp_ids, start=1)
+            ],
+        ],
+        "prerequisites": [],
+    }
+    llm = TruncateOnceBatchStages([
+        '{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"基础","topic":"基础","evidence_ids":["es_1"],"examples":[],"exercises":[]}]}',
+        json_dumps(outline_payload),
+        # After the first truncated call, the 3-node group splits into
+        # [kp_1] and [kp_2,kp_3] (midpoint = 3 // 2); each half succeeds.
+        '{"stage":"script_writer_batch","scripts":[%s]}' % _script_json(kp_ids[0]),
+        '{"stage":"script_writer_batch","scripts":[%s]}' % ",".join(_script_json(kp_id) for kp_id in kp_ids[1:]),
+        *[_verifier_json() for _ in kp_ids],
+    ])
+    result = asyncio_run(ControlledPrepWorkflow(llm, max_retries=0).run(_request()))
+    assert len(result["scripts"]) == 3
+    assert llm.batch_attempts == 3  # 1 truncated + 2 successful halves
+    assert llm.calls.count("write_script") == 0
+    assert llm.calls.count("verify_script") == 3
+
+
+def test_many_knowledge_points_split_into_bounded_batch_requests():
+    """P0: more KPs than the configured batch size must use several requests."""
+    kp_ids = [f"kp_{index}" for index in range(1, 5)]
+    outline_payload = {
+        "stage": "outline_planner",
+        "candidates": [
+            {
+                "candidate_id": "sec",
+                "node_type": "section",
+                "title": "基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_1"],
+                "rationale": "",
+            },
+            *[
+                {
+                    "candidate_id": kp_id,
+                    "node_type": "knowledge_point",
+                    "title": f"概念{index}",
+                    "parent_candidate_id": "sec",
+                    "evidence_ids": ["es_1"],
+                    "rationale": "",
+                }
+                for index, kp_id in enumerate(kp_ids, start=1)
+            ],
+        ],
+        "prerequisites": [],
+    }
+    batch_payloads = [
+        '{"stage":"script_writer_batch","scripts":[%s]}' % ",".join(
+            _script_json(kp_id) for kp_id in group
+        )
+        for group in (kp_ids[:3], kp_ids[3:])
+    ]
+    llm = SequencedPrepStages([
+        '{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"基础","topic":"基础","evidence_ids":["es_1"],"examples":[],"exercises":[]}]}',
+        json_dumps(outline_payload),
+        *batch_payloads,
+        *[_verifier_json() for _ in kp_ids],
+    ])
+    result = asyncio_run(ControlledPrepWorkflow(llm, max_retries=0).run(_request()))
+    assert len(result["scripts"]) == 4
+    assert llm.calls.count("write_scripts_batch") == 2
+    assert llm.calls.count("write_script") == 0
+    batch_groups = [item[1] for item in llm.kwargs if item[0] == "write_scripts_batch"]
+    assert batch_groups == [kp_ids[:3], kp_ids[3:]]
+    assert all(
+        item[2]["max_tokens"] == 4096
+        for item in llm.kwargs if item[0] == "write_scripts_batch"
+    )
+
+
+def test_oversized_single_knowledge_point_uses_larger_single_node_budget():
+    """P2: a node whose estimated output exceeds the group budget must fall
+    back to the single-node writer with a larger completion budget."""
+    long_text = "内燃机工作原理" * 700  # ~4900 chars -> estimate > 4096
+    request = ControlledPrepInput(
+        source_text=long_text,
+        evidence=[
+            EvidenceReference(evidence_id="es_big", text=long_text, page=1),
+            EvidenceReference(evidence_id="es_small", text="短证据", page=2),
+        ],
+        course_positioning="算法课",
+        style=TeachingStyleConfig(level="beginner"),
+    )
+    outline_payload = {
+        "stage": "outline_planner",
+        "candidates": [
+            {
+                "candidate_id": "sec",
+                "node_type": "section",
+                "title": "基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_small"],
+                "rationale": "",
+            },
+            {
+                "candidate_id": "kp_big",
+                "node_type": "knowledge_point",
+                "title": "大知识点",
+                "parent_candidate_id": "sec",
+                "evidence_ids": ["es_big"],
+                "rationale": "",
+            },
+            {
+                "candidate_id": "kp_small",
+                "node_type": "knowledge_point",
+                "title": "小知识点",
+                "parent_candidate_id": "sec",
+                "evidence_ids": ["es_small"],
+                "rationale": "",
+            },
+        ],
+        "prerequisites": [],
+    }
+    llm = SequencedPrepStages([
+        '{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"基础","topic":"基础","evidence_ids":["es_small"],"examples":[],"exercises":[]}]}',
+        json_dumps(outline_payload),
+        _script_json("kp_big", "es_big"),
+        '{"stage":"script_writer_batch","scripts":[%s]}' % _script_json("kp_small", "es_small"),
+        _verifier_json("es_big"),
+        _verifier_json("es_small"),
+    ])
+    result = asyncio_run(ControlledPrepWorkflow(llm, max_retries=0).run(request))
+    assert len(result["scripts"]) == 2
+    assert llm.calls.count("write_script") == 1
+    assert llm.calls.count("write_scripts_batch") == 1
+    script_kwargs = [item[2] for item in llm.kwargs if item[0] == "write_script"]
+    assert script_kwargs[0]["max_tokens"] == 8192
+    batch_kwargs = [item[2] for item in llm.kwargs if item[0] == "write_scripts_batch"]
+    assert batch_kwargs[0]["max_tokens"] == 4096
+
+
+def json_dumps(value) -> str:
+    import json
+    return json.dumps(value, ensure_ascii=False)
 
 
 def asyncio_run(awaitable):

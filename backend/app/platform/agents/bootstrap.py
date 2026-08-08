@@ -42,6 +42,40 @@ from sqlmodel import Session
 logger = logging.getLogger(__name__)
 
 
+def bootstrap_research_agent(app: Any) -> bool:
+    """Register the metadata-only ResearchAgent without requiring an LLM.
+
+    The first slice depends only on arXiv's public Atom API and never performs
+    network I/O during bootstrap.  Later writing/trend/reproduction providers
+    remain absent until their explicit evidence and sandbox gates are wired.
+    """
+    try:
+        from .research.composition import build_research_graph_factory
+        from .research.profile import build_research_profile
+        from .providers.research.access import CourseAccessResearchScopePort
+        from .providers.research.paper_search import ArxivPaperSearchProvider
+
+        platform = getattr(app.state, "agent_platform", None)
+        if platform is None:
+            platform = LegacyAgentPlatform()
+        paper_search = ArxivPaperSearchProvider()
+        scope_access = CourseAccessResearchScopePort(lambda: Session(engine))
+        platform.register_generic(
+            profile=build_research_profile(),
+            builder=build_research_graph_factory(
+                scope_access=scope_access,
+                paper_search=paper_search,
+            ),
+        )
+        app.state.agent_platform = platform
+        app.state.research_paper_search_provider = paper_search
+        logger.info("AgentPlatform: registered ResearchAgent literature-search slice.")
+        return True
+    except Exception as error:  # noqa: BLE001 - never block app startup
+        logger.warning("ResearchAgent bootstrap failed: %s: %s", type(error).__name__, error)
+        return False
+
+
 def bootstrap_prep_agent(app: Any) -> bool:
     """Register Prep runtimes and inject the shared structured LLM adapter.
 

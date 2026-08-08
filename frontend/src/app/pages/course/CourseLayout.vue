@@ -41,6 +41,15 @@ const navItems = computed(() => {
     { key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: allowed.value['analytics.view_course'] },
     { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
     { key: 'experiments', label: '实验任务', to: `/app/course/${courseId.value}/experiments`, enabled: true },
+    {
+      key: 'research',
+      label: '科研',
+      to: `/app/course/${courseId.value}/research`,
+      // Keep the Research workspace discoverable for every active course
+      // member. The backend still gates the actual paper search capability.
+      enabled: allowed.value['course.view'],
+      reason: '当前课程角色无研究检索权限',
+    },
   ]
   if (allowed.value['course.edit']) {
     base.push(
@@ -59,6 +68,7 @@ const activeKey = computed(() => {
   if (route.path.includes('/visualize')) return 'learn'
   if (route.path.includes('/build')) return 'build'
   if (route.path.includes('/experiments')) return 'experiments'
+  if (route.path.includes('/research')) return 'research'
   if (route.path.includes('/members')) return 'members'
   if (route.path.includes('/settings')) return 'settings'
   return 'overview'
@@ -234,7 +244,13 @@ onMounted(load)
   align-items: center;
   gap: var(--space-1);
   height: 100%;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+
+.sfx-l2nav-links::-webkit-scrollbar { display: none; }
 
 .sfx-l2nav-link {
   position: relative;

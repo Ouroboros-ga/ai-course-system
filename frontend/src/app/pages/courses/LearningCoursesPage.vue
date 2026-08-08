@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { BookOpen, ChevronRight, Clock3, UserRound } from 'lucide-vue-next'
+import { BookOpen, ChevronRight, Clock3, UserRound, LibraryBig } from 'lucide-vue-next'
 import { listFacadeCourses } from '@/api/facade.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
@@ -41,6 +41,10 @@ function continueCourse(course) {
 
 function openOverview(course) {
   router.push(`/app/course/${course.course_id}/overview`)
+}
+
+function openResearch(course) {
+  router.push(`/app/course/${course.course_id}/research`)
 }
 
 onMounted(load)
@@ -104,6 +108,10 @@ onMounted(load)
         </div>
 
         <div class="sfx-course-actions">
+          <SfxButton variant="secondary" size="sm" @click.stop="openResearch(course)">
+            科研工作台
+            <template #icon><LibraryBig :size="15" /></template>
+          </SfxButton>
           <SfxButton variant="primary" size="sm" @click.stop="continueCourse(course)">
             继续学习
             <template #icon><ChevronRight :size="15" /></template>
@@ -203,5 +211,13 @@ onMounted(load)
 
 .sfx-course-actions {
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+@media (max-width: 720px) {
+  .sfx-course-card { align-items: stretch; flex-direction: column; }
+  .sfx-course-actions { justify-content: flex-end; }
 }
 </style>

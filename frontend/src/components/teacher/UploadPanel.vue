@@ -17,7 +17,7 @@
           <div v-if="!isUploading" class="upload-placeholder">
             <FileText class="upload-icon" :size="32" />
             <div class="upload-text">点击或拖拽上传文档</div>
-            <div class="upload-hint">支持 PDF、DOCX、PPTX（最大50MB）</div>
+            <div class="upload-hint">支持 PDF、DOCX、PPTX（最大100MB）</div>
           </div>
           <div v-else class="uploading-state">
             <LoadingSpinner :text="uploadProgress" />

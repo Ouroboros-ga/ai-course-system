@@ -22,6 +22,8 @@
 
 ### 1.1 状态标记
 
+学习页的节点轨道必须以 `learning-context.items` 为唯一首屏聚合来源，同时把学习曝光与认知掌握分开显示。认知详情通过现有 `/cognitive/course/{course_id}/state?node_id={cognition.node_id}` 按需读取；跳转知识图谱时使用 `cognition.node_key`，不能把数据库整数 ID 当作公开图谱节点身份。
+
 | 标记 | 含义 | 前端处理 |
 |---|---|---|
 | `available` | 已注册、真实可调用、具有稳定语义 | 可直接接入并写契约测试 |
@@ -149,11 +151,13 @@ type HomeViewModel = {
 
 | 新接口 | 状态 | 权限/语义 |
 |---|---|---|
-| `GET /facade/course/{course_id}/learning-context` | `available` | `course.learn`；返回 active `release_id`、知识点学习状态、完成原因、认知/推荐状态和 `recent_anchor`。|
+| `GET /facade/course/{course_id}/learning-context` | `available` | `course.learn`；返回 active `release_id`、知识点学习状态、完成原因、认知/推荐状态和 `recent_anchor`；学习轨道以双层状态向学生可见展示。|
 | `POST /facade/course/{course_id}/learning-events` | `available` | `course.learn`；记录 `node_opened`、`media_progress`、`read_progress`、`explicit_complete` 等规范化事件，要求幂等键。|
 | `POST /facade/course/{course_id}/learning-actions/complete` | `available` | `course.learn`；仅允许当前 active release 的显式完成动作，不产生 mastery 证据。|
 
 旧表中将上述三个接口标记为 `planned` 的文字均由本段状态修订覆盖。
+
+学习轨道状态显示约定：学习完成与认知掌握不合并；绿色“已掌握”只来自正式 `CognitiveState`，黄色“待掌握”对应 `developing/beginner`，未知证据显示“需要更多证据”。认知详细六维状态沿用 `/cognitive/course/{course_id}/state`，由学生点击状态详情后按需读取，不为每个知识点批量请求。
 
 | 子状态 | 接口 | 状态 | 说明 |
 |---|---|---|---|

@@ -21,7 +21,7 @@ from app.services.task_service import TaskCreateRequest, task_service
 
 logger = logging.getLogger(__name__)
 
-COURSE_MATERIAL_MAX_BYTES = 50 * 1024 * 1024
+COURSE_MATERIAL_MAX_BYTES = 100 * 1024 * 1024
 ALLOWED_SOURCE_SUFFIXES = {".ppt", ".pptx", ".pdf", ".doc", ".docx"}
 
 
@@ -63,7 +63,7 @@ class CourseMaterialUploadService:
                     break
                 total += len(chunk)
                 if total > COURSE_MATERIAL_MAX_BYTES:
-                    raise ValueError("文件大小超过限制（最大 50MB）")
+                    raise ValueError("文件大小超过限制（最大 100MB）")
                 digest.update(chunk)
                 staged.write(chunk)
             if total == 0:

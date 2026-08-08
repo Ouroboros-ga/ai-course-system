@@ -122,7 +122,7 @@ onBeforeUnmount(() => {
           @click="toggleMenu"
         >
           <UserRound :size="16" />
-          <span class="sfx-l1nav-username">{{ counter.userData.username || '未登录' }}</span>
+          <span class="sfx-l1nav-username">{{ counter.displayName || '未登录' }}</span>
           <ChevronDown :size="14" class="sfx-l1nav-caret" :class="{ 'is-open': menuOpen }" />
         </button>
         <div v-if="menuOpen" class="sfx-l1nav-menu" role="menu">

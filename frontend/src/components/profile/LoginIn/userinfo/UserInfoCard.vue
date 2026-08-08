@@ -7,10 +7,10 @@
       <div class="user-header">
         <div class="avatar">
           <!-- 这里可以根据用户名动态生成头像背景色或显示首字母 -->
-          <span>{{ counter.userData.username ? counter.userData.username.charAt(0).toUpperCase() : 'U' }}</span>
+          <span>{{ (counter.displayName || counter.userData.username || 'U').charAt(0).toUpperCase() }}</span>
         </div>
         <div class="user-info">
-          <h3 class="username">{{ counter.userData.username || '未登录' }}</h3>
+          <h3 class="username">{{ counter.displayName || counter.userData.username || '未登录' }}</h3>
           <p class="user-id">ID: {{ counter.userData.id || '...' }}</p>
         </div>
       </div>
@@ -22,9 +22,9 @@
           <!-- 默认菜单视图 -->
           <div v-if="activePanel === 'menu'" key="menu" class="panel-content">
             <div class="menu-list">
-              <div class="menu-item" @click="activePanel = 'username'">
+              <div class="menu-item" @click="activePanel = 'nickname'">
                 <div class="icon"><Pencil :size="18" /></div>
-                <span>修改用户名</span>
+                <span>修改昵称</span>
                 <div class="arrow"><ChevronRight :size="18" /></div>
               </div>
               <div class="menu-item" @click="activePanel = 'password'">
@@ -40,27 +40,19 @@
           </div>
 
           <!-- 修改用户名视图 -->
-          <div v-else-if="activePanel === 'username'" key="username" class="panel-content">
+          <div v-else-if="activePanel === 'nickname'" key="nickname" class="panel-content">
             <div class="panel-header">
               <button class="back-btn" @click="resetForm"><ArrowLeft :size="18" /> 返回</button>
-              <h4>修改用户名</h4>
+              <h4>修改昵称</h4>
             </div>
-            <form @submit.prevent="handleSubmitUsername" class="edit-form">
+            <form @submit.prevent="handleSubmitNickname" class="edit-form">
               <div class="input-group">
-                <label>新用户名</label>
+                <label>新昵称</label>
                 <input
                   type="text"
-                  v-model="form.username"
-                  placeholder="请输入新的用户名 (仅英文字母)"
-                  maxlength="80"
-                />
-              </div>
-              <div class="input-group">
-                <label>当前密码</label>
-                <input
-                  type="password"
-                  v-model="form.oldPassword"
-                  placeholder="请输入当前密码"
+                  v-model="form.nickname"
+                  placeholder="请输入新的昵称"
+                  maxlength="50"
                 />
               </div>
               <button type="submit" class="submit-btn">保存修改</button>
@@ -87,8 +79,9 @@
                 <input
                   type="password"
                   v-model="form.newPassword"
-                  placeholder="6-18位字母或数字"
-                  maxlength="18"
+                  placeholder="至少 8 位"
+                  minlength="8"
+                  maxlength="200"
                 />
               </div>
               <div class="input-group">
@@ -97,7 +90,8 @@
                   type="password"
                   v-model="form.confirmPassword"
                   placeholder="再次输入新密码"
-                  maxlength="18"
+                  minlength="8"
+                  maxlength="200"
                 />
               </div>
               <button type="submit" class="submit-btn">确认修改</button>
@@ -126,7 +120,7 @@ const activePanel = ref('menu')
 
 // 表单数据
 const form = reactive({
-  username: '',
+  nickname: '',
   oldPassword: '',
   newPassword: '',
   confirmPassword: ''
@@ -135,7 +129,7 @@ const form = reactive({
 // 重置表单状态
 const resetForm = () => {
   activePanel.value = 'menu'
-  form.username = ''
+  form.nickname = ''
   form.oldPassword = ''
   form.newPassword = ''
   form.confirmPassword = ''
@@ -143,25 +137,13 @@ const resetForm = () => {
 
 // --- 业务逻辑 ---
 
-// 1. 提交用户名修改
-const handleSubmitUsername = () => {
-  const usernameRegex = /^[a-zA-Z]{1,80}$/
-
-  if (!form.oldPassword) {
-    showToast('请输入当前密码！', 'error')
+// 1. 提交昵称修改
+const handleSubmitNickname = () => {
+  if (!form.nickname.trim()) {
+    showToast('昵称不能为空！', 'error')
     return
   }
-  if (!form.username) {
-    showToast('用户名不能为空！', 'error')
-    return
-  }
-  if (!usernameRegex.test(form.username)) {
-    showToast('用户名格式错误：仅允许英文字母，且不能超过80个字符。', 'error')
-    return
-  }
-
-  // 发送事件给父组件处理 API
-  emit('updateUsername', { username: form.username, oldPassword: form.oldPassword })
+  emit('updateUsername', { nickname: form.nickname.trim() })
 
   // 乐观更新或等待父组件反馈后关闭
   // resetForm()
@@ -169,14 +151,14 @@ const handleSubmitUsername = () => {
 
 // 2. 提交密码修改
 const handleSubmitPassword = () => {
-  const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
+  const passwordRegex = /^.{8,200}$/
 
   if (!form.oldPassword) {
     showToast('请输入当前密码！', 'error')
     return
   }
   if (!passwordRegex.test(form.newPassword)) {
-    showToast('新密码格式错误：长度需在6~18位之间，且只能包含英文字母和数字。', 'error')
+    showToast('新密码长度需在 8~200 位之间。', 'error')
     return
   }
   if (form.newPassword !== form.confirmPassword) {

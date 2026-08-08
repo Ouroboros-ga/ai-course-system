@@ -27,7 +27,8 @@ def test_public_registry_is_safe_and_seeded(session, teacher_user):
     payload = list_public_presets(session, active_tts_provider_key="fake_tts")
 
     assert len(payload["voices"]) == 1
-    assert len(payload["avatars"]) == 3
+    assert len(payload["avatars"]) == 4
+    assert "platform-instructor-real-v1" in {item["preset_id"] for item in payload["avatars"]}
     for voice in payload["voices"]:
         assert {"preset_id", "version", "display_name", "provider_key", "status", "content_hash"} <= voice.keys()
         assert "resource_ref_hash" not in voice
@@ -78,12 +79,15 @@ def test_release_versions_sign_different_immutable_manifests(session, teacher_us
     reset_object_storage_for_tests()
     course = _course(session, teacher_user.id)
     ensure_platform_presets(session)
+    # v2 has been bumped to 1.1.0 (rewritten SVG content); a release frozen on
+    # the superseded 1.0.0 must still resolve through the retired row when the
+    # migration path kept it, while a new release uses the active 1.1.0.
     first = MediaRelease(
         course_id=course.id,
         version_number=1,
         created_by=teacher_user.id,
         avatar_preset_id="platform-instructor-v2",
-        avatar_preset_version="1.0.0",
+        avatar_preset_version="1.1.0",
     )
     second = MediaRelease(
         course_id=course.id,
@@ -118,3 +122,64 @@ def test_release_versions_sign_different_immutable_manifests(session, teacher_us
     # adding another preset version.
     rows = session.exec(select(PlatformAvatarPreset)).all()
     assert {row.preset_id for row in rows} >= {"platform-instructor-v2", "platform-analyst-v1"}
+
+
+def test_superseded_preset_version_is_retired_and_still_resolvable(session, teacher_user):
+    """P1: when a preset's manifest content changes, the version must move.
+    ensure_platform_presets must retire the old ACTIVE version (keeping the
+    row/object for frozen releases) and resolve the preset without an explicit
+    version to the new active version."""
+    from app.models.platform_media_preset_model import PlatformPresetStatus
+    from app.services.object_storage import get_object_storage
+    from app.services.platform_media_preset_service import resolve_avatar_preset
+
+    reset_object_storage_for_tests()
+    # Simulate a legacy database row + object frozen on the old manifest
+    # version, exactly as a pre-migration deployment would have.
+    legacy_object_key = "platform/avatar-presets/platform-instructor-v2/1.0.0/manifest.json"
+    get_object_storage().put(
+        legacy_object_key,
+        b'{"schema":"sprite2d-manifest/v1","preset_id":"platform-instructor-v2","version":"1.0.0"}',
+        mime_type="application/json",
+    )
+    legacy = PlatformAvatarPreset(
+        preset_id="platform-instructor-v2",
+        version="1.0.0",
+        display_name="知性讲师",
+        provider_key="platform_sprite2d",
+        manifest_object_key=legacy_object_key,
+        content_hash="legacy",
+        status=PlatformPresetStatus.ACTIVE,
+    )
+    session.add(legacy)
+    session.commit()
+
+    ensure_platform_presets(session)
+    session.refresh(legacy)
+    assert legacy.status == PlatformPresetStatus.RETIRED
+
+    active = session.exec(select(PlatformAvatarPreset).where(
+        PlatformAvatarPreset.preset_id == "platform-instructor-v2",
+        PlatformAvatarPreset.version == "1.1.0",
+        PlatformAvatarPreset.status == PlatformPresetStatus.ACTIVE,
+    )).first()
+    assert active is not None
+
+    # Preset resolution without a version picks the active latest (1.1.0).
+    resolved = resolve_avatar_preset(session, preset_id="platform-instructor-v2")
+    assert resolved.version == "1.1.0"
+    assert resolved.status == PlatformPresetStatus.ACTIVE
+
+    # A frozen release on the retired version still resolves with allow_inactive.
+    frozen = resolve_avatar_preset(
+        session,
+        preset_id="platform-instructor-v2",
+        version="1.0.0",
+        allow_inactive=True,
+    )
+    assert frozen.version == "1.0.0"
+    assert frozen.status == PlatformPresetStatus.RETIRED
+
+    # Default resolution without ids still targets the real-v1 default.
+    default = resolve_avatar_preset(session)
+    assert default.preset_id == "platform-instructor-real-v1"

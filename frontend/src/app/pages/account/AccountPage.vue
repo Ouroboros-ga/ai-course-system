@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { AudioLines, Sparkles, Upload, UserRound, Video } from 'lucide-vue-next'
 import {
   confirmAvatarSourceMedia,
@@ -12,6 +12,8 @@ import {
   uploadAvatarSourceMedia,
 } from '@/api/avatar.js'
 import { useCounterStore } from '@/stores/counter.js'
+import { updateMyProfile } from '@/api/user.js'
+import { showToast } from '@/utils/toast.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -33,6 +35,9 @@ const confirmedConsent = ref(false)
 const creating = ref(false)
 const error = ref('')
 const canCreate = computed(() => displayName.value.trim().length > 0 && confirmedConsent.value && !creating.value)
+const profileForm = reactive({ nickname: '', current_password: '', new_password: '', confirm_password: '' })
+const profileSaving = ref(false)
+const profileError = ref('')
 
 function profileSources(profileId) { return sourceMedia.value[profileId] ?? [] }
 function profileJobs(profileId) { return preparationJobs.value[profileId] ?? [] }
@@ -143,13 +148,53 @@ function readableStatus(status) {
   return ({ verified: '已校验', uploaded: '待校验', pending: '等待处理', running: '预处理中', succeeded: '已完成', failed: '处理失败', ready: '可用' })[status] ?? status
 }
 
-onMounted(load)
+onMounted(() => {
+  syncProfileForm()
+  load()
+})
+
+function syncProfileForm() {
+  profileForm.nickname = counter.userData.nickname || counter.userData.username || ''
+}
+
+async function saveProfile() {
+  profileError.value = ''
+  const currentName = counter.userData.nickname || counter.userData.username || ''
+  const nicknameChanged = profileForm.nickname.trim() !== currentName
+  const newPassword = (profileForm.new_password || '').trim()
+  const passwordChanged = Boolean(newPassword)
+  const currentPassword = (profileForm.current_password || '').trim()
+  const confirmPassword = (profileForm.confirm_password || '').trim()
+  const hasAnyInput = nicknameChanged || passwordChanged || Boolean(currentPassword) || Boolean(confirmPassword)
+  if (!hasAnyInput) return showToast('没有可保存的资料变更', 'warning')
+  if (nicknameChanged && !profileForm.nickname.trim()) return showToast('名称不能为空', 'warning')
+  if (!passwordChanged && (currentPassword || confirmPassword)) return showToast('请输入新密码', 'warning')
+  if (passwordChanged && !currentPassword) return showToast('修改密码前请输入原密码', 'warning')
+  if (passwordChanged && newPassword.length < 8) return showToast('新密码至少 8 位', 'warning')
+  if (passwordChanged && newPassword !== confirmPassword) return showToast('两次输入的新密码不一致', 'warning')
+  profileSaving.value = true
+  try {
+    const result = await updateMyProfile({
+      nickname: nicknameChanged ? profileForm.nickname.trim() : undefined,
+      current_password: passwordChanged ? currentPassword : undefined,
+      new_password: passwordChanged ? newPassword : undefined,
+    })
+    counter.setAuth({ token: result.token, userInfo: result.userInfo, role: result.userInfo.role, platform_permissions: result.userInfo.platform_permissions })
+    profileForm.current_password = ''
+    profileForm.new_password = ''
+    profileForm.confirm_password = ''
+    showToast('个人资料已更新', 'success')
+  } catch (caught) {
+    profileError.value = caught?.message || '个人资料更新失败'
+  } finally { profileSaving.value = false }
+}
 </script>
 
 <template>
   <div class="sfx-page sfx-page--narrow">
     <header class="sfx-page-header"><div><h1 class="sfx-t-title1"><UserRound :size="25" /> 个人中心</h1><p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">账户信息与专属数字人预设。素材上传、校验和预处理均由独立任务完成。</p></div></header>
-    <section class="sfx-panel account-summary"><span class="sfx-t-ui">账户</span><strong>{{ counter.userData.username || '—' }}</strong><SfxBadge tone="ink">{{ counter.userData.role || 'member' }}</SfxBadge></section>
+    <section class="sfx-panel account-summary"><span class="sfx-t-ui">账户</span><strong>{{ counter.displayName || '—' }}</strong><span class="sfx-t-caption sfx-t-secondary">ID {{ counter.userData.id || '—' }}</span><SfxBadge tone="ink">{{ counter.userData.role || 'member' }}</SfxBadge></section>
+    <section class="sfx-panel profile-settings"><h2 class="sfx-panel-title"><UserRound :size="18" /> 账户资料</h2><p class="sfx-t-ui sfx-t-secondary">账号 ID 和登录名保持不变；名称用于个人中心和管理页面展示。</p><SfxField label="名称"><input v-model="profileForm.nickname" class="sfx-input" maxlength="50" /></SfxField><div class="password-fields"><SfxField label="原密码（修改密码时必填）"><input v-model="profileForm.current_password" class="sfx-input" type="password" autocomplete="current-password" /></SfxField><SfxField label="新密码"><input v-model="profileForm.new_password" class="sfx-input" type="password" autocomplete="new-password" minlength="8" /></SfxField><SfxField label="确认新密码"><input v-model="profileForm.confirm_password" class="sfx-input" type="password" autocomplete="new-password" minlength="8" /></SfxField></div><SfxButton variant="primary" :loading="profileSaving" @click="saveProfile">保存资料</SfxButton><p v-if="profileError" class="account-error" role="alert">{{ profileError }}</p></section>
     <section class="sfx-panel"><h2 class="sfx-panel-title"><Sparkles :size="18" /> 新建数字人预设</h2><p class="sfx-t-ui sfx-t-secondary">先建立有授权的预设记录；随后上传本人肖像视频和声音样本。原始素材不会提供给课程学生下载。</p><SfxField label="预设名称"><input v-model="displayName" class="sfx-input" placeholder="例如：李老师课程讲解" /></SfxField><SfxField label="说明（可选）"><textarea v-model="notes" class="sfx-textarea" rows="3" placeholder="适用课程或讲解风格" /></SfxField><label class="consent"><input v-model="confirmedConsent" type="checkbox" /> 我确认拥有上传肖像、视频与声音素材的授权。</label><SfxButton variant="primary" :disabled="!canCreate" :loading="creating" @click="createProfile">创建预设</SfxButton><p v-if="error" class="account-error" role="alert">{{ error }}</p></section>
     <section><h2 class="sfx-t-title2">我的数字人预设</h2><SfxSkeleton v-if="state === 'loading'" :lines="3" block /><SfxError v-else-if="state === 'error'" :description="error || '无法读取预设。'" @retry="load" /><SfxEmpty v-else-if="state === 'empty'" title="还没有数字人预设" description="创建预设后，上传肖像视频和声音样本，才能创建服务端预处理任务。" /><div v-else class="profile-list"><article v-for="profile in profiles" :key="profile.avatar_id" class="sfx-panel profile-card"><div class="profile-head"><div><h3 class="sfx-t-title3">{{ profile.display_name }}</h3><p class="sfx-t-caption sfx-t-secondary">{{ profile.avatar_id }}</p></div><SfxBadge :tone="statusTone(profile.status)">{{ readableStatus(profile.status) }}</SfxBadge></div><p class="sfx-t-ui sfx-t-secondary">{{ profile.current_asset_package_id ? '资产包已就绪，可在本人课程中绑定到媒体发布版本。' : '上传并校验两类素材后，创建后台预处理任务。' }}</p><div class="source-grid"><section class="source-card"><h4><Video :size="17" /> 肖像视频</h4><SfxBadge :tone="mediaFor(profile.avatar_id, 'portrait_video') ? 'green' : 'amber'">{{ mediaFor(profile.avatar_id, 'portrait_video') ? '已校验' : '待上传' }}</SfxBadge><input :aria-label="`${profile.display_name} 的肖像视频`" type="file" accept="video/mp4,video/webm,video/quicktime" :disabled="isBusy(selectedKey(profile.avatar_id, 'portrait_video'))" @change="selectSource(profile.avatar_id, 'portrait_video', $event)" /><p v-if="selectedFiles[selectedKey(profile.avatar_id, 'portrait_video')]" class="sfx-t-caption">{{ selectedFiles[selectedKey(profile.avatar_id, 'portrait_video')].name }}</p><progress v-if="isBusy(selectedKey(profile.avatar_id, 'portrait_video'))" :value="uploadProgress[selectedKey(profile.avatar_id, 'portrait_video')] ?? 0" max="100" /><SfxButton size="sm" variant="secondary" :disabled="!selectedFiles[selectedKey(profile.avatar_id, 'portrait_video')]" :loading="isBusy(selectedKey(profile.avatar_id, 'portrait_video'))" @click="uploadSource(profile, 'portrait_video')"><Upload :size="15" /> 上传并校验</SfxButton></section><section class="source-card"><h4><AudioLines :size="17" /> 声音样本</h4><SfxBadge :tone="mediaFor(profile.avatar_id, 'voice_sample') ? 'green' : 'amber'">{{ mediaFor(profile.avatar_id, 'voice_sample') ? '已校验' : '待上传' }}</SfxBadge><input :aria-label="`${profile.display_name} 的声音样本`" type="file" accept="audio/mpeg,audio/wav,audio/x-wav,audio/mp4,audio/ogg" :disabled="isBusy(selectedKey(profile.avatar_id, 'voice_sample'))" @change="selectSource(profile.avatar_id, 'voice_sample', $event)" /><p v-if="selectedFiles[selectedKey(profile.avatar_id, 'voice_sample')]" class="sfx-t-caption">{{ selectedFiles[selectedKey(profile.avatar_id, 'voice_sample')].name }}</p><progress v-if="isBusy(selectedKey(profile.avatar_id, 'voice_sample'))" :value="uploadProgress[selectedKey(profile.avatar_id, 'voice_sample')] ?? 0" max="100" /><SfxButton size="sm" variant="secondary" :disabled="!selectedFiles[selectedKey(profile.avatar_id, 'voice_sample')]" :loading="isBusy(selectedKey(profile.avatar_id, 'voice_sample'))" @click="uploadSource(profile, 'voice_sample')"><Upload :size="15" /> 上传并校验</SfxButton></section></div><div class="prepare-row"><div><strong class="sfx-t-ui">服务端预处理</strong><p class="sfx-t-caption sfx-t-secondary">{{ latestJob(profile.avatar_id) ? `最近任务：${readableStatus(latestJob(profile.avatar_id).status)}（${latestJob(profile.avatar_id).task_id}）` : '校验两类素材后可创建任务；任务写入任务中心，离开此页不会中断。' }}</p></div><SfxButton variant="primary" :disabled="!mediaFor(profile.avatar_id, 'portrait_video') || !mediaFor(profile.avatar_id, 'voice_sample')" :loading="isBusy(`${profile.avatar_id}:prepare`)" @click="prepare(profile)">创建预处理任务</SfxButton></div></article></div></section>
   </div>
@@ -158,6 +203,8 @@ onMounted(load)
 <style scoped>
 .sfx-page-header h1, .sfx-panel-title, .source-card h4 { display: flex; align-items: center; gap: var(--space-2); }
 .account-summary, .profile-head, .prepare-row { display: flex; align-items: center; gap: var(--space-3); }
+.profile-settings { align-items: stretch; }
+.password-fields { width: 100%; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
 .profile-head, .prepare-row { justify-content: space-between; }
 .sfx-panel { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); margin-bottom: var(--space-6); }
 .sfx-input, .sfx-textarea { width: 100%; }
@@ -171,4 +218,5 @@ onMounted(load)
 .prepare-row { width: 100%; border-top: 1px solid var(--border-subtle); padding-top: var(--space-3); }
 .account-error { color: var(--red-700); }
 @media (max-width: 640px) { .source-grid { grid-template-columns: 1fr; } .prepare-row { align-items: flex-start; flex-direction: column; } }
+@media (max-width: 720px) { .password-fields { grid-template-columns: 1fr; } }
 </style>

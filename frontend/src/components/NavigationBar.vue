@@ -113,7 +113,7 @@ onBeforeUnmount(() => document.removeEventListener('keydown', handleEsc))
       <!-- 鐢ㄦ埛寰界珷 -->
       <div v-if="counter.isLoggedIn" class="user-badge">
         <span class="role-tag" :class="{ 'admin-tag': counter.canManageUsers }">{{ roleLabel }}</span>
-        <span class="username">{{ counter.userData.username }}</span>
+        <span class="username">{{ counter.displayName || counter.userData.username }}</span>
       </div>
     </nav>
 

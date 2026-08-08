@@ -1374,6 +1374,8 @@ class CourseReleaseService:
         # with an empty/stale media snapshot: learners must receive the exact
         # active release and playlist hash that was reviewed by the teacher.
         from app.models.media_release_model import MediaRelease, MediaReleaseStatus
+        from app.models.media_release_model import MediaReleaseItem
+        from app.services.unified_learning_service import ordered_outline_nodes
         media_candidates = [
             candidate for candidate in session.exec(select(MediaRelease).where(
                 MediaRelease.course_id == course_id,
@@ -1398,6 +1400,37 @@ class CourseReleaseService:
                 reject_state_conflict(
                     "课程媒体快照与当前激活版本不一致",
                     details={"error_code": "MEDIA_RELEASE_SNAPSHOT_MISMATCH"},
+                )
+            expected_outline_ids = [
+                str(node.outline_node_id)
+                for node in ordered_outline_nodes(
+                    session,
+                    outline_version_id=outline.outline_version_id,
+                    knowledge_points_only=True,
+                )
+            ]
+            media_items = list(session.exec(
+                select(MediaReleaseItem)
+                .where(MediaReleaseItem.release_id == media.release_id)
+            ).all())
+            # order_index is only sibling-unique; compare using the same
+            # immutable outline pre-order used by the learner and freeze gate.
+            item_by_outline_id = {str(item.outline_node_id or ""): item for item in media_items}
+            ordered_media_items = [item_by_outline_id[node_id] for node_id in expected_outline_ids if node_id in item_by_outline_id]
+            ordered_media_items.extend(
+                item for item in sorted(media_items, key=lambda item: (item.order_index, item.id or 0))
+                if item not in ordered_media_items
+            )
+            media_items = ordered_media_items
+            actual_outline_ids = [str(item.outline_node_id or "") for item in media_items]
+            if expected_outline_ids != actual_outline_ids:
+                reject_state_conflict(
+                    "课程目录与媒体播放清单节点不一致，不能正式发布",
+                    details={
+                        "error_code": "MEDIA_RELEASE_NODE_MISMATCH",
+                        "expected_node_count": len(expected_outline_ids),
+                        "actual_node_count": len(actual_outline_ids),
+                    },
                 )
         release.material_version_ids = list(corpus.material_version_ids or [])
         release.document_ir_run_ids = list(corpus.parse_run_ids or [])

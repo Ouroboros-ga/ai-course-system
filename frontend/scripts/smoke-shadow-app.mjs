@@ -14,6 +14,7 @@
  *  2) 构建产物中存在含 `.sfx` 令牌作用域的 CSS（token 隔离已落地）；
  *  3) 至少一个 JS chunk 含影子前端路由路径串（/app/courses/learning）；
  *  4) 旗关闭构建（VITE_ENABLE_SHADOW_FRONTEND 未设）→ /app 仍可访问并回落。
+ *  5) ResearchAgent 课程路由与前端 API 前缀随构建产出。
  *
  * 任一断言失败 → 非零退出。
  */
@@ -121,6 +122,9 @@ async function main() {
     const learn = await fetchText('/app/course/1/learn')
     check('GET /app/course/1/learn 返回 200', learn.status === 200, `status=${learn.status}`)
 
+    const research = await fetchText('/app/course/1/research')
+    check('GET /app/course/1/research 返回 200', research.status === 200, `status=${research.status}`)
+
     // 2 & 3) 构建产物内容断言
     const { cssText, jsText } = await readAssets()
 
@@ -129,6 +133,7 @@ async function main() {
       check('CSS 产物含 Academic Ink 主色 #14213D', cssText.includes('#14213D'), '')
       check('JS 产物含 /app/courses/learning 路由串', jsText.includes('/app/courses/learning'), '')
       check('JS 产物含 learnMachine 状态（LEARN）', jsText.includes('LEARN'), '')
+      check('JS 产物含 ResearchAgent API 前缀', jsText.includes('/research-agent/courses/'), '')
     } else {
       check('旗关闭构建：CSS 不含 .sfx（影子前端未启用）', !cssText.includes('.sfx'), '符合预期')
     }

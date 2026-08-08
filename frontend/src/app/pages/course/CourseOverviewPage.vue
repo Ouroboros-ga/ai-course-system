@@ -1,15 +1,16 @@
 <script setup>
 import { computed, inject, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ArrowRight, BookOpenCheck, FileText, Layers3, Timer, CheckCircle2, ListTodo, MessageSquareText, Network } from 'lucide-vue-next'
+import { ArrowRight, BookOpenCheck, FileText, Layers3, Timer, CheckCircle2, ListTodo, MessageSquareText, Network, LibraryBig } from 'lucide-vue-next'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { getCourseDashboard } from '@/api/dashboard.js'
 
 const router = useRouter()
-const { course, courseRole, courseId } = inject('courseContext')
+const { course, courseRole, courseId, allowed } = inject('courseContext')
 
 const detail = computed(() => course.value ?? {})
+const researchVisible = computed(() => Boolean(allowed.value?.['course.view']))
 
 // 批次1：课程概览真实待办
 const dashboard = ref(null)
@@ -75,10 +76,16 @@ function formatPercent(rate) {
           上次学到：{{ continueInfo.node_title || '知识点 ' + (continueInfo.node_index ?? '?') }} · 第 {{ continueInfo.page ?? 1 }} 页
         </p>
       </div>
-      <SfxButton variant="primary" @click="router.push(`/app/course/${courseId}/learn`)">
-        {{ courseRole === 'teacher' ? '学生视角预览' : '继续学习' }}
-        <template #icon><ArrowRight :size="16" /></template>
-      </SfxButton>
+      <div class="sfx-overview-hero-actions">
+        <SfxButton v-if="researchVisible" variant="secondary" @click="router.push(`/app/course/${courseId}/research`)">
+          科研工作台
+          <template #icon><LibraryBig :size="16" /></template>
+        </SfxButton>
+        <SfxButton variant="primary" @click="router.push(`/app/course/${courseId}/learn`)">
+          {{ courseRole === 'teacher' ? '学生视角预览' : '继续学习' }}
+          <template #icon><ArrowRight :size="16" /></template>
+        </SfxButton>
+      </div>
     </section>
 
     <!-- B. 学习进度（真实数据，不伪造） -->
@@ -212,6 +219,14 @@ function formatPercent(rate) {
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
+}
+
+.sfx-overview-hero-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .sfx-overview-desc {

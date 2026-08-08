@@ -101,6 +101,23 @@ def _register_tts_audio_asset(
     session.flush()
 
 
+def _playlist_node_alignment(
+    expected_ids: list[str],
+    actual_ids: list[str],
+) -> tuple[bool, bool]:
+    """Compare released playlist nodes against the outline's knowledge points.
+
+    Returns ``(set_mismatch, order_differs)``.  Playback treats a node-set
+    mismatch as fail-closed (missing/foreign nodes) but ignores order: older
+    playlists froze a flat ``order_index`` sequence, so a strict order check
+    would reject every multi-chapter course built before the pre-order freeze.
+    Empty ids are ignored on both sides.
+    """
+    expected_set = {node_id for node_id in expected_ids if node_id}
+    actual_set = {node_id for node_id in actual_ids if node_id}
+    return expected_set != actual_set, expected_ids != actual_ids
+
+
 def ensure_release_tts_assets_registered(
     session: Session,
     *,
@@ -923,6 +940,7 @@ class MediaPlaybackService:
         subtitle_segments = []
         ppt_timeline = []
         playlist = None
+        playlist_alignment_error = None
         if release.audio_playlist_object_key:
             try:
                 raw_playlist = json.loads(storage.get(release.audio_playlist_object_key).decode("utf-8"))
@@ -969,8 +987,55 @@ class MediaPlaybackService:
                             segment["ppt_page"] = item["ppt_timeline"][0]["ppt_page"] if item["ppt_timeline"] else None
                             segment["material_version_id"] = item["ppt_timeline"][0]["material_version_id"] if item["ppt_timeline"] else None
                         playlist["items"].append(item)
+                    if course_release is not None and playlist is not None:
+                        # The course release and media release are immutable
+                        # snapshots. Never silently pair a playlist from an
+                        # older outline/script with the current course rail.
+                        from app.services.unified_learning_service import ordered_outline_nodes
+                        expected_nodes = ordered_outline_nodes(
+                            session,
+                            outline_version_id=course_release.outline_version_id,
+                            knowledge_points_only=True,
+                        )
+                        expected_ids = [str(node.outline_node_id) for node in expected_nodes]
+                        actual_ids = [str(item.get("outline_node_id") or "") for item in playlist["items"]]
+                        set_mismatch, order_differs = _playlist_node_alignment(expected_ids, actual_ids)
+                        if set_mismatch:
+                            # The node set must match the released outline.  Order
+                            # is deliberately NOT compared here: older playlists
+                            # froze a flat order_index sequence, and a strict
+                            # order check would reject every multi-chapter course
+                            # built before the pre-order freeze.  A set mismatch
+                            # means missing/foreign nodes and stays fail-closed.
+                            playlist_alignment_error = {
+                                "reason": "media_playlist_node_mismatch",
+                                "message": "课程目录与媒体播放清单节点不一致，请重新建设并发布媒体",
+                                "fallback_mode": "compatibility",
+                                "course_release_id": course_release.release_id,
+                                "media_release_id": release.release_id,
+                            }
+                            logger.error(
+                                "Course %s playlist node set mismatch: expected=%s actual=%s",
+                                course_id, len(expected_ids), len(actual_ids),
+                            )
+                        elif order_differs:
+                            logger.warning(
+                                "Course %s playlist order differs from outline pre-order "
+                                "(expected=%d actual=%d); nodes align, playback continues.",
+                                course_id, len(expected_ids), len(actual_ids),
+                            )
             except Exception as exc:
-                logger.warning("签发 audio-playlist/v1 失败，回退旧媒体字段: %s", exc)
+                if release.audio_playlist_object_key:
+                    playlist_alignment_error = {
+                        "reason": "media_playlist_unavailable",
+                        "message": "课程音频播放清单校验失败，暂不可播放",
+                        "fallback_mode": "compatibility",
+                        "course_release_id": course_release.release_id if course_release else None,
+                        "media_release_id": release.release_id,
+                    }
+                    logger.error("课程 %s audio-playlist/v1 校验失败，拒绝播放: %s", course_id, exc)
+                else:
+                    logger.warning("签发 audio-playlist/v1 失败，回退旧媒体字段: %s", exc)
         for cue in cues:
             subtitle_segments.append({
                 "node_id": cue.node_id,
@@ -1059,6 +1124,9 @@ class MediaPlaybackService:
                 }
             except Exception as e:
                 logger.warning("签发数字人 Cue manifest 失败，播放继续走兼容模式: %s", e)
+
+        if playlist_alignment_error is not None:
+            return {"available": False, **playlist_alignment_error}
 
         return {
             "available": True,

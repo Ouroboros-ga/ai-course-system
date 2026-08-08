@@ -15,6 +15,7 @@ from app.models.course_outline_model import CoursePptMapping, TeachingScriptNode
 from app.models.media_release_model import (
     MediaGenerationJob,
     MediaGenerationJobType,
+    MediaRelease,
     MediaReleaseItem,
     MediaReleaseStatus,
 )
@@ -238,6 +239,149 @@ def test_batch_plan_uses_course_teaching_order_not_outline_identifier_order(sess
     plan = build_media_plan(session, course_id=course.id, node_ids=[second.id, first.id])
     assert [item["node_id"] for item in plan["items"]] == [first.id, second.id]
     assert [item["order_index"] for item in plan["items"]] == [0, 1]
+
+
+def test_batch_plan_uses_preorder_across_multiple_chapters(session, teacher_user):
+    course = _course(session, teacher_user.id)
+    from app.models.course_outline_model import (
+        CourseOutlineNode,
+        CourseOutlineVersion,
+        OutlineLifecycleStatus,
+        TeachingScriptVersion,
+        OutlineNodeType,
+    )
+
+    outline = CourseOutlineVersion(
+        course_id=course.id,
+        version=1,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+    )
+    script_version = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        version=1,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+    )
+    session.add_all([outline, script_version])
+    session.flush()
+    chapter_a = CourseOutlineNode(
+        course_id=course.id, outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.CHAPTER, title="A", order_index=0,
+    )
+    chapter_b = CourseOutlineNode(
+        course_id=course.id, outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.CHAPTER, title="B", order_index=1,
+    )
+    session.add_all([chapter_a, chapter_b])
+    session.flush()
+    ordered_ids = []
+    scripts = []
+    for parent, suffix in ((chapter_a, "a1"), (chapter_a, "a2"), (chapter_b, "b1"), (chapter_b, "b2")):
+        node = CourseOutlineNode(
+            course_id=course.id, outline_version_id=outline.outline_version_id,
+            parent_node_id=parent.outline_node_id,
+            node_type=OutlineNodeType.KNOWLEDGE_POINT,
+            title=suffix, order_index=0 if suffix.endswith("1") else 1,
+        )
+        session.add(node)
+        session.flush()
+        ordered_ids.append(node.outline_node_id)
+        script = TeachingScriptNode(
+            course_id=course.id,
+            script_version_id=script_version.script_version_id,
+            outline_node_id=node.outline_node_id,
+            content=suffix,
+        )
+        scripts.append(script)
+        session.add(script)
+    session.commit()
+
+    plan = build_media_plan(
+        session,
+        course_id=course.id,
+        node_ids=[script.id for script in reversed(scripts)],
+    )
+    assert [item["outline_node_id"] for item in plan["items"]] == ordered_ids
+
+
+def test_freeze_playlist_uses_preorder_across_multiple_chapters(session, teacher_user):
+    """Freezing must not reintroduce the old flat sibling order bug."""
+    course = _course(session, teacher_user.id)
+    from app.models.course_outline_model import (
+        CourseOutlineNode,
+        CourseOutlineVersion,
+        OutlineLifecycleStatus,
+        TeachingScriptVersion,
+        OutlineNodeType,
+    )
+
+    outline = CourseOutlineVersion(course_id=course.id, version=1, lifecycle_status=OutlineLifecycleStatus.DRAFT)
+    script_version = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        version=1,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+    )
+    session.add_all([outline, script_version])
+    session.flush()
+    chapter_a = CourseOutlineNode(
+        course_id=course.id, outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.CHAPTER, title="A", order_index=0,
+    )
+    chapter_b = CourseOutlineNode(
+        course_id=course.id, outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.CHAPTER, title="B", order_index=1,
+    )
+    session.add_all([chapter_a, chapter_b])
+    session.flush()
+    scripts = []
+    for parent, suffix in ((chapter_a, "a1"), (chapter_a, "a2"), (chapter_b, "b1"), (chapter_b, "b2")):
+        outline_node = CourseOutlineNode(
+            course_id=course.id, outline_version_id=outline.outline_version_id,
+            parent_node_id=parent.outline_node_id,
+            node_type=OutlineNodeType.KNOWLEDGE_POINT, title=suffix,
+            order_index=0 if suffix.endswith("1") else 1,
+        )
+        session.add(outline_node)
+        session.flush()
+        script = TeachingScriptNode(
+            course_id=course.id, script_version_id=script_version.script_version_id,
+            outline_node_id=outline_node.outline_node_id, content=suffix,
+        )
+        session.add(script)
+        scripts.append(script)
+    session.flush()
+    release = MediaRelease(course_id=course.id, created_by=teacher_user.id, status=MediaReleaseStatus.DRAFT)
+    release.ppt_manifest_object_key = "ppt-manifest/p4/preorder.json"
+    session.add(release)
+    session.flush()
+    # This is the historically wrong cross-chapter flat SQL sequence.
+    flat_order = [scripts[0], scripts[2], scripts[1], scripts[3]]
+    storage = get_object_storage()
+    for flat_rank, script in enumerate(flat_order):
+        item = MediaReleaseItem(
+            release_id=release.release_id, course_id=course.id, node_id=script.id,
+            outline_node_id=script.outline_node_id, order_index=flat_rank,
+            script_hash="preorder", status="ready", duration_ms=1_000,
+            audio_object_key=f"tts/p4/{release.release_id}/{script.id}.mp3",
+            audio_sha256="test", subtitle_manifest_object_key=f"subtitle/p4/{script.id}.json",
+            avatar_cues_object_key=f"avatar/p4/{script.id}.json",
+            ppt_mapping_snapshot={"mappings": [{
+                "material_version_id": f"smv-{script.id}", "page_refs": [1],
+            }]},
+        )
+        session.add(item)
+    storage.put(release.ppt_manifest_object_key, json.dumps({
+        "schema": "ppt-manifest/v1", "pages": [], "decks": [
+            {"material_version_id": f"smv-{script.id}", "pages": [{"page": 1}]}
+            for script in scripts
+        ],
+    }).encode(), mime_type="application/json")
+    session.flush()
+
+    frozen = freeze_playlist(session, course_id=course.id, release_id=release.release_id)
+    assert [item["outline_node_id"] for item in frozen["items"]] == [script.outline_node_id for script in scripts]
+    assert [item["offset_ms"] for item in frozen["items"]] == [0, 1_000, 2_000, 3_000]
 
 
 def test_playlist_requires_every_ready_item_and_frozen_ppt_manifest(session, teacher_user):

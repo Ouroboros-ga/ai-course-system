@@ -73,6 +73,14 @@ class Settings(BaseSettings):
     PREP_STRUCTURE_MAX_TOKENS: int = 12000
     PREP_SCRIPT_MAX_TOKENS: int = 4096
     PREP_SCRIPT_BATCH_SIZE: int = 5
+    # Initial (first-draft) prep has its own bounded script budgets so it stays
+    # independent from the incremental rewrite pipeline.  The initial pipeline
+    # groups knowledge-point scripts into several requests (P0 chunking) and
+    # uses a per-request completion budget; a single oversized knowledge point
+    # falls back to its own larger budget instead of failing the whole draft.
+    PREP_INITIAL_SCRIPT_BATCH_SIZE: int = 3
+    PREP_INITIAL_SCRIPT_MAX_TOKENS: int = 4096
+    PREP_INITIAL_SCRIPT_SINGLE_MAX_TOKENS: int = 8192
     # Local-only, explicit debugging aid.  The per-course enable state and
     # captured prompts/responses are stored under this ignored directory; raw
     # model content never enters normal logs or durable diagnostics.

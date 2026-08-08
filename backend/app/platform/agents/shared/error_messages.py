@@ -34,8 +34,18 @@ def safe_prep_error_message(error: BaseException, *, default: str = "备课智�
     """Translate internal Prep/LLM failures into an actionable safe message."""
     for current in iter_exception_chain(error):
         reason_code = getattr(current, "reason_code", "")
+        if reason_code == "input_length_exceeded":
+            return "输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或缩小备课范围后重试。"
         if reason_code == "MODEL_OUTPUT_TRUNCATED":
-            return "模型输出达到长度上限，系统未写入课程草稿；请缩小整理范围后重试。"
+            stage = getattr(current, "stage", "") or ""
+            stage_label = _PREP_STAGE_LABELS.get(stage, "")
+            suffix = "系统已自动分段生成，若仍失败请减少材料数量或拆分课程后重试。"
+            if stage_label:
+                return (
+                    f"模型在「{stage_label}」阶段输出达到长度上限，系统未写入课程草稿；"
+                    f"{suffix}"
+                )
+            return f"模型输出达到长度上限，系统未写入课程草稿；{suffix}"
         if reason_code == "response_format_unsupported":
             return "当前模型网关不支持结构化输出，系统已尝试兼容模式但仍未完成；请检查模型网关配置后重试。"
         if reason_code == "structured_output_invalid":

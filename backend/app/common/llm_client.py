@@ -53,13 +53,15 @@ class LLMError(Exception):
 
 
 def _llm_http_error_reason(*, status_code: int, body: str) -> str:
-    """Classify only the one safe HTTP-400 fallback we support.
+    """Classify only the safe HTTP-400 fallbacks we support.
 
-    Different OpenAI-compatible gateways reject ``json_schema`` with
-    different messages.  We intentionally retain no response text; a stable
-    capability classification is sufficient for callers to retry with their
-    prompt-constrained JSON path.  Other 400s stay unclassified so invalid
-    credentials, models, and request payloads cannot be hidden by a retry.
+    Different OpenAI-compatible gateways reject ``json_schema`` or an
+    oversized context with different messages.  We intentionally retain no
+    response text; a stable capability classification is sufficient for
+    callers to retry with their prompt-constrained JSON path or to show an
+    actionable "input too long" message.  Other 400s stay unclassified so
+    invalid credentials, models, and request payloads cannot be hidden by a
+    retry.
     """
     if status_code != 400:
         return ""
@@ -72,6 +74,22 @@ def _llm_http_error_reason(*, status_code: int, body: str) -> str:
         "structured output",
     )):
         return "response_format_unsupported"
+    if any(marker in normalized for marker in (
+        "context length",
+        "context_length",
+        "maximum context",
+        "max context",
+        "context window",
+        "input is too long",
+        "input_too_long",
+        "input length",
+        "maximum input",
+        "too many tokens",
+        "token limit exceeded",
+        "exceeds the maximum",
+        "exceeded the maximum",
+    )):
+        return "input_length_exceeded"
     return ""
 
 

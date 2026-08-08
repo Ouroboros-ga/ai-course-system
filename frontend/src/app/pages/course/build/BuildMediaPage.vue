@@ -292,7 +292,7 @@ async function load({ quiet = false } = {}) {
         selectedVoicePresetVersion.value = voice?.version || ''
       }
       if (!selectedAvatarPresetId.value || !presetCatalog.value.avatars.some(item => item.preset_id === selectedAvatarPresetId.value && item.version === selectedAvatarPresetVersion.value)) {
-        const avatar = presetCatalog.value.avatars[0]
+        const avatar = presetCatalog.value.avatars.find(item => item.preset_id === 'platform-instructor-real-v1') || presetCatalog.value.avatars[0]
         selectedAvatarPresetId.value = avatar?.preset_id || ''
         selectedAvatarPresetVersion.value = avatar?.version || ''
       }

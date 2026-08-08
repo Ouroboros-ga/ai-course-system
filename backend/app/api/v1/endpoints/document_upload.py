@@ -1,4 +1,4 @@
-﻿"""
+"""
 文档上传与解析 API
 处理文件上传、文档解析、AI 分析
 """
@@ -58,9 +58,9 @@ async def upload_document(
             f.write(content)
 
         file_size = file_path.stat().st_size
-        if file_size > 50 * 1024 * 1024:
+        if file_size > 100 * 1024 * 1024:
             file_path.unlink()
-            return unified_response(code=400, message="文件大小超过限制（最大50MB）", data=None)
+            return unified_response(code=400, message="文件大小超过限制（最大100MB）", data=None)
 
         # 创建课程记录
         course = Course(

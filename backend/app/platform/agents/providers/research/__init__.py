@@ -1,4 +1,7 @@
-"""Research-domain providers: web research and question bank."""
+"""Research-domain providers: scholarly search, web research and question bank."""
+
+from .access import CourseAccessResearchScopePort
+from .paper_search import ArxivPaperSearchProvider
 
 from .question_bank import (
     CallableQuestionBankPort,
@@ -17,6 +20,8 @@ __all__ = [
     "CallableQuestionBankPort",
     "CallableQuestionGenerationPort",
     "CallableWebResearchPort",
+    "ArxivPaperSearchProvider",
+    "CourseAccessResearchScopePort",
     "make_session_scoped_question_bank_port",
     "make_session_scoped_question_generation_port",
     "make_session_scoped_web_research_port",

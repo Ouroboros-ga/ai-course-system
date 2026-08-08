@@ -1,5 +1,37 @@
 import { computed, ref, watch } from 'vue'
 
+function sameId(left, right) {
+  return left != null && right != null && String(left) === String(right)
+}
+
+/** Match a course node to its immutable playlist item. Node ids are preferred. */
+export function findPlaylistItemIndex(items, node) {
+  if (!Array.isArray(items) || !node) return -1
+  const nodeIndex = items.findIndex(item => sameId(item?.nodeId, node.id))
+  if (nodeIndex >= 0) return nodeIndex
+  return items.findIndex(item => sameId(item?.outlineNodeId, node.outlineNodeId))
+}
+
+/** Resolve the playlist item whose global offset contains the current time. */
+export function findPlaylistItemIndexAtTime(items, seconds) {
+  if (!Array.isArray(items) || !items.length) return -1
+  const timeMs = Math.max(0, Number(seconds) || 0) * 1000
+  return items.findIndex(item => {
+    const start = Math.max(0, Number(item?.offsetMs) || 0)
+    const end = start + Math.max(0, Number(item?.durationMs) || 0)
+    return end > start && timeMs >= start && timeMs < end
+  })
+}
+
+/** Resolve a directory click to the playlist clock, with legacy node fallback. */
+export function resolvePlaylistSelection(items, node) {
+  const playlistIndex = findPlaylistItemIndex(items, node)
+  const targetTime = playlistIndex >= 0
+    ? Math.max(0, Number(items[playlistIndex]?.offsetMs) || 0) / 1000
+    : Math.max(0, Number(node?.timestampStart) || 0)
+  return { playlistIndex, targetTime }
+}
+
 /** Maps the frozen course playlist to one active HTMLAudioElement source. */
 export function usePlaylistPlayback(playlist) {
   const activeIndex = ref(0)
@@ -9,8 +41,8 @@ export function usePlaylistPlayback(playlist) {
 
   function selectByNode(nodeId) {
     const index = playlist.value?.items?.findIndex(item => (
-      String(item.nodeId) === String(nodeId)
-      || String(item.outlineNodeId) === String(nodeId)
+      sameId(item.nodeId, nodeId)
+      || sameId(item.outlineNodeId, nodeId)
     )) ?? -1
     if (index >= 0) activeIndex.value = index
     return index >= 0
@@ -30,10 +62,10 @@ export function usePlaylistPlayback(playlist) {
   }
 
   function seekGlobal(seconds) {
-    const ms = Math.max(0, Number(seconds) || 0) * 1000
-    const index = playlist.value?.items?.findIndex(item => ms >= item.offsetMs && ms < item.offsetMs + item.durationMs) ?? -1
+    const index = findPlaylistItemIndexAtTime(playlist.value?.items, seconds)
     if (index < 0) return { changed: false, localSeconds: 0 }
     activeIndex.value = index
+    const ms = Math.max(0, Number(seconds) || 0) * 1000
     return { changed: true, localSeconds: Math.max(0, (ms - playlist.value.items[index].offsetMs) / 1000) }
   }
 

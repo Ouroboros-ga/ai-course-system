@@ -20,6 +20,7 @@ from app.schemas.common_schema import (
     UserInfo,
     RegisterRequest,
     ModifyUserRequest,
+    ProfileUpdateRequest,
 )
 from app.core.exceptions import unified_response
 
@@ -42,6 +43,10 @@ def _platform_permissions(session: Session, user_id: int) -> list[str]:
         getattr(assignment.permission, "value", str(assignment.permission))
         for assignment in assignments
     })
+
+
+def _nickname(user: User) -> str:
+    return user.real_name or user.username
 
 
 @router.post("/login", response_model=LoginResponse)
@@ -78,6 +83,7 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
             userInfo=UserInfo(
                 id=str(user.id),
                 username=user.username,
+                nickname=_nickname(user),
                 role=user.role.value if hasattr(user.role, "value") else user.role,
                 platform_permissions=_platform_permissions(session, int(user.id)),
             ),
@@ -123,6 +129,7 @@ async def user_register(
             userInfo=UserInfo(
                 id=str(new_user.id),
                 username=new_user.username,
+                nickname=_nickname(new_user),
                 role=new_user.role.value if hasattr(new_user.role, "value") else new_user.role,
                 platform_permissions=_platform_permissions(session, int(new_user.id)),
             ),
@@ -136,12 +143,68 @@ async def get_my_info(
     session: Session = Depends(get_session),
 ):
     """Return identity plus explicit platform permissions for capability views."""
+    db_user = session.get(User, int(current_user["user_id"]))
     data = {
         **current_user,
+        "username": db_user.username if db_user else current_user.get("username", ""),
+        "nickname": _nickname(db_user) if db_user else current_user.get("username", ""),
         "role": "admin" if current_user.get("role") == "admin" else "user",
         "platform_permissions": _platform_permissions(session, int(current_user["user_id"])),
     }
     return unified_response(code=200, message="获取成功", data=data)
+
+
+@router.patch("/me/profile", response_model=UnifiedResponse)
+async def update_my_profile(
+    request: ProfileUpdateRequest,
+    current_user=Depends(get_current_user),
+    session: Session = Depends(get_session),
+):
+    """Change the display nickname and/or password for the logged-in user.
+
+    The account ID and login username are immutable here.  Password changes
+    are fail-closed and require verification of the existing password.
+    """
+    user = session.get(User, int(current_user["user_id"]))
+    if user is None:
+        return unified_response(code=404, message="用户不存在", data=None)
+
+    changing_password = request.new_password is not None and request.new_password != ""
+    changing_nickname = request.nickname is not None
+    if not changing_password and not changing_nickname:
+        return unified_response(code=400, message="没有可保存的资料变更", data=None)
+    if changing_password:
+        if not request.current_password or not verify_password(request.current_password, user.hashed_password):
+            return unified_response(code=401, message="原密码验证失败", data=None)
+        user.hashed_password = get_password_hash(request.new_password)
+        user.auth_version += 1
+    if changing_nickname:
+        nickname = request.nickname.strip()
+        if not nickname:
+            return unified_response(code=422, message="昵称不能为空", data=None)
+        user.real_name = nickname
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    access_token = create_access_token(
+        data={
+            "sub": str(user.id),
+            "username": user.username,
+            "role": user.role.value if hasattr(user.role, "value") else user.role,
+            "school_id": user.school_id,
+            "auth_version": user.auth_version,
+        },
+        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+    )
+    return unified_response(code=200, message="资料已更新", data={
+        "token": access_token,
+        "userInfo": UserInfo(
+            id=str(user.id), username=user.username, nickname=_nickname(user),
+            role=user.role.value if hasattr(user.role, "value") else user.role,
+            platform_permissions=_platform_permissions(session, int(user.id)),
+        ).model_dump(),
+    })
 
 
 @router.post("/modify", response_model=LoginResponse)
@@ -163,14 +226,10 @@ async def user_modify(
     if not verify_password(request.password, user.hashed_password):
         return LoginResponse(code=401, message="密码错误", data=None)
 
-    # 3. 检查新用户名是否已被占用
+    # 登录名是稳定的账号标识，不再通过兼容接口修改。昵称请使用
+    # PATCH /user/me/profile；保留本接口仅用于旧客户端的密码更新。
     if request.newUsername and request.newUsername != user.username:
-        existing = session.exec(
-            select(User).where(User.username == request.newUsername)
-        ).first()
-        if existing:
-            return LoginResponse(code=409, message="新用户名已被占用", data=None)
-        user.username = request.newUsername
+        return LoginResponse(code=400, message="登录名不可修改，请修改个人昵称", data=None)
 
     # 4. 修改密码
     if request.newPassword:
@@ -200,7 +259,7 @@ async def user_modify(
         message="修改成功",
         data=LoginResponseData(
             token=access_token,
-            userInfo=UserInfo(id=str(user.id), username=user.username),
+            userInfo=UserInfo(id=str(user.id), username=user.username, nickname=_nickname(user)),
         ),
     )
 

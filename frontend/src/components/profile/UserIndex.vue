@@ -86,7 +86,9 @@ const handleLoginSend = async (data) => {
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
-        username: res.userInfo.username || data.username
+        username: res.userInfo.username || data.username,
+        nickname: res.userInfo.nickname || res.userInfo.username || data.username,
+        platform_permissions: res.userInfo.platform_permissions || []
       },
       role: res.userInfo.role
     })
@@ -120,7 +122,9 @@ const handleRegisterSend = async (data) => {
       token: res.token,
       userInfo: {
         id: res.userInfo.id,
-        username: res.userInfo.username || data.username
+        username: res.userInfo.username || data.username,
+        nickname: res.userInfo.nickname || res.userInfo.username || data.username,
+        platform_permissions: res.userInfo.platform_permissions || []
       },
       role: res.userInfo.role
     })
@@ -172,21 +176,12 @@ const handleSavePreference = (prefs) => {
   showPreferencePanel.value = false
 }
 
-// 10. 更新用户名
+// 10. 更新昵称
 const handleUpdateUsername = async (data) => {
   try {
-    const params = {
-      id: counter.userData.id,
-      username: counter.userData.username,
-      password: data.oldPassword,
-      newUsername: data.username,
-      newPassword: "",
-    }
-    const res = await api.user.modify(params)
-    localStorage.setItem('token', res.token)
-    localStorage.setItem('username', res.userInfo.username)
-    counter.userData.username = res.userInfo.username
-    showToast("用户名修改成功", "success")
+    const res = await api.user.updateMyProfile({ nickname: data.nickname })
+    counter.setAuth({ token: res.token, userInfo: res.userInfo, role: res.userInfo.role, platform_permissions: res.userInfo.platform_permissions })
+    showToast("昵称修改成功", "success")
     showSettingsPanel.value = false
   } catch (error) {
     console.error('更新用户名失败', error)
@@ -197,15 +192,8 @@ const handleUpdateUsername = async (data) => {
 // 11. 更新密码
 const handleUpdatePassword = async (data) => {
   try {
-    const params = {
-      id: counter.userData.id,
-      username: counter.userData.username,
-      password: data.oldPassword,
-      newPassword: data.newPassword,
-      newUsername: "",
-    }
-    const res = await api.user.modify(params)
-    localStorage.setItem('token', res.token)
+    const res = await api.user.updateMyProfile({ current_password: data.oldPassword, new_password: data.newPassword })
+    counter.setAuth({ token: res.token, userInfo: res.userInfo, role: res.userInfo.role, platform_permissions: res.userInfo.platform_permissions })
     showToast("密码修改成功", "success")
     showSettingsPanel.value = false
   } catch (error) {
@@ -244,9 +232,9 @@ const handleLogout = () => {
     <div v-else class="profile-content">
       <div class="user-card">
         <div class="user-info">
-          <div class="avatar">{{ counter.userData.username[0].toUpperCase() }}</div>
+          <div class="avatar">{{ (counter.displayName || counter.userData.username || 'U')[0].toUpperCase() }}</div>
           <div>
-            <div class="username">{{ counter.userData.username }}</div>
+            <div class="username">{{ counter.displayName || counter.userData.username }}</div>
             <div class="user-id">ID: {{ counter.userData.id }}</div>
           </div>
         </div>

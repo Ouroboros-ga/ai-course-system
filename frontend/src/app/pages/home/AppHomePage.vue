@@ -43,7 +43,7 @@ onMounted(async () => {
     <ParticleBackground class="sfx-home-particles" />
     <div class="sfx-home">
       <header class="sfx-home-header">
-        <h1 class="sfx-t-title1">{{ counter.userData.username ? `${counter.userData.username}，欢迎回来` : '工作首页' }}</h1>
+        <h1 class="sfx-t-title1">{{ counter.displayName ? `${counter.displayName}，欢迎回来` : '工作首页' }}</h1>
         <p class="sfx-t-ui sfx-t-secondary">继续你中断的学习</p>
       </header>
 

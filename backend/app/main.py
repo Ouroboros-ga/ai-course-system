@@ -140,6 +140,7 @@ from app.api.v1.endpoints import (
     facade,             # Phase A 门面层
     safety,             # G6 安全围栏与沙箱治理
     web_research,       # G7 WebResearchTool
+    research_agent,     # ResearchAgent evidence-first scholarly research
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
     graphrag,           # GraphRAG + immutable CourseKnowledgeBundle
@@ -239,8 +240,13 @@ async def recover_durable_task_queues() -> None:
 # disabled -> no injection -> the endpoint stays 503. KG-MEST reports and
 # course sidecars are optional enrichments; only runtime/LLM configuration
 # controls injection. Never blocks startup; see bootstrap.py.
-from app.platform.agents.bootstrap import bootstrap_prep_agent, bootstrap_teaching_agent
+from app.platform.agents.bootstrap import (
+    bootstrap_prep_agent,
+    bootstrap_research_agent,
+    bootstrap_teaching_agent,
+)
 bootstrap_prep_agent(app)
+bootstrap_research_agent(app)
 bootstrap_teaching_agent(app)
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）
@@ -314,6 +320,7 @@ app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围�
 
 # G7: WebResearchTool 受控研究
 app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
+app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=["ResearchAgent"])
 
 # G8: 媒体时间轴与数字人
 app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒体时间轴"])

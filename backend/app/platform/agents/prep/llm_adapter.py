@@ -249,6 +249,7 @@ class PrepLLMAdapter:
         *,
         run_id: str = "",
         trace_id: str = "",
+        max_tokens: int | None = None,
     ) -> "TeachingScriptNodeDraft":
         """Stage 3 (single): write a TeachingScriptNode for one knowledge point."""
         from app.schemas.controlled_prep import TeachingScriptNodeDraft as _Result
@@ -266,6 +267,7 @@ class PrepLLMAdapter:
             output_schema=_Result,
             run_id=run_id,
             trace_id=trace_id,
+            max_tokens=max_tokens,
         )
         return self._parsed_or_validate(response, _Result)
 
@@ -277,6 +279,7 @@ class PrepLLMAdapter:
         *,
         run_id: str = "",
         trace_id: str = "",
+        max_tokens: int | None = None,
     ) -> list["TeachingScriptNodeDraft"]:
         """Stage 3 (batch): write TeachingScriptNodes for multiple knowledge points.
 
@@ -298,6 +301,7 @@ class PrepLLMAdapter:
             output_schema=_Batch,
             run_id=run_id,
             trace_id=trace_id,
+            max_tokens=max_tokens,
         )
         batch = self._parsed_or_validate(response, _Batch)
         return list(batch.scripts)

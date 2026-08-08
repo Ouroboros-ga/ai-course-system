@@ -32,11 +32,12 @@ from typing import Any, Callable, Mapping
 
 
 class AgentType(str, Enum):
-    """Stable identifiers for the three integrated agents."""
+    """Stable identifiers for integrated agents."""
 
     EDU = "edu"        # TeachingAgent: per-(student, course) Q&A
     PREP = "prep"      # 备课 Agent: per-draft/outline-node planning
     CODING = "coding"  # Coding Agent: per-(student, course) code diagnosis
+    RESEARCH = "research"  # ResearchAgent: course-bound evidence-first research
 
 
 class ExecutionMode(str, Enum):

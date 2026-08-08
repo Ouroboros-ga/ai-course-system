@@ -9,7 +9,7 @@ from sqlmodel import Session, func, select
 
 from app.core.exceptions import reject_state_conflict, reject_validation_failed
 from app.core.time_utils import utcnow_aware
-from app.models.course_outline_model import CoursePptMapping, TeachingScriptNode
+from app.models.course_outline_model import CoursePptMapping, TeachingScriptNode, TeachingScriptVersion
 from app.models.media_release_model import (
     MediaBuildBatch,
     MediaBuildBatchStatus,
@@ -287,11 +287,34 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
     outline_rows = list(session.exec(select(CourseOutlineNode).where(
         CourseOutlineNode.course_id == course_id,
     )).all())
+    # Use the same tree pre-order as the learner rail/publication gate. A
+    # flat order_index is only unique within a parent and breaks multi-chapter
+    # playlist ordering.
+    from app.services.unified_learning_service import ordered_outline_nodes
+    version_ids = {node.script_version_id for node in nodes}
+    script_versions = {
+        version.script_version_id: version
+        for version in session.exec(select(TeachingScriptVersion).where(
+            TeachingScriptVersion.script_version_id.in_(version_ids),
+        )).all()
+    } if version_ids else {}
+    tree_ranks: dict[str, int] = {}
+    for version in script_versions.values():
+        ordered = ordered_outline_nodes(
+            session,
+            outline_version_id=version.outline_version_id,
+            knowledge_points_only=True,
+        )
+        tree_ranks.update({node.outline_node_id: rank for rank, node in enumerate(ordered)})
     outline_order = {
         row.outline_node_id: (row.order_index, row.outline_node_id)
         for row in outline_rows
     }
-    nodes.sort(key=lambda n: (*outline_order.get(n.outline_node_id, (10**9, n.outline_node_id or "")), n.id or 0))
+    nodes.sort(key=lambda n: (
+        tree_ranks.get(n.outline_node_id, 10**9),
+        *outline_order.get(n.outline_node_id, (10**9, n.outline_node_id or "")),
+        n.id or 0,
+    ))
     if node_ids:
         missing = sorted(set(node_ids) - {int(n.id) for n in nodes if n.id})
         if missing:
@@ -545,9 +568,31 @@ def freeze_playlist(session: Session, *, course_id: int, release_id: str) -> dic
         reject_validation_failed("媒体草稿不存在")
     if release.status != MediaReleaseStatus.DRAFT:
         reject_state_conflict("仅未激活的媒体草稿可冻结课程播放清单")
-    items = list(session.exec(select(MediaReleaseItem).where(MediaReleaseItem.release_id == release_id).order_by(MediaReleaseItem.order_index)).all())
+    items = list(session.exec(select(MediaReleaseItem).where(MediaReleaseItem.release_id == release_id)).all())
     if not items:
         reject_state_conflict("媒体草稿没有知识点条目")
+    # order_index is only sibling-unique; freeze in canonical outline
+    # pre-order, shared with planning/publication/learner playback.
+    from app.models.course_outline_model import TeachingScriptNode, TeachingScriptVersion
+    from app.services.unified_learning_service import ordered_outline_nodes
+    script_node_ids = [item.node_id for item in items]
+    script_nodes = list(session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.id.in_(script_node_ids),
+    )).all()) if script_node_ids else []
+    version_ids = {node.script_version_id for node in script_nodes}
+    versions = list(session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.script_version_id.in_(version_ids),
+    )).all()) if version_ids else []
+    tree_ranks = {}
+    for version in versions:
+        tree_ranks.update({node.outline_node_id: rank for rank, node in enumerate(
+            ordered_outline_nodes(session, outline_version_id=version.outline_version_id, knowledge_points_only=True)
+        )})
+    items.sort(key=lambda item: (tree_ranks.get(item.outline_node_id, 10**9), item.order_index, item.id or 0))
+    for rank, item in enumerate(items):
+        item.order_index = rank
+        session.add(item)
+
     if not release.ppt_manifest_object_key:
         reject_state_conflict("课程 PPT manifest 尚未冻结")
     if release.audio_playlist_object_key:

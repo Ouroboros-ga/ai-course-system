@@ -12,6 +12,7 @@ from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
 
+from app.core.config import settings
 from app.platform.agents.contracts.llm import StructuredOutputError
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
@@ -88,6 +89,8 @@ class ControlledPrepWorkflow:
         request: ControlledPrepInput,
         outline: OutlinePlannerResult,
         candidate_id: str,
+        *,
+        max_tokens: int | None = None,
     ) -> TeachingScriptNodeDraft:
         candidate = next(
             (item for item in outline.candidates if item.candidate_id == candidate_id),
@@ -101,9 +104,10 @@ class ControlledPrepWorkflow:
                 raise StructuredOutputError("script_writer returned a different candidate_id")
             return result
 
+        kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
         return await self._run_stage(
             "write_script",
-            self._call_stage("write_script", request, outline, candidate_id),
+            self._call_stage("write_script", request, outline, candidate_id, **kwargs),
             validate,
         )
 
@@ -112,6 +116,8 @@ class ControlledPrepWorkflow:
         request: ControlledPrepInput,
         outline: OutlinePlannerResult,
         candidates: list[Any],
+        *,
+        max_tokens: int | None = None,
     ) -> list[TeachingScriptNodeDraft]:
         """Generate all first-round scripts in one structured LLM request."""
         candidate_ids = {candidate.candidate_id for candidate in candidates}
@@ -123,9 +129,10 @@ class ControlledPrepWorkflow:
                 self._assert_evidence_ids(script, request.evidence)
             return scripts
 
+        kwargs = {} if max_tokens is None else {"max_tokens": max_tokens}
         return await self._run_stage(
             "write_scripts_batch",
-            self._call_stage("write_scripts_batch", request, outline, candidates),
+            self._call_stage("write_scripts_batch", request, outline, candidates, **kwargs),
             validate,
         )
 
@@ -144,10 +151,10 @@ class ControlledPrepWorkflow:
             validate,
         )
 
-    async def _call_stage(self, stage: str, *args: Any) -> Any:
+    async def _call_stage(self, stage: str, *args: Any, **kwargs: Any) -> Any:
         """Call one stage and attach its name to errors for diagnosis."""
         try:
-            return await self._stage_method(stage)(*args)
+            return await self._stage_method(stage)(*args, **kwargs)
         except Exception as error:  # noqa: BLE001 - preserve original type
             if not getattr(error, "stage", ""):
                 try:
@@ -176,6 +183,148 @@ class ControlledPrepWorkflow:
                 except Exception:  # pragma: no cover - unusual exception type
                     pass
             raise
+
+    # -- initial script chunking (P0/P2) -----------------------------------
+
+    def _group_max_tokens(self) -> int:
+        return max(1, int(getattr(settings, "PREP_INITIAL_SCRIPT_MAX_TOKENS", 4096)))
+
+    def _single_script_max_tokens(self) -> int:
+        return max(
+            int(getattr(settings, "PREP_INITIAL_SCRIPT_SINGLE_MAX_TOKENS", 8192)),
+            self._group_max_tokens(),
+        )
+
+    @staticmethod
+    def _estimate_script_tokens(
+        request: ControlledPrepInput,
+        candidate: Any,
+    ) -> int:
+        """Heuristic: a script tracks the length of its bound evidence.
+
+        Chinese text is roughly one token per character for these gateways;
+        the fixed overhead reserves room for JSON metadata, claims and the
+        paragraph_evidence array.  This is only used to pick group sizes.
+        """
+        allowed = {item.evidence_id for item in request.evidence}
+        bound_ids = {
+            item.evidence_id
+            for item in request.evidence
+            if item.evidence_id in candidate.evidence_ids
+        }
+        evidence_len = sum(len(item.text) for item in request.evidence if item.evidence_id in bound_ids)
+        return int(evidence_len * 0.9) + 500
+
+    def _group_script_candidates(
+        self,
+        request: ControlledPrepInput,
+        candidates: list[Any],
+        *,
+        batch_size: int,
+        group_max_tokens: int,
+    ) -> list[list[Any]]:
+        """Pack knowledge points so each request stays inside the output budget.
+
+        A candidate whose own estimate already exceeds the group budget is
+        returned as a singleton group; the caller then routes it through the
+        single-node ``write_script`` path with the larger budget instead of
+        truncating a batch.
+        """
+        groups: list[list[Any]] = []
+        current: list[Any] = []
+        current_estimate = 0
+        for candidate in candidates:
+            estimate = self._estimate_script_tokens(request, candidate)
+            if estimate >= group_max_tokens:
+                if current:
+                    groups.append(current)
+                    current = []
+                    current_estimate = 0
+                groups.append([candidate])
+                continue
+            if current and (
+                len(current) >= batch_size
+                or current_estimate + estimate > group_max_tokens
+            ):
+                groups.append(current)
+                current = []
+                current_estimate = 0
+            current.append(candidate)
+            current_estimate += estimate
+        if current:
+            groups.append(current)
+        return groups or [[]]
+
+    async def _write_scripts_chunked(
+        self,
+        request: ControlledPrepInput,
+        outline: OutlinePlannerResult,
+        candidates: list[Any],
+    ) -> list[TeachingScriptNodeDraft]:
+        """Generate first-round scripts in bounded, budget-aware requests."""
+        batch_size = max(1, int(getattr(settings, "PREP_INITIAL_SCRIPT_BATCH_SIZE", 3)))
+        group_max_tokens = self._group_max_tokens()
+        groups = self._group_script_candidates(
+            request,
+            candidates,
+            batch_size=batch_size,
+            group_max_tokens=group_max_tokens,
+        )
+        scripts: list[TeachingScriptNodeDraft] = []
+        for group in groups:
+            scripts.extend(await self._generate_scripts_for_group(request, outline, group))
+        return scripts
+
+    async def _generate_scripts_for_group(
+        self,
+        request: ControlledPrepInput,
+        outline: OutlinePlannerResult,
+        group: list[Any],
+    ) -> list[TeachingScriptNodeDraft]:
+        """Generate one group, splitting it on output truncation.
+
+        A truncated batch is a signal that the completion budget is too small
+        for this group.  Splitting in half and retrying keeps the draft
+        generation working for legitimately large courses instead of failing
+        the whole build; a single node that still truncates falls back to the
+        larger single-node budget.
+        """
+        group_max_tokens = self._group_max_tokens()
+        if len(group) == 1 and self._estimate_script_tokens(request, group[0]) >= group_max_tokens:
+            # Oversized single node: go straight to the larger single-node
+            # budget instead of paying for a batch call that will truncate.
+            return [await self.write_script(
+                request,
+                outline,
+                group[0].candidate_id,
+                max_tokens=self._single_script_max_tokens(),
+            )]
+        try:
+            return await self.write_scripts_batch(
+                request,
+                outline,
+                group,
+                max_tokens=group_max_tokens,
+            )
+        except StructuredOutputError as error:
+            if error.reason_code != "MODEL_OUTPUT_TRUNCATED":
+                raise
+            logger.warning(
+                "Initial script batch truncated (stage=write_scripts_batch, group=%d); "
+                "splitting group for retry.",
+                len(group),
+            )
+            if len(group) == 1:
+                return [await self.write_script(
+                    request,
+                    outline,
+                    group[0].candidate_id,
+                    max_tokens=self._single_script_max_tokens(),
+                )]
+            midpoint = len(group) // 2
+            left = await self._generate_scripts_for_group(request, outline, group[:midpoint])
+            right = await self._generate_scripts_for_group(request, outline, group[midpoint:])
+            return [*left, *right]
 
     def compile_patch(
         self,
@@ -302,9 +451,16 @@ class ControlledPrepWorkflow:
         if not candidates:
             raise ValueError("no knowledge point candidate selected")
         if len(candidates) == 1:
-            scripts = [await self.write_script(request, outline, candidates[0].candidate_id)]
+            # A single knowledge point gets the larger single-node budget so a
+            # legitimately long script never fails the whole first draft.
+            scripts = [await self.write_script(
+                request,
+                outline,
+                candidates[0].candidate_id,
+                max_tokens=self._single_script_max_tokens(),
+            )]
         else:
-            scripts = await self.write_scripts_batch(request, outline, candidates)
+            scripts = await self._write_scripts_chunked(request, outline, candidates)
         await emit("scripts", 80, scripts)
         verifications = []
         for index, script in enumerate(scripts, start=1):

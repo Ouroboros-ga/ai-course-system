@@ -147,3 +147,7 @@ backend/media/
 /research/**/artifacts/**/*.ckpt
 /research/**/artifacts/**/cache/
 .claude/plans/
+
+# 依赖缓存 / 本地 QA 产物（不入库）
+.pnpm-store/
+backend/.qa/

@@ -194,6 +194,28 @@ def test_relative_local_storage_path_is_backend_rooted(monkeypatch, tmp_path):
     assert LocalStorageProvider(explicit).root_dir == explicit
 
 
+def test_playlist_node_alignment_ignores_order_but_rejects_missing_nodes():
+    """P0: a flat-order (legacy) playlist with the same node set must NOT be
+    rejected, while a missing/foreign node stays fail-closed."""
+    from app.services.media_release_service import _playlist_node_alignment
+
+    expected = ["on_a1", "on_a2", "on_b1", "on_b2"]
+    # Legacy flat order: same set, different sequence -> set ok, order differs.
+    flat_order = ["on_a1", "on_b1", "on_a2", "on_b2"]
+    set_mismatch, order_differs = _playlist_node_alignment(expected, flat_order)
+    assert set_mismatch is False
+    assert order_differs is True
+    # Identical order -> fully aligned.
+    assert _playlist_node_alignment(expected, list(expected)) == (False, False)
+    # Missing node -> fail-closed.
+    assert _playlist_node_alignment(expected, ["on_a1", "on_a2", "on_b1"]) == (True, True)
+    # Foreign node -> fail-closed.
+    assert _playlist_node_alignment(expected, [*expected, "on_foreign"]) == (True, True)
+    # Empty ids on both sides are ignored (no crash, no phantom mismatch).
+    assert _playlist_node_alignment([""], []) == (False, True)
+    assert _playlist_node_alignment([], []) == (False, False)
+
+
 def _create_release_via_api(
     client, token: str, course_id: int,
     *,

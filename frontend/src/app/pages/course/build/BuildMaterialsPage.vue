@@ -152,7 +152,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 <template>
   <section class="materials-stage">
     <section class="upload-panel" aria-labelledby="upload-title">
-      <div class="upload-copy"><FilePlus2 :size="22" /><div><h3 id="upload-title" class="sfx-panel-title">添加课程材料</h3><p class="sfx-t-caption sfx-t-secondary">支持 PPT、PPTX、PDF、DOC、DOCX；单份最大 50MB。可为每份资料指定教学角色。</p></div></div>
+      <div class="upload-copy"><FilePlus2 :size="22" /><div><h3 id="upload-title" class="sfx-panel-title">添加课程材料</h3><p class="sfx-t-caption sfx-t-secondary">支持 PPT、PPTX、PDF、DOC、DOCX；单份最大 100MB。可为每份资料指定教学角色。</p></div></div>
       <input ref="inputRef" class="sr-only" type="file" multiple accept=".ppt,.pptx,.pdf,.doc,.docx" :disabled="uploading" @change="selectFiles" />
       <SfxButton variant="secondary" :disabled="uploading" @click="chooseFiles"><Upload :size="16" /> 选择文件</SfxButton>
       <div v-if="pendingFiles.length" class="pending-list">
