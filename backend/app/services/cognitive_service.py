@@ -34,6 +34,7 @@ from app.models.progress_model import LearningProgress, NodeProgress
 from app.domain.learning.evidence import LearningEvidence, EvidenceType
 from app.domain.learning.mastery_state import MasteryState, MasteryLevel, MasterySource
 from app.services.knowledge_node_identity_service import resolve_node_id
+from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 
 # 最小样本量阈值：低于此值时输出 unknown
 MIN_SAMPLE_FOR_PERFORMANCE = 3
@@ -519,6 +520,7 @@ def record_scored_evidence(
         existing.question_attempt_id = attempt.id
         existing.event_refs = event_refs
         session.add(existing)
+        upsert_learning_evidence_context(session, existing)
         return existing
 
     record = LearningEvidenceRecord(
@@ -537,4 +539,5 @@ def record_scored_evidence(
         event_refs=event_refs,
     )
     session.add(record)
+    upsert_learning_evidence_context(session, record)
     return record

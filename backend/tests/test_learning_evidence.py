@@ -21,6 +21,7 @@ from sqlmodel import select
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.cognitive_state_model import LearningEvidenceRecord
+from app.models.unified_learning_model import LearningEvidenceContext
 from app.models.question_bank_model import (
     QuestionBankItem,
     QuestionAttempt,
@@ -372,6 +373,16 @@ def test_record_scored_evidence_idempotent(session):
 
     count = len(_evidence_for_student(session, student.id, course.id))
     assert count == 1
+    contexts = session.exec(
+        select(LearningEvidenceContext).where(
+            LearningEvidenceContext.evidence_id == first.evidence_id,
+        )
+    ).all()
+    assert len(contexts) == 1
+    # Legacy question attempts do not carry release identity; the adapter
+    # keeps it unknown instead of attributing evidence to the active release.
+    assert contexts[0].source_release_id is None
+    assert contexts[0].outline_node_id is None
 
 
 def test_record_scored_evidence_rejects_ungraded_attempt(session):

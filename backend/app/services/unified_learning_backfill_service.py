@@ -10,7 +10,9 @@ from sqlmodel import Session, select
 from app.models.course_build_model import CourseRelease
 from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
 from app.models.progress_model import LearningProgress, NodeProgress
+from app.models.cognitive_state_model import LearningEvidenceRecord
 from app.models.unified_learning_model import LearningEventType
+from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 from app.services.unified_learning_service import record_event
 
 
@@ -23,6 +25,7 @@ def backfill_learning_projection(session: Session, *, batch_id: str, course_id: 
     releases = session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id) if course_id else select(CourseRelease)).all()
     emitted = 0
     unknown = 0
+    evidence_contexts = 0
     for release in releases:
         if not release.outline_version_id:
             continue
@@ -56,5 +59,11 @@ def backfill_learning_projection(session: Session, *, batch_id: str, course_id: 
                     emitted += 1
                 except ValueError:
                     unknown += 1
+    evidence_query = select(LearningEvidenceRecord)
+    if course_id is not None:
+        evidence_query = evidence_query.where(LearningEvidenceRecord.course_id == course_id)
+    for evidence in session.exec(evidence_query).all():
+        upsert_learning_evidence_context(session, evidence)
+        evidence_contexts += 1
     session.commit()
-    return {"batch_id": batch_id, "emitted": emitted, "unknown": unknown}
+    return {"batch_id": batch_id, "emitted": emitted, "unknown": unknown, "evidence_contexts": evidence_contexts}

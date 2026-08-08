@@ -577,3 +577,10 @@ Prep 只消费课程建设上下文、草稿和证据引用，不新增 LLM-faci
 Prep Agent 不新增 LLM-facing learning Tool，不读取或写入学生学习事件、投影、认知或
 推荐记录。统一学习数据的 planned Port/Provider 仅供 Teaching/Coding 运行时未来适配；
 Prep 保持确定性 Dependencies 与 PatchProposal 边界。
+
+统一学习数据契约字段（`LearningContextPort`、`LearningProjectionPort`、
+`LearningEvidenceContextPort`）及 `StudentStateTool` / `CognitionTool` /
+`LearningEventTool` 的请求、返回、权限和 `unknown/pending/degraded/not_available`
+语义见 `docs/phase1/TeachingAgent运行边界与课程解析降级.md`；它们当前均为
+`planned/unimplemented`。Prep Agent 不消费这些接口，也不增加任何 LLM-facing learning
+tool，不能写学生学习数据。

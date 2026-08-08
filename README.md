@@ -54,7 +54,7 @@ P5.1/P5.2 已通过本地 fake provider、SQLite 迁移、上传隔离和前端�
 
 ### 2026-08-07 统一学习数据链
 
-学习页面现在以 `course_id + release_id + outline_node_id` 作为知识点学习身份。学习事件写入不可变 `learning_events`，再投影到学生学习状态和教师课程统计；曝光/完成与评分型认知证据分离。学生学习轨道直接显示自己的完成进度，并以双层状态显示“已掌握/待掌握/需要更多证据/暂不可分析”；点击状态后按需读取认知详情，认知不可用不阻断学习。新学习页已接入 `learning-context`、事件写入和显式完成接口，刷新后从当前 release 投影恢复最近锚点；失败事件暂存浏览器待发队列。教师 `/app/course/:courseId/analytics` 已读取统一统计投影。接口与 Agent planned Port/Tool 边界见 [统一学习进度认知推荐统计契约](docs/phase1/统一学习进度认知推荐统计契约.md)。
+学习页面现在以 `course_id + release_id + outline_node_id` 作为知识点学习身份。学习事件写入不可变 `learning_events`，再投影到学生学习状态和教师课程统计；曝光/完成与评分型认知证据分离。正式评分产生的 `LearningEvidenceRecord` 会以 `LearningEvidenceContext` 关联图谱节点与可安全确定的 release/outline 身份；无法唯一映射时保留 unknown，不猜测来源。学生学习轨道直接显示自己的完成进度，并以双层状态显示“已掌握/待掌握/需要更多证据/暂不可分析”；点击状态后按需读取认知详情，认知不可用不阻断学习。新学习页已接入 `learning-context`、事件写入和显式完成接口，刷新后从当前 release 投影恢复最近锚点；失败事件暂存浏览器待发队列。教师 `/app/course/:courseId/analytics` 已读取统一统计投影。接口与 Agent planned Port/Tool 边界见 [统一学习进度认知推荐统计契约](docs/phase1/统一学习进度认知推荐统计契约.md)。
 
 ```text
 课程资料 → 统一上传与版本化对象存储 → 解析任务 / DocumentIR / Evidence

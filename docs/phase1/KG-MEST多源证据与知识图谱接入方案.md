@@ -228,3 +228,11 @@ CourseLearningStatsProjection` 链路；这不是 KG-MEST 的正式认知实现�
 认知/推荐必须返回 `not_available`。planned `LearningEvidenceContextPort` 将正式
 evidence 记录其 source release 与 outline node，以支持同一 node_key 跨发布版本
 复用而不把观看行为当成掌握证据。
+
+当前已实现的是认知服务侧的最小关联适配器，不是 Agent Port：正式评分证据写入时
+upsert `LearningEvidenceContext`；请求字段为 `evidence_id/course_id`，可选的
+`source_release_id/outline_node_id/event_id` 必须彼此一致且通过课程范围校验；返回
+`knowledge_node_key` 与身份字段。无法唯一确定来源版本时保持 `unknown`，失败码包括
+`SOURCE_RELEASE_AND_OUTLINE_NODE_REQUIRED`、`EVIDENCE_CONTEXT_NODE_NOT_IN_RELEASE`
+和 `EVIDENCE_CONTEXT_EVENT_IDENTITY_CONFLICT`。认知/推荐仍只能读取投影，不能把该表
+当作掌握结论来源。

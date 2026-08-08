@@ -69,3 +69,9 @@ planned/unimplemented 的 `LearningProjectionPort` 返回 `release_id`、
 `outline_node_id`、`exposure_status`、`completion_ratio`；正式评分结果仍由服务端
 写入认知证据。沙箱、认知和推荐不可用时必须返回 `unknown/pending/degraded`，不能
 伪造掌握结论。
+
+`LearningEvidenceContextPort`（planned/unimplemented）只接收正式 `evidence_id`，返回
+`knowledge_node_key`、`source_release_id`、`outline_node_id`、`event_id` 和 `status`。
+当前服务层已有非 Agent 的 `LearningEvidenceContext` upsert 适配器；评分证据落库后运行，
+旧答题记录没有 release 身份时保持 unknown，不从 active release 反推。CodingEduAgent
+不得把一次代码运行、诊断摘要或观看行为直接写成掌握证据。

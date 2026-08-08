@@ -28,10 +28,13 @@ import { consumeRecommendation } from '@/api/cognitive.js'
 const route = useRoute()
 const router = useRouter()
 const counter = useCounterStore()
-const { courseRole, detail, analyticsEligible, capabilities } = inject('courseContext')
+const { detail, analyticsEligible, capabilities } = inject('courseContext')
 
 const courseId = Number(route.params.courseId)
-const previewMode = computed(() => ['owner', 'teacher', 'teaching_assistant'].includes(courseRole.value))
+// Course Access is the source of truth: only an analytics-eligible learner
+// may read or write their private learning/cognition state.  Staff and
+// observers all use the content-only preview branch.
+const previewMode = computed(() => !analyticsEligible.value)
 
 // TeachingAgent 受控接入（P1）：将 courseContext 的 analyticsEligible/capabilities
 // 与当前用户 ID 以 getter 形式注入 workspace。workspace 在 sendQuestion 时读取最新值，

@@ -255,11 +255,9 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
     release = active_release(session, course_id) if release_id is None else session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id, CourseRelease.release_id == release_id)).first()
     if release is None:
         raise HTTPException(status_code=409, detail="RELEASE_NOT_FOUND")
-    # Analytics is a projection read. Refresh it against the current active,
-    # analytics-eligible membership set before serializing so removed/excluded
-    # learners cannot survive in a stale aggregate row.
-    refresh_course_stats(session, course_id=course_id, release_id=release.release_id)
-    session.commit()
+    # This endpoint is a pure projection read.  Event writes refresh the
+    # aggregate; a future outbox worker may repair/replay it without allowing
+    # a GET request to mutate business data.
     nodes = release_nodes(session, release)
     memberships = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.status == MembershipStatus.ACTIVE)).all()
     students = [m for m in memberships if m.role.value == "student" and not m.analytics_excluded]

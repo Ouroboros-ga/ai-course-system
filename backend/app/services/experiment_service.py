@@ -47,6 +47,7 @@ from app.services.sandbox_client import (
     SubmissionStatus,
     sandbox_client,
 )
+from app.services.learning_evidence_context_service import upsert_learning_evidence_context
 
 
 logger = logging.getLogger(__name__)
@@ -905,6 +906,7 @@ class ExperimentFinalizeService:
             )
         ).first()
         if existing is not None:
+            upsert_learning_evidence_context(session, existing)
             return existing
 
         evidence = LearningEvidenceRecord(
@@ -924,6 +926,7 @@ class ExperimentFinalizeService:
         )
         session.add(evidence)
         session.flush()
+        upsert_learning_evidence_context(session, evidence)
         return evidence
 
 

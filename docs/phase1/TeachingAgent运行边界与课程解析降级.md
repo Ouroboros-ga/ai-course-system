@@ -54,3 +54,23 @@ TeachingAgent 不直接访问学习表。未来通过 planned/unimplemented 的
 exposure、cognition、recommendation 三段最小字段，`LearningEventTool` 只记录经过
 治理的教学动作和幂等键。当前实现仍由学习门面 API 负责接线，不能把这些 Port/Tool
 描述为已完成能力。
+
+### Planned Port/Tool 字段契约（未实现）
+
+以下接口只冻结请求/返回形状，当前不能被前端或 Agent 直接调用。身份由服务端注入，
+不信任模型输出或浏览器传入的学生身份。
+
+| 接口 | 请求字段 | 最小返回字段 | 权限与失败语义 |
+|---|---|---|---|
+| `LearningContextPort` | `course_id`, `student_id`, `release_id?`, `outline_node_id?` | `release_id`, `items[].outline_node_id`, `learning`, `cognition`, `recommendation`, `recent_anchor` | 本人需 `course.learn + analytics_eligible`；`unknown/not_available/degraded` 原样保留 |
+| `LearningProjectionPort` | `course_id`, `student_id`, `release_id`, `outline_node_id` | `exposure_status`, `completion_ratio`, `completion_reason`, `current_timestamp`, `current_page`, `last_accessed_at` | 跨课程/release/node `NODE_NOT_IN_RELEASE`，只读本人或 `analytics.view_member` |
+| `LearningEvidenceContextPort` | `evidence_id`, `course_id`, `source_release_id?`, `outline_node_id?`, `event_id?` | `knowledge_node_key`, `source_release_id`, `outline_node_id`, `event_id`, `status` | 仅正式评分证据；来源不完整 `SOURCE_RELEASE_AND_OUTLINE_NODE_REQUIRED`，无法唯一映射为 `unknown` |
+| `CognitionPort` | `course_id`, `student_id`, `release_id`, `outline_node_id`, `knowledge_node_key?` | `mastery_level`, `mastery_score`, `evidence_confidence`, `sample_size`, `reason_codes`, `computed_at` | 无正式证据 `unknown/insufficient_evidence`；服务失败 `degraded` |
+| `RecommendationPort` | 上述身份 + `exposure_status`, `completion_ratio`, `mastery_level`, `evidence_confidence` | `status`, `recommendation_id?`, `type?`, `title?`, `reason_codes` | 低置信度只能 `pending`；无图谱 `not_available`；依赖失败 `degraded` |
+| `LearningEventPort`（统一学习事实） | `course_id`, `student_id`, `release_id`, `outline_node_id`, `event_type`, `idempotency_key`, `occurred_at`, `payload`, `source` | `event_id`, `projection_version`, `exposure_status` | 重复键返回原事件；冲突 `IDEMPOTENCY_KEY_CONFLICT`；权限/release 校验 fail-closed |
+| `StudentStateTool` | `course_id`, `student_id`, `release_id`, `outline_node_id?` | `learning`, `cognition`, `recommendation`, `recent_anchor` | 只返回摘要，不返回聊天正文、完整答案或 LLM trace |
+| `CognitionTool` | `course_id`, `student_id`, `release_id`, `outline_node_id`, `knowledge_node_key?` | 同 `CognitionPort` | 只读认知投影；失败 `COGNITION_UNAVAILABLE` |
+| `LearningEventTool` | 治理后的教学动作、事件字段和幂等键 | `event_id`, `status`, `error_code?` | 仅记录允许的教学动作；Prep Agent 不拥有此工具 |
+
+`unknown`=证据不足，`pending`=异步刷新未完成，`degraded`=依赖不可用，
+`not_available`=没有合法图谱映射；四者不能互换，也不能由前端自行推导最终状态。
