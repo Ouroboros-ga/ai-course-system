@@ -920,6 +920,13 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 - 左侧 3px 状态线用 `::before` 伪元素实现（不用 `box-shadow: inset 3px 0 0`）：
   - `position:absolute; left:0; top/bottom: var(--space-2); width:3px; background: var(--ink-900); border-radius: var(--radius-full)`
 - 学习轨道 current 态额外把左侧 status 圆圈变为实色反白徽章：`.sfx-track-item.is-current .sfx-track-item-status { background: var(--ink-900); color: var(--surface-panel); border-radius: var(--radius-full) }`
+
+**学生学习状态可见性（2026-08-08）**：
+
+- 学习轨道必须同时展示学习状态与认知状态，不能以观看完成替代掌握结论。
+- `advanced/proficient` 用 Check + “已掌握”；`developing/beginner` 用提示图标 + “待掌握”；`unknown` 用 Help + “需要更多证据”；无映射用 Info + “暂不可分析”。
+- 图标、文字、`aria-label` 和 tooltip 必须共同表达语义，颜色不能单独承担状态。
+- 认知详情采用轨道内联展开；默认只请求聚合 `learning-context`，点击状态详情后按需读取认知六维接口。
 - 建设侧栏 active 态保留原 step-index / step-copy / icon 视觉，仅在 `::before` 上对齐状态线规范
 
 **收缩态视觉**：

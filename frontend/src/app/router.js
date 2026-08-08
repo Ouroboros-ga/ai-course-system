@@ -192,6 +192,12 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
                 component: () => import('./pages/course/CourseAnalyticsPage.vue'),
                 meta: { requiredPermission: 'analytics.view_course' },
               },
+              {
+                path: 'research',
+                name: 'app-course-research',
+                component: () => import('./pages/course/research/ResearchWorkspacePage.vue'),
+                meta: { requiredPermission: 'course.question.ask' },
+              },
 
               // 知识空间（§15）：Local Rail 结构视图｜原文引用｜候选审核｜版本记录
               {

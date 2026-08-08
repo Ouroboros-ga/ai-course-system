@@ -2,6 +2,8 @@
 
 > 2026-08-07 新增：[平台管理员、Provider 与开放 API 兼容层](phase1/平台管理员Provider与开放API兼容层.md)。该文档记录全局 user/admin 角色收敛、历史大写 TEACHER 账号升级管理员、后台配置、密钥脱敏、Provider 热刷新及可移除的泛雅·超星 AI 示例协议参考兼容包边界。
 
+> 2026-08-07 新增：[ResearchAgent 整体架构、前端与上线基线](phase1/研究智能体整体架构与前端设计.md)。P0 已接通课程内 arXiv 元数据检索与来源核验；趋势、综合、写作、多源检索和完整仓库复现仍为 Research Preview。该文档是研究智能体的现行架构与验收入口。
+
 > 更新：2026-08-07。本文是仓库文档的入口与分类规则，不以文档替代代码事实。
 
 当前统一学习数据契约：[统一学习进度认知推荐统计契约](phase1/统一学习进度认知推荐统计契约.md)。该契约已覆盖新学习页和教师 `/analytics` 页的 available facade 接口；认知/推荐/Agent Port 与 Tool 扩展仍明确标记为 planned/unimplemented。
@@ -18,6 +20,7 @@
 4. [路由契约基线](phase1/路由契约基线.md) 与 `backend/app/main.py`：实际 API 注册事实。
 5. [关键业务回归矩阵](phase1/关键业务回归矩阵.md)：改动后的最低验证范围。
 6. [阶段 8：媒体与数字人当前方案](phase1/阶段8_媒体TTS数字人PPT_实施规划.md)：课程级批量媒体、PPT manifest、audio-playlist/v1、PixiJS 播放和当前阻塞的唯一现行基线。
+7. [ResearchAgent 整体架构、前端与上线基线](phase1/研究智能体整体架构与前端设计.md)：论文检索、研究证据、写作和复现的边界、API、页面与分阶段上线门。
 
 ## 目录分类
 

@@ -19,9 +19,10 @@ from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.course_model import Course, CourseScript, ScriptNode, ScriptNodeType
-from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, TeachingScriptNode, TeachingScriptVersion
+from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineLifecycleStatus, OutlineNodeType, TeachingScriptNode, TeachingScriptVersion
 from app.models.access_control_model import CourseRole
 from app.services.course_build_service import course_release_service
+from app.services.unified_learning_service import ordered_outline_nodes
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus
 from app.models.progress_model import LearningProgress, LearningStatus, NodeProgress
 from app.models.mapping_model import KnowledgePageMap
@@ -32,6 +33,23 @@ from app.services.course_access_service import CourseAccessContext, course_permi
 router = APIRouter(tags=["分屏播放器"])
 
 logger = logging.getLogger(__name__)
+
+
+def _learner_outline_nodes(
+    nodes: list[CourseOutlineNode],
+    *,
+    release_id: Optional[str],
+    content_status: str = "ready",
+) -> list[CourseOutlineNode]:
+    """Return the node sequence exposed to a learner player.
+
+    Frozen releases use knowledge points as the only progress-bearing units.
+    Draft preview passes ``content_status="preview"`` and keeps the complete
+    outline so teachers can inspect hierarchy and auxiliary suggestions.
+    """
+    if content_status == "preview":
+        return list(nodes)
+    return [node for node in nodes if node.node_type == OutlineNodeType.KNOWLEDGE_POINT]
 
 
 class PlayerInitData(BaseModel):
@@ -121,11 +139,29 @@ def _versioned_player_data(
     partially prepared outline before the matching lecture draft exists.  No
     synthetic lesson text is created in that case.
     """
-    outline_nodes = session.exec(
-        select(CourseOutlineNode)
-        .where(CourseOutlineNode.outline_version_id == outline.outline_version_id)
-        .order_by(CourseOutlineNode.order_index.asc())
-    ).all()
+    outline_nodes = ordered_outline_nodes(
+        session,
+        outline_version_id=outline.outline_version_id,
+    )
+    # The unified learner contract is knowledge-point based.  A frozen release
+    # may still contain chapter/section/example/practice-suggestion nodes for
+    # authoring and navigation, but those nodes are not learner facts and must
+    # not be emitted to the student player (otherwise its index-based UI can
+    # diverge from ``learning-context.items`` and the 14-point denominator).
+    # Teacher draft preview intentionally keeps the complete outline so authors
+    # can inspect hierarchy before publication; legacy direct-publication paths
+    # are handled outside this function and retain their historical payload.
+    outline_nodes = _learner_outline_nodes(
+        outline_nodes,
+        release_id=release_id,
+        content_status=content_status,
+    )
+    if release_id or content_status != "preview":
+        if not outline_nodes:
+            return _unavailable_player_data(
+                course,
+                "当前发布版本尚未包含可学习的知识点。",
+            )
     if not outline_nodes:
         return _unavailable_player_data(
             course,

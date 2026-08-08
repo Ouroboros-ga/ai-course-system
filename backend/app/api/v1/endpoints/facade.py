@@ -14,6 +14,7 @@ ViewModel 契约:
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any
 from datetime import datetime
 
@@ -48,12 +49,13 @@ from app.services.facade_home_service import facade_home_service
 from app.models.course_build_model import CourseRelease
 from app.models.access_control_model import MembershipStatus
 from app.models.unified_learning_model import LearningEventType, StudentLearningProjection, CourseLearningStatsProjection, ExposureStatus
-from app.models.cognitive_state_model import CognitiveState, RecommendationRecord
+from app.models.cognitive_state_model import CognitiveState, LearningEvidenceRecord, RecommendationRecord
 from app.models.graph_production_model import CourseKnowledgeNode
 from app.services.unified_learning_service import active_release, release_nodes, record_event, student_context, refresh_course_stats
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["Phase A 门面层"])
+logger = logging.getLogger(__name__)
 
 class LearningEventRequest(BaseModel):
     release_id: str
@@ -68,16 +70,142 @@ class LearningEventRequest(BaseModel):
 def _attach_cognition(session: Session, *, student_id: int, course_id: int, item: dict[str, Any]) -> None:
     key = item.get("knowledge_node_key")
     if not key:
+        item["cognition"] = {
+            "status": "not_available",
+            "reason_codes": ["knowledge_node_unmapped"],
+        }
         return
-    knowledge = session.exec(select(CourseKnowledgeNode).where(CourseKnowledgeNode.course_id == course_id, CourseKnowledgeNode.node_key == key)).first()
+    try:
+        knowledge = session.exec(select(CourseKnowledgeNode).where(
+            CourseKnowledgeNode.course_id == course_id,
+            CourseKnowledgeNode.node_key == key,
+        )).first()
+    except Exception as exc:
+        session.rollback()
+        logger.warning(
+            "learning-context knowledge mapping degraded course=%s student=%s node_key=%s error=%s",
+            course_id,
+            student_id,
+            key,
+            type(exc).__name__,
+        )
+        item["cognition"] = {
+            "status": "degraded",
+            "node_key": key,
+            "reason_codes": ["cognition_service_unavailable"],
+            "evidence_count": 0,
+            "sample_size": 0,
+        }
+        item["recommendation"] = {
+            "status": "degraded",
+            "reason_codes": ["recommendation_service_unavailable"],
+        }
+        return
     if knowledge is None:
+        item["cognition"] = {
+            "status": "not_available",
+            "reason_codes": ["knowledge_node_unmapped"],
+        }
+        item["recommendation"] = {
+            "status": "not_available",
+            "reason_codes": ["knowledge_node_unmapped"],
+        }
         return
-    state = session.exec(select(CognitiveState).where(CognitiveState.student_id == student_id, CognitiveState.course_id == course_id, CognitiveState.node_id == knowledge.id, CognitiveState.is_latest == True).order_by(CognitiveState.computed_at.desc())).first()
-    recommendation = session.exec(select(RecommendationRecord).where(RecommendationRecord.student_id == student_id, RecommendationRecord.course_id == course_id, RecommendationRecord.node_id == knowledge.id, RecommendationRecord.consumed == False).order_by(RecommendationRecord.created_at.desc())).first()
+    try:
+        state = session.exec(select(CognitiveState).where(CognitiveState.student_id == student_id, CognitiveState.course_id == course_id, CognitiveState.node_id == knowledge.id, CognitiveState.is_latest == True).order_by(CognitiveState.computed_at.desc())).first()
+        recommendation = session.exec(select(RecommendationRecord).where(
+            RecommendationRecord.student_id == student_id,
+            RecommendationRecord.course_id == course_id,
+            RecommendationRecord.consumed == False,
+            (RecommendationRecord.knowledge_node_id == knowledge.id) | (RecommendationRecord.node_id == knowledge.id),
+        ).order_by(RecommendationRecord.created_at.desc())).first()
+    except Exception as exc:
+        # 认知/推荐表或服务不可用时，学习上下文仍必须返回；前端显示 degraded。
+        session.rollback()
+        logger.warning(
+            "learning-context cognition/recommendation degraded course=%s student=%s node_key=%s error=%s",
+            course_id,
+            student_id,
+            key,
+            type(exc).__name__,
+        )
+        item["cognition"] = {
+            "status": "degraded",
+            "node_id": knowledge.id,
+            "node_key": knowledge.node_key,
+            "reason_codes": ["cognition_service_unavailable"],
+            "evidence_count": 0,
+            "sample_size": 0,
+        }
+        item["recommendation"] = {"status": "degraded", "reason_codes": ["recommendation_service_unavailable"]}
+        return
     if state:
-        item["cognition"] = {"status": "available", "mastery_level": state.mastery_level, "mastery_score": state.mastery_score, "evidence_confidence": state.evidence_confidence, "reason_codes": state.reason_codes, "sample_size": state.sample_size, "computed_at": state.computed_at.isoformat() if state.computed_at else None}
+        evidence_count = len(state.evidence_refs or [])
+        if evidence_count == 0 and state.sample_size:
+            evidence_count = state.sample_size
+        evidence_rows = []
+        evidence_ids = [str(ref) for ref in (state.evidence_refs or []) if ref]
+        if evidence_ids:
+            try:
+                evidence_records = session.exec(select(LearningEvidenceRecord).where(
+                    LearningEvidenceRecord.student_id == student_id,
+                    LearningEvidenceRecord.course_id == course_id,
+                    LearningEvidenceRecord.evidence_id.in_(evidence_ids),
+                )).all()
+                evidence_by_id = {str(row.evidence_id): row for row in evidence_records}
+                for evidence_id in evidence_ids[:10]:
+                    row = evidence_by_id.get(evidence_id)
+                    evidence_rows.append({
+                        "evidence_id": evidence_id,
+                        "type": row.evidence_type if row else "unknown",
+                        "confidence": row.confidence if row else None,
+                        "source": row.source if row else "cognitive_state",
+                        "question_attempt_id": row.question_attempt_id if row else None,
+                    })
+            except Exception as exc:
+                session.rollback()
+                logger.warning(
+                    "learning-context evidence detail degraded course=%s student=%s node_key=%s error=%s",
+                    course_id,
+                    student_id,
+                    key,
+                    type(exc).__name__,
+                )
+        item["cognition"] = {
+            "status": "available",
+            "node_id": knowledge.id,
+            "node_key": knowledge.node_key,
+            "mastery_level": state.mastery_level,
+            "mastery_score": state.mastery_score,
+            "evidence_confidence": state.evidence_confidence,
+            "reason_codes": state.reason_codes or [],
+            "evidence_count": evidence_count,
+            "evidence": evidence_rows,
+            "sample_size": state.sample_size,
+            "computed_at": state.computed_at.isoformat() if state.computed_at else None,
+        }
+    else:
+        item["cognition"] = {
+            "status": "unknown",
+            "node_id": knowledge.id,
+            "node_key": knowledge.node_key,
+            "mastery_level": "unknown",
+            "reason_codes": ["insufficient_evidence"],
+            "evidence_count": 0,
+            "sample_size": 0,
+            "evidence": [],
+        }
     if recommendation:
-        item["recommendation"] = {"status": "available", "recommendation_id": recommendation.recommendation_id, "type": recommendation.recommendation_type, "priority": recommendation.priority, "title": recommendation.title, "description": recommendation.description, "reason_codes": recommendation.reason_codes, "evidence_refs": recommendation.evidence_refs}
+        item["recommendation"] = {
+            "status": "available",
+            "recommendation_id": recommendation.recommendation_id,
+            "type": recommendation.recommendation_type,
+            "priority": recommendation.priority,
+            "title": recommendation.title,
+            "description": recommendation.description,
+            "reason_codes": recommendation.reason_codes,
+            "evidence_refs": recommendation.evidence_refs,
+        }
 
 
 @router.get("/course/{course_id}/learning-context")
@@ -127,10 +255,24 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
     release = active_release(session, course_id) if release_id is None else session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id, CourseRelease.release_id == release_id)).first()
     if release is None:
         raise HTTPException(status_code=409, detail="RELEASE_NOT_FOUND")
+    # Analytics is a projection read. Refresh it against the current active,
+    # analytics-eligible membership set before serializing so removed/excluded
+    # learners cannot survive in a stale aggregate row.
+    refresh_course_stats(session, course_id=course_id, release_id=release.release_id)
+    session.commit()
     nodes = release_nodes(session, release)
     memberships = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.status == MembershipStatus.ACTIVE)).all()
     students = [m for m in memberships if m.role.value == "student" and not m.analytics_excluded]
-    projections = session.exec(select(StudentLearningProjection).where(StudentLearningProjection.course_id == course_id, StudentLearningProjection.release_id == release.release_id)).all()
+    student_ids = [membership.user_id for membership in students]
+    projection_query = select(StudentLearningProjection).where(
+        StudentLearningProjection.course_id == course_id,
+        StudentLearningProjection.release_id == release.release_id,
+    )
+    if student_ids:
+        projection_query = projection_query.where(StudentLearningProjection.student_id.in_(student_ids))
+    else:
+        projection_query = projection_query.where(StudentLearningProjection.student_id == -1)
+    projections = session.exec(projection_query).all()
     stats_rows = session.exec(select(CourseLearningStatsProjection).where(
         CourseLearningStatsProjection.course_id == course_id,
         CourseLearningStatsProjection.release_id == release.release_id,
@@ -184,7 +326,7 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
 async def get_student_learning_analytics(course_id: int, student_id: int, release_id: Optional[str] = Query(None), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "analytics.view_member")
     membership = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.user_id == student_id, CourseMembership.status == MembershipStatus.ACTIVE)).first()
-    if membership is None or membership.role.value != "student":
+    if membership is None or membership.role.value != "student" or membership.analytics_excluded:
         raise HTTPException(status_code=404, detail="STUDENT_NOT_FOUND")
     data = student_context(session, student_id=student_id, course_id=course_id, release_id=release_id)
     for item in data.get("items", []):

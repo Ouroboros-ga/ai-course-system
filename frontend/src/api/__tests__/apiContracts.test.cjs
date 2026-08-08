@@ -121,13 +121,48 @@ test('backend: graph_production.py 注册所有对应路由', () => {
 // cognitive.js ↔ cognitive_recommendation.py 契约
 // ============================================================================
 
-test('cognitive.js: getCognitiveState 调用 /state?student_id=（不是 /students/{id}/state）', () => {
+test('cognitive.js: getCognitiveState 调用 /state，并按需传 student_id/node_id', () => {
   const src = read('frontend/src/api/cognitive.js')
   const p = extractFirstPath(src, 'getCognitiveState')
   assert.equal(p, '/cognitive/course/${courseId}/state')
   assert.doesNotMatch(p, /\/students\//)
-  // 必须通过 params 传递 student_id
-  assert.match(src, /params:\s*\{\s*student_id:\s*studentId\s*\}/)
+  // 学生视角可省略 student_id，由 JWT 决定；教师/节点详情可显式传入两个查询参数。
+  assert.match(src, /const params = \{\}/)
+  assert.match(src, /if \(studentId != null\) params\.student_id = studentId/)
+  assert.match(src, /if \(nodeId != null\) params\.node_id = nodeId/)
+})
+
+test('LearningTrack.vue: 学习轨道公开双层状态、详情入口与知识依据跳转事件', () => {
+  const src = read('frontend/src/app/components/learn/LearningTrack.vue')
+  assert.match(src, /已掌握/)
+  assert.match(src, /待掌握/)
+  assert.match(src, /未学习/)
+  assert.match(src, /学习中/)
+  assert.match(src, /需要更多证据/)
+  assert.match(src, /认知暂不可用/)
+  assert.match(src, /暂不可分析/)
+  assert.match(src, /emit\(\s*['"]inspect['"]\s*,\s*node\.outlineNodeId/)
+  assert.match(src, /emit\(\s*['"]open-knowledge['"]\s*,\s*knowledgeNodeId\(node\)/)
+  assert.match(src, /:title="`\$\{displayState\(node\)\.label\}/)
+  assert.match(src, /evidence_count|sample_size/)
+  assert.match(src, /cognition\?\.node_key/)
+})
+
+test('LearnPage.vue: 学习轨道可进入当前知识点的知识图谱依据', () => {
+  const src = read('frontend/src/app/pages/learn/LearnPage.vue')
+  assert.match(src, /useRouter\(\)/)
+  assert.match(src, /knowledge\/graph\//)
+  assert.match(src, /@open-knowledge="handleOpenKnowledge"/)
+})
+
+test('LearnPage.vue: 推荐动作复用 PracticePanel 并消费推荐', () => {
+  const page = read('frontend/src/app/pages/learn/LearnPage.vue')
+  const track = read('frontend/src/app/components/learn/LearningTrack.vue')
+  assert.match(page, /consumeRecommendation/)
+  assert.match(page, /recommendation_consumed/)
+  assert.match(page, /handleDockAction\(\{ id: 'practice'/)
+  assert.match(track, /recommendation-action/)
+  assert.match(track, /去练习/)
 })
 
 test('cognitive.js: computeCognitiveState 调用 /compute（不是 /students/{id}/compute）', () => {

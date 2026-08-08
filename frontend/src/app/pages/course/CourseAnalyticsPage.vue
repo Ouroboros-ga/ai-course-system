@@ -13,6 +13,26 @@ const selectedStudent = ref(null)
 const studentDetail = ref(null)
 const points = computed(() => analytics.value?.knowledge_points || [])
 const students = computed(() => analytics.value?.students || [])
+const masteryLevels = computed(() => {
+  const counts = {}
+  for (const point of points.value) {
+    for (const [level, count] of Object.entries(point.mastery_distribution || {})) {
+      counts[level] = (counts[level] || 0) + Number(count || 0)
+    }
+  }
+  return Object.entries(counts).sort((a, b) => b[1] - a[1])
+})
+
+function reasonText(cognition) {
+  const codes = Array.isArray(cognition?.reason_codes) ? cognition.reason_codes : []
+  return codes.length ? codes.join('、') : '暂无原因码'
+}
+
+function evidenceText(cognition) {
+  const evidence = Array.isArray(cognition?.evidence) ? cognition.evidence : []
+  if (!evidence.length) return '暂无正式证据'
+  return evidence.map(item => `${item.evidence_id} / ${item.type}`).join('；')
+}
 
 async function load() {
   state.value = 'loading'
@@ -53,6 +73,13 @@ onMounted(load)
         </div>
       </header>
       <section class="sfx-panel">
+        <h2 class="sfx-panel-title">掌握等级分布</h2>
+        <div class="sfx-analytics-chips">
+          <span v-for="([level, count]) in masteryLevels" :key="level" class="sfx-analytics-chip">{{ level }}：{{ count }}</span>
+          <span v-if="!masteryLevels.length" class="sfx-t-secondary">暂无正式认知证据</span>
+        </div>
+      </section>
+      <section class="sfx-panel">
         <h2 class="sfx-panel-title">知识点完成情况</h2>
         <div class="sfx-table-wrap">
           <table class="sfx-table">
@@ -81,8 +108,12 @@ onMounted(load)
       </section>
       <section v-if="studentDetail" class="sfx-panel">
         <h2 class="sfx-panel-title">学生 {{ selectedStudent }} 学习明细</h2>
-        <div v-for="item in studentDetail.items" :key="item.outline_node_id" class="sfx-analytics-student-row">
-          <span>{{ item.title }}</span><span>{{ item.learning.status }}</span><span>{{ Math.round(item.learning.completion_ratio * 100) }}%</span><span>{{ item.cognition.mastery_level || item.cognition.status }}</span>
+        <div v-for="item in studentDetail.items" :key="item.outline_node_id" class="sfx-analytics-student-detail">
+          <div><strong>{{ item.title }}</strong><span>{{ item.learning.status }} · {{ Math.round(item.learning.completion_ratio * 100) }}%</span></div>
+          <div><span>认知：{{ item.cognition.mastery_level || item.cognition.status }}</span><span>置信度：{{ item.cognition.evidence_confidence ?? '—' }}</span></div>
+          <div class="sfx-t-caption">原因：{{ reasonText(item.cognition) }}</div>
+          <div class="sfx-t-caption">证据：{{ evidenceText(item.cognition) }}</div>
+          <div class="sfx-t-caption">推荐：{{ item.recommendation?.status || 'not_available' }}{{ item.recommendation?.title ? ` · ${item.recommendation.title}` : '' }}</div>
         </div>
       </section>
     </template>
@@ -96,4 +127,9 @@ onMounted(load)
 .sfx-table { width:100%; border-collapse:collapse; }
 .sfx-table th,.sfx-table td { padding:12px 10px; border-bottom:1px solid var(--border-default); text-align:left; }
 .sfx-analytics-student-row { display:grid; grid-template-columns:2fr 1fr 1fr 1fr; padding:10px 0; border-bottom:1px solid var(--border-subtle); }
+.sfx-analytics-chips { display:flex; flex-wrap:wrap; gap:8px; }
+.sfx-analytics-chip { padding:6px 10px; border:1px solid var(--border-default); border-radius:999px; background:var(--surface-cool); color:var(--text-secondary); font-size:var(--ui-sm-size); }
+.sfx-analytics-student-detail { display:grid; gap:4px; padding:12px 0; border-bottom:1px solid var(--border-subtle); color:var(--text-secondary); }
+.sfx-analytics-student-detail > div { display:flex; flex-wrap:wrap; gap:12px; }
+.sfx-analytics-student-detail strong { color:var(--text-primary); min-width:220px; }
 </style>

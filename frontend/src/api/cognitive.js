@@ -29,10 +29,13 @@ import request from '@/utils/request.js'
  * @param {number|string} studentId - 学生 ID
  * @returns {Promise<Object>} 认知状态对象（含 dimensions/mastery_level/policy_version）
  */
-export function getCognitiveState(courseId, studentId) {
+export function getCognitiveState(courseId, studentId = null, nodeId = null) {
+  const params = {}
+  if (studentId != null) params.student_id = studentId
+  if (nodeId != null) params.node_id = nodeId
   return request.get(
     `/cognitive/course/${courseId}/state`,
-    { params: { student_id: studentId } },
+    { params },
   )
 }
 

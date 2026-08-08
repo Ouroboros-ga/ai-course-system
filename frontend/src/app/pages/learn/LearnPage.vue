@@ -1,10 +1,15 @@
 <script setup>
 import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
-import { usePlaylistPlayback } from '@/features/student-learning/composables/usePlaylistPlayback.js'
+import {
+  findPlaylistItemIndex,
+  findPlaylistItemIndexAtTime,
+  resolvePlaylistSelection,
+  usePlaylistPlayback,
+} from '@/features/student-learning/composables/usePlaylistPlayback.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
@@ -18,8 +23,10 @@ import NoteStage from '@/app/components/learn/NoteStage.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { consumeRecommendation } from '@/api/cognitive.js'
 
 const route = useRoute()
+const router = useRouter()
 const counter = useCounterStore()
 const { courseRole, detail, analyticsEligible, capabilities } = inject('courseContext')
 
@@ -139,32 +146,68 @@ async function exitBranch() {
 }
 
 function handlePlayback(payload) {
+  const items = media.playlist.value?.items
+  const globalTime = Number(payload?.globalTime)
+  if (Array.isArray(items) && items.length && Number.isFinite(globalTime)) {
+    const playlistIndex = findPlaylistItemIndexAtTime(items, globalTime)
+    if (playlistIndex >= 0) {
+      playlistPlayback.activeIndex.value = playlistIndex
+      const item = items[playlistIndex]
+      // The playlist is authoritative for release playback. Supplying its
+      // node id keeps the legacy workspace index in sync for the rail.
+      payload = { ...payload, nodeId: item.nodeId, outlineNodeId: item.outlineNodeId }
+    }
+  }
   ws.updatePlayback(payload)
 }
 function handleNodeChange(direction) {
-  ws.selectNode(ws.currentNodeIndex.value + Number(direction), { play: ws.isPlaying.value })
+  handleTrackSelect(ws.currentNodeIndex.value + Number(direction))
+}
+function handleTrackSelect(index, options = {}) {
+  const parsedIndex = Number(index)
+  if (!Number.isInteger(parsedIndex) || parsedIndex < 0 || parsedIndex >= ws.nodes.value.length) return
+  const nextIndex = parsedIndex
+  const node = ws.nodes.value[nextIndex]
+  if (!node) return
+  const wasPlaying = options.play ?? ws.isPlaying.value
+  const items = media.playlist.value?.items || []
+  const { playlistIndex, targetTime } = resolvePlaylistSelection(items, node)
+
+  if (playlistIndex >= 0) playlistPlayback.activeIndex.value = playlistIndex
+  ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
+  ws.seekTo(targetTime)
+  // seekTo uses legacy node timing for compatibility; restore the playlist's
+  // authoritative node identity after the global seek.
+  ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
+}
+
+function handleOpenKnowledge(nodeId) {
+  if (nodeId == null || nodeId === '') return
+  router.push(`/app/course/${courseId}/knowledge/graph/${encodeURIComponent(nodeId)}`)
 }
 function handlePlaylistNext() {
-  if (!playlistPlayback.next()) return
-  const item = playlistPlayback.activeItem.value
-  if (item?.nodeId != null || item?.outlineNodeId) {
-    const index = ws.nodes.value.findIndex(node => (
-      String(node.id) === String(item.nodeId)
-      || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-    ))
-    if (index >= 0) ws.selectNode(index, { play: true })
-  }
+  const nextIndex = playlistPlayback.activeIndex.value + 1
+  const items = media.playlist.value?.items || []
+  const item = items[nextIndex]
+  if (!item) return
+  const index = ws.nodes.value.findIndex(node => (
+    (item.nodeId != null && String(node.id) === String(item.nodeId))
+    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
+  ))
+  if (index >= 0) handleTrackSelect(index, { play: true })
+  else playlistPlayback.next()
 }
 function handlePlaylistPrevious() {
-  if (!playlistPlayback.previous()) return
-  const item = playlistPlayback.activeItem.value
-  if (item?.nodeId != null || item?.outlineNodeId) {
-    const index = ws.nodes.value.findIndex(node => (
-      String(node.id) === String(item.nodeId)
-      || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-    ))
-    if (index >= 0) ws.selectNode(index, { play: true })
-  }
+  const previousIndex = playlistPlayback.activeIndex.value - 1
+  const items = media.playlist.value?.items || []
+  const item = items[previousIndex]
+  if (!item) return
+  const index = ws.nodes.value.findIndex(node => (
+    (item.nodeId != null && String(node.id) === String(item.nodeId))
+    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
+  ))
+  if (index >= 0) handleTrackSelect(index, { play: true })
+  else playlistPlayback.previous()
 }
 
 watch(
@@ -181,6 +224,36 @@ watch(
   { immediate: true },
 )
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
+
+async function handleRecommendationAction({ node, recommendation, action }) {
+  const nodeIndex = ws.nodes.value.findIndex(item => String(item.outlineNodeId) === String(node?.outlineNodeId))
+  if (nodeIndex >= 0) handleTrackSelect(nodeIndex, { play: action === 'continue' })
+
+  if (action === 'practice') {
+    handleDockAction({ id: 'practice', target: LEARN_STATES.PRACTICE })
+  }
+
+  // 推荐消费是可追溯的学习动作；消费失败不阻断学生进入练习或继续学习。
+  if (recommendation?.recommendation_id) {
+    const consumed = await consumeRecommendation(recommendation.recommendation_id, { action: 'accepted' })
+      .then(() => true)
+      .catch(() => false)
+    // 后端消费接口会在可映射时写入统一 LearningEvent；只有接口失败时
+    // 才进入离线队列，避免产生两条 recommendation_consumed 事实。
+    if (!consumed && node?.outlineNodeId) {
+      ws.queueLearningEvent(node.outlineNodeId, 'recommendation_consumed', {
+        recommendation_id: recommendation.recommendation_id,
+        recommendation_type: recommendation.type || recommendation.recommendation_type || null,
+        action,
+      })
+    }
+  }
+}
+
+async function handlePracticeExit() {
+  await exitBranch()
+  await ws.refreshLearningContext().catch(() => {})
+}
 
 async function completeNode() {
   await ws.completeCurrentNode()
@@ -218,13 +291,23 @@ watch(
     />
 
     <template v-else>
+      <div v-if="previewMode" class="sfx-preview-notice" role="status">
+        教师预览模式：这里展示课程草稿内容，不读取或写入任何学生学习进度、认知或推荐状态。
+      </div>
       <div class="sfx-learn-body">
         <LearningTrack
           :nodes="ws.nodes.value"
           :current-index="ws.currentNodeIndex.value"
           :completed-ids="ws.completedNodes.value"
+          :learning-items="ws.learningItems.value"
+          :expanded-node-id="ws.expandedNodeId.value"
+          :cognitive-details="ws.cognitiveDetails.value"
+          :cognitive-loading="ws.cognitiveLoading.value"
           :collapsed="trackCollapsed"
-          @select="(i) => ws.selectNode(i, { play: false })"
+          @select="handleTrackSelect"
+          @inspect="ws.toggleNodeCognition"
+          @open-knowledge="handleOpenKnowledge"
+          @recommendation-action="handleRecommendationAction"
           @toggle="handleTrackToggle"
         />
 
@@ -299,7 +382,7 @@ watch(
           v-if="learnState === LEARN_STATES.PRACTICE"
           :course-id="courseId"
           :node-index="ws.currentNodeIndex.value"
-          @exit="exitBranch"
+          @exit="handlePracticeExit"
         />
       </div>
 
@@ -335,6 +418,7 @@ watch(
   overflow: hidden;
 }
 .sfx-learn-complete { align-self: center; margin: 0 0 16px; padding: 8px 14px; border: var(--border-default); border-radius: 8px; background: var(--color-brand); color: var(--text-inverse); }
+.sfx-preview-notice { flex: 0 0 auto; margin: 12px 16px 0; padding: 10px 12px; border: 1px solid var(--amber-300); border-radius: var(--radius-sm); background: var(--amber-100); color: var(--amber-700); font-size: var(--ui-sm-size); }
 
 .sfx-learn-stage {
   flex: 1;

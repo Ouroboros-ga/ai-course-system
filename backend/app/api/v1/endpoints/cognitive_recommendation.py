@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import logging
 from typing import Optional, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
@@ -41,8 +42,14 @@ from app.services.course_access_service import (
     require_course_permission,
     resolve_course_access,
 )
+from app.models.course_build_model import CourseRelease, ReleaseStatus
+from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
+from app.models.graph_production_model import CourseKnowledgeNode
+from app.models.unified_learning_model import LearningEventType
+from app.services.unified_learning_service import record_event, refresh_course_stats
 
 router = APIRouter(tags=["G2 六维认知与推荐"])
+logger = logging.getLogger(__name__)
 
 
 # ==================== 认知状态接口 ====================
@@ -208,6 +215,55 @@ async def consume_recommendation(
     record = mark_recommendation_consumed(session, recommendation_id, user_id)
     if not record:
         raise HTTPException(status_code=404, detail="推荐记录不存在或不属于当前用户")
+
+    # 推荐消费是学习动作的一部分，但不能让认知/推荐链路阻断学习。
+    # 仅在推荐能稳定映射到当前 active release 的正式知识点时写入统一事件；
+    # 课程级或未映射推荐仍保留原消费记录，前端继续按降级语义运行。
+    try:
+        release = session.exec(select(CourseRelease).where(
+            CourseRelease.course_id == record.course_id,
+            CourseRelease.status == ReleaseStatus.PUBLISHED,
+            CourseRelease.is_active == True,
+        )).first()
+        knowledge_id = record.knowledge_node_id or record.node_id
+        knowledge = None
+        if knowledge_id is not None:
+            knowledge = session.get(CourseKnowledgeNode, knowledge_id)
+            if knowledge is not None and knowledge.course_id != record.course_id:
+                knowledge = None
+        outline_node = None
+        if release is not None and knowledge is not None:
+            outline_node = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.outline_version_id == release.outline_version_id,
+                CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+                CourseOutlineNode.knowledge_graph_node_id == knowledge.node_key,
+            )).first()
+        if release is not None and outline_node is not None:
+            record_event(
+                session,
+                student_id=user_id,
+                course_id=record.course_id,
+                release_id=release.release_id,
+                outline_node_id=outline_node.outline_node_id,
+                event_type=LearningEventType.RECOMMENDATION_CONSUMED,
+                idempotency_key=f"recommendation-consumed:{recommendation_id}",
+                payload={
+                    "recommendation_id": recommendation_id,
+                    "recommendation_type": record.recommendation_type,
+                    "action": "accepted",
+                },
+                source="cognitive_recommendation",
+            )
+            refresh_course_stats(session, course_id=record.course_id, release_id=release.release_id)
+            session.commit()
+    except Exception as exc:
+        logger.warning(
+            "recommendation consumed but learning event projection degraded recommendation_id=%s course=%s error=%s",
+            recommendation_id,
+            record.course_id,
+            type(exc).__name__,
+        )
+        session.rollback()
 
     return unified_response(
         code=200,

@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlmodel import Session, select
 
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_aware, utcnow_aware
 from app.models.course_build_model import CourseRelease, ReleaseStatus
 from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
 from app.models.access_control_model import CourseMembership, MembershipStatus
@@ -31,11 +31,54 @@ def active_release(session: Session, course_id: int) -> CourseRelease | None:
     )).first()
 
 
+def ordered_outline_nodes(
+    session: Session,
+    *,
+    outline_version_id: str,
+    knowledge_points_only: bool = False,
+) -> list[CourseOutlineNode]:
+    """Return a deterministic pre-order traversal of a versioned outline.
+
+    ``order_index`` is only unique among siblings, so a flat SQL sort by that
+    column can reorder nodes from different sections.  The learner player and
+    learning projection must share one tree traversal; ties are resolved by the
+    immutable node id rather than a client-generated index.
+    """
+    nodes = list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == outline_version_id,
+    )).all())
+    children: dict[str | None, list[CourseOutlineNode]] = {}
+    for node in nodes:
+        children.setdefault(node.parent_node_id, []).append(node)
+    for siblings in children.values():
+        siblings.sort(key=lambda node: (node.order_index, node.outline_node_id))
+
+    ordered: list[CourseOutlineNode] = []
+    visited: set[str] = set()
+
+    def visit(node: CourseOutlineNode) -> None:
+        if node.outline_node_id in visited:
+            return
+        visited.add(node.outline_node_id)
+        if not knowledge_points_only or node.node_type == OutlineNodeType.KNOWLEDGE_POINT:
+            ordered.append(node)
+        for child in children.get(node.outline_node_id, []):
+            visit(child)
+
+    for root in children.get(None, []):
+        visit(root)
+    # Preserve malformed/orphaned historical rows without looping forever.
+    for node in sorted(nodes, key=lambda item: (item.order_index, item.outline_node_id)):
+        visit(node)
+    return ordered
+
+
 def release_nodes(session: Session, release: CourseRelease) -> list[CourseOutlineNode]:
-    return list(session.exec(select(CourseOutlineNode).where(
-        CourseOutlineNode.outline_version_id == release.outline_version_id,
-        CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
-    ).order_by(CourseOutlineNode.order_index.asc())).all())
+    return ordered_outline_nodes(
+        session,
+        outline_version_id=release.outline_version_id,
+        knowledge_points_only=True,
+    )
 
 
 def _node(session: Session, release: CourseRelease, outline_node_id: str) -> CourseOutlineNode | None:
@@ -92,6 +135,16 @@ def record_event(
         LearningEvent.idempotency_key == idempotency_key,
     )).first()
     if existing:
+        if (
+            existing.course_id != course_id
+            or existing.release_id != release_id
+            or existing.outline_node_id != outline_node_id
+            or existing.event_type != event_type
+        ):
+            # Reusing a browser/request key for another scope must fail closed;
+            # silently treating it as a duplicate would leak or misattribute
+            # a learning fact across courses/releases/nodes.
+            raise ValueError("IDEMPOTENCY_KEY_CONFLICT")
         projection = session.exec(select(StudentLearningProjection).where(
             StudentLearningProjection.student_id == student_id,
             StudentLearningProjection.course_id == course_id,
@@ -102,7 +155,7 @@ def record_event(
             projection = _ensure_projection(session, student_id, course_id, release, node)
         return existing, projection
     payload = dict(payload or {})
-    occurred_at = occurred_at or utcnow_aware()
+    occurred_at = to_aware(occurred_at) if occurred_at else utcnow_aware()
     if occurred_at > utcnow_aware() + timedelta(minutes=5):
         raise ValueError("OCCURRED_AT_IN_FUTURE")
     event = LearningEvent(
@@ -125,9 +178,21 @@ def record_event(
         projection.first_accessed_at = now
     projection.last_accessed_at = max(projection.last_accessed_at or now, now)
     projection.visit_count += 1 if event_type == LearningEventType.NODE_OPENED else 0
-    projection.exposure_seconds += max(0, min(60, int(float(payload.get("time_spent_delta", 0) or 0))))
-    projection.current_timestamp = max(projection.current_timestamp, float(payload.get("current_timestamp", 0) or 0))
-    projection.current_page = max(1, int(payload.get("current_page", projection.current_page) or projection.current_page))
+    try:
+        time_spent_delta = float(payload.get("time_spent_delta", 0) or 0)
+    except (TypeError, ValueError):
+        time_spent_delta = 0.0
+    try:
+        current_timestamp = float(payload.get("current_timestamp", 0) or 0)
+    except (TypeError, ValueError):
+        current_timestamp = 0.0
+    try:
+        current_page = int(payload.get("current_page", projection.current_page) or projection.current_page)
+    except (TypeError, ValueError):
+        current_page = projection.current_page
+    projection.exposure_seconds += max(0, min(60, int(time_spent_delta)))
+    projection.current_timestamp = max(projection.current_timestamp, max(0.0, current_timestamp))
+    projection.current_page = max(1, current_page)
     ratio = _ratio(payload, event_type)
     projection.completion_ratio = max(projection.completion_ratio, ratio)
     if event_type == LearningEventType.EXPLICIT_COMPLETE or ratio >= COMPLETION_THRESHOLD:
@@ -197,7 +262,14 @@ def student_context(session: Session, *, student_id: int, course_id: int, releas
             "recommendation": {"status": "not_available" if not node.knowledge_graph_node_id else "pending"},
         })
     completed = sum(1 for item in items if item["learning"]["status"] == ExposureStatus.COMPLETED.value)
-    latest = max((p for p in projections if p.last_accessed_at), key=lambda p: p.last_accessed_at, default=None)
+    # SQLite may return legacy timestamps without tzinfo even though the
+    # canonical model writes aware datetimes. Compare by epoch seconds so a
+    # mixed historical database cannot crash the read model.
+    latest = max(
+        (p for p in projections if p.last_accessed_at),
+        key=lambda p: p.last_accessed_at.timestamp(),
+        default=None,
+    )
     return {
         "course_id": course_id,
         "release_id": release.release_id,
@@ -222,11 +294,16 @@ def refresh_course_stats(session: Session, *, course_id: int, release_id: str) -
     memberships = session.exec(select(CourseMembership).where(CourseMembership.course_id == course_id, CourseMembership.status == MembershipStatus.ACTIVE)).all()
     student_ids = [m.user_id for m in memberships if m.role.value == "student" and not m.analytics_excluded]
     for node in nodes:
-        rows = session.exec(select(StudentLearningProjection).where(
+        projection_query = select(StudentLearningProjection).where(
             StudentLearningProjection.course_id == course_id,
             StudentLearningProjection.release_id == release_id,
             StudentLearningProjection.outline_node_id == node.outline_node_id,
-        )).all()
+        )
+        if student_ids:
+            projection_query = projection_query.where(StudentLearningProjection.student_id.in_(student_ids))
+        else:
+            projection_query = projection_query.where(StudentLearningProjection.student_id == -1)
+        rows = session.exec(projection_query).all()
         counts = {status.value: 0 for status in ExposureStatus}
         for row in rows:
             counts[row.exposure_status.value] += 1

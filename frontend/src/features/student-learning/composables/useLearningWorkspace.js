@@ -4,6 +4,8 @@ import { askQuestion } from '@/api/chat.js'
 import { respondTeachingAgent, getConversationHistory } from '@/api/teaching_agent.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import { getLearningContext, recordLearningEvent, completeLearningAction } from '@/api/facade.js'
+import { getCognitiveState } from '@/api/cognitive.js'
+import { getNodeDisplayState as resolveNodeDisplayState } from '@/features/student-learning/learningStatus.js'
 import { listNotes, createNote, updateNote, deleteNote } from '@/api/note.js'
 import {
   buildProgressPayload,
@@ -76,6 +78,10 @@ export function useLearningWorkspace(courseId, options = {}) {
   const completedNodes = ref([])
   const releaseId = ref(null)
   const learningContext = ref(null)
+  const expandedNodeId = ref(null)
+  const cognitiveDetails = ref({})
+  const cognitiveLoading = ref({})
+  const cognitiveCache = new Map()
   const pendingLearningEvents = ref([])
   const openedNodeKeys = ref(new Set())
   const isPlaying = ref(false)
@@ -118,6 +124,49 @@ export function useLearningWorkspace(courseId, options = {}) {
   const pptPages = computed(() => course.value?.pptPages ?? [])
   const currentNode = computed(() => nodes.value[currentNodeIndex.value] ?? null)
   const currentNodeId = computed(() => currentNode.value?.id ?? null)
+  const learningItems = computed(() => learningContext.value?.items ?? [])
+  const learningItemsByNodeId = computed(() => {
+    const map = new Map()
+    for (const item of learningItems.value) map.set(String(item.outline_node_id), item)
+    return map
+  })
+
+  function buildPreviewLearningContext(normalized) {
+    const previewItems = (normalized?.nodes || [])
+      .filter(node => node?.outlineNodeId)
+      .map(node => ({
+        outline_node_id: String(node.outlineNodeId),
+        title: node.title,
+        node_type: node.type || 'knowledge_point',
+        knowledge_node_key: null,
+        learning: {
+          status: 'not_available',
+          completion_ratio: 0,
+          exposure_seconds: 0,
+          current_timestamp: 0,
+          current_page: node.pageStart || 1,
+          completion_reason: null,
+        },
+        cognition: {
+          status: 'not_available',
+          reason_codes: ['teacher_preview_no_student_state'],
+        },
+        recommendation: {
+          status: 'not_available',
+          reason_codes: ['teacher_preview_no_student_state'],
+        },
+      }))
+    return {
+      course_id: normalized?.courseId ?? courseId,
+      release_id: normalized?.releaseId ?? null,
+      items: previewItems,
+      total: previewItems.length,
+      completed: 0,
+      completion_rate: 0,
+      recent_anchor: null,
+      preview: true,
+    }
+  }
   const currentSlide = computed(() => {
     const slide = slides.value.find(item => item.page === currentPage.value)
     if (!slide) return null
@@ -305,6 +354,66 @@ export function useLearningWorkspace(courseId, options = {}) {
     }
   }
 
+  function refreshLearningContext() {
+    return getLearningContext(courseId).then(response => {
+      const context = response?.data ?? response
+      const nextReleaseId = context?.release_id || releaseId.value
+      if (nextReleaseId !== releaseId.value) {
+        cognitiveCache.clear()
+        cognitiveDetails.value = {}
+        cognitiveLoading.value = {}
+      }
+      learningContext.value = context
+      releaseId.value = nextReleaseId
+      completedNodes.value = learningItems.value
+        .filter(item => item?.learning?.status === 'completed')
+        .map(item => {
+          const node = nodes.value.find(candidate => String(candidate.outlineNodeId) === String(item.outline_node_id))
+          return node?.id
+        })
+        .filter(id => id != null)
+      return context
+    })
+  }
+
+  function getNodeDisplayState(item) {
+    return resolveNodeDisplayState(item)
+  }
+
+  async function loadNodeCognition(outlineNodeId) {
+    const item = learningItemsByNodeId.value.get(String(outlineNodeId))
+    const nodeId = item?.cognition?.node_id
+    expandedNodeId.value = String(outlineNodeId)
+    if (nodeId == null || previewMode) return null
+    const cacheKey = `${releaseId.value || 'unknown'}:${String(outlineNodeId)}`
+    if (cognitiveCache.has(cacheKey)) return cognitiveCache.get(cacheKey)
+    cognitiveLoading.value = { ...cognitiveLoading.value, [outlineNodeId]: true }
+    try {
+      const response = await getCognitiveState(courseId, null, nodeId)
+      const detail = response?.data ?? response
+      cognitiveCache.set(cacheKey, detail)
+      cognitiveDetails.value = { ...cognitiveDetails.value, [outlineNodeId]: detail }
+      return detail
+    } catch (err) {
+      cognitiveDetails.value = {
+        ...cognitiveDetails.value,
+        [outlineNodeId]: { status: 'degraded', message: err?.message || '认知详情暂时不可用' },
+      }
+      return null
+    } finally {
+      cognitiveLoading.value = { ...cognitiveLoading.value, [outlineNodeId]: false }
+    }
+  }
+
+  function toggleNodeCognition(outlineNodeId) {
+    const key = String(outlineNodeId)
+    if (expandedNodeId.value === key) {
+      expandedNodeId.value = null
+      return
+    }
+    loadNodeCognition(key)
+  }
+
   function restoreViewState() {
     const saved = readJson(viewStorageKey, {})
     mode.value = Object.values(LEARNING_MODES).includes(saved.mode)
@@ -348,17 +457,19 @@ export function useLearningWorkspace(courseId, options = {}) {
       const response = await getPlayerInitData(courseId)
       const normalized = normalizePlayerData(response)
       releaseId.value = normalized.releaseId
-      try {
-        const context = await getLearningContext(courseId)
-        learningContext.value = context?.data ?? context
-        releaseId.value = learningContext.value?.release_id || releaseId.value
-        completedNodes.value = (learningContext.value?.items || [])
-          .filter(item => item?.learning?.status === 'completed')
-          .map(item => item.outline_node_id)
-      } catch {
-        completedNodes.value = normalized.savedProgress.completedNodeIds || []
-      }
       course.value = normalized
+      if (previewMode) {
+        // Teacher/staff preview is a content inspection context. It must not
+        // read or merge a student's release-scoped projection into draft nodes.
+        learningContext.value = buildPreviewLearningContext(normalized)
+        completedNodes.value = []
+      } else {
+        try {
+          await refreshLearningContext()
+        } catch {
+          completedNodes.value = normalized.savedProgress.completedNodeIds || []
+        }
+      }
       if (!normalized.nodes.length) {
         error.value = normalized.contentMessage || '课程学习内容尚未就绪，请稍后再试。'
         status.value = 'empty'
@@ -439,7 +550,12 @@ export function useLearningWorkspace(courseId, options = {}) {
       seekTo(globalTime)
       // A frozen media release owns its cue-to-node/page mapping.  The legacy
       // script timing remains a fallback while P0 still borrows its PPT assets.
-      const cueNodeIndex = nodes.value.findIndex(node => String(node.id) === String(payload?.nodeId))
+      const cueNodeIndex = nodes.value.findIndex(node => {
+        const nodeIdMatches = payload?.nodeId != null && String(node.id) === String(payload.nodeId)
+        const outlineNodeIdMatches = payload?.outlineNodeId != null
+          && String(node.outlineNodeId) === String(payload.outlineNodeId)
+        return nodeIdMatches || outlineNodeIdMatches
+      })
       if (cueNodeIndex >= 0) {
         currentNodeIndex.value = cueNodeIndex
       }
@@ -726,6 +842,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       if (!completedNodes.value.includes(node.id)) {
         completedNodes.value = [...completedNodes.value, node.id]
       }
+      await refreshLearningContext().catch(() => {})
       return true
     } catch {
       saveState.value = 'error'
@@ -803,6 +920,15 @@ export function useLearningWorkspace(courseId, options = {}) {
     completedNodes,
     releaseId,
     learningContext,
+    learningItems,
+    learningItemsByNodeId,
+    expandedNodeId,
+    cognitiveDetails,
+    cognitiveLoading,
+    getNodeDisplayState,
+    loadNodeCognition,
+    toggleNodeCognition,
+    refreshLearningContext,
     pendingLearningEvents,
     queueLearningEvent,
     flushLearningEvents,

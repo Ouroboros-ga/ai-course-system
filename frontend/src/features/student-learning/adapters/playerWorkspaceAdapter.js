@@ -175,7 +175,7 @@ export function buildProgressPayload(state) {
     // 上限 60 秒，与后端校验一致，避免后台标签页长时间未保存的跳变。
   }
   if (state.timeSpentDelta !== undefined && state.timeSpentDelta !== null) {
-    payload.time_spent_delta = clamp(numberOr(state.timeSpentDelta, 0), 0, 60)
+    payload.time_spent_delta = clamp(numberOr(state.timeSpentDelta, 0), 0, 60) // time_spent_delta
   }
   return payload
 }
