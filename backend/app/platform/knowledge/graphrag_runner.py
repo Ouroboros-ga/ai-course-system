@@ -82,15 +82,22 @@ class GraphRagRunner:
             for document in manifest.documents
         ])
         estimated_tokens = _estimate_tokens([document.text for document in manifest.documents])
-        estimated_cost = (estimated_tokens / 1_000_000) * 30.0
+        estimated_cost = (
+            estimated_tokens / 1_000_000
+        ) * settings.GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOKENS
+        max_estimated_cost_usd = (
+            settings.GRAPHRAG_MAX_ESTIMATED_COST_USD
+            if settings.GRAPHRAG_MAX_ESTIMATED_COST_USD > 0
+            else settings.GRAPHRAG_MAX_ESTIMATED_COST
+        )
         if (
             settings.GRAPHRAG_MAX_INPUT_TOKENS > 0
             and estimated_tokens > settings.GRAPHRAG_MAX_INPUT_TOKENS
         ):
             raise GraphRagRunError("LLM_BUDGET_EXCEEDED")
         if (
-            settings.GRAPHRAG_MAX_ESTIMATED_COST > 0
-            and estimated_cost > settings.GRAPHRAG_MAX_ESTIMATED_COST
+            max_estimated_cost_usd > 0
+            and estimated_cost > max_estimated_cost_usd
         ):
             raise GraphRagRunError("LLM_BUDGET_EXCEEDED")
         outputs = self._load_complete_outputs(output_dir, manifest=manifest)
@@ -280,7 +287,10 @@ class GraphRagRunner:
         artifact_root: Path,
         policy_context: dict[str, Any] | None = None,
     ) -> GraphRagArtifacts:
-        python = Path(settings.GRAPHRAG_WORKER_PYTHON).resolve()
+        # Do not call Path.resolve() here. A venv's ``bin/python`` is normally
+        # a symlink to the base interpreter; resolving the final symlink would
+        # bypass the venv and lose GraphRAG/sqlmodel site-packages on Linux.
+        python = Path(os.path.abspath(settings.GRAPHRAG_WORKER_PYTHON))
         if not python.is_file():
             raise GraphRagRunError("GRAPHRAG_WORKER_UNAVAILABLE")
         manifest_path = artifact_root / "input" / "input_manifest.json"
@@ -290,6 +300,22 @@ class GraphRagRunner:
             raise GraphRagRunError("GRAPH_INPUT_MANIFEST_MISMATCH")
         environment = os.environ.copy()
         environment["AI_COURSE_GRAPHRAG_IN_WORKER"] = "1"
+        # Runtime/CLI overrides live on the already-instantiated Settings
+        # object.  The isolated interpreter rebuilds Settings from its own
+        # environment, so propagate the safety gates explicitly; otherwise a
+        # bounded manual smoke could silently inherit broader server defaults.
+        environment["GRAPHRAG_MAX_INPUT_TOKENS"] = str(
+            settings.GRAPHRAG_MAX_INPUT_TOKENS
+        )
+        environment["GRAPHRAG_MAX_ESTIMATED_COST_USD"] = str(
+            settings.GRAPHRAG_MAX_ESTIMATED_COST_USD
+        )
+        environment["GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOKENS"] = str(
+            settings.GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOKENS
+        )
+        environment["GRAPHRAG_MAX_ESTIMATED_COST"] = str(
+            settings.GRAPHRAG_MAX_ESTIMATED_COST
+        )
         policy_path.write_text(
             json.dumps(policy_context or {}, ensure_ascii=False, sort_keys=True),
             encoding="utf-8",

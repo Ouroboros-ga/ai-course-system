@@ -7,6 +7,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        DEBIAN_MIRROR: ${PADDLEOCR_DEBIAN_MIRROR:-deb.debian.org}
+        DEBIAN_SECURITY_MIRROR: ${PADDLEOCR_DEBIAN_SECURITY_MIRROR:-deb.debian.org}
+        PIP_INDEX_URL: ${PADDLEOCR_PIP_INDEX_URL:-https://pypi.org/simple}
     image: smartcarb/paddleocr:2.7.3-cpu
     container_name: smartcarb-paddleocr
     restart: unless-stopped
@@ -18,15 +22,15 @@ services:
       PADDLEOCR_WORKERS: "1"
       PADDLEOCR_MAX_PAGES: "50"
       PADDLEOCR_REQUEST_TIMEOUT_S: "300"
-      PADDLEOCR_HOME: /paddleocr_models
-      OMP_NUM_THREADS: "4"
+      PADDLEOCR_HOME: /root/.paddleocr
+      OMP_NUM_THREADS: "2"
     volumes:
-      - paddleocr_models:/paddleocr_models
+      - paddleocr_models:/root/.paddleocr
     deploy:
       resources:
         limits:
-          cpus: "4.0"
-          memory: 4G
+          cpus: "2.0"
+          memory: 3G
         reservations:
           memory: 1G
     healthcheck:

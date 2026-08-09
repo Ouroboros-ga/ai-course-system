@@ -72,7 +72,7 @@ import api from '@/api/index.js'
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
 
-import FileConfigModal from '@/components/chat/Fileconfigmodal/FileConfigModal.vue'
+import FileConfigModal from '@/components/chat/FileConfigModal/FileConfigModal.vue'
 
 const props = defineProps(['initialData', 'resetTrigger'])
 const emit = defineEmits(['file-upload', 'analysis-complete'])

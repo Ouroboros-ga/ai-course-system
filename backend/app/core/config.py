@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     GRAPHRAG_MAX_RETRIES: int = 2
     GRAPHRAG_RUN_TIMEOUT_SECONDS: int = 1800
     GRAPHRAG_MAX_INPUT_TOKENS: int = 0
+    # USD-based preflight estimate. This is not a provider-side billing cap.
+    GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOKENS: float = 30.0
+    GRAPHRAG_MAX_ESTIMATED_COST_USD: float = 0.0
+    # Backward-compatible alias for existing deployments. Prefer the explicit
+    # *_USD setting above; when it is zero this legacy value remains effective.
     GRAPHRAG_MAX_ESTIMATED_COST: float = 0.0
     VECTOR_STORE_PROVIDER: str = "lancedb"
     VECTOR_STORE_ROOT: str = "./media/knowledge_indexes"

@@ -69,9 +69,13 @@ class _PaddleRuntime:
     def ocr_image(self, image_bytes: bytes, lang: str = "ch") -> List[OcrBlock]:
         if not self._available:
             raise RuntimeError("PaddleOCR runtime not available")
+        import numpy as np  # type: ignore
         from PIL import Image  # type: ignore
-        img = Image.open(io.BytesIO(image_bytes))
-        result = self._engine.ocr(img, cls=True)
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        # PaddleOCR 2.7 does not accept a Pillow Image directly.  Keep the
+        # service boundary byte-oriented, then adapt to the runtime's native
+        # ndarray contract inside this provider.
+        result = self._engine.ocr(np.asarray(img), cls=True)
         return self._normalize(result, img.width, img.height)
 
     def ocr_pdf(self, pdf_bytes: bytes, lang: str = "ch",
@@ -106,11 +110,38 @@ class _PaddleRuntime:
 
     @staticmethod
     def _normalize(page_result, width: float, height: float) -> List[OcrBlock]:
-        page = OcrPage(page=1, blocks=[])
-        return PaddleRuntime._normalize_page(page_result)
+        # PaddleOCR wraps the result for a single image in one additional page
+        # list.  Accept both shapes so a minor provider return-shape change does
+        # not silently produce an empty response.
+        if (
+            isinstance(page_result, list)
+            and len(page_result) == 1
+            and isinstance(page_result[0], list)
+            and not PaddleRuntime._looks_like_entry(page_result[0])
+        ):
+            page_result = page_result[0]
+        return PaddleRuntime._normalize_page(page_result, width=width, height=height)
 
     @staticmethod
-    def _normalize_page(page_result) -> List[OcrBlock]:
+    def _looks_like_entry(value) -> bool:
+        if not isinstance(value, (list, tuple)) or len(value) < 2:
+            return False
+        box, recognition = value[0], value[1]
+        return (
+            isinstance(box, (list, tuple))
+            and len(box) >= 4
+            and isinstance(recognition, (list, tuple))
+            and len(recognition) >= 2
+            and isinstance(recognition[0], str)
+        )
+
+    @staticmethod
+    def _normalize_page(
+        page_result,
+        *,
+        width: Optional[float] = None,
+        height: Optional[float] = None,
+    ) -> List[OcrBlock]:
         blocks: List[OcrBlock] = []
         if not page_result:
             return blocks
@@ -121,9 +152,17 @@ class _PaddleRuntime:
                 text, conf = entry[1]
                 xs = [pt[0] for pt in box]
                 ys = [pt[1] for pt in box]
+                bbox = [min(xs), min(ys), max(xs), max(ys)]
+                if width and height:
+                    bbox = [
+                        bbox[0] / width,
+                        bbox[1] / height,
+                        bbox[2] / width,
+                        bbox[3] / height,
+                    ]
                 blocks.append(OcrBlock(
                     text=text,
-                    bbox=[min(xs), min(ys), max(xs), max(ys)],
+                    bbox=bbox,
                     confidence=float(conf),
                     kind="text",
                 ))

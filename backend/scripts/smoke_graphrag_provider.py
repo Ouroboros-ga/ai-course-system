@@ -23,7 +23,14 @@ def main() -> int:
     parser.add_argument("--course-id", type=int, required=True)
     parser.add_argument("--max-chunks", type=int, default=3, choices=range(1, 11))
     parser.add_argument("--max-input-tokens", type=int, default=12000)
-    parser.add_argument("--max-estimated-cost", type=float, default=1.0)
+    parser.add_argument(
+        "--max-estimated-cost-usd",
+        "--max-estimated-cost",
+        dest="max_estimated_cost_usd",
+        type=float,
+        default=0.70,
+        help="USD preflight estimate; this is not a provider-side billing cap",
+    )
     parser.add_argument("--confirm-billable", action="store_true")
     args = parser.parse_args()
     if not args.confirm_billable:
@@ -31,7 +38,7 @@ def main() -> int:
     if not settings.GRAPHRAG_ENABLED:
         parser.error("GRAPHRAG_ENABLED 未启用")
     settings.GRAPHRAG_MAX_INPUT_TOKENS = args.max_input_tokens
-    settings.GRAPHRAG_MAX_ESTIMATED_COST = args.max_estimated_cost
+    settings.GRAPHRAG_MAX_ESTIMATED_COST_USD = args.max_estimated_cost_usd
 
     run_id = f"manual_smoke_{uuid.uuid4().hex}"
     root = (

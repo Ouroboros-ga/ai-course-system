@@ -11,7 +11,7 @@
 8. 写入 DocumentBlock / EvidenceSpan / GraphCandidateBatch
 
 设计要点：
-- 真实 Provider 不可用时降级到 Fake Provider（保证端到端流程可用）
+- 真实 Provider 不可用时返回结构化失败，不生成 Fake 解析结果
 - 解析失败必须返回结构化错误，不伪装成功
 - EvidenceSpan 候选基于规则抽取（每个非空 text block 生成一个候选）
 - GraphCandidateBatch 自动创建并标记 succeeded

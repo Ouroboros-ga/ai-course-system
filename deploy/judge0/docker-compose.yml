@@ -11,8 +11,10 @@
 # 数据卷不会被普通回滚删除；清理卷必须先备份并由运维显式执行。
 #
 # P0-2 安全约束：本配置已移除 `privileged` 字段。Judge0 isolate 通过
-# 最小化的 cap_add: SYS_ADMIN 创建 Linux 命名空间，并保留
-# no-new-privileges:true 防止权限提升。如因特殊原因必须使用特权模式
+# 最小化的 cap_add: SYS_ADMIN 创建 Linux 命名空间。API 容器保留
+# no-new-privileges:true；官方 Worker 启动脚本必须通过 setuid sudo 写入
+# isolate 环境，因此 Worker 不能设置该项，但仍不使用 privileged 模式。
+# 如因特殊原因必须使用特权模式
 # （例如 isolate 在某些内核版本上无法工作），必须在专用硬化主机上
 # 手动配置 privileged: true，并接受部署安全评审；不得通过环境变量
 # 在普通主机上开启特权模式。
@@ -26,6 +28,8 @@ x-logging: &default-logging
 
 services:
   server:
+    # Docker Hub official linux/amd64 manifest for 1.13.1:
+    # sha256:6b5d6a66aa19a8e878a52ea3c6a560afc1086734d96e2885b561fd5c6018f082
     image: judge0/judge0:1.13.1
     # Judge0 reads this as an environment file. Do not mount it as an
     # unrelated file: that leaves server/worker with different credentials
@@ -48,6 +52,11 @@ services:
       - no-new-privileges:true
     <<: *default-logging
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
     depends_on:
       db:
         condition: service_healthy
@@ -75,18 +84,22 @@ services:
       AUTHZ_TOKEN: ${JUDGE0_AUTHZ_TOKEN:?set JUDGE0_AUTHZ_TOKEN}
       REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
       POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
-    # Judge0's upstream isolate may require elevated worker privileges on
-    # some Linux hosts. Use the minimal capability (SYS_ADMIN) instead of
-    # privileged mode, and keep no-new-privileges to prevent escalation.
-    # See the P0-2 security note at the top of this file.
+    # The upstream worker starts as the non-root `judge0` user and uses sudo
+    # to prepare isolate's environment. `no-new-privileges` blocks that
+    # required setuid transition, so it is intentionally absent here. The
+    # container remains non-privileged and receives only SYS_ADMIN in addition
+    # to Docker's default capability set. See the P0-2 note above.
     cap_add:
       - SYS_ADMIN
-    security_opt:
-      - no-new-privileges:true
     volumes:
       - ./workers-no-secret-env.sh:/bootstrap/workers-no-secret-env.sh:ro
     <<: *default-logging
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "1.50"
+          memory: 1536M
     depends_on:
       db:
         condition: service_healthy
@@ -104,6 +117,11 @@ services:
       - judge0_pg_data:/var/lib/postgresql/data/
     <<: *default-logging
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
     networks:
       - judge0_net
     healthcheck:
@@ -123,6 +141,11 @@ services:
       REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
     <<: *default-logging
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
     networks:
       - judge0_net
     healthcheck:

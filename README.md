@@ -1,5 +1,7 @@
 # AI 互动智课系统
 
+> **2026-08-09 Ubuntu 部署基线：** 服务器文件解析、LanceDB/GraphRAG、Judge0、Node 与外部 Provider 的真实状态和回滚方式见 [服务器环境一致性与外部链路审计](docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md)。LanceDB 0.34/PyArrow 25 在 Ubuntu x86_64 未发现兼容阻塞；GraphRAG 必须经独立 Python Worker，真实 LLM 构图受 token、USD 预估、数据外发授权与人工确认闸门控制。当前 GraphRAG/Judge0 均 fail-closed：前者等待课程数据范围/目的地级外发授权，后者因官方 isolate 需要共用主机不接受的提升权限而未启用。
+
 > **2026-08-07 管理员与 Provider 配置**：新增 `/app/admin`，用于用户检索、昵称/密码/启用状态管理，以及 LLM、TTS、PPT 的 Base URL、模型和密钥配置。平台全局角色已收敛为 `user/admin`；课程教师能力继续由 Course Access v1 决定。外部“泛雅·超星 AI”示例协议通过可移除的 `/api/v1/compat/*` 参考兼容包接入；未配置 Provider 或未映射外部资源时会 fail-closed。删除 `backend/app/external_apis/fanya_chaoxing_ai/` 不影响内部 API。详见 [现行实施说明](docs/phase1/平台管理员Provider与开放API兼容层.md)。
 
 本仓库是本地原型 Demo。当前实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。

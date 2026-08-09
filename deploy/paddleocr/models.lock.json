@@ -8,28 +8,28 @@
     {
       "name": "ch_PP-OCRv4_det",
       "purpose": "文本检测",
-      "source": "PaddleOCR 内置下载（首次运行缓存到 PADDLEOCR_HOME）",
-      "sha256": "to-be-pinned-after-first-download"
+      "source": "PaddleOCR 内置下载（首次运行缓存到 PADDLEOCR_HOME）；摘要目标：inference.pdmodel",
+      "sha256": "2ad68ed2768fe6c41166a5bc64680cc9f445390acb6528da449a4db2f7b90e14"
     },
     {
       "name": "ch_PP-OCRv4_rec",
       "purpose": "文本识别",
-      "source": "PaddleOCR 内置下载",
-      "sha256": "to-be-pinned-after-first-download"
+      "source": "PaddleOCR 内置下载；摘要目标：inference.pdmodel",
+      "sha256": "bf78f3898a004615e69c676259d8171bd7ae99000653b41fd72aaa36ae8bd304"
     },
     {
       "name": "ch_ppocr_mobile_v2.0_cls",
       "purpose": "方向分类",
-      "source": "PaddleOCR 内置下载",
-      "sha256": "to-be-pinned-after-first-download"
+      "source": "PaddleOCR 内置下载；摘要目标：inference.pdmodel",
+      "sha256": "3c4337ec61722a20b1dca2e5bfaffc313c0592bc89ad6e0d45168224186f6683"
     }
   ],
   "runtime": {
     "device": "cpu",
-    "threads": 4,
+    "threads": 2,
     "max_pages_per_request": 50,
     "request_timeout_s": 300,
-    "max_concurrent_requests": 4
+    "max_concurrent_requests": 1
   },
-  "note": "首次构建镜像时 PREWARM_MODELS=true 会触发模型下载并固化进镜像层；生产应改用挂载卷（offline_models=true）并在此填入实际 SHA256，确保可复现。"
+  "note": "2026-08-09 在部署主机首次构建时记录三个 inference.pdmodel 的实际 SHA256。运行时仍使用只读语义的命名卷保存模型缓存，升级模型前必须重新核对并更新摘要。"
 }
