@@ -57,12 +57,12 @@ services:
     # tooling, but do not rely on it as the only runtime guard.
     cpus: "0.50"
     mem_limit: 512M
-    pids_limit: 256
     deploy:
       resources:
         limits:
           cpus: "0.50"
           memory: 512M
+          pids: 256
     depends_on:
       db:
         condition: service_healthy
@@ -103,12 +103,12 @@ services:
     restart: unless-stopped
     cpus: "1.50"
     mem_limit: 1536M
-    pids_limit: 256
     deploy:
       resources:
         limits:
           cpus: "1.50"
           memory: 1536M
+          pids: 256
     depends_on:
       db:
         condition: service_healthy
@@ -128,12 +128,12 @@ services:
     restart: unless-stopped
     cpus: "0.50"
     mem_limit: 512M
-    pids_limit: 256
     deploy:
       resources:
         limits:
           cpus: "0.50"
           memory: 512M
+          pids: 256
     networks:
       - judge0_net
     healthcheck:
@@ -155,12 +155,12 @@ services:
     restart: unless-stopped
     cpus: "0.25"
     mem_limit: 128M
-    pids_limit: 128
     deploy:
       resources:
         limits:
           cpus: "0.25"
           memory: 128M
+          pids: 128
     networks:
       - judge0_net
     healthcheck:
