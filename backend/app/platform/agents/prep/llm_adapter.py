@@ -293,11 +293,16 @@ class PrepLLMAdapter:
         max_tokens: int | None = None,
     ) -> "EvidenceSegmenterResult":
         """Stage 1 Reduce: merge summaries without resending source text."""
-        from app.schemas.controlled_prep import EvidenceSegmenterResult as _Result
+        from app.schemas.controlled_prep import (
+            EvidenceReduceResult as _WireResult,
+            EvidenceSegmenterResult as _Result,
+        )
 
         user_payload = {
             "constraints": {
                 "max_segments": 32,
+                "max_examples_per_segment": 10,
+                "max_exercises_per_segment": 10,
                 "return_json_only": True,
                 "evidence_ids_must_come_from_input": True,
             },
@@ -308,7 +313,7 @@ class PrepLLMAdapter:
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="segment_evidence_reduce",
             purpose="reduce course evidence summaries",
-            output_schema=_Result,
+            output_schema=_WireResult,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=(
                 int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS)
@@ -317,7 +322,11 @@ class PrepLLMAdapter:
             run_id=run_id,
             trace_id=trace_id,
         )
-        return self._parsed_or_validate(response, _Result)
+        wire_result = self._parsed_or_validate(response, _WireResult)
+        # Convert the Reduce-only wire model back to the strict domain
+        # contract.  The wire validator has already stably deduplicated and
+        # bounded descriptive suggestions; every other field is revalidated.
+        return _Result.model_validate(wire_result.model_dump(mode="json"))
 
     async def plan_outline(
         self,

@@ -218,7 +218,7 @@ InitialCoursePrepPort.build(
 
 **持久化**：Service 内部完成（outline/scripts/ppt/graph 全部持久化）。Graph 不触碰持久化。
 
-**材料证据整理（2026-08-09）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理总调用预算 40；任何阶段失败仍不写入课程草稿。
+**材料证据整理（2026-08-09）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理总调用预算 40。Reduce prompt 与 JSON Schema 均要求每个 segment 的 `examples`、`exercises` 各不超过 10 项；Reduce 专用线格式会在正式 `EvidenceSegmenterResult` 校验前对这两个非事实列表稳定去重、去空并裁剪，避免模型修复重试仍超限导致整课失败。segment 数量、身份、证据 ID 与其他字段不做宽松归一化；任何剩余错误仍不写入课程草稿。
 
 ### Workflow 2：IncrementalEditGraph
 

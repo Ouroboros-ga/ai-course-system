@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -49,9 +49,45 @@ class EvidenceSegment(StrictModel):
     exercises: list[str] = Field(default_factory=list, max_length=10)
 
 
+class EvidenceReduceSegment(EvidenceSegment):
+    """Reduce wire shape with deterministic normalization for safe list fields.
+
+    The JSON schema still advertises the public ten-item limit inherited from
+    ``EvidenceSegment``.  The before-validator is intentionally scoped to the
+    Reduce response: examples and exercises are descriptive suggestions, so an
+    otherwise valid course organization must not fail merely because a model
+    repeated or over-produced them.  Identity, provenance, and segment-count
+    fields remain strictly validated.
+    """
+
+    @field_validator("examples", "exercises", mode="before")
+    @classmethod
+    def normalize_bounded_suggestions(cls, value: object) -> object:
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            return value
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            candidate = item.strip()
+            if not candidate or candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized.append(candidate)
+            if len(normalized) == 10:
+                break
+        return normalized
+
+
 class EvidenceSegmenterResult(StrictModel):
     stage: Literal["evidence_segmenter"] = "evidence_segmenter"
     segments: list[EvidenceSegment] = Field(min_length=1, max_length=32)
+
+
+class EvidenceReduceResult(StrictModel):
+    """Model-facing Reduce result normalized before the strict domain result."""
+
+    stage: Literal["evidence_segmenter"] = "evidence_segmenter"
+    segments: list[EvidenceReduceSegment] = Field(min_length=1, max_length=32)
 
 
 class EvidenceSegmentMapResult(StrictModel):

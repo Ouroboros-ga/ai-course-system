@@ -1,4 +1,5 @@
 import asyncio
+import json
 
 import pytest
 from pydantic import ValidationError
@@ -154,6 +155,104 @@ def test_wrapped_response_format_rejection_uses_adapter_fallback_without_format(
     assert "source_text" not in "\n".join(message.content for message in gateway.calls[0]["messages"])
     assert "response_format" not in gateway.calls[1]["kwargs"]
     assert "JSON Schema" in gateway.calls[1]["messages"][-1].content
+
+
+def test_reduce_stably_deduplicates_and_caps_examples_and_exercises():
+    class CapturingStructured:
+        def __init__(self):
+            self.schema = None
+            self.messages = None
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schema = output_schema
+            self.messages = messages
+            payload = {
+                "stage": "evidence_segmenter",
+                "segments": [{
+                    "segment_id": "seg_1",
+                    "title": "bounded suggestions",
+                    "topic": "bounded suggestions",
+                    "evidence_ids": ["es_1"],
+                    "examples": [
+                        " example-0 ",
+                        "example-0",
+                        *[f"example-{index}" for index in range(1, 15)],
+                    ],
+                    "exercises": [f"exercise-{index}" for index in range(15)],
+                }],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    result = asyncio_run(adapter.reduce_evidence([EvidenceSegment(
+        segment_id="local",
+        title="local",
+        topic="local",
+        evidence_ids=["es_1"],
+    )]))
+
+    assert port.schema.__name__ == "EvidenceReduceResult"
+    wire_schema = port.schema.model_json_schema()
+    segment_schema = wire_schema["$defs"]["EvidenceReduceSegment"]
+    assert segment_schema["properties"]["examples"]["maxItems"] == 10
+    assert segment_schema["properties"]["exercises"]["maxItems"] == 10
+    assert result.segments[0].examples == [f"example-{index}" for index in range(10)]
+    assert result.segments[0].exercises == [f"exercise-{index}" for index in range(10)]
+    constraints = json.loads(port.messages[1]["content"])["constraints"]
+    assert constraints["max_examples_per_segment"] == 10
+    assert constraints["max_exercises_per_segment"] == 10
+
+
+def test_reduce_repair_response_with_fifteen_items_is_safely_normalized():
+    """A repaired Reduce response may repeat the same bounded-list violation."""
+
+    examples = [f"example-{index}" for index in range(15)]
+    exercises = [f"exercise-{index}" for index in range(15)]
+
+    class RepairingGateway:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, _messages, **_kwargs):
+            self.calls += 1
+            segment = {
+                "segment_id": "seg_1",
+                "title": "repair result",
+                "evidence_ids": ["es_1"],
+                "examples": examples,
+                "exercises": exercises,
+            }
+            if self.calls == 2:
+                segment["topic"] = "repair result"
+            return LLMResponse(
+                content=json.dumps({
+                    "stage": "evidence_segmenter",
+                    "segments": [segment],
+                }),
+                usage={},
+                model="gateway",
+                finish_reason="stop",
+                latency_ms=1,
+            )
+
+    gateway = RepairingGateway()
+    adapter = PrepLLMAdapter(
+        structured_llm=SharedLLMStructuredProvider(client=gateway),
+    )
+    result = asyncio_run(adapter.reduce_evidence([EvidenceSegment(
+        segment_id="local",
+        title="local",
+        topic="local",
+        evidence_ids=["es_1"],
+    )]))
+
+    assert gateway.calls == 2
+    assert result.segments[0].examples == examples[:10]
+    assert result.segments[0].exercises == exercises[:10]
 
 
 def test_structure_planner_uses_sparse_schema_and_disables_reasoning_budget():
