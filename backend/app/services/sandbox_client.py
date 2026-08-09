@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 from enum import Enum
@@ -238,11 +239,30 @@ class SandboxClient:
                 response = client.post(
                     f"{self.base_url}/submissions",
                     json=payload,
-                    params={"base64_encoded": "true", "wait": "true"},
+                    # wait=true executes inside the non-privileged API
+                    # container in Judge0 1.13.1. Enqueue so only the
+                    # dedicated privileged Worker executes student code.
+                    params={"base64_encoded": "true", "wait": "false"},
                     headers=self._headers(),
                 )
                 response.raise_for_status()
                 data = response.json()
+
+                token = data.get("token")
+                deadline = time.monotonic() + float(self.timeout)
+                while int((data.get("status") or {}).get("id", 0)) <= 2:
+                    if not token:
+                        raise RuntimeError("Judge0 queued submission returned no token")
+                    if time.monotonic() >= deadline:
+                        raise httpx.TimeoutException("Judge0 queue polling timed out")
+                    time.sleep(0.2)
+                    poll_response = client.get(
+                        f"{self.base_url}/submissions/{token}",
+                        params={"base64_encoded": "true"},
+                        headers=self._headers(),
+                    )
+                    poll_response.raise_for_status()
+                    data = poll_response.json()
 
             return self._parse_result(data)
 

@@ -286,6 +286,47 @@ class TestSandboxClient:
         assert result.status == SubmissionStatus.SANDBOX_UNAVAILABLE
         assert "降级" in result.message
 
+    @patch("app.services.sandbox_client.time.sleep", return_value=None)
+    @patch("app.services.sandbox_client.httpx.Client")
+    def test_submit_code_enqueues_then_polls_worker(
+        self, mock_client_cls, _mock_sleep,
+    ):
+        queued_response = MagicMock()
+        queued_response.raise_for_status = MagicMock()
+        queued_response.json.return_value = {"token": "worker-token"}
+
+        completed_response = MagicMock()
+        completed_response.raise_for_status = MagicMock()
+        completed_response.json.return_value = {
+            "token": "worker-token",
+            "status": {"id": 3, "description": "Accepted"},
+            "stdout": "V09SS0VSX09L",  # base64("WORKER_OK")
+            "stderr": None,
+            "compile_output": None,
+            "time": "0.01",
+            "memory": 1024,
+            "exit_code": 0,
+            "message": None,
+        }
+        mock_client = MagicMock()
+        mock_client.__enter__ = MagicMock(return_value=mock_client)
+        mock_client.__exit__ = MagicMock(return_value=False)
+        mock_client.post.return_value = queued_response
+        mock_client.get.return_value = completed_response
+        mock_client_cls.return_value = mock_client
+
+        client = SandboxClient(base_url="http://127.0.0.1:2358", authn_token="test")
+        client._enabled = True
+        result = client.submit_code("print('WORKER_OK')", "python3")
+
+        assert result.status == SubmissionStatus.ACCEPTED
+        assert result.stdout == "WORKER_OK"
+        assert mock_client.post.call_args.kwargs["params"]["wait"] == "false"
+        mock_client.get.assert_called_once()
+        assert mock_client.get.call_args.args[0].endswith(
+            "/submissions/worker-token"
+        )
+
     @patch("app.services.sandbox_client.httpx.Client")
     def test_network_always_disabled_in_payload(self, mock_client_cls):
         """提交请求中网络始终关闭"""
@@ -320,6 +361,7 @@ class TestSandboxClient:
         assert payload["enable_network"] is False
         assert payload["enable_per_process_and_thread_time_limit"] is True
         assert payload["enable_per_process_and_thread_memory_limit"] is True
+        assert call_args.kwargs["params"]["wait"] == "false"
 
 
 # ==================== Judge0 恢复演练测试 ====================

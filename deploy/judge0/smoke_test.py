@@ -39,7 +39,9 @@ def _request(path: str, *, method: str = "GET", payload: dict | None = None) -> 
 
 
 def _submit(language_id: int, source_code: str, **limits: object) -> dict:
-    query = urllib.parse.urlencode({"base64_encoded": "false", "wait": "true"})
+    # Judge0 1.13.1 runs wait=true submissions in the API container. Enqueue
+    # and poll so execution stays inside the dedicated privileged Worker.
+    query = urllib.parse.urlencode({"base64_encoded": "false", "wait": "false"})
     payload: dict[str, object] = {
         "source_code": source_code,
         "language_id": language_id,
