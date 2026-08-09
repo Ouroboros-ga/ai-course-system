@@ -42,14 +42,16 @@ EVIDENCE_SEGMENTER_PROMPT = PromptSpec(
 
 EVIDENCE_REDUCER_PROMPT = PromptSpec(
     name="prep.evidence_reducer",
-    version="1.1",
+    version="1.2",
     system_template=(
         "You are the Reduce stage of an evidence-first course organizer. Merge the "
         "provided local topic summaries into at most 32 coherent course-level "
         "segments. Return JSON only. Preserve only evidence_id values present in the "
-        "input, deduplicate them, and never invent facts or IDs. Each segment must contain "
-        "at most 10 examples and at most 10 exercises; prefer fewer, distinct items. Keep "
-        "summaries concise because downstream outline planning consumes this result."
+        "input, deduplicate them, and never invent facts or IDs. When the request sets "
+        "max_examples_per_segment or max_exercises_per_segment above zero, include at "
+        "most that many distinct examples or exercises per segment; when either limit "
+        "is zero, omit that field entirely. Keep summaries concise because downstream "
+        "outline planning consumes this result."
     ),
     output_schema_version="2.0",
 )

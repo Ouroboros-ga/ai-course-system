@@ -92,7 +92,12 @@ class Settings(BaseSettings):
     PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS: int = 36000
     PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS: int = 25
     PREP_INITIAL_EVIDENCE_CONCURRENCY: int = 2
-    PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS: int = 40
+    # Total Map+Reduce call budget for one course's evidence organization.
+    # Intermediate Reduce levels now merge lean summaries (no examples/
+    # exercises), which cut both per-call truncation and the number of calls;
+    # 64 keeps headroom for a full-scale 25-chunk corpus without hiding
+    # runaway loops behind an unbounded budget.
+    PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS: int = 64
     PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS: int = 4096
     PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS: int = 8192
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS: int = 16384

@@ -817,6 +817,137 @@ def test_evidence_attempt_budget_has_safe_teacher_message():
     assert "internal budget detail" not in message
 
 
+def test_reduce_lean_mode_uses_lean_schema_without_suggestions():
+    class CapturingStructured:
+        def __init__(self):
+            self.schema = None
+            self.messages = None
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schema = output_schema
+            self.messages = messages
+            payload = {
+                "stage": "evidence_segmenter",
+                "segments": [{
+                    "segment_id": "seg_1",
+                    "title": "lean",
+                    "topic": "lean",
+                    "evidence_ids": ["es_1"],
+                }],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    result = asyncio_run(adapter.reduce_evidence(
+        [EvidenceSegment(
+            segment_id="local",
+            title="local",
+            topic="local",
+            evidence_ids=["es_1"],
+        )],
+        lean=True,
+    ))
+
+    assert port.schema.__name__ == "LeanEvidenceReduceResult"
+    constraints = json.loads(port.messages[1]["content"])["constraints"]
+    assert constraints["max_examples_per_segment"] == 0
+    assert constraints["max_exercises_per_segment"] == 0
+    assert result.segments[0].examples == []
+    assert result.segments[0].exercises == []
+
+
+def test_reduce_hierarchy_uses_lean_intermediate_and_full_final_level(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 200)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS", 1000)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
+
+    class HierarchyStages:
+        def __init__(self):
+            self.reduce_leans = []
+
+        async def segment_evidence(self, request, **_kwargs):
+            return EvidenceSegmentMapResult(segments=[
+                EvidenceSegment(
+                    segment_id=f"local_{index}_{half}",
+                    title="local",
+                    topic="local " + "x" * 60,
+                    evidence_ids=[item.evidence_id for item in request.evidence],
+                    examples=[f"example-{index}"],
+                    exercises=[f"exercise-{index}"],
+                )
+                for index, item in enumerate(request.evidence)
+                for half in range(2)
+            ])
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_leans.append(_kwargs.get("lean"))
+            evidence_ids = []
+            for segment in segments:
+                evidence_ids.extend(segment.evidence_ids)
+            return EvidenceSegmenterResult(segments=[EvidenceSegment(
+                segment_id="merged",
+                title="merged",
+                topic="merged",
+                evidence_ids=list(dict.fromkeys(evidence_ids)),
+            )])
+
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id=f"evg_{index}", text="x" * 150, page=index + 1)
+        for index in range(4)
+    ])
+    stages = HierarchyStages()
+    asyncio_run(ControlledPrepWorkflow(stages).segment_evidence(request))
+
+    # Only the final single-group level re-adds examples/exercises; every
+    # intermediate level merges on the lean summary to stay inside the
+    # completion budget.
+    assert len(stages.reduce_leans) >= 2
+    assert stages.reduce_leans[-1] is False
+    assert all(stages.reduce_leans[:-1])
+
+
+def test_run_concurrent_cancels_in_flight_siblings_on_failure():
+    outcomes: list[str] = []
+
+    async def slow():
+        try:
+            await asyncio.sleep(0.2)
+        except asyncio.CancelledError:
+            outcomes.append("cancelled")
+            raise
+        outcomes.append("completed")
+
+    async def boom():
+        outcomes.append("boom")
+        raise StructuredOutputError(
+            "budget exhausted",
+            reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+            stage="segment_evidence_reduce",
+        )
+
+    async def scenario():
+        with pytest.raises(StructuredOutputError):
+            await ControlledPrepWorkflow._run_concurrent([
+                slow(),
+                boom(),
+                slow(),
+            ])
+        # The failing sibling raises while the survivors are cancelled rather
+        # than leaking in-flight LLM requests into the background.
+        assert outcomes.count("cancelled") == 2
+        assert outcomes.count("completed") == 0
+        assert "boom" in outcomes
+
+    asyncio_run(scenario())
+
+
 def test_group_evidence_ids_expand_to_canonical_block_ids():
     evidence = [EvidenceReference(
         evidence_id="evg_1",

@@ -90,6 +90,29 @@ class EvidenceReduceResult(StrictModel):
     segments: list[EvidenceReduceSegment] = Field(min_length=1, max_length=32)
 
 
+class LeanEvidenceSegment(StrictModel):
+    """Intermediate Reduce output keeping only identity and provenance.
+
+    Examples/exercises are descriptive suggestions that no downstream stage
+    consumes; carrying them through every hierarchical level is what made
+    intermediate Reduce responses hit ``finish_reason=length`` and burn the
+    bounded call budget.  Intermediate levels therefore merge on
+    title/topic/evidence_ids only, and the final level re-adds suggestions.
+    """
+
+    segment_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
+    evidence_ids: list[str] = Field(min_length=1)
+
+
+class LeanEvidenceReduceResult(StrictModel):
+    """Model-facing Reduce result for intermediate (non-final) levels."""
+
+    stage: Literal["evidence_segmenter"] = "evidence_segmenter"
+    segments: list[LeanEvidenceSegment] = Field(min_length=1, max_length=32)
+
+
 class EvidenceSegmentMapResult(StrictModel):
     """Bounded local result used by one evidence Map request."""
 

@@ -291,18 +291,28 @@ class PrepLLMAdapter:
         run_id: str = "",
         trace_id: str = "",
         max_tokens: int | None = None,
+        lean: bool = False,
     ) -> "EvidenceSegmenterResult":
-        """Stage 1 Reduce: merge summaries without resending source text."""
+        """Stage 1 Reduce: merge summaries without resending source text.
+
+        Intermediate hierarchical levels pass ``lean=True``: the wire schema
+        then only carries ``title``/``topic``/``evidence_ids`` so a level's
+        request and response stay small and finish within the completion
+        budget.  The final level keeps ``lean=False`` and re-adds bounded
+        ``examples``/``exercises`` suggestions.
+        """
         from app.schemas.controlled_prep import (
             EvidenceReduceResult as _WireResult,
             EvidenceSegmenterResult as _Result,
+            LeanEvidenceReduceResult as _LeanWireResult,
         )
 
+        wire_schema = _LeanWireResult if lean else _WireResult
         user_payload = {
             "constraints": {
                 "max_segments": 32,
-                "max_examples_per_segment": 10,
-                "max_exercises_per_segment": 10,
+                "max_examples_per_segment": 0 if lean else 10,
+                "max_exercises_per_segment": 0 if lean else 10,
                 "return_json_only": True,
                 "evidence_ids_must_come_from_input": True,
             },
@@ -313,7 +323,7 @@ class PrepLLMAdapter:
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="segment_evidence_reduce",
             purpose="reduce course evidence summaries",
-            output_schema=_WireResult,
+            output_schema=wire_schema,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=(
                 int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS)
@@ -322,7 +332,7 @@ class PrepLLMAdapter:
             run_id=run_id,
             trace_id=trace_id,
         )
-        wire_result = self._parsed_or_validate(response, _WireResult)
+        wire_result = self._parsed_or_validate(response, wire_schema)
         # Convert the Reduce-only wire model back to the strict domain
         # contract.  The wire validator has already stably deduplicated and
         # bounded descriptive suggestions; every other field is revalidated.

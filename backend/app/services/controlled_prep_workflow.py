@@ -79,13 +79,33 @@ class ControlledPrepWorkflow:
             )
         return method
 
+    @staticmethod
+    async def _run_concurrent(coroutines: list[Awaitable[Any]]) -> list[Any]:
+        """Run coroutines concurrently and cancel in-flight siblings on failure.
+
+        ``asyncio.gather`` alone leaves sibling tasks running in the background
+        when one child raises, so a budget-exceeded error leaked live LLM
+        requests until they finished on their own.  This helper cancels the
+        survivors, awaits their shutdown, and re-raises the first original
+        exception so ``except StructuredOutputError`` paths keep working.
+        """
+        tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+        try:
+            return await asyncio.gather(*tasks)
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
+
     async def segment_evidence(self, request: ControlledPrepInput) -> EvidenceSegmenterResult:
         """Map bounded evidence batches, then hierarchically reduce them."""
         chunks = self._chunk_evidence(request)
         concurrency = max(1, int(settings.PREP_INITIAL_EVIDENCE_CONCURRENCY))
         semaphore = asyncio.Semaphore(concurrency)
         budget = EvidenceAttemptBudget(int(settings.PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS))
-        mapped = await asyncio.gather(*[
+        mapped = await self._run_concurrent([
             self._segment_evidence_group(
                 request,
                 chunk,
@@ -182,7 +202,7 @@ class ControlledPrepWorkflow:
                 raise
             if len(evidence) > 1:
                 midpoint = len(evidence) // 2
-                left, right = await asyncio.gather(
+                left, right = await self._run_concurrent([
                     self._segment_evidence_group(
                         request,
                         evidence[:midpoint],
@@ -197,7 +217,7 @@ class ControlledPrepWorkflow:
                         semaphore=semaphore,
                         budget=budget,
                     ),
-                )
+                ])
                 return [*left, *right]
             retry_limit = max(
                 int(settings.PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS),
@@ -250,6 +270,7 @@ class ControlledPrepWorkflow:
         path: str,
         semaphore: asyncio.Semaphore,
         budget: EvidenceAttemptBudget,
+        lean: bool = False,
     ) -> list[EvidenceSegment]:
         def validate(result: EvidenceSegmenterResult) -> EvidenceSegmenterResult:
             self._assert_evidence_ids(result, request.evidence)
@@ -264,6 +285,7 @@ class ControlledPrepWorkflow:
                         "reduce_evidence",
                         segments,
                         max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
+                        lean=lean,
                     ),
                     validate,
                 )
@@ -271,13 +293,14 @@ class ControlledPrepWorkflow:
             if error.reason_code != "MODEL_OUTPUT_TRUNCATED" or len(segments) <= 1:
                 raise
             midpoint = len(segments) // 2
-            left, right = await asyncio.gather(
+            left, right = await self._run_concurrent([
                 self._reduce_evidence_group(
                     request,
                     segments[:midpoint],
                     path=f"{path}L",
                     semaphore=semaphore,
                     budget=budget,
+                    lean=lean,
                 ),
                 self._reduce_evidence_group(
                     request,
@@ -285,8 +308,9 @@ class ControlledPrepWorkflow:
                     path=f"{path}R",
                     semaphore=semaphore,
                     budget=budget,
+                    lean=lean,
                 ),
-            )
+            ])
             return [*left, *right]
         return [
             segment.model_copy(update={"segment_id": f"reduce_{path}_{index}"})
@@ -304,19 +328,31 @@ class ControlledPrepWorkflow:
         current = segments
         for level in range(8):
             groups = self._chunk_segment_summaries(current)
-            reduced = await asyncio.gather(*[
+            final_level = len(groups) == 1
+            reduced = await self._run_concurrent([
                 self._reduce_evidence_group(
                     request,
                     group,
                     path=f"{level}_{index}",
                     semaphore=semaphore,
                     budget=budget,
+                    # Only the last level re-adds examples/exercises; every
+                    # intermediate level merges on the lean summary so its
+                    # request and response fit the completion budget.
+                    lean=not final_level,
                 )
                 for index, group in enumerate(groups)
             ])
             flattened = [segment for group in reduced for segment in group]
             if len(groups) == 1:
-                return EvidenceSegmenterResult(segments=flattened)
+                if len(flattened) <= 32:
+                    return EvidenceSegmenterResult(segments=flattened)
+                # The final group truncated and bisection concatenated two
+                # <=32-segment responses.  One more lean merge pass squeezes
+                # the result under the EvidenceSegmenterResult cap instead of
+                # failing the whole build with a schema error.
+                current = flattened
+                continue
             if len(flattened) >= len(current) and all(len(group) == 1 for group in groups):
                 break
             current = flattened
