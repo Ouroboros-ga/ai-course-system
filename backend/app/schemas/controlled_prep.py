@@ -53,21 +53,16 @@ class EvidenceSegment(StrictModel):
     exercises: list[str] = Field(default_factory=list, max_length=10)
 
 
-class EvidenceReduceSegment(StrictModel):
-    """Reduce wire shape with deterministic normalization for safe list fields.
+class BoundedSuggestionFields(StrictModel):
+    """Shared stable normalization for descriptive examples/exercises lists.
 
-    The JSON schema still advertises the public ten-item limit for
-    examples/exercises.  The before-validator is intentionally scoped to the
-    Reduce response: these are descriptive suggestions, so an otherwise valid
-    course organization must not fail merely because a model repeated or
-    over-produced them.  Identity and segment-count fields remain strictly
-    validated.  ``evidence_ids`` is deliberately absent: the program backfills
-    the deterministic union of the input group after the call.
+    The model may repeat, over-produce, or emit whitespace-padded suggestions
+    in both the Map and Reduce wire responses.  These fields are descriptive,
+    so an otherwise valid course organization must not fail merely because the
+    model exceeded the ten-item cap; they are stably deduplicated, stripped,
+    and truncated to ten before strict validation.
     """
 
-    segment_id: str = Field(min_length=1, max_length=100)
-    title: str = Field(min_length=1, max_length=300)
-    topic: str = Field(min_length=1, max_length=500)
     examples: list[str] = Field(default_factory=list, max_length=10)
     exercises: list[str] = Field(default_factory=list, max_length=10)
 
@@ -87,6 +82,21 @@ class EvidenceReduceSegment(StrictModel):
             if len(normalized) == 10:
                 break
         return normalized
+
+
+class EvidenceReduceSegment(BoundedSuggestionFields):
+    """Reduce wire shape with deterministic normalization for safe list fields.
+
+    The JSON schema still advertises the public ten-item limit for
+    examples/exercises (inherited from ``BoundedSuggestionFields``).  Identity
+    and segment-count fields remain strictly validated.  ``evidence_ids`` is
+    deliberately absent: the program backfills the deterministic union of the
+    input group after the call.
+    """
+
+    segment_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
 
 
 class EvidenceSegmenterResult(StrictModel):
@@ -124,14 +134,18 @@ class LeanEvidenceReduceResult(StrictModel):
     segments: list[LeanEvidenceSegment] = Field(min_length=1, max_length=32)
 
 
-class EvidenceMapSegment(StrictModel):
-    """Map wire shape: LLMs never return evidence identifiers."""
+class EvidenceMapSegment(BoundedSuggestionFields):
+    """Map wire shape with the same stable suggestion normalization.
+
+    LLMs never return evidence identifiers.  examples/exercises inherit the
+    deterministic deduplicate/strip/truncate-to-ten behavior from
+    ``BoundedSuggestionFields`` so an over-produced Map response is normalized
+    instead of failing the whole course build.
+    """
 
     segment_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=300)
     topic: str = Field(min_length=1, max_length=500)
-    examples: list[str] = Field(default_factory=list, max_length=10)
-    exercises: list[str] = Field(default_factory=list, max_length=10)
 
 
 class EvidenceSegmentMapWireResult(StrictModel):

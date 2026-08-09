@@ -904,6 +904,48 @@ def test_map_backfills_batch_ids_and_never_exposes_evidence_ids():
     assert result.segments[0].evidence_ids == ["es_1", "es_2"]
 
 
+def test_map_stably_deduplicates_and_caps_examples_and_exercises():
+    """An over-produced Map response is normalized like Reduce, not rejected."""
+
+    class CapturingStructured:
+        def __init__(self):
+            self.schema = None
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schema = output_schema
+            payload = {
+                "stage": "evidence_segmenter",
+                "segments": [{
+                    "segment_id": "seg_1",
+                    "title": "topic one",
+                    "topic": "topic one",
+                    "examples": [
+                        " example-0 ",
+                        "example-0",
+                        *[f"example-{index}" for index in range(1, 15)],
+                    ],
+                    "exercises": [f"exercise-{index}" for index in range(15)],
+                }],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id="es_1", text="first"),
+        EvidenceReference(evidence_id="es_2", text="second"),
+    ])
+    result = asyncio_run(adapter.segment_evidence(request))
+
+    assert port.schema.__name__ == "EvidenceSegmentMapWireResult"
+    assert result.segments[0].examples == [f"example-{index}" for index in range(10)]
+    assert result.segments[0].exercises == [f"exercise-{index}" for index in range(10)]
+    assert result.segments[0].evidence_ids == ["es_1", "es_2"]
+
+
 def test_outline_and_script_and_verifier_backfill_from_input_scope():
     class SequencedStructured:
         def __init__(self, responses):
