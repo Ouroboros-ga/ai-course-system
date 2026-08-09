@@ -184,7 +184,10 @@ def main() -> int:
         "        os._exit(0)\n"
         "    os.waitpid(pid, 0)\n"
         "    print('PROCESS_CREATED')\n",
-        max_processes_and_or_threads=1,
+        # Judge0 invokes the language through a bash wrapper. Permit bash plus
+        # the Python interpreter, then require the test's additional fork to
+        # be rejected.
+        max_processes_and_or_threads=2,
     )
     _assert_status("process_limit", results["process_limit"], {3})
     if str(results["process_limit"].get("stdout") or "").strip() != "PROCESS_BLOCKED":
