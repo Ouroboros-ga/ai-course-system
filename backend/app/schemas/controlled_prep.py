@@ -140,12 +140,23 @@ class EvidenceMapSegment(BoundedSuggestionFields):
     LLMs never return evidence identifiers.  examples/exercises inherit the
     deterministic deduplicate/strip/truncate-to-ten behavior from
     ``BoundedSuggestionFields`` so an over-produced Map response is normalized
-    instead of failing the whole course build.
+    instead of failing the whole course build.  The model sometimes repeats
+    the top-level ``stage`` inside each segment; that single meaningless field
+    is dropped here, while every other unknown field stays strictly rejected.
     """
 
     segment_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=300)
     topic: str = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_nested_stage(cls, value: object) -> object:
+        if isinstance(value, dict) and "stage" in value:
+            data = dict(value)
+            data.pop("stage", None)
+            return data
+        return value
 
 
 class EvidenceSegmentMapWireResult(StrictModel):

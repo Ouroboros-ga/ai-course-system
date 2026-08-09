@@ -11,6 +11,7 @@ from app.platform.agents.shared.error_messages import safe_prep_error_message
 from app.platform.agents.contracts.llm import LLMOptions, LLMTraceContext
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
+    EvidenceMapSegment,
     EvidenceReference,
     EvidenceSegment,
     EvidenceSegmentMapResult,
@@ -944,6 +945,49 @@ def test_map_stably_deduplicates_and_caps_examples_and_exercises():
     assert result.segments[0].examples == [f"example-{index}" for index in range(10)]
     assert result.segments[0].exercises == [f"exercise-{index}" for index in range(10)]
     assert result.segments[0].evidence_ids == ["es_1", "es_2"]
+
+
+def test_map_wire_drops_nested_stage_but_rejects_unknown_fields():
+    """A nested per-segment ``stage`` is stripped; anything else stays strict."""
+
+    class CapturingStructured:
+        def __init__(self):
+            self.schema = None
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schema = output_schema
+            payload = {
+                "stage": "evidence_segmenter",
+                "segments": [{
+                    "stage": "evidence_segmenter",
+                    "segment_id": "seg_1",
+                    "title": "topic one",
+                    "topic": "topic one",
+                }],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id="es_1", text="first"),
+    ])
+    result = asyncio_run(adapter.segment_evidence(request))
+
+    assert port.schema.__name__ == "EvidenceSegmentMapWireResult"
+    assert result.segments[0].segment_id == "seg_1"
+    assert result.segments[0].evidence_ids == ["es_1"]
+    # Any other unknown field inside a segment is still strictly rejected.
+    with pytest.raises(ValidationError):
+        EvidenceMapSegment.model_validate({
+            "segment_id": "seg_1",
+            "title": "t",
+            "topic": "t",
+            "bogus": 1,
+        })
 
 
 def test_outline_and_script_and_verifier_backfill_from_input_scope():

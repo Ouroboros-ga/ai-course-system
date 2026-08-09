@@ -230,7 +230,7 @@ InitialCoursePrepPort.build(
 - 讲稿：`evidence_ids` 取自其绑定的大纲候选（≤100），`paragraph_evidence` 按段落数回填同一证据集以保持对齐校验；
 - 校验：每个 finding 回填该讲稿的证据集。
 
-由此代价是证据粒度绑定到"输入分段/材料组"，不再由模型声明"哪句话精确来自哪条证据"；审计仍保留（服务端展开 `block_id`）。讲稿/校验 prompt 的输入证据改为程序侧粗到细有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符），避免大纲节点全量引用后把整本材料塞进每次讲稿请求。Map 与 Reduce 的 wire 线格式共用 `BoundedSuggestionFields` 稳定归一化（examples/exercises 去重、去空、裁剪到 10 条），模型超产 15 条时不再触发结构化重试。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
+由此代价是证据粒度绑定到"输入分段/材料组"，不再由模型声明"哪句话精确来自哪条证据"；审计仍保留（服务端展开 `block_id`）。讲稿/校验 prompt 的输入证据改为程序侧粗到细有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符），避免大纲节点全量引用后把整本材料塞进每次讲稿请求。Map 与 Reduce 的 wire 线格式共用 `BoundedSuggestionFields` 稳定归一化（examples/exercises 去重、去空、裁剪到 10 条），模型超产 15 条时不再触发结构化重试；Map wire 层还会丢弃模型在分段内重复输出的顶层 `stage` 字段，其余未知字段仍严格拒绝。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
 
 ### Workflow 2：IncrementalEditGraph
 
