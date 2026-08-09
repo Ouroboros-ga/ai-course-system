@@ -87,7 +87,6 @@ const handleLoginSend = async (data) => {
       userInfo: {
         id: res.userInfo.id,
         username: res.userInfo.username || data.username,
-        nickname: res.userInfo.nickname || res.userInfo.username || data.username,
         platform_permissions: res.userInfo.platform_permissions || []
       },
       role: res.userInfo.role
@@ -123,7 +122,6 @@ const handleRegisterSend = async (data) => {
       userInfo: {
         id: res.userInfo.id,
         username: res.userInfo.username || data.username,
-        nickname: res.userInfo.nickname || res.userInfo.username || data.username,
         platform_permissions: res.userInfo.platform_permissions || []
       },
       role: res.userInfo.role
@@ -176,12 +174,12 @@ const handleSavePreference = (prefs) => {
   showPreferencePanel.value = false
 }
 
-// 10. 更新昵称
+// 10. 更新用户名（即登录名和页面显示名）
 const handleUpdateUsername = async (data) => {
   try {
-    const res = await api.user.updateMyProfile({ nickname: data.nickname })
+    const res = await api.user.updateMyProfile({ username: data.username })
     counter.setAuth({ token: res.token, userInfo: res.userInfo, role: res.userInfo.role, platform_permissions: res.userInfo.platform_permissions })
-    showToast("昵称修改成功", "success")
+    showToast("用户名修改成功", "success")
     showSettingsPanel.value = false
   } catch (error) {
     console.error('更新用户名失败', error)

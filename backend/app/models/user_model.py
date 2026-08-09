@@ -10,6 +10,22 @@ import re
 from app.core.time_utils import utcnow_aware
 
 
+USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9._-]{3,50}$")
+
+
+def normalize_username(value: str) -> str:
+    """Return the canonical login/display name or raise ``ValueError``.
+
+    A platform account has one user-facing name: ``username``.  Keep the
+    character set intentionally conservative so the same value can safely be
+    used by sign-in, URLs, imports, and administrator search.
+    """
+    username = (value or "").strip()
+    if not USERNAME_PATTERN.fullmatch(username):
+        raise ValueError("用户名须为 3-50 位英文、数字或 . _ -")
+    return username
+
+
 class UserRole(str, Enum):
     USER = "user"
     ADMIN = "admin"

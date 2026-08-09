@@ -24,9 +24,10 @@ from app.schemas.common_schema import (
 )
 from app.core.exceptions import unified_response
 
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 from app.models.database import get_session
-from app.models.user_model import User, UserRole
+from app.models.user_model import User, UserRole, normalize_username
 from app.models.access_control_model import PlatformPermissionAssignment
 
 router = APIRouter()
@@ -45,14 +46,25 @@ def _platform_permissions(session: Session, user_id: int) -> list[str]:
     })
 
 
-def _nickname(user: User) -> str:
-    return user.real_name or user.username
+def _user_info(session: Session, user: User) -> UserInfo:
+    return UserInfo(
+        id=str(user.id),
+        username=user.username,
+        role=user.role.value if hasattr(user.role, "value") else user.role,
+        platform_permissions=_platform_permissions(session, int(user.id)),
+    )
 
 
 @router.post("/login", response_model=LoginResponse)
 async def user_login(request: LoginRequest, session: Session = Depends(get_session)):
-    statement = select(User).where(User.username == request.username)
+    identifier = request.username.strip()
+    statement = select(User).where(User.username == identifier)
     user = session.exec(statement).first()
+
+    # A numeric primary key is useful for institutional account lists.  Prefer
+    # an exact username first so a legitimate all-numeric username still wins.
+    if user is None and identifier.isdecimal():
+        user = session.get(User, int(identifier))
 
     if not user:
         return LoginResponse(code=401, message="用户名密码错误", data=None)
@@ -80,13 +92,7 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
         message="登录成功",
         data=LoginResponseData(
             token=access_token,
-            userInfo=UserInfo(
-                id=str(user.id),
-                username=user.username,
-                nickname=_nickname(user),
-                role=user.role.value if hasattr(user.role, "value") else user.role,
-                platform_permissions=_platform_permissions(session, int(user.id)),
-            ),
+            userInfo=_user_info(session, user),
         ),
     )
 
@@ -95,14 +101,19 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
 async def user_register(
     request: RegisterRequest, session: Session = Depends(get_session)
 ):
-    statement = select(User).where(User.username == request.username)
+    try:
+        username = normalize_username(request.username)
+    except ValueError as exc:
+        return LoginResponse(code=422, message=str(exc), data=None)
+
+    statement = select(User).where(User.username == username)
     existing_user = session.exec(statement).first()
 
     if existing_user:
         return LoginResponse(code=409, message="用户名已存在", data=None)
 
     hashed_password = get_password_hash(request.password)
-    new_user = User(username=request.username, hashed_password=hashed_password)
+    new_user = User(username=username, hashed_password=hashed_password)
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
@@ -126,13 +137,7 @@ async def user_register(
         message="注册并登录成功",
         data=LoginResponseData(
             token=access_token,
-            userInfo=UserInfo(
-                id=str(new_user.id),
-                username=new_user.username,
-                nickname=_nickname(new_user),
-                role=new_user.role.value if hasattr(new_user.role, "value") else new_user.role,
-                platform_permissions=_platform_permissions(session, int(new_user.id)),
-            ),
+            userInfo=_user_info(session, new_user),
         ),
     )
 
@@ -147,7 +152,6 @@ async def get_my_info(
     data = {
         **current_user,
         "username": db_user.username if db_user else current_user.get("username", ""),
-        "nickname": _nickname(db_user) if db_user else current_user.get("username", ""),
         "role": "admin" if current_user.get("role") == "admin" else "user",
         "platform_permissions": _platform_permissions(session, int(current_user["user_id"])),
     }
@@ -160,31 +164,41 @@ async def update_my_profile(
     current_user=Depends(get_current_user),
     session: Session = Depends(get_session),
 ):
-    """Change the display nickname and/or password for the logged-in user.
+    """Change the username and/or password for the logged-in user.
 
-    The account ID and login username are immutable here.  Password changes
-    are fail-closed and require verification of the existing password.
+    The numeric account ID is immutable.  Password changes are fail-closed and
+    require verification of the existing password.
     """
     user = session.get(User, int(current_user["user_id"]))
     if user is None:
         return unified_response(code=404, message="用户不存在", data=None)
 
     changing_password = request.new_password is not None and request.new_password != ""
-    changing_nickname = request.nickname is not None
-    if not changing_password and not changing_nickname:
+    changing_username = request.username is not None
+    if not changing_password and not changing_username:
         return unified_response(code=400, message="没有可保存的资料变更", data=None)
     if changing_password:
         if not request.current_password or not verify_password(request.current_password, user.hashed_password):
             return unified_response(code=401, message="原密码验证失败", data=None)
         user.hashed_password = get_password_hash(request.new_password)
         user.auth_version += 1
-    if changing_nickname:
-        nickname = request.nickname.strip()
-        if not nickname:
-            return unified_response(code=422, message="昵称不能为空", data=None)
-        user.real_name = nickname
+    if changing_username:
+        try:
+            username = normalize_username(request.username)
+        except ValueError as exc:
+            return unified_response(code=422, message=str(exc), data=None)
+        existing = session.exec(
+            select(User.id).where(User.username == username, User.id != user.id)
+        ).first()
+        if existing is not None:
+            return unified_response(code=409, message="用户名已存在", data=None)
+        user.username = username
     session.add(user)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return unified_response(code=409, message="用户名已存在", data=None)
     session.refresh(user)
 
     access_token = create_access_token(
@@ -199,11 +213,7 @@ async def update_my_profile(
     )
     return unified_response(code=200, message="资料已更新", data={
         "token": access_token,
-        "userInfo": UserInfo(
-            id=str(user.id), username=user.username, nickname=_nickname(user),
-            role=user.role.value if hasattr(user.role, "value") else user.role,
-            platform_permissions=_platform_permissions(session, int(user.id)),
-        ).model_dump(),
+        "userInfo": _user_info(session, user).model_dump(),
     })
 
 
@@ -226,10 +236,17 @@ async def user_modify(
     if not verify_password(request.password, user.hashed_password):
         return LoginResponse(code=401, message="密码错误", data=None)
 
-    # 登录名是稳定的账号标识，不再通过兼容接口修改。昵称请使用
-    # PATCH /user/me/profile；保留本接口仅用于旧客户端的密码更新。
     if request.newUsername and request.newUsername != user.username:
-        return LoginResponse(code=400, message="登录名不可修改，请修改个人昵称", data=None)
+        try:
+            username = normalize_username(request.newUsername)
+        except ValueError as exc:
+            return LoginResponse(code=422, message=str(exc), data=None)
+        existing = session.exec(
+            select(User.id).where(User.username == username, User.id != user.id)
+        ).first()
+        if existing is not None:
+            return LoginResponse(code=409, message="用户名已存在", data=None)
+        user.username = username
 
     # 4. 修改密码
     if request.newPassword:
@@ -238,7 +255,11 @@ async def user_modify(
 
     # 5. 保存修改
     session.add(user)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        return LoginResponse(code=409, message="用户名已存在", data=None)
     session.refresh(user)
 
     # 6. 生成新Token（使旧Token失效）
@@ -259,7 +280,7 @@ async def user_modify(
         message="修改成功",
         data=LoginResponseData(
             token=access_token,
-            userInfo=UserInfo(id=str(user.id), username=user.username, nickname=_nickname(user)),
+            userInfo=_user_info(session, user),
         ),
     )
 

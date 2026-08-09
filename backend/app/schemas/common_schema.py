@@ -26,7 +26,6 @@ class UnifiedResponse(BaseModel):
 class UserInfo(BaseModel):
     id: str
     username: str = ""
-    nickname: str = ""
     role: str = "user"
     platform_permissions: list[str] = Field(default_factory=list)
 
@@ -37,13 +36,15 @@ class LoginResponseData(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    username: str
-    password: str
+    # Keep the request field for existing clients.  Its value may be either a
+    # username or the numeric platform user ID.
+    username: str = Field(min_length=1, max_length=80)
+    password: str = Field(min_length=1, max_length=200)
 
 
 class RegisterRequest(BaseModel):
-    username: str
-    password: str
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=200)
 
 
 class LoginResponse(UnifiedResponse):
@@ -62,11 +63,11 @@ class ModifyUserRequest(BaseModel):
 class ProfileUpdateRequest(BaseModel):
     """Authenticated self-service profile update.
 
-    The login username remains the stable account identifier.  ``nickname`` is
-    the single user-facing name and can be changed without changing that ID or
-    login identifier.  A password change always requires the current password.
+    The numeric account ID never changes.  ``username`` is the single
+    user-facing login and display name.  A password change always requires the
+    current password.
     """
 
-    nickname: Optional[str] = Field(default=None, max_length=50)
+    username: Optional[str] = Field(default=None, max_length=50)
     current_password: Optional[str] = Field(default=None, min_length=1, max_length=200)
     new_password: Optional[str] = Field(default=None, min_length=8, max_length=200)

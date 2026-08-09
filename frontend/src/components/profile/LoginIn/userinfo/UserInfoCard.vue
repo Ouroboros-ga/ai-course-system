@@ -22,9 +22,9 @@
           <!-- 默认菜单视图 -->
           <div v-if="activePanel === 'menu'" key="menu" class="panel-content">
             <div class="menu-list">
-              <div class="menu-item" @click="activePanel = 'nickname'">
+              <div class="menu-item" @click="activePanel = 'username'">
                 <div class="icon"><Pencil :size="18" /></div>
-                <span>修改昵称</span>
+                <span>修改用户名</span>
                 <div class="arrow"><ChevronRight :size="18" /></div>
               </div>
               <div class="menu-item" @click="activePanel = 'password'">
@@ -40,18 +40,18 @@
           </div>
 
           <!-- 修改用户名视图 -->
-          <div v-else-if="activePanel === 'nickname'" key="nickname" class="panel-content">
+          <div v-else-if="activePanel === 'username'" key="username" class="panel-content">
             <div class="panel-header">
               <button class="back-btn" @click="resetForm"><ArrowLeft :size="18" /> 返回</button>
-              <h4>修改昵称</h4>
+              <h4>修改用户名</h4>
             </div>
-            <form @submit.prevent="handleSubmitNickname" class="edit-form">
+            <form @submit.prevent="handleSubmitUsername" class="edit-form">
               <div class="input-group">
-                <label>新昵称</label>
+                <label>新用户名</label>
                 <input
                   type="text"
-                  v-model="form.nickname"
-                  placeholder="请输入新的昵称"
+                  v-model="form.username"
+                  placeholder="3-50 位英文、数字或 . _ -"
                   maxlength="50"
                 />
               </div>
@@ -120,7 +120,7 @@ const activePanel = ref('menu')
 
 // 表单数据
 const form = reactive({
-  nickname: '',
+  username: '',
   oldPassword: '',
   newPassword: '',
   confirmPassword: ''
@@ -129,7 +129,7 @@ const form = reactive({
 // 重置表单状态
 const resetForm = () => {
   activePanel.value = 'menu'
-  form.nickname = ''
+  form.username = ''
   form.oldPassword = ''
   form.newPassword = ''
   form.confirmPassword = ''
@@ -137,13 +137,13 @@ const resetForm = () => {
 
 // --- 业务逻辑 ---
 
-// 1. 提交昵称修改
-const handleSubmitNickname = () => {
-  if (!form.nickname.trim()) {
-    showToast('昵称不能为空！', 'error')
+// 1. 提交用户名修改
+const handleSubmitUsername = () => {
+  if (!form.username.trim()) {
+    showToast('用户名不能为空！', 'error')
     return
   }
-  emit('updateUsername', { nickname: form.nickname.trim() })
+  emit('updateUsername', { username: form.username.trim() })
 
   // 乐观更新或等待父组件反馈后关闭
   // resetForm()

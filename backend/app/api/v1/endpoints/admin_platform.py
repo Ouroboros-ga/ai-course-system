@@ -44,7 +44,7 @@ class IntegrationUpdate(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    nickname: Optional[str] = Field(default=None, max_length=50)
+    username: Optional[str] = Field(default=None, max_length=50)
     role: Optional[str] = Field(default=None, pattern="^(user|admin)$")
     is_active: Optional[bool] = None
 

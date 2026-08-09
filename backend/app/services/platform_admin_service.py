@@ -7,6 +7,7 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 
 from fastapi import HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select, func
 
 from app.core.config import settings
@@ -14,7 +15,7 @@ from app.core.security import get_password_hash
 from app.core.time_utils import utcnow_aware
 from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 from app.models.platform_admin_model import PlatformAdminAuditEvent, PlatformIntegrationConfig
-from app.models.user_model import User, UserRole
+from app.models.user_model import User, UserRole, normalize_username
 from app.services.platform_provider_manager import provider_manager
 
 
@@ -113,7 +114,7 @@ def list_users(session: Session, *, user_id: int | None = None, query: str = "",
     if user_id is not None:
         statement = statement.where(User.id == user_id)
     if query:
-        statement = statement.where((User.username.contains(query)) | (User.real_name.contains(query)))
+        statement = statement.where(User.username.contains(query))
     if role:
         normalized = "admin" if role == "admin" else "user"
         statement = statement.where(User.role == UserRole.ADMIN if normalized == "admin" else User.role != UserRole.ADMIN)
@@ -121,7 +122,7 @@ def list_users(session: Session, *, user_id: int | None = None, query: str = "",
         statement = statement.where(User.is_active == is_active)
     total = session.exec(select(func.count()).select_from(statement.subquery())).one()
     users = session.exec(statement.order_by(User.id).offset((page - 1) * page_size).limit(page_size)).all()
-    return {"items": [{"id": u.id, "username": u.username, "nickname": u.real_name or u.username, "role": "admin" if str(u.role) == "UserRole.ADMIN" or getattr(u.role, "value", u.role) == "admin" else "user", "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users], "total": int(total), "page": page, "page_size": page_size}
+    return {"items": [{"id": u.id, "username": u.username, "role": "admin" if str(u.role) == "UserRole.ADMIN" or getattr(u.role, "value", u.role) == "admin" else "user", "is_active": u.is_active, "created_at": u.created_at.isoformat() if u.created_at else None} for u in users], "total": int(total), "page": page, "page_size": page_size}
 
 
 def _sync_admin_assignment(session: Session, user_id: int, is_admin: bool) -> None:
@@ -160,8 +161,17 @@ def update_user(session: Session, actor_id: int, target_id: int, payload: dict[s
         raise HTTPException(status_code=404, detail="用户不存在")
     if target_id == actor_id and (payload.get("is_active") is False or payload.get("role") not in (None, "admin")):
         raise HTTPException(status_code=403, detail="不能停用或降级当前管理员账号")
-    if "nickname" in payload:
-        user.real_name = payload["nickname"]
+    if "username" in payload:
+        try:
+            username = normalize_username(payload["username"])
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        existing = session.exec(
+            select(User.id).where(User.username == username, User.id != target_id)
+        ).first()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="用户名已存在")
+        user.username = username
     if "is_active" in payload:
         user.is_active = bool(payload["is_active"])
     if payload.get("role") is not None:
@@ -171,8 +181,13 @@ def update_user(session: Session, actor_id: int, target_id: int, payload: dict[s
     user.updated_at = utcnow_aware()
     session.add(user)
     audit(session, actor_id, "user.update", "user", str(target_id), {"fields": sorted(payload.keys())})
-    session.commit(); session.refresh(user)
-    return {"id": user.id, "username": user.username, "nickname": user.real_name or user.username, "role": "admin" if getattr(user.role, "value", user.role) == "admin" else "user", "is_active": user.is_active}
+    try:
+        session.commit()
+    except IntegrityError as exc:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="用户名已存在") from exc
+    session.refresh(user)
+    return {"id": user.id, "username": user.username, "role": "admin" if getattr(user.role, "value", user.role) == "admin" else "user", "is_active": user.is_active}
 
 
 def reset_password(session: Session, actor_id: int, target_id: int, password: str) -> None:

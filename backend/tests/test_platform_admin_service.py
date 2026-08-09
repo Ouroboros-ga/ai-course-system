@@ -31,13 +31,13 @@ def test_admin_user_filter_update_and_password_reset(session):
     session.refresh(admin)
     session.refresh(learner)
 
-    result = list_users(session, query="Alice", role="user")
+    result = list_users(session, query="learner", role="user")
     assert result["total"] == 1
     assert result["items"][0]["id"] == learner.id
     assert result["items"][0]["role"] == "user"
 
-    updated = update_user(session, admin.id, learner.id, {"nickname": "Alice New", "role": "admin", "is_active": True})
-    assert updated["nickname"] == "Alice New"
+    updated = update_user(session, admin.id, learner.id, {"username": "alice-new", "role": "admin", "is_active": True})
+    assert updated["username"] == "alice-new"
     assert updated["role"] == "admin"
 
     before = learner.auth_version
@@ -47,7 +47,7 @@ def test_admin_user_filter_update_and_password_reset(session):
     assert verify_password("new-secure-password", learner.hashed_password)
 
 
-def test_profile_update_keeps_login_name_and_requires_current_password(client, session):
+def test_profile_update_changes_login_name_and_requires_current_password(client, session):
     user = _user("profile-user")
     session.add(user)
     session.commit()
@@ -59,13 +59,18 @@ def test_profile_update_keeps_login_name_and_requires_current_password(client, s
     assert rejected.status_code == 200
     assert rejected.json()["code"] == 401
 
-    updated = client.patch("/api/v1/user/me/profile", headers=headers, json={"nickname": "展示名称", "current_password": "old-password", "new_password": "new-password"})
+    updated = client.patch("/api/v1/user/me/profile", headers=headers, json={"username": "renamed-user", "current_password": "old-password", "new_password": "new-password"})
     assert updated.status_code == 200
     payload = updated.json()["data"]
     assert payload["userInfo"]["id"] == str(user.id)
-    assert payload["userInfo"]["username"] == "profile-user"
-    assert payload["userInfo"]["nickname"] == "展示名称"
+    assert payload["userInfo"]["username"] == "renamed-user"
     session.refresh(user)
-    assert user.username == "profile-user"
-    assert user.real_name == "展示名称"
+    assert user.username == "renamed-user"
     assert verify_password("new-password", user.hashed_password)
+
+    old_login = client.post("/api/v1/user/login", json={"username": "profile-user", "password": "new-password"})
+    assert old_login.json()["code"] == 401
+    username_login = client.post("/api/v1/user/login", json={"username": "renamed-user", "password": "new-password"})
+    assert username_login.json()["code"] == 200
+    id_login = client.post("/api/v1/user/login", json={"username": str(user.id), "password": "new-password"})
+    assert id_login.json()["code"] == 200

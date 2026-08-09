@@ -21,7 +21,7 @@ const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
 
 function userPatch(user) {
-  return { nickname: user.nickname || '', role: user.role, is_active: user.is_active }
+  return { username: user.username || '', role: user.role, is_active: user.is_active }
 }
 
 function integrationDraft(item) {
@@ -124,16 +124,16 @@ onMounted(load)
         <div class="section-head"><h2 class="sfx-t-title3"><UsersRound :size="19" /> 用户管理</h2><span class="sfx-t-caption">{{ total }} 个账号</span></div>
         <form class="filters" @submit.prevent="page = 1; loadUsers()">
           <input v-model="filters.user_id" class="sfx-input" inputmode="numeric" placeholder="用户 ID" />
-          <input v-model="filters.query" class="sfx-input" placeholder="名称搜索" />
+          <input v-model="filters.query" class="sfx-input" placeholder="用户名搜索" />
           <select v-model="filters.role" class="sfx-select"><option value="">全部角色</option><option value="user">用户</option><option value="admin">管理员</option></select>
           <select v-model="filters.is_active" class="sfx-select"><option value="">全部状态</option><option value="true">启用</option><option value="false">停用</option></select>
           <SfxButton type="submit" size="sm" variant="secondary">筛选</SfxButton>
         </form>
         <SfxEmpty v-if="!users.length" title="没有匹配账号" description="调整搜索条件后再试。" />
         <div v-else class="table-wrap">
-          <table class="admin-table"><thead><tr><th>ID</th><th>名称</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+          <table class="admin-table"><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
             <tbody><template v-for="user in users" :key="user.id"><tr><td>{{ user.id }}</td>
-              <td><input v-model="user.nickname" class="sfx-input compact" maxlength="50" :placeholder="user.username" aria-label="用户名称" /></td>
+              <td><input v-model="user.username" class="sfx-input compact" maxlength="50" aria-label="用户名" /></td>
               <td><select v-model="user.role" class="sfx-select compact"><option value="user">用户</option><option value="admin">管理员</option></select></td>
               <td><label class="state-check"><input v-model="user.is_active" type="checkbox" /> {{ user.is_active ? '启用' : '停用' }}</label></td>
               <td class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = user.id; password = ''">重置密码</SfxButton></td></tr>

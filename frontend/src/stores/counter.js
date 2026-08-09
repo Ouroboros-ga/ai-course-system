@@ -20,7 +20,6 @@ export const useCounterStore = defineStore('counter', () => {
 
   const userData = ref({
     username: null,
-    nickname: null,
     id: null,
     role: null,
     platform_permissions: [],
@@ -46,7 +45,6 @@ export const useCounterStore = defineStore('counter', () => {
     token.value = authData.token
     userData.value = {
       username: authData.username || authData.userInfo?.username || null,
-      nickname: authData.nickname || authData.userInfo?.nickname || authData.username || authData.userInfo?.username || null,
       id: authData.id || authData.userInfo?.id || null,
       role: authData.role || authData.userInfo?.role || null,
       platform_permissions: authData.platform_permissions || authData.userInfo?.platform_permissions || [],
@@ -64,16 +62,13 @@ export const useCounterStore = defineStore('counter', () => {
     if (userData.value.username) {
       localStorage.setItem('username', userData.value.username)
     }
-    if (userData.value.nickname) {
-      localStorage.setItem('nickname', userData.value.nickname)
-    }
+    localStorage.removeItem('nickname')
   }
 
   function clearAuth() {
     token.value = null
     userData.value = {
       username: null,
-      nickname: null,
       id: null,
       role: null,
       platform_permissions: [],
@@ -91,7 +86,6 @@ export const useCounterStore = defineStore('counter', () => {
     const savedRole = localStorage.getItem('userRole')
     const savedUserId = localStorage.getItem('userId')
     const savedUsername = localStorage.getItem('username')
-    const savedNickname = localStorage.getItem('nickname')
     const savedPlatformPermissions = localStorage.getItem('platformPermissions')
 
     if (savedToken) {
@@ -105,11 +99,6 @@ export const useCounterStore = defineStore('counter', () => {
     }
     if (savedUsername) {
       userData.value.username = savedUsername
-    }
-    if (savedNickname) {
-      userData.value.nickname = savedNickname
-    } else if (savedUsername) {
-      userData.value.nickname = savedUsername
     }
     if (savedPlatformPermissions) {
       try { userData.value.platform_permissions = JSON.parse(savedPlatformPermissions) || [] } catch { userData.value.platform_permissions = [] }
@@ -137,7 +126,7 @@ export const useCounterStore = defineStore('counter', () => {
     hasPlatformPermission,
     canManageUsers,
     canCreateCourses,
-    displayName: computed(() => userData.value.nickname || userData.value.username || ''),
+    displayName: computed(() => userData.value.username || ''),
     setPlatformPermissions,
     setAuth,
     clearAuth,

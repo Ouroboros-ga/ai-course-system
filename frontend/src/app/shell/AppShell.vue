@@ -14,7 +14,6 @@ async function hydratePlatformPermissions() {
   try {
     const data = await getMyInfo()
     counter.userData.username = data.username || counter.userData.username
-    counter.userData.nickname = data.nickname || data.username || counter.userData.nickname
     counter.userData.id = data.user_id || counter.userData.id
     counter.userData.role = data.role || 'user'
     counter.setPlatformPermissions(data.platform_permissions)

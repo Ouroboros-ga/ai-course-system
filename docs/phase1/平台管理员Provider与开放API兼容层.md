@@ -1,13 +1,15 @@
 # 平台管理员、Provider 与开放 API 兼容层
 
-更新：2026-08-07。本文记录本地原型中的当前实现，不代表线上生产发布状态。
+更新：2026-08-09。本文记录本地原型中的当前实现，不代表线上生产发布状态。
 
 ## 已实现
 
 - 平台管理员 API：`/api/v1/admin/integrations` 与 `/api/v1/admin/users`。
 - LLM、TTS、PPT 配置保存到 `platform_integration_configs`；密钥以 Fernet 加密保存，读取只返回 `key_configured` 与末四位。
 - 更新配置使用 `expected_version` 乐观锁；在无密钥、Base URL 或模型配置时 fail-closed。
-- 管理员可按 ID、账号/昵称、角色、启用状态分页筛选；可更新昵称、全局 `user/admin` 角色、启用状态并重置密码。密码重置递增 `auth_version`，含该版本声明的 JWT 立即失效。
+- 账户只有一个 `username`：管理员可按 ID、用户名、角色、启用状态分页筛选，并更新用户名、全局 `user/admin` 角色、启用状态和密码。右上角、个人中心和管理员表格均使用同一个 `username`；数字用户 ID 保持不变。登录先匹配用户名，输入全为数字且未命中用户名时再按用户 ID 登录。
+- 用户在个人中心可修改自己的用户名；密码修改必须先验证原密码。用户名修改保留 ID，且对重名返回明确冲突；旧 `real_name` 仅保留为泛雅等外部资料，不再作为账户昵称。
+- 密码重置递增 `auth_version`，含该版本声明的 JWT 立即失效。
 - 新增 `/app/admin` 的用户管理与 LLM/TTS/PPT 设置 UI；API Key 为空表示保留已有密钥。
 - 新增隔离的 `/api/v1/compat/*` 泛雅·超星 AI **示例协议参考兼容包**，采用 `code/msg/data/requestId` 外壳并独立校验 `time/enc`。它位于 `backend/app/external_apis/fanya_chaoxing_ai/`，由 `main.py` 可选发现；仅在该包挂载时才登记其独立签名校验前缀。删除该目录仅取消这组路由，内部 JWT 路由、数据模型和 Course Access API 不被改变。该名称不表示超星集团官方认证或发布。
 
@@ -35,6 +37,6 @@ PDF 示例接口映射为 `/api/v1/compat/lesson/*`、`/api/v1/compat/qa/*`、`/
 
 - 模型/服务：`backend/app/models/platform_admin_model.py`、`backend/app/services/platform_admin_service.py`、`backend/app/services/platform_provider_manager.py`。
 - 迁移：`backend/alembic/versions/20260807_1400_0041_platform_admin.py`、`backend/alembic/versions/20260807_1800_0043_upgrade_legacy_teacher_roles.py`。
-- 路由：`backend/app/api/v1/endpoints/admin_platform.py`、`backend/app/external_apis/fanya_chaoxing_ai/router.py`；后者由 `backend/app/main.py::_mount_optional_fanya_chaoxing_ai_compat` 可选挂载。
-- 前端：`frontend/src/app/pages/admin/PlatformAdminPage.vue`、`frontend/src/api/admin_platform.js`。
-- 已运行：平台管理员服务测试（2 passed）；迁移 `0040 → 0041 → 0040` SQLite 演练；Vite production build；`tests/test_fanya_chaoxing_ai_compat.py`（5 passed）及该包/挂载代码 `compileall`。兼容包测试不会调用付费 Provider。
+- 路由：`backend/app/api/v1/endpoints/user.py`、`backend/app/api/v1/endpoints/admin_platform.py`、`backend/app/external_apis/fanya_chaoxing_ai/router.py`；后者由 `backend/app/main.py::_mount_optional_fanya_chaoxing_ai_compat` 可选挂载。
+- 前端：`frontend/src/app/pages/admin/PlatformAdminPage.vue`、`frontend/src/app/pages/account/AccountPage.vue`、`frontend/src/components/profile/LoginIn/login/Login.vue`、`frontend/src/api/admin_platform.js`。
+- 已运行：账户收敛后的平台管理员服务测试（3 passed）与 Vite production build；此前迁移 `0040 → 0041 → 0040` SQLite 演练、`tests/test_fanya_chaoxing_ai_compat.py`（5 passed）及该包/挂载代码 `compileall`。兼容包测试不会调用付费 Provider。

@@ -47,6 +47,10 @@ const description = computed(() => (
     : '创建账号后即可开始建立第一门课程。'
 ))
 const submitLabel = computed(() => (isLoginMode.value ? '登录并继续' : '创建账号'))
+const identityLabel = computed(() => (isLoginMode.value ? '用户名或用户 ID' : '用户名'))
+const identityPlaceholder = computed(() => (isLoginMode.value ? '请输入用户名或数字 ID' : '3-50 位英文、数字或 . _ -'))
+const identityHint = computed(() => (isLoginMode.value ? '可使用用户名或数字 ID 登录。' : '用户名支持 3-50 位英文、数字或 . _ -。'))
+const passwordHint = computed(() => (isLoginMode.value ? '请输入账户密码。' : '密码长度为 8-200 位。'))
 
 function clearErrors() {
   errors.username = ''
@@ -63,19 +67,18 @@ function switchMode(loginMode) {
 
 function validate() {
   clearErrors()
-  const usernameRegex = /^[a-zA-Z]{1,80}$/
-  const passwordRegex = /^[a-zA-Z0-9]{6,18}$/
+  const usernameRegex = /^[a-zA-Z0-9._-]{3,50}$/
 
   if (!form.username) {
     errors.username = '请输入用户名。'
-  } else if (!usernameRegex.test(form.username)) {
-    errors.username = '用户名仅支持 1–80 位英文字母。'
+  } else if (!isLoginMode.value && !usernameRegex.test(form.username)) {
+    errors.username = '用户名支持 3-50 位英文、数字或 . _ -。'
   }
 
   if (!form.password) {
     errors.password = '请输入密码。'
-  } else if (!passwordRegex.test(form.password)) {
-    errors.password = '密码需为 6–18 位字母或数字。'
+  } else if (!isLoginMode.value && (form.password.length < 8 || form.password.length > 200)) {
+    errors.password = '密码长度需为 8-200 位。'
   }
 
   if (!isLoginMode.value) {
@@ -175,7 +178,7 @@ watch(() => props.serverError, (value) => {
           </p>
 
           <div class="field-group">
-            <label for="auth-username">用户名</label>
+            <label for="auth-username">{{ identityLabel }}</label>
             <div class="field-control" :class="{ invalid: errors.username }">
               <UserRound :size="18" aria-hidden="true" />
               <input
@@ -184,13 +187,13 @@ watch(() => props.serverError, (value) => {
                 name="username"
                 autocomplete="username"
                 maxlength="80"
-                placeholder="请输入英文用户名"
+                :placeholder="identityPlaceholder"
                 :aria-invalid="Boolean(errors.username)"
                 :aria-describedby="errors.username ? 'username-error' : 'username-hint'"
                 @input="errors.username = ''"
               />
             </div>
-            <p id="username-hint" class="field-hint">仅支持 1–80 位英文字母。</p>
+            <p id="username-hint" class="field-hint">{{ identityHint }}</p>
             <p v-if="errors.username" id="username-error" class="field-error" role="alert">{{ errors.username }}</p>
           </div>
 
@@ -204,7 +207,7 @@ watch(() => props.serverError, (value) => {
                 name="password"
                 :type="showPassword ? 'text' : 'password'"
                 autocomplete="current-password"
-                maxlength="18"
+                maxlength="200"
                 placeholder="请输入密码"
                 :aria-invalid="Boolean(errors.password)"
                 :aria-describedby="errors.password ? 'password-error' : 'password-hint'"
@@ -220,7 +223,7 @@ watch(() => props.serverError, (value) => {
                 <Eye v-else :size="19" />
               </button>
             </div>
-            <p id="password-hint" class="field-hint">6–18 位字母或数字。</p>
+            <p id="password-hint" class="field-hint">{{ passwordHint }}</p>
             <p v-if="errors.password" id="password-error" class="field-error" role="alert">{{ errors.password }}</p>
           </div>
 
@@ -234,7 +237,7 @@ watch(() => props.serverError, (value) => {
                 name="confirm-password"
                 :type="showConfirmPassword ? 'text' : 'password'"
                 autocomplete="new-password"
-                maxlength="18"
+                maxlength="200"
                 placeholder="再次输入密码"
                 :aria-invalid="Boolean(errors.confirmPassword)"
                 :aria-describedby="errors.confirmPassword ? 'confirm-password-error' : undefined"
