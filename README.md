@@ -1,6 +1,6 @@
 # AI 互动智课系统
 
-> **2026-08-09 首轮智能备课稳定性：** `segment_evidence` 已由单次请求改为页内碎块合并后的分层 Map/Reduce；模型只接收最小证据视图，服务端继续保留并在持久化前展开真实 `DocumentBlock.block_id`。默认单批正文不超过 24,000 字、Map 并发 2，证据 Reduce/大纲输出上限为 16,384 tokens；全局 `LLM_MAX_TOKENS` 不变。结构化调用首轮即附带 JSON Schema 并关闭初始备课思考模式，截断时按批递归拆分且始终 fail-closed。2026-08-09 真实复测发现 Reduce 可能连续返回 15 个 `examples`/`exercises`；现由 Reduce 专用线格式在严格领域校验前稳定去重、去空并各裁剪至 10 项，其他结构与证据字段仍 fail-closed。代码证据见 `course_initial_prep_service.py`、`controlled_prep_workflow.py`、`controlled_prep.py` 与 `prep/llm_adapter.py`；Fake/本地回归未调用真实付费模型。
+> **2026-08-10 首轮智能备课稳定性：** `segment_evidence` 使用页内碎块合并后的分层 Map/Reduce；模型不返回证据 ID，服务端确定性回填并在持久化前展开真实 `DocumentBlock.block_id`。默认单批正文不超过 24,000 字、Map 并发 2，证据 Reduce/大纲输出上限为 16,384 tokens；全局 `LLM_MAX_TOKENS` 不变。高密度课程材料的 Map + Reduce 共享调用预算从 64 提升到 160，仍保留总材料、分块数和并发硬上限。Map/Reduce 对描述性 `examples`/`exercises` 稳定去重、去空并裁剪至 10 项，Map 分段内冗余 `stage` 会被移除；其他结构与证据字段仍 fail-closed。真实大材料端到端验收仍在继续，任何剩余失败均不覆盖原课程草稿。代码证据见 `course_initial_prep_service.py`、`controlled_prep_workflow.py`、`controlled_prep.py` 与 `prep/llm_adapter.py`；Fake/本地回归未调用真实付费模型。
 
 > **2026-08-09 Ubuntu 部署基线：** 服务器文件解析、LanceDB/GraphRAG、Judge0、Node 与外部 Provider 的真实状态和回滚方式见 [服务器环境一致性与外部链路审计](docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md)。LanceDB 0.34/PyArrow 25 在 Ubuntu x86_64 未发现兼容阻塞；GraphRAG 必须经独立 Python Worker，真实 LLM 构图受 token、USD 预估、数据外发授权与人工确认闸门控制。当前 GraphRAG/Judge0 均 fail-closed：前者等待课程数据范围/目的地级外发授权，后者因官方 isolate 需要共用主机不接受的提升权限而未启用。
 

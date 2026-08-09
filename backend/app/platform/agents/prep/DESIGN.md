@@ -218,7 +218,7 @@ InitialCoursePrepPort.build(
 
 **持久化**：Service 内部完成（outline/scripts/ppt/graph 全部持久化）。Graph 不触碰持久化。
 
-**材料证据整理（2026-08-09）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理总调用预算 64。Reduce prompt 与 JSON Schema 均要求每个 segment 的 `examples`、`exercises` 各不超过 10 项；Reduce 专用线格式会在正式 `EvidenceSegmenterResult` 校验前对这两个非事实列表稳定去重、去空并裁剪，避免模型修复重试仍超限导致整课失败。segment 数量、身份、证据 ID 与其他字段不做宽松归一化；任何剩余错误仍不写入课程草稿。
+**材料证据整理（2026-08-10）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理的 Map + Reduce 共享调用预算为 160；这是高密度课程材料的有界成本上限，不是无限重试。Map/Reduce wire 都会对非事实的 `examples`、`exercises` 稳定去重、去空并裁剪至 10 项；Map 内冗余的 `stage` 会被程序移除。segment 数量、身份、证据 ID 与其他未知字段仍 fail-closed；任何剩余错误不写入课程草稿。
 
 **材料证据整理 v2（2026-08-09）**：层级 Reduce 的**中间层改为瘦合并**——只输出 `title/topic`（`LeanEvidenceReduceResult`），`examples/exercises` 延后到最后一级才生成；二者无下游消费者（大纲只用证据 ID，讲稿用证据原文），此前逐级携带导致中间层响应 `finish_reason=length` 并烧掉调用预算。最后一级仍走完整线格式并保持既有去重/裁剪归一化。预算同步从 40 提升到 64。并发执行改为"首个异常即取消在途 sibling"（`ControlledPrepWorkflow._run_concurrent`），避免预算耗尽后残留 LLM 请求继续运行。
 

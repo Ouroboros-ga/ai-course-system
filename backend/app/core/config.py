@@ -99,9 +99,9 @@ class Settings(BaseSettings):
     # Total Map+Reduce call budget for one course's evidence organization.
     # Intermediate Reduce levels now merge lean summaries (no examples/
     # exercises), which cut both per-call truncation and the number of calls;
-    # 64 keeps headroom for a full-scale 25-chunk corpus without hiding
-    # runaway loops behind an unbounded budget.
-    PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS: int = 64
+    # 160 leaves room for a full-scale 25-chunk corpus, recursive truncation
+    # splits, and multi-level Reduce while remaining a hard cost guardrail.
+    PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS: int = 160
     PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS: int = 4096
     PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS: int = 8192
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS: int = 16384
