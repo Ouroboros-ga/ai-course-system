@@ -216,6 +216,14 @@ class SandboxClient:
             "stack_limit": limits.stack_limit,
             "max_processes_and_or_threads": limits.max_processes,
             "max_file_size": limits.max_file_size,
+            # Judge0 1.13.1 bundles isolate 1.8.1, whose cgroup mode expects
+            # the legacy cgroup-v1 cpuacct/memory hierarchy. Ubuntu 22.04
+            # defaults to cgroup v2, so aggregate cgroup limits fail before
+            # the source file is staged. Per-process RLIMIT enforcement works
+            # on cgroup v2; max_processes plus the Worker container's hard
+            # memory/PID ceilings bound aggregate Demo-host consumption.
+            "enable_per_process_and_thread_time_limit": True,
+            "enable_per_process_and_thread_memory_limit": True,
             "enable_network": False,  # 始终关闭网络
             "number_of_runs": 1,
             "redirect_stderr_to_stdout": False,

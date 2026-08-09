@@ -318,6 +318,8 @@ class TestSandboxClient:
         call_args = mock_client.post.call_args
         payload = call_args.kwargs.get("json") or call_args[1].get("json")
         assert payload["enable_network"] is False
+        assert payload["enable_per_process_and_thread_time_limit"] is True
+        assert payload["enable_per_process_and_thread_memory_limit"] is True
 
 
 # ==================== Judge0 恢复演练测试 ====================

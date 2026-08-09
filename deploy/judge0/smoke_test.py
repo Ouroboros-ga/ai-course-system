@@ -48,6 +48,8 @@ def _submit(language_id: int, source_code: str, **limits: object) -> dict:
         "memory_limit": 131072,
         "max_processes_and_or_threads": 16,
         "max_file_size": 1024,
+        "enable_per_process_and_thread_time_limit": True,
+        "enable_per_process_and_thread_memory_limit": True,
         "enable_network": False,
     }
     payload.update(limits)
