@@ -3,6 +3,7 @@ import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { FilePlus2, Upload } from 'lucide-vue-next'
 import { getDraftBuildStatus, listBuildMaterials, rebuildInitialDraft, uploadCourseMaterials } from '@/api/course_build.js'
+import { createPendingFileId } from '@/app/lib/pendingFileId.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 
@@ -68,7 +69,7 @@ function chooseFiles() { inputRef.value?.click() }
 function selectFiles(event) {
   const chosen = Array.from(event.target.files || [])
   pendingFiles.value.push(...chosen.map((file) => ({
-    id: `${file.name}:${file.size}:${file.lastModified}:${crypto.randomUUID()}`,
+    id: createPendingFileId(file),
     file,
     role: suggestedRole(file),
   })))
