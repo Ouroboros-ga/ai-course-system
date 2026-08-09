@@ -10,6 +10,7 @@ from typing import Any
 
 
 _PREP_STAGE_LABELS = {
+    "segment_evidence_reduce": "材料证据整理",
     "segment_evidence": "材料证据整理",
     "plan_outline": "课程结构规划",
     "write_script": "讲授脚本生成",
@@ -34,6 +35,11 @@ def safe_prep_error_message(error: BaseException, *, default: str = "备课智�
     """Translate internal Prep/LLM failures into an actionable safe message."""
     for current in iter_exception_chain(error):
         reason_code = getattr(current, "reason_code", "")
+        if reason_code == "PREP_EVIDENCE_BUDGET_EXCEEDED":
+            return (
+                "材料证据整理已达到系统设定的分段与重试预算，系统未写入课程草稿；"
+                "请减少材料数量或拆分课程后重试。"
+            )
         if reason_code == "input_length_exceeded":
             return "输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或缩小备课范围后重试。"
         if reason_code == "MODEL_OUTPUT_TRUNCATED":

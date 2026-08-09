@@ -195,7 +195,7 @@ class PptMappingState(PrepCommonState, total=False):
 
 | Workflow | 节点数 | 包装对象 | 持久化 | LLM 阶段 |
 |---------|--------|---------|--------|---------|
-| InitialBuildGraph | 1 | InitialCoursePrepService.build() | Service 内部 | 4 Prompt + 1 确定性编译 |
+| InitialBuildGraph | 1 | InitialCoursePrepService.build() | Service 内部 | 有界 Evidence Map/Reduce + 大纲 + 讲稿 + 校验 + 确定性编译 |
 | IncrementalEditGraph | 1 | CoursePrepAgentService.plan()/plan_batch() | endpoint 层 | 1 Prompt，批量为单次课程级上下文 |
 | PptMappingOptimizationGraph | 1 | PptMappingOptimizationService | Service 内部 | 1 Prompt |
 
@@ -203,7 +203,7 @@ class PptMappingState(PrepCommonState, total=False):
 
 ```text
 执行模式：QUEUED（Worker）
-超时：600s
+超时：900s（每次外部 LLM 调用另受 240s 上限约束）
 并发：3
 节点：execute_initial_build
     ↓
@@ -217,6 +217,8 @@ InitialCoursePrepPort.build(
 ```
 
 **持久化**：Service 内部完成（outline/scripts/ppt/graph 全部持久化）。Graph 不触碰持久化。
+
+**材料证据整理（2026-08-09）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理总调用预算 40；任何阶段失败仍不写入课程草稿。
 
 ### Workflow 2：IncrementalEditGraph
 
@@ -366,16 +368,17 @@ class PromptSpec:
 
 ### Prompt 清单
 
-首次备课 5 个阶段，其中 4 个 LLM Prompt、1 个确定性编译阶段；增量修改 1 个 LLM Prompt；PPT 映射优化 1 个 LLM Prompt。
+首次备课仍是 5 个业务阶段；证据阶段内部使用 Map 与 Reduce 两个 PromptSpec，其后是大纲、讲稿、证据校验和确定性编译。增量修改与 PPT 映射优化保持独立 Prompt。
 
 | # | PromptSpec | 阶段 | 链路 |
 |---|-----------|------|------|
-| 1 | prep.evidence_segmenter v1.0 | 证据分段 | Initial |
-| 2 | prep.outline_planner v1.0 | 目录规划 | Initial |
-| 3 | prep.script_writer v1.0 | 讲稿撰写 | Initial |
-| 4 | prep.evidence_verifier v1.0 | 证据校验 | Initial |
-| 5 | prep.incremental_planner v1.1 | 增量规划 | Incremental |
-| 6 | prep.ppt_mapping_optimizer v1.0 | PPT映射优化 | PptMapping |
+| 1 | prep.evidence_segmenter v2.0 | 有界证据 Map | Initial |
+| 2 | prep.evidence_reducer v1.0 | 层级证据 Reduce | Initial |
+| 3 | prep.outline_planner v2.0 | 目录规划（最多 24 知识点/64 节点） | Initial |
+| 4 | prep.script_writer / batch v1.1 | 讲稿撰写 | Initial |
+| 5 | prep.evidence_verifier v1.1 | 证据校验 | Initial |
+| 6 | prep.incremental_planner v2.0 | 增量规划 | Incremental |
+| 7 | prep.ppt_mapping_optimizer v1.1 | PPT映射优化 | PptMapping |
 
 `compile_patch` 阶段是确定性编译，无 Prompt。
 
@@ -400,6 +403,7 @@ class PromptSpec:
 | 方法 | 对应 PromptSpec | 调用方 |
 |------|----------------|--------|
 | segment_evidence() | prep.evidence_segmenter | ControlledPrepWorkflow |
+| reduce_evidence() | prep.evidence_reducer | ControlledPrepWorkflow |
 | plan_outline() | prep.outline_planner | ControlledPrepWorkflow |
 | write_script() | prep.script_writer | ControlledPrepWorkflow |
 | write_scripts_batch() | prep.script_writer | ControlledPrepWorkflow |

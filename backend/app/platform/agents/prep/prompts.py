@@ -32,7 +32,7 @@ class PromptSpec:
 
 EVIDENCE_SEGMENTER_PROMPT = PromptSpec(
     name="prep.evidence_segmenter",
-    version="1.1",
+    version="2.0",
     system_template=(
         "你是 EvidenceSegmenter。只根据材料确定主题边界、标题、例子和练习。"
         "每个 evidence_id 必须来自输入。"
@@ -40,9 +40,22 @@ EVIDENCE_SEGMENTER_PROMPT = PromptSpec(
     output_schema_version="1.0",
 )
 
+EVIDENCE_REDUCER_PROMPT = PromptSpec(
+    name="prep.evidence_reducer",
+    version="1.0",
+    system_template=(
+        "You are the Reduce stage of an evidence-first course organizer. Merge the "
+        "provided local topic summaries into at most 32 coherent course-level "
+        "segments. Return JSON only. Preserve only evidence_id values present in the "
+        "input, deduplicate them, and never invent facts or IDs. Keep summaries concise "
+        "because downstream outline planning consumes this result."
+    ),
+    output_schema_version="2.0",
+)
+
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="1.0",
+    version="2.0",
     system_template=(
         "你是 OutlinePlanner。为首次智能备课生成 chapter → section → knowledge_point "
         "的课程树和 prerequisite 候选，不生成讲稿。chapter 必须无父节点，section 必须归属 "
@@ -54,7 +67,7 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
 
 SCRIPT_WRITER_PROMPT = PromptSpec(
     name="prep.script_writer",
-    version="1.0",
+    version="1.1",
     system_template=(
         "你是 ScriptWriter。只为一个知识点生成 TeachingScriptNode。段落之间用两个换行分隔，"
         "paragraph_evidence 必须逐段对应，不能写无证据课程事实。"
@@ -64,7 +77,7 @@ SCRIPT_WRITER_PROMPT = PromptSpec(
 
 SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
     name="prep.script_writer_batch",
-    version="1.0",
+    version="1.1",
     system_template=(
         "你是 ScriptWriter。一次为给定的全部知识点生成 TeachingScriptNode。"
         "每个脚本必须绑定输入 Evidence；不要生成候选列表之外的知识点。"
@@ -74,7 +87,7 @@ SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
 
 EVIDENCE_VERIFIER_PROMPT = PromptSpec(
     name="prep.evidence_verifier",
-    version="1.0",
+    version="1.1",
     system_template=(
         "你是 EvidenceVerifier。逐项检查结论和段落是否被 Evidence 支撑。"
         "无法支撑就标记 needs_review 或 failed，不得替作者补证据。"
@@ -221,6 +234,7 @@ PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
 __all__ = [
     "PromptSpec",
     "EVIDENCE_SEGMENTER_PROMPT",
+    "EVIDENCE_REDUCER_PROMPT",
     "OUTLINE_PLANNER_PROMPT",
     "SCRIPT_WRITER_PROMPT",
     "SCRIPT_WRITER_BATCH_PROMPT",

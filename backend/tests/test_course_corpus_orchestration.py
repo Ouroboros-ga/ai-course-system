@@ -297,9 +297,16 @@ def test_initial_agent_draft_uses_teaching_tree_and_primary_ppt_evidence_only(se
 
     class FakeWorkflow:
         async def run(self, request):
-            ids = {item.text: item.evidence_id for item in request.evidence}
-            primary_id = ids["四冲程发动机的工作过程"]
-            textbook_id = ids["进气、压缩、做功和排气构成一个完整循环。"]
+            primary_id = next(
+                item.evidence_id
+                for item in request.evidence
+                if primary_block.block_id in item.source_block_ids
+            )
+            textbook_id = next(
+                item.evidence_id
+                for item in request.evidence
+                if textbook_block.block_id in item.source_block_ids
+            )
             outline = OutlinePlannerResult(
                 stage="outline_planner",
                 candidates=[

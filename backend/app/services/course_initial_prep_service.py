@@ -10,11 +10,13 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import hashlib
 import re
 from typing import Any, Awaitable, Callable
 
 from sqlmodel import Session, select
 
+from app.core.config import settings
 from app.models.course_build_model import CourseCorpusItem, CourseCorpusSnapshot, SourceMaterial
 from app.models.course_model import Course
 from app.models.course_outline_model import (
@@ -46,12 +48,16 @@ ROLE_PRIORITY = {
     "reference": 60,
 }
 
-# Keep the first course-planning request within ordinary OpenAI-compatible
-# gateway context windows.  The controlled workflow receives evidence text
-# separately, so sending hundreds of full blocks twice only adds latency and
-# timeout risk without improving traceability.
-MAX_AGENT_EVIDENCE = 120
-MAX_AGENT_SOURCE_CHARS = 60_000
+@dataclass(frozen=True)
+class EvidenceInputStats:
+    total_units: int
+    selected_units: int
+    total_chars: int
+    selected_chars: int
+
+    @property
+    def sampled(self) -> bool:
+        return self.selected_units < self.total_units or self.selected_chars < self.total_chars
 
 
 @dataclass
@@ -91,13 +97,12 @@ class InitialCoursePrepService:
             DocumentBlock.run_id.in_(list(role_by_run)),
         )).all())
         blocks = self._ordered_blocks(blocks, role_by_run)
-        evidence, source_text = self._build_agent_input(blocks, role_by_run, material_by_run)
+        evidence, evidence_stats = self._build_agent_input(blocks, role_by_run, material_by_run)
         if not evidence:
             raise InitialCoursePreparationError("课程材料没有可用于智能备课的有效文本")
 
         course = session.get(Course, course_id)
         request = ControlledPrepInput(
-            source_text=source_text,
             evidence=evidence,
             course_positioning=(course.description if course and course.description else course.title if course else "课程材料驱动的教学设计"),
             style=TeachingStyleConfig(level="beginner", tone="conversational", language="zh-CN"),
@@ -120,6 +125,7 @@ class InitialCoursePrepService:
             outcome = on_stage("persisting", 95, None)
             if outcome is not None:
                 await outcome
+        prepared = self._expand_prepared_evidence(prepared, evidence)
         self._validate_initial_outline(prepared["outline"])
 
         result = DraftAssetResult(
@@ -128,6 +134,12 @@ class InitialCoursePrepService:
             material_version_id=None,
             corpus_snapshot_id=corpus_snapshot_id,
         )
+        if evidence_stats.sampled:
+            result.warnings.append(
+                "PREP_EVIDENCE_SAMPLED: corpus exceeded the bounded initial-prep evidence budget "
+                f"({evidence_stats.selected_units}/{evidence_stats.total_units} units, "
+                f"{evidence_stats.selected_chars}/{evidence_stats.total_chars} chars selected)"
+            )
         if replace_unreviewed_initial:
             self._archive_unreviewed_initial_draft(session, course_id=course_id)
         by_block_id = {block.block_id: block for block in blocks}
@@ -253,15 +265,51 @@ class InitialCoursePrepService:
         blocks: list[DocumentBlock],
         role_by_run: dict[str, str],
         material_by_run: dict[str, str] | None = None,
-    ) -> tuple[list[EvidenceReference], str]:
-        """Sample evidence round-robin across role/file/page buckets.
+    ) -> tuple[list[EvidenceReference], EvidenceInputStats]:
+        """Coalesce tiny parse blocks and select bounded, traceable evidence.
 
-        The former prefix slice could consume all 120 slots from the first
-        primary deck pages.  A deterministic bucket round-robin keeps every
-        selected material, role and chapter/page represented when possible.
+        OCR and layout parsers often emit dozens of tiny blocks per page. A
+        one-block-per-evidence policy exhausts the evidence-count limit long
+        before it consumes the text budget. Adjacent blocks are therefore
+        merged into stable units while retaining every original block ID.
         """
         material_by_run = material_by_run or {}
-        buckets: dict[tuple[str, str, int], list[DocumentBlock]] = defaultdict(list)
+        target_chars = max(1, int(settings.PREP_INITIAL_EVIDENCE_UNIT_TARGET_CHARS))
+        unit_max_chars = max(
+            target_chars,
+            int(settings.PREP_INITIAL_EVIDENCE_UNIT_MAX_CHARS),
+        )
+        all_units: list[EvidenceReference] = []
+        current_key: tuple[str, str, int] | None = None
+        current_parts: list[str] = []
+        current_block_ids: list[str] = []
+        current_pages: list[int] = []
+
+        def flush() -> None:
+            nonlocal current_parts, current_block_ids, current_pages
+            if not current_parts or current_key is None:
+                current_parts = []
+                current_block_ids = []
+                current_pages = []
+                return
+            role, material, _page = current_key
+            text = " ".join(current_parts)
+            fingerprint = "\n".join([role, material, *current_block_ids, text])
+            evidence_id = f"evg_{hashlib.sha256(fingerprint.encode('utf-8')).hexdigest()[:24]}"
+            all_units.append(EvidenceReference(
+                evidence_id=evidence_id,
+                text=text,
+                page=min(current_pages) if current_pages else None,
+                page_end=max(current_pages) if current_pages else None,
+                block_id=current_block_ids[0] if current_block_ids else None,
+                source_block_ids=list(current_block_ids),
+                material_version_id=material,
+                material_role=role,
+            ))
+            current_parts = []
+            current_block_ids = []
+            current_pages = []
+
         for block in blocks:
             text = " ".join((block.text or "").split())
             if len(text) < 2 or block.semantic_role in {"header", "footer", "page_number"}:
@@ -269,40 +317,195 @@ class InitialCoursePrepService:
             role = role_by_run.get(block.run_id, "reference")
             material = material_by_run.get(block.run_id, block.material_version_id or "unknown")
             page = int(block.page_or_slide or block.page_number or 1)
-            buckets[(role, material, page)].append(block)
-        ordered_buckets = [buckets[key] for key in sorted(
-            buckets,
-            key=lambda key: (ROLE_PRIORITY.get(key[0], 99), key[1], key[2]),
-        )]
-        evidence: list[EvidenceReference] = []
-        source_parts: list[str] = []
-        remaining = MAX_AGENT_SOURCE_CHARS
-        offset = 0
-        while ordered_buckets and remaining > 0 and len(evidence) < MAX_AGENT_EVIDENCE:
-            next_buckets: list[list[DocumentBlock]] = []
-            for bucket in ordered_buckets:
-                if offset >= len(bucket):
-                    continue
-                block = bucket[offset]
-                text = " ".join((block.text or "").split())[:4_000]
-                if text and len(text) <= remaining:
-                    remaining -= len(text) + 80
-                    evidence.append(EvidenceReference(
-                        evidence_id=block.block_id,
-                        block_id=block.block_id,
-                        page=int(block.page_or_slide or block.page_number or 1),
-                        text=text,
-                    ))
-                    source_parts.append(
-                        f"[{role_by_run.get(block.run_id, 'reference')} / file {material_by_run.get(block.run_id, '-')[:24]} / page {block.page_or_slide or block.page_number or '-'} / {block.semantic_role or 'text'}] {text}"
+            # Page boundaries are evidence boundaries. Crossing a page here
+            # would make a valid citation to one slide/page pull unrelated
+            # neighbouring blocks into PPT mappings and source references.
+            key = (role, material, page)
+            for part in InitialCoursePrepService._split_evidence_text(text, unit_max_chars):
+                current_chars = sum(len(value) for value in current_parts) + max(0, len(current_parts) - 1)
+                if current_parts and (
+                    key != current_key
+                    or current_chars + 1 + len(part) > unit_max_chars
+                    or (
+                        block.block_id not in current_block_ids
+                        and len(current_block_ids) >= 500
                     )
-                if offset + 1 < len(bucket):
-                    next_buckets.append(bucket)
-                if len(evidence) >= MAX_AGENT_EVIDENCE or remaining <= 0:
+                ):
+                    flush()
+                current_key = key
+                current_parts.append(part)
+                if block.block_id not in current_block_ids:
+                    current_block_ids.append(block.block_id)
+                current_pages.append(page)
+                current_chars = sum(len(value) for value in current_parts) + max(0, len(current_parts) - 1)
+                if current_chars >= target_chars:
+                    flush()
+        flush()
+
+        total_chars = sum(len(item.text) for item in all_units)
+        selected = InitialCoursePrepService._select_evidence_units(
+            all_units,
+            max_units=max(1, int(settings.PREP_INITIAL_EVIDENCE_MAX_UNITS)),
+            max_chars=max(1, int(settings.PREP_INITIAL_EVIDENCE_TOTAL_MAX_CHARS)),
+        )
+        return selected, EvidenceInputStats(
+            total_units=len(all_units),
+            selected_units=len(selected),
+            total_chars=total_chars,
+            selected_chars=sum(len(item.text) for item in selected),
+        )
+
+    @staticmethod
+    def _split_evidence_text(text: str, limit: int) -> list[str]:
+        """Split an oversized parser block near a sentence boundary."""
+        remaining = text.strip()
+        parts: list[str] = []
+        boundary_chars = "。！？；.!?; "
+        while len(remaining) > limit:
+            lower_bound = max(1, int(limit * 0.7))
+            cut = max(remaining.rfind(marker, lower_bound, limit + 1) for marker in boundary_chars)
+            if cut < lower_bound:
+                cut = limit
+            elif remaining[cut] in boundary_chars.strip():
+                cut += 1
+            parts.append(remaining[:cut].strip())
+            remaining = remaining[cut:].strip()
+        if remaining:
+            parts.append(remaining)
+        return parts
+
+    @staticmethod
+    def _coverage_indices(size: int) -> list[int]:
+        """Return a deterministic coarse-to-fine order over a source."""
+        if size <= 0:
+            return []
+        result: list[int] = [0]
+        if size == 1:
+            return result
+        result.append(size - 1)
+        queue: list[tuple[int, int]] = [(0, size - 1)]
+        seen = set(result)
+        while queue:
+            left, right = queue.pop(0)
+            if right - left <= 1:
+                continue
+            midpoint = (left + right) // 2
+            if midpoint not in seen:
+                result.append(midpoint)
+                seen.add(midpoint)
+            queue.extend([(left, midpoint), (midpoint, right)])
+        return result
+
+    @staticmethod
+    def _select_evidence_units(
+        units: list[EvidenceReference],
+        *,
+        max_units: int,
+        max_chars: int,
+    ) -> list[EvidenceReference]:
+        """Select longitudinal coverage across every included material."""
+        buckets: dict[tuple[str, str], list[EvidenceReference]] = defaultdict(list)
+        for item in units:
+            buckets[(item.material_role, item.material_version_id or "unknown")].append(item)
+        ordered_keys = sorted(
+            buckets,
+            key=lambda key: (ROLE_PRIORITY.get(key[0], 99), key[1]),
+        )
+        coverage = {
+            key: [buckets[key][index] for index in InitialCoursePrepService._coverage_indices(len(buckets[key]))]
+            for key in ordered_keys
+        }
+        offsets = {key: 0 for key in ordered_keys}
+        selected: list[EvidenceReference] = []
+        selected_chars = 0
+        while len(selected) < max_units and selected_chars < max_chars:
+            progressed = False
+            for key in ordered_keys:
+                offset = offsets[key]
+                if offset >= len(coverage[key]):
+                    continue
+                item = coverage[key][offset]
+                offsets[key] = offset + 1
+                if selected_chars + len(item.text) > max_chars:
+                    continue
+                selected.append(item)
+                selected_chars += len(item.text)
+                progressed = True
+                if len(selected) >= max_units or selected_chars >= max_chars:
                     break
-            ordered_buckets = next_buckets
-            offset += 1
-        return evidence, "\n".join(source_parts)
+            if not progressed:
+                break
+        return sorted(
+            selected,
+            key=lambda item: (
+                ROLE_PRIORITY.get(item.material_role, 99),
+                item.material_version_id or "",
+                item.page or 0,
+                item.page_end or 0,
+                item.evidence_id,
+            ),
+        )
+
+    @staticmethod
+    def _expand_prepared_evidence(
+        prepared: dict[str, Any],
+        evidence: list[EvidenceReference],
+    ) -> dict[str, Any]:
+        """Replace LLM-facing evidence-unit IDs with canonical block IDs."""
+        expansion = {
+            item.evidence_id: (
+                list(item.source_block_ids)
+                or ([item.block_id] if item.block_id else [item.evidence_id])
+            )
+            for item in evidence
+        }
+
+        def expand(values: list[str]) -> list[str]:
+            result: list[str] = []
+            seen: set[str] = set()
+            for value in values:
+                for block_id in expansion.get(value, [value]):
+                    if block_id not in seen:
+                        seen.add(block_id)
+                        result.append(block_id)
+            return result
+
+        outline = prepared["outline"]
+        expanded_candidates = [
+            candidate.model_copy(update={"evidence_ids": expand(candidate.evidence_ids)})
+            for candidate in outline.candidates
+        ]
+        expanded_prerequisites = [
+            prerequisite.model_copy(update={"evidence_ids": expand(prerequisite.evidence_ids)})
+            for prerequisite in outline.prerequisites
+        ]
+        expanded_outline = outline.model_copy(update={
+            "candidates": expanded_candidates,
+            "prerequisites": expanded_prerequisites,
+        })
+
+        expanded_scripts = [
+            script.model_copy(update={
+                "evidence_ids": expand(script.evidence_ids),
+                "paragraph_evidence": [expand(values) for values in script.paragraph_evidence],
+            })
+            for script in prepared["scripts"]
+        ]
+        expanded_verifications = [
+            verification.model_copy(update={
+                "findings": [
+                    finding.model_copy(update={"evidence_ids": expand(finding.evidence_ids)})
+                    for finding in verification.findings
+                ],
+            })
+            for verification in prepared["verifications"]
+        ]
+        return {
+            **prepared,
+            "outline": expanded_outline,
+            "scripts": expanded_scripts,
+            "verifications": expanded_verifications,
+        }
 
     @staticmethod
     def _validate_initial_outline(outline: Any) -> None:

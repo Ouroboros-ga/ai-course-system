@@ -55,6 +55,11 @@ def _course_build_failure_message(error: BaseException) -> str:
     visited: set[int] = set()
     while current is not None and id(current) not in visited:
         visited.add(id(current))
+        if getattr(current, "reason_code", "") == "PREP_EVIDENCE_BUDGET_EXCEEDED":
+            return (
+                "材料证据整理已达到系统设定的分段与重试预算，系统未写入课程草稿；"
+                "请减少材料数量或拆分课程后重试。"
+            )
         if getattr(current, "reason_code", "") == "input_length_exceeded":
             return "输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或拆分课程后重新智能备课"
         if getattr(current, "reason_code", "") == "MODEL_OUTPUT_TRUNCATED":
@@ -71,6 +76,7 @@ def _course_build_failure_message(error: BaseException) -> str:
         if getattr(current, "reason_code", "") == "structured_output_invalid":
             stage = getattr(current, "stage", "") or ""
             stage_label = {
+                "segment_evidence_reduce": "材料证据整理",
                 "segment_evidence": "材料证据整理",
                 "plan_outline": "课程结构规划",
                 "write_script": "讲授脚本生成",
@@ -109,6 +115,7 @@ def _initial_runtime_failure(result: Any) -> BaseException | None:
         reason_code = str(detail.get("reason_code") or "")
         if reason_code == "structured_output_invalid":
             stage_label = {
+                "segment_evidence_reduce": "材料证据整理",
                 "segment_evidence": "材料证据整理",
                 "plan_outline": "课程结构规划",
                 "write_script": "讲授脚本生成",
@@ -124,6 +131,24 @@ def _initial_runtime_failure(result: Any) -> BaseException | None:
         str(detail)[:500],
         retryable=True,
     )
+
+
+def _course_build_checkpoint_payload(value: Any) -> dict[str, Any]:
+    """Persist stage progress metadata without course/model content."""
+    if value is None:
+        return {}
+    payload: dict[str, Any] = {"result_type": type(value).__name__}
+    if isinstance(value, list):
+        payload["item_count"] = len(value)
+        return payload
+    for field in ("segments", "candidates", "prerequisites", "scripts", "findings"):
+        items = getattr(value, field, None)
+        if isinstance(items, list):
+            payload[f"{field}_count"] = len(items)
+    verdict = getattr(value, "verdict", None)
+    if verdict:
+        payload["verdict"] = str(verdict)
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -534,7 +559,7 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 CourseDraftBuildCheckpoint.build_task_id == build_task_id,
                 CourseDraftBuildCheckpoint.stage == checkpoint_stage,
             )).first()
-            payload_data = value.model_dump(mode="json") if hasattr(value, "model_dump") else {}
+            payload_data = _course_build_checkpoint_payload(value)
             if checkpoint is None:
                 checkpoint = CourseDraftBuildCheckpoint(
                     course_id=course_id,

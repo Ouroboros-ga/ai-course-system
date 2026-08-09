@@ -1,13 +1,18 @@
+import asyncio
+
 import pytest
 from pydantic import ValidationError
 
 from app.common.llm_client import LLMError, LLMResponse
 from app.platform.agents.prep.llm_adapter import PrepLLMAdapter
 from app.platform.agents.providers.llm.structured import SharedLLMStructuredProvider
+from app.platform.agents.shared.error_messages import safe_prep_error_message
 from app.platform.agents.contracts.llm import LLMOptions, LLMTraceContext
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
     EvidenceReference,
+    EvidenceSegment,
+    EvidenceSegmentMapResult,
     EvidenceSegmenterResult,
     EvidenceVerifierResult,
     OutlinePlannerResult,
@@ -16,6 +21,8 @@ from app.schemas.controlled_prep import (
     TeachingStyleConfig,
 )
 from app.services.controlled_prep_workflow import ControlledPrepWorkflow, StructuredOutputError
+from app.services.course_initial_prep_service import InitialCoursePrepService
+from app.models.document_parse_model import DocumentBlock
 
 
 class SequencedPrepStages:
@@ -141,6 +148,10 @@ def test_wrapped_response_format_rejection_uses_adapter_fallback_without_format(
 
     assert result.segments[0].evidence_ids == ["es_1"]
     assert gateway.calls[0]["kwargs"]["response_format"]["type"] == "json_object"
+    assert gateway.calls[0]["kwargs"]["thinking"] == {"type": "disabled"}
+    assert gateway.calls[0]["kwargs"]["max_tokens"] == 4096
+    assert "JSON Schema" in gateway.calls[0]["messages"][-1].content
+    assert "source_text" not in "\n".join(message.content for message in gateway.calls[0]["messages"])
     assert "response_format" not in gateway.calls[1]["kwargs"]
     assert "JSON Schema" in gateway.calls[1]["messages"][-1].content
 
@@ -528,9 +539,220 @@ def test_oversized_single_knowledge_point_uses_larger_single_node_budget():
     assert llm.calls.count("write_script") == 1
     assert llm.calls.count("write_scripts_batch") == 1
     script_kwargs = [item[2] for item in llm.kwargs if item[0] == "write_script"]
-    assert script_kwargs[0]["max_tokens"] == 8192
+    assert script_kwargs[0]["max_tokens"] == 12288
     batch_kwargs = [item[2] for item in llm.kwargs if item[0] == "write_scripts_batch"]
     assert batch_kwargs[0]["max_tokens"] == 4096
+
+
+def test_initial_input_coalesces_tiny_blocks_and_preserves_source_ids():
+    blocks = [
+        DocumentBlock(
+            course_id=1,
+            run_id="run_1",
+            block_id=f"blk_{index:03d}",
+            page_number=index // 4 + 1,
+            page_or_slide=index // 4 + 1,
+            order_index=index,
+            semantic_role="body",
+            text=f"fragment {index:03d} " + ("x" * 30),
+        )
+        for index in range(120)
+    ]
+    evidence, stats = InitialCoursePrepService._build_agent_input(
+        blocks,
+        {"run_1": "textbook"},
+        {"run_1": "material_1"},
+    )
+    repeated, repeated_stats = InitialCoursePrepService._build_agent_input(
+        blocks,
+        {"run_1": "textbook"},
+        {"run_1": "material_1"},
+    )
+
+    assert stats.sampled is False
+    assert stats == repeated_stats
+    assert len(evidence) < len(blocks)
+    assert all(len(item.text) <= 2400 for item in evidence)
+    assert [item.evidence_id for item in evidence] == [item.evidence_id for item in repeated]
+    assert {
+        block_id
+        for item in evidence
+        for block_id in item.source_block_ids
+    } == {block.block_id for block in blocks}
+
+
+def test_large_fragmented_corpus_fits_bounded_map_requests():
+    blocks = [
+        DocumentBlock(
+            course_id=1,
+            run_id="run_large",
+            block_id=f"blk_{page:03d}_{index:02d}",
+            page_number=page,
+            page_or_slide=page,
+            order_index=index,
+            semantic_role="body",
+            text=f"{page:03d}-{index:02d}-" + ("x" * 20),
+        )
+        for page in range(1, 576)
+        for index in range(37)
+    ]
+    evidence, stats = InitialCoursePrepService._build_agent_input(
+        InitialCoursePrepService._ordered_blocks(blocks, {"run_large": "textbook"}),
+        {"run_large": "textbook"},
+        {"run_large": "material_large"},
+    )
+    request = ControlledPrepInput(evidence=evidence, course_positioning="large corpus")
+    workflow = ControlledPrepWorkflow()
+    chunks = workflow._chunk_evidence(request)
+
+    assert len(blocks) == 21275
+    assert stats.sampled is False
+    assert len(evidence) == 575
+    assert len(chunks) <= 25
+    assert max(sum(len(item.text) for item in chunk) for chunk in chunks) <= 24000
+    assert max(workflow._evidence_payload_chars(request, chunk) for chunk in chunks) <= 36000
+
+
+def test_evidence_map_reduce_bounds_payload_and_concurrency(monkeypatch):
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 1000)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS", 10000)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS", 20)
+
+    class MapReduceStages:
+        def __init__(self):
+            self.map_sizes = []
+            self.reduce_calls = 0
+            self.active = 0
+            self.max_active = 0
+
+        async def segment_evidence(self, request, **_kwargs):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            self.map_sizes.append(sum(len(item.text) for item in request.evidence))
+            await asyncio.sleep(0.01)
+            self.active -= 1
+            return EvidenceSegmentMapResult(segments=[EvidenceSegment(
+                segment_id="local",
+                title="local",
+                topic="local",
+                evidence_ids=[item.evidence_id for item in request.evidence],
+            )])
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_calls += 1
+            evidence_ids = []
+            for segment in segments:
+                evidence_ids.extend(segment.evidence_ids)
+            return EvidenceSegmenterResult(segments=[EvidenceSegment(
+                segment_id="final",
+                title="final",
+                topic="final",
+                evidence_ids=list(dict.fromkeys(evidence_ids)),
+            )])
+
+    request = ControlledPrepInput(
+        evidence=[
+            EvidenceReference(evidence_id=f"evg_{index}", text="x" * 800, page=index + 1)
+            for index in range(4)
+        ],
+        course_positioning="bounded map reduce",
+    )
+    stages = MapReduceStages()
+    result = asyncio_run(ControlledPrepWorkflow(stages).segment_evidence(request))
+
+    assert len(stages.map_sizes) == 4
+    assert max(stages.map_sizes) <= 1000
+    assert stages.max_active == 2
+    assert stages.reduce_calls == 1
+    assert set(result.segments[0].evidence_ids) == {f"evg_{index}" for index in range(4)}
+
+
+def test_truncated_evidence_map_recursively_bisects():
+    class TruncatingMapStages:
+        def __init__(self):
+            self.group_sizes = []
+
+        async def segment_evidence(self, request, **_kwargs):
+            self.group_sizes.append(len(request.evidence))
+            if len(request.evidence) > 1:
+                raise StructuredOutputError(
+                    "truncated",
+                    reason_code="MODEL_OUTPUT_TRUNCATED",
+                    stage="segment_evidence",
+                    truncated=True,
+                )
+            item = request.evidence[0]
+            return EvidenceSegmentMapResult(segments=[EvidenceSegment(
+                segment_id="local",
+                title="local",
+                topic="local",
+                evidence_ids=[item.evidence_id],
+            )])
+
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id="evg_1", text="first evidence"),
+        EvidenceReference(evidence_id="evg_2", text="second evidence"),
+    ])
+    stages = TruncatingMapStages()
+    result = asyncio_run(ControlledPrepWorkflow(stages).segment_evidence(request))
+
+    assert stages.group_sizes == [2, 1, 1]
+    assert len(result.segments) == 2
+
+
+def test_evidence_attempt_budget_has_safe_teacher_message():
+    error = StructuredOutputError(
+        "internal budget detail",
+        reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+        stage="segment_evidence",
+        attempts=40,
+    )
+    message = safe_prep_error_message(error)
+
+    assert "材料证据整理" in message
+    assert "系统未写入课程草稿" in message
+    assert "internal budget detail" not in message
+
+
+def test_group_evidence_ids_expand_to_canonical_block_ids():
+    evidence = [EvidenceReference(
+        evidence_id="evg_1",
+        text="grounded evidence",
+        block_id="blk_1",
+        source_block_ids=["blk_1", "blk_2"],
+    )]
+    outline = OutlinePlannerResult.model_validate({
+        "stage": "outline_planner",
+        "candidates": [{
+            "candidate_id": "kp_1",
+            "node_type": "knowledge_point",
+            "title": "concept",
+            "parent_candidate_id": None,
+            "evidence_ids": ["evg_1"],
+            "rationale": "",
+        }],
+        "prerequisites": [],
+    })
+    script = TeachingScriptNodeDraft.model_validate_json(_script_json("kp_1", "evg_1"))
+    verification = EvidenceVerifierResult.model_validate_json(_verifier_json("evg_1"))
+    expanded = InitialCoursePrepService._expand_prepared_evidence(
+        {
+            "outline": outline,
+            "scripts": [script],
+            "verifications": [verification],
+            "proposal": None,
+        },
+        evidence,
+    )
+
+    assert expanded["outline"].candidates[0].evidence_ids == ["blk_1", "blk_2"]
+    assert expanded["scripts"][0].evidence_ids == ["blk_1", "blk_2"]
+    assert expanded["scripts"][0].paragraph_evidence == [["blk_1", "blk_2"]]
+    assert expanded["verifications"][0].findings[0].evidence_ids == ["blk_1", "blk_2"]
 
 
 def json_dumps(value) -> str:

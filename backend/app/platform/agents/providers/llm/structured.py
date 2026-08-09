@@ -37,6 +37,7 @@ Backward compatibility:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -127,7 +128,11 @@ class SharedLLMStructuredProvider:
         if use_response_format:
             kwargs["response_format"] = dict(options.response_format)
 
-        request_messages = shared_messages
+        request_messages = (
+            [*shared_messages, Message(role="system", content=_initial_schema_instruction(output_schema))]
+            if output_schema is not None
+            else shared_messages
+        )
         response_format_fallback = False
         try:
             # First attempt via the shared client.
@@ -135,6 +140,7 @@ class SharedLLMStructuredProvider:
                 messages=request_messages,
                 kwargs=kwargs,
                 trace_context=trace_context,
+                timeout_seconds=options.timeout_seconds,
             )
         except StructuredOutputError as error:
             if not use_response_format or not _response_format_unsupported(error):
@@ -158,6 +164,7 @@ class SharedLLMStructuredProvider:
                 messages=request_messages,
                 kwargs=kwargs,
                 trace_context=trace_context,
+                timeout_seconds=options.timeout_seconds,
             )
 
         # If no schema, return raw text.
@@ -224,6 +231,7 @@ class SharedLLMStructuredProvider:
             messages=repair_messages,
             kwargs=repair_kwargs,
             trace_context=trace_context,
+            timeout_seconds=options.timeout_seconds,
         )
         if _is_truncated(repair_response.finish_reason):
             await self._record_diagnostic(response=repair_response, request_messages=repair_messages, trace_context=trace_context, options=options, output_schema=output_schema, attempt=2, repaired=True, response_format_fallback=response_format_fallback, input_chars=sum(len(item.content) for item in repair_messages))
@@ -357,10 +365,20 @@ class SharedLLMStructuredProvider:
         messages: list[Message],
         kwargs: dict[str, Any],
         trace_context: LLMTraceContext,
+        timeout_seconds: float | None = None,
     ) -> SharedLLMResponse:
         """Call the shared llm_client with error normalization."""
         try:
-            return await self._client.chat(messages, **kwargs)
+            call = self._client.chat(messages, **kwargs)
+            if timeout_seconds is None:
+                return await call
+            return await asyncio.wait_for(call, timeout=max(1.0, float(timeout_seconds)))
+        except asyncio.TimeoutError as error:
+            raise StructuredOutputError(
+                f"Shared LLM client exceeded {timeout_seconds} seconds",
+                reason_code="llm_call_timeout",
+                stage=trace_context.node,
+            ) from error
         except Exception as error:
             # Normalize shared client errors into StructuredOutputError so
             # callers have a single error type to handle.
@@ -459,6 +477,17 @@ def _response_format_unsupported(error: BaseException) -> bool:
             return True
         current = current.__cause__ or current.__context__
     return False
+
+
+def _initial_schema_instruction(output_schema: type[BaseModel]) -> str:
+    """Constrain the first JSON-mode call, not only a repair/fallback call."""
+    schema = json.dumps(output_schema.model_json_schema(), ensure_ascii=False)
+    return (
+        "Return ONLY one valid JSON object matching the following JSON Schema. "
+        "Do not include explanations, markdown, code fences, leading prose, or "
+        "trailing text. Rebuild the complete object and keep bounded arrays concise.\n"
+        f"JSON Schema:\n{schema}"
+    )
 
 
 def _response_format_fallback_instruction(output_schema: type[BaseModel] | None) -> str:

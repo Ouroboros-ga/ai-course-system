@@ -80,7 +80,26 @@ class Settings(BaseSettings):
     # falls back to its own larger budget instead of failing the whole draft.
     PREP_INITIAL_SCRIPT_BATCH_SIZE: int = 3
     PREP_INITIAL_SCRIPT_MAX_TOKENS: int = 4096
-    PREP_INITIAL_SCRIPT_SINGLE_MAX_TOKENS: int = 8192
+    PREP_INITIAL_SCRIPT_SINGLE_MAX_TOKENS: int = 12288
+    # Initial evidence preparation is intentionally bounded independently of
+    # the generic LLM settings. Parsed blocks are coalesced into stable units,
+    # mapped in small requests, then reduced without resending the raw corpus.
+    PREP_INITIAL_EVIDENCE_UNIT_TARGET_CHARS: int = 1500
+    PREP_INITIAL_EVIDENCE_UNIT_MAX_CHARS: int = 2400
+    PREP_INITIAL_EVIDENCE_TOTAL_MAX_CHARS: int = 600000
+    PREP_INITIAL_EVIDENCE_MAX_UNITS: int = 1000
+    PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS: int = 24000
+    PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS: int = 36000
+    PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS: int = 25
+    PREP_INITIAL_EVIDENCE_CONCURRENCY: int = 2
+    PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS: int = 40
+    PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS: int = 4096
+    PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS: int = 8192
+    PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS: int = 16384
+    PREP_INITIAL_OUTLINE_MAX_TOKENS: int = 16384
+    PREP_INITIAL_VERIFIER_MAX_TOKENS: int = 4096
+    PREP_INITIAL_MAX_KNOWLEDGE_POINTS: int = 24
+    PREP_INITIAL_MAX_OUTLINE_NODES: int = 64
     # Local-only, explicit debugging aid.  The per-course enable state and
     # captured prompts/responses are stored under this ignored directory; raw
     # model content never enters normal logs or durable diagnostics.

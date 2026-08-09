@@ -14,7 +14,22 @@ class EvidenceReference(StrictModel):
     evidence_id: str = Field(min_length=1, max_length=200)
     text: str = Field(min_length=1, max_length=20_000)
     page: int | None = Field(default=None, ge=1)
+    page_end: int | None = Field(default=None, ge=1)
     block_id: str | None = Field(default=None, max_length=200)
+    source_block_ids: list[str] = Field(default_factory=list, max_length=500)
+    material_version_id: str | None = Field(default=None, max_length=200)
+    material_role: str = Field(default="reference", max_length=64)
+
+    def llm_payload(self) -> dict[str, object]:
+        """Return the minimal model-facing view; provenance stays server-side."""
+        return {
+            "evidence_id": self.evidence_id,
+            "text": self.text,
+            "page": self.page,
+            "page_end": self.page_end,
+            "material_version_id": self.material_version_id,
+            "material_role": self.material_role,
+        }
 
 
 class TeachingStyleConfig(StrictModel):
@@ -36,7 +51,14 @@ class EvidenceSegment(StrictModel):
 
 class EvidenceSegmenterResult(StrictModel):
     stage: Literal["evidence_segmenter"] = "evidence_segmenter"
-    segments: list[EvidenceSegment] = Field(min_length=1, max_length=100)
+    segments: list[EvidenceSegment] = Field(min_length=1, max_length=32)
+
+
+class EvidenceSegmentMapResult(StrictModel):
+    """Bounded local result used by one evidence Map request."""
+
+    stage: Literal["evidence_segmenter"] = "evidence_segmenter"
+    segments: list[EvidenceSegment] = Field(min_length=1, max_length=12)
 
 
 class OutlineCandidate(StrictModel):
@@ -61,12 +83,17 @@ class PrerequisiteCandidate(StrictModel):
 
 class OutlinePlannerResult(StrictModel):
     stage: Literal["outline_planner"] = "outline_planner"
-    candidates: list[OutlineCandidate] = Field(min_length=1, max_length=200)
+    candidates: list[OutlineCandidate] = Field(min_length=1, max_length=64)
     prerequisites: list[PrerequisiteCandidate] = Field(default_factory=list, max_length=200)
 
     @model_validator(mode="after")
     def validate_parent_candidates(self) -> "OutlinePlannerResult":
         ids = {candidate.candidate_id for candidate in self.candidates}
+        knowledge_point_count = sum(
+            candidate.node_type == "knowledge_point" for candidate in self.candidates
+        )
+        if knowledge_point_count > 24:
+            raise ValueError("outline cannot contain more than 24 knowledge points")
         for candidate in self.candidates:
             if candidate.parent_candidate_id and candidate.parent_candidate_id not in ids:
                 raise ValueError(f"unknown parent_candidate_id: {candidate.parent_candidate_id}")
@@ -141,8 +168,11 @@ class PatchProposalDraft(StrictModel):
 
 
 class ControlledPrepInput(StrictModel):
-    source_text: str = Field(min_length=1, max_length=200_000)
-    evidence: list[EvidenceReference] = Field(min_length=1, max_length=500)
+    # Deprecated compatibility field. Initial Prep sends typed evidence units
+    # only; excluding this field prevents the corpus from being serialized a
+    # second time into every LLM request.
+    source_text: str = Field(default="", max_length=200_000, exclude=True)
+    evidence: list[EvidenceReference] = Field(min_length=1, max_length=1000)
     course_positioning: str = Field(default="", max_length=2_000)
     style: TeachingStyleConfig = Field(default_factory=TeachingStyleConfig)
 

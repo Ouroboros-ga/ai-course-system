@@ -46,6 +46,7 @@ from ..contracts.llm import (
 )
 from app.core.config import settings
 from .prompts import (
+    EVIDENCE_REDUCER_PROMPT,
     EVIDENCE_SEGMENTER_PROMPT,
     EVIDENCE_VERIFIER_PROMPT,
     INCREMENTAL_PLANNER_PROMPT,
@@ -62,10 +63,11 @@ if TYPE_CHECKING:  # pragma: no cover - import-only types
     from app.schemas.controlled_prep import (
         ControlledPrepInput,
         EvidenceSegmenterResult,
+        EvidenceSegment,
+        EvidenceSegmentMapResult,
         EvidenceVerifierResult,
         OutlineCandidate,
         OutlinePlannerResult,
-        TeachingScriptBatchResult,
         TeachingScriptNodeDraft,
     )
     from app.services.course_prep_agent_service import AgentPlan
@@ -133,6 +135,7 @@ class PrepLLMAdapter:
         return LLMOptions(
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout_seconds=max(1, int(settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS)),
             response_format={"type": "json_object"},
             prompt_version=spec.version,
             provider_options=dict(provider_options or {}),
@@ -147,9 +150,61 @@ class PrepLLMAdapter:
         the gateway received it; we deliberately do not replace the configured
         model with a different model name behind the teacher's back.
         """
-        if action not in {"organize_structure", "optimize_all_scripts", "optimize_node_script"}:
+        if action not in {
+            "initial",
+            "organize_structure",
+            "optimize_all_scripts",
+            "optimize_node_script",
+        }:
             return None
         return {"thinking": {"type": "disabled"}}
+
+    @staticmethod
+    def _request_context(request: "ControlledPrepInput") -> Mapping[str, Any]:
+        return {
+            "course_positioning": request.course_positioning,
+            "style": request.style.model_dump(mode="json"),
+        }
+
+    @staticmethod
+    def _evidence_for_ids(
+        request: "ControlledPrepInput",
+        evidence_ids: set[str],
+    ) -> list[Mapping[str, Any]]:
+        return [
+            item.llm_payload()
+            for item in request.evidence
+            if item.evidence_id in evidence_ids
+        ]
+
+    @staticmethod
+    def _outline_context(
+        outline: "OutlinePlannerResult",
+        candidate_ids: set[str],
+    ) -> Mapping[str, Any]:
+        by_id = {item.candidate_id: item for item in outline.candidates}
+        keep_ids = set(candidate_ids)
+        pending = [by_id[item_id].parent_candidate_id for item_id in candidate_ids if item_id in by_id]
+        while pending:
+            parent_id = pending.pop()
+            if not parent_id or parent_id in keep_ids:
+                continue
+            keep_ids.add(parent_id)
+            parent = by_id.get(parent_id)
+            if parent and parent.parent_candidate_id:
+                pending.append(parent.parent_candidate_id)
+        return {
+            "candidates": [
+                item.model_dump(mode="json")
+                for item in outline.candidates
+                if item.candidate_id in keep_ids
+            ],
+            "prerequisites": [
+                item.model_dump(mode="json")
+                for item in outline.prerequisites
+                if item.knowledge_point_candidate_id in candidate_ids
+            ],
+        }
 
     @staticmethod
     def _messages(spec: PromptSpec, user_prompt: str) -> list[Mapping[str, str]]:
@@ -199,17 +254,66 @@ class PrepLLMAdapter:
         *,
         run_id: str = "",
         trace_id: str = "",
-    ) -> "EvidenceSegmenterResult":
-        """Stage 1: segment course material into themed evidence blocks."""
-        from app.schemas.controlled_prep import EvidenceSegmenterResult as _Result
+        max_tokens: int | None = None,
+    ) -> "EvidenceSegmentMapResult":
+        """Stage 1 Map: segment one bounded evidence batch."""
+        from app.schemas.controlled_prep import EvidenceSegmentMapResult as _Result
 
-        user_prompt = request.model_dump_json()
+        user_payload = {
+            **self._request_context(request),
+            "constraints": {
+                "max_segments": 12,
+                "return_json_only": True,
+                "evidence_ids_must_come_from_input": True,
+            },
+            "evidence": [item.llm_payload() for item in request.evidence],
+        }
         response = await self._complete(
             spec=EVIDENCE_SEGMENTER_PROMPT,
-            user_prompt=user_prompt,
+            user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="segment_evidence",
             purpose="segment course evidence",
             output_schema=_Result,
+            provider_options=self._structured_prep_provider_options("initial"),
+            max_tokens=(
+                int(settings.PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS)
+                if max_tokens is None else max_tokens
+            ),
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+        return self._parsed_or_validate(response, _Result)
+
+    async def reduce_evidence(
+        self,
+        segments: list["EvidenceSegment"],
+        *,
+        run_id: str = "",
+        trace_id: str = "",
+        max_tokens: int | None = None,
+    ) -> "EvidenceSegmenterResult":
+        """Stage 1 Reduce: merge summaries without resending source text."""
+        from app.schemas.controlled_prep import EvidenceSegmenterResult as _Result
+
+        user_payload = {
+            "constraints": {
+                "max_segments": 32,
+                "return_json_only": True,
+                "evidence_ids_must_come_from_input": True,
+            },
+            "segments": [item.model_dump(mode="json") for item in segments],
+        }
+        response = await self._complete(
+            spec=EVIDENCE_REDUCER_PROMPT,
+            user_prompt=json.dumps(user_payload, ensure_ascii=False),
+            node="segment_evidence_reduce",
+            purpose="reduce course evidence summaries",
+            output_schema=_Result,
+            provider_options=self._structured_prep_provider_options("initial"),
+            max_tokens=(
+                int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS)
+                if max_tokens is None else max_tokens
+            ),
             run_id=run_id,
             trace_id=trace_id,
         )
@@ -227,7 +331,12 @@ class PrepLLMAdapter:
         from app.schemas.controlled_prep import OutlinePlannerResult as _Result
 
         user_payload = {
-            "request": request.model_dump(mode="json"),
+            **self._request_context(request),
+            "constraints": {
+                "max_knowledge_points": int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS),
+                "max_total_nodes": int(settings.PREP_INITIAL_MAX_OUTLINE_NODES),
+                "return_json_only": True,
+            },
             "segments": segments.model_dump(mode="json"),
         }
         response = await self._complete(
@@ -236,6 +345,8 @@ class PrepLLMAdapter:
             node="plan_outline",
             purpose="plan course outline",
             output_schema=_Result,
+            provider_options=self._structured_prep_provider_options("initial"),
+            max_tokens=int(settings.PREP_INITIAL_OUTLINE_MAX_TOKENS),
             run_id=run_id,
             trace_id=trace_id,
         )
@@ -254,10 +365,15 @@ class PrepLLMAdapter:
         """Stage 3 (single): write a TeachingScriptNode for one knowledge point."""
         from app.schemas.controlled_prep import TeachingScriptNodeDraft as _Result
 
+        candidate = next(
+            item for item in outline.candidates if item.candidate_id == candidate_id
+        )
+        evidence_ids = set(candidate.evidence_ids)
         user_payload = {
-            "request": request.model_dump(mode="json"),
-            "outline": outline.model_dump(mode="json"),
+            **self._request_context(request),
+            "outline": self._outline_context(outline, {candidate_id}),
             "candidate_id": candidate_id,
+            "evidence": self._evidence_for_ids(request, evidence_ids),
         }
         response = await self._complete(
             spec=SCRIPT_WRITER_PROMPT,
@@ -267,6 +383,7 @@ class PrepLLMAdapter:
             output_schema=_Result,
             run_id=run_id,
             trace_id=trace_id,
+            provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=max_tokens,
         )
         return self._parsed_or_validate(response, _Result)
@@ -288,10 +405,17 @@ class PrepLLMAdapter:
         """
         from app.schemas.controlled_prep import TeachingScriptBatchResult as _Batch
 
+        candidate_ids = {candidate.candidate_id for candidate in candidates}
+        evidence_ids = {
+            evidence_id
+            for candidate in candidates
+            for evidence_id in candidate.evidence_ids
+        }
         user_payload = {
-            "request": request.model_dump(mode="json"),
-            "outline": outline.model_dump(mode="json"),
+            **self._request_context(request),
+            "outline": self._outline_context(outline, candidate_ids),
             "candidates": [c.model_dump(mode="json") for c in candidates],
+            "evidence": self._evidence_for_ids(request, evidence_ids),
         }
         response = await self._complete(
             spec=SCRIPT_WRITER_BATCH_PROMPT,
@@ -301,6 +425,7 @@ class PrepLLMAdapter:
             output_schema=_Batch,
             run_id=run_id,
             trace_id=trace_id,
+            provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=max_tokens,
         )
         batch = self._parsed_or_validate(response, _Batch)
@@ -317,9 +442,13 @@ class PrepLLMAdapter:
         """Stage 4: verify that the script's conclusions are evidence-backed."""
         from app.schemas.controlled_prep import EvidenceVerifierResult as _Result
 
+        evidence_ids = set(script.evidence_ids)
+        for paragraph_ids in script.paragraph_evidence:
+            evidence_ids.update(paragraph_ids)
         user_payload = {
-            "request": request.model_dump(mode="json"),
+            **self._request_context(request),
             "script": script.model_dump(mode="json"),
+            "evidence": self._evidence_for_ids(request, evidence_ids),
         }
         response = await self._complete(
             spec=EVIDENCE_VERIFIER_PROMPT,
@@ -327,6 +456,8 @@ class PrepLLMAdapter:
             node="verify_script",
             purpose="verify script evidence",
             output_schema=_Result,
+            provider_options=self._structured_prep_provider_options("initial"),
+            max_tokens=int(settings.PREP_INITIAL_VERIFIER_MAX_TOKENS),
             run_id=run_id,
             trace_id=trace_id,
         )

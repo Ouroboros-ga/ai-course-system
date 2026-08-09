@@ -6,6 +6,7 @@ resulting PatchProposal.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Awaitable, Callable
@@ -17,6 +18,8 @@ from app.platform.agents.contracts.llm import StructuredOutputError
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
     EvidenceReference,
+    EvidenceSegment,
+    EvidenceSegmentMapResult,
     EvidenceSegmenterResult,
     EvidenceVerifierResult,
     OutlinePlannerResult,
@@ -34,6 +37,24 @@ class CourseBuildStageTimeout(StructuredOutputError):
 
 class CourseBuildCancelled(StructuredOutputError):
     """The corpus/build lease changed while an LLM stage was in flight."""
+
+
+class EvidenceAttemptBudget:
+    """Bound provider calls made while organizing one course corpus."""
+
+    def __init__(self, limit: int) -> None:
+        self.limit = max(1, limit)
+        self.used = 0
+
+    def take(self) -> None:
+        if self.used >= self.limit:
+            raise StructuredOutputError(
+                "initial evidence preparation exceeded its bounded LLM call budget",
+                reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+                stage="segment_evidence",
+                attempts=self.used,
+            )
+        self.used += 1
 
 
 class ControlledPrepWorkflow:
@@ -59,14 +80,251 @@ class ControlledPrepWorkflow:
         return method
 
     async def segment_evidence(self, request: ControlledPrepInput) -> EvidenceSegmenterResult:
+        """Map bounded evidence batches, then hierarchically reduce them."""
+        chunks = self._chunk_evidence(request)
+        concurrency = max(1, int(settings.PREP_INITIAL_EVIDENCE_CONCURRENCY))
+        semaphore = asyncio.Semaphore(concurrency)
+        budget = EvidenceAttemptBudget(int(settings.PREP_INITIAL_EVIDENCE_MAX_ATTEMPTS))
+        mapped = await asyncio.gather(*[
+            self._segment_evidence_group(
+                request,
+                chunk,
+                path=str(index),
+                semaphore=semaphore,
+                budget=budget,
+            )
+            for index, chunk in enumerate(chunks)
+        ])
+        segments = [segment for group in mapped for segment in group]
+        if len(mapped) == 1:
+            return EvidenceSegmenterResult(segments=segments)
+        return await self._reduce_evidence_hierarchically(
+            request,
+            segments,
+            semaphore=semaphore,
+            budget=budget,
+        )
+
+    @staticmethod
+    def _evidence_payload_chars(
+        request: ControlledPrepInput,
+        evidence: list[EvidenceReference],
+    ) -> int:
+        payload = {
+            "course_positioning": request.course_positioning,
+            "style": request.style.model_dump(mode="json"),
+            "evidence": [item.llm_payload() for item in evidence],
+        }
+        return len(json.dumps(payload, ensure_ascii=False))
+
+    def _chunk_evidence(self, request: ControlledPrepInput) -> list[list[EvidenceReference]]:
+        text_limit = max(1, int(settings.PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS))
+        payload_limit = max(text_limit, int(settings.PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS))
+        chunks: list[list[EvidenceReference]] = []
+        current: list[EvidenceReference] = []
+        current_text_chars = 0
+        for item in request.evidence:
+            candidate = [*current, item]
+            candidate_text_chars = current_text_chars + len(item.text)
+            if current and (
+                candidate_text_chars > text_limit
+                or self._evidence_payload_chars(request, candidate) > payload_limit
+            ):
+                chunks.append(current)
+                current = []
+                current_text_chars = 0
+            current.append(item)
+            current_text_chars += len(item.text)
+        if current:
+            chunks.append(current)
+        max_chunks = max(1, int(settings.PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS))
+        if len(chunks) > max_chunks:
+            raise StructuredOutputError(
+                f"initial evidence requires {len(chunks)} map chunks; limit is {max_chunks}",
+                reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+                stage="segment_evidence",
+            )
+        return chunks
+
+    async def _segment_evidence_group(
+        self,
+        request: ControlledPrepInput,
+        evidence: list[EvidenceReference],
+        *,
+        path: str,
+        semaphore: asyncio.Semaphore,
+        budget: EvidenceAttemptBudget,
+        retry_tokens: int | None = None,
+    ) -> list[EvidenceSegment]:
+        subset = request.model_copy(update={"source_text": "", "evidence": evidence})
+
+        def validate(result: EvidenceSegmentMapResult) -> EvidenceSegmentMapResult:
+            self._assert_evidence_ids(result, evidence)
+            if len(result.segments) > 12:
+                raise StructuredOutputError(
+                    "evidence map returned more than 12 local segments",
+                    reason_code="structured_output_invalid",
+                    stage="segment_evidence",
+                )
+            return result
+
+        try:
+            budget.take()
+            kwargs = {} if retry_tokens is None else {"max_tokens": retry_tokens}
+            async with semaphore:
+                result = await self._run_stage(
+                    "segment_evidence",
+                    self._call_stage("segment_evidence", subset, **kwargs),
+                    validate,
+                )
+        except StructuredOutputError as error:
+            if error.reason_code != "MODEL_OUTPUT_TRUNCATED":
+                raise
+            if len(evidence) > 1:
+                midpoint = len(evidence) // 2
+                left, right = await asyncio.gather(
+                    self._segment_evidence_group(
+                        request,
+                        evidence[:midpoint],
+                        path=f"{path}L",
+                        semaphore=semaphore,
+                        budget=budget,
+                    ),
+                    self._segment_evidence_group(
+                        request,
+                        evidence[midpoint:],
+                        path=f"{path}R",
+                        semaphore=semaphore,
+                        budget=budget,
+                    ),
+                )
+                return [*left, *right]
+            retry_limit = max(
+                int(settings.PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS),
+                int(settings.PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS),
+            )
+            if retry_tokens is None:
+                return await self._segment_evidence_group(
+                    request,
+                    evidence,
+                    path=f"{path}R",
+                    semaphore=semaphore,
+                    budget=budget,
+                    retry_tokens=retry_limit,
+                )
+            raise
+        return [
+            segment.model_copy(update={"segment_id": f"map_{path}_{index}"})
+            for index, segment in enumerate(result.segments, start=1)
+        ]
+
+    @staticmethod
+    def _segment_payload_chars(segments: list[EvidenceSegment]) -> int:
+        return len(json.dumps(
+            {"segments": [item.model_dump(mode="json") for item in segments]},
+            ensure_ascii=False,
+        ))
+
+    def _chunk_segment_summaries(
+        self,
+        segments: list[EvidenceSegment],
+    ) -> list[list[EvidenceSegment]]:
+        payload_limit = max(1, int(settings.PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS))
+        chunks: list[list[EvidenceSegment]] = []
+        current: list[EvidenceSegment] = []
+        for segment in segments:
+            candidate = [*current, segment]
+            if current and self._segment_payload_chars(candidate) > payload_limit:
+                chunks.append(current)
+                current = []
+            current.append(segment)
+        if current:
+            chunks.append(current)
+        return chunks
+
+    async def _reduce_evidence_group(
+        self,
+        request: ControlledPrepInput,
+        segments: list[EvidenceSegment],
+        *,
+        path: str,
+        semaphore: asyncio.Semaphore,
+        budget: EvidenceAttemptBudget,
+    ) -> list[EvidenceSegment]:
         def validate(result: EvidenceSegmenterResult) -> EvidenceSegmenterResult:
             self._assert_evidence_ids(result, request.evidence)
             return result
 
-        return await self._run_stage(
-            "segment_evidence",
-            self._call_stage("segment_evidence", request),
-            validate,
+        try:
+            budget.take()
+            async with semaphore:
+                result = await self._run_stage(
+                    "segment_evidence_reduce",
+                    self._call_stage(
+                        "reduce_evidence",
+                        segments,
+                        max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
+                    ),
+                    validate,
+                )
+        except StructuredOutputError as error:
+            if error.reason_code != "MODEL_OUTPUT_TRUNCATED" or len(segments) <= 1:
+                raise
+            midpoint = len(segments) // 2
+            left, right = await asyncio.gather(
+                self._reduce_evidence_group(
+                    request,
+                    segments[:midpoint],
+                    path=f"{path}L",
+                    semaphore=semaphore,
+                    budget=budget,
+                ),
+                self._reduce_evidence_group(
+                    request,
+                    segments[midpoint:],
+                    path=f"{path}R",
+                    semaphore=semaphore,
+                    budget=budget,
+                ),
+            )
+            return [*left, *right]
+        return [
+            segment.model_copy(update={"segment_id": f"reduce_{path}_{index}"})
+            for index, segment in enumerate(result.segments, start=1)
+        ]
+
+    async def _reduce_evidence_hierarchically(
+        self,
+        request: ControlledPrepInput,
+        segments: list[EvidenceSegment],
+        *,
+        semaphore: asyncio.Semaphore,
+        budget: EvidenceAttemptBudget,
+    ) -> EvidenceSegmenterResult:
+        current = segments
+        for level in range(8):
+            groups = self._chunk_segment_summaries(current)
+            reduced = await asyncio.gather(*[
+                self._reduce_evidence_group(
+                    request,
+                    group,
+                    path=f"{level}_{index}",
+                    semaphore=semaphore,
+                    budget=budget,
+                )
+                for index, group in enumerate(groups)
+            ])
+            flattened = [segment for group in reduced for segment in group]
+            if len(groups) == 1:
+                return EvidenceSegmenterResult(segments=flattened)
+            if len(flattened) >= len(current) and all(len(group) == 1 for group in groups):
+                break
+            current = flattened
+        raise StructuredOutputError(
+            "evidence summaries could not be reduced within eight bounded levels",
+            reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+            stage="segment_evidence_reduce",
+            attempts=budget.used,
         )
 
     async def plan_outline(
@@ -171,12 +429,29 @@ class ControlledPrepWorkflow:
     ) -> Any:
         """Attach a stage to both provider and post-parse validation errors."""
         try:
-            result = await result_awaitable
+            result = await asyncio.wait_for(
+                result_awaitable,
+                timeout=max(1, int(settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS)),
+            )
             validated = validator(result)
             if hasattr(validated, "__await__"):
                 return await validated
             return validated
+        except asyncio.TimeoutError as error:
+            raise CourseBuildStageTimeout(
+                f"course preparation stage '{stage}' exceeded "
+                f"{settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS} seconds",
+                reason_code="llm_call_timeout",
+                stage=stage,
+            ) from error
         except Exception as error:  # noqa: BLE001 - preserve original type
+            if getattr(error, "reason_code", "") == "llm_call_timeout":
+                raise CourseBuildStageTimeout(
+                    f"course preparation stage '{stage}' exceeded "
+                    f"{settings.COURSE_BUILD_STAGE_TIMEOUT_SECONDS} seconds",
+                    reason_code="llm_call_timeout",
+                    stage=stage,
+                ) from error
             if not getattr(error, "stage", ""):
                 try:
                     setattr(error, "stage", stage)
@@ -206,7 +481,6 @@ class ControlledPrepWorkflow:
         the fixed overhead reserves room for JSON metadata, claims and the
         paragraph_evidence array.  This is only used to pick group sizes.
         """
-        allowed = {item.evidence_id for item in request.evidence}
         bound_ids = {
             item.evidence_id
             for item in request.evidence
@@ -421,29 +695,17 @@ class ControlledPrepWorkflow:
         segments = await self.segment_evidence(request)
         await emit("evidence", 10, segments)
         outline = await self.plan_outline(request, segments)
-        max_kp = 24
+        max_kp = max(1, int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS))
+        max_nodes = max(max_kp, int(settings.PREP_INITIAL_MAX_OUTLINE_NODES))
         knowledge = [item for item in outline.candidates if item.node_type == "knowledge_point"]
-        if len(knowledge) > max_kp:
-            by_id = {item.candidate_id: item for item in outline.candidates}
-            keep_ids = {item.candidate_id for item in knowledge[:max_kp]}
-            pending_parents = [item.parent_candidate_id for item in knowledge[:max_kp] if item.parent_candidate_id]
-            while pending_parents:
-                parent_id = pending_parents.pop()
-                if not parent_id or parent_id in keep_ids:
-                    continue
-                keep_ids.add(parent_id)
-                parent = by_id.get(parent_id)
-                if parent and parent.parent_candidate_id:
-                    pending_parents.append(parent.parent_candidate_id)
-            kept_candidates = [item for item in outline.candidates if item.candidate_id in keep_ids]
-            kept_ids = {item.candidate_id for item in kept_candidates}
-            outline = outline.model_copy(update={
-                "candidates": kept_candidates,
-                "prerequisites": [
-                    item for item in outline.prerequisites
-                    if item.knowledge_point_candidate_id in kept_ids
-                ],
-            })
+        if len(knowledge) > max_kp or len(outline.candidates) > max_nodes:
+            raise StructuredOutputError(
+                f"outline exceeded bounded size ({len(knowledge)} knowledge points, "
+                f"{len(outline.candidates)} total nodes)",
+                reason_code="structured_output_invalid",
+                stage="plan_outline",
+                schema_name=type(outline).__name__,
+            )
         await emit("outline", 30, outline)
         candidates = [item for item in outline.candidates if item.node_type == "knowledge_point"]
         if candidate_id:
@@ -462,10 +724,21 @@ class ControlledPrepWorkflow:
         else:
             scripts = await self._write_scripts_chunked(request, outline, candidates)
         await emit("scripts", 80, scripts)
-        verifications = []
-        for index, script in enumerate(scripts, start=1):
-            verifications.append(await self.verify_script(request, script))
-            await emit("verification", 80 + int(15 * index / max(1, len(scripts))), verifications[-1])
+        verification_semaphore = asyncio.Semaphore(
+            max(1, int(settings.PREP_INITIAL_EVIDENCE_CONCURRENCY))
+        )
+
+        async def verify_one(script: TeachingScriptNodeDraft) -> EvidenceVerifierResult:
+            async with verification_semaphore:
+                return await self.verify_script(request, script)
+
+        verifications = list(await asyncio.gather(*(verify_one(script) for script in scripts)))
+        for index, verification in enumerate(verifications, start=1):
+            await emit(
+                "verification",
+                80 + int(15 * index / max(1, len(verifications))),
+                verification,
+            )
         proposal = self.compile_patch(
             request, outline, scripts, verifications,
             existing_outline_ids=existing_outline_ids,
