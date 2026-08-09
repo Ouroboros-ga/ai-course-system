@@ -52,6 +52,12 @@ services:
       - no-new-privileges:true
     <<: *default-logging
     restart: unless-stopped
+    # Service-level limits are enforced by Docker Compose outside Swarm.
+    # Keep the matching deploy block as documentation for Swarm-compatible
+    # tooling, but do not rely on it as the only runtime guard.
+    cpus: "0.50"
+    mem_limit: 512M
+    pids_limit: 256
     deploy:
       resources:
         limits:
@@ -95,6 +101,9 @@ services:
       - ./workers-no-secret-env.sh:/bootstrap/workers-no-secret-env.sh:ro
     <<: *default-logging
     restart: unless-stopped
+    cpus: "1.50"
+    mem_limit: 1536M
+    pids_limit: 256
     deploy:
       resources:
         limits:
@@ -117,6 +126,9 @@ services:
       - judge0_pg_data:/var/lib/postgresql/data/
     <<: *default-logging
     restart: unless-stopped
+    cpus: "0.50"
+    mem_limit: 512M
+    pids_limit: 256
     deploy:
       resources:
         limits:
@@ -141,6 +153,9 @@ services:
       REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
     <<: *default-logging
     restart: unless-stopped
+    cpus: "0.25"
+    mem_limit: 128M
+    pids_limit: 128
     deploy:
       resources:
         limits:

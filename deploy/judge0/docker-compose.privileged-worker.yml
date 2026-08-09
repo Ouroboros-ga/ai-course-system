@@ -1,0 +1,11 @@
+# Demo-only compatibility override for hosts where Judge0 isolate cannot
+# privatize mounts with SYS_ADMIN alone.
+#
+# Apply together with docker-compose.yml. Only the code-execution worker is
+# privileged; the API, PostgreSQL and Redis containers retain the base file's
+# non-privileged configuration, resource limits and network boundaries.
+# This same-host mode is not an acceptable production isolation boundary.
+
+services:
+  worker:
+    privileged: true
