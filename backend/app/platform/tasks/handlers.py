@@ -548,9 +548,9 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 progress=progress,
                 stage=stage,
                 message={
-                    "evidence": "已完成材料证据整理",
-                    "outline": "已完成课程结构规划",
-                    "scripts": "已完成基础讲授脚本生成",
+                    "evidence": "正在整理材料证据",
+                    "outline": "正在规划课程结构",
+                    "scripts": "正在生成基础讲授脚本",
                     "verification": "正在核验讲授脚本证据",
                 }.get(stage, stage),
             )

@@ -21,9 +21,13 @@ class EvidenceReference(StrictModel):
     material_role: str = Field(default="reference", max_length=64)
 
     def llm_payload(self) -> dict[str, object]:
-        """Return the minimal model-facing view; provenance stays server-side."""
+        """Return the minimal model-facing view; provenance stays server-side.
+
+        ``evidence_id`` is intentionally excluded: LLMs must never see or
+        return evidence identifiers.  The workflow backfills them from the
+        deterministic input scope after each stage.
+        """
         return {
-            "evidence_id": self.evidence_id,
             "text": self.text,
             "page": self.page,
             "page_end": self.page_end,
@@ -49,16 +53,23 @@ class EvidenceSegment(StrictModel):
     exercises: list[str] = Field(default_factory=list, max_length=10)
 
 
-class EvidenceReduceSegment(EvidenceSegment):
+class EvidenceReduceSegment(StrictModel):
     """Reduce wire shape with deterministic normalization for safe list fields.
 
-    The JSON schema still advertises the public ten-item limit inherited from
-    ``EvidenceSegment``.  The before-validator is intentionally scoped to the
-    Reduce response: examples and exercises are descriptive suggestions, so an
-    otherwise valid course organization must not fail merely because a model
-    repeated or over-produced them.  Identity, provenance, and segment-count
-    fields remain strictly validated.
+    The JSON schema still advertises the public ten-item limit for
+    examples/exercises.  The before-validator is intentionally scoped to the
+    Reduce response: these are descriptive suggestions, so an otherwise valid
+    course organization must not fail merely because a model repeated or
+    over-produced them.  Identity and segment-count fields remain strictly
+    validated.  ``evidence_ids`` is deliberately absent: the program backfills
+    the deterministic union of the input group after the call.
     """
+
+    segment_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
+    examples: list[str] = Field(default_factory=list, max_length=10)
+    exercises: list[str] = Field(default_factory=list, max_length=10)
 
     @field_validator("examples", "exercises", mode="before")
     @classmethod
@@ -96,14 +107,14 @@ class LeanEvidenceSegment(StrictModel):
     Examples/exercises are descriptive suggestions that no downstream stage
     consumes; carrying them through every hierarchical level is what made
     intermediate Reduce responses hit ``finish_reason=length`` and burn the
-    bounded call budget.  Intermediate levels therefore merge on
-    title/topic/evidence_ids only, and the final level re-adds suggestions.
+    bounded call budget.  Intermediate levels therefore merge on title/topic
+    only, and the final level re-adds suggestions.  ``evidence_ids`` stays
+    server-side and is backfilled as the input group's deterministic union.
     """
 
     segment_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=300)
     topic: str = Field(min_length=1, max_length=500)
-    evidence_ids: list[str] = Field(min_length=1)
 
 
 class LeanEvidenceReduceResult(StrictModel):
@@ -113,8 +124,25 @@ class LeanEvidenceReduceResult(StrictModel):
     segments: list[LeanEvidenceSegment] = Field(min_length=1, max_length=32)
 
 
+class EvidenceMapSegment(StrictModel):
+    """Map wire shape: LLMs never return evidence identifiers."""
+
+    segment_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    topic: str = Field(min_length=1, max_length=500)
+    examples: list[str] = Field(default_factory=list, max_length=10)
+    exercises: list[str] = Field(default_factory=list, max_length=10)
+
+
+class EvidenceSegmentMapWireResult(StrictModel):
+    """Model-facing Map result; the program backfills evidence_ids per batch."""
+
+    stage: Literal["evidence_segmenter"] = "evidence_segmenter"
+    segments: list[EvidenceMapSegment] = Field(min_length=1, max_length=12)
+
+
 class EvidenceSegmentMapResult(StrictModel):
-    """Bounded local result used by one evidence Map request."""
+    """Bounded domain result used by one evidence Map request (backfilled)."""
 
     stage: Literal["evidence_segmenter"] = "evidence_segmenter"
     segments: list[EvidenceSegment] = Field(min_length=1, max_length=12)
@@ -166,6 +194,91 @@ class OutlinePlannerResult(StrictModel):
                     f"{prerequisite.knowledge_point_candidate_id}"
                 )
         return self
+
+
+class OutlineCandidateWire(StrictModel):
+    """Outline wire shape: LLMs never return evidence identifiers."""
+
+    candidate_id: str = Field(min_length=1, max_length=100)
+    node_type: Literal["chapter", "section", "knowledge_point"]
+    title: str = Field(min_length=1, max_length=300)
+    parent_candidate_id: str | None = Field(default=None, max_length=100)
+    rationale: str = Field(default="", max_length=2_000)
+
+
+class PrerequisiteCandidateWire(StrictModel):
+    knowledge_point_candidate_id: str = Field(min_length=1, max_length=100)
+    prerequisite_title: str = Field(min_length=1, max_length=300)
+    rationale: str = Field(default="", max_length=2_000)
+
+
+class OutlinePlannerWireResult(StrictModel):
+    """Model-facing Outline result; the program backfills evidence_ids.
+
+    The tree-shape constraints mirror the domain ``OutlinePlannerResult`` so
+    an invalid hierarchy is rejected before backfill, not after.
+    """
+
+    stage: Literal["outline_planner"] = "outline_planner"
+    candidates: list[OutlineCandidateWire] = Field(min_length=1, max_length=64)
+    prerequisites: list[PrerequisiteCandidateWire] = Field(default_factory=list, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_parent_candidates(self) -> "OutlinePlannerWireResult":
+        ids = {candidate.candidate_id for candidate in self.candidates}
+        knowledge_point_count = sum(
+            candidate.node_type == "knowledge_point" for candidate in self.candidates
+        )
+        if knowledge_point_count > 24:
+            raise ValueError("outline cannot contain more than 24 knowledge points")
+        for candidate in self.candidates:
+            if candidate.parent_candidate_id and candidate.parent_candidate_id not in ids:
+                raise ValueError(f"unknown parent_candidate_id: {candidate.parent_candidate_id}")
+            if candidate.node_type == "chapter" and candidate.parent_candidate_id:
+                raise ValueError("chapter candidates cannot have a parent")
+        return self
+
+
+class ScriptWireDraft(StrictModel):
+    """Script wire shape: no evidence_ids / paragraph_evidence from the model.
+
+    The program backfills ``evidence_ids`` from the bound candidate and
+    ``paragraph_evidence`` per paragraph so the strict domain contract stays
+    aligned without asking the LLM for any identifier.
+    """
+
+    stage: Literal["script_writer"] = "script_writer"
+    candidate_id: str = Field(min_length=1, max_length=100)
+    title: str = Field(min_length=1, max_length=300)
+    course_positioning: str = Field(min_length=1, max_length=2_000)
+    prerequisites: list[str] = Field(default_factory=list, max_length=20)
+    style: TeachingStyleConfig
+    content: str = Field(min_length=1, max_length=50_000)
+    claims: list[str] = Field(min_length=1, max_length=100)
+
+
+class TeachingScriptBatchWireResult(StrictModel):
+    """One model-facing response containing the first-round scripts."""
+
+    stage: Literal["script_writer_batch", "script_writer"] = "script_writer_batch"
+    scripts: list[ScriptWireDraft] = Field(min_length=1, max_length=50)
+
+
+class EvidenceFindingWire(StrictModel):
+    """Verifier wire finding without evidence identifiers."""
+
+    claim: str = Field(min_length=1, max_length=2_000)
+    supported: bool
+    reason: str = Field(default="", max_length=2_000)
+
+
+class EvidenceVerifierWireResult(StrictModel):
+    """Model-facing Verifier result; the program backfills finding evidence_ids."""
+
+    stage: Literal["evidence_verifier"] = "evidence_verifier"
+    verdict: Literal["passed", "needs_review", "failed"]
+    findings: list[EvidenceFindingWire] = Field(min_length=1, max_length=200)
+    unsupported_paragraph_indexes: list[int] = Field(default_factory=list, max_length=200)
 
 
 class TeachingScriptNodeDraft(StrictModel):

@@ -81,6 +81,10 @@ class Settings(BaseSettings):
     PREP_INITIAL_SCRIPT_BATCH_SIZE: int = 3
     PREP_INITIAL_SCRIPT_MAX_TOKENS: int = 4096
     PREP_INITIAL_SCRIPT_SINGLE_MAX_TOKENS: int = 12288
+    # Evidence text bound for one script/verifier prompt.  Evidence ids are
+    # backfilled program-side, so an outline node can reference the whole
+    # course corpus; the prompt itself must stay bounded.
+    PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS: int = 24000
     # Initial evidence preparation is intentionally bounded independently of
     # the generic LLM settings. Parsed blocks are coalesced into stable units,
     # mapped in small requests, then reduced without resending the raw corpus.

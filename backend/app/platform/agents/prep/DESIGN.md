@@ -220,7 +220,17 @@ InitialCoursePrepPort.build(
 
 **材料证据整理（2026-08-09）**：`InitialCoursePrepService` 先在页内把 OCR/解析碎块合并成稳定证据单元，保留服务端 `source_block_ids`；`ControlledPrepWorkflow` 以正文 24,000 字、完整载荷 36,000 字为单批上限执行 Map，并发 2，随后只对摘要和证据单元 ID 做层级 Reduce。模型不接收原始块 ID；工作流全部成功后，Service 才将证据单元 ID 展开为真实 `DocumentBlock.block_id` 并持久化。Map 截断递归二分，材料整理总调用预算 64。Reduce prompt 与 JSON Schema 均要求每个 segment 的 `examples`、`exercises` 各不超过 10 项；Reduce 专用线格式会在正式 `EvidenceSegmenterResult` 校验前对这两个非事实列表稳定去重、去空并裁剪，避免模型修复重试仍超限导致整课失败。segment 数量、身份、证据 ID 与其他字段不做宽松归一化；任何剩余错误仍不写入课程草稿。
 
-**材料证据整理 v2（2026-08-09）**：层级 Reduce 的**中间层改为瘦合并**——只输出 `title/topic/evidence_ids`（`LeanEvidenceReduceResult`），`examples/exercises` 延后到最后一级才生成；二者无下游消费者（大纲只用 `evidence_ids`，讲稿用证据原文），此前逐级携带导致中间层响应 `finish_reason=length` 并烧掉调用预算。最后一级仍走完整线格式并保持既有去重/裁剪归一化。预算同步从 40 提升到 64。并发执行改为"首个异常即取消在途 sibling"（`ControlledPrepWorkflow._run_concurrent`），避免预算耗尽后残留 LLM 请求继续运行。
+**材料证据整理 v2（2026-08-09）**：层级 Reduce 的**中间层改为瘦合并**——只输出 `title/topic`（`LeanEvidenceReduceResult`），`examples/exercises` 延后到最后一级才生成；二者无下游消费者（大纲只用证据 ID，讲稿用证据原文），此前逐级携带导致中间层响应 `finish_reason=length` 并烧掉调用预算。最后一级仍走完整线格式并保持既有去重/裁剪归一化。预算同步从 40 提升到 64。并发执行改为"首个异常即取消在途 sibling"（`ControlledPrepWorkflow._run_concurrent`），避免预算耗尽后残留 LLM 请求继续运行。
+
+**材料证据整理 v3：证据 ID 程序回填（2026-08-09）**：LLM 在 Map/Reduce 阶段曾幻觉出不存在的 `evg_...` ID，硬门会正确拒绝但直接终止任务。为从根上消除该风险，**所有 Initial 阶段的 LLM 输出与输入都不再包含 `evidence_id / evidence_ids / evidence_refs / paragraph_evidence`**（wire schema 全都不带这些字段，`EvidenceReference.llm_payload()` 也不再下发 evidence_id），证据归属一律由 `PrepLLMAdapter` 按确定性输入范围回填：
+
+- Map：每个输出段回填**整个输入批次**的证据 ID；
+- Reduce：每个合并段回填**参与合并分段的确定性并集**；
+- 大纲候选/prerequisite：回填**全部输入分段证据的并集**，并按粗到细顺序截断到 ≤100（对齐 `PatchOperationDraft.evidence_refs` 上限）；
+- 讲稿：`evidence_ids` 取自其绑定的大纲候选（≤100），`paragraph_evidence` 按段落数回填同一证据集以保持对齐校验；
+- 校验：每个 finding 回填该讲稿的证据集。
+
+由此代价是证据粒度绑定到"输入分段/材料组"，不再由模型声明"哪句话精确来自哪条证据"；审计仍保留（服务端展开 `block_id`）。讲稿/校验 prompt 的输入证据改为程序侧粗到细有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符），避免大纲节点全量引用后把整本材料塞进每次讲稿请求。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
 
 ### Workflow 2：IncrementalEditGraph
 
@@ -374,11 +384,11 @@ class PromptSpec:
 
 | # | PromptSpec | 阶段 | 链路 |
 |---|-----------|------|------|
-| 1 | prep.evidence_segmenter v2.0 | 有界证据 Map | Initial |
-| 2 | prep.evidence_reducer v1.2 | 层级证据 Reduce（中间层瘦合并，末级补全 examples/exercises） | Initial |
-| 3 | prep.outline_planner v2.0 | 目录规划（最多 24 知识点/64 节点） | Initial |
-| 4 | prep.script_writer / batch v1.1 | 讲稿撰写 | Initial |
-| 5 | prep.evidence_verifier v1.1 | 证据校验 | Initial |
+| 1 | prep.evidence_segmenter v2.1 | 有界证据 Map（模型不返回证据 ID） | Initial |
+| 2 | prep.evidence_reducer v1.3 | 层级证据 Reduce（中间层瘦合并、末级补全 examples/exercises、不返回证据 ID） | Initial |
+| 3 | prep.outline_planner v2.1 | 目录规划（最多 24 知识点/64 节点，不返回证据 ID） | Initial |
+| 4 | prep.script_writer / batch v1.2 | 讲稿撰写（不返回证据 ID / paragraph_evidence） | Initial |
+| 5 | prep.evidence_verifier v1.2 | 证据校验（不返回证据 ID） | Initial |
 | 6 | prep.incremental_planner v2.0 | 增量规划 | Incremental |
 | 7 | prep.ppt_mapping_optimizer v1.1 | PPT映射优化 | PptMapping |
 

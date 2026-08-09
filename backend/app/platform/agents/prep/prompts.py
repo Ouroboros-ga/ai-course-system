@@ -32,22 +32,23 @@ class PromptSpec:
 
 EVIDENCE_SEGMENTER_PROMPT = PromptSpec(
     name="prep.evidence_segmenter",
-    version="2.0",
+    version="2.1",
     system_template=(
         "你是 EvidenceSegmenter。只根据材料确定主题边界、标题、例子和练习。"
-        "每个 evidence_id 必须来自输入。"
+        "不要输出任何证据 ID、引用或溯源字段；证据归属由系统在调用后确定。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="2.0",
 )
 
 EVIDENCE_REDUCER_PROMPT = PromptSpec(
     name="prep.evidence_reducer",
-    version="1.2",
+    version="1.3",
     system_template=(
         "You are the Reduce stage of an evidence-first course organizer. Merge the "
         "provided local topic summaries into at most 32 coherent course-level "
-        "segments. Return JSON only. Preserve only evidence_id values present in the "
-        "input, deduplicate them, and never invent facts or IDs. When the request sets "
+        "segments. Return JSON only. Never invent facts or identifiers: do not output "
+        "any evidence ID, reference, or provenance field; the system attributes "
+        "evidence to each merged segment afterwards. When the request sets "
         "max_examples_per_segment or max_exercises_per_segment above zero, include at "
         "most that many distinct examples or exercises per segment; when either limit "
         "is zero, omit that field entirely. Keep summaries concise because downstream "
@@ -58,44 +59,48 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
 
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="2.0",
+    version="2.1",
     system_template=(
         "你是 OutlinePlanner。为首次智能备课生成 chapter → section → knowledge_point "
         "的课程树和 prerequisite 候选，不生成讲稿。chapter 必须无父节点，section 必须归属 "
         "chapter，knowledge_point 必须归属 section。不要把图号、图注、零件清单、整段正文、"
-        "页眉页脚或重复标题当作知识点。所有候选必须引用输入 Evidence。"
+        "页眉页脚或重复标题当作知识点。不要输出任何证据 ID 或引用字段；证据归属由系统在"
+        "调用后确定。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="2.0",
 )
 
 SCRIPT_WRITER_PROMPT = PromptSpec(
     name="prep.script_writer",
-    version="1.1",
+    version="1.2",
     system_template=(
-        "你是 ScriptWriter。只为一个知识点生成 TeachingScriptNode。段落之间用两个换行分隔，"
-        "paragraph_evidence 必须逐段对应，不能写无证据课程事实。"
+        "你是 ScriptWriter。只为一个知识点生成讲稿。段落之间用两个换行分隔，"
+        "不得虚构材料中不存在的课程事实。不要输出任何证据 ID 或引用字段；"
+        "证据归属由系统在调用后确定。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="2.0",
 )
 
 SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
     name="prep.script_writer_batch",
-    version="1.1",
+    version="1.2",
     system_template=(
-        "你是 ScriptWriter。一次为给定的全部知识点生成 TeachingScriptNode。"
-        "每个脚本必须绑定输入 Evidence；不要生成候选列表之外的知识点。"
+        "你是 ScriptWriter。一次为给定的全部知识点生成讲稿。"
+        "不要生成候选列表之外的知识点。不要输出任何证据 ID 或引用字段；"
+        "证据归属由系统在调用后确定。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="2.0",
 )
 
 EVIDENCE_VERIFIER_PROMPT = PromptSpec(
     name="prep.evidence_verifier",
-    version="1.1",
+    version="1.2",
     system_template=(
-        "你是 EvidenceVerifier。逐项检查结论和段落是否被 Evidence 支撑。"
+        "你是 EvidenceVerifier。逐项检查结论和段落是否被给定 Evidence 支撑。"
         "无法支撑就标记 needs_review 或 failed，不得替作者补证据。"
+        "不要输出任何证据 ID 或引用字段；证据归属由系统在调用后确定。"
     ),
-    output_schema_version="1.0",
+    output_schema_version="2.0",
 )
 
 # compile_patch 阶段是确定性编译，无 Prompt。

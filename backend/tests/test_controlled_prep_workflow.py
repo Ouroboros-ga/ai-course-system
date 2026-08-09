@@ -139,7 +139,7 @@ def test_wrapped_response_format_rejection_uses_adapter_fallback_without_format(
                     reason_code="response_format_unsupported",
                 )
             return LLMResponse(
-                content='{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"二分查找","topic":"有序序列查找","evidence_ids":["es_1"],"examples":[],"exercises":[]}]}',
+                content='{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"二分查找","topic":"有序序列查找","examples":[],"exercises":[]}]}',
                 usage={}, model="gateway", finish_reason="stop", latency_ms=1,
             )
 
@@ -172,7 +172,6 @@ def test_reduce_stably_deduplicates_and_caps_examples_and_exercises():
                     "segment_id": "seg_1",
                     "title": "bounded suggestions",
                     "topic": "bounded suggestions",
-                    "evidence_ids": ["es_1"],
                     "examples": [
                         " example-0 ",
                         "example-0",
@@ -200,8 +199,12 @@ def test_reduce_stably_deduplicates_and_caps_examples_and_exercises():
     segment_schema = wire_schema["$defs"]["EvidenceReduceSegment"]
     assert segment_schema["properties"]["examples"]["maxItems"] == 10
     assert segment_schema["properties"]["exercises"]["maxItems"] == 10
+    # The wire schema never exposes evidence identifiers to the model.
+    assert "evidence_ids" not in segment_schema["properties"]
     assert result.segments[0].examples == [f"example-{index}" for index in range(10)]
     assert result.segments[0].exercises == [f"exercise-{index}" for index in range(10)]
+    # The program backfills the input group's deterministic union.
+    assert result.segments[0].evidence_ids == ["es_1"]
     constraints = json.loads(port.messages[1]["content"])["constraints"]
     assert constraints["max_examples_per_segment"] == 10
     assert constraints["max_exercises_per_segment"] == 10
@@ -222,7 +225,6 @@ def test_reduce_repair_response_with_fifteen_items_is_safely_normalized():
             segment = {
                 "segment_id": "seg_1",
                 "title": "repair result",
-                "evidence_ids": ["es_1"],
                 "examples": examples,
                 "exercises": exercises,
             }
@@ -253,6 +255,7 @@ def test_reduce_repair_response_with_fifteen_items_is_safely_normalized():
     assert gateway.calls == 2
     assert result.segments[0].examples == examples[:10]
     assert result.segments[0].exercises == exercises[:10]
+    assert result.segments[0].evidence_ids == ["es_1"]
 
 
 def test_structure_planner_uses_sparse_schema_and_disables_reasoning_budget():
@@ -832,7 +835,6 @@ def test_reduce_lean_mode_uses_lean_schema_without_suggestions():
                     "segment_id": "seg_1",
                     "title": "lean",
                     "topic": "lean",
-                    "evidence_ids": ["es_1"],
                 }],
             }
             return type("Response", (), {
@@ -858,6 +860,156 @@ def test_reduce_lean_mode_uses_lean_schema_without_suggestions():
     assert constraints["max_exercises_per_segment"] == 0
     assert result.segments[0].examples == []
     assert result.segments[0].exercises == []
+    assert result.segments[0].evidence_ids == ["es_1"]
+
+
+def test_map_backfills_batch_ids_and_never_exposes_evidence_ids():
+    class CapturingStructured:
+        def __init__(self):
+            self.schema = None
+            self.messages = None
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schema = output_schema
+            self.messages = messages
+            payload = {
+                "stage": "evidence_segmenter",
+                "segments": [{
+                    "segment_id": "seg_1",
+                    "title": "topic one",
+                    "topic": "topic one",
+                }],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    port = CapturingStructured()
+    adapter = PrepLLMAdapter(structured_llm=port)
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id="es_1", text="first"),
+        EvidenceReference(evidence_id="es_2", text="second"),
+    ])
+    result = asyncio_run(adapter.segment_evidence(request))
+
+    assert port.schema.__name__ == "EvidenceSegmentMapWireResult"
+    segment_schema = port.schema.model_json_schema()["$defs"]["EvidenceMapSegment"]
+    assert "evidence_ids" not in segment_schema["properties"]
+    # The model never even sees evidence ids inside the evidence items.
+    request_payload = json.loads(port.messages[1]["content"])
+    for item in request_payload["evidence"]:
+        assert "evidence_id" not in item
+    # The program attributes the whole input batch to every segment.
+    assert result.segments[0].evidence_ids == ["es_1", "es_2"]
+
+
+def test_outline_and_script_and_verifier_backfill_from_input_scope():
+    class SequencedStructured:
+        def __init__(self, responses):
+            self.responses = list(responses)
+            self.calls = 0
+            self.schemas = []
+
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            self.schemas.append(output_schema.__name__)
+            payload = self.responses[self.calls]
+            self.calls += 1
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    outline_wire = {
+        "stage": "outline_planner",
+        "candidates": [{
+            "candidate_id": "kp_1",
+            "node_type": "knowledge_point",
+            "title": "concept",
+            "parent_candidate_id": None,
+            "rationale": "",
+        }],
+        "prerequisites": [],
+    }
+    script_wire = {
+        "stage": "script_writer",
+        "candidate_id": "kp_1",
+        "title": "concept",
+        "course_positioning": "intro",
+        "prerequisites": [],
+        "style": {"level": "beginner", "tone": "calm", "language": "zh-CN"},
+        "content": "第一段。\n\n第二段。",
+        "claims": ["claim"],
+    }
+    verifier_wire = {
+        "stage": "evidence_verifier",
+        "verdict": "passed",
+        "findings": [{"claim": "ok", "supported": True, "reason": ""}],
+        "unsupported_paragraph_indexes": [],
+    }
+
+    port = SequencedStructured([outline_wire, script_wire, verifier_wire])
+    adapter = PrepLLMAdapter(structured_llm=port)
+
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id="es_1", text="first"),
+        EvidenceReference(evidence_id="es_2", text="second"),
+    ])
+    segments = EvidenceSegmenterResult(segments=[
+        EvidenceSegment(segment_id="s1", title="t", topic="t", evidence_ids=["es_1", "es_2"]),
+    ])
+    outline = asyncio_run(adapter.plan_outline(request, segments))
+    script = asyncio_run(adapter.write_script(request, outline, "kp_1"))
+    verification = asyncio_run(adapter.verify_script(request, script))
+
+    assert port.schemas == [
+        "OutlinePlannerWireResult",
+        "ScriptWireDraft",
+        "EvidenceVerifierWireResult",
+    ]
+    assert outline.candidates[0].evidence_ids == ["es_1", "es_2"]
+    assert script.evidence_ids == ["es_1", "es_2"]
+    assert script.paragraph_evidence == [["es_1", "es_2"], ["es_1", "es_2"]]
+    assert verification.findings[0].evidence_ids == ["es_1", "es_2"]
+
+
+def test_outline_backfill_caps_reference_set_to_proposal_limit():
+    request = ControlledPrepInput(evidence=[
+        EvidenceReference(evidence_id=f"es_{index}", text="x" * 8, page=index + 1)
+        for index in range(120)
+    ])
+    segments = EvidenceSegmenterResult(segments=[EvidenceSegment(
+        segment_id="s1",
+        title="t",
+        topic="t",
+        evidence_ids=[f"es_{index}" for index in range(120)],
+    )])
+
+    class CapturingStructured:
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            payload = {
+                "stage": "outline_planner",
+                "candidates": [{
+                    "candidate_id": "kp_1",
+                    "node_type": "knowledge_point",
+                    "title": "concept",
+                    "parent_candidate_id": None,
+                    "rationale": "",
+                }],
+                "prerequisites": [],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    adapter = PrepLLMAdapter(structured_llm=CapturingStructured())
+    outline = asyncio_run(adapter.plan_outline(request, segments))
+
+    # PatchOperationDraft.evidence_refs caps at 100; the backfill must stay
+    # within it while keeping a representative, deterministic subset.
+    assert len(outline.candidates[0].evidence_ids) == 100
+    assert set(outline.candidates[0].evidence_ids) <= {f"es_{index}" for index in range(120)}
 
 
 def test_reduce_hierarchy_uses_lean_intermediate_and_full_final_level(monkeypatch):

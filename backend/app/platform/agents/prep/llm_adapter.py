@@ -45,6 +45,7 @@ from ..contracts.llm import (
     StructuredLLMPort,
 )
 from app.core.config import settings
+from app.platform.agents.contracts.llm import StructuredOutputError
 from .prompts import (
     EVIDENCE_REDUCER_PROMPT,
     EVIDENCE_SEGMENTER_PROMPT,
@@ -167,15 +168,103 @@ class PrepLLMAdapter:
         }
 
     @staticmethod
-    def _evidence_for_ids(
+    def _script_evidence_max_chars() -> int:
+        """Cap the evidence text sent into one script/verifier prompt.
+
+        Outline backfill attributes the whole course corpus to every node, so
+        without this bound each script request would carry the entire material.
+        """
+        return max(1, int(settings.PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS))
+
+    @staticmethod
+    def _coarse_to_fine_order(size: int) -> list[int]:
+        """Deterministic coarse-to-fine order over a list (0, last, mid, ...)."""
+        if size <= 0:
+            return []
+        result: list[int] = [0]
+        if size == 1:
+            return result
+        result.append(size - 1)
+        queue: list[tuple[int, int]] = [(0, size - 1)]
+        seen = set(result)
+        while queue:
+            left, right = queue.pop(0)
+            if right - left <= 1:
+                continue
+            midpoint = (left + right) // 2
+            if midpoint not in seen:
+                result.append(midpoint)
+                seen.add(midpoint)
+            queue.extend([(left, midpoint), (midpoint, right)])
+        return result
+
+    @staticmethod
+    def _bounded_evidence_items(
         request: "ControlledPrepInput",
         evidence_ids: set[str],
-    ) -> list[Mapping[str, Any]]:
-        return [
-            item.llm_payload()
-            for item in request.evidence
-            if item.evidence_id in evidence_ids
-        ]
+        *,
+        max_chars: int,
+    ) -> list[Any]:
+        """Deterministically sample a candidate's evidence for one prompt.
+
+        Outline backfill attributes the whole course corpus to every node, so
+        sending ``evidence_ids`` verbatim would push the entire material into
+        every script/verifier request.  This samples the allowed set in a
+        fixed coarse-to-fine order, bounded by ``max_chars``.
+        """
+        items = [item for item in request.evidence if item.evidence_id in evidence_ids]
+        selected: list[Any] = []
+        used = 0
+        for index in PrepLLMAdapter._coarse_to_fine_order(len(items)):
+            item = items[index]
+            if used + len(item.text) > max_chars:
+                continue
+            selected.append(item)
+            used += len(item.text)
+        return selected
+
+    @staticmethod
+    def _union_evidence_ids(segments: list[Any]) -> list[str]:
+        """Deterministic, deduplicated union of the input group's evidence."""
+        ids: list[str] = []
+        seen: set[str] = set()
+        for segment in segments:
+            for value in segment.evidence_ids:
+                if value not in seen:
+                    seen.add(value)
+                    ids.append(value)
+        return ids
+
+    @staticmethod
+    def _cap_evidence_ids(ids: list[str], limit: int = 100) -> list[str]:
+        """Deterministically cap a backfilled reference set.
+
+        ``PatchOperationDraft.evidence_refs`` allows at most 100 entries, so
+        outline nodes and scripts keep a representative, bounded citation set
+        sampled coarse-to-fine instead of the whole course corpus.
+        """
+        if len(ids) <= limit:
+            return list(ids)
+        return [ids[index] for index in PrepLLMAdapter._coarse_to_fine_order(len(ids))][:limit]
+
+    @staticmethod
+    def _segment_llm_payload(segment: Any) -> dict[str, object]:
+        data = segment.model_dump(mode="json")
+        data.pop("evidence_ids", None)
+        return data
+
+    @staticmethod
+    def _candidate_llm_payload(candidate: Any) -> dict[str, object]:
+        data = candidate.model_dump(mode="json")
+        data.pop("evidence_ids", None)
+        return data
+
+    @staticmethod
+    def _script_llm_payload(script: Any) -> dict[str, object]:
+        data = script.model_dump(mode="json")
+        data.pop("evidence_ids", None)
+        data.pop("paragraph_evidence", None)
+        return data
 
     @staticmethod
     def _outline_context(
@@ -195,16 +284,41 @@ class PrepLLMAdapter:
                 pending.append(parent.parent_candidate_id)
         return {
             "candidates": [
-                item.model_dump(mode="json")
+                PrepLLMAdapter._candidate_llm_payload(item)
                 for item in outline.candidates
                 if item.candidate_id in keep_ids
             ],
             "prerequisites": [
-                item.model_dump(mode="json")
+                PrepLLMAdapter._candidate_llm_payload(item)
                 for item in outline.prerequisites
                 if item.knowledge_point_candidate_id in candidate_ids
             ],
         }
+
+    @staticmethod
+    def _backfilled_script(wire: Any, candidate: Any) -> "TeachingScriptNodeDraft":
+        """Fill the strict domain script from a model-facing wire draft.
+
+        ``evidence_ids`` come from the bound outline candidate and
+        ``paragraph_evidence`` mirrors them per paragraph, so the strict
+        alignment validator holds without asking the model for identifiers.
+        """
+        from app.schemas.controlled_prep import TeachingScriptNodeDraft as _Result
+
+        evidence_ids = PrepLLMAdapter._cap_evidence_ids(list(candidate.evidence_ids))
+        paragraph_count = len(wire.content.split("\n\n"))
+        return _Result(
+            stage="script_writer",
+            candidate_id=wire.candidate_id,
+            title=wire.title,
+            evidence_ids=evidence_ids,
+            course_positioning=wire.course_positioning,
+            prerequisites=wire.prerequisites,
+            style=wire.style,
+            content=wire.content,
+            claims=wire.claims,
+            paragraph_evidence=[evidence_ids] * paragraph_count,
+        )
 
     @staticmethod
     def _messages(spec: PromptSpec, user_prompt: str) -> list[Mapping[str, str]]:
@@ -256,15 +370,23 @@ class PrepLLMAdapter:
         trace_id: str = "",
         max_tokens: int | None = None,
     ) -> "EvidenceSegmentMapResult":
-        """Stage 1 Map: segment one bounded evidence batch."""
-        from app.schemas.controlled_prep import EvidenceSegmentMapResult as _Result
+        """Stage 1 Map: segment one bounded evidence batch.
+
+        The model returns topic segments without any evidence identifier; the
+        adapter attributes every segment to the whole input batch afterwards.
+        """
+        from app.schemas.controlled_prep import (
+            EvidenceSegment as _Segment,
+            EvidenceSegmentMapResult as _Result,
+            EvidenceSegmentMapWireResult as _WireResult,
+        )
 
         user_payload = {
             **self._request_context(request),
             "constraints": {
                 "max_segments": 12,
                 "return_json_only": True,
-                "evidence_ids_must_come_from_input": True,
+                "do_not_output_evidence_ids": True,
             },
             "evidence": [item.llm_payload() for item in request.evidence],
         }
@@ -273,7 +395,7 @@ class PrepLLMAdapter:
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="segment_evidence",
             purpose="segment course evidence",
-            output_schema=_Result,
+            output_schema=_WireResult,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=(
                 int(settings.PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS)
@@ -282,7 +404,19 @@ class PrepLLMAdapter:
             run_id=run_id,
             trace_id=trace_id,
         )
-        return self._parsed_or_validate(response, _Result)
+        wire_result = self._parsed_or_validate(response, _WireResult)
+        batch_ids = [item.evidence_id for item in request.evidence]
+        return _Result(segments=[
+            _Segment(
+                segment_id=item.segment_id,
+                title=item.title,
+                topic=item.topic,
+                evidence_ids=batch_ids,
+                examples=item.examples,
+                exercises=item.exercises,
+            )
+            for item in wire_result.segments
+        ])
 
     async def reduce_evidence(
         self,
@@ -296,13 +430,15 @@ class PrepLLMAdapter:
         """Stage 1 Reduce: merge summaries without resending source text.
 
         Intermediate hierarchical levels pass ``lean=True``: the wire schema
-        then only carries ``title``/``topic``/``evidence_ids`` so a level's
-        request and response stay small and finish within the completion
-        budget.  The final level keeps ``lean=False`` and re-adds bounded
-        ``examples``/``exercises`` suggestions.
+        then only carries ``title``/``topic`` so a level's request and response
+        stay small and finish within the completion budget.  The final level
+        keeps ``lean=False`` and re-adds bounded examples/exercises.  Evidence
+        ids are never returned by the model: every merged segment receives the
+        deterministic union of its input group.
         """
         from app.schemas.controlled_prep import (
             EvidenceReduceResult as _WireResult,
+            EvidenceSegment as _Segment,
             EvidenceSegmenterResult as _Result,
             LeanEvidenceReduceResult as _LeanWireResult,
         )
@@ -314,9 +450,9 @@ class PrepLLMAdapter:
                 "max_examples_per_segment": 0 if lean else 10,
                 "max_exercises_per_segment": 0 if lean else 10,
                 "return_json_only": True,
-                "evidence_ids_must_come_from_input": True,
+                "do_not_output_evidence_ids": True,
             },
-            "segments": [item.model_dump(mode="json") for item in segments],
+            "segments": [PrepLLMAdapter._segment_llm_payload(item) for item in segments],
         }
         response = await self._complete(
             spec=EVIDENCE_REDUCER_PROMPT,
@@ -333,10 +469,18 @@ class PrepLLMAdapter:
             trace_id=trace_id,
         )
         wire_result = self._parsed_or_validate(response, wire_schema)
-        # Convert the Reduce-only wire model back to the strict domain
-        # contract.  The wire validator has already stably deduplicated and
-        # bounded descriptive suggestions; every other field is revalidated.
-        return _Result.model_validate(wire_result.model_dump(mode="json"))
+        union_ids = PrepLLMAdapter._union_evidence_ids(segments)
+        return _Result(segments=[
+            _Segment(
+                segment_id=item.segment_id,
+                title=item.title,
+                topic=item.topic,
+                evidence_ids=union_ids,
+                examples=getattr(item, "examples", []) or [],
+                exercises=getattr(item, "exercises", []) or [],
+            )
+            for item in wire_result.segments
+        ])
 
     async def plan_outline(
         self,
@@ -346,8 +490,18 @@ class PrepLLMAdapter:
         run_id: str = "",
         trace_id: str = "",
     ) -> "OutlinePlannerResult":
-        """Stage 2: plan the chapter -> section -> knowledge_point outline tree."""
-        from app.schemas.controlled_prep import OutlinePlannerResult as _Result
+        """Stage 2: plan the chapter -> section -> knowledge_point outline tree.
+
+        The model never returns evidence identifiers; every candidate and
+        prerequisite receives the deterministic union of the input segments'
+        evidence after the call.
+        """
+        from app.schemas.controlled_prep import (
+            OutlineCandidate as _Candidate,
+            OutlinePlannerResult as _Result,
+            OutlinePlannerWireResult as _WireResult,
+            PrerequisiteCandidate as _Prerequisite,
+        )
 
         user_payload = {
             **self._request_context(request),
@@ -355,21 +509,47 @@ class PrepLLMAdapter:
                 "max_knowledge_points": int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS),
                 "max_total_nodes": int(settings.PREP_INITIAL_MAX_OUTLINE_NODES),
                 "return_json_only": True,
+                "do_not_output_evidence_ids": True,
             },
-            "segments": segments.model_dump(mode="json"),
+            "segments": [PrepLLMAdapter._segment_llm_payload(item) for item in segments.segments],
         }
         response = await self._complete(
             spec=OUTLINE_PLANNER_PROMPT,
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="plan_outline",
             purpose="plan course outline",
-            output_schema=_Result,
+            output_schema=_WireResult,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=int(settings.PREP_INITIAL_OUTLINE_MAX_TOKENS),
             run_id=run_id,
             trace_id=trace_id,
         )
-        return self._parsed_or_validate(response, _Result)
+        wire_result = self._parsed_or_validate(response, _WireResult)
+        union_ids = PrepLLMAdapter._cap_evidence_ids(
+            PrepLLMAdapter._union_evidence_ids(segments.segments)
+        )
+        return _Result(
+            candidates=[
+                _Candidate(
+                    candidate_id=item.candidate_id,
+                    node_type=item.node_type,
+                    title=item.title,
+                    parent_candidate_id=item.parent_candidate_id,
+                    evidence_ids=union_ids,
+                    rationale=item.rationale,
+                )
+                for item in wire_result.candidates
+            ],
+            prerequisites=[
+                _Prerequisite(
+                    knowledge_point_candidate_id=item.knowledge_point_candidate_id,
+                    prerequisite_title=item.prerequisite_title,
+                    evidence_ids=union_ids,
+                    rationale=item.rationale,
+                )
+                for item in wire_result.prerequisites
+            ],
+        )
 
     async def write_script(
         self,
@@ -382,30 +562,37 @@ class PrepLLMAdapter:
         max_tokens: int | None = None,
     ) -> "TeachingScriptNodeDraft":
         """Stage 3 (single): write a TeachingScriptNode for one knowledge point."""
-        from app.schemas.controlled_prep import TeachingScriptNodeDraft as _Result
+        from app.schemas.controlled_prep import ScriptWireDraft as _WireDraft
 
         candidate = next(
             item for item in outline.candidates if item.candidate_id == candidate_id
         )
-        evidence_ids = set(candidate.evidence_ids)
         user_payload = {
             **self._request_context(request),
             "outline": self._outline_context(outline, {candidate_id}),
             "candidate_id": candidate_id,
-            "evidence": self._evidence_for_ids(request, evidence_ids),
+            "evidence": [
+                item.llm_payload()
+                for item in self._bounded_evidence_items(
+                    request,
+                    set(candidate.evidence_ids),
+                    max_chars=self._script_evidence_max_chars(),
+                )
+            ],
         }
         response = await self._complete(
             spec=SCRIPT_WRITER_PROMPT,
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="write_script",
             purpose="write single teaching script",
-            output_schema=_Result,
+            output_schema=_WireDraft,
             run_id=run_id,
             trace_id=trace_id,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=max_tokens,
         )
-        return self._parsed_or_validate(response, _Result)
+        wire_draft = self._parsed_or_validate(response, _WireDraft)
+        return PrepLLMAdapter._backfilled_script(wire_draft, candidate)
 
     async def write_scripts_batch(
         self,
@@ -419,10 +606,10 @@ class PrepLLMAdapter:
     ) -> list["TeachingScriptNodeDraft"]:
         """Stage 3 (batch): write TeachingScriptNodes for multiple knowledge points.
 
-        Uses ``TeachingScriptBatchResult`` as the output schema and returns
-        its ``scripts`` list, mirroring ``ControlledPrepWorkflow``.
+        Parses the model-facing wire batch and backfills each script from its
+        bound candidate.
         """
-        from app.schemas.controlled_prep import TeachingScriptBatchResult as _Batch
+        from app.schemas.controlled_prep import TeachingScriptBatchWireResult as _WireBatch
 
         candidate_ids = {candidate.candidate_id for candidate in candidates}
         evidence_ids = {
@@ -433,22 +620,40 @@ class PrepLLMAdapter:
         user_payload = {
             **self._request_context(request),
             "outline": self._outline_context(outline, candidate_ids),
-            "candidates": [c.model_dump(mode="json") for c in candidates],
-            "evidence": self._evidence_for_ids(request, evidence_ids),
+            "candidates": [PrepLLMAdapter._candidate_llm_payload(c) for c in candidates],
+            "evidence": [
+                item.llm_payload()
+                for item in self._bounded_evidence_items(
+                    request,
+                    evidence_ids,
+                    max_chars=self._script_evidence_max_chars(),
+                )
+            ],
         }
         response = await self._complete(
             spec=SCRIPT_WRITER_BATCH_PROMPT,
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="write_scripts_batch",
             purpose="write batch teaching scripts",
-            output_schema=_Batch,
+            output_schema=_WireBatch,
             run_id=run_id,
             trace_id=trace_id,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=max_tokens,
         )
-        batch = self._parsed_or_validate(response, _Batch)
-        return list(batch.scripts)
+        batch = self._parsed_or_validate(response, _WireBatch)
+        by_id = {candidate.candidate_id: candidate for candidate in candidates}
+        scripts: list[Any] = []
+        for wire_draft in batch.scripts:
+            candidate = by_id.get(wire_draft.candidate_id)
+            if candidate is None:
+                raise StructuredOutputError(
+                    "script_writer_batch returned an unknown candidate_id",
+                    reason_code="structured_output_invalid",
+                    stage="write_scripts_batch",
+                )
+            scripts.append(PrepLLMAdapter._backfilled_script(wire_draft, candidate))
+        return scripts
 
     async def verify_script(
         self,
@@ -458,29 +663,59 @@ class PrepLLMAdapter:
         run_id: str = "",
         trace_id: str = "",
     ) -> "EvidenceVerifierResult":
-        """Stage 4: verify that the script's conclusions are evidence-backed."""
-        from app.schemas.controlled_prep import EvidenceVerifierResult as _Result
+        """Stage 4: verify that the script's conclusions are evidence-backed.
+
+        Findings receive the script's evidence set as their backfilled
+        ``evidence_ids``; the model never returns identifiers.
+        """
+        from app.schemas.controlled_prep import (
+            EvidenceFinding as _Finding,
+            EvidenceVerifierResult as _Result,
+            EvidenceVerifierWireResult as _WireResult,
+        )
 
         evidence_ids = set(script.evidence_ids)
         for paragraph_ids in script.paragraph_evidence:
             evidence_ids.update(paragraph_ids)
         user_payload = {
             **self._request_context(request),
-            "script": script.model_dump(mode="json"),
-            "evidence": self._evidence_for_ids(request, evidence_ids),
+            "script": PrepLLMAdapter._script_llm_payload(script),
+            "evidence": [
+                item.llm_payload()
+                for item in self._bounded_evidence_items(
+                    request,
+                    evidence_ids,
+                    max_chars=self._script_evidence_max_chars(),
+                )
+            ],
         }
         response = await self._complete(
             spec=EVIDENCE_VERIFIER_PROMPT,
             user_prompt=json.dumps(user_payload, ensure_ascii=False),
             node="verify_script",
             purpose="verify script evidence",
-            output_schema=_Result,
+            output_schema=_WireResult,
             provider_options=self._structured_prep_provider_options("initial"),
             max_tokens=int(settings.PREP_INITIAL_VERIFIER_MAX_TOKENS),
             run_id=run_id,
             trace_id=trace_id,
         )
-        return self._parsed_or_validate(response, _Result)
+        wire_result = self._parsed_or_validate(response, _WireResult)
+        backfilled_ids = list(script.evidence_ids)
+        return _Result(
+            stage="evidence_verifier",
+            verdict=wire_result.verdict,
+            findings=[
+                _Finding(
+                    claim=item.claim,
+                    evidence_ids=backfilled_ids,
+                    supported=item.supported,
+                    reason=item.reason,
+                )
+                for item in wire_result.findings
+            ],
+            unsupported_paragraph_indexes=wire_result.unsupported_paragraph_indexes,
+        )
 
     # -- Incremental pipeline --------------------------------------------
 

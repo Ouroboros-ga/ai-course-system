@@ -256,7 +256,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
             <del v-if="operation.before">{{ operation.before }}</del>
             <ins v-if="operation.after">{{ operation.after }}</ins>
             <p v-if="operation.reason">{{ operation.reason }}</p>
-            <div v-if="operation.evidence_refs?.length" class="evidence-refs">证据：{{ operation.evidence_refs.join('、') }}</div>
+            <div v-if="operation.evidence_refs?.length" class="evidence-refs">证据：{{ operation.evidence_refs.length }} 条</div>
           </div>
           <footer>
             <SfxButton size="sm" :loading="deciding === proposal.proposal_id" @click="decide(proposal, true)">
