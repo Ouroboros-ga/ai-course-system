@@ -119,6 +119,15 @@ def main() -> int:
     if not python_languages:
         raise RuntimeError("Judge0 has no enabled Python language")
     language = max(python_languages, key=lambda item: int(item.get("id", 0)))
+    c_languages = [
+        item
+        for item in languages
+        if isinstance(item, dict)
+        and str(item.get("name", "")).startswith("C (")
+    ]
+    if not c_languages:
+        raise RuntimeError("Judge0 has no enabled C compiler")
+    c_language = max(c_languages, key=lambda item: int(item.get("id", 0)))
 
     language_id = int(language["id"])
     results: dict[str, dict] = {}
@@ -130,7 +139,9 @@ def main() -> int:
     if str(results["accepted"].get("stdout") or "").strip() != "JUDGE0_SMOKE_OK":
         raise RuntimeError("accepted: stdout marker missing")
 
-    results["compile_error"] = _submit(language_id, "def broken(:\n    pass")
+    results["compile_error"] = _submit(
+        int(c_language["id"]), "int main( { return 0; }"
+    )
     _assert_status("compile_error", results["compile_error"], {6})
 
     results["runtime_error"] = _submit(
@@ -197,6 +208,7 @@ def main() -> int:
 
     summary = {
         "language": language.get("name"),
+        "compile_language": c_language.get("name"),
         "cases": {name: _case_summary(result) for name, result in results.items()},
         "process_limit_enforced": True,
         "file_size_limit_enforced": True,
