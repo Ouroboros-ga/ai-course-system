@@ -75,7 +75,7 @@ def _request():
 def test_each_stage_uses_registered_prep_port_and_generates_local_node():
     llm = SequencedPrepStages([
         '{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"二分查找","topic":"有序序列查找","evidence_ids":["es_1"],"examples":[],"exercises":[]}]}',
-        '{"stage":"outline_planner","candidates":[{"candidate_id":"kp_1","node_type":"section","title":"查找基础","parent_candidate_id":null,"evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_2","node_type":"knowledge_point","title":"二分查找","parent_candidate_id":"kp_1","evidence_ids":["es_1"],"rationale":""}],"prerequisites":[]}',
+        '{"stage":"outline_planner","candidates":[{"candidate_id":"ch_1","node_type":"chapter","title":"查找算法","parent_candidate_id":null,"evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_1","node_type":"section","title":"查找基础","parent_candidate_id":"ch_1","evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_2","node_type":"knowledge_point","title":"二分查找","parent_candidate_id":"kp_1","evidence_ids":["es_1"],"rationale":""}],"prerequisites":[]}',
         '{"stage":"script_writer","candidate_id":"kp_2","title":"二分查找","evidence_ids":["es_1"],"course_positioning":"初学者算法课","prerequisites":[],"style":{"level":"beginner","tone":"conversational","language":"zh-CN","include_examples":true,"include_practice_prompt":true},"content":"二分查找用于有序序列。","claims":["二分查找要求序列有序"],"paragraph_evidence":[["es_1"]]}',
         '{"stage":"evidence_verifier","verdict":"passed","findings":[{"claim":"二分查找要求序列有序","evidence_ids":["es_1"],"supported":true,"reason":"原文直接说明"}],"unsupported_paragraph_indexes":[]}',
     ])
@@ -106,7 +106,7 @@ def test_requires_registered_prep_stage_port_instead_of_generic_chat():
 def test_multiple_knowledge_points_use_one_batch_script_request():
     llm = SequencedPrepStages([
         '{"stage":"evidence_segmenter","segments":[{"segment_id":"seg_1","title":"基础","topic":"基础","evidence_ids":["es_1"],"examples":[],"exercises":[]}]}',
-        '{"stage":"outline_planner","candidates":[{"candidate_id":"sec","node_type":"section","title":"基础","parent_candidate_id":null,"evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_1","node_type":"knowledge_point","title":"概念一","parent_candidate_id":"sec","evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_2","node_type":"knowledge_point","title":"概念二","parent_candidate_id":"sec","evidence_ids":["es_1"],"rationale":""}],"prerequisites":[]}',
+        '{"stage":"outline_planner","candidates":[{"candidate_id":"ch","node_type":"chapter","title":"算法基础","parent_candidate_id":null,"evidence_ids":["es_1"],"rationale":""},{"candidate_id":"sec","node_type":"section","title":"基础","parent_candidate_id":"ch","evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_1","node_type":"knowledge_point","title":"概念一","parent_candidate_id":"sec","evidence_ids":["es_1"],"rationale":""},{"candidate_id":"kp_2","node_type":"knowledge_point","title":"概念二","parent_candidate_id":"sec","evidence_ids":["es_1"],"rationale":""}],"prerequisites":[]}',
         '{"stage":"script_writer_batch","scripts":['
         '{"stage":"script_writer","candidate_id":"kp_1","title":"概念一","evidence_ids":["es_1"],"course_positioning":"算法课","prerequisites":[],"style":{"level":"beginner","tone":"conversational","language":"zh-CN","include_examples":true,"include_practice_prompt":true},"content":"概念一。","claims":["概念一"],"paragraph_evidence":[["es_1"]]},'
         '{"stage":"script_writer","candidate_id":"kp_2","title":"概念二","evidence_ids":["es_1"],"course_positioning":"算法课","prerequisites":[],"style":{"level":"beginner","tone":"conversational","language":"zh-CN","include_examples":true,"include_practice_prompt":true},"content":"概念二。","claims":["概念二"],"paragraph_evidence":[["es_1"]]}]}',
@@ -499,10 +499,18 @@ def test_truncated_batch_splits_in_half_and_recovers():
         "stage": "outline_planner",
         "candidates": [
             {
+                "candidate_id": "ch",
+                "node_type": "chapter",
+                "title": "算法基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_1"],
+                "rationale": "",
+            },
+            {
                 "candidate_id": "sec",
                 "node_type": "section",
                 "title": "基础",
-                "parent_candidate_id": None,
+                "parent_candidate_id": "ch",
                 "evidence_ids": ["es_1"],
                 "rationale": "",
             },
@@ -543,10 +551,18 @@ def test_many_knowledge_points_split_into_bounded_batch_requests():
         "stage": "outline_planner",
         "candidates": [
             {
+                "candidate_id": "ch",
+                "node_type": "chapter",
+                "title": "算法基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_1"],
+                "rationale": "",
+            },
+            {
                 "candidate_id": "sec",
                 "node_type": "section",
                 "title": "基础",
-                "parent_candidate_id": None,
+                "parent_candidate_id": "ch",
                 "evidence_ids": ["es_1"],
                 "rationale": "",
             },
@@ -605,10 +621,18 @@ def test_oversized_single_knowledge_point_uses_larger_single_node_budget():
         "stage": "outline_planner",
         "candidates": [
             {
+                "candidate_id": "ch",
+                "node_type": "chapter",
+                "title": "算法基础",
+                "parent_candidate_id": None,
+                "evidence_ids": ["es_small"],
+                "rationale": "",
+            },
+            {
                 "candidate_id": "sec",
                 "node_type": "section",
                 "title": "基础",
-                "parent_candidate_id": None,
+                "parent_candidate_id": "ch",
                 "evidence_ids": ["es_small"],
                 "rationale": "",
             },
@@ -1680,6 +1704,92 @@ def test_outline_over_budget_triggers_compact_recovery():
     assert stages.calls == 2
 
 
+def test_outline_section_cap_is_enforced_and_compact_budget_is_hard():
+    oversized = {
+        "candidates": [
+            {
+                "candidate_id": "c1",
+                "node_type": "chapter",
+                "title": "第一章",
+                "evidence_ids": ["evg_1"],
+            },
+            *[
+                candidate
+                for index in range(13)
+                for candidate in (
+                    {
+                        "candidate_id": f"s{index}",
+                        "node_type": "section",
+                        "title": f"第 {index + 1} 节",
+                        "parent_candidate_id": "c1",
+                        "evidence_ids": ["evg_1"],
+                    },
+                    {
+                        "candidate_id": f"k{index}",
+                        "node_type": "knowledge_point",
+                        "title": f"知识点 {index + 1}",
+                        "parent_candidate_id": f"s{index}",
+                        "evidence_ids": ["evg_1"],
+                    },
+                )
+            ],
+        ],
+        "prerequisites": [],
+    }
+
+    class CaptureCompactBudget(OutlineStages):
+        def __init__(self):
+            super().__init__([oversized, _outline_payload_with_kp()])
+            self.budgets = []
+
+        async def plan_outline(self, request, segments, **kwargs):
+            self.budgets.append(request.skeleton_budget)
+            return await super().plan_outline(request, segments, **kwargs)
+
+    stages = CaptureCompactBudget()
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(
+            _outline_request(), _outline_segments()
+        )
+    )
+
+    assert stages.calls == 2
+    assert any("PREP_OUTLINE_COMPACTED" in item for item in warnings)
+    assert len([c for c in outline.candidates if c.node_type == "section"]) == 1
+    compact_budget = stages.budgets[1]
+    assert compact_budget.max_sections == compact_budget.target_sections == 1
+    assert compact_budget.max_knowledge_points == compact_budget.target_knowledge_points == 1
+    assert compact_budget.max_total_nodes == 3
+
+
+def test_outline_failed_compact_retry_uses_deterministic_fallback():
+    class AlwaysInvalid:
+        def __init__(self):
+            self.calls = 0
+
+        async def plan_outline(self, _request, _segments, **_kwargs):
+            self.calls += 1
+            raise StructuredOutputError(
+                "invalid outline",
+                reason_code="structured_output_invalid",
+                stage="plan_outline",
+            )
+
+    stages = AlwaysInvalid()
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(
+            _outline_request(), _outline_segments()
+        )
+    )
+
+    assert stages.calls == 2
+    assert any("PREP_OUTLINE_COMPACT_RECOVERY_FAILED" in item for item in warnings)
+    assert any("PREP_OUTLINE_DETERMINISTIC_FALLBACK" in item for item in warnings)
+    assert {candidate.node_type for candidate in outline.candidates} == {
+        "chapter", "section", "knowledge_point",
+    }
+
+
 def test_outline_no_valid_tree_falls_back_to_deterministic_skeleton():
     # A parent cycle means no leaf node exists for backfill; the workflow
     # compiles a deterministic skeleton from the evidence segment titles
@@ -1700,7 +1810,40 @@ def test_outline_no_valid_tree_falls_back_to_deterministic_skeleton():
     assert len(knowledge_points) == 1
     assert knowledge_points[0].title == "材料"
     assert knowledge_points[0].evidence_ids == ["evg_1"]
+    sections = [c for c in outline.candidates if c.node_type == "section"]
+    chapters = [c for c in outline.candidates if c.node_type == "chapter"]
+    assert len(sections) == len(chapters) == 1
+    assert sections[0].parent_candidate_id == chapters[0].candidate_id
+    assert knowledge_points[0].parent_candidate_id == sections[0].candidate_id
     assert any("PREP_OUTLINE_DETERMINISTIC_FALLBACK" in item for item in warnings)
+
+
+def test_outline_duplicate_candidate_ids_are_rejected_by_tree_contract():
+    outline = OutlinePlannerResult.model_validate({
+        "candidates": [
+            {"candidate_id": "c1", "node_type": "chapter", "title": "一", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "c1", "node_type": "chapter", "title": "二", "evidence_ids": ["evg_1"]},
+        ],
+        "prerequisites": [],
+    })
+    with pytest.raises(StructuredOutputError) as caught:
+        ControlledPrepWorkflow._validate_outline_tree(outline)
+    assert caught.value.reason_code == "structured_output_invalid"
+
+
+def test_outline_backfill_respects_remaining_total_node_budget():
+    outline = OutlinePlannerResult.model_validate(_outline_payload_directory_only())
+    budget = CourseSkeletonBudget(
+        target_sections=1,
+        target_knowledge_points=1,
+        target_total_nodes=3,
+        max_sections=2,
+        max_knowledge_points=1,
+        max_total_nodes=3,
+    )
+    with pytest.raises(StructuredOutputError) as caught:
+        ControlledPrepWorkflow()._backfill_knowledge_points(outline, budget)
+    assert caught.value.reason_code == "structured_output_invalid"
 
 
 def test_skeleton_budget_shrinks_for_small_corpora():
@@ -1718,6 +1861,40 @@ def test_skeleton_budget_targets_typical_textbook():
     assert 8 <= budget.target_sections <= 12
     assert 12 <= budget.target_knowledge_points <= 24
     assert budget.target_total_nodes <= 48
+
+
+def test_deterministic_fallback_keeps_large_textbook_skeleton_bounded():
+    segments = EvidenceSegmenterResult(segments=[
+        EvidenceSegment(
+            segment_id=f"segment_{index}",
+            title=f"教材主题 {index + 1}",
+            topic=f"教材主题 {index + 1}",
+            evidence_ids=["evg_1"],
+        )
+        for index in range(32)
+    ])
+    budget = CourseSkeletonBudget.for_evidence_segment_count(32)
+    outline, warnings = ControlledPrepWorkflow()._compile_deterministic_skeleton(
+        _outline_request(), segments, budget
+    )
+    chapters = [c for c in outline.candidates if c.node_type == "chapter"]
+    sections = [c for c in outline.candidates if c.node_type == "section"]
+    knowledge_points = [
+        c for c in outline.candidates if c.node_type == "knowledge_point"
+    ]
+
+    assert len(chapters) == 1
+    assert len(sections) == budget.target_sections == 10
+    assert len(knowledge_points) == budget.target_knowledge_points == 16
+    assert len(outline.candidates) == 27
+    assert len(outline.candidates) <= budget.max_total_nodes
+    assert all(
+        section.parent_candidate_id == chapters[0].candidate_id
+        for section in sections
+    )
+    section_ids = {section.candidate_id for section in sections}
+    assert all(kp.parent_candidate_id in section_ids for kp in knowledge_points)
+    assert any("PREP_OUTLINE_DETERMINISTIC_FALLBACK" in item for item in warnings)
 
 
 def test_outline_request_constraints_carry_skeleton_budget(monkeypatch):
