@@ -50,7 +50,11 @@ def build_ppt_mapping_profile() -> AgentProfile:
     return AgentProfile(
         agent_type=AgentType.PREP,
         build_initial_state=build_initial_state,
-        default_timeout_seconds=240.0,
+        # Large courses may contain several decks.  The service bounds LLM
+        # fan-out, while the runtime timeout must exceed the frontend's
+        # 300-second request budget so a valid mapping cannot be cut off at
+        # the previous 240-second limit.
+        default_timeout_seconds=300.0,
         max_concurrency=5,
         execution_mode=ExecutionMode.INLINE,
         description=(

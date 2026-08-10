@@ -838,6 +838,11 @@ class PrepLLMAdapter:
             node="optimize_ppt_mappings",
             purpose="optimize ppt mappings",
             output_schema=None,
+            # PPT mapping is a bounded JSON compiler.  Hidden reasoning adds
+            # latency and can consume the entire completion budget without
+            # producing the small suggestions envelope.
+            provider_options={"thinking": {"type": "disabled"}},
+            max_tokens=4096,
             run_id=run_id,
             trace_id=trace_id,
         )

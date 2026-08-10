@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
@@ -58,6 +59,26 @@ class _FakeLLMClient:
         user_msg = messages[1].content
         self.received_payload = json.loads(user_msg)
         return _FakeLLMResponse(content=self._response)
+
+
+def test_ppt_mapping_adapter_disables_reasoning_and_bounds_json_output():
+    from app.platform.agents.prep.llm_adapter import PrepLLMAdapter
+
+    captured = {}
+
+    class FakePort:
+        async def complete(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(content='{"suggestions": []}')
+
+    adapter = PrepLLMAdapter(structured_llm=FakePort())
+
+    async def run():
+        return await adapter.optimize_ppt_mappings([], [], [])
+
+    asyncio.run(run())
+    assert captured["options"].max_tokens == 4096
+    assert captured["options"].provider_options == {"thinking": {"type": "disabled"}}
 
 
 def _setup_course_with_outline_and_ppt(
