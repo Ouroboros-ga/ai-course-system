@@ -45,6 +45,7 @@ const needsPolling = computed(() => (
   hasUnfinishedMaterials.value
   || ['assembling_corpus', 'submitting_build', 'building'].includes(draftBuild.value?.phase)
 ))
+const canRebuildInitial = computed(() => ['build_failed', 'ready_for_review'].includes(draftBuild.value?.phase))
 const draftBuildText = computed(() => {
   switch (draftBuild.value?.phase) {
     case 'parsing_materials': return '课程资料正在解析；全部材料完成后将自动启动智能备课。'
@@ -130,7 +131,7 @@ async function upload() {
   }
 }
 async function rebuildInitial() {
-  if (rebuilding.value || draftBuild.value?.phase !== 'build_failed') return
+  if (rebuilding.value || !canRebuildInitial.value) return
   rebuilding.value = true
   uploadError.value = ''
   try {
@@ -188,6 +189,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
       <div v-if="draftBuildText" class="draft-build-summary">
         <p class="draft-build-status" :class="`draft-build-${draftBuild?.phase}`" role="status">{{ draftBuildText }}</p>
         <SfxButton v-if="draftBuild?.phase === 'build_failed'" variant="secondary" size="sm" :loading="rebuilding" @click="rebuildInitial">重新智能备课</SfxButton>
+        <SfxButton v-if="draftBuild?.phase === 'ready_for_review'" variant="secondary" size="sm" :loading="rebuilding" @click="rebuildInitial">重新生成课程草稿</SfxButton>
       </div>
       <p v-if="skeletonNotice" class="skeleton-notice" role="status">{{ skeletonNotice }}</p>
       <p v-if="loading" class="empty">正在读取资料…</p>
