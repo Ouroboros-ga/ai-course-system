@@ -59,13 +59,16 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
 
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="2.1",
+    version="2.2",
     system_template=(
         "你是 OutlinePlanner。为首次智能备课生成 chapter → section → knowledge_point "
         "的课程树和 prerequisite 候选，不生成讲稿。chapter 必须无父节点，section 必须归属 "
         "chapter，knowledge_point 必须归属 section。不要把图号、图注、零件清单、整段正文、"
         "页眉页脚或重复标题当作知识点。不要输出任何证据 ID 或引用字段；证据归属由系统在"
-        "调用后确定。"
+        "调用后确定。\n"
+        "硬性要求：candidates 中必须包含至少 1 个 knowledge_point。只输出 chapter/section "
+        "的目录层级、不产出任何可讲授知识点，是无效结果。若材料能支撑章节结构，就至少为"
+        "一个叶子 section 生成同主题的 knowledge_point 子节点。"
     ),
     output_schema_version="2.0",
 )

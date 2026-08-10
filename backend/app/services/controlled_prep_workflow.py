@@ -23,6 +23,7 @@ from app.schemas.controlled_prep import (
     EvidenceSegmentMapResult,
     EvidenceSegmenterResult,
     EvidenceVerifierResult,
+    OutlineCandidate,
     OutlinePlannerResult,
     PatchOperationDraft,
     PatchProposalDraft,
@@ -458,16 +459,111 @@ class ControlledPrepWorkflow:
         self,
         request: ControlledPrepInput,
         segments: EvidenceSegmenterResult,
-    ) -> OutlinePlannerResult:
+    ) -> tuple[OutlinePlannerResult, list[str]]:
+        """Plan the course tree and guarantee at least one teachable point.
+
+        Returns ``(outline, warnings)``.  A model response containing only
+        chapter/section directory nodes (zero ``knowledge_point``) is a
+        contract miss: it gets one targeted retry with the strengthened
+        prompt, then a deterministic leaf-section backfill; only when there is
+        no usable parent node does the build fail with
+        ``PREP_OUTLINE_NO_KNOWLEDGE_POINTS`` instead of crashing at the script
+        stage with a raw ``ValueError``.
+        """
         def validate(result: OutlinePlannerResult) -> OutlinePlannerResult:
             self._assert_evidence_ids(result, request.evidence)
             return result
 
-        return await self._run_stage(
-            "plan_outline",
-            self._call_stage("plan_outline", request, segments),
-            validate,
+        async def invoke() -> OutlinePlannerResult:
+            return await self._run_stage(
+                "plan_outline",
+                self._call_stage("plan_outline", request, segments),
+                validate,
+            )
+
+        outline = await invoke()
+        if self._has_knowledge_point(outline):
+            return outline, []
+        # First miss: one targeted retry.  The port re-sends the strengthened
+        # prompt (min_knowledge_points=1) rather than silently moving on.
+        outline = await invoke()
+        if self._has_knowledge_point(outline):
+            return outline, []
+        # Second miss: deterministic backfill.  The model never fabricates
+        # evidence ids or precise identifiers; system-generated nodes inherit
+        # their parent's programmatically-backfilled evidence.
+        warnings = self._backfill_knowledge_points(outline)
+        return outline, warnings
+
+    @staticmethod
+    def _has_knowledge_point(outline: OutlinePlannerResult) -> bool:
+        return any(
+            candidate.node_type == "knowledge_point"
+            for candidate in outline.candidates
         )
+
+    def _backfill_knowledge_points(self, outline: OutlinePlannerResult) -> list[str]:
+        """Attach a same-title ``knowledge_point`` child to each leaf section.
+
+        Leaf nodes are sections (or chapters) that no other candidate
+        references as a parent, so the generated points stay grounded in the
+        material's real hierarchy.  Everything else (titles, parent links,
+        programmatically-backfilled evidence) is preserved.
+        """
+        candidates = outline.candidates
+        referenced_as_parent = {
+            candidate.parent_candidate_id
+            for candidate in candidates
+            if candidate.parent_candidate_id
+        }
+        leaves = [
+            candidate for candidate in candidates
+            if candidate.node_type == "section"
+            and candidate.candidate_id not in referenced_as_parent
+        ]
+        if not leaves:
+            leaves = [
+                candidate for candidate in candidates
+                if candidate.node_type == "chapter"
+                and candidate.candidate_id not in referenced_as_parent
+            ]
+        if not leaves:
+            raise StructuredOutputError(
+                "outline contains no chapter/section node to attach a "
+                "knowledge point to",
+                reason_code="PREP_OUTLINE_NO_KNOWLEDGE_POINTS",
+                stage="plan_outline",
+            )
+        max_kp = max(1, int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS))
+        leaves = leaves[:max_kp]
+        existing_ids = {candidate.candidate_id for candidate in candidates}
+        new_candidates = list(candidates)
+        for index, leaf in enumerate(leaves):
+            candidate_id = f"kp_fallback_{index}"
+            while candidate_id in existing_ids:
+                index += 1
+                candidate_id = f"kp_fallback_{index}"
+            existing_ids.add(candidate_id)
+            new_candidates.append(OutlineCandidate(
+                candidate_id=candidate_id,
+                node_type="knowledge_point",
+                title=leaf.title,
+                parent_candidate_id=leaf.candidate_id,
+                evidence_ids=list(leaf.evidence_ids),
+                rationale=leaf.rationale,
+            ))
+        outline.candidates = new_candidates
+        logger.warning(
+            "PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED: model returned %d outline "
+            "nodes without any knowledge_point; %d leaf node(s) got system "
+            "generated knowledge_point children",
+            len(candidates),
+            len(leaves),
+        )
+        return [
+            f"PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED: 大纲模型两次均未生成可讲授知识点，"
+            f"系统已为 {len(leaves)} 个叶子章节生成同名知识点保底结构。"
+        ]
 
     async def write_script(
         self,
@@ -821,7 +917,9 @@ class ControlledPrepWorkflow:
         await emit("evidence", 0, None)
         segments = await self.segment_evidence(request)
         await emit("evidence", 10, segments)
-        outline = await self.plan_outline(request, segments)
+        warnings: list[str] = []
+        outline, outline_warnings = await self.plan_outline(request, segments)
+        warnings.extend(outline_warnings)
         max_kp = max(1, int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS))
         max_nodes = max(max_kp, int(settings.PREP_INITIAL_MAX_OUTLINE_NODES))
         knowledge = [item for item in outline.candidates if item.node_type == "knowledge_point"]
@@ -838,7 +936,14 @@ class ControlledPrepWorkflow:
         if candidate_id:
             candidates = [item for item in candidates if item.candidate_id == candidate_id]
         if not candidates:
-            raise ValueError("no knowledge point candidate selected")
+            # Defense in depth: plan_outline now guarantees at least one
+            # knowledge point via retry + deterministic backfill, so reaching
+            # this point is a hard contract violation, not a user error.
+            raise StructuredOutputError(
+                "outline produced no knowledge point candidate",
+                reason_code="PREP_OUTLINE_NO_KNOWLEDGE_POINTS",
+                stage="plan_outline",
+            )
         if len(candidates) == 1:
             # A single knowledge point gets the larger single-node budget so a
             # legitimately long script never fails the whole first draft.
@@ -877,6 +982,7 @@ class ControlledPrepWorkflow:
             "scripts": scripts,
             "verifications": verifications,
             "proposal": proposal,
+            "warnings": warnings,
         }
 
     @staticmethod

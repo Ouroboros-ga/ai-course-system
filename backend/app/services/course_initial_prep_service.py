@@ -176,6 +176,7 @@ class InitialCoursePrepService:
                 f"({evidence_stats.selected_units}/{evidence_stats.total_units} units, "
                 f"{evidence_stats.selected_chars}/{evidence_stats.total_chars} chars selected)"
             )
+        result.warnings.extend(list(prepared.get("warnings") or []))
         if replace_unreviewed_initial:
             self._archive_unreviewed_initial_draft(session, course_id=course_id)
         by_block_id = {block.block_id: block for block in blocks}

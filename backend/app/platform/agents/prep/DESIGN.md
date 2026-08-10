@@ -242,6 +242,13 @@ InitialCoursePrepPort.build(
 - **收敛契约（preferred / hard 双目标）**：每个非末级 Reduce 组在调用前计算**理想目标** `preferred_target = max(1, min(32, ceil(n * ratio)))`（`PREP_INITIAL_EVIDENCE_REDUCE_RATIO` 默认 0.25，经 `llm_adapter.reduce_evidence.preferred_target` 写进 `constraints.max_segments`）与**硬性安全上限** `hard_limit = max(1, min(32, ceil(n * hard_ratio)))`（`PREP_INITIAL_EVIDENCE_REDUCE_HARD_RATIO` 默认 0.5，仅程序内部判定，不下发模型）。**只要输出 `output < input` 且 `output <= hard_limit` 即视为有效进展并直接进入下一层**——25% 是理想而非生死线：`34 → 10`（preferred 9、hard 17）会正常继续，`34 → 34` 才被拒绝。仅在"无缩小"或"超硬上限"时执行**一次**定向重试；第二次仍无足够进展则准确抛出 `PREP_EVIDENCE_REDUCE_NON_CONVERGENT`，异常消息携带 `level/group、input、preferred_target、hard_limit、output、compression_ratio、retry_reason、budget_used` 全量指标。层级上限 `PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS`（默认 8）仅作保险；全单段组或达层上限仍不收敛同样返回该错误。截断二分递归保留双目标传播。**分组大小按真实模型载荷计算**（`_segment_payload_chars` 排除服务端 `evidence_ids`，与 wire 一致），避免溯源元数据把摘要错误拆得过碎，不影响服务端证据回填与审计。
 - **诊断上下文落库**：`InitialCoursePrepService.build()` 经 `_run_prep_with_diagnostic_context` 设置 `DiagnosticContext(run_id=f"prep_initial_{build_task_id}", trace_id=..., course_id=...)`，`_record_diagnostic` 据此把每条 LLM 诊断关联到任务编号；`TaskExecutionError` 新增 `reason_code` 透传，`_initial_runtime_failure` 不再丢弃该分类，`course_draft_build_handler` 失败提示统一追加"诊断编号：prep_initial_{build_task_id}"，教师可凭单号从 `agent_llm_diagnostic_records` 定位 Map/Reduce/截断/预算的具体卡点。日志与诊断表仍只记录安全的结构化指标、哈希与调用结果，不落课件原文、Prompt 或完整模型回复。
 
+**大纲契约：必须产出至少一个知识点（2026-08-10）**：此前模型若只返回 `chapter/section` 目录节点（0 个 `knowledge_point`），大纲阶段只检查"候选总数不超限"，直到脚本阶段才以裸 `ValueError`（`no knowledge point candidate selected`）崩溃。本版补齐：
+
+- **请求侧**：`llm_adapter.plan_outline` 的 `constraints` 增加 `min_knowledge_points: 1`；`OUTLINE_PLANNER_PROMPT` 升级到 v2.2，硬性要求至少生成 1 个可讲授知识点，并提示"为叶子 section 生成同主题 knowledge_point 子节点"。
+- **程序侧硬校验 + 一次定向重试**：`ControlledPrepWorkflow.plan_outline` 校验结果，知识点为 0 时以同一 Port（强化后 Prompt）重试一次。
+- **确定性兜底**：重试仍无知识点时，为每个**叶子 section**（无子节点的 section，退化到叶子 chapter）创建**同名 `knowledge_point` 子节点**；保留原标题、父子关系与程序回填的证据（模型不编造证据或精确 ID），并写入 `PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED` 警告透传到 `DraftAssetResult.warnings`，供教师知悉该结构由系统保底生成。
+- **明确的失败码**：若不存在可挂靠的 section/chapter（如异常环结构），返回 `PREP_OUTLINE_NO_KNOWLEDGE_POINTS`，教师端显示安全中文文案并附诊断编号，不再暴露英文内部错误。
+
 ### Workflow 2：IncrementalEditGraph
 
 ```text

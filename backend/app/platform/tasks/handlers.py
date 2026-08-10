@@ -73,6 +73,11 @@ def _course_build_failure_message(error: BaseException, *, run_id: str = "") -> 
                 "材料已读取，但摘要没有在安全范围内收敛；"
                 f"原草稿未写入{suffix}请重试，或减少材料数量后重新智能备课。"
             )
+        if reason_code == "PREP_OUTLINE_NO_KNOWLEDGE_POINTS":
+            return (
+                "课程材料无法生成可讲授的知识点，系统未写入课程草稿；"
+                f"请更换或补充课件内容后重新智能备课{suffix}"
+            )
         if reason_code == "input_length_exceeded":
             return f"输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或拆分课程后重新智能备课{suffix}"
         if reason_code == "MODEL_OUTPUT_TRUNCATED":

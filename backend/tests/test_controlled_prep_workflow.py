@@ -1561,6 +1561,117 @@ def test_prep_build_binds_diagnostic_context_to_run_and_trace():
     assert current_diagnostic_context.get().run_id == ""
 
 
+def _outline_request() -> ControlledPrepInput:
+    return ControlledPrepInput(
+        source_text="课程材料",
+        evidence=[EvidenceReference(evidence_id="evg_1", text="材料文本", page=1)],
+        course_positioning="课程材料驱动的教学设计",
+        style=TeachingStyleConfig(level="beginner"),
+    )
+
+
+def _outline_segments() -> EvidenceSegmenterResult:
+    return EvidenceSegmenterResult(segments=[EvidenceSegment(
+        segment_id="s_1", title="材料", topic="材料", evidence_ids=["evg_1"],
+    )])
+
+
+class OutlineStages:
+    """Stub Prep port whose plan_outline serves a fixed payload list."""
+
+    def __init__(self, payloads: list[dict], *, repeat_last: bool = False):
+        self.payloads = list(payloads)
+        self.calls = 0
+        self.repeat_last = repeat_last
+
+    async def plan_outline(self, _request, _segments, **_kwargs):
+        self.calls += 1
+        if self.repeat_last and len(self.payloads) == 1:
+            return OutlinePlannerResult.model_validate(self.payloads[0])
+        return OutlinePlannerResult.model_validate(self.payloads.pop(0))
+
+
+def _outline_payload_with_kp() -> dict:
+    return {
+        "candidates": [
+            {"candidate_id": "c1", "node_type": "chapter", "title": "第一章", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "s1", "node_type": "section", "title": "第一节", "parent_candidate_id": "c1", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "k1", "node_type": "knowledge_point", "title": "知识点一", "parent_candidate_id": "s1", "evidence_ids": ["evg_1"]},
+        ],
+        "prerequisites": [],
+    }
+
+
+def _outline_payload_directory_only() -> dict:
+    return {
+        "candidates": [
+            {"candidate_id": "c1", "node_type": "chapter", "title": "第一章", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "s1", "node_type": "section", "title": "第一节", "parent_candidate_id": "c1", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "s2", "node_type": "section", "title": "第二节", "parent_candidate_id": "c1", "evidence_ids": ["evg_1"]},
+        ],
+        "prerequisites": [],
+    }
+
+
+def test_outline_normal_return_has_knowledge_point_single_call():
+    stages = OutlineStages([_outline_payload_with_kp()])
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+    )
+    assert any(c.node_type == "knowledge_point" for c in outline.candidates)
+    assert warnings == []
+    assert stages.calls == 1
+
+
+def test_outline_directory_only_retries_and_recovers():
+    stages = OutlineStages([_outline_payload_directory_only(), _outline_payload_with_kp()])
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+    )
+    assert any(c.node_type == "knowledge_point" for c in outline.candidates)
+    assert warnings == []
+    assert stages.calls == 2
+
+
+def test_outline_second_directory_miss_backfills_knowledge_points():
+    stages = OutlineStages([_outline_payload_directory_only()], repeat_last=True)
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+    )
+    knowledge_points = [c for c in outline.candidates if c.node_type == "knowledge_point"]
+    # Both leaf sections s1 and s2 get a same-title knowledge_point child.
+    assert len(knowledge_points) == 2
+    assert {kp.parent_candidate_id for kp in knowledge_points} == {"s1", "s2"}
+    assert {kp.title for kp in knowledge_points} == {"第一节", "第二节"}
+    assert all(kp.evidence_ids == ["evg_1"] for kp in knowledge_points)
+    assert any("PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED" in item for item in warnings)
+    assert stages.calls == 2
+
+
+def test_outline_no_parent_raises_safe_reason_code():
+    # A parent cycle means no leaf chapter/section exists to attach a point.
+    cycle = {
+        "candidates": [
+            {"candidate_id": "s1", "node_type": "section", "title": "第一节", "parent_candidate_id": "s2", "evidence_ids": ["evg_1"]},
+            {"candidate_id": "s2", "node_type": "section", "title": "第二节", "parent_candidate_id": "s1", "evidence_ids": ["evg_1"]},
+        ],
+        "prerequisites": [],
+    }
+    stages = OutlineStages([cycle], repeat_last=True)
+    with pytest.raises(StructuredOutputError) as excinfo:
+        asyncio_run(
+            ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+        )
+    assert excinfo.value.reason_code == "PREP_OUTLINE_NO_KNOWLEDGE_POINTS"
+
+    # The teacher-facing message is safe Chinese text with the diagnostic id.
+    from app.platform.tasks.handlers import _course_build_failure_message
+    rendered = _course_build_failure_message(excinfo.value, run_id="prep_initial_cdbt_2")
+    assert "无法生成可讲授的知识点" in rendered
+    assert "诊断编号：prep_initial_cdbt_2" in rendered
+    assert "no knowledge point candidate" not in rendered
+
+
 def json_dumps(value) -> str:
     import json
     return json.dumps(value, ensure_ascii=False)

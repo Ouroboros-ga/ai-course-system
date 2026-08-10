@@ -509,6 +509,7 @@ class PrepLLMAdapter:
         user_payload = {
             **self._request_context(request),
             "constraints": {
+                "min_knowledge_points": 1,
                 "max_knowledge_points": int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS),
                 "max_total_nodes": int(settings.PREP_INITIAL_MAX_OUTLINE_NODES),
                 "return_json_only": True,
