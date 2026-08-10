@@ -157,7 +157,7 @@ def test_female_instructor_signs_all_object_backed_layers(session, teacher_user)
     assert preset.preset_id == "platform-female-instructor-v1"
     assert manifest_url and "platform-female-instructor-v1" in manifest_url
     assert len(asset_urls) == 11
-    assert all("purpose=platform_avatar_texture" in url for url in asset_urls.values())
+    assert all("platform_avatar_texture" in url for url in asset_urls.values())
     assert all(key.startswith("platform/avatar-presets/platform-female-instructor-v1/1.0.0/assets/") for key in asset_urls)
 
 

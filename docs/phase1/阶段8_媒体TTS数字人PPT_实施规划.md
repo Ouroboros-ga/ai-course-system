@@ -1,5 +1,7 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
+> **2026-08-10 当前角色路线更新**：新建设默认角色为 `platform-female-instructor-v1@1.0.0`，为平台自有、虚构的女性讲师肖像预设；渲染模式为 `portrait_patch_v1`（960px 静默主图 + 8 个口型补丁 + 闭眼补丁）。纹理作为内容寻址对象存储资产，由播放响应按 `course_id + release_id + preset_id + preset_version` 签发短期 URL；PixiJS 只以音频时钟选择补丁，不产生第二时钟。旧 `platform-instructor-real-v1@1.0.0` 汽车教师已退休，只为已冻结 Release 兼容解析。课程 87 的旧快照不得原地改脸，需新建、激活媒体版本后再正式发布。源图和哈希记录见 `frontend/src/assets/platform-avatar-presets/platform-female-instructor-v1/source/SOURCE.md`；这些源图为 1254×1254，未宣称为 2K。
+
 > 2026-08-07 P5.2 更新：对象存储上传已统一为 Local PUT / S3-OSS presigned POST + confirm 校验；Local 内容读取必须携带签名 scope；旧 `/video-gen` 仅为兼容/历史入口，不作为正式 MediaRelease 或 audio-playlist/v1 发布依据。详见 [P5.2 文档](阶段8_P5.2_OSS与旧链隔离.md)。
 
 > 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程 87 已以
@@ -31,7 +33,7 @@ BuildMediaPage
   → LearnPage / LectureStage
 ```
 
-每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，角色由 P5.1 平台注册表按发布版本冻结（当前默认 `platform-instructor-real-v1@1.0.0`，半写实虚构汽车教师），失败时按 `PixiJS → 静态头像 → 无数字人` 降级。该角色不是教师本人肖像；真实教师素材需另行授权、版本化和资产预处理。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
+每个播放清单条目拥有独立音频、字幕、Cue 与 PPT 映射快照。活动条目的 `<audio>` 是唯一时钟；跨知识点全局时间由条目 `offset_ms + audio.currentTime` 投影。PixiJS 只读取标准化 `avatar-cues/v1`，角色由 P5.1 平台注册表按发布版本冻结（当前默认 `platform-female-instructor-v1@1.0.0`，半写实虚构女性教师），失败时按 `PixiJS → 静态头像 → 无数字人` 降级。该角色不是教师本人肖像；真实教师素材需另行授权、版本化和资产预处理。服务端不做逐帧数字人合成，API 进程不代理大媒体流量。
 
 ### 当前代码证据
 

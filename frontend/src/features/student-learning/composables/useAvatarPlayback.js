@@ -1,7 +1,7 @@
 import { computed, ref } from 'vue'
 
 import { normalizeAvatarCueManifest } from '../adapters/avatarPlaybackAdapter.js'
-import { normalizeSprite2dManifest, PLATFORM_SPRITE2D_MANIFEST } from '../adapters/platformSprite2dAssets.js'
+import { normalizeSprite2dManifest } from '../adapters/platformSprite2dAssets.js'
 
 async function readManifest(url) {
   const response = await fetch(url, {
@@ -55,15 +55,16 @@ export function useAvatarPlayback() {
             assetSource.value = 'release'
           }
         } catch {
-          // The P3 platform asset is an explicit, approved fallback for an
-          // unavailable or pre-P3 provider package.  The signed Cue remains
-          // the only source of speaking timing.
+          // A released portrait package cannot be substituted with another
+          // role. Keep the signed Cue for safe timing degradation, but let
+          // the viewport show its neutral static fallback instead.
         }
       }
 
       if (!spriteManifest.value) {
-        spriteManifest.value = PLATFORM_SPRITE2D_MANIFEST
-        assetSource.value = 'platform'
+        // Never revive the retired automobile-teacher SVG as a fallback.
+        // A different visual identity would violate the release snapshot.
+        assetSource.value = 'none'
       }
       status.value = 'ready'
       return cues.value

@@ -8,6 +8,7 @@ const props = defineProps({
   cues: { type: Object, default: null },
   spriteManifest: { type: Object, default: null },
   currentTime: { type: Number, default: 0 },
+  audioElement: { type: Object, default: null },
   defaultPlaybackMode: { type: String, default: 'auto' },
   assetSource: { type: String, default: 'platform' },
 })
@@ -19,6 +20,8 @@ const renderStatus = ref('idle')
 const activeMode = ref('compatibility')
 let renderer = null
 let RendererClass = null
+let audioFrameRequest = 0
+let boundAudioElement = null
 
 const requestedMode = computed(() => selectAvatarPlaybackMode(
   props.defaultPlaybackMode,
@@ -33,14 +36,55 @@ const statusLabel = computed(() => {
 })
 
 function destroyRenderer() {
+  stopAudioFrameSampling()
+  bindAudioElement(null)
   renderer?.destroy()
   renderer = null
 }
 
-function updateFrame() {
+function updateFrame(timeSeconds = props.currentTime) {
   if (!renderer || !props.cues) return
-  const timeMs = Math.max(0, Number(props.currentTime) || 0) * 1000
+  const timeMs = Math.max(0, Number(timeSeconds) || 0) * 1000
   renderer.setFrame({ ...resolveAvatarFrame(props.cues, timeMs), timeMs })
+}
+
+function sampleAudioFrame() {
+  audioFrameRequest = 0
+  const audio = props.audioElement
+  if (!renderer || !audio || audio.paused || audio.ended) return
+  // requestAnimationFrame is only a sampling trigger.  The HTMLAudioElement
+  // remains the single timeline source, so Pixi never advances independently.
+  updateFrame(audio.currentTime)
+  audioFrameRequest = requestAnimationFrame(sampleAudioFrame)
+}
+
+function startAudioFrameSampling() {
+  if (audioFrameRequest || !renderer || !props.audioElement || props.audioElement.paused) return
+  audioFrameRequest = requestAnimationFrame(sampleAudioFrame)
+}
+
+function stopAudioFrameSampling() {
+  if (audioFrameRequest) cancelAnimationFrame(audioFrameRequest)
+  audioFrameRequest = 0
+}
+
+function bindAudioElement(audio) {
+  if (boundAudioElement === audio) {
+    startAudioFrameSampling()
+    return
+  }
+  if (boundAudioElement) {
+    boundAudioElement.removeEventListener('play', startAudioFrameSampling)
+    boundAudioElement.removeEventListener('pause', stopAudioFrameSampling)
+    boundAudioElement.removeEventListener('ended', stopAudioFrameSampling)
+  }
+  boundAudioElement = audio || null
+  if (boundAudioElement) {
+    boundAudioElement.addEventListener('play', startAudioFrameSampling)
+    boundAudioElement.addEventListener('pause', stopAudioFrameSampling)
+    boundAudioElement.addEventListener('ended', stopAudioFrameSampling)
+  }
+  if (boundAudioElement) startAudioFrameSampling()
 }
 
 async function initialise() {
@@ -66,6 +110,7 @@ async function initialise() {
     await renderer.init(props.spriteManifest)
     renderStatus.value = 'ready'
     updateFrame()
+    bindAudioElement(props.audioElement)
   } catch {
     destroyRenderer()
     activeMode.value = 'compatibility'
@@ -82,6 +127,7 @@ watch(
   initialise,
 )
 watch(() => props.currentTime, updateFrame)
+watch(() => props.audioElement, bindAudioElement, { immediate: true })
 </script>
 
 <template>
@@ -92,7 +138,7 @@ watch(() => props.currentTime, updateFrame)
       <span class="avatar-static-body" />
     </div>
     <div class="avatar-viewport-meta">
-      <span>{{ assetSource === 'platform' ? '平台预制讲师' : '已发布形象' }}</span>
+      <span>{{ assetSource === 'none' ? '静态占位' : (assetSource === 'platform' ? '平台预制讲师' : '已发布形象') }}</span>
       <small>{{ statusLabel }}</small>
     </div>
   </aside>

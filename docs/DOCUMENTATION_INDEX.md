@@ -42,6 +42,8 @@
 | 根目录产品/比赛/CodeMind 文档 | 历史产品构想、比赛材料或远期规划 | 不可反推当前能力。 |
 
 ### 媒体与数字人文档状态
+
+- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：2026-08-10 已更新平台女性讲师 `platform-female-instructor-v1@1.0.0` 的预设、对象存储签发与旧汽车教师退休规则；课程 87 仍需以新 MediaRelease/正式 CourseRelease 快照完成浏览器实测，不能改写旧版本。
 - `phase1/阶段8_P5.1_音色与角色注册表.md`：平台注册的音色/角色版本冻结、签名 manifest 与前后端接入（2026-08-07 已实现）。
 - `phase1/阶段8_P5.2_OSS与旧链隔离.md`：Local PUT、S3/OSS presigned POST、confirm 校验、本地签名 scope 与 `/video-gen` 兼容隔离（2026-08-07 已实现）。
 

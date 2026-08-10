@@ -17,6 +17,8 @@
 
 ## 当前媒体与数字人方案
 
+> **2026-08-10 平台女性讲师预设**：`platform-female-instructor-v1@1.0.0` 已成为新媒体建设的默认 2D 角色。它由一张 960px 静默虚构女性讲师肖像、8 个口型补丁和 1 个闭眼补丁组成；发布播放响应会分别签发 manifest 与纹理 URL，浏览器仅按 `avatar-cues/v1` 和 `<audio>` 时钟选择口型/眨眼。旧 `platform-instructor-real-v1@1.0.0`（汽车教师）已退休，仅允许已冻结的历史 Release 解析，不能被静默替换。课程 87 的当前发布版本也必须按“新建媒体版本 → 激活 → 正式课程发布”切换，不能覆盖旧快照。
+
 媒体主链已经冻结为“课程级批量建设 + 不可变播放清单”：
 
 ```text
@@ -35,16 +37,18 @@
 
 ### P5.1：平台音色与 2D 角色注册表（2026-08-07）
 
+**2026-08-10 状态更新**：平台注册表的活跃默认角色已切换为 `platform-female-instructor-v1@1.0.0`。源图为本地生成的虚构人物、无真实人物参考；其来源说明与 SHA-256 记录在 `frontend/src/assets/platform-avatar-presets/platform-female-instructor-v1/source/SOURCE.md`。源图实为 1254×1254（不是 2K），但处理后的 960px 主纹理足以覆盖当前 480p 目标。纹理对象采用内容寻址 `object_key`，按课程/Release/预设 scope 签发；加载失败降级，绝不使音频、PPT 或字幕停播。
+
 当前实现已将媒体版本绑定从前端硬编码提升为服务端注册表：
 
 - `PlatformVoicePreset` 与 `PlatformAvatarPreset` 由服务端维护，批量计划重新解析并在 `MediaBuildBatch` / `MediaRelease` 中冻结 `preset_id + version`。
 - `GET /api/v1/media/course/{course_id}/platform-presets` 只返回安全的显示信息和内容哈希，不暴露 Doubao speaker、resource ID 或密钥。
-- 首版已注册 1 个 fake-demo 音色和 4 个平台预制 Sprite2D 角色；默认建设角色为 `platform-instructor-real-v1@1.0.0`（半写实虚构汽车教师），角色 manifest 按版本写入对象存储并通过发布版本签名下发。
+- 首版已注册 1 个 fake-demo 音色和 4 个平台预制 Sprite2D 角色；默认建设角色为 `platform-female-instructor-v1@1.0.0`（半写实虚构女性教师）。旧 `platform-instructor-real-v1@1.0.0`（汽车教师）为历史 Release 兼容项，不能在新建设中选择；角色 manifest 按版本写入对象存储并通过发布版本签名下发。
 - 学习端按发布版本加载 manifest；加载失败依次降级为本地平台默认角色、静态头像、无数字人，音频/PPT/字幕不被阻断。
 
 P5.1/P5.2 已通过本地 fake provider、SQLite 迁移、上传隔离和前端构建验证。P5.3 的单次豆包短文本 POC 已有脱敏历史结果：音频与 `words` 返回，时间误差约 191.583ms，但 `phonemes` 为空，因此不能承诺精确口型；本回合重新调用被外部付费请求审批拦截，未重试。详见 [`阶段8_P5.3_一次受控豆包验收`](docs/phase1/阶段8_P5.3_一次受控豆包验收.md)。
 
-学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版使用发布版本冻结的半写实平台注册角色（当前默认 `platform-instructor-real-v1@1.0.0`），按 `avatar-cues/v1` 驱动；这不是某位真实教师的肖像。Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
+学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版使用发布版本冻结的半写实平台注册角色（当前默认 `platform-female-instructor-v1@1.0.0`），按 `avatar-cues/v1` 驱动；这不是某位真实教师的肖像。Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
 
 服务端只负责权限、批次编排、缓存复用、时序归一化、对象存储和版本发布。媒体数据只保存 `object_key`、SHA 和签名 URL，不保存绝对路径。Local storage 与 S3/OSS presigned PUT/POST 通过同一适配层切换。
 

@@ -4,7 +4,7 @@
 - Source: user-authorized, wholly fictional images generated in Codex on 2026-08-10.
 - Real-person reference: none. The prompts explicitly prohibited real-person and celebrity likenesses.
 - Source assets: no third-party image, logo, trademark, or teacher portrait was supplied to the generator.
-- Intended processing: the master and eight mouth-only frames will be aligned, background-removed and cut into `sprite2d-manifest/v1` layers in a later asset-preparation change. They are not yet browser playback assets.
+- Implemented processing (2026-08-10): `01-mouth-sil.png` was resized to the immutable 960px `body.png`; each mouth frame was reduced to a feathered local mouth patch; an additional internal closed-eye processing frame was cropped to `eyes-closed.png`. The resulting 11 runtime PNGs live in `backend/app/assets/platform_avatar_presets/platform-female-instructor-v1/1.0.0/` and are seeded into object storage under content-addressed keys by `platform_media_preset_service.py`. They are browser playback assets only through a course/release/preset-scoped signed URL.
 - Generated dimensions: `1254 × 1254` PNG for every frame. The built-in generator did not return the requested 2048-pixel output; do not describe these files as 2K originals. This resolution remains sufficient for the current 480p PixiJS target, but a higher-resolution source should be commissioned if a larger display target is added.
 - Commercial use, modification, and redistribution: confirm the applicable image-generation service terms and project legal policy before external distribution. This record is provenance evidence, not a legal opinion or a substitute for a public-release license review.
 

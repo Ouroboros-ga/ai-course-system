@@ -335,6 +335,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         :cues="avatarCues"
         :sprite-manifest="avatarSpriteManifest"
         :current-time="avatarPlaybackTime"
+        :audio-element="audioRef"
         :default-playback-mode="defaultPlaybackMode"
         :asset-source="avatarAssetSource"
       />
