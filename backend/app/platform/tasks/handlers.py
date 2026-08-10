@@ -138,7 +138,15 @@ def _initial_runtime_failure(result: Any) -> BaseException | None:
             message = f"模型返回内容不符合格式，系统已重试 1 次；失败阶段：{stage_label}。原课程草稿未覆盖，请重新智能备课。"
         else:
             message = str(detail.get("message") or "备课智能体未能完成本次整理")[:500]
-        return TaskExecutionError(code, message, retryable=True)
+        # Carry the original failure classification across the Runtime
+        # boundary so the outer handler can append the diagnostic id and give
+        # an accurate teacher-facing message instead of a generic fallback.
+        return TaskExecutionError(
+            code,
+            message,
+            retryable=True,
+            reason_code=reason_code or None,
+        )
     return TaskExecutionError(
         "COURSE_DRAFT_BUILD_FAILED",
         str(detail)[:500],

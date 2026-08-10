@@ -426,7 +426,7 @@ class PrepLLMAdapter:
         trace_id: str = "",
         max_tokens: int | None = None,
         lean: bool = False,
-        target_segments: int | None = None,
+        preferred_target: int | None = None,
     ) -> "EvidenceSegmenterResult":
         """Stage 1 Reduce: merge summaries without resending source text.
 
@@ -435,9 +435,9 @@ class PrepLLMAdapter:
         stay small and finish within the completion budget.  The final level
         keeps ``lean=False`` and re-adds bounded examples/exercises.  Evidence
         ids are never returned by the model: every merged segment receives the
-        deterministic union of its input group.  ``target_segments`` is a
-        must-compress hint for non-final levels; the caller validates the
-        actual compression ratio.
+        deterministic union of its input group.  ``preferred_target`` is the
+        ideal segment ceiling for non-final levels (ceil(n * 0.25)); the caller
+        independently validates real progress against its hard ceiling.
         """
         from app.schemas.controlled_prep import (
             EvidenceReduceResult as _WireResult,
@@ -449,7 +449,7 @@ class PrepLLMAdapter:
         wire_schema = _LeanWireResult if lean else _WireResult
         user_payload = {
             "constraints": {
-                "max_segments": target_segments or 32,
+                "max_segments": preferred_target or 32,
                 "max_examples_per_segment": 0 if lean else 10,
                 "max_exercises_per_segment": 0 if lean else 10,
                 "return_json_only": True,

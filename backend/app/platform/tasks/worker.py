@@ -58,11 +58,23 @@ TaskHandler = Callable[[TaskHandlerContext], Awaitable[None]]
 class TaskExecutionError(Exception):
     """handler 抛出的结构化错误，携带 error_code 与 retryable。"""
 
-    def __init__(self, error_code: str, message: str, *, retryable: bool = True) -> None:
+    def __init__(
+        self,
+        error_code: str,
+        message: str,
+        *,
+        retryable: bool = True,
+        reason_code: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.error_code = error_code
         self.message = message
         self.retryable = retryable
+        # Preserve the agent-level failure classification (e.g.
+        # PREP_EVIDENCE_REDUCE_NON_CONVERGENT) across the Runtime boundary so
+        # outer handlers can emit precise diagnostics instead of a generic
+        # fallback message.
+        self.reason_code = reason_code
 
 
 def _classify_exception(exc: Exception) -> tuple[str, str, bool]:

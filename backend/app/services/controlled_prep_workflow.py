@@ -242,10 +242,20 @@ class ControlledPrepWorkflow:
 
     @staticmethod
     def _segment_payload_chars(segments: list[EvidenceSegment]) -> int:
-        return len(json.dumps(
-            {"segments": [item.model_dump(mode="json") for item in segments]},
-            ensure_ascii=False,
-        ))
+        # Size groups by the payload the model actually receives.  The Reduce
+        # wire format deliberately excludes server-side evidence ids, so they
+        # must not inflate group sizing here either; this mirrors
+        # ``PrepLLMAdapter._segment_llm_payload`` and keeps evidence
+        # backfill/audit untouched on the service side.
+        payload = {"segments": [
+            {
+                key: value
+                for key, value in item.model_dump(mode="json").items()
+                if key != "evidence_ids"
+            }
+            for item in segments
+        ]}
+        return len(json.dumps(payload, ensure_ascii=False))
 
     def _chunk_segment_summaries(
         self,
@@ -273,26 +283,39 @@ class ControlledPrepWorkflow:
         semaphore: asyncio.Semaphore,
         budget: EvidenceAttemptBudget,
         lean: bool = False,
-        target_segments: int | None = None,
+        preferred_target: int | None = None,
+        hard_limit: int | None = None,
     ) -> list[EvidenceSegment]:
         def validate(result: EvidenceSegmenterResult) -> EvidenceSegmenterResult:
             self._assert_evidence_ids(result, request.evidence)
             return result
 
-        try:
+        async def invoke() -> EvidenceSegmenterResult:
             budget.take()
             async with semaphore:
-                result = await self._run_stage(
+                return await self._run_stage(
                     "segment_evidence_reduce",
                     self._call_stage(
                         "reduce_evidence",
                         segments,
                         max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
                         lean=lean,
-                        target_segments=target_segments,
+                        preferred_target=preferred_target,
                     ),
                     validate,
                 )
+
+        def accepted(output_n: int) -> bool:
+            # Real progress means the group actually shrank AND landed at or
+            # under the hard safety ceiling.  ``preferred_target`` is only the
+            # ideal; missing it by a few segments is still legitimate progress
+            # (e.g. 34 -> 10 when the preferred is 9 and the hard limit is 17).
+            if preferred_target is None or hard_limit is None:
+                return True
+            return output_n < len(segments) and output_n <= hard_limit
+
+        try:
+            result = await invoke()
         except StructuredOutputError as error:
             if error.reason_code != "MODEL_OUTPUT_TRUNCATED" or len(segments) <= 1:
                 raise
@@ -305,7 +328,8 @@ class ControlledPrepWorkflow:
                     semaphore=semaphore,
                     budget=budget,
                     lean=lean,
-                    target_segments=target_segments,
+                    preferred_target=preferred_target,
+                    hard_limit=hard_limit,
                 ),
                 self._reduce_evidence_group(
                     request,
@@ -314,41 +338,45 @@ class ControlledPrepWorkflow:
                     semaphore=semaphore,
                     budget=budget,
                     lean=lean,
-                    target_segments=target_segments,
+                    preferred_target=preferred_target,
+                    hard_limit=hard_limit,
                 ),
             ])
             return [*left, *right]
-        if target_segments is not None and len(result.segments) > target_segments:
-            # One targeted retry for a group that missed its must-compress
-            # target.  A second miss is an accurate non-convergence error
-            # rather than a silent multi-level budget drain.
-            logger.warning(
-                "Reduce group %s missed its compression target (%d > %d); retrying once",
-                path,
-                len(result.segments),
-                target_segments,
+        output_n = len(result.segments)
+        if accepted(output_n):
+            return [
+                segment.model_copy(update={"segment_id": f"reduce_{path}_{index}"})
+                for index, segment in enumerate(result.segments, start=1)
+            ]
+        # One targeted retry for a group that made no real progress (either it
+        # did not shrink or it stayed above the hard ceiling).  A second miss
+        # is an accurate non-convergence error rather than a silent multi-level
+        # budget drain.
+        retry_reason = "no_shrinkage" if output_n >= len(segments) else "over_hard_limit"
+        logger.warning(
+            "Reduce group %s missed its safety ceiling (input=%d preferred=%s "
+            "hard=%s output=%d); retrying once",
+            path,
+            len(segments),
+            preferred_target,
+            hard_limit,
+            output_n,
+        )
+        result = await invoke()
+        output_n = len(result.segments)
+        if not accepted(output_n):
+            compression_ratio = (output_n / len(segments)) if segments else 0.0
+            raise StructuredOutputError(
+                f"reduce group {path} made no sufficient progress "
+                f"(level/group={path}, input={len(segments)}, "
+                f"preferred_target={preferred_target}, hard_limit={hard_limit}, "
+                f"output={output_n}, compression_ratio={compression_ratio:.2f}, "
+                f"retry_reason={retry_reason}, budget_used={budget.used})",
+                reason_code="PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
+                stage="segment_evidence_reduce",
+                attempts=budget.used,
             )
-            budget.take()
-            async with semaphore:
-                result = await self._run_stage(
-                    "segment_evidence_reduce",
-                    self._call_stage(
-                        "reduce_evidence",
-                        segments,
-                        max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
-                        lean=lean,
-                        target_segments=target_segments,
-                    ),
-                    validate,
-                )
-            if len(result.segments) > target_segments:
-                raise StructuredOutputError(
-                    f"reduce group {path} did not compress to its target "
-                    f"({len(result.segments)} > {target_segments} from {len(segments)} input segments)",
-                    reason_code="PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
-                    stage="segment_evidence_reduce",
-                    attempts=budget.used,
-                )
         return [
             segment.model_copy(update={"segment_id": f"reduce_{path}_{index}"})
             for index, segment in enumerate(result.segments, start=1)
@@ -363,6 +391,7 @@ class ControlledPrepWorkflow:
         budget: EvidenceAttemptBudget,
     ) -> EvidenceSegmenterResult:
         ratio = max(0.05, float(settings.PREP_INITIAL_EVIDENCE_REDUCE_RATIO))
+        hard_ratio = max(ratio, float(settings.PREP_INITIAL_EVIDENCE_REDUCE_HARD_RATIO))
         max_levels = max(1, int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS))
         current = segments
         for level in range(max_levels):
@@ -376,15 +405,24 @@ class ControlledPrepWorkflow:
                     semaphore=semaphore,
                     budget=budget,
                     # Only the last level re-adds examples/exercises and is
-                    # exempt from the must-compress target; every intermediate
-                    # level must merge its group down to ceil(n * ratio) so the
-                    # hierarchy provably shrinks instead of drifting for eight
-                    # levels.  A single-segment group is a pass-through.
+                    # exempt from the convergence targets; every intermediate
+                    # level receives an ideal (preferred) ceiling of
+                    # ceil(n * ratio) and a hard safety ceiling of
+                    # ceil(n * hard_ratio).  Real progress is accepted even
+                    # when the ideal is missed (34 -> 10 with preferred 9);
+                    # only no-shrinkage or above-hard-ceiling groups retry and
+                    # fail with PREP_EVIDENCE_REDUCE_NON_CONVERGENT.  A
+                    # single-segment group is a pass-through.
                     lean=not final_level,
-                    target_segments=(
+                    preferred_target=(
                         None
                         if final_level or len(group) == 1
                         else max(1, min(32, math.ceil(len(group) * ratio)))
+                    ),
+                    hard_limit=(
+                        None
+                        if final_level or len(group) == 1
+                        else max(1, min(32, math.ceil(len(group) * hard_ratio)))
                     ),
                 )
                 for index, group in enumerate(groups)

@@ -105,12 +105,18 @@ class Settings(BaseSettings):
     PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS: int = 4096
     PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS: int = 8192
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS: int = 16384
-    # Must-compress contract for every non-final Reduce group: a group of N
-    # input segments must merge down to at most ceil(N * ratio) segments (and
-    # never more than the schema cap of 32).  One targeted retry is allowed
-    # per group; a group that still does not compress fails the level with
-    # PREP_EVIDENCE_REDUCE_NON_CONVERGENT instead of burning more levels.
+    # Reduce convergence contract for every non-final Reduce group.  A group
+    # of N input segments has an ideal (preferred) target of ceil(N * ratio)
+    # and a hard safety ceiling of ceil(N * hard_ratio) (both capped at the
+    # schema limit of 32).  A group that shrinks at all AND lands at or under
+    # the hard ceiling is real progress and passes the level; only a group
+    # that does not shrink at all or stays above the hard ceiling gets one
+    # targeted retry, and a second miss fails the level with
+    # PREP_EVIDENCE_REDUCE_NON_CONVERGENT.  This treats 25% as the ideal, not
+    # an absolute pass/fail line: 34 -> 10 (71% compression) is accepted while
+    # 34 -> 34 is rejected.
     PREP_INITIAL_EVIDENCE_REDUCE_RATIO: float = 0.25
+    PREP_INITIAL_EVIDENCE_REDUCE_HARD_RATIO: float = 0.5
     # Hard cap on Reduce hierarchy levels; reaching it is a non-convergence
     # failure (accurate diagnostics), not a budget-exhausted failure.
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS: int = 8

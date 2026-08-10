@@ -1,5 +1,6 @@
 import asyncio
 import json
+import math
 
 import pytest
 from pydantic import ValidationError
@@ -1231,8 +1232,9 @@ def _multi_segment_map_stage() -> list[EvidenceReference]:
 
 
 def test_reduce_must_compress_target_reaches_intermediate_levels(monkeypatch):
-    """The must-compress contract passes ceil(n * ratio) targets to non-final
-    reduce groups while the final single-group level stays exempt."""
+    """Intermediate reduce groups receive both a preferred (ceil(n * ratio))
+    and a hard ceiling (ceil(n * hard_ratio)) while the final single-group
+    level stays exempt."""
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 400)
@@ -1240,10 +1242,11 @@ def test_reduce_must_compress_target_reaches_intermediate_levels(monkeypatch):
     monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
     monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
     monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_REDUCE_RATIO", 0.25)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_REDUCE_HARD_RATIO", 0.5)
 
     class CompressingReduce:
         def __init__(self):
-            self.targets = []
+            self.calls = []
 
         async def segment_evidence(self, request, **_kwargs):
             return EvidenceSegmentMapResult(segments=[
@@ -1257,7 +1260,7 @@ def test_reduce_must_compress_target_reaches_intermediate_levels(monkeypatch):
             ])
 
         async def reduce_evidence(self, segments, **_kwargs):
-            self.targets.append(_kwargs.get("target_segments"))
+            self.calls.append((len(segments), _kwargs.get("preferred_target")))
             evidence_ids = []
             for segment in segments:
                 evidence_ids.extend(segment.evidence_ids)
@@ -1273,10 +1276,168 @@ def test_reduce_must_compress_target_reaches_intermediate_levels(monkeypatch):
     result = asyncio_run(ControlledPrepWorkflow(stages).segment_evidence(request))
 
     assert len(result.segments) == 1
-    # Every intermediate group gets ceil(n * ratio); only the final
-    # single-group level is exempt from the must-compress target.
-    assert 1 in stages.targets
-    assert None in stages.targets
+    # Every intermediate group must receive its preferred contract
+    # ceil(n * ratio); pass-through single-segment groups and the final level
+    # stay exempt.  The parallel hard ceiling is validated by the group-level
+    # progress tests below (it is workflow-internal and never sent to the LLM).
+    intermediate = [call for call in stages.calls if call[1] is not None]
+    assert intermediate, "expected at least one intermediate reduce group"
+    for group_n, preferred in intermediate:
+        assert preferred == max(1, min(32, math.ceil(group_n * 0.25)))
+    assert any(call[1] is None for call in stages.calls)
+
+
+def test_reduce_group_accepts_effective_progress_below_preferred_target(monkeypatch):
+    """34 -> 10 style progress (shrunk but above the ideal target) is accepted:
+    a 6-segment group with preferred 2 and hard 3 that returns 3 segments must
+    pass without a retry, exactly as 34 -> 10 with preferred 9 and hard 17."""
+    from app.core.config import settings
+    from app.services.controlled_prep_workflow import EvidenceAttemptBudget
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS", 16384)
+    monkeypatch.setattr(settings, "COURSE_BUILD_STAGE_TIMEOUT_SECONDS", 60)
+
+    class EffectiveProgressReduce:
+        def __init__(self):
+            self.reduce_calls = 0
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_calls += 1
+            evidence_ids = []
+            for segment in segments:
+                evidence_ids.extend(segment.evidence_ids)
+            # Mirrors the real 34 -> 10 case: keeps 3 of 6 segments, which is
+            # at the hard ceiling (3) but above the preferred target (2).
+            return EvidenceSegmenterResult(segments=[
+                EvidenceSegment(
+                    segment_id="merged",
+                    title="merged",
+                    topic="merged",
+                    evidence_ids=list(dict.fromkeys(evidence_ids)),
+                )
+                for _ in range(3)
+            ])
+
+    segments = [
+        EvidenceSegment(
+            segment_id=f"s_{index}",
+            title="t",
+            topic="x" * 120,
+            evidence_ids=["evg_1"],
+        )
+        for index in range(6)
+    ]
+    request = ControlledPrepInput(evidence=[EvidenceReference(
+        evidence_id="evg_1", text="evidence", page=1,
+    )])
+    stages = EffectiveProgressReduce()
+    workflow = ControlledPrepWorkflow(stages)
+    budget = EvidenceAttemptBudget(160)
+    result = asyncio_run(workflow._reduce_evidence_group(
+        request,
+        segments,
+        path="0_1",
+        semaphore=asyncio.Semaphore(2),
+        budget=budget,
+        lean=True,
+        preferred_target=2,
+        hard_limit=3,
+    ))
+
+    assert len(result) == 3
+    # Real progress below the ideal must not trigger a retry.
+    assert stages.reduce_calls == 1
+
+
+def test_reduce_group_rejects_no_shrinkage_with_full_metrics(monkeypatch):
+    """Stagnation (no shrink at all) retries once and then fails with
+    PREP_EVIDENCE_REDUCE_NON_CONVERGENT carrying full metrics.  20 -> 20 is
+    used because the wire schema itself caps output at 32 segments, so a
+    realistic worst case is "same count as input", not "34 -> 34"."""
+    from app.core.config import settings
+    from app.services.controlled_prep_workflow import EvidenceAttemptBudget
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS", 16384)
+    monkeypatch.setattr(settings, "COURSE_BUILD_STAGE_TIMEOUT_SECONDS", 60)
+
+    class StubbornReduce:
+        def __init__(self):
+            self.reduce_calls = 0
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_calls += 1
+            return EvidenceSegmenterResult(segments=[
+                segment.model_copy(update={"segment_id": f"m_{index}"})
+                for index, segment in enumerate(segments)
+            ])
+
+    segments = [
+        EvidenceSegment(
+            segment_id=f"s_{index}",
+            title="t",
+            topic="x" * 120,
+            evidence_ids=["evg_1"],
+        )
+        for index in range(20)
+    ]
+    request = ControlledPrepInput(evidence=[EvidenceReference(
+        evidence_id="evg_1", text="evidence", page=1,
+    )])
+    stages = StubbornReduce()
+    workflow = ControlledPrepWorkflow(stages)
+    budget = EvidenceAttemptBudget(160)
+    with pytest.raises(StructuredOutputError) as excinfo:
+        asyncio_run(workflow._reduce_evidence_group(
+            request,
+            segments,
+            path="0_1",
+            semaphore=asyncio.Semaphore(2),
+            budget=budget,
+            lean=True,
+            preferred_target=5,
+            hard_limit=10,
+        ))
+
+    assert excinfo.value.reason_code == "PREP_EVIDENCE_REDUCE_NON_CONVERGENT"
+    assert excinfo.value.stage == "segment_evidence_reduce"
+    message = str(excinfo.value)
+    # The message pinpoints the exact level/group and the safety metrics so a
+    # teacher can diagnose from a single task number.
+    assert "0_1" in message
+    assert "input=20" in message
+    assert "output=20" in message
+    assert "retry_reason=no_shrinkage" in message
+    assert stages.reduce_calls == 2
+
+
+def test_initial_runtime_failure_preserves_reason_code():
+    """The Initial Prep Runtime must carry the original failure classification
+    (e.g. PREP_EVIDENCE_REDUCE_NON_CONVERGENT) so the outer handler can append
+    the diagnostic id instead of falling back to a generic message."""
+    from app.platform.tasks.handlers import _initial_runtime_failure
+
+    failure = _initial_runtime_failure({
+        "errors": [{
+            "code": "INITIAL_BUILD_FAILED",
+            "message": "材料已读取，但摘要没有在安全范围内收敛，系统未写入课程草稿；请重试，或减少材料数量后重新智能备课。",
+            "reason_code": "PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
+            "stage": "segment_evidence_reduce",
+            "error_type": "StructuredOutputError",
+        }],
+    })
+
+    assert failure is not None
+    assert failure.reason_code == "PREP_EVIDENCE_REDUCE_NON_CONVERGENT"
+    # And the outer failure message now renders the accurate text with the
+    # diagnostic id appended.
+    from app.platform.tasks.handlers import _course_build_failure_message
+    rendered = _course_build_failure_message(failure, run_id="prep_initial_cdbt_1")
+    assert "没有在安全范围内收敛" in rendered
+    assert "诊断编号：prep_initial_cdbt_1" in rendered
+    assert "减少材料数量或拆分课程" not in rendered
+
+
+
 
 
 def test_reduce_truncation_bisects_and_recovers(monkeypatch):
