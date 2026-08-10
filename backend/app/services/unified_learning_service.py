@@ -176,7 +176,13 @@ def record_event(
     now = occurred_at
     if projection.first_accessed_at is None:
         projection.first_accessed_at = now
-    projection.last_accessed_at = max(projection.last_accessed_at or now, now)
+    # SQLite drops timezone information when reloading DateTime columns even
+    # when the model declares timezone=True.  Normalize the persisted value
+    # before comparing it with the canonical aware event time.
+    projection.last_accessed_at = max(
+        to_aware(projection.last_accessed_at or now),
+        now,
+    )
     projection.visit_count += 1 if event_type == LearningEventType.NODE_OPENED else 0
     try:
         time_spent_delta = float(payload.get("time_spent_delta", 0) or 0)

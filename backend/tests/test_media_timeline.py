@@ -34,6 +34,10 @@ from app.services.media_timeline_service import (
     register_media_asset, serialize_cue,
 )
 from app.services.object_storage import LocalStorageProvider, reset_object_storage_for_tests
+from app.services.platform_media_preset_service import (
+    ensure_platform_presets,
+    sign_avatar_package_for_release,
+)
 
 
 def _user(session, name, role=UserRole.TEACHER):
@@ -339,3 +343,59 @@ class TestMediaTimelineAPI:
             headers=headers,
         )
         assert expired.status_code == 403
+
+    def test_platform_avatar_package_is_signed_and_course_scoped(
+        self, client, session, signed_media_storage,
+    ):
+        """A platform manifest is global, but every read remains release/course scoped."""
+        teacher = _user(session, "mt_avatar_package_owner")
+        outsider = _user(session, "mt_avatar_package_outsider")
+        course = _setup(session, teacher)
+        _setup(session, outsider)
+        ensure_platform_presets(session)
+        session.commit()
+
+        preset, manifest_url, asset_urls = sign_avatar_package_for_release(
+            session,
+            course_id=course.id,
+            release_id="media-release-avatar-route-test",
+            preset_id="platform-female-instructor-v1",
+            preset_version="1.0.0",
+        )
+        assert preset is not None
+        assert manifest_url
+        assert asset_urls
+
+        owner_headers = {"Authorization": f"Bearer {_token(teacher)}"}
+        manifest = client.get(manifest_url, headers=owner_headers)
+        assert manifest.status_code == 200, manifest.text
+        assert manifest.json()["schema"] == "sprite2d-manifest/v1"
+
+        texture = client.get(next(iter(asset_urls.values())), headers=owner_headers)
+        assert texture.status_code == 200
+        assert texture.content
+
+        # A valid signature for a different object cannot be upgraded into a
+        # platform-manifest read merely by copying the preset scope.
+        forged_key = (
+            "platform/avatar-presets/platform-female-instructor-v1/"
+            "1.0.0/not-the-registered-manifest.json"
+        )
+        forged_url = signed_media_storage.sign_read_url(
+            forged_key,
+            scope={
+                "course_id": course.id,
+                "release_id": "media-release-avatar-route-test",
+                "purpose": "platform_avatar_manifest",
+                "preset_id": "platform-female-instructor-v1",
+                "preset_version": "1.0.0",
+            },
+        )
+        forged = client.get(forged_url, headers=owner_headers)
+        assert forged.status_code == 403
+
+        cross_course = client.get(
+            manifest_url,
+            headers={"Authorization": f"Bearer {_token(outsider)}"},
+        )
+        assert cross_course.status_code == 403

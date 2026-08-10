@@ -19,6 +19,8 @@
 
 > **2026-08-10 平台女性讲师预设**：`platform-female-instructor-v1@1.0.0` 已成为新媒体建设的默认 2D 角色。它由一张 960px 静默虚构女性讲师肖像、8 个口型补丁和 1 个闭眼补丁组成；发布播放响应会分别签发 manifest 与纹理 URL，浏览器仅按 `avatar-cues/v1` 和 `<audio>` 时钟选择口型/眨眼。旧 `platform-instructor-real-v1@1.0.0`（汽车教师）已退休，仅允许已冻结的历史 Release 解析，不能被静默替换。课程 87 的当前发布版本也必须按“新建媒体版本 → 激活 → 正式课程发布”切换，不能覆盖旧快照。
 
+> **2026-08-10 本地播放回归**：已用 `MEDIA_DEMO_MODE=true` 在课程 87 的三知识点合成 fixture 上重新执行 Fake WAV、PPT manifest、`audio-playlist/v1`、MediaRelease 激活、CourseRelease 发布与学生学习页播放。当前本地快照为 `mrel_2376035e170c438c9ee9d9dc331145a9` / `cr_8897817c555447928962abc3f1880c25`，播放清单 SHA-256 为 `9432c7de…`；它是可重复创建的本地诊断数据，不替代历史 20 节点快照，更不代表真实课程或付费 TTS 质量。真实本地 Chrome 已验证签名角色资源、音频/PPT/字幕/目录/口型共同时钟、跨节点 seek、播放与暂停状态保持、自然续播及 manifest 失败静态降级。480p 视口下 4.123 秒短测记录 977 帧（约 237 FPS），只证明该次无头 Chrome 短测超过 24 FPS；Windows Computer Use 桥本次不可用，且尚未完成有头 GPU、连续 10 分钟和掉帧率验收。
+
 媒体主链已经冻结为“课程级批量建设 + 不可变播放清单”：
 
 ```text
@@ -49,6 +51,8 @@
 P5.1/P5.2 已通过本地 fake provider、SQLite 迁移、上传隔离和前端构建验证。P5.3 的单次豆包短文本 POC 已有脱敏历史结果：音频与 `words` 返回，时间误差约 191.583ms，但 `phonemes` 为空，因此不能承诺精确口型；本回合重新调用被外部付费请求审批拦截，未重试。详见 [`阶段8_P5.3_一次受控豆包验收`](docs/phase1/阶段8_P5.3_一次受控豆包验收.md)。
 
 学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版使用发布版本冻结的半写实平台注册角色（当前默认 `platform-female-instructor-v1@1.0.0`），按 `avatar-cues/v1` 驱动；这不是某位真实教师的肖像。Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
+
+这次浏览器回归的代码修正集中在 `media_timeline.py`（平台 manifest/纹理签名与 Course Access）、`Sprite2DRenderer.js` / `AvatarViewport.vue`（无扩展名纹理解析、人物主体与正确 Canvas 尺寸）、`LectureStage.vue`（跨知识点 keyed audio 事件隔离与自然续播）及 `unified_learning_service.py`（SQLite 时区时间归一化）。Fake Cue 没有音素，因此页面必须显示“字幕段估算”，不能把可动嘴型表述为精确唇形同步。
 
 服务端只负责权限、批次编排、缓存复用、时序归一化、对象存储和版本发布。媒体数据只保存 `object_key`、SHA 和签名 URL，不保存绝对路径。Local storage 与 S3/OSS presigned PUT/POST 通过同一适配层切换。
 

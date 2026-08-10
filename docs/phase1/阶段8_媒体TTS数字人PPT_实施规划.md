@@ -4,10 +4,11 @@
 
 > 2026-08-07 P5.2 更新：对象存储上传已统一为 Local PUT / S3-OSS presigned POST + confirm 校验；Local 内容读取必须携带签名 scope；旧 `/video-gen` 仅为兼容/历史入口，不作为正式 MediaRelease 或 audio-playlist/v1 发布依据。详见 [P5.2 文档](阶段8_P5.2_OSS与旧链隔离.md)。
 
-> 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入；课程 87 已以
-> Fake WAV 完成 PPT 映射、playlist、MediaRelease 激活和正式课程发布门。它证明本地课程级
-> 发布链路，而不证明真实 TTS 音质、字级时序质量、精确口型或目标浏览器性能。
-> 部署或本地升级必须显式执行 `alembic upgrade head`。最后核对：2026-08-07。
+> 状态：P0–P4 的后端模型、路由、前端播放适配和 PixiJS 预制角色已接入。2026-08-10
+> 已在 `MEDIA_DEMO_MODE=true` 下以三知识点合成 fixture 重新执行课程 87 的 Fake WAV、PPT
+> 映射、playlist、MediaRelease 激活、正式课程发布和真实本地 Chrome 播放回归；付费 TTS
+> 未被调用。该结果证明本地课程级发布与降级链路，不证明真实语音质量、精确口型或长时
+> 目标设备性能。部署或本地升级必须显式执行 `alembic upgrade head`。最后核对：2026-08-10。
 >
 > 本文以实际注册路由、调用链、模型和一次真实 Provider POC 为证据，不把历史
 > Demo、Fake Provider 或未接入的 API 写成已对学生生效的能力。与历史阶段8说明
@@ -43,17 +44,30 @@ BuildMediaPage
 - 学习端：`frontend/src/features/student-learning/composables/useMediaPlayback.js`、`usePlaylistPlayback.js`、`frontend/src/app/components/learn/LectureStage.vue`。
 - 数字人：`AvatarViewport.vue`、`useAvatarPlayback.js`、`Sprite2DRenderer.js` 和 `platformSprite2dAssets.js`。
 
-### 课程 87 已完成链路与剩余验收
+### 课程 87 当前本地回归与历史快照边界
 
-课程 87 的 `mrel_623ac854…` 已处于 active，`cr_4ca1bc01…` 已处于 published；该课程快照固定
-`release_id + playlist_content_hash=e78973d2…`。本地数据库核对到 20 个 `ready` 条目、44 页 PPT、
-20 份 WAV/字幕/Cue 与 880448ms 的 `audio-playlist/v1`，播放服务返回 `available=true`。代码证据为
-`media_batch_service.freeze_playlist`、`media_release_service.get_current_playback` 和
-`CourseReleaseService._current_media_snapshot`；运行证据见 `功能现状审计表.md` 的 2026-08-06 记录。
+2026-08-10 为了可重复浏览器诊断，`backend/scripts/prepare_stage8_media_demo.py` 在明确 Demo
+模式下准备了三知识点合成课程 87，并拒绝覆盖不属于该 fixture 的现有课程。当前本地 active
+MediaRelease 是 `mrel_2376035e170c438c9ee9d9dc331145a9`，published CourseRelease 是
+`cr_8897817c555447928962abc3f1880c25`，播放清单 SHA-256 为
+`9432c7debaabb665c0c0fb78f785076e81ee3cb4a65b6c012a2e7c1a7c76530a`。2026-08-06/07
+记录的 `mrel_623ac854…`、20 条目和 44 页 PPT 属于此前本地数据库快照，保留为历史运行证据，
+不得再描述为当前数据库状态。
 
-剩余阻塞是浏览器现场验收（含左侧数字人位置、跨知识点和性能记录）与经教师明确授权的真实
-豆包短文本 POC；P5.3 脱敏记录见 [阶段8_P5.3_一次受控豆包验收](阶段8_P5.3_一次受控豆包验收.md)。
-该 POC 不创建 MediaRelease，不得覆盖当前 Fake 版本。
+真实本地 Chrome 已验证：角色 manifest 与其引用纹理全部经签名 URL 读取；音频播放、PPT、
+字幕、目录高亮和 PixiJS 嘴型共享 `<audio>` 时钟；跨条目 seek、播放中/暂停中目录跳转、自然
+进入下一知识点均保持正确状态；角色 manifest 503 时降级为静态头像而音频和 PPT 继续。
+480p 视口短测 4.123 秒内执行 977 次 `setFrame`（约 237 FPS），音频同时推进 3.951 秒。
+这是无头本地 Chrome 的短时功能/吞吐证据，不是 Windows Computer Use、有头 GPU、掉帧率或
+连续 10 分钟性能验收；Computer Use 桥本次不可用后按前端调试规则回退到真实本地 Chrome。
+
+代码证据包括 `media_timeline.py` 的平台 manifest/纹理精确 scope 与 Course Access 校验、
+`Sprite2DRenderer.js` 的无扩展名纹理 parser 和主体图层、`AvatarViewport.vue` 的初始化可见性与
+Canvas 尺寸、`LectureStage.vue` 的 keyed audio 旧事件隔离，以及
+`unified_learning_service.py` 对 SQLite 重载后时间戳的时区归一化。Fake WAV/Cue 没有音素，
+只能验收“字幕段估算”嘴型和同步降级，不能验收真实语音或精确唇形。真实豆包课程版本仍须
+教师再次确认费用并新建不可变 Release；P5.3 历史脱敏结果见
+[阶段8_P5.3_一次受控豆包验收](阶段8_P5.3_一次受控豆包验收.md)。
 
 教师真人形象与声音授权属于后续扩展，见[阶段8附加：教师数字人资产中心](阶段8_附加_教师数字人资产中心.md)。该文档不改变当前平台预制角色和课程级发布门。
 
@@ -639,9 +653,9 @@ dispose()
 - 本地验证已覆盖批量只读计划、缓存复用、发布门、播放全局时间轴、Cue/Provider 回归；
   前端 API 契约测试与 Vite 构建通过。所有自动化验证使用 Fake/本地对象，不产生付费
   调用。
-- 课程 87 已用 `fake-v1.1-playable` 通过映射、manifest、清单、激活与正式发布门；用户已确认
-  浏览器播放体验与左侧数字人布局手工验收完成。测试与 Fake WAV 不能替代真实 Provider 质量和
-  480p/24fps 性能记录。
+- 课程 87 已用 `fake-v1.1-playable` 通过映射、manifest、清单、激活与正式发布门；2026-08-10
+  又以三知识点合成 fixture 在真实本地 Chrome 中完成跨节点、降级和 480p 短测。Fake WAV
+  不能替代真实 Provider 质量，4.123 秒无头短测也不能替代有头 GPU 与连续 10 分钟性能记录。
 
 ### Fake TTS 本地试听边界（2026-08-05）
 
@@ -687,8 +701,8 @@ dispose()
 
 ## 10. 当前下一步
 
-1. 补做目标浏览器的 480p/24fps 性能记录：初始化时间、平均 FPS、掉帧率、连续播放时长与音频同步偏差；
-   不达标即保留 compatibility 降级。
+1. 在最终目标 Windows 设备用有头浏览器补做连续 10 分钟记录：初始化时间、平均 FPS、掉帧率、
+   音频同步偏差和 compatibility 切换；当前只有 4.123 秒无头 Chrome 短测，不得外推长时稳定性。
 2. 将本次豆包 POC 结论纳入 Provider 选择：`words` 可用于字幕/Cue，`phonemes` 为空，不能宣称精确口型。
    若要创建真实 TTS 课程版本，必须由教师重新确认批次费用并新建 MediaRelease，绝不覆盖 Fake 版本。
 3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增受控写入接口；

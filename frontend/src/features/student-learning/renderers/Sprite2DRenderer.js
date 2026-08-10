@@ -8,6 +8,11 @@ const expressionTint = {
   attentive: 0xF5FAFF,
 }
 
+// Signed local/OSS proxy routes end in `/content`, so Pixi cannot infer an
+// image loader from the URL suffix.  Pin the parser explicitly; otherwise
+// Assets.load() resolves to null even when the response is a valid PNG.
+export const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
+
 /**
  * The renderer owns pixels only.  It never creates a playback timer: callers
  * set a frame derived from HTMLAudioElement time, which keeps PixiJS from
@@ -63,7 +68,10 @@ export class Sprite2DRenderer {
       ['eyes', manifest.sprites.eyes],
       ...MOUTH_KEYS.map(key => [`mouth:${key}`, manifest.sprites.mouths[key]]),
     ]
-    const textures = await Promise.all(entries.map(async ([key, url]) => [key, await Assets.load(url)]))
+    const textures = await Promise.all(entries.map(async ([key, url]) => [
+      key,
+      await Assets.load(spriteTextureAsset(url)),
+    ]))
     return new Map(textures)
   }
 
@@ -93,7 +101,7 @@ export class Sprite2DRenderer {
 
     if (this.manifest.renderMode === 'portrait_patch_v1') {
       const layout = this.manifest.layout
-      this.portraitBody = this.#sprite(textures.get('body'), layout)
+      this.portraitBody = this.#sprite(textures.get('body'), layout.body)
       this.eyes = this.#sprite(textures.get('eyes'), layout.eyes)
       this.eyes.visible = false
       root.addChild(this.portraitBody, this.eyes)

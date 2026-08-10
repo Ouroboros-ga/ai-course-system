@@ -2,7 +2,7 @@ from app.models.course_build_model import CourseRelease, ReleaseStatus
 from app.models.course_model import Course, CourseStatus
 from app.models.course_outline_model import CourseOutlineNode, CourseOutlineVersion, OutlineNodeType
 from app.models.unified_learning_model import LearningEventType
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.services.unified_learning_service import ordered_outline_nodes, record_event, student_context
 from app.api.v1.endpoints.player import _learner_outline_nodes
@@ -171,3 +171,36 @@ def test_record_event_accepts_naive_utc_and_clamps_malformed_progress(session, t
     assert projection.current_timestamp == 0
     assert projection.current_page == 1
     assert projection.exposure_seconds == 0
+
+
+def test_record_event_normalizes_persisted_sqlite_timestamp(session, teacher_user, student_user):
+    """A second browser event must not compare SQLite-naive and aware times."""
+    course, release, nodes = _release_with_knowledge_points(session, teacher_user.id, count=1)
+    first_time = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
+    record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.NODE_OPENED,
+        idempotency_key="sqlite-aware-first",
+        occurred_at=first_time,
+    )
+    session.commit()
+    session.expire_all()
+
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.MEDIA_PROGRESS,
+        idempotency_key="sqlite-aware-second",
+        occurred_at=first_time + timedelta(seconds=5),
+        payload={"current_timestamp": 5},
+    )
+
+    assert projection.last_accessed_at.tzinfo is not None
+    assert projection.last_accessed_at == first_time + timedelta(seconds=5)

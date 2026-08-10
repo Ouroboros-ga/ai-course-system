@@ -87,7 +87,15 @@ const releaseTtsJobs = computed(() => jobs.value.filter((job) => (
 )))
 const releaseTtsJob = computed(() => releaseTtsJobs.value[0] ?? null)
 const selectedTtsJob = computed(() => releaseTtsJobs.value.find((job) => job.node_id === selectedNodeDbId.value) ?? null)
-const releaseBoundNodeId = computed(() => releaseTtsJob.value?.node_id ?? workingRelease.value?.cues?.[0]?.node_id ?? null)
+// A playlist release intentionally owns many knowledge-point jobs. Treating
+// its first TTS job as a single-node binding hides the PPT/playlist/activation
+// controls whenever another rail item is selected. Only legacy single-node
+// releases have a selected-node binding.
+const releaseBoundNodeId = computed(() => (
+  workingRelease.value?.release_metadata?.audio_playlist_mode
+    ? null
+    : releaseTtsJob.value?.node_id ?? workingRelease.value?.cues?.[0]?.node_id ?? null
+))
 const releaseMatchesSelection = computed(() => !releaseBoundNodeId.value || releaseBoundNodeId.value === selectedNodeDbId.value)
 const boundScript = computed(() => scripts.value.find((item) => item.script_node_db_id === releaseBoundNodeId.value) ?? null)
 const cueJob = computed(() => jobs.value.find((job) => (
@@ -140,6 +148,9 @@ const batchReady = computed(() => {
   if (!items.length) return false
   return batchState.value?.status === 'ready' || items.every((item) => item.status === 'ready')
 })
+const releaseCueAssetsReady = computed(() => (
+  isPlaylistRelease.value ? batchReady.value : hasFrozenCues.value
+))
 const batchAudioReady = computed(() => {
   const items = batchItems.value
   return items.length > 0 && items.every((item) => Boolean(item.audio_object_key))
@@ -833,10 +844,10 @@ onBeforeUnmount(() => {
                   </div>
                 </div>
 
-                <article class="workflow-row" :class="{ complete: hasFrozenCues, active: selectedTtsJob?.status === 'succeeded' && !hasFrozenCues }">
+                <article class="workflow-row" :class="{ complete: releaseCueAssetsReady, active: selectedTtsJob?.status === 'succeeded' && !releaseCueAssetsReady }">
                   <div class="workflow-icon"><Captions :size="18" /></div>
-                  <div class="workflow-copy"><span>02 · 字幕与数字人时间轴</span><strong>冻结字幕、说话区间和 PPT 映射快照</strong><p v-if="hasFrozenCues">已生成 release-scoped subtitle-manifest/v1 与 avatar-cues/v1。</p><p v-else-if="cueJob">{{ jobStatusLabel(cueJob) }} · {{ cueJob.error_message_safe || '不再调用 TTS Provider' }}</p><p v-else>需要成功 TTS；缺少音素时仅生成字级/字幕驱动的通用说话状态，不宣称精确口型。</p></div>
-                  <SfxBadge :tone="hasFrozenCues ? 'green' : cueJob ? jobTone(cueJob) : 'neutral'">{{ hasFrozenCues ? '已冻结' : cueJob ? jobStatusLabel(cueJob) : '等待 TTS' }}</SfxBadge>
+                  <div class="workflow-copy"><span>02 · 字幕与数字人时间轴</span><strong>冻结字幕、说话区间和 PPT 映射快照</strong><p v-if="isPlaylistRelease && batchReady">本批全部知识点均已生成 release-scoped subtitle-manifest/v1 与 avatar-cues/v1。</p><p v-else-if="hasFrozenCues">已生成 release-scoped subtitle-manifest/v1 与 avatar-cues/v1。</p><p v-else-if="cueJob">{{ jobStatusLabel(cueJob) }} · {{ cueJob.error_message_safe || '不再调用 TTS Provider' }}</p><p v-else>需要成功 TTS；缺少音素时仅生成字级/字幕驱动的通用说话状态，不宣称精确口型。</p></div>
+                  <SfxBadge :tone="releaseCueAssetsReady ? 'green' : cueJob ? jobTone(cueJob) : 'neutral'">{{ releaseCueAssetsReady ? '已冻结' : cueJob ? jobStatusLabel(cueJob) : '等待 TTS' }}</SfxBadge>
                 </article>
                 <div v-if="selectedTtsJob?.status === 'succeeded' && !hasFrozenCues && (!cueJob || cueJob.status === 'failed')" class="workflow-action"><SfxButton :disabled="!canGenerate" :loading="acting === 'freeze-cues'" @click="freezeCues">冻结字幕与数字人时间轴</SfxButton></div>
 
@@ -852,7 +863,7 @@ onBeforeUnmount(() => {
                   <small v-if="!hasPptManifest">需先冻结 PPT manifest；任一知识点未成功或映射缺失时，服务端会阻止冻结。</small>
                 </div>
 
-                <article class="workflow-row" :class="{ complete: workingRelease.status === 'active', active: hasFrozenCues && workingRelease.status === 'draft' }">
+                <article class="workflow-row" :class="{ complete: workingRelease.status === 'active', active: canActivateWorkingRelease && workingRelease.status === 'draft' }">
                   <div class="workflow-icon"><Check :size="18" /></div>
                   <div class="workflow-copy"><span>04 · 激活并固化到课程发布</span><strong>激活媒体版本，再重新正式发布课程</strong><p v-if="workingRelease.status === 'active'">媒体已激活；课程正式发布时会把它写入不可变媒体快照。</p><p v-else>激活不会自动改写学生当前课程版本。完成激活后仍需到第 07 步重新正式发布。</p></div>
                   <SfxBadge :tone="workingRelease.status === 'active' ? 'green' : 'amber'">{{ workingRelease.status === 'active' ? '已激活' : '等待激活' }}</SfxBadge>

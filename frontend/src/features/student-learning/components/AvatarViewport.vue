@@ -28,9 +28,14 @@ const requestedMode = computed(() => selectAvatarPlaybackMode(
   browserAvatarCapability(),
 ))
 const shouldRender = computed(() => Boolean(props.cues && props.spriteManifest && requestedMode.value !== 'compatibility'))
-const isPrecise = computed(() => props.cues?.timing?.precision === 'phoneme')
 const statusLabel = computed(() => {
-  if (renderStatus.value === 'ready') return isPrecise.value ? '音素同步' : '字级同步'
+  if (renderStatus.value === 'ready') {
+    const precision = props.cues?.timing?.precision
+    if (precision === 'phoneme') return '音素同步'
+    if (precision === 'word') return '字级同步'
+    if (precision === 'subtitle') return '字幕段估算'
+    return '时间轴同步'
+  }
   if (renderStatus.value === 'initializing') return '正在加载'
   return '静态兼容'
 })
@@ -96,10 +101,13 @@ async function initialise() {
     emit('status-change', { status: renderStatus.value, mode: activeMode.value })
     return
   }
-  await nextTick()
-  if (!rendererHost.value) return
   renderStatus.value = 'initializing'
   emit('status-change', { status: renderStatus.value, mode: activeMode.value })
+  // The host is hidden while idle/compatibility.  Let Vue expose and lay it
+  // out before Pixi reads resizeTo dimensions; otherwise Pixi falls back to
+  // an 800x600 canvas that overflows the portrait slot and can render blank.
+  await nextTick()
+  if (!rendererHost.value) return
   try {
     if (!RendererClass) ({ Sprite2DRenderer: RendererClass } = await import('../renderers/Sprite2DRenderer.js'))
     renderer = new RendererClass({
@@ -132,8 +140,16 @@ watch(() => props.audioElement, bindAudioElement, { immediate: true })
 
 <template>
   <aside class="avatar-viewport" :class="`is-${renderStatus}`" aria-label="数字人讲师">
-    <div ref="rendererHost" class="avatar-viewport-canvas" :hidden="renderStatus !== 'ready'" />
-    <div v-if="renderStatus !== 'ready'" class="avatar-viewport-static" aria-hidden="true">
+    <div
+      ref="rendererHost"
+      class="avatar-viewport-canvas"
+      :hidden="renderStatus === 'idle' || renderStatus === 'compatibility'"
+    />
+    <div
+      v-if="renderStatus === 'idle' || renderStatus === 'compatibility'"
+      class="avatar-viewport-static"
+      aria-hidden="true"
+    >
       <span class="avatar-static-head"><UserRound :size="38" :stroke-width="1.5" /></span>
       <span class="avatar-static-body" />
     </div>

@@ -43,7 +43,7 @@
 
 ### 媒体与数字人文档状态
 
-- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：2026-08-10 已更新平台女性讲师 `platform-female-instructor-v1@1.0.0` 的预设、对象存储签发与旧汽车教师退休规则；课程 87 仍需以新 MediaRelease/正式 CourseRelease 快照完成浏览器实测，不能改写旧版本。
+- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：2026-08-10 已更新平台女性讲师 `platform-female-instructor-v1@1.0.0` 的预设、对象存储签发与旧汽车教师退休规则；课程 87 已在显式 Demo 模式以三知识点合成 fixture 创建新 MediaRelease/正式 CourseRelease，并在真实本地 Chrome 完成播放、跨节点、静态降级和 480p 短测。该 fixture 不覆盖历史 20 节点快照，Fake WAV/无头短测不证明真实 TTS 或长时设备性能。
 - `phase1/阶段8_P5.1_音色与角色注册表.md`：平台注册的音色/角色版本冻结、签名 manifest 与前后端接入（2026-08-07 已实现）。
 - `phase1/阶段8_P5.2_OSS与旧链隔离.md`：Local PUT、S3/OSS presigned POST、confirm 校验、本地签名 scope 与 `/video-gen` 兼容隔离（2026-08-07 已实现）。
 
@@ -52,7 +52,7 @@
 - `phase1/阶段8_P5.0_Provider配置基线.md`：2026-08-07 新增；统一 `MEDIA_DEMO_MODE`、
   `fake-demo`/`doubao` 页面状态与正式 Provider fail-closed 规则。
 
-- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：现行方案与实施基线；2026-08-07 已复核课程 87 的 Fake WAV 课程级发布完成，后续入口是浏览器现场验收与受控真实 TTS POC。
+- 课程 87 的浏览器功能回归已有 2026-08-10 记录；后续入口是有头目标设备连续 10 分钟性能验收，以及每次都需教师重新授权的受控真实 TTS POC。
 - `phase1/阶段8_附加_教师数字人资产中心.md`：后续教师授权资产扩展；当前不是首版发布前置。
 - `phase1/阶段8_附加_DH_live浏览器实时渲染PoC验证报告.md`：DH_live 浏览器本地实时渲染与素材预处理的独立 PoC 实测记录（2026-08-06）；不改变主链，作为 M4 引擎接入评估依据。
 - `backend/docs/数字人合成api.md`、`backend/docs/video_create.md`、`docs/refactor/R1D-DuixAvatar*`、`docs/refactor/R2B数字人与PPT任务迁移报告.md`：已废弃/仅历史追溯，不得作为当前数字人路线或完成度依据。

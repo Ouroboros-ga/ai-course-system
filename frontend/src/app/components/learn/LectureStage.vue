@@ -71,6 +71,7 @@ const audioError = ref('')
 const legacyVideoError = ref('')
 const mediaDuration = ref(0)
 let applyingExternalTime = false
+let switchingMediaSource = false
 
 const activePlaylistItem = computed(() => props.playlist?.items?.[props.playlistIndex] ?? null)
 const activeAudioUrl = computed(() => activePlaylistItem.value?.audioUrl || props.audioUrl)
@@ -136,15 +137,41 @@ function sourceTimeForGlobal(globalTime) {
   return Math.max(0, timestamp - Number(props.currentNode?.timestampStart || 0))
 }
 
-function globalTimeFromElement() {
-  const element = mediaElement.value
+function globalTimeFromElement(element = mediaElement.value) {
   if (!element) return Math.max(0, Number(props.currentTime) || 0)
   if (hasAudio.value) return (hasPlaylist.value ? playlistOffset.value : 0) + element.currentTime
   return Number(props.currentNode?.timestampStart || 0) + element.currentTime
 }
 
-function emitPlayback(isPlaying = !mediaElement.value?.paused) {
-  const globalTime = globalTimeFromElement()
+function isActiveMediaElement(element) {
+  if (!element || element !== mediaElement.value) return false
+  const expected = hasAudio.value ? activeAudioUrl.value : props.legacyVideoUrl
+  const actual = element.currentSrc || element.src
+  if (!expected || !actual || typeof document === 'undefined') return true
+  try {
+    return new URL(expected, document.baseURI).href === new URL(actual, document.baseURI).href
+  } catch {
+    return expected === actual
+  }
+}
+
+function isTerminalMediaTime(element) {
+  const duration = Number(element?.duration)
+  const current = Number(element?.currentTime)
+  return Number.isFinite(duration) && duration > 0
+    && Number.isFinite(current) && current >= duration - 0.05
+}
+
+function emitPlayback(isPlaying, element = mediaElement.value) {
+  // Vue may deliver a final media event after a keyed element has already
+  // been replaced.  Never project an obsolete audio clock into the new item.
+  if (!isActiveMediaElement(element)) return
+  // Replacing a keyed <audio> element can fire final timeupdate/play/pause
+  // events on the old source.  None of them describe the newly selected
+  // playlist item, so ignore the old clock until new metadata is ready.
+  if (switchingMediaSource) return
+  const playing = isPlaying ?? !element.paused
+  const globalTime = globalTimeFromElement(element)
   const currentMs = globalTime * 1000
   const activeCue = hasAudio.value ? resolvePptCueAtTime(props.pptTimeline, currentMs) : null
   const activeSegment = hasAudio.value
@@ -152,7 +179,7 @@ function emitPlayback(isPlaying = !mediaElement.value?.paused) {
     : null
   emit('playback', {
     globalTime,
-    isPlaying,
+    isPlaying: playing,
     page: activeCue?.page ?? null,
     materialVersionId: activeCue?.materialVersionId ?? null,
     nodeId: activeCue?.nodeId ?? activeSegment?.nodeId ?? null,
@@ -168,30 +195,49 @@ function syncMediaSettings() {
   }
 }
 
-async function handleLoadedMetadata() {
-  const element = mediaElement.value
-  if (!element) return
+async function handleLoadedMetadata(event) {
+  const element = event?.currentTarget || mediaElement.value
+  if (!isActiveMediaElement(element)) return
   mediaDuration.value = Number.isFinite(element.duration) ? element.duration : 0
   syncMediaSettings()
   applyingExternalTime = true
   const target = sourceTimeForGlobal(props.currentTime)
   element.currentTime = Math.min(target, element.duration || target)
   applyingExternalTime = false
-  if (props.isPlaying) {
-    await element.play().catch(() => emitPlayback(false))
-  }
+  let playFailed = false
+  if (props.isPlaying) await element.play().catch(() => { playFailed = true })
+  if (!isActiveMediaElement(element)) return
+  switchingMediaSource = false
+  emitPlayback(playFailed ? false : !element.paused, element)
 }
 
-function handleTimeUpdate() {
-  if (!applyingExternalTime) emitPlayback()
+function handleTimeUpdate(event) {
+  const element = event?.currentTarget || mediaElement.value
+  if (!isActiveMediaElement(element)) return
+  // Browsers emit a final timeupdate after the element is already ended and
+  // paused.  Let handleEnded own the item transition; treating that final
+  // sample as a pause can preselect the next item and then skip it.
+  if (element.ended || isTerminalMediaTime(element)) return
+  if (!applyingExternalTime) emitPlayback(undefined, element)
 }
 
-function handleAudioError() {
+function handlePause(event) {
+  const element = event?.currentTarget || mediaElement.value
+  // Natural media completion emits pause before ended in some browsers.
+  // Keep the play intent so handleEnded can advance and resume the next item.
+  if (!isActiveMediaElement(element) || isTerminalMediaTime(element)) return
+  emitPlayback(false, element)
+}
+
+function handleAudioError(event) {
+  if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
+  switchingMediaSource = false
   audioError.value = '发布的讲解音频无法加载'
   emitPlayback(false)
 }
 
-function handleLegacyVideoError() {
+function handleLegacyVideoError(event) {
+  if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   legacyVideoError.value = '兼容讲解视频无法加载'
   emitPlayback(false)
 }
@@ -246,7 +292,12 @@ function skipBy(seconds) {
   seekTo((Number(props.currentTime) || 0) + seconds)
 }
 
-function handleEnded() {
+function handleEnded(event) {
+  if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
+  // An old keyed element may report ended again while Vue removes it.  The
+  // source switch already has an authoritative target, so ignore that stale
+  // event instead of advancing twice.
+  if (switchingMediaSource) return
   if (hasPlaylist.value && props.playlistIndex < (props.playlist?.items?.length || 0) - 1) {
     emit('playlist-next')
     return
@@ -269,6 +320,7 @@ function formatTime(value) {
 }
 
 watch([() => props.audioUrl, () => props.playlistIndex], async () => {
+  switchingMediaSource = true
   audioError.value = ''
   mediaDuration.value = 0
   await nextTick()
@@ -324,14 +376,14 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         class="sfx-stage-clock"
         @loadedmetadata="handleLoadedMetadata"
         @timeupdate="handleTimeUpdate"
-        @play="emitPlayback(true)"
-        @pause="emitPlayback(false)"
+        @play="emitPlayback(true, $event.currentTarget)"
+        @pause="handlePause"
         @ended="handleEnded"
         @error="handleAudioError"
       />
 
       <AvatarViewport
-        v-if="hasAudio && avatarCues && avatarSpriteManifest"
+        v-if="hasAudio && avatarCues"
         :cues="avatarCues"
         :sprite-manifest="avatarSpriteManifest"
         :current-time="avatarPlaybackTime"
@@ -349,8 +401,8 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         preload="metadata"
         @loadedmetadata="handleLoadedMetadata"
         @timeupdate="handleTimeUpdate"
-        @play="emitPlayback(true)"
-        @pause="emitPlayback(false)"
+        @play="emitPlayback(true, $event.currentTarget)"
+        @pause="handlePause"
         @ended="handleEnded"
         @error="handleLegacyVideoError"
       />

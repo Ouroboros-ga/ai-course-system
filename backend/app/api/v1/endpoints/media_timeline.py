@@ -22,6 +22,7 @@ from app.models.media_timeline_model import (
     CueType,
     DigitalHumanPreset,
 )
+from app.models.platform_media_preset_model import PlatformAvatarPreset
 from app.services.course_access_service import require_course_permission
 from app.services.object_storage import LocalStorageProvider, get_object_storage, mime_type_for
 from app.services.media_timeline_service import (
@@ -210,20 +211,42 @@ async def get_asset_content(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="object_key 不安全") from exc
 
-    # Platform-owned avatar textures are immutable shared assets, not a
-    # course-owned MediaAsset row.  Their signed URL still binds the exact
-    # course/release/preset and this branch repeats Course Access before any
-    # file is returned.  No other platform object can use this exception.
-    if signed_scope.get("purpose") == "platform_avatar_texture":
+    # Platform avatar manifests and textures are immutable shared registry
+    # assets, not course-owned MediaAsset rows.  Their signed URLs still bind
+    # the exact course/release/preset and this branch repeats Course Access
+    # before any file is returned.  The manifest key is matched against the
+    # registry row; textures remain confined to that version's asset prefix.
+    # No other platform object can use this exception.
+    platform_avatar_purpose = signed_scope.get("purpose")
+    if platform_avatar_purpose in {
+        "platform_avatar_manifest",
+        "platform_avatar_texture",
+    }:
         preset_id = signed_scope.get("preset_id", "")
         preset_version = signed_scope.get("preset_version", "")
-        expected_prefix = f"platform/avatar-presets/{preset_id}/{preset_version}/assets/"
-        if not preset_id or not preset_version or not object_key.startswith(expected_prefix):
-            raise HTTPException(status_code=403, detail="平台数字人纹理签名范围无效")
+        if not preset_id or not preset_version:
+            raise HTTPException(status_code=403, detail="平台数字人签名范围无效")
+        preset = session.exec(
+            select(PlatformAvatarPreset).where(
+                PlatformAvatarPreset.preset_id == preset_id,
+                PlatformAvatarPreset.version == preset_version,
+            )
+        ).first()
+        if preset is None:
+            raise HTTPException(status_code=404, detail="平台数字人预设不存在")
+        if platform_avatar_purpose == "platform_avatar_manifest":
+            object_in_scope = object_key == preset.manifest_object_key
+        else:
+            expected_prefix = (
+                f"platform/avatar-presets/{preset_id}/{preset_version}/assets/"
+            )
+            object_in_scope = object_key.startswith(expected_prefix)
+        if not object_in_scope:
+            raise HTTPException(status_code=403, detail="平台数字人资产签名范围无效")
         try:
             course_id = int(signed_scope["course_id"])
         except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=403, detail="平台数字人纹理课程范围无效") from exc
+            raise HTTPException(status_code=403, detail="平台数字人课程范围无效") from exc
         require_course_permission(session, current_user, course_id, "course.content.read")
         try:
             file_path = storage._safe_full_path(object_key)
@@ -231,7 +254,7 @@ async def get_asset_content(
                 raise FileNotFoundError(object_key)
             return FileResponse(path=file_path, media_type=mime_type_for(object_key), filename=None)
         except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="平台数字人纹理不存在") from exc
+            raise HTTPException(status_code=404, detail="平台数字人资产不存在") from exc
 
     asset = session.exec(
         select(MediaAsset).where(MediaAsset.object_key == object_key)
