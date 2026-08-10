@@ -24,6 +24,7 @@ from app.models.course_build_model import (
     BuildStepName,
     BuildStepStatus,
     CourseCorpusSnapshot,
+    CourseDraftBuildCheckpoint,
     CourseDraftBuildTask,
     CorpusSnapshotStatus,
     MaterialStatus,
@@ -265,6 +266,25 @@ async def get_draft_build_status(
         "failed": "build_failed",
         "cancelled": "build_cancelled",
     }
+    # Surface non-blocking degradation warnings (e.g. PREP_OUTLINE_COMPACTED,
+    # PREP_OUTLINE_DETERMINISTIC_FALLBACK) and a concise skeleton summary so
+    # the material workspace can tell the teacher the draft was auto-compacted
+    # without a separate request.  Only the persisting checkpoint carries the
+    # final result payload; earlier stages stay metadata-only.
+    warnings: list[str] = []
+    skeleton_summary: dict[str, Any] | None = None
+    if status in {"succeeded", "partial_success"}:
+        checkpoint = session.exec(select(CourseDraftBuildCheckpoint).where(
+            CourseDraftBuildCheckpoint.build_task_id == build.build_task_id,
+            CourseDraftBuildCheckpoint.stage == "persisting",
+        ).order_by(CourseDraftBuildCheckpoint.created_at.desc())).first()
+        if checkpoint is not None and isinstance(checkpoint.payload, dict):
+            warnings = list(checkpoint.payload.get("warnings") or [])
+            if checkpoint.payload.get("outline_node_count") is not None:
+                skeleton_summary = {
+                    "outline_node_count": checkpoint.payload.get("outline_node_count"),
+                    "script_node_count": checkpoint.payload.get("script_node_count"),
+                }
     return unified_response(code=200, message="获取自动备课状态成功", data={
         "course_id": course_id,
         "phase": phase_by_status.get(status, "building"),
@@ -273,6 +293,8 @@ async def get_draft_build_status(
         "course_draft_build_task_id": build.build_task_id,
         "task_id": build.task_id,
         "error_message": build.error_message or "",
+        "warnings": warnings,
+        "skeleton_summary": skeleton_summary,
     })
 
 

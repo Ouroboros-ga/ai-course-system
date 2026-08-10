@@ -83,6 +83,7 @@ class DraftAssetResult:
             "script_node_count": self.script_node_count,
             "markdown_resource_id": self.markdown_resource_id,
             "markdown_resource_version_id": self.markdown_resource_version_id,
+            "warnings": list(self.warnings or []),
         }
 
 

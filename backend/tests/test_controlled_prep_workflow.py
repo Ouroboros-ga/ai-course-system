@@ -12,6 +12,7 @@ from app.platform.agents.shared.error_messages import safe_prep_error_message
 from app.platform.agents.contracts.llm import LLMOptions, LLMTraceContext
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
+    CourseSkeletonBudget,
     EvidenceMapSegment,
     EvidenceReference,
     EvidenceSegment,
@@ -1056,11 +1057,13 @@ def test_outline_and_script_and_verifier_backfill_from_input_scope():
     ]
     assert outline.candidates[0].evidence_ids == ["es_1", "es_2"]
     assert script.evidence_ids == ["es_1", "es_2"]
-    assert script.paragraph_evidence == [["es_1", "es_2"], ["es_1", "es_2"]]
+    # Paragraphs receive compact local references rather than duplicating the
+    # complete candidate evidence set.
+    assert script.paragraph_evidence == [["es_1"], ["es_2"]]
     assert verification.findings[0].evidence_ids == ["es_1", "es_2"]
 
 
-def test_outline_backfill_caps_reference_set_to_proposal_limit():
+def test_outline_backfill_keeps_reference_set_local_and_bounded():
     request = ControlledPrepInput(evidence=[
         EvidenceReference(evidence_id=f"es_{index}", text="x" * 8, page=index + 1)
         for index in range(120)
@@ -1093,10 +1096,10 @@ def test_outline_backfill_caps_reference_set_to_proposal_limit():
     adapter = PrepLLMAdapter(structured_llm=CapturingStructured())
     outline = asyncio_run(adapter.plan_outline(request, segments))
 
-    # PatchOperationDraft.evidence_refs caps at 100; the backfill must stay
-    # within it while keeping a representative, deterministic subset.
-    assert len(outline.candidates[0].evidence_ids) == 100
-    assert set(outline.candidates[0].evidence_ids) <= {f"es_{index}" for index in range(120)}
+    # A knowledge point keeps a local subset instead of inheriting every one
+    # of the source segment's 120 references.
+    assert len(outline.candidates[0].evidence_ids) == 8
+    assert outline.candidates[0].evidence_ids == [f"es_{index}" for index in range(8)]
 
 
 def test_reduce_hierarchy_uses_lean_intermediate_and_full_final_level(monkeypatch):
@@ -1624,32 +1627,63 @@ def test_outline_normal_return_has_knowledge_point_single_call():
 
 
 def test_outline_directory_only_retries_and_recovers():
-    stages = OutlineStages([_outline_payload_directory_only(), _outline_payload_with_kp()])
+    # First call returns directory-only (no kp).  The workflow backfills
+    # knowledge points onto the leaf sections and recovers with a
+    # KNOWLEDGE_POINT_BACKFILLED warning rather than failing.
+    stages = OutlineStages([_outline_payload_directory_only()])
     outline, warnings = asyncio_run(
         ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
     )
     assert any(c.node_type == "knowledge_point" for c in outline.candidates)
-    assert warnings == []
-    assert stages.calls == 2
+    assert any("PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED" in item for item in warnings)
+    assert stages.calls == 1
 
 
 def test_outline_second_directory_miss_backfills_knowledge_points():
+    # Directory-only on both the normal and the compact call: leaf backfill
+    # attaches knowledge points to the leaf sections.
     stages = OutlineStages([_outline_payload_directory_only()], repeat_last=True)
     outline, warnings = asyncio_run(
         ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
     )
     knowledge_points = [c for c in outline.candidates if c.node_type == "knowledge_point"]
-    # Both leaf sections s1 and s2 get a same-title knowledge_point child.
     assert len(knowledge_points) == 2
     assert {kp.parent_candidate_id for kp in knowledge_points} == {"s1", "s2"}
     assert {kp.title for kp in knowledge_points} == {"第一节", "第二节"}
     assert all(kp.evidence_ids == ["evg_1"] for kp in knowledge_points)
     assert any("PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED" in item for item in warnings)
+
+
+def test_outline_over_budget_triggers_compact_recovery():
+    # An over-budget response is rejected by the schema (structured_output_invalid);
+    # the workflow catches it and runs one compact skeleton recovery call which
+    # returns a valid tree.
+    class OverBudgetThenValid:
+        def __init__(self):
+            self.calls = 0
+
+        async def plan_outline(self, _request, _segments, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise StructuredOutputError(
+                    "outline exceeded bounded size",
+                    reason_code="structured_output_invalid",
+                    stage="plan_outline",
+                )
+            return OutlinePlannerResult.model_validate(_outline_payload_with_kp())
+
+    stages = OverBudgetThenValid()
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+    )
+    assert any("PREP_OUTLINE_COMPACTED" in item for item in warnings)
     assert stages.calls == 2
 
 
-def test_outline_no_parent_raises_safe_reason_code():
-    # A parent cycle means no leaf chapter/section exists to attach a point.
+def test_outline_no_valid_tree_falls_back_to_deterministic_skeleton():
+    # A parent cycle means no leaf node exists for backfill; the workflow
+    # compiles a deterministic skeleton from the evidence segment titles
+    # instead of failing the whole build.
     cycle = {
         "candidates": [
             {"candidate_id": "s1", "node_type": "section", "title": "第一节", "parent_candidate_id": "s2", "evidence_ids": ["evg_1"]},
@@ -1658,18 +1692,89 @@ def test_outline_no_parent_raises_safe_reason_code():
         "prerequisites": [],
     }
     stages = OutlineStages([cycle], repeat_last=True)
-    with pytest.raises(StructuredOutputError) as excinfo:
-        asyncio_run(
-            ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
-        )
-    assert excinfo.value.reason_code == "PREP_OUTLINE_NO_KNOWLEDGE_POINTS"
+    outline, warnings = asyncio_run(
+        ControlledPrepWorkflow(stages).plan_outline(_outline_request(), _outline_segments())
+    )
+    knowledge_points = [c for c in outline.candidates if c.node_type == "knowledge_point"]
+    # Deterministic fallback built one knowledge point from the single segment.
+    assert len(knowledge_points) == 1
+    assert knowledge_points[0].title == "材料"
+    assert knowledge_points[0].evidence_ids == ["evg_1"]
+    assert any("PREP_OUTLINE_DETERMINISTIC_FALLBACK" in item for item in warnings)
 
-    # The teacher-facing message is safe Chinese text with the diagnostic id.
-    from app.platform.tasks.handlers import _course_build_failure_message
-    rendered = _course_build_failure_message(excinfo.value, run_id="prep_initial_cdbt_2")
-    assert "无法生成可讲授的知识点" in rendered
-    assert "诊断编号：prep_initial_cdbt_2" in rendered
-    assert "no knowledge point candidate" not in rendered
+
+def test_skeleton_budget_shrinks_for_small_corpora():
+    # Two evidence segments must not force 8-12 sections; the budget derives
+    # a proportionally smaller target so the model never invents structure.
+    budget = CourseSkeletonBudget.for_evidence_segment_count(2)
+    assert budget.target_sections <= 2
+    assert budget.target_knowledge_points <= 2
+    assert budget.target_total_nodes <= 5
+
+
+def test_skeleton_budget_targets_typical_textbook():
+    # A 577-page textbook yielding 32 segments targets the full skeleton range.
+    budget = CourseSkeletonBudget.for_evidence_segment_count(32)
+    assert 8 <= budget.target_sections <= 12
+    assert 12 <= budget.target_knowledge_points <= 24
+    assert budget.target_total_nodes <= 48
+
+
+def test_outline_request_constraints_carry_skeleton_budget(monkeypatch):
+    # The adapter must forward mode + target_* + max_* from the budget so the
+    # model sees the course-skeleton contract, not scattered config values.
+    captured = {}
+
+    class CapturingPort:
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            captured["messages"] = messages
+            payload = {
+                "stage": "outline_planner",
+                "candidates": [{
+                    "candidate_id": "k1",
+                    "node_type": "knowledge_point",
+                    "title": "kp",
+                }],
+                "prerequisites": [],
+            }
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(payload),
+                "content": json.dumps(payload),
+            })()
+
+    from app.platform.agents.prep.llm_adapter import PrepLLMAdapter
+    adapter = PrepLLMAdapter(structured_llm=CapturingPort())
+    request = _outline_request()
+    asyncio_run(adapter.plan_outline(request, _outline_segments()))
+    user_payload = json.loads(captured["messages"][1]["content"])
+    constraints = user_payload["constraints"]
+    assert user_payload["mode"] == "course_skeleton"
+    assert "target_sections" in constraints
+    assert "target_knowledge_points" in constraints
+    assert "max_total_nodes" in constraints
+    # Evidence ids are never sent to the model (the constraint key name
+    # ``do_not_output_evidence_ids`` is intentional and contains the substring
+    # only as a rule label; the real check is that no segment carries an id).
+    for segment in user_payload["segments"]:
+        assert "evidence_id" not in segment
+        assert "evidence_ids" not in segment
+
+
+def test_initial_runtime_failure_preserves_stage_label():
+    # stage must cross the Runtime boundary so the teacher sees "课程结构规划"
+    # instead of "未知阶段".
+    from app.platform.tasks.handlers import _initial_runtime_failure
+    failure = _initial_runtime_failure({
+        "errors": [{
+            "code": "INITIAL_BUILD_FAILED",
+            "message": "失败",
+            "reason_code": "structured_output_invalid",
+            "stage": "plan_outline",
+            "error_type": "StructuredOutputError",
+        }],
+    })
+    assert failure is not None
+    assert failure.stage == "plan_outline"
 
 
 def json_dumps(value) -> str:

@@ -46,6 +46,7 @@ from ..contracts.llm import (
 )
 from app.core.config import settings
 from app.platform.agents.contracts.llm import StructuredOutputError
+from .evidence_binding import bind_evidence_refs, bind_outline_evidence_refs
 from .prompts import (
     EVIDENCE_REDUCER_PROMPT,
     EVIDENCE_SEGMENTER_PROMPT,
@@ -171,8 +172,8 @@ class PrepLLMAdapter:
     def _script_evidence_max_chars() -> int:
         """Cap the evidence text sent into one script/verifier prompt.
 
-        Outline backfill attributes the whole course corpus to every node, so
-        without this bound each script request would carry the entire material.
+        Candidate evidence is locally attributed, but scripts still receive a
+        bounded subset so one unusually rich topic cannot bloat its request.
         """
         return max(1, int(settings.PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS))
 
@@ -224,24 +225,12 @@ class PrepLLMAdapter:
         return selected
 
     @staticmethod
-    def _union_evidence_ids(segments: list[Any]) -> list[str]:
-        """Deterministic, deduplicated union of the input group's evidence."""
-        ids: list[str] = []
-        seen: set[str] = set()
-        for segment in segments:
-            for value in segment.evidence_ids:
-                if value not in seen:
-                    seen.add(value)
-                    ids.append(value)
-        return ids
-
-    @staticmethod
     def _cap_evidence_ids(ids: list[str], limit: int = 100) -> list[str]:
-        """Deterministically cap a backfilled reference set.
+        """Deterministically cap an already-local evidence reference set.
 
-        ``PatchOperationDraft.evidence_refs`` allows at most 100 entries, so
-        outline nodes and scripts keep a representative, bounded citation set
-        sampled coarse-to-fine instead of the whole course corpus.
+        ``PatchOperationDraft.evidence_refs`` allows at most 100 entries. The
+        local binder normally returns far fewer, while this remains a defense
+        against malformed legacy inputs.
         """
         if len(ids) <= limit:
             return list(ids)
@@ -296,17 +285,30 @@ class PrepLLMAdapter:
         }
 
     @staticmethod
-    def _backfilled_script(wire: Any, candidate: Any) -> "TeachingScriptNodeDraft":
+    def _backfilled_script(
+        wire: Any,
+        candidate: Any,
+        request: "ControlledPrepInput",
+    ) -> "TeachingScriptNodeDraft":
         """Fill the strict domain script from a model-facing wire draft.
 
-        ``evidence_ids`` come from the bound outline candidate and
-        ``paragraph_evidence`` mirrors them per paragraph, so the strict
-        alignment validator holds without asking the model for identifiers.
+        ``evidence_ids`` come from the bound outline candidate. Paragraphs are
+        then attributed to a compact local subset of those same server-side
+        references; they are never filled with the whole candidate set.
         """
         from app.schemas.controlled_prep import TeachingScriptNodeDraft as _Result
 
         evidence_ids = PrepLLMAdapter._cap_evidence_ids(list(candidate.evidence_ids))
-        paragraph_count = len(wire.content.split("\n\n"))
+        candidate_evidence = [
+            item for item in request.evidence
+            if item.evidence_id in set(evidence_ids)
+        ]
+        paragraph_evidence = bind_evidence_refs(
+            wire.content.split("\n\n"),
+            candidate_evidence,
+            max_source_items=1,
+            max_evidence_refs=2,
+        )
         return _Result(
             stage="script_writer",
             candidate_id=wire.candidate_id,
@@ -317,7 +319,7 @@ class PrepLLMAdapter:
             style=wire.style,
             content=wire.content,
             claims=wire.claims,
-            paragraph_evidence=[evidence_ids] * paragraph_count,
+            paragraph_evidence=paragraph_evidence,
         )
 
     @staticmethod
@@ -372,8 +374,9 @@ class PrepLLMAdapter:
     ) -> "EvidenceSegmentMapResult":
         """Stage 1 Map: segment one bounded evidence batch.
 
-        The model returns topic segments without any evidence identifier; the
-        adapter attributes every segment to the whole input batch afterwards.
+        The model returns topic segments without any evidence identifier. The
+        adapter binds every segment to a small relevant subset of the ordered
+        input batch afterwards.
         """
         from app.schemas.controlled_prep import (
             EvidenceSegment as _Segment,
@@ -405,17 +408,22 @@ class PrepLLMAdapter:
             trace_id=trace_id,
         )
         wire_result = self._parsed_or_validate(response, _WireResult)
-        batch_ids = [item.evidence_id for item in request.evidence]
+        bound_refs = bind_evidence_refs(
+            wire_result.segments,
+            request.evidence,
+            max_source_items=3,
+            max_evidence_refs=6,
+        )
         return _Result(segments=[
             _Segment(
                 segment_id=item.segment_id,
                 title=item.title,
                 topic=item.topic,
-                evidence_ids=batch_ids,
+                evidence_ids=refs,
                 examples=item.examples,
                 exercises=item.exercises,
             )
-            for item in wire_result.segments
+            for item, refs in zip(wire_result.segments, bound_refs, strict=True)
         ])
 
     async def reduce_evidence(
@@ -434,10 +442,10 @@ class PrepLLMAdapter:
         then only carries ``title``/``topic`` so a level's request and response
         stay small and finish within the completion budget.  The final level
         keeps ``lean=False`` and re-adds bounded examples/exercises.  Evidence
-        ids are never returned by the model: every merged segment receives the
-        deterministic union of its input group.  ``preferred_target`` is the
-        ideal segment ceiling for non-final levels (ceil(n * 0.25)); the caller
-        independently validates real progress against its hard ceiling.
+        ids are never returned by the model: every merged segment is bound to
+        a compact local subset of its input segments. ``preferred_target`` is
+        the ideal segment ceiling for non-final levels (ceil(n * 0.25)); the
+        caller independently validates real progress against its hard ceiling.
         """
         from app.schemas.controlled_prep import (
             EvidenceReduceResult as _WireResult,
@@ -472,17 +480,22 @@ class PrepLLMAdapter:
             trace_id=trace_id,
         )
         wire_result = self._parsed_or_validate(response, wire_schema)
-        union_ids = PrepLLMAdapter._union_evidence_ids(segments)
+        bound_refs = bind_evidence_refs(
+            wire_result.segments,
+            segments,
+            max_source_items=4,
+            max_evidence_refs=12,
+        )
         return _Result(segments=[
             _Segment(
                 segment_id=item.segment_id,
                 title=item.title,
                 topic=item.topic,
-                evidence_ids=union_ids,
+                evidence_ids=refs,
                 examples=getattr(item, "examples", []) or [],
                 exercises=getattr(item, "exercises", []) or [],
             )
-            for item in wire_result.segments
+            for item, refs in zip(wire_result.segments, bound_refs, strict=True)
         ])
 
     async def plan_outline(
@@ -495,9 +508,9 @@ class PrepLLMAdapter:
     ) -> "OutlinePlannerResult":
         """Stage 2: plan the chapter -> section -> knowledge_point outline tree.
 
-        The model never returns evidence identifiers; every candidate and
-        prerequisite receives the deterministic union of the input segments'
-        evidence after the call.
+        The model never returns evidence identifiers. Each candidate is bound
+        to locally relevant evidence segments, then parent nodes aggregate only
+        their own subtree's bounded evidence.
         """
         from app.schemas.controlled_prep import (
             OutlineCandidate as _Candidate,
@@ -506,12 +519,18 @@ class PrepLLMAdapter:
             PrerequisiteCandidate as _Prerequisite,
         )
 
+        budget = request.skeleton_budget
         user_payload = {
             **self._request_context(request),
+            "mode": budget.mode,
             "constraints": {
                 "min_knowledge_points": 1,
-                "max_knowledge_points": int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS),
-                "max_total_nodes": int(settings.PREP_INITIAL_MAX_OUTLINE_NODES),
+                "target_sections": int(budget.target_sections),
+                "target_knowledge_points": int(budget.target_knowledge_points),
+                "target_total_nodes": int(budget.target_total_nodes),
+                "max_sections": int(budget.max_sections),
+                "max_knowledge_points": int(budget.max_knowledge_points),
+                "max_total_nodes": int(budget.max_total_nodes),
                 "return_json_only": True,
                 "do_not_output_evidence_ids": True,
             },
@@ -529,8 +548,9 @@ class PrepLLMAdapter:
             trace_id=trace_id,
         )
         wire_result = self._parsed_or_validate(response, _WireResult)
-        union_ids = PrepLLMAdapter._cap_evidence_ids(
-            PrepLLMAdapter._union_evidence_ids(segments.segments)
+        refs_by_candidate = bind_outline_evidence_refs(
+            wire_result.candidates,
+            segments.segments,
         )
         return _Result(
             candidates=[
@@ -539,7 +559,7 @@ class PrepLLMAdapter:
                     node_type=item.node_type,
                     title=item.title,
                     parent_candidate_id=item.parent_candidate_id,
-                    evidence_ids=union_ids,
+                    evidence_ids=refs_by_candidate[item.candidate_id],
                     rationale=item.rationale,
                 )
                 for item in wire_result.candidates
@@ -548,7 +568,9 @@ class PrepLLMAdapter:
                 _Prerequisite(
                     knowledge_point_candidate_id=item.knowledge_point_candidate_id,
                     prerequisite_title=item.prerequisite_title,
-                    evidence_ids=union_ids,
+                    evidence_ids=refs_by_candidate[
+                        item.knowledge_point_candidate_id
+                    ],
                     rationale=item.rationale,
                 )
                 for item in wire_result.prerequisites
@@ -596,7 +618,7 @@ class PrepLLMAdapter:
             max_tokens=max_tokens,
         )
         wire_draft = self._parsed_or_validate(response, _WireDraft)
-        return PrepLLMAdapter._backfilled_script(wire_draft, candidate)
+        return PrepLLMAdapter._backfilled_script(wire_draft, candidate, request)
 
     async def write_scripts_batch(
         self,
@@ -656,7 +678,7 @@ class PrepLLMAdapter:
                     reason_code="structured_output_invalid",
                     stage="write_scripts_batch",
                 )
-            scripts.append(PrepLLMAdapter._backfilled_script(wire_draft, candidate))
+            scripts.append(PrepLLMAdapter._backfilled_script(wire_draft, candidate, request))
         return scripts
 
     async def verify_script(
@@ -669,8 +691,8 @@ class PrepLLMAdapter:
     ) -> "EvidenceVerifierResult":
         """Stage 4: verify that the script's conclusions are evidence-backed.
 
-        Findings receive the script's evidence set as their backfilled
-        ``evidence_ids``; the model never returns identifiers.
+        Findings receive a local subset of the script's existing evidence;
+        the model never returns identifiers.
         """
         from app.schemas.controlled_prep import (
             EvidenceFinding as _Finding,
@@ -705,18 +727,26 @@ class PrepLLMAdapter:
             trace_id=trace_id,
         )
         wire_result = self._parsed_or_validate(response, _WireResult)
-        backfilled_ids = list(script.evidence_ids)
+        allowed_evidence = [
+            item for item in request.evidence if item.evidence_id in evidence_ids
+        ]
+        finding_refs = bind_evidence_refs(
+            wire_result.findings,
+            allowed_evidence,
+            max_source_items=2,
+            max_evidence_refs=4,
+        )
         return _Result(
             stage="evidence_verifier",
             verdict=wire_result.verdict,
             findings=[
                 _Finding(
                     claim=item.claim,
-                    evidence_ids=backfilled_ids,
+                    evidence_ids=refs,
                     supported=item.supported,
                     reason=item.reason,
                 )
-                for item in wire_result.findings
+                for item, refs in zip(wire_result.findings, finding_refs, strict=True)
             ],
             unsupported_paragraph_indexes=wire_result.unsupported_paragraph_indexes,
         )

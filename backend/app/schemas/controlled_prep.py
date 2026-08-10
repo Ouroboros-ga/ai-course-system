@@ -364,6 +364,54 @@ class PatchProposalDraft(StrictModel):
     operations: list[PatchOperationDraft] = Field(min_length=1, max_length=500)
 
 
+class CourseSkeletonBudget(StrictModel):
+    """Single source of truth for the first-draft course-skeleton targets.
+
+    The initial preparation produces an auditable course skeleton (chapter ->
+    section -> knowledge_point), not a replica of a textbook table of contents.
+    Targets are ideal ranges the model aims for; ``max_*`` fields are hard
+    ceilings enforced by the outline schema and the workflow.  Small corpora
+    receive proportionally smaller targets so the model never invents structure
+    to fill a quota.
+    """
+
+    mode: Literal["course_skeleton"] = "course_skeleton"
+    target_sections: int = Field(default=10, ge=1, le=12)
+    target_knowledge_points: int = Field(default=16, ge=1, le=24)
+    target_total_nodes: int = Field(default=30, ge=1, le=48)
+    max_sections: int = Field(default=12, ge=1, le=12)
+    max_knowledge_points: int = Field(default=24, ge=1, le=24)
+    max_total_nodes: int = Field(default=64, ge=1, le=64)
+
+    @model_validator(mode="after")
+    def _validate_ranges(self) -> "CourseSkeletonBudget":
+        if self.target_sections > self.max_sections:
+            raise ValueError("target_sections cannot exceed max_sections")
+        if self.target_knowledge_points > self.max_knowledge_points:
+            raise ValueError("target_knowledge_points cannot exceed max_knowledge_points")
+        if self.target_total_nodes > self.max_total_nodes:
+            raise ValueError("target_total_nodes cannot exceed max_total_nodes")
+        return self
+
+    @classmethod
+    def for_evidence_segment_count(cls, segment_count: int) -> "CourseSkeletonBudget":
+        """Derive proportionate targets from the resolved evidence segments.
+
+        A 577-page textbook yielding 32 segments targets ~10 sections / ~16
+        knowledge points; a 3-page handout with 2 segments targets 1-2 of
+        each instead of inventing 8 units to fill a quota.
+        """
+        n = max(1, int(segment_count))
+        target_sections = max(1, min(12, min(10, (n + 1) // 3)))
+        target_kp = max(1, min(24, max(target_sections, min(16, n))))
+        target_nodes = target_sections + target_kp + 1
+        return cls(
+            target_sections=target_sections,
+            target_knowledge_points=target_kp,
+            target_total_nodes=min(48, target_nodes),
+        )
+
+
 class ControlledPrepInput(StrictModel):
     # Deprecated compatibility field. Initial Prep sends typed evidence units
     # only; excluding this field prevents the corpus from being serialized a
@@ -372,6 +420,7 @@ class ControlledPrepInput(StrictModel):
     evidence: list[EvidenceReference] = Field(min_length=1, max_length=1000)
     course_positioning: str = Field(default="", max_length=2_000)
     style: TeachingStyleConfig = Field(default_factory=TeachingStyleConfig)
+    skeleton_budget: CourseSkeletonBudget = Field(default_factory=CourseSkeletonBudget)
 
     @model_validator(mode="after")
     def validate_unique_evidence(self) -> "ControlledPrepInput":

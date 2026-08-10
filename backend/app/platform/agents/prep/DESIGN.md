@@ -222,15 +222,17 @@ InitialCoursePrepPort.build(
 
 **材料证据整理 v2（2026-08-09）**：层级 Reduce 的**中间层改为瘦合并**——只输出 `title/topic`（`LeanEvidenceReduceResult`），`examples/exercises` 延后到最后一级才生成；二者无下游消费者（大纲只用证据 ID，讲稿用证据原文），此前逐级携带导致中间层响应 `finish_reason=length` 并烧掉调用预算。最后一级仍走完整线格式并保持既有去重/裁剪归一化。预算同步从 40 提升到 64。并发执行改为"首个异常即取消在途 sibling"（`ControlledPrepWorkflow._run_concurrent`），避免预算耗尽后残留 LLM 请求继续运行。
 
-**材料证据整理 v3：证据 ID 程序回填（2026-08-09）**：LLM 在 Map/Reduce 阶段曾幻觉出不存在的 `evg_...` ID，硬门会正确拒绝但直接终止任务。为从根上消除该风险，**所有 Initial 阶段的 LLM 输出与输入都不再包含 `evidence_id / evidence_ids / evidence_refs / paragraph_evidence`**（wire schema 全都不带这些字段，`EvidenceReference.llm_payload()` 也不再下发 evidence_id），证据归属一律由 `PrepLLMAdapter` 按确定性输入范围回填：
+**材料证据整理 v3：证据 ID 程序回填（2026-08-09，2026-08-10 粒度修正）**：LLM 在 Map/Reduce 阶段曾幻觉出不存在的 `evg_...` ID，硬门会正确拒绝但直接终止任务。为从根上消除该风险，**所有 Initial 阶段的 LLM 输出与输入都不再包含 `evidence_id / evidence_ids / evidence_refs / paragraph_evidence`**（wire schema 全都不带这些字段，`EvidenceReference.llm_payload()` 也不再下发 evidence_id）。但“按输入范围取全量并集”会让所有目录、讲稿和图谱候选显示同一份课程证据，已废弃。
 
-- Map：每个输出段回填**整个输入批次**的证据 ID；
-- Reduce：每个合并段回填**参与合并分段的确定性并集**；
-- 大纲候选/prerequisite：回填**全部输入分段证据的并集**，并按粗到细顺序截断到 ≤100（对齐 `PatchOperationDraft.evidence_refs` 上限）；
-- 讲稿：`evidence_ids` 取自其绑定的大纲候选（≤100），`paragraph_evidence` 按段落数回填同一证据集以保持对齐校验；
-- 校验：每个 finding 回填该讲稿的证据集。
+现由 `evidence_binding.py` 在服务端基于标题/主题/文本的确定性词法匹配与输入顺序先验绑定**局部既有证据**，不调用模型、不生成 ID、不持久化原文：
 
-由此代价是证据粒度绑定到"输入分段/材料组"，不再由模型声明"哪句话精确来自哪条证据"；审计仍保留（服务端展开 `block_id`）。讲稿/校验 prompt 的输入证据改为程序侧粗到细有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符），避免大纲节点全量引用后把整本材料塞进每次讲稿请求。Map 与 Reduce 的 wire 线格式共用 `BoundedSuggestionFields` 稳定归一化（examples/exercises 去重、去空、裁剪到 10 条），模型超产 15 条时不再触发结构化重试；Map wire 层还会丢弃模型在分段内重复输出的顶层 `stage` 字段，其余未知字段仍严格拒绝。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
+- Map：每个输出段从当前输入批次选择至多 3 个相关证据单元（至多 6 个引用）；
+- Reduce：每个合并段从已局部绑定的输入分段选择至多 4 个来源（至多 12 个引用），绝不取整个 Reduce 组的并集；
+- 大纲：知识点直接绑定至多 8 个相关引用；section 只汇总自身子树且至多 12 个，chapter 至多 24 个；prerequisite 继承其目标知识点的局部集合；
+- 讲稿：继承知识点局部集合，`paragraph_evidence` 再逐段绑定 1 个来源/至多 2 个引用；校验 finding 绑定至多 2 个来源/4 个引用；
+- 持久化：`InitialCoursePrepService` 仍在服务器端把证据单元展开为 canonical `block_id`，但不会增加跨主题引用。
+
+因此模型永远不声明“哪条精确 ID”，而每个草稿节点仍保有可审计、可读的局部来源。旧版全量并集生成的未审核草稿必须在修复后通过同一 corpus 重建为新版本，不原地伪造归因；已锁定或已发布版本绝不自动改写。讲稿/校验 prompt 的输入证据仍使用程序侧有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符）。Map 与 Reduce 的 wire 线格式共用 `BoundedSuggestionFields` 稳定归一化（examples/exercises 去重、去空、裁剪到 10 条），模型超产 15 条时不再触发结构化重试；Map wire 层还会丢弃模型在分段内重复输出的顶层 `stage` 字段，其余未知字段仍严格拒绝。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
 
 **材料证据整理 v4：失败分类 + 可验证收敛 + 诊断上下文（2026-08-10）**：此前 Reduce 固定 8 层"碰运气"，模型摘要不压缩时任务被错误归类为 `PREP_EVIDENCE_BUDGET_EXCEEDED`，前端误导教师"请减少材料或拆分课程"。本版改动：
 
@@ -244,10 +246,11 @@ InitialCoursePrepPort.build(
 
 **大纲契约：必须产出至少一个知识点（2026-08-10）**：此前模型若只返回 `chapter/section` 目录节点（0 个 `knowledge_point`），大纲阶段只检查"候选总数不超限"，直到脚本阶段才以裸 `ValueError`（`no knowledge point candidate selected`）崩溃。本版补齐：
 
-- **请求侧**：`llm_adapter.plan_outline` 的 `constraints` 增加 `min_knowledge_points: 1`；`OUTLINE_PLANNER_PROMPT` 升级到 v2.2，硬性要求至少生成 1 个可讲授知识点，并提示"为叶子 section 生成同主题 knowledge_point 子节点"。
-- **程序侧硬校验 + 一次定向重试**：`ControlledPrepWorkflow.plan_outline` 校验结果，知识点为 0 时以同一 Port（强化后 Prompt）重试一次。
-- **确定性兜底**：重试仍无知识点时，为每个**叶子 section**（无子节点的 section，退化到叶子 chapter）创建**同名 `knowledge_point` 子节点**；保留原标题、父子关系与程序回填的证据（模型不编造证据或精确 ID），并写入 `PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED` 警告透传到 `DraftAssetResult.warnings`，供教师知悉该结构由系统保底生成。
-- **明确的失败码**：若不存在可挂靠的 section/chapter（如异常环结构），返回 `PREP_OUTLINE_NO_KNOWLEDGE_POINTS`，教师端显示安全中文文案并附诊断编号，不再暴露英文内部错误。
+- **请求侧**：`llm_adapter.plan_outline` 的 `constraints` 增加 `min_knowledge_points: 1`；`OUTLINE_PLANNER_PROMPT` 升级到 v2.3，明确"生成可审核的课程骨架，而非复刻教材目录"，给出 8-12 单元 / 12-24 知识点的目标范围与硬上限，并要求小材料按容量等比缩减目标。
+- **课程骨架预算对象**：`CourseSkeletonBudget`（`mode=course_skeleton`、`target_sections/target_knowledge_points/target_total_nodes`、`max_*` 硬上限）作为单一事实源接入 `ControlledPrepInput.skeleton_budget`；`plan_outline` 调用前按证据分段数 `for_evidence_segment_count` 动态校准目标（577 页 32 段 -> 8-12 单元；3 页 2 段 -> 1-2 单元），小材料不强行凑够 8 个单元。adapter 把 `mode + target_* + max_*` 统一写进 `constraints`，不再散落在 Prompt/配置/工作流里。
+- **四级恢复阶梯**（`plan_outline`）：1) 正常生成（含 JSON 自动修复）；2) 超预算或树不合法时一次"压缩课程骨架"调用（`_compact_outline_recovery`，预算减半重试）；3) 仍缺知识点时为叶子 section 确定性回填同名 `knowledge_point`（`PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED`）；4) 完全无可用树时从证据分段标题确定性编译骨架（`_compile_deterministic_skeleton`，`PREP_OUTLINE_DETERMINISTIC_FALLBACK`），不调用模型、不伪造证据、不泄漏证据 ID。这彻底消除"模型格式有问题就整次备课失败"。
+- **错误与警告链路**：`TaskExecutionError` 新增 `stage` 透传，`_initial_runtime_failure` 保留失败阶段，教师端显示"课程结构规划"而非"未知阶段"；`DraftAssetResult.to_progress_data()` 含 `warnings`，`course_draft_build_handler` 存入 persisting checkpoint；`draft-build-status` 接口在 succeeded 时返回 `warnings` 与 `skeleton_summary`（节点数摘要），前端 `BuildMaterialsPage` 消费后展示非阻塞提示（如"已生成课程骨架：N 个节点，系统已合并细碎目录，进入结构页可继续调整"）。
+- **明确的失败码**：仅在连证据分段也不存在时返回 `PREP_OUTLINE_NO_KNOWLEDGE_POINTS`，教师端显示安全中文文案并附诊断编号。
 
 ### Workflow 2：IncrementalEditGraph
 

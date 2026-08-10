@@ -65,6 +65,7 @@ class TaskExecutionError(Exception):
         *,
         retryable: bool = True,
         reason_code: str | None = None,
+        stage: str | None = None,
     ) -> None:
         super().__init__(message)
         self.error_code = error_code
@@ -75,6 +76,9 @@ class TaskExecutionError(Exception):
         # outer handlers can emit precise diagnostics instead of a generic
         # fallback message.
         self.reason_code = reason_code
+        # Preserve the failing stage (e.g. plan_outline) so the teacher-facing
+        # message can say "课程结构规划" instead of "未知阶段".
+        self.stage = stage
 
 
 def _classify_exception(exc: Exception) -> tuple[str, str, bool]:

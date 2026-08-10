@@ -202,7 +202,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
           <SfxBadge :tone="selected.locked ? 'green' : 'amber'">{{ selected.locked ? '已锁定' : '可编辑' }}</SfxBadge>
         </header>
         <label>知识点名称<input v-model="selected.title" :disabled="!editable || selected.locked" @blur="save(selected)" /></label>
-        <p v-if="selected.source_block_refs?.length" class="source-summary">关联原文区块：{{ selected.source_block_refs.join('、') }}</p>
+        <p v-if="selected.source_block_refs?.length" class="source-summary">已关联 {{ selected.source_block_refs.length }} 个原文区块；可在右侧助教面板的“节点来源”查看具体原文。</p>
         <p v-if="saving === selected.outline_node_id" class="saving"><Save :size="14" /> 正在保存更改</p>
         <div class="node-actions">
           <SfxButton variant="secondary" size="sm" :disabled="!editable || nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id) === 0" @click="move(nodes.findIndex((node) => node.outline_node_id === selected.outline_node_id), -1)"><ChevronUp :size="15" /> 上移</SfxButton>

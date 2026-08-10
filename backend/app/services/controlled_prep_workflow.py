@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.platform.agents.contracts.llm import StructuredOutputError
 from app.schemas.controlled_prep import (
     ControlledPrepInput,
+    CourseSkeletonBudget,
     EvidenceReference,
     EvidenceSegment,
     EvidenceSegmentMapResult,
@@ -460,16 +461,26 @@ class ControlledPrepWorkflow:
         request: ControlledPrepInput,
         segments: EvidenceSegmenterResult,
     ) -> tuple[OutlinePlannerResult, list[str]]:
-        """Plan the course tree and guarantee at least one teachable point.
+        """Plan the course tree with a four-level recovery ladder.
 
-        Returns ``(outline, warnings)``.  A model response containing only
-        chapter/section directory nodes (zero ``knowledge_point``) is a
-        contract miss: it gets one targeted retry with the strengthened
-        prompt, then a deterministic leaf-section backfill; only when there is
-        no usable parent node does the build fail with
-        ``PREP_OUTLINE_NO_KNOWLEDGE_POINTS`` instead of crashing at the script
-        stage with a raw ``ValueError``.
+        Returns ``(outline, warnings)``.  Recovery order:
+        1. Normal outline generation (structured port + JSON auto-repair).
+        2. If the result is over-budget or has an invalid tree, one
+           "compact course skeleton" call with the same port.
+        3. If the compacted result still lacks knowledge points, deterministic
+           leaf-section knowledge-point backfill.
+        4. If no usable tree exists at all, a deterministic skeleton compiled
+           from the evidence segment titles (no model, no fabricated evidence).
+
+        Only step 4 writes a draft when the model could not produce a valid
+        tree at all; it is marked ``PREP_OUTLINE_DETERMINISTIC_FALLBACK`` so the
+        teacher knows the structure is system-generated and needs review.
         """
+        budget = CourseSkeletonBudget.for_evidence_segment_count(
+            len(segments.segments)
+        )
+        request = request.model_copy(update={"skeleton_budget": budget})
+
         def validate(result: OutlinePlannerResult) -> OutlinePlannerResult:
             self._assert_evidence_ids(result, request.evidence)
             return result
@@ -481,19 +492,78 @@ class ControlledPrepWorkflow:
                 validate,
             )
 
-        outline = await invoke()
-        if self._has_knowledge_point(outline):
-            return outline, []
-        # First miss: one targeted retry.  The port re-sends the strengthened
-        # prompt (min_knowledge_points=1) rather than silently moving on.
-        outline = await invoke()
-        if self._has_knowledge_point(outline):
-            return outline, []
-        # Second miss: deterministic backfill.  The model never fabricates
-        # evidence ids or precise identifiers; system-generated nodes inherit
-        # their parent's programmatically-backfilled evidence.
-        warnings = self._backfill_knowledge_points(outline)
+        warnings: list[str] = []
+        try:
+            outline = await invoke()
+        except StructuredOutputError as error:
+            if error.reason_code != "structured_output_invalid":
+                raise
+            # JSON auto-repair already failed inside the port; try one compact
+            # skeleton call before falling through to deterministic compile.
+            outline = await self._compact_outline_recovery(request, segments, validate)
+            warnings.append(
+                "PREP_OUTLINE_COMPACTED: 大纲首次返回不合法，系统已执行一次压缩课程骨架恢复。"
+            )
+
+        if self._is_outline_within_budget(outline, budget) and self._has_knowledge_point(outline):
+            return outline, warnings
+
+        # Over-budget or missing knowledge points: one compact skeleton call.
+        if not self._is_outline_within_budget(outline, budget):
+            outline = await self._compact_outline_recovery(request, segments, validate)
+            warnings.append(
+                "PREP_OUTLINE_COMPACTED: 大纲超出骨架预算，系统已执行一次压缩课程骨架恢复。"
+            )
+            if self._is_outline_within_budget(outline, budget) and self._has_knowledge_point(outline):
+                return outline, warnings
+
+        # Still missing knowledge points: deterministic leaf backfill.
+        if not self._has_knowledge_point(outline):
+            try:
+                backfill_warnings = self._backfill_knowledge_points(outline)
+                warnings.extend(backfill_warnings)
+                return outline, warnings
+            except StructuredOutputError:
+                pass
+
+        # No usable tree at all: deterministic skeleton from segment titles.
+        outline, fallback_warnings = self._compile_deterministic_skeleton(
+            request, segments, budget
+        )
+        warnings.extend(fallback_warnings)
         return outline, warnings
+
+    async def _compact_outline_recovery(
+        self,
+        request: ControlledPrepInput,
+        segments: EvidenceSegmenterResult,
+        validate: Callable[[OutlinePlannerResult], OutlinePlannerResult],
+    ) -> OutlinePlannerResult:
+        """One targeted "compact course skeleton" retry with a tighter budget."""
+        budget = request.skeleton_budget
+        compact_budget = budget.model_copy(update={
+            "target_sections": max(1, budget.target_sections // 2),
+            "target_knowledge_points": max(1, budget.target_knowledge_points // 2),
+            "target_total_nodes": max(1, budget.target_total_nodes // 2),
+        })
+        compact_request = request.model_copy(update={"skeleton_budget": compact_budget})
+        return await self._run_stage(
+            "plan_outline",
+            self._call_stage("plan_outline", compact_request, segments),
+            validate,
+        )
+
+    @staticmethod
+    def _is_outline_within_budget(
+        outline: OutlinePlannerResult, budget: CourseSkeletonBudget
+    ) -> bool:
+        kp_count = sum(
+            1 for c in outline.candidates if c.node_type == "knowledge_point"
+        )
+        return (
+            len(outline.candidates) <= budget.max_total_nodes
+            and kp_count <= budget.max_knowledge_points
+        )
 
     @staticmethod
     def _has_knowledge_point(outline: OutlinePlannerResult) -> bool:
@@ -563,6 +633,88 @@ class ControlledPrepWorkflow:
         return [
             f"PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED: 大纲模型两次均未生成可讲授知识点，"
             f"系统已为 {len(leaves)} 个叶子章节生成同名知识点保底结构。"
+        ]
+
+    def _compile_deterministic_skeleton(
+        self,
+        request: ControlledPrepInput,
+        segments: EvidenceSegmenterResult,
+        budget: CourseSkeletonBudget,
+    ) -> tuple[OutlinePlannerResult, list[str]]:
+        """Compile a course skeleton purely from evidence segment titles.
+
+        This is the last-resort recovery when the model cannot produce any
+        valid tree.  It uses only the already-parsed, evidence-bound segment
+        titles to build ``chapter -> knowledge_point`` pairs: it never calls
+        the model, never fabricates evidence, and never leaks evidence ids to
+        the model.  The result is marked
+        ``PREP_OUTLINE_DETERMINISTIC_FALLBACK`` so the teacher knows the
+        structure is system-generated and needs review.
+        """
+        segment_items = list(segments.segments)[:budget.max_knowledge_points]
+        if not segment_items:
+            raise StructuredOutputError(
+                "cannot compile a deterministic skeleton without segments",
+                reason_code="PREP_OUTLINE_NO_KNOWLEDGE_POINTS",
+                stage="plan_outline",
+            )
+
+        def local_refs(values: list[str], limit: int) -> list[str]:
+            """Keep deterministic fallback evidence local to each segment."""
+            result: list[str] = []
+            for value in values:
+                if value and value not in result:
+                    result.append(value)
+                if len(result) >= limit:
+                    break
+            return result
+
+        chapter_refs: list[str] = []
+        for segment in segment_items:
+            for evidence_id in local_refs(list(segment.evidence_ids), 8):
+                if evidence_id not in chapter_refs:
+                    chapter_refs.append(evidence_id)
+                if len(chapter_refs) >= 24:
+                    break
+            if len(chapter_refs) >= 24:
+                break
+        if not chapter_refs:
+            raise StructuredOutputError(
+                "cannot compile a deterministic skeleton without bound evidence",
+                reason_code="PREP_OUTLINE_NO_KNOWLEDGE_POINTS",
+                stage="plan_outline",
+            )
+        candidates: list[OutlineCandidate] = []
+        chapter_id = "ch_deterministic_0"
+        candidates.append(OutlineCandidate(
+            candidate_id=chapter_id,
+            node_type="chapter",
+            title="课程骨架（系统生成）",
+            parent_candidate_id=None,
+            evidence_ids=chapter_refs,
+            rationale="确定性兜底生成的课程根章节",
+        ))
+        for index, segment in enumerate(segment_items):
+            candidate_id = f"kp_deterministic_{index}"
+            candidates.append(OutlineCandidate(
+                candidate_id=candidate_id,
+                node_type="knowledge_point",
+                title=segment.title[:300] or f"知识点 {index + 1}",
+                parent_candidate_id=chapter_id,
+                evidence_ids=local_refs(list(segment.evidence_ids), 8),
+                rationale="确定性兜底：源自证据分段标题",
+            ))
+        outline = OutlinePlannerResult(candidates=candidates, prerequisites=[])
+        logger.warning(
+            "PREP_OUTLINE_DETERMINISTIC_FALLBACK: model produced no valid tree; "
+            "compiled %d knowledge points from %d evidence segments",
+            len(segment_items),
+            len(segments.segments),
+        )
+        return outline, [
+            "PREP_OUTLINE_DETERMINISTIC_FALLBACK: 模型未能生成有效课程结构，"
+            f"系统已根据 {len(segment_items)} 个证据分段标题确定性编译课程骨架，"
+            "该结构为系统保底生成，请教师进入结构页复核。"
         ]
 
     async def write_script(
@@ -920,13 +1072,15 @@ class ControlledPrepWorkflow:
         warnings: list[str] = []
         outline, outline_warnings = await self.plan_outline(request, segments)
         warnings.extend(outline_warnings)
-        max_kp = max(1, int(settings.PREP_INITIAL_MAX_KNOWLEDGE_POINTS))
-        max_nodes = max(max_kp, int(settings.PREP_INITIAL_MAX_OUTLINE_NODES))
+        budget = request.skeleton_budget
+        max_kp = max(1, int(budget.max_knowledge_points))
+        max_nodes = max(max_kp, int(budget.max_total_nodes))
         knowledge = [item for item in outline.candidates if item.node_type == "knowledge_point"]
         if len(knowledge) > max_kp or len(outline.candidates) > max_nodes:
             raise StructuredOutputError(
                 f"outline exceeded bounded size ({len(knowledge)} knowledge points, "
-                f"{len(outline.candidates)} total nodes)",
+                f"{len(outline.candidates)} total nodes; budget max_kp={max_kp}, "
+                f"max_nodes={max_nodes})",
                 reason_code="structured_output_invalid",
                 stage="plan_outline",
                 schema_name=type(outline).__name__,

@@ -58,6 +58,23 @@ const draftBuildText = computed(() => {
     default: return ''
   }
 })
+const skeletonNotice = computed(() => {
+  const phase = draftBuild.value?.phase
+  if (phase !== 'ready_for_review') return ''
+  const warnings = draftBuild.value?.warnings || []
+  const summary = draftBuild.value?.skeleton_summary
+  const hasDegradation = warnings.some((w) => (
+    w.includes('PREP_OUTLINE_COMPACTED')
+    || w.includes('PREP_OUTLINE_DETERMINISTIC_FALLBACK')
+    || w.includes('PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED')
+  ))
+  if (!hasDegradation && !summary) return ''
+  const nodeCount = summary?.outline_node_count
+  const parts = ['已根据课程材料生成课程骨架']
+  if (nodeCount) parts.push(`共 ${nodeCount} 个节点`)
+  if (hasDegradation) parts.push('系统已合并细碎目录并自动压缩结构，进入结构页可继续调整')
+  return `${parts.join('，')}。`
+})
 
 function suggestedRole(file) {
   const name = file.name.toLowerCase()
@@ -172,6 +189,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
         <p class="draft-build-status" :class="`draft-build-${draftBuild?.phase}`" role="status">{{ draftBuildText }}</p>
         <SfxButton v-if="draftBuild?.phase === 'build_failed'" variant="secondary" size="sm" :loading="rebuilding" @click="rebuildInitial">重新智能备课</SfxButton>
       </div>
+      <p v-if="skeletonNotice" class="skeleton-notice" role="status">{{ skeletonNotice }}</p>
       <p v-if="loading" class="empty">正在读取资料…</p>
       <div v-else-if="!materials.length" class="empty">还没有课程资料。添加主课件、教材或其他教学材料后，解析会在后台继续执行。</div>
       <div v-else class="materials">
@@ -199,6 +217,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}
 .draft-build-summary{display:flex;align-items:flex-start;gap:var(--space-2);margin:0 0 var(--space-3)}
 .draft-build-status{flex:1;margin:0;padding:var(--space-2) var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
+.skeleton-notice{margin:0 0 var(--space-2);padding:var(--space-2) var(--space-3);border:1px solid var(--green-300);border-radius:var(--radius-md);background:var(--green-50);color:var(--green-700);font-size:var(--ui-sm-size);line-height:1.5}
 .draft-build-blocked_by_materials,.draft-build-build_failed{border-color:var(--amber-300);background:var(--amber-50);color:var(--amber-700)}
 .duplicate-notice{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--amber-300);border-radius:var(--radius-md);background:var(--amber-50);color:var(--amber-700);font-size:var(--ui-sm-size);line-height:1.5}
 .material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}

@@ -59,16 +59,26 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
 
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="2.2",
+    version="2.3",
     system_template=(
-        "你是 OutlinePlanner。为首次智能备课生成 chapter → section → knowledge_point "
-        "的课程树和 prerequisite 候选，不生成讲稿。chapter 必须无父节点，section 必须归属 "
-        "chapter，knowledge_point 必须归属 section。不要把图号、图注、零件清单、整段正文、"
-        "页眉页脚或重复标题当作知识点。不要输出任何证据 ID 或引用字段；证据归属由系统在"
-        "调用后确定。\n"
-        "硬性要求：candidates 中必须包含至少 1 个 knowledge_point。只输出 chapter/section "
-        "的目录层级、不产出任何可讲授知识点，是无效结果。若材料能支撑章节结构，就至少为"
-        "一个叶子 section 生成同主题的 knowledge_point 子节点。"
+        "你是 OutlinePlanner。首次智能备课的目标是生成一份可审核的课程骨架，"
+        "而不是复刻整本教材目录、训练题标题或书签。\n"
+        "组织规则：\n"
+        "- 按可讲授主题合并材料，不要把每个小标题、图注、零件清单、页眉页脚、"
+        "习题编号都变成节点；\n"
+        "- 先输出 chapter/section（主题单元），再在每个单元下挂靠可讲授的 "
+        "knowledge_point；\n"
+        "- chapter 必须无父节点，section 必须归属 chapter，knowledge_point 必须"
+        "归属 section；\n"
+        "- candidates 中必须包含至少 1 个 knowledge_point；只输出目录层级、不产出"
+        "任何可讲授知识点，是无效结果。\n"
+        "数量目标（见 constraints 中的 target_*，是理想范围而非硬性配额）：\n"
+        "- 主题单元（section）目标 8-12 个，硬上限 12；\n"
+        "- 知识点目标 12-24 个，硬上限 24；\n"
+        "- 总节点目标约 25-35，绝不超过 64。\n"
+        "小材料不要强行凑够 8 个单元：按材料实际容量等比缩减目标数量，宁可精简"
+        "也不要编造结构。不要输出任何证据 ID 或引用字段；证据归属由系统在"
+        "调用后确定。"
     ),
     output_schema_version="2.0",
 )
