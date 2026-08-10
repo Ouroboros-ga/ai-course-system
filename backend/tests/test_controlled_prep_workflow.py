@@ -1223,6 +1223,183 @@ def test_group_evidence_ids_expand_to_canonical_block_ids():
     assert expanded["verifications"][0].findings[0].evidence_ids == ["blk_1", "blk_2"]
 
 
+def _multi_segment_map_stage() -> list[EvidenceReference]:
+    return [
+        EvidenceReference(evidence_id=f"evg_{i}", text="x" * 150, page=i + 1)
+        for i in range(6)
+    ]
+
+
+def test_reduce_must_compress_target_reaches_intermediate_levels(monkeypatch):
+    """The must-compress contract passes ceil(n * ratio) targets to non-final
+    reduce groups while the final single-group level stays exempt."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 400)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS", 1200)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_REDUCE_RATIO", 0.25)
+
+    class CompressingReduce:
+        def __init__(self):
+            self.targets = []
+
+        async def segment_evidence(self, request, **_kwargs):
+            return EvidenceSegmentMapResult(segments=[
+                EvidenceSegment(
+                    segment_id=f"local_{index}",
+                    title="local",
+                    topic="t" + "x" * 120,
+                    evidence_ids=[item.evidence_id],
+                )
+                for index, item in enumerate(request.evidence)
+            ])
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.targets.append(_kwargs.get("target_segments"))
+            evidence_ids = []
+            for segment in segments:
+                evidence_ids.extend(segment.evidence_ids)
+            return EvidenceSegmenterResult(segments=[EvidenceSegment(
+                segment_id="merged",
+                title="merged",
+                topic="merged",
+                evidence_ids=list(dict.fromkeys(evidence_ids)),
+            )])
+
+    request = ControlledPrepInput(evidence=_multi_segment_map_stage())
+    stages = CompressingReduce()
+    result = asyncio_run(ControlledPrepWorkflow(stages).segment_evidence(request))
+
+    assert len(result.segments) == 1
+    # Every intermediate group gets ceil(n * ratio); only the final
+    # single-group level is exempt from the must-compress target.
+    assert 1 in stages.targets
+    assert None in stages.targets
+
+
+def test_reduce_truncation_bisects_and_recovers(monkeypatch):
+    """A truncated reduce response halves the group and recovers instead of
+    failing the whole build or silently draining the budget."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 400)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS", 1200)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
+
+    class TruncatingThenCompressing:
+        def __init__(self):
+            self.reduce_calls = 0
+
+        async def segment_evidence(self, request, **_kwargs):
+            return EvidenceSegmentMapResult(segments=[
+                EvidenceSegment(
+                    segment_id=f"local_{index}",
+                    title="local",
+                    topic="t" + "x" * 120,
+                    evidence_ids=[item.evidence_id],
+                )
+                for index, item in enumerate(request.evidence)
+            ])
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_calls += 1
+            if self.reduce_calls == 1 and len(segments) > 1:
+                raise StructuredOutputError(
+                    "output truncated",
+                    reason_code="MODEL_OUTPUT_TRUNCATED",
+                    stage="segment_evidence_reduce",
+                )
+            evidence_ids = []
+            for segment in segments:
+                evidence_ids.extend(segment.evidence_ids)
+            return EvidenceSegmenterResult(segments=[EvidenceSegment(
+                segment_id="merged",
+                title="merged",
+                topic="merged",
+                evidence_ids=list(dict.fromkeys(evidence_ids)),
+            )])
+
+    request = ControlledPrepInput(evidence=_multi_segment_map_stage())
+    result = asyncio_run(
+        ControlledPrepWorkflow(TruncatingThenCompressing()).segment_evidence(request)
+    )
+    assert len(result.segments) == 1
+
+
+def test_reduce_non_convergence_fails_with_accurate_reason_code(monkeypatch):
+    """A model that never compresses triggers PREP_EVIDENCE_REDUCE_NON_CONVERGENT
+    after one targeted retry instead of a misleading budget-exceeded error."""
+    from app.core.config import settings
+
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_TEXT_CHARS", 400)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_PAYLOAD_CHARS", 1200)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS", 10)
+    monkeypatch.setattr(settings, "PREP_INITIAL_EVIDENCE_CONCURRENCY", 2)
+
+    class StubbornReduce:
+        def __init__(self):
+            self.reduce_calls = 0
+
+        async def segment_evidence(self, request, **_kwargs):
+            return EvidenceSegmentMapResult(segments=[
+                EvidenceSegment(
+                    segment_id=f"local_{index}",
+                    title="local",
+                    topic="t" + "x" * 120,
+                    evidence_ids=[item.evidence_id],
+                )
+                for index, item in enumerate(request.evidence)
+            ])
+
+        async def reduce_evidence(self, segments, **_kwargs):
+            self.reduce_calls += 1
+            # Never compresses: mirrors every input segment unchanged.
+            return EvidenceSegmenterResult(segments=[
+                segment.model_copy(update={"segment_id": f"m_{self.reduce_calls}_{index}"})
+                for index, segment in enumerate(segments)
+            ])
+
+    request = ControlledPrepInput(evidence=_multi_segment_map_stage())
+    with pytest.raises(StructuredOutputError) as excinfo:
+        asyncio_run(ControlledPrepWorkflow(StubbornReduce()).segment_evidence(request))
+
+    assert excinfo.value.reason_code == "PREP_EVIDENCE_REDUCE_NON_CONVERGENT"
+    assert excinfo.value.stage == "segment_evidence_reduce"
+
+
+def test_prep_build_binds_diagnostic_context_to_run_and_trace():
+    """A real build must persist LLM diagnostics under one run_id/trace_id so a
+    failed build is traceable from its task number back to each LLM call."""
+    from app.platform.agents.runtime.diagnostic_context import current_diagnostic_context
+    from app.services.course_initial_prep_service import _run_prep_with_diagnostic_context
+
+    seen: dict[str, str] = {}
+
+    async def inner():
+        context = current_diagnostic_context.get()
+        seen["run_id"] = context.run_id
+        seen["trace_id"] = context.trace_id
+        seen["course_id"] = context.course_id
+        return "ok"
+
+    result = asyncio_run(_run_prep_with_diagnostic_context(
+        course_id=7,
+        build_task_id="bt_1",
+        awaitable=inner(),
+    ))
+
+    assert result == "ok"
+    assert seen["run_id"] == "prep_initial_bt_1"
+    assert seen["course_id"] == "7"
+    assert seen["trace_id"].startswith("trace_")
+    # The context must be reset once the build finishes so later independent
+    # LLM calls are not accidentally attributed to this build.
+    assert current_diagnostic_context.get().run_id == ""
+
+
 def json_dumps(value) -> str:
     import json
     return json.dumps(value, ensure_ascii=False)

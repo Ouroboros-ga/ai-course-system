@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from typing import Any, Awaitable, Callable
 
 from pydantic import BaseModel
@@ -50,7 +51,7 @@ class EvidenceAttemptBudget:
         if self.used >= self.limit:
             raise StructuredOutputError(
                 "initial evidence preparation exceeded its bounded LLM call budget",
-                reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+                reason_code="PREP_EVIDENCE_CALL_BUDGET_EXCEEDED",
                 stage="segment_evidence",
                 attempts=self.used,
             )
@@ -161,8 +162,9 @@ class ControlledPrepWorkflow:
         if len(chunks) > max_chunks:
             raise StructuredOutputError(
                 f"initial evidence requires {len(chunks)} map chunks; limit is {max_chunks}",
-                reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+                reason_code="PREP_EVIDENCE_CHUNK_LIMIT_EXCEEDED",
                 stage="segment_evidence",
+                attempts=len(chunks),
             )
         return chunks
 
@@ -271,6 +273,7 @@ class ControlledPrepWorkflow:
         semaphore: asyncio.Semaphore,
         budget: EvidenceAttemptBudget,
         lean: bool = False,
+        target_segments: int | None = None,
     ) -> list[EvidenceSegment]:
         def validate(result: EvidenceSegmenterResult) -> EvidenceSegmenterResult:
             self._assert_evidence_ids(result, request.evidence)
@@ -286,6 +289,7 @@ class ControlledPrepWorkflow:
                         segments,
                         max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
                         lean=lean,
+                        target_segments=target_segments,
                     ),
                     validate,
                 )
@@ -301,6 +305,7 @@ class ControlledPrepWorkflow:
                     semaphore=semaphore,
                     budget=budget,
                     lean=lean,
+                    target_segments=target_segments,
                 ),
                 self._reduce_evidence_group(
                     request,
@@ -309,9 +314,41 @@ class ControlledPrepWorkflow:
                     semaphore=semaphore,
                     budget=budget,
                     lean=lean,
+                    target_segments=target_segments,
                 ),
             ])
             return [*left, *right]
+        if target_segments is not None and len(result.segments) > target_segments:
+            # One targeted retry for a group that missed its must-compress
+            # target.  A second miss is an accurate non-convergence error
+            # rather than a silent multi-level budget drain.
+            logger.warning(
+                "Reduce group %s missed its compression target (%d > %d); retrying once",
+                path,
+                len(result.segments),
+                target_segments,
+            )
+            budget.take()
+            async with semaphore:
+                result = await self._run_stage(
+                    "segment_evidence_reduce",
+                    self._call_stage(
+                        "reduce_evidence",
+                        segments,
+                        max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS),
+                        lean=lean,
+                        target_segments=target_segments,
+                    ),
+                    validate,
+                )
+            if len(result.segments) > target_segments:
+                raise StructuredOutputError(
+                    f"reduce group {path} did not compress to its target "
+                    f"({len(result.segments)} > {target_segments} from {len(segments)} input segments)",
+                    reason_code="PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
+                    stage="segment_evidence_reduce",
+                    attempts=budget.used,
+                )
         return [
             segment.model_copy(update={"segment_id": f"reduce_{path}_{index}"})
             for index, segment in enumerate(result.segments, start=1)
@@ -325,8 +362,10 @@ class ControlledPrepWorkflow:
         semaphore: asyncio.Semaphore,
         budget: EvidenceAttemptBudget,
     ) -> EvidenceSegmenterResult:
+        ratio = max(0.05, float(settings.PREP_INITIAL_EVIDENCE_REDUCE_RATIO))
+        max_levels = max(1, int(settings.PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS))
         current = segments
-        for level in range(8):
+        for level in range(max_levels):
             groups = self._chunk_segment_summaries(current)
             final_level = len(groups) == 1
             reduced = await self._run_concurrent([
@@ -336,10 +375,17 @@ class ControlledPrepWorkflow:
                     path=f"{level}_{index}",
                     semaphore=semaphore,
                     budget=budget,
-                    # Only the last level re-adds examples/exercises; every
-                    # intermediate level merges on the lean summary so its
-                    # request and response fit the completion budget.
+                    # Only the last level re-adds examples/exercises and is
+                    # exempt from the must-compress target; every intermediate
+                    # level must merge its group down to ceil(n * ratio) so the
+                    # hierarchy provably shrinks instead of drifting for eight
+                    # levels.  A single-segment group is a pass-through.
                     lean=not final_level,
+                    target_segments=(
+                        None
+                        if final_level or len(group) == 1
+                        else max(1, min(32, math.ceil(len(group) * ratio)))
+                    ),
                 )
                 for index, group in enumerate(groups)
             ])
@@ -348,17 +394,24 @@ class ControlledPrepWorkflow:
                 if len(flattened) <= 32:
                     return EvidenceSegmenterResult(segments=flattened)
                 # The final group truncated and bisection concatenated two
-                # <=32-segment responses.  One more lean merge pass squeezes
-                # the result under the EvidenceSegmenterResult cap instead of
+                # <=32-segment responses.  One more merge pass squeezes the
+                # result under the EvidenceSegmenterResult cap instead of
                 # failing the whole build with a schema error.
                 current = flattened
                 continue
-            if len(flattened) >= len(current) and all(len(group) == 1 for group in groups):
-                break
+            if all(len(group) == 1 for group in groups):
+                raise StructuredOutputError(
+                    f"reduce level {level} contains only single-segment groups; "
+                    f"no further compression is possible ({len(flattened)} segments)",
+                    reason_code="PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
+                    stage="segment_evidence_reduce",
+                    attempts=budget.used,
+                )
             current = flattened
         raise StructuredOutputError(
-            "evidence summaries could not be reduced within eight bounded levels",
-            reason_code="PREP_EVIDENCE_BUDGET_EXCEEDED",
+            f"evidence summaries could not be reduced within {max_levels} bounded levels "
+            f"(remaining {len(current)} segments after the last level)",
+            reason_code="PREP_EVIDENCE_REDUCE_NON_CONVERGENT",
             stage="segment_evidence_reduce",
             attempts=budget.used,
         )

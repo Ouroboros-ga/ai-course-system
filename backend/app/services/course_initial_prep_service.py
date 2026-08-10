@@ -12,6 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 import hashlib
 import re
+import uuid
 from typing import Any, Awaitable, Callable
 
 from sqlmodel import Session, select
@@ -58,6 +59,36 @@ class EvidenceInputStats:
     @property
     def sampled(self) -> bool:
         return self.selected_units < self.total_units or self.selected_chars < self.total_chars
+
+
+async def _run_prep_with_diagnostic_context(
+    *,
+    course_id: int,
+    build_task_id: str | None,
+    awaitable: Awaitable[Any],
+) -> Any:
+    """Bind the prep build's LLM calls to a stable run/trace/course context.
+
+    LLM diagnostics are written metadata-only; without this, every record in
+    ``agent_llm_diagnostic_records`` lands with ``run_id=""`` and
+    ``course_id=null``, so a failed build cannot be traced to its task.
+    """
+    from app.platform.agents.runtime.diagnostic_context import (
+        DiagnosticContext,
+        current_diagnostic_context,
+    )
+
+    run_id = f"prep_initial_{build_task_id}" if build_task_id else f"prep_initial_{uuid.uuid4().hex[:12]}"
+    trace_id = f"trace_{uuid.uuid4().hex[:16]}"
+    token = current_diagnostic_context.set(DiagnosticContext(
+        run_id=run_id,
+        trace_id=trace_id,
+        course_id=str(course_id),
+    ))
+    try:
+        return await awaitable
+    finally:
+        current_diagnostic_context.reset(token)
 
 
 @dataclass
@@ -115,12 +146,17 @@ class InitialCoursePrepService:
         # the caller's normal durable task transaction.
         session.commit()
         active_workflow = workflow or controlled_prep_workflow
-        if on_stage is None:
-            # Preserve the small fake-workflow contract used by existing
-            # service tests and integrations.
-            prepared = await active_workflow.run(request)
-        else:
-            prepared = await active_workflow.run(request, on_stage=on_stage)
+        prepared = await _run_prep_with_diagnostic_context(
+            course_id=course_id,
+            build_task_id=build_task_id,
+            awaitable=(
+                # Preserve the small fake-workflow contract used by existing
+                # service tests and integrations.
+                active_workflow.run(request)
+                if on_stage is None
+                else active_workflow.run(request, on_stage=on_stage)
+            ),
+        )
         if on_stage is not None:
             outcome = on_stage("persisting", 95, None)
             if outcome is not None:

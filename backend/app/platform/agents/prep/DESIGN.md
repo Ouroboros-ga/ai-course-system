@@ -232,6 +232,16 @@ InitialCoursePrepPort.build(
 
 由此代价是证据粒度绑定到"输入分段/材料组"，不再由模型声明"哪句话精确来自哪条证据"；审计仍保留（服务端展开 `block_id`）。讲稿/校验 prompt 的输入证据改为程序侧粗到细有界抽样（`PREP_INITIAL_SCRIPT_EVIDENCE_MAX_CHARS`，默认 24,000 字符），避免大纲节点全量引用后把整本材料塞进每次讲稿请求。Map 与 Reduce 的 wire 线格式共用 `BoundedSuggestionFields` 稳定归一化（examples/exercises 去重、去空、裁剪到 10 条），模型超产 15 条时不再触发结构化重试；Map wire 层还会丢弃模型在分段内重复输出的顶层 `stage` 字段，其余未知字段仍严格拒绝。增量链路（`plan_incremental` 的 AgentPlan operations）仍保留模型侧 `evidence_refs`，受既有白名单校验与 fail-closed 约束，作为后续统一项。
 
+**材料证据整理 v4：失败分类 + 可验证收敛 + 诊断上下文（2026-08-10）**：此前 Reduce 固定 8 层"碰运气"，模型摘要不压缩时任务被错误归类为 `PREP_EVIDENCE_BUDGET_EXCEEDED`，前端误导教师"请减少材料或拆分课程"。本版改动：
+
+- **失败类型拆分**（`reason_code`）：
+  - `PREP_EVIDENCE_CALL_BUDGET_EXCEEDED`：确实耗尽调用次数（`EvidenceAttemptBudget.take()`）；
+  - `PREP_EVIDENCE_CHUNK_LIMIT_EXCEEDED`：课件切片数量超过 `PREP_INITIAL_EVIDENCE_MAP_MAX_CHUNKS`；
+  - `PREP_EVIDENCE_REDUCE_NON_CONVERGENT`：模型摘要未在安全范围内压缩；
+  - `MODEL_OUTPUT_TRUNCATED`：模型输出被截断（可二分恢复）。
+- **Must-compress 契约**：每个非末级 Reduce 组在调用前计算 `target_segments = max(1, min(32, ceil(n * ratio)))`（`PREP_INITIAL_EVIDENCE_REDUCE_RATIO` 默认 0.25），随 `target_segments` 关键字传入 `llm_adapter.reduce_evidence` 并写进 `constraints.max_segments`。程序校验压缩率：首次超目标时执行**一次**针对性重试；第二次仍超目标则准确抛出 `PREP_EVIDENCE_REDUCE_NON_CONVERGENT`（带 `attempts`），不再烧预算。层级上限 `PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS`（默认 8）仅作保险，每层都有可验证收敛条件；全单段组或达层上限仍不收敛同样返回该错误。截断二分递归保留 `target_segments` 传播。
+- **诊断上下文落库**：`InitialCoursePrepService.build()` 经 `_run_prep_with_diagnostic_context` 设置 `DiagnosticContext(run_id=f"prep_initial_{build_task_id}", trace_id=..., course_id=...)`，`_record_diagnostic` 据此把每条 LLM 诊断关联到任务编号；`course_draft_build_handler` 失败提示统一追加"诊断编号：prep_initial_{build_task_id}"，教师可凭单号从 `agent_llm_diagnostic_records` 定位 Map/Reduce/截断/预算的具体卡点。日志与诊断表仍只记录安全的结构化指标、哈希与调用结果，不落课件原文、Prompt 或完整模型回复。
+
 ### Workflow 2：IncrementalEditGraph
 
 ```text

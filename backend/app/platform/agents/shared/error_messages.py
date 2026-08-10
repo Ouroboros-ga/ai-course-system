@@ -35,10 +35,20 @@ def safe_prep_error_message(error: BaseException, *, default: str = "备课智�
     """Translate internal Prep/LLM failures into an actionable safe message."""
     for current in iter_exception_chain(error):
         reason_code = getattr(current, "reason_code", "")
-        if reason_code == "PREP_EVIDENCE_BUDGET_EXCEEDED":
+        if reason_code in {"PREP_EVIDENCE_BUDGET_EXCEEDED", "PREP_EVIDENCE_CALL_BUDGET_EXCEEDED"}:
             return (
-                "材料证据整理已达到系统设定的分段与重试预算，系统未写入课程草稿；"
+                "材料证据整理的模型调用次数已达到系统安全上限，系统未写入课程草稿；"
                 "请减少材料数量或拆分课程后重试。"
+            )
+        if reason_code == "PREP_EVIDENCE_CHUNK_LIMIT_EXCEEDED":
+            return (
+                "课件切片数量超过系统安全上限，系统未写入课程草稿；"
+                "请减少材料数量或拆分课程后重试。"
+            )
+        if reason_code == "PREP_EVIDENCE_REDUCE_NON_CONVERGENT":
+            return (
+                "材料已读取，但摘要没有在安全范围内收敛，系统未写入课程草稿；"
+                "请重试，或减少材料数量后重新智能备课。"
             )
         if reason_code == "input_length_exceeded":
             return "输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或缩小备课范围后重试。"

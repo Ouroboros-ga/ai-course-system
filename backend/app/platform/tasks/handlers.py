@@ -49,25 +49,38 @@ def _tts_provider_semaphore(provider_key: str, limit: int) -> threading.BoundedS
         return current
 
 
-def _course_build_failure_message(error: BaseException) -> str:
+def _course_build_failure_message(error: BaseException, *, run_id: str = "") -> str:
     """Return a safe, actionable message for a failed intelligent-prep task."""
+    diagnostic = f"诊断编号：{run_id}" if run_id else ""
+    suffix = f"。{diagnostic}" if diagnostic else "。"
     current: BaseException | None = error
     visited: set[int] = set()
     while current is not None and id(current) not in visited:
         visited.add(id(current))
-        if getattr(current, "reason_code", "") == "PREP_EVIDENCE_BUDGET_EXCEEDED":
+        reason_code = getattr(current, "reason_code", "")
+        if reason_code in {"PREP_EVIDENCE_BUDGET_EXCEEDED", "PREP_EVIDENCE_CALL_BUDGET_EXCEEDED"}:
             return (
-                "材料证据整理已达到系统设定的分段与重试预算，系统未写入课程草稿；"
-                "请减少材料数量或拆分课程后重试。"
+                "材料证据整理的模型调用次数已达到系统安全上限，系统未写入课程草稿；"
+                f"请减少材料数量或拆分课程后重试{suffix}"
             )
-        if getattr(current, "reason_code", "") == "input_length_exceeded":
-            return "输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或拆分课程后重新智能备课"
-        if getattr(current, "reason_code", "") == "MODEL_OUTPUT_TRUNCATED":
-            return "模型输出达到长度上限，系统已自动分段生成；若仍失败请减少材料数量或拆分课程后重新智能备课"
-        if getattr(current, "reason_code", "") == "response_format_unsupported":
-            return "模型网关不支持结构化输出，系统已尝试兼容模式但仍未完成；请检查模型网关兼容性后重新智能备课"
+        if reason_code == "PREP_EVIDENCE_CHUNK_LIMIT_EXCEEDED":
+            return (
+                "课件切片数量超过系统安全上限，系统未写入课程草稿；"
+                f"请减少材料数量或拆分课程后重试{suffix}"
+            )
+        if reason_code == "PREP_EVIDENCE_REDUCE_NON_CONVERGENT":
+            return (
+                "材料已读取，但摘要没有在安全范围内收敛；"
+                f"原草稿未写入{suffix}请重试，或减少材料数量后重新智能备课。"
+            )
+        if reason_code == "input_length_exceeded":
+            return f"输入内容超过模型上下文上限，系统未写入课程草稿；请减少上传材料页数或拆分课程后重新智能备课{suffix}"
+        if reason_code == "MODEL_OUTPUT_TRUNCATED":
+            return f"模型输出达到长度上限，系统已自动分段生成；若仍失败请减少材料数量或拆分课程后重新智能备课{suffix}"
+        if reason_code == "response_format_unsupported":
+            return f"模型网关不支持结构化输出，系统已尝试兼容模式但仍未完成；请检查模型网关兼容性后重新智能备课{suffix}"
         if getattr(current, "status_code", None) == 400:
-            return "模型服务拒绝了智能备课请求（HTTP 400）；请检查模型名称、网关兼容性和请求限制后重新智能备课"
+            return f"模型服务拒绝了智能备课请求（HTTP 400）；请检查模型名称、网关兼容性和请求限制后重新智能备课{suffix}"
         current = current.__cause__ or current.__context__
     current = error
     visited.clear()
@@ -83,10 +96,10 @@ def _course_build_failure_message(error: BaseException) -> str:
                 "write_scripts_batch": "批量讲授脚本生成",
                 "verify_script": "讲授脚本核验",
             }.get(stage, stage or "未知阶段")
-            return f"模型返回内容不符合格式，系统已重试 1 次；失败阶段：{stage_label}。原课程草稿未覆盖，请重新智能备课。"
+            return f"模型返回内容不符合格式，系统已重试 1 次；失败阶段：{stage_label}。原课程草稿未覆盖，请重新智能备课{suffix}"
         current = current.__cause__ or current.__context__
     if "PREP_STRUCTURED_PORT_UNAVAILABLE" in str(error):
-        return "智能备课结构化服务未就绪；请检查后端 LLM 配置后重新智能备课"
+        return f"智能备课结构化服务未就绪；请检查后端 LLM 配置后重新智能备课{suffix}"
     return str(error)[:500]
 
 
@@ -761,7 +774,10 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 session.commit()
         raise TaskExecutionError("COURSE_BUILD_STAGE_TIMEOUT", str(exc), retryable=True) from exc
     except Exception as exc:
-        failure_message = _course_build_failure_message(exc)
+        failure_message = _course_build_failure_message(
+            exc,
+            run_id=f"prep_initial_{build_task_id}",
+        )
         with ctx.session_factory() as session:
             build = session.exec(select(CourseDraftBuildTask).where(
                 CourseDraftBuildTask.build_task_id == build_task_id,
