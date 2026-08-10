@@ -27,7 +27,7 @@ export function useAvatarPlayback() {
   const available = computed(() => status.value === 'ready' && Boolean(cues.value))
   const usesPlatformAsset = computed(() => assetSource.value === 'platform')
 
-  async function load({ avatarCues, digitalHumanManifest, avatarManifestUrl } = {}) {
+  async function load({ avatarCues, digitalHumanManifest, avatarManifestUrl, avatarAssetUrls } = {}) {
     status.value = 'loading'
     error.value = ''
     if (!avatarCues?.manifestUrl) {
@@ -46,7 +46,10 @@ export function useAvatarPlayback() {
       const releaseManifestUrl = avatarManifestUrl || digitalHumanManifest?.manifestUrl
       if (releaseManifestUrl) {
         try {
-          const remoteManifest = normalizeSprite2dManifest(await readManifest(releaseManifestUrl))
+          const remoteManifest = normalizeSprite2dManifest(
+            await readManifest(releaseManifestUrl),
+            avatarAssetUrls || digitalHumanManifest?.assetUrls || {},
+          )
           if (remoteManifest) {
             spriteManifest.value = remoteManifest
             assetSource.value = 'release'

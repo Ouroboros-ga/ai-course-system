@@ -16,6 +16,7 @@ from app.services.object_storage import reset_object_storage_for_tests
 from app.services.platform_media_preset_service import (
     ensure_platform_presets,
     list_public_presets,
+    sign_avatar_package_for_release,
     sign_avatar_manifest_for_release,
 )
 from app.services.media_release_service import media_release_service
@@ -28,7 +29,9 @@ def test_public_registry_is_safe_and_seeded(session, teacher_user):
 
     assert len(payload["voices"]) == 1
     assert len(payload["avatars"]) == 4
-    assert "platform-instructor-real-v1" in {item["preset_id"] for item in payload["avatars"]}
+    avatar_ids = {item["preset_id"] for item in payload["avatars"]}
+    assert "platform-female-instructor-v1" in avatar_ids
+    assert "platform-instructor-real-v1" not in avatar_ids
     for voice in payload["voices"]:
         assert {"preset_id", "version", "display_name", "provider_key", "status", "content_hash"} <= voice.keys()
         assert "resource_ref_hash" not in voice
@@ -124,6 +127,40 @@ def test_release_versions_sign_different_immutable_manifests(session, teacher_us
     assert {row.preset_id for row in rows} >= {"platform-instructor-v2", "platform-analyst-v1"}
 
 
+def test_female_instructor_signs_all_object_backed_layers(session, teacher_user):
+    """The realistic preset has one 480p portrait and compact signed patches.
+
+    The browser must not use an unprotected local/static image route for these
+    assets: every object-backed manifest entry gets a release-scoped URL.
+    """
+    reset_object_storage_for_tests()
+    course = _course(session, teacher_user.id)
+    release = MediaRelease(
+        course_id=course.id,
+        version_number=1,
+        created_by=teacher_user.id,
+        avatar_preset_id="platform-female-instructor-v1",
+        avatar_preset_version="1.0.0",
+    )
+    session.add(release)
+    session.commit()
+
+    preset, manifest_url, asset_urls = sign_avatar_package_for_release(
+        session,
+        course_id=course.id,
+        release_id=release.release_id,
+        preset_id=release.avatar_preset_id,
+        preset_version=release.avatar_preset_version,
+    )
+
+    assert preset is not None
+    assert preset.preset_id == "platform-female-instructor-v1"
+    assert manifest_url and "platform-female-instructor-v1" in manifest_url
+    assert len(asset_urls) == 11
+    assert all("purpose=platform_avatar_texture" in url for url in asset_urls.values())
+    assert all(key.startswith("platform/avatar-presets/platform-female-instructor-v1/1.0.0/assets/") for key in asset_urls)
+
+
 def test_superseded_preset_version_is_retired_and_still_resolvable(session, teacher_user):
     """P1: when a preset's manifest content changes, the version must move.
     ensure_platform_presets must retire the old ACTIVE version (keeping the
@@ -180,6 +217,6 @@ def test_superseded_preset_version_is_retired_and_still_resolvable(session, teac
     assert frozen.version == "1.0.0"
     assert frozen.status == PlatformPresetStatus.RETIRED
 
-    # Default resolution without ids still targets the real-v1 default.
+    # Default resolution without ids targets the new, realistic female preset.
     default = resolve_avatar_preset(session)
-    assert default.preset_id == "platform-instructor-real-v1"
+    assert default.preset_id == "platform-female-instructor-v1"

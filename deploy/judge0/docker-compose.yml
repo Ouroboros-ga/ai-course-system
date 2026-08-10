@@ -41,7 +41,7 @@ services:
       REDIS_PASSWORD: ${JUDGE0_REDIS_PASSWORD:?set JUDGE0_REDIS_PASSWORD}
       POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
     ports:
-      - "127.0.0.1:2358:2358"
+      - "${JUDGE0_BIND_IP:-127.0.0.1}:2358:2358"
     # Judge0 isolate must create Linux namespaces. Use the minimal
     # capability (SYS_ADMIN) instead of privileged mode, and keep
     # no-new-privileges to prevent privilege escalation. See the P0-2

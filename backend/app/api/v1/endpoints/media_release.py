@@ -58,7 +58,7 @@ from app.services.media_release_service import (
 from app.models.course_outline_model import TeachingScriptNode
 from app.services.tts_provider import TtsProviderConfigurationError
 from app.services.stage8_provider_runtime import get_stage8_tts_provider, resolve_stage8_tts_runtime
-from app.services.platform_media_preset_service import list_public_presets, sign_avatar_manifest_for_release
+from app.services.platform_media_preset_service import list_public_presets, sign_avatar_package_for_release
 from app.services.media_batch_service import (
     build_media_plan,
     confirm_media_batch,
@@ -458,7 +458,7 @@ async def preview_draft_release_item_playback(
                 "material_version_id": mapping.get("material_version_id"),
                 "start_ms": int(item.duration_ms * index / max(len(refs), 1)),
             })
-    _, avatar_manifest_url = sign_avatar_manifest_for_release(
+    _, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
         session,
         course_id=course_id,
         release_id=release_id,
@@ -489,6 +489,7 @@ async def preview_draft_release_item_playback(
         "avatar_preset_id": release.avatar_preset_id,
         "avatar_preset_version": release.avatar_preset_version,
         "avatar_manifest_url": avatar_manifest_url,
+        "avatar_asset_urls": avatar_asset_urls,
     })
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -28,7 +29,7 @@ from app.services.object_storage import get_object_storage
 logger = logging.getLogger(__name__)
 
 
-DEFAULT_AVATAR_PRESET_ID = "platform-instructor-real-v1"
+DEFAULT_AVATAR_PRESET_ID = "platform-female-instructor-v1"
 DEFAULT_AVATAR_PRESET_VERSION = "1.0.0"
 
 
@@ -125,10 +126,20 @@ def _avatar_manifest(*, preset_id: str, version: str, label: str, palette: dict[
 
 _AVATAR_DEFINITIONS = (
     {
+        "preset_id": "platform-female-instructor-v1",
+        "version": "1.0.0",
+        "display_name": "平台女性讲师",
+        "asset_bundle": "platform_female_instructor_v1",
+    },
+    {
         "preset_id": "platform-instructor-real-v1",
         "version": "1.0.0",
         "display_name": "半写实汽车教师",
         "realistic": True,
+        # Kept only for releases which already froze this version.  New
+        # construction work must use the female instructor or another active
+        # preset, never silently rewrite historic releases.
+        "status": PlatformPresetStatus.RETIRED,
         "palette": {"jacket": "#203A5F", "jacket_light": "#486B92", "shirt": "#F7F8FA", "tie": "#B34B4B", "skin": "#D59B78", "skin_light": "#F0C5A5", "hair": "#1A2230", "hair_light": "#46556A", "eye": "#182235", "mouth": "#8B3A3A"},
     },
     {
@@ -174,6 +185,92 @@ _VOICE_DEFINITIONS = (
 
 def _manifest_key(preset_id: str, version: str) -> str:
     return f"platform/avatar-presets/{preset_id}/{version}/manifest.json"
+
+
+_FEMALE_INSTRUCTOR_ASSET_ROOT = (
+    Path(__file__).resolve().parents[1]
+    / "assets"
+    / "platform_avatar_presets"
+    / "platform-female-instructor-v1"
+    / "1.0.0"
+)
+_FEMALE_INSTRUCTOR_ASSETS = {
+    "body": "body.png",
+    "head": "transparent.png",
+    "eyes": "eyes-closed.png",
+    "mouth:sil": "mouth-sil.png",
+    "mouth:a": "mouth-a.png",
+    "mouth:e": "mouth-e.png",
+    "mouth:i": "mouth-i.png",
+    "mouth:o": "mouth-o.png",
+    "mouth:u": "mouth-u.png",
+    "mouth:fv": "mouth-fv.png",
+    "mouth:mbp": "mouth-mbp.png",
+}
+_MOUTH_KEYS = ("sil", "a", "e", "i", "o", "u", "fv", "mbp")
+
+
+def _asset_key(preset_id: str, version: str, filename: str, content_hash: str) -> str:
+    """Use a content-addressed key so a corrected bitmap cannot overwrite it."""
+    stem, suffix = filename.rsplit(".", 1)
+    return (
+        f"platform/avatar-presets/{preset_id}/{version}/assets/"
+        f"{stem}-{content_hash[:16]}.{suffix}"
+    )
+
+
+def _seed_female_instructor_manifest(definition: dict[str, Any], storage: Any) -> dict[str, Any]:
+    """Store compact real-portrait layers once and return their manifest.
+
+    The source images are repository-owned, fictional reference art.  The
+    browser receives signed texture URLs only; the manifest remains an
+    immutable object-key contract just like audio and PPT assets.
+    """
+    object_keys: dict[str, str] = {}
+    hashes: dict[str, str] = {}
+    for asset_id, filename in _FEMALE_INSTRUCTOR_ASSETS.items():
+        source = _FEMALE_INSTRUCTOR_ASSET_ROOT / filename
+        if not source.is_file():
+            raise RuntimeError(f"platform female instructor seed asset missing: {filename}")
+        content = source.read_bytes()
+        content_hash = _sha256(content)
+        object_key = _asset_key(definition["preset_id"], definition["version"], filename, content_hash)
+        if storage.exists(object_key):
+            if _sha256(storage.get(object_key)) != content_hash:
+                # The path embeds the expected hash.  A mismatch means storage
+                # corruption, not a mutable preset upgrade; do not serve it.
+                raise RuntimeError(f"platform female instructor immutable asset corrupt: {object_key}")
+        else:
+            storage.put(object_key, content, mime_type="image/png")
+        object_keys[asset_id] = object_key
+        hashes[asset_id] = content_hash
+
+    def asset(asset_id: str) -> dict[str, str]:
+        return {"object_key": object_keys[asset_id], "sha256": hashes[asset_id]}
+
+    return {
+        "schema": "sprite2d-manifest/v1",
+        "provider": "platform_sprite2d",
+        "version": f"{definition['preset_id']}@{definition['version']}",
+        "label": definition["display_name"],
+        "render_mode": "portrait_patch_v1",
+        "stage": {"width": 480, "height": 480},
+        "expressions": ["neutral", "warm", "attentive"],
+        "gestures": ["rest"],
+        "asset_provenance": "platform-owned-fictional/1",
+        "sprites": {
+            "body": asset("body"),
+            # Kept for the v1 schema. portrait_patch_v1 does not render it.
+            "head": asset("head"),
+            "eyes": asset("eyes"),
+            "mouths": {key: asset(f"mouth:{key}") for key in _MOUTH_KEYS},
+        },
+        "layout": {
+            "body": {"x": 240, "y": 240, "width": 480, "height": 480},
+            "eyes": {"x": 240, "y": 151, "width": 151, "height": 41},
+            "mouth": {"x": 240, "y": 218, "width": 96, "height": 45},
+        },
+    }
 
 
 def _voice_public(preset: PlatformVoicePreset) -> dict[str, Any]:
@@ -233,13 +330,16 @@ def ensure_platform_presets(session: Session) -> None:
         )).all():
             superseded.status = PlatformPresetStatus.RETIRED
             session.add(superseded)
-        manifest = _avatar_manifest(
-            preset_id=definition["preset_id"],
-            version=definition["version"],
-            label=definition["display_name"],
-            palette=definition["palette"],
-            realistic=bool(definition.get("realistic", False)),
-        )
+        if definition.get("asset_bundle") == "platform_female_instructor_v1":
+            manifest = _seed_female_instructor_manifest(definition, storage)
+        else:
+            manifest = _avatar_manifest(
+                preset_id=definition["preset_id"],
+                version=definition["version"],
+                label=definition["display_name"],
+                palette=definition["palette"],
+                realistic=bool(definition.get("realistic", False)),
+            )
         manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         content_hash = _sha256(manifest_bytes)
         object_key = _manifest_key(definition["preset_id"], definition["version"])
@@ -247,6 +347,11 @@ def ensure_platform_presets(session: Session) -> None:
             PlatformAvatarPreset.preset_id == definition["preset_id"],
             PlatformAvatarPreset.version == definition["version"],
         )).first()
+        desired_status = definition.get("status", PlatformPresetStatus.ACTIVE)
+        if existing is not None and existing.status != desired_status:
+            existing.status = desired_status
+            existing.updated_at = now
+            session.add(existing)
         if storage.exists(object_key):
             stored_bytes = storage.get(object_key)
             stored_hash = _sha256(stored_bytes)
@@ -272,6 +377,7 @@ def ensure_platform_presets(session: Session) -> None:
                 provider_key="platform_sprite2d",
                 manifest_object_key=object_key,
                 content_hash=content_hash,
+                status=desired_status,
                 created_at=now,
                 updated_at=now,
             ))
@@ -347,22 +453,47 @@ def resolve_avatar_preset(
     return preset
 
 
-def sign_avatar_manifest_for_release(
+def _manifest_asset_keys(manifest: dict[str, Any], *, preset: PlatformAvatarPreset) -> list[str]:
+    """Return only this preset's object-backed texture keys.
+
+    Legacy SVG/data-URL manifests naturally return an empty list.  Keeping the
+    prefix check here prevents a malformed platform manifest from becoming a
+    generic signed-object URL oracle.
+    """
+    prefix = f"platform/avatar-presets/{preset.preset_id}/{preset.version}/assets/"
+    result: list[str] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, dict):
+            candidate = value.get("object_key")
+            if isinstance(candidate, str) and candidate.startswith(prefix):
+                result.append(candidate)
+            for nested in value.values():
+                visit(nested)
+        elif isinstance(value, list):
+            for nested in value:
+                visit(nested)
+
+    visit((manifest or {}).get("sprites"))
+    return list(dict.fromkeys(result))
+
+
+def sign_avatar_package_for_release(
     session: Session,
     *,
     course_id: int,
     release_id: str,
     preset_id: str | None,
     preset_version: str | None,
-) -> tuple[PlatformAvatarPreset | None, str | None]:
-    """Resolve the release's frozen version, including a retired preset.
+ ) -> tuple[PlatformAvatarPreset | None, str | None, dict[str, str]]:
+    """Sign an immutable preset manifest and its object-backed textures.
 
     A later registry change must never switch an earlier course release to a
-    different visual asset.  If the historic record/object is unavailable, the
-    player receives ``None`` and selects its local static fallback instead.
+    different visual asset.  The returned map is keyed by the object's own
+    immutable key; browsers receive short-lived URLs, never filesystem paths.
     """
     if not preset_id or not preset_version:
-        return None, None
+        return None, None, {}
     try:
         preset = resolve_avatar_preset(
             session,
@@ -370,7 +501,8 @@ def sign_avatar_manifest_for_release(
             version=preset_version,
             allow_inactive=True,
         )
-        url = get_object_storage().sign_read_url(
+        storage = get_object_storage()
+        url = storage.sign_read_url(
             preset.manifest_object_key,
             scope={
                 "course_id": course_id,
@@ -380,6 +512,39 @@ def sign_avatar_manifest_for_release(
                 "preset_version": preset.version,
             },
         )
-        return preset, url
+        manifest = json.loads(storage.get(preset.manifest_object_key).decode("utf-8"))
+        asset_urls = {
+            object_key: storage.sign_read_url(
+                object_key,
+                scope={
+                    "course_id": course_id,
+                    "release_id": release_id,
+                    "purpose": "platform_avatar_texture",
+                    "preset_id": preset.preset_id,
+                    "preset_version": preset.version,
+                },
+            )
+            for object_key in _manifest_asset_keys(manifest, preset=preset)
+        }
+        return preset, url, asset_urls
     except Exception:
-        return None, None
+        return None, None, {}
+
+
+def sign_avatar_manifest_for_release(
+    session: Session,
+    *,
+    course_id: int,
+    release_id: str,
+    preset_id: str | None,
+    preset_version: str | None,
+) -> tuple[PlatformAvatarPreset | None, str | None]:
+    """Backward-compatible manifest-only wrapper for legacy callers."""
+    preset, url, _asset_urls = sign_avatar_package_for_release(
+        session,
+        course_id=course_id,
+        release_id=release_id,
+        preset_id=preset_id,
+        preset_version=preset_version,
+    )
+    return preset, url

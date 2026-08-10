@@ -33,6 +33,7 @@ export function useMediaPlayback(courseId) {
   const ppt = computed(() => manifest.value.ppt)
   const avatarCues = computed(() => manifest.value.avatarCues)
   const avatarManifestUrl = computed(() => manifest.value.avatarManifestUrl)
+  const avatarAssetUrls = computed(() => manifest.value.avatarAssetUrls)
   const digitalHumanManifest = computed(() => manifest.value.digitalHumanManifest)
 
   function addMediaAccessToken(value) {
@@ -41,6 +42,9 @@ export function useMediaPlayback(courseId) {
     const withLocalAccessToken = url => String(url || '').startsWith('/')
       ? withAccessToken(url, token)
       : String(url || '')
+    const withLocalAccessTokenMap = urls => Object.fromEntries(
+      Object.entries(urls || {}).map(([objectKey, url]) => [objectKey, withLocalAccessToken(url)]),
+    )
     return {
       ...value,
       audioUrl: withLocalAccessToken(value.audioUrl),
@@ -53,6 +57,7 @@ export function useMediaPlayback(courseId) {
               subtitleManifestUrl: withLocalAccessToken(item.subtitleManifestUrl),
               avatarCuesUrl: withLocalAccessToken(item.avatarCuesUrl),
               avatarManifestUrl: withLocalAccessToken(item.avatarManifestUrl),
+              avatarAssetUrls: withLocalAccessTokenMap(item.avatarAssetUrls),
               // `useAvatarPlayback` consumes the normalized nested object,
               // rather than the compatibility `avatarCuesUrl` field.  Keep
               // its signed local route authenticated too; otherwise audio
@@ -94,9 +99,11 @@ export function useMediaPlayback(courseId) {
         ? {
             ...value.digitalHumanManifest,
             manifestUrl: withLocalAccessToken(value.digitalHumanManifest.manifestUrl),
+            assetUrls: withLocalAccessTokenMap(value.digitalHumanManifest.assetUrls),
           }
         : null,
       avatarManifestUrl: withLocalAccessToken(value.avatarManifestUrl),
+      avatarAssetUrls: withLocalAccessTokenMap(value.avatarAssetUrls),
     }
   }
 
@@ -140,6 +147,7 @@ export function useMediaPlayback(courseId) {
     ppt,
     avatarCues,
     avatarManifestUrl,
+    avatarAssetUrls,
     digitalHumanManifest,
     load,
     resolvePptPage,

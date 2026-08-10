@@ -54,17 +54,51 @@ export const PLATFORM_SPRITE2D_MANIFEST = Object.freeze({
   },
 })
 
-export function normalizeSprite2dManifest(rawValue) {
+const textureUrl = (value, assetUrls) => {
+  if (typeof value === 'string') return value
+  const objectKey = typeof value?.object_key === 'string' ? value.object_key : ''
+  return objectKey ? String(assetUrls?.[objectKey] ?? '') : ''
+}
+
+const stageNumber = (value, fallback) => {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function normalizeLayout(rawLayout, stage) {
+  const rect = (value, fallback) => ({
+    x: stageNumber(value?.x, fallback.x),
+    y: stageNumber(value?.y, fallback.y),
+    width: Math.max(1, stageNumber(value?.width, fallback.width)),
+    height: Math.max(1, stageNumber(value?.height, fallback.height)),
+  })
+  return {
+    body: rect(rawLayout?.body, { x: stage.width / 2, y: stage.height / 2, width: stage.width, height: stage.height }),
+    eyes: rect(rawLayout?.eyes, { x: stage.width / 2, y: 210, width: 245, height: 310 }),
+    mouth: rect(rawLayout?.mouth, { x: stage.width / 2, y: 286, width: 74, height: 42 }),
+  }
+}
+
+export function normalizeSprite2dManifest(rawValue, assetUrls = {}) {
   const raw = rawValue?.data ?? rawValue ?? {}
   const sprites = raw.sprites
   const supportedMouths = sprites?.mouths
+  const stage = {
+    width: Math.max(1, Number(raw.stage?.width) || 480),
+    height: Math.max(1, Number(raw.stage?.height) || 480),
+  }
+  const body = textureUrl(sprites?.body, assetUrls)
+  const head = textureUrl(sprites?.head, assetUrls)
+  const eyes = textureUrl(sprites?.eyes, assetUrls)
+  const mouths = Object.fromEntries(
+    ['sil', 'a', 'e', 'i', 'o', 'u', 'fv', 'mbp'].map(key => [key, textureUrl(supportedMouths?.[key], assetUrls)]),
+  )
   if (
     raw.schema !== 'sprite2d-manifest/v1'
-    || typeof sprites?.body !== 'string'
-    || typeof sprites?.head !== 'string'
-    || typeof sprites?.eyes !== 'string'
-    || !supportedMouths
-    || ![...new Set(['sil', 'a', 'e', 'i', 'o', 'u', 'fv', 'mbp'])].every(key => typeof supportedMouths[key] === 'string')
+    || !body
+    || !head
+    || !eyes
+    || ![...new Set(['sil', 'a', 'e', 'i', 'o', 'u', 'fv', 'mbp'])].every(key => mouths[key])
   ) return null
 
   return {
@@ -72,17 +106,16 @@ export function normalizeSprite2dManifest(rawValue) {
     provider: String(raw.provider ?? 'sprite2d'),
     version: String(raw.version ?? ''),
     label: String(raw.label ?? '数字人'),
-    stage: {
-      width: Math.max(1, Number(raw.stage?.width) || 480),
-      height: Math.max(1, Number(raw.stage?.height) || 480),
-    },
+    renderMode: raw.render_mode === 'portrait_patch_v1' ? 'portrait_patch_v1' : 'layered_sprite2d',
+    stage,
     expressions: Array.isArray(raw.expressions) ? raw.expressions.map(String) : ['neutral'],
     gestures: Array.isArray(raw.gestures) ? raw.gestures.map(String) : ['rest'],
+    layout: normalizeLayout(raw.layout, stage),
     sprites: {
-      body: sprites.body,
-      head: sprites.head,
-      eyes: sprites.eyes,
-      mouths: Object.fromEntries(Object.entries(supportedMouths).map(([key, value]) => [key, String(value)])),
+      body,
+      head,
+      eyes,
+      mouths,
     },
   }
 }

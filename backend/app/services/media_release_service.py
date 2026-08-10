@@ -45,7 +45,7 @@ from app.services.digital_human_provider import (
     get_digital_human_provider,
 )
 from app.services.object_storage import get_object_storage, mime_type_for
-from app.services.platform_media_preset_service import sign_avatar_manifest_for_release
+from app.services.platform_media_preset_service import sign_avatar_package_for_release
 from app.services.task_service import TaskCreateRequest, task_service
 from app.services.tts_provider import (
     TtsSynthesisRequest,
@@ -1061,7 +1061,8 @@ class MediaPlaybackService:
 
         # 数字人 manifest（仅在绑定时）
         avatar_manifest_url = None
-        _avatar_preset, avatar_manifest_url = sign_avatar_manifest_for_release(
+        avatar_asset_urls: dict[str, str] = {}
+        _avatar_preset, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
             session,
             course_id=course_id,
             release_id=release.release_id,
@@ -1072,6 +1073,7 @@ class MediaPlaybackService:
         if avatar_manifest_url:
             digital_human_manifest = {
                 "manifest_url": avatar_manifest_url,
+                "asset_urls": avatar_asset_urls,
                 "render_mode": "browser_realtime",
                 "recommended_quality": release.default_playback_mode.value,
                 "fallback_supported": True,
@@ -1098,6 +1100,7 @@ class MediaPlaybackService:
                 item.setdefault("avatar_preset_version", release.avatar_preset_version)
                 if avatar_manifest_url:
                     item.setdefault("avatar_manifest_url", avatar_manifest_url)
+                    item.setdefault("avatar_asset_urls", avatar_asset_urls)
 
         # P2 timeline is exposed independently from the avatar package.  P3
         # may consume it when a renderer is available; all existing learners
@@ -1142,6 +1145,7 @@ class MediaPlaybackService:
             "avatar_preset_id": release.avatar_preset_id,
             "avatar_preset_version": release.avatar_preset_version,
             "avatar_manifest_url": avatar_manifest_url,
+            "avatar_asset_urls": avatar_asset_urls,
             "digital_human_manifest": digital_human_manifest,
             "avatar_cues": avatar_cues,
             "default_playback_mode": release.default_playback_mode.value,

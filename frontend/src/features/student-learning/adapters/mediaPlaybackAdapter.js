@@ -89,10 +89,20 @@ function normalizeAvatarCues(value) {
   }
 }
 
+function normalizeAvatarAssetUrls(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([objectKey, url]) => objectKey && typeof url === 'string' && url)
+      .map(([objectKey, url]) => [String(objectKey), String(url)]),
+  )
+}
+
 function normalizeDigitalHumanManifest(value) {
   if (!value || !(value.manifest_url ?? value.manifestUrl)) return null
   return {
     manifestUrl: String(value.manifest_url ?? value.manifestUrl),
+    assetUrls: normalizeAvatarAssetUrls(value.asset_urls ?? value.assetUrls),
     avatarPresetId: String(value.avatar_preset_id ?? value.avatarPresetId ?? ''),
     avatarPresetVersion: String(value.avatar_preset_version ?? value.avatarPresetVersion ?? ''),
     renderMode: String(value.render_mode ?? value.renderMode ?? ''),
@@ -137,6 +147,7 @@ function normalizePlaylist(value) {
       avatarPresetId: String(item?.avatar_preset_id ?? item?.avatarPresetId ?? ''),
       avatarPresetVersion: String(item?.avatar_preset_version ?? item?.avatarPresetVersion ?? ''),
       avatarManifestUrl: String(item?.avatar_manifest_url ?? item?.avatarManifestUrl ?? ''),
+      avatarAssetUrls: normalizeAvatarAssetUrls(item?.avatar_asset_urls ?? item?.avatarAssetUrls),
       avatarCues: (item?.avatar_cues_url ?? item?.avatarCuesUrl)
         ? { schema: 'avatar-cues/v1', manifestUrl: String(item?.avatar_cues_url ?? item?.avatarCuesUrl) }
         : null,
@@ -179,6 +190,7 @@ export function normalizeMediaPlayback(rawResponse) {
     avatarPresetId: String(raw.avatar_preset_id ?? raw.avatarPresetId ?? digitalHumanManifest?.avatarPresetId ?? ''),
     avatarPresetVersion: String(raw.avatar_preset_version ?? raw.avatarPresetVersion ?? digitalHumanManifest?.avatarPresetVersion ?? ''),
     avatarManifestUrl: String(raw.avatar_manifest_url ?? raw.avatarManifestUrl ?? digitalHumanManifest?.manifestUrl ?? ''),
+    avatarAssetUrls: normalizeAvatarAssetUrls(raw.avatar_asset_urls ?? raw.avatarAssetUrls ?? digitalHumanManifest?.assetUrls),
     digitalHumanManifest,
     playlist,
   }

@@ -267,9 +267,14 @@ onMounted(async () => {
 })
 
 watch(
-  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => media.avatarManifestUrl.value, () => playlistPlayback.activeItem.value?.avatarCues, () => playlistPlayback.activeItem.value?.avatarManifestUrl],
-  ([avatarCues, digitalHumanManifest, avatarManifestUrl, playlistAvatarCues, playlistAvatarManifestUrl]) => {
-    avatar.load({ avatarCues: playlistAvatarCues || avatarCues, digitalHumanManifest, avatarManifestUrl: playlistAvatarManifestUrl || avatarManifestUrl })
+  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => media.avatarManifestUrl.value, () => media.avatarAssetUrls.value, () => playlistPlayback.activeItem.value?.avatarCues, () => playlistPlayback.activeItem.value?.avatarManifestUrl, () => playlistPlayback.activeItem.value?.avatarAssetUrls],
+  ([avatarCues, digitalHumanManifest, avatarManifestUrl, avatarAssetUrls, playlistAvatarCues, playlistAvatarManifestUrl, playlistAvatarAssetUrls]) => {
+    avatar.load({
+      avatarCues: playlistAvatarCues || avatarCues,
+      digitalHumanManifest,
+      avatarManifestUrl: playlistAvatarManifestUrl || avatarManifestUrl,
+      avatarAssetUrls: Object.keys(playlistAvatarAssetUrls || {}).length ? playlistAvatarAssetUrls : avatarAssetUrls,
+    })
   },
   { immediate: true },
 )

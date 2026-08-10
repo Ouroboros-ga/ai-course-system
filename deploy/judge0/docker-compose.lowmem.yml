@@ -1,0 +1,45 @@
+# Experimental low-memory profile for a dedicated 2 vCPU / 2 GB Judge0 host.
+# This profile is for single-concurrency smoke/demo use only. It intentionally
+# leaves headroom for Ubuntu, Docker, and the kernel; it is not a throughput
+# or production profile.
+
+services:
+  server:
+    cpus: "0.25"
+    mem_limit: 384M
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 384M
+          pids: 128
+
+  worker:
+    cpus: "0.75"
+    mem_limit: 768M
+    deploy:
+      resources:
+        limits:
+          cpus: "0.75"
+          memory: 768M
+          pids: 128
+
+  db:
+    cpus: "0.25"
+    mem_limit: 256M
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+          pids: 128
+
+  redis:
+    cpus: "0.10"
+    mem_limit: 64M
+    deploy:
+      resources:
+        limits:
+          cpus: "0.10"
+          memory: 64M
+          pids: 64

@@ -22,6 +22,7 @@ export class Sprite2DRenderer {
     this.root = null
     this.eyes = null
     this.head = null
+    this.portraitBody = null
     this.leftArm = null
     this.rightArm = null
     this.mouths = new Map()
@@ -90,6 +91,23 @@ export class Sprite2DRenderer {
     this.root = root
     this.app.stage.addChild(root)
 
+    if (this.manifest.renderMode === 'portrait_patch_v1') {
+      const layout = this.manifest.layout
+      this.portraitBody = this.#sprite(textures.get('body'), layout)
+      this.eyes = this.#sprite(textures.get('eyes'), layout.eyes)
+      this.eyes.visible = false
+      root.addChild(this.portraitBody, this.eyes)
+
+      for (const key of MOUTH_KEYS) {
+        const mouth = this.#sprite(textures.get(`mouth:${key}`), layout.mouth)
+        mouth.visible = key === 'sil'
+        root.addChild(mouth)
+        this.mouths.set(key, mouth)
+      }
+      this.currentMouth = this.mouths.get('sil')
+      return
+    }
+
     this.leftArm = this.#createArm(150, 354)
     this.rightArm = this.#createArm(330, 354, true)
     root.addChild(this.leftArm, this.rightArm)
@@ -132,7 +150,15 @@ export class Sprite2DRenderer {
     // Decorative motion is a deterministic function of audio time, not wall time.
     const seconds = Math.max(0, Number(timeMs) || 0) / 1000
     const blinkCycle = seconds % 4.6
-    this.eyes.scale.y = blinkCycle > 4.25 && blinkCycle < 4.42 ? 0.12 : 1
+    const blink = blinkCycle > 4.25 && blinkCycle < 4.42
+    if (this.manifest.renderMode === 'portrait_patch_v1') {
+      // The closed-eye patch is part of the same fictional portrait package;
+      // it is selected from audio time rather than from a wall-clock timer.
+      this.eyes.visible = blink
+      return
+    }
+
+    this.eyes.scale.y = blink ? 0.12 : 1
     const expression = speaking ? (precision === 'phoneme' ? 'attentive' : 'warm') : 'neutral'
     this.head.tint = expressionTint[expression]
     this.eyes.tint = expressionTint[expression]
@@ -147,6 +173,7 @@ export class Sprite2DRenderer {
     this.app.destroy({ removeView: true }, { children: true })
     this.app = null
     this.root = null
+    this.portraitBody = null
     this.mouths.clear()
     this.currentMouth = null
     this.container?.replaceChildren()
