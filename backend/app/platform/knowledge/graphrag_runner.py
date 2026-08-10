@@ -52,12 +52,14 @@ class GraphRagRunner:
         manifest: GraphRagInputManifest,
         artifact_root: Path,
         policy_context: dict[str, Any] | None = None,
+        allow_isolated_worker: bool = True,
     ) -> GraphRagArtifacts:
         if not settings.GRAPHRAG_ENABLED:
             raise GraphRagRunError("GRAPHRAG_NOT_CONFIGURED")
         self._validate_model_configuration()
         if (
             settings.GRAPHRAG_WORKER_PYTHON
+            and allow_isolated_worker
             and os.environ.get("AI_COURSE_GRAPHRAG_IN_WORKER") != "1"
         ):
             return self._run_isolated_worker(
@@ -345,7 +347,30 @@ class GraphRagRunner:
         except subprocess.TimeoutExpired as exc:
             raise GraphRagRunError("GRAPHRAG_RUN_TIMEOUT") from exc
         if not result_path.is_file():
-            raise GraphRagRunError("GRAPHRAG_WORKER_FAILED")
+            # A worker can finish writing all immutable GraphRAG tables and
+            # still disappear before the small JSON handoff is flushed (for
+            # example when the task process is restarted).  Do not discard a
+            # complete, manifest-matching artifact set.  Re-enter the runner
+            # in-process with isolation disabled; this path only validates the
+            # tables and performs the remaining typed-relation step, so it does
+            # not repeat GraphRAG extraction or embedding work.
+            try:
+                complete_outputs = GraphRagRunner()._load_complete_outputs(
+                    artifact_root / "output",
+                    manifest=manifest,
+                )
+                if complete_outputs is None:
+                    raise GraphRagRunError("GRAPHRAG_WORKER_FAILED")
+                return GraphRagRunner().run(
+                    manifest=manifest,
+                    artifact_root=artifact_root,
+                    policy_context=policy_context,
+                    allow_isolated_worker=False,
+                )
+            except GraphRagRunError:
+                raise
+            except Exception as exc:
+                raise GraphRagRunError("GRAPHRAG_WORKER_FAILED") from exc
         try:
             payload = json.loads(result_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
