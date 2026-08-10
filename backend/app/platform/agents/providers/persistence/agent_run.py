@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import json
+import asyncio
+import logging
 from typing import Any, Callable, Mapping
 
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
 from app.models.agent_run_model import AgentLLMDiagnosticRecord, AgentRunEventRecord, AgentRunRecord
 from ...runtime.events import AgentRunEventPort, AgentRunStorePort, RunEventType, RunStatus
+
+logger = logging.getLogger(__name__)
 
 
 class SqlAgentRunStorePort(AgentRunStorePort):
@@ -98,15 +103,48 @@ class SqlAgentRunEventPort(AgentRunEventPort):
 
 
 class SqlAgentLLMDiagnosticStore:
-    """Bounded diagnostic sink; never stores prompt or response bodies."""
+    """Bounded diagnostic sink; never stores prompt or response bodies.
+
+    Diagnostics are observational data.  A transient SQLite writer collision
+    (or an unavailable diagnostic table during a partial migration) must never
+    turn a successful Prep/PPT mapping operation into a failed user task.
+    """
 
     def __init__(self, session_factory: Callable[[], Session]) -> None:
         self._session_factory = session_factory
 
     async def record(self, **data: Any) -> None:
-        with self._session_factory() as session:
-            session.add(AgentLLMDiagnosticRecord(**_diagnostic_values(data)))
-            session.commit()
+        values = _diagnostic_values(data)
+        delays = (0.05, 0.15, 0.4)
+        for attempt in range(len(delays) + 1):
+            try:
+                with self._session_factory() as session:
+                    session.add(AgentLLMDiagnosticRecord(**values))
+                    session.commit()
+                return
+            except OperationalError as exc:
+                # SQLite reports this as ``database is locked``.  Retry only
+                # that transient condition; all other DB errors are captured
+                # and downgraded below without masking the business result.
+                if not _is_sqlite_lock_error(exc) or attempt >= len(delays):
+                    logger.warning(
+                        "Agent LLM diagnostic write skipped (%s)",
+                        type(exc).__name__,
+                    )
+                    return
+                await asyncio.sleep(delays[attempt])
+            except Exception as exc:  # noqa: BLE001 - diagnostics are best effort
+                logger.warning(
+                    "Agent LLM diagnostic write skipped (%s)",
+                    type(exc).__name__,
+                )
+                return
+
+
+def _is_sqlite_lock_error(exc: OperationalError) -> bool:
+    message = str(exc).casefold()
+    original = getattr(exc, "orig", None)
+    return "database is locked" in message or "database is locked" in str(original).casefold()
 
 
 def _run_dict(record: AgentRunRecord) -> dict[str, Any]:

@@ -240,10 +240,11 @@ class GraphRagIdentityService:
         nodes: list[CourseKnowledgeNode],
         *,
         title: str,
-        aliases: list[str],
+        aliases: list[str] | None = None,
         entity_type: str,
         anchor_ids: set[str],
     ) -> tuple[CourseKnowledgeNode | None, str, float]:
+        aliases = aliases or []
         incoming_names = {
             normalized
             for value in (title, *aliases)

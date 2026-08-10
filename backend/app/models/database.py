@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, create_engine, Session
+from sqlalchemy import event
 from typing import Generator
 import os
 
@@ -249,7 +250,11 @@ def _build_connect_args(url: str) -> dict:
     PostgreSQL/MySQL 不需要且不接受该参数。
     """
     if url.startswith("sqlite"):
-        return {"check_same_thread": False}
+        # SQLite is used by the local/demo deployment and is accessed by the
+        # request process and task worker concurrently.  ``timeout`` makes the
+        # sqlite driver wait for a short-lived writer instead of immediately
+        # surfacing ``database is locked``.
+        return {"check_same_thread": False, "timeout": 30.0}
     return {}
 
 
@@ -258,6 +263,26 @@ engine = create_engine(
     echo=False,
     connect_args=_build_connect_args(DATABASE_URL),
 )
+
+
+@event.listens_for(engine, "connect")
+def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
+    """Apply bounded-writer settings only to SQLite connections.
+
+    The listener is intentionally attached to this engine (rather than using
+    application startup SQL) so every pooled connection, including worker
+    sessions, receives the same settings.  Other database dialects are not
+    affected.
+    """
+    if engine.url.get_backend_name() != "sqlite":
+        return
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA busy_timeout=30000")
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+    finally:
+        cursor.close()
 
 
 def create_tables():
