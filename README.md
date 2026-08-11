@@ -1,6 +1,6 @@
 # AI 互动智课系统（ai-course-system）
 
-> **2026-08-11 数据库迁移状态**：当前运行默认仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0047`、可审计 SQLite 快照迁移工具和服务器部署基线已加入；尚未切换正式服务器。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
+> **2026-08-11 数据库迁移状态**：当前运行库仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0047`、可审计快照迁移工具和服务器部署基线已加入；隔离 PostgreSQL 16 已通过完整迁移与合成复制预演，但尚未导入正式 SQLite 或切换服务。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
 >
 > 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。
 
