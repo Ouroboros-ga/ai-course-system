@@ -1,129 +1,316 @@
-# AI 互动智课系统
+# AI 互动智课系统（ai-course-system）
 
-> **2026-08-10 首轮智能备课稳定性：** `segment_evidence` 使用页内碎块合并后的分层 Map/Reduce；模型不返回证据 ID，服务端确定性回填并在持久化前展开真实 `DocumentBlock.block_id`。默认单批正文不超过 24,000 字、Map 并发 2，证据 Reduce/大纲输出上限为 16,384 tokens；全局 `LLM_MAX_TOKENS` 不变。高密度课程材料的 Map + Reduce 共享调用预算从 64 提升到 160，仍保留总材料、分块数和并发硬上限。Map/Reduce 对描述性 `examples`/`exercises` 稳定去重、去空并裁剪至 10 项，Map 分段内冗余 `stage` 会被移除；其他结构与证据字段仍 fail-closed。真实大材料端到端验收仍在继续，任何剩余失败均不覆盖原课程草稿。代码证据见 `course_initial_prep_service.py`、`controlled_prep_workflow.py`、`controlled_prep.py` 与 `prep/llm_adapter.py`；Fake/本地回归未调用真实付费模型。
+> **面向高校课程的证据驱动型智能教学平台** —— 把静态课件建设为"可解析、可讲授、可互动、可追踪"的课程闭环，并承载挑战杯 XH-202620"学科垂类大模型与创新应用"的计算机学科延伸方向（助教 / 助学 / 助研）。
+>
+> 当前定位：**本地原型 Demo**。真实实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。详见 [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md)。
 
-> **2026-08-09 Ubuntu 部署基线：** 服务器文件解析、LanceDB/GraphRAG、Judge0、Node 与外部 Provider 的真实状态和回滚方式见 [服务器环境一致性与外部链路审计](docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md)。LanceDB 0.34/PyArrow 25 在 Ubuntu x86_64 未发现兼容阻塞；GraphRAG 必须经独立 Python Worker，真实 LLM 构图受 token、USD 预估、数据外发授权与人工确认闸门控制。当前 GraphRAG/Judge0 均 fail-closed：前者等待课程数据范围/目的地级外发授权，后者因官方 isolate 需要共用主机不接受的提升权限而未启用。
+---
 
-> **2026-08-09 账户名称收敛**：账户只有一个可见且可登录的 `username`：`/app/admin`、右上角和个人中心均展示/编辑它，数字用户 ID 不变；登录接受“用户名或数字用户 ID + 密码”。旧 `real_name` 仅保留为外部资料字段，不再作为账户昵称。管理员与 Provider 配置入口仍为 `/app/admin`；详见 [现行实施说明](docs/phase1/平台管理员Provider与开放API兼容层.md)。
+## 目录
 
-本仓库是本地原型 Demo。当前实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。
+1. [项目简介与设计目标](#1-项目简介与设计目标)
+2. [核心功能特性（含实现状态）](#2-核心功能特性含实现状态)
+3. [技术栈与运行环境](#3-技术栈与运行环境)
+4. [目录结构概览](#4-目录结构概览)
+5. [快速开始指南](#5-快速开始指南)
+6. [常用开发与部署命令](#6-常用开发与部署命令)
+7. [文档与规划索引](#7-文档与规划索引)
 
-> **2026-08-07 ResearchAgent P0**：新增课程内 `/app/course/:courseId/research` 研究工作台与独立 `platform/agents/research/`。当前真实接通 arXiv 元数据检索、课程权限、PII 脱敏、来源核验和补充参考边界；趋势分析、证据综合、学术写作、Semantic Scholar/OpenAlex/Crossref 与完整仓库复现仍为 `Research Preview`，未伪装完成。现行架构、开源选型、数据模型与分阶段上线门见 [ResearchAgent 整体架构、前端与上线基线](docs/phase1/研究智能体整体架构与前端设计.md)。
+---
 
-> **2026-08-07 Stage 8 Provider**：本地媒体 Demo 必须显式 `MEDIA_DEMO_MODE=true`，页面
-> 显示 `fake-demo` 且不会调用付费 TTS；正式媒体生成须设置 `MEDIA_DEMO_MODE=false` 与
-> `STAGE8_TTS_PROVIDER=doubao`，缺失配置时 fail-closed。详见
-> [`docs/phase1/阶段8_P5.0_Provider配置基线.md`](docs/phase1/阶段8_P5.0_Provider配置基线.md)。
+## 1. 项目简介与设计目标
 
-## 当前媒体与数字人方案
-
-> **2026-08-10 平台女性讲师预设**：`platform-female-instructor-v1@1.0.0` 已成为新媒体建设的默认 2D 角色。它由一张 960px 静默虚构女性讲师肖像、8 个口型补丁和 1 个闭眼补丁组成；发布播放响应会分别签发 manifest 与纹理 URL，浏览器仅按 `avatar-cues/v1` 和 `<audio>` 时钟选择口型/眨眼。旧 `platform-instructor-real-v1@1.0.0`（汽车教师）已退休，仅允许已冻结的历史 Release 解析，不能被静默替换。课程 87 的当前发布版本也必须按“新建媒体版本 → 激活 → 正式课程发布”切换，不能覆盖旧快照。
-
-> **2026-08-10 本地播放回归**：已用 `MEDIA_DEMO_MODE=true` 在课程 87 的三知识点合成 fixture 上重新执行 Fake WAV、PPT manifest、`audio-playlist/v1`、MediaRelease 激活、CourseRelease 发布与学生学习页播放。当前本地快照为 `mrel_2376035e170c438c9ee9d9dc331145a9` / `cr_8897817c555447928962abc3f1880c25`，播放清单 SHA-256 为 `9432c7de…`；它是可重复创建的本地诊断数据，不替代历史 20 节点快照，更不代表真实课程或付费 TTS 质量。真实本地 Chrome 已验证签名角色资源、音频/PPT/字幕/目录/口型共同时钟、跨节点 seek、播放与暂停状态保持、自然续播及 manifest 失败静态降级。480p 视口下 4.123 秒短测记录 977 帧（约 237 FPS），只证明该次无头 Chrome 短测超过 24 FPS；Windows Computer Use 桥本次不可用，且尚未完成有头 GPU、连续 10 分钟和掉帧率验收。
-
-媒体主链已经冻结为“课程级批量建设 + 不可变播放清单”：
-
-```text
-课程讲稿 / 知识点选择 / PPT 映射
-  → 服务端只读计划（脚本指纹、缓存命中、字符数、费用估算）
-  → 教师一次确认
-  → MediaBuildBatch + MediaReleaseItem
-  → Fake WAV 或受控 Media Worker TTS
-  → 字幕与 avatar-cues/v1 非付费冻结
-  → ppt-manifest/v1 冻结
-  → audio-playlist/v1 冻结
-  → MediaRelease 激活
-  → 正式课程发布快照固定 release_id + playlist_content_hash
-  → 学习端 playback API
-```
-
-### P5.1：平台音色与 2D 角色注册表（2026-08-07）
-
-**2026-08-10 状态更新**：平台注册表的活跃默认角色已切换为 `platform-female-instructor-v1@1.0.0`。源图为本地生成的虚构人物、无真实人物参考；其来源说明与 SHA-256 记录在 `frontend/src/assets/platform-avatar-presets/platform-female-instructor-v1/source/SOURCE.md`。源图实为 1254×1254（不是 2K），但处理后的 960px 主纹理足以覆盖当前 480p 目标。纹理对象采用内容寻址 `object_key`，按课程/Release/预设 scope 签发；加载失败降级，绝不使音频、PPT 或字幕停播。
-
-当前实现已将媒体版本绑定从前端硬编码提升为服务端注册表：
-
-- `PlatformVoicePreset` 与 `PlatformAvatarPreset` 由服务端维护，批量计划重新解析并在 `MediaBuildBatch` / `MediaRelease` 中冻结 `preset_id + version`。
-- `GET /api/v1/media/course/{course_id}/platform-presets` 只返回安全的显示信息和内容哈希，不暴露 Doubao speaker、resource ID 或密钥。
-- 首版已注册 1 个 fake-demo 音色和 4 个平台预制 Sprite2D 角色；默认建设角色为 `platform-female-instructor-v1@1.0.0`（半写实虚构女性教师）。旧 `platform-instructor-real-v1@1.0.0`（汽车教师）为历史 Release 兼容项，不能在新建设中选择；角色 manifest 按版本写入对象存储并通过发布版本签名下发。
-- 学习端按发布版本加载 manifest；加载失败依次降级为本地平台默认角色、静态头像、无数字人，音频/PPT/字幕不被阻断。
-
-P5.1/P5.2 已通过本地 fake provider、SQLite 迁移、上传隔离和前端构建验证。P5.3 的单次豆包短文本 POC 已有脱敏历史结果：音频与 `words` 返回，时间误差约 191.583ms，但 `phonemes` 为空，因此不能承诺精确口型；本回合重新调用被外部付费请求审批拦截，未重试。详见 [`阶段8_P5.3_一次受控豆包验收`](docs/phase1/阶段8_P5.3_一次受控豆包验收.md)。
-
-学习端不解析 PPTX、不调用 TTS，也不为每位学生启动服务端数字人推理。发布清单中的每个知识点拥有独立音频、字幕、Cue 和 PPT 映射；当前活动知识点的原生 `<audio>` 是唯一主时钟，PPT、字幕、知识点切换和 PixiJS 角色都从 `audio.currentTime` 投影。数字人首版使用发布版本冻结的半写实平台注册角色（当前默认 `platform-female-instructor-v1@1.0.0`），按 `avatar-cues/v1` 驱动；这不是某位真实教师的肖像。Cue 或 WebGL 不可用时降级为静态头像或关闭，绝不阻断音频、PPT 和字幕。
-
-这次浏览器回归的代码修正集中在 `media_timeline.py`（平台 manifest/纹理签名与 Course Access）、`Sprite2DRenderer.js` / `AvatarViewport.vue`（无扩展名纹理解析、人物主体与正确 Canvas 尺寸）、`LectureStage.vue`（跨知识点 keyed audio 事件隔离与自然续播）及 `unified_learning_service.py`（SQLite 时区时间归一化）。Fake Cue 没有音素，因此页面必须显示“字幕段估算”，不能把可动嘴型表述为精确唇形同步。
-
-服务端只负责权限、批次编排、缓存复用、时序归一化、对象存储和版本发布。媒体数据只保存 `object_key`、SHA 和签名 URL，不保存绝对路径。Local storage 与 S3/OSS presigned PUT/POST 通过同一适配层切换。
-
-### P5.2：OSS 与旧链隔离（2026-08-07）
-
-上传意图按对象存储协议返回：Local 使用受控 `PUT`，S3/OSS 使用 `POST fields + file`；两者上传完成后都必须调用服务端 `confirm`，由服务端重新 HEAD、计算 SHA、探测 MIME/时长。Local 媒体读取 URL 强制携带并校验 `exp/sig/object_key/scope`，scope 绑定课程和用途。旧 `/video-gen` 仅保留历史 `VideoGenerationTask` 兼容，带弃用响应和 Sunset，不得写入新的 `MediaRelease` 或正式播放清单。
-
-
-
-## 课程系统总链路
-
-### 2026-08-07 统一学习数据链
-
-学习页面现在以 `course_id + release_id + outline_node_id` 作为知识点学习身份。学习事件写入不可变 `learning_events`，再投影到学生学习状态和教师课程统计；曝光/完成与评分型认知证据分离。正式评分产生的 `LearningEvidenceRecord` 会以 `LearningEvidenceContext` 关联图谱节点与可安全确定的 release/outline 身份；无法唯一映射时保留 unknown，不猜测来源。学生学习轨道直接显示自己的完成进度，并以双层状态显示“已掌握/待掌握/需要更多证据/暂不可分析”；点击状态后按需读取认知详情，认知不可用不阻断学习。新学习页已接入 `learning-context`、事件写入和显式完成接口，刷新后从当前 release 投影恢复最近锚点；失败事件暂存浏览器待发队列。教师 `/app/course/:courseId/analytics` 已读取统一统计投影。接口与 Agent planned Port/Tool 边界见 [统一学习进度认知推荐统计契约](docs/phase1/统一学习进度认知推荐统计契约.md)。
+系统将教师已有教学资料（PPT/PDF/Word/教案/题目）转化为一条可编辑、可播放、可互动、可回看学习状态的课程链路：
 
 ```text
 课程资料 → 统一上传与版本化对象存储 → 解析任务 / DocumentIR / Evidence
 → 可信检索、课程图谱与教学结构 → 教师审核、编辑与发布
-→ 学生学习、练习、代码实验、TeachingAgent 与课程媒体播放
+→ 学生学习、练习、代码实验、TeachingAgent 问答与课程媒体播放
 ```
 
-课程授权统一遵循 Course Access v1；学生代码只通过独立 Judge0 沙箱执行。外部 LLM、OCR、TTS、PPT 和数字人服务只能经独立适配层或任务服务接入。
+**设计目标：**
 
-### 2026-08-07 Conversation Domain 与提问反推
+- **证据驱动、内容可追溯**：讲稿、问答、诊断回链 Evidence 原文锚点，拒绝无依据断言；
+- **教师审核闸门**：备课 PatchProposal、出题草稿、媒体发布均需教师确认，fail-closed；
+- **数据最小化三域分离**：Agent Runtime/Audit、Conversation、学习分析三域隔离，隐私合规；
+- **可降级、可回滚**：外部 LLM/TTS/OCR/Judge0/GraphRAG 全部经独立适配层或任务服务接入，缺失配置即明确降级或拒绝，不伪造成功。
 
-TeachingAgent 的数据持久化按三个相互独立的域划分（AGENTS.md §5.1）：
+**赛题延伸（挑战杯 XH-202620）**：在通用教学闭环之上，面向计算机学科扩展知识库、代码实验、算法可视化与助研（ResearchAgent）能力。其中**模型微调（LoRA/SFT）与 CS 学科知识库内容填充为规划项，尚未实现**，详见 [探索结果摘要与差距分析](../代码库探索结果摘要与差距分析.md)。
 
-1. **Agent Runtime Context / Audit 域**仍保持数据最小化。`agent_learning_events`、`agent_trace_records`、`agent_conversation_sessions` 由白名单 sanitize 函数强制最小化，不持久化原始问题、完整答案、Prompt 或完整 LLM Trace。
-2. **Conversation Domain（产品体验域）**独立持久化学生与教学智能体的完整消息（`conversation_messages` 表 + `conversation_service`），用于刷新 / 重新进入课程后恢复对话。写入在 TeachingAgent 端点回答成功后非阻塞进行；读取经 `GET /api/v1/teaching-agent/conversations/{course_id}`，仅限学习者本人，带独立 `data_policy_version="conversation-domain/1"` 与 `retention_until` 保留窗口（默认 90 天）。
-3. **学习分析不得直接依赖完整 Conversation**。提问反推经 `derive_question_inference_signals` / `GET /api/v1/teaching-agent/conversations/{course_id}/inference` 把近期提问聚合成结构化信号（计数、平均提问深度、薄弱标记、trace 引用），不返回原文；认知/推荐/出题只消费此结构化投影。
+---
 
-前端 `useLearningWorkspace.load()` 在 TeachingAgent 受控条件齐备时调用 `getConversationHistory` 重建聊天面板，学生可在刷新后继续上下文对话。
+## 2. 核心功能特性（含实现状态）
 
-## 开发入口
+> 状态口径：✅ 已实现（有代码/路由/测试证据） ｜ 🧪 测试或 Demo 阶段（可运行但默认关闭或需显式配置） ｜ 📋 规划中/未实现 ｜ ⚠️ 接口已定义实现待填充
 
-- [开发与安全规则](AGENTS.md)
-- [前端设计指南](design.md)
-- [文档导航](docs/DOCUMENTATION_INDEX.md)
-- [阶段 8：媒体与数字人当前方案](docs/phase1/阶段8_媒体TTS数字人PPT_实施规划.md)
-- [当前功能审计](docs/phase1/功能现状审计表.md)
-- [ResearchAgent 整体架构与前端设计](docs/phase1/研究智能体整体架构与前端设计.md)
-- [运行说明](docs/RUN.md)
+### 2.1 课程建设（教师端）
 
-## 文档维护与废弃规则
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 课程创建、资料上传（≤100MB）、课程生命周期（发布/下架/回滚） | ✅ | `document.py`、`course_build_service.py`、`course_release_service` |
+| 文档解析（PPT/PDF/DOCX → Markdown → 结构化） | ✅ | Docling + LibreOffice/Poppler + PaddleOCR（本地真实链路） |
+| 结构化讲稿生成（开场白/讲解/过渡语） | ✅ | Prep Agent + 有界 Map/Reduce + PatchProposal 审核闸门 |
+| PPT 页面 ↔ 知识点映射 | ✅ | `mapping.py` + LLM 语义匹配 |
+| 课程知识图谱（GraphRAG，8 种教育关系） | 🧪 | Worker 已部署、LanceDB/BGE 已接通；真实课程构图因**数据外发授权未获批**默认关闭（`GRAPHRAG_ENABLED=false`） |
+| 教师 8 步生产工作台、脚本快照/版本/回滚 | ✅ | shadow 前端 `/app/course/:courseId/build` |
 
-与开发者讨论后发生的产品方案、技术路线、发布门槛或真实状态变化，必须在同一变更中同步 README、对应 `docs/phase1/` 现行文档和必要的审计/契约文档，并在文档中记录日期、变更原因和代码证据。被替代的路线不得继续作为实现依据：应在原文档顶部标记“已废弃/仅历史追溯”，并链接到现行文档；不要用旧文档证明功能已完成。
+### 2.2 媒体与数字人讲授（Stage 8）
 
-`docs/phase1/` 是当前实施基线；`docs/refactor/`、`backend/docs/`、`frontend/docs/` 和根目录产品材料仅用于历史追溯，除非在文档导航中明确重新登记。
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 课程级批量媒体（MediaBuildBatch → MediaReleaseItem） | ✅ | 只读计划 → 教师一次确认 → 批量构建 |
+| 不可变播放清单（`audio-playlist/v1`、`ppt-manifest/v1`、字幕、`avatar-cues/v1`） | ✅ | 发布快照固定 `release_id + playlist_content_hash` |
+| PixiJS 2D 数字人（平台注册角色） | ✅ | 默认 `platform-female-instructor-v1@1.0.0`（虚构女性讲师，非真实肖像）；按音频时钟驱动 |
+| 真实 TTS（豆包） | 🧪 | `MEDIA_DEMO_MODE=false` + `STAGE8_TTS_PROVIDER=doubao` 显式配置；已通过一次受控 POC（`phonemes` 为空，不承诺精确口型） |
+| OSS/S3 对象存储、上传 confirm 校验 | ✅ | Local PUT / S3-OSS presigned POST 双链路 |
+| 旧 `/video-gen` 数字人视频链 | 🚫 | 仅历史兼容，带弃用响应与 Sunset |
 
-`docs/research/` 与 `research/` 保存离线研究和实验，不构成生产效果证明。
+### 2.3 学生学习
 
-## 前端约定
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 选课、分屏/统一学习工作台（大纲+媒体+助手+笔记） | ✅ | `/app/course/:courseId/learn`；legacy `StudentPlayer` 保留 |
+| 学习事件链（`learning_events`）与进度续接 | ✅ | 事件 → 投影 → 学生状态/教师统计；失败事件浏览器待发队列 |
+| 六维认知状态 + 掌握度（规则基线） | ✅ | `rule_baseline.py` 为真实实现；**BKT/DKT/IRT 仅接口定义** |
+| 认知推荐 | ✅ | `cognitive_recommendation.py` + `recommendation_consumed` 事件 |
+| 课程内问答（TeachingAgent 六段工作流） | ✅ | 上下文锚定 `course_id+release_id+outline_node_id`，证据引用，Conversation 域独立持久化（默认 90 天保留） |
+| 练习/测验、前置知识跳转补学 | ✅ | `question_bank.py`、`prerequisite.py` |
 
-前端视觉令牌、布局、滚动模型、过渡动画、组件和按钮规范以 [`design.md`](design.md) 为唯一权威。新增或修改页面、组件前必须先阅读该文档。
-# 当前学习页进度可见性（2026-08-08）
+### 2.4 代码实验（CS 垂类）
 
-学生学习页使用 `/facade/course/{course_id}/learning-context` 作为唯一聚合读模型：
-同一响应包含当前发布版本的知识点清单、学习状态、认知摘要和推荐摘要。轨道以图标与文字
-分别展示“未学习/学习中/已完成”和“已掌握/待掌握/需要更多证据/暂不可分析”；观看行为不会
-直接变成掌握结论。节点详情提供完成原因、置信度、正式证据数量和知识图谱依据入口。
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 代码沙箱执行（Judge0） | 🧪 | 客户端完整（多语言/状态映射/降级），`JUDGE0_ENABLED=False` **默认禁用**（共用主机权限受限） |
+| 平台实验室（Labs）、算法实验（Experiments） | ✅ | `labs.py`、`experiments.py` 已注册（未启用沙箱时返回 `CODING_SANDBOX_DISABLED`） |
+| 算法可视化（JSAV，11 种白名单算法） | ✅ | legacy `VisualizationView` + JSAVPlayer；学生可播 published 计划，教师可创建/发布计划 |
+| CodingEduAgent 代码诊断 | ✅ | 三节点工作流（沙箱结果→诊断→响应） |
 
-推荐动作复用现有练习面板和学习状态机；消费接口成功时由服务端写入统一
-`recommendation_consumed` 学习事件，失败时保留本地待发送队列。认知和推荐服务降级不会阻断
-课程学习。
-# Current pipeline note (2026-08-11)
+### 2.5 助研（ResearchAgent）与平台管理
 
-New course imports now use the governed asynchronous path: material parsing and
-DocumentIR/evidence indexing complete first; a course-wide GraphRAG draft is
-then queued for teacher review; only approval schedules LanceDB + local BGE
-indexing and activation. GraphRAG and LanceDB are intentionally separate
-stages so a large file cannot block durable parsing or expose an unreviewed
-bundle. Platform administrators can enable developer mode and tune per-kind
-task concurrency in Platform Admin → 后台任务并发. The limits are per app
-process; durable leases remain authoritative across restarts.
+| 功能 | 状态 | 说明 |
+|---|---|---|
+| 研究工作台 `/app/course/:courseId/research` | ✅ | 五阶段入口（检索/趋势/综合/写作/复现） |
+| arXiv 论文元数据检索 + 来源核验 | ✅ | 真实接通（节流 3s + 24h 缓存 + PII 脱敏 + EvidenceGate） |
+| 趋势分析、证据综合、学术写作、代码复现 | 🧪 | 页面按 `research_preview` 展示，未伪装完成 |
+| Semantic Scholar / OpenAlex / Crossref、全文解析、GitHub 仓库复现 | 📋 | 规划中 |
+| 平台管理员（用户/角色/Provider 配置/任务并发） | ✅ | `/app/admin`（shadow）、`admin_platform.py` |
+| 泛雅·超星 AI 参考兼容层 | ✅ | `external_apis/fanya_chaoxing_ai/`，可整体移除 |
+
+### 2.6 规划中（挑战杯赛题扩展，未实现）
+
+| 功能 | 说明 |
+|---|---|
+| 学科垂类模型微调（LoRA/SFT） | 无训练代码；星辰 MaaS / 本地 LoRA 均为规划路线 |
+| CS 学科知识库内容填充 | `knowledge_data/` 三个 JSON 为空占位 |
+| 星火 X1 深度推理接入 | 仅 PPT 生成使用星火；LLM 默认豆包 |
+| 代码项目交流平台（类 CSDN） | 无实现 |
+
+---
+
+## 3. 技术栈与运行环境
+
+### 3.1 后端
+
+| 项 | 版本/选型 |
+|---|---|
+| 语言/框架 | Python + FastAPI（≥0.135）+ Uvicorn |
+| ORM/迁移 | SQLModel（≥0.0.37）+ Alembic（45 个迁移版本） |
+| 智能体 | LangGraph（0.6.x）+ 自研 Port 契约（10 个） |
+| 文档解析 | Docling（≥2.81）、LibreOffice、Poppler、PaddleOCR（容器） |
+| 向量/图谱 | LanceDB 0.34、本地 BGE 嵌入、GraphRAG 3.1.1（独立 Worker，关闭态） |
+| 代码沙箱 | Judge0（客户端就绪，默认关闭） |
+| 外部服务 | 豆包 LLM（默认）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
+| 数据库 | SQLite（`database/smart_class.db`）；对象存储 Local/S3/OSS 适配 |
+
+### 3.2 前端
+
+| 项 | 版本/选型 |
+|---|---|
+| 框架 | Vue 3.5 + Vite 7 + Pinia + vue-router 5 |
+| 渲染 | PixiJS 8.16（Sprite2D 数字人）、Chart.js、KaTeX、marked |
+| 双前端 | legacy 路由（/）+ shadow 前端（`/app/**`，`VITE_ENABLE_SHADOW_FRONTEND` 默认开） |
+
+### 3.3 运行环境
+
+- Node ≥ 20.19（前端）；Python 3.11+（后端，uv 管理，`uv.lock`/`pyproject.toml`）
+- 生产部署：Ubuntu 22.04 + systemd（`smartcarb-backend.service`，2 workers）+ Nginx（`smartcarb-nginx.conf`）+ Docker Compose（`deploy/`）
+- 服务器资源边界：7.1 GiB 内存无 swap，OCR/GraphRAG/Judge0 压测须串行
+
+---
+
+## 4. 目录结构概览
+
+```text
+ai-course-system/
+├── backend/                     # FastAPI 后端
+│   ├── app/
+│   │   ├── api/v1/endpoints/    # 63 组路由、64 个端点模块（公开 API 权威来源）
+│   │   ├── platform/            # 智能体(agents)、知识库(knowledge)、证据(evidence)、
+│   │   │                        # 文档智能(document_intelligence)、适配器(adapters)、mastery
+│   │   ├── services/            # 66 个业务服务
+│   │   ├── domain/              # learning / safety / student_memory / education_graph / knowledge_bundle
+│   │   ├── models/              # 42 个 ORM 模型
+│   │   └── external_apis/       # 泛雅·超星 AI 参考兼容包
+│   ├── alembic/                 # 45 个迁移版本
+│   └── tests/                   # 105 个测试文件（pytest）
+├── frontend/                    # Vue 3 前端
+│   ├── src/
+│   │   ├── router/              # legacy 路由（23 条具名）
+│   │   ├── app/                 # shadow 前端（/app/** 43 条：建课/学习/研究/管理）
+│   │   ├── api/                 # 40 个 API 客户端
+│   │   ├── views/               # legacy 视图（播放器/可视化/检索 Demo…）
+│   │   ├── features/            # 特征模块（student-learning / graph-browser / evidence-viewer…）
+│   │   └── components/          # 组件（chat / visualization / graphrag / cognitive…）
+│   └── package.json             # dev/build/test:unit/lint/smoke:app
+├── docs/                        # 文档（DOCUMENTATION_INDEX.md 为入口）
+│   ├── phase1/                  # 现行实施基线、审计与契约（37 篇）
+│   ├── refactor/                # 历史重构/Shadow/迁移记录（仅追溯）
+│   └── frontend-design/         # 页面设计与前端契约
+├── deploy/                      # Docker Compose、Dockerfile.backend、nginx、judge0、paddleocr
+├── database/                    # SQLite 生产库 + 备份
+├── knowledge_data/              # CS 学科知识库（当前为空占位）
+├── scripts/                     # dev-stack.sh（PaddleOCR + 后端一键启动）等
+├── research/                    # 离线研究沙箱（不构成生产结论）
+└── test/ tests/                 # 测试资产与基准
+```
+
+---
+
+## 5. 快速开始指南
+
+### 5.1 后端启动
+
+```bash
+cd backend
+uv sync                 # 按 uv.lock 安装依赖（或 uv run 自动处理）
+uv run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+- API 文档：http://localhost:8000/docs
+- 数据库迁移（如需要）：`uv run alembic upgrade head`
+- 一键开发栈（PaddleOCR 容器 + 后端）：`./scripts/dev-stack.sh`（Linux/macOS）
+
+### 5.2 前端启动
+
+```bash
+cd frontend
+npm install             # 或 pnpm install（仓库含 pnpm-lock.yaml）
+npm run dev             # 默认端口 5300
+```
+
+- 访问 http://localhost:5300（终端按 `o` 打开浏览器）
+- shadow 前端默认开启（`VITE_ENABLE_SHADOW_FRONTEND=true`），入口为 `/app/**`
+
+### 5.3 环境配置
+
+```bash
+cd backend
+cp .env.example .env     # 若有模板；否则按 config.py 默认值 + 生产 .env 填写
+```
+
+关键开关（缺省均为安全默认）：
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `LLM_PROVIDER` | `doubao` | 外部 LLM；未配置 Key 时相关能力 fail-closed |
+| `MEDIA_DEMO_MODE` | `true` | 媒体建设用 Fake WAV，页面显示 `fake-demo`，不调用付费 TTS |
+| `STAGE8_TTS_PROVIDER` | — | 正式 TTS 需 `MEDIA_DEMO_MODE=false` + `doubao` |
+| `JUDGE0_ENABLED` | `false` | Judge0 沙箱默认关闭 |
+| `GRAPHRAG_ENABLED` | `false` | GraphRAG 构图默认关闭（等待数据外发授权） |
+| `VITE_ENABLE_SHADOW_FRONTEND` | `true` | 前端 shadow 入口 |
+
+### 5.4 运行测试
+
+```bash
+# 后端（pytest.ini 已配置 pythonpath=backend、testpaths=backend/tests）
+cd backend
+uv run pytest -q
+
+# 前端单元测试（node --test 定向）
+cd frontend
+npm run test:unit
+
+# 前端生产构建 + 应用冒烟
+npm run build
+npm run smoke:app
+```
+
+> 测试基线示例：媒体发布/播放定向回归 53 passed、前端学习/媒体单测 40 passed（2026-08-10 记录）。所有自动化均为 Fake/Mock/本地数据，不调用真实付费服务。
+
+---
+
+## 6. 常用开发与部署命令
+
+### 6.1 常用命令速查
+
+| 操作 | 命令 |
+|---|---|
+| 后端开发启动 | `cd backend && uv run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` |
+| 后端单测 | `cd backend && uv run pytest -q` |
+| 数据库迁移 | `cd backend && uv run alembic upgrade head`（降级：`downgrade -1`） |
+| 前端开发 | `cd frontend && npm run dev` |
+| 前端构建 | `cd frontend && npm run build` |
+| 前端单测 | `cd frontend && npm run test:unit` |
+| 前端 lint | `cd frontend && npm run lint` |
+| 应用冒烟 | `cd frontend && npm run smoke:app` |
+| 一键开发栈 | `./scripts/dev-stack.sh [--skip-backend|--skip-ocr]` |
+
+### 6.2 部署（Ubuntu）
+
+```bash
+# 后端 systemd 服务（工作目录 /opt/smartcarb/backend，uvicorn 0.0.0.0:8000，2 workers）
+# 前端 Nginx：SPA 回退 + /api/ 反代 127.0.0.1:8000（60m body、600s 超时）
+# 完整部署说明见 deploy/DEMO部署说明.md 与 docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md
+```
+
+历史部署脚本（根目录 `deploy_*.sh`、`verify_*.sh` 等）为 2026-08 现场排障产物，仅供参考。
+
+---
+
+## 7. 文档与规划索引
+
+### 7.1 现行文档（优先阅读）
+
+| 文档 | 用途 |
+|---|---|
+| [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md) | 文档导航与状态（唯一入口） |
+| [AGENTS.md](AGENTS.md) | 开发与安全规则（最高优先级） |
+| [docs/phase1/功能现状审计表.md](docs/phase1/功能现状审计表.md) | 当前代码审计结论与已知缺口 |
+| [docs/phase1/服务器环境一致性与外部链路审计.md](docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md) | 2026-08-09 Ubuntu 实际环境与外部链路基线 |
+| [docs/phase1/统一课程建设与解析基线.md](docs/phase1/统一课程建设与解析基线.md) | 统一上传、解析、RAG、讲稿与 PPT 映射目标 |
+| [docs/phase1/阶段8_媒体TTS数字人PPT_实施规划.md](docs/phase1/阶段8_媒体TTS数字人PPT_实施规划.md) | 媒体与数字人现行基线 |
+| [docs/phase1/研究智能体整体架构与前端设计.md](docs/phase1/研究智能体整体架构与前端设计.md) | ResearchAgent 架构与上线门 |
+| [docs/phase1/路由契约基线.md](docs/phase1/路由契约基线.md) | API 契约基线 |
+| [docs/RUN.md](docs/RUN.md) | 最小启动说明 |
+| [设计指南](design.md) | 前端视觉令牌/组件规范（改前端前必读） |
+
+### 7.2 规划与差距分析
+
+| 文档 | 性质 | 状态标注 |
+|---|---|---|
+| [代码库探索结果摘要与差距分析](../代码库探索结果摘要与差距分析.md) | 2026-08-11 探索基线 | 现行 |
+| [文档更新清单](../文档更新清单.md) | 旧文档状态与更新原因 | 现行 |
+| [挑战杯揭榜挂帅_文档规划方案](../挑战杯揭榜挂帅_文档规划方案.md) | 比赛文档规划（根目录） | 规划文档；§1.2 已完成清单需按代码复核 |
+| [XH202620_文档规划/01_文档规划总方案.md](../XH202620_文档规划/01_文档规划总方案.md) | 写作蓝图 | 规划；"垂类模型精调"未实现 |
+| [docs/产品二-CodeNexus计算机学科智能教学系统.md](docs/产品二-CodeNexus计算机学科智能教学系统.md) | 产品二规划 | 规划中（大部分未实现） |
+| [docs/赛题差距分析与重构建议.md](docs/赛题差距分析与重构建议.md) | 2026-06-21 旧分析 | 已废弃/仅历史追溯 |
+
+### 7.3 文档维护规则
+
+- 现行文档写入 `docs/phase1/` 并在 `DOCUMENTATION_INDEX.md` 登记。
+- 与开发者讨论后的方案/技术路线变化，必须同步 README、对应现行文档与索引；被替代文档标记"已废弃/仅历史追溯"。
+- `docs/refactor/`、`backend/docs/`、`frontend/docs/`、根目录产品/比赛材料仅用于历史追溯，不作为实现依据。
+- 禁止用规划文档、Shadow 报告或离线研究证明功能已完成；一切以注册路由、模型、迁移、测试与浏览器行为为准。
+
+---
+
+## 近期关键更新（时间线）
+
+- **2026-08-11**：课程导入走受管异步路径（解析先行 → GraphRAG 草稿排队教师审核 → 授权后激活 LanceDB/BGE）；平台管理员可配置任务并发。
+- **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
+- **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
+- **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。
+
+---
+
+*本 README 基于 2026-08-11 代码库探索重写；所有功能状态均可回溯至代码证据，详见《代码库探索结果摘要与差距分析》。*
