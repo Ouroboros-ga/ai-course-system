@@ -264,6 +264,53 @@ def test_course_draft_build_handler_executes_with_persisted_payload(session, mon
     assert build.status == CourseDraftBuildStatus.SUCCEEDED
 
 
+def test_course_draft_build_handler_marks_script_coverage_as_partial_success(session, monkeypatch):
+    owner, course = _course_owner(session)
+    _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")
+    corpus = course_corpus_service.create_ready_snapshot(
+        session, course_id=course.id, owner_user_id=owner.id,
+    )
+    build, task_id = course_corpus_service.create_build_task(
+        session, corpus=corpus, owner_user_id=owner.id, quiet_window_seconds=0,
+    )
+    session.commit()
+    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).one()
+    payload = json.loads(task.input_payload)
+    test_engine = session.get_bind()
+
+    async def fake_initial_build(_session, **_kwargs):
+        from app.services.document_draft_builders import DraftAssetResult
+        return DraftAssetResult(
+            course_id=course.id,
+            run_id="fake",
+            material_version_id=None,
+            script_coverage_issues=[{
+                "outline_node_id": "on_missing",
+                "code": "EVIDENCE_VERIFICATION_FAILED",
+            }],
+        )
+
+    monkeypatch.setattr(initial_course_prep_service, "build", fake_initial_build)
+
+    asyncio.run(course_draft_build_handler(TaskHandlerContext(
+        task_id=task_id,
+        input_payload=payload,
+        session_factory=lambda: Session(test_engine),
+        service=task_service,
+    )))
+
+    session.expire_all()
+    final = task_service.get_task(session, task_id, owner_user_id=owner.id)
+    session.refresh(build)
+    assert final.status == "partial_success"
+    assert final.result_data["script_coverage_issues"] == [{
+        "outline_node_id": "on_missing",
+        "code": "EVIDENCE_VERIFICATION_FAILED",
+    }]
+    assert build.status == CourseDraftBuildStatus.PARTIAL_SUCCESS
+    assert build.error_code == "SCRIPT_COVERAGE_INCOMPLETE"
+
+
 def test_initial_agent_draft_uses_teaching_tree_and_primary_ppt_evidence_only(session):
     owner, course = _course_owner(session)
     primary, _ = _parsed_material(session, course_id=course.id, owner_id=owner.id, role="primary_courseware")

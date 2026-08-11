@@ -40,6 +40,7 @@ class InitialPrepResult:
     graph_relation_candidates: int = 0
     outline_node_count: int = 0
     script_node_count: int = 0
+    script_coverage_issues: list[dict[str, str]] = field(default_factory=list)
     markdown_resource_id: str = ""
     markdown_resource_version_id: str = ""
 

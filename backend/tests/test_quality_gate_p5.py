@@ -7,6 +7,14 @@ import uuid
 from app.core.security import get_password_hash
 from app.models.course_build_model import CourseQualityGateRun, GateSeverity
 from app.models.course_model import Course, CourseStatus
+from app.models.course_outline_model import (
+    CourseOutlineNode,
+    CourseOutlineVersion,
+    OutlineLifecycleStatus,
+    OutlineNodeType,
+    TeachingScriptNode,
+    TeachingScriptVersion,
+)
 from app.models.graph_production_model import GraphSnapshotRecord, SnapshotStatus
 from app.models.user_model import User, UserRole
 from app.services.course_build_service import _prerequisite_cycle_nodes, quality_gate_service
@@ -131,3 +139,100 @@ def test_quality_gate_requires_a_published_graph_snapshot(session):
     )
     graph_check = next(item for item in with_graph.checks if item["check_id"] == "graph.prerequisite_acyclic")
     assert graph_check["passed"] is True
+
+
+def test_missing_or_empty_knowledge_point_scripts_are_unbypassable_blockers(session):
+    course, teacher = _course_and_teacher(session)
+    outline = CourseOutlineVersion(
+        course_id=course.id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(outline)
+    session.flush()
+    covered = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="Covered",
+        order_index=0,
+    )
+    empty = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="Empty",
+        order_index=1,
+    )
+    missing = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="Missing",
+        order_index=2,
+    )
+    session.add(covered)
+    session.add(empty)
+    session.add(missing)
+    session.flush()
+    scripts = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(scripts)
+    session.flush()
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=scripts.script_version_id,
+        outline_node_id=covered.outline_node_id,
+        content="Covered script.",
+    ))
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=scripts.script_version_id,
+        outline_node_id=empty.outline_node_id,
+        content="   ",
+    ))
+    session.commit()
+
+    run = quality_gate_service.run_checks(session, course_id=course.id, initiated_by=teacher.id)
+    coverage = next(item for item in run.checks if item["check_id"] == "scripts.knowledge_coverage")
+    non_empty = next(item for item in run.checks if item["check_id"] == "scripts.non_empty")
+    assert coverage["severity"] == GateSeverity.BLOCKER.value
+    assert non_empty["severity"] == GateSeverity.BLOCKER.value
+    assert run.blocker_count >= 2
+
+    with pytest.raises(Exception):
+        quality_gate_service.confirm_warning_override(
+            session,
+            course_id=course.id,
+            gate_run_id=run.gate_run_id,
+            confirmed_by=teacher.id,
+            reason="Missing scripts must not be overridden.",
+        )
+
+
+def test_absent_script_version_is_an_unbypassable_blocker(session):
+    course, teacher = _course_and_teacher(session)
+    outline = CourseOutlineVersion(
+        course_id=course.id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(outline)
+    session.flush()
+    session.add(CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=outline.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="No script version",
+        order_index=0,
+    ))
+    session.commit()
+
+    run = quality_gate_service.run_checks(session, course_id=course.id, initiated_by=teacher.id)
+    version_check = next(item for item in run.checks if item["check_id"] == "scripts.version_exists")
+    assert version_check["severity"] == GateSeverity.BLOCKER.value
+    assert run.blocker_count >= 1

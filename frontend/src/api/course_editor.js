@@ -11,8 +11,10 @@ export const unlockOutlineNode = (courseId, nodeId) => request.post(`${base(cour
 export const deleteOutlineNode = (courseId, nodeId) => request.delete(`${base(courseId)}/outline/nodes/${encodeURIComponent(nodeId)}`)
 
 export const getTeachingScripts = (courseId) => request.get(`${base(courseId)}/scripts`)
+export const createTeachingScript = (courseId, payload) => request.post(`${base(courseId)}/scripts`, payload)
 export const updateTeachingScript = (courseId, scriptNodeId, payload) => request.patch(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}`, payload)
 export const lockTeachingScript = (courseId, scriptNodeId) => request.post(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}/lock`)
+export const unlockTeachingScript = (courseId, scriptNodeId) => request.post(`${base(courseId)}/scripts/${encodeURIComponent(scriptNodeId)}/unlock`)
 
 export const listBuildProposals = (courseId, status = null) => request.get(
   `${base(courseId)}/proposals`,

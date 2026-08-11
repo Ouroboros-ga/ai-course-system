@@ -938,9 +938,17 @@ class ControlledPrepWorkflow:
         """Generate all first-round scripts in one structured LLM request."""
         candidate_ids = {candidate.candidate_id for candidate in candidates}
         async def validate(scripts: list[TeachingScriptNodeDraft]) -> list[TeachingScriptNodeDraft]:
-            returned_ids = {script.candidate_id for script in scripts}
-            if returned_ids != candidate_ids:
-                raise StructuredOutputError("script_writer_batch 返回的 candidate_id 与请求不一致")
+            returned_id_list = [script.candidate_id for script in scripts]
+            returned_ids = set(returned_id_list)
+            unknown_ids = returned_ids - candidate_ids
+            if unknown_ids:
+                raise StructuredOutputError("script_writer_batch 返回了未请求的 candidate_id")
+            if len(returned_ids) != len(returned_id_list):
+                raise StructuredOutputError("script_writer_batch 返回了重复的 candidate_id")
+            # A model may validly omit individual scripts in a large batch.
+            # Preserve the valid subset; persistence creates a safe coverage
+            # issue for each omitted knowledge point instead of discarding the
+            # entire teacher-visible draft.
             for script in scripts:
                 self._assert_evidence_ids(script, request.evidence)
             return scripts

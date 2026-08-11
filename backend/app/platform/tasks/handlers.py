@@ -510,6 +510,7 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
     build_task_id = str(payload.get("build_task_id") or "")
     if not course_id or not corpus_snapshot_id or not build_task_id:
         raise TaskExecutionError("VALIDATION_FAILED", "course_draft_build 缺少课程或语料快照", retryable=False)
+    partial_success = False
 
     from app.core.time_utils import utcnow_aware
     from app.models.course_build_model import (
@@ -711,6 +712,7 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                             graph_relation_candidates=int(result_payload.get("graph_relation_candidates") or 0),
                             outline_node_count=int(result_payload.get("outline_node_count") or 0),
                             script_node_count=int(result_payload.get("script_node_count") or 0),
+                            script_coverage_issues=list(result_payload.get("script_coverage_issues") or []),
                             markdown_resource_id=result_payload.get("markdown_resource_id") or None,
                             markdown_resource_version_id=result_payload.get("markdown_resource_version_id") or None,
                         )
@@ -741,6 +743,7 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 build.result_outline_version_id = result.outline_version_id
                 build.result_script_version_id = result.script_version_id
                 result_data = result.to_progress_data()
+                partial_success = bool(result_data.get("script_coverage_issues"))
             build.result_retrieval_snapshot_id = retrieval.retrieval_snapshot_id
             if not course_corpus_service.is_snapshot_current(session, corpus=corpus):
                 raise CourseBuildCancelled("课程语料已更新，未提交旧版本草稿")
@@ -760,7 +763,15 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
                 checkpoint.payload = result_data
                 checkpoint.created_at = utcnow_aware()
                 session.add(checkpoint)
-            build.status = CourseDraftBuildStatus.SUCCEEDED
+            build.status = (
+                CourseDraftBuildStatus.PARTIAL_SUCCESS
+                if partial_success else CourseDraftBuildStatus.SUCCEEDED
+            )
+            build.error_code = "SCRIPT_COVERAGE_INCOMPLETE" if partial_success else ""
+            build.error_message = (
+                f"{len(result_data.get('script_coverage_issues') or [])} 个知识点的讲稿未通过证据校验或未生成，等待教师手工补齐"
+                if partial_success else ""
+            )
             build.finished_at = utcnow_aware()
             session.add(build)
             session.commit()
@@ -833,11 +844,19 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
         raise TaskExecutionError("COURSE_DRAFT_BUILD_FAILED", failure_message, retryable=True) from exc
 
     with ctx.session_factory() as session:
-        ctx.service.mark_succeeded(
-            session, ctx.task_id,
-            result_ref=f"course_corpus://{corpus_snapshot_id}",
-            result_data={"build_task_id": build_task_id, **result_data},
-        )
+        task_result = {"build_task_id": build_task_id, **result_data}
+        if partial_success:
+            ctx.service.mark_partial_success(
+                session, ctx.task_id,
+                result_ref=f"course_corpus://{corpus_snapshot_id}",
+                result_data=task_result,
+            )
+        else:
+            ctx.service.mark_succeeded(
+                session, ctx.task_id,
+                result_ref=f"course_corpus://{corpus_snapshot_id}",
+                result_data=task_result,
+            )
 
 
 # ---------------------------------------------------------------------------

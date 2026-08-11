@@ -61,6 +61,7 @@ class InitialPrepResultState(TypedDict, total=False):
     graph_relation_candidates: int
     outline_node_count: int
     script_node_count: int
+    script_coverage_issues: list[dict[str, str]]
     markdown_resource_id: str
     markdown_resource_version_id: str
 

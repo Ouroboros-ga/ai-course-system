@@ -661,6 +661,33 @@ def _prerequisite_cycle_nodes(relations: list[dict]) -> set[str]:
     return cycles
 
 
+def _script_coverage_gaps(
+    session: Session,
+    *,
+    course_id: int,
+    outline_version_id: str,
+    script_version_id: str,
+) -> tuple[list[str], list[str]]:
+    """Return missing and empty script nodes for one explicit draft pair."""
+    knowledge_nodes = list(session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.course_id == course_id,
+        CourseOutlineNode.outline_version_id == outline_version_id,
+        CourseOutlineNode.node_type == OutlineNodeType.KNOWLEDGE_POINT,
+    )).all())
+    script_nodes = list(session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.course_id == course_id,
+        TeachingScriptNode.script_version_id == script_version_id,
+    )).all())
+    by_outline = {item.outline_node_id: item for item in script_nodes}
+    missing = [node.outline_node_id for node in knowledge_nodes if node.outline_node_id not in by_outline]
+    empty = [
+        node.outline_node_id
+        for node in knowledge_nodes
+        if node.outline_node_id in by_outline and not (by_outline[node.outline_node_id].content or "").strip()
+    ]
+    return missing, empty
+
+
 class QualityGateService:
     """质量门禁服务
 
@@ -911,22 +938,25 @@ class QualityGateService:
                 TeachingScriptNode.script_version_id == script_version.script_version_id,
             )).all()) if script_version else []
             if script_version is None:
-                checks.append({"check_id": "scripts.version_exists", "name": "讲稿草稿存在", "severity": GateSeverity.ERROR.value, "passed": False, "message": "课程目录尚未生成对应讲稿版本"})
-                error_count += 1
+                # A missing script version means every knowledge point is
+                # uncovered.  It is not a teacher-confirmable quality warning:
+                # there is no lecture content to publish at all.
+                checks.append({"check_id": "scripts.version_exists", "name": "讲稿草稿存在", "severity": GateSeverity.BLOCKER.value, "passed": False, "message": "课程目录尚未生成对应讲稿版本"})
+                blocker_count += 1
             scripts_by_outline = {item.outline_node_id: item for item in script_nodes}
             script_ids = set(scripts_by_outline)
             missing_scripts = [n.outline_node_id for n in knowledge if n.outline_node_id not in script_ids]
             if missing_scripts:
-                checks.append({"check_id": "scripts.knowledge_coverage", "name": "知识点讲稿覆盖", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(missing_scripts)} 个知识点缺少讲稿"})
-                error_count += 1
+                checks.append({"check_id": "scripts.knowledge_coverage", "name": "知识点讲稿覆盖", "severity": GateSeverity.BLOCKER.value, "passed": False, "message": f"{len(missing_scripts)} 个知识点缺少讲稿"})
+                blocker_count += 1
 
             empty_scripts = [node.outline_node_id for node in knowledge if (
                 node.outline_node_id in scripts_by_outline
                 and not (scripts_by_outline[node.outline_node_id].content or "").strip()
             )]
             if empty_scripts:
-                checks.append({"check_id": "scripts.non_empty", "name": "知识点讲稿非空", "severity": GateSeverity.ERROR.value, "passed": False, "message": f"{len(empty_scripts)} 个知识点讲稿为空", "details": empty_scripts[:20]})
-                error_count += 1
+                checks.append({"check_id": "scripts.non_empty", "name": "知识点讲稿非空", "severity": GateSeverity.BLOCKER.value, "passed": False, "message": f"{len(empty_scripts)} 个知识点讲稿为空", "details": empty_scripts[:20]})
+                blocker_count += 1
 
             missing_evidence = [node.outline_node_id for node in knowledge if not (
                 node.source_block_refs
@@ -1260,6 +1290,23 @@ class CourseReleaseService:
         )).first() if script_id else None
         if outline is None or script is None:
             reject_state_conflict("发布必须指定同一草稿版本的课程结构与讲稿")
+        if script.outline_version_id != outline.outline_version_id:
+            reject_state_conflict("发布必须指定同一草稿版本的课程结构与讲稿")
+        missing_scripts, empty_scripts = _script_coverage_gaps(
+            session,
+            course_id=course_id,
+            outline_version_id=outline.outline_version_id,
+            script_version_id=script.script_version_id,
+        )
+        if missing_scripts or empty_scripts:
+            reject_state_conflict(
+                "课程仍有未补齐或为空的知识点讲稿，不能正式发布",
+                details={
+                    "error_code": "SCRIPT_COVERAGE_INCOMPLETE",
+                    "missing_script_count": len(missing_scripts),
+                    "empty_script_count": len(empty_scripts),
+                },
+            )
         outline_same_materials = course_corpus_service.snapshots_have_same_material_set(
             session,
             left_snapshot_id=outline.corpus_snapshot_id,

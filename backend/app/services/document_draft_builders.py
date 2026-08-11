@@ -68,6 +68,7 @@ class DraftAssetResult:
     graph_candidate_batch_id: Optional[str] = None
     outline_node_count: int = 0
     script_node_count: int = 0
+    script_coverage_issues: list[dict[str, str]] = field(default_factory=list)
     markdown_resource_id: Optional[str] = None
     markdown_resource_version_id: Optional[str] = None
     warnings: list[str] = field(default_factory=list)
@@ -81,6 +82,14 @@ class DraftAssetResult:
             "graph_candidate_batch_id": self.graph_candidate_batch_id,
             "outline_node_count": self.outline_node_count,
             "script_node_count": self.script_node_count,
+            "script_coverage_issues": [
+                {
+                    "outline_node_id": str(issue.get("outline_node_id") or ""),
+                    "code": str(issue.get("code") or ""),
+                }
+                for issue in self.script_coverage_issues
+                if issue.get("outline_node_id") and issue.get("code")
+            ],
             "markdown_resource_id": self.markdown_resource_id,
             "markdown_resource_version_id": self.markdown_resource_version_id,
             "warnings": list(self.warnings or []),

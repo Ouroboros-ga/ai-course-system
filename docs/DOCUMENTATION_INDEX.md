@@ -8,6 +8,8 @@
 
 > 2026-08-11 更新：课程建设助教的单节点提案、批量一键操作、审核决定与提案列表增加展示安全的 `change_summary` / `display`。教师端状态固定为 `pending_review`、`applied`、`rejected`、`no_change`，不再显示内部 `target`；原始 `PatchProposalOperation.target` 保持持久化/API 兼容以支持审计和已有决定链路，无数据库迁移。实现与回归证据见[功能现状审计表](phase1/功能现状审计表.md)。
 
+> 2026-08-11 更新：初始备课新增“讲稿覆盖问题”安全记录与 `partial_success` 语义；教师可在当前草稿讲稿页手工补齐，缺失/空讲稿升级为不可绕过的发布 BLOCKER。实现、迁移和验证边界见[课程生成核心逻辑与统一建设链](phase1/课程生成核心逻辑与统一建设链.md)及[功能现状审计表](phase1/功能现状审计表.md)。
+
 > 2026-08-07 新增：[平台管理员、Provider 与开放 API 兼容层](phase1/平台管理员Provider与开放API兼容层.md)。该文档记录全局 user/admin 角色收敛、历史大写 TEACHER 账号升级管理员、后台配置、密钥脱敏、Provider 热刷新及可移除的泛雅·超星 AI 示例协议参考兼容包边界。
 
 > 2026-08-07 新增：[ResearchAgent 整体架构、前端与上线基线](phase1/研究智能体整体架构与前端设计.md)。P0 已接通课程内 arXiv 元数据检索与来源核验；趋势、综合、写作、多源检索和完整仓库复现仍为 Research Preview。该文档是研究智能体的现行架构与验收入口。

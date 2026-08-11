@@ -273,6 +273,7 @@ async def get_draft_build_status(
     # final result payload; earlier stages stay metadata-only.
     warnings: list[str] = []
     skeleton_summary: dict[str, Any] | None = None
+    script_coverage_issues: list[dict[str, str]] = []
     if status in {"succeeded", "partial_success"}:
         checkpoint = session.exec(select(CourseDraftBuildCheckpoint).where(
             CourseDraftBuildCheckpoint.build_task_id == build.build_task_id,
@@ -284,7 +285,16 @@ async def get_draft_build_status(
                 skeleton_summary = {
                     "outline_node_count": checkpoint.payload.get("outline_node_count"),
                     "script_node_count": checkpoint.payload.get("script_node_count"),
+                    "script_coverage_issue_count": len(checkpoint.payload.get("script_coverage_issues") or []),
                 }
+            script_coverage_issues = [
+                {
+                    "outline_node_id": str(issue.get("outline_node_id") or ""),
+                    "code": str(issue.get("code") or ""),
+                }
+                for issue in list(checkpoint.payload.get("script_coverage_issues") or [])
+                if isinstance(issue, dict) and issue.get("outline_node_id") and issue.get("code")
+            ]
     return unified_response(code=200, message="获取自动备课状态成功", data={
         "course_id": course_id,
         "phase": phase_by_status.get(status, "building"),
@@ -292,9 +302,11 @@ async def get_draft_build_status(
         "corpus_snapshot_id": corpus.corpus_snapshot_id,
         "course_draft_build_task_id": build.build_task_id,
         "task_id": build.task_id,
+        "error_code": build.error_code or "",
         "error_message": build.error_message or "",
         "warnings": warnings,
         "skeleton_summary": skeleton_summary,
+        "script_coverage_issues": script_coverage_issues,
     })
 
 

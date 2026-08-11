@@ -107,6 +107,7 @@ class InitialCoursePrepProvider:
             graph_relation_candidates=result.graph_relation_candidates,
             outline_node_count=result.outline_node_count,
             script_node_count=result.script_node_count,
+            script_coverage_issues=list(result.script_coverage_issues or []),
             markdown_resource_id=result.markdown_resource_id or "",
             markdown_resource_version_id=result.markdown_resource_version_id or "",
         )

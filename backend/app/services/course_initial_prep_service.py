@@ -24,6 +24,7 @@ from app.models.course_outline_model import (
     CourseOutlineNode,
     CourseOutlineVersion,
     CoursePptMapping,
+    CourseScriptCoverageIssue,
     OutlineLifecycleStatus,
     OutlineNodeType,
     TeachingScriptNode,
@@ -663,17 +664,48 @@ class InitialCoursePrepService:
         session.add(version)
         session.flush()
         result.script_version_id = version.script_version_id
+        scripts_by_candidate = {script.candidate_id: script for script in prepared["scripts"]}
+        if len(scripts_by_candidate) != len(prepared["scripts"]):
+            raise InitialCoursePreparationError("智能备课返回了重复的讲稿候选")
         verdict_by_candidate = {
             script.candidate_id: verification.verdict
             for script, verification in zip(prepared["scripts"], prepared["verifications"], strict=True)
         }
+        expected_candidate_ids = {
+            candidate.candidate_id
+            for candidate in prepared["outline"].candidates
+            if candidate.node_type == "knowledge_point"
+        }
+        unexpected_candidate_ids = set(scripts_by_candidate) - expected_candidate_ids
+        if unexpected_candidate_ids:
+            raise InitialCoursePreparationError("智能备课返回了不属于知识点的讲稿候选")
+        issue_code_by_candidate = {
+            candidate_id: "SCRIPT_OUTPUT_MISSING"
+            for candidate_id in expected_candidate_ids - set(scripts_by_candidate)
+        }
+        for candidate_id, verdict in verdict_by_candidate.items():
+            if verdict == "failed":
+                issue_code_by_candidate[candidate_id] = "EVIDENCE_VERIFICATION_FAILED"
         count = 0
-        for script in prepared["scripts"]:
-            if verdict_by_candidate.get(script.candidate_id) == "failed":
-                continue
-            node = candidate_to_node.get(script.candidate_id)
+        for candidate_id in sorted(expected_candidate_ids):
+            node = candidate_to_node.get(candidate_id)
             if node is None:
+                raise InitialCoursePreparationError("讲稿候选无法映射到课程知识点")
+            issue_code = issue_code_by_candidate.get(candidate_id)
+            if issue_code:
+                session.add(CourseScriptCoverageIssue(
+                    course_id=course_id,
+                    build_task_id=build_task_id,
+                    script_version_id=version.script_version_id,
+                    outline_node_id=node.outline_node_id,
+                    issue_code=issue_code,
+                ))
+                result.script_coverage_issues.append({
+                    "outline_node_id": node.outline_node_id,
+                    "code": issue_code,
+                })
                 continue
+            script = scripts_by_candidate[candidate_id]
             refs = [reference for reference in script.evidence_ids if reference in valid_block_ids]
             session.add(TeachingScriptNode(
                 course_id=course_id,
@@ -685,9 +717,13 @@ class InitialCoursePrepService:
                 content_hash="",
             ))
             count += 1
-        if not count:
-            raise InitialCoursePreparationError("智能备课未生成可核验的基础讲稿")
+        if count + len(result.script_coverage_issues) != len(expected_candidate_ids):
+            raise InitialCoursePreparationError("讲稿持久化后的知识点覆盖统计不一致")
         result.script_node_count = count
+        if result.script_coverage_issues:
+            result.warnings.append(
+                f"SCRIPT_COVERAGE_INCOMPLETE: {len(result.script_coverage_issues)} 个知识点需要教师手工补齐讲稿"
+            )
 
     @staticmethod
     def _primary_slide_version_id(session: Session, *, course_id: int, items: list[CourseCorpusItem]) -> str | None:

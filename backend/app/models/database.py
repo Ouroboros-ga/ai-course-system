@@ -146,6 +146,7 @@ from app.models.course_outline_model import (
     OutlineLifecycleStatus,
     TeachingScriptVersion,
     TeachingScriptNode,
+    CourseScriptCoverageIssue,
     PatchProposal,
     PatchProposalOperation,
     PatchProposalStatus,

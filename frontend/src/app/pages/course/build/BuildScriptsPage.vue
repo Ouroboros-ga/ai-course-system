@@ -1,8 +1,8 @@
 <script setup>
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { LockKeyhole, Save, Sparkles } from 'lucide-vue-next'
-import { getOutline, getTeachingScripts, lockTeachingScript, runPrepAgentBatchAction, updateTeachingScript } from '@/api/course_editor.js'
+import { AlertTriangle, LockKeyhole, LockOpen, Save, Sparkles } from 'lucide-vue-next'
+import { createTeachingScript, getOutline, getTeachingScripts, lockTeachingScript, runPrepAgentBatchAction, unlockTeachingScript, updateTeachingScript } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
@@ -21,6 +21,12 @@ const saving = ref('')
 const organizing = ref(false)
 const selected = computed(() => items.value.find((item) => item.script_node_id === selectedId.value) ?? null)
 const outlineLabel = (item) => item?.outline_node?.display_label || item?.display_label || item?.outline_title || '未关联课程节点'
+const scriptStatus = (item) => {
+  if (item.has_script) return item.locked ? '已锁定' : `${outlineBreadcrumb(item)} · 草稿可编辑`
+  if (item.coverage_issue?.code === 'EVIDENCE_VERIFICATION_FAILED') return '证据校验未通过，待手工补齐'
+  if (item.coverage_issue?.code === 'SCRIPT_OUTPUT_MISSING') return '模型未返回讲稿，待手工补齐'
+  return '讲稿尚未生成'
+}
 const outlineBreadcrumb = (item) => {
   const breadcrumb = item?.outline_node?.breadcrumb || item?.breadcrumb || []
   return breadcrumb.length > 1 ? breadcrumb.slice(0, -1).join(' / ') : '课程结构'
@@ -50,6 +56,7 @@ async function load() {
     // scripts endpoint remains the source of editable content, but its
     // denormalized display fields must never win over the current outline.
     const scriptByOutline = new Map((data?.items ?? []).map((item) => [item.outline_node_id, item]))
+    const issueByOutline = new Map((data?.coverage_issues ?? []).map((issue) => [issue.outline_node_id, issue]))
     const knowledgeNodes = (outlineData?.nodes ?? []).filter((node) => (
       String(node.node_type || '').toLowerCase() === 'knowledge_point'
     ))
@@ -65,6 +72,7 @@ async function load() {
           locked: false,
         }),
         has_script: Boolean(script),
+        coverage_issue: issueByOutline.get(outlineNode.outline_node_id) ?? null,
         outline_node: outlineNode,
         outline_title: outlineNode.title,
         display_number: outlineNode.display_number,
@@ -85,10 +93,35 @@ async function save(item) {
   catch (caught) { error.value = caught?.message || '讲稿保存失败' }
   finally { saving.value = '' }
 }
+async function createMissingScript(item) {
+  if (!editable.value || item.locked || item.has_script) return
+  const content = item.content.trim()
+  if (!content) {
+    error.value = '请先填写非空讲稿，再保存。'
+    return
+  }
+  saving.value = item.script_node_id
+  try {
+    await createTeachingScript(courseId.value, {
+      outline_node_id: item.outline_node_id,
+      content,
+      style: item.style.trim() || 'beginner',
+    })
+    const outlineNodeId = item.outline_node_id
+    await load()
+    selectedId.value = items.value.find((candidate) => candidate.outline_node_id === outlineNodeId)?.script_node_id ?? ''
+  } catch (caught) { error.value = caught?.message || '讲稿补齐失败' }
+  finally { saving.value = '' }
+}
 async function lock(item) {
   if (!item.has_script) return
   try { await lockTeachingScript(courseId.value, item.script_node_id); item.locked = true }
   catch (caught) { error.value = caught?.message || '锁定讲稿失败' }
+}
+async function unlock(item) {
+  if (!editable.value || !item.has_script) return
+  try { await unlockTeachingScript(courseId.value, item.script_node_id); item.locked = false }
+  catch (caught) { error.value = caught?.message || '取消锁定讲稿失败' }
 }
 function openAgent(customInstruction) {
   if (!workbench || workbench.batchRun) return
@@ -179,19 +212,31 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
     <div v-else-if="!items.length" class="empty-state"><Sparkles :size="22" /><strong>讲授脚本尚未生成</strong><p>先确认课程结构并完成首次智能备课，系统才会生成可审核的讲稿草稿。</p></div>
     <div v-else class="scripts-workbench">
       <div class="script-list" aria-label="讲稿节点列表">
-        <button v-for="item in items" :key="item.script_node_id" class="script-row" :class="{ selected: selectedId === item.script_node_id }" type="button" @click="select(item)">
-          <span><strong>{{ outlineLabel(item) }}</strong><small>{{ !item.has_script ? '讲稿尚未生成' : item.locked ? '已锁定' : `${outlineBreadcrumb(item)} · 草稿可编辑` }}</small></span><LockKeyhole v-if="item.locked" :size="15" />
+        <button v-for="item in items" :key="item.script_node_id" class="script-row" :class="{ selected: selectedId === item.script_node_id, issue: !item.has_script && item.coverage_issue }" type="button" @click="select(item)">
+          <span><strong>{{ outlineLabel(item) }}</strong><small>{{ scriptStatus(item) }}</small></span><LockKeyhole v-if="item.locked" :size="15" />
         </button>
       </div>
       <article v-if="selected" class="script-editor">
-        <header><div><p>关联目录节点 · {{ outlineBreadcrumb(selected) }}</p><h3>{{ outlineLabel(selected) }}</h3></div><SfxBadge :tone="selected.locked ? 'green' : 'amber'">{{ selected.locked ? '已锁定' : '草稿' }}</SfxBadge></header>
-        <div v-if="!selected.has_script" class="missing-script">该知识点已在课程结构中，但当前讲稿版本尚未覆盖它。完成一次首轮备课或重试构建后，这里会生成可编辑讲稿。</div>
-        <template v-else>
-          <label>讲授脚本<textarea v-model="selected.content" :disabled="!editable || selected.locked" @blur="save(selected)" /></label>
-          <label>讲解风格<input v-model="selected.style" :disabled="!editable || selected.locked" placeholder="例如：面向大一学生，循序解释" @blur="save(selected)" /></label>
-        </template>
+        <header><div><p>关联目录节点 · {{ outlineBreadcrumb(selected) }}</p><h3>{{ outlineLabel(selected) }}</h3></div><SfxBadge :tone="selected.locked ? 'green' : selected.coverage_issue ? 'red' : 'amber'">{{ selected.locked ? '已锁定' : selected.coverage_issue ? '待补齐' : '草稿' }}</SfxBadge></header>
+        <div v-if="!selected.has_script" class="missing-script" :class="{ failed: selected.coverage_issue }">
+          <AlertTriangle v-if="selected.coverage_issue" :size="18" aria-hidden="true" />
+          <div>
+            <strong v-if="selected.coverage_issue?.code === 'EVIDENCE_VERIFICATION_FAILED'">未保留未验证讲稿</strong>
+            <strong v-else-if="selected.coverage_issue?.code === 'SCRIPT_OUTPUT_MISSING'">模型未返回该知识点讲稿</strong>
+            <strong v-else>当前讲稿版本尚未覆盖该知识点</strong>
+            <p v-if="selected.coverage_issue">系统保留了已通过校验的其他讲稿；请教师依据当前知识点来源材料手工补齐。本操作不会再次调用智能体。</p>
+            <p v-else>请手工补齐讲稿后再继续课程建设。</p>
+          </div>
+        </div>
+        <label>讲授脚本<textarea v-model="selected.content" :disabled="!editable || selected.locked" @blur="selected.has_script && save(selected)" /></label>
+        <label>讲解风格<input v-model="selected.style" :disabled="!editable || selected.locked" placeholder="例如：面向大一学生，循序解释" @blur="selected.has_script && save(selected)" /></label>
         <p v-if="saving === selected.script_node_id" class="saving"><Save :size="14" /> 正在保存讲稿</p>
-        <div class="script-actions"><SfxButton v-if="!selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="lock(selected)"><LockKeyhole :size="15" /> 锁定讲稿</SfxButton><SfxButton variant="tertiary" size="sm" :disabled="Boolean(workbench?.batchRun)" @click="openAgentForNode"><Sparkles :size="15" /> 智能优化讲解</SfxButton></div>
+        <div class="script-actions">
+          <SfxButton v-if="!selected.has_script" variant="primary" size="sm" :disabled="!editable || selected.locked || !selected.content.trim()" :loading="saving === selected.script_node_id" @click="createMissingScript(selected)"><Save :size="15" /> 保存讲稿</SfxButton>
+          <SfxButton v-if="selected.has_script && !selected.locked" variant="secondary" size="sm" :disabled="!editable" @click="lock(selected)"><LockKeyhole :size="15" /> 锁定讲稿</SfxButton>
+          <SfxButton v-else-if="selected.has_script" variant="secondary" size="sm" :disabled="!editable" @click="unlock(selected)"><LockOpen :size="15" /> 取消锁定</SfxButton>
+          <SfxButton v-if="selected.has_script" variant="tertiary" size="sm" :disabled="Boolean(workbench?.batchRun)" @click="openAgentForNode"><Sparkles :size="15" /> 智能优化讲解</SfxButton>
+        </div>
       </article>
     </div>
   </section>
@@ -205,6 +250,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .script-row:last-child{border-bottom:0}
 .script-row:hover{background:var(--surface-cool)}
 .script-row.selected{background:var(--ink-100);color:var(--ink-900)}
+.script-row.issue small{color:var(--red-700)}
 .script-row.selected::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
 .script-row span{display:grid;gap:2px}
 .script-row strong{font-size:var(--ui-sm-size);font-weight:600;line-height:1.35}
@@ -234,7 +280,11 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .first-prep-progress span:nth-child(3){animation-delay:.3s}
 @keyframes first-prep-pulse{0%,100%{transform:scale(1);opacity:.85}50%{transform:scale(1.06);opacity:1}}
 @keyframes first-prep-bounce{0%,100%{transform:translateY(0);opacity:.4}50%{transform:translateY(-6px);opacity:1}}
-.missing-script{padding:var(--space-4);border:1px dashed var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-muted);line-height:1.6}
+.missing-script{display:flex;gap:var(--space-2);padding:var(--space-4);border:1px dashed var(--border-default);border-radius:var(--radius-md);background:var(--surface-cool);color:var(--text-muted);line-height:1.6}
+.missing-script.failed{border-style:solid;border-color:var(--red-300);background:var(--red-100);color:var(--red-700)}
+.missing-script strong{display:block;color:var(--text-primary)}
+.missing-script.failed strong{color:var(--red-700)}
+.missing-script p{margin:var(--space-1) 0 0}
 @media(max-width:880px){.scripts-workbench{grid-template-columns:1fr;overflow:visible}.script-list{max-height:260px;overflow:auto}}
 @media(max-width:560px){.scripts-stage{padding:var(--space-3)}.script-editor{padding:var(--space-3)}.script-actions :deep(.sfx-btn){flex:1}}
 </style>

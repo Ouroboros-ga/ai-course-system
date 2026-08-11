@@ -238,6 +238,39 @@ class TeachingScriptNode(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 
 
+class CourseScriptCoverageIssue(SQLModel, table=True):
+    """Safe, teacher-actionable record for an omitted initial script.
+
+    The initial preparation pipeline deliberately does not persist an
+    evidence-verifier-rejected model draft. This table preserves only the
+    durable course node and a reason code, never a prompt, model response, or
+    verifier finding.
+    """
+
+    __tablename__ = "course_script_coverage_issues"
+    __table_args__ = (
+        UniqueConstraint(
+            "script_version_id", "outline_node_id",
+            name="uq_script_coverage_issue_version_node",
+        ),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    issue_id: str = Field(
+        default_factory=lambda: f"sci_{uuid.uuid4().hex}",
+        unique=True, index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    build_task_id: Optional[str] = Field(default=None, index=True)
+    script_version_id: str = Field(index=True)
+    outline_node_id: str = Field(index=True)
+    issue_code: str = Field(max_length=64, index=True)
+    status: str = Field(default="open", max_length=32, index=True)
+    resolved_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    resolved_at: Optional[datetime] = Field(default=None)
+
+
 class PatchProposalStatus(str, Enum):
     """提案状态：教师接受/拒绝前为 pending。"""
     PENDING = "pending"

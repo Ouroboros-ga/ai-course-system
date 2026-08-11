@@ -1550,6 +1550,28 @@ async def lock_script(course_id: int, script_node_id: str, session: Session = De
     return unified_response(200, "讲稿节点已锁定", _script_node_view(node))
 
 
+@router.post("/course/{course_id}/scripts/{script_node_id}/unlock")
+async def unlock_script(
+    course_id: int,
+    script_node_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a draft lecture-script node to the editable AI scope."""
+    require_course_permission(session, current_user, course_id, "course.script.edit")
+    node = session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.script_node_id == script_node_id,
+        TeachingScriptNode.course_id == course_id,
+    )).first()
+    if node is None:
+        raise HTTPException(404, "讲稿节点不存在")
+    node.locked_by = None
+    node.locked_at = None
+    session.add(node)
+    session.commit()
+    session.refresh(node)
+    return unified_response(200, "讲稿节点已解锁", _script_node_view(node))
+
 @router.get("/course/{course_id}/proposals")
 async def list_proposals(
     course_id: int,
