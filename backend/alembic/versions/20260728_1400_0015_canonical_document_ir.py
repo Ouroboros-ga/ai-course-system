@@ -34,6 +34,25 @@ def _drop_block_foreign_key(table: sa.Table) -> None:
             table.constraints.remove(constraint)
 
 
+def _drop_postgresql_legacy_block_foreign_keys(bind) -> None:
+    """Release the legacy parent unique index before it is replaced.
+
+    PostgreSQL makes a foreign key depend on the unique index that proves its
+    parent key.  SQLite permits the historical order, but PostgreSQL must drop
+    the old ``evidence_spans.block_id`` foreign key before making ``block_id``
+    non-unique.  The later batch rebuild installs the scoped composite key.
+    """
+    if bind.dialect.name != "postgresql" or "evidence_spans" not in sa.inspect(bind).get_table_names():
+        return
+    for foreign_key in sa.inspect(bind).get_foreign_keys("evidence_spans"):
+        referred_table = foreign_key.get("referred_table")
+        constrained_columns = set(foreign_key.get("constrained_columns") or ())
+        if referred_table == "document_blocks" and "block_id" in constrained_columns:
+            name = foreign_key.get("name")
+            if name:
+                op.drop_constraint(name, "evidence_spans", type_="foreignkey")
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     existing = _columns(bind, "document_parse_runs")
@@ -66,6 +85,8 @@ def upgrade() -> None:
         if name not in existing:
             op.add_column("document_blocks", sa.Column(name, column, nullable=True))
             op.create_index(f"ix_document_blocks_{name}", "document_blocks", [name])
+
+    _drop_postgresql_legacy_block_foreign_keys(bind)
 
     # Canonical block IDs are source locators, not database row IDs.  Versions
     # retain the same locator across a reparse, so uniqueness must be scoped
