@@ -176,7 +176,78 @@ def _script_node_payload(node: TeachingScriptNode) -> dict[str, Any]:
     }
 
 
-def _proposal_payload(proposal: PatchProposal, ops: list[PatchProposalOperation]) -> dict[str, Any]:
+def _proposal_operation_display(
+    session: Session,
+    course_id: int,
+    operation: PatchProposalOperation,
+) -> dict[str, str]:
+    """Build the safe teacher-facing label for the legacy proposal route."""
+    target_kind, target_id, field = (operation.target.split(":", 2) + ["", "", ""])[:3]
+    resource = "course_change"
+    resource_label = "课程内容"
+    field_label = "内容"
+    node_title = ""
+
+    if target_kind == "outline":
+        resource = "outline"
+        resource_label = "课程节点"
+        field_label = {"title": "标题", "page_range": "页码范围", "node": "内容"}.get(field, "内容")
+        node = session.exec(select(CourseOutlineNode).where(
+            CourseOutlineNode.course_id == course_id,
+            CourseOutlineNode.outline_node_id == target_id,
+        )).first()
+        node_title = node.title if node else ""
+        if operation.operation == PatchOperation.ADD and field == "node":
+            try:
+                node_title = str(json.loads(operation.after).get("title") or "")
+            except (TypeError, ValueError):
+                node_title = ""
+    elif target_kind == "script":
+        resource = "script"
+        resource_label = "讲解脚本"
+        field_label = {"content": "讲稿内容", "style": "讲解风格"}.get(field, "内容")
+        script = session.exec(select(TeachingScriptNode).where(
+            TeachingScriptNode.course_id == course_id,
+            TeachingScriptNode.script_node_id == target_id,
+        )).first()
+        if script is not None:
+            node = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_node_id == script.outline_node_id,
+            )).first()
+            node_title = node.title if node else ""
+
+    label = f"{'新增' if operation.operation == PatchOperation.ADD else ''}{resource_label}"
+    if node_title:
+        label = f"{label}《{node_title}》"
+    return {
+        "resource": resource,
+        "resource_label": resource_label,
+        "field": field or "change",
+        "field_label": field_label,
+        "node_title": node_title,
+        "label": f"{label}的{field_label}",
+    }
+
+
+def _proposal_change_state(status: PatchProposalStatus) -> Literal[
+    "pending_review", "applied", "rejected", "no_change"
+]:
+    if status == PatchProposalStatus.PENDING:
+        return "pending_review"
+    if status == PatchProposalStatus.REJECTED:
+        return "rejected"
+    if status in {PatchProposalStatus.ACCEPTED, PatchProposalStatus.PARTIALLY_ACCEPTED}:
+        return "applied"
+    return "no_change"
+
+
+def _proposal_payload(
+    session: Session,
+    proposal: PatchProposal,
+    ops: list[PatchProposalOperation],
+) -> dict[str, Any]:
+    display_items = [_proposal_operation_display(session, proposal.course_id, op) for op in ops]
     return {
         "proposal_id": proposal.proposal_id,
         "course_id": proposal.course_id,
@@ -188,11 +259,17 @@ def _proposal_payload(proposal: PatchProposal, ops: list[PatchProposalOperation]
         "created_at": proposal.created_at.isoformat() if proposal.created_at else None,
         "decided_by": proposal.decided_by,
         "decided_at": proposal.decided_at.isoformat() if proposal.decided_at else None,
+        "change_summary": {
+            "state": _proposal_change_state(proposal.status),
+            "count": len(display_items),
+            "items": display_items,
+        },
         "operations": [
             {
                 "op_id": op.op_id,
                 "operation": op.operation.value,
                 "target": op.target,
+                "display": display_items[index],
                 "before": op.before,
                 "after": op.after,
                 "reason": op.reason,
@@ -202,7 +279,7 @@ def _proposal_payload(proposal: PatchProposal, ops: list[PatchProposalOperation]
                 "accepted": op.accepted,
                 "decided_at": op.decided_at.isoformat() if op.decided_at else None,
             }
-            for op in ops
+            for index, op in enumerate(ops)
         ],
     }
 
@@ -522,7 +599,7 @@ async def list_patch_proposals(
         statement = statement.where(PatchProposal.status == status)
     proposals = list(session.exec(statement.order_by(PatchProposal.created_at.desc())).all())
     return unified_response(200, "获取教师审核提案成功", {
-        "items": [_proposal_payload(p, list(session.exec(select(PatchProposalOperation).where(
+        "items": [_proposal_payload(session, p, list(session.exec(select(PatchProposalOperation).where(
             PatchProposalOperation.course_id == course_id,
             PatchProposalOperation.proposal_id == p.proposal_id,
         )).all())) for p in proposals],
@@ -555,7 +632,7 @@ async def create_patch_proposal(
         session.add(op)
         ops.append(op)
     session.commit()
-    return unified_response(201, "备课智能体提案已创建，等待教师审核", _proposal_payload(proposal, ops))
+    return unified_response(201, "备课智能体提案已创建，等待教师审核", _proposal_payload(session, proposal, ops))
 
 
 def _apply_proposal_operation(session: Session, course_id: int, op: PatchProposalOperation, teacher_id: int) -> None:
@@ -654,4 +731,4 @@ async def decide_patch_proposal(
     proposal.decided_at = utcnow_aware()
     session.add(proposal)
     session.commit()
-    return unified_response(200, "教师提案审核完成", _proposal_payload(proposal, ops))
+    return unified_response(200, "教师提案审核完成", _proposal_payload(session, proposal, ops))

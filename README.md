@@ -49,7 +49,7 @@
 |---|---|---|
 | 课程创建、资料上传（≤100MB）、课程生命周期（发布/下架/回滚） | ✅ | `document.py`、`course_build_service.py`、`course_release_service` |
 | 文档解析（PPT/PDF/DOCX → Markdown → 结构化） | ✅ | Docling + LibreOffice/Poppler + PaddleOCR（本地真实链路） |
-| 结构化讲稿生成（开场白/讲解/过渡语） | ✅ | Prep Agent + 有界 Map/Reduce + PatchProposal 审核闸门 |
+| 结构化讲稿生成（开场白/讲解/过渡语） | ✅ | Prep Agent + 有界 Map/Reduce + PatchProposal 审核闸门；单节点优化返回待审核提案，批量一键优化才直接应用，教师界面只显示节点/字段摘要 |
 | PPT 页面 ↔ 知识点映射 | ✅ | `mapping.py` + LLM 语义匹配 |
 | 课程知识图谱（GraphRAG，8 种教育关系） | 🧪 | Worker 已部署、LanceDB/BGE 已接通；真实课程构图因**数据外发授权未获批**默认关闭（`GRAPHRAG_ENABLED=false`） |
 | 教师 8 步生产工作台、脚本快照/版本/回滚 | ✅ | shadow 前端 `/app/course/:courseId/build` |

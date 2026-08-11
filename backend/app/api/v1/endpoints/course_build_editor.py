@@ -95,6 +95,87 @@ def _prep_agent_busy_error() -> HTTPException:
     )
 
 
+def _operation_display(
+    session: Session,
+    course_id: int,
+    operation: PatchProposalOperation | dict[str, Any],
+) -> dict[str, str]:
+    """Return the teacher-facing label for one auditable proposal operation.
+
+    ``PatchProposalOperation.target`` is deliberately an internal, stable
+    address used by the decision path.  It must stay machine-readable for
+    audit and compatibility, but must never be used as the UI label.
+    """
+    target = operation.target if isinstance(operation, PatchProposalOperation) else str(operation.get("target") or "")
+    target_kind, target_id, field = (target.split(":", 2) + ["", "", ""])[:3]
+    resource = "course_change"
+    resource_label = "课程内容"
+    field_label = "内容"
+    node_title = ""
+
+    if target_kind == "outline":
+        resource = "outline"
+        resource_label = "课程节点"
+        field_label = {"title": "标题", "structure": "结构"}.get(field, "内容")
+        if target_id != "new":
+            node = session.exec(select(CourseOutlineNode).where(
+                CourseOutlineNode.course_id == course_id,
+                CourseOutlineNode.outline_node_id == target_id,
+            )).first()
+            node_title = node.title if node else ""
+    elif target_kind == "script":
+        resource = "script"
+        resource_label = "讲解脚本"
+        field_label = {"content": "讲稿内容", "style": "讲解风格"}.get(field, "内容")
+        if target_id != "new":
+            script = session.exec(select(TeachingScriptNode).where(
+                TeachingScriptNode.course_id == course_id,
+                TeachingScriptNode.script_node_id == target_id,
+            )).first()
+            if script is not None:
+                node = session.exec(select(CourseOutlineNode).where(
+                    CourseOutlineNode.course_id == course_id,
+                    CourseOutlineNode.outline_node_id == script.outline_node_id,
+                )).first()
+                node_title = node.title if node else ""
+
+    prefix = "新增" if target_id == "new" else ""
+    label = f"{prefix}{resource_label}"
+    if node_title:
+        label = f"{label}《{node_title}》"
+    return {
+        "resource": resource,
+        "resource_label": resource_label,
+        "field": field or "change",
+        "field_label": field_label,
+        "node_title": node_title,
+        "label": f"{label}的{field_label}",
+    }
+
+
+def _change_summary(
+    session: Session,
+    course_id: int,
+    operations: list[PatchProposalOperation] | list[dict[str, Any]],
+    state: Literal["pending_review", "applied", "rejected", "no_change"],
+) -> dict[str, Any]:
+    """Build the common, display-safe proposal result shape."""
+    items = [_operation_display(session, course_id, operation) for operation in operations]
+    return {"state": state, "count": len(items), "items": items}
+
+
+def _proposal_change_state(status: PatchProposalStatus) -> Literal[
+    "pending_review", "applied", "rejected", "no_change"
+]:
+    if status == PatchProposalStatus.PENDING:
+        return "pending_review"
+    if status == PatchProposalStatus.REJECTED:
+        return "rejected"
+    if status in {PatchProposalStatus.ACCEPTED, PatchProposalStatus.PARTIALLY_ACCEPTED}:
+        return "applied"
+    return "no_change"
+
+
 class OutlineNodeCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     node_type: OutlineNodeType = OutlineNodeType.KNOWLEDGE_POINT
@@ -1095,6 +1176,7 @@ async def run_prep_agent_command(
     session.add(proposal)
     session.flush()
     operation_count = 0
+    persisted_operations: list[PatchProposalOperation] = []
     for item in result.operations:
         target_kind, target_id, field = item["target"].split(":", 2)
         before = ""
@@ -1114,7 +1196,7 @@ async def run_prep_agent_command(
             if target is None or target.locked_by is not None:
                 continue
             before = _proposal_before_value(target, field)
-        session.add(PatchProposalOperation(
+        operation = PatchProposalOperation(
             proposal_id=proposal.proposal_id,
             course_id=course_id,
             operation=PatchOperation(item.get("operation", "replace")),
@@ -1124,32 +1206,45 @@ async def run_prep_agent_command(
             reason=item["reason"],
             evidence_refs=item["evidence_refs"],
             policy_version="course-prep-agent/actions-2.0",
-        ))
+        )
+        session.add(operation)
+        persisted_operations.append(operation)
         operation_count += 1
     if operation_count == 0:
         session.rollback()
+        change_summary = _change_summary(session, course_id, [], "no_change")
         return unified_response(200, "未发现需要安全调整的内容，课程草稿保持不变", {
             "outcome": "no_change",
             "action": intent.action.value,
+            "change_summary": change_summary,
             "explanation": {
                 "changed": [],
                 "reason": result.summary,
                 "evidence": result.evidence,
                 "excluded_locked_targets": result.excluded_locked_targets,
                 "planner": result.planner,
+                "change_summary": change_summary,
             },
         })
     session.commit()
+    change_summary = _change_summary(
+        session,
+        course_id,
+        persisted_operations,
+        "pending_review",
+    )
     return unified_response(201, "备课 Agent 已生成待教师审核的提案", {
         "proposal_id": proposal.proposal_id,
         "status": PatchProposalStatus.PENDING.value,
         "action": intent.action.value,
+        "change_summary": change_summary,
         "explanation": {
             "changed": [item["target"] for item in result.operations],
             "reason": result.summary,
             "evidence": result.evidence,
             "excluded_locked_targets": result.excluded_locked_targets,
             "planner": result.planner,
+            "change_summary": change_summary,
         },
     })
 
@@ -1304,6 +1399,7 @@ async def run_prep_agent_batch_action(
             "updated_count": len(operations),
             "excluded_locked_targets": result.excluded_locked_targets,
             "planner": result.planner,
+            "change_summary": _change_summary(session, course_id, operations, "applied"),
             "summary": result.summary,
             "run_id": result.run_id or None,
             "trace_id": result.trace_id or None,
@@ -1469,7 +1565,32 @@ async def list_proposals(
     result = []
     for proposal in proposals:
         ops = session.exec(select(PatchProposalOperation).where(PatchProposalOperation.proposal_id == proposal.proposal_id).order_by(PatchProposalOperation.id)).all()
-        result.append({"proposal_id": proposal.proposal_id, "tool_name": proposal.tool_name, "policy_version": proposal.policy_version, "status": proposal.status.value, "reason": proposal.reason, "created_at": proposal.created_at.isoformat(), "operations": [{"op_id": o.op_id, "operation": o.operation.value, "target": o.target, "before": o.before, "after": o.after, "reason": o.reason, "evidence_refs": o.evidence_refs or [], "external_ref": o.external_ref, "accepted": o.accepted} for o in ops]})
+        result.append({
+            "proposal_id": proposal.proposal_id,
+            "tool_name": proposal.tool_name,
+            "policy_version": proposal.policy_version,
+            "status": proposal.status.value,
+            "reason": proposal.reason,
+            "created_at": proposal.created_at.isoformat(),
+            "change_summary": _change_summary(
+                session,
+                course_id,
+                list(ops),
+                _proposal_change_state(proposal.status),
+            ),
+            "operations": [{
+                "op_id": o.op_id,
+                "operation": o.operation.value,
+                "target": o.target,
+                "display": _operation_display(session, course_id, o),
+                "before": o.before,
+                "after": o.after,
+                "reason": o.reason,
+                "evidence_refs": o.evidence_refs or [],
+                "external_ref": o.external_ref,
+                "accepted": o.accepted,
+            } for o in ops],
+        })
     return unified_response(200, "获取备课提案成功", {"items": result, "total": len(result)})
 
 
@@ -1824,7 +1945,17 @@ async def decide_proposal(course_id: int, proposal_id: str, payload: ProposalDec
         for op in ops: op.accepted = False; op.decided_at = utcnow_aware(); session.add(op)
         proposal.status = PatchProposalStatus.REJECTED
     proposal.decided_by = context.user_id; proposal.decided_at = utcnow_aware(); session.add(proposal); session.commit()
-    return unified_response(200, "提案已接受" if payload.accepted else "提案已拒绝", {"proposal_id": proposal_id, "status": proposal.status.value})
+    change_summary = _change_summary(
+        session,
+        course_id,
+        list(ops),
+        _proposal_change_state(proposal.status),
+    )
+    return unified_response(200, "提案已接受" if payload.accepted else "提案已拒绝", {
+        "proposal_id": proposal_id,
+        "status": proposal.status.value,
+        "change_summary": change_summary,
+    })
 
 
 @router.get("/course/{course_id}/ppt-mapping")

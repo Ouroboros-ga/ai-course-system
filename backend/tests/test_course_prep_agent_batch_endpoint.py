@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -8,7 +9,7 @@ import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
-from app.api.v1.endpoints import course_build_editor
+from app.api.v1.endpoints import course_build_editor, course_outline
 from app.core.security import get_password_hash
 from app.models.course_model import Course, CourseStatus
 from app.models.course_build_model import MaterialStatus, SourceMaterial, SourceMaterialVersion
@@ -18,6 +19,7 @@ from app.models.course_outline_model import (
     CoursePptMapping,
     OutlineLifecycleStatus,
     OutlineNodeType,
+    PatchOperation,
     PatchProposal,
     PatchProposalOperation,
     PatchProposalStatus,
@@ -121,6 +123,27 @@ def _result(first, second):
     )
 
 
+def _add_draft_script(session, course, outline_node, teacher):
+    version = TeachingScriptVersion(
+        course_id=course.id,
+        outline_version_id=outline_node.outline_version_id,
+        lifecycle_status=OutlineLifecycleStatus.DRAFT,
+        created_by=teacher.id,
+    )
+    session.add(version)
+    session.flush()
+    script = TeachingScriptNode(
+        script_version_id=version.script_version_id,
+        course_id=course.id,
+        outline_node_id=outline_node.outline_node_id,
+        content="原始讲稿内容",
+        style="beginner",
+    )
+    session.add(script)
+    session.commit()
+    return script
+
+
 def test_batch_endpoint_applies_every_planned_node_without_pending_approval(
     session,
     monkeypatch,
@@ -156,10 +179,176 @@ def test_batch_endpoint_applies_every_planned_node_without_pending_approval(
     assert all(operation.accepted is True for operation in operations)
     assert len(operations) == 2
     assert response["data"]["updated_count"] == 2
+    summary = response["data"]["change_summary"]
+    assert summary["state"] == "applied"
+    assert summary["count"] == 2
+    assert {item["resource"] for item in summary["items"]} == {"outline"}
+    assert all(item["node_title"].startswith("新标题") for item in summary["items"])
+    assert "outline:" not in json.dumps(summary, ensure_ascii=False)
     assert not session.exec(select(PatchProposal).where(
         PatchProposal.course_id == course.id,
         PatchProposal.status == PatchProposalStatus.PENDING,
     )).all()
+
+
+def test_single_node_title_command_stays_pending_until_accepted_and_exposes_safe_display(
+    session,
+    monkeypatch,
+):
+    teacher, course, first, _, _ = _setup_outline(session)
+
+    async def fake_plan(**kwargs):
+        assert kwargs["action"] == "optimize_node_title"
+        return IncrementalPrepResult(
+            summary="建议优化当前标题",
+            operations=[{
+                "target": f"outline:{first.outline_node_id}:title",
+                "after": "优化后的标题",
+                "reason": "标题更清晰",
+                "evidence_refs": [],
+            }],
+            planner="llm_single_node",
+        )
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+    response = asyncio.run(course_build_editor.run_prep_agent_command(
+        course.id,
+        course_build_editor.PrepAgentCommandRequest(
+            instruction="请优化当前节点标题",
+            outline_node_id=first.outline_node_id,
+            action="optimize_node_title",
+        ),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    proposal_id = response["data"]["proposal_id"]
+    summary = response["data"]["change_summary"]
+    assert response["data"]["status"] == PatchProposalStatus.PENDING.value
+    assert summary["state"] == "pending_review"
+    assert summary["items"] == [{
+        "resource": "outline",
+        "resource_label": "课程节点",
+        "field": "title",
+        "field_label": "标题",
+        "node_title": "旧标题一",
+        "label": "课程节点《旧标题一》的标题",
+    }]
+    assert "outline:" not in json.dumps(summary, ensure_ascii=False)
+    operation = session.exec(select(PatchProposalOperation).where(
+        PatchProposalOperation.proposal_id == proposal_id,
+    )).one()
+    assert operation.target == f"outline:{first.outline_node_id}:title"
+    session.expire_all()
+    assert session.get(CourseOutlineNode, first.id).title == "旧标题一"
+
+    listed = asyncio.run(course_build_editor.list_proposals(
+        course.id,
+        PatchProposalStatus.PENDING,
+        session,
+        _current_user(teacher),
+    ))
+    listed_operation = listed["data"]["items"][0]["operations"][0]
+    assert listed_operation["target"] == operation.target
+    assert listed_operation["display"]["label"] == "课程节点《旧标题一》的标题"
+    assert "outline:" not in json.dumps(listed["data"]["items"][0]["change_summary"], ensure_ascii=False)
+
+    decision = asyncio.run(course_build_editor.decide_proposal(
+        course.id,
+        proposal_id,
+        course_build_editor.ProposalDecision(accepted=True),
+        session,
+        _current_user(teacher),
+    ))
+    assert decision["data"]["status"] == PatchProposalStatus.ACCEPTED.value
+    assert decision["data"]["change_summary"]["state"] == "applied"
+    session.expire_all()
+    assert session.get(CourseOutlineNode, first.id).title == "优化后的标题"
+
+
+def test_single_node_script_rejection_keeps_draft_unchanged(session, monkeypatch):
+    teacher, course, first, _, _ = _setup_outline(session)
+    script = _add_draft_script(session, course, first, teacher)
+
+    async def fake_plan(**kwargs):
+        assert kwargs["action"] == "optimize_node_script"
+        return IncrementalPrepResult(
+            summary="建议优化当前讲稿",
+            operations=[{
+                "target": f"script:{script.script_node_id}:content",
+                "after": "优化后的讲稿内容",
+                "reason": "表达更适合初学者",
+                "evidence_refs": [],
+            }],
+            planner="llm_single_node",
+        )
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+    response = asyncio.run(course_build_editor.run_prep_agent_command(
+        course.id,
+        course_build_editor.PrepAgentCommandRequest(
+            instruction="请优化当前讲解脚本",
+            outline_node_id=first.outline_node_id,
+            action="optimize_node_script",
+        ),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    proposal_id = response["data"]["proposal_id"]
+    summary = response["data"]["change_summary"]
+    assert summary["state"] == "pending_review"
+    assert summary["items"][0]["label"] == "讲解脚本《旧标题一》的讲稿内容"
+    assert "script:" not in json.dumps(summary, ensure_ascii=False)
+    session.expire_all()
+    assert session.get(TeachingScriptNode, script.id).content == "原始讲稿内容"
+
+    decision = asyncio.run(course_build_editor.decide_proposal(
+        course.id,
+        proposal_id,
+        course_build_editor.ProposalDecision(accepted=False),
+        session,
+        _current_user(teacher),
+    ))
+    assert decision["data"]["status"] == PatchProposalStatus.REJECTED.value
+    assert decision["data"]["change_summary"]["state"] == "rejected"
+    session.expire_all()
+    assert session.get(TeachingScriptNode, script.id).content == "原始讲稿内容"
+
+
+def test_legacy_proposal_payload_also_uses_display_without_hiding_raw_audit_target(session):
+    teacher, course, first, _, _ = _setup_outline(session)
+    proposal = PatchProposal(
+        course_id=course.id,
+        tool_name="LegacyProposalTool",
+        policy_version="legacy/1",
+        reason="旧入口兼容测试",
+        created_by=teacher.id,
+    )
+    session.add(proposal)
+    session.flush()
+    operation = PatchProposalOperation(
+        proposal_id=proposal.proposal_id,
+        course_id=course.id,
+        operation=PatchOperation.REPLACE,
+        target=f"outline:{first.outline_node_id}:title",
+        before="旧标题一",
+        after="新标题一",
+        reason="统一标题",
+        evidence_refs=[],
+        policy_version="legacy/1",
+    )
+    session.add(operation)
+    session.commit()
+
+    payload = course_outline._proposal_payload(session, proposal, [operation])
+
+    assert payload["change_summary"]["state"] == "pending_review"
+    assert payload["operations"][0]["target"] == operation.target
+    assert payload["operations"][0]["display"]["label"] == "课程节点《旧标题一》的标题"
+    assert "outline:" not in json.dumps(payload["change_summary"], ensure_ascii=False)
 
 
 def test_natural_language_one_click_command_reuses_the_atomic_batch_action(

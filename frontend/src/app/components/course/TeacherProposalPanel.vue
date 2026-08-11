@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { decidePatchProposal, listPatchProposals } from '@/api/course_build.js'
+import { operationDisplayLabel } from '@/app/lib/prepAgentPresentation.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 
@@ -42,7 +43,7 @@ onMounted(load)
       <header><div><strong>{{ proposal.tool_name }}</strong><span class="sfx-t-caption"> · {{ proposal.policy_version || '未标注策略版本' }}</span></div><SfxBadge tone="amber">待审核</SfxBadge></header>
       <p v-if="proposal.reason" class="sfx-t-ui">{{ proposal.reason }}</p>
       <label v-for="operation in proposal.operations" :key="operation.op_id" class="sfx-proposal-op" :class="`is-${operation.operation}`">
-        <div class="sfx-proposal-op-head"><span><input v-model="selectedOps[proposal.proposal_id]" type="checkbox" :value="operation.op_id" /> <SfxBadge :tone="operation.operation === 'remove' ? 'red' : 'green'">{{ operation.operation }}</SfxBadge></span><code>{{ operation.target }}</code></div>
+        <div class="sfx-proposal-op-head"><span><input v-model="selectedOps[proposal.proposal_id]" type="checkbox" :value="operation.op_id" /> <SfxBadge :tone="operation.operation === 'remove' ? 'red' : 'green'">{{ operation.operation }}</SfxBadge></span><strong class="sfx-proposal-display">{{ operationDisplayLabel(operation) }}</strong></div>
         <del v-if="operation.before" class="sfx-proposal-before">{{ operation.before }}</del><ins v-if="operation.after" class="sfx-proposal-after">{{ operation.after }}</ins>
         <p v-if="operation.reason" class="sfx-t-caption">{{ operation.reason }}</p>
       </label>
@@ -52,5 +53,5 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-proposals{display:grid;gap:var(--space-3)}.sfx-proposals-head,.sfx-proposal header,.sfx-proposal footer,.sfx-proposal-op-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2)}.sfx-proposal{display:grid;gap:var(--space-2);padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md)}.sfx-proposal-op{display:grid;gap:var(--space-1);padding:var(--space-2);border-left:3px solid var(--green-600);background:var(--green-50)}.sfx-proposal-op.is-remove{border-color:var(--red-600);background:var(--red-50)}.sfx-proposal-before{color:var(--red-700);white-space:pre-wrap}.sfx-proposal-after{color:var(--green-700);white-space:pre-wrap}.sfx-proposal footer{justify-content:flex-end}.sfx-proposal-error{color:var(--red-700)}code{overflow-wrap:anywhere}
+.sfx-proposals{display:grid;gap:var(--space-3)}.sfx-proposals-head,.sfx-proposal header,.sfx-proposal footer,.sfx-proposal-op-head{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2)}.sfx-proposal{display:grid;gap:var(--space-2);padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md)}.sfx-proposal-op{display:grid;gap:var(--space-1);padding:var(--space-2);border-left:3px solid var(--green-600);background:var(--green-50)}.sfx-proposal-op.is-remove{border-color:var(--red-600);background:var(--red-50)}.sfx-proposal-before{color:var(--red-700);white-space:pre-wrap}.sfx-proposal-after{color:var(--green-700);white-space:pre-wrap}.sfx-proposal footer{justify-content:flex-end}.sfx-proposal-error{color:var(--red-700)}.sfx-proposal-display{overflow-wrap:break-word}
 </style>

@@ -4,6 +4,7 @@ import { BookOpenText, Check, ChevronDown, CircleAlert, SendHorizontal, Sparkles
 import { decideBuildProposal, getPrepAgentNodeEvidence, listBuildProposals, runPrepAgentCommand } from '@/api/course_editor.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { changeSummaryMessage, operationDisplayLabel } from '@/app/lib/prepAgentPresentation.js'
 import { apiErrorMessage } from '@/utils/apiErrorMessage.js'
 
 const props = defineProps({
@@ -28,7 +29,6 @@ let thinkingTimer = null
 const thinkingText = computed(() => thinkingSteps[thinkingStep.value] || thinkingSteps[0])
 const deciding = ref('')
 const error = ref('')
-const lastResponse = ref(null)
 const pending = computed(() => proposals.value.filter((proposal) => proposal.status === 'pending'))
 const selectedTitle = computed(() => props.selectedNode?.title || '')
 
@@ -92,25 +92,25 @@ async function send(targetNodeId = undefined, requestedAction = null) {
     thinking.value = false
     clearInterval(thinkingTimer)
     const needsClarification = data?.outcome === 'needs_clarification'
-    lastResponse.value = data?.explanation ?? {
+    const explanation = data?.explanation ?? {
       reason: data?.summary || data?.clarification || (data?.outcome === 'no_change'
         ? '未发现需要安全调整的内容，草稿保持不变。'
         : data?.status === 'accepted'
           ? '已完成一键优化并写入课程草稿。'
           : '已创建待教师审核的提案。'),
-      changed: data?.status === 'accepted'
-        ? [`已更新 ${data?.updated_count || 0} 个目标`]
-        : [],
       planner: data?.planner,
       excluded_locked_targets: data?.excluded_locked_targets || [],
     }
+    const changeSummary = data?.change_summary ?? explanation.change_summary ?? null
     // Agent 回复（偏左）
     const reply = {
       role: 'agent',
-      reason: lastResponse.value.reason || '已生成待审核提案。',
-      changed: lastResponse.value.changed || [],
-      planner: lastResponse.value.planner,
-      excluded: lastResponse.value.excluded_locked_targets || [],
+      reason: explanation.reason || changeSummaryMessage(changeSummary) || '已生成待审核提案。',
+      changeSummary,
+      proposalId: data?.proposal_id ?? null,
+      proposalStatus: changeSummary?.state ?? null,
+      planner: explanation.planner,
+      excluded: explanation.excluded_locked_targets || [],
     }
     messages.value.push(reply)
     scrollToBottom()
@@ -128,11 +128,23 @@ async function send(targetNodeId = undefined, requestedAction = null) {
 async function decide(proposal, accepted) {
   deciding.value = proposal.proposal_id; error.value = ''
   try {
-    await decideBuildProposal(props.courseId, proposal.proposal_id, accepted)
+    const data = await decideBuildProposal(props.courseId, proposal.proposal_id, accepted)
+    const changeSummary = data?.change_summary ?? null
+    const message = messages.value.find((item) => item.proposalId === proposal.proposal_id)
+    if (message && changeSummary) {
+      message.changeSummary = changeSummary
+      message.proposalStatus = changeSummary.state
+      message.reason = accepted ? '教师已接受该提案，修改已写入课程草稿。' : '教师已拒绝该提案。'
+    }
     await loadProposals()
     window.dispatchEvent(new CustomEvent('course-build-proposal-decided'))
   } catch (caught) { error.value = apiErrorMessage(caught, '提案审核失败；草稿未被修改') }
   finally { deciding.value = '' }
+}
+function operationActionLabel(operation) {
+  if (operation === 'remove') return '移除'
+  if (operation === 'add') return '新增'
+  return '修改'
 }
 function submitOnEnter(event) { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send() } }
 onMounted(() => {
@@ -223,7 +235,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
             <template v-else>
               <p class="chat-reason">{{ msg.reason }}</p>
               <p v-if="msg.planner" class="chat-meta">生成方式：{{ msg.planner.startsWith('llm') ? 'AI 生成' : '规则生成' }}</p>
-              <p v-if="msg.changed?.length" class="chat-meta">已更新：{{ msg.changed.join('、') }}</p>
+              <p v-if="changeSummaryMessage(msg.changeSummary)" class="chat-meta">{{ changeSummaryMessage(msg.changeSummary) }}</p>
               <p v-if="msg.excluded?.length" class="chat-excluded">已排除锁定项：{{ msg.excluded.join('、') }}</p>
             </template>
           </div>
@@ -252,7 +264,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
           </header>
           <p class="proposal-reason">{{ proposal.reason || '智能体提出了一项课程草稿修改。' }}</p>
           <div v-for="operation in proposal.operations" :key="operation.op_id" class="proposal-operation">
-            <div><code>{{ operation.target }}</code><span>{{ operation.operation }}</span></div>
+            <div><strong>{{ operationDisplayLabel(operation) }}</strong><span>{{ operationActionLabel(operation.operation) }}</span></div>
             <del v-if="operation.before">{{ operation.before }}</del>
             <ins v-if="operation.after">{{ operation.after }}</ins>
             <p v-if="operation.reason">{{ operation.reason }}</p>
@@ -406,7 +418,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-xs) var(--radius-md) var(--radius-md) var(--radius-md);
 }
-.chat-bubble--agent p { margin: 0 0 var(--space-1); overflow-wrap: anywhere; }
+.chat-bubble--agent p { margin: 0 0 var(--space-1); overflow-wrap: break-word; }
 .chat-bubble--agent p:last-child { margin-bottom: 0; }
 .chat-reason { color: var(--text-primary); white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 .chat-meta { color: var(--text-muted); font-size: var(--caption-size); }

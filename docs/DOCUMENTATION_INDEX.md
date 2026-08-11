@@ -6,6 +6,8 @@
 
 > 2026-08-10 更新：首轮智能备课的材料证据整理保持有界 Map/Reduce，但面向高密度课件将 Map + Reduce 共享调用预算由 64 提升至 160；总材料、分块数与并发上限不变。Map/Reduce 的描述性列表归一化和 Map 嵌套 `stage` 移除已落地，证据 ID 与其他未知字段继续 fail-closed。资源上限、证据追溯与当前端到端验收状态登记在[统一课程建设与解析基线](phase1/统一课程建设与解析基线.md)和[功能现状审计表](phase1/功能现状审计表.md)。公开课程建设路由不变，无数据库迁移。
 
+> 2026-08-11 更新：课程建设助教的单节点提案、批量一键操作、审核决定与提案列表增加展示安全的 `change_summary` / `display`。教师端状态固定为 `pending_review`、`applied`、`rejected`、`no_change`，不再显示内部 `target`；原始 `PatchProposalOperation.target` 保持持久化/API 兼容以支持审计和已有决定链路，无数据库迁移。实现与回归证据见[功能现状审计表](phase1/功能现状审计表.md)。
+
 > 2026-08-07 新增：[平台管理员、Provider 与开放 API 兼容层](phase1/平台管理员Provider与开放API兼容层.md)。该文档记录全局 user/admin 角色收敛、历史大写 TEACHER 账号升级管理员、后台配置、密钥脱敏、Provider 热刷新及可移除的泛雅·超星 AI 示例协议参考兼容包边界。
 
 > 2026-08-07 新增：[ResearchAgent 整体架构、前端与上线基线](phase1/研究智能体整体架构与前端设计.md)。P0 已接通课程内 arXiv 元数据检索与来源核验；趋势、综合、写作、多源检索和完整仓库复现仍为 Research Preview。该文档是研究智能体的现行架构与验收入口。

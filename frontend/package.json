@@ -11,7 +11,7 @@
     "lint": "run-s lint:*",
     "lint:oxlint": "oxlint . --fix",
     "lint:eslint": "eslint . --fix --cache",
-    "test:unit": "node --test src/app/lib/__tests__/learnMachine.test.js src/app/lib/__tests__/citationStatus.test.js src/app/lib/__tests__/pendingFileId.test.js src/features/student-learning/__tests__/playerWorkspaceAdapter.test.js src/features/student-learning/__tests__/mediaPlaybackAdapter.test.js src/features/student-learning/__tests__/avatarPlaybackAdapter.test.js src/features/student-learning/__tests__/mediaNavigation.test.js src/features/student-learning/__tests__/learningStatus.test.js src/features/student-learning/__tests__/sprite2dRenderer.test.js",
+    "test:unit": "node --test src/app/lib/__tests__/learnMachine.test.js src/app/lib/__tests__/citationStatus.test.js src/app/lib/__tests__/pendingFileId.test.js src/app/lib/__tests__/prepAgentPresentation.test.js src/features/student-learning/__tests__/playerWorkspaceAdapter.test.js src/features/student-learning/__tests__/mediaPlaybackAdapter.test.js src/features/student-learning/__tests__/avatarPlaybackAdapter.test.js src/features/student-learning/__tests__/mediaNavigation.test.js src/features/student-learning/__tests__/learningStatus.test.js src/features/student-learning/__tests__/sprite2dRenderer.test.js",
     "smoke:app": "node scripts/smoke-shadow-app.mjs"
   },
   "dependencies": {

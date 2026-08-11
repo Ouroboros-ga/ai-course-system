@@ -46,7 +46,7 @@
         <div v-else-if="evidence.length" class="evidence-list"><article v-for="item in evidence" :key="item.block_id" class="evidence-card"><small>第 {{ item.page || '?' }} 页 · {{ item.source_kind || '解析文本' }}</small><p>{{ item.text }}</p></article></div>
         <div v-else class="state compact">选择课程节点后显示其原文证据。</div>
         <div class="proposal-heading"><p>待审核提案</p><small>{{ proposals.length }} 项</small></div>
-        <div class="proposal-list"><article v-for="proposal in proposals" :key="proposal.proposal_id" class="proposal-card"><strong>{{ proposal.reason }}</strong><small>{{ proposal.operations?.length || 0 }} 项修改</small><p v-for="op in proposal.operations?.slice(0, 2)" :key="op.op_id">{{ op.target }}：{{ op.reason }}</p><div v-if="proposal.status === 'pending'" class="proposal-actions"><button type="button" class="accept" @click="decide(proposal, true)">接受</button><button type="button" class="reject" @click="decide(proposal, false)">拒绝</button></div><small v-else>已{{ proposal.status === 'accepted' ? '接受' : '处理' }}</small></article></div>
+        <div class="proposal-list"><article v-for="proposal in proposals" :key="proposal.proposal_id" class="proposal-card"><strong>{{ proposal.reason }}</strong><small>{{ proposal.operations?.length || 0 }} 项修改</small><p v-for="op in proposal.operations?.slice(0, 2)" :key="op.op_id">{{ operationDisplayLabel(op) }}：{{ op.reason }}</p><div v-if="proposal.status === 'pending'" class="proposal-actions"><button type="button" class="accept" @click="decide(proposal, true)">接受</button><button type="button" class="reject" @click="decide(proposal, false)">拒绝</button></div><small v-else>已{{ proposal.status === 'accepted' ? '接受' : '处理' }}</small></article></div>
       </aside>
     </section>
 
@@ -66,6 +66,7 @@ import { computed, onMounted, ref } from 'vue'
 import { LockKeyhole, MessageSquareText, RefreshCw, Save, Sparkles, X } from 'lucide-vue-next'
 import { useRoute } from 'vue-router'
 import { decideBuildProposal, getOutline, getPrepAgentNodeEvidence, getTeachingScripts, listBuildProposals, lockOutlineNode, lockTeachingScript, runPrepAgentCommand, updateOutlineNode, updateTeachingScript } from '@/api/course_editor.js'
+import { changeSummaryMessage, operationDisplayLabel } from '@/app/lib/prepAgentPresentation.js'
 import { showToast } from '@/utils/toast.js'
 
 const route = useRoute()
@@ -109,7 +110,8 @@ async function sendAgent () {
     const reason = result?.explanation?.reason
       || result?.summary
       || (result?.status === 'accepted' ? '已完成一键优化并写入课程草稿。' : '已生成待审核提案。')
-    agentFeedback.value = `${reason}${excluded ? ` 已排除 ${excluded} 个锁定目标。` : ''}`
+    const statusMessage = changeSummaryMessage(result?.change_summary)
+    agentFeedback.value = `${statusMessage || reason}${excluded ? ` 已排除 ${excluded} 个锁定目标。` : ''}`
     instruction.value = ''
     await reload()
   } catch (error) {

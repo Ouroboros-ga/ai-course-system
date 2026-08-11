@@ -96,7 +96,8 @@ async function organizeAll() {
     role: 'agent',
     running: true,
     reason: '正在整理全部未锁定的课程节点，请勿发起其他智能优化。',
-    changed: [],
+    proposalId: null,
+    proposalStatus: null,
   }
   if (workbench) {
     workbench.agentOpen = true
@@ -109,7 +110,9 @@ async function organizeAll() {
     Object.assign(message, {
       running: false,
       reason: result.summary || '课程结构已整理并直接应用。',
-      changed: [`已更新 ${result.updated_count || 0} 个节点`],
+      changeSummary: result.change_summary ?? null,
+      proposalId: result.proposal_id ?? null,
+      proposalStatus: result.change_summary?.state ?? null,
       excluded: result.excluded_locked_targets || [],
       planner: result.planner,
     })
