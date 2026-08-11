@@ -105,10 +105,15 @@ const hasFrozenCues = computed(() => Boolean(
   workingRelease.value?.avatar_cues_object_key && workingRelease.value?.subtitle_manifest_object_key,
 ))
 const hasPptManifest = computed(() => Boolean(workingRelease.value?.ppt_manifest_object_key))
+const pptManifestJob = computed(() => jobs.value.find((job) => (
+  job.job_type === 'ppt_manifest' && job.media_release_id === workingRelease.value?.release_id
+)) ?? null)
+const pptManifestInFlight = computed(() => ['pending', 'running'].includes(pptManifestJob.value?.status))
+const pptManifestProgress = computed(() => pptManifestJob.value?.output_metadata?.page_progress ?? null)
 const isPlaylistRelease = computed(() => Boolean(workingRelease.value?.release_metadata?.audio_playlist_mode))
 const hasFrozenPlaylist = computed(() => Boolean(workingRelease.value?.audio_playlist_object_key && workingRelease.value?.audio_playlist_sha256))
 const canActivateWorkingRelease = computed(() => {
-  if (!workingRelease.value || workingRelease.value.status !== 'draft') return false
+  if (!workingRelease.value || workingRelease.value.status !== 'draft' || !hasPptManifest.value) return false
   return isPlaylistRelease.value
     ? hasFrozenPlaylist.value
     : hasFrozenCues.value
@@ -236,6 +241,7 @@ function findScriptForBatchItem(item) {
 function jobLabel(job) {
   if (job?.job_type === 'tts') return '讲稿语音合成'
   if (job?.job_type === 'timeline_publish') return '字幕与数字人时间轴'
+  if (job?.job_type === 'ppt_manifest') return 'PPT 页面清单'
   return job?.job_type || '媒体任务'
 }
 
@@ -580,16 +586,21 @@ async function freezeCues() {
 }
 
 async function createPptManifest() {
-  if (!canGenerate.value || !workingRelease.value || acting.value) return
+  if (!canGenerate.value || !workingRelease.value || acting.value || pptManifestInFlight.value) return
   acting.value = 'ppt-manifest'
   error.value = ''
   notice.value = ''
   try {
     const result = await buildPptManifest(courseId.value, workingRelease.value.release_id)
-    notice.value = `已冻结 ${result.page_count || 0} 张 PPT 页面。`
-    await refreshReleaseDetail()
+    if (result.async) {
+      jobs.value = [result, ...jobs.value.filter((item) => item.job_id !== result.job_id)]
+      notice.value = 'PPT manifest 已转入后台：将复用映射页图，仅在发现缺页时补渲染。页面会每 5 秒更新进度。'
+    } else {
+      notice.value = 'PPT manifest 已存在，无需重复渲染。'
+      await refreshReleaseDetail()
+    }
   } catch (caught) {
-    error.value = apiErrorMessage(caught, 'PPT manifest 未生成。请先回到第 04 步确认 PPT 源文件和映射。')
+    error.value = apiErrorMessage(caught, 'PPT manifest 未提交。请先回到第 04 步确认 PPT 源文件和映射。')
   } finally {
     acting.value = ''
   }
@@ -853,10 +864,10 @@ onBeforeUnmount(() => {
 
                 <article class="workflow-row" :class="{ complete: hasPptManifest, active: canBuildPptManifest && !hasPptManifest }">
                   <div class="workflow-icon"><FileImage :size="18" /></div>
-                  <div class="workflow-copy"><span>03 · PPT manifest</span><strong>冻结学生端播放所需的 PPT 页图清单</strong><p v-if="hasPptManifest">PPT manifest 已绑定到此媒体草稿。</p><p v-else-if="isPlaylistRelease">批量模式：需全部知识点音频与 Cue 就绪后生成；缺少 PPT 源文件时服务端会返回明确阻塞原因。</p><p v-else>如果第 04 步尚无可渲染 PPT/PDF 源文件，本步骤会明确返回阻塞原因；可先回到映射页处理。</p></div>
-                  <SfxBadge :tone="hasPptManifest ? 'green' : 'amber'">{{ hasPptManifest ? '已冻结' : '可选但建议完成' }}</SfxBadge>
+                  <div class="workflow-copy"><span>03 · PPT manifest</span><strong>冻结学生端播放所需的 PPT 页图清单</strong><p v-if="hasPptManifest">PPT manifest 已绑定到此媒体草稿。</p><template v-else-if="pptManifestInFlight"><p>正在复用映射阶段缓存的 PPT 页图；只有缺失页面才会在后台补渲染。</p><p v-if="pptManifestProgress" class="task-output">页图进度：{{ pptManifestProgress.completed_pages || 0 }}/{{ pptManifestProgress.total_pages || '待确认' }}；缓存 {{ pptManifestProgress.cached_pages || 0 }} 页，待补 {{ pptManifestProgress.missing_pages || 0 }} 页。</p></template><p v-else-if="pptManifestJob?.status === 'failed'">{{ pptManifestJob.error_message_safe || 'PPT manifest 后台任务失败，请检查任务记录后重试。' }}</p><p v-else-if="isPlaylistRelease">批量模式：需全部知识点音频与 Cue 就绪后生成；缺少 PPT 源文件时服务端会返回明确阻塞原因。</p><p v-else>如果第 04 步尚无可渲染 PPT/PDF 源文件，本步骤会明确返回阻塞原因；可先回到映射页处理。</p></div>
+                  <SfxBadge :tone="hasPptManifest ? 'green' : pptManifestJob ? jobTone(pptManifestJob) : 'amber'">{{ hasPptManifest ? '已冻结' : pptManifestJob ? jobStatusLabel(pptManifestJob) : '可选但建议完成' }}</SfxBadge>
                 </article>
-                <div v-if="canBuildPptManifest && !hasPptManifest" class="workflow-action"><SfxButton variant="secondary" :disabled="!canGenerate" :loading="acting === 'ppt-manifest'" @click="createPptManifest">生成 PPT manifest</SfxButton></div>
+                <div v-if="canBuildPptManifest && !hasPptManifest" class="workflow-action"><SfxButton v-if="!pptManifestInFlight" variant="secondary" :disabled="!canGenerate || acting === 'ppt-manifest'" @click="createPptManifest">{{ pptManifestJob?.status === 'failed' ? '重试 PPT manifest' : '生成 PPT manifest' }}</SfxButton><small v-else>后台任务执行中；本页面每 5 秒刷新一次进度，无需保持本次请求。</small></div>
                 <div v-if="isPlaylistRelease" class="workflow-action">
                   <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已固定到此版本，后续不会自动更改。</p>
                   <SfxButton v-else variant="secondary" :disabled="!canGenerate || !hasPptManifest" :loading="acting === 'batch-freeze'" @click="freezeBatchPlaylist">冻结课程播放清单</SfxButton>

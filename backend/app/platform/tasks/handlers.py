@@ -1346,6 +1346,171 @@ async def media_timeline_publish_handler(ctx: TaskHandlerContext) -> None:
 
 
 # ---------------------------------------------------------------------------
+# media.ppt_manifest handler (cached PPT manifest construction)
+# ---------------------------------------------------------------------------
+
+
+async def media_ppt_manifest_handler(ctx: TaskHandlerContext) -> None:
+    """Bind cached PPT pages to a release and render only known cache gaps.
+
+    LibreOffice is deliberately invoked from this durable worker, never from
+    the HTTP request that starts the manifest.  The job's safe metadata carries
+    page counters so the construction page can poll rather than spin.
+    """
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    release_id = str(payload.get("release_id") or "")
+    job_id = str(payload.get("job_id") or "")
+    if not course_id or not release_id or not job_id:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "media.ppt_manifest handler requires course_id/release_id/job_id",
+            retryable=False,
+        )
+
+    def run_manifest() -> None:
+        from sqlmodel import select
+
+        from app.models.media_release_model import (
+            MediaGenerationJob,
+            MediaGenerationStatus,
+            MediaReleaseStatus,
+        )
+        from app.services.media_release_service import (
+            media_generation_job_service,
+            media_release_service,
+        )
+        from app.services.ppt_manifest_service import (
+            PptManifestGenerationError,
+            build_ppt_manifest,
+        )
+
+        with ctx.session_factory() as session:
+            job = session.exec(select(MediaGenerationJob).where(
+                MediaGenerationJob.course_id == course_id,
+                MediaGenerationJob.job_id == job_id,
+                MediaGenerationJob.task_id == ctx.task_id,
+            )).first()
+            if job is None:
+                raise TaskExecutionError(
+                    "RESOURCE_NOT_FOUND",
+                    "PPT manifest task does not match its media job",
+                    retryable=False,
+                )
+            if job.status == MediaGenerationStatus.SUCCEEDED:
+                return
+            release = media_release_service.get_release(
+                session,
+                course_id=course_id,
+                release_id=release_id,
+            )
+            if release.status not in (MediaReleaseStatus.DRAFT, MediaReleaseStatus.WITHDRAWN):
+                media_generation_job_service.mark_failed(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    error_code="RELEASE_STATE_CHANGED",
+                    error_message_safe="媒体版本状态已变化，未继续生成 PPT manifest",
+                    retryable=False,
+                )
+                return
+            media_generation_job_service.mark_running(
+                session,
+                course_id=course_id,
+                job_id=job_id,
+                stage="checking_ppt_cache",
+            )
+
+            latest_progress: dict[str, Any] = {}
+
+            def update_progress(snapshot: dict[str, Any]) -> None:
+                nonlocal latest_progress
+                latest_progress = dict(snapshot)
+                total_pages = max(0, int(snapshot.get("total_pages") or 0))
+                completed_pages = max(0, int(snapshot.get("completed_pages") or 0))
+                task_progress = 5 if total_pages == 0 else min(99, 5 + int(90 * completed_pages / total_pages))
+                stage = str(snapshot.get("stage") or "rendering_pages")
+                media_generation_job_service.update_progress(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    progress=task_progress,
+                    stage=stage,
+                    output_metadata={
+                        "page_progress": {
+                            "stage": stage,
+                            "completed_pages": completed_pages,
+                            "total_pages": total_pages,
+                            "cached_pages": max(0, int(snapshot.get("cached_pages") or 0)),
+                            "missing_pages": max(0, int(snapshot.get("missing_pages") or 0)),
+                            "deck_count": max(0, int(snapshot.get("deck_count") or 0)),
+                            "material_version_id": snapshot.get("material_version_id"),
+                        },
+                    },
+                    message=f"PPT 页面 {completed_pages}/{total_pages}" if total_pages else "正在检查 PPT 页面缓存",
+                )
+
+            try:
+                manifest = build_ppt_manifest(
+                    session,
+                    course_id=course_id,
+                    release=release,
+                    progress_callback=update_progress,
+                )
+            except PptManifestGenerationError as exc:
+                media_generation_job_service.mark_failed(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    error_code="PPT_MANIFEST_GENERATION_FAILED",
+                    error_message_safe=str(exc)[:500],
+                    retryable=True,
+                )
+                return
+            except Exception as exc:  # noqa: BLE001 - preserve a safe failure record
+                logger.exception("PPT manifest worker failed for release %s", release_id)
+                media_generation_job_service.mark_failed(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    error_code="PPT_MANIFEST_GENERATION_FAILED",
+                    error_message_safe=f"PPT manifest 构建失败：{type(exc).__name__}",
+                    retryable=True,
+                )
+                return
+            if manifest is None or not release.ppt_manifest_object_key:
+                media_generation_job_service.mark_failed(
+                    session,
+                    course_id=course_id,
+                    job_id=job_id,
+                    error_code="PPT_SOURCE_UNAVAILABLE",
+                    error_message_safe="当前课程没有可用于生成 PPT manifest 的课件源文件",
+                    retryable=False,
+                )
+                return
+            media_generation_job_service.mark_succeeded(
+                session,
+                course_id=course_id,
+                job_id=job_id,
+                output_object_key=release.ppt_manifest_object_key,
+                output_metadata={
+                    "schema": manifest.get("schema"),
+                    "ppt_manifest_object_key": release.ppt_manifest_object_key,
+                    "page_count": len(manifest.get("pages") or []),
+                    "deck_count": len(manifest.get("decks") or []),
+                    "page_progress": {
+                        **latest_progress,
+                        "stage": "completed",
+                        "completed_pages": int(latest_progress.get("total_pages") or len(manifest.get("pages") or [])),
+                        "total_pages": int(latest_progress.get("total_pages") or len(manifest.get("pages") or [])),
+                    },
+                },
+            )
+
+    await asyncio.to_thread(run_manifest)
+
+
+# ---------------------------------------------------------------------------
 # question_bank.import handler
 # ---------------------------------------------------------------------------
 
@@ -1770,6 +1935,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     # generation task types stay on their existing generic compatibility path.
     worker.register("media.tts", media_tts_handler)
     worker.register("media.timeline_publish", media_timeline_publish_handler)
+    worker.register("media.ppt_manifest", media_ppt_manifest_handler)
     for job_type in ("subtitle", "avatar_preprocess", "dh_render", "video_package"):
         task_type = f"media.{job_type}"
         if not worker.has_handler(task_type):

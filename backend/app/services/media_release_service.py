@@ -305,6 +305,39 @@ class MediaGenerationJobService:
         session.flush()
         return job
 
+    def update_progress(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        job_id: str,
+        progress: int,
+        stage: str,
+        output_metadata: Optional[dict] = None,
+        message: str = "",
+    ) -> MediaGenerationJob:
+        """Persist a safe worker progress snapshot for authoring-page polling."""
+        job = self.get_job(session, course_id=course_id, job_id=job_id)
+        if job.status not in {MediaGenerationStatus.PENDING, MediaGenerationStatus.RUNNING}:
+            return job
+        job.output_metadata = {
+            **(job.output_metadata or {}),
+            **(output_metadata or {}),
+        }
+        job.updated_at = utcnow_aware()
+        session.add(job)
+        if job.task_id:
+            task_service.mark_progress(
+                session,
+                job.task_id,
+                progress=max(0, min(99, int(progress))),
+                stage=stage,
+                message=message[:200],
+            )
+        else:
+            session.flush()
+        return job
+
     def mark_succeeded(
         self,
         session: Session,
@@ -531,15 +564,24 @@ class MediaReleaseService:
         course_id: int,
         release_id: str,
     ) -> Optional[dict[str, Any]]:
-        """Build the immutable PPT manifest once before a release is activated."""
+        """Verify that the immutable PPT manifest is ready for activation.
+
+        Rendering is intentionally performed by ``media.ppt_manifest``.  The
+        activation request must stay fast and must never re-enter LibreOffice
+        synchronously after a browser timeout or a page refresh.
+        """
         release = self.get_release(session, course_id=course_id, release_id=release_id)
         if release.ppt_manifest_object_key:
             storage = get_object_storage()
             if not storage.exists(release.ppt_manifest_object_key):
                 raise RuntimeError("bound PPT manifest object is unavailable")
             return None
-        from app.services.ppt_manifest_service import build_ppt_manifest
-        return build_ppt_manifest(session, course_id=course_id, release=release)
+        from app.services.ppt_manifest_service import has_ppt_manifest_source
+        if not has_ppt_manifest_source(session, course_id=course_id):
+            # Audio-only releases are still valid.  There is no source asset
+            # to bind, and activation remains a lightweight state transition.
+            return None
+        raise RuntimeError("PPT manifest is not ready; submit the media worker first")
 
     def withdraw_release(
         self, session: Session, *, course_id: int, release_id: str,

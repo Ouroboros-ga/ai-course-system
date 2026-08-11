@@ -1,5 +1,7 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
+> **2026-08-11 PPT manifest 异步化**：`POST /api/v1/media/course/{course_id}/releases/{release_id}/ppt-manifest` 只创建 `media.ppt_manifest` 任务并立即返回。Worker 先盘点 `ppt_slide_image` 缓存，对 PPTX 仅将缺页交给 LibreOffice；任务的 `output_metadata.page_progress` 记录总页数、已处理页、缓存页和待补页。建设页每 5 秒轮询既有媒体任务列表显示进度。服务重启扫尾后的 `media.ppt_manifest` 会从安全任务载荷重新入队。激活只校验已经冻结的 manifest，绝不在 HTTP 请求内重新渲染；没有 PPT/PDF 源的纯音频 Release 保持可激活。
+
 > **2026-08-10 当前角色路线更新**：新建设默认角色为 `platform-female-instructor-v1@1.0.0`，为平台自有、虚构的女性讲师肖像预设；渲染模式为 `portrait_patch_v1`（960px 静默主图 + 8 个口型补丁 + 闭眼补丁）。纹理作为内容寻址对象存储资产，由播放响应按 `course_id + release_id + preset_id + preset_version` 签发短期 URL；PixiJS 只以音频时钟选择补丁，不产生第二时钟。旧 `platform-instructor-real-v1@1.0.0` 汽车教师已退休，只为已冻结 Release 兼容解析。课程 87 的旧快照不得原地改脸，需新建、激活媒体版本后再正式发布。源图和哈希记录见 `frontend/src/assets/platform-avatar-presets/platform-female-instructor-v1/source/SOURCE.md`；这些源图为 1254×1254，未宣称为 2K。
 
 > 2026-08-07 P5.2 更新：对象存储上传已统一为 Local PUT / S3-OSS presigned POST + confirm 校验；Local 内容读取必须携带签名 scope；旧 `/video-gen` 仅为兼容/历史入口，不作为正式 MediaRelease 或 audio-playlist/v1 发布依据。详见 [P5.2 文档](阶段8_P5.2_OSS与旧链隔离.md)。

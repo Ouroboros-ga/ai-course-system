@@ -228,6 +228,14 @@ async def recover_durable_task_queues() -> None:
     except Exception:
         logger.exception("Knowledge Bundle build queue recovery failed")
     try:
+        from app.models.database import session_factory
+        from app.platform.tasks.media_manifest_queue import recover_media_manifest_tasks
+        from app.platform.tasks.worker import local_task_worker
+
+        await recover_media_manifest_tasks(session_factory, local_task_worker)
+    except Exception:
+        logger.exception("PPT manifest task recovery failed")
+    try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
         )

@@ -62,16 +62,16 @@ class _FakeLibreOfficeConverter:
         return result
 
 
-def _course_with_uploaded_ppt(session):
+def _course_with_uploaded_ppt(session, *, fixture_key: str = "default"):
     teacher = User(
-        username="original-slide-render-teacher",
+        username=f"original-slide-render-teacher-{fixture_key}",
         hashed_password=get_password_hash("test-password"),
         role=UserRole.TEACHER,
     )
     session.add(teacher)
     session.flush()
     course = Course(
-        fanya_course_id="original-slide-render-course",
+        fanya_course_id=f"original-slide-render-course-{fixture_key}",
         fanya_course_name="Original slides",
         title="Original slides",
         teacher_id=teacher.id,
@@ -99,7 +99,7 @@ def _course_with_uploaded_ppt(session):
 
 
 def test_original_slide_render_ignores_generic_evidence_and_completes_whole_deck(session, monkeypatch):
-    course, version = _course_with_uploaded_ppt(session)
+    course, version = _course_with_uploaded_ppt(session, fixture_key="whole-deck")
     storage = _MemoryStorage({version.file_path: b"teacher-pptx-bytes"})
     converter = _FakeLibreOfficeConverter()
     monkeypatch.setattr(ppt_slide_render_service, "get_object_storage", lambda: storage)
@@ -145,6 +145,38 @@ def test_original_slide_render_ignores_generic_evidence_and_completes_whole_deck
         EvidenceRenderAsset.asset_type == RenderAssetType.PPT_SLIDE_IMAGE,
     )).all()
     assert {asset.page_number for asset in persisted} == {1, 2}
+
+
+def test_manifest_cache_inventory_renders_only_missing_pptx_page(session, monkeypatch):
+    """A partial mapping cache must not be discarded by manifest generation."""
+    course, version = _course_with_uploaded_ppt(session, fixture_key="cache-gap")
+    storage = _MemoryStorage({version.file_path: b"teacher-pptx-bytes"})
+    converter = _FakeLibreOfficeConverter()
+    monkeypatch.setattr(ppt_slide_render_service, "get_object_storage", lambda: storage)
+    monkeypatch.setattr(
+        ppt_slide_render_service,
+        "_expected_page_count",
+        lambda *_args, **_kwargs: 2,
+    )
+    import app.platform.document_intelligence.libreoffice_converter as converter_module
+    monkeypatch.setattr(converter_module, "libreoffice_converter", converter)
+
+    ppt_slide_render_service.ensure_ppt_source_slide_renders(
+        session,
+        course_id=course.id,
+        material_version_id=version.version_id,
+        page_numbers=[1],
+    )
+    completed = ppt_slide_render_service.ensure_ppt_source_slide_renders(
+        session,
+        course_id=course.id,
+        material_version_id=version.version_id,
+    )
+
+    assert sorted(completed) == [1, 2]
+    # The second call is the manifest-style full-deck request.  It keeps the
+    # mapped first page and asks LibreOffice for page 2 only.
+    assert converter.requested_page_sets == [(1,), (2,)]
 
 
 def test_sign_manifest_pages_preserves_per_deck_teacher_slide_urls():

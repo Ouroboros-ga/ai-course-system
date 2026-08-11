@@ -370,7 +370,6 @@ class PptMappingOptimizationService:
                 session,
                 course_id=course_id,
                 material_version_id=material_version_id,
-                force_full=True,
             )
         except PptSlideRenderError as error:
             raise PptMappingContentUnavailable(

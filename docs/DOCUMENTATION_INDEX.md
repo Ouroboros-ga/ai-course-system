@@ -49,7 +49,7 @@
 
 ### 媒体与数字人文档状态
 
-- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：2026-08-10 已更新平台女性讲师 `platform-female-instructor-v1@1.0.0` 的预设、对象存储签发与旧汽车教师退休规则；课程 87 已在显式 Demo 模式以三知识点合成 fixture 创建新 MediaRelease/正式 CourseRelease，并在真实本地 Chrome 完成播放、跨节点、静态降级和 480p 短测。该 fixture 不覆盖历史 20 节点快照，Fake WAV/无头短测不证明真实 TTS 或长时设备性能。
+- `phase1/阶段8_媒体TTS数字人PPT_实施规划.md`：2026-08-11 新增缓存优先的异步 `media.ppt_manifest`：复用映射页图、只补渲染缺页、轮询安全页数进度，且激活不再同步触发 LibreOffice。2026-08-10 已更新平台女性讲师 `platform-female-instructor-v1@1.0.0` 的预设、对象存储签发与旧汽车教师退休规则；课程 87 已在显式 Demo 模式以三知识点合成 fixture 创建新 MediaRelease/正式 CourseRelease，并在真实本地 Chrome 完成播放、跨节点、静态降级和 480p 短测。该 fixture 不覆盖历史 20 节点快照，Fake WAV/无头短测不证明真实 TTS 或长时设备性能。
 - `phase1/阶段8_P5.1_音色与角色注册表.md`：平台注册的音色/角色版本冻结、签名 manifest 与前后端接入（2026-08-07 已实现）。
 - `phase1/阶段8_P5.2_OSS与旧链隔离.md`：Local PUT、S3/OSS presigned POST、confirm 校验、本地签名 scope 与 `/video-gen` 兼容隔离（2026-08-07 已实现）。
 

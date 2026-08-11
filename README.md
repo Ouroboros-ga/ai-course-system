@@ -59,7 +59,7 @@
 | 功能 | 状态 | 说明 |
 |---|---|---|
 | 课程级批量媒体（MediaBuildBatch → MediaReleaseItem） | ✅ | 只读计划 → 教师一次确认 → 批量构建 |
-| 不可变播放清单（`audio-playlist/v1`、`ppt-manifest/v1`、字幕、`avatar-cues/v1`） | ✅ | 发布快照固定 `release_id + playlist_content_hash` |
+| 不可变播放清单（`audio-playlist/v1`、`ppt-manifest/v1`、字幕、`avatar-cues/v1`） | ✅ | 发布快照固定 `release_id + playlist_content_hash`；PPT manifest 使用后台 `media.ppt_manifest`，复用映射页图并仅补渲染缺页 |
 | PixiJS 2D 数字人（平台注册角色） | ✅ | 默认 `platform-female-instructor-v1@1.0.0`（虚构女性讲师，非真实肖像）；按音频时钟驱动 |
 | 真实 TTS（豆包） | 🧪 | `MEDIA_DEMO_MODE=false` + `STAGE8_TTS_PROVIDER=doubao` 显式配置；已通过一次受控 POC（`phonemes` 为空，不承诺精确口型） |
 | OSS/S3 对象存储、上传 confirm 校验 | ✅ | Local PUT / S3-OSS presigned POST 双链路 |
@@ -307,6 +307,7 @@ npm run smoke:app
 ## 近期关键更新（时间线）
 
 - **2026-08-11**：课程导入走受管异步路径（解析先行 → GraphRAG 草稿排队教师审核 → 授权后激活 LanceDB/BGE）；平台管理员可配置任务并发。初始备课若个别讲稿未通过证据校验或模型漏项，保留其余草稿并标记 `partial_success`，由教师在讲稿页手工补齐；未覆盖/空讲稿是不可确认绕过的发布 BLOCKER。
+- **2026-08-11**：PPT manifest 改为缓存优先的后台 `media.ppt_manifest` 任务：复用映射阶段页图、仅补渲染缺页、记录安全页数进度；激活不再同步触发 LibreOffice 渲染。
 - **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
 - **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
 - **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。

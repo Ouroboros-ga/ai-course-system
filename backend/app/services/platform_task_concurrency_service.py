@@ -19,6 +19,10 @@ DEFAULTS = {
 
 TASK_GROUPS = {
     "document_parse": "document_parse",
+    # PPT manifest jobs only inspect cached page images or ask LibreOffice to
+    # render a small cache gap.  They have the same CPU/RAM profile as a
+    # document parse, so the developer-mode control applies consistently.
+    "media.ppt_manifest": "document_parse",
     "course_draft_build": "course_draft_build",
     "knowledge.graphrag_build": "graphrag",
     "knowledge.vector_index": "vector_index",

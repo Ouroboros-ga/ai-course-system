@@ -209,7 +209,6 @@ async def run_parse_pipeline(
                 material_version_id=version.version_id,
                 run_id=run_id,
                 document_id=parse_run.document_id,
-                force_full=True,
             )
         except Exception as exc:
             logger.warning(

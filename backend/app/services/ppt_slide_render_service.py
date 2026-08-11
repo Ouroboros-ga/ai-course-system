@@ -10,8 +10,9 @@ from __future__ import annotations
 import hashlib
 import io
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from sqlmodel import Session, select
 
@@ -29,6 +30,24 @@ class PptSlideRenderError(RuntimeError):
         self.message = message
 
 
+@dataclass(frozen=True)
+class PptSlideRenderStatus:
+    """Cache inventory for one teacher-uploaded deck, without rendering it."""
+
+    material_version_id: str
+    expected_page_count: Optional[int]
+    cached_pages: tuple[int, ...]
+    missing_pages: tuple[int, ...]
+
+    @property
+    def cached_page_count(self) -> int:
+        return len(self.cached_pages)
+
+    @property
+    def is_complete(self) -> bool:
+        return self.expected_page_count is not None and not self.missing_pages
+
+
 def _normalise_pages(page_numbers: Optional[Iterable[int]]) -> list[int]:
     if page_numbers is None:
         return []
@@ -43,6 +62,123 @@ def _normalise_pages(page_numbers: Optional[Iterable[int]]) -> list[int]:
     return sorted(result)
 
 
+def _load_source_version(
+    session: Session,
+    *,
+    course_id: int,
+    material_version_id: str,
+) -> SourceMaterialVersion:
+    version = session.exec(select(SourceMaterialVersion).where(
+        SourceMaterialVersion.course_id == course_id,
+        SourceMaterialVersion.version_id == material_version_id,
+    )).first()
+    if version is None or not version.file_path:
+        raise PptSlideRenderError("PPT_SOURCE_UNAVAILABLE", "PPT source version is unavailable")
+    if Path(version.file_path).suffix.lower() not in {".pptx", ".ppt"}:
+        raise PptSlideRenderError("PPT_SOURCE_INVALID", "Source material is not a PPT/PPTX file")
+    return version
+
+
+def _cached_assets_by_page(
+    session: Session,
+    *,
+    course_id: int,
+    material_version_id: str,
+    storage,
+) -> dict[int, EvidenceRenderAsset]:
+    rows = list(session.exec(select(EvidenceRenderAsset).where(
+        EvidenceRenderAsset.course_id == course_id,
+        EvidenceRenderAsset.asset_type == RenderAssetType.PPT_SLIDE_IMAGE,
+        EvidenceRenderAsset.object_key.like(f"ppt-slide-render/course{course_id}/{material_version_id}/%"),
+    ).order_by(EvidenceRenderAsset.created_at.desc(), EvidenceRenderAsset.id.desc())).all())
+    existing_by_page: dict[int, EvidenceRenderAsset] = {}
+    for asset in rows:
+        if asset.page_number < 1 or asset.page_number in existing_by_page or not asset.object_key:
+            continue
+        try:
+            if not storage.exists(asset.object_key):
+                continue
+        except Exception:
+            # A cache probe must never turn a transient storage lookup error
+            # into a full LibreOffice conversion.
+            continue
+        existing_by_page[asset.page_number] = asset
+    return existing_by_page
+
+
+def _expected_page_count(
+    session: Session,
+    *,
+    course_id: int,
+    version: SourceMaterialVersion,
+    storage,
+    cached_pages: Iterable[int],
+) -> Optional[int]:
+    """Resolve deck size without converting the deck again."""
+    if Path(version.file_path).suffix.lower() == ".pptx":
+        try:
+            from pptx import Presentation
+
+            presentation = Presentation(io.BytesIO(storage.get(version.file_path)))
+            return len(presentation.slides)
+        except Exception:
+            # The renderer remains the authoritative failure path when the
+            # source is actually needed. Inventory inspection is best-effort.
+            pass
+
+    # Legacy .ppt has no native in-process counter.  Its parse projection is
+    # still a safe lower-bound inventory and does not invoke LibreOffice.
+    try:
+        from app.models.document_parse_model import DocumentBlock
+
+        pages = list(session.exec(select(DocumentBlock.page_or_slide).where(
+            DocumentBlock.course_id == course_id,
+            DocumentBlock.material_version_id == version.version_id,
+            DocumentBlock.page_or_slide > 0,
+        )).all())
+    except Exception:
+        pages = []
+    known_pages = [int(page) for page in pages if int(page or 0) > 0]
+    known_pages.extend(int(page) for page in cached_pages if int(page) > 0)
+    return max(known_pages) if known_pages else None
+
+
+def get_ppt_source_slide_render_status(
+    session: Session,
+    *,
+    course_id: int,
+    material_version_id: str,
+    storage=None,
+) -> PptSlideRenderStatus:
+    """Return cached and missing original-slide pages without rendering."""
+    version = _load_source_version(
+        session,
+        course_id=course_id,
+        material_version_id=material_version_id,
+    )
+    storage = storage or get_object_storage()
+    existing_by_page = _cached_assets_by_page(
+        session,
+        course_id=course_id,
+        material_version_id=material_version_id,
+        storage=storage,
+    )
+    expected_page_count = _expected_page_count(
+        session,
+        course_id=course_id,
+        version=version,
+        storage=storage,
+        cached_pages=existing_by_page,
+    )
+    expected_pages = set(range(1, expected_page_count + 1)) if expected_page_count else set()
+    return PptSlideRenderStatus(
+        material_version_id=material_version_id,
+        expected_page_count=expected_page_count,
+        cached_pages=tuple(sorted(existing_by_page)),
+        missing_pages=tuple(sorted(expected_pages.difference(existing_by_page))),
+    )
+
+
 def ensure_ppt_source_slide_renders(
     session: Session,
     *,
@@ -52,6 +188,7 @@ def ensure_ppt_source_slide_renders(
     force_full: bool = False,
     run_id: Optional[str] = None,
     document_id: Optional[str] = None,
+    on_page_rendered: Optional[Callable[[int], None]] = None,
 ) -> dict[int, EvidenceRenderAsset]:
     """Return original-slide image assets, rendering only missing requested pages.
 
@@ -81,13 +218,36 @@ def ensure_ppt_source_slide_renders(
         if asset.page_number >= 1 and asset.page_number not in existing_by_page and asset.object_key:
             existing_by_page[asset.page_number] = asset
 
+    storage = get_object_storage()
+    # Re-read through the storage inventory: DB rows whose immutable object
+    # disappeared are cache misses, not valid manifest pages.
+    existing_by_page = _cached_assets_by_page(
+        session,
+        course_id=course_id,
+        material_version_id=material_version_id,
+        storage=storage,
+    )
+    expected_page_count: Optional[int] = None
+    if page_numbers is None and not force_full:
+        expected_page_count = _expected_page_count(
+            session,
+            course_id=course_id,
+            version=version,
+            storage=storage,
+            cached_pages=existing_by_page,
+        )
+        if expected_page_count is not None:
+            requested_pages = list(range(1, expected_page_count + 1))
+        elif existing_by_page:
+            # Do not perform a full conversion merely because a legacy deck
+            # has no reliable in-process page inventory.
+            return existing_by_page
+
     missing = [page for page in requested_pages if page not in existing_by_page]
-    if page_numbers is None and existing_by_page and not force_full:
+    if page_numbers is None and expected_page_count is not None and not missing and not force_full:
         return existing_by_page
     if page_numbers is not None and not missing:
         return {page: existing_by_page[page] for page in requested_pages}
-
-    storage = get_object_storage()
     rendered_images: list[tuple[int, bytes]] = []
     try:
         content = storage.get(version.file_path)
@@ -105,7 +265,10 @@ def ensure_ppt_source_slide_renders(
             source_path = Path(temp_dir) / f"source{suffix}"
             source_path.write_bytes(content)
             conversion = libreoffice_converter.convert_to_pdf(str(source_path), output_dir=temp_dir)
-            target_pages = missing if page_numbers is not None else None
+            # ``requested_pages`` is populated with the full PPTX inventory
+            # for manifest construction.  That makes a partial cache render
+            # only the gaps rather than re-rendering every cached slide.
+            target_pages = None if force_full or not requested_pages else missing
             image_paths = libreoffice_converter.render_pages(
                 conversion.pdf_path,
                 output_dir=temp_dir,
@@ -178,6 +341,8 @@ def ensure_ppt_source_slide_renders(
                 resource_version="ppt-manifest/v1",
             ))
         existing_by_page[page_number] = asset
+        if on_page_rendered is not None:
+            on_page_rendered(page_number)
 
     if page_numbers is not None:
         return {page: existing_by_page[page] for page in requested_pages if page in existing_by_page}

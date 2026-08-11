@@ -46,6 +46,7 @@ class MediaGenerationJobType(str, Enum):
     DH_RENDER = "dh_render"                   # 数字人渲染
     VIDEO_PACKAGE = "video_package"           # 封装视频合成
     TIMELINE_PUBLISH = "timeline_publish"     # 时间轴发布
+    PPT_MANIFEST = "ppt_manifest"             # PPT 页面清单绑定与缺页补渲染
 
 
 class MediaGenerationStatus(str, Enum):

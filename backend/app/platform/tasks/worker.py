@@ -67,6 +67,7 @@ _concurrency_controller = _ConcurrencyController()
 def _task_group(task_type: str) -> str | None:
     return {
         "document_parse": "document_parse",
+        "media.ppt_manifest": "document_parse",
         "course_draft_build": "course_draft_build",
         "knowledge.graphrag_build": "graphrag",
         "knowledge.vector_index": "vector_index",

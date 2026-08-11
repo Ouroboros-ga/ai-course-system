@@ -11,7 +11,7 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from PIL import Image
 from sqlmodel import Session, select
@@ -88,12 +88,30 @@ def _current_uploaded_slide_versions(
     return deduplicated
 
 
+def has_ppt_manifest_source(session: Session, *, course_id: int) -> bool:
+    """Whether this course declares a source that requires a PPT manifest.
+
+    Audio-only releases are valid.  This check is intentionally metadata-only:
+    it must not read a source object, invoke LibreOffice, or turn activation
+    into a long-running request.
+    """
+    if _current_uploaded_slide_versions(session, course_id=course_id):
+        return True
+    course = session.get(Course, course_id)
+    if course is None:
+        return False
+    source_ref = course.source_file_path or course.pdf_file_path or ""
+    source_name = course.source_file_name or source_ref
+    return bool(source_ref and Path(source_name).suffix.lower() in {".ppt", ".pptx", ".pdf"})
+
+
 def _manifest_deck_from_uploaded_source(
     session: Session,
     *,
     course_id: int,
     material: SourceMaterial,
     version: SourceMaterialVersion,
+    on_page_rendered: Optional[Callable[[int], None]] = None,
 ) -> dict[str, Any]:
     """Build one deck entry from the shared original-slide render cache."""
     from app.services.ppt_slide_render_service import ensure_ppt_source_slide_renders
@@ -102,7 +120,7 @@ def _manifest_deck_from_uploaded_source(
         session,
         course_id=course_id,
         material_version_id=version.version_id,
-        force_full=True,
+        on_page_rendered=on_page_rendered,
     )
     pages = [
         {
@@ -212,12 +230,33 @@ def sign_manifest_pages(
     }
 
 
+def ppt_manifest_input_fingerprint(session: Session, *, course_id: int) -> str:
+    """Stable fingerprint used to deduplicate one release manifest task."""
+    course = session.get(Course, course_id)
+    deck_inputs = [
+        {
+            "material_version_id": version.version_id,
+            "source_sha256": version.file_hash,
+            "file_path": version.file_path,
+        }
+        for _material, version in _current_uploaded_slide_versions(session, course_id=course_id)
+    ]
+    payload = {
+        "decks": deck_inputs,
+        "legacy_source": (course.source_file_path or course.pdf_file_path or "") if course else "",
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def build_ppt_manifest(
     session: Session,
     *,
     course_id: int,
     release: MediaRelease,
     storage: Optional[ObjectStorageProvider] = None,
+    progress_callback: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any] | None:
     """Render a course source and bind a release-scoped immutable manifest.
 
@@ -233,22 +272,89 @@ def build_ppt_manifest(
     # Prefer those exact PPTX sources over legacy ``Course.source_file_path``
     # so mapping and learner playback share the same visual assets.
     uploaded_decks: list[dict[str, Any]] = []
-    for material, version in _current_uploaded_slide_versions(session, course_id=course_id):
-        from app.services.ppt_slide_render_service import PptSlideRenderError
+    uploaded_sources = _current_uploaded_slide_versions(session, course_id=course_id)
+    if uploaded_sources:
+        from app.services.ppt_slide_render_service import (
+            PptSlideRenderError,
+            get_ppt_source_slide_render_status,
+        )
+
+        statuses = {
+            version.version_id: get_ppt_source_slide_render_status(
+                session,
+                course_id=course_id,
+                material_version_id=version.version_id,
+                storage=storage,
+            )
+            for _material, version in uploaded_sources
+        }
+        total_pages = sum(
+            status.expected_page_count if status.expected_page_count is not None else status.cached_page_count
+            for status in statuses.values()
+        )
+        progress = {
+            "stage": "checking_cache",
+            "total_pages": total_pages,
+            "completed_pages": sum(status.cached_page_count for status in statuses.values()),
+            "cached_pages": sum(status.cached_page_count for status in statuses.values()),
+            "missing_pages": sum(len(status.missing_pages) for status in statuses.values()),
+            "deck_count": len(uploaded_sources),
+        }
+
+        def emit_progress(stage: str, **updates: Any) -> None:
+            if progress_callback is None:
+                return
+            progress["stage"] = stage
+            progress.update(updates)
+            progress_callback(dict(progress))
+
+        emit_progress("checking_cache")
+    else:
+        statuses = {}
+        progress = {}
+
+        def emit_progress(_stage: str, **_updates: Any) -> None:
+            return
+
+    for material, version in uploaded_sources:
+        status = statuses[version.version_id]
+
+        def on_page_rendered(_page_number: int, *, deck_version_id: str = version.version_id) -> None:
+            progress["completed_pages"] = min(
+                int(progress.get("total_pages") or 0),
+                int(progress.get("completed_pages") or 0) + 1,
+            )
+            emit_progress("rendering_pages", material_version_id=deck_version_id)
+
         try:
             uploaded_decks.append(_manifest_deck_from_uploaded_source(
                 session,
                 course_id=course_id,
                 material=material,
                 version=version,
+                on_page_rendered=on_page_rendered,
             ))
         except PptSlideRenderError as exc:
             # Surface the renderer's stable, actionable cause (for example
             # CONVERTER_UNAVAILABLE when LibreOffice is missing) to the caller
             # instead of leaking an unhandled 500.
             raise PptManifestGenerationError(f"{exc.error_code}: {exc.message}") from exc
+        if status.expected_page_count is None:
+            # Legacy decks may only reveal their exact count after the cached
+            # assets are read.  Keep progress truthful instead of inventing a
+            # denominator before a render is complete.
+            progress["total_pages"] = max(
+                int(progress.get("total_pages") or 0),
+                sum(len(deck["pages"]) for deck in uploaded_decks),
+            )
+            progress["completed_pages"] = min(
+                int(progress["total_pages"]),
+                max(int(progress.get("completed_pages") or 0), sum(len(deck["pages"]) for deck in uploaded_decks)),
+            )
+        emit_progress("binding_manifest", material_version_id=version.version_id)
     if uploaded_decks:
         primary_deck = uploaded_decks[0]
+        emit_progress("writing_manifest")
         manifest = {
             "schema": PPT_MANIFEST_SCHEMA,
             "source_sha256": primary_deck["source_sha256"],
@@ -288,6 +394,7 @@ def build_ppt_manifest(
         }
         session.add(release)
         session.flush()
+        emit_progress("completed")
         return manifest
 
     source = _read_course_source(course, storage)

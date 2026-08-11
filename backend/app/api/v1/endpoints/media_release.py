@@ -48,6 +48,7 @@ from app.models.media_release_model import (
 )
 from app.models.access_control_model import PlatformPermission
 from app.services.course_access_service import require_course_permission, require_platform_permission
+from app.services.task_service import task_service
 from app.services.media_release_service import (
     ensure_release_tts_assets_registered,
     media_generation_job_service,
@@ -1026,6 +1027,133 @@ async def build_avatar_cues(
 
 
 @media_release_router.post("/course/{course_id}/releases/{release_id}/ppt-manifest")
+async def enqueue_ppt_manifest_build(
+    course_id: int,
+    release_id: str,
+    payload: PptManifestBuildRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Queue a cache-first PPT manifest build and return immediately.
+
+    The worker reuses source-slide images produced by the mapping pipeline.
+    It renders only missing PPTX pages and writes safe page counters to the
+    media job so the authoring page can poll progress without holding an HTTP
+    request open.
+    """
+    access = require_course_permission(session, current_user, course_id, "course.media.generate")
+    release = media_release_service.get_release(session, course_id=course_id, release_id=release_id)
+    if release.status not in (MediaReleaseStatus.DRAFT, MediaReleaseStatus.WITHDRAWN):
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict("Only draft or withdrawn media releases can build a PPT manifest")
+    if release.ppt_manifest_object_key and not payload.force:
+        return unified_response(
+            code=200,
+            message="PPT manifest already exists",
+            data={
+                "release_id": release_id,
+                "ppt_manifest_object_key": release.ppt_manifest_object_key,
+                "async": False,
+            },
+        )
+
+    from app.models.database import session_factory
+    from app.models.task_model import TaskRecord
+    from app.platform.tasks.worker import local_task_worker
+    from app.services.ppt_manifest_service import ppt_manifest_input_fingerprint
+
+    if not local_task_worker.has_handler("media.ppt_manifest"):
+        from app.core.exceptions import reject_dependency_unavailable
+        reject_dependency_unavailable("PPT manifest worker is not registered; release was not changed")
+
+    input_hash = ppt_manifest_input_fingerprint(session, course_id=course_id)
+    force_suffix = "normal"
+    if payload.force:
+        # A force request rebuilds the release-scoped manifest binding, never
+        # bypasses the source-page cache.  Include the prior binding only to
+        # allow a later explicit rebuild after a successful task.
+        force_suffix = hashlib.sha256((release.ppt_manifest_object_key or "none").encode("utf-8")).hexdigest()[:12]
+    idempotency_key = f"ppt-manifest:{release_id}:{input_hash[:32]}:{force_suffix}"
+    existing = session.exec(select(MediaGenerationJob).where(
+        MediaGenerationJob.course_id == course_id,
+        MediaGenerationJob.idempotency_key == idempotency_key,
+    )).first()
+    if existing is not None:
+        worker_payload = {
+            "course_id": course_id,
+            "release_id": release_id,
+            "job_id": existing.job_id,
+        }
+        if existing.status in (MediaGenerationStatus.PENDING, MediaGenerationStatus.RUNNING):
+            return unified_response(
+                code=202,
+                message="PPT manifest worker is already queued",
+                data={**_serialize_job(existing), "async": True},
+            )
+        if existing.status in (MediaGenerationStatus.FAILED, MediaGenerationStatus.CANCELLED):
+            if not existing.task_id:
+                from app.core.exceptions import reject_state_conflict
+                reject_state_conflict("The failed PPT manifest job has no task record and cannot be retried")
+            task_service.retry(
+                session,
+                existing.task_id,
+                operator_user_id=int(access.user_id),
+            )
+            existing.status = MediaGenerationStatus.PENDING
+            existing.error_code = ""
+            existing.error_message_safe = ""
+            existing.finished_at = None
+            existing.output_metadata = {}
+            existing.input_payload = worker_payload
+            session.add(existing)
+            session.commit()
+            local_task_worker.submit(session_factory, existing.task_id, worker_payload)
+            return unified_response(
+                code=202,
+                message="PPT manifest worker retried",
+                data={**_serialize_job(existing), "async": True},
+            )
+        return unified_response(
+            code=200,
+            message="PPT manifest worker has already completed",
+            data={**_serialize_job(existing), "async": False},
+        )
+
+    task_payload = {
+        "course_id": course_id,
+        "release_id": release_id,
+        "source_fingerprint": input_hash[:16],
+    }
+    job, task_id = media_generation_job_service.create_job(
+        session,
+        course_id=course_id,
+        job_type=MediaGenerationJobType.PPT_MANIFEST,
+        created_by=int(access.user_id),
+        provider_key="ppt-source-cache",
+        provider_version="ppt-manifest/v1",
+        input_summary="PPT manifest: reuse cached pages and render only missing pages",
+        input_payload=task_payload,
+        input_hash=input_hash,
+        idempotency_key=idempotency_key,
+        media_release_id=release_id,
+    )
+    worker_payload = {**task_payload, "job_id": job.job_id}
+    job.input_payload = worker_payload
+    task_record = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).first()
+    if task_record is not None:
+        task_record.input_payload = json.dumps(worker_payload, ensure_ascii=False, sort_keys=True)
+        session.add(task_record)
+    session.add(job)
+    session.commit()
+    local_task_worker.submit(session_factory, task_id, worker_payload)
+    return unified_response(
+        code=202,
+        message="PPT manifest worker queued",
+        data={**_serialize_job(job), "async": True},
+    )
+
+
+@media_release_router.post("/course/{course_id}/releases/{release_id}/ppt-manifest/sync", include_in_schema=False)
 async def build_ppt_manifest(
     course_id: int,
     release_id: str,
@@ -1034,6 +1162,14 @@ async def build_ppt_manifest(
     current_user: dict = Depends(get_current_user),
 ):
     """Render and bind an immutable ``ppt-manifest/v1`` to a draft release."""
+    from app.core.exceptions import reject_state_conflict
+    reject_state_conflict(
+        "Synchronous PPT manifest rendering was removed; use the background manifest endpoint",
+        details={"error_code": "PPT_MANIFEST_ASYNC_REQUIRED"},
+    )
+
+    # Kept below temporarily as a source-level reference for the old endpoint
+    # contract.  The early state conflict above makes this route non-operative.
     require_course_permission(session, current_user, course_id, "course.media.generate")
     release = media_release_service.get_release(session, course_id=course_id, release_id=release_id)
     if release.status not in (MediaReleaseStatus.DRAFT, MediaReleaseStatus.WITHDRAWN):
@@ -1088,8 +1224,19 @@ async def activate_release(
     require_course_permission(
         session, current_user, course_id, "course.publish",
     )
-    # A release may be audio-only, but when a PPT/PDF source exists we freeze
-    # the rendered pages before students can observe the release.
+    # Manifest rendering is a dedicated background job.  Activation only
+    # verifies its immutable output so a click here can never start a second
+    # LibreOffice conversion after the authoring request timed out.
+    release_for_manifest = media_release_service.get_release(
+        session, course_id=course_id, release_id=release_id,
+    )
+    from app.services.ppt_manifest_service import has_ppt_manifest_source
+    if has_ppt_manifest_source(session, course_id=course_id) and not release_for_manifest.ppt_manifest_object_key:
+        from app.core.exceptions import reject_state_conflict
+        reject_state_conflict(
+            "PPT manifest is still pending; wait for the background media job before activation",
+            details={"error_code": "PPT_MANIFEST_PENDING"},
+        )
     try:
         media_release_service.ensure_ppt_manifest(
             session, course_id=course_id, release_id=release_id,
