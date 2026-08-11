@@ -27,7 +27,7 @@ def upgrade() -> None:
     op.execute(sa.text(
         "INSERT INTO platform_task_concurrency_configs "
         "(config_key, developer_mode, max_total, document_parse, course_draft_build, graphrag, vector_index, updated_at, created_at) "
-        "VALUES ('default', 0, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+        "VALUES ('default', FALSE, 1, 1, 1, 1, 1, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
     ))
 
 

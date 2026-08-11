@@ -46,7 +46,8 @@ def upgrade() -> None:
                 (course_id, learning, course_building, knowledge_graph, evidence,
                  experiment, coding_sandbox, cognitive_analysis, safety_policy,
                  updated_at, migration_batch_id)
-            SELECT id, 1, 1, 0, 0, 0, 0, 1, 0, CURRENT_TIMESTAMP, :batch_id
+            SELECT id, TRUE, TRUE, FALSE, FALSE, FALSE, FALSE, TRUE, FALSE,
+                   CURRENT_TIMESTAMP, :batch_id
             FROM courses
             WHERE NOT EXISTS (
                 SELECT 1 FROM course_capabilities c
@@ -64,7 +65,7 @@ def upgrade() -> None:
             INSERT INTO course_memberships
                 (user_id, course_id, role, status, permission_overrides,
                  analytics_excluded, joined_at, updated_at, migration_batch_id)
-            SELECT teacher_id, id, 'OWNER', 'ACTIVE', '{}', 1,
+            SELECT teacher_id, id, 'OWNER', 'ACTIVE', '{}', TRUE,
                    COALESCE(created_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, :batch_id
             FROM courses
             WHERE teacher_id IS NOT NULL
@@ -85,10 +86,10 @@ def upgrade() -> None:
             INSERT INTO course_memberships
                 (user_id, course_id, role, status, permission_overrides,
                  analytics_excluded, joined_at, updated_at, migration_batch_id)
-            SELECT student_id, course_id, 'STUDENT', 'ACTIVE', '{}', 0,
+            SELECT student_id, course_id, 'STUDENT', 'ACTIVE', '{}', FALSE,
                    COALESCE(enrolled_at, CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, :batch_id
             FROM student_enrollments
-            WHERE is_active = 1
+            WHERE is_active = TRUE
               AND NOT EXISTS (
                   SELECT 1 FROM course_memberships m
                   WHERE m.user_id = student_enrollments.student_id
