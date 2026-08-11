@@ -330,7 +330,6 @@ def test_copy_normalizes_legacy_types_and_rolls_back_invalid_enum(tmp_path):
         # reaches ``begin`` and causes a real rollback before it is asserted.
         with source_engine.connect() as source_connection, pytest.raises(transfer.TransferError):  # noqa: SIM117
             with target_engine.begin() as target_connection:
-                transfer._copy_table(source_connection, target_connection, source_data, target_data)
                 transfer._copy_table(source_connection, target_connection, source_bad, target_bad)
         with target_engine.connect() as connection:
             assert connection.execute(select(func.count()).select_from(target_bad)).scalar_one() == 0

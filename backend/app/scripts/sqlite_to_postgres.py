@@ -69,6 +69,7 @@ SKIPPED_SOURCE_TABLES = {
 }
 BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TRANSFER_NAME = "sqlite-to-postgresql"
+PRESEEDED_TARGET_TABLES = {"platform_task_concurrency_configs"}
 
 
 class TransferError(RuntimeError):
@@ -335,8 +336,16 @@ def _target_preflight(source_engine: Engine, target_engine: Engine) -> tuple[lis
         nonempty = [
             table_name
             for table_name, table in target_table_map.items()
-            if connection.execute(select(func.count()).select_from(table)).scalar_one() > 0
+            if table_name not in PRESEEDED_TARGET_TABLES
+            and connection.execute(select(func.count()).select_from(table)).scalar_one() > 0
         ]
+        seeded = target_table_map.get("platform_task_concurrency_configs")
+        if seeded is not None:
+            keys = connection.execute(
+                select(seeded.c.config_key).order_by(seeded.c.config_key)
+            ).scalars().all()
+            if keys not in ([], ["default"]):
+                nonempty.append("platform_task_concurrency_configs")
     if nonempty:
         raise TransferError("PostgreSQL target must be empty before copy")
     return source_tables, _schema_fingerprint(target_inspector, target_tables)
@@ -736,6 +745,13 @@ def cmd_copy(args: argparse.Namespace) -> int:
                 # Requires SUPERUSER.  The scope is this single transaction and
                 # all foreign-key anti-joins below must pass before commit.
                 target_connection.execute(text("SET LOCAL session_replication_role = replica"))
+                # Revision 0045 inserts one deterministic default row.  It is
+                # schema bootstrap data rather than destination business data;
+                # clear it inside the same transaction so the source setting
+                # is copied exactly and a failed import rolls the seed back.
+                for table_name in PRESEEDED_TARGET_TABLES:
+                    if table_name in target_table_map:
+                        target_connection.execute(target_table_map[table_name].delete())
                 for table_name in source_tables:
                     copied_rows += _copy_table(
                         source_connection,
