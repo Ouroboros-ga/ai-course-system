@@ -699,9 +699,6 @@ def cmd_plan(args: argparse.Namespace) -> int:
         _validate_existing_batch(_read_report(batch_id), source_sha256=source_sha256, target_schema_sha256=target_schema_sha256)
         source_table_map = _load_tables(source_engine, source_tables)
         target_table_map = _load_tables(target_engine, source_tables)
-        transfer_ledger_table = _load_tables(
-            target_engine, ["schema_migration_records"],
-        )["schema_migration_records"]
         with source_engine.connect() as connection:
             report["source_summaries"] = _all_summaries(
                 connection,
@@ -736,6 +733,9 @@ def cmd_copy(args: argparse.Namespace) -> int:
         report = _new_report(batch_id, snapshot, source_sha256, target_schema_sha256)
         source_table_map = _load_tables(source_engine, source_tables)
         target_table_map = _load_tables(target_engine, source_tables)
+        transfer_ledger_table = _load_tables(
+            target_engine, ["schema_migration_records"],
+        )["schema_migration_records"]
         with source_engine.connect() as source_connection:
             source_summaries = _all_summaries(
                 source_connection,
