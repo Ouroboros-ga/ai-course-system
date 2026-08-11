@@ -108,7 +108,7 @@ def upgrade() -> None:
                 (user_id, permission, granted_by_user_id, granted_at, migration_batch_id)
             SELECT id, 'ADMIN', id, CURRENT_TIMESTAMP, :batch_id
             FROM users
-            WHERE role IN ('ADMIN', 'admin')
+            WHERE UPPER(CAST(role AS TEXT)) = 'ADMIN'
               AND NOT EXISTS (
                   SELECT 1 FROM platform_permission_assignments p
                   WHERE p.user_id = users.id
@@ -127,7 +127,7 @@ def upgrade() -> None:
                 (user_id, permission, granted_by_user_id, granted_at, migration_batch_id)
             SELECT id, 'COURSE_CREATE', id, CURRENT_TIMESTAMP, :batch_id
             FROM users
-            WHERE role IN ('TEACHER', 'teacher')
+            WHERE UPPER(CAST(role AS TEXT)) = 'TEACHER'
               AND NOT EXISTS (
                   SELECT 1 FROM platform_permission_assignments p
                   WHERE p.user_id = users.id
