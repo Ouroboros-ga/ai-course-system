@@ -95,11 +95,11 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="sfx-profile">
-    <header class="sfx-profile-head">
+  <div class="sfx-settings-page">
+    <header class="sfx-settings-head">
       <div>
         <h1 class="sfx-t-title2">基础信息</h1>
-        <p class="sfx-t-ui sfx-t-secondary">课程名称、简介与展示资料。多人同时编辑时，后保存的人不会覆盖他人修改。</p>
+        <p class="sfx-t-ui sfx-t-secondary">管理课程名称、简介与展示资料。</p>
       </div>
       <SfxBadge :tone="course.status === 'published' ? 'green' : 'amber'">
         {{ course.status || 'draft' }}
@@ -107,24 +107,24 @@ onMounted(load)
     </header>
 
     <form class="sfx-panel sfx-profile-form" @submit.prevent="save">
-      <label>
-        课程名称
+      <label class="sfx-form-label">
+        <span>课程名称</span>
         <input v-model.trim="form.title" class="sfx-input" maxlength="200" required />
       </label>
-      <label>
-        课程简介
-        <textarea v-model.trim="form.description" class="sfx-input" rows="6" maxlength="4000" />
+      <label class="sfx-form-label">
+        <span>课程简介</span>
+        <textarea v-model.trim="form.description" class="sfx-textarea" rows="6" maxlength="4000" />
       </label>
       <SfxError v-if="error" :description="error" />
-      <p v-if="saved" class="sfx-save-ok">已保存。</p>
+      <p v-if="saved" class="sfx-settings-notice is-success">已保存。</p>
       <SfxButton type="submit" :loading="saving">保存基础信息</SfxButton>
     </form>
 
     <section v-if="canDelete" class="sfx-panel sfx-danger-zone" aria-labelledby="danger-zone-title">
       <div>
         <p class="sfx-danger-kicker">危险操作</p>
-        <h2 id="danger-zone-title">永久删除课程</h2>
-        <p>删除后课程将永久移除，学生无法再访问，课程数据无法恢复。</p>
+        <h2 id="danger-zone-title" class="sfx-t-title3">永久删除课程</h2>
+        <p class="sfx-t-ui sfx-t-secondary">删除后课程将永久移除，学生无法再访问，课程数据无法恢复。</p>
       </div>
       <SfxButton variant="danger" @click="openDeleteDialog">
         <template #icon><Trash2 :size="16" /></template>
@@ -167,17 +167,65 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-profile{display:flex;flex-direction:column;gap:var(--space-4);padding:var(--space-6);max-width:860px;margin:0 auto;width:100%}
-.sfx-profile-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-3)}
-.sfx-profile-form{display:grid;gap:var(--space-4)}
-.sfx-profile-form label,.sfx-delete-dialog label{display:grid;gap:var(--space-1)}
-.sfx-save-ok{color:var(--green-700)}
-.sfx-danger-zone{display:flex;align-items:center;justify-content:space-between;gap:var(--space-6);border-color:var(--red-300);margin-top:var(--space-6)}
-.sfx-danger-zone h2{margin:2px 0 var(--space-2);font-size:var(--text-lg);color:var(--ink-900)}
-.sfx-danger-zone p{margin:0;max-width:640px;color:var(--text-secondary);line-height:1.6}
-.sfx-danger-kicker{font-size:var(--ui-sm-size);font-weight:700;color:var(--red-700)!important;letter-spacing:.06em}
-.sfx-delete-dialog{display:grid;gap:var(--space-4)}
-.sfx-delete-warning{display:flex;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--red-300);border-radius:var(--radius-md);background:var(--red-100);color:var(--red-800)}
-.sfx-delete-warning p{margin:var(--space-1) 0 0;line-height:1.55}
-@media(max-width:640px){.sfx-profile{padding:var(--space-4)}.sfx-danger-zone{align-items:flex-start;flex-direction:column}}
+.sfx-profile-form {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.sfx-form-label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--ui-sm-size);
+  font-weight: var(--ui-sm-weight);
+  color: var(--text-secondary);
+}
+
+.sfx-danger-zone {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-6);
+  border-color: var(--red-300);
+  margin-top: var(--space-6);
+}
+
+.sfx-danger-zone h2 { margin: 2px 0 var(--space-1); }
+
+.sfx-danger-zone p { margin: 0; max-width: 560px; }
+
+.sfx-danger-kicker {
+  font-size: var(--caption-size);
+  font-weight: 700;
+  color: var(--red-700);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.sfx-delete-dialog {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.sfx-delete-dialog label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--ui-sm-size);
+  color: var(--text-secondary);
+}
+
+.sfx-delete-warning {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--red-300);
+  border-radius: var(--radius-md);
+  background: var(--red-100);
+  color: var(--red-700);
+}
+
+.sfx-delete-warning p { margin: var(--space-1) 0 0; line-height: 1.55; }
+
+@media (max-width: 640px) {
+  .sfx-danger-zone { align-items: flex-start; flex-direction: column; }
+}
 </style>

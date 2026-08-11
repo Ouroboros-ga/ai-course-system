@@ -180,7 +180,7 @@ onMounted(load)
         <section>
           <h3 class="sfx-t-ui sfx-hall-drawer-heading">加入规则</h3>
           <p class="sfx-t-ui sfx-t-secondary">
-            当前支持邀请码加入。申请审核流程属于冻结契约（planned），开放前如需加入请联系教师获取邀请码。
+            当前可通过邀请码加入课程。如需申请加入，请联系教师获取邀请码。
           </p>
         </section>
       </template>

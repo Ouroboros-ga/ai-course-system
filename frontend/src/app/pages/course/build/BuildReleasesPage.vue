@@ -44,7 +44,7 @@ async function publish () {
 </script>
 <template>
   <section class="stage">
-    <p>先运行发布前检查。发现的问题会列出；标记为“必须先处理”的问题仍需修复，其他问题可由教师确认后正式发布。</p>
+    <p>先运行发布前检查，系统会列出需要处理的问题。部分问题需修复后才能发布，部分问题可由教师确认后继续发布。</p>
     <div class="actions"><SfxButton variant="primary" :disabled="loading" :loading="loading" @click="validate">{{ loading ? '检查中…' : '运行发布前检查' }}</SfxButton></div>
     <div v-if="gate" class="gate">
       <p>必须先处理 {{ gate.blocker_count || 0 }} 项 · 需教师确认 {{ (gate.error_count || 0) + (gate.warning_count || 0) }} 项</p>

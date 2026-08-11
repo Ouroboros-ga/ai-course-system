@@ -125,7 +125,7 @@ onMounted(load)
     <header class="sfx-page-header">
       <div>
         <h1 class="sfx-t-title1"><ShieldCheck :size="25" /> 平台管理</h1>
-        <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">全局账号只分为用户与管理员；课程教学能力由 Course Access 决定。</p>
+        <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">管理平台用户账号与系统配置；课程内的教学角色由各课程单独授权。</p>
       </div>
       <SfxButton variant="secondary" size="sm" :disabled="loading" @click="load"><RefreshCw :size="15" /> 刷新</SfxButton>
     </header>
@@ -157,14 +157,14 @@ onMounted(load)
       </section>
 
       <section class="sfx-panel admin-section">
-        <div class="section-head"><h2 class="sfx-t-title3"><Cpu :size="19" /> 后台任务并发</h2><span class="sfx-t-caption">开发者模式下限制本进程解析、备课、GraphRAG 和向量索引的并发数。</span></div>
+        <div class="section-head"><h2 class="sfx-t-title3"><Cpu :size="19" /> 后台任务并发</h2><span class="sfx-t-caption">开发者模式下可限制后台任务的并发数量，避免本机资源过载。</span></div>
         <div class="concurrency-grid">
           <label class="checkbox-line"><input v-model="concurrency.developer_mode" type="checkbox" /> 开发者模式</label>
           <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>LanceDB 索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
         </div>
         <div class="section-actions"><SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置</SfxButton></div>
       </section>

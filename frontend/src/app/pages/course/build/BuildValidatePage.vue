@@ -47,7 +47,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 
 <template>
   <section class="validate-stage">
-    <div class="gate-summary" :class="{ running: status === 'running' }"><ShieldCheck :size="25" /><div><strong>{{ status === 'running' ? '正在检查课程一致性' : result?.passed ? '草稿已通过检查' : '发现需要关注的发布问题' }}</strong><p>{{ status === 'running' ? '正在核对证据、讲稿、图谱、映射与检索快照。' : `必须先处理 ${summary.blocker} 项 · 需教师确认 ${summary.error + summary.warning} 项` }}</p></div></div>
+    <div class="gate-summary" :class="{ running: status === 'running' }"><ShieldCheck :size="25" /><div><strong>{{ status === 'running' ? '正在检查课程一致性' : result?.passed ? '草稿已通过检查' : '发现需要关注的发布问题' }}</strong><p>{{ status === 'running' ? '正在核对讲稿、图谱、映射与检索索引的一致性。' : `必须先处理 ${summary.blocker} 项 · 需教师确认 ${summary.error + summary.warning} 项` }}</p></div></div>
     <p v-if="error" class="validation-error" role="alert"><CircleAlert :size="16" /> {{ error }}</p>
     <div v-else-if="status === 'running'" class="loading-state">正在运行发布前检查…</div>
     <div v-else-if="result" class="check-wrap">

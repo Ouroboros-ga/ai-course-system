@@ -157,7 +157,7 @@ onMounted(loadCapabilities)
       </ol>
       <p class="rail-policy sfx-t-caption">
         <ShieldCheck :size="15" />
-        其他能力将在证据链与执行隔离验证完成后开放。
+        其他能力将在相关验证完成后逐步开放。
       </p>
     </aside>
 
@@ -168,7 +168,7 @@ onMounted(loadCapabilities)
             <h1 class="sfx-t-title1">研究工作台</h1>
             <SfxBadge tone="amber">Research Preview</SfxBadge>
           </div>
-          <p class="sfx-t-body sfx-t-secondary">从可验证论文开始，构建可追溯的研究证据链。</p>
+          <p class="sfx-t-body sfx-t-secondary">从可验证的论文出发，构建可追溯的研究线索。</p>
         </div>
       </header>
 

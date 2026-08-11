@@ -60,7 +60,7 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="sfx-page sfx-tasks">
+  <div class="sfx-page">
     <header class="sfx-page-header"><div><h1 class="sfx-t-title1">{{ title }}</h1><p class="sfx-t-ui sfx-t-secondary">课程解析、图谱、媒体和实验运行任务的真实状态。</p></div><SfxButton size="sm" variant="secondary" @click="load">刷新</SfxButton></header>
     <SfxSkeleton v-if="state === 'loading'" :lines="5" block />
     <SfxError v-else-if="state === 'error'" description="任务中心暂时无法读取" @retry="load" />
@@ -70,4 +70,4 @@ onMounted(load)
   </div>
 </template>
 
-<style scoped>.sfx-tasks{max-width:1180px}.sfx-task-actions{display:flex;align-items:center;gap:var(--space-2)}.sfx-task-error{margin:0 0 var(--space-3);padding:var(--space-3);border:1px solid var(--color-danger);border-radius:var(--radius-md);background:var(--color-danger-light);color:var(--color-danger-hover)}</style>
+<style scoped>.sfx-task-actions{display:flex;align-items:center;gap:var(--space-2)}.sfx-task-error{margin:0 0 var(--space-3);padding:var(--space-3);border:1px solid var(--color-danger);border-radius:var(--radius-md);background:var(--color-danger-light);color:var(--color-danger-hover)}</style>

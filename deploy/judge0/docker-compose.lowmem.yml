@@ -17,6 +17,11 @@ services:
   worker:
     cpus: "0.75"
     mem_limit: 768M
+    # Ubuntu's docker-default AppArmor profile blocks isolate's mount
+    # privatization on some hosts even with SYS_ADMIN. Keep the worker
+    # non-privileged and relax only AppArmor for this dedicated demo host.
+    security_opt:
+      - apparmor=unconfined
     deploy:
       resources:
         limits:

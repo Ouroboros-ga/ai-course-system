@@ -54,3 +54,50 @@ const railItems = computed(() => {
   flex-direction: column;
 }
 </style>
+
+<style>
+.sfx-settings-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-8) var(--space-6) var(--space-12);
+  max-width: 860px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.sfx-settings-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
+}
+
+.sfx-settings-head h1 { margin: 0; }
+.sfx-settings-head p { margin: var(--space-1) 0 0; }
+
+.sfx-settings-notice {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  font-size: var(--ui-sm-size);
+  line-height: var(--ui-sm-line);
+}
+
+.sfx-settings-notice.is-success {
+  color: var(--green-700);
+  background: var(--green-100);
+}
+
+.sfx-settings-notice.is-error {
+  color: var(--red-700);
+  background: var(--red-100);
+}
+
+.sfx-settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+</style>

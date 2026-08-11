@@ -311,8 +311,8 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 
     <div v-else-if="isFirstPrepInProgress && !state?.has_ppt" class="first-prep-pending" role="status">
       <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" /></div>
-      <h3>助教智能体首次备课中</h3>
-      <p>课程结构和材料解析完成后，即可基于每页 PPT 图像和 OCR 文本进行映射。</p>
+      <h3>正在自动备课中</h3>
+      <p>课程结构和材料解析完成后，即可将每页 PPT 与知识点对应起来。</p>
     </div>
 
     <div v-else-if="!state?.has_ppt" class="frozen">

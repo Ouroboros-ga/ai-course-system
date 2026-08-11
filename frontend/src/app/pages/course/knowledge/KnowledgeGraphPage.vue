@@ -290,10 +290,10 @@ onMounted(() => {
         <Eye :size="24" aria-hidden="true" />
         <p class="sfx-knowledge__preview-kicker">{{ previewRoleLabel }}视角</p>
         <p class="sfx-knowledge__preview-text">
-          当前仅查看已发布图谱快照。学生私有认知状态与学习推荐属于学生个人数据，不在此视角展示。
+          当前查看的是已发布的知识图谱。学生的个人学习数据不在教师预览中展示。
         </p>
         <p class="sfx-knowledge__preview-hint">
-          如需查看某位学生的认知状态，请进入专门的学生认知查看流程。
+          如需查看某位学生的学习情况，请前往课程学习分析页面。
         </p>
       </section>
     </SfxDrawer>

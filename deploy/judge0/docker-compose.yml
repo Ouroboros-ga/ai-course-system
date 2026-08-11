@@ -30,7 +30,7 @@ services:
   server:
     # Docker Hub official linux/amd64 manifest for 1.13.1:
     # sha256:6b5d6a66aa19a8e878a52ea3c6a560afc1086734d96e2885b561fd5c6018f082
-    image: judge0/judge0:1.13.1
+    image: ${JUDGE0_IMAGE_REGISTRY:-docker.io}/judge0/judge0:1.13.1
     # Judge0 reads this as an environment file. Do not mount it as an
     # unrelated file: that leaves server/worker with different credentials
     # than Redis/PostgreSQL.
@@ -82,7 +82,7 @@ services:
       start_period: 60s
 
   worker:
-    image: judge0/judge0:1.13.1
+    image: ${JUDGE0_IMAGE_REGISTRY:-docker.io}/judge0/judge0:1.13.1
     command: ["/bin/bash", "/bootstrap/workers-no-secret-env.sh"]
     env_file: judge0.conf
     environment:
@@ -118,7 +118,7 @@ services:
       - judge0_net
 
   db:
-    image: postgres:16.2-alpine
+    image: ${JUDGE0_IMAGE_REGISTRY:-docker.io}/library/postgres:16.2-alpine
     env_file: judge0.conf
     environment:
       POSTGRES_PASSWORD: ${JUDGE0_POSTGRES_PASSWORD:?set JUDGE0_POSTGRES_PASSWORD}
@@ -143,7 +143,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7.2.4-alpine
+    image: ${JUDGE0_IMAGE_REGISTRY:-docker.io}/library/redis:7.2.4-alpine
     command: [
       "sh", "-c",
       'docker-entrypoint.sh --appendonly no --requirepass "$$REDIS_PASSWORD"'

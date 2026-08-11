@@ -167,7 +167,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
     <div v-else-if="isFirstPrepInProgress && !nodes.length" class="first-prep-pending" role="status" aria-live="polite">
       <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
       <h3>智能体首次智慧备课中</h3>
-      <p>助教智能体正在解析课程材料，并整理目录草稿与知识点结构。完成后此处会自动呈现可编辑的课程结构。</p>
+      <p>正在自动解析课程材料并整理目录结构，完成后可在此编辑。</p>
       <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
     </div>
     <div v-else-if="!nodes.length" class="empty-state">
@@ -211,7 +211,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
           <SfxButton v-else variant="secondary" size="sm" @click="toggleLock(selected)"><LockOpen :size="15" /> 取消锁定</SfxButton>
           <SfxButton variant="tertiary" size="sm" :disabled="Boolean(workbench?.batchRun)" @click="openAgent"><Sparkles :size="15" /> 智能优化节点</SfxButton>
         </div>
-        <p class="lock-note"><LockKeyhole :size="14" /> 锁定后不会进入后续 Agent 的可修改集合。</p>
+        <p class="lock-note"><LockKeyhole :size="14" /> 锁定后，智能体优化时不会修改此节点。</p>
       </article>
     </div>
   </section>

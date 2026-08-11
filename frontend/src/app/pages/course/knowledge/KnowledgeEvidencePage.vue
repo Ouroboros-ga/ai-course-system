@@ -195,7 +195,7 @@ onMounted(load)
               <span class="sfx-t-caption sfx-mono">{{ item.evidence_id || item.span_id }}</span>
             </div>
             <h2 class="sfx-t-ui sfx-evidence-file"><FileText :size="16" aria-hidden="true" />{{ item.source_file || item.document_id || '未命名课件' }}</h2>
-            <p class="sfx-t-caption sfx-t-secondary">{{ formatPage(item.page_number) }} · {{ item.source_type || 'document' }} · {{ item.char_start || 0 }}–{{ item.char_end || 0 }} 字符</p>
+            <p class="sfx-t-caption sfx-t-secondary">{{ formatPage(item.page_number) }} · {{ item.source_type || '文档' }}</p>
             <p class="sfx-evidence-snippet">{{ item.text_snippet || '（无文本片段）' }}</p>
             <p v-if="item.citation" class="sfx-t-caption sfx-t-secondary">Citation：{{ item.citation.citation_id }} · {{ item.citation.status }}</p>
           </div>

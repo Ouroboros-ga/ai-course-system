@@ -737,11 +737,11 @@ onBeforeUnmount(() => {
           </div>
           <div v-if="batchPlan" class="batch-estimate">
             <span>节点 {{ batchPlan.node_count }}</span><span>总字符 {{ batchPlan.total_chars }}</span><span>待计费 {{ batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
-            <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new Set(batchPlan.blocking_reasons)].join('；') }}；试听不受阻，冻结播放清单前必须完成映射。</p>
+            <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new Set(batchPlan.blocking_reasons)].join('；') }}；试听可随时进行，但最终发布前需完成全部映射。</p>
             <p v-if="!batchPlanMatchesSelections" class="task-error">音色或角色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
           </div>
           <div class="tts-actions">
-            <span v-if="providerIsDemo" class="provider-demo-note">fake-demo：本地演示，不调用付费 TTS。</span>
+            <span v-if="providerIsDemo" class="provider-demo-note">演示模式：使用本地合成，不产生费用。</span>
             <SfxButton :disabled="!canPlanBatch" :loading="acting === 'batch-plan'" @click="createBatchPlan">核算批量费用</SfxButton>
             <label v-if="providerNeedsConfirmation" class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
             <SfxButton :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'" @click="confirmBatch">确认并提交批量任务</SfxButton>
@@ -769,7 +769,7 @@ onBeforeUnmount(() => {
             <div class="selected-script-heading">
               <span>当前讲稿</span>
               <h3 id="selected-script-title">{{ scriptLabel(selectedScript) }}</h3>
-              <p>{{ selectedCharCount }} 字 · {{ selectedByteCount }} UTF-8 字节 · {{ selectedScript.locked ? '已锁定，不会在媒体处理中改写' : '草稿内容将按本次提交冻结' }}</p>
+              <p>{{ selectedCharCount }} 字 · {{ selectedByteCount }} UTF-8 字节 · {{ selectedScript.locked ? '已锁定，不会在媒体处理中改写' : '草稿内容将按本次提交固定' }}</p>
             </div>
             <div class="script-preview">{{ selectedScript.content }}</div>
           </section>
@@ -785,9 +785,9 @@ onBeforeUnmount(() => {
             </header>
             <div v-if="previewPlayback" class="preview-body">
               <p v-if="previewPlayback.ppt_timeline?.length">PPT：{{ previewPlayback.ppt_timeline.map(item => `第 ${item.ppt_page} 页`).join('、') }}</p>
-              <p v-else>PPT 映射尚未冻结；试听不受阻，正式清单仍受发布门限制。</p>
+              <p v-else>PPT 映射尚未完成；试听可正常进行，但最终发布需要先完成映射。</p>
               <p v-if="previewPlayback.subtitle_segments?.length">字幕：{{ previewPlayback.subtitle_segments.map(item => item.text).join('') }}</p>
-              <p v-else>字幕与数字人 Cue 尚未冻结；试听不会受阻，正式清单仍受发布门限制。</p>
+              <p v-else>字幕与数字人时间轴尚未生成；试听可正常进行，但最终发布需要先生成。</p>
             </div>
             <div v-else class="preview-empty">
               <Volume2 :size="20" />
@@ -836,7 +836,7 @@ onBeforeUnmount(() => {
 
                 <div v-if="!selectedTtsJob || selectedTtsJob.status === 'failed'" class="tts-confirmation">
                   <label v-if="providerNeedsConfirmation" class="confirmation-check"><input v-model="paidTtsConfirmed" type="checkbox" :disabled="!providerReady || !canGenerate" /><span>我确认本次将提交一次语音合成，并承担正式 Provider 调用费用。</span></label>
-                  <span v-else-if="providerIsDemo" class="provider-demo-note">fake-demo：无需费用确认，仅生成可试听的本地演示音频。</span>
+                  <span v-else-if="providerIsDemo" class="provider-demo-note">演示模式：无需费用确认，仅生成可试听的演示音频。</span>
                   <div class="tts-actions">
                     <SfxButton v-if="selectedTtsJob?.status === 'failed'" :disabled="!canSubmitTts" :loading="acting === 'retry-tts'" @click="retryTts">确认并重试一次</SfxButton>
                     <SfxButton v-else :disabled="!canSubmitTts" :loading="acting === 'submit-tts'" @click="submitTts"><Send :size="16" /> 提交语音合成</SfxButton>
@@ -858,9 +858,9 @@ onBeforeUnmount(() => {
                 </article>
                 <div v-if="canBuildPptManifest && !hasPptManifest" class="workflow-action"><SfxButton variant="secondary" :disabled="!canGenerate" :loading="acting === 'ppt-manifest'" @click="createPptManifest">生成 PPT manifest</SfxButton></div>
                 <div v-if="isPlaylistRelease" class="workflow-action">
-                  <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已冻结；已固定到此媒体草稿，之后不可静默替换。</p>
+                  <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已固定到此版本，后续不会自动更改。</p>
                   <SfxButton v-else variant="secondary" :disabled="!canGenerate || !hasPptManifest" :loading="acting === 'batch-freeze'" @click="freezeBatchPlaylist">冻结课程播放清单</SfxButton>
-                  <small v-if="!hasPptManifest">需先冻结 PPT manifest；任一知识点未成功或映射缺失时，服务端会阻止冻结。</small>
+                  <small v-if="!hasPptManifest">需先完成 PPT 页面映射；有知识点未生成或映射缺失时，无法最终发布。</small>
                 </div>
 
                 <article class="workflow-row" :class="{ complete: workingRelease.status === 'active', active: canActivateWorkingRelease && workingRelease.status === 'draft' }">

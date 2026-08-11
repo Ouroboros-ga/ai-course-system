@@ -120,7 +120,7 @@ onMounted(load)
       <div>
         <h1 class="sfx-t-title2">成员列表</h1>
         <p class="sfx-t-ui sfx-t-secondary">
-          共 {{ members.length }} 名成员。成员姓名与账号由成员读模型（planned facade）提供，当前如实显示用户 ID。
+          共 {{ members.length }} 名成员。
         </p>
       </div>
     </header>

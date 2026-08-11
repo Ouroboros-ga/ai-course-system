@@ -195,7 +195,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
       <p v-if="loading" class="empty">正在读取资料…</p>
       <div v-else-if="!materials.length" class="empty">还没有课程资料。添加主课件、教材或其他教学材料后，解析会在后台继续执行。</div>
       <div v-else class="materials">
-        <article v-for="item in materials" :key="item.material_id" class="material"><div><strong>{{ item.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ roleLabel[item.material_role] || item.material_role || '参考材料' }} · {{ item.material_type }}</p></div><span class="status" :class="`status-${item.status}`">{{ statusLabel[item.status] || item.status }}</span><small>当前版本：{{ item.current_version_id || '-' }}</small></article>
+        <article v-for="item in materials" :key="item.material_id" class="material"><div><strong>{{ item.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ roleLabel[item.material_role] || item.material_role || '参考材料' }} · {{ item.material_type }}</p></div><span class="status" :class="`status-${item.status}`">{{ statusLabel[item.status] || item.status }}</span><small>版本 {{ item.current_version_id ? 'v' + item.current_version_id.slice(-4) : '-' }}</small></article>
       </div>
     </template>
   </section>

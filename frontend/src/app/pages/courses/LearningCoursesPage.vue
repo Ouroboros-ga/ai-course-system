@@ -51,8 +51,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="sfx-courses">
-    <header class="sfx-courses-header">
+  <div class="sfx-page sfx-page--narrow">
+    <header class="sfx-page-header">
       <div>
         <h1 class="sfx-t-title1">我学习的</h1>
         <p class="sfx-t-ui sfx-t-secondary">当前作为学生参与的课程</p>
@@ -123,21 +123,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-courses {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-16);
-  width: 100%;
-}
-
-.sfx-courses-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-  margin-bottom: var(--space-6);
-}
-
 .sfx-course-list {
   display: flex;
   flex-direction: column;

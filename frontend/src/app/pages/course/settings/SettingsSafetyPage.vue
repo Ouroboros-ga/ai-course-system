@@ -128,11 +128,11 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="sfx-safety">
-    <header class="sfx-safety-head">
+  <div class="sfx-settings-page sfx-safety">
+    <header class="sfx-settings-head">
       <div>
         <h1 class="sfx-t-title2">安全与合规</h1>
-        <p class="sfx-t-ui sfx-t-secondary">课程安全策略与平台硬边界</p>
+        <p class="sfx-t-ui sfx-t-secondary">课程安全策略与平台安全底线</p>
       </div>
       <SfxBadge v-if="policy" :tone="statusMeta[policy.status]?.tone ?? 'neutral'">
         {{ statusMeta[policy.status]?.label ?? policy.status }}
@@ -215,21 +215,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-safety {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
-  max-width: 860px;
-}
-
-.sfx-safety-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
 .sfx-panel-title {
   display: flex;
   align-items: center;

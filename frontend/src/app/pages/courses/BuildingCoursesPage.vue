@@ -144,7 +144,7 @@ onMounted(load)
       </ul>
 
       <p class="sfx-build-note sfx-t-caption">
-        待确认候选数、失败任务数与建设阶段进度由课程建设读模型（planned facade）提供，接入前不展示推测数字。
+        部分建设进度指标将在后续版本中展示。
       </p>
     </template>
   </div>

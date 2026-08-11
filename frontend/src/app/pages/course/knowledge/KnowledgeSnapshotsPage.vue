@@ -126,8 +126,8 @@ onMounted(load)
   <div class="page">
     <header class="head">
       <div>
-        <h1>知识包版本</h1>
-        <p>图谱、Evidence、Citation 与 LanceDB 索引以同一版本激活和回滚。</p>
+        <h1 class="sfx-t-title2">知识包版本</h1>
+        <p class="sfx-t-ui sfx-t-secondary">知识图谱、原文引用与检索索引会作为一个整体版本进行发布和回滚。</p>
       </div>
       <SfxButton
         v-if="items.length >= 2"
@@ -156,8 +156,8 @@ onMounted(load)
 
     <template v-else>
       <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
-      <div class="table-wrap">
-        <table>
+      <div class="sfx-table-wrap">
+        <table class="sfx-table">
           <thead>
             <tr>
               <th>版本</th>
@@ -191,7 +191,7 @@ onMounted(load)
                 >
                   回滚到此版本
                 </SfxButton>
-                <span v-else class="muted">{{ item.is_active ? '正在服务' : '不可激活' }}</span>
+                <span v-else class="sfx-t-caption sfx-t-muted">{{ item.is_active ? '正在服务' : '不可激活' }}</span>
               </td>
             </tr>
           </tbody>
@@ -245,7 +245,7 @@ onMounted(load)
         <strong>{{ rollbackTarget ? itemLabel(rollbackTarget) : '' }}</strong>。
       </p>
       <ul>
-        <li>只切换 CourseKnowledgeHead，不删除任何历史 LanceDB。</li>
+        <li>切换只更新当前生效的版本指针，不会删除任何历史版本数据。</li>
         <li>旧推荐保留原 Bundle 引用，新推荐使用切换后的 Bundle。</li>
         <li>若目标 manifest 或 COMPLETE 校验失败，激活指针不会改变。</li>
       </ul>
@@ -262,21 +262,16 @@ onMounted(load)
 <style scoped>
 .page { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
-.head h1 { margin: 0; font-size: 24px; }
-.head p { margin: 6px 0 0; color: var(--text-secondary); }
-.table-wrap { overflow-x: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-md); }
-table { width: 100%; border-collapse: collapse; }
-th, td { padding: 12px; border-bottom: 1px solid var(--border-subtle); text-align: left; vertical-align: top; }
-th { color: var(--text-secondary); font-size: 12px; }
-td small, td code { display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-td small { margin-top: 4px; color: var(--text-muted); }
-.muted { color: var(--text-muted); font-size: 12px; }
-.error { color: var(--red-700); background: var(--red-100); padding: 10px 12px; border-radius: var(--radius-sm); }
-.compare-form { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: 12px; }
-.compare-form label { display: grid; gap: 6px; }
-.compare-form select { min-height: 38px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 0 8px; }
-.diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 18px; }
-.diff-grid section { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 14px; }
+.head h1 { margin: 0; }
+.head p { margin: var(--space-1) 0 0; }
+.sfx-table td small, .sfx-table td code { display: block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfx-table td small { margin-top: var(--space-1); color: var(--text-muted); }
+.error { color: var(--red-700); background: var(--red-100); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); }
+.compare-form { display: grid; grid-template-columns: 1fr 1fr auto; align-items: end; gap: var(--space-3); }
+.compare-form label { display: grid; gap: var(--space-2); }
+.compare-form select { min-height: 38px; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 0 var(--space-2); }
+.diff-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); margin-top: var(--space-4); }
+.diff-grid section { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); }
 @media (max-width: 760px) {
   .head { align-items: flex-start; flex-direction: column; }
   .compare-form, .diff-grid { grid-template-columns: 1fr; }

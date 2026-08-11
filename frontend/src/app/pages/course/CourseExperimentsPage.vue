@@ -125,7 +125,7 @@ onMounted(async () => {
       <div>
         <h1 class="sfx-t-title1">实验任务</h1>
         <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">
-          {{ isTeacher ? '管理课程实验定义、查看提交情况' : '完成课程实验，运行记录会形成学习证据' }}
+          {{ isTeacher ? '管理课程实验定义、查看提交情况' : '完成课程实验，运行记录会保存为你的学习记录' }}
         </p>
       </div>
       <SfxCapabilityTag level="experimental" />
@@ -149,7 +149,7 @@ onMounted(async () => {
             <span v-else>未获取到语言列表</span>
           </dd>
           <dt>能力边界</dt>
-          <dd>当前提供「运行一段代码」的基础能力；完整实验流程（任务定义、尝试、测试评分）待实验契约实现。</dd>
+          <dd>目前支持运行代码并查看结果；完整的实验任务流程（含自动评分）将在后续版本提供。</dd>
         </dl>
       </template>
       <p v-else-if="sandboxStatus === 'error'" class="sfx-t-ui sfx-t-secondary">
@@ -182,7 +182,7 @@ onMounted(async () => {
         <div class="sfx-exp-sandbox-head">
           <div>
             <h2 class="sfx-panel-title">代码实验</h2>
-            <p class="sfx-t-ui sfx-t-secondary">提交后由独立沙箱运行，CodingEduAgent 只读取已验证的 run_id 诊断。</p>
+            <p class="sfx-t-ui sfx-t-secondary">提交后代码会在独立环境中运行，并自动给出诊断建议。</p>
           </div>
           <SfxBadge v-if="run?.outcome" tone="ink">{{ run.outcome }}</SfxBadge>
         </div>
@@ -212,15 +212,15 @@ onMounted(async () => {
           <ul v-if="diagnosis.debug_steps?.length">
             <li v-for="step in diagnosis.debug_steps" :key="step">{{ step }}</li>
           </ul>
-          <small>本次 run_id 已保存；返回学习页后 EduAgent 可读取受限诊断，不会直接修改认知评分。</small>
+          <small>本次运行结果已保存，可在学习页查看诊断建议。</small>
         </div>
       </section>
 
       <SfxPlannedPanel
         v-if="!experiments.length"
         contract-key="experiments"
-        title="课程实验任务 · 接口契约已冻结"
-        available-note="沙箱语言与安全边界已在上方真实展示；实验工作区将复用同一沙箱能力。"
+        title="课程实验任务 · 即将开放"
+        available-note="代码运行环境已在上方展示；实验任务功能将在后续版本提供。"
       >
         <template #icon><FlaskConical :size="20" :stroke-width="1.9" /></template>
         <p class="sfx-t-ui sfx-t-secondary">
@@ -252,31 +252,31 @@ onMounted(async () => {
       <SfxPlannedPanel
         v-if="teacherTab === 'list'"
         contract-key="experiments"
-        title="实验任务列表 · 接口契约已冻结"
+        title="实验任务列表 · 即将开放"
       >
         <p class="sfx-t-ui sfx-t-secondary">
-          列表将包含：任务名、关联知识点、状态、截止时间、提交人数、异常数与安全策略（§16.2）。
+          列表将包含：任务名、关联知识点、状态、截止时间、提交人数、异常数与安全策略。
         </p>
       </SfxPlannedPanel>
 
       <SfxPlannedPanel
         v-else-if="teacherTab === 'create'"
         contract-key="experiments"
-        title="创建实验任务 · 接口契约已冻结"
+        title="创建实验任务 · 即将开放"
       >
         <p class="sfx-t-ui sfx-t-secondary">
-          创建流程按 §16.2 分为：基本信息 → 实验内容 → 评测与提示 → 安全策略 → 预览发布。
-          沙箱预设与语言白名单已可在「设置 → 沙箱权限」中真实配置。
+          创建流程分为：基本信息 → 实验内容 → 评测与提示 → 安全策略 → 预览发布。
+          代码运行环境与支持的语言可在「设置 → 代码运行」中配置。
         </p>
       </SfxPlannedPanel>
 
       <SfxPlannedPanel
         v-else
         contract-key="experiments"
-        title="提交情况 · 接口契约已冻结"
+        title="提交情况 · 即将开放"
       >
         <p class="sfx-t-ui sfx-t-secondary">
-          教师仅能查看课程任务范围内的证据（§16.2），不默认查看学生全部自主实验。
+          教师只能查看本课程任务范围内的学生提交，不会看到学生在其他自主实验中的内容。
         </p>
       </SfxPlannedPanel>
     </template>

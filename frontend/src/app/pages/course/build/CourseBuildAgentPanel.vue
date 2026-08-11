@@ -204,7 +204,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
 
     <!-- 聊天消息区 -->
     <div ref="chatScroll" class="agent-chat">
-      <p v-if="!messages.length" class="chat-empty">向助教智能体说明你想调整什么，它会生成待审核的提案。</p>
+      <p v-if="!messages.length" class="chat-empty">描述你想要的调整，助手会给出修改建议供你确认。</p>
 
       <template v-for="(msg, i) in messages" :key="i">
         <!-- 用户消息（偏右） -->
@@ -222,8 +222,8 @@ watch(() => workbench?.pendingInstruction, (text) => {
             <p v-else-if="msg.error" class="chat-error"><CircleAlert :size="14" /> {{ msg.reason }}</p>
             <template v-else>
               <p class="chat-reason">{{ msg.reason }}</p>
-              <p v-if="msg.planner" class="chat-meta">生成方式：{{ msg.planner.startsWith('llm') ? '在线模型' : '本地规则' }}</p>
-              <p v-if="msg.changed?.length" class="chat-meta">修改目标：{{ msg.changed.join('、') }}</p>
+              <p v-if="msg.planner" class="chat-meta">生成方式：{{ msg.planner.startsWith('llm') ? 'AI 生成' : '规则生成' }}</p>
+              <p v-if="msg.changed?.length" class="chat-meta">已更新：{{ msg.changed.join('、') }}</p>
               <p v-if="msg.excluded?.length" class="chat-excluded">已排除锁定项：{{ msg.excluded.join('、') }}</p>
             </template>
           </div>

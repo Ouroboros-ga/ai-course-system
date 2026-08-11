@@ -65,7 +65,7 @@ onMounted(load)
         <div>
           <p class="sfx-t-kicker">LEARNING ANALYTICS</p>
           <h1 class="sfx-t-title2">学习进度与认知分析</h1>
-          <p class="sfx-t-secondary">按当前发布版本统计知识点学习状态；掌握结论仅来自正式证据。</p>
+          <p class="sfx-t-secondary">按当前发布版本统计知识点学习状态；掌握度评定基于已确认的学习记录。</p>
         </div>
         <div class="sfx-analytics-summary">
           <strong>{{ analytics?.student_count || 0 }}</strong><span>名学生</span>
@@ -123,9 +123,6 @@ onMounted(load)
 <style scoped>
 .sfx-analytics-summary { display:flex; gap:8px; align-items:baseline; color:var(--text-secondary); }
 .sfx-analytics-summary strong { font-size:24px; color:var(--text-primary); margin-left:16px; }
-.sfx-table-wrap { overflow:auto; }
-.sfx-table { width:100%; border-collapse:collapse; }
-.sfx-table th,.sfx-table td { padding:12px 10px; border-bottom:1px solid var(--border-default); text-align:left; }
 .sfx-analytics-student-row { display:grid; grid-template-columns:2fr 1fr 1fr 1fr; padding:10px 0; border-bottom:1px solid var(--border-subtle); }
 .sfx-analytics-chips { display:flex; flex-wrap:wrap; gap:8px; }
 .sfx-analytics-chip { padding:6px 10px; border:1px solid var(--border-default); border-radius:999px; background:var(--surface-cool); color:var(--text-secondary); font-size:var(--ui-sm-size); }

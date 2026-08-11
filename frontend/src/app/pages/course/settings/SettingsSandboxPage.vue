@@ -126,8 +126,8 @@ onMounted(load)
 </script>
 
 <template>
-  <div class="sfx-sandbox">
-    <header class="sfx-sandbox-head">
+  <div class="sfx-settings-page sfx-sandbox">
+    <header class="sfx-settings-head">
       <div>
         <h1 class="sfx-t-title2">沙箱权限</h1>
         <p class="sfx-t-ui sfx-t-secondary">课程代码运行的资源与网络边界</p>
@@ -148,9 +148,9 @@ onMounted(load)
       <section class="sfx-panel">
         <h2 class="sfx-panel-title"><Lock :size="16" /> 平台硬边界（不可设置）</h2>
         <ul class="sfx-sandbox-hardlimits">
-          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止挂载宿主机路径</span></li>
-          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止特权容器</span></li>
-          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止公共互联网任意访问</span></li>
+          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止访问服务器文件</span></li>
+          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止获取管理员权限</span></li>
+          <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止随意访问互联网</span></li>
         </ul>
       </section>
 
@@ -231,21 +231,6 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-sandbox {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-6);
-  max-width: 860px;
-}
-
-.sfx-sandbox-head {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: var(--space-4);
-}
-
 .sfx-panel-title {
   display: flex;
   align-items: center;

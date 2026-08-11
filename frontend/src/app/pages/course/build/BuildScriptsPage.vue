@@ -170,7 +170,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
     <div v-else-if="isFirstPrepInProgress && !items.length" class="first-prep-pending" role="status" aria-live="polite">
       <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" :stroke-width="1.8" /></div>
       <h3>智能体首次智慧备课中</h3>
-      <p>助教智能体正在解析课程材料，并生成讲授脚本草稿。完成后此处会自动呈现可审核的讲稿节点。</p>
+      <p>正在自动解析课程材料并生成讲稿草稿，完成后可在此审核和编辑。</p>
       <div class="first-prep-progress" aria-hidden="true"><span></span><span></span><span></span></div>
     </div>
     <div v-else-if="!items.length" class="empty-state"><Sparkles :size="22" /><strong>讲授脚本尚未生成</strong><p>先确认课程结构并完成首次智能备课，系统才会生成可审核的讲稿草稿。</p></div>

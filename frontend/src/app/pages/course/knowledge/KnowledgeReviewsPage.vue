@@ -113,7 +113,7 @@ async function approve() {
   const accepted = window.confirm(
     `确认通过整图？\n${nodes.value.length} 个节点，${relations.value.length} 条语义关系，`
     + `${evidenceCount} 个来源 Anchor。\n`
-    + '系统会转正引用、冻结检索快照并构建真实 LanceDB；校验成功前不会切换学生端。',
+    + '确认后，系统会正式启用这版图谱并更新学生端内容；校验通过前学生看到的不会变化。',
   )
   if (!accepted) return
   submitting.value = true
@@ -158,11 +158,10 @@ onBeforeUnmount(() => window.clearInterval(timer))
   <main class="review">
     <header class="review__header">
       <div>
-        <p class="eyebrow">GRAPHRAG GOVERNANCE</p>
+        <p class="eyebrow">知识图谱审批</p>
         <h1>知识图谱整图审批</h1>
         <p>
-          图谱由真实 DocumentIR 生成。教师可核验来源、通过整图，或带反馈重新生成；
-          节点和关系不在此页面直接改写。
+          知识图谱根据课程材料自动生成。教师可核对来源、通过审核，或附上反馈后重新生成。
         </p>
       </div>
       <div class="actions">
@@ -193,8 +192,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <section v-if="!runtimeReady" class="runtime-warning">
         <ShieldAlert :size="18" />
         <div>
-          <strong>GraphRAG 运行时尚未配置完成</strong>
-          <p>Completion 与 Embedding 必须分别配置；在配置完成前不会发起付费构建。</p>
+          <strong>图谱生成所需的 AI 服务尚未配置完成</strong>
+          <p>文本生成与向量化服务需分别配置，配置完成前不会产生费用。</p>
         </div>
       </section>
 
@@ -203,7 +202,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <div><span>节点 / 关系</span><strong>{{ nodes.length }} / {{ relations.length }}</strong></div>
         <div><span>类型化关系</span><strong>{{ draft?.typed_relationship_count || 0 }}</strong></div>
         <div><span>Active Bundle</span><strong>{{ bundleStatus?.active_bundle_id || '无' }}</strong></div>
-        <div><span>LanceDB</span><strong>{{ bundleStatus?.vector_index?.status || '未构建' }}</strong></div>
+        <div><span>向量索引</span><strong>{{ bundleStatus?.vector_index?.status || '未构建' }}</strong></div>
       </section>
 
       <p v-if="actionMessage" class="notice">{{ actionMessage }}</p>
@@ -211,8 +210,8 @@ onBeforeUnmount(() => window.clearInterval(timer))
       <section v-if="!draft" class="state">
         <Sparkles :size="30" />
         <div>
-          <h2>尚无 GraphRAG 草稿</h2>
-          <p>完成运行时配置后，可填写生成原因，从课程 DocumentIR 创建语义图谱。</p>
+          <h2>尚无知识图谱草稿</h2>
+          <p>完成配置后，可填写生成原因，从课程材料中生成知识图谱。</p>
         </div>
       </section>
 
@@ -305,50 +304,50 @@ onBeforeUnmount(() => window.clearInterval(timer))
 </template>
 
 <style scoped>
-.review { display: flex; flex-direction: column; gap: 18px; padding: 24px; color: #0f172a; }
-.review__header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
-.review__header h1 { margin: 4px 0 8px; }
-.review__header > div > p:last-child { max-width: 780px; margin: 0; color: #64748b; }
-.eyebrow { margin: 0; color: #0f766e; font-size: 11px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
-.actions { display: flex; gap: 8px; }
-.primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 10px; padding: 9px 13px; font-weight: 650; cursor: pointer; }
-.primary { border: 1px solid #0f766e; background: #0f766e; color: #fff; }
-.secondary { border: 1px solid #cbd5e1; background: #fff; color: #334155; }
+.review { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); color: var(--text-primary); }
+.review__header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
+.review__header h1 { margin: var(--space-1) 0 var(--space-2); }
+.review__header > div > p:last-child { max-width: 780px; margin: 0; color: var(--text-muted); }
+.eyebrow { margin: 0; color: var(--ink-700); font-size: var(--caption-size); font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+.actions { display: flex; gap: var(--space-2); }
+.primary, .secondary { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); font-weight: 650; cursor: pointer; }
+.primary { border: 1px solid var(--ink-700); background: var(--ink-700); color: var(--surface-panel); }
+.secondary { border: 1px solid var(--border-default); background: var(--surface-panel); color: var(--text-secondary); }
 button:disabled { opacity: .5; cursor: not-allowed; }
-.state { display: flex; min-height: 260px; align-items: center; justify-content: center; gap: 9px; border: 1px dashed #cbd5e1; border-radius: 16px; color: #64748b; }
-.state--error { color: #b91c1c; }
-.runtime-warning { display: flex; gap: 10px; border: 1px solid #fbbf24; border-radius: 12px; padding: 12px; background: #fffbeb; color: #92400e; }
-.runtime-warning p { margin: 4px 0 0; }
-.metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
-.metrics div { display: flex; min-width: 0; flex-direction: column; gap: 4px; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
-.metrics span, .muted { color: #64748b; }
+.state { display: flex; min-height: 260px; align-items: center; justify-content: center; gap: var(--space-2); border: 1px dashed var(--border-default); border-radius: var(--radius-lg); color: var(--text-muted); }
+.state--error { color: var(--red-700); }
+.runtime-warning { display: flex; gap: var(--space-2); border: 1px solid var(--amber-500); border-radius: var(--radius-md); padding: var(--space-3); background: var(--amber-100); color: var(--amber-700); }
+.runtime-warning p { margin: var(--space-1) 0 0; }
+.metrics { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-2); }
+.metrics div { display: flex; min-width: 0; flex-direction: column; gap: var(--space-1); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: var(--space-3); }
+.metrics span, .muted { color: var(--text-muted); }
 .metrics strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.notice { margin: 0; border: 1px solid #99f6e4; border-radius: 10px; padding: 10px 12px; background: #f0fdfa; color: #115e59; }
-.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 15px; }
+.notice { margin: 0; border: 1px solid var(--ink-100); border-radius: var(--radius-md); padding: var(--space-2) var(--space-3); background: var(--surface-cool); color: var(--ink-700); }
+.workspace { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--space-4); }
 .canvas { min-width: 0; }
-.detail { max-height: 560px; overflow: auto; border: 1px solid #e2e8f0; border-radius: 16px; padding: 17px; }
-.detail h2 { margin: 4px 0 9px; }
-.detail > p { color: #475569; line-height: 1.65; }
-.detail dl { display: grid; grid-template-columns: 92px 1fr; gap: 7px 9px; font-size: 13px; }
-.detail dt { color: #64748b; }
+.detail { max-height: 560px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: var(--space-4); }
+.detail h2 { margin: var(--space-1) 0 var(--space-2); }
+.detail > p { color: var(--text-secondary); line-height: 1.65; }
+.detail dl { display: grid; grid-template-columns: 92px 1fr; gap: var(--space-2); font-size: var(--ui-sm-size); }
+.detail dt { color: var(--text-muted); }
 .detail dd { margin: 0; overflow-wrap: anywhere; }
-.evidence { border-top: 1px solid #e2e8f0; margin-top: 14px; padding-top: 12px; }
-.evidence h3 { display: flex; align-items: center; gap: 6px; }
-.evidence article { border: 1px solid #e2e8f0; border-radius: 10px; margin-top: 8px; padding: 10px; }
-.evidence article p { margin: 6px 0; line-height: 1.55; }
-.evidence small { color: #64748b; }
-.evidence-link { display: block; margin-top: 8px; border: 0; padding: 0; background: transparent; color: #0f766e; font-weight: 650; cursor: pointer; }
-.runtime { border: 1px solid #e2e8f0; border-radius: 14px; padding: 14px; }
-.runtime h2 { margin: 0 0 9px; font-size: 16px; }
-.runtime > div { display: flex; flex-wrap: wrap; gap: 8px 16px; color: #475569; }
+.evidence { border-top: 1px solid var(--border-subtle); margin-top: var(--space-3); padding-top: var(--space-3); }
+.evidence h3 { display: flex; align-items: center; gap: var(--space-2); }
+.evidence article { border: 1px solid var(--border-subtle); border-radius: var(--radius-md); margin-top: var(--space-2); padding: var(--space-2); }
+.evidence article p { margin: var(--space-2) 0; line-height: 1.55; }
+.evidence small { color: var(--text-muted); }
+.evidence-link { display: block; margin-top: var(--space-2); border: 0; padding: 0; background: transparent; color: var(--ink-700); font-weight: 650; cursor: pointer; }
+.runtime { border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: var(--space-3); }
+.runtime h2 { margin: 0 0 var(--space-2); font-size: var(--title-3-size); }
+.runtime > div { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-4); color: var(--text-secondary); }
 .modal-backdrop { position: fixed; z-index: 70; inset: 0; display: grid; place-items: center; background: rgb(15 23 42 / 45%); }
-.modal { width: min(560px, 92vw); display: grid; gap: 14px; border-radius: 16px; padding: 20px; background: #fff; }
+.modal { width: min(560px, 92vw); display: grid; gap: var(--space-3); border-radius: var(--radius-lg); padding: var(--space-4); background: var(--surface-panel); }
 .modal header { display: flex; align-items: flex-start; justify-content: space-between; }
-.modal header h2 { margin: 4px 0 0; }
-.modal header button { border: 0; background: transparent; font-size: 22px; cursor: pointer; }
-.modal label { display: grid; gap: 6px; font-weight: 600; }
-.modal input, .modal textarea { border: 1px solid #cbd5e1; border-radius: 9px; padding: 9px; font: inherit; }
-.modal > p { margin: 0; color: #64748b; }
+.modal header h2 { margin: var(--space-1) 0 0; }
+.modal header button { border: 0; background: transparent; font-size: var(--title-2-size); cursor: pointer; }
+.modal label { display: grid; gap: var(--space-1); font-weight: 600; }
+.modal input, .modal textarea { border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: var(--space-2); font: inherit; }
+.modal > p { margin: 0; color: var(--text-muted); }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 900px) {

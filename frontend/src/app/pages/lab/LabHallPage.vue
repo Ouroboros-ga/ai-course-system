@@ -42,7 +42,7 @@ onMounted(load)
 <template>
   <div class="sfx-page">
     <header class="sfx-page-header"><div><h1 class="sfx-t-title1">实验大厅</h1><p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">发现已发布的自主实验与课程实验。</p></div><SfxButton variant="secondary" size="sm" @click="load">刷新</SfxButton></header>
-    <section class="sfx-panel environment"><div><h2 class="sfx-panel-title"><FlaskConical :size="18" /> 代码运行环境</h2><p class="sfx-t-ui sfx-t-secondary">代码只会发送到独立 Judge0 沙箱，不会在主应用中执行。</p></div><SfxBadge :tone="sandbox?.available ? 'green' : 'amber'">{{ sandbox?.available ? '沙箱可用' : '沙箱暂不可用' }}</SfxBadge><p v-if="languages.length" class="sfx-t-caption sfx-t-secondary">支持 {{ languages.length }} 种语言</p></section>
+    <section class="sfx-panel environment"><div><h2 class="sfx-panel-title"><FlaskConical :size="18" /> 代码运行环境</h2><p class="sfx-t-ui sfx-t-secondary">代码会在独立的安全环境中运行。</p></div><SfxBadge :tone="sandbox?.available ? 'green' : 'amber'">{{ sandbox?.available ? '沙箱可用' : '沙箱暂不可用' }}</SfxBadge><p v-if="languages.length" class="sfx-t-caption sfx-t-secondary">支持 {{ languages.length }} 种语言</p></section>
     <SfxSkeleton v-if="state === 'loading'" :lines="5" block />
     <SfxError v-else-if="state === 'error'" :description="error || '无法读取实验目录。'" @retry="load" />
     <SfxEmpty v-else-if="state === 'empty'" title="暂无可加入的实验" description="已发布的自主实验或你有权限的课程实验会显示在这里。" />

@@ -28,7 +28,7 @@ async function loadDashboard() {
   dashboardLoading.value = true
   dashboardError.value = ''
   try {
-    dashboard.value = await getCourseDashboard(courseId)
+    dashboard.value = await getCourseDashboard(courseId.value)
   } catch (e) {
     dashboardError.value = e?.message || '概览数据加载失败'
   } finally {
@@ -55,7 +55,7 @@ function formatPercent(rate) {
 </script>
 
 <template>
-  <div class="sfx-overview">
+  <div class="sfx-page sfx-page--narrow sfx-overview">
     <!-- A. 继续学习（page-design §11.1 A）：当前课程与主操作 -->
     <section class="sfx-overview-hero">
       <div class="sfx-overview-hero-main">
@@ -194,10 +194,6 @@ function formatPercent(rate) {
 
 <style scoped>
 .sfx-overview {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: var(--space-8) var(--space-6) var(--space-16);
-  width: 100%;
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
@@ -234,7 +230,7 @@ function formatPercent(rate) {
 }
 
 .sfx-overview-continue {
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 .sfx-overview-meta {
@@ -266,16 +262,16 @@ function formatPercent(rate) {
 
 .sfx-overview-progress-bar {
   height: 8px;
-  background: var(--surface-muted, #f0f0f0);
-  border-radius: 4px;
+  background: var(--surface-cool);
+  border-radius: var(--radius-xs);
   overflow: hidden;
   margin-bottom: var(--space-4);
 }
 
 .sfx-overview-progress-fill {
   height: 100%;
-  background: var(--accent-primary, #4f8cf7);
-  border-radius: 4px;
+  background: var(--ink-700);
+  border-radius: var(--radius-xs);
   transition: width var(--duration-normal) var(--ease-out);
 }
 
@@ -309,16 +305,16 @@ function formatPercent(rate) {
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
-  background: var(--surface-muted, #fafafa);
-  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-cool);
+  border-radius: var(--radius-sm);
 }
 
 .sfx-overview-pending-type {
-  font-size: 0.75rem;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: #fff3e0;
-  color: #e65100;
+  font-size: var(--caption-size);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-xs);
+  background: var(--amber-100);
+  color: var(--amber-700);
   white-space: nowrap;
 }
 
@@ -333,8 +329,8 @@ function formatPercent(rate) {
 
 .sfx-overview-response {
   padding: var(--space-3);
-  background: var(--surface-muted, #fafafa);
-  border-radius: var(--radius-sm, 4px);
+  background: var(--surface-cool);
+  border-radius: var(--radius-sm);
 }
 
 .sfx-overview-response-obs {
@@ -343,7 +339,7 @@ function formatPercent(rate) {
 
 .sfx-overview-response-sug {
   margin: 0;
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 
 /* P2 §三.3：E 课程结构摘要样式 */
@@ -358,23 +354,23 @@ function formatPercent(rate) {
   flex-direction: column;
   gap: var(--space-1);
   padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-sm, 6px);
-  background: var(--surface-muted, #fafafa);
-  border: 1px solid var(--border-default, #eee);
+  border-radius: var(--radius-sm);
+  background: var(--surface-cool);
+  border: 1px solid var(--border-default);
   min-width: 0;
 }
 .sfx-overview-structure-current {
-  background: var(--accent-bg, #e8f0fe);
-  border-color: var(--accent-primary, #4f8cf7);
+  background: var(--ink-100);
+  border-color: var(--ink-700);
 }
 .sfx-overview-structure-current-title {
   font-weight: 600;
-  color: var(--accent-primary, #1565c0);
+  color: var(--ink-700);
   word-break: break-word;
 }
 .sfx-overview-structure-prev,
 .sfx-overview-structure-next {
-  color: var(--text-secondary, #666);
+  color: var(--text-secondary);
 }
 @media (max-width: 640px) {
   .sfx-overview-structure {
