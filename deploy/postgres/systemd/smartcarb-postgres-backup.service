@@ -1,0 +1,9 @@
+[Unit]
+Description=SmartCarb PostgreSQL logical backup
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/opt/smartcarb-postgres/postgres.env
+ExecStart=/bin/sh /opt/smartcarb-git/deploy/postgres/scripts/backup.sh

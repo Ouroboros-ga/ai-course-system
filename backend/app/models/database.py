@@ -263,10 +263,48 @@ def _build_connect_args(url: str) -> dict:
     return {}
 
 
+def _positive_int_env(name: str, default: int) -> int:
+    """Read bounded pool settings without making startup fragile.
+
+    Invalid values are deliberately ignored in favour of the safe deployment
+    default.  These knobs are only consumed by PostgreSQL engines; SQLite
+    retains its single-file behaviour and PRAGMA configuration below.
+    """
+    raw_value = os.environ.get(name, "").strip()
+    if not raw_value:
+        return default
+    try:
+        return max(1, int(raw_value))
+    except ValueError:
+        return default
+
+
+def _build_engine_kwargs(url: str) -> dict:
+    """Return dialect-specific engine configuration.
+
+    PostgreSQL runs behind two Uvicorn workers and durable task handlers.  A
+    small bounded pool per process avoids stale connections after container or
+    database restarts while keeping the total connection budget predictable.
+    """
+    kwargs: dict = {
+        "echo": False,
+        "connect_args": _build_connect_args(url),
+    }
+    if url.startswith("postgresql"):
+        kwargs.update(
+            pool_pre_ping=True,
+            pool_size=_positive_int_env("AI_COURSE_DB_POOL_SIZE", 5),
+            max_overflow=_positive_int_env("AI_COURSE_DB_MAX_OVERFLOW", 5),
+            pool_recycle=_positive_int_env("AI_COURSE_DB_POOL_RECYCLE_SECONDS", 1800),
+            pool_timeout=_positive_int_env("AI_COURSE_DB_POOL_TIMEOUT_SECONDS", 30),
+            isolation_level="READ COMMITTED",
+        )
+    return kwargs
+
+
 engine = create_engine(
     DATABASE_URL,
-    echo=False,
-    connect_args=_build_connect_args(DATABASE_URL),
+    **_build_engine_kwargs(DATABASE_URL),
 )
 
 
@@ -279,7 +317,18 @@ def _configure_sqlite_connection(dbapi_connection, connection_record) -> None:
     sessions, receives the same settings.  Other database dialects are not
     affected.
     """
-    if engine.url.get_backend_name() != "sqlite":
+    dialect = engine.url.get_backend_name()
+    if dialect == "postgresql":
+        # The source SQLite history contains both naive and aware timestamps.
+        # PostgreSQL sessions are fixed to UTC so service code has one stable
+        # interpretation while the transfer tool normalizes legacy rows.
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("SET TIME ZONE 'UTC'")
+        finally:
+            cursor.close()
+        return
+    if dialect != "sqlite":
         return
     cursor = dbapi_connection.cursor()
     try:

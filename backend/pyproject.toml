@@ -41,10 +41,16 @@ dependencies = [
     "openpyxl==3.1.5",
     "lancedb==0.34.0",
     "pandas",
+    # The runtime supports a dedicated PostgreSQL deployment.  Keep the
+    # driver in the locked runtime dependencies so a production database
+    # switch cannot silently start with an unavailable dialect driver.
+    "psycopg2-binary>=2.9.9,<3",
 ]
 
 [project.optional-dependencies]
-postgres = ["psycopg2-binary>=2.9.9"]
+# Compatibility extra retained for existing deployment commands.  PostgreSQL
+# support is now part of the standard runtime dependency set above.
+postgres = []
 knowledge-index = ["graphrag==3.1.1"]
 
 [project.scripts]

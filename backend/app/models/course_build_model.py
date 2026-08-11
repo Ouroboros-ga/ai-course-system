@@ -332,6 +332,7 @@ class CourseDraftBuildTask(SQLModel, table=True):
             "course_id",
             unique=True,
             sqlite_where=text("status IN ('queued', 'running')"),
+            postgresql_where=text("status IN ('queued', 'running')"),
         ),
     )
 

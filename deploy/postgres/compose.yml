@@ -1,0 +1,32 @@
+services:
+  postgres:
+    # Pin the patch release.  Record the pulled image digest in the private
+    # deployment record before the first production start.
+    image: ${POSTGRES_IMAGE:-postgres:16.14-alpine3.23}
+    container_name: ${POSTGRES_CONTAINER_NAME:-smartcarb-postgres}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in the private env file}
+      POSTGRES_USER: ${POSTGRES_SUPERUSER:?set POSTGRES_SUPERUSER in the private env file}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD in the private env file}
+      AI_COURSE_APP_DB_USER: ${AI_COURSE_APP_DB_USER:?set AI_COURSE_APP_DB_USER in the private env file}
+      AI_COURSE_APP_DB_PASSWORD: ${AI_COURSE_APP_DB_PASSWORD:?set AI_COURSE_APP_DB_PASSWORD in the private env file}
+      AI_COURSE_MIGRATION_DB_USER: ${AI_COURSE_MIGRATION_DB_USER:?set AI_COURSE_MIGRATION_DB_USER in the private env file}
+      AI_COURSE_MIGRATION_DB_PASSWORD: ${AI_COURSE_MIGRATION_DB_PASSWORD:?set AI_COURSE_MIGRATION_DB_PASSWORD in the private env file}
+      TZ: UTC
+      PGTZ: UTC
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - ${POSTGRES_DATA_DIR:?set POSTGRES_DATA_DIR in the private env file}:/var/lib/postgresql/data
+      - ./postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    mem_limit: 1536m
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

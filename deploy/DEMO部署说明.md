@@ -1,5 +1,7 @@
 # 超星AI互动智课系统 - DEMO部署说明
 
+> **已废弃作为服务器部署依据（2026-08-11）**：本文中的“生产 MySQL”、启动时自动建表和旧 Docker 示例均不反映当前代码。服务器数据库迁移与独立 PostgreSQL 部署请使用 [`deploy/postgres/README.md`](postgres/README.md) 和 [`docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md`](../docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。本文件仅保留作历史追溯。
+
 ## 📋 系统概述
 
 本系统是基于泛雅平台的AI互动智课生成与实时问答系统，采用前后端分离架构：

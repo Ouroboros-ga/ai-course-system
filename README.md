@@ -1,5 +1,9 @@
 # AI 互动智课系统（ai-course-system）
 
+> **2026-08-11 数据库迁移状态**：当前运行默认仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0047`、可审计 SQLite 快照迁移工具和服务器部署基线已加入；尚未切换正式服务器。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
+>
+> 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。
+
 > **面向高校课程的证据驱动型智能教学平台** —— 把静态课件建设为"可解析、可讲授、可互动、可追踪"的课程闭环，并承载挑战杯 XH-202620"学科垂类大模型与创新应用"的计算机学科延伸方向（助教 / 助学 / 助研）。
 >
 > 当前定位：**本地原型 Demo**。真实实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。详见 [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md)。

@@ -109,6 +109,25 @@ def test_empty_sqlite_upgrade_head_creates_all_tables(tmp_path):
         engine.dispose()
 
 
+def test_sqlite_active_course_build_index_is_partial(tmp_path):
+    """Revision 0047 retains the active-build lease semantics on SQLite."""
+    db_path = tmp_path / "active_build_index.db"
+    db_url = f"sqlite:///{db_path}"
+    _run_alembic(db_url, "upgrade", "head")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            statement = conn.execute(text("""
+                SELECT sql FROM sqlite_master
+                WHERE type = 'index'
+                  AND name = 'uq_course_draft_build_active_course'
+            """)).scalar_one()
+        assert "WHERE status IN ('queued', 'running')" in statement
+    finally:
+        engine.dispose()
+
+
 # ==================== 场景2：旧 SQLite fixture stamp + upgrade 演练 ====================
 
 
@@ -440,13 +459,10 @@ def test_postgres_empty_upgrade_head():
     engine = create_engine(pg_url)
     with engine.begin() as conn:
         # 删除所有表（包括 alembic_version）
-        conn.execute(text(
-            "DROP TABLE IF EXISTS alembic_version CASCADE"
-        ))
+        conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+        conn.execute(text("CREATE SCHEMA public"))
+        conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
         # 获取所有表并删除
-        inspector = inspect(engine)
-        for table_name in inspector.get_table_names():
-            conn.execute(text(f'DROP TABLE IF EXISTS "{table_name}" CASCADE'))
     engine.dispose()
 
     # 执行 alembic upgrade head
@@ -471,6 +487,74 @@ def test_postgres_empty_upgrade_head():
 
 
 # ==================== 迁移链完整性测试 ====================
+
+
+@pytest.mark.skipif(
+    not _postgres_available(),
+    reason="AI_COURSE_TEST_POSTGRES_URL is required",
+)
+def test_postgres_active_course_build_index_is_partial():
+    """The PostgreSQL course-build lease must not restrict historical rows."""
+    pg_url = os.environ["AI_COURSE_TEST_POSTGRES_URL"]
+    _run_alembic(pg_url, "upgrade", "head")
+
+    engine = create_engine(pg_url)
+    try:
+        with engine.connect() as conn:
+            predicate = conn.execute(text("""
+                SELECT pg_get_expr(index_ref.indpred, index_ref.indrelid)
+                FROM pg_index AS index_ref
+                JOIN pg_class AS index_class ON index_class.oid = index_ref.indexrelid
+                JOIN pg_namespace AS namespace_ref ON namespace_ref.oid = index_class.relnamespace
+                WHERE namespace_ref.nspname = current_schema()
+                  AND index_class.relname = 'uq_course_draft_build_active_course'
+            """)).scalar_one()
+        assert predicate is not None
+        assert "status" in predicate
+        assert "queued" in predicate
+        assert "running" in predicate
+    finally:
+        engine.dispose()
+
+
+@pytest.mark.skipif(
+    not _postgres_available(),
+    reason="AI_COURSE_TEST_POSTGRES_URL is required",
+)
+def test_postgres_0047_downgrade_and_upgrade_are_reentrant():
+    """Revision 0047 can be exercised safely on an empty PostgreSQL schema."""
+    pg_url = os.environ["AI_COURSE_TEST_POSTGRES_URL"]
+    engine = create_engine(pg_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+            conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
+    finally:
+        engine.dispose()
+
+    _run_alembic(pg_url, "upgrade", "head")
+    _run_alembic(pg_url, "downgrade", "0046")
+    _run_alembic(pg_url, "upgrade", "0047")
+    _run_alembic(pg_url, "upgrade", "0047")
+
+    engine = create_engine(pg_url)
+    try:
+        with engine.connect() as conn:
+            predicate = conn.execute(text("""
+                SELECT pg_get_expr(index_ref.indpred, index_ref.indrelid)
+                FROM pg_index AS index_ref
+                JOIN pg_class AS index_class ON index_class.oid = index_ref.indexrelid
+                JOIN pg_namespace AS namespace_ref ON namespace_ref.oid = index_class.relnamespace
+                WHERE namespace_ref.nspname = current_schema()
+                  AND index_class.relname = 'uq_course_draft_build_active_course'
+            """)).scalar_one()
+        assert predicate is not None
+        assert "status" in predicate
+        assert "queued" in predicate
+        assert "running" in predicate
+    finally:
+        engine.dispose()
 
 
 def test_migration_chain_downgrade_and_upgrade_roundtrip(tmp_path):

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run SmartCarb PostgreSQL health check every ten minutes
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=10m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
