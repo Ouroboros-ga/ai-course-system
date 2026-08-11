@@ -22,8 +22,9 @@ export const listBuildProposals = (courseId, status = null) => request.get(
 )
 export const decideBuildProposal = (courseId, proposalId, accepted) => request.post(`${base(courseId)}/proposals/${encodeURIComponent(proposalId)}/decide`, { accepted })
 
-// Teacher-facing controlled preparation Agent.  It only returns/persists a
-// PatchProposal; accepting a proposal remains a separate explicit action.
+// Teacher-facing controlled preparation Agent.  Single-node requests return
+// a PatchProposal; an explicitly authorized high-confidence batch may reuse
+// the atomic batch apply path.
 export const runPrepAgentCommand = (courseId, instruction, outlineNodeId = null, action = null) => request.post(
   `${base(courseId)}/prep-agent/commands`,
   {

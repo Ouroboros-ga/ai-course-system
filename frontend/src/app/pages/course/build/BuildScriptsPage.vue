@@ -145,6 +145,13 @@ async function organizeAll() {
   if (!items.value.length) return reportOrganizeUnavailable('讲解脚本尚未生成，暂无可优化的内容。')
   if (!items.value.some((item) => item.has_script && !item.locked)) return reportOrganizeUnavailable('没有可优化的未锁定讲稿；请先生成讲稿或解锁一个节点。')
   organizing.value = true; error.value = ''
+  const userMessage = {
+    role: 'user',
+    text: '一键优化全部未锁定讲解脚本，并授权完成后直接应用。',
+    source: 'quick_action',
+    action: 'optimize_all_scripts',
+    executionMode: 'immediate_apply',
+  }
   const message = {
     role: 'agent',
     running: true,
@@ -154,6 +161,7 @@ async function organizeAll() {
   }
   if (workbench) {
     workbench.agentOpen = true
+    workbench.agentMessages.push(userMessage)
     workbench.batchRun = { action: 'optimize_all_scripts', startedAt: Date.now() }
     workbench.agentMessages.push(message)
   }

@@ -30,6 +30,7 @@ from app.models.document_parse_model import DocumentBlock
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.platform.agents.prep.incremental.dependencies import IncrementalPrepResult
+from app.platform.agents.prep.actions import PrepAction, PrepIntent
 
 
 def _setup_outline(session):
@@ -362,7 +363,17 @@ def test_natural_language_one_click_command_reuses_the_atomic_batch_action(
         assert "一键" in kwargs["instruction"]
         return _result(first, second)
 
+    async def fake_classify(*args, **kwargs):
+        assert kwargs["instruction"].startswith("请一键")
+        return PrepIntent(
+            action=PrepAction.ORGANIZE_STRUCTURE,
+            instruction=kwargs["instruction"],
+            apply_immediately=True,
+        )
+
     monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+    from app.services.course_prep_agent_service import course_prep_agent_service
+    monkeypatch.setattr(course_prep_agent_service, "classify_intent", fake_classify)
 
     response = asyncio.run(course_build_editor.run_prep_agent_command(
         course.id,
@@ -383,6 +394,102 @@ def test_natural_language_one_click_command_reuses_the_atomic_batch_action(
         PatchProposal.course_id == course.id,
         PatchProposal.status == PatchProposalStatus.PENDING,
     )).all()
+
+
+def test_explicit_button_action_bypasses_the_intent_classifier(session, monkeypatch):
+    teacher, course, first, _, _ = _setup_outline(session)
+
+    async def fail_classify(*args, **kwargs):
+        raise AssertionError("explicit button action must not classify")
+
+    async def fake_plan(**kwargs):
+        assert kwargs["action"] == "optimize_node_title"
+        return IncrementalPrepResult(
+            summary="标题提案",
+            operations=[{
+                "target": f"outline:{first.outline_node_id}:title",
+                "after": "按钮生成的新标题",
+                "reason": "更清晰",
+                "evidence_refs": [],
+            }],
+            planner="llm_single_node",
+        )
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fake_plan)
+    from app.services.course_prep_agent_service import course_prep_agent_service
+    monkeypatch.setattr(course_prep_agent_service, "classify_intent", fail_classify)
+    response = asyncio.run(course_build_editor.run_prep_agent_command(
+        course.id,
+        course_build_editor.PrepAgentCommandRequest(
+            instruction="按钮发送的自然语言说明",
+            outline_node_id=first.outline_node_id,
+            action="optimize_node_title",
+        ),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    assert response["data"]["status"] == PatchProposalStatus.PENDING.value
+
+
+def test_ambiguous_free_text_returns_clarification_without_planning(session, monkeypatch):
+    teacher, course, _, _, _ = _setup_outline(session)
+
+    async def fake_classify(*args, **kwargs):
+        return PrepIntent(
+            action=None,
+            instruction=kwargs["instruction"],
+            needs_clarification=True,
+            clarification="请说明是整理结构还是优化讲解。",
+        )
+
+    async def fail_plan(**kwargs):
+        raise AssertionError("ambiguous text must not enter planning")
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fail_plan)
+    from app.services.course_prep_agent_service import course_prep_agent_service
+    monkeypatch.setattr(course_prep_agent_service, "classify_intent", fake_classify)
+    response = asyncio.run(course_build_editor.run_prep_agent_command(
+        course.id,
+        course_build_editor.PrepAgentCommandRequest(instruction="帮我处理一下"),
+        _request(),
+        session,
+        _current_user(teacher),
+    ))
+
+    assert response["data"] == {
+        "outcome": "needs_clarification",
+        "clarification": "请说明是整理结构还是优化讲解。",
+    }
+
+
+def test_intent_router_unavailable_fails_closed_without_keyword_fallback(session, monkeypatch):
+    teacher, course, _, _, _ = _setup_outline(session)
+
+    async def unavailable(*args, **kwargs):
+        from app.services.course_prep_agent_service import CoursePrepAgentIntentRoutingError
+        raise CoursePrepAgentIntentRoutingError("router unavailable")
+
+    async def fail_plan(**kwargs):
+        raise AssertionError("unavailable router must not enter planning")
+
+    monkeypatch.setattr(course_build_editor, "_plan_incremental_prep", fail_plan)
+    from app.services.course_prep_agent_service import course_prep_agent_service
+    monkeypatch.setattr(course_prep_agent_service, "classify_intent", unavailable)
+    with pytest.raises(HTTPException) as caught:
+        asyncio.run(course_build_editor.run_prep_agent_command(
+            course.id,
+            course_build_editor.PrepAgentCommandRequest(
+                instruction="请整理课程结构",
+            ),
+            _request(),
+            session,
+            _current_user(teacher),
+        ))
+
+    assert caught.value.status_code == 503
+    assert caught.value.detail["error_code"] == "PREP_AGENT_INTENT_UNAVAILABLE"
 
 
 def test_structure_batch_applies_move_and_remove_as_one_atomic_tree_change(session, monkeypatch):
