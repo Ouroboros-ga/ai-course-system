@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound } from 'lucide-vue-next'
-import { getAdminUsers, getIntegrations, resetAdminPassword, testIntegration, updateAdminUser, updateIntegration } from '@/api/admin_platform.js'
+import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu } from 'lucide-vue-next'
+import { getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
 import { showToast } from '@/utils/toast.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -19,6 +19,7 @@ const passwordFor = ref(null)
 const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
+const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1 })
 
 function userPatch(user) {
   return { username: user.username || '', role: user.role, is_active: user.is_active }
@@ -43,16 +44,28 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [userResult, integrationResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations()])
+    const [userResult, integrationResult, concurrencyResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency()])
     users.value = userResult.items || []
     total.value = userResult.total || 0
     integrations.value = integrationResult.items || []
     integrations.value.forEach(item => { drafts[item.integration_key] = integrationDraft(item) })
+    Object.assign(concurrency, concurrencyResult || {})
   } catch (caught) {
     error.value = caught?.response?.data?.detail?.message || caught?.message || '无法读取平台管理数据'
   } finally {
     loading.value = false
   }
+}
+
+async function saveConcurrency() {
+  saving.value = 'task-concurrency'
+  try {
+    const updated = await updateTaskConcurrency({ ...concurrency })
+    Object.assign(concurrency, updated || {})
+    showToast('后台任务并发配置已保存', 'success')
+  } catch (caught) {
+    showToast(caught?.message || '并发配置保存失败', 'error')
+  } finally { saving.value = '' }
 }
 
 async function saveUser(user) {
@@ -130,17 +143,30 @@ onMounted(load)
           <SfxButton type="submit" size="sm" variant="secondary">筛选</SfxButton>
         </form>
         <SfxEmpty v-if="!users.length" title="没有匹配账号" description="调整搜索条件后再试。" />
-        <div v-else class="table-wrap">
-          <table class="admin-table"><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
+        <div v-else class="sfx-table-wrap">
+          <table class="sfx-table"><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
             <tbody><template v-for="user in users" :key="user.id"><tr><td>{{ user.id }}</td>
               <td><input v-model="user.username" class="sfx-input compact" maxlength="50" aria-label="用户名" /></td>
               <td><select v-model="user.role" class="sfx-select compact"><option value="user">用户</option><option value="admin">管理员</option></select></td>
               <td><label class="state-check"><input v-model="user.is_active" type="checkbox" /> {{ user.is_active ? '启用' : '停用' }}</label></td>
-              <td class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = user.id; password = ''">重置密码</SfxButton></td></tr>
-              <tr v-if="passwordFor === user.id" class="password-row"><td colspan="5"><input v-model="password" class="sfx-input" type="password" autocomplete="new-password" placeholder="输入至少 8 位的新密码" /><SfxButton size="sm" :loading="saving === `password-${user.id}`" @click="setPassword(user)">确认重置</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = null">取消</SfxButton></td></tr></template>
+              <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = user.id; password = ''">重置密码</SfxButton></span></td></tr>
+              <tr v-if="passwordFor === user.id" class="password-row"><td colspan="5"><span class="password-row-actions"><input v-model="password" class="sfx-input" type="password" autocomplete="new-password" placeholder="输入至少 8 位的新密码" /><SfxButton size="sm" :loading="saving === `password-${user.id}`" @click="setPassword(user)">确认重置</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = null">取消</SfxButton></span></td></tr></template>
             </tbody>
           </table>
         </div>
+      </section>
+
+      <section class="sfx-panel admin-section">
+        <div class="section-head"><h2 class="sfx-t-title3"><Cpu :size="19" /> 后台任务并发</h2><span class="sfx-t-caption">开发者模式下限制本进程解析、备课、GraphRAG 和向量索引的并发数。</span></div>
+        <div class="concurrency-grid">
+          <label class="checkbox-line"><input v-model="concurrency.developer_mode" type="checkbox" /> 开发者模式</label>
+          <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>LanceDB 索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
+        </div>
+        <div class="section-actions"><SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置</SfxButton></div>
       </section>
 
       <section class="sfx-panel admin-section">
@@ -161,8 +187,10 @@ onMounted(load)
 
 <style scoped>
 .admin-page { overflow: auto; }
-.sfx-page-header h1, .section-head, .provider-card header, .provider-card footer, .actions, .password-row td { display:flex; align-items:center; gap:var(--space-2); }
+.sfx-page-header h1, .section-head, .provider-card header, .provider-card footer { display:flex; align-items:center; gap:var(--space-2); }
+.actions, .password-row-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
-.table-wrap { overflow-x:auto; }.admin-table { width:100%; border-collapse:collapse; font-size:var(--ui-sm-size); }.admin-table th,.admin-table td { padding:var(--space-3); border-bottom:1px solid var(--border-subtle); text-align:left; vertical-align:middle; white-space:nowrap; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
+.sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
 .provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
+.concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
 </style>

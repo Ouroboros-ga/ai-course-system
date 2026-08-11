@@ -446,6 +446,7 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 build, build_task_id = course_corpus_service.create_build_task(
                     session, corpus=corpus, owner_user_id=int(payload.get("initiated_by") or 0),
                 )
+                owner_user_id = int(build.owner_user_id or payload.get("initiated_by") or 0)
                 session.commit()
                 _draft_progress = {
                     "corpus_snapshot_id": corpus.corpus_snapshot_id,
@@ -459,6 +460,30 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                     )
                 except Exception:
                     logger.exception("Could not submit course draft build task %s", build_task_id)
+                # Every new course now enters the governed knowledge pipeline
+                # after all current materials are parsed: GraphRAG creates a
+                # teacher-reviewable draft, while LanceDB is deliberately
+                # deferred until that draft is approved.
+                try:
+                    from app.services.knowledge_bundle_service import knowledge_bundle_service
+                    graph_run, graph_task = knowledge_bundle_service.request_regeneration(
+                        session,
+                        course_id=int(course_id),
+                        actor_user_id=owner_user_id,
+                        reason="auto_after_materials_ready",
+                        instructions="按课程材料生成带证据闭合的 GraphRAG 草稿；等待教师审核后再构建向量索引。",
+                    )
+                    session.commit()
+                    from app.platform.tasks.knowledge_build_queue import knowledge_build_queue
+                    knowledge_build_queue.submit(ctx.session_factory, local_task_worker, str(graph_task.get("task_id") or ""))
+                    _draft_progress["graphrag_run_id"] = graph_run.run_id
+                    _draft_progress["graphrag_task_id"] = graph_task.get("task_id")
+                except Exception:
+                    # Material parsing and the course draft remain truthful;
+                    # a failed optional GraphRAG enqueue is visible in logs and
+                    # can be retried from the knowledge task surface.
+                    session.rollback()
+                    logger.exception("Could not submit automatic GraphRAG task for course %s", course_id)
         except Exception:
             # Task itself is already correctly marked succeeded.  Preserve that
             # truth and log this non-critical projection repair for retry.

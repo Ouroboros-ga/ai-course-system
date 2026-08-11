@@ -18,6 +18,7 @@ from app.services.platform_admin_service import (
     update_user,
     reset_password,
 )
+from app.services.platform_task_concurrency_service import get_config, update_config
 
 router = APIRouter(tags=["平台管理员"])
 
@@ -53,9 +54,29 @@ class PasswordReset(BaseModel):
     password: str = Field(min_length=8, max_length=200)
 
 
+class TaskConcurrencyUpdate(BaseModel):
+    developer_mode: bool = False
+    max_total: int = Field(default=1, ge=1, le=32)
+    document_parse: int = Field(default=1, ge=1, le=32)
+    course_draft_build: int = Field(default=1, ge=1, le=32)
+    graphrag: int = Field(default=1, ge=1, le=32)
+    vector_index: int = Field(default=1, ge=1, le=32)
+
+
 @router.get("/integrations")
 async def get_integrations(session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
     return unified_response(200, "获取平台集成配置成功", {"items": list_integrations(session)})
+
+
+@router.get("/task-concurrency")
+async def get_task_concurrency(session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
+    return unified_response(200, "获取任务并发配置成功", get_config(session))
+
+
+@router.put("/task-concurrency")
+async def put_task_concurrency(payload: TaskConcurrencyUpdate, session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
+    data = update_config(session, int(current_user["user_id"]), payload.model_dump())
+    return unified_response(200, "任务并发配置已保存", data)
 
 
 @router.put("/integrations/{integration_key}")

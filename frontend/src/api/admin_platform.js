@@ -7,3 +7,5 @@ export const resetAdminPassword = (userId, password) => request({ url: `/admin/u
 export const getIntegrations = () => request({ url: '/admin/integrations', method: 'get' })
 export const updateIntegration = (key, data) => request({ url: `/admin/integrations/${key}`, method: 'put', data })
 export const testIntegration = (key) => request({ url: `/admin/integrations/${key}/test`, method: 'post' })
+export const getTaskConcurrency = () => request({ url: '/admin/task-concurrency', method: 'get' })
+export const updateTaskConcurrency = (data) => request({ url: '/admin/task-concurrency', method: 'put', data })

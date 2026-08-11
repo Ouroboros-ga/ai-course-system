@@ -46,3 +46,27 @@ class PlatformAdminAuditEvent(SQLModel, table=True):
         sa_column=Column("metadata", JSON, nullable=False, default=dict),
     )
     created_at: datetime = Field(default_factory=utcnow_aware, index=True)
+
+
+class PlatformTaskConcurrencyConfig(SQLModel, table=True):
+    """Process-local worker limits persisted as platform policy.
+
+    The local task worker runs inside each Uvicorn process.  The values are
+    therefore an operational ceiling per process, not a distributed lock;
+    durable task leases remain the source of truth across restarts/processes.
+    """
+
+    __tablename__ = "platform_task_concurrency_configs"
+    __table_args__ = (UniqueConstraint("config_key", name="uq_platform_task_concurrency_config_key"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    config_key: str = Field(default="default", max_length=32, index=True)
+    developer_mode: bool = Field(default=False)
+    max_total: int = Field(default=1, ge=1)
+    document_parse: int = Field(default=1, ge=1)
+    course_draft_build: int = Field(default=1, ge=1)
+    graphrag: int = Field(default=1, ge=1)
+    vector_index: int = Field(default=1, ge=1)
+    updated_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+    created_at: datetime = Field(default_factory=utcnow_aware)

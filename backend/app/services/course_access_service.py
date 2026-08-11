@@ -93,8 +93,11 @@ CAPABILITY_NAMES = frozenset({"learning", "course_building", "knowledge_graph", 
 DEFAULT_NEW_COURSE_CAPABILITIES = {
     "learning": True,
     "course_building": True,
-    "knowledge_graph": False,
-    "evidence": False,
+    # New courses use the formal parse -> GraphRAG draft -> review -> vector
+    # index pipeline.  These switches expose the governed workflow; they do
+    # not bypass the teacher approval gate or publish a bundle automatically.
+    "knowledge_graph": True,
+    "evidence": True,
     "experiment": False,
     "coding_sandbox": False,
     "cognitive_analysis": True,

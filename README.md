@@ -117,3 +117,13 @@ TeachingAgent 的数据持久化按三个相互独立的域划分（AGENTS.md §
 推荐动作复用现有练习面板和学习状态机；消费接口成功时由服务端写入统一
 `recommendation_consumed` 学习事件，失败时保留本地待发送队列。认知和推荐服务降级不会阻断
 课程学习。
+# Current pipeline note (2026-08-11)
+
+New course imports now use the governed asynchronous path: material parsing and
+DocumentIR/evidence indexing complete first; a course-wide GraphRAG draft is
+then queued for teacher review; only approval schedules LanceDB + local BGE
+indexing and activation. GraphRAG and LanceDB are intentionally separate
+stages so a large file cannot block durable parsing or expose an unreviewed
+bundle. Platform administrators can enable developer mode and tune per-kind
+task concurrency in Platform Admin → 后台任务并发. The limits are per app
+process; durable leases remain authoritative across restarts.

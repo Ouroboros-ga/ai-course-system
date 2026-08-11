@@ -232,7 +232,11 @@ from app.models.agent_run_model import (
     AgentRunEventRecord,
     AgentLLMDiagnosticRecord,
 )
-from app.models.platform_admin_model import PlatformIntegrationConfig, PlatformAdminAuditEvent
+from app.models.platform_admin_model import (
+    PlatformIntegrationConfig,
+    PlatformAdminAuditEvent,
+    PlatformTaskConcurrencyConfig,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

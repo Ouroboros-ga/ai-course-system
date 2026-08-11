@@ -28,6 +28,64 @@ from app.services.task_service import TaskService, task_service
 logger = logging.getLogger(__name__)
 
 
+class _ConcurrencyController:
+    """Atomically enforce total and per-kind limits without gate starvation."""
+
+    def __init__(self) -> None:
+        self._condition = asyncio.Condition()
+        self._active_total = 0
+        self._active_groups: dict[str, int] = {}
+
+    async def acquire(self, *, group: str | None, total_limit: int, group_limit: int) -> None:
+        async with self._condition:
+            await self._condition.wait_for(
+                lambda: self._active_total < max(1, int(total_limit))
+                and (
+                    group is None
+                    or self._active_groups.get(group, 0) < max(1, int(group_limit))
+                )
+            )
+            self._active_total += 1
+            if group:
+                self._active_groups[group] = self._active_groups.get(group, 0) + 1
+
+    async def release(self, group: str | None) -> None:
+        async with self._condition:
+            self._active_total = max(0, self._active_total - 1)
+            if group:
+                current = max(0, self._active_groups.get(group, 0) - 1)
+                if current:
+                    self._active_groups[group] = current
+                else:
+                    self._active_groups.pop(group, None)
+            self._condition.notify_all()
+
+
+_concurrency_controller = _ConcurrencyController()
+
+
+def _task_group(task_type: str) -> str | None:
+    return {
+        "document_parse": "document_parse",
+        "course_draft_build": "course_draft_build",
+        "knowledge.graphrag_build": "graphrag",
+        "knowledge.vector_index": "vector_index",
+    }.get(task_type)
+
+
+async def _acquire_task_limits(session, task_type: str):
+    from app.services.platform_task_concurrency_service import get_group_limit
+
+    total_limit, group_limit = get_group_limit(session, task_type)
+    group = _task_group(task_type)
+    await _concurrency_controller.acquire(
+        group=group,
+        total_limit=total_limit,
+        group_limit=group_limit,
+    )
+    return group
+
+
 class SessionFactory(Protocol):
     """与 app.models.database.get_session 兼容的会话工厂。"""
 
@@ -183,24 +241,37 @@ class LocalTaskWorker:
                 service=self._service,
                 agent_platform=self._agent_platform,
             )
+            # Do not hold the task lookup session while waiting for a slot;
+            # SQLite deployments must not retain a connection across an
+            # arbitrary developer-configured queue delay.
+        task_group = None
+        acquired = False
+        try:
+            with session_factory() as limit_session:
+                task_group = await _acquire_task_limits(limit_session, task_type)
+            acquired = True
             try:
                 await handler(ctx)
             except Exception as exc:
                 error_code, message, retryable = _classify_exception(exc)
                 try:
-                    self._service.mark_failed(
-                        session,
-                        task_id,
-                        error_code=error_code,
-                        error_message=message,
-                        retryable=retryable,
-                    )
+                    with session_factory() as failure_session:
+                        self._service.mark_failed(
+                            failure_session,
+                            task_id,
+                            error_code=error_code,
+                            error_message=message,
+                            retryable=retryable,
+                        )
                 except Exception:
                     logger.exception(
                         "Failed to record failure for task %s (original: %s)",
                         task_id,
                         message,
                     )
+        finally:
+            if acquired:
+                await _concurrency_controller.release(task_group)
 
 
 # 模块级单例
