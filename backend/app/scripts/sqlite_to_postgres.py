@@ -239,10 +239,14 @@ def _head_revision() -> str:
     for path in versions_dir.glob("*.py"):
         content = path.read_text(encoding="utf-8")
         revision_match = re.search(
-            r'^revision\s*=\s*["\']([^"\']+)["\']', content, re.MULTILINE
+            r'^revision(?:\s*:\s*[^=]+)?\s*=\s*["\']([^"\']+)["\']',
+            content,
+            re.MULTILINE,
         )
         down_match = re.search(
-            r'^down_revision\s*=\s*(None|["\']([^"\']+)["\'])', content, re.MULTILINE
+            r'^down_revision(?:\s*:\s*[^=]+)?\s*=\s*(None|["\']([^"\']+)["\'])',
+            content,
+            re.MULTILINE,
         )
         if revision_match:
             revisions[revision_match.group(1)] = (

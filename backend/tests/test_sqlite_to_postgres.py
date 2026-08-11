@@ -166,11 +166,11 @@ def test_copy_normalizes_legacy_types_and_rolls_back_invalid_enum(tmp_path):
     """Probe bool/JSON/enum/time/binary/Unicode/NULL plus cyclic FK copying."""
     postgres_url = _postgres_url_or_skip()
     suffix = uuid.uuid4().hex[:12]
-    data_name = f"sqlite_transfer_probe_{suffix}"
-    left_name = f"sqlite_transfer_left_{suffix}"
-    right_name = f"sqlite_transfer_right_{suffix}"
-    bad_name = f"sqlite_transfer_bad_{suffix}"
-    enum_name = f"sqlite_transfer_state_{suffix}"
+    data_name = f"transfer_probe_{suffix}"
+    left_name = f"transfer_left_{suffix}"
+    right_name = f"transfer_right_{suffix}"
+    bad_name = f"transfer_bad_{suffix}"
+    enum_name = f"transfer_state_{suffix}"
 
     source_path = tmp_path / "probe.sqlite"
     source_engine = create_engine(f"sqlite:///{source_path.as_posix()}")
