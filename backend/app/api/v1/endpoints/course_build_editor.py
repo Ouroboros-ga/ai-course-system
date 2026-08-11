@@ -35,6 +35,7 @@ from app.models.course_outline_model import (
     PatchProposal,
     PatchProposalOperation,
     PatchProposalStatus,
+    CourseScriptCoverageIssue,
     TeachingScriptNode,
     TeachingScriptVersion,
 )
@@ -199,6 +200,12 @@ class ReorderRequest(BaseModel):
 class ScriptUpdate(BaseModel):
     content: Optional[str] = Field(default=None, max_length=200_000)
     style: Optional[str] = Field(default=None, max_length=64)
+
+
+class ScriptCreate(BaseModel):
+    outline_node_id: str = Field(min_length=1, max_length=200)
+    content: str = Field(min_length=1, max_length=200_000)
+    style: str = Field(default="beginner", max_length=64)
 
 
 class ProposalOperationInput(BaseModel):
@@ -1037,6 +1044,11 @@ async def get_scripts(course_id: int, session: Session = Depends(get_session), c
         TeachingScriptNode.script_version_id == script.script_version_id,
     )).all())
     nodes_by_outline = {node.outline_node_id: node for node in script_nodes}
+    coverage_issues = list(session.exec(select(CourseScriptCoverageIssue).where(
+        CourseScriptCoverageIssue.course_id == course_id,
+        CourseScriptCoverageIssue.script_version_id == script.script_version_id,
+        CourseScriptCoverageIssue.status == "open",
+    ).order_by(CourseScriptCoverageIssue.created_at)).all())
     items = [
         _script_node_view(
             nodes_by_outline[outline_node.outline_node_id],
@@ -1055,8 +1067,105 @@ async def get_scripts(course_id: int, session: Session = Depends(get_session), c
             "review_status": script.review_status,
         },
         "items": items,
+        "coverage_issues": [
+            {
+                "issue_id": issue.issue_id,
+                "outline_node_id": issue.outline_node_id,
+                "code": issue.issue_code,
+                "status": issue.status,
+                "created_at": issue.created_at.isoformat() if issue.created_at else None,
+            }
+            for issue in coverage_issues
+        ],
         "editable": script.lifecycle_status == OutlineLifecycleStatus.DRAFT,
     })
+
+
+def _resolve_script_coverage_issues(
+    session: Session,
+    *,
+    course_id: int,
+    script_version_id: str,
+    outline_node_id: str,
+    resolved_by: int,
+) -> None:
+    now = utcnow_aware()
+    issues = list(session.exec(select(CourseScriptCoverageIssue).where(
+        CourseScriptCoverageIssue.course_id == course_id,
+        CourseScriptCoverageIssue.script_version_id == script_version_id,
+        CourseScriptCoverageIssue.outline_node_id == outline_node_id,
+        CourseScriptCoverageIssue.status == "open",
+    )).all())
+    for issue in issues:
+        issue.status = "resolved"
+        issue.resolved_by = resolved_by
+        issue.resolved_at = now
+        session.add(issue)
+
+
+@router.post("/course/{course_id}/scripts")
+async def create_missing_script(
+    course_id: int,
+    payload: ScriptCreate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Create a teacher-authored script for one missing draft knowledge point."""
+    context = require_course_permission(session, current_user, course_id, "course.script.edit")
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(422, "讲稿正文不能为空")
+    outline = _draft_outline(session, course_id)
+    if outline is None:
+        raise HTTPException(409, "当前课程没有可编辑的目录草稿")
+    script_version = session.exec(select(TeachingScriptVersion).where(
+        TeachingScriptVersion.course_id == course_id,
+        TeachingScriptVersion.outline_version_id == outline.outline_version_id,
+        TeachingScriptVersion.lifecycle_status == OutlineLifecycleStatus.DRAFT,
+    ).order_by(TeachingScriptVersion.version.desc())).first()
+    if script_version is None:
+        raise HTTPException(409, "当前课程没有可编辑的讲稿草稿")
+    outline_node = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.course_id == course_id,
+        CourseOutlineNode.outline_version_id == outline.outline_version_id,
+        CourseOutlineNode.outline_node_id == payload.outline_node_id,
+    )).first()
+    if outline_node is None or outline_node.node_type != OutlineNodeType.KNOWLEDGE_POINT:
+        raise HTTPException(422, "讲稿必须绑定当前草稿中的知识点节点")
+    if outline_node.locked_by is not None:
+        raise HTTPException(409, "知识点已锁定；请先解锁后再补齐讲稿")
+    existing = session.exec(select(TeachingScriptNode).where(
+        TeachingScriptNode.course_id == course_id,
+        TeachingScriptNode.script_version_id == script_version.script_version_id,
+        TeachingScriptNode.outline_node_id == outline_node.outline_node_id,
+    )).first()
+    if existing is not None:
+        raise HTTPException(409, "该知识点已有讲稿，请刷新后编辑已有内容")
+    source_refs = list(outline_node.source_block_refs or [])
+    node = TeachingScriptNode(
+        course_id=course_id,
+        script_version_id=script_version.script_version_id,
+        outline_node_id=outline_node.outline_node_id,
+        content=content,
+        style=(payload.style or "beginner").strip() or "beginner",
+        source_block_refs=source_refs,
+        content_hash=hashlib.sha256(content.encode("utf-8")).hexdigest(),
+    )
+    _mark_teacher_edited(script_version)
+    _mark_teacher_edited(outline)
+    session.add(script_version)
+    session.add(outline)
+    session.add(node)
+    _resolve_script_coverage_issues(
+        session,
+        course_id=course_id,
+        script_version_id=script_version.script_version_id,
+        outline_node_id=outline_node.outline_node_id,
+        resolved_by=context.user_id,
+    )
+    session.commit()
+    session.refresh(node)
+    return unified_response(201, "讲稿已补齐", _script_node_view(node))
 
 
 @router.patch("/course/{course_id}/scripts/{script_node_id}")
@@ -1079,6 +1188,14 @@ async def update_script(course_id: int, script_node_id: str, payload: ScriptUpda
     if outline:
         _mark_teacher_edited(outline)
         session.add(outline)
+    if (node.content or "").strip():
+        _resolve_script_coverage_issues(
+            session,
+            course_id=course_id,
+            script_version_id=node.script_version_id,
+            outline_node_id=node.outline_node_id,
+            resolved_by=context.user_id,
+        )
     node.updated_at = utcnow_aware(); session.add(node); session.commit(); session.refresh(node)
     return unified_response(200, "讲稿已保存", _script_node_view(node))
 
@@ -1571,6 +1688,7 @@ async def unlock_script(
     session.commit()
     session.refresh(node)
     return unified_response(200, "讲稿节点已解锁", _script_node_view(node))
+
 
 @router.get("/course/{course_id}/proposals")
 async def list_proposals(
