@@ -579,6 +579,10 @@ def _foreign_key_violations(connection: Connection, tables: dict[str, Table]) ->
             if parent_table is None or parent_table.name not in tables:
                 continue
             parent_table = tables[parent_table.name]
+            # An alias is required even when child and parent are different
+            # Python objects: self-referential FKs otherwise render the same
+            # PostgreSQL table name twice without an alias.
+            parent_alias = parent_table.alias(f"{table_name}__fk_parent")
             pairs = [
                 (element.parent.name, element.column.name)
                 for element in foreign_key.elements
@@ -586,14 +590,14 @@ def _foreign_key_violations(connection: Connection, tables: dict[str, Table]) ->
             if not pairs:
                 continue
             join_condition = and_(*[
-                child_table.c[child_name] == parent_table.c[parent_name]
+                child_table.c[child_name] == parent_alias.c[parent_name]
                 for child_name, parent_name in pairs
             ])
             child_present = and_(*[child_table.c[child_name].is_not(None) for child_name, _ in pairs])
-            parent_missing = parent_table.c[pairs[0][1]].is_(None)
+            parent_missing = parent_alias.c[pairs[0][1]].is_(None)
             count = connection.execute(
                 select(func.count())
-                .select_from(child_table.outerjoin(parent_table, join_condition))
+                .select_from(child_table.outerjoin(parent_alias, join_condition))
                 .where(child_present, parent_missing)
             ).scalar_one()
             key = f"{table_name}:{','.join(name for name, _ in pairs)}"
