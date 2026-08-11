@@ -44,17 +44,25 @@ def _add_column_if_missing(bind, table: str, column: str, ddl: str) -> None:
     bind.execute(sa.text(f"ALTER TABLE {table} ADD COLUMN {ddl}"))
 
 
+def _timestamp_type(bind) -> str:
+    """Return a portable raw-SQL timestamp type for this legacy migration."""
+    if bind.dialect.name == "postgresql":
+        return "TIMESTAMP WITH TIME ZONE"
+    return "DATETIME"
+
+
 def upgrade() -> None:
     bind = op.get_bind()
+    timestamp_type = _timestamp_type(bind)
 
     # 1. avatar_profiles: 增加授权确认与撤销时间戳
     _add_column_if_missing(
         bind, "avatar_profiles", "teacher_authorization_confirmed_at",
-        "teacher_authorization_confirmed_at DATETIME NULL",
+        f"teacher_authorization_confirmed_at {timestamp_type} NULL",
     )
     _add_column_if_missing(
         bind, "avatar_profiles", "revoked_at",
-        "revoked_at DATETIME NULL",
+        f"revoked_at {timestamp_type} NULL",
     )
 
     # 2. avatar_source_media: 增加服务端探测与扫描字段
@@ -80,7 +88,7 @@ def upgrade() -> None:
     )
     _add_column_if_missing(
         bind, "avatar_source_media", "verified_at",
-        "verified_at DATETIME NULL",
+        f"verified_at {timestamp_type} NULL",
     )
 
     # 3. upload_status 字符串值迁移：
