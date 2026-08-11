@@ -99,14 +99,14 @@ def _upgrade_to_head(database_url: str) -> None:
     _run_alembic(database_url, "upgrade", "head")
 
 
-def test_revision_0047_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
-    """The lease-index repair upgrades, downgrades and upgrades on SQLite."""
-    database_path = tmp_path / "0047-roundtrip.sqlite"
+def test_revision_0048_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
+    """PostgreSQL-only legacy FK handling remains a SQLite no-op on round trips."""
+    database_path = tmp_path / "0048-roundtrip.sqlite"
     database_url = f"sqlite:///{database_path.as_posix()}"
     _upgrade_to_head(database_url)
     _run_alembic(database_url, "downgrade", "0046")
-    _run_alembic(database_url, "upgrade", "0047")
-    _run_alembic(database_url, "upgrade", "0047")
+    _run_alembic(database_url, "upgrade", "0048")
+    _run_alembic(database_url, "upgrade", "0048")
 
     engine = create_engine(database_url)
     try:
@@ -118,6 +118,29 @@ def test_revision_0047_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
                 )
             ).scalar_one()
         assert "WHERE status IN ('queued', 'running')" in index_sql
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0048_keeps_legacy_media_release_fk_not_valid():
+    """Old immutable media releases remain readable while future rows are checked."""
+    postgres_url = _postgres_url_or_skip()
+    assert transfer._head_revision() == "0048"
+    _reset_postgres_public_schema(postgres_url)
+    _upgrade_to_head(postgres_url)
+    _run_alembic(postgres_url, "downgrade", "0047")
+    _run_alembic(postgres_url, "upgrade", "0048")
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            validated = connection.execute(
+                text(
+                    "SELECT convalidated FROM pg_constraint "
+                    "WHERE conname = 'fk_media_release_items_node_id_script_nodes'"
+                )
+            ).scalar_one()
+        assert validated is False
     finally:
         engine.dispose()
 

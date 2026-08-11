@@ -84,4 +84,4 @@
 
 ## 2026-08-11 数据库迁移基线
 
-- [SQLite 到独立 PostgreSQL 的迁移与服务器切换](phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)：当前 PostgreSQL 兼容修复、可审计 SQLite 快照迁移、已完成的隔离预演、维护窗口切换、回滚边界和备份恢复入口。服务器实际部署文件为 `deploy/postgres/`；正式数据尚未切换前，不得将本文表述为已上线。
+- [SQLite 到独立 PostgreSQL 的迁移与服务器切换](phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)：当前 PostgreSQL 兼容修复、可审计 SQLite 快照迁移、已完成的隔离预演、维护窗口切换、回滚边界和备份恢复入口。`0048` 对历史 `media_release_items → script_nodes` 失效引用采用数据原样迁移、源/目标按关系计数一致校验和 PostgreSQL `NOT VALID` 外键；新写入仍受外键检查。服务器实际部署文件为 `deploy/postgres/`；正式数据尚未切换前，不得将本文表述为已上线。

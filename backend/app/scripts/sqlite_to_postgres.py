@@ -70,6 +70,15 @@ SKIPPED_SOURCE_TABLES = {
 BATCH_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 TRANSFER_NAME = "sqlite-to-postgresql"
 PRESEEDED_TARGET_TABLES = {"platform_task_concurrency_configs"}
+# SQLite allowed a small number of stale release-item references while foreign
+# key enforcement was disabled in an older media workflow.  The rows carry
+# immutable release history, so migration must retain them verbatim instead of
+# deleting them or rewriting their references.  PostgreSQL migration 0048
+# keeps the matching constraint NOT VALID: old rows are preserved while all
+# later writes remain checked by PostgreSQL.
+SUPPORTED_LEGACY_FOREIGN_KEY_RELATIONS = frozenset({
+    "media_release_items:node_id",
+})
 
 
 class TransferError(RuntimeError):
@@ -228,18 +237,50 @@ def _open_sqlite_read_only(path: Path) -> sqlite3.Connection:
     return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
 
 
+def _sqlite_foreign_key_violations(connection: sqlite3.Connection) -> dict[str, int]:
+    """Group SQLite FK check output by the child table and local FK columns."""
+    rows = list(connection.execute("PRAGMA foreign_key_check"))
+    relation_columns: dict[tuple[str, int], list[tuple[int, str]]] = {}
+    for child_table in sorted({str(row[0]) for row in rows}):
+        escaped_table = child_table.replace('"', '""')
+        for foreign_key in connection.execute(f'PRAGMA foreign_key_list("{escaped_table}")'):
+            foreign_key_id = int(foreign_key[0])
+            sequence = int(foreign_key[1])
+            local_column = str(foreign_key[3])
+            relation_columns.setdefault((child_table, foreign_key_id), []).append((sequence, local_column))
+
+    violations: dict[str, int] = {}
+    for child_table, _row_id, _parent_table, foreign_key_id in rows:
+        local_columns = relation_columns.get((str(child_table), int(foreign_key_id)), [])
+        if not local_columns:
+            raise TransferError("SQLite foreign_key_check returned an unresolvable foreign key")
+        column_name = ",".join(column for _sequence, column in sorted(local_columns))
+        relation = f"{child_table}:{column_name}"
+        violations[relation] = violations.get(relation, 0) + 1
+    return dict(sorted(violations.items()))
+
+
 def _sqlite_snapshot_checks(path: Path) -> dict[str, Any]:
     connection = _open_sqlite_read_only(path)
     try:
         integrity_rows = [str(row[0]) for row in connection.execute("PRAGMA integrity_check")]
-        foreign_key_rows = list(connection.execute("PRAGMA foreign_key_check"))
+        foreign_key_violations = _sqlite_foreign_key_violations(connection)
     finally:
         connection.close()
     if integrity_rows != ["ok"]:
         raise TransferError("SQLite integrity_check failed")
-    if foreign_key_rows:
-        raise TransferError(f"SQLite foreign_key_check found {len(foreign_key_rows)} violation(s)")
-    return {"integrity_check": "ok", "foreign_key_violation_count": 0}
+    unexpected_relations = sorted(
+        set(foreign_key_violations) - SUPPORTED_LEGACY_FOREIGN_KEY_RELATIONS
+    )
+    if unexpected_relations:
+        raise TransferError(
+            f"SQLite unexpected foreign-key violation in {len(unexpected_relations)} relation(s)"
+        )
+    return {
+        "integrity_check": "ok",
+        "foreign_key_violation_count": sum(foreign_key_violations.values()),
+        "foreign_key_violations": foreign_key_violations,
+    }
 
 
 def _head_revision() -> str:
@@ -605,6 +646,17 @@ def _foreign_key_violations(connection: Connection, tables: dict[str, Table]) ->
     return violations
 
 
+def _assert_foreign_key_violation_parity(
+    source_violations: dict[str, int],
+    target_violations: dict[str, int],
+) -> None:
+    """Allow only the exact, documented historical FK debt from the snapshot."""
+    source_nonzero = {key: value for key, value in source_violations.items() if value}
+    target_nonzero = {key: value for key, value in target_violations.items() if value}
+    if source_nonzero != target_nonzero:
+        raise TransferError("foreign-key verification mismatch between source and target")
+
+
 def _assert_matching_summaries(source: dict[str, Any], target: dict[str, Any]) -> None:
     if source.keys() != target.keys():
         raise TransferError("source and target table sets differ during verification")
@@ -773,9 +825,10 @@ def cmd_copy(args: argparse.Namespace) -> int:
                 )
                 _assert_matching_summaries(source_summaries, target_summaries)
                 foreign_key_violations = _foreign_key_violations(target_connection, target_table_map)
-                failing_foreign_keys = {key: value for key, value in foreign_key_violations.items() if value}
-                if failing_foreign_keys:
-                    raise TransferError(f"foreign-key verification failed for {len(failing_foreign_keys)} relation(s)")
+                _assert_foreign_key_violation_parity(
+                    source_checks["foreign_key_violations"],
+                    foreign_key_violations,
+                )
                 _ledger_record(
                     target_connection,
                     transfer_ledger_table,
@@ -833,9 +886,10 @@ def cmd_verify(args: argparse.Namespace) -> int:
             )
             _assert_matching_summaries(source_summaries, target_summaries)
             foreign_key_violations = _foreign_key_violations(target_connection, target_table_map)
-        failing_foreign_keys = {key: value for key, value in foreign_key_violations.items() if value}
-        if failing_foreign_keys:
-            raise TransferError(f"foreign-key verification failed for {len(failing_foreign_keys)} relation(s)")
+        _assert_foreign_key_violation_parity(
+            source_checks["foreign_key_violations"],
+            foreign_key_violations,
+        )
         report.update(
             {
                 "source_checks": source_checks,
