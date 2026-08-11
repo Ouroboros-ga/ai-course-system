@@ -19,6 +19,8 @@ docker image inspect postgres:16.14-alpine3.23 --format '{{index .RepoDigests 0}
 docker compose --env-file /opt/smartcarb-postgres/postgres.env -f deploy/postgres/compose.yml up -d
 ```
 
+正式环境保持 `POSTGRES_HOST_PORT=5432`，仅映射 `127.0.0.1:5432`；隔离预演可改为未占用的本机端口（如 `55432`），不得开放公网端口。
+
 应用服务只使用 `ai_course_app`，其连接串写入 systemd 的私有环境文件：
 
 ```text
