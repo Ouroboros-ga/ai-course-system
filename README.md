@@ -1,6 +1,6 @@
 # AI 互动智课系统（ai-course-system）
 
-> **2026-08-11 数据库迁移状态**：当前运行库仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0050`、可审计快照迁移工具和服务器部署基线已加入；隔离 PostgreSQL 16 已通过真实 SQLite 快照的完整复制与校验，但尚未切换服务。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。历史 SQLAlchemy 枚举成员名会仅在 `evidence_render_assets.asset_type`、`source_material_versions.parse_status` 和 `source_materials.status` 三列映射为当前运行时值，其他枚举仍 fail-closed。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
+> **2026-08-11 数据库迁移状态**：服务器运行库已切换到独立 PostgreSQL 16。Alembic `0052`、可审计 SQLite 快照迁移工具和 `deploy/postgres/` 是当前基线；最终快照的 162 张表、89,561 行已完成摘要/外键校验。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。`0049/0050` 中遗留的小写枚举标签只用于兼容历史类型，`0051/0052` 补齐并归一化为 SQLAlchemy 实际持久化/读取的大写成员名：`evidence_render_assets.asset_type`、`source_material_versions.parse_status` 和 `source_materials.status` 不得保留小写活跃值，其他枚举仍 fail-closed。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
 >
 > 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。
 
@@ -251,7 +251,7 @@ npm run smoke:app
 |---|---|
 | 后端开发启动 | `cd backend && uv run python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000` |
 | 后端单测 | `cd backend && uv run pytest -q` |
-| 数据库迁移 | `cd backend && uv run alembic upgrade head`（降级：`downgrade -1`） |
+| 数据库迁移 | `cd backend && uv run alembic upgrade head`（PostgreSQL `0049–0052` 为前向枚举迁移；故障按备份/服务环境恢复或前向修复，勿执行 `downgrade -1`） |
 | 前端开发 | `cd frontend && npm run dev` |
 | 前端构建 | `cd frontend && npm run build` |
 | 前端单测 | `cd frontend && npm run test:unit` |

@@ -67,8 +67,8 @@ def test_foreign_key_verification_requires_legacy_orphan_counts_to_match_source(
         transfer._assert_foreign_key_violation_parity(expected, {"media_release_items:node_id": 13})
 
 
-def test_coerce_normalizes_legacy_render_asset_enum_member_to_runtime_value():
-    """The old uppercase page-image member remains the same asset category."""
+def test_coerce_preserves_render_asset_orm_enum_member_name():
+    """PostgreSQL must receive the SQLAlchemy enum member name, not its value."""
     metadata = MetaData()
     assets = Table(
         "evidence_render_assets",
@@ -76,18 +76,18 @@ def test_coerce_normalizes_legacy_render_asset_enum_member_to_runtime_value():
         Column(
             "asset_type",
             SAEnum(
-                "PAGE_IMAGE", "REGION_IMAGE", "THUMBNAIL",
+                "PAGE_IMAGE", "PPT_SLIDE_IMAGE", "REGION_IMAGE", "THUMBNAIL",
                 "page_image", "ppt_slide_image", "region_image", "thumbnail",
                 name="renderassettype",
             ),
         ),
     )
 
-    assert transfer._coerce_value("PPT_SLIDE_IMAGE", assets.c.asset_type) == "ppt_slide_image"
+    assert transfer._coerce_value("PPT_SLIDE_IMAGE", assets.c.asset_type) == "PPT_SLIDE_IMAGE"
 
 
-def test_coerce_normalizes_legacy_material_status_member_to_runtime_value():
-    """The old material-status member name remains the same workflow state."""
+def test_coerce_preserves_material_version_orm_enum_member_name():
+    """PostgreSQL must receive the SQLAlchemy enum member name, not its value."""
     metadata = MetaData()
     versions = Table(
         "source_material_versions",
@@ -95,18 +95,18 @@ def test_coerce_normalizes_legacy_material_status_member_to_runtime_value():
         Column(
             "parse_status",
             SAEnum(
-                "UPLOADED", "PARSING", "PARSED", "FAILED", "SUPERSEDED",
+                "UPLOADED", "PARSING", "PARSED", "NEEDS_REVIEW", "FAILED", "SUPERSEDED",
                 "uploaded", "parsing", "parsed", "needs_review", "failed", "superseded",
                 name="materialstatus",
             ),
         ),
     )
 
-    assert transfer._coerce_value("NEEDS_REVIEW", versions.c.parse_status) == "needs_review"
+    assert transfer._coerce_value("NEEDS_REVIEW", versions.c.parse_status) == "NEEDS_REVIEW"
 
 
-def test_coerce_normalizes_legacy_source_material_status_member_to_runtime_value():
-    """The current material row uses the same historical status enum encoding."""
+def test_coerce_preserves_source_material_orm_enum_member_name():
+    """Source-material rows use the same database encoding as their versions."""
     metadata = MetaData()
     materials = Table(
         "source_materials",
@@ -114,11 +114,11 @@ def test_coerce_normalizes_legacy_source_material_status_member_to_runtime_value
         Column(
             "status",
             SAEnum(
-                "UPLOADED", "PARSING", "PARSED", "FAILED", "SUPERSEDED",
+                "UPLOADED", "PARSING", "PARSED", "NEEDS_REVIEW", "FAILED", "SUPERSEDED",
                 "uploaded", "parsing", "parsed", "needs_review", "failed", "superseded",
                 name="materialstatus",
             ),
         ),
     )
 
-    assert transfer._coerce_value("PARSING", materials.c.status) == "parsing"
+    assert transfer._coerce_value("PARSING", materials.c.status) == "PARSING"

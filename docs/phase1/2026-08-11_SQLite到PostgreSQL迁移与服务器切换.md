@@ -5,7 +5,7 @@
 ## 已落地的准备
 
 - 运行时支持 PostgreSQL 连接池、连接存活探测和 UTC 会话；SQLite 仍是本地默认。
-- `0047` 修复 PostgreSQL 下课程构建 lease 索引，约束仅覆盖 `queued/running`，不再错误限制同课程的历史构建记录；`0048` 将历史 `media_release_items → script_nodes` 失效引用定义为 PostgreSQL `NOT VALID` 外键，旧发布快照原样保留，后续写入仍受外键校验；`0049/0050` 扩展历史枚举以接受当前小写运行时值。导入器仅在 `evidence_render_assets.asset_type`、`source_material_versions.parse_status`、`source_materials.status` 将明确列出的旧成员名映射为等义当前值，未知枚举继续拒绝。
+- `0047` 修复 PostgreSQL 下课程构建 lease 索引，约束仅覆盖 `queued/running`，不再错误限制同课程的历史构建记录；`0048` 将历史 `media_release_items → script_nodes` 失效引用定义为 PostgreSQL `NOT VALID` 外键，旧发布快照原样保留，后续写入仍受外键校验；`0049/0050` 遗留的小写枚举标签仅保持类型兼容，`0051/0052` 补齐 SQLAlchemy 实际使用的大写成员名并归一化 `evidence_render_assets.asset_type`、`source_material_versions.parse_status`、`source_materials.status`。导入器保留源 SQLite 的大写成员名，未知枚举继续拒绝。
 - `app.scripts.sqlite_to_postgres` 只能读取 SQLite Backup API 生成且带批次校验文件的快照，目标必须为空且在 Alembic head；复制、摘要比对、外键反查和序列重置在单一 PostgreSQL 事务中完成。
 - 每个迁移批次保留无原始业务内容的报告：表计数、NULL 统计、主键边界、规范化 SHA-256 摘要、外键结果与 SQLite 文件摘要；连接串和密码不写入报告。对 `media_release_items:node_id` 这一已知历史关系，报告必须证明源/目标失效引用数量完全一致；任何其他关系的失效引用仍会 fail-closed。
 
@@ -27,12 +27,9 @@
 
 若第 4 或第 5 步失败，立即恢复原 systemd 环境并启动 SQLite 后端。恢复流量后，SQLite 不再是可安全直接回切的写库；后续故障以 PostgreSQL 备份/恢复或前向修复处理。
 
-## 当前未完成的外部动作
+## 2026-08-11 实际服务器切换与枚举修正
 
-截至 2026-08-11 的隔离预演，服务器已在独立工作树启动临时 PostgreSQL 16 容器（仅 `127.0.0.1:55432`）并向既有后端 venv 安装 `psycopg2-binary==2.9.12`；生产服务未重启、生产 SQLite 未读取或导入、systemd/Nginx 未切换。临时库已验证 `0001 → 0047`、局部唯一索引、合成 SQLite `plan/copy/verify`、类型归一化、外键反查和失败事务回滚（5 项定向测试通过）。
-
-## 2026-08-11 隔离预演后的剩余边界
-
-- 已修复并验证历史迁移中的 PostgreSQL 方言差异：布尔/枚举字面量、SQLite `DATETIME` DDL、数字人状态枚举和 DocumentIR 外键重建顺序。
-- 迁移工具不复制 Alembic、脱敏迁移和 schema migration 账本；目标保留自身迁移历史，且只在复制校验成功后写入本次迁移摘要。`0045` 的确定性默认并发配置会在同一事务内替换为源库配置。
-- 尚未对现有服务器 SQLite 做热快照或预演；该实际数据演练、30 分钟维护窗口、正式导入、服务切换及业务验收仍需要单独授权。
+- 服务器已在维护窗口内从 SQLite 切换到 PostgreSQL 16：最终 SQLite Backup API 快照为 116,801,536 字节，正式报告 `pg-cutover-20260811-01` 为 `verified`，162 张表和 89,561 行的规范化摘要匹配；14 条 `media_release_items:node_id` 历史失效引用在源/目标保持一致。
+- 生产 PostgreSQL 只绑定 `127.0.0.1:5432`，应用账号没有超级权限，迁移账号切换后为 `NOLOGIN NOSUPERUSER`。首份 `pg_dump -Fc` 备份、每日备份计时器和十分钟健康计时器均已启用；最终 SQLite 快照以只读方式保留。
+- 初次切换后发现 SQLite 导入器的枚举别名逻辑错误地将三列 SQLAlchemy 枚举成员名转为小写；`0049/0050` 只为这些既有错误值保留 PostgreSQL 类型兼容标签，材料和备课状态接口因而发生 `LookupError`。`0051` 在受控 autocommit 中补齐 `NEEDS_REVIEW` 与 `PPT_SLIDE_IMAGE`，`0052` 在后续事务中归一化既有行；隔离 PostgreSQL 在 `0050 → 0052` 后验证三类小写残留均为零，ORM 可读取 3 条材料、3 条材料版本和 62 条渲染资产。
+- 迁移工具不复制 Alembic、脱敏迁移和 schema migration 账本；目标保留自身迁移历史，且只在复制校验成功后写入本次迁移摘要。`0045` 的确定性默认并发配置会在同一事务内替换为源库配置。正式切换后 SQLite 不再是可安全直接回切的写库，后续故障使用 PostgreSQL 备份或前向修复。

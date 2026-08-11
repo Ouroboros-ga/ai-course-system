@@ -36,6 +36,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SAEnum
+from sqlmodel import Session, select as sqlmodel_select
 
 
 def test_snapshot_records_backup_api_attestation(tmp_path, monkeypatch):
@@ -99,14 +100,14 @@ def _upgrade_to_head(database_url: str) -> None:
     _run_alembic(database_url, "upgrade", "head")
 
 
-def test_revision_0050_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
+def test_revision_0052_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
     """PostgreSQL-only legacy FK handling remains a SQLite no-op on round trips."""
-    database_path = tmp_path / "0050-roundtrip.sqlite"
+    database_path = tmp_path / "0052-roundtrip.sqlite"
     database_url = f"sqlite:///{database_path.as_posix()}"
     _upgrade_to_head(database_url)
     _run_alembic(database_url, "downgrade", "0046")
-    _run_alembic(database_url, "upgrade", "0050")
-    _run_alembic(database_url, "upgrade", "0050")
+    _run_alembic(database_url, "upgrade", "0052")
+    _run_alembic(database_url, "upgrade", "0052")
 
     engine = create_engine(database_url)
     try:
@@ -125,7 +126,7 @@ def test_revision_0050_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
 def test_postgres_0048_keeps_legacy_media_release_fk_not_valid():
     """Old immutable media releases remain readable while future rows are checked."""
     postgres_url = _postgres_url_or_skip()
-    assert transfer._head_revision() == "0048"
+    assert transfer._head_revision() == "0052"
     _reset_postgres_public_schema(postgres_url)
     _upgrade_to_head(postgres_url)
     _run_alembic(postgres_url, "downgrade", "0047")
@@ -145,10 +146,10 @@ def test_postgres_0048_keeps_legacy_media_release_fk_not_valid():
         engine.dispose()
 
 
-def test_postgres_0049_accepts_runtime_render_asset_enum_values():
-    """The PostgreSQL enum accepts the lowercase values emitted by current code."""
+def test_postgres_0049_keeps_legacy_lowercase_render_asset_values_compatible():
+    """Existing type labels remain available for 0051 to normalize safely."""
     postgres_url = _postgres_url_or_skip()
-    assert transfer._head_revision() == "0049"
+    assert transfer._head_revision() == "0052"
     _reset_postgres_public_schema(postgres_url)
     _upgrade_to_head(postgres_url)
 
@@ -163,10 +164,10 @@ def test_postgres_0049_accepts_runtime_render_asset_enum_values():
         engine.dispose()
 
 
-def test_postgres_0050_accepts_runtime_material_status_values():
-    """The PostgreSQL enum accepts the lowercase material states used at runtime."""
+def test_postgres_0050_keeps_legacy_lowercase_material_status_values_compatible():
+    """Existing type labels remain available for 0051 to normalize safely."""
     postgres_url = _postgres_url_or_skip()
-    assert transfer._head_revision() == "0050"
+    assert transfer._head_revision() == "0052"
     _reset_postgres_public_schema(postgres_url)
     _upgrade_to_head(postgres_url)
 
@@ -177,6 +178,118 @@ def test_postgres_0050_accepts_runtime_material_status_values():
                 text("SELECT unnest(enum_range(NULL::materialstatus))::text")
             ).scalars())
         assert {"uploaded", "parsing", "parsed", "needs_review", "failed", "superseded"} <= values
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0051_adds_uppercase_orm_enum_member_labels():
+    """The follow-up normalization can target every ORM member name safely."""
+    postgres_url = _postgres_url_or_skip()
+    assert transfer._head_revision() == "0052"
+    _reset_postgres_public_schema(postgres_url)
+    _run_alembic(postgres_url, "upgrade", "0051")
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            material_values = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::materialstatus))::text")
+            ).scalars())
+            asset_values = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::renderassettype))::text")
+            ).scalars())
+        assert "NEEDS_REVIEW" in material_values
+        assert "PPT_SLIDE_IMAGE" in asset_values
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0052_normalizes_legacy_rows_and_keeps_them_orm_readable():
+    """The deployed 0050 state repairs without losing ORM readability."""
+    postgres_url = _postgres_url_or_skip()
+    assert transfer._head_revision() == "0052"
+    _reset_postgres_public_schema(postgres_url)
+    _run_alembic(postgres_url, "upgrade", "0050")
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        # This is an isolated database with an explicitly privileged test role.
+        # Reproduce exactly the malformed values that the original transfer
+        # inserted, without manufacturing unrelated course/user fixtures.
+        with engine.begin() as connection:
+            connection.execute(text("SET LOCAL session_replication_role = replica"))
+            connection.execute(
+                text(
+                    "INSERT INTO source_materials "
+                    "(material_id, course_id, name, material_type, material_role, "
+                    "include_in_course_corpus, source_kind, status, created_at, updated_at) "
+                    "VALUES (:material_id, 1, 'enum regression', 'slide', 'reference', "
+                    "true, 'upload', 'needs_review', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+                ),
+                {"material_id": "enum-regression-material"},
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO source_material_versions "
+                    "(version_id, material_id, course_id, version, file_path, file_hash, "
+                    "file_size, mime_type, parse_status, parse_output_ref, parse_error, "
+                    "is_current, created_at) "
+                    "VALUES ('enum-regression-version', 'enum-regression-material', 1, 1, "
+                    "'materials/enum.pdf', 'enum-hash', 1, 'application/pdf', "
+                    "'needs_review', '', '', true, CURRENT_TIMESTAMP)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO evidence_render_assets "
+                    "(asset_id, course_id, page_number, asset_type, object_key, mime_type, "
+                    "width, height, content_hash, created_at) "
+                    "VALUES ('enum-regression-asset', 1, 1, 'ppt_slide_image', "
+                    "'evidence/enum.png', 'image/png', 1, 1, 'enum-asset-hash', CURRENT_TIMESTAMP)"
+                )
+            )
+
+        _run_alembic(postgres_url, "upgrade", "0052")
+        with engine.connect() as connection:
+            lowercase_rows = connection.execute(
+                text(
+                    "SELECT "
+                    "(SELECT count(*) FROM source_materials "
+                    "WHERE status::text = lower(status::text)), "
+                    "(SELECT count(*) FROM source_material_versions "
+                    "WHERE parse_status::text = lower(parse_status::text)), "
+                    "(SELECT count(*) FROM evidence_render_assets "
+                    "WHERE asset_type::text = lower(asset_type::text))"
+                )
+            ).one()
+        assert lowercase_rows == (0, 0, 0)
+
+        from app.models.course_build_model import (
+            MaterialStatus,
+            SourceMaterial,
+            SourceMaterialVersion,
+        )
+        from app.models.document_parse_model import EvidenceRenderAsset, RenderAssetType
+
+        with Session(engine) as session:
+            material = session.exec(
+                sqlmodel_select(SourceMaterial).where(
+                    SourceMaterial.material_id == "enum-regression-material"
+                )
+            ).one()
+            version = session.exec(
+                sqlmodel_select(SourceMaterialVersion).where(
+                    SourceMaterialVersion.version_id == "enum-regression-version"
+                )
+            ).one()
+            asset = session.exec(
+                sqlmodel_select(EvidenceRenderAsset).where(
+                    EvidenceRenderAsset.asset_id == "enum-regression-asset"
+                )
+            ).one()
+        assert material.status == MaterialStatus.NEEDS_REVIEW
+        assert version.parse_status == MaterialStatus.NEEDS_REVIEW
+        assert asset.asset_type == RenderAssetType.PPT_SLIDE_IMAGE
     finally:
         engine.dispose()
 

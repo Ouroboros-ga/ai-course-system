@@ -1,4 +1,4 @@
-"""Allow current render-asset enum values in PostgreSQL.
+"""Retain legacy lowercased render-asset labels in PostgreSQL.
 
 Revision ID: 0049
 Revises: 0048
@@ -15,7 +15,7 @@ branch_labels = None
 depends_on = None
 
 
-CURRENT_RENDER_ASSET_VALUES = (
+LEGACY_RENDER_ASSET_VALUES = (
     "page_image",
     "ppt_slide_image",
     "region_image",
@@ -27,10 +27,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
-    # The legacy baseline enum used uppercase names while the runtime has
-    # always persisted lowercase values.  PostgreSQL enum additions preserve
-    # old rows and allow the current values without rewriting content records.
-    for value in CURRENT_RENDER_ASSET_VALUES:
+    # The original SQLite transfer incorrectly rewrote SQLAlchemy member names
+    # to lowercase.  Keep those historical labels available so the following
+    # 0051/0052 repair can normalize existing rows without data loss.
+    for value in LEGACY_RENDER_ASSET_VALUES:
         op.execute(f"ALTER TYPE renderassettype ADD VALUE IF NOT EXISTS '{value}'")
 
 

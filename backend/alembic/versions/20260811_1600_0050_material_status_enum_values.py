@@ -1,4 +1,4 @@
-"""Allow current material-status enum values in PostgreSQL.
+"""Retain legacy lowercased material-status labels in PostgreSQL.
 
 Revision ID: 0050
 Revises: 0049
@@ -15,7 +15,7 @@ branch_labels = None
 depends_on = None
 
 
-CURRENT_MATERIAL_STATUS_VALUES = (
+LEGACY_MATERIAL_STATUS_VALUES = (
     "uploaded",
     "parsing",
     "parsed",
@@ -29,9 +29,10 @@ def upgrade() -> None:
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
         return
-    # The baseline used SQLAlchemy enum member names.  Current course build
-    # code stores lower-case state values, including the newer needs_review.
-    for value in CURRENT_MATERIAL_STATUS_VALUES:
+    # The original SQLite transfer incorrectly rewrote SQLAlchemy member names
+    # to lowercase.  Keep those historical labels available so the following
+    # 0051/0052 repair can normalize existing rows without data loss.
+    for value in LEGACY_MATERIAL_STATUS_VALUES:
         op.execute(f"ALTER TYPE materialstatus ADD VALUE IF NOT EXISTS '{value}'")
 
 
