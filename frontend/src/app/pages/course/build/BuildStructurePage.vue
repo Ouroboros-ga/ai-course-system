@@ -227,14 +227,14 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .outline-row.selected{background:var(--ink-100);color:var(--ink-900)}
 .outline-row.selected::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
 .outline-row.locked{color:var(--text-secondary)}
-.outline-order{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px;color:var(--text-muted)}
+.outline-order{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size);color:var(--text-muted)}
 .drag-mark{color:var(--ink-300)}
-.outline-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);font-weight:550}
+.outline-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);font-weight:var(--ui-md-weight)}
 .lock-icon{color:var(--green-700);flex-shrink:0}
 .evidence-count{font-size:var(--caption-size);color:var(--ink-500);white-space:nowrap}
 .node-editor{display:grid;align-content:start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-canvas);overflow-y:auto;min-height:0}
 .node-editor header{display:flex;justify-content:space-between;gap:var(--space-2);align-items:flex-start}
-.node-type{margin:0;color:var(--text-muted);font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
+.node-type{margin:0;color:var(--text-muted);font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size)}
 .node-editor h3{margin:var(--space-1) 0 0;color:var(--text-primary);font-size:var(--title-3-size)}
 .node-editor label{display:grid;gap:var(--space-1);color:var(--text-secondary);font-size:var(--ui-sm-size);font-weight:600}
 .node-editor input{height:40px;box-sizing:border-box;padding:0 var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);outline:none;background:var(--surface-panel);color:var(--text-primary);font:inherit;font-size:var(--body-md-size)}

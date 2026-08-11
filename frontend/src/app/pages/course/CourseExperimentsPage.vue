@@ -12,6 +12,7 @@ import { useCounterStore } from '@/stores/counter.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxCapabilityTag from '@/app/ui/SfxCapabilityTag.vue'
 import SfxPlannedPanel from '@/app/ui/SfxPlannedPanel.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 import TeacherExperimentPanel from '@/app/components/course/TeacherExperimentPanel.vue'
 
 /**
@@ -162,20 +163,20 @@ onMounted(async () => {
     <!-- 学生视图 -->
     <template v-if="!isTeacher">
       <div class="sfx-exp-filters" role="tablist" aria-label="实验任务筛选">
-        <button
+        <SfxButton
           v-for="opt in [
             { value: 'todo', label: '待完成' },
             { value: 'doing', label: '进行中' },
             { value: 'done', label: '已完成' },
           ]"
           :key="opt.value"
-          type="button"
+          variant="tertiary"
+          size="sm"
           role="tab"
           :aria-selected="studentFilter === opt.value"
-          class="sfx-exp-filter"
           :class="{ 'is-active': studentFilter === opt.value }"
           @click="studentFilter = opt.value"
-        >{{ opt.label }}</button>
+        >{{ opt.label }}</SfxButton>
       </div>
 
       <section v-if="experiments.length" class="sfx-panel sfx-code-runner">
@@ -202,9 +203,9 @@ onMounted(async () => {
           代码
           <textarea v-model="sourceCode" class="sfx-code-editor" rows="12" spellcheck="false" placeholder="在这里编写代码…" />
         </label>
-        <button class="sfx-code-run" type="button" :disabled="codeStatus === 'running' || !sourceCode.trim() || !selectedExperiment" @click="runCode">
+        <SfxButton variant="primary" :disabled="codeStatus === 'running' || !sourceCode.trim() || !selectedExperiment" @click="runCode">
           {{ codeStatus === 'running' ? '运行中…' : '运行代码' }}
-        </button>
+        </SfxButton>
         <p v-if="codeError" class="sfx-code-error" role="alert">{{ codeError }}</p>
         <div v-if="diagnosis" class="sfx-code-diagnosis">
           <strong>代码诊断：{{ diagnosis.error_class || diagnosis.outcome || '已完成' }}</strong>

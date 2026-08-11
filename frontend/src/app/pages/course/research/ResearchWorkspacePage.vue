@@ -357,10 +357,10 @@ onMounted(loadCapabilities)
   border-left-color: var(--ink-700);
 }
 .stage-item.is-disabled { color: var(--text-muted); }
-.stage-index { font-family: var(--font-mono); font-size: 11px; }
+.stage-index { font-family: var(--font-mono); font-size: var(--caption-size); }
 .stage-copy { display: flex; min-width: 0; flex-direction: column; gap: 2px; }
 .stage-copy strong { font-size: var(--ui-sm-size); font-weight: 600; }
-.stage-copy small { color: var(--amber-700); font-size: 11px; }
+.stage-copy small { color: var(--amber-700); font-size: var(--caption-size); }
 .stage-item.is-active .stage-copy small { color: var(--green-700); }
 .rail-policy {
   display: flex;

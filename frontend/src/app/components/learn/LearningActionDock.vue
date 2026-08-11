@@ -41,6 +41,7 @@ const items = computed(() =>
 
 <template>
   <footer class="sfx-dock" ref="rootRef" tabindex="-1" aria-label="教学行动工具坞">
+    <!-- 特殊场景：工具坞动作项，v-for 列表项且包裹 icon+label 富文本，含 aria-pressed 切换态与自定义 is-active/is-disabled 视觉，保留原生 button（design.md §9.1 例外） -->
     <button
       v-for="item in items"
       :key="item.id"

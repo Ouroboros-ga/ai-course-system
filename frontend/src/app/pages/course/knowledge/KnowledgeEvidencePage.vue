@@ -157,15 +157,15 @@ onMounted(load)
     </header>
 
     <nav class="sfx-evidence-filters" aria-label="Evidence 状态筛选">
-      <button
+      <SfxButton
         v-for="item in filters"
         :key="item.value"
-        type="button"
-        class="sfx-evidence-filter"
+        variant="tertiary"
+        size="sm"
         :class="{ 'is-active': filter === item.value }"
         :aria-pressed="filter === item.value"
         @click="filter = item.value"
-      >{{ item.label }}</button>
+      >{{ item.label }}</SfxButton>
     </nav>
 
     <SfxSkeleton v-if="status === 'loading'" :lines="6" block />

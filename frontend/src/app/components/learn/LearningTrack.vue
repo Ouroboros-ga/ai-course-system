@@ -198,12 +198,12 @@ const indentStep = 12
                   <span class="sfx-track-item-title-text">{{ node.title }}</span>
                   <KeyRound v-if="node.isKeyPoint" :size="12" class="sfx-track-key" aria-label="重点" />
                 </span>
-                <button
-                  type="button"
-                  class="sfx-track-item-details-btn"
+                <SfxButton
+                  variant="tertiary"
+                  size="sm"
                   :aria-label="expandedNodeId === node.outlineNodeId ? `收起${node.title}状态详情` : `查看${node.title}状态详情`"
                   @click.stop="emit('inspect', node.outlineNodeId)"
-                >{{ expandedNodeId === node.outlineNodeId ? '收起' : '详情' }}</button>
+                >{{ expandedNodeId === node.outlineNodeId ? '收起' : '详情' }}</SfxButton>
               </span>
               <span class="sfx-track-item-subrow">
                 <span :class="`is-tone-${displayState(node).tone}`" class="sfx-track-item-state-label">
@@ -341,7 +341,7 @@ const indentStep = 12
 
 .sfx-track-summary-rate {
   color: var(--ink-900);
-  font-size: 20px;
+  font-size: var(--title-3-size);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
@@ -412,13 +412,13 @@ const indentStep = 12
 .sfx-track-item:hover { background: var(--surface-cool); }
 .sfx-track-item:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--color-brand), 0 0 0 4px rgba(79, 70, 229, 0.15);
+  box-shadow: 0 0 0 2px var(--color-focus), 0 0 0 4px var(--ink-100);
 }
 
 /* 章 */
 .sfx-track-item.is-chapter { padding-top: 10px; padding-bottom: 10px; }
 .sfx-track-item.is-chapter .sfx-track-item-title {
-  font-size: 14px;
+  font-size: var(--ui-md-size);
   font-weight: 600;
   color: var(--text-primary);
   line-height: 1.35;
@@ -516,7 +516,7 @@ const indentStep = 12
   font: inherit;
   cursor: pointer;
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: var(--caption-size);
   line-height: 1;
   padding: 3px 4px;
   border-radius: var(--radius-sm);
@@ -530,7 +530,7 @@ const indentStep = 12
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--caption-size);
   line-height: 1.2;
   color: var(--text-muted);
   min-width: 0;

@@ -202,15 +202,15 @@ onMounted(() => {
 
     <div v-else class="sfx-knowledge__body" :class="{ 'is-preview': isPreview }">
       <section v-if="isPreview" class="sfx-knowledge__teacher-tools" aria-label="教师预览工具">
-        <button type="button" class="sfx-knowledge__mode-chip" @click="previewDrawerOpen = true">
-          <Eye :size="15" aria-hidden="true" />
+        <SfxButton variant="secondary" size="sm" @click="previewDrawerOpen = true">
+          <template #icon><Eye :size="15" aria-hidden="true" /></template>
           {{ previewRoleLabel }}预览
-        </button>
-        <button type="button" class="sfx-knowledge__mode-chip" @click="refinementDrawerOpen = true">
-          <ShieldCheck :size="15" aria-hidden="true" />
+        </SfxButton>
+        <SfxButton variant="secondary" size="sm" @click="refinementDrawerOpen = true">
+          <template #icon><ShieldCheck :size="15" aria-hidden="true" /></template>
           质量报告
           <span v-if="refinementRows.length" class="sfx-knowledge__mode-count">{{ refinementRows.length }}</span>
-        </button>
+        </SfxButton>
       </section>
 
       <section class="sfx-knowledge__main">
@@ -410,7 +410,7 @@ onMounted(() => {
   padding: 1px 6px;
   background: var(--ink-700, #203A5F);
   color: white;
-  font-size: 11px;
+  font-size: var(--caption-size);
   text-align: center;
 }
 

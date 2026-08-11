@@ -13,6 +13,7 @@
  */
 import { computed, onMounted, ref, watch } from 'vue'
 import { listCourseQuestions, submitAttempt } from '@/api/question_bank.js'
+import SfxButton from '@/app/ui/SfxButton.vue'
 
 const props = defineProps({
   courseId: { type: Number, required: true },
@@ -256,9 +257,9 @@ onMounted(() => {
         </ul>
       </div>
       <div class="sfx-practice-intro-actions">
-        <button class="sfx-practice-start" :disabled="loading || !hasQuestions" @click="startPracticing">
+        <SfxButton variant="primary" :disabled="loading || !hasQuestions" @click="startPracticing">
           {{ loading ? '加载中…' : (hasQuestions ? '开始练习' : '暂无题目') }}
-        </button>
+        </SfxButton>
         <p v-if="error && !hasQuestions" class="sfx-practice-error">{{ error }}</p>
       </div>
     </div>
@@ -269,7 +270,7 @@ onMounted(() => {
 
       <div v-else-if="error && !hasQuestions" class="sfx-practice-empty">
         <p>{{ error }}</p>
-        <button class="sfx-practice-retry-btn" @click="loadQuestions">重新加载</button>
+        <SfxButton variant="secondary" @click="loadQuestions">重新加载</SfxButton>
       </div>
 
       <div v-else-if="currentQuestion" class="sfx-practice-body">
@@ -314,9 +315,9 @@ onMounted(() => {
 
         <!-- 提示使用埋点：作答前可查看提示，查看后本次 attempt 记 hint_used=true -->
         <div v-if="!lastResult" class="sfx-practice-hint">
-          <button v-if="!hintVisible" type="button" class="sfx-practice-hint-btn" @click="showHint">
+          <SfxButton v-if="!hintVisible" variant="tertiary" size="sm" @click="showHint">
             查看提示
-          </button>
+          </SfxButton>
           <p v-else class="sfx-practice-hint-text">
             提示：回顾当前知识点讲解中的关键概念与示例，再结合题干作答。
             <span class="sfx-practice-hint-tag">已记录提示使用</span>
@@ -342,23 +343,23 @@ onMounted(() => {
 
         <!-- 操作按钮 -->
         <div class="sfx-practice-actions">
-          <button v-if="!lastResult" class="sfx-practice-submit" :disabled="submitting" @click="submitAnswer">
+          <SfxButton v-if="!lastResult" variant="primary" :disabled="submitting" @click="submitAnswer">
             {{ submitting ? '提交中…' : '提交答案' }}
-          </button>
+          </SfxButton>
           <template v-else>
-            <button v-if="!lastResult.is_correct && lastResult.judgement_status === 'judged'" class="sfx-practice-retry" @click="retryQuestion">
+            <SfxButton v-if="!lastResult.is_correct && lastResult.judgement_status === 'judged'" variant="secondary" @click="retryQuestion">
               重新作答
-            </button>
-            <button class="sfx-practice-next" @click="nextQuestion">下一题</button>
+            </SfxButton>
+            <SfxButton variant="tertiary" @click="nextQuestion">下一题</SfxButton>
           </template>
-          <button
+          <SfxButton
             v-if="attempted.length > 0"
-            class="sfx-practice-finish"
+            variant="primary"
             @click="finishPractice"
             title="结束练习并查看本次总结"
           >
             完成练习
-          </button>
+          </SfxButton>
         </div>
 
         <p v-if="error" class="sfx-practice-error">{{ error }}</p>
@@ -406,7 +407,7 @@ onMounted(() => {
         <h5 class="sfx-practice-verify-subtitle">下一步</h5>
         <div class="sfx-practice-verify-actions">
           <button class="sfx-practice-verify-primary" @click="emit('exit')">返回课程</button>
-          <button class="sfx-practice-verify-secondary" @click="practiceMore">再练一题</button>
+          <SfxButton variant="secondary" @click="practiceMore">再练一题</SfxButton>
         </div>
       </div>
     </div>

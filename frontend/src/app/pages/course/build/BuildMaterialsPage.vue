@@ -222,7 +222,7 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .skeleton-notice{margin:0 0 var(--space-2);padding:var(--space-2) var(--space-3);border:1px solid var(--green-300);border-radius:var(--radius-md);background:var(--green-50);color:var(--green-700);font-size:var(--ui-sm-size);line-height:1.5}
 .draft-build-blocked_by_materials,.draft-build-build_failed{border-color:var(--amber-300);background:var(--amber-50);color:var(--amber-700)}
 .duplicate-notice{margin:0 0 var(--space-3);padding:var(--space-2) var(--space-3);border:1px solid var(--amber-300);border-radius:var(--radius-md);background:var(--amber-50);color:var(--amber-700);font-size:var(--ui-sm-size);line-height:1.5}
-.material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px}
+.material small{justify-self:end;font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size)}
 .status{display:inline-flex;align-items:center;gap:var(--space-1);font-size:var(--ui-sm-size);font-weight:600;color:var(--text-secondary)}
 .status::before{content:"◇"}
 .status-parsing{color:var(--ink-700)}

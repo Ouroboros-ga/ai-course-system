@@ -22,6 +22,7 @@ import {
 } from 'lucide-vue-next'
 import { getPlan, listPlans } from '@/api/visualization.js'
 import JSAVPlayer from '@/components/visualization/JSAVPlayer.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 
 const props = defineProps({
   courseId: { type: [Number, String], required: true },
@@ -194,9 +195,9 @@ onMounted(loadPlans)
     >
       <TriangleAlert :size="22" />
       <p>{{ errorMessage || '可视化计划暂时不可读' }}</p>
-      <button type="button" class="sfx-vis-stage-retry" @click="loadPlans">
+      <SfxButton variant="secondary" @click="loadPlans">
         重试
-      </button>
+      </SfxButton>
     </div>
 
     <div v-else-if="status === 'empty'" class="sfx-vis-stage-state sfx-vis-stage-state--empty">

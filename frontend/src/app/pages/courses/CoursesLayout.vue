@@ -3,6 +3,7 @@ import { computed, provide, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { FilePlus2, UserRoundPlus } from 'lucide-vue-next'
 import JoinCourseDrawer from '@/app/components/courses/JoinCourseDrawer.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 import { useCounterStore } from '@/stores/counter.js'
 
 /**
@@ -50,12 +51,14 @@ provide('coursesContext', { openJoin, joinRefreshTick })
           >{{ tab.label }}</RouterLink>
         </nav>
         <div class="sfx-l2nav-actions">
-          <button v-if="canImportCourses" type="button" class="sfx-l2nav-join" @click="openCreateCourse">
-            <FilePlus2 :size="16" /> 创建课程
-          </button>
-          <button type="button" class="sfx-l2nav-join" @click="openJoin">
-            <UserRoundPlus :size="16" /> 加入课程
-          </button>
+          <SfxButton v-if="canImportCourses" variant="primary" @click="openCreateCourse">
+            <template #icon><FilePlus2 :size="16" /></template>
+            创建课程
+          </SfxButton>
+          <SfxButton variant="secondary" @click="openJoin">
+            <template #icon><UserRoundPlus :size="16" /></template>
+            加入课程
+          </SfxButton>
         </div>
       </div>
     </div>

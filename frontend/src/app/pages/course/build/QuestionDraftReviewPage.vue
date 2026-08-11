@@ -129,14 +129,14 @@ watch([courseId, statusFilter], loadDrafts)
   <section class="stage">
     <header class="stage-head">
       <div class="filters">
-        <button
+        <SfxButton
           v-for="opt in statusOptions"
           :key="opt.value"
-          type="button"
-          class="chip"
+          variant="tertiary"
+          size="sm"
           :class="{ active: statusFilter === opt.value }"
           @click="statusFilter = opt.value"
-        >{{ opt.label }}</button>
+        >{{ opt.label }}</SfxButton>
       </div>
       <p v-if="message" :class="['msg', messageKind]">{{ message }}</p>
     </header>
@@ -259,20 +259,20 @@ watch([courseId, statusFilter], loadDrafts)
 .draft-item:hover{border-color:var(--border-strong)}
 .draft-item.active{border-color:var(--ink-700);box-shadow:inset 3px 0 0 var(--ink-700)}
 .item-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-1)}
-.badge{font-size:11px;font-weight:600;padding:2px var(--space-2);border-radius:var(--radius-full);text-transform:uppercase;letter-spacing:.04em}
+.badge{font-size:var(--caption-size);font-weight:600;padding:2px var(--space-2);border-radius:var(--radius-full);text-transform:uppercase;letter-spacing:.04em}
 .badge-draft{background:var(--amber-100);color:var(--amber-800)}
 .badge-approved{background:var(--green-100);color:var(--green-800)}
 .badge-rejected{background:var(--red-100);color:var(--red-700)}
 .badge-stale{background:var(--ink-100);color:var(--text-muted)}
 .item-diff{font-size:var(--caption-size);color:var(--text-muted)}
 .item-text{margin:0 0 var(--space-1);font-size:var(--ui-sm-size);line-height:1.5;color:var(--text-primary);display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-.item-meta{margin:0;display:flex;gap:var(--space-3);flex-wrap:wrap;font-size:11px;color:var(--text-muted)}
+.item-meta{margin:0;display:flex;gap:var(--space-3);flex-wrap:wrap;font-size:var(--caption-size);color:var(--text-muted)}
 .detail{overflow-y:auto;padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-md);background:var(--surface-panel);display:flex;flex-direction:column;gap:var(--space-3)}
 .detail-title{margin:0;font-size:var(--ui-md-size);font-weight:650;color:var(--text-primary)}
 .question-text{margin:0;padding:var(--space-3);background:var(--surface-soft);border-radius:var(--radius-sm);font-size:var(--ui-md-size);line-height:1.6;color:var(--text-primary);white-space:pre-wrap}
 .fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:var(--space-2);margin:0}
 .fields div{display:flex;flex-direction:column;gap:2px}
-.fields dt{font-size:11px;color:var(--text-muted);font-weight:600}
+.fields dt{font-size:var(--caption-size);color:var(--text-muted);font-weight:600}
 .fields dd{margin:0;font-size:var(--ui-sm-size);color:var(--text-primary)}
 .block{display:flex;flex-direction:column;gap:var(--space-1)}
 .block h3{margin:0;font-size:var(--ui-sm-size);font-weight:650;color:var(--text-secondary)}

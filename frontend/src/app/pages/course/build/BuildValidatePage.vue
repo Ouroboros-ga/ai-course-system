@@ -76,6 +76,6 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 .check-row header{display:flex;align-items:center;justify-content:space-between;gap:var(--space-2)}
 .check-row strong{color:var(--text-primary);font-size:var(--ui-md-size)}
 .check-row p{margin:0;color:var(--text-secondary);font-size:var(--ui-sm-size);line-height:1.5}
-.check-row code{color:var(--text-muted);font-family:var(--font-mono);font-size:11px}
+.check-row code{color:var(--text-muted);font-family:var(--font-mono);font-size:var(--caption-size)}
 @media(max-width:560px){.validate-stage{padding:var(--space-3)}.check-row{padding:var(--space-3)}}
 </style>

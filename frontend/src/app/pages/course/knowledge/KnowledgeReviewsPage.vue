@@ -8,6 +8,7 @@ import {
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  X,
 } from 'lucide-vue-next'
 import {
   approveKnowledgeBundle,
@@ -16,6 +17,7 @@ import {
   regenerateKnowledgeBundle,
 } from '@/api/graph.js'
 import KnowledgeGraphCanvas from '@/features/knowledge-bundle/KnowledgeGraphCanvas.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -165,18 +167,19 @@ onBeforeUnmount(() => window.clearInterval(timer))
         </p>
       </div>
       <div class="actions">
-        <button
-          type="button"
-          class="secondary"
+        <SfxButton
+          variant="secondary"
+          size="sm"
           :disabled="!runtimeReady"
           @click="feedbackOpen = true"
         >
-          <RefreshCw :size="16" /> 重新生成
-        </button>
-        <button type="button" class="primary" :disabled="!canApprove" @click="approve">
-          <LoaderCircle v-if="submitting" class="spin" :size="16" />
-          <CheckCircle2 v-else :size="16" /> 通过整图
-        </button>
+          <template #icon><RefreshCw :size="16" /></template>
+          重新生成
+        </SfxButton>
+        <SfxButton variant="primary" size="sm" :disabled="!canApprove" :loading="submitting" @click="approve">
+          <template #icon><CheckCircle2 :size="16" /></template>
+          通过整图
+        </SfxButton>
       </div>
     </header>
 
@@ -185,7 +188,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
     </div>
     <div v-else-if="error" class="state state--error">
       <ShieldAlert :size="21" /> {{ error }}
-      <button type="button" @click="load">重试</button>
+      <SfxButton variant="secondary" @click="load">重试</SfxButton>
     </div>
 
     <template v-else>
@@ -244,9 +247,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
                 <strong>第 {{ item.page_number || '—' }} 页</strong>
                 <p>{{ item.text_snippet }}</p>
                 <small>{{ item.anchor_id }} · {{ item.status }}</small>
-                <button type="button" class="evidence-link" @click="openEvidence(item)">
+                <SfxButton variant="tertiary" size="sm" @click="openEvidence(item)">
                   打开原文
-                </button>
+                </SfxButton>
               </article>
               <p v-if="!selectedEvidence.length" class="muted">
                 该项没有可闭合来源，后端会拒绝整图审批。
@@ -278,7 +281,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
             <p class="eyebrow">NEW GRAPHRAG RUN</p>
             <h2>带反馈重新生成</h2>
           </div>
-          <button type="button" @click="feedbackOpen = false">×</button>
+          <SfxButton variant="tertiary" size="sm" aria-label="关闭" @click="feedbackOpen = false">
+            <template #icon><X :size="16" /></template>
+          </SfxButton>
         </header>
         <label>
           原因（必填）
@@ -294,10 +299,10 @@ onBeforeUnmount(() => window.clearInterval(timer))
           />
         </label>
         <p>新运行会保留可靠的 kn_* 身份，不覆盖当前 Active Bundle。</p>
-        <button type="submit" class="primary" :disabled="!reason.trim() || submitting">
-          <LoaderCircle v-if="submitting" class="spin" :size="16" />
-          <Sparkles v-else :size="16" /> 创建新运行
-        </button>
+        <SfxButton type="submit" variant="primary" :disabled="!reason.trim() || submitting" :loading="submitting">
+          <template #icon><Sparkles :size="16" /></template>
+          创建新运行
+        </SfxButton>
       </form>
     </div>
   </main>

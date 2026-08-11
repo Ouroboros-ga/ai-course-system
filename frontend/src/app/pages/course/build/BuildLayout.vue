@@ -93,8 +93,8 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
 <template>
   <div class="build-workspace">
     <div class="mobile-workbench-tabs" role="tablist" aria-label="课程建设面板">
-      <button type="button" :class="{ active: !agentOpen }" @click="agentOpen = false">建设步骤</button>
-      <button type="button" :class="{ active: agentOpen }" @click="agentOpen = true">助教智能体</button>
+      <SfxButton variant="tertiary" size="sm" :class="{ active: !agentOpen }" @click="agentOpen = false">建设步骤</SfxButton>
+      <SfxButton variant="tertiary" size="sm" :class="{ active: agentOpen }" @click="agentOpen = true">助教智能体</SfxButton>
     </div>
 
     <div class="build-grid" :class="{ 'agent-is-open': agentOpen, 'rail-collapsed': railCollapsed }">
@@ -174,11 +174,11 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
 .build-link{position:relative;display:grid;grid-template-columns:30px 18px minmax(0,1fr);gap:var(--space-2);align-items:center;min-height:52px;padding:var(--space-2) var(--space-3);color:var(--text-secondary);text-decoration:none;border-radius:var(--radius-md)}
 .build-link:hover{background:var(--surface-panel);color:var(--ink-900)}
 .build-link.active{background:var(--ink-100);color:var(--ink-900)}
-.build-link.active::before{position:absolute;left:-8px;top:10px;bottom:10px;width:3px;background:var(--ink-700);content:""}
-.step-index{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:11px;color:var(--text-muted)}
+.build-link.active::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
+.step-index{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size);color:var(--text-muted)}
 .step-copy{display:grid;gap:2px}
 .step-copy strong{font-size:var(--ui-md-size);font-weight:600}
-.step-copy small{font-size:11px;line-height:15px;color:var(--text-muted)}
+.step-copy small{font-size:var(--caption-size);line-height:15px;color:var(--text-muted)}
 .rail-note{margin:var(--space-5) var(--space-3) 0;padding-top:var(--space-4);border-top:1px solid var(--border-default);font-size:var(--caption-size);line-height:1.55;color:var(--text-muted)}
 .build-stage{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;padding:var(--space-6);background:var(--surface-panel);overflow:hidden}
 .stage-context{display:flex;justify-content:space-between;gap:var(--space-4);align-items:flex-start;margin-bottom:var(--space-6);flex-shrink:0;flex-wrap:wrap}

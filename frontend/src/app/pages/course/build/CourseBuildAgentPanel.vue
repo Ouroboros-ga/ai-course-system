@@ -507,7 +507,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
   color: var(--text-muted); font-size: var(--caption-size);
 }
 .evidence-card code, .proposal-operation code {
-  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace; font-size: 11px;
+  font-family: "JetBrains Mono", "Fira Code", Consolas, monospace; font-size: var(--caption-size);
 }
 
 /* ── 提案卡片 ── */

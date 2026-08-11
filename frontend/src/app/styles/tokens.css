@@ -46,7 +46,7 @@
   /* ── 1.4 文字色 ── */
   --text-primary: #172033;
   --text-secondary: #4E5969;
-  --text-muted: #7B8494;
+  --text-muted: #5E6776;
   --text-disabled: #A7AFBC;
   --text-inverse: #FFFFFF;
   --text-link: #355C7D;
@@ -86,6 +86,7 @@
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
   --space-6: 24px;
   --space-8: 32px;
   --space-10: 40px;
