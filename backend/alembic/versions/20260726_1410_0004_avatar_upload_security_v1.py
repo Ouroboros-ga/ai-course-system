@@ -51,6 +51,34 @@ def _timestamp_type(bind) -> str:
     return "DATETIME"
 
 
+def _upgrade_postgresql_upload_status_enum(bind) -> None:
+    """Replace the baseline PostgreSQL enum with the current state-machine enum.
+
+    SQLite stored legacy status aliases as text, while the baseline PostgreSQL
+    schema used an enum containing only the old labels.  Recreate the enum via
+    ``TEXT`` so the legacy aliases are normalized before the column is cast
+    back; an unknown legacy value fails the migration rather than being lost.
+    """
+    bind.execute(sa.text(
+        "ALTER TABLE avatar_source_media "
+        "ALTER COLUMN upload_status TYPE TEXT USING upload_status::text"
+    ))
+    bind.execute(sa.text("DROP TYPE avatarsourcemediastatus"))
+    bind.execute(sa.text(
+        "CREATE TYPE avatarsourcemediastatus AS ENUM "
+        "('PENDING_UPLOAD', 'UPLOADED', 'VERIFIED', 'INVALID', "
+        "'QUARANTINED', 'WITHDRAWN', 'EXPIRED')"
+    ))
+    bind.execute(sa.text(
+        "ALTER TABLE avatar_source_media ALTER COLUMN upload_status "
+        "TYPE avatarsourcemediastatus USING "
+        "(CASE UPPER(upload_status) "
+        "WHEN 'PENDING' THEN 'PENDING_UPLOAD' "
+        "WHEN 'VALIDATED' THEN 'VERIFIED' "
+        "ELSE UPPER(upload_status) END)::avatarsourcemediastatus"
+    ))
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     timestamp_type = _timestamp_type(bind)
@@ -96,18 +124,21 @@ def upgrade() -> None:
     #    - "validated" -> "verified"
     #    - "uploaded"/"invalid"/"expired" 保持不变
     #    - 新值 "quarantined"/"withdrawn" 不需要在迁移中产生
-    bind.execute(
-        sa.text(
-            "UPDATE avatar_source_media SET upload_status = 'pending_upload' "
-            "WHERE upload_status = 'pending'"
+    if bind.dialect.name == "postgresql":
+        _upgrade_postgresql_upload_status_enum(bind)
+    else:
+        bind.execute(
+            sa.text(
+                "UPDATE avatar_source_media SET upload_status = 'pending_upload' "
+                "WHERE upload_status = 'pending'"
+            )
         )
-    )
-    bind.execute(
-        sa.text(
-            "UPDATE avatar_source_media SET upload_status = 'verified' "
-            "WHERE upload_status = 'validated'"
+        bind.execute(
+            sa.text(
+                "UPDATE avatar_source_media SET upload_status = 'verified' "
+                "WHERE upload_status = 'validated'"
+            )
         )
-    )
 
     # 4. 为新增的 server_content_sha256 创建索引（幂等）
     from sqlalchemy import inspect as _inspect
