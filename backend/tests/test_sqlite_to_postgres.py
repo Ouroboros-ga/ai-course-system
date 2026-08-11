@@ -99,14 +99,14 @@ def _upgrade_to_head(database_url: str) -> None:
     _run_alembic(database_url, "upgrade", "head")
 
 
-def test_revision_0048_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
+def test_revision_0050_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
     """PostgreSQL-only legacy FK handling remains a SQLite no-op on round trips."""
-    database_path = tmp_path / "0048-roundtrip.sqlite"
+    database_path = tmp_path / "0050-roundtrip.sqlite"
     database_url = f"sqlite:///{database_path.as_posix()}"
     _upgrade_to_head(database_url)
     _run_alembic(database_url, "downgrade", "0046")
-    _run_alembic(database_url, "upgrade", "0048")
-    _run_alembic(database_url, "upgrade", "0048")
+    _run_alembic(database_url, "upgrade", "0050")
+    _run_alembic(database_url, "upgrade", "0050")
 
     engine = create_engine(database_url)
     try:
@@ -141,6 +141,42 @@ def test_postgres_0048_keeps_legacy_media_release_fk_not_valid():
                 )
             ).scalar_one()
         assert validated is False
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0049_accepts_runtime_render_asset_enum_values():
+    """The PostgreSQL enum accepts the lowercase values emitted by current code."""
+    postgres_url = _postgres_url_or_skip()
+    assert transfer._head_revision() == "0049"
+    _reset_postgres_public_schema(postgres_url)
+    _upgrade_to_head(postgres_url)
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            values = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::renderassettype))::text")
+            ).scalars())
+        assert {"page_image", "ppt_slide_image", "region_image", "thumbnail"} <= values
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0050_accepts_runtime_material_status_values():
+    """The PostgreSQL enum accepts the lowercase material states used at runtime."""
+    postgres_url = _postgres_url_or_skip()
+    assert transfer._head_revision() == "0050"
+    _reset_postgres_public_schema(postgres_url)
+    _upgrade_to_head(postgres_url)
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            values = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::materialstatus))::text")
+            ).scalars())
+        assert {"uploaded", "parsing", "parsed", "needs_review", "failed", "superseded"} <= values
     finally:
         engine.dispose()
 

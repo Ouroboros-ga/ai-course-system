@@ -79,6 +79,34 @@ PRESEEDED_TARGET_TABLES = {"platform_task_concurrency_configs"}
 SUPPORTED_LEGACY_FOREIGN_KEY_RELATIONS = frozenset({
     "media_release_items:node_id",
 })
+# This legacy SQLite table was created while SQLAlchemy stored enum member
+# names, before the runtime moved to their lowercase values.  The aliases are
+# deliberately table-and-column scoped: enum values in every other table stay
+# fail-closed rather than receiving broad case conversion.
+LEGACY_ENUM_VALUE_ALIASES = {
+    ("evidence_render_assets", "asset_type"): {
+        "PAGE_IMAGE": "page_image",
+        "PPT_SLIDE_IMAGE": "ppt_slide_image",
+        "REGION_IMAGE": "region_image",
+        "THUMBNAIL": "thumbnail",
+    },
+    ("source_material_versions", "parse_status"): {
+        "UPLOADED": "uploaded",
+        "PARSING": "parsing",
+        "PARSED": "parsed",
+        "NEEDS_REVIEW": "needs_review",
+        "FAILED": "failed",
+        "SUPERSEDED": "superseded",
+    },
+    ("source_materials", "status"): {
+        "UPLOADED": "uploaded",
+        "PARSING": "parsing",
+        "PARSED": "parsed",
+        "NEEDS_REVIEW": "needs_review",
+        "FAILED": "failed",
+        "SUPERSEDED": "superseded",
+    },
+}
 
 
 class TransferError(RuntimeError):
@@ -432,6 +460,9 @@ def _coerce_value(value: Any, target_column) -> Any:
         return _coerce_datetime(value, column_type)
     if isinstance(column_type, SAEnum):
         candidate = value.value if hasattr(value, "value") else str(value)
+        candidate = LEGACY_ENUM_VALUE_ALIASES.get(
+            (target_column.table.name, target_column.name), {}
+        ).get(candidate, candidate)
         allowed = set(column_type.enums or [])
         if allowed and candidate not in allowed:
             raise TransferError(f"invalid enum value in {target_column.table.name}.{target_column.name}")

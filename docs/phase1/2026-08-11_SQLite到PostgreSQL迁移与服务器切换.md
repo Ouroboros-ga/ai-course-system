@@ -5,7 +5,7 @@
 ## 已落地的准备
 
 - 运行时支持 PostgreSQL 连接池、连接存活探测和 UTC 会话；SQLite 仍是本地默认。
-- `0047` 修复 PostgreSQL 下课程构建 lease 索引，约束仅覆盖 `queued/running`，不再错误限制同课程的历史构建记录；`0048` 将历史 `media_release_items → script_nodes` 失效引用定义为 PostgreSQL `NOT VALID` 外键，旧发布快照原样保留，后续写入仍受外键校验。
+- `0047` 修复 PostgreSQL 下课程构建 lease 索引，约束仅覆盖 `queued/running`，不再错误限制同课程的历史构建记录；`0048` 将历史 `media_release_items → script_nodes` 失效引用定义为 PostgreSQL `NOT VALID` 外键，旧发布快照原样保留，后续写入仍受外键校验；`0049/0050` 扩展历史枚举以接受当前小写运行时值。导入器仅在 `evidence_render_assets.asset_type`、`source_material_versions.parse_status`、`source_materials.status` 将明确列出的旧成员名映射为等义当前值，未知枚举继续拒绝。
 - `app.scripts.sqlite_to_postgres` 只能读取 SQLite Backup API 生成且带批次校验文件的快照，目标必须为空且在 Alembic head；复制、摘要比对、外键反查和序列重置在单一 PostgreSQL 事务中完成。
 - 每个迁移批次保留无原始业务内容的报告：表计数、NULL 统计、主键边界、规范化 SHA-256 摘要、外键结果与 SQLite 文件摘要；连接串和密码不写入报告。对 `media_release_items:node_id` 这一已知历史关系，报告必须证明源/目标失效引用数量完全一致；任何其他关系的失效引用仍会 fail-closed。
 

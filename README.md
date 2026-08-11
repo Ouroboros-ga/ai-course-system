@@ -1,6 +1,6 @@
 # AI 互动智课系统（ai-course-system）
 
-> **2026-08-11 数据库迁移状态**：当前运行库仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0048`、可审计快照迁移工具和服务器部署基线已加入；隔离 PostgreSQL 16 已通过完整迁移与合成复制预演，但尚未导入正式 SQLite 或切换服务。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
+> **2026-08-11 数据库迁移状态**：当前运行库仍是 SQLite。独立 PostgreSQL 的运行时适配、Alembic `0050`、可审计快照迁移工具和服务器部署基线已加入；隔离 PostgreSQL 16 已通过真实 SQLite 快照的完整复制与校验，但尚未切换服务。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。历史 SQLAlchemy 枚举成员名会仅在 `evidence_render_assets.asset_type`、`source_material_versions.parse_status` 和 `source_materials.status` 三列映射为当前运行时值，其他枚举仍 fail-closed。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
 >
 > 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。
 
@@ -118,7 +118,7 @@
 | 项 | 版本/选型 |
 |---|---|
 | 语言/框架 | Python + FastAPI（≥0.135）+ Uvicorn |
-| ORM/迁移 | SQLModel（≥0.0.37）+ Alembic（48 个迁移版本） |
+| ORM/迁移 | SQLModel（≥0.0.37）+ Alembic（50 个迁移版本） |
 | 智能体 | LangGraph（0.6.x）+ 自研 Port 契约（10 个） |
 | 文档解析 | Docling（≥2.81）、LibreOffice、Poppler、PaddleOCR（容器） |
 | 向量/图谱 | LanceDB 0.34、本地 BGE 嵌入、GraphRAG 3.1.1（独立 Worker，关闭态） |

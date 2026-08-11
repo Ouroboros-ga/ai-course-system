@@ -4,6 +4,8 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
+from sqlalchemy import Column, MetaData, Table
+from sqlalchemy import Enum as SAEnum
 
 from app.scripts import sqlite_to_postgres as transfer
 
@@ -63,3 +65,60 @@ def test_foreign_key_verification_requires_legacy_orphan_counts_to_match_source(
 
     with pytest.raises(transfer.TransferError, match="foreign-key verification mismatch"):
         transfer._assert_foreign_key_violation_parity(expected, {"media_release_items:node_id": 13})
+
+
+def test_coerce_normalizes_legacy_render_asset_enum_member_to_runtime_value():
+    """The old uppercase page-image member remains the same asset category."""
+    metadata = MetaData()
+    assets = Table(
+        "evidence_render_assets",
+        metadata,
+        Column(
+            "asset_type",
+            SAEnum(
+                "PAGE_IMAGE", "REGION_IMAGE", "THUMBNAIL",
+                "page_image", "ppt_slide_image", "region_image", "thumbnail",
+                name="renderassettype",
+            ),
+        ),
+    )
+
+    assert transfer._coerce_value("PPT_SLIDE_IMAGE", assets.c.asset_type) == "ppt_slide_image"
+
+
+def test_coerce_normalizes_legacy_material_status_member_to_runtime_value():
+    """The old material-status member name remains the same workflow state."""
+    metadata = MetaData()
+    versions = Table(
+        "source_material_versions",
+        metadata,
+        Column(
+            "parse_status",
+            SAEnum(
+                "UPLOADED", "PARSING", "PARSED", "FAILED", "SUPERSEDED",
+                "uploaded", "parsing", "parsed", "needs_review", "failed", "superseded",
+                name="materialstatus",
+            ),
+        ),
+    )
+
+    assert transfer._coerce_value("NEEDS_REVIEW", versions.c.parse_status) == "needs_review"
+
+
+def test_coerce_normalizes_legacy_source_material_status_member_to_runtime_value():
+    """The current material row uses the same historical status enum encoding."""
+    metadata = MetaData()
+    materials = Table(
+        "source_materials",
+        metadata,
+        Column(
+            "status",
+            SAEnum(
+                "UPLOADED", "PARSING", "PARSED", "FAILED", "SUPERSEDED",
+                "uploaded", "parsing", "parsed", "needs_review", "failed", "superseded",
+                name="materialstatus",
+            ),
+        ),
+    )
+
+    assert transfer._coerce_value("PARSING", materials.c.status) == "parsing"
