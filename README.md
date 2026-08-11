@@ -312,6 +312,7 @@ npm run smoke:app
 
 - **2026-08-11**：课程导入走受管异步路径（解析先行 → GraphRAG 草稿排队教师审核 → 授权后激活 LanceDB/BGE）；平台管理员可配置任务并发。初始备课若个别讲稿未通过证据校验或模型漏项，保留其余草稿并标记 `partial_success`，由教师在讲稿页手工补齐；未覆盖/空讲稿是不可确认绕过的发布 BLOCKER。
 - **2026-08-11**：PPT manifest 改为缓存优先的后台 `media.ppt_manifest` 任务：复用映射阶段页图、仅补渲染缺页、记录安全页数进度；激活不再同步触发 LibreOffice 渲染。
+- **2026-08-11**：课程建设助教自由文本改由 Prep 结构化意图路由器按完整语义选择既有五种 action，移除关键词兜底；低置信度/范围不明请求只澄清或返回 `PREP_AGENT_INTENT_UNAVAILABLE`。明确按钮 action 仍绕过分类器；一键整理结构/优化讲解在 batch API 前写入带授权标识的本地用户消息，批量原子应用与单节点待审核提案语义保持不变，无数据库迁移。
 - **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
 - **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
 - **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。

@@ -273,8 +273,8 @@ class PrepAgentCommandRequest(BaseModel):
 
     instruction: str = Field(default="", max_length=8_000)
     outline_node_id: Optional[str] = Field(default=None, max_length=100)
-    # Buttons send the action directly; chat leaves it empty and lets the
-    # transparent intent resolver select the same capability token.
+    # Buttons send the action directly; free-text chat leaves it empty and
+    # lets the structured Prep intent router select a capability token.
     action: Optional[str] = Field(default=None, max_length=64)
 
 
@@ -1214,11 +1214,49 @@ async def run_prep_agent_command(
     PatchProposal persistence and decision endpoint, so it cannot double-write
     the outline/script records.
     """
-    intent = resolve_prep_intent(
-        payload.instruction,
-        selected_outline_node_id=payload.outline_node_id,
-        explicit_action=payload.action,
+    from app.services.course_prep_agent_service import (
+        CoursePrepAgentIntentRoutingError,
+        CoursePrepAgentPlanningError,
+        course_prep_agent_service,
     )
+
+    if payload.action is not None:
+        # Button actions are already explicit and deterministic.  They must
+        # bypass the classifier so a model outage cannot disable a button.
+        intent = resolve_prep_intent(
+            payload.instruction,
+            selected_outline_node_id=payload.outline_node_id,
+            explicit_action=payload.action,
+        )
+    else:
+        # Classifying a free-text request is itself a teacher-facing course
+        # operation, so enforce the broad course capability before exposing a
+        # bounded node summary to the router.  Action-specific permissions
+        # are checked again below before planning or applying anything.
+        require_course_permission(session, current_user, course_id, "course.edit")
+        try:
+            intent = await course_prep_agent_service.classify_intent(
+                session,
+                course_id=course_id,
+                instruction=payload.instruction,
+                outline_node_id=payload.outline_node_id,
+            )
+        except CoursePrepAgentIntentRoutingError as exc:
+            raise HTTPException(
+                503,
+                detail={
+                    "error_code": "PREP_AGENT_INTENT_UNAVAILABLE",
+                    "message": "助教意图判断暂时不可用，未执行任何课程修改。",
+                },
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(
+                422,
+                detail={
+                    "error_code": "PREP_AGENT_NO_EDITABLE_TARGET",
+                    "message": str(exc),
+                },
+            ) from exc
     if intent.needs_clarification:
         return unified_response(200, "需要补充操作范围", {
             "outcome": "needs_clarification",
@@ -1256,11 +1294,6 @@ async def run_prep_agent_command(
         batch_running = batch_lock is not None and batch_lock.locked()
     if batch_running:
         raise _prep_agent_busy_error()
-    from app.services.course_prep_agent_service import (
-        CoursePrepAgentPlanningError,
-        course_prep_agent_service,
-    )
-
     try:
         result = await _plan_incremental_prep(
             request=request,

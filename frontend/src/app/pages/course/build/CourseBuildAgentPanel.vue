@@ -222,6 +222,9 @@ watch(() => workbench?.pendingInstruction, (text) => {
         <!-- 用户消息（偏右） -->
         <div v-if="msg.role === 'user'" class="chat-msg chat-msg--user">
           <div class="chat-bubble chat-bubble--user">
+            <div v-if="msg.source === 'quick_action'" class="quick-action-badge">
+              <SfxBadge tone="ink">一键操作 · 已授权直接应用</SfxBadge>
+            </div>
             <p>{{ msg.text }}</p>
           </div>
         </div>
@@ -412,6 +415,7 @@ watch(() => workbench?.pendingInstruction, (text) => {
   border-radius: var(--radius-md) var(--radius-xs) var(--radius-md) var(--radius-md);
 }
 .chat-bubble--user p { margin: 0; white-space: pre-wrap; word-break: break-word; }
+.quick-action-badge { margin-bottom: var(--space-2); }
 .chat-bubble--agent {
   background: var(--surface-cool);
   color: var(--text-primary);

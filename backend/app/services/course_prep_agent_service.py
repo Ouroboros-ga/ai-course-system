@@ -1,9 +1,10 @@
 """Teacher-controlled course preparation agent.
 
-The agent has read-only course tools and one proposal-writing tool.  It never
-updates outline/script rows: every follow-up instruction is persisted as a
-``PatchProposal`` for a teacher decision.  Locked nodes are excluded before
-the LLM sees its editable target set and are checked again before persistence.
+The agent has read-only course tools and a proposal-writing planning surface.
+Single-node follow-up instructions remain ``PatchProposal`` changes for a
+teacher decision; the separate batch endpoint may atomically apply an explicit
+teacher-authorized whole-course pass. Locked nodes are excluded before the LLM
+sees its editable target set and are checked again before persistence.
 """
 from __future__ import annotations
 
@@ -30,7 +31,13 @@ from app.models.course_outline_model import (
     TeachingScriptVersion,
 )
 from app.models.document_parse_model import DocumentBlock, EvidenceSpan, EvidenceSpanStatus
-from app.platform.agents.prep.actions import PrepAction, canonical_prep_action
+from app.platform.agents.prep.actions import (
+    PrepAction,
+    PrepIntent,
+    PrepIntentDecision,
+    canonical_prep_action,
+    prep_intent_from_decision,
+)
 from app.platform.agents.contracts.llm import StructuredOutputError
 from app.platform.agents.shared.error_messages import safe_prep_error_message
 
@@ -159,6 +166,12 @@ class CoursePrepAgentPlanningError(RuntimeError):
     """The configured LLM failed to return a safe, valid preparation plan."""
 
 
+class CoursePrepAgentIntentRoutingError(CoursePrepAgentPlanningError):
+    """The structured free-text intent router could not produce a decision."""
+
+    error_code = "PREP_AGENT_INTENT_UNAVAILABLE"
+
+
 class CoursePrepAgentService:
     """Read course facts, plan safe modifications, return proposal-ready data."""
 
@@ -175,6 +188,112 @@ class CoursePrepAgentService:
         # evidence projection remains available as a deterministic fallback
         # when a course has not activated a knowledge bundle yet.
         self._course_retrieval = course_retrieval
+
+    async def classify_intent(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        instruction: str,
+        outline_node_id: str | None = None,
+    ) -> PrepIntent:
+        """Classify free text using the configured structured Prep model.
+
+        Only a bounded node summary and the allowed action descriptions are
+        exposed to this call.  It cannot retrieve evidence or mutate a draft;
+        the returned decision is still gated by ``prep_intent_from_decision``.
+        """
+        text = (instruction or "").strip()
+        if not text:
+            return PrepIntent(
+                action=None,
+                instruction=text,
+                needs_clarification=True,
+                clarification="请说明希望执行的备课操作和范围。",
+            )
+
+        outline, scripts = self._load_latest_draft_targets(
+            session,
+            course_id=course_id,
+        )
+        selected = None
+        if outline_node_id:
+            selected = next(
+                (node for node in outline if node.outline_node_id == outline_node_id),
+                None,
+            )
+            if selected is None:
+                raise ValueError("选中的课程节点不属于当前最新草稿，请刷新后重试")
+        selected_scripts = (
+            [node for node in scripts if node.outline_node_id == outline_node_id]
+            if selected is not None
+            else []
+        )
+        payload = {
+            "instruction": text,
+            "selected_node": (
+                {
+                    "outline_node_id": selected.outline_node_id,
+                    "title": selected.title or "",
+                    "has_script": bool(selected_scripts),
+                }
+                if selected is not None
+                else None
+            ),
+            "allowed_actions": [
+                {
+                    "action": PrepAction.OPTIMIZE_NODE_TITLE.value,
+                    "scope": "当前选中课程节点标题",
+                },
+                {
+                    "action": PrepAction.ORGANIZE_STRUCTURE.value,
+                    "scope": "全课程未锁定目录/节点结构",
+                },
+                {
+                    "action": PrepAction.OPTIMIZE_NODE_SCRIPT.value,
+                    "scope": "当前选中课程节点讲解脚本",
+                },
+                {
+                    "action": PrepAction.OPTIMIZE_ALL_SCRIPTS.value,
+                    "scope": "全课程未锁定讲解脚本",
+                },
+                {
+                    "action": PrepAction.MATCH_PPT.value,
+                    "scope": "课程节点与 PPT 页面映射",
+                },
+            ],
+        }
+        if self._llm is None or not hasattr(self._llm, "classify_intent"):
+            raise CoursePrepAgentIntentRoutingError("备课意图模型不可用，未执行任何操作")
+        try:
+            decision = await self._llm.classify_intent(payload)
+            if not isinstance(decision, PrepIntentDecision):
+                decision = PrepIntentDecision.model_validate(decision)
+        except StructuredOutputError as exc:
+            logger.warning(
+                "Course prep intent routing failed schema validation: %s: %s",
+                type(exc).__name__, str(exc)[:300],
+            )
+            error = CoursePrepAgentIntentRoutingError(
+                "备课意图模型返回无效结果，未执行任何操作"
+            )
+            error.reason_code = getattr(exc, "reason_code", "")
+            error.stage = getattr(exc, "stage", "intent_routing")
+            error.attempts = getattr(exc, "attempts", 0)
+            raise error from exc
+        except Exception as exc:
+            logger.warning(
+                "Course prep intent routing unavailable: %s: %s",
+                type(exc).__name__, str(exc)[:300],
+            )
+            raise CoursePrepAgentIntentRoutingError(
+                "备课意图模型服务不可用，未执行任何操作"
+            ) from exc
+        return prep_intent_from_decision(
+            text,
+            selected_outline_node_id=outline_node_id,
+            decision=decision,
+        )
 
     async def plan(
         self,

@@ -92,6 +92,13 @@ async function organizeAll() {
   if (!nodes.value.length) return reportOrganizeUnavailable('课程结构尚未生成，暂无可整理的节点。')
   if (!nodes.value.some((node) => !node.locked)) return reportOrganizeUnavailable('所有课程节点都已锁定；解锁至少一个节点后再整理。')
   organizing.value = true; error.value = ''
+  const userMessage = {
+    role: 'user',
+    text: '一键整理全部未锁定课程节点，并授权完成后直接应用。',
+    source: 'quick_action',
+    action: 'organize_structure',
+    executionMode: 'immediate_apply',
+  }
   const message = {
     role: 'agent',
     running: true,
@@ -101,6 +108,7 @@ async function organizeAll() {
   }
   if (workbench) {
     workbench.agentOpen = true
+    workbench.agentMessages.push(userMessage)
     workbench.batchRun = { action: 'organize_structure', startedAt: Date.now() }
     workbench.agentMessages.push(message)
   }

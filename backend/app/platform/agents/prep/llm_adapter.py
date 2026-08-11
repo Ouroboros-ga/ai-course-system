@@ -2,7 +2,7 @@
 
 This is an Adapter (interface conversion), not a Port. It sits between the
 low-level ``StructuredLLMPort`` (``contracts/llm.py``) and the Prep Agent's
-business layer, exposing the seven LLM operations the Prep pipelines need:
+business layer, exposing the eight LLM operations the Prep pipelines need:
 
     - segment_evidence        (Initial pipeline, stage 1)
     - plan_outline            (Initial pipeline, stage 2)
@@ -10,6 +10,7 @@ business layer, exposing the seven LLM operations the Prep pipelines need:
     - write_scripts_batch     (Initial pipeline, stage 3, batch)
     - verify_script           (Initial pipeline, stage 4)
     - plan_incremental        (Incremental pipeline)
+    - classify_intent         (Free-text action routing)
     - optimize_ppt_mappings   (PPT mapping pipeline)
 
 Design notes:
@@ -52,6 +53,7 @@ from .prompts import (
     EVIDENCE_SEGMENTER_PROMPT,
     EVIDENCE_VERIFIER_PROMPT,
     INCREMENTAL_PLANNER_PROMPT,
+    PREP_INTENT_ROUTER_PROMPT,
     PREP_ACTION_PLANNER_PROMPT,
     STRUCTURE_PLANNER_PROMPT,
     OUTLINE_PLANNER_PROMPT,
@@ -752,6 +754,39 @@ class PrepLLMAdapter:
         )
 
     # -- Incremental pipeline --------------------------------------------
+
+    async def classify_intent(
+        self,
+        payload: Any,
+        *,
+        run_id: str = "",
+        trace_id: str = "",
+    ) -> Any:
+        """Classify free text into one existing Prep action.
+
+        This is intentionally a small structured call.  It does not receive
+        evidence, tools, editable content, or write permissions; the service
+        applies the confidence and direct-apply gates after validation.
+        """
+        from app.platform.agents.prep.actions import PrepIntentDecision
+
+        user_prompt = (
+            payload
+            if isinstance(payload, str)
+            else json.dumps(payload, ensure_ascii=False, default=str)
+        )
+        response = await self._complete(
+            spec=PREP_INTENT_ROUTER_PROMPT,
+            user_prompt=user_prompt,
+            node="intent_routing",
+            purpose="prep intent classification",
+            output_schema=PrepIntentDecision,
+            provider_options={"thinking": {"type": "disabled"}},
+            max_tokens=512,
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+        return self._parsed_or_validate(response, PrepIntentDecision)
 
     async def plan_incremental(
         self,

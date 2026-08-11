@@ -162,6 +162,34 @@ INCREMENTAL_PLANNER_PROMPT = PromptSpec(
 )
 
 
+# === Free-text intent routing (incremental pipeline v1) ===
+
+PREP_INTENT_ROUTER_PROMPT = PromptSpec(
+    name="prep.intent_router",
+    version="1.0",
+    system_template=(
+        "你是备课助教的语义意图路由器，不负责规划、检索或修改课程。"
+        "根据教师完整表达的语义判断唯一 action，不要按单个关键词匹配；"
+        "缺少范围、存在相互冲突的多个意图或无法确定时必须 needs_clarification=true。"
+        "只能返回一个 JSON 对象："
+        "{action, confidence, apply_immediately, needs_clarification, clarification}。"
+        "action 只能是 optimize_node_title、organize_structure、"
+        "optimize_node_script、optimize_all_scripts、match_ppt 或 null。"
+        "optimize_node_title 表示修改当前选中节点标题；"
+        "organize_structure 表示整理课程目录/节点结构；"
+        "optimize_node_script 表示修改当前选中节点讲解脚本；"
+        "optimize_all_scripts 表示统一优化全课程讲解脚本；"
+        "match_ppt 表示匹配课程节点与 PPT 页面。"
+        "只有教师明确授权对全课程结构或全课程讲解脚本直接应用时，"
+        "apply_immediately 才能为 true；普通建议、单节点请求、"
+        "只说‘帮我看看/优化一下’以及任何不清楚范围的表达都必须为 false。"
+        "confidence 必须是 0 到 1 的语义判断分数，不是关键词命中分数。"
+        "返回纯 JSON，不要 markdown、解释或额外字段。"
+    ),
+    output_schema_version="1.0",
+)
+
+
 # === Canonical teacher actions (incremental pipeline v2) ===
 
 PREP_ACTION_PLANNER_PROMPT = PromptSpec(
@@ -261,6 +289,7 @@ __all__ = [
     "SCRIPT_WRITER_BATCH_PROMPT",
     "EVIDENCE_VERIFIER_PROMPT",
     "INCREMENTAL_PLANNER_PROMPT",
+    "PREP_INTENT_ROUTER_PROMPT",
     "PREP_ACTION_PLANNER_PROMPT",
     "STRUCTURE_PLANNER_PROMPT",
     "PPT_MAPPING_OPTIMIZER_PROMPT",

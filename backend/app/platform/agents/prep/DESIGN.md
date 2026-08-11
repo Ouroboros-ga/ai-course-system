@@ -401,7 +401,7 @@ class PromptSpec:
 
 ### Prompt 清单
 
-首次备课仍是 5 个业务阶段；证据阶段内部使用 Map 与 Reduce 两个 PromptSpec，其后是大纲、讲稿、证据校验和确定性编译。增量修改与 PPT 映射优化保持独立 Prompt。
+首次备课仍是 5 个业务阶段；证据阶段内部使用 Map 与 Reduce 两个 PromptSpec，其后是大纲、讲稿、证据校验和确定性编译。增量修改、自由文本意图路由与 PPT 映射优化保持独立 Prompt；意图路由只选择既有 action，不获得规划或写权限。
 
 | # | PromptSpec | 阶段 | 链路 |
 |---|-----------|------|------|
@@ -411,7 +411,8 @@ class PromptSpec:
 | 4 | prep.script_writer / batch v1.2 | 讲稿撰写（不返回证据 ID / paragraph_evidence） | Initial |
 | 5 | prep.evidence_verifier v1.2 | 证据校验（不返回证据 ID） | Initial |
 | 6 | prep.incremental_planner v2.0 | 增量规划 | Incremental |
-| 7 | prep.ppt_mapping_optimizer v1.1 | PPT映射优化 | PptMapping |
+| 7 | prep.intent_router v1.0 | 自由文本语义 action 路由（不规划、不写入） | Incremental |
+| 8 | prep.ppt_mapping_optimizer v1.1 | PPT映射优化 | PptMapping |
 
 `compile_patch` 阶段是确定性编译，无 Prompt。
 
@@ -442,6 +443,7 @@ class PromptSpec:
 | write_scripts_batch() | prep.script_writer | ControlledPrepWorkflow |
 | verify_script() | prep.evidence_verifier | ControlledPrepWorkflow |
 | plan_incremental() | prep.incremental_planner | CoursePrepAgentService |
+| classify_intent() | prep.intent_router | CoursePrepAgentService |
 | optimize_ppt_mappings() | prep.ppt_mapping_optimizer | PptMappingOptimizationService |
 
 ### Service 构造函数接缝改造
@@ -493,8 +495,8 @@ prep/
 ├── __init__.py
 ├── DESIGN.md                       ← 本文档
 ├── enums.py                        # PrepGraphKind（3 个值）
-├── prompts.py                      # 6 个 PromptSpec
-├── llm_adapter.py                  # PrepLLMAdapter（7 个方法）
+├── prompts.py                      # PromptSpec 集合（含自由文本意图路由）
+├── llm_adapter.py                  # PrepLLMAdapter（8 个方法）
 ├── stage_emitter.py                # StageEmitter
 ├── validation.py                   # PrepPlanValidatorPort
 │
