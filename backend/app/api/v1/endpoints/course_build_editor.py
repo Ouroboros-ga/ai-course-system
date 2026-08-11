@@ -2399,6 +2399,11 @@ async def optimize_ppt_mapping(
     batch_lock = await _try_acquire_prep_batch_lock(course_id)
     if batch_lock is None:
         raise _prep_agent_busy_error()
+    # Commit the request-scoped read transaction before the Prep agent opens
+    # its own writer session.  SQLite (even in WAL mode) blocks a writer while
+    # any read transaction is open on another connection, which previously
+    # surfaced as ``database is locked`` during ``UPDATE course_ppt_mappings``.
+    session.commit()
     try:
         summary = await _run_ppt_mapping_agent(
             request=request,
@@ -2504,6 +2509,11 @@ async def match_ppt_mapping_scope(
     batch_lock = await _try_acquire_prep_batch_lock(course_id)
     if batch_lock is None:
         raise _prep_agent_busy_error()
+    # Commit the request-scoped read transaction before the Prep agent opens
+    # its own writer session.  See ``optimize_ppt_mapping`` for the rationale:
+    # SQLite otherwise blocks the writer behind the open read transaction and
+    # raises ``database is locked``.
+    session.commit()
     try:
         summary = await _run_ppt_mapping_agent(
             request=request,

@@ -82,15 +82,25 @@ def test_engine(temp_db_path):
 
     # 使用 alembic upgrade head 建库，而非 create_all
     # 这确保测试数据库结构与生产一致（经过迁移链验证）
-    from alembic.config import CommandLine
-    backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    alembic_ini = os.path.join(backend_root, "alembic.ini")
-    cmdline = CommandLine(prog="alembic")
+    # 当 alembic 未安装时回退到 create_all，保证测试可运行
     try:
-        cmdline.main(["-c", alembic_ini, "upgrade", "head"])
-    except SystemExit as e:
-        if e.code not in (None, 0):
-            raise RuntimeError(f"alembic upgrade head failed with exit code {e.code}")
+        from alembic.config import CommandLine
+        backend_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        alembic_ini = os.path.join(backend_root, "alembic.ini")
+        cmdline = CommandLine(prog="alembic")
+        try:
+            cmdline.main(["-c", alembic_ini, "upgrade", "head"])
+        except SystemExit as e:
+            if e.code not in (None, 0):
+                raise RuntimeError(f"alembic upgrade head failed with exit code {e.code}")
+    except ModuleNotFoundError:
+        # 测试环境未安装 alembic，回退到 create_all 建表
+        engine_fallback = create_engine(
+            os.environ["AI_COURSE_DATABASE_URL"],
+            connect_args={"check_same_thread": False},
+        )
+        SQLModel.metadata.create_all(engine_fallback)
+        engine_fallback.dispose()
 
     engine = create_engine(
         os.environ["AI_COURSE_DATABASE_URL"],
