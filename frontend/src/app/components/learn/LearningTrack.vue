@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue'
+import { nextTick, ref, watch } from 'vue'
 import { Check, ChevronLeft, ChevronRight, CircleAlert, Clock3, HelpCircle, Info, KeyRound, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { getCognitionDisplayState, getLearningDisplayState, getNodeDisplayState, summarizeLearningItems } from '@/features/student-learning/learningStatus.js'
@@ -59,7 +59,7 @@ function itemFor(node) {
 function cognitionFor(node) {
   const item = itemFor(node)
   const detail = props.cognitiveDetails[String(node?.outlineNodeId)]
-  if (detail && detail.status !== 'degraded') return { ...(item?.cognition || {}), ...detail }
+  if (detail && detail.status !== 'degraded') return { ...item?.cognition, ...detail }
   return item?.cognition || {}
 }
 
@@ -195,15 +195,9 @@ const indentStep = 12
             <span class="sfx-track-item-main">
               <span class="sfx-track-item-title-row">
                 <span class="sfx-track-item-title">
-                  <span class="sfx-track-item-title-text">{{ node.title }}</span>
+                  <span class="sfx-track-item-title-text" :title="node.title">{{ node.title }}</span>
                   <KeyRound v-if="node.isKeyPoint" :size="12" class="sfx-track-key" aria-label="重点" />
                 </span>
-                <SfxButton
-                  variant="tertiary"
-                  size="sm"
-                  :aria-label="expandedNodeId === node.outlineNodeId ? `收起${node.title}状态详情` : `查看${node.title}状态详情`"
-                  @click.stop="emit('inspect', node.outlineNodeId)"
-                >{{ expandedNodeId === node.outlineNodeId ? '收起' : '详情' }}</SfxButton>
               </span>
               <span class="sfx-track-item-subrow">
                 <span :class="`is-tone-${displayState(node).tone}`" class="sfx-track-item-state-label">
@@ -215,6 +209,13 @@ const indentStep = 12
                 <span class="sfx-track-item-time sfx-track-item-muted">{{ formatDuration(node.duration) }}</span>
                 <span class="sfx-track-item-sep sfx-track-item-muted">·</span>
                 <span class="sfx-track-item-progress">{{ formatPercent(itemFor(node)?.learning?.completion_ratio) }}</span>
+                <SfxButton
+                  variant="tertiary"
+                  size="sm"
+                  class="sfx-track-item-detail-btn"
+                  :aria-label="expandedNodeId === node.outlineNodeId ? `收起${node.title}状态详情` : `查看${node.title}状态详情`"
+                  @click.stop="emit('inspect', node.outlineNodeId)"
+                >{{ expandedNodeId === node.outlineNodeId ? '收起' : '详情' }}</SfxButton>
               </span>
             </span>
           </template>
@@ -500,32 +501,28 @@ const indentStep = 12
 }
 
 .sfx-track-item-title-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
   flex: 1;
+  min-width: 0;
+  line-height: 1.45;
+}
+
+/* 详情按钮：次行右端，让出标题空间 + 紧凑型适配 */
+.sfx-track-item-detail-btn {
+  margin-left: auto;
+  flex-shrink: 0;
+  height: 22px !important;
+  padding: 0 6px !important;
+  font-size: var(--caption-size) !important;
+  border-radius: var(--radius-sm) !important;
   min-width: 0;
 }
 
-/* 详情按钮：原生 button，紧凑小字 */
-.sfx-track-item-details-btn {
-  flex-shrink: 0;
-  appearance: none;
-  border: 0;
-  background: transparent;
-  font: inherit;
-  cursor: pointer;
-  color: var(--text-muted);
-  font-size: var(--caption-size);
-  line-height: 1;
-  padding: 3px 4px;
-  border-radius: var(--radius-sm);
-  white-space: nowrap;
-  transition: color var(--duration-fast) var(--ease-out), background var(--duration-fast) var(--ease-out);
-}
-.sfx-track-item-details-btn:hover { color: var(--text-primary); background: var(--ink-100); }
-
-/* subrow：状态 + 时间 + 进度（无按钮，不会出界） */
+/* subrow：状态 + 时间 + 进度 + 详情按钮（详情按钮右端常驻） */
 .sfx-track-item-subrow {
   display: flex;
   align-items: center;
@@ -534,14 +531,16 @@ const indentStep = 12
   line-height: 1.2;
   color: var(--text-muted);
   min-width: 0;
-  overflow: hidden;
 }
 
 .sfx-track-item-state-label {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  flex-shrink: 0;
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 500;
 }
