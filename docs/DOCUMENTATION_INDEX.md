@@ -12,6 +12,10 @@
 
 > 2026-08-11 更新：初始备课新增“讲稿覆盖问题”安全记录与 `partial_success` 语义；教师可在当前草稿讲稿页手工补齐，缺失/空讲稿升级为不可绕过的发布 BLOCKER。实现、迁移和验证边界见[课程生成核心逻辑与统一建设链](phase1/课程生成核心逻辑与统一建设链.md)及[功能现状审计表](phase1/功能现状审计表.md)。
 
+> 2026-08-12 更新：当前“实验平台”仅表示代码沙箱。教师可在课程设置中用窄权限接口启用/关闭；关闭时师生二级导航不显示“实验任务”。汽车工程等非代码课程保持关闭；后续仿真类实验必须另建能力与任务链，不得冒充现有代码沙箱。实际权限和验证证据见[功能现状审计表](phase1/功能现状审计表.md)。
+
+> 2026-08-12 更新：课程能力开关默认全开，教师可在设置页自配实验平台/沙箱/智能体配置/智能体启动；「智能体」设置契约统一为 `enabled`/`enabled_tools`/`require_teacher_confirmation`/`web_research_enabled`，教学问答端点按课程级 `agent_policy.enabled` 门禁。平台 `ADMIN` 权限在所有课程持有成员列表不可见的“课程所有者”身份，facade 首页与建设列表对管理员返回全部课程（含草稿）。实现与验证证据见[功能现状审计表](phase1/功能现状审计表.md)与 [Course Access 权限解析](phase1/权限架构重构Goal.md)。
+
 > 2026-08-07 新增：[平台管理员、Provider 与开放 API 兼容层](phase1/平台管理员Provider与开放API兼容层.md)。该文档记录全局 user/admin 角色收敛、历史大写 TEACHER 账号升级管理员、后台配置、密钥脱敏、Provider 热刷新及可移除的泛雅·超星 AI 示例协议参考兼容包边界。
 
 > 2026-08-12 更新：[ResearchAgent 整体架构、前端与上线基线](phase1/研究智能体整体架构与前端设计.md) 的真实部署数据库兼容基线确认为 PostgreSQL 16.14 + pgvector 0.7.4：仅只读验证 `0053` 五表、`vector` 和 `<=>`；Provider 对 vector SQL 不可用显式降级关键词，不改变服务器配置或服务。arXiv 仍是唯一论文源，多源/全文/写作/完整仓库复现保持 Research Preview。执行清单见 [ResearchAgent Harness Todo](phase1/ResearchAgent_Harness_TODO.md)。

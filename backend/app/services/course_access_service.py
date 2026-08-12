@@ -263,10 +263,14 @@ def resolve_course_access(session: Session, current_user: dict[str, Any], course
     platform_permissions_for_course = _platform_course_permissions(platform_permissions)
 
     if membership is None or membership.status != MembershipStatus.ACTIVE:
+        # 平台管理员拥有「隐藏课程所有者」身份：无需成员关系即可对任意
+        # 课程行使完整 OWNER 权限（含修改不合规课程）。语义上与 OWNER 平级，
+        # 但管理员不写入 CourseMembership，因此成员列表对其天然不可见。
+        hidden_owner = PlatformPermission.ADMIN.value in platform_permissions
         return CourseAccessContext(
             course_id=course_id,
             user_id=user_id,
-            role=None,
+            role=CourseRole.OWNER if hidden_owner else None,
             membership_status=membership.status if membership else None,
             permissions=platform_permissions_for_course,
             capabilities=capabilities,

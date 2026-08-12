@@ -281,9 +281,14 @@ class FacadeHomeService:
             m.role in {CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT}
             for m in memberships
         )
+        # 平台管理员对所有课程拥有隐藏的「课程所有者」身份；默认进入教师视图
+        # 以便发现全部课程并处理不合规内容。
+        is_platform_admin = self._is_platform_admin(session, user_id)
 
         if mode is None:
-            if has_student and has_teacher:
+            if is_platform_admin:
+                active_mode = "teacher"
+            elif has_student and has_teacher:
                 active_mode = "mixed"
             elif has_teacher:
                 active_mode = "teacher"
@@ -300,12 +305,16 @@ class FacadeHomeService:
         # teacher 视图下的"我建设的"
         building_courses: list[BuildingCourseCard] = []
         if active_mode in {"teacher", "mixed"}:
-            building_courses = self._build_building_courses(session, user_id)
+            building_courses = self._build_building_courses(
+                session, user_id, is_platform_admin=is_platform_admin,
+            )
 
         # 待处理审核（teacher 视图）
         pending_reviews: list[PendingReviewCard] = []
         if active_mode in {"teacher", "mixed"}:
-            pending_reviews = self._build_pending_reviews(session, user_id)
+            pending_reviews = self._build_pending_reviews(
+                session, user_id, is_platform_admin=is_platform_admin,
+            )
 
         # 系统任务（所有视图都展示失败任务）
         system_tasks = self._build_system_tasks(session, user_id)
@@ -363,6 +372,7 @@ class FacadeHomeService:
             return self._list_building_courses(
                 session, user_id, cursor=cursor, page_size=page_size,
                 query=query, status_filter=status_filter,
+                is_platform_admin=self._is_platform_admin(session, user_id),
             )
         return self._list_hall_courses(
             session, user_id, cursor=cursor, page_size=page_size,
@@ -417,32 +427,45 @@ class FacadeHomeService:
     # ------------------------------------------------------------------
 
     def _build_building_courses(
-        self, session: Session, user_id: int
+        self, session: Session, user_id: int, *, is_platform_admin: bool = False,
     ) -> list[BuildingCourseCard]:
-        """教师最近建设的课程（最多3个）。"""
+        """教师最近建设的课程（最多3个）。
+
+        平台管理员对所有课程拥有隐藏的「课程所有者」身份：在教师视图返回
+        全部课程（含草稿），便于发现并修改不合规课程。
+        """
         teacher_roles = {CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT}
-        memberships = session.exec(
-            select(CourseMembership)
-            .where(
-                CourseMembership.user_id == user_id,
-                CourseMembership.status == MembershipStatus.ACTIVE,
-                CourseMembership.role.in_(teacher_roles),
-            )
-            .order_by(CourseMembership.updated_at.desc())
-            .limit(self.HOME_BUILDING_LIMIT)
-        ).all()
+        if is_platform_admin:
+            memberships = None
+            courses = session.exec(
+                select(Course).order_by(Course.updated_at.desc()).limit(self.HOME_BUILDING_LIMIT)
+            ).all()
+        else:
+            memberships = session.exec(
+                select(CourseMembership)
+                .where(
+                    CourseMembership.user_id == user_id,
+                    CourseMembership.status == MembershipStatus.ACTIVE,
+                    CourseMembership.role.in_(teacher_roles),
+                )
+                .order_by(CourseMembership.updated_at.desc())
+                .limit(self.HOME_BUILDING_LIMIT)
+            ).all()
+            courses = [session.get(Course, m.course_id) for m in memberships]
 
         cards: list[BuildingCourseCard] = []
-        for m in memberships:
-            course = session.get(Course, m.course_id)
+        for idx, course in enumerate(courses):
             if course is None:
                 continue
             pending = self._count_pending_reviews_for_course(session, course.id)
-            failed = self._count_failed_tasks_for_course(session, course.id, user_id)
+            failed = 0 if is_platform_admin else self._count_failed_tasks_for_course(
+                session, course.id, user_id,
+            )
+            role = "owner" if is_platform_admin else memberships[idx].role.value
             cards.append(BuildingCourseCard(
                 course_id=course.id,
                 title=course.title,
-                role=m.role.value,
+                role=role,
                 status=course.status.value if course.status else "draft",
                 current_build_step=None,  # 阶段3 补充建设步骤状态机
                 pending_review_count=pending,
@@ -456,23 +479,33 @@ class FacadeHomeService:
     # ------------------------------------------------------------------
 
     def _build_pending_reviews(
-        self, session: Session, user_id: int
+        self, session: Session, user_id: int, *, is_platform_admin: bool = False,
     ) -> list[PendingReviewCard]:
-        """教师需要处理的审核项（最多10个）。"""
-        teacher_roles = {CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT}
-        memberships = session.exec(
-            select(CourseMembership)
-            .where(
-                CourseMembership.user_id == user_id,
-                CourseMembership.status == MembershipStatus.ACTIVE,
-                CourseMembership.role.in_(teacher_roles),
-            )
-        ).all()
-        if not memberships:
-            return []
+        """教师需要处理的审核项（最多10个）。
 
-        course_ids = [m.course_id for m in memberships]
-        course_by_id = {m.course_id: session.get(Course, m.course_id) for m in memberships}
+        平台管理员对全部课程可见待审核项（题目 / 图谱候选 / 失败任务），
+        便于审计与处理不合规内容。
+        """
+        teacher_roles = {CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT}
+        if is_platform_admin:
+            all_courses = session.exec(select(Course)).all()
+            if not all_courses:
+                return []
+            course_ids = [c.id for c in all_courses]
+            course_by_id = {c.id: c for c in all_courses}
+        else:
+            memberships = session.exec(
+                select(CourseMembership)
+                .where(
+                    CourseMembership.user_id == user_id,
+                    CourseMembership.status == MembershipStatus.ACTIVE,
+                    CourseMembership.role.in_(teacher_roles),
+                )
+            ).all()
+            if not memberships:
+                return []
+            course_ids = [m.course_id for m in memberships]
+            course_by_id = {m.course_id: session.get(Course, m.course_id) for m in memberships}
         cards: list[PendingReviewCard] = []
 
         # 1. 题目审核：auto_accepted/draft/stale 状态的题目需要教师审核
@@ -675,18 +708,26 @@ class FacadeHomeService:
         page_size: int,
         query: Optional[str],
         status_filter: Optional[str],
+        is_platform_admin: bool = False,
     ) -> dict[str, Any]:
-        """教师建设课程列表（owner/teacher/teaching_assistant）。"""
+        """教师建设课程列表（owner/teacher/teaching_assistant）。
+
+        平台管理员对所有课程拥有隐藏的「课程所有者」身份：返回全部课程
+        （含草稿），便于发现并修改不合规课程。
+        """
         teacher_roles = {CourseRole.OWNER, CourseRole.TEACHER, CourseRole.TEACHING_ASSISTANT}
-        stmt = (
-            select(CourseMembership, Course)
-            .join(Course, Course.id == CourseMembership.course_id)
-            .where(
-                CourseMembership.user_id == user_id,
-                CourseMembership.status == MembershipStatus.ACTIVE,
-                CourseMembership.role.in_(teacher_roles),
+        if is_platform_admin:
+            stmt = select(Course)
+        else:
+            stmt = (
+                select(CourseMembership, Course)
+                .join(Course, Course.id == CourseMembership.course_id)
+                .where(
+                    CourseMembership.user_id == user_id,
+                    CourseMembership.status == MembershipStatus.ACTIVE,
+                    CourseMembership.role.in_(teacher_roles),
+                )
             )
-        )
 
         # 建设视图允许所有状态（draft/published/closed/archived）
         if query:
@@ -712,17 +753,29 @@ class FacadeHomeService:
         rows = rows[:page_size]
 
         items: list[dict[str, Any]] = []
-        for m, course in rows:
-            card = self._serialize_course_card(session, user_id, course, role=m.role.value)
+        for row in rows:
+            if is_platform_admin:
+                course = row
+                role = "owner"
+            else:
+                _membership, course = row
+                role = _membership.role.value
+            card = self._serialize_course_card(session, user_id, course, role=role)
             # 补充建设状态摘要
             card["build_status"] = {
                 "pending_review_count": self._count_pending_reviews_for_course(session, course.id),
-                "failed_task_count": self._count_failed_tasks_for_course(session, course.id, user_id),
+                "failed_task_count": (
+                    0 if is_platform_admin
+                    else self._count_failed_tasks_for_course(session, course.id, user_id)
+                ),
                 "current_build_step": None,  # 阶段3 补充
             }
             items.append(card)
 
-        next_cursor = _encode_cursor(rows[-1][1]) if has_next and rows else None
+        last_course = rows[-1] if has_next and rows else None
+        if last_course is not None and not is_platform_admin:
+            last_course = last_course[1]
+        next_cursor = _encode_cursor(last_course) if last_course is not None else None
         return {
             "view": "building",
             "items": items,
@@ -829,6 +882,16 @@ class FacadeHomeService:
     # ------------------------------------------------------------------
     # 序列化与查询辅助
     # ------------------------------------------------------------------
+
+    def _is_platform_admin(self, session: Session, user_id: int) -> bool:
+        """用户是否持有未撤销的平台 ADMIN 权限（对所有课程隐藏所有者身份）。"""
+        assignments = session.exec(
+            select(PlatformPermissionAssignment).where(
+                PlatformPermissionAssignment.user_id == user_id,
+                PlatformPermissionAssignment.revoked_at.is_(None),
+            )
+        ).all()
+        return any(a.permission == PlatformPermission.ADMIN for a in assignments)
 
     def _serialize_course_card(
         self,

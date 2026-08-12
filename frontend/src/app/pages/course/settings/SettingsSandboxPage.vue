@@ -1,9 +1,14 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { Lock } from 'lucide-vue-next'
 import { getSandboxPolicy, updateSandboxPolicy } from '@/api/safety.js'
 import { getSandboxLanguages } from '@/api/sandbox.js'
+import {
+  getCourseCapabilities,
+  updateCodeSandboxExperimentPlatform,
+} from '@/api/course_access.js'
+import { isCodeSandboxExperimentPlatformEnabled } from '@/app/lib/courseExperimentPlatform.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
@@ -19,11 +24,20 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
  */
 const route = useRoute()
 const courseId = Number(route.params.courseId)
+const courseContext = inject('courseContext', null)
 
 const status = ref('loading')
 const forbidden = ref(false)
 const policy = ref(null)
 const platformLanguages = ref([])
+const courseCapabilities = ref({})
+const platformSaving = ref(false)
+const experimentPlatformEnabled = computed(() =>
+  isCodeSandboxExperimentPlatformEnabled(courseCapabilities.value),
+)
+const canManageExperimentPlatform = computed(() => Boolean(
+  courseContext?.allowed?.value?.['course.edit'],
+))
 
 const form = ref({
   sandbox_preset: 'basic_programming',
@@ -71,12 +85,14 @@ async function load() {
   status.value = 'loading'
   forbidden.value = false
   try {
-    const [data, langs] = await Promise.all([
+    const [data, langs, capabilities] = await Promise.all([
       getSandboxPolicy(courseId),
       getSandboxLanguages().catch(() => null),
+      getCourseCapabilities(courseId),
     ])
     policy.value = data
     platformLanguages.value = Array.isArray(langs?.languages) ? langs.languages : []
+    courseCapabilities.value = capabilities?.capabilities ?? {}
     form.value = {
       sandbox_preset: data.sandbox_preset ?? 'basic_programming',
       allowed_languages: [...(data.allowed_languages ?? [])],
@@ -92,6 +108,29 @@ async function load() {
   } catch (e) {
     forbidden.value = /403|权限|拒绝/.test(String(e?.message || ''))
     status.value = 'error'
+  }
+}
+
+async function setExperimentPlatform(enabled) {
+  if (platformSaving.value || !canManageExperimentPlatform.value) return
+
+  platformSaving.value = true
+  saveNotice.value = ''
+  saveError.value = ''
+  try {
+    const updated = await updateCodeSandboxExperimentPlatform(courseId, enabled)
+    courseCapabilities.value = {
+      ...courseCapabilities.value,
+      ...(updated?.capabilities ?? {}),
+    }
+    await courseContext?.reload?.()
+    saveNotice.value = enabled
+      ? '实验平台（代码沙箱）已启用。'
+      : '实验平台已关闭，师生侧的“实验任务”入口已隐藏。'
+  } catch (e) {
+    saveError.value = e?.message || '实验平台设置保存失败，请稍后重试。'
+  } finally {
+    platformSaving.value = false
   }
 }
 
@@ -132,7 +171,8 @@ onMounted(load)
         <h1 class="sfx-t-title2">沙箱权限</h1>
         <p class="sfx-t-ui sfx-t-secondary">课程代码运行的资源与网络边界</p>
       </div>
-      <SfxBadge v-if="policy" tone="ink">{{ presetOptions.find((o) => o.value === policy.sandbox_preset)?.label ?? policy.sandbox_preset }}</SfxBadge>
+      <SfxBadge v-if="experimentPlatformEnabled && policy" tone="ink">{{ presetOptions.find((o) => o.value === policy.sandbox_preset)?.label ?? policy.sandbox_preset }}</SfxBadge>
+      <SfxBadge v-else tone="amber">实验平台未启用</SfxBadge>
     </header>
 
     <SfxSkeleton v-if="status === 'loading'" :lines="6" />
@@ -146,6 +186,33 @@ onMounted(load)
 
     <template v-else>
       <section class="sfx-panel">
+        <div class="sfx-experiment-platform-head">
+          <div>
+            <h2 class="sfx-panel-title">实验平台（代码沙箱）</h2>
+            <p class="sfx-t-ui sfx-t-secondary">
+              当前实验平台只支持代码运行。关闭后，教师端与学生端都不会显示“实验任务”。
+            </p>
+          </div>
+          <SfxButton
+            :variant="experimentPlatformEnabled ? 'secondary' : 'primary'"
+            :loading="platformSaving"
+            :disabled="!canManageExperimentPlatform"
+            @click="setExperimentPlatform(!experimentPlatformEnabled)"
+          >
+            {{ experimentPlatformEnabled ? '关闭实验平台' : '启用实验平台' }}
+          </SfxButton>
+        </div>
+        <p v-if="!canManageExperimentPlatform" class="sfx-t-caption sfx-t-muted">
+          当前课程角色没有变更实验平台设置的权限。
+        </p>
+        <p v-else-if="!experimentPlatformEnabled" class="sfx-t-caption sfx-t-muted">
+          汽车工程等暂不使用代码沙箱的课程应保持关闭；将来接入非代码实验时会使用独立能力，不复用此开关。
+        </p>
+        <p v-if="saveNotice" class="sfx-sandbox-notice sfx-t-ui" role="status">{{ saveNotice }}</p>
+        <p v-if="saveError" class="sfx-sandbox-error sfx-t-ui" role="alert">{{ saveError }}</p>
+      </section>
+
+      <section class="sfx-panel">
         <h2 class="sfx-panel-title"><Lock :size="16" /> 平台硬边界（不可设置）</h2>
         <ul class="sfx-sandbox-hardlimits">
           <li><SfxBadge tone="green">已强制</SfxBadge><span class="sfx-t-ui">禁止访问服务器文件</span></li>
@@ -154,7 +221,7 @@ onMounted(load)
         </ul>
       </section>
 
-      <section class="sfx-panel">
+      <section v-if="experimentPlatformEnabled" class="sfx-panel">
         <h2 class="sfx-panel-title">课程沙箱策略</h2>
 
         <div class="sfx-sandbox-form">
@@ -219,9 +286,6 @@ onMounted(load)
           </label>
         </div>
 
-        <p v-if="saveNotice" class="sfx-sandbox-notice sfx-t-ui" role="status">{{ saveNotice }}</p>
-        <p v-if="saveError" class="sfx-sandbox-error sfx-t-ui" role="alert">{{ saveError }}</p>
-
         <div class="sfx-sandbox-actions">
           <SfxButton variant="primary" :loading="saving" @click="save">保存沙箱策略</SfxButton>
         </div>
@@ -231,6 +295,13 @@ onMounted(load)
 </template>
 
 <style scoped>
+.sfx-experiment-platform-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
 .sfx-panel-title {
   display: flex;
   align-items: center;
@@ -319,5 +390,11 @@ onMounted(load)
   margin-top: var(--space-4);
   display: flex;
   justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .sfx-experiment-platform-head {
+    flex-direction: column;
+  }
 }
 </style>

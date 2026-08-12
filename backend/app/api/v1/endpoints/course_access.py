@@ -59,6 +59,12 @@ class CapabilityUpdateRequest(BaseModel):
     safety_policy: bool
 
 
+class ExperimentPlatformUpdateRequest(BaseModel):
+    """Teacher-scoped switch for the currently supported code-sandbox platform."""
+
+    enabled: bool
+
+
 @router.get("/courses/{course_id}/access")
 async def get_course_access(
     course_id: int,
@@ -198,6 +204,12 @@ async def update_course_capabilities(
         select(CourseCapability).where(CourseCapability.course_id == course_id)
     ).first()
     values = payload.model_dump()
+    # The only supported experiment platform currently is the code sandbox.
+    # Persist it atomically so a course cannot retain an experiment entry whose
+    # tasks have no executable runtime. Future non-code labs need a dedicated
+    # capability rather than reusing this code-sandbox switch.
+    if not values["coding_sandbox"]:
+        values["experiment"] = False
     if capability is None:
         capability = CourseCapability(course_id=course_id, **values)
     else:
@@ -207,6 +219,41 @@ async def update_course_capabilities(
     session.add(capability)
     session.commit()
     return unified_response(code=200, message="保存课程能力成功", data={"course_id": course_id, "capabilities": values})
+
+
+@router.put("/courses/{course_id}/experiment-platform")
+async def update_code_sandbox_experiment_platform(
+    course_id: int,
+    payload: ExperimentPlatformUpdateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Let a course teacher opt in or out of the current code-only lab UI."""
+    require_course_permission(session, current_user, course_id, "course.edit")
+    capability = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course_id)
+    ).first()
+    if capability is None:
+        capability = CourseCapability(course_id=course_id)
+
+    # Do not expose an experiment task entry without its only current runtime.
+    capability.experiment = payload.enabled
+    capability.coding_sandbox = payload.enabled
+    capability.updated_at = utcnow_aware()
+    session.add(capability)
+    session.commit()
+
+    return unified_response(
+        code=200,
+        message="保存实验平台设置成功",
+        data={
+            "course_id": course_id,
+            "capabilities": {
+                "experiment": capability.experiment,
+                "coding_sandbox": capability.coding_sandbox,
+            },
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

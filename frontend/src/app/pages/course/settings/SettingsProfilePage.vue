@@ -42,8 +42,9 @@ async function load() {
   resetFromCourse()
   try {
     const settings = await getCourseSettings(courseId.value)
-    version.value = settings?.version ?? null
-    if (settings?.profile) form.value = { ...form.value, ...settings.profile }
+    const current = settings?.current_setting
+    version.value = current?.version ?? null
+    if (current?.profile) form.value = { ...form.value, ...current.profile }
   } catch {
     // The basic course fields remain editable when lifecycle settings are unavailable.
   }

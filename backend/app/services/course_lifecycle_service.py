@@ -1,4 +1,4 @@
-﻿"""阶段2 成员、设置、加入申请与课程生命周期服务。
+"""阶段2 成员、设置、加入申请与课程生命周期服务。
 
 每个服务接收 Session（事务边界由路由层管理），不自行创建独立 session。
 所有写入都通过 CourseAccessContext 校验权限，不依赖 User.role。
@@ -519,9 +519,14 @@ _PUBLISH_FIELDS = {
     "hall_visible", "join_mode", "invite_code", "require_review",
     "start_at", "end_at", "notify_on_publish", "allow_withdraw", "allow_chapter_jump",
 }
+# 智能体策略白名单与前端 SettingsAgentPage 表单字段一一对应：
+# - enabled: 课程智能体启动开关（关闭后教学问答端点拒绝请求）
+# - enabled_tools: 允许智能体使用的工具名列表（配合 AgentToolPolicy 治理）
+# - require_teacher_confirmation: 高风险教学动作需教师确认
+# - web_research_enabled: 是否允许智能体补充外部资料（WebResearch）
+# 历史占位字段（agent_name/answer_scope 等）无消费方，已从白名单移除。
 _AGENT_POLICY_FIELDS = {
-    "agent_name", "answer_scope", "require_citation", "no_evidence_behavior",
-    "allowed_actions", "hint_strategy", "teacher_instructions", "experimental_enabled",
+    "enabled", "enabled_tools", "require_teacher_confirmation", "web_research_enabled",
 }
 _SAFETY_FIELDS = {
     "preset", "blocked_topics", "must_cite_topics", "course_whitelist",

@@ -85,7 +85,7 @@
 | 功能 | 状态 | 说明 |
 |---|---|---|
 | 代码沙箱执行（Judge0） | 🧪 | 客户端完整（多语言/状态映射/降级），`JUDGE0_ENABLED=False` **默认禁用**（共用主机权限受限） |
-| 平台实验室（Labs）、算法实验（Experiments） | ✅ | `labs.py`、`experiments.py` 已注册（未启用沙箱时返回 `CODING_SANDBOX_DISABLED`） |
+| 平台实验室（Labs）、算法实验（Experiments） | ✅ | 当前仅支持代码沙箱；教师可按课程启用，关闭时师生不显示“实验任务”，未启用沙箱时执行返回 `CODING_SANDBOX_DISABLED` |
 | 算法可视化（JSAV，11 种白名单算法） | ✅ | legacy `VisualizationView` + JSAVPlayer；学生可播 published 计划，教师可创建/发布计划 |
 | CodingEduAgent 代码诊断 | ✅ | 三节点工作流（沙箱结果→诊断→响应） |
 
@@ -312,6 +312,7 @@ npm run smoke:app
 
 ## 近期关键更新（时间线）
 
+- **2026-08-12**：课程能力开关改为新课程默认全开（含实验/代码沙箱/智能体配置），教师可在设置页自行关闭；「智能体」设置契约统一为 `enabled`（启动开关）/`enabled_tools`/`require_teacher_confirmation`/`web_research_enabled`，教学问答端点按课程级 `agent_policy.enabled` 门禁；平台 `ADMIN` 权限在所有课程持有成员列表不可见的「课程所有者」身份（`course_role=owner`、无成员关系），facade 首页与建设列表对管理员返回全部课程（含草稿）以便修改不合规课程。
 - **2026-08-11**：课程导入走受管异步路径（解析先行 → GraphRAG 草稿排队教师审核 → 授权后激活 LanceDB/BGE）；平台管理员可配置任务并发。初始备课若个别讲稿未通过证据校验或模型漏项，保留其余草稿并标记 `partial_success`，由教师在讲稿页手工补齐；未覆盖/空讲稿是不可确认绕过的发布 BLOCKER。
 - **2026-08-11**：PPT manifest 改为缓存优先的后台 `media.ppt_manifest` 任务：复用映射阶段页图、仅补渲染缺页、记录安全页数进度；激活不再同步触发 LibreOffice 渲染。
 - **2026-08-11**：课程建设助教自由文本改由 Prep 结构化意图路由器按完整语义选择既有五种 action，移除关键词兜底；低置信度/范围不明请求只澄清或返回 `PREP_AGENT_INTENT_UNAVAILABLE`。明确按钮 action 仍绕过分类器；一键整理结构/优化讲解在 batch API 前写入带授权标识的本地用户消息，批量原子应用与单节点待审核提案语义保持不变，无数据库迁移。

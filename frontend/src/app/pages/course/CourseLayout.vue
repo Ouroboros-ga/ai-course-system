@@ -6,6 +6,7 @@ import { getCourseAccess, getCourseDetail } from '@/api/courses.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+import { isCodeSandboxExperimentPlatformEnabled } from '@/app/lib/courseExperimentPlatform.js'
 
 const route = useRoute()
 const router = useRouter()
@@ -40,7 +41,12 @@ const navItems = computed(() => {
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
     { key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: allowed.value['analytics.view_course'] },
     { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
-    { key: 'experiments', label: '实验任务', to: `/app/course/${courseId.value}/experiments`, enabled: true },
+    {
+      key: 'experiments',
+      label: '实验任务',
+      to: `/app/course/${courseId.value}/experiments`,
+      enabled: isCodeSandboxExperimentPlatformEnabled(capabilities.value),
+    },
     {
       key: 'research',
       label: '科研',
@@ -58,7 +64,10 @@ const navItems = computed(() => {
       { key: 'settings', label: '设置', to: `/app/course/${courseId.value}/settings`, enabled: true },
     )
   }
-  return base
+  // Other unavailable entries retain their disabled explanation. The current
+  // experiment implementation is code-sandbox-only, so it must disappear
+  // entirely when that platform is not enabled for this course.
+  return base.filter((item) => item.key !== 'experiments' || item.enabled)
 })
 
 const activeKey = computed(() => {

@@ -43,3 +43,12 @@ export function getCourseCapabilities(courseId) {
 export function updateCourseCapabilities(courseId, payload) {
   return request.put(`/course-access/courses/${courseId}/capabilities`, payload)
 }
+
+/**
+ * Toggle the currently supported, code-sandbox-only experiment platform.
+ * This narrow endpoint is available to a course teacher and cannot alter
+ * unrelated course capability switches.
+ */
+export function updateCodeSandboxExperimentPlatform(courseId, enabled) {
+  return request.put(`/course-access/courses/${courseId}/experiment-platform`, { enabled })
+}

@@ -9,6 +9,7 @@ const courseId = computed(() => courseContext.courseId.value)
 const allowed = computed(() => courseContext.allowed.value?.['agent.policy.configure'])
 
 const form = ref({
+  enabled: true,
   enabled_tools: [],
   require_teacher_confirmation: true,
   web_research_enabled: false,
@@ -31,8 +32,15 @@ const tools = [
 async function load() {
   try {
     const data = await getCourseSettings(courseId.value)
-    version.value = data?.version ?? null
-    form.value = { ...form.value, ...(data?.agent_policy ?? {}) }
+    const current = data?.current_setting
+    version.value = current?.version ?? null
+    const policy = current?.agent_policy ?? {}
+    form.value = {
+      enabled: policy.enabled !== false,
+      enabled_tools: Array.isArray(policy.enabled_tools) ? [...policy.enabled_tools] : [],
+      require_teacher_confirmation: policy.require_teacher_confirmation !== false,
+      web_research_enabled: Boolean(policy.web_research_enabled),
+    }
   } catch (e) {
     error.value = e?.message || '智能体策略读取失败'
   }
@@ -66,6 +74,14 @@ onMounted(load)
     </header>
 
     <form class="sfx-panel sfx-agent-form" @submit.prevent="save">
+      <div class="sfx-agent-section">
+        <h2 class="sfx-panel-title">智能体启动</h2>
+        <label class="sfx-check">
+          <input v-model="form.enabled" type="checkbox" :disabled="!allowed" />
+          <span class="sfx-t-ui">启用课程智能体（关闭后学生侧教学问答入口不可用）</span>
+        </label>
+      </div>
+
       <div class="sfx-agent-section">
         <h2 class="sfx-panel-title">可用能力</h2>
         <label v-for="[tool, toolLabel] in tools" :key="tool" class="sfx-check">

@@ -5,6 +5,7 @@ from datetime import datetime
 import sqlite3
 
 import pytest
+from sqlmodel import select
 
 from app.core.security import get_password_hash
 from app.core.security import create_access_token
@@ -168,6 +169,9 @@ def test_explicit_platform_admin_is_cross_course_authorized(session):
     assert context.allows("course.view")
     assert context.allows("course.delete")
     assert context.analytics_eligible is False
+    # 隐藏课程所有者身份：无成员关系也呈现为 OWNER（成员列表不可见）。
+    assert context.role == CourseRole.OWNER
+    assert context.membership_status is None
 
 
 def test_safety_manage_platform_permission_grants_agent_policy_across_courses(session):
@@ -279,6 +283,84 @@ def test_access_endpoint_rejects_legacy_owner_without_membership(client, session
 
     response = client.get(
         f"/api/v1/course-access/courses/{course.id}/access",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 403
+
+
+def test_disabling_code_sandbox_also_disables_current_experiment_platform(client, session):
+    """The current experiment UI is code-sandbox-only, so it cannot remain exposed alone."""
+    owner = _user(session, "permission_platform_gate_owner", UserRole.TEACHER)
+    course = _course(session, owner.id)
+    establish_course_access_baseline(session, course.id, owner.id)
+    session.commit()
+    token = create_access_token({"sub": str(owner.id), "username": owner.username, "role": "teacher"})
+
+    response = client.put(
+        f"/api/v1/course-access/courses/{course.id}/capabilities",
+        json={
+            "learning": True,
+            "course_building": True,
+            "knowledge_graph": True,
+            "evidence": True,
+            "experiment": True,
+            "coding_sandbox": False,
+            "cognitive_analysis": True,
+            "safety_policy": False,
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    capabilities = response.json()["data"]["capabilities"]
+    assert capabilities["experiment"] is False
+    assert capabilities["coding_sandbox"] is False
+    stored = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course.id)
+    ).one()
+    assert stored.experiment is False
+    assert stored.coding_sandbox is False
+
+
+def test_course_teacher_can_enable_current_code_sandbox_platform(client, session):
+    owner = _user(session, "permission_platform_gate_course_owner", UserRole.TEACHER)
+    teacher = _user(session, "permission_platform_gate_teacher", UserRole.TEACHER)
+    course = _course(session, owner.id)
+    establish_course_access_baseline(session, course.id, owner.id)
+    _member(session, teacher, course, CourseRole.TEACHER, analytics_excluded=True)
+    session.commit()
+    token = create_access_token({"sub": str(teacher.id), "username": teacher.username, "role": "teacher"})
+
+    response = client.put(
+        f"/api/v1/course-access/courses/{course.id}/experiment-platform",
+        json={"enabled": True},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+
+    assert response.status_code == 200
+    capabilities = response.json()["data"]["capabilities"]
+    assert capabilities["experiment"] is True
+    assert capabilities["coding_sandbox"] is True
+    stored = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course.id)
+    ).one()
+    assert stored.experiment is True
+    assert stored.coding_sandbox is True
+
+
+def test_student_cannot_change_current_code_sandbox_platform(client, session):
+    owner = _user(session, "permission_platform_gate_student_owner", UserRole.TEACHER)
+    student = _user(session, "permission_platform_gate_student", UserRole.STUDENT)
+    course = _course(session, owner.id)
+    establish_course_access_baseline(session, course.id, owner.id)
+    _member(session, student, course, CourseRole.STUDENT, analytics_excluded=False)
+    session.commit()
+    token = create_access_token({"sub": str(student.id), "username": student.username, "role": "student"})
+
+    response = client.put(
+        f"/api/v1/course-access/courses/{course.id}/experiment-platform",
+        json={"enabled": True},
         headers={"Authorization": f"Bearer {token}"},
     )
 

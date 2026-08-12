@@ -600,18 +600,32 @@ def test_settings_unauthorized_for_student(client, session):
 
 
 def test_settings_agent_policy_field_whitelist(client, session):
-    """agent_policy 仅接受白名单字段；非法字段被忽略。"""
+    """agent_policy 仅接受白名单字段（前端 SettingsAgentPage 契约字段）；非法字段被忽略。"""
     teacher = _user(session, "lc_ap_teacher", UserRole.TEACHER)
     course = _course(session, teacher.id)
 
     resp = client.put(
         f"{COURSE_SETTINGS}/course/{course.id}/agent-policy",
-        json={"patch": {"agent_name": "课程助手", "malicious_field": "hack"}, "expected_version": None},
+        json={
+            "patch": {
+                "enabled": False,
+                "enabled_tools": ["graph_read", "question_bank"],
+                "require_teacher_confirmation": True,
+                "web_research_enabled": False,
+                "agent_name": "课程助手",  # 历史占位字段，不在白名单内
+                "malicious_field": "hack",
+            },
+            "expected_version": None,
+        },
         headers=_auth(_token(teacher)),
     )
     assert resp.status_code == 200
     ap = resp.json()["data"]["agent_policy"]
-    assert ap["agent_name"] == "课程助手"
+    assert ap["enabled"] is False
+    assert ap["enabled_tools"] == ["graph_read", "question_bank"]
+    assert ap["require_teacher_confirmation"] is True
+    assert ap["web_research_enabled"] is False
+    assert "agent_name" not in ap
     assert "malicious_field" not in ap
 
 

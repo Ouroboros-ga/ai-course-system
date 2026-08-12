@@ -521,6 +521,59 @@ def test_platform_admin_can_access_cross_course(client, session):
     assert resp.status_code == 200
 
 
+def test_platform_admin_home_shows_all_courses(client, session):
+    """平台管理员（无成员关系）在首页默认教师视图，且可见全部课程（隐藏所有者）。"""
+    teacher = _user(session, "fac_admin_home_teacher", UserRole.TEACHER)
+    published = _course(session, teacher.id)
+    draft = _course(session, teacher.id)
+    draft.status = CourseStatus.DRAFT
+    session.add(draft)
+    session.commit()
+
+    admin = _user(session, "fac_admin_home_user", UserRole.STUDENT)
+    session.add(PlatformPermissionAssignment(
+        user_id=admin.id, permission=PlatformPermission.ADMIN,
+    ))
+    session.commit()
+
+    resp = client.get(f"{FACADE}/home", headers=_auth(_token(admin)))
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["active_mode"] == "teacher"
+    building_ids = {c["course_id"] for c in data["building_courses"]}
+    assert published.id in building_ids
+    assert draft.id in building_ids
+    assert all(c["role"] == "owner" for c in data["building_courses"])
+
+
+def test_platform_admin_building_list_all_courses(client, session):
+    """平台管理员（无成员关系）building 列表可见全部课程（含草稿），role 为 owner。"""
+    teacher = _user(session, "fac_admin_list_teacher", UserRole.TEACHER)
+    published = _course(session, teacher.id)
+    draft = _course(session, teacher.id)
+    draft.status = CourseStatus.DRAFT
+    session.add(draft)
+    session.commit()
+
+    admin = _user(session, "fac_admin_list_user", UserRole.STUDENT)
+    session.add(PlatformPermissionAssignment(
+        user_id=admin.id, permission=PlatformPermission.ADMIN,
+    ))
+    session.commit()
+
+    resp = client.get(
+        f"{FACADE}/courses",
+        params={"view": "building", "page_size": 20},
+        headers=_auth(_token(admin)),
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    item_ids = {item["course_id"] for item in data["items"]}
+    assert published.id in item_ids
+    assert draft.id in item_ids
+    assert all(item["role"] == "owner" for item in data["items"])
+
+
 # ==================== ViewModel 结构测试 ====================
 
 def test_overview_contains_capabilities(client, session):

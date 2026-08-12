@@ -61,6 +61,66 @@ test('SettingsProfilePage.vue: 删除入口由课程 owner 权限共同控制', 
   assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
 })
 
+test('course_access.js: 教师实验平台开关与后端窄权限路由一致', () => {
+  const frontend = read('frontend/src/api/course_access.js')
+  const backend = read('backend/app/api/v1/endpoints/course_access.py')
+
+  assert.match(frontend, /export function updateCodeSandboxExperimentPlatform/)
+  assert.match(frontend, /request\.put\(`\/course-access\/courses\/\$\{courseId\}\/experiment-platform`, \{ enabled \}\)/)
+  assert.match(backend, /@router\.put\(["']\/courses\/\{course_id\}\/experiment-platform["']\)/)
+  assert.match(backend, /async def update_code_sandbox_experiment_platform[\s\S]*?"course\.edit"/)
+})
+
+test('CourseLayout.vue: 未启用代码沙箱时隐藏实验任务二级导航', () => {
+  const src = read('frontend/src/app/pages/course/CourseLayout.vue')
+
+  assert.match(src, /isCodeSandboxExperimentPlatformEnabled\(capabilities\.value\)/)
+  assert.match(src, /item\.key !== ['"]experiments['"] \|\| item\.enabled/)
+})
+
+test('SettingsSandboxPage.vue: 教师通过实验平台开关而非全量能力写入配置', () => {
+  const src = read('frontend/src/app/pages/course/settings/SettingsSandboxPage.vue')
+
+  assert.match(src, /updateCodeSandboxExperimentPlatform/)
+  assert.match(src, /setExperimentPlatform\(!experimentPlatformEnabled\)/)
+  assert.doesNotMatch(src, /updateCourseCapabilities/)
+})
+
+test('SettingsAgentPage.vue: 智能体策略字段与后端白名单一一对应（含启动开关）', () => {
+  const frontend = read('frontend/src/app/pages/course/settings/SettingsAgentPage.vue')
+  const backend = read('backend/app/services/course_lifecycle_service.py')
+
+  // 前端表单字段必须全部落在后端 agent_policy 白名单内
+  for (const field of ['enabled', 'enabled_tools', 'require_teacher_confirmation', 'web_research_enabled']) {
+    assert.match(frontend, new RegExp(`form\\.value\\.${field}|${field}:`))
+    assert.match(backend, new RegExp(`["']${field}["']`))
+  }
+  // 读取路径：设置聚合模型在 current_setting.agent_policy
+  assert.match(frontend, /current\?\.agent_policy/)
+  // 启动开关 UI 存在
+  assert.match(frontend, /智能体启动/)
+  // 历史占位字段不再进入白名单
+  assert.doesNotMatch(backend, /["']agent_name["']/)
+})
+
+test('SettingsProfilePage.vue: 读取设置聚合模型 current_setting.profile', () => {
+  const src = read('frontend/src/app/pages/course/settings/SettingsProfilePage.vue')
+  assert.match(src, /current\?\.profile/)
+})
+
+test('teaching_agent.py: 教学问答端点消费课程智能体启动开关', () => {
+  const src = read('backend/app/api/v1/endpoints/teaching_agent.py')
+  assert.match(src, /_course_agent_enabled/)
+  assert.match(src, /TEACHING_AGENT_DISABLED/)
+})
+
+test('facade_home_service.py: 平台管理员对所有课程拥有隐藏所有者身份', () => {
+  const src = read('backend/app/services/facade_home_service.py')
+  assert.match(src, /_is_platform_admin/)
+  assert.match(src, /is_platform_admin/)
+  assert.match(src, /hidden.*owner|隐藏.*课程所有者/)
+})
+
 // ============================================================================
 // graph.js ↔ graph_production.py 契约
 // ============================================================================

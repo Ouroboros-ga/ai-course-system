@@ -24,6 +24,24 @@ from app.services.course_access_service import require_course_permission, resolv
 router = APIRouter()
 
 
+def _course_agent_enabled(session: Session, course_id: int) -> bool:
+    """课程级智能体启动开关（settings.agent_policy.enabled）。
+
+    未显式配置（enabled 为 None）视为开启——本地 Demo 底层开关全开的
+    默认语义；教师可在设置页「智能体」显式关闭后，教学问答端点拒绝请求。
+    会话对象不完整（如单元测试的 mock session）时同样默认开启。
+    """
+    if not hasattr(session, "exec"):
+        return True
+    from app.services.course_lifecycle_service import course_settings_service
+
+    current = course_settings_service.get_current(session, course_id=course_id)
+    if current is None or not current.agent_policy:
+        return True
+    enabled = current.agent_policy.get("enabled")
+    return enabled is None or enabled is True
+
+
 class TeachingAgentRequest(BaseModel):
     """Self-service request.
 
@@ -179,6 +197,8 @@ async def respond(
     if body.student_id is not None and str(body.student_id) != str(caller_id):
         raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_SELF_ID_MISMATCH", "message": "Self-service requests cannot select another learner."})
     context = require_course_permission(session, current_user, course_id, "course.question.ask")
+    if not _course_agent_enabled(session, course_id):
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_DISABLED", "message": "课程智能体未启用，请联系课程教师在设置中开启。"})
     if not context.analytics_eligible:
         raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_LEARNER_REQUIRED", "message": "Only an active course learner may request an individualized teaching response."})
     return await _respond_for_subject(
@@ -203,6 +223,8 @@ async def respond_for_learner(
         raise HTTPException(status_code=422, detail={"code": "TEACHING_AGENT_SCOPE_INVALID", "message": "learner_user_id and course_id must be numeric IDs"}) from exc
 
     require_course_permission(session, current_user, course_id, "analytics.view_member")
+    if not _course_agent_enabled(session, course_id):
+        raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_DISABLED", "message": "课程智能体未启用，请联系课程教师在设置中开启。"})
     target_context = resolve_course_access(session, {"user_id": str(learner_user_id)}, course_id)
     if not target_context.analytics_eligible:
         raise HTTPException(status_code=403, detail={"code": "TEACHING_AGENT_TARGET_NOT_LEARNER", "message": "Target is not an active learner in this course."})
