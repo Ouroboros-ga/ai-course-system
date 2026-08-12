@@ -646,7 +646,8 @@ const indentStep = 12
 
 .sfx-track-key { color: var(--amber-500); flex-shrink: 0; }
 
-/* 收缩态 */
+/* 收缩态：仅图标列。当前项不再绘制按展开态缩进定位的竖线（图标已居中，竖线会错位
+   骑在图标上并露出残影），高亮收成胶囊形贴合图标，hover 同理。 */
 .sfx-track.is-collapsed .sfx-track-list { padding: var(--space-3) var(--space-1); gap: var(--space-1); }
 .sfx-track.is-collapsed .sfx-track-item {
   justify-content: center;
@@ -654,4 +655,7 @@ const indentStep = 12
   align-items: center;
 }
 .sfx-track.is-collapsed .sfx-track-item-status { margin-top: 0; }
+.sfx-track.is-collapsed .sfx-track-item:hover { border-radius: var(--radius-full); }
+.sfx-track.is-collapsed .sfx-track-item.is-current { border-radius: var(--radius-full); }
+.sfx-track.is-collapsed .sfx-track-item.is-current::before { display: none; }
 </style>
