@@ -73,6 +73,11 @@ class Settings(BaseSettings):
     PREP_STRUCTURE_MAX_TOKENS: int = 12000
     PREP_SCRIPT_MAX_TOKENS: int = 4096
     PREP_SCRIPT_BATCH_SIZE: int = 5
+    # PPT mapping suggests one entry per knowledge point plus a Chinese reason.
+    # A course with dozens of nodes/pages can exceed the generic JSON budget,
+    # so this call gets its own larger completion room (truncated JSON is
+    # additionally salvaged by the service before it is dropped).
+    PREP_PPT_MAPPING_MAX_TOKENS: int = 8192
     # Initial (first-draft) prep has its own bounded script budgets so it stays
     # independent from the incremental rewrite pipeline.  The initial pipeline
     # groups knowledge-point scripts into several requests (P0 chunking) and

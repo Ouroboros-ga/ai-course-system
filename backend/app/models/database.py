@@ -238,6 +238,13 @@ from app.models.platform_admin_model import (
     PlatformAdminAuditEvent,
     PlatformTaskConcurrencyConfig,
 )
+from app.models.research_workspace_model import (
+    ResearchMemory,
+    ResearchNote,
+    ResearchScope,
+    ResearchTodo,
+    ResearchWorkspace,
+)
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 DATABASE_DIR = os.path.join(PROJECT_ROOT, "database")

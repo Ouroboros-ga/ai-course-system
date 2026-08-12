@@ -43,33 +43,83 @@ logger = logging.getLogger(__name__)
 
 
 def bootstrap_research_agent(app: Any) -> bool:
-    """Register the metadata-only ResearchAgent without requiring an LLM.
+    """Register the persisted ResearchAgent Harness without bootstrap I/O.
 
-    The first slice depends only on arXiv's public Atom API and never performs
-    network I/O during bootstrap.  Later writing/trend/reproduction providers
-    remain absent until their explicit evidence and sandbox gates are wired.
+    arXiv, the configured embedding backend and the optional structured LLM are
+    all lazy: no external call or local model load happens during application
+    startup.  Missing embeddings degrade memory retrieval to keywords; missing
+    LLM routing degrades to the deterministic allowlisted selector.
     """
     try:
         from .research.composition import build_research_graph_factory
         from .research.profile import build_research_profile
         from .providers.research.access import CourseAccessResearchScopePort
         from .providers.research.paper_search import ArxivPaperSearchProvider
+        from .providers.research.workspace import LazyEmbeddingProvider, SqlResearchWorkspaceProvider
+        from .providers.llm.structured import SharedLLMStructuredProvider
+        from .providers.persistence import SqlAgentLLMDiagnosticStore, SqlAgentRunEventPort
+        from app.platform.knowledge.embedding import embedding_provider_from_settings
 
         platform = getattr(app.state, "agent_platform", None)
         if platform is None:
             platform = LegacyAgentPlatform()
         paper_search = ArxivPaperSearchProvider()
-        scope_access = CourseAccessResearchScopePort(lambda: Session(engine))
+        session_factory = lambda: Session(engine)
+        # Research runs use the existing minimal append-only event domain.
+        # Node logs remain sanitized, and full prompts/model output are never
+        # included in event payloads.
+        platform.set_event_port(SqlAgentRunEventPort(session_factory))
+        scope_access = CourseAccessResearchScopePort(session_factory)
+        embedding_provider = None
+        embedding_provider_name = settings.GRAPHRAG_EMBEDDING_PROVIDER.strip()
+        embedding_model_name = settings.GRAPHRAG_EMBEDDING_MODEL.strip()
+        embedding_configured = bool(
+            embedding_provider_name
+            and embedding_model_name
+            and (
+                settings.GRAPHRAG_EMBEDDING_LOCAL_PATH.strip()
+                if embedding_provider_name.lower() in {"local_bge", "bge-local", "local"}
+                else settings.GRAPHRAG_EMBEDDING_API_BASE.strip()
+                and settings.GRAPHRAG_EMBEDDING_API_KEY.strip()
+            )
+        )
+        if embedding_configured:
+            embedding_provider = LazyEmbeddingProvider(
+                factory=embedding_provider_from_settings,
+                provider_name=embedding_provider_name,
+                model_name=embedding_model_name,
+            )
+        workspace = SqlResearchWorkspaceProvider(
+            session_factory=session_factory,
+            embedding_provider=embedding_provider,
+        )
+        structured_llm = None
+        if (
+            settings.LLM_API_BASE.strip()
+            and settings.LLM_API_KEY.strip()
+            and settings.LLM_MODEL_NAME.strip()
+        ):
+            structured_llm = SharedLLMStructuredProvider(
+                diagnostic_sink=SqlAgentLLMDiagnosticStore(session_factory),
+            )
         platform.register_generic(
             profile=build_research_profile(),
             builder=build_research_graph_factory(
                 scope_access=scope_access,
                 paper_search=paper_search,
+                workspace=workspace,
+                structured_llm=structured_llm,
             ),
         )
         app.state.agent_platform = platform
         app.state.research_paper_search_provider = paper_search
-        logger.info("AgentPlatform: registered ResearchAgent literature-search slice.")
+        app.state.research_workspace_provider = workspace
+        app.state.research_memory_embedding_configured = embedding_configured
+        logger.info(
+            "AgentPlatform: registered ResearchAgent Harness (embedding=%s, llm_router=%s).",
+            "configured" if embedding_configured else "keyword_degraded",
+            "configured" if structured_llm is not None else "deterministic",
+        )
         return True
     except Exception as error:  # noqa: BLE001 - never block app startup
         logger.warning("ResearchAgent bootstrap failed: %s: %s", type(error).__name__, error)
@@ -284,7 +334,6 @@ def _register_prep_pipeline_definitions(
     from .providers.prep.initial_course_prep import InitialCoursePrepProvider
     from .providers.prep.incremental_prep import IncrementalPrepProvider
     from .providers.prep.ppt_mapping_optimization import PptMappingOptimizationProvider
-    from .runtime.dispatcher import BaseAgentRuntime
     from .providers.persistence import SqlAgentLLMDiagnosticStore, SqlAgentRunEventPort, SqlAgentRunStorePort
     from .runtime.registry import AgentDefinitionKey
 

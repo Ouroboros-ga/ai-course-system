@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Sequence
 
@@ -72,6 +73,44 @@ class PptMappingContentUnavailable(RuntimeError):
     error_code = "PPT_MAPPING_CONTENT_UNAVAILABLE"
 
 
+# A suggestion object has no nested ``{...}`` values (page_refs is an array of
+# ints, reason is a plain string), so a non-greedy object scan is safe to use
+# as a salvage strategy on truncated LLM output.
+_JSON_OBJECT_RE = re.compile(r"\{[^{}]*\}", re.DOTALL)
+
+
+def salvage_suggestions(raw_text: str) -> list[dict]:
+    """Best-effort extraction of mapping-suggestion objects from LLM output.
+
+    A large course can push a single PPT mapping completion past its token
+    budget.  When that happens the returned JSON is truncated mid-list and a
+    strict ``json.loads`` fails, which previously dropped the entire batch
+    (only the evidence-seeded mappings survived).  This helper first tries
+    the strict ``{"suggestions": [...]}`` envelope, then falls back to
+    scanning for complete suggestion objects that carry an
+    ``outline_node_id`` so the model's finished work is still applied.
+    """
+    if not isinstance(raw_text, str) or not raw_text.strip():
+        return []
+    try:
+        parsed = json.loads(raw_text)
+    except (TypeError, ValueError):
+        parsed = None
+    if isinstance(parsed, dict) and isinstance(parsed.get("suggestions"), list):
+        return [item for item in parsed["suggestions"] if isinstance(item, dict)]
+    if isinstance(parsed, list):
+        return [item for item in parsed if isinstance(item, dict)]
+    candidates: list[dict] = []
+    for match in _JSON_OBJECT_RE.finditer(raw_text):
+        try:
+            item = json.loads(match.group(0))
+        except (TypeError, ValueError):
+            continue
+        if isinstance(item, dict) and item.get("outline_node_id"):
+            candidates.append(item)
+    return candidates
+
+
 @dataclass
 class PptMappingSuggestion:
     """One LLM-produced mapping suggestion.
@@ -107,6 +146,13 @@ class PptMappingOptimizationSummary:
     updated_count: int
     suggestions: list[PptMappingSuggestion] = field(default_factory=list)
     material_version_ids: list[str] = field(default_factory=list)
+    # Coverage view: how many knowledge-point nodes were in scope and which
+    # of them still have no mapping row after seeding + LLM suggestions.
+    # ``updated_count`` counts touched rows (a node mapped in two decks counts
+    # twice), so callers need this node-level view to report honestly to the
+    # teacher instead of equating "mappings updated" with "nodes covered".
+    total_knowledge_points: int = 0
+    unmapped_node_ids: list[str] = field(default_factory=list)
 
 
 class PptMappingOptimizationService:
@@ -303,12 +349,26 @@ class PptMappingOptimizationService:
             )
             all_suggestions.extend(valid_suggestions)
 
+        # Node-level coverage: count knowledge-point nodes that still have no
+        # mapping row in any current version after seeding + LLM suggestions.
+        mapping_rows = list(session.exec(
+            select(CoursePptMapping).where(
+                CoursePptMapping.course_id == course_id,
+                CoursePptMapping.material_version_id.in_(version_ids),
+            )
+        ).all())
+        covered_node_ids = {row.outline_node_id for row in mapping_rows}
+        unmapped_node_ids = sorted(
+            {node.outline_node_id for node in nodes} - covered_node_ids
+        )
         session.commit()
         return PptMappingOptimizationSummary(
             total_mappings=total_mappings,
             updated_count=updated,
             suggestions=all_suggestions,
             material_version_ids=version_ids,
+            total_knowledge_points=len(nodes),
+            unmapped_node_ids=unmapped_node_ids,
         )
 
     # -- internal helpers ------------------------------------------------
@@ -864,18 +924,23 @@ class PptMappingOptimizationService:
                 temperature=0.2,
                 response_format={"type": "json_object"},
             )
-            raw = response.content if hasattr(response, "content") else response
-            parsed = json.loads(raw) if isinstance(raw, str) else raw
-            suggestions = (
-                parsed.get("suggestions", []) if isinstance(parsed, dict) else parsed
-            )
-            return self._parse_suggestions(suggestions)
         except Exception as error:  # noqa: BLE001 - fail-closed
             logger.warning(
                 "PptMappingOptimization: LLM call failed: %s: %s",
                 type(error).__name__, error,
             )
             return []
+
+        raw = response.content if hasattr(response, "content") else response
+        if isinstance(raw, str):
+            suggestions = salvage_suggestions(raw)
+        elif isinstance(raw, list):
+            suggestions = [item for item in raw if isinstance(item, dict)]
+        elif isinstance(raw, dict) and isinstance(raw.get("suggestions"), list):
+            suggestions = [item for item in raw["suggestions"] if isinstance(item, dict)]
+        else:
+            suggestions = []
+        return self._parse_suggestions(suggestions)
 
     @staticmethod
     def _parse_suggestions(raw: list[Any]) -> list[PptMappingSuggestion]:
@@ -1012,4 +1077,5 @@ __all__ = [
     "PptMappingOptimizationSummary",
     "PptMappingOptimizationService",
     "ppt_mapping_optimization_service",
+    "salvage_suggestions",
 ]

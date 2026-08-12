@@ -115,6 +115,8 @@ def build_ppt_mapping_workflow(deps: PptMappingDependencies):
                 "updated_count": result.updated_count,
                 "suggestions": suggestions_payload,
                 "material_version_ids": list(result.material_version_ids),
+                "total_knowledge_points": result.total_knowledge_points,
+                "unmapped_node_ids": list(result.unmapped_node_ids),
             },
         }
 

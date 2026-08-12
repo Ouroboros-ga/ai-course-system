@@ -1,7 +1,7 @@
 """AgentPlatform: unified platform for all agent runtimes.
 
 The platform is the single entry point for agent-runtime resolution across
-the three integrated agents (EDU, PREP, CODING). It assembles:
+the integrated agents (EDU, PREP, CODING, RESEARCH). It assembles:
 
     - ``AgentRuntimeRegistry``: definition-keyed cache of stateless runtimes.
     - ``AgentGateway``: unified run lifecycle entry point.
@@ -31,27 +31,28 @@ directly.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Mapping, Optional, Protocol, runtime_checkable
+from collections.abc import Callable, Mapping
+from typing import Any, Protocol, runtime_checkable
 
 from .gateway import AgentGateway
-from .runtime.base import AgentRunContext, LangGraphAgentRuntime, RunnableGraph
+from .runtime.base import AgentRunContext, RunnableGraph
 from .runtime.concurrency import AgentConcurrencyLimiter
 from .runtime.dispatcher import BaseAgentRuntime
 from .runtime.events import AgentRunEventPort, NullAgentRunEventPort
 from .runtime.profile import AgentProfile, AgentType, RuntimeKey
-from .runtime.registry import AgentDefinitionKey, AgentRuntimeRegistry
+from .runtime.registry import AgentRuntimeRegistry
 
 logger = logging.getLogger(__name__)
 
 # A legacy resolver takes (student_id, course_id) and returns a runtime or None.
 # This matches TeachingAgentRuntimeRegistry.get_or_create's signature.
-LegacyResolver = Callable[[str, str], Optional[Any]]
+LegacyResolver = Callable[[str, str], Any | None]
 
 # A generic builder takes a scope tuple and returns a compiled graph or None.
 # The builder is responsible for wiring tools, compiling the LangGraph workflow,
 # and returning a RunnableGraph. Returning None means the agent is unavailable
 # for the given scope (e.g. course not configured).
-RuntimeBuilder = Callable[[tuple[str, ...]], Optional[RunnableGraph]]
+RuntimeBuilder = Callable[[tuple[str, ...]], RunnableGraph | None]
 
 
 @runtime_checkable
@@ -73,7 +74,7 @@ class AgentPlatform:
       already caches.
 
     - ``register_generic``: for agents backed by ``AgentProfile`` +
-      ``LangGraphAgentRuntime`` (PREP, CODING). The platform caches
+      ``BaseAgentRuntime`` (PREP, CODING, RESEARCH). The platform caches
       runtimes per ``RuntimeKey`` with simple dict-based caching.
 
     The platform is fail-closed: unregistered agents or unavailable scopes
@@ -92,7 +93,7 @@ class AgentPlatform:
         self._legacy_resolvers: dict[AgentType, LegacyResolver] = {}
         self._profiles: dict[AgentType, AgentProfile] = {}
         self._builders: dict[AgentType, RuntimeBuilder] = {}
-        self._cache: dict[RuntimeKey, LangGraphAgentRuntime] = {}
+        self._cache: dict[RuntimeKey, BaseAgentRuntime] = {}
         # Phase 1 infrastructure (nullable for incremental adoption).
         self._runtime_registry = runtime_registry or AgentRuntimeRegistry()
         self._concurrency_limiter = concurrency_limiter or AgentConcurrencyLimiter()
@@ -125,11 +126,11 @@ class AgentPlatform:
         profile: AgentProfile,
         builder: RuntimeBuilder,
     ) -> None:
-        """Register a generic agent backed by ``LangGraphAgentRuntime``.
+        """Register a generic agent backed by ``BaseAgentRuntime``.
 
         The ``builder`` receives a scope tuple and returns a compiled
         ``RunnableGraph`` (or ``None`` if unavailable). The platform wraps
-        the graph in a ``LangGraphAgentRuntime`` and caches it per
+        the graph in a ``BaseAgentRuntime`` and caches it per
         ``RuntimeKey``.
         """
         if profile.agent_type in self._profiles:
@@ -164,7 +165,7 @@ class AgentPlatform:
         agent_type: AgentType,
         student_id: str,
         course_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Resolve a legacy runtime (e.g. TeachingAgentRuntime).
 
         Returns the runtime instance or ``None`` if the agent is not
@@ -187,10 +188,10 @@ class AgentPlatform:
         agent_type: AgentType,
         scope: tuple[str, ...],
         config_version: str = "v1",
-    ) -> Optional[LangGraphAgentRuntime]:
-        """Get or build a generic runtime (PREP, CODING).
+    ) -> BaseAgentRuntime | None:
+        """Get or build a generic runtime (PREP, CODING, RESEARCH).
 
-        Returns a cached ``LangGraphAgentRuntime`` if available, or builds
+        Returns a cached ``BaseAgentRuntime`` if available, or builds
         one via the registered builder. Returns ``None`` if the agent is
         not registered as generic or the builder returns ``None``.
         """
@@ -219,9 +220,11 @@ class AgentPlatform:
         if graph is None:
             return None
 
-        runtime = LangGraphAgentRuntime(
-            graph=graph,
+        runtime = BaseAgentRuntime(
             profile=profile,
+            graph=graph,
+            concurrency_limiter=self._concurrency_limiter,
+            event_port=self._event_port,
             timeout_seconds=profile.default_timeout_seconds,
         )
         self._cache[key] = runtime
@@ -291,6 +294,11 @@ class AgentPlatform:
     def event_port(self) -> AgentRunEventPort:
         """The shared event port (Phase 1)."""
         return self._event_port
+
+    def set_event_port(self, event_port: AgentRunEventPort) -> None:
+        """Replace the shared lifecycle-event sink before runtimes are built."""
+
+        self._event_port = event_port
 
     @property
     def gateway(self) -> AgentGateway | None:

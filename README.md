@@ -93,7 +93,9 @@
 
 | 功能 | 状态 | 说明 |
 |---|---|---|
-| 研究工作台 `/app/course/:courseId/research` | ✅ | 五阶段入口（检索/趋势/综合/写作/复现） |
+| ResearchAgent HarnessEngineer | ✅ | 真实条件路由 LangGraph；动态 Prompt/Tool/Context/压缩；25s 超时与并发 8 |
+| 科研工作台 `/app/course/:courseId/research` | ✅ | 论文、Todo、Notepad、Memory、Scope 五个可操作视图；`course.view` 可见、执行另行授权 |
+| 工作区持久化与向量记忆 | ✅ | Alembic `0053`；PostgreSQL 18 + pgvector 目标，embedding 不可用时明确降级关键词 |
 | arXiv 论文元数据检索 + 来源核验 | ✅ | 真实接通（节流 3s + 24h 缓存 + PII 脱敏 + EvidenceGate） |
 | 趋势分析、证据综合、学术写作、代码复现 | 🧪 | 页面按 `research_preview` 展示，未伪装完成 |
 | Semantic Scholar / OpenAlex / Crossref、全文解析、GitHub 仓库复现 | 📋 | 规划中 |
@@ -118,13 +120,13 @@
 | 项 | 版本/选型 |
 |---|---|
 | 语言/框架 | Python + FastAPI（≥0.135）+ Uvicorn |
-| ORM/迁移 | SQLModel（≥0.0.37）+ Alembic（50 个迁移版本） |
-| 智能体 | LangGraph（0.6.x）+ 自研 Port 契约（10 个） |
+| ORM/迁移 | SQLModel（≥0.0.37）+ Alembic（当前 head `0053`） |
+| 智能体 | LangGraph（0.6.x）+ 自研 Port/Provider 契约 |
 | 文档解析 | Docling（≥2.81）、LibreOffice、Poppler、PaddleOCR（容器） |
 | 向量/图谱 | LanceDB 0.34、本地 BGE 嵌入、GraphRAG 3.1.1（独立 Worker，关闭态） |
 | 代码沙箱 | Judge0（客户端就绪，默认关闭） |
 | 外部服务 | 豆包 LLM（默认）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
-| 数据库 | SQLite（`database/smart_class.db`，正式切换前）；对象存储 Local/S3/OSS 适配 |
+| 数据库 | 当前本地 SQLite；部署目标 PostgreSQL 18，Research Memory 使用 pgvector；对象存储 Local/S3/OSS 适配 |
 
 ### 3.2 前端
 
@@ -315,6 +317,7 @@ npm run smoke:app
 - **2026-08-11**：课程建设助教自由文本改由 Prep 结构化意图路由器按完整语义选择既有五种 action，移除关键词兜底；低置信度/范围不明请求只澄清或返回 `PREP_AGENT_INTENT_UNAVAILABLE`。明确按钮 action 仍绕过分类器；一键整理结构/优化讲解在 batch API 前写入带授权标识的本地用户消息，批量原子应用与单节点待审核提案语义保持不变，无数据库迁移。
 - **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
 - **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
+- **2026-08-11**：ResearchAgent Harness v1（真实条件 LangGraph、科研工作区、Todo/Notepad/Scope/Memory、PostgreSQL 18 + pgvector 迁移与五视图前端）；多源检索、全文、写作与完整仓库复现仍未接通。
 - **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。
 
 ---

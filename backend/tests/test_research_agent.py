@@ -104,7 +104,11 @@ def test_arxiv_provider_degrades_without_fabricating_results_on_transport_failur
 def test_research_workflow_rejects_identity_only_query_without_calling_provider():
     provider = AsyncMock()
     scope_access = AsyncMock()
-    graph = build_research_workflow(ResearchTools(scope_access=scope_access, paper_search=provider))
+    graph = build_research_workflow(ResearchTools(
+        scope_access=scope_access,
+        paper_search=provider,
+        workspace=AsyncMock(),
+    ))
     state = asyncio.run(graph.ainvoke({
         "course_id": "1",
         "actor_user_id": "7",
@@ -126,7 +130,11 @@ def test_research_workflow_rechecks_course_access_before_search():
     provider = AsyncMock()
     scope_access = AsyncMock()
     scope_access.authorize.return_value = {"allowed": False, "reason_code": "HTTPException"}
-    graph = build_research_workflow(ResearchTools(scope_access=scope_access, paper_search=provider))
+    graph = build_research_workflow(ResearchTools(
+        scope_access=scope_access,
+        paper_search=provider,
+        workspace=AsyncMock(),
+    ))
     state = asyncio.run(graph.ainvoke({
         "course_id": "1",
         "actor_user_id": "7",

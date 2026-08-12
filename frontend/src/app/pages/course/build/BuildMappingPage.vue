@@ -35,6 +35,7 @@ const prepBatchRunning = computed(() => Boolean(workbench?.batchRun))
 const hasCurrentPptVersions = computed(() => Boolean(state.value?.ppt_materials?.length))
 const mappingContractReady = computed(() => state.value?.mapping_contract_version === 'ppt-mapping/v2')
 const mappingNodes = computed(() => (state.value?.nodes || []).filter(node => node.node_type === 'knowledge_point'))
+const mappedNodeCount = computed(() => mappingNodes.value.filter(node => (node.ppt_mappings || []).length).length)
 const selectedNode = computed(() => mappingNodes.value.find(node => node.outline_node_id === selectedNodeId.value) || null)
 const selectedMaterial = computed(() => (
   state.value?.ppt_materials?.find(item => item.material_version_id === selectedMaterialVersionId.value) || null
@@ -234,9 +235,16 @@ async function runMatch(mode) {
     }
     const result = await matchPptMapping(courseId.value, payload)
     const noReliableMatch = result.outcome === 'no_reliable_match'
+    const totalKnowledgePoints = Number(result.total_knowledge_points || 0)
+    const coveredKnowledgePoints = Number(result.covered_knowledge_points ?? result.total_knowledge_points ?? 0)
+    const unmappedCount = Number(result.unmapped_count || 0)
+    const coverageText = totalKnowledgePoints > 0
+      ? `已覆盖 ${coveredKnowledgePoints}/${totalKnowledgePoints} 个知识点，更新 ${result.updated_count || 0} 条映射`
+        + (unmappedCount ? `；还有 ${unmappedCount} 个知识点未匹配到 PPT 页` : '。')
+      : `已更新 ${result.updated_count || 0} 条未锁定映射。`
     message.value = noReliableMatch
       ? '未找到可信候选页，可直接在页图中选择，或对当前知识点重新匹配。'
-      : `匹配完成：已更新 ${result.updated_count || 0} 条未锁定映射。`
+      : coverageText
     Object.assign(agentMessage, {
       running: false,
       error: false,
@@ -342,7 +350,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 
       <div class="mapping-workbench">
         <aside class="node-rail" aria-label="知识点目录">
-          <div class="rail-heading"><span>知识点目录</span><small>{{ mappingNodes.length }} 个</small></div>
+          <div class="rail-heading"><span>知识点目录</span><small>{{ mappedNodeCount }} / {{ mappingNodes.length }} 已映射</small></div>
           <div class="node-list">
             <SfxButton
               v-for="node in mappingNodes"
@@ -357,6 +365,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
               <small v-if="existingMapping(node.outline_node_id, selectedMaterialVersionId)?.page_refs?.length">
                 {{ existingMapping(node.outline_node_id, selectedMaterialVersionId).page_range }}
               </small>
+              <small v-else-if="(node.ppt_mappings || []).length" class="mapped-elsewhere">其他版本已映射</small>
             </SfxButton>
           </div>
         </aside>
@@ -461,7 +470,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 .rail-heading{display:flex;justify-content:space-between;align-items:center;padding:var(--space-3);border-bottom:1px solid var(--border-subtle);font-size:var(--ui-md-size);font-weight:var(--ui-md-weight);color:var(--text-primary)}
 .rail-heading small{color:var(--text-muted);font-size:var(--caption-size)}
 .node-list{display:grid;align-content:start;gap:var(--space-1);overflow-y:auto;min-height:0;padding:var(--space-2)}
-.node-item{justify-content:space-between;width:100%;min-height:40px;text-align:left}.node-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node-item small{margin-left:var(--space-2);white-space:nowrap;opacity:.8}
+.node-item{justify-content:space-between;width:100%;min-height:40px;text-align:left}.node-item>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.node-item small{margin-left:var(--space-2);white-space:nowrap;opacity:.8}.node-item small.mapped-elsewhere{color:var(--ink-700);opacity:1}
 .ppt-canvas{display:flex;flex-direction:column;gap:var(--space-3);min-width:0;min-height:0;overflow-y:auto;padding:var(--space-3)}
 .selection-summary{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-panel)}
 .selection-summary>div:not(.selection-actions){display:grid;gap:2px;min-width:0;flex:1}.selection-summary span{font-size:var(--caption-size);color:var(--text-muted)}.selection-summary strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);color:var(--text-primary)}

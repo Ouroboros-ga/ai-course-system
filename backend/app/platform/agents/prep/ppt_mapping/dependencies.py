@@ -64,6 +64,11 @@ class PptMappingOptimizationResult:
     updated_count: int
     suggestions: list[PptMappingSuggestion] = field(default_factory=list)
     material_version_ids: list[str] = field(default_factory=list)
+    # Node-level coverage mirrors the service summary: ``updated_count`` is a
+    # row-level count (a node mapped in two decks counts twice), while these
+    # fields tell the teacher how many knowledge points are actually covered.
+    total_knowledge_points: int = 0
+    unmapped_node_ids: list[str] = field(default_factory=list)
 
 
 class PptMappingOptimizationPort(Protocol):

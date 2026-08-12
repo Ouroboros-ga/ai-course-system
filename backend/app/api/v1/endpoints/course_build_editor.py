@@ -2720,6 +2720,13 @@ async def optimize_ppt_mapping(
 
     updated_count = int(summary.get("updated_count") or 0)
     suggestions = list(summary.get("suggestions") or [])
+    # Row-level ``updated_count`` is not node coverage.  Report both so the
+    # teacher sees how many knowledge points are actually covered and how many
+    # are still waiting for a page range.
+    total_knowledge_points = int(summary.get("total_knowledge_points") or 0)
+    unmapped_node_ids = list(summary.get("unmapped_node_ids") or [])
+    unmapped_count = len(unmapped_node_ids)
+    covered_knowledge_points = max(0, total_knowledge_points - unmapped_count)
     # A completed runtime only means the workflow returned a result.  It does
     # not mean that any mapping row was actually changed.  Reporting this as a
     # successful optimisation misleads teachers and hides empty/locked model
@@ -2740,6 +2747,10 @@ async def optimize_ppt_mapping(
             "updated_count": 0,
             "suggestions": suggestions,
             "material_version_ids": list(summary.get("material_version_ids") or material_version_ids),
+            "total_knowledge_points": total_knowledge_points,
+            "covered_knowledge_points": covered_knowledge_points,
+            "unmapped_count": unmapped_count,
+            "unmapped_node_ids": unmapped_node_ids,
             "manual_next_steps": ["select_pages", "match_current_node"],
         })
 
@@ -2749,6 +2760,10 @@ async def optimize_ppt_mapping(
         "updated_count": updated_count,
         "suggestions": suggestions,
         "material_version_ids": list(summary.get("material_version_ids") or material_version_ids),
+        "total_knowledge_points": total_knowledge_points,
+        "covered_knowledge_points": covered_knowledge_points,
+        "unmapped_count": unmapped_count,
+        "unmapped_node_ids": unmapped_node_ids,
     })
 
 
@@ -2833,6 +2848,10 @@ async def match_ppt_mapping_scope(
 
     updated_count = int(summary.get("updated_count") or 0)
     suggestions = list(summary.get("suggestions") or [])
+    total_knowledge_points = int(summary.get("total_knowledge_points") or 0)
+    unmapped_node_ids = list(summary.get("unmapped_node_ids") or [])
+    unmapped_count = len(unmapped_node_ids)
+    covered_knowledge_points = max(0, total_knowledge_points - unmapped_count)
     if updated_count == 0:
         return unified_response(200, "未找到可信候选页，可直接在页图中选择，或调整范围后重新匹配。", {
             "outcome": "no_reliable_match",
@@ -2840,6 +2859,10 @@ async def match_ppt_mapping_scope(
             "updated_count": 0,
             "suggestions": suggestions,
             "material_version_ids": material_version_ids,
+            "total_knowledge_points": total_knowledge_points,
+            "covered_knowledge_points": covered_knowledge_points,
+            "unmapped_count": unmapped_count,
+            "unmapped_node_ids": unmapped_node_ids,
             "manual_next_steps": ["select_pages", "match_current_node"],
         })
     return unified_response(200, "PPT 映射匹配完成并已写入草稿", {
@@ -2848,6 +2871,10 @@ async def match_ppt_mapping_scope(
         "updated_count": updated_count,
         "suggestions": suggestions,
         "material_version_ids": material_version_ids,
+        "total_knowledge_points": total_knowledge_points,
+        "covered_knowledge_points": covered_knowledge_points,
+        "unmapped_count": unmapped_count,
+        "unmapped_node_ids": unmapped_node_ids,
     })
 
 

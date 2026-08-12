@@ -47,6 +47,7 @@ from ..contracts.llm import (
 )
 from app.core.config import settings
 from app.platform.agents.contracts.llm import StructuredOutputError
+from app.services.ppt_mapping_optimization_service import salvage_suggestions
 from .evidence_binding import bind_evidence_refs, bind_outline_evidence_refs
 from .prompts import (
     EVIDENCE_REDUCER_PROMPT,
@@ -877,21 +878,16 @@ class PrepLLMAdapter:
             # latency and can consume the entire completion budget without
             # producing the small suggestions envelope.
             provider_options={"thinking": {"type": "disabled"}},
-            max_tokens=4096,
+            # A course with many knowledge points and page OCR blocks needs
+            # room for every suggestion plus its Chinese reason; too small a
+            # budget truncates the JSON mid-list (see ``salvage_suggestions``).
+            max_tokens=int(settings.PREP_PPT_MAPPING_MAX_TOKENS),
             run_id=run_id,
             trace_id=trace_id,
         )
-        try:
-            parsed = json.loads(response.content)
-        except (TypeError, ValueError):
-            logger.warning("PrepLLMAdapter.optimize_ppt_mappings: non-JSON response")
-            return []
-        if isinstance(parsed, dict):
-            suggestions = parsed.get("suggestions", [])
-        elif isinstance(parsed, list):
-            suggestions = parsed
-        else:
-            suggestions = []
+        # Strict parse first; when the completion was truncated mid-list, keep
+        # the already-emitted suggestions instead of dropping the whole batch.
+        suggestions = salvage_suggestions(response.content)
         return list(suggestions)
 
 

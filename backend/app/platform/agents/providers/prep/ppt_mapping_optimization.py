@@ -89,6 +89,8 @@ class PptMappingOptimizationProvider:
             updated_count=summary.updated_count,
             suggestions=suggestions,
             material_version_ids=list(summary.material_version_ids),
+            total_knowledge_points=summary.total_knowledge_points,
+            unmapped_node_ids=list(summary.unmapped_node_ids),
         )
 
 

@@ -62,6 +62,7 @@ class _FakeLLMClient:
 
 
 def test_ppt_mapping_adapter_disables_reasoning_and_bounds_json_output():
+    from app.core.config import settings
     from app.platform.agents.prep.llm_adapter import PrepLLMAdapter
 
     captured = {}
@@ -77,8 +78,48 @@ def test_ppt_mapping_adapter_disables_reasoning_and_bounds_json_output():
         return await adapter.optimize_ppt_mappings([], [], [])
 
     asyncio.run(run())
-    assert captured["options"].max_tokens == 4096
+    assert captured["options"].max_tokens == settings.PREP_PPT_MAPPING_MAX_TOKENS
     assert captured["options"].provider_options == {"thinking": {"type": "disabled"}}
+
+
+def test_salvage_suggestions_recovers_truncated_json():
+    """截断的 LLM JSON 不应整批丢弃：应恢复已完整输出的建议对象。"""
+    from app.services.ppt_mapping_optimization_service import salvage_suggestions
+
+    truncated = (
+        '{"suggestions": [{"outline_node_id": "kp_1", "page_refs": [1,2],'
+        '"confidence": 0.9, "reason": "标题匹配"}, {"outline_node_id": "kp_2",'
+    )
+    items = salvage_suggestions(truncated)
+    assert [item["outline_node_id"] for item in items] == ["kp_1"]
+
+
+def test_salvage_suggestions_passes_through_valid_envelope():
+    """合法 JSON envelope 原样返回。"""
+    from app.services.ppt_mapping_optimization_service import salvage_suggestions
+
+    items = salvage_suggestions(
+        '{"suggestions": [{"outline_node_id": "a", "page_refs": [1]}]}'
+    )
+    assert items == [{"outline_node_id": "a", "page_refs": [1]}]
+
+
+def test_ppt_mapping_adapter_salvages_truncated_llm_json():
+    """适配器收到截断响应时返回已完成的建议，而不是空列表。"""
+    from app.platform.agents.prep.llm_adapter import PrepLLMAdapter
+
+    truncated = (
+        '{"suggestions": [{"outline_node_id": "kp_1", "page_refs": [1,2],'
+        '"confidence": 0.9, "reason": "标题匹配"}, {"outline_node_id": "kp_2",'
+    )
+
+    class FakePort:
+        async def complete(self, **kwargs):
+            return SimpleNamespace(content=truncated)
+
+    adapter = PrepLLMAdapter(structured_llm=FakePort())
+    result = asyncio.run(adapter.optimize_ppt_mappings([], [], []))
+    assert [item["outline_node_id"] for item in result] == ["kp_1"]
 
 
 def _setup_course_with_outline_and_ppt(
@@ -613,3 +654,55 @@ def test_out_of_range_suggestions_are_not_applied_to_shorter_deck(session, monke
         CoursePptMapping.material_version_id == material_version_id,
     )).one()
     assert mapping.page_refs == [1, 2]
+
+
+def test_optimize_mappings_reports_node_coverage(session, monkeypatch):
+    """摘要应给出知识点覆盖口径：updated_count 是行数，覆盖统计以节点计。"""
+    monkeypatch.setattr(PptMappingOptimizationService, "_llm_is_configured", staticmethod(lambda: True))
+    _teacher, course, _outline_ver, existing_kp, new_kp, material_version_id = _setup_course_with_outline_and_ppt(
+        session,
+        with_existing_mapping=True,
+    )
+    # LLM 只为 existing_kp 出建议；new_kp（教师新增、无建议）仍无映射
+    fake_client = _FakeLLMClient(json.dumps({"suggestions": [{
+        "outline_node_id": existing_kp.outline_node_id,
+        "page_refs": [1],
+        "confidence": 0.9,
+        "reason": "标题匹配",
+    }]}))
+    summary = asyncio.run(PptMappingOptimizationService(client=fake_client).optimize_mappings(
+        session,
+        course_id=course.id,
+        material_version_id=material_version_id,
+    ))
+
+    assert summary.total_knowledge_points == 2
+    assert summary.unmapped_node_ids == [new_kp.outline_node_id]
+
+
+def test_optimize_mappings_salvages_truncated_llm_json(session, monkeypatch):
+    """LLM 输出被截断时，已完整输出的建议仍应写入，而不是整批丢弃。"""
+    monkeypatch.setattr(PptMappingOptimizationService, "_llm_is_configured", staticmethod(lambda: True))
+    _teacher, course, _outline_ver, _existing_kp, new_kp, material_version_id = _setup_course_with_outline_and_ppt(
+        session,
+        with_existing_mapping=True,
+    )
+    truncated = (
+        '{"suggestions": [{"outline_node_id": "' + new_kp.outline_node_id
+        + '", "page_refs": [3], "confidence": 0.85, "reason": "材料匹配"},'
+        '{"outline_node_id": "partially"'
+    )
+    fake_client = _FakeLLMClient(truncated)
+    summary = asyncio.run(PptMappingOptimizationService(client=fake_client).optimize_mappings(
+        session,
+        course_id=course.id,
+        material_version_id=material_version_id,
+    ))
+
+    mapping = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.outline_node_id == new_kp.outline_node_id,
+        CoursePptMapping.material_version_id == material_version_id,
+    )).first()
+    assert mapping is not None
+    assert mapping.page_refs == [3]
+    assert summary.updated_count >= 1

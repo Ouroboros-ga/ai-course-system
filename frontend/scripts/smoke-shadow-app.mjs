@@ -134,6 +134,9 @@ async function main() {
       check('JS 产物含 /app/courses/learning 路由串', jsText.includes('/app/courses/learning'), '')
       check('JS 产物含 learnMachine 状态（LEARN）', jsText.includes('LEARN'), '')
       check('JS 产物含 ResearchAgent API 前缀', jsText.includes('/research-agent/courses/'), '')
+      check('JS 产物含 ResearchAgent Harness run 契约', jsText.includes('/workspace/runs'), '')
+      check('JS 产物含 HarnessEngineer 工作台身份', jsText.includes('HarnessEngineer'), '')
+      check('ResearchAgent 页面可见权限使用 course.view', jsText.includes('app-course-research') && jsText.includes('course.view'), '')
     } else {
       check('旗关闭构建：CSS 不含 .sfx（影子前端未启用）', !cssText.includes('.sfx'), '符合预期')
     }

@@ -31,8 +31,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from datetime import UTC, datetime
-from typing import Any, Mapping
+from typing import Any
 
 from .base import AgentRunContext, RunnableGraph
 from .concurrency import AgentConcurrencyLimiter
@@ -42,9 +43,8 @@ from .errors import (
     RuntimeCancelledError,
     RuntimeTimeoutError,
 )
-from .events import AgentRunEventPort, NullAgentRunEventPort, RunEventType, RunStatus
+from .events import AgentRunEventPort, NullAgentRunEventPort, RunEventType
 from .profile import AgentProfile
-from ..shared.state import empty_meta
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +160,16 @@ class BaseAgentRuntime:
                 agent_type=agent_type_value, extra_state=state,
             )
 
+    async def respond(self, ctx: AgentRunContext) -> Mapping[str, Any]:
+        """Compatibility entry point used by ``AgentPlatform`` callers.
+
+        Keeping the small alias lets older generic-agent endpoints retain the
+        ``respond(ctx)`` contract while execution goes through the bounded
+        concurrency, timeout and lifecycle-event path implemented by ``run``.
+        """
+
+        return await self.run(context=ctx)
+
     async def _invoke_with_timeout(
         self,
         *,
@@ -180,7 +190,7 @@ class BaseAgentRuntime:
                     self._graph.ainvoke(state),
                     timeout=self._timeout,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return self._timeout_state(state, trace_id, run_id, agent_type, started_at)
 
         # Merge result with meta.
