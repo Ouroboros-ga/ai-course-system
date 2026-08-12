@@ -519,15 +519,10 @@ _PUBLISH_FIELDS = {
     "hall_visible", "join_mode", "invite_code", "require_review",
     "start_at", "end_at", "notify_on_publish", "allow_withdraw", "allow_chapter_jump",
 }
-# 智能体策略白名单与前端 SettingsAgentPage 表单字段一一对应：
-# - enabled: 课程智能体启动开关（关闭后教学问答端点拒绝请求）
-# - enabled_tools: 允许智能体使用的工具名列表（配合 AgentToolPolicy 治理）
-# - require_teacher_confirmation: 高风险教学动作需教师确认
-# - web_research_enabled: 是否允许智能体补充外部资料（WebResearch）
-# 历史占位字段（agent_name/answer_scope 等）无消费方，已从白名单移除。
-_AGENT_POLICY_FIELDS = {
-    "enabled", "enabled_tools", "require_teacher_confirmation", "web_research_enabled",
-}
+# CourseSettingVersion owns only the course-level launch switch. Per-tool
+# enablement and confirmation rules belong to AgentToolPolicy; accepting those
+# fields here would persist a second configuration that the runtime never reads.
+_AGENT_POLICY_FIELDS = {"enabled"}
 _SAFETY_FIELDS = {
     "preset", "blocked_topics", "must_cite_topics", "course_whitelist",
     "high_risk_confirm", "keyword_rules", "dry_run", "enabled",

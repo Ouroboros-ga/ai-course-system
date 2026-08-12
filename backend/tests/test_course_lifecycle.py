@@ -600,7 +600,7 @@ def test_settings_unauthorized_for_student(client, session):
 
 
 def test_settings_agent_policy_field_whitelist(client, session):
-    """agent_policy 仅接受白名单字段（前端 SettingsAgentPage 契约字段）；非法字段被忽略。"""
+    """Only the runtime-consumed course launch switch belongs in lifecycle settings."""
     teacher = _user(session, "lc_ap_teacher", UserRole.TEACHER)
     course = _course(session, teacher.id)
 
@@ -622,11 +622,23 @@ def test_settings_agent_policy_field_whitelist(client, session):
     assert resp.status_code == 200
     ap = resp.json()["data"]["agent_policy"]
     assert ap["enabled"] is False
-    assert ap["enabled_tools"] == ["graph_read", "question_bank"]
-    assert ap["require_teacher_confirmation"] is True
-    assert ap["web_research_enabled"] is False
+    assert "enabled_tools" not in ap
+    assert "require_teacher_confirmation" not in ap
+    assert "web_research_enabled" not in ap
     assert "agent_name" not in ap
     assert "malicious_field" not in ap
+
+    current = client.get(
+        f"{COURSE_SETTINGS}/course/{course.id}/settings",
+        headers=_auth(_token(teacher)),
+    )
+    assert current.status_code == 200
+    assert current.json()["data"]["version"] == resp.json()["data"]["version"]
+    assert current.json()["data"]["agent_policy"] == {"enabled": False}
+
+    from app.api.v1.endpoints.teaching_agent import _course_agent_enabled
+
+    assert _course_agent_enabled(session, course.id) is False
 
 
 # ---------------------------------------------------------------------------

@@ -86,26 +86,24 @@ test('SettingsSandboxPage.vue: 教师通过实验平台开关而非全量能力�
   assert.doesNotMatch(src, /updateCourseCapabilities/)
 })
 
-test('SettingsAgentPage.vue: 智能体策略字段与后端白名单一一对应（含启动开关）', () => {
+test('SettingsAgentPage.vue: 读取真实 course-settings 顶层契约并只暴露启动开关', () => {
   const frontend = read('frontend/src/app/pages/course/settings/SettingsAgentPage.vue')
   const backend = read('backend/app/services/course_lifecycle_service.py')
 
-  // 前端表单字段必须全部落在后端 agent_policy 白名单内
-  for (const field of ['enabled', 'enabled_tools', 'require_teacher_confirmation', 'web_research_enabled']) {
-    assert.match(frontend, new RegExp(`form\\.value\\.${field}|${field}:`))
-    assert.match(backend, new RegExp(`["']${field}["']`))
-  }
-  // 读取路径：设置聚合模型在 current_setting.agent_policy
-  assert.match(frontend, /current\?\.agent_policy/)
-  // 启动开关 UI 存在
+  assert.match(frontend, /data\?\.agent_policy/)
+  assert.match(frontend, /data\?\.version/)
+  assert.doesNotMatch(frontend, /current_setting/)
   assert.match(frontend, /智能体启动/)
-  // 历史占位字段不再进入白名单
+  assert.match(backend, /_AGENT_POLICY_FIELDS\s*=\s*\{\s*["']enabled["']\s*,?\s*\}/)
+  assert.doesNotMatch(frontend, /enabled_tools|require_teacher_confirmation|web_research_enabled/)
   assert.doesNotMatch(backend, /["']agent_name["']/)
 })
 
-test('SettingsProfilePage.vue: 读取设置聚合模型 current_setting.profile', () => {
+test('SettingsProfilePage.vue: 读取真实 course-settings 顶层 profile', () => {
   const src = read('frontend/src/app/pages/course/settings/SettingsProfilePage.vue')
-  assert.match(src, /current\?\.profile/)
+  assert.match(src, /settings\?\.profile/)
+  assert.match(src, /settings\?\.version/)
+  assert.doesNotMatch(src, /current_setting/)
 })
 
 test('teaching_agent.py: 教学问答端点消费课程智能体启动开关', () => {

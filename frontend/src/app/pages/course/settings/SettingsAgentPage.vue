@@ -10,36 +10,19 @@ const allowed = computed(() => courseContext.allowed.value?.['agent.policy.confi
 
 const form = ref({
   enabled: true,
-  enabled_tools: [],
-  require_teacher_confirmation: true,
-  web_research_enabled: false,
 })
 const version = ref(null)
 const saving = ref(false)
 const error = ref('')
 const saved = ref(false)
 
-const tools = [
-  ['graph_read', '图谱检索'],
-  ['course_retrieval', '课程内容检索'],
-  ['question_bank', '题库'],
-  ['sandbox', '代码沙箱'],
-  ['visualization', '可视化演示'],
-  ['learning_event', '学习行为记录'],
-  ['web_research', '外部资料检索'],
-]
-
 async function load() {
   try {
     const data = await getCourseSettings(courseId.value)
-    const current = data?.current_setting
-    version.value = current?.version ?? null
-    const policy = current?.agent_policy ?? {}
+    version.value = data?.version ?? null
+    const policy = data?.agent_policy ?? {}
     form.value = {
       enabled: policy.enabled !== false,
-      enabled_tools: Array.isArray(policy.enabled_tools) ? [...policy.enabled_tools] : [],
-      require_teacher_confirmation: policy.require_teacher_confirmation !== false,
-      web_research_enabled: Boolean(policy.web_research_enabled),
     }
   } catch (e) {
     error.value = e?.message || '智能体策略读取失败'
@@ -68,8 +51,8 @@ onMounted(load)
   <div class="sfx-settings-page">
     <header class="sfx-settings-head">
       <div>
-        <h1 class="sfx-t-title2">智能体策略</h1>
-        <p class="sfx-t-ui sfx-t-secondary">选择本课程允许智能体使用的能力，并决定高风险动作是否需要教师确认。</p>
+        <h1 class="sfx-t-title2">智能体设置</h1>
+        <p class="sfx-t-ui sfx-t-secondary">控制学生是否可以使用本课程的教学智能体。</p>
       </div>
     </header>
 
@@ -79,26 +62,6 @@ onMounted(load)
         <label class="sfx-check">
           <input v-model="form.enabled" type="checkbox" :disabled="!allowed" />
           <span class="sfx-t-ui">启用课程智能体（关闭后学生侧教学问答入口不可用）</span>
-        </label>
-      </div>
-
-      <div class="sfx-agent-section">
-        <h2 class="sfx-panel-title">可用能力</h2>
-        <label v-for="[tool, toolLabel] in tools" :key="tool" class="sfx-check">
-          <input v-model="form.enabled_tools" type="checkbox" :value="tool" :disabled="!allowed" />
-          <span class="sfx-t-ui">{{ toolLabel }}</span>
-        </label>
-      </div>
-
-      <div class="sfx-agent-section">
-        <h2 class="sfx-panel-title">行为约束</h2>
-        <label class="sfx-check">
-          <input v-model="form.require_teacher_confirmation" type="checkbox" :disabled="!allowed" />
-          <span class="sfx-t-ui">高风险教学动作必须教师确认</span>
-        </label>
-        <label class="sfx-check">
-          <input v-model="form.web_research_enabled" type="checkbox" :disabled="!allowed" />
-          <span class="sfx-t-ui">允许补充外部资料（仅供回答参考，不改变课程内容）</span>
         </label>
       </div>
 

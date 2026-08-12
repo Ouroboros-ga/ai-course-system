@@ -20,6 +20,7 @@ from app.models.access_control_model import (
 from app.models.course_model import Course, CourseStatus
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
+    DEFAULT_NEW_COURSE_CAPABILITIES,
     activate_student_membership,
     establish_course_access_baseline,
     resolve_course_access,
@@ -287,6 +288,11 @@ def test_access_endpoint_rejects_legacy_owner_without_membership(client, session
     )
 
     assert response.status_code == 403
+
+
+def test_new_courses_require_explicit_code_sandbox_opt_in():
+    assert DEFAULT_NEW_COURSE_CAPABILITIES["experiment"] is False
+    assert DEFAULT_NEW_COURSE_CAPABILITIES["coding_sandbox"] is False
 
 
 def test_disabling_code_sandbox_also_disables_current_experiment_platform(client, session):
