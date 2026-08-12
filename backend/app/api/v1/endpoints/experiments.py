@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlmodel import Session
 
@@ -28,7 +28,7 @@ from app.models.experiment_model import (
     ExperimentPublishStatus,
     RunOutcome,
 )
-from app.services.course_access_service import require_course_permission
+from app.services.course_access_service import require_course_permission as _base_require_course_permission
 from app.services.experiment_service import (
     attempt_service,
     coding_hint_service,
@@ -42,6 +42,23 @@ from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 
 
 experiment_router = APIRouter()
+
+
+def _require_experiment_platform(session: Session, current_user: dict, course_id: int, permission: str):
+    """The course experiment platform requires both coupled capability flags."""
+    context = _base_require_course_permission(session, current_user, course_id, permission)
+    if not context.capabilities.get("experiment", False) or not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "EXPERIMENT_PLATFORM_DISABLED", "message": "课程实验平台未启用"},
+        )
+    return context
+
+
+# All routes in this module are inside the coupled experiment platform.  Keep
+# existing call sites fail-closed without relying on each future endpoint to
+# remember both capability checks.
+require_course_permission = _require_experiment_platform
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +90,7 @@ class VersionCreateRequest(BaseModel):
     wall_time_limit: int = Field(default=10, ge=1, le=60)
     max_processes: int = Field(default=30, ge=1, le=120)
     max_file_size: int = Field(default=1024, ge=1, le=8192)
-    passing_score: float = Field(default=0.6, ge=0.0, le=1.0)
+    passing_score: float = Field(default=1.0, ge=1.0, le=1.0)
     writes_formal_evidence: bool = True
     test_cases: list[dict] = Field(default_factory=list)
     activate: bool = True
@@ -279,7 +296,7 @@ async def create_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师创建实验定义。"""
-    require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
     user_id = int(current_user["user_id"])
     definition = definition_service.create_definition(
         session,
@@ -309,7 +326,7 @@ async def get_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """获取实验定义详情（学生视图不返回 draft/archived）。"""
-    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    context = _require_experiment_platform(session, current_user, course_id, "experiment.view")
     definition = definition_service.get_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -333,7 +350,7 @@ async def update_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师更新实验定义。"""
-    require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
     definition = definition_service.update_definition(
         session,
         course_id=course_id,
@@ -361,7 +378,7 @@ async def publish_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师发布实验。"""
-    require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
     definition = definition_service.publish_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -382,7 +399,7 @@ async def archive_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师归档实验。"""
-    require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
     definition = definition_service.archive_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -537,6 +554,29 @@ async def activate_version(
     )
 
 
+@experiment_router.post("/versions/{version_id}/reference-preview")
+async def preview_reference_solution(
+    version_id: str,
+    payload: ReferencePreviewRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Validate a transient reference solution without storing its source."""
+    require_course_permission(session, current_user, course_id, "experiment.configure")
+    from app.services.experiment_service import publish_validator
+
+    result = publish_validator.verify_reference_solution(
+        session,
+        course_id=course_id,
+        version_id=version_id,
+        language=payload.language,
+        source_code=payload.source_code,
+    )
+    session.commit()
+    return unified_response(code=200, message="参考解预览完成", data=result)
+
+
 @experiment_router.post("/versions/{version_id}/lock")
 async def lock_version(
     version_id: str,
@@ -616,54 +656,21 @@ async def get_attempt(
     )
 
 
-@experiment_router.post("/attempts/{attempt_id}/submit")
-async def submit_attempt(
-    attempt_id: str,
-    course_id: int = Query(...),
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """学生提交尝试（标记为已提交，等待 finalize）。"""
-    require_course_permission(session, current_user, course_id, "experiment.run")
-    user_id = int(current_user["user_id"])
-    attempt = attempt_service.get_attempt(
-        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
-    )
-    attempt = attempt_service.submit_attempt(
-        session, course_id=course_id, attempt_id=attempt_id,
-    )
-    session.commit()
-    session.refresh(attempt)
-    return unified_response(
-        code=200,
-        message="尝试已提交",
-        data=_serialize_attempt(attempt),
-    )
-
-
 # ---------------------------------------------------------------------------
 # 代码运行
 # ---------------------------------------------------------------------------
 
 
-@experiment_router.post("/attempts/{attempt_id}/runs")
+@experiment_router.post("/attempts/{attempt_id}/runs", status_code=202)
 async def create_run(
     attempt_id: str,
     payload: RunCreateRequest,
     course_id: int = Query(...),
-    async_run: bool = Query(
-        False,
-        description="异步执行模式：返回 202 + task_id，不阻塞等待 Judge0",
-    ),
+    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=128),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """学生提交代码；同步或异步执行运行（沙箱不可用时降级）。
-
-    - 同步模式（默认，async_run=false）：在请求内等待 Judge0 返回，兼容现有测试
-    - 异步模式（async_run=true）：创建 TaskRecord，返回 202 + task_id，
-      worker 异步执行；前端通过 GET /api/v1/tasks/{task_id} 轮询状态
-    """
+    """创建正式异步评测任务；永不在请求内等待 Judge0。"""
     context = require_course_permission(session, current_user, course_id, "experiment.run")
     if not context.capabilities.get("coding_sandbox", False):
         raise HTTPException(
@@ -672,28 +679,28 @@ async def create_run(
         )
     user_id = int(current_user["user_id"])
 
-    if not async_run:
-        # 同步路径（保留向后兼容）
-        run = await run_service.create_run(
-            session,
-            course_id=course_id,
-            attempt_id=attempt_id,
-            language=payload.language,
-            source_code=payload.source_code,
-            student_id=user_id,
-        )
-        session.commit()
-        session.refresh(run)
-        return unified_response(
-            code=201,
-            message="运行已完成" if run.outcome == RunOutcome.ACCEPTED else "运行结果已生成",
-            data=_serialize_run(run),
-        )
-
-    # 异步路径：创建 ExperimentRun（PENDING）+ TaskRecord，返回 202 + task_id
+    # 创建 ExperimentRun（PENDING）+ TaskRecord，返回 202 + task_id。
+    # 同一 Idempotency-Key 返回现有运行，不重复评分或生成实验记录。
     from app.services.task_service import TaskCreateRequest, task_service
 
-    # 创建 ExperimentRun（不执行沙箱；校验仍在 create_run 内完成）
+    existing = run_service.get_run_by_idempotency(
+        session, attempt_id=attempt_id, idempotency_key=idempotency_key,
+    )
+    if existing is not None:
+        return unified_response(
+            code=202,
+            message="代码运行任务已存在",
+            data={"run_id": existing.run_id, "task_id": existing.task_id, "status": existing.outcome.value},
+        )
+
+    attempt = attempt_service.get_attempt(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
+    )
+    if attempt.status == AttemptStatus.IN_PROGRESS:
+        attempt_service.submit_attempt(session, course_id=course_id, attempt_id=attempt_id)
+    elif attempt.status != AttemptStatus.SUBMITTED:
+        raise HTTPException(status_code=409, detail="该实验尝试已经终结或取消")
+
     run = await run_service.create_run(
         session,
         course_id=course_id,
@@ -702,6 +709,7 @@ async def create_run(
         source_code=payload.source_code,
         student_id=user_id,
         execute=False,
+        idempotency_key=idempotency_key,
     )
 
     task_view = task_service.create_task(session, TaskCreateRequest(
@@ -721,6 +729,7 @@ async def create_run(
             {"resource_kind": "experiment_attempt", "resource_id": attempt_id, "relation": "input"},
             {"resource_kind": "experiment_run", "resource_id": run.run_id, "relation": "output"},
         ],
+        idempotency_key=f"experiment_run:{attempt_id}:{idempotency_key}",
     ))
 
     # 关联 task_id 到 run（便于后续查询）
@@ -759,7 +768,6 @@ async def create_run(
             "run_id": run.run_id,
             "task_id": task_view.task_id,
             "status": run.outcome.value if hasattr(run.outcome, "value") else str(run.outcome),
-            "async": True,
         },
     )
 
@@ -791,36 +799,22 @@ async def list_runs(
     )
 
 
-# ---------------------------------------------------------------------------
-# 终结化
-# ---------------------------------------------------------------------------
-
-
-@experiment_router.post("/attempts/{attempt_id}/finalize")
-async def finalize_attempt(
-    attempt_id: str,
+@experiment_router.get("/runs/{run_id}")
+async def get_run(
+    run_id: str,
     course_id: int = Query(...),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """通过评分规则后形成正式评分型 Evidence；失败不写掌握结论。"""
-    context = require_course_permission(session, current_user, course_id, "experiment.run")
-    if not context.capabilities.get("coding_sandbox", False):
-        raise HTTPException(
-            status_code=403,
-            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "课程未启用代码沙箱能力"},
-        )
-    user_id = int(current_user["user_id"])
-    attempt = finalize_service.finalize_attempt(
-        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
+    """Read one formal run without exposing source or hidden-test artifacts."""
+    context = _require_experiment_platform(session, current_user, course_id, "experiment.view")
+    run = run_service.get_run(
+        session,
+        course_id=course_id,
+        run_id=run_id,
+        student_id=int(current_user["user_id"]) if context.role is not None and context.role.value == "student" else None,
     )
-    session.commit()
-    session.refresh(attempt)
-    return unified_response(
-        code=200,
-        message="尝试已终结化" if attempt.status == AttemptStatus.FINALIZED else "尝试未通过评分",
-        data=_serialize_attempt(attempt),
-    )
+    return unified_response(code=200, message="获取运行结果成功", data=_serialize_run(run))
 
 
 # ---------------------------------------------------------------------------
@@ -973,3 +967,62 @@ async def get_run_diagnosis(
     if diagnosis is None:
         return unified_response(code=200, message="尚未生成代码诊断", data={"run_id": run_id, "diagnosis": None})
     return unified_response(code=200, message="获取代码诊断成功", data=serialize_diagnosis(diagnosis))
+
+
+@experiment_router.get("/runs/{run_id}/feedback")
+async def get_run_feedback(
+    run_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return a CodingAgent-safe explanation with a deterministic fallback.
+
+    The payload is assembled from the server-owned diagnosis record only.  It
+    intentionally excludes source, stdin/stdout, hidden tests, artifacts and
+    Judge0 configuration, so future LLM enrichment has the same boundary.
+    """
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    user_id = int(current_user["user_id"])
+    run = run_service.get_run(
+        session,
+        course_id=course_id,
+        run_id=run_id,
+        student_id=user_id if context.role is not None and context.role.value == "student" else None,
+    )
+    diagnosis = session.exec(select(CodingDiagnosisRecord).where(
+        CodingDiagnosisRecord.run_id == run_id,
+        CodingDiagnosisRecord.course_id == course_id,
+        CodingDiagnosisRecord.student_id == run.student_id,
+    )).first()
+    if diagnosis is None and run.outcome != RunOutcome.PENDING:
+        diagnosis = coding_eduagent.diagnose_run(
+            session, course_id=course_id, student_id=run.student_id, run_id=run_id,
+        )
+        session.commit()
+    if diagnosis is None:
+        return unified_response(
+            code=200,
+            message="运行尚未终结",
+            data={"run_id": run_id, "status": "pending", "feedback": None},
+        )
+    return unified_response(
+        code=200,
+        message="获取本次运行讲解成功",
+        data={
+            "run_id": run_id,
+            "feedback_source": "coding-rules",
+            "summary": diagnosis.summary,
+            "next_steps": list(diagnosis.debug_steps or []),
+            "reason_codes": list(diagnosis.reason_codes or []),
+            "line": diagnosis.line,
+            "result": {
+                "outcome": diagnosis.outcome,
+                "passed_count": run.passed_count,
+                "total_count": run.total_count,
+                "cpu_time_ms": run.cpu_time_ms,
+                "wall_time_ms": run.wall_time_ms,
+                "memory_kb": run.memory_kb,
+            },
+        },
+    )

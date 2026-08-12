@@ -133,11 +133,24 @@ def build_coding_workflow(tools: CodingTools):
         # Try LLM-based diagnosis when configured.
         if tools.llm is not None:
             try:
+                diagnosis = state.get("coding_diagnosis") or {}
+                safe_diagnosis = {
+                    key: diagnosis.get(key)
+                    for key in ("outcome", "error_class", "line", "summary", "debug_steps", "reason_codes")
+                }
+                safe_sandbox = {
+                    "outcome": sandbox_result.get("outcome"),
+                    "diagnosis": {
+                        key: (sandbox_result.get("diagnosis") or {}).get(key)
+                        for key in ("compile_ok", "passed_count", "total_count", "score", "error_code")
+                    },
+                    "resource_usage": sandbox_result.get("resource_usage") or {},
+                }
                 response = await tools.llm.generate_teaching_response(context={
                     "agent_type": "coding",
-                    "sandbox_result": sandbox_result,
-                    "coding_diagnosis": state.get("coding_diagnosis"),
-                    "user_message": state.get("user_message", ""),
+                    "sandbox_result": safe_sandbox,
+                    "coding_diagnosis": safe_diagnosis,
+                    "instruction": "只解释已脱敏诊断，不索取或复述源码、测试输入输出、隐藏测试或 Judge0 数据。",
                 })
                 answer = response.get("answer") or response.get("content") or ""
                 if answer:

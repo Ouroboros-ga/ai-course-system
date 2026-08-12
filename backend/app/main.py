@@ -236,6 +236,38 @@ async def recover_durable_task_queues() -> None:
     except Exception:
         logger.exception("PPT manifest task recovery failed")
     try:
+        # Formal experiment runs are safe to resume only when Judge0 has not
+        # written a terminal result.  The handler's idempotent run/attempt and
+        # projection checks prevent duplicate scoring after a process restart.
+        import json
+        from sqlmodel import select
+        from app.models.experiment_model import ExperimentRun, RunOutcome
+        from app.models.task_model import TaskRecord
+        from app.models.database import session_factory
+        from app.platform.tasks.worker import local_task_worker
+        from app.services.task_service import task_service
+
+        to_resume: list[tuple[str, dict]] = []
+        with session_factory() as session:
+            tasks = list(session.exec(select(TaskRecord).where(
+                TaskRecord.task_type == "experiment_run",
+                TaskRecord.status == "interrupted",
+            )).all())
+            for task in tasks:
+                payload = json.loads(task.input_payload or "{}")
+                run = session.exec(select(ExperimentRun).where(
+                    ExperimentRun.run_id == payload.get("run_id"),
+                )).first()
+                if run is None or run.outcome != RunOutcome.PENDING:
+                    continue
+                task_service.retry(session, task.task_id)
+                to_resume.append((task.task_id, payload))
+        for task_id, payload in to_resume:
+            local_task_worker.submit(session_factory, task_id, payload)
+        logger.info("Experiment run recovery requeued %d pending task(s)", len(to_resume))
+    except Exception:
+        logger.exception("Experiment run recovery failed")
+    try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
         )
@@ -249,6 +281,7 @@ async def recover_durable_task_queues() -> None:
 # course sidecars are optional enrichments; only runtime/LLM configuration
 # controls injection. Never blocks startup; see bootstrap.py.
 from app.platform.agents.bootstrap import (
+    bootstrap_coding_agent,
     bootstrap_prep_agent,
     bootstrap_research_agent,
     bootstrap_teaching_agent,
@@ -256,6 +289,7 @@ from app.platform.agents.bootstrap import (
 bootstrap_prep_agent(app)
 bootstrap_research_agent(app)
 bootstrap_teaching_agent(app)
+bootstrap_coding_agent(app)
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）
 app.add_middleware(SignatureMiddleware)

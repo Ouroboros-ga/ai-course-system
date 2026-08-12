@@ -185,6 +185,10 @@ from app.models.experiment_model import (
     ExperimentRun,
     ExperimentRunArtifact,
     CodingHintRecord,
+    FreeSandboxQuotaWindow,
+    SandboxExecutionLease,
+    ExperimentLabProjection,
+    ExperimentRecommendation,
 )
 from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 # 阶段7：通用资源库、回收站与平台实验室目录

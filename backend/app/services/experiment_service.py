@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from sqlmodel import Session, func, select
 
@@ -39,6 +39,8 @@ from app.models.experiment_model import (
     ExperimentRunArtifact,
     ExperimentTestCase,
     ExperimentVersion,
+    FreeSandboxQuotaWindow,
+    SandboxExecutionLease,
     RunOutcome,
 )
 from app.services.sandbox_client import (
@@ -60,6 +62,101 @@ CODING_HINT_POLICY_VERSION = "coding-hint-v1.0"
 # full_solution 是否被允许；当前无策略查询逻辑，硬编码为 False，
 # 且客户端不可覆盖（端点已移除 full_solution_allowed 字段）。
 DEFAULT_FULL_SOLUTION_ALLOWED = False
+
+
+FREE_SANDBOX_WINDOW = timedelta(minutes=10)
+FREE_SANDBOX_LIMIT = 10
+FORMAL_SANDBOX_LEASE_SECONDS = 90
+
+
+class FreeSandboxQuotaService:
+    """Server-owned quota for non-scoring free code runs.
+
+    This intentionally persists no source, stdin or sandbox output.  Keeping
+    the counter in the database makes the 10/10-minute rule consistent across
+    application processes without introducing another rate-limit dependency.
+    """
+
+    def consume(self, session: Session, *, course_id: int, student_id: int) -> int:
+        now = utcnow_aware()
+        cutoff = now - FREE_SANDBOX_WINDOW
+        window = session.exec(
+            select(FreeSandboxQuotaWindow)
+            .where(
+                FreeSandboxQuotaWindow.course_id == course_id,
+                FreeSandboxQuotaWindow.student_id == student_id,
+                FreeSandboxQuotaWindow.window_started_at >= cutoff,
+            )
+            .order_by(FreeSandboxQuotaWindow.window_started_at.desc())
+        ).first()
+        if window is None:
+            window = FreeSandboxQuotaWindow(
+                course_id=course_id,
+                student_id=student_id,
+                window_started_at=now,
+                request_count=0,
+            )
+            session.add(window)
+            session.flush()
+
+        if window.request_count >= FREE_SANDBOX_LIMIT:
+            retry_after = max(
+                1,
+                int((window.window_started_at + FREE_SANDBOX_WINDOW - now).total_seconds()),
+            )
+            return retry_after
+        window.request_count += 1
+        window.updated_at = now
+        session.add(window)
+        session.flush()
+        return 0
+
+
+class SandboxExecutionLeaseService:
+    """A database lease complements the process-local worker semaphore."""
+
+    def acquire(self, session: Session, *, task_id: str) -> bool:
+        now = utcnow_aware()
+        lease = session.get(SandboxExecutionLease, "judge0_formal")
+        if lease is None:
+            lease = SandboxExecutionLease(
+                lease_name="judge0_formal",
+                holder_task_id=task_id,
+                lease_expires_at=now + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS),
+                updated_at=now,
+            )
+            session.add(lease)
+            session.flush()
+            return True
+        if lease.holder_task_id not in (None, task_id) and (
+            lease.lease_expires_at is None or lease.lease_expires_at > now
+        ):
+            return False
+        lease.holder_task_id = task_id
+        lease.lease_expires_at = now + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS)
+        lease.updated_at = now
+        session.add(lease)
+        session.flush()
+        return True
+
+    def renew(self, session: Session, *, task_id: str) -> bool:
+        lease = session.get(SandboxExecutionLease, "judge0_formal")
+        if lease is None or lease.holder_task_id != task_id:
+            return False
+        lease.lease_expires_at = utcnow_aware() + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS)
+        lease.updated_at = utcnow_aware()
+        session.add(lease)
+        session.flush()
+        return True
+
+    def release(self, session: Session, *, task_id: str) -> None:
+        lease = session.get(SandboxExecutionLease, "judge0_formal")
+        if lease is not None and lease.holder_task_id == task_id:
+            lease.holder_task_id = None
+            lease.lease_expires_at = None
+            lease.updated_at = utcnow_aware()
+            session.add(lease)
+            session.flush()
 
 
 # ---------------------------------------------------------------------------
@@ -175,8 +272,7 @@ class ExperimentDefinitionService:
         experiment_id: str,
     ) -> ExperimentDefinition:
         definition = self.get_definition(session, course_id=course_id, experiment_id=experiment_id)
-        if not definition.default_version_id:
-            reject_state_conflict("实验缺少激活版本，无法发布")
+        publish_validator.validate(session, definition=definition)
         definition.publish_status = ExperimentPublishStatus.PUBLISHED
         definition.updated_at = utcnow_aware()
         session.add(definition)
@@ -219,7 +315,7 @@ class ExperimentVersionService:
         wall_time_limit: int = 10,
         max_processes: int = 30,
         max_file_size: int = 1024,
-        passing_score: float = 0.6,
+        passing_score: float = 1.0,
         writes_formal_evidence: bool = True,
         created_by: int,
         test_cases: Optional[list[dict]] = None,
@@ -229,6 +325,14 @@ class ExperimentVersionService:
         definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id,
         )
+
+        if passing_score != 1.0:
+            reject_validation_failed("正式编程评测采用 ACM/ICPC，passing_score 必须为 1.0")
+        if not test_cases:
+            reject_validation_failed("实验版本至少需要一个公开或隐藏测试用例")
+        total_weight = sum(float(case.get("weight", 1.0)) for case in test_cases)
+        if abs(total_weight - 1.0) > 1e-6:
+            reject_validation_failed("测试用例权重总和必须为 1")
 
         # 计算版本号
         max_version = session.exec(
@@ -388,6 +492,102 @@ class ExperimentVersionService:
         return version
 
 
+class ExperimentPublishValidator:
+    """The one release gate for a formal, server-owned programming experiment."""
+
+    def validate(self, session: Session, *, definition: ExperimentDefinition) -> ExperimentVersion:
+        if not definition.language_whitelist:
+            reject_validation_failed("发布前必须配置至少一种允许语言")
+        invalid = [language for language in definition.language_whitelist if language not in ALLOWED_LANGUAGES]
+        if invalid:
+            reject_validation_failed(f"发布语言不受支持: {invalid}")
+        if not definition.default_version_id:
+            reject_state_conflict("实验缺少激活默认版本，无法发布")
+
+        version = version_service.get_version(
+            session,
+            course_id=definition.course_id,
+            version_id=definition.default_version_id,
+        )
+        if not version.is_active or not version.is_locked:
+            reject_state_conflict("发布前必须锁定活动默认版本")
+        if version.passing_score != 1.0:
+            reject_validation_failed("正式编程评测必须使用 ACM/ICPC 的 passing_score=1.0")
+        if version.reference_preview_verified_at is None:
+            reject_state_conflict("参考解预览尚未全 AC，无法发布")
+        if not (1 <= version.cpu_time_limit <= 30 and 16_000 <= version.memory_limit <= 512_000):
+            reject_validation_failed("资源边界不合规")
+
+        cases = version_service.list_test_cases(
+            session,
+            course_id=definition.course_id,
+            version_id=version.version_id,
+            include_hidden=True,
+        )
+        if not cases:
+            reject_validation_failed("发布前至少需要一个测试用例")
+        if abs(sum(case.weight for case in cases) - 1.0) > 1e-6:
+            reject_validation_failed("测试用例权重总和必须为 1")
+        if not sandbox_client.health_check():
+            reject_capability_disabled("SANDBOX_UNAVAILABLE")
+        return version
+
+    def verify_reference_solution(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        version_id: str,
+        language: str,
+        source_code: str,
+    ) -> dict[str, Any]:
+        """Run a temporary reference solution without persisting code or artifacts."""
+        version = version_service.get_version(session, course_id=course_id, version_id=version_id)
+        definition = definition_service.get_definition(
+            session, course_id=course_id, experiment_id=version.experiment_id,
+        )
+        if language not in definition.language_whitelist:
+            reject_validation_failed("参考解语言不在实验白名单中")
+        if not sandbox_client.health_check():
+            reject_capability_disabled("SANDBOX_UNAVAILABLE")
+
+        limits = SandboxResourceLimits(
+            cpu_time_limit=version.cpu_time_limit,
+            memory_limit=version.memory_limit,
+            wall_time_limit=version.wall_time_limit,
+            max_processes=version.max_processes,
+            max_file_size=version.max_file_size,
+            enable_network=False,
+        )
+        cases = version_service.list_test_cases(
+            session, course_id=course_id, version_id=version_id, include_hidden=True,
+        )
+        outcomes: list[str] = []
+        for case in cases:
+            result = sandbox_client.submit_code(
+                source_code=source_code,
+                language=language,
+                stdin=case.stdin,
+                expected_output=case.expected_stdout,
+                limits=limits,
+            )
+            outcomes.append(self._safe_preview_status(result.status))
+            if result.status != SubmissionStatus.ACCEPTED:
+                break
+        passed = len(cases) > 0 and len(outcomes) == len(cases) and all(
+            item == "accepted" for item in outcomes
+        )
+        if passed:
+            version.reference_preview_verified_at = utcnow_aware()
+            session.add(version)
+            session.flush()
+        return {"passed": passed, "total_count": len(cases), "passed_count": len(outcomes) if passed else max(0, len(outcomes) - 1)}
+
+    @staticmethod
+    def _safe_preview_status(status: SubmissionStatus) -> str:
+        return "accepted" if status == SubmissionStatus.ACCEPTED else "failed"
+
+
 # ---------------------------------------------------------------------------
 # 实验尝试服务
 # ---------------------------------------------------------------------------
@@ -529,6 +729,7 @@ class ExperimentRunService:
         source_code: str,
         student_id: int,
         execute: bool = True,
+        idempotency_key: Optional[str] = None,
     ) -> ExperimentRun:
         """创建代码运行记录。
 
@@ -550,6 +751,16 @@ class ExperimentRunService:
             session, course_id=course_id, version_id=attempt.version_id,
         )
 
+        if idempotency_key:
+            existing = session.exec(
+                select(ExperimentRun).where(
+                    ExperimentRun.attempt_id == attempt_id,
+                    ExperimentRun.idempotency_key == idempotency_key,
+                )
+            ).first()
+            if existing is not None:
+                return existing
+
         run = self._create_run_record(
             session,
             course_id=course_id,
@@ -557,6 +768,7 @@ class ExperimentRunService:
             language=language,
             source_code=source_code,
             student_id=student_id,
+            idempotency_key=idempotency_key,
         )
 
         if execute:
@@ -602,6 +814,7 @@ class ExperimentRunService:
         language: str,
         source_code: str,
         student_id: int,
+        idempotency_key: Optional[str] = None,
     ) -> ExperimentRun:
         """仅创建 ExperimentRun 记录（PENDING），不执行沙箱。
 
@@ -614,6 +827,7 @@ class ExperimentRunService:
             student_id=student_id,
             language=language,
             source_code=source_code,
+            idempotency_key=idempotency_key,
             outcome=RunOutcome.PENDING,
         )
         session.add(run)
@@ -627,6 +841,7 @@ class ExperimentRunService:
         run: ExperimentRun,
         attempt: ExperimentAttempt,
         version: ExperimentVersion,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         # 加载测试用例
         cases = version_service.list_test_cases(
@@ -663,6 +878,16 @@ class ExperimentRunService:
         first_wrong_answer = ""
 
         for case in cases:
+            # A running cancellation takes effect after the currently active
+            # Judge0 case returns.  Do not finalise the attempt or create
+            # evidence; the student may start a new attempt deliberately.
+            if cancel_check is not None and cancel_check():
+                run.error_code = "CANCELLED"
+                run.error_message = "评测任务已取消，未形成终结成绩"
+                run.test_summary = {"cases": test_summary, "cancelled": True}
+                session.add(run)
+                session.flush()
+                return
             try:
                 case_limits = limits
                 if case.time_limit_override is not None:
@@ -763,12 +988,9 @@ class ExperimentRunService:
             else:
                 run.outcome = RunOutcome.WRONG_ANSWER
 
-        # 计算分数（按权重）
-        total_weight = sum(c.weight for c in cases) or 1.0
-        passed_weight = sum(
-            c.weight for c, t in zip(cases, test_summary) if t["passed"]
-        )
-        run.score = passed_weight / total_weight if total_weight > 0 else 0.0
+        # ACM/ICPC 正式结果只有全 AC 或未通过。权重只用于发布完整性校验，
+        # 诊断仍保留通过数量和首个错误分类。
+        run.score = 1.0 if run.outcome == RunOutcome.ACCEPTED else 0.0
         run.finished_at = utcnow_aware()
         session.add(run)
         session.flush()
@@ -806,6 +1028,20 @@ class ExperimentRunService:
         if student_id is not None and run.student_id != student_id:
             reject_course_access_denied("无权访问他人运行")
         return run
+
+    def get_run_by_idempotency(
+        self,
+        session: Session,
+        *,
+        attempt_id: str,
+        idempotency_key: str,
+    ) -> Optional[ExperimentRun]:
+        return session.exec(
+            select(ExperimentRun).where(
+                ExperimentRun.attempt_id == attempt_id,
+                ExperimentRun.idempotency_key == idempotency_key,
+            )
+        ).first()
 
     def list_runs(
         self,
@@ -859,11 +1095,14 @@ class ExperimentFinalizeService:
             session, course_id=course_id, version_id=attempt.version_id,
         )
 
-        # 计算最终分数
-        score = latest_run.score or 0.0
-        passed = score >= version.passing_score and latest_run.outcome == RunOutcome.ACCEPTED
+        if latest_run.outcome == RunOutcome.SANDBOX_UNAVAILABLE:
+            reject_state_conflict("SANDBOX_UNAVAILABLE：评测尚未终结，可重试")
+        if latest_run.outcome == RunOutcome.PENDING:
+            reject_state_conflict("评测尚未终结，不能写入正式记录")
 
-        attempt.final_score = score
+        # ACM/ICPC：所有测试 Accepted 才是 1；其余终态均是 0。
+        passed = latest_run.outcome == RunOutcome.ACCEPTED
+        attempt.final_score = 1.0 if passed else 0.0
         attempt.passed = passed
         attempt.finalized_at = utcnow_aware()
         attempt.status = AttemptStatus.FINALIZED if passed else AttemptStatus.FAILED
@@ -1032,7 +1271,10 @@ class CodingHintService:
 
 definition_service = ExperimentDefinitionService()
 version_service = ExperimentVersionService()
+publish_validator = ExperimentPublishValidator()
 attempt_service = ExperimentAttemptService()
 run_service = ExperimentRunService()
 finalize_service = ExperimentFinalizeService()
 coding_hint_service = CodingHintService()
+free_sandbox_quota_service = FreeSandboxQuotaService()
+sandbox_execution_lease_service = SandboxExecutionLeaseService()

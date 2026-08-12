@@ -302,29 +302,49 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         app.state.agent_platform = platform
         logger.info("TeachingAgent registry injected; AgentPlatform registered EDU agent.")
 
-        # Commit 7: register Coding agent with the unified AgentPlatform.
-        # The Coding Agent is a new skeleton with a 3-node workflow:
-        # load_sandbox_result → load_coding_diagnosis → generate_diagnosis_response.
-        # It reuses the same SandboxPort and CodingDiagnosisPort already wired for EDU.
-        # Governance is prompt-level (read-only tools are LOW-risk).
-        try:
-            from .coding.composition import build_coding_graph_factory
-            from .coding.profile import build_coding_profile as _coding_profile
-            platform.register_generic(
-                profile=_coding_profile(),
-                builder=build_coding_graph_factory(
-                    sandbox=sandbox_port,
-                    coding_diagnosis=coding_diagnosis,
-                    llm=OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model),
-                ),
-            )
-            logger.info("AgentPlatform: registered Coding agent.")
-        except Exception as coding_error:  # noqa: BLE001 - never block app startup
-            logger.warning("AgentPlatform: Coding agent registration failed: %s: %s", type(coding_error).__name__, coding_error)
-
         return True
     except Exception as error:  # noqa: BLE001 - never block app startup
         logger.warning("TeachingAgent bootstrap failed (endpoint stays 503): %s: %s", type(error).__name__, error)
+        return False
+
+
+def bootstrap_coding_agent(app: Any) -> bool:
+    """Register CodingAgent independently of the TeachingAgent LLM switch.
+
+    Judge0 result reads and deterministic diagnoses remain useful when no LLM
+    is configured.  An optional LLM is injected only when its own configuration
+    is complete, so a TeachingAgent bootstrap failure cannot hide CodingAgent.
+    """
+    try:
+        from .coding.composition import build_coding_graph_factory
+        from .coding.profile import build_coding_profile
+
+        session_factory = lambda: Session(engine)
+        coding_diagnosis, _student_history = make_session_scoped_coding_ports(session_factory)
+        sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+        llm = None
+        base_url = (settings.LLM_API_BASE or "").strip()
+        api_key = (settings.LLM_API_KEY or "").strip()
+        model = (settings.LLM_MODEL_NAME or "").strip()
+        if base_url and api_key and model:
+            llm = OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model)
+
+        platform = getattr(app.state, "agent_platform", None)
+        if platform is None:
+            platform = LegacyAgentPlatform()
+        platform.register_generic(
+            profile=build_coding_profile(),
+            builder=build_coding_graph_factory(
+                sandbox=sandbox_port,
+                coding_diagnosis=coding_diagnosis,
+                llm=llm,
+            ),
+        )
+        app.state.agent_platform = platform
+        logger.info("CodingAgent registered with %s feedback.", "LLM" if llm else "rule-based")
+        return True
+    except Exception as error:  # noqa: BLE001 - must not block app startup
+        logger.warning("CodingAgent bootstrap failed: %s: %s", type(error).__name__, error)
         return False
 
 

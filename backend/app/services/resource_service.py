@@ -38,10 +38,177 @@ from app.models.resource_model import (
     ResourceTag,
     ResourceVersion,
 )
+from app.models.experiment_model import (
+    AttemptStatus,
+    ExperimentAttempt,
+    ExperimentDefinition,
+    ExperimentLabProjection,
+    ExperimentRecommendation,
+    ExperimentPublishStatus,
+)
 
 
 # 默认回收站保留期 30 天
 DEFAULT_RECYCLE_RETENTION_DAYS = 30
+
+
+class LabProjectionService:
+    """Read-model and trusted-write boundary for course experiment laboratories."""
+
+    def ensure_projection(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        experiment_id: str,
+    ) -> ExperimentLabProjection:
+        definition = session.exec(
+            select(ExperimentDefinition).where(
+                ExperimentDefinition.course_id == course_id,
+                ExperimentDefinition.experiment_id == experiment_id,
+            )
+        ).first()
+        if definition is None:
+            reject_resource_not_found("课程实验不存在，无法创建实验室投影")
+        projection = session.exec(
+            select(ExperimentLabProjection).where(
+                ExperimentLabProjection.course_id == course_id,
+                ExperimentLabProjection.experiment_id == experiment_id,
+            )
+        ).first()
+        if projection is None:
+            projection = ExperimentLabProjection(course_id=course_id, experiment_id=experiment_id)
+            session.add(projection)
+            session.flush()
+        return projection
+
+    def project_finalized_attempt(
+        self,
+        session: Session,
+        *,
+        attempt_id: str,
+    ) -> LabRecord:
+        """Create exactly one formal record from a server-finalized attempt.
+
+        No API supplies score, pass state or evidence here.  The attempt is the
+        only authority and is cross-checked against its definition/projection.
+        """
+        existing = session.exec(
+            select(LabRecord).where(LabRecord.attempt_id == attempt_id)
+        ).first()
+        if existing is not None:
+            if existing.record_source != "experiment_finalization":
+                reject_state_conflict("历史非可信记录不能转换为正式实验记录")
+            return existing
+
+        attempt = session.exec(
+            select(ExperimentAttempt).where(ExperimentAttempt.attempt_id == attempt_id)
+        ).first()
+        if attempt is None or attempt.status not in (AttemptStatus.FINALIZED, AttemptStatus.FAILED):
+            reject_state_conflict("只有已终结的课程实验尝试可以投影为实验记录")
+        if attempt.final_score not in (0.0, 1.0) or attempt.passed is None:
+            reject_state_conflict("终结尝试缺少可信 ACM/ICPC 评分")
+
+        projection = self.ensure_projection(
+            session,
+            course_id=int(attempt.course_id),
+            experiment_id=str(attempt.experiment_id),
+        )
+        record = LabRecord(
+            lab_id=projection.projection_id,
+            projection_id=projection.projection_id,
+            course_id=attempt.course_id,
+            student_id=attempt.student_id,
+            attempt_id=attempt.attempt_id,
+            final_score=attempt.final_score,
+            passed=attempt.passed,
+            evidence_id=attempt.evidence_id,
+            return_anchor=attempt.return_anchor,
+            record_source="experiment_finalization",
+        )
+        session.add(record)
+        session.flush()
+        return record
+
+    def list_course_tasks(self, session: Session, *, course_id: int, student_id: int) -> list[dict[str, Any]]:
+        definitions = list(session.exec(
+            select(ExperimentDefinition).where(
+                ExperimentDefinition.course_id == course_id,
+                ExperimentDefinition.publish_status == ExperimentPublishStatus.PUBLISHED,
+            ).order_by(ExperimentDefinition.created_at.desc())
+        ).all())
+        result: list[dict[str, Any]] = []
+        for definition in definitions:
+            projection = self.ensure_projection(
+                session, course_id=course_id, experiment_id=definition.experiment_id,
+            )
+            record = session.exec(
+                select(LabRecord).where(
+                    LabRecord.projection_id == projection.projection_id,
+                    LabRecord.student_id == student_id,
+                    LabRecord.record_source == "experiment_finalization",
+                ).order_by(LabRecord.created_at.desc())
+            ).first()
+            result.append({
+                "lab_id": projection.projection_id,
+                "projection_id": projection.projection_id,
+                "course_id": course_id,
+                "experiment_id": definition.experiment_id,
+                "title": definition.title,
+                "description": definition.description,
+                "language_whitelist": definition.language_whitelist,
+                "last_attempt_id": record.attempt_id if record else None,
+                "final_score": record.final_score if record else None,
+                "passed": record.passed if record else None,
+            })
+        return result
+
+    def list_my_experiments(self, session: Session, *, student_id: int) -> list[dict[str, Any]]:
+        items: list[dict[str, Any]] = []
+        recommendations = list(session.exec(
+            select(ExperimentRecommendation).where(
+                ExperimentRecommendation.student_id == student_id,
+            ).order_by(ExperimentRecommendation.created_at.desc())
+        ).all())
+        for recommendation in recommendations:
+            definition = session.exec(select(ExperimentDefinition).where(
+                ExperimentDefinition.course_id == recommendation.course_id,
+                ExperimentDefinition.experiment_id == recommendation.experiment_id,
+            )).first()
+            if definition is None:
+                continue
+            projection = self.ensure_projection(
+                session, course_id=definition.course_id, experiment_id=definition.experiment_id,
+            )
+            items.append({
+                "lab_id": projection.projection_id,
+                "course_id": definition.course_id,
+                "experiment_id": definition.experiment_id,
+                "title": definition.title,
+                "description": definition.description,
+                "recommended_at": recommendation.created_at.isoformat(),
+            })
+        return items
+
+    def list_records(self, session: Session, *, student_id: int, course_id: Optional[int] = None) -> list[dict[str, Any]]:
+        statement = select(LabRecord).where(
+            LabRecord.student_id == student_id,
+            LabRecord.record_source == "experiment_finalization",
+        )
+        if course_id is not None:
+            statement = statement.where(LabRecord.course_id == course_id)
+        records = list(session.exec(statement.order_by(LabRecord.created_at.desc())).all())
+        return [{
+            "record_id": record.record_id,
+            "lab_id": record.lab_id,
+            "course_id": record.course_id,
+            "attempt_id": record.attempt_id,
+            "final_score": record.final_score,
+            "passed": record.passed,
+            "evidence_id": record.evidence_id,
+            "return_anchor": record.return_anchor,
+            "created_at": record.created_at.isoformat() if record.created_at else None,
+        } for record in records]
 
 
 # ---------------------------------------------------------------------------
@@ -852,3 +1019,4 @@ class LabCatalogService:
 
 resource_service = ResourceService()
 lab_catalog_service = LabCatalogService()
+lab_projection_service = LabProjectionService()

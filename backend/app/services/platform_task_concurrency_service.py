@@ -15,6 +15,7 @@ DEFAULTS = {
     "course_draft_build": 1,
     "graphrag": 1,
     "vector_index": 1,
+    "sandbox_execution": 1,
 }
 
 TASK_GROUPS = {
@@ -26,6 +27,7 @@ TASK_GROUPS = {
     "course_draft_build": "course_draft_build",
     "knowledge.graphrag_build": "graphrag",
     "knowledge.vector_index": "vector_index",
+    "experiment_run": "sandbox_execution",
 }
 
 

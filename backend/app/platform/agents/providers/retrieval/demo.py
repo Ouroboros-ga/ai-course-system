@@ -120,7 +120,6 @@ class Judge0SandboxPort:
     - ``code_submission_id`` 即 ``ExperimentRun.run_id``，由前端在提交代码后传给 TeachingAgent
     - 健康时按 ``run_id`` + ``course_id`` 从本地 ``ExperimentRun`` 表读取已验证结果
       （而非直接暴露 Judge0 token 或调用 Judge0 API）
-    - 同时读取关联的 ``ExperimentRunArtifact``（stdout/stderr/compile/test_report）
     - 严格 course_id 隔离：跨课程查询返回 not_found，不泄露他人结果
     - 健康检查失败或沙箱禁用时返回 ``sandbox_unavailable``，保留降级语义
     - DB 查询异常时返回 ``internal_error``，不抛出，保证 Agent/Q&A 不中断
@@ -171,9 +170,7 @@ class Judge0SandboxPort:
             - ``available``: bool — False 表示沙箱不可用或结果不存在
             - ``status``: RunOutcome 值或 ``sandbox_unavailable`` / ``not_found`` / ``internal_error``
             - ``outcome``: RunOutcome 值（与 status 一致，便于 Agent 消费）
-            - ``diagnosis``: 受限诊断摘要（compile_ok、passed_count/total_count、score、error_code）
-            - ``stdout``/``stderr``/``compile_output``: 来自 ExperimentRunArtifact（截断保护）
-            - ``test_summary``: 分层测试摘要（不泄露隐藏测试详情）
+            - ``diagnosis``: 受限诊断摘要（结果类别、通过数量、资源和错误码）
             - ``resource_usage``: cpu_time_ms/wall_time_ms/memory_kb
         """
         # Fast path: disabled or unhealthy → degrade without raising.
@@ -214,10 +211,7 @@ class Judge0SandboxPort:
             }
 
         try:
-            from app.models.experiment_model import (
-                ExperimentRun,
-                ExperimentRunArtifact,
-            )
+            from app.models.experiment_model import ExperimentRun
             from sqlmodel import select
         except ImportError as error:
             return {
@@ -250,39 +244,18 @@ class Judge0SandboxPort:
                         "message": f"运行 {code_submission_id} 在课程 {course_id} 下不存在",
                     }
 
-                # 读取关联的 ExperimentRunArtifact（stdout/stderr/compile/test_report）
-                artifacts_rows = session.exec(
-                    select(ExperimentRunArtifact).where(
-                        ExperimentRunArtifact.run_id == run.run_id,
-                    )
-                ).all()
-                artifacts: dict[str, str] = {}
-                for art in artifacts_rows:
-                    artifacts[art.artifact_type] = art.content or ""
-
-                # 截断保护：避免超大输出污染 Agent 上下文
-                max_text = 4000
-
-                def _trunc(text: str) -> str:
-                    if not text:
-                        return ""
-                    return text if len(text) <= max_text else text[:max_text] + "\n[truncated]"
-
                 outcome_value = run.outcome.value if hasattr(run.outcome, "value") else str(run.outcome)
 
-                # 构建受限诊断摘要：包含 Agent 诊断所需的最小信息
-                # 不泄露隐藏测试详情（test_summary 已由 experiment_run_handler 处理）
+                # CodingAgent is not an artifact viewer.  Do not return source,
+                # inputs/outputs, public/hidden test detail, stderr/compile text
+                # or Judge0 configuration to either workflow or LLM context.
                 diagnosis = {
                     "outcome": outcome_value,
                     "compile_ok": bool(run.compile_ok),
-                    "compile_message": _trunc(run.compile_message),
-                    "runtime_message": _trunc(run.runtime_message),
                     "passed_count": int(run.passed_count or 0),
                     "total_count": int(run.total_count or 0),
                     "score": float(run.score) if run.score is not None else None,
                     "error_code": run.error_code or "",
-                    "error_message": _trunc(run.error_message),
-                    "test_summary": run.test_summary or {},
                 }
 
                 return {
@@ -291,13 +264,7 @@ class Judge0SandboxPort:
                     "outcome": outcome_value,
                     "run_id": run.run_id,
                     "attempt_id": run.attempt_id,
-                    "language": run.language,
                     "diagnosis": diagnosis,
-                    "stdout": _trunc(artifacts.get("stdout", "")),
-                    "stderr": _trunc(artifacts.get("stderr", "")),
-                    "compile_output": _trunc(artifacts.get("compile", "")),
-                    "test_report": _trunc(artifacts.get("test_report", "")),
-                    "test_summary": run.test_summary or {},
                     "resource_usage": {
                         "cpu_time_ms": run.cpu_time_ms,
                         "wall_time_ms": run.wall_time_ms,

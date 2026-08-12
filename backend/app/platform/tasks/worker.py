@@ -71,6 +71,7 @@ def _task_group(task_type: str) -> str | None:
         "course_draft_build": "course_draft_build",
         "knowledge.graphrag_build": "graphrag",
         "knowledge.vector_index": "vector_index",
+        "experiment_run": "sandbox_execution",
     }.get(task_type)
 
 
