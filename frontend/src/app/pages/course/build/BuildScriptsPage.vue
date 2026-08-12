@@ -29,7 +29,9 @@ const scriptStatus = (item) => {
 }
 const outlineBreadcrumb = (item) => {
   const breadcrumb = item?.outline_node?.breadcrumb || item?.breadcrumb || []
-  return breadcrumb.length > 1 ? breadcrumb.slice(0, -1).join(' / ') : '课程结构'
+  // 简化：仅展示最近一级父节点，避免完整路径过长撑破行；超长由列表行省略号兜底
+  if (breadcrumb.length <= 1) return '课程结构'
+  return String(breadcrumb[breadcrumb.length - 2] ?? '课程结构')
 }
 
 // 智能体首次智慧备课进行中：解析材料 / 汇总语料 / 提交任务 / 构建中
@@ -263,9 +265,10 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .script-row.selected{background:var(--ink-100);color:var(--ink-900)}
 .script-row.issue small{color:var(--red-700)}
 .script-row.selected::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
-.script-row span{display:grid;gap:2px}
-.script-row strong{font-size:var(--ui-sm-size);font-weight:600;line-height:1.35}
-.script-row small{font-size:var(--caption-size);color:var(--text-muted)}
+.script-row span{display:grid;gap:2px;flex:1;min-width:0}
+.script-row strong{font-size:var(--ui-sm-size);font-weight:600;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.script-row small{font-size:var(--caption-size);color:var(--text-muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.script-row :deep(.lucide){flex-shrink:0}
 .script-editor{display:grid;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-canvas);overflow-y:auto;min-height:0}
 .script-editor header{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--space-2)}
 .script-editor header p{margin:0;color:var(--text-muted);font-size:var(--caption-size)}

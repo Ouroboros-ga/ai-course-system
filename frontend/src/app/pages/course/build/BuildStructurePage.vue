@@ -198,7 +198,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
         >
           <span class="outline-order">{{ node.display_number || String(index + 1).padStart(2, '0') }}</span>
           <GripVertical :size="16" class="drag-mark" aria-hidden="true" />
-          <span class="outline-title" :style="{ paddingInlineStart: `${Math.min((node.depth || 0) * 12, 36)}px` }">{{ node.title }}</span>
+          <span class="outline-title">{{ node.title }}</span>
           <LockKeyhole v-if="node.locked" :size="15" aria-label="已锁定" class="lock-icon" />
           <span v-else-if="node.source_block_refs?.length" class="evidence-count">{{ node.source_block_refs.length }} 条证据</span>
         </button>
@@ -232,15 +232,15 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .structure-stage{display:flex;flex-direction:column;gap:0;padding:0;height:100%;overflow:hidden}
 .structure-workbench{display:grid;grid-template-columns:minmax(280px,.95fr) minmax(320px,1.05fr);gap:var(--space-4);min-height:0;flex:1;overflow:hidden}
 .outline-list{display:grid;align-content:start;border:1px solid var(--border-default);border-radius:var(--radius-md);overflow-y:auto;min-height:0}
-.outline-row{display:grid;grid-template-columns:26px 18px minmax(0,1fr) auto;gap:var(--space-2);align-items:center;min-height:52px;padding:0 var(--space-3);border:0;border-bottom:1px solid var(--border-subtle);background:var(--surface-panel);color:var(--text-primary);text-align:left;cursor:pointer;font:inherit;position:relative}
+.outline-row{display:grid;grid-template-columns:minmax(24px,3rem) 16px minmax(0,1fr) auto;gap:var(--space-1);align-items:center;min-height:52px;padding:0 var(--space-3);border:0;border-bottom:1px solid var(--border-subtle);background:var(--surface-panel);color:var(--text-primary);text-align:left;cursor:pointer;font:inherit;position:relative}
 .outline-row:last-child{border-bottom:0}
 .outline-row:hover{background:var(--surface-cool)}
 .outline-row.selected{background:var(--ink-100);color:var(--ink-900)}
 .outline-row.selected::before{position:absolute;left:0;top:var(--space-2);bottom:var(--space-2);width:3px;background:var(--ink-900);content:"";border-radius:var(--radius-full)}
 .outline-row.locked{color:var(--text-secondary)}
-.outline-order{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size);color:var(--text-muted)}
-.drag-mark{color:var(--ink-300)}
-.outline-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);font-weight:var(--ui-md-weight)}
+.outline-order{font-family:"JetBrains Mono","Fira Code",Consolas,monospace;font-size:var(--caption-size);color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right}
+.drag-mark{color:var(--ink-300);flex-shrink:0}
+.outline-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;font-size:var(--ui-md-size);font-weight:var(--ui-md-weight)}
 .lock-icon{color:var(--green-700);flex-shrink:0}
 .evidence-count{font-size:var(--caption-size);color:var(--ink-500);white-space:nowrap}
 .node-editor{display:grid;align-content:start;gap:var(--space-3);padding:var(--space-4);border:1px solid var(--border-default);border-radius:var(--radius-lg);background:var(--surface-canvas);overflow-y:auto;min-height:0}

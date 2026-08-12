@@ -32,8 +32,8 @@ const error = ref('')
 const pending = computed(() => proposals.value.filter((proposal) => proposal.status === 'pending'))
 const selectedTitle = computed(() => props.selectedNode?.title || '')
 
-// 上下文面板折叠状态
-const contextCollapsed = ref(false)
+// 上下文面板折叠状态（默认收起，减少遮挡编辑区）
+const contextCollapsed = ref(true)
 function toggleContext() { contextCollapsed.value = !contextCollapsed.value }
 
 // 聊天消息列表
