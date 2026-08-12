@@ -1,8 +1,8 @@
 # ResearchAgent HarnessEngineer
 
-> 状态：Harness v1 已接通（2026-08-11）  
+> 状态：Harness v1 已接通（2026-08-12）
 > 数据边界：`research-workspace/1`  
-> 数据库目标：PostgreSQL 18 + pgvector；SQLite 仅用于本地 Demo/测试。
+> 真实部署兼容基线：PostgreSQL 16.14 + pgvector 0.7.4；PostgreSQL 18 保持前向兼容，SQLite 仅用于本地 Demo/测试。
 
 ResearchAgent 是课程内、用户私有的科研工作台。它复用仓库现有
 `AgentPlatform`、`BaseAgentRuntime`、Course Access v1 和 LangGraph，不与
@@ -103,6 +103,11 @@ PostgreSQL 先执行 `CREATE EXTENSION IF NOT EXISTS vector`，再创建 `VECTOR
 `embedding_dimensions` 过滤后执行 `<=>` cosine distance 的精确检索；没有伪造一个
 不适用于混合维度的 HNSW 索引。数据规模或模型冻结后，才应为单一维度增加表达式列/
 HNSW 迁移。SQLite 保存同一 canonical JSON vector，仅用于 Demo 与迁移回归。
+
+真实部署已只读验证 PostgreSQL 16.14 + pgvector 0.7.4 的 `vector` 类型和 `<=>`
+余弦运算符。若某一部署的 vector 扩展、运算符或 SQL 方言不可用，Provider 会回滚该
+失败事务并返回 `retrieval_mode=keyword`、`degraded_reason=pgvector_query_unavailable`；
+这不改变数据库配置、扩展或服务。
 
 迁移没有历史数据转换。downgrade 只删除本域五张表，保留可能被其他模块共享的
 `vector` 扩展。

@@ -56,4 +56,5 @@
 
 - 已接通：P0 arXiv metadata-only 检索，以及 Harness、Workspace、Todo、Notepad、Memory、Scope 与前端工作台。
 - 运行时降级：未配置或不可用 embedding 时，记忆存储/检索显式回退为关键词；自动化浏览器已验证该路径。
-- 不在本轮伪装完成：Semantic Scholar/Crossref 多源检索、完整仓库 Reproduction Worker、论文全文证据抽取和正式学术综述生成；尚未连接真实 PostgreSQL 18 实例做运行态验收。
+- 真实部署数据库验收：仅通过只读 SQL 验证 PostgreSQL 16.14、pgvector 0.7.4、`<=>` 余弦运算符、`0053` 五表和 schema usage；未修改配置、服务或业务数据。若 vector SQL 不可用，Provider 回滚失败事务并降级关键词检索。
+- 不在本轮伪装完成：Semantic Scholar/Crossref 多源检索、完整仓库 Reproduction Worker、论文全文证据抽取和正式学术综述生成；尚未在真实业务数据上创建记忆记录或执行写入端到端验收。

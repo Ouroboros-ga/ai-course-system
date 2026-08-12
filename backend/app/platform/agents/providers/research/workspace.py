@@ -10,6 +10,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
 
 from app.core.time_utils import utcnow_aware
@@ -436,11 +437,20 @@ class SqlResearchWorkspaceProvider:
         query_vector, _ = await self._embed(_bounded(query, 2_000))
         with self._session_factory() as session:
             workspace = self._require_workspace(session, workspace_id=workspace_id, course_id=course_id, actor_user_id=actor_user_id)
+            pgvector_query_unavailable = False
             if query_vector and session.bind is not None and session.bind.dialect.name == "postgresql":
-                return self._postgres_vector_search(
-                    session, workspace_id=workspace.workspace_id,
-                    vector=query_vector, limit=bounded_limit,
-                )
+                try:
+                    return self._postgres_vector_search(
+                        session, workspace_id=workspace.workspace_id,
+                        vector=query_vector, limit=bounded_limit,
+                    )
+                except SQLAlchemyError:
+                    # PostgreSQL and pgvector are independently upgraded in
+                    # deployment.  If the extension/operator is unavailable,
+                    # clear the failed transaction and keep private memory
+                    # recall usable through deterministic keyword ranking.
+                    session.rollback()
+                    pgvector_query_unavailable = True
             memories = list(session.exec(select(ResearchMemory).where(
                 ResearchMemory.workspace_id == workspace.workspace_id,
             )).all())
@@ -449,7 +459,7 @@ class SqlResearchWorkspaceProvider:
             used_vector = False
             for memory in memories:
                 score = _keyword_score(query_terms, set(memory.keywords or []))
-                if query_vector and memory.embedding and len(query_vector) == len(memory.embedding):
+                if not pgvector_query_unavailable and query_vector and memory.embedding and len(query_vector) == len(memory.embedding):
                     score = _cosine(query_vector, memory.embedding)
                     used_vector = True
                 score = score * 0.9 + memory.importance * 0.1
@@ -464,6 +474,7 @@ class SqlResearchWorkspaceProvider:
             return {
                 "retrieval_mode": "vector" if used_vector else "keyword",
                 "degraded": not used_vector,
+                "degraded_reason": "pgvector_query_unavailable" if pgvector_query_unavailable else None,
                 "items": [
                     {**_memory_dict(memory), "score": round(float(score), 6)}
                     for score, memory in selected

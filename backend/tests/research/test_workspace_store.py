@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -197,3 +199,52 @@ def test_long_term_memory_uses_vectors_and_returns_relevant_items(workspace_prov
     assert result["items"][0]["content"].startswith("RAG")
     assert result["items"][0]["score"] > result["items"][1]["score"]
 
+
+def test_postgres_pgvector_query_failure_degrades_to_keyword_search(workspace_provider, monkeypatch):
+    """An older or partially provisioned pgvector must not block memory recall."""
+    workspace = _workspace(workspace_provider)
+    asyncio.run(workspace_provider.store_memory(
+        workspace_id=workspace["workspace_id"],
+        course_id=7,
+        actor_user_id="11",
+        scope_id=workspace["active_scope_id"],
+        tier="long_term",
+        content="RAG 教育实验需要核验评价指标。",
+        importance=0.8,
+    ))
+
+    original_factory = workspace_provider._session_factory
+
+    class PostgresLikeSession:
+        """Reuse the SQLite fixture while selecting the production PostgreSQL branch."""
+
+        def __init__(self):
+            self._session = original_factory()
+            self.bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
+
+        def __enter__(self):
+            self._session.__enter__()
+            return self
+
+        def __exit__(self, *args):
+            return self._session.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self._session, name)
+
+    def unavailable_pgvector(*_args, **_kwargs):
+        raise OperationalError("SELECT embedding <=> ...", {}, RuntimeError("operator does not exist"))
+
+    monkeypatch.setattr(workspace_provider, "_session_factory", PostgresLikeSession)
+    monkeypatch.setattr(workspace_provider, "_postgres_vector_search", unavailable_pgvector)
+
+    result = asyncio.run(workspace_provider.search_memory(
+        workspace_id=workspace["workspace_id"],
+        course_id=7,
+        actor_user_id="11",
+        query="RAG 教育指标",
+    ))
+
+    assert result["retrieval_mode"] == "keyword"
+    assert result["degraded"] is True
+    assert result["items"][0]["content"].startswith("RAG")
