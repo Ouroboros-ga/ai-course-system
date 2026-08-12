@@ -73,6 +73,9 @@ async function load() {
         }),
         has_script: Boolean(script),
         coverage_issue: issueByOutline.get(outlineNode.outline_node_id) ?? null,
+        // 无讲稿节点走 fallback 分支时不会展开后端 script 字段；
+        // 补齐讲稿（createTeachingScript）依赖 outline_node_id，必须显式提供。
+        outline_node_id: outlineNode.outline_node_id,
         outline_node: outlineNode,
         outline_title: outlineNode.title,
         display_number: outlineNode.display_number,
