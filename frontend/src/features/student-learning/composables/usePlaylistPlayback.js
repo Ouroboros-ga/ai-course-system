@@ -23,6 +23,34 @@ export function findPlaylistItemIndexAtTime(items, seconds) {
   })
 }
 
+/** Resolve one keyed playlist item back to the learner rail. */
+export function findLearningNodeIndexForPlaylistItem(nodes, item) {
+  if (!Array.isArray(nodes) || !item) return -1
+  const nodeIdIndex = nodes.findIndex(node => sameId(node?.id, item.nodeId))
+  if (nodeIdIndex >= 0) return nodeIdIndex
+  return nodes.findIndex(node => sameId(node?.outlineNodeId, item.outlineNodeId))
+}
+
+/**
+ * Project the active audio clock onto the immutable playlist before touching
+ * the legacy learner-node timeline. A keyed audio element remains the source
+ * of truth for terminal events where a half-open time range has no match.
+ */
+export function resolvePlaylistPlaybackTarget(items, nodes, seconds, activeIndex = -1) {
+  const timedIndex = findPlaylistItemIndexAtTime(items, seconds)
+  const fallbackIndex = Number.isInteger(activeIndex)
+    && activeIndex >= 0
+    && activeIndex < (items?.length || 0)
+    ? activeIndex
+    : -1
+  const playlistIndex = timedIndex >= 0 ? timedIndex : fallbackIndex
+  if (playlistIndex < 0) return { playlistIndex: -1, nodeIndex: -1 }
+  return {
+    playlistIndex,
+    nodeIndex: findLearningNodeIndexForPlaylistItem(nodes, items[playlistIndex]),
+  }
+}
+
 /** Resolve a directory click to the playlist clock, with legacy node fallback. */
 export function resolvePlaylistSelection(items, node) {
   const playlistIndex = findPlaylistItemIndex(items, node)

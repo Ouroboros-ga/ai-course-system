@@ -6,7 +6,7 @@ import { useMediaPlayback } from '@/features/student-learning/composables/useMed
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
   findPlaylistItemIndex,
-  findPlaylistItemIndexAtTime,
+  resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
   usePlaylistPlayback,
 } from '@/features/student-learning/composables/usePlaylistPlayback.js'
@@ -152,13 +152,23 @@ function handlePlayback(payload) {
   const items = media.playlist.value?.items
   const globalTime = Number(payload?.globalTime)
   if (Array.isArray(items) && items.length && Number.isFinite(globalTime)) {
-    const playlistIndex = findPlaylistItemIndexAtTime(items, globalTime)
-    if (playlistIndex >= 0) {
-      playlistPlayback.activeIndex.value = playlistIndex
-      const item = items[playlistIndex]
+    const target = resolvePlaylistPlaybackTarget(
+      items,
+      ws.nodes.value,
+      globalTime,
+      playlistPlayback.activeIndex.value,
+    )
+    if (target.playlistIndex >= 0) {
+      playlistPlayback.activeIndex.value = target.playlistIndex
+      const item = items[target.playlistIndex]
       // The playlist is authoritative for release playback. Supplying its
       // node id keeps the legacy workspace index in sync for the rail.
-      payload = { ...payload, nodeId: item.nodeId, outlineNodeId: item.outlineNodeId }
+      payload = {
+        ...payload,
+        nodeId: item.nodeId,
+        outlineNodeId: item.outlineNodeId,
+        playlistNodeIndex: target.nodeIndex,
+      }
     }
   }
   ws.updatePlayback(payload)
@@ -178,10 +188,7 @@ function handleTrackSelect(index, options = {}) {
 
   if (playlistIndex >= 0) playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
-  ws.seekTo(targetTime)
-  // seekTo uses legacy node timing for compatibility; restore the playlist's
-  // authoritative node identity after the global seek.
-  ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
+  ws.seekTo(targetTime, playlistIndex >= 0 ? { nodeIndex: nextIndex } : {})
 }
 
 function handleOpenKnowledge(nodeId) {

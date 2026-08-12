@@ -4,6 +4,7 @@ import assert from 'node:assert/strict'
 import {
   findPlaylistItemIndex,
   findPlaylistItemIndexAtTime,
+  resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
 } from '../composables/usePlaylistPlayback.js'
 
@@ -33,5 +34,29 @@ test('directory selection uses playlist offset and legacy timestamp fallback', (
   assert.deepEqual(resolvePlaylistSelection([], { id: 99, timestampStart: 7.5 }), {
     playlistIndex: -1,
     targetTime: 7.5,
+  })
+})
+
+test('playlist playback resolves the directory node without legacy node timestamps', () => {
+  // Published CourseRelease nodes intentionally retain no legacy media timing.
+  // A regression here makes every positive audio time select the final node.
+  const releasedNodes = [
+    { id: 'n-11', outlineNodeId: 'n-11', timestampStart: 0, timestampEnd: 0 },
+    { id: 'n-12', outlineNodeId: 'n-12', timestampStart: 0, timestampEnd: 0 },
+  ]
+
+  assert.deepEqual(resolvePlaylistPlaybackTarget(items, releasedNodes, 0.5, 1), {
+    playlistIndex: 0,
+    nodeIndex: 0,
+  })
+  assert.deepEqual(resolvePlaylistPlaybackTarget(items, releasedNodes, 2.5, 0), {
+    playlistIndex: 1,
+    nodeIndex: 1,
+  })
+  // A terminal/gap event belongs to the currently keyed audio item, not to
+  // the legacy zero-duration timeline.
+  assert.deepEqual(resolvePlaylistPlaybackTarget(items, releasedNodes, 5, 1), {
+    playlistIndex: 1,
+    nodeIndex: 1,
   })
 })

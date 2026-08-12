@@ -57,6 +57,16 @@ test('keeps global playback time aligned with nodes and pages', () => {
   assert.equal(resolvePageAtTime(nodes[0], 30), 3)
 })
 
+test('does not treat an all-zero legacy timeline as the final knowledge point', () => {
+  const releaseNodes = [
+    { timestampStart: 0, timestampEnd: 0 },
+    { timestampStart: 0, timestampEnd: 0 },
+    { timestampStart: 0, timestampEnd: 0 },
+  ]
+
+  assert.equal(findNodeIndexAtTime(releaseNodes, 3), 0)
+})
+
 test('adapts workspace state to the backend snake-case progress contract', () => {
   assert.deepEqual(
     buildProgressPayload({
