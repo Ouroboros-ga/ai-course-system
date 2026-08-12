@@ -1,4 +1,5 @@
 import request from '@/utils/request.js'
+import { sanitizePlanListParams } from './visualizationRequestGuards.js'
 
 /**
  * G4 算法可视化 API
@@ -51,7 +52,9 @@ export function createPlan(courseId, data) {
  * @param {string} [params.status] - 按状态筛选
  */
 export function listPlans(courseId, params = {}) {
-  return request.get(`/visualization/course/${courseId}/plans`, { params })
+  return request.get(`/visualization/course/${courseId}/plans`, {
+    params: sanitizePlanListParams(params),
+  })
 }
 
 /**

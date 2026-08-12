@@ -20,6 +20,7 @@ import {
   EvidenceStatus,
 } from '../features/evidence-viewer/contracts.js'
 import request from '../utils/request.js'
+import { resolveCitationPageImageSource } from './evidenceRequestGuards.js'
 
 /**
  * @typedef {Object} DocumentPageResponse
@@ -105,6 +106,19 @@ export async function fetchPageImage(documentId, pageNumber) {
     naturalWidth: data.natural_width ?? data.naturalWidth ?? 0,
     naturalHeight: data.natural_height ?? data.naturalHeight ?? 0,
   }
+}
+
+/**
+ * Resolve a citation page image without allowing the course learning flow to
+ * fall back to the admin-only document-scoped evidence-v2 API.
+ */
+export async function fetchCitationPageImage(options = {}) {
+  const source = resolveCitationPageImageSource(options)
+  if (!source) return null
+  if (source.kind === 'protected') return fetchProtectedImageUrl(source.url)
+
+  const page = await fetchPageImage(source.documentId, source.pageNumber)
+  return page?.imageUrl ?? null
 }
 
 /**

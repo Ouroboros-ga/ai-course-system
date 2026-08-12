@@ -3,11 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { ArrowLeft, ChevronDown, FileWarning, MessageSquareWarning } from 'lucide-vue-next'
 import {
   fetchCitations,
+  fetchCitationPageImage,
   fetchCourseCitations,
   fetchCourseEvidenceSpans,
   fetchEvidenceSpans,
-  fetchPageImage,
-  fetchProtectedImageUrl,
   validateCitations,
 } from '@/api/evidence.js'
 import {
@@ -126,10 +125,12 @@ async function toggleCitation(citation) {
   if (expandedKey.value && page != null && !pageImages.value[page]) {
     pageImages.value = { ...pageImages.value, [page]: { status: 'loading', url: '' } }
     try {
-      const renderUrl = citation.metadata?.renderUrl
-      const imageUrl = renderUrl
-        ? await fetchProtectedImageUrl(renderUrl)
-        : (await fetchPageImage(props.documentId, page))?.imageUrl
+      const imageUrl = await fetchCitationPageImage({
+        courseId: props.courseId,
+        documentId: props.documentId,
+        pageNumber: page,
+        renderUrl: citation.metadata?.renderUrl,
+      })
       if (!imageUrl) throw new Error('empty image url')
       pageImages.value = { ...pageImages.value, [page]: { status: 'ready', url: imageUrl } }
     } catch {
