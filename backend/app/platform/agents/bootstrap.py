@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from sqlmodel import Session
+
 from app.core.config import settings
 from app.core.feature_flags import TEACHING_AGENT_MODES
 from app.models.database import engine
@@ -22,22 +24,37 @@ from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
 from app.platform.agents.platform import LegacyAgentPlatform
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime.profile import AgentType
-from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
 from app.platform.agents.tools.coding import make_session_scoped_coding_ports
-from app.platform.agents.tools.conversation_context import make_session_scoped_conversation_context_port
+from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
+from app.platform.agents.tools.conversation_context import (
+    make_session_scoped_conversation_context_port,
+)
 from app.platform.agents.tools.experiment import make_session_scoped_experiment_port
 from app.platform.agents.tools.integration import Judge0SandboxPort
-from app.platform.agents.tools.learning_event import make_session_scoped_learning_event_port
+from app.platform.agents.tools.learning_event import (
+    make_session_scoped_learning_event_port,
+)
 from app.platform.agents.tools.openai_compatible import OpenAICompatibleTeachingLLM
-from app.platform.agents.tools.question_bank import make_session_scoped_question_bank_port
-from app.platform.agents.tools.question_generation import make_session_scoped_question_generation_port
-from app.platform.agents.tools.recommendation import make_session_scoped_recommendation_port
-from app.platform.agents.tools.teacher_safety_valve import make_session_scoped_teacher_safety_valve_port
-from app.platform.agents.tools.tool_governance import make_session_scoped_tool_governance_port
-from app.platform.agents.tools.visualization import make_session_scoped_visualization_port
+from app.platform.agents.tools.question_bank import (
+    make_session_scoped_question_bank_port,
+)
+from app.platform.agents.tools.question_generation import (
+    make_session_scoped_question_generation_port,
+)
+from app.platform.agents.tools.recommendation import (
+    make_session_scoped_recommendation_port,
+)
+from app.platform.agents.tools.teacher_safety_valve import (
+    make_session_scoped_teacher_safety_valve_port,
+)
+from app.platform.agents.tools.tool_governance import (
+    make_session_scoped_tool_governance_port,
+)
+from app.platform.agents.tools.visualization import (
+    make_session_scoped_visualization_port,
+)
 from app.platform.agents.tools.web_research import make_session_scoped_web_research_port
 from app.platform.retrieval_demo.service import DemoService
-from sqlmodel import Session
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +68,21 @@ def bootstrap_research_agent(app: Any) -> bool:
     LLM routing degrades to the deterministic allowlisted selector.
     """
     try:
-        from .research.composition import build_research_graph_factory
-        from .research.profile import build_research_profile
+        from app.platform.knowledge.embedding import embedding_provider_from_settings
+
+        from .providers.llm.structured import SharedLLMStructuredProvider
+        from .providers.persistence import (
+            SqlAgentLLMDiagnosticStore,
+            SqlAgentRunEventPort,
+        )
         from .providers.research.access import CourseAccessResearchScopePort
         from .providers.research.paper_search import ArxivPaperSearchProvider
-        from .providers.research.workspace import LazyEmbeddingProvider, SqlResearchWorkspaceProvider
-        from .providers.llm.structured import SharedLLMStructuredProvider
-        from .providers.persistence import SqlAgentLLMDiagnosticStore, SqlAgentRunEventPort
-        from app.platform.knowledge.embedding import embedding_provider_from_settings
+        from .providers.research.workspace import (
+            LazyEmbeddingProvider,
+            SqlResearchWorkspaceProvider,
+        )
+        from .research.composition import build_research_graph_factory
+        from .research.profile import build_research_profile
 
         platform = getattr(app.state, "agent_platform", None)
         if platform is None:
@@ -140,11 +164,6 @@ def bootstrap_prep_agent(app: Any) -> bool:
             logger.info("PrepAgent LLM is not configured; batch/agent endpoints remain unavailable.")
             return False
 
-        from .platform import LegacyAgentPlatform
-        from .gateway import AgentGateway
-        from .prep.llm_adapter import PrepLLMAdapter
-        from .providers.llm.structured import SharedLLMStructuredProvider
-        from .providers.retrieval.active_bundle import ActiveBundleCourseRetrievalPort
         from app.services.controlled_prep_workflow import (
             ControlledPrepWorkflow,
             controlled_prep_workflow,
@@ -157,6 +176,12 @@ def bootstrap_prep_agent(app: Any) -> bool:
             PptMappingOptimizationService,
             ppt_mapping_optimization_service,
         )
+
+        from .gateway import AgentGateway
+        from .platform import LegacyAgentPlatform
+        from .prep.llm_adapter import PrepLLMAdapter
+        from .providers.llm.structured import SharedLLMStructuredProvider
+        from .providers.retrieval.active_bundle import ActiveBundleCourseRetrievalPort
 
         session_factory = lambda: Session(engine)
         from .providers.persistence import SqlAgentLLMDiagnosticStore
@@ -321,20 +346,24 @@ def _register_prep_pipeline_definitions(
     """
     from .prep.common.dependencies import CommonPrepDependencies
     from .prep.enums import PrepGraphKind
-    from .prep.initial.composition import build_initial_graph_factory
-    from .prep.initial.dependencies import InitialPrepDependencies
-    from .prep.initial.profile import build_initial_profile
     from .prep.incremental.composition import build_incremental_graph_factory
     from .prep.incremental.dependencies import IncrementalPrepDependencies
     from .prep.incremental.profile import build_incremental_profile
+    from .prep.initial.composition import build_initial_graph_factory
+    from .prep.initial.dependencies import InitialPrepDependencies
+    from .prep.initial.profile import build_initial_profile
     from .prep.ppt_mapping.composition import build_ppt_mapping_graph_factory
     from .prep.ppt_mapping.dependencies import PptMappingDependencies
     from .prep.ppt_mapping.profile import build_ppt_mapping_profile
     from .providers.llm.structured import SharedLLMStructuredProvider
-    from .providers.prep.initial_course_prep import InitialCoursePrepProvider
+    from .providers.persistence import (
+        SqlAgentLLMDiagnosticStore,
+        SqlAgentRunEventPort,
+        SqlAgentRunStorePort,
+    )
     from .providers.prep.incremental_prep import IncrementalPrepProvider
+    from .providers.prep.initial_course_prep import InitialCoursePrepProvider
     from .providers.prep.ppt_mapping_optimization import PptMappingOptimizationProvider
-    from .providers.persistence import SqlAgentLLMDiagnosticStore, SqlAgentRunEventPort, SqlAgentRunStorePort
     from .runtime.registry import AgentDefinitionKey
 
     event_port = SqlAgentRunEventPort(session_factory)

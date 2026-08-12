@@ -23,7 +23,10 @@ import { readFile, stat } from 'node:fs/promises'
 import { join, extname, normalize } from 'node:path'
 
 const DIST = process.env.SMOKE_DIST || join(process.cwd(), 'dist')
-const PORT = Number(process.env.SMOKE_PORT) || 4319
+// Let the OS select an ephemeral loopback port by default.  A fixed port is
+// brittle on Windows because it may be reserved by another local service.
+// Callers that need a stable port can still provide SMOKE_PORT explicitly.
+let PORT = Number(process.env.SMOKE_PORT) || 0
 const HOST = '127.0.0.1'
 
 const MIME = {
@@ -68,7 +71,19 @@ async function serve() {
     }
   })
 
-  await new Promise((r) => server.listen(PORT, HOST, r))
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(PORT, HOST, () => {
+      server.off('error', reject)
+      const address = server.address()
+      if (!address || typeof address === 'string') {
+        reject(new Error('smoke server did not expose a TCP address'))
+        return
+      }
+      PORT = address.port
+      resolve()
+    })
+  })
   return server
 }
 
