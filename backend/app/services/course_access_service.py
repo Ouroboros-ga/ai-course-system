@@ -1,4 +1,4 @@
-﻿"""The single runtime authority for course-scoped access decisions."""
+"""The single runtime authority for course-scoped access decisions."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -98,10 +98,12 @@ DEFAULT_NEW_COURSE_CAPABILITIES = {
     # not bypass the teacher approval gate or publish a bundle automatically.
     "knowledge_graph": True,
     "evidence": True,
-    "experiment": False,
-    "coding_sandbox": False,
+    # 本地 Demo 阶段新课程默认全开（含实验/沙箱/安全策略配置入口）；
+    # 能力门禁只拦「配置类权限」，教师角色权限本身不受影响。
+    "experiment": True,
+    "coding_sandbox": True,
     "cognitive_analysis": True,
-    "safety_policy": False,
+    "safety_policy": True,
 }
 
 
