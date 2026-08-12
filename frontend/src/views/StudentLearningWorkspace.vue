@@ -55,7 +55,7 @@
           :nodes="nodes"
           :current-node-index="currentNodeIndex"
           :completed-nodes="completedNodes"
-          @select="selectNode"
+          @select="handleNodeSelect"
           @close="setPanel('outline', false)"
         />
 
@@ -64,19 +64,27 @@
             :mode="mode"
             :current-node="currentNode"
             :current-time="currentTime"
+            :seek-revision="seekRevision"
             :current-page="currentPage"
             :current-slide="currentSlide"
             :current-ppt-page="currentPptPage"
             :current-video-url="currentVideoUrl"
             :total-pages="totalPages"
             :total-duration="course.totalDuration"
+            :audio-url="media.audioUrl.value"
+            :playlist="media.playlist.value"
+            :playlist-index="playlistPlayback.activeIndex.value"
+            :media-duration="media.manifest.value.durationMs / 1000"
+            :ppt-timeline="media.pptTimeline.value"
+            :ppt-manifest="media.ppt.value"
             :is-playing="isPlaying"
             :playback-rate="playbackRate"
             :volume="volume"
             :is-muted="isMuted"
             :captions-enabled="captionsEnabled"
-            @update-playback="updatePlayback"
-            @seek="seekTo"
+            @update-playback="handleMediaPlayback"
+            @seek="handleMediaSeek"
+            @playlist-next="handlePlaylistNext"
             @page-change="setPage"
             @rate-change="playbackRate = $event"
             @volume-change="volume = $event"
@@ -184,12 +192,21 @@ import LearningNotesPanel from '@/features/student-learning/components/LearningN
 import LearningWorkspaceHeader from '@/features/student-learning/components/LearningWorkspaceHeader.vue'
 import WorkspaceDrawer from '@/features/student-learning/components/WorkspaceDrawer.vue'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
+import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
+import {
+  resolveMediaPlaybackProjection,
+  resolvePlaylistSelection,
+  usePlaylistPlayback,
+} from '@/features/student-learning/composables/usePlaylistPlayback.js'
 import '@/features/student-learning/styles/learning-workspace.css'
 
 const route = useRoute()
 const router = useRouter()
 const courseId = Number(route.params.courseId)
 const isCompact = useMediaQuery('(max-width: 1024px)')
+const media = useMediaPlayback(courseId)
+const playlistPlayback = usePlaylistPlayback(media.playlist)
+const seekRevision = ref(0)
 
 const {
   status,
@@ -274,9 +291,78 @@ function handlePanelToggle(panel) {
 }
 
 function handleMobileNodeSelect(index) {
-  selectNode(index)
+  handleNodeSelect(index)
   closeMobilePanel()
 }
 
-onMounted(load)
+function projectMediaTime(globalTime, payload = {}) {
+  const timestamp = Number(globalTime)
+  if (!Number.isFinite(timestamp)) {
+    updatePlayback(payload)
+    return
+  }
+  const projection = resolveMediaPlaybackProjection(
+    media.playlist.value?.items || [],
+    nodes.value,
+    media.pptTimeline.value,
+    timestamp,
+    playlistPlayback.activeIndex.value,
+  )
+  if (projection.playlistIndex >= 0) {
+    playlistPlayback.activeIndex.value = projection.playlistIndex
+  }
+  updatePlayback({
+    ...payload,
+    ...projection,
+    globalTime: timestamp,
+  })
+}
+
+function handleMediaPlayback(payload) {
+  projectMediaTime(payload?.globalTime, payload)
+}
+
+function handleMediaSeek(globalTime) {
+  seekRevision.value += 1
+  projectMediaTime(globalTime, { isPlaying: isPlaying.value })
+}
+
+function handleNodeSelect(index) {
+  const nextIndex = Number(index)
+  const node = nodes.value[nextIndex]
+  if (!Number.isInteger(nextIndex) || !node) return
+  const selection = resolvePlaylistSelection(
+    media.playlist.value?.items || [],
+    node,
+    media.pptTimeline.value,
+  )
+  if (selection.playlistIndex >= 0) {
+    playlistPlayback.activeIndex.value = selection.playlistIndex
+  }
+  // The release clock, not the zeroed legacy node timestamps, owns the
+  // selected position and the matching PPT cue.
+  selectNode(nextIndex, { play: isPlaying.value, preserveTime: true })
+  seekRevision.value += 1
+  projectMediaTime(selection.targetTime, { isPlaying: isPlaying.value })
+}
+
+function handlePlaylistNext() {
+  const item = media.playlist.value?.items?.[playlistPlayback.activeIndex.value + 1]
+  if (!item) return
+  const nodeIndex = nodes.value.findIndex(node => (
+    String(node.id) === String(item.nodeId)
+    || String(node.outlineNodeId) === String(item.outlineNodeId)
+  ))
+  if (nodeIndex >= 0) {
+    handleNodeSelect(nodeIndex)
+    return
+  }
+  playlistPlayback.activeIndex.value += 1
+  projectMediaTime(Number(item.offsetMs) / 1000, { isPlaying: true })
+}
+
+onMounted(async () => {
+  await Promise.all([load(), media.load()])
+  projectMediaTime(currentTime.value, { isPlaying: isPlaying.value })
+})
 </script>

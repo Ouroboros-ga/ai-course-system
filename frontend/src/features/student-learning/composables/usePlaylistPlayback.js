@@ -4,6 +4,36 @@ function sameId(left, right) {
   return left != null && right != null && String(left) === String(right)
 }
 
+/**
+ * Select the source clock without treating a shared course audio file as a
+ * per-node clip. Only an item-owned URL can use that item's local offset.
+ */
+export function resolveActiveAudioClock(items, activeIndex, fallbackAudioUrl = '') {
+  const item = Array.isArray(items) ? items[activeIndex] ?? null : null
+  const itemAudioUrl = String(item?.audioUrl || '')
+  const audioUrl = itemAudioUrl || String(fallbackAudioUrl || '')
+  const segmented = Boolean(itemAudioUrl)
+  return {
+    audioUrl,
+    offsetSeconds: segmented ? Math.max(0, Number(item?.offsetMs) || 0) / 1000 : 0,
+    segmented,
+    // A shared source must keep the same element across rail selection, while
+    // adjacent segmented items need unique generations even if their URLs match.
+    generation: segmented ? `item:${activeIndex}:${audioUrl}` : `shared:${audioUrl}`,
+  }
+}
+
+/** Return whether an event was emitted by the currently rendered media clock. */
+export function isActiveAudioClockEvent(eventGeneration, activeGeneration) {
+  return String(eventGeneration || '') === String(activeGeneration || '')
+}
+
+/** Ignore clock drift from media timeupdates, but always honor a learner seek. */
+export function shouldSeekMediaClock(currentSeconds, targetSeconds, force = false) {
+  if (force) return true
+  return Math.abs((Number(currentSeconds) || 0) - (Number(targetSeconds) || 0)) > 1.25
+}
+
 /** Match a course node to its immutable playlist item. Node ids are preferred. */
 export function findPlaylistItemIndex(items, node) {
   if (!Array.isArray(items) || !node) return -1
@@ -78,6 +108,41 @@ export function resolvePlaylistPlaybackTarget(items, nodes, seconds, activeIndex
   return {
     playlistIndex,
     nodeIndex: findLearningNodeIndexForPlaylistItem(nodes, items[playlistIndex]),
+  }
+}
+
+/**
+ * Project the immutable media clock onto every learner-facing surface. A
+ * published outline intentionally has no legacy media timestamps, so the
+ * playlist and frozen PPT cues are the only valid source for this mapping.
+ */
+export function resolveMediaPlaybackProjection(items, nodes, timeline, seconds, activeIndex = -1) {
+  const playlistTarget = resolvePlaylistPlaybackTarget(items, nodes, seconds, activeIndex)
+  const timelineTarget = resolveTimelinePlaybackTarget(
+    timeline,
+    nodes,
+    seconds,
+    playlistTarget.nodeIndex,
+  )
+  const playlistItem = playlistTarget.playlistIndex >= 0
+    ? items?.[playlistTarget.playlistIndex] ?? null
+    : null
+  const targetMs = Math.max(0, Number(seconds) || 0) * 1000
+  let activeCue = null
+  for (const cue of Array.isArray(timeline) ? timeline : []) {
+    if (Math.max(0, Number(cue?.startMs) || 0) > targetMs) break
+    activeCue = cue
+  }
+
+  return {
+    playlistIndex: playlistTarget.playlistIndex,
+    nodeIndex: playlistTarget.nodeIndex >= 0
+      ? playlistTarget.nodeIndex
+      : timelineTarget.nodeIndex,
+    nodeId: playlistItem?.nodeId ?? timelineTarget.nodeId,
+    outlineNodeId: playlistItem?.outlineNodeId ?? timelineTarget.outlineNodeId,
+    page: activeCue?.page ?? null,
+    materialVersionId: activeCue?.materialVersionId ?? null,
   }
 }
 

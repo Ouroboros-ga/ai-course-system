@@ -4,9 +4,13 @@ import assert from 'node:assert/strict'
 import {
   findPlaylistItemIndex,
   findPlaylistItemIndexAtTime,
+  isActiveAudioClockEvent,
+  resolveActiveAudioClock,
+  resolveMediaPlaybackProjection,
   resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
   resolveTimelinePlaybackTarget,
+  shouldSeekMediaClock,
 } from '../composables/usePlaylistPlayback.js'
 
 const items = [
@@ -36,6 +40,34 @@ test('directory selection uses playlist offset and legacy timestamp fallback', (
     playlistIndex: -1,
     targetTime: 7.5,
   })
+})
+
+test('shared course audio remains a global clock when playlist items lack audio URLs', () => {
+  const clock = resolveActiveAudioClock(items, 1, '/content/course-audio.wav')
+
+  assert.deepEqual(clock, {
+    audioUrl: '/content/course-audio.wav',
+    offsetSeconds: 0,
+    segmented: false,
+    generation: 'shared:/content/course-audio.wav',
+  })
+})
+
+test('audio event generation rejects a stale segmented event when adjacent clips share a URL', () => {
+  const clips = [
+    { ...items[0], audioUrl: '/content/reused-clip.wav' },
+    { ...items[1], audioUrl: '/content/reused-clip.wav' },
+  ]
+  const initial = resolveActiveAudioClock(clips, 0, '')
+  const current = resolveActiveAudioClock(clips, 1, '')
+
+  assert.equal(isActiveAudioClockEvent(initial.generation, current.generation), false)
+  assert.equal(isActiveAudioClockEvent(current.generation, current.generation), true)
+})
+
+test('explicit seek applies a sub-second shared-clock move that normal clock updates debounce', () => {
+  assert.equal(shouldSeekMediaClock(30, 30.5), false)
+  assert.equal(shouldSeekMediaClock(30, 30.5, true), true)
 })
 
 test('legacy release navigation uses its frozen cue clock instead of zero node timestamps', () => {
@@ -80,5 +112,25 @@ test('playlist playback resolves the directory node without legacy node timestam
   assert.deepEqual(resolvePlaylistPlaybackTarget(items, releasedNodes, 5, 1), {
     playlistIndex: 1,
     nodeIndex: 1,
+  })
+})
+
+test('frozen media time projects directory, playlist, and PPT state together', () => {
+  const releasedNodes = [
+    { id: 'n-11', outlineNodeId: 'n-11', timestampStart: 0, timestampEnd: 0 },
+    { id: 'n-12', outlineNodeId: 'n-12', timestampStart: 0, timestampEnd: 0 },
+  ]
+  const timeline = [
+    { nodeId: 11, outlineNodeId: 'n-11', page: 3, materialVersionId: 'primary', startMs: 0 },
+    { nodeId: 12, outlineNodeId: 'n-12', page: 4, materialVersionId: 'primary', startMs: 2_000 },
+  ]
+
+  assert.deepEqual(resolveMediaPlaybackProjection(items, releasedNodes, timeline, 2.5, 0), {
+    playlistIndex: 1,
+    nodeIndex: 1,
+    nodeId: 12,
+    outlineNodeId: 'n-12',
+    page: 4,
+    materialVersionId: 'primary',
   })
 })

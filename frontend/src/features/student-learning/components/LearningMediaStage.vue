@@ -13,23 +13,40 @@
         </header>
 
         <div class="sl-video-frame">
+          <audio
+            v-if="hasAudio"
+            ref="audioRef"
+            :key="activeAudioClock.generation"
+            :src="activeAudioUrl"
+            :data-media-generation="activeAudioClock.generation"
+            preload="metadata"
+            class="sl-stage-clock"
+            @loadedmetadata="handleLoadedMetadata"
+            @timeupdate="handleTimeUpdate"
+            @play="emitPlaybackState(true, $event.currentTarget)"
+            @pause="emitPlaybackState(false, $event.currentTarget)"
+            @ended="handleEnded"
+            @error="handleMediaError"
+          />
           <video
+            v-else
             ref="videoRef"
             :src="currentVideoUrl || undefined"
+            :data-media-generation="mediaGeneration"
             preload="metadata"
             playsinline
             @loadedmetadata="handleLoadedMetadata"
             @timeupdate="handleTimeUpdate"
-            @play="emitPlaybackState(true)"
-            @pause="emitPlaybackState(false)"
+            @play="emitPlaybackState(true, $event.currentTarget)"
+            @pause="emitPlaybackState(false, $event.currentTarget)"
             @ended="handleEnded"
             @error="handleMediaError"
           ></video>
 
-          <div v-if="!currentVideoUrl || localMediaError" class="sl-media-fallback">
+          <div v-if="!currentVideoUrl || hasAudio || localMediaError" class="sl-media-fallback">
             <VideoOff :size="34" />
-            <strong>{{ localMediaError ? '讲解视频暂时无法播放' : '当前知识点暂无数字人视频' }}</strong>
-            <p>PPT 与讲解文本仍可正常阅读，不影响自主研习。</p>
+            <strong>{{ localMediaError ? '讲解媒体暂时无法播放' : hasAudio ? '正在播放课程讲解音频' : '当前知识点暂无数字人视频' }}</strong>
+            <p>{{ hasAudio ? '音频时钟正在同步目录、进度与 PPT。' : 'PPT 与讲解文本仍可正常阅读，不影响自主研习。' }}</p>
             <button v-if="localMediaError" type="button" @click="retryMedia">重新加载视频</button>
           </div>
 
@@ -52,21 +69,21 @@
       <article class="sl-ppt-pane">
         <header class="sl-pane-label">
           <span><Presentation :size="16" /> 同步课件</span>
-          <small>第 {{ currentPage }} / {{ totalPages }} 页</small>
+          <small>第 {{ displayedPage }} / {{ totalPages }} 页</small>
         </header>
 
         <div class="sl-slide-frame">
           <img
-            v-if="currentSlide && !slideError"
-            :key="currentSlide.url"
-            :src="currentSlide.url"
-            :alt="'课程课件第 ' + currentPage + ' 页'"
+            v-if="effectiveSlide && !slideError"
+            :key="effectiveSlide.imageUrl || effectiveSlide.url"
+            :src="effectiveSlide.imageUrl || effectiveSlide.url"
+            :alt="'课程课件第 ' + displayedPage + ' 页'"
             @error="slideError = true"
           />
-          <div v-else-if="currentPptPage?.content || currentNode?.content" class="sl-slide-text">
-            <span>第 {{ currentPage }} 页</span>
-            <h2>{{ currentPptPage?.title || currentNode?.title }}</h2>
-            <p>{{ currentPptPage?.content || currentNode?.content }}</p>
+          <div v-else-if="effectivePptPage?.content || currentNode?.content" class="sl-slide-text">
+            <span>第 {{ displayedPage }} 页</span>
+            <h2>{{ effectivePptPage?.title || currentNode?.title }}</h2>
+            <p>{{ effectivePptPage?.content || currentNode?.content }}</p>
           </div>
           <div v-else class="sl-media-fallback sl-media-fallback--light">
             <FileQuestion :size="34" />
@@ -85,7 +102,7 @@
           >
             <ChevronLeft :size="19" />
           </button>
-          <span>第 {{ currentPage }} 页</span>
+          <span>第 {{ displayedPage }} 页</span>
           <button
             type="button"
             class="sl-icon-button"
@@ -103,7 +120,7 @@
       <button
         type="button"
         class="sl-icon-button sl-control-primary"
-        :disabled="!currentVideoUrl"
+        :disabled="!mediaElement"
         :aria-label="isPlaying ? '暂停讲解' : '播放讲解'"
         @click="togglePlay"
       >
@@ -117,13 +134,13 @@
         <input
           type="range"
           min="0"
-          :max="Math.max(totalDuration, 1)"
+          :max="Math.max(effectiveDuration, 1)"
           step="0.1"
           :value="currentTime"
           @input="handleSeek"
         />
       </label>
-      <span class="sl-time">{{ formatTime(totalDuration) }}</span>
+      <span class="sl-time">{{ formatTime(effectiveDuration) }}</span>
 
       <select
         :value="playbackRate"
@@ -191,17 +208,31 @@ import {
   Volume2,
   VolumeX,
 } from 'lucide-vue-next'
+import { resolvePptCueAtTime } from '../adapters/mediaPlaybackAdapter.js'
+import {
+  isActiveAudioClockEvent,
+  resolveActiveAudioClock,
+  shouldSeekMediaClock,
+} from '../composables/usePlaylistPlayback.js'
 
 const props = defineProps({
   mode: { type: String, required: true },
   currentNode: { type: Object, default: null },
   currentTime: { type: Number, default: 0 },
+  seekRevision: { type: Number, default: 0 },
   currentPage: { type: Number, default: 1 },
   currentSlide: { type: Object, default: null },
   currentPptPage: { type: Object, default: null },
   currentVideoUrl: { type: String, default: '' },
   totalPages: { type: Number, default: 1 },
   totalDuration: { type: Number, default: 0 },
+  audioUrl: { type: String, default: '' },
+  playlist: { type: Object, default: null },
+  playlistIndex: { type: Number, default: 0 },
+  mediaDuration: { type: Number, default: 0 },
+  subtitleSegments: { type: Array, default: () => [] },
+  pptTimeline: { type: Array, default: () => [] },
+  pptManifest: { type: Object, default: null },
   isPlaying: { type: Boolean, default: false },
   playbackRate: { type: Number, default: 1 },
   volume: { type: Number, default: 0.85 },
@@ -218,13 +249,50 @@ const emit = defineEmits([
   'mute-change',
   'captions-change',
   'media-error',
+  'playlist-next',
 ])
 
 const stageRef = ref(null)
 const videoRef = ref(null)
+const audioRef = ref(null)
 const localMediaError = ref('')
 const slideError = ref(false)
 let applyingExternalTime = false
+
+const activeAudioClock = computed(() => resolveActiveAudioClock(
+  props.playlist?.items,
+  props.playlistIndex,
+  props.audioUrl,
+))
+const activeAudioUrl = computed(() => activeAudioClock.value.audioUrl)
+const playlistOffset = computed(() => activeAudioClock.value.offsetSeconds)
+const hasSegmentedPlaylistAudio = computed(() => activeAudioClock.value.segmented)
+const hasAudio = computed(() => Boolean(activeAudioUrl.value) && !localMediaError.value)
+const mediaElement = computed(() => hasAudio.value ? audioRef.value : videoRef.value)
+const mediaGeneration = computed(() => hasAudio.value
+  ? activeAudioClock.value.generation
+  : `video:${props.currentVideoUrl || ''}`)
+const effectiveDuration = computed(() => Math.max(Number(props.mediaDuration) || 0, Number(props.totalDuration) || 0))
+
+const releasePptCue = computed(() => resolvePptCueAtTime(
+  props.pptTimeline,
+  Math.max(0, Number(props.currentTime) || 0) * 1000,
+))
+const activePptDeck = computed(() => {
+  const decks = props.pptManifest?.decks || []
+  const versionId = releasePptCue.value?.materialVersionId || props.pptManifest?.primaryMaterialVersionId
+  return decks.find(deck => deck.materialVersionId === versionId) || null
+})
+const releasePptPage = computed(() => {
+  const page = releasePptCue.value?.page
+  const pages = activePptDeck.value?.pages?.length
+    ? activePptDeck.value.pages
+    : props.pptManifest?.pages || []
+  return page ? pages.find(item => item.page === page) ?? null : null
+})
+const effectiveSlide = computed(() => releasePptPage.value || props.currentSlide)
+const effectivePptPage = computed(() => releasePptPage.value || props.currentPptPage)
+const displayedPage = computed(() => releasePptCue.value?.page ?? props.currentPage)
 
 const captionText = computed(() => {
   return String(props.currentNode?.content || '')
@@ -235,50 +303,99 @@ const captionText = computed(() => {
 })
 
 function localTimeForGlobal(globalTime) {
+  if (hasAudio.value) {
+    return hasSegmentedPlaylistAudio.value
+      ? Math.max(0, Number(globalTime) - playlistOffset.value)
+      : Math.max(0, Number(globalTime) || 0)
+  }
   return Math.max(0, Number(globalTime) - Number(props.currentNode?.timestampStart || 0))
 }
 
-function syncVideoSettings() {
-  if (!videoRef.value) return
-  videoRef.value.playbackRate = props.playbackRate
-  videoRef.value.volume = props.volume
-  videoRef.value.muted = props.isMuted
+function globalTimeFromElement(element = mediaElement.value) {
+  if (!element) return Math.max(0, Number(props.currentTime) || 0)
+  if (hasAudio.value) return (hasSegmentedPlaylistAudio.value ? playlistOffset.value : 0) + element.currentTime
+  return Number(props.currentNode?.timestampStart || 0) + element.currentTime
 }
 
-async function handleLoadedMetadata() {
-  if (!videoRef.value) return
-  syncVideoSettings()
-  applyingExternalTime = true
-  const target = localTimeForGlobal(props.currentTime)
-  videoRef.value.currentTime = Math.min(target, videoRef.value.duration || target)
-  applyingExternalTime = false
-  localMediaError.value = ''
-  if (props.isPlaying) {
-    await videoRef.value.play().catch(() => emitPlaybackState(false))
+function isActiveMediaElement(element) {
+  if (!element || element !== mediaElement.value) return false
+  if (!isActiveAudioClockEvent(element.dataset?.mediaGeneration, mediaGeneration.value)) return false
+  const expected = hasAudio.value ? activeAudioUrl.value : props.currentVideoUrl
+  const actual = element.currentSrc || element.src
+  if (!expected || !actual || typeof document === 'undefined') return true
+  try {
+    return new URL(expected, document.baseURI).href === new URL(actual, document.baseURI).href
+  } catch {
+    return expected === actual
   }
 }
 
-function handleTimeUpdate() {
-  if (!videoRef.value || applyingExternalTime) return
+function isTerminalMediaTime(element) {
+  const duration = Number(element?.duration)
+  const current = Number(element?.currentTime)
+  return Number.isFinite(duration) && duration > 0
+    && Number.isFinite(current) && current >= duration - 0.05
+}
+
+function syncVideoSettings() {
+  const element = mediaElement.value
+  if (!element) return
+  element.playbackRate = props.playbackRate
+  element.volume = props.volume
+  element.muted = props.isMuted
+}
+
+function syncMediaClock(globalTime, force = false) {
+  const element = mediaElement.value
+  if (!element || element.readyState < 1) return
+  const target = localTimeForGlobal(globalTime)
+  if (!shouldSeekMediaClock(element.currentTime, target, force)) return
+  applyingExternalTime = true
+  element.currentTime = Math.min(target, element.duration || target)
+  applyingExternalTime = false
+}
+
+async function handleLoadedMetadata(event) {
+  const element = event?.currentTarget || mediaElement.value
+  if (!isActiveMediaElement(element)) return
+  syncVideoSettings()
+  syncMediaClock(props.currentTime, true)
+  localMediaError.value = ''
+  if (props.isPlaying) {
+    await element.play().catch(() => emitPlaybackState(false, element))
+  }
+}
+
+function handleTimeUpdate(event) {
+  const element = event?.currentTarget || mediaElement.value
+  if (!isActiveMediaElement(element) || applyingExternalTime || element.ended || isTerminalMediaTime(element)) return
+  const globalTime = globalTimeFromElement(element)
+  const cue = hasAudio.value
+    ? resolvePptCueAtTime(props.pptTimeline, globalTime * 1000)
+    : null
   emit('update-playback', {
-    globalTime: Number(props.currentNode?.timestampStart || 0) + videoRef.value.currentTime,
-    isPlaying: !videoRef.value.paused,
+    globalTime,
+    isPlaying: !element.paused,
+    page: cue?.page ?? null,
+    materialVersionId: cue?.materialVersionId ?? null,
   })
 }
 
-function emitPlaybackState(value) {
+function emitPlaybackState(value, element = mediaElement.value) {
+  if (!isActiveMediaElement(element)) return
   emit('update-playback', {
-    globalTime: props.currentTime,
+    globalTime: globalTimeFromElement(element),
     isPlaying: value,
   })
 }
 
 function togglePlay() {
-  if (!videoRef.value || !props.currentVideoUrl) return
-  if (videoRef.value.paused) {
-    videoRef.value.play().catch(handleMediaError)
+  const element = mediaElement.value
+  if (!element) return
+  if (element.paused) {
+    element.play().catch(handleMediaError)
   } else {
-    videoRef.value.pause()
+    element.pause()
   }
 }
 
@@ -287,22 +404,28 @@ function handleSeek(event) {
   emit('seek', nextTime)
 }
 
-function handleEnded() {
+function handleEnded(event) {
+  if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
+  if (hasSegmentedPlaylistAudio.value && props.playlistIndex < (props.playlist?.items?.length || 0) - 1) {
+    emit('playlist-next')
+    return
+  }
   emit('update-playback', {
-    globalTime: props.currentNode?.timestampEnd ?? props.currentTime,
+    globalTime: globalTimeFromElement(),
     isPlaying: false,
   })
 }
 
-function handleMediaError() {
+function handleMediaError(event) {
+  if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   localMediaError.value = '媒体资源加载失败'
   emit('media-error', localMediaError.value)
 }
 
-function retryMedia() {
+async function retryMedia() {
   localMediaError.value = ''
-  if (!videoRef.value) return
-  videoRef.value.load()
+  await nextTick()
+  mediaElement.value?.load()
 }
 
 async function toggleFullscreen() {
@@ -329,11 +452,18 @@ function formatTime(seconds) {
 watch(
   () => props.currentVideoUrl,
   async () => {
+    if (hasAudio.value) return
     localMediaError.value = ''
     await nextTick()
     videoRef.value?.load()
   }
 )
+
+watch(() => activeAudioClock.value.generation, async () => {
+  localMediaError.value = ''
+  await nextTick()
+  audioRef.value?.load()
+})
 
 watch(
   () => props.currentSlide?.url,
@@ -344,16 +474,10 @@ watch(
 
 watch(
   () => props.currentTime,
-  value => {
-    if (!videoRef.value || !props.currentVideoUrl || videoRef.value.readyState < 1) return
-    const target = localTimeForGlobal(value)
-    if (Math.abs(videoRef.value.currentTime - target) > 1.25) {
-      applyingExternalTime = true
-      videoRef.value.currentTime = Math.min(target, videoRef.value.duration || target)
-      applyingExternalTime = false
-    }
-  }
+  value => syncMediaClock(value)
 )
+
+watch(() => props.seekRevision, () => syncMediaClock(props.currentTime, true))
 
 watch(() => props.playbackRate, syncVideoSettings)
 watch(() => props.volume, syncVideoSettings)
