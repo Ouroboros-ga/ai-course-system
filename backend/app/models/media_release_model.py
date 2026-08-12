@@ -1,4 +1,4 @@
-﻿"""阶段8 媒体生成与发布模型
+"""阶段8 媒体生成与发布模型
 
 实现「讲稿 → TTS → 字幕/PPT 时间轴 → MediaRelease → 学生端播放」闭环的核心持久化模型。
 
@@ -293,7 +293,7 @@ class MediaReleaseItem(SQLModel, table=True):
     item_id: str = Field(default_factory=lambda: "mrit_" + uuid.uuid4().hex, unique=True, index=True)
     release_id: str = Field(index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
-    node_id: int = Field(foreign_key="script_nodes.id", index=True)
+    node_id: int = Field(foreign_key="teaching_script_nodes.id", index=True)
     outline_node_id: Optional[str] = Field(default=None, index=True)
     order_index: int = Field(default=0, index=True)
     script_hash: str = Field(default="", index=True)
@@ -327,7 +327,7 @@ class MediaReleaseCue(SQLModel, table=True):
     )
     release_id: str = Field(index=True, description="关联 MediaRelease.release_id")
     course_id: int = Field(foreign_key="courses.id", index=True)
-    node_id: int = Field(foreign_key="script_nodes.id", index=True)
+    node_id: int = Field(foreign_key="teaching_script_nodes.id", index=True)
 
     cue_index: int = Field(description="在节点内的序号")
     start_time: float = Field(description="起始时间(秒，相对节点音频/视频)")
