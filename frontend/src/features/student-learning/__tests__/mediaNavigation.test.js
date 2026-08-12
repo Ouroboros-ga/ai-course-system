@@ -6,6 +6,7 @@ import {
   findPlaylistItemIndexAtTime,
   resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
+  resolveTimelinePlaybackTarget,
 } from '../composables/usePlaylistPlayback.js'
 
 const items = [
@@ -34,6 +35,27 @@ test('directory selection uses playlist offset and legacy timestamp fallback', (
   assert.deepEqual(resolvePlaylistSelection([], { id: 99, timestampStart: 7.5 }), {
     playlistIndex: -1,
     targetTime: 7.5,
+  })
+})
+
+test('legacy release navigation uses its frozen cue clock instead of zero node timestamps', () => {
+  const releasedNodes = [
+    { id: 'outline-1', outlineNodeId: 'outline-1', timestampStart: 0, timestampEnd: 0 },
+    { id: 'outline-2', outlineNodeId: 'outline-2', timestampStart: 0, timestampEnd: 0 },
+  ]
+  const timeline = [
+    { nodeId: 101, outlineNodeId: 'outline-1', startMs: 0, endMs: 12_000 },
+    { nodeId: 102, outlineNodeId: 'outline-2', startMs: 12_000, endMs: 25_000 },
+  ]
+
+  assert.deepEqual(resolvePlaylistSelection([], releasedNodes[1], timeline), {
+    playlistIndex: -1,
+    targetTime: 12,
+  })
+  assert.deepEqual(resolveTimelinePlaybackTarget(timeline, releasedNodes, 14, 0), {
+    nodeIndex: 1,
+    nodeId: 102,
+    outlineNodeId: 'outline-2',
   })
 })
 

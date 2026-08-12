@@ -65,6 +65,7 @@ test('does not treat an all-zero legacy timeline as the final knowledge point', 
   ]
 
   assert.equal(findNodeIndexAtTime(releaseNodes, 3), 0)
+  assert.equal(findNodeIndexAtTime(releaseNodes, 3, 2), 2)
 })
 
 test('adapts workspace state to the backend snake-case progress contract', () => {

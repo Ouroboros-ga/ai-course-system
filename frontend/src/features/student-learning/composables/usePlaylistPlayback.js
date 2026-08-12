@@ -31,6 +31,36 @@ export function findLearningNodeIndexForPlaylistItem(nodes, item) {
   return nodes.findIndex(node => sameId(node?.outlineNodeId, item.outlineNodeId))
 }
 
+function findTimelineCueForNode(timeline, node) {
+  if (!Array.isArray(timeline) || !node) return null
+  return timeline.find(cue => (
+    sameId(cue?.outlineNodeId, node.outlineNodeId)
+    || sameId(cue?.nodeId, node.id)
+  )) ?? null
+}
+
+/** Resolve a legacy single-audio clock back to one released outline node. */
+export function resolveTimelinePlaybackTarget(timeline, nodes, seconds, currentNodeIndex = -1) {
+  const targetMs = Math.max(0, Number(seconds) || 0) * 1000
+  let activeCue = null
+  for (const cue of Array.isArray(timeline) ? timeline : []) {
+    if (Math.max(0, Number(cue?.startMs) || 0) > targetMs) break
+    activeCue = cue
+  }
+  const matchedIndex = findLearningNodeIndexForPlaylistItem(nodes, activeCue)
+  const fallbackIndex = Number.isInteger(currentNodeIndex)
+    && currentNodeIndex >= 0
+    && currentNodeIndex < (nodes?.length || 0)
+    ? currentNodeIndex
+    : -1
+  const nodeIndex = matchedIndex >= 0 ? matchedIndex : fallbackIndex
+  return {
+    nodeIndex,
+    nodeId: activeCue?.nodeId ?? null,
+    outlineNodeId: activeCue?.outlineNodeId ?? null,
+  }
+}
+
 /**
  * Project the active audio clock onto the immutable playlist before touching
  * the legacy learner-node timeline. A keyed audio element remains the source
@@ -52,10 +82,13 @@ export function resolvePlaylistPlaybackTarget(items, nodes, seconds, activeIndex
 }
 
 /** Resolve a directory click to the playlist clock, with legacy node fallback. */
-export function resolvePlaylistSelection(items, node) {
+export function resolvePlaylistSelection(items, node, timeline = []) {
   const playlistIndex = findPlaylistItemIndex(items, node)
+  const timelineCue = playlistIndex < 0 ? findTimelineCueForNode(timeline, node) : null
   const targetTime = playlistIndex >= 0
     ? Math.max(0, Number(items[playlistIndex]?.offsetMs) || 0) / 1000
+    : timelineCue
+      ? Math.max(0, Number(timelineCue.startMs) || 0) / 1000
     : Math.max(0, Number(node?.timestampStart) || 0)
   return { playlistIndex, targetTime }
 }

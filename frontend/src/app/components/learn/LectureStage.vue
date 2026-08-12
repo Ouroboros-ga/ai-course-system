@@ -183,6 +183,7 @@ function emitPlayback(isPlaying, element = mediaElement.value) {
     page: activeCue?.page ?? null,
     materialVersionId: activeCue?.materialVersionId ?? null,
     nodeId: activeCue?.nodeId ?? activeSegment?.nodeId ?? null,
+    outlineNodeId: activeCue?.outlineNodeId ?? activeSegment?.outlineNodeId ?? null,
   })
 }
 

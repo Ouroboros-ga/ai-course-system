@@ -60,14 +60,14 @@ function normalizeCompletionRate(value) {
   return clamp(parsed <= 1 ? parsed * 100 : parsed, 0, 100)
 }
 
-export function findNodeIndexAtTime(nodes, timestamp) {
+export function findNodeIndexAtTime(nodes, timestamp, fallbackIndex = 0) {
   if (!Array.isArray(nodes) || nodes.length === 0) return 0
   // Immutable course releases no longer own a legacy media timeline. Their
   // nodes intentionally arrive as 0/0 markers while audio-playlist/v1 owns
   // playback. Do not let binary search turn every positive time into the last
   // node when a caller has to use this legacy fallback.
   if (nodes.every(node => Number(node?.timestampStart) === 0 && Number(node?.timestampEnd) === 0)) {
-    return 0
+    return clamp(Number(fallbackIndex) || 0, 0, nodes.length - 1)
   }
   const time = Math.max(0, numberOr(timestamp))
   let left = 0

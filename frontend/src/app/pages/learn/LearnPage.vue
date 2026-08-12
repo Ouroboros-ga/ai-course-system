@@ -8,6 +8,7 @@ import {
   findPlaylistItemIndex,
   resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
+  resolveTimelinePlaybackTarget,
   usePlaylistPlayback,
 } from '@/features/student-learning/composables/usePlaylistPlayback.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
@@ -167,8 +168,21 @@ function handlePlayback(payload) {
         ...payload,
         nodeId: item.nodeId,
         outlineNodeId: item.outlineNodeId,
-        playlistNodeIndex: target.nodeIndex,
+        nodeIndex: target.nodeIndex,
       }
+    }
+  } else if (Number.isFinite(globalTime)) {
+    const target = resolveTimelinePlaybackTarget(
+      media.pptTimeline.value,
+      ws.nodes.value,
+      globalTime,
+      ws.currentNodeIndex.value,
+    )
+    payload = {
+      ...payload,
+      nodeId: target.nodeId ?? payload?.nodeId,
+      outlineNodeId: target.outlineNodeId ?? payload?.outlineNodeId,
+      nodeIndex: target.nodeIndex,
     }
   }
   ws.updatePlayback(payload)
@@ -184,11 +198,11 @@ function handleTrackSelect(index, options = {}) {
   if (!node) return
   const wasPlaying = options.play ?? ws.isPlaying.value
   const items = media.playlist.value?.items || []
-  const { playlistIndex, targetTime } = resolvePlaylistSelection(items, node)
+  const { playlistIndex, targetTime } = resolvePlaylistSelection(items, node, media.pptTimeline.value)
 
   if (playlistIndex >= 0) playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
-  ws.seekTo(targetTime, playlistIndex >= 0 ? { nodeIndex: nextIndex } : {})
+  ws.seekTo(targetTime, { nodeIndex: nextIndex })
 }
 
 function handleOpenKnowledge(nodeId) {

@@ -539,7 +539,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       && requestedIndex >= 0
       && requestedIndex < nodes.value.length
       ? requestedIndex
-      : findNodeIndexAtTime(nodes.value, nextTime)
+      : findNodeIndexAtTime(nodes.value, nextTime, currentNodeIndex.value)
     if (nextIndex !== currentNodeIndex.value) {
       currentNodeIndex.value = nextIndex
     }
@@ -552,11 +552,11 @@ export function useLearningWorkspace(courseId, options = {}) {
     const globalTime = Number(payload?.globalTime)
     if (Number.isFinite(globalTime)) {
       const previousIndex = currentNodeIndex.value
-      const playlistNodeIndex = Number(payload?.playlistNodeIndex)
-      const hasPlaylistNodeIndex = Number.isInteger(playlistNodeIndex)
-        && playlistNodeIndex >= 0
-        && playlistNodeIndex < nodes.value.length
-      seekTo(globalTime, hasPlaylistNodeIndex ? { nodeIndex: playlistNodeIndex } : {})
+      const mediaNodeIndex = Number(payload?.nodeIndex ?? payload?.playlistNodeIndex)
+      const hasMediaNodeIndex = Number.isInteger(mediaNodeIndex)
+        && mediaNodeIndex >= 0
+        && mediaNodeIndex < nodes.value.length
+      seekTo(globalTime, hasMediaNodeIndex ? { nodeIndex: mediaNodeIndex } : {})
       // A frozen media release owns its cue-to-node/page mapping.  The legacy
       // script timing remains a fallback while P0 still borrows its PPT assets.
       const cueNodeIndex = nodes.value.findIndex(node => {
@@ -565,7 +565,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           && String(node.outlineNodeId) === String(payload.outlineNodeId)
         return nodeIdMatches || outlineNodeIdMatches
       })
-      if (!hasPlaylistNodeIndex && cueNodeIndex >= 0) {
+      if (!hasMediaNodeIndex && cueNodeIndex >= 0) {
         currentNodeIndex.value = cueNodeIndex
       }
       const cuePage = Number(payload?.page)
