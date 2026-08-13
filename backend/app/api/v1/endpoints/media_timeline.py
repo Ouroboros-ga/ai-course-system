@@ -8,13 +8,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
-from app.core.security import get_current_user
+from app.core.security import get_current_user, oauth2_scheme
 from app.models.database import get_session
 from app.models.media_timeline_model import (
     MediaAsset,
@@ -175,6 +175,23 @@ async def register_asset(
     )
 
 
+async def _maybe_current_user(
+    token: Optional[str] = Depends(oauth2_scheme),
+    request: Request = None,
+) -> Optional[dict]:
+    """媒体内容读取的可选鉴权。
+
+    普通媒体路径仍要求登录（函数体中对 None 显式返回 401，行为与原先一致）；
+    ASR 服务间签名 URL（purpose=asr_transcribe）在签名校验通过后免登录读取，
+    由函数体内的 ASR 分支直接放行。token 缺失/无效时返回 None 而不是抛出 401，
+    否则 FastAPI 会在进入函数体前拦截，ASR 分支永远无法到达。
+    """
+    try:
+        return await get_current_user(token=token, request=request)
+    except HTTPException:
+        return None
+
+
 @router.get("/assets/{object_key:path}/content")
 async def get_asset_content(
     object_key: str,
@@ -182,7 +199,7 @@ async def get_asset_content(
     sig: str = Query(..., min_length=8, max_length=128),
     scope: str = Query(..., min_length=3, max_length=1000),
     session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
+    current_user: Optional[dict] = Depends(_maybe_current_user),
 ):
     """按课程权限读取媒体内容。
 
@@ -224,6 +241,14 @@ async def get_asset_content(
             return FileResponse(path=file_path, media_type="audio/wav", filename=None)
         except FileNotFoundError as exc:
             raise HTTPException(status_code=404, detail="媒体文件不存在") from exc
+
+    # 非 ASR 媒体路径:签名验证通过后仍需登录用户(与历史行为一致)
+    if current_user is None:
+        raise HTTPException(
+            status_code=401,
+            detail="身份认证失败：无效的访问令牌",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     # Platform avatar manifests and textures are immutable shared registry
     # assets, not course-owned MediaAsset rows.  Their signed URLs still bind
