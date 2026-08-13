@@ -5,6 +5,7 @@ import asyncio
 import logging
 from typing import Any, Callable, Mapping
 
+from sqlalchemy import Text, cast
 from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select
 
@@ -87,17 +88,22 @@ class SqlAgentRunEventPort(AgentRunEventPort):
     async def emit(self, *, run_id: str, trace_id: str, event_type: RunEventType,
                    payload: Mapping[str, Any]) -> None:
         with self._session_factory() as session:
+            # Dedup by serialized payload text: a direct JSON-column equality
+            # compiles to ``json = json`` on PostgreSQL, which is undefined
+            # there.  Both dialects store/compare the serialized text, so the
+            # text comparison keeps dedup working on SQLite and PostgreSQL.
+            sanitized = _sanitize_payload(payload)
             duplicate = session.exec(select(AgentRunEventRecord).where(
                 AgentRunEventRecord.run_id == run_id,
                 AgentRunEventRecord.event_type == (event_type.value if isinstance(event_type, RunEventType) else str(event_type)),
-                AgentRunEventRecord.payload == _sanitize_payload(payload),
+                cast(AgentRunEventRecord.payload, Text) == json.dumps(sanitized, ensure_ascii=False, default=str),
             )).first()
             if duplicate is not None:
                 return
             session.add(AgentRunEventRecord(
                 run_id=run_id, trace_id=trace_id,
                 event_type=event_type.value if isinstance(event_type, RunEventType) else str(event_type),
-                payload=_sanitize_payload(payload),
+                payload=sanitized,
             ))
             session.commit()
 
