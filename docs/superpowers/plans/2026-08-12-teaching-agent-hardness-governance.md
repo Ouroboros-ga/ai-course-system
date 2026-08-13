@@ -65,7 +65,11 @@ New learner-owned transition endpoints are: `GET /api/v1/learning-adjustments/co
 
 ### P0 implementation checkpoint (2026-08-13, local only)
 
-Tasks 8–12 are implemented in the current worktree. The implementation added migration `0056`, strict item-local coordinate contracts, the deterministic `LearningAdjustmentService`/Port, TeachingAgent trace correlation, learner-owned transition endpoints, and the learner-controlled review/return UI. The compatibility adapter now returns a supplement only after resolving the same learner/course `qaRecordId` to a valid frozen proposal and an existing Conversation Domain assistant message; otherwise it returns `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`.
+### Deployment migration identity (2026-08-13)
+
+The original planning aliases `0055` and `0056` conflicted with an independently developed experiment-sandbox migration. The deployed TeachingAgent chain therefore uses the unique Alembic revisions `20260812_tc_policy` (from `0054`) and `20260812_learning_adjust` (from `20260812_tc_policy`). Before a future merge that includes the experiment-sandbox `0055` branch, add an explicit Alembic merge revision; do not reuse numeric revision identifiers or stamp either branch.
+
+Tasks 8–12 are implemented in the current worktree. The implementation added migration `20260812_learning_adjust`, strict item-local coordinate contracts, the deterministic `LearningAdjustmentService`/Port, TeachingAgent trace correlation, learner-owned transition endpoints, and the learner-controlled review/return UI. The compatibility adapter now returns a supplement only after resolving the same learner/course `qaRecordId` to a valid frozen proposal and an existing Conversation Domain assistant message; otherwise it returns `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`.
 
 The following local verification has completed without paid providers: 38 backend tests covering the P0 domain, service, API, workflow, compatibility and learning-projection paths; and 12 frontend tests covering coordinate construction, acceptance/recovery semantics and playlist playback. The original checklists remain as the implementation procedure; Task 13 is still open for fresh final build/migration checks and non-production browser acceptance. In particular, do not claim a browser navigation succeeded from `applied`: cross-item review, `canplay`/`seeked` failures, explicit return, refresh recovery, release changes and a real compatibility round must be manually exercised before release.
 

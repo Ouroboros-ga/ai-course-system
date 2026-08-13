@@ -1,7 +1,7 @@
 """Add minimal learner-confirmed learning adjustment records.
 
-Revision ID: 0056
-Revises: 0055
+Revision ID: 20260812_learning_adjust
+Revises: 20260812_tc_policy
 Create Date: 2026-08-12 13:00:00
 """
 from __future__ import annotations
@@ -12,8 +12,8 @@ import sqlalchemy as sa
 from alembic import op
 
 
-revision: str = "0056"
-down_revision: Union[str, None] = "0055"
+revision: str = "20260812_learning_adjust"
+down_revision: Union[str, None] = "20260812_tc_policy"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
