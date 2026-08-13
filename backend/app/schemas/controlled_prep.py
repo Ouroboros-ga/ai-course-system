@@ -279,7 +279,11 @@ class ScriptWireDraft(StrictModel):
     prerequisites: list[str] = Field(default_factory=list, max_length=20)
     style: TeachingStyleConfig
     content: str = Field(min_length=1, max_length=50_000)
-    claims: list[str] = Field(min_length=1, max_length=100)
+    claims: list[str] = Field(
+        min_length=1,
+        max_length=100,
+        description="该知识点讲稿所依据的核心论断（由材料支撑的事实性陈述），1~10 条自然语言短句，每条即一条论断；不是证据 ID 或引用编号，必填且至少 1 条",
+    )
 
 
 class TeachingScriptBatchWireResult(StrictModel):
@@ -315,7 +319,11 @@ class TeachingScriptNodeDraft(StrictModel):
     prerequisites: list[str] = Field(default_factory=list, max_length=20)
     style: TeachingStyleConfig
     content: str = Field(min_length=1, max_length=50_000)
-    claims: list[str] = Field(min_length=1, max_length=100)
+    claims: list[str] = Field(
+        min_length=1,
+        max_length=100,
+        description="该知识点讲稿所依据的核心论断（由材料支撑的事实性陈述），1~10 条自然语言短句，每条即一条论断；不是证据 ID 或引用编号，必填且至少 1 条",
+    )
     paragraph_evidence: list[list[str]] = Field(min_length=1, max_length=200)
 
     @model_validator(mode="after")

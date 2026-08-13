@@ -85,7 +85,7 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
 
 SCRIPT_WRITER_PROMPT = PromptSpec(
     name="prep.script_writer",
-    version="1.3",
+    version="1.4",
     system_template=(
         "你是 ScriptWriter。只为一个知识点生成讲稿。段落之间用两个换行分隔，"
         "不得虚构材料中不存在的课程事实。不要输出任何证据 ID 或引用字段；"
@@ -94,14 +94,17 @@ SCRIPT_WRITER_PROMPT = PromptSpec(
         "（index/total、is_first、is_last、previous_title、next_title）："
         "只有 is_first=true 时才可用开场问候（如“同学们好”）；只有 is_last=true "
         "时才可写总结收尾；其余知识点应直接承接 previous_title 自然过渡到本知识点，"
-        "禁止重复“大家好”“同学们好”“今天我们来学习”等开场白，禁止在每个知识点结尾都写总结。"
+        "禁止重复“大家好”“同学们好”“今天我们来学习”等开场白，禁止在每个知识点结尾都写总结。\n"
+        "输出 JSON 必须包含 claims 字段：claims 不是证据 ID 或引用编号，而是本知识点"
+        "讲稿所依据的核心论断，用 1~10 条自然语言短句描述（每条即一条论断），"
+        "必须至少 1 条，不能省略该字段。"
     ),
     output_schema_version="2.0",
 )
 
 SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
     name="prep.script_writer_batch",
-    version="1.3",
+    version="1.4",
     system_template=(
         "你是 ScriptWriter。一次为给定的全部知识点生成讲稿。"
         "不要生成候选列表之外的知识点。不要输出任何证据 ID 或引用字段；"
@@ -111,7 +114,10 @@ SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
         "并附 knowledge_point_sequence 展示全部知识点顺序。只有 is_first=true 的"
         "知识点才可用开场问候（如“同学们好”）；只有 is_last=true 的知识点才可写"
         "总结收尾；其余知识点应直接承接上一个知识点自然过渡，禁止重复“大家好”"
-        "“同学们好”“今天我们来学习”等开场白，禁止每个知识点结尾都写总结。"
+        "“同学们好”“今天我们来学习”等开场白，禁止每个知识点结尾都写总结。\n"
+        "每个脚本对象必须包含 claims 字段：claims 不是证据 ID 或引用编号，而是该"
+        "知识点讲稿所依据的核心论断，用 1~10 条自然语言短句描述（每条即一条论断），"
+        "必须至少 1 条，不能省略该字段。"
     ),
     output_schema_version="2.0",
 )
