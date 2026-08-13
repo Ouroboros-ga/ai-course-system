@@ -323,6 +323,28 @@ class Settings(BaseSettings):
     VOLCENGINE_DOUBAO_TTS_READ_TIMEOUT_SECONDS: int = 90
 
     # --------------------------
+    # 豆包语音识别 ASR（录音文件识别标准版 HTTP）
+    # --------------------------
+    # submit 标准版要求提供「公网可访问」的音频 URL（audio.url），本地
+    # localhost 无法被火山引擎访问。部署到公网服务器时必须把
+    # ASR_PUBLIC_BASE_URL 配置为外部可达的后端地址（如
+    # http://120.26.104.247:8000），未配置时转写端点返回明确错误而非伪造成功。
+    # API Key 只留在服务端，不进入前端、日志或测试 fixture。
+    VOLCENGINE_ASR_API_KEY: str = ""
+    VOLCENGINE_ASR_RESOURCE_ID: str = "volc.seedasr.auc"
+    VOLCENGINE_ASR_SUBMIT_URL: str = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/submit"
+    VOLCENGINE_ASR_QUERY_URL: str = "https://openspeech.bytedance.com/api/v3/auc/bigmodel/query"
+    ASR_PUBLIC_BASE_URL: str = ""
+    ASR_MAX_AUDIO_MB: int = 20
+    ASR_MAX_DURATION_SECONDS: int = 120
+    ASR_HTTP_TIMEOUT_SECONDS: int = 60
+    # 媒体工具显式路径。本地 Windows 开发环境 PATH 中的 ffmpeg 可能是残缺
+    # build（无法解码 wav），可用此项覆盖为完整版；Linux 部署无需设置，
+    # 回退到 PATH 中的系统 ffmpeg。
+    FFMPEG_PATH: str = ""
+    FFPROBE_PATH: str = ""
+
+    # --------------------------
     # 阶段8 M2 TTS 任务重试与限额
     # --------------------------
     TTS_MAX_RETRY_ATTEMPTS: int = 3

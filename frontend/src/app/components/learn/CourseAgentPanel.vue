@@ -1,7 +1,8 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookMarked, Code2, CornerUpLeft, Lightbulb, ListChecks, LineChart, MapPinned, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
+import { BookMarked, Code2, CornerUpLeft, Lightbulb, ListChecks, LineChart, MapPinned, Mic, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { useVoiceInput } from '@/features/student-learning/composables/useVoiceInput.js'
 
 /**
  * 课程智能体面板（page-design §12.5 UNDERSTAND / §13.1 统一人格 / §6.7 SystemResponsePanel）。
@@ -53,6 +54,33 @@ function handleQuick(action) {
 
 function handleSubmit() {
   send(props.ws.questionDraft.value)
+}
+
+// 语音输入：录音 → 后端豆包 ASR 转写 → 文本填入问题草稿（用户确认后发送）
+const {
+  status: voiceStatus,
+  supported: voiceSupported,
+  durationMs: voiceDurationMs,
+  start: startVoice,
+  stop: stopVoice,
+} = useVoiceInput({
+  getCourseId: () => props.ws.course.value?.courseId ?? null,
+  onText: (text) => {
+    props.ws.questionDraft.value = text
+    nextTick(() => inputRef.value?.focus())
+  },
+})
+
+function handleVoiceClick() {
+  if (voiceStatus.value === 'recording') {
+    stopVoice()
+  } else {
+    startVoice()
+  }
+}
+
+function formatVoiceSeconds() {
+  return Math.floor(voiceDurationMs.value / 1000)
 }
 
 function handleInput(e) {
@@ -308,6 +336,33 @@ function hasMessageForActiveAdjustment() {
           @input="handleInput"
           @keydown.enter.exact.prevent="handleSubmit"
         />
+        <button
+          v-if="voiceStatus === 'idle'"
+          type="button"
+          class="sfx-agent-mic"
+          :disabled="!voiceSupported"
+          :title="voiceSupported ? '语音输入（录音转文字）' : '当前浏览器不支持语音输入'"
+          aria-label="语音输入"
+          @click="handleVoiceClick"
+        >
+          <Mic :size="17" />
+        </button>
+        <button
+          v-else
+          type="button"
+          class="sfx-agent-mic"
+          :class="{ 'is-recording': voiceStatus === 'recording' }"
+          :disabled="voiceStatus === 'transcribing'"
+          :title="voiceStatus === 'recording' ? '点击停止录音' : '正在转写…'"
+          aria-label="停止录音并转写"
+          @click="handleVoiceClick"
+        >
+          <template v-if="voiceStatus === 'recording'">
+            <span class="sfx-agent-mic-dot"></span>
+            <span class="sfx-agent-mic-timer">{{ formatVoiceSeconds() }}s</span>
+          </template>
+          <span v-else class="sfx-agent-mic-spinner"></span>
+        </button>
         <button type="submit" class="sfx-agent-send"
                 :disabled="ws.isAsking.value || !ws.questionDraft.value.trim()"
                 aria-label="发送问题">
@@ -560,4 +615,53 @@ function hasMessageForActiveAdjustment() {
 }
 .sfx-agent-send:hover:not(:disabled) { background: var(--color-brand-hover); }
 .sfx-agent-send:disabled { background: var(--border-strong); cursor: not-allowed; }
+
+.sfx-agent-mic {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.sfx-agent-mic:hover:not(:disabled) { border-color: var(--border-strong); color: var(--ink-700); }
+.sfx-agent-mic:disabled { color: var(--text-disabled); cursor: not-allowed; }
+.sfx-agent-mic.is-recording {
+  border-color: var(--red-500);
+  background: var(--red-100);
+  color: var(--red-700);
+}
+.sfx-agent-mic-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--red-700);
+  animation: sfx-mic-pulse 1s ease-in-out infinite;
+}
+.sfx-agent-mic-timer {
+  font-size: var(--caption-size);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sfx-agent-mic-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border-strong);
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: sfx-mic-spin 0.8s linear infinite;
+}
+@keyframes sfx-mic-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+@keyframes sfx-mic-spin {
+  to { transform: rotate(360deg); }
+}
 </style>

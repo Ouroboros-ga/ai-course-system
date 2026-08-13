@@ -161,6 +161,7 @@ from app.api.v1.endpoints import (
     historical_rebuild, # 阶段10 历史课程补建清单编排
     storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
     admin_platform,     # 平台 Provider 配置与用户管理
+    asr,                # 豆包语音输入（ASR 录音转文字）
 )
 from app.schemas import UnifiedResponse
 
@@ -374,6 +375,9 @@ app.include_router(retrieval_demo.router, prefix="/api/v1/retrieval-demo", tags=
 # an application composition root injects scope-checked domain Ports.
 app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=["TeachingAgent"])
 app.include_router(learning_adjustments.router, prefix="/api/v1/learning-adjustments", tags=["Learning adjustments"])
+
+# 豆包语音输入（ASR 录音转文字）
+app.include_router(asr.router, prefix="/api/v1/asr", tags=["语音识别"])
 
 # 阶段0：统一任务中心（OCR/解析/图谱/媒体/实验/同步等长任务的持久化与状态机）
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务中心"])
