@@ -21,6 +21,14 @@ from sqlmodel import select
 from app.core.security import create_access_token, get_password_hash
 from app.models.access_control_model import CourseCapability
 from app.models.course_model import Course, CourseStatus, StudentEnrollment
+from app.models.experiment_model import (
+    AttemptStatus,
+    ExperimentAttempt,
+    ExperimentDefinition,
+    ExperimentLabProjection,
+    ExperimentPublishStatus,
+    ExperimentRecommendation,
+)
 from app.models.resource_model import (
     LabCatalogEntry,
     LabCatalogVisibility,
@@ -166,7 +174,7 @@ def _publish_lab_via_api(client, token: str, lab_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-class TestLabCreate:
+class LegacyIndependentLabCreateContract:
     """实验室创建与发布"""
 
     def test_teacher_creates_course_level_lab(self, client, session, teacher_user):
@@ -213,7 +221,7 @@ class TestLabCreate:
 # ---------------------------------------------------------------------------
 
 
-class TestLabCatalog:
+class LegacyIndependentLabCatalogContract:
     """实验室目录与列表页"""
 
     def test_catalog_only_lists_published_labs(self, client, session, teacher_user, student_user):
@@ -273,7 +281,7 @@ class TestLabCatalog:
 # ---------------------------------------------------------------------------
 
 
-class TestLabEnrollAndRecord:
+class LegacyIndependentLabEnrollAndRecordContract:
     """学生加入实验室与记录尝试结果"""
 
     def test_student_enrolls_lab(self, client, session, teacher_user, student_user):
@@ -372,3 +380,169 @@ class TestLabEnrollAndRecord:
         )
         body = resp.json()
         assert body["code"] != 201
+
+
+class TestLabRecordsAreServerOwned:
+    def test_independent_lab_lifecycle_routes_are_not_registered(
+        self, client, session, teacher_user, student_user,
+    ):
+        """Only course-experiment projections remain public lab APIs."""
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        _enroll_student(session, course.id, student_user.id)
+        headers = _auth(_token(student_user))
+
+        requests = [
+            client.post(
+                LAB,
+                json={"title": "deprecated", "course_id": course.id},
+                headers=headers,
+            ),
+            client.get(f"{LAB}/legacy_lab", headers=headers),
+            client.post(f"{LAB}/legacy_lab/publish", headers=headers),
+            client.post(f"{LAB}/legacy_lab/enroll", headers=headers),
+        ]
+
+        assert [response.status_code for response in requests] == [404, 404, 404, 404]
+
+    def test_projection_reads_require_an_authorized_course_scope(
+        self, client, session, teacher_user, student_user,
+    ):
+        """A lab projection can never be discovered outside Course Access v1."""
+        visible_course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, visible_course.id)
+        _enroll_student(session, visible_course.id, student_user.id)
+
+        hidden_course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, hidden_course.id)
+        hidden_definition = ExperimentDefinition(
+            course_id=hidden_course.id,
+            title="Cross-course projection",
+            language_whitelist=["python3"],
+            publish_status=ExperimentPublishStatus.PUBLISHED,
+            created_by=teacher_user.id,
+        )
+        session.add(hidden_definition)
+        session.commit()
+
+        headers = _auth(_token(student_user))
+        missing_scope = client.get(f"{LAB}/catalog", headers=headers)
+        cross_course = client.get(
+            f"{LAB}/catalog?course_id={hidden_course.id}", headers=headers,
+        )
+        my_experiments = client.get(
+            f"{LAB}/my-experiments?course_id={hidden_course.id}", headers=headers,
+        )
+        records = client.get(
+            f"{LAB}/records?course_id={hidden_course.id}", headers=headers,
+        )
+
+        assert missing_scope.status_code == 422
+        assert cross_course.status_code == 403
+        assert my_experiments.status_code == 403
+        assert records.status_code == 403
+
+    def test_public_record_write_route_is_not_registered(self, client, session, teacher_user, student_user):
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        _enroll_student(session, course.id, student_user.id)
+        response = client.post(
+            f"{LAB}/legacy_lab/records",
+            json={
+                "attempt_id": "att_forged",
+                "final_score": 1.0,
+                "passed": True,
+                "evidence_id": "ev_forged",
+            },
+            headers=_auth(_token(student_user)),
+        )
+
+        assert response.status_code == 404
+        assert response.json()["code"] == 404
+
+    def test_lab_reads_are_course_experiment_projections_only(
+        self, client, session, teacher_user, student_user,
+    ):
+        """The laboratory must never surface independently-written lab data."""
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        _enroll_student(session, course.id, student_user.id)
+
+        definition = ExperimentDefinition(
+            course_id=course.id,
+            title="可信课程实验",
+            description="只由课程实验投影展示",
+            language_whitelist=["python3"],
+            publish_status=ExperimentPublishStatus.PUBLISHED,
+            created_by=teacher_user.id,
+        )
+        session.add(definition)
+        session.flush()
+        projection = ExperimentLabProjection(
+            course_id=course.id,
+            experiment_id=definition.experiment_id,
+        )
+        attempt = ExperimentAttempt(
+            course_id=course.id,
+            experiment_id=definition.experiment_id,
+            version_id="expv_projection_test",
+            student_id=student_user.id,
+            status=AttemptStatus.FINALIZED,
+            final_score=1.0,
+            passed=True,
+        )
+        recommendation = ExperimentRecommendation(
+            course_id=course.id,
+            student_id=student_user.id,
+            experiment_id=definition.experiment_id,
+            version_id=attempt.version_id,
+        )
+        session.add(projection)
+        session.add(attempt)
+        session.add(recommendation)
+        session.flush()
+        trusted = LabRecord(
+            lab_id=projection.projection_id,
+            projection_id=projection.projection_id,
+            course_id=course.id,
+            experiment_id=definition.experiment_id,
+            student_id=student_user.id,
+            attempt_id=attempt.attempt_id,
+            final_score=1.0,
+            passed=True,
+            source_kind="experiment_attempt_terminated",
+            trusted_source=True,
+        )
+        legacy = LabRecord(
+            lab_id="legacy_lab",
+            course_id=course.id,
+            student_id=student_user.id,
+            attempt_id="legacy_attempt",
+            final_score=1.0,
+            passed=True,
+            source_kind="legacy_unverified",
+            trusted_source=False,
+        )
+        session.add(trusted)
+        session.add(legacy)
+        session.commit()
+
+        headers = _auth(_token(student_user))
+        catalog = client.get(f"{LAB}/catalog?course_id={course.id}", headers=headers).json()["data"]["items"]
+        assert [item["experiment_id"] for item in catalog] == [definition.experiment_id]
+        assert catalog[0]["projection_id"] == projection.projection_id
+
+        tasks = client.get(f"{LAB}/course-tasks?course_id={course.id}", headers=headers).json()["data"]["items"]
+        assert [item["experiment_id"] for item in tasks] == [definition.experiment_id]
+        assert tasks[0]["recommended"] is True
+        assert tasks[0]["last_attempt_id"] == attempt.attempt_id
+
+        mine = client.get(
+            f"{LAB}/my-experiments?course_id={course.id}", headers=headers,
+        ).json()["data"]["items"]
+        assert [item["experiment_id"] for item in mine] == [definition.experiment_id]
+
+        records = client.get(
+            f"{LAB}/records?course_id={course.id}", headers=headers,
+        ).json()["data"]["items"]
+        assert [item["record_id"] for item in records] == [trusted.record_id]

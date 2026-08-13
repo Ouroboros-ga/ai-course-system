@@ -13,7 +13,7 @@ from __future__ import annotations
 from typing import Optional, Any
 from pydantic import BaseModel, Field
 
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
@@ -23,6 +23,7 @@ from app.core.security import get_current_user
 from app.core.config import settings
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
+from app.services.experiment_service import FreeSandboxQuotaService
 from app.models.safety_policy_model import CourseSandboxPolicy
 from app.services.sandbox_client import (
     sandbox_client,
@@ -41,14 +42,6 @@ class CodeExecutionRequest(BaseModel):
     source_code: str = Field(min_length=1, max_length=100_000)
     language: str  # 必须在 ALLOWED_LANGUAGES 中
     stdin: str = Field(default="", max_length=100_000)
-    expected_output: str = Field(default="", max_length=100_000)
-
-    # 可选资源限制（不超过系统上限）
-    cpu_time_limit: Optional[int] = Field(default=None, ge=1, le=10)
-    memory_limit: Optional[int] = Field(default=None, ge=16_000, le=256_000)
-    wall_time_limit: Optional[int] = Field(default=None, ge=1, le=20)
-    max_processes: Optional[int] = Field(default=None, ge=1, le=60)
-    max_file_size: Optional[int] = Field(default=None, ge=1, le=2_048)
 
 
 @router.get("/health")
@@ -97,18 +90,36 @@ async def execute_code(
     if course_policy and payload.language not in (course_policy.allowed_languages or []):
         raise HTTPException(status_code=400, detail="课程未允许该编程语言")
 
+    retry_after = FreeSandboxQuotaService().consume(
+        session,
+        student_id=int(current_user["user_id"]),
+        course_id=course_id,
+    )
+    if retry_after:
+        session.rollback()
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "error_code": "FREE_SANDBOX_QUOTA_EXCEEDED",
+                "message": "自由运行次数已达上限，请稍后再试",
+                "retry_after": retry_after,
+            },
+            headers={"Retry-After": str(retry_after)},
+        )
+    session.commit()
+
     cpu_limit = min(
-        payload.cpu_time_limit or settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
+        settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
         course_policy.cpu_limit if course_policy else settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
         settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
     )
     memory_limit = min(
-        payload.memory_limit or settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
+        settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
         course_policy.memory_limit if course_policy else settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
         settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
     )
     wall_limit = min(
-        payload.wall_time_limit or settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
+        settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
         course_policy.wall_time_limit if course_policy else settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
         settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
     )
@@ -119,11 +130,11 @@ async def execute_code(
         memory_limit=memory_limit,
         wall_time_limit=wall_limit,
         max_processes=min(
-            payload.max_processes or settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
             settings.JUDGE0_DEFAULT_MAX_PROCESSES,
         ),
         max_file_size=min(
-            payload.max_file_size or settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
             settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
         ),
     )
@@ -133,7 +144,7 @@ async def execute_code(
         source_code=payload.source_code,
         language=payload.language,
         stdin=payload.stdin,
-        expected_output=payload.expected_output,
+        expected_output="",
         limits=limits,
     )
 

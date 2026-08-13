@@ -23,6 +23,7 @@ from ..contracts import (
     CognitionPort,
     CodingDiagnosisPort,
     ConversationContextPort,
+    ExperimentDispatchPort,
     ExperimentPort,
     LearningEventPort,
     QuestionBankPort,
@@ -76,6 +77,7 @@ class TeachingAgentRuntimeRegistry:
         tool_governance: Optional[ToolGovernancePort] = None,
         teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
         experiment: Optional[ExperimentPort] = None,
+        experiment_dispatch: Optional[ExperimentDispatchPort] = None,
         visualization: Optional[VisualizationPort] = None,
         coding_diagnosis: Optional[CodingDiagnosisPort] = None,
         student_history: Optional[StudentHistoryPort] = None,
@@ -94,6 +96,7 @@ class TeachingAgentRuntimeRegistry:
         self._tool_governance = tool_governance
         self._teacher_safety_valve = teacher_safety_valve
         self._experiment = experiment
+        self._experiment_dispatch = experiment_dispatch
         self._visualization = visualization
         self._coding_diagnosis = coding_diagnosis
         self._student_history = student_history
@@ -132,7 +135,7 @@ class TeachingAgentRuntimeRegistry:
                         web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank, question_generation=self._question_generation,
                         conversation_context=self._conversation_context,
                         tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
-                        experiment=self._experiment, visualization=self._visualization,
+                        experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                         coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                     )
                 except (TypeError, ValueError) as error:
@@ -146,7 +149,7 @@ class TeachingAgentRuntimeRegistry:
                     web_research=self._web_research, cognition=self._cognition, question_bank=self._question_bank, question_generation=self._question_generation,
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
-                    experiment=self._experiment, visualization=self._visualization,
+                    experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                 )
             elif report is None:
@@ -156,7 +159,7 @@ class TeachingAgentRuntimeRegistry:
                     web_research=self._web_research, cognition=None, question_bank=self._question_bank, question_generation=self._question_generation,
                     conversation_context=self._conversation_context,
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
-                    experiment=self._experiment, visualization=self._visualization,
+                    experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                 )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise

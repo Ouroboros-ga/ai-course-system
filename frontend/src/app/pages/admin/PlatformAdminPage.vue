@@ -19,7 +19,7 @@ const passwordFor = ref(null)
 const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
-const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1 })
+const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1 })
 
 function userPatch(user) {
   return { username: user.username || '', role: user.role, is_active: user.is_active }
@@ -163,6 +163,7 @@ onMounted(load)
           <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>代码沙箱评测<input v-model.number="concurrency.sandbox_execution" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
         </div>

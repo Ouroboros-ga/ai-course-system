@@ -13,6 +13,7 @@ from ..contracts import (
     CodingDiagnosisPort,
     ConversationContextPort,
     CourseRetrievalPort,
+    ExperimentDispatchPort,
     ExperimentPort,
     KnowledgeGraphPort,
     LearningEventPort,
@@ -59,6 +60,7 @@ def build_teaching_runtime(
     tool_governance: Optional[ToolGovernancePort] = None,
     teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
     experiment: Optional[ExperimentPort] = None,
+    experiment_dispatch: Optional[ExperimentDispatchPort] = None,
     visualization: Optional[VisualizationPort] = None,
     coding_diagnosis: Optional[CodingDiagnosisPort] = None,
     student_history: Optional[StudentHistoryPort] = None,
@@ -71,7 +73,7 @@ def build_teaching_runtime(
         web_research=web_research, cognition=cognition, question_bank=question_bank, question_generation=question_generation,
         conversation_context=conversation_context,
         tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
-        experiment=experiment, visualization=visualization,
+        experiment=experiment, experiment_dispatch=experiment_dispatch, visualization=visualization,
         coding_diagnosis=coding_diagnosis, student_history=student_history,
     ))
 
@@ -92,6 +94,7 @@ def build_course_sidecar_runtime(
     tool_governance: Optional[ToolGovernancePort] = None,
     teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
     experiment: Optional[ExperimentPort] = None,
+    experiment_dispatch: Optional[ExperimentDispatchPort] = None,
     visualization: Optional[VisualizationPort] = None,
     coding_diagnosis: Optional[CodingDiagnosisPort] = None,
     student_history: Optional[StudentHistoryPort] = None,
@@ -124,7 +127,7 @@ def build_course_sidecar_runtime(
         web_research=web_research, cognition=cognition, question_bank=question_bank, question_generation=question_generation,
         conversation_context=conversation_context,
         tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
-        experiment=experiment, visualization=visualization,
+        experiment=experiment, experiment_dispatch=experiment_dispatch, visualization=visualization,
         coding_diagnosis=coding_diagnosis, student_history=student_history,
     )
 
@@ -147,6 +150,7 @@ def build_kg_mest_shadow_sidecar_runtime(
     tool_governance: Optional[ToolGovernancePort] = None,
     teacher_safety_valve: Optional[TeacherSafetyValvePort] = None,
     experiment: Optional[ExperimentPort] = None,
+    experiment_dispatch: Optional[ExperimentDispatchPort] = None,
     visualization: Optional[VisualizationPort] = None,
     coding_diagnosis: Optional[CodingDiagnosisPort] = None,
     student_history: Optional[StudentHistoryPort] = None,
@@ -166,6 +170,6 @@ def build_kg_mest_shadow_sidecar_runtime(
         web_research=web_research, cognition=cognition, question_bank=question_bank, question_generation=question_generation,
         conversation_context=conversation_context,
         tool_governance=tool_governance, teacher_safety_valve=teacher_safety_valve,
-        experiment=experiment, visualization=visualization,
+        experiment=experiment, experiment_dispatch=experiment_dispatch, visualization=visualization,
         coding_diagnosis=coding_diagnosis, student_history=student_history,
     )

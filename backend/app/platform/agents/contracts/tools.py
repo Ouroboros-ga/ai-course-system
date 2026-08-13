@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
-from .experiment import ExperimentPort, VisualizationPort
+from .experiment import ExperimentDispatchPort, ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
 from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
@@ -46,6 +46,10 @@ class TeachingTools:
     tool_governance: Optional[ToolGovernancePort] = None
     teacher_safety_valve: Optional[TeacherSafetyValvePort] = None
     experiment: Optional[ExperimentPort] = None
+    # This port can create a teacher-confirmation proposal only.  The current
+    # teaching workflow deliberately does not invoke it until a governed
+    # recommendation node is introduced.
+    experiment_dispatch: Optional[ExperimentDispatchPort] = None
     visualization: Optional[VisualizationPort] = None
 
 

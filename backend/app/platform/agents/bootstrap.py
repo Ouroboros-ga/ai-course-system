@@ -29,7 +29,10 @@ from app.platform.agents.tools.cognition import make_session_scoped_cognition_po
 from app.platform.agents.tools.conversation_context import (
     make_session_scoped_conversation_context_port,
 )
-from app.platform.agents.tools.experiment import make_session_scoped_experiment_port
+from app.platform.agents.tools.experiment import (
+    make_session_scoped_experiment_dispatch_port,
+    make_session_scoped_experiment_port,
+)
 from app.platform.agents.tools.integration import Judge0SandboxPort
 from app.platform.agents.tools.learning_event import (
     make_session_scoped_learning_event_port,
@@ -57,6 +60,60 @@ from app.platform.agents.tools.web_research import make_session_scoped_web_resea
 from app.platform.retrieval_demo.service import DemoService
 
 logger = logging.getLogger(__name__)
+
+
+def bootstrap_coding_agent(app: Any) -> bool:
+    """Register CodingAgent independently of TeachingAgent and its LLM gate.
+
+    Coding feedback is useful whenever the server can read a formal run.  Its
+    deterministic diagnosis fallback therefore must not disappear because the
+    conversational TeachingAgent is disabled or its LLM is unavailable.
+    """
+    try:
+        from .coding.composition import build_coding_graph_factory
+        from .coding.profile import build_coding_profile
+
+        platform = getattr(app.state, "agent_platform", None)
+        if platform is None:
+            platform = LegacyAgentPlatform()
+        session_factory = lambda: Session(engine)
+        coding_diagnosis, _ = make_session_scoped_coding_ports(session_factory)
+
+        sandbox_port = getattr(app.state, "coding_agent_sandbox_port", None)
+        if sandbox_port is None:
+            sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+            app.state.coding_agent_sandbox_port = sandbox_port
+        app.state.coding_agent_diagnosis_port = coding_diagnosis
+
+        llm = None
+        base_url = (getattr(settings, "LLM_API_BASE", "") or "").strip()
+        api_key = (getattr(settings, "LLM_API_KEY", "") or "").strip()
+        model = (getattr(settings, "LLM_MODEL_NAME", "") or "").strip()
+        if base_url and api_key and model:
+            llm = OpenAICompatibleTeachingLLM(
+                base_url=base_url,
+                api_key=api_key,
+                model=model,
+            )
+
+        platform.register_generic(
+            profile=build_coding_profile(),
+            builder=build_coding_graph_factory(
+                sandbox=sandbox_port,
+                coding_diagnosis=coding_diagnosis,
+                llm=llm,
+            ),
+        )
+        app.state.agent_platform = platform
+        logger.info(
+            "AgentPlatform: registered CodingAgent (llm=%s, sandbox_healthy=%s).",
+            "configured" if llm is not None else "rule_fallback",
+            getattr(sandbox_port, "is_healthy", False),
+        )
+        return True
+    except Exception as error:  # noqa: BLE001 - never block app startup
+        logger.warning("CodingAgent bootstrap failed: %s: %s", type(error).__name__, error)
+        return False
 
 
 def bootstrap_research_agent(app: Any) -> bool:
@@ -262,8 +319,12 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         # 健康检查失败时 Port 仍接受调用，但每次返回 sandbox_unavailable，
         # 保证 Agent/Q&A 主流程在 Judge0 不可用时不中断（降级语义）。
         # 修复：注入 session_factory，使 Port 能按 run_id 从 ExperimentRun 读取已验证结果。
-        # Commit 7: 单例共享给 EDU 和 Coding agent，避免重复 health_check。
-        sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+        # CodingAgent owns its independent startup gate. Reuse its immutable
+        # read-only sandbox port when already registered; direct TeachingAgent
+        # bootstrap remains backward-compatible for tests and legacy callers.
+        sandbox_port = getattr(app.state, "coding_agent_sandbox_port", None)
+        if sandbox_port is None:
+            sandbox_port = Judge0SandboxPort(session_factory=session_factory)
         registry = TeachingAgentRuntimeRegistry(
             demo_service=service,
             llm=OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model),
@@ -280,6 +341,7 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             tool_governance=make_session_scoped_tool_governance_port(session_factory),
             teacher_safety_valve=make_session_scoped_teacher_safety_valve_port(session_factory),
             experiment=make_session_scoped_experiment_port(session_factory),
+            experiment_dispatch=make_session_scoped_experiment_dispatch_port(session_factory),
             visualization=make_session_scoped_visualization_port(session_factory),
             coding_diagnosis=coding_diagnosis,
             student_history=student_history,
@@ -301,26 +363,6 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
 
         app.state.agent_platform = platform
         logger.info("TeachingAgent registry injected; AgentPlatform registered EDU agent.")
-
-        # Commit 7: register Coding agent with the unified AgentPlatform.
-        # The Coding Agent is a new skeleton with a 3-node workflow:
-        # load_sandbox_result → load_coding_diagnosis → generate_diagnosis_response.
-        # It reuses the same SandboxPort and CodingDiagnosisPort already wired for EDU.
-        # Governance is prompt-level (read-only tools are LOW-risk).
-        try:
-            from .coding.composition import build_coding_graph_factory
-            from .coding.profile import build_coding_profile as _coding_profile
-            platform.register_generic(
-                profile=_coding_profile(),
-                builder=build_coding_graph_factory(
-                    sandbox=sandbox_port,
-                    coding_diagnosis=coding_diagnosis,
-                    llm=OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model),
-                ),
-            )
-            logger.info("AgentPlatform: registered Coding agent.")
-        except Exception as coding_error:  # noqa: BLE001 - never block app startup
-            logger.warning("AgentPlatform: Coding agent registration failed: %s: %s", type(coding_error).__name__, coding_error)
 
         return True
     except Exception as error:  # noqa: BLE001 - never block app startup

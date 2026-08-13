@@ -56,6 +56,70 @@ def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any
     }
 
 
+_DIAGNOSIS_CONTEXT_FIELDS = (
+    "outcome",
+    "error_class",
+    "line",
+    "column",
+    "passed_count",
+    "total_count",
+    "resource_usage",
+    "summary",
+    "debug_steps",
+    "reason_codes",
+)
+
+
+def _sanitize_sandbox_result(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Keep only non-sensitive execution availability facts in agent state."""
+    sanitized: dict[str, Any] = {"available": bool(result.get("available", False))}
+    outcome = result.get("outcome") or result.get("status")
+    if outcome:
+        sanitized["outcome"] = str(outcome)
+    resource_usage = result.get("resource_usage")
+    if isinstance(resource_usage, Mapping):
+        sanitized["resource_usage"] = {
+            field: resource_usage.get(field)
+            for field in ("cpu_time_ms", "wall_time_ms", "memory_kb")
+            if resource_usage.get(field) is not None
+        }
+    return sanitized
+
+
+def _llm_diagnosis_context(
+    coding_diagnosis: Mapping[str, Any] | None,
+    sandbox_result: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    """Return the only execution facts a CodingAgent LLM may receive.
+
+    A persisted ``CodingDiagnosisRecord`` is preferred.  The fallback is
+    limited to its own diagnosis summary and resource counters; it never
+    forwards source code, artifacts, test details, Judge0 payloads, or the
+    learner's free-form message.
+    """
+    source = coding_diagnosis if isinstance(coding_diagnosis, Mapping) else {}
+
+    context: dict[str, Any] = {}
+    for field in _DIAGNOSIS_CONTEXT_FIELDS:
+        value = source.get(field)
+        if value is not None:
+            context[field] = value
+
+    if "outcome" not in context and isinstance(sandbox_result, Mapping):
+        outcome = sandbox_result.get("outcome") or sandbox_result.get("status")
+        if outcome:
+            context["outcome"] = outcome
+    if "resource_usage" not in context and isinstance(sandbox_result, Mapping):
+        resource_usage = sandbox_result.get("resource_usage")
+        if isinstance(resource_usage, Mapping):
+            context["resource_usage"] = {
+                field: resource_usage.get(field)
+                for field in ("cpu_time_ms", "wall_time_ms", "memory_kb")
+                if resource_usage.get(field) is not None
+            }
+    return context
+
+
 def build_coding_workflow(tools: CodingTools):
     """Compile the Coding Agent LangGraph workflow."""
 
@@ -69,15 +133,14 @@ def build_coding_workflow(tools: CodingTools):
                 "trace": _trace(state, "load_sandbox_result", skipped=True),
             }
         try:
-            result = dict(await tools.sandbox.get_execution_result(
+            raw_result = dict(await tools.sandbox.get_execution_result(
                 student_id=state["student_id"],
                 course_id=state["course_id"],
                 code_submission_id=submission_id,
             ))
-            # The sandbox result includes a diagnosis summary if available.
+            result = _sanitize_sandbox_result(raw_result)
             return {
                 "sandbox_result": result,
-                "coding_diagnosis": result.get("diagnosis"),
                 "trace": _trace(state, "load_sandbox_result", available=result.get("available", False)),
             }
         except Exception as error:  # noqa: BLE001 - degrade
@@ -135,9 +198,10 @@ def build_coding_workflow(tools: CodingTools):
             try:
                 response = await tools.llm.generate_teaching_response(context={
                     "agent_type": "coding",
-                    "sandbox_result": sandbox_result,
-                    "coding_diagnosis": state.get("coding_diagnosis"),
-                    "user_message": state.get("user_message", ""),
+                    "diagnosis": _llm_diagnosis_context(
+                        state.get("coding_diagnosis"),
+                        sandbox_result,
+                    ),
                 })
                 answer = response.get("answer") or response.get("content") or ""
                 if answer:
@@ -176,7 +240,7 @@ def _rule_based_diagnosis(
     and test pass rate without exposing internal sandbox details.
     """
     outcome = sandbox_result.get("outcome") or sandbox_result.get("status") or "unknown"
-    diagnosis = coding_diagnosis or sandbox_result.get("diagnosis") or {}
+    diagnosis = coding_diagnosis if isinstance(coding_diagnosis, Mapping) else {}
 
     parts: list[str] = []
 

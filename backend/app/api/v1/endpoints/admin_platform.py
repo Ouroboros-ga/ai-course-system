@@ -61,6 +61,7 @@ class TaskConcurrencyUpdate(BaseModel):
     course_draft_build: int = Field(default=1, ge=1, le=32)
     graphrag: int = Field(default=1, ge=1, le=32)
     vector_index: int = Field(default=1, ge=1, le=32)
+    sandbox_execution: int = Field(default=1, ge=1, le=32)
 
 
 @router.get("/integrations")

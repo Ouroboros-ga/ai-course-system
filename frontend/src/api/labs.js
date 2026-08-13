@@ -1,9 +1,7 @@
 import request from '@/utils/request.js'
+import { labProjectionPaths } from './labProjectionContract.js'
 
-export const listLabCatalog = (params = {}) => request.get('/lab/catalog', { params })
-export const listLabCourseTasks = (courseId) => request.get('/lab/course-tasks', { params: { course_id: courseId } })
-export const listMyLabs = (params = {}) => request.get('/lab/my-experiments', { params })
-export const listLabRecords = (params = {}) => request.get('/lab/records', { params })
-export const createLab = (payload) => request.post('/lab', payload)
-export const publishLab = (labId) => request.post(`/lab/${encodeURIComponent(labId)}/publish`)
-export const enrollLab = (labId) => request.post(`/lab/${encodeURIComponent(labId)}/enroll`)
+export const listLabCatalog = (courseId) => request.get(labProjectionPaths(courseId).catalog)
+export const listLabCourseTasks = (courseId) => request.get(labProjectionPaths(courseId).courseTasks)
+export const listMyLabs = (courseId) => request.get(labProjectionPaths(courseId).myExperiments)
+export const listLabRecords = (courseId) => request.get(labProjectionPaths(courseId).records)

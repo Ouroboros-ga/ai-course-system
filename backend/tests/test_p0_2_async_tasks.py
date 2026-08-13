@@ -191,13 +191,20 @@ def test_business_handlers_registered_after_register_all():
 # ---------------------------------------------------------------------------
 
 
-def test_document_parse_endpoint_returns_task_id(client, session):
+def test_document_parse_endpoint_returns_task_id(client, session, monkeypatch):
     """POST /api/v1/graph/course/{id}/ingestions 返回 202 + task_id。
 
     验证 document_parse 不再伪异步：task_id 非空，前端可通过 /tasks/{task_id} 轮询。
     """
     from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
     from app.services.course_access_service import require_course_permission
+
+    # This contract asserts the durable enqueue result before a worker consumes
+    # it.  The application fixture registers real handlers at startup, so hold
+    # this one submission rather than racing a background parse against the
+    # immediately following task-status read.
+    from app.platform.tasks.document_parse_queue import document_parse_queue
+    monkeypatch.setattr(document_parse_queue, "submit", lambda *_args, **_kwargs: None)
 
     teacher = _user(session, "p02_doc_parse_teacher", UserRole.TEACHER)
     course = _course(session, teacher.id)
@@ -260,8 +267,8 @@ def test_document_parse_endpoint_returns_task_id(client, session):
 # ---------------------------------------------------------------------------
 
 
-def test_experiment_async_run_returns_202_with_task_id(client, session):
-    """POST /api/v1/experiments/attempts/{id}/runs?async_run=true 返回 202 + task_id。
+def test_experiment_run_returns_202_with_task_id(client, session):
+    """正式评测始终返回 202 + task_id，不接受 legacy async_run 分支。
 
     验证 Judge0 Run 先返回 pending，不阻塞 API。
     """
@@ -293,6 +300,7 @@ def test_experiment_async_run_returns_202_with_task_id(client, session):
     ).first()
     if capability is not None:
         capability.experiment = True
+        capability.coding_sandbox = True
         session.add(capability)
     session.commit()
 
@@ -315,6 +323,12 @@ def test_experiment_async_run_returns_202_with_task_id(client, session):
         experiment_id="exp-test-1",
         version_label="v1",
         created_by=teacher.id,
+        # This fixture represents a version that already completed the
+        # teacher-only reference preview and was locked for publication.
+        # Formal student runs must not bypass those production prerequisites.
+        is_locked=True,
+        is_active=True,
+        reference_preview_verified_at=datetime.now().astimezone(),
     )
     session.add(version)
     session.commit()
@@ -330,22 +344,25 @@ def test_experiment_async_run_returns_202_with_task_id(client, session):
     )
     session.commit()
 
-    headers = {"Authorization": f"Bearer {_token(student)}"}
+    headers = {
+        "Authorization": f"Bearer {_token(student)}",
+        "Idempotency-Key": "p02-formal-run-1",
+    }
     resp = client.post(
-        f"/api/v1/experiments/attempts/{attempt.attempt_id}/runs?course_id={course.id}&async_run=true",
+        f"/api/v1/experiments/attempts/{attempt.attempt_id}/runs?course_id={course.id}",
         headers=headers,
         json={
             "language": "python",
             "source_code": "print('hello')",
         },
     )
-    assert resp.status_code == 200, resp.text
+    assert resp.status_code == 202, resp.text
     body = resp.json()
     assert body["code"] == 202
     data = body["data"]
     assert data["run_id"]  # 非空
     assert data["task_id"]  # 非空
-    assert data["async"] is True
+    assert data["status"] == "pending"
 
     # 验证 TaskRecord 存在
     task_resp = client.get(f"/api/v1/tasks/{data['task_id']}", headers=headers)

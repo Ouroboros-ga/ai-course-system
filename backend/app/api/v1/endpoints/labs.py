@@ -4,16 +4,14 @@
 
 路由前缀：/api/v1/lab
 
-提供四个列表页与教师/学生操作：
-- GET    /lab/catalog                  平台实验室大厅（按 visibility 过滤）
-- GET    /lab/course-tasks             课程任务页（课程实验+学生参与情况）
-- GET    /lab/my-experiments           我的实验页（学生参与的所有平台/课程实验室）
-- GET    /lab/records                  实验记录页（学生最终记录汇总）
-- POST   /lab                          教师创建实验室条目
-- GET    /lab/{lab_id}                 实验室详情
-- POST   /lab/{lab_id}/publish         教师发布实验室
-- POST   /lab/{lab_id}/enroll          学生加入实验室
-- POST   /lab/{lab_id}/records         记录学生尝试结果（由实验 finalize 写入）
+公开接口只提供课程实验投影视图：
+- GET    /lab/catalog                  当前课程已发布实验的发现入口
+- GET    /lab/course-tasks             当前课程的实验与学生进度
+- GET    /lab/my-experiments           推荐或已有尝试的课程实验
+- GET    /lab/records                  仅服务端终结尝试生成的可信记录
+
+独立实验室的创建、发布、加入、详情与记录写入接口已下线。历史数据保留为
+``legacy_unverified``，但不进入上述正式投影视图。
 
 权限模型：
 - 平台实验与课程实验共享沙箱能力，但课程实验可回写课程证据和 return anchor
@@ -34,6 +32,7 @@ from app.core.security import get_current_user
 from app.models.database import get_session
 from app.models.resource_model import LabCatalogVisibility
 from app.services.course_access_service import require_course_permission
+from app.services.experiment_service import experiment_lab_read_service
 from app.services.resource_service import lab_catalog_service
 
 
@@ -94,8 +93,7 @@ class LabRecordCreateRequest(BaseModel):
 
 @lab_router.get("/catalog")
 async def list_catalog(
-    course_id: Optional[int] = Query(default=None),
-    visibility: Optional[LabCatalogVisibility] = Query(default=None),
+    course_id: int = Query(...),
     cursor: Optional[str] = Query(default=None),
     page_size: int = Query(default=20, ge=1, le=100),
     session: Session = Depends(get_session),
@@ -106,13 +104,10 @@ async def list_catalog(
     - 学生视角：仅看 public 或自己课程（course_id）的实验室
     - 教师视角：可按 visibility 过滤；course_id 指定时返回该课程实验室
     """
-    user_id = int(current_user["user_id"])
-    result = lab_catalog_service.list_catalog(
+    require_course_permission(session, current_user, course_id, "experiment.view")
+    result = experiment_lab_read_service.list_catalog(
         session,
-        student_id=user_id,
         course_id=course_id,
-        visibility=visibility,
-        published_only=True,
         cursor=cursor,
         page_size=page_size,
     )
@@ -137,7 +132,7 @@ async def list_course_tasks(
     user_id = int(current_user["user_id"])
     # 学生视角使用自身 student_id；教师视角传 0 表示不返回个人参与情况
     student_id_for_query = user_id if (context.role is None or context.role.value == "student") else 0
-    items = lab_catalog_service.list_course_tasks(
+    items = experiment_lab_read_service.list_course_tasks(
         session, course_id=course_id, student_id=student_id_for_query,
     )
     return unified_response(
@@ -153,14 +148,16 @@ async def list_course_tasks(
 
 @lab_router.get("/my-experiments")
 async def list_my_experiments(
+    course_id: int = Query(...),
     active_only: bool = Query(default=True),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
     """我的实验页：列出当前学生参与的所有平台/课程实验室。"""
+    require_course_permission(session, current_user, course_id, "experiment.view")
     user_id = int(current_user["user_id"])
-    items = lab_catalog_service.list_my_experiments(
-        session, student_id=user_id, active_only=active_only,
+    items = experiment_lab_read_service.list_my_experiments(
+        session, course_id=course_id, student_id=user_id, active_only=active_only,
     )
     return unified_response(
         code=200,
@@ -174,7 +171,7 @@ async def list_my_experiments(
 
 @lab_router.get("/records")
 async def list_records(
-    course_id: Optional[int] = Query(default=None),
+    course_id: int = Query(...),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -182,8 +179,9 @@ async def list_records(
 
     学生只能看自己的记录；course_id 指定时按课程过滤。
     """
+    require_course_permission(session, current_user, course_id, "experiment.view")
     user_id = int(current_user["user_id"])
-    records = lab_catalog_service.list_records(
+    records = experiment_lab_read_service.list_records(
         session, student_id=user_id, course_id=course_id,
     )
     return unified_response(
@@ -196,7 +194,8 @@ async def list_records(
     )
 
 
-@lab_router.post("")
+# Legacy service helper retained for migration tooling only.  Independent lab
+# lifecycle APIs are no longer part of the public router.
 async def create_lab(
     payload: LabCreateRequest,
     session: Session = Depends(get_session),
@@ -236,7 +235,7 @@ async def create_lab(
     )
 
 
-@lab_router.get("/{lab_id}")
+# Legacy migration helper; independent lab detail is no longer a public API.
 async def get_lab(
     lab_id: str,
     session: Session = Depends(get_session),
@@ -256,7 +255,7 @@ async def get_lab(
     )
 
 
-@lab_router.post("/{lab_id}/publish")
+# Legacy service helper retained for migration tooling only.
 async def publish_lab(
     lab_id: str,
     session: Session = Depends(get_session),
@@ -284,7 +283,7 @@ async def publish_lab(
     )
 
 
-@lab_router.post("/{lab_id}/enroll")
+# Legacy service helper retained for migration tooling only.
 async def enroll_lab(
     lab_id: str,
     session: Session = Depends(get_session),
@@ -313,69 +312,5 @@ async def enroll_lab(
             "enrolled_at": enrollment.enrolled_at.isoformat() if enrollment.enrolled_at else None,
             "is_active": enrollment.is_active,
             "last_attempt_id": enrollment.last_attempt_id,
-        },
-    )
-
-
-@lab_router.post("/{lab_id}/records")
-async def record_lab_result(
-    lab_id: str,
-    payload: LabRecordCreateRequest,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """记录学生在实验室的最终尝试结果。
-
-    - 学生调用：student_id 默认为自身
-    - 教师/系统调用：需指定 student_id 且具备 experiment.configure 权限
-    """
-    user_id = int(current_user["user_id"])
-    lab = lab_catalog_service.get_lab(session, lab_id=lab_id)
-    target_student_id = payload.student_id or user_id
-
-    # 若指定的 student_id 不是自身，需教师权限
-    if target_student_id != user_id:
-        if lab.course_id is not None:
-            require_course_permission(
-                session, current_user, lab.course_id, "experiment.configure",
-            )
-        else:
-            from app.core.exceptions import reject_course_access_denied
-            if lab.owner_user_id != user_id:
-                reject_course_access_denied("无权为其他学生记录结果")
-    else:
-        # 学生自身调用：课程级实验室需 view 权限
-        if lab.course_id is not None:
-            require_course_permission(
-                session, current_user, lab.course_id, "experiment.run",
-            )
-
-    record = lab_catalog_service.record_attempt_result(
-        session,
-        lab_id=lab_id,
-        student_id=target_student_id,
-        attempt_id=payload.attempt_id,
-        final_score=payload.final_score,
-        passed=payload.passed,
-        evidence_id=payload.evidence_id,
-        return_anchor=payload.return_anchor,
-    )
-    session.commit()
-    session.refresh(record)
-    return unified_response(
-        code=201,
-        message="实验记录已写入",
-        data={
-            "record_id": record.record_id,
-            "lab_id": record.lab_id,
-            "student_id": record.student_id,
-            "course_id": record.course_id,
-            "attempt_id": record.attempt_id,
-            "final_score": record.final_score,
-            "passed": record.passed,
-            "evidence_id": record.evidence_id,
-            "return_anchor": record.return_anchor,
-            "created_at": record.created_at.isoformat() if record.created_at else None,
-            "updated_at": record.updated_at.isoformat() if record.updated_at else None,
         },
     )

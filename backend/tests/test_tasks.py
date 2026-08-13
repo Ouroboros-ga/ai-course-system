@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime
 
 import pytest
-from sqlmodel import Session as _Session
+from sqlmodel import Session as _Session, select
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.access_control_model import (
@@ -18,7 +18,9 @@ from app.models.access_control_model import (
 )
 from app.models.course_model import Course, CourseStatus
 from app.models.database import engine
+from app.models.platform_admin_model import PlatformTaskConcurrencyConfig
 from app.models.task_model import TaskRecord
+from app.services.platform_task_concurrency_service import get_group_limit, update_config
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.task_service import TaskCreateRequest, task_service
@@ -76,6 +78,24 @@ def _token(user):
 def _session_factory():
     """返回可用作 context manager 的 Session。"""
     return _Session(engine)
+
+
+def test_experiment_run_uses_the_dedicated_sandbox_execution_limit(session):
+    """Formal Judge0 work must not share an unrelated local worker group."""
+    update_config(
+        session,
+        actor_user_id=1,
+        payload={
+            "developer_mode": True,
+            "max_total": 4,
+            "sandbox_execution": 1,
+        },
+    )
+
+    total_limit, group_limit = get_group_limit(session, "experiment_run")
+
+    assert total_limit == 4
+    assert group_limit == 1
 
 
 # ---------------------------------------------------------------------------
@@ -304,6 +324,57 @@ def test_cancel_and_acknowledge(client, session):
     ack_resp = client.post(f"{TASKS}/{view.task_id}/acknowledge", headers=headers)
     assert ack_resp.status_code == 200
     assert ack_resp.json()["data"]["acknowledged"] is True
+
+
+def test_cancelled_experiment_run_cannot_be_retried(session):
+    """A cancelled formal run must never be requeued into a later grade."""
+    from fastapi import HTTPException
+
+    student = _user(session, "cancelled_experiment_student")
+    created = task_service.create_task(
+        session,
+        TaskCreateRequest(
+            task_type="experiment_run",
+            owner_user_id=student.id,
+            course_id=1,
+            input_summary="formal experiment run",
+        ),
+    )
+    task_service.cancel(session, created.task_id, operator_user_id=student.id)
+
+    with pytest.raises(HTTPException) as exc_info:
+        task_service.retry(session, created.task_id, operator_user_id=student.id)
+
+    assert exc_info.value.status_code == 409
+    assert exc_info.value.detail["error_code"] == "STATE_CONFLICT"
+    persisted = task_service.get_task(session, created.task_id, owner_user_id=student.id)
+    assert persisted.status == "cancelled"
+
+
+def test_create_task_without_commit_stays_inside_caller_transaction(session, test_engine):
+    """Formal run creation can atomically commit its task with the run record."""
+    user = _user(session, "deferred_task_owner")
+    created = task_service.create_task(
+        session,
+        TaskCreateRequest(
+            task_type="experiment_run",
+            owner_user_id=user.id,
+            course_id=1,
+            input_summary="deferred formal run",
+        ),
+        commit=False,
+    )
+
+    with _Session(test_engine) as outside_session:
+        assert outside_session.exec(
+            select(TaskRecord).where(TaskRecord.task_id == created.task_id)
+        ).first() is None
+
+    session.commit()
+    with _Session(test_engine) as outside_session:
+        assert outside_session.exec(
+            select(TaskRecord).where(TaskRecord.task_id == created.task_id)
+        ).one().status == "pending"
 
 
 # ---------------------------------------------------------------------------

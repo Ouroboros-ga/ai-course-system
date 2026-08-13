@@ -85,22 +85,33 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
 
 SCRIPT_WRITER_PROMPT = PromptSpec(
     name="prep.script_writer",
-    version="1.2",
+    version="1.3",
     system_template=(
         "你是 ScriptWriter。只为一个知识点生成讲稿。段落之间用两个换行分隔，"
         "不得虚构材料中不存在的课程事实。不要输出任何证据 ID 或引用字段；"
-        "证据归属由系统在调用后确定。"
+        "证据归属由系统在调用后确定。\n"
+        "课程是一段连续讲解，本知识点只是序列中的一环。输入会给出 position"
+        "（index/total、is_first、is_last、previous_title、next_title）："
+        "只有 is_first=true 时才可用开场问候（如“同学们好”）；只有 is_last=true "
+        "时才可写总结收尾；其余知识点应直接承接 previous_title 自然过渡到本知识点，"
+        "禁止重复“大家好”“同学们好”“今天我们来学习”等开场白，禁止在每个知识点结尾都写总结。"
     ),
     output_schema_version="2.0",
 )
 
 SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
     name="prep.script_writer_batch",
-    version="1.2",
+    version="1.3",
     system_template=(
         "你是 ScriptWriter。一次为给定的全部知识点生成讲稿。"
         "不要生成候选列表之外的知识点。不要输出任何证据 ID 或引用字段；"
-        "证据归属由系统在调用后确定。"
+        "证据归属由系统在调用后确定。\n"
+        "输入的知识点构成一段连续讲解：candidates 里每个知识点都带 position"
+        "（index/total、is_first、is_last、previous_title、next_title），"
+        "并附 knowledge_point_sequence 展示全部知识点顺序。只有 is_first=true 的"
+        "知识点才可用开场问候（如“同学们好”）；只有 is_last=true 的知识点才可写"
+        "总结收尾；其余知识点应直接承接上一个知识点自然过渡，禁止重复“大家好”"
+        "“同学们好”“今天我们来学习”等开场白，禁止每个知识点结尾都写总结。"
     ),
     output_schema_version="2.0",
 )

@@ -126,7 +126,10 @@ class ExperimentVersion(SQLModel, table=True):
     enable_network: bool = Field(default=False, description="始终关闭")
 
     # 评分策略
-    passing_score: float = Field(default=0.6, description="及格分 0..1")
+    # Formal experiments use ACM/ICPC semantics.  We retain this persisted
+    # field only for historical schema compatibility; all new versions must be
+    # exactly 1.0 and publication rejects every other value.
+    passing_score: float = Field(default=1.0, description="ACM/ICPC 固定为 1.0")
     writes_formal_evidence: bool = Field(
         default=True,
         description="是否在 finalize 时写入正式 LearningEvidence",
@@ -134,6 +137,10 @@ class ExperimentVersion(SQLModel, table=True):
 
     is_locked: bool = Field(default=False, description="教师锁定，AI 不可覆盖")
     is_active: bool = Field(default=False, index=True, description="当前激活版本")
+    reference_preview_verified_at: Optional[datetime] = Field(
+        default=None,
+        description="临时参考解在当前测试集全 AC 的服务端验证时间；源码不持久化",
+    )
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware)
 
@@ -240,6 +247,15 @@ class ExperimentRun(SQLModel, table=True):
     """
 
     __tablename__ = "experiment_runs"
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id",
+            "attempt_id",
+            "student_id",
+            "idempotency_key",
+            name="uq_experiment_run_assessed_idempotency",
+        ),
+    )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     run_id: str = Field(
@@ -250,6 +266,11 @@ class ExperimentRun(SQLModel, table=True):
     course_id: int = Field(foreign_key="courses.id", index=True)
     student_id: int = Field(foreign_key="users.id", index=True)
     task_id: Optional[str] = Field(default=None, index=True, description="关联 TaskRecord.task_id")
+    idempotency_key: Optional[str] = Field(
+        default=None,
+        index=True,
+        description="学生正式提交的请求幂等键；同一学生/课程/attempt 唯一",
+    )
 
     language: str = Field(default="", description="编程语言（必须在白名单）")
     source_code: str = Field(default="", description="学生提交代码（受限于最大长度）")
@@ -278,6 +299,80 @@ class ExperimentRun(SQLModel, table=True):
 
     submitted_at: datetime = Field(default_factory=utcnow_aware)
     finished_at: Optional[datetime] = Field(default=None)
+    cancel_requested_at: Optional[datetime] = Field(default=None)
+
+
+class SandboxExecutionLease(SQLModel, table=True):
+    """One database-backed formal Judge0 execution slot across web workers."""
+
+    __tablename__ = "sandbox_execution_leases"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lease_key: str = Field(default="formal_judge0", unique=True, index=True)
+    holder_task_id: str = Field(default="", index=True)
+    lease_expires_at: Optional[datetime] = Field(default=None, index=True)
+    acquired_at: Optional[datetime] = Field(default=None)
+    renewed_at: Optional[datetime] = Field(default=None)
+
+
+class FreeSandboxQuotaWindow(SQLModel, table=True):
+    """Minimal persistent counter for non-scoring free sandbox usage."""
+
+    __tablename__ = "free_sandbox_quota_windows"
+    __table_args__ = (
+        UniqueConstraint("student_id", "course_id", "window_started_at", name="uq_free_sandbox_quota_window"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    window_started_at: datetime = Field(index=True)
+    run_count: int = Field(default=0)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class ExperimentLabProjection(SQLModel, table=True):
+    """The only supported laboratory representation of a course experiment."""
+
+    __tablename__ = "experiment_lab_projections"
+    __table_args__ = (
+        UniqueConstraint("course_id", "experiment_id", name="uq_experiment_lab_projection"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    projection_id: str = Field(
+        default_factory=lambda: "labexp_" + uuid.uuid4().hex,
+        unique=True,
+        index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    experiment_id: str = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class ExperimentRecommendation(SQLModel, table=True):
+    """Teacher-approved, student-visible recommendation.  It never starts a run."""
+
+    __tablename__ = "experiment_recommendations"
+    __table_args__ = (
+        UniqueConstraint("course_id", "student_id", "experiment_id", name="uq_experiment_recommendation"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recommendation_id: str = Field(
+        default_factory=lambda: "exprec_" + uuid.uuid4().hex,
+        unique=True,
+        index=True,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    experiment_id: str = Field(index=True)
+    version_id: str = Field(index=True)
+    outline_node_id: Optional[str] = Field(default=None, index=True)
+    proposal_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ExperimentRunArtifact(SQLModel, table=True):

@@ -4,6 +4,7 @@ import os
 from importlib.util import find_spec
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.signature_middleware import SignatureMiddleware
@@ -203,7 +204,7 @@ app.state.startup_dependency_report = startup_dependency_report
 
 @app.on_event("startup")
 async def recover_durable_task_queues() -> None:
-    """Recover parse and course-build work interrupted by a local restart."""
+    """Recover durable work that is safe to resume after a local restart."""
     try:
         from app.models.database import session_factory
         from app.platform.tasks.document_parse_queue import document_parse_queue
@@ -236,6 +237,14 @@ async def recover_durable_task_queues() -> None:
     except Exception:
         logger.exception("PPT manifest task recovery failed")
     try:
+        from app.models.database import session_factory
+        from app.platform.tasks.experiment_run_queue import recover_experiment_run_tasks
+        from app.platform.tasks.worker import local_task_worker
+
+        await recover_experiment_run_tasks(session_factory, local_task_worker)
+    except Exception:
+        logger.exception("Formal experiment run recovery failed")
+    try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
         )
@@ -249,12 +258,14 @@ async def recover_durable_task_queues() -> None:
 # course sidecars are optional enrichments; only runtime/LLM configuration
 # controls injection. Never blocks startup; see bootstrap.py.
 from app.platform.agents.bootstrap import (
+    bootstrap_coding_agent,
     bootstrap_prep_agent,
     bootstrap_research_agent,
     bootstrap_teaching_agent,
 )
 bootstrap_prep_agent(app)
 bootstrap_research_agent(app)
+bootstrap_coding_agent(app)
 bootstrap_teaching_agent(app)
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）
@@ -525,5 +536,11 @@ async def error_monitor_snapshot():
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
 async def catch_all(path: str):
     if path.startswith("@vite/") or path.startswith("src/") or path.endswith((".js", ".css", ".html", ".ico", ".png", ".svg")):
-        return unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None)
-    return unified_response(404, f"接口不存在: /{path}", None)
+        return JSONResponse(
+            status_code=404,
+            content=unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None),
+        )
+    return JSONResponse(
+        status_code=404,
+        content=unified_response(404, f"接口不存在: /{path}", None),
+    )

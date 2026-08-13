@@ -117,6 +117,25 @@ class CodingEduAgent:
 coding_eduagent = CodingEduAgent()
 
 
+def build_rule_explanation(record: CodingDiagnosisRecord) -> dict[str, Any]:
+    """Build product feedback from a bounded diagnosis record only.
+
+    This deliberately accepts ``CodingDiagnosisRecord`` rather than an
+    ``ExperimentRun`` or sandbox payload.  The public explanation endpoint
+    must not re-open source code, artifacts, hidden cases, or Judge0 output
+    after the deterministic diagnosis has been persisted.
+    """
+    return {
+        "run_id": record.run_id,
+        "outcome": record.outcome,
+        "error_class": record.error_class,
+        "summary": record.summary,
+        "next_steps": list(record.debug_steps or []),
+        "reason_codes": list(record.reason_codes or []),
+        "source": "coding-rules",
+    }
+
+
 def serialize_diagnosis(record: CodingDiagnosisRecord) -> dict[str, Any]:
     return {
         "diagnosis_id": record.diagnosis_id,

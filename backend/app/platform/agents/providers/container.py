@@ -108,6 +108,7 @@ class ProviderContainer:
 
     # --- Experiment & visualization (session-scoped closures, Mode A) ---
     experiment: Optional[Any] = None  # ExperimentPort
+    experiment_dispatch: Optional[Any] = None  # ExperimentDispatchPort
     visualization: Optional[Any] = None  # VisualizationPort
 
     # --- Run store (process-level, stateless) ---

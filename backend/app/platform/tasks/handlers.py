@@ -864,6 +864,31 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _wait_for_formal_sandbox_lease(
+    ctx: TaskHandlerContext,
+    *,
+    poll_seconds: float = 0.25,
+) -> bool:
+    """Acquire the single formal-evaluation lease, unless the task is cancelled.
+
+    The lease is persisted so every worker process shares the same Judge0
+    capacity.  A full slot is normal backpressure, not a task failure: keep
+    this task running and poll until the current holder releases or expires.
+    """
+    from app.services.experiment_service import SandboxExecutionLeaseService
+
+    lease_service = SandboxExecutionLeaseService()
+    while True:
+        with ctx.session_factory() as session:
+            task = ctx.service.get_task(session, ctx.task_id)
+            if task.status == "cancelled":
+                return False
+            if lease_service.acquire(session, task_id=ctx.task_id):
+                session.commit()
+                return True
+        await asyncio.sleep(poll_seconds)
+
+
 async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
     """实验代码运行 handler（Judge0 异步执行）。
 
@@ -892,69 +917,146 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
     from app.models.experiment_model import ExperimentRun, RunOutcome
     from app.services.experiment_service import (
         attempt_service,
+        finalize_service,
         run_service,
+        SandboxExecutionLeaseService,
         version_service,
     )
     from sqlmodel import select
 
     # 1. 标记 running
     with ctx.session_factory() as session:
+        task = ctx.service.get_task(session, ctx.task_id)
+        if task.status == "cancelled":
+            return
         ctx.service.mark_running(session, ctx.task_id, stage="sandbox_execution")
         # 同步 run 状态：ExperimentRun 在 create_run 时已创建为 PENDING
 
-    # 2. 执行沙箱运行
-    with ctx.session_factory() as session:
-        run = session.exec(
-            select(ExperimentRun).where(
-                ExperimentRun.run_id == run_id,
-                ExperimentRun.course_id == int(course_id),
-            )
-        ).first()
-        if run is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"ExperimentRun {run_id} 不存在",
-                retryable=False,
-            )
-        # 验证学生归属：payload 中的 student_id 必须与 ExperimentRun 记录一致，
-        # 防止伪造 run_id/attempt_id 访问他人数据
-        if student_id is not None and run.student_id != int(student_id):
-            raise TaskExecutionError(
-                "STUDENT_MISMATCH",
-                f"Student ID mismatch: expected {student_id}, got {run.student_id}",
-                retryable=False,
-            )
-        # 使用 run 记录中的 student_id 校验 attempt 归属（权威来源）
-        attempt = attempt_service.get_attempt(
-            session, course_id=int(course_id), attempt_id=attempt_id,
-            student_id=run.student_id,
-        )
-        version = version_service.get_version(
-            session, course_id=int(course_id), version_id=attempt.version_id,
-        )
-        try:
-            await run_service._execute_run(
-                session, run=run, attempt=attempt, version=version,
-            )
-            # Persist the bounded diagnosis in the same worker transaction as
-            # the verified run result.  This keeps the normal path usable by
-            # EduAgent without requiring a second client request.
-            run_service._ensure_coding_diagnosis(session, run)
-            session.commit()
-        except Exception as exc:
-            raise TaskExecutionError(
-                "SANDBOX_EXECUTION_FAILED",
-                f"沙箱执行失败: {exc}",
-                retryable=True,
-            )
+    # 2. Acquire the shared Judge0 slot before opening the run transaction.
+    # A busy slot remains queued work rather than a retryable task failure.
+    if not await _wait_for_formal_sandbox_lease(ctx):
+        return
 
-    # 3. 根据 outcome 标记 succeeded / failed
+    # 3. Every path after acquisition must release the shared slot, including
+    # malformed payloads and authorization/ownership validation failures.
+    lease_service = SandboxExecutionLeaseService()
+    try:
+        with ctx.session_factory() as session:
+            run = session.exec(
+                select(ExperimentRun).where(
+                    ExperimentRun.run_id == run_id,
+                    ExperimentRun.course_id == int(course_id),
+                )
+            ).first()
+            if run is None:
+                raise TaskExecutionError(
+                    "VALIDATION_FAILED",
+                    f"ExperimentRun {run_id} 不存在",
+                    retryable=False,
+                )
+            # 验证学生归属：payload 中的 student_id 必须与 ExperimentRun 记录一致，
+            # 防止伪造 run_id/attempt_id 访问他人数据
+            if student_id is not None and run.student_id != int(student_id):
+                raise TaskExecutionError(
+                    "STUDENT_MISMATCH",
+                    f"Student ID mismatch: expected {student_id}, got {run.student_id}",
+                    retryable=False,
+                )
+            # 使用 run 记录中的 student_id 校验 attempt 归属（权威来源）
+            attempt = attempt_service.get_attempt(
+                session, course_id=int(course_id), attempt_id=attempt_id,
+                student_id=run.student_id,
+            )
+            version = version_service.get_version(
+                session, course_id=int(course_id), version_id=attempt.version_id,
+            )
+            try:
+                if run.cancel_requested_at is not None:
+                    return
+
+                async def renew_lease_before_case() -> bool:
+                    # Renewal must commit in its own short transaction.  The
+                    # assessment session can span remote Judge0 calls, so a
+                    # mere flush would leave every other Uvicorn process seeing
+                    # the old expiry and able to reclaim the sole worker slot.
+                    with ctx.session_factory() as lease_session:
+                        renewed = lease_service.renew(lease_session, task_id=ctx.task_id)
+                        if renewed:
+                            lease_session.commit()
+                        else:
+                            lease_session.rollback()
+                        return renewed
+
+                await run_service._execute_run(
+                    session,
+                    run=run,
+                    attempt=attempt,
+                    version=version,
+                    before_case=renew_lease_before_case,
+                )
+                # Make the server-owned run durable before the separate
+                # cancellation/finalization transaction below.
+                session.commit()
+            except TaskExecutionError:
+                session.rollback()
+                raise
+            except Exception as exc:
+                session.rollback()
+                raise TaskExecutionError(
+                    "SANDBOX_EXECUTION_FAILED",
+                    f"沙箱执行失败: {exc}",
+                    retryable=True,
+                ) from exc
+
+        # The cancel endpoint and finalization both lock the same run row.  A
+        # cancel that commits first wins and leaves the attempt submitted; a
+        # finalization that commits first makes later cancellation a no-op.
+        with ctx.session_factory() as completion_session:
+            completed_run = completion_session.exec(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.run_id == run_id,
+                    ExperimentRun.course_id == int(course_id),
+                )
+                .with_for_update()
+            ).first()
+            if completed_run is None:
+                raise TaskExecutionError(
+                    "VALIDATION_FAILED",
+                    "Experiment run disappeared before completion.",
+                    retryable=False,
+                )
+            if completed_run.cancel_requested_at is None:
+                run_service._ensure_coding_diagnosis(completion_session, completed_run)
+                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
+                    finalize_service.finalize_attempt(
+                        completion_session,
+                        course_id=int(course_id),
+                        attempt_id=attempt_id,
+                        student_id=completed_run.student_id,
+                    )
+            completion_session.commit()
+    finally:
+        with ctx.session_factory() as release_session:
+            try:
+                lease_service.release(release_session, task_id=ctx.task_id)
+                release_session.commit()
+            except Exception:
+                release_session.rollback()
+                logger.exception("Failed to release formal sandbox lease for task %s", ctx.task_id)
+
+    # 4. 根据 outcome 标记 succeeded / failed
     with ctx.session_factory() as session:
         run = session.exec(
             select(ExperimentRun).where(ExperimentRun.run_id == run_id)
         ).first()
         outcome = run.outcome if run else RunOutcome.INTERNAL_ERROR
 
+        if run and run.cancel_requested_at is not None:
+            task = ctx.service.get_task(session, ctx.task_id)
+            if task.status != "cancelled":
+                ctx.service.cancel(session, ctx.task_id, reason="评测已取消")
+            return
         if outcome == RunOutcome.ACCEPTED:
             ctx.service.mark_succeeded(
                 session,
@@ -1673,6 +1775,7 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
             session_factory=ctx.session_factory,
             decided_by=int(decided_by) if decided_by else None,
             trace_id=trace_id,
+            proposal_id=str(proposal_id),
         )
         dispatch_result.update(outcome)
     except TaskExecutionError:
@@ -1709,6 +1812,7 @@ async def _dispatch_agent_action(
     session_factory,
     decided_by: Optional[int],
     trace_id: str,
+    proposal_id: str | None = None,
 ) -> dict[str, Any]:
     """P1-6: 真实分发高风险动作到对应业务 service。
 
@@ -1735,6 +1839,7 @@ async def _dispatch_agent_action(
             proposed_action=proposed_action,
             session_factory=session_factory,
             decided_by=decided_by,
+            proposal_id=proposal_id,
             dispatched_at=dispatched_at,
         )
 
@@ -1817,21 +1922,10 @@ async def _dispatch_trigger_experiment(
     proposed_action: dict[str, Any],
     session_factory,
     decided_by: Optional[int],
+    proposal_id: str | None,
     dispatched_at: str,
 ) -> dict[str, Any]:
-    """P1-6: 派发 trigger_experiment 到 experiment_service。
-
-    proposed_action 期望字段：
-    - experiment_id: str   → 必填，标识要触发的实验
-    - language: str        → 可选，若提供则同时创建 run
-    - source_code: str     → 可选，与 language 配合创建 run
-
-    流程：
-    1. 通过 attempt_service.create_attempt 为学生创建尝试（使用实验默认版本）
-    2. 若提供 language + source_code，则通过 run_service.create_run(execute=False)
-       创建 PENDING run，由 experiment_run_handler 异步执行
-    3. 否则仅创建 attempt，学生可在 UI 中提交代码
-    """
+    """Create a governed, student-visible recommendation without executing code."""
     experiment_id = proposed_action.get("experiment_id")
     if not experiment_id:
         return {
@@ -1849,39 +1943,40 @@ async def _dispatch_trigger_experiment(
             "details": {"reason": "trigger_experiment 需要 student_id 才能创建 attempt"},
         }
 
-    language = proposed_action.get("language")
-    source_code = proposed_action.get("source_code") or proposed_action.get("code")
-    has_code_payload = bool(language) and bool(source_code)
-
     with session_factory() as session:
         try:
             from app.services.experiment_service import (
-                attempt_service,
-                run_service,
+                ExperimentRecommendationDispatchError,
+                recommendation_service,
             )
 
-            attempt = attempt_service.create_attempt(
+            recommendation, created = recommendation_service.create_from_approved_proposal(
                 session,
                 course_id=course_id,
-                experiment_id=str(experiment_id),
                 student_id=int(student_id),
+                proposal_id=str(proposal_id or ""),
+                proposed_action=proposed_action,
             )
-
-            run_id = None
-            if has_code_payload:
-                # 创建 PENDING run（不立即执行），由 experiment_run_handler 异步消费
-                run = await run_service.create_run(
-                    session,
-                    course_id=course_id,
-                    attempt_id=attempt.attempt_id,
-                    language=str(language),
-                    source_code=str(source_code),
-                    student_id=int(student_id),
-                    execute=False,
-                )
-                run_id = run.run_id
-
             session.commit()
+            return {
+                "dispatched": True,
+                "dispatched_at": dispatched_at,
+                "outcome": "experiment_recommendation_created" if created else "experiment_recommendation_existing",
+                "details": {
+                    "experiment_id": str(experiment_id),
+                    "recommendation_id": recommendation.recommendation_id,
+                    "version_id": recommendation.version_id,
+                    "outline_node_id": recommendation.outline_node_id,
+                },
+            }
+
+        except ExperimentRecommendationDispatchError as exc:
+            return {
+                "dispatched": False,
+                "dispatched_at": dispatched_at,
+                "outcome": exc.code,
+                "details": {"experiment_id": str(experiment_id)},
+            }
         except TaskExecutionError:
             raise
         except Exception as exc:
@@ -1890,23 +1985,6 @@ async def _dispatch_trigger_experiment(
                 f"trigger_experiment 派发失败: {exc}",
                 retryable=True,
             )
-
-        return {
-            "dispatched": True,
-            "dispatched_at": dispatched_at,
-            "outcome": "experiment_attempt_created" if not has_code_payload else "experiment_run_created",
-            "details": {
-                "experiment_id": str(experiment_id),
-                "attempt_id": attempt.attempt_id,
-                "run_id": run_id,
-                "note": (
-                    "ExperimentAttempt 已创建；学生可在 UI 中提交代码"
-                    if not has_code_payload
-                    else "ExperimentRun 已创建为 PENDING；由 experiment_run_handler 后续执行"
-                ),
-            },
-        }
-
 
 # ---------------------------------------------------------------------------
 # 注册函数
