@@ -118,12 +118,14 @@ test('normalizes a course playlist as independent audio items with global subtit
     playlist: {
       schema: 'audio-playlist/v1', duration_ms: 3_000,
       items: [
-        { node_id: 10, offset_ms: 0, duration_ms: 1_000, audio_url: '/first.mp3', subtitle_segments: [{ start_ms: 0, end_ms: 900, text: '第一段' }] },
-        { node_id: 11, offset_ms: 1_000, duration_ms: 2_000, audio_url: '/second.mp3', subtitle_segments: [{ start_ms: 100, end_ms: 1_200, text: '第二段' }] },
+        { item_id: 'mrit_first', node_id: 10, offset_ms: 0, duration_ms: 1_000, audio_url: '/first.mp3', subtitle_segments: [{ start_ms: 0, end_ms: 900, text: '第一段' }] },
+        { item_id: 'mrit_second', node_id: 11, offset_ms: 1_000, duration_ms: 2_000, audio_url: '/second.mp3', subtitle_segments: [{ start_ms: 100, end_ms: 1_200, text: '第二段' }] },
       ],
     },
   })
   assert.equal(result.playlist.schema, 'audio-playlist/v1')
+  assert.equal(result.playlist.items[0].itemId, 'mrit_first')
+  assert.equal(result.playlist.items[1].itemId, 'mrit_second')
   assert.equal(result.playlist.items[1].offsetMs, 1_000)
   assert.equal(result.subtitleSegments[1].startMs, 1_100)
   assert.equal(findActiveSubtitleIndex(result.subtitleSegments, 1_150), 1)

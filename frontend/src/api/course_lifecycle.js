@@ -17,6 +17,7 @@ export const updateCourseSafetySettings = (courseId, patch, expectedVersion) => 
 export const updateCourseSandboxSettings = (courseId, patch, expectedVersion) => request.put(`/course-settings/course/${course(courseId)}/sandbox`, sectionPayload(patch, expectedVersion))
 export const updateCourseIntegrationSettings = (courseId, patch, expectedVersion) => request.put(`/course-settings/course/${course(courseId)}/integration`, sectionPayload(patch, expectedVersion))
 export const rollbackCourseSettings = (courseId, version) => request.post(`/course-settings/course/${course(courseId)}/settings/rollback`, { target_version: version })
+export const listCourseGroups = (courseId) => request.get(`/course-groups/course/${course(courseId)}/groups`)
 
 export const listFanyaSyncRuns = (courseId) => request.get(`/integrations/fanya/course/${course(courseId)}/sync/runs`)
 export const startFanyaSync = (courseId, payload = {}) => request.post(`/integrations/fanya/course/${course(courseId)}/sync`, payload)

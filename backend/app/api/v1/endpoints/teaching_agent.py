@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
 from app.core.security import get_current_user
@@ -20,6 +20,7 @@ from app.services.conversation_service import (
     persist_conversation_turn,
 )
 from app.services.course_access_service import require_course_permission, resolve_course_access
+from app.schemas.learning_adjustment import QuestionObservation
 
 router = APIRouter()
 
@@ -51,6 +52,8 @@ class TeachingAgentRequest(BaseModel):
     ``/respond-for-learner`` contract.
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     student_id: str | None = Field(default=None, min_length=1, max_length=128)
     course_id: str = Field(min_length=1, max_length=128)
     session_id: str = Field(min_length=1, max_length=128)
@@ -58,6 +61,7 @@ class TeachingAgentRequest(BaseModel):
     resource_id: str | None = Field(default=None, max_length=128)
     exercise_id: str | None = Field(default=None, max_length=128)
     code_submission_id: str | None = Field(default=None, max_length=128)
+    question_observation: QuestionObservation | None = None
 
 
 def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform]:
@@ -77,6 +81,8 @@ def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRu
 
 class TeachingAgentLearnerRequest(BaseModel):
     """Teacher-side request for a specific learner in the course."""
+
+    model_config = ConfigDict(extra="forbid")
 
     learner_user_id: str = Field(min_length=1, max_length=128)
     course_id: str = Field(min_length=1, max_length=128)
@@ -111,6 +117,8 @@ async def _respond_for_subject(
     resource_id: str | None,
     exercise_id: str | None,
     code_submission_id: str | None,
+    question_observation: QuestionObservation | None,
+    persist_learner_turn: bool,
     runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform],
     session: Session,
 ) -> dict[str, Any]:
@@ -119,6 +127,7 @@ async def _respond_for_subject(
         student_id=str(subject_user_id), course_id=str(course_id), session_id=session_id,
         message=message, resource_id=resource_id, exercise_id=exercise_id,
         code_submission_id=code_submission_id,
+        question_observation=question_observation,
     )
     if state.get("status") == "rejected":
         raise HTTPException(status_code=403, detail={"code": state["errors"][-1], "trace_id": state["trace_id"]})
@@ -128,7 +137,7 @@ async def _respond_for_subject(
     # 认知采集：LLM 已在意图解析时实时标定提问深度，随本次回答落库（追加型）。
     # 记录失败不影响回答本身（数据最小化，只存深度分数与标签）。
     depth = state.get("inquiry_depth")
-    if depth is not None:
+    if persist_learner_turn and depth is not None:
         try:
             record_question_depth(
                 session,
@@ -157,6 +166,7 @@ async def _respond_for_subject(
         "citations": state.get("citations", []),
         "recommended_resources": [{"resource_id": resource_id} for resource_id in state.get("selected_resource_ids", [])],
         "warnings": state.get("warnings", []), "degraded_services": state.get("degraded_services", []),
+        "learning_adjustment": state.get("learning_adjustment"),
     }
 
     # Conversation Domain (AGENTS.md §5.1): persist the question/answer turn so
@@ -165,7 +175,7 @@ async def _respond_for_subject(
     # tables. Only persisted when a final answer exists (atomic Q/A turn).
     # Non-blocking: a persistence failure must never break the teaching response.
     final_answer = state.get("final_answer")
-    if final_answer:
+    if persist_learner_turn and final_answer:
         persist_conversation_turn(
             session,
             student_id=subject_user_id,
@@ -205,6 +215,8 @@ async def respond(
         subject_user_id=caller_id, course_id=course_id, session_id=body.session_id,
         message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
         code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+        question_observation=body.question_observation,
+        persist_learner_turn=True,
         session=session,
     )
 
@@ -232,6 +244,8 @@ async def respond_for_learner(
         subject_user_id=learner_user_id, course_id=course_id, session_id=body.session_id,
         message=body.message, resource_id=body.resource_id, exercise_id=body.exercise_id,
         code_submission_id=body.code_submission_id, runtime_source=runtime_source,
+        question_observation=None,
+        persist_learner_turn=False,
         session=session,
     )
 

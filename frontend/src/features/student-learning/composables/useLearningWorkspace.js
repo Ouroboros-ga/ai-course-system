@@ -49,6 +49,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   const getStudentId = options?.getStudentId ?? (() => null)
   const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
   const getCapabilities = options?.getCapabilities ?? (() => ({}))
+  const getQuestionObservation = options?.getQuestionObservation ?? (() => null)
   // CodingEduAgent receives only a server-issued ExperimentRun id. The
   // coding runner can update this value after a verified submission; no
   // source code or Judge0 token is ever placed in the TeachingAgent payload.
@@ -651,7 +652,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   // TeachingAgent 受控接入（P1）：调用 /teaching-agent/respond 并归一化响应。
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
-  async function askTeachingAgent(question) {
+  async function askTeachingAgent(question, questionObservation = null) {
     const verifiedRunId = getCodeSubmissionId()
     const result = await respondTeachingAgent({
       course_id: String(course.value.courseId),
@@ -659,6 +660,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       message: question,
       resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
       code_submission_id: verifiedRunId ? String(verifiedRunId) : null,
+      questionObservation: questionObservation ?? null,
     })
     const warnings = Array.isArray(result?.warnings) ? result.warnings : []
     // 合并 fallback_reason 与 warnings 去重后的可读文案
@@ -681,6 +683,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       // TeachingAgent 不返回 confidence 数值；有 warnings/degraded_services 时标低置信。
       lowConfidence:
         Boolean(warnings.length) || Boolean(result?.degraded_services?.length),
+      learningAdjustment: result?.learning_adjustment ?? null,
     }
   }
 
@@ -710,6 +713,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   async function sendQuestion(explicitQuestion) {
     const question = String(explicitQuestion ?? questionDraft.value).trim()
     if (!question || isAsking.value || !currentNode.value) return
+    const questionObservation = getQuestionObservation()
 
     const userMessage = {
       id: 'user-' + Date.now(),
@@ -737,7 +741,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       if (canUseTeachingAgent) {
         // Agent 503/失败属预期降级场景（skipErrorToast 已静默），回退 V1 不影响 Q&A。
         try {
-          result = await askTeachingAgent(question)
+          result = await askTeachingAgent(question, questionObservation)
           if (result.fallbackRequired) {
             const fallback = await askV1(question)
             result = {
@@ -763,6 +767,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,
           page: currentPage.value,
+          learningAdjustment: result?.learningAdjustment ?? null,
         },
       ]
     } catch {

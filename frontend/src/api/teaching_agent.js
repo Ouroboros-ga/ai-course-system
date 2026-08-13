@@ -24,6 +24,7 @@ import request from '@/utils/request.js'
  * @param {string} [payload.resource_id] - 当前学习资源（知识点节点 ID）
  * @param {string} [payload.exercise_id] - 关联练习 ID
  * @param {string} [payload.code_submission_id] - 关联代码提交 ID
+ * @param {Object|null} [payload.questionObservation] - 当次提问瞬间的已冻结播放坐标；缺失时仍正常问答
  * @param {boolean} [payload.skipErrorToast=true] - 503/失败时静默回退，不弹错误提示
  * @returns {Promise<Object>} TeachingAgent 响应（含 trace_id/answer/citations 等）
  */
@@ -39,6 +40,7 @@ export function respondTeachingAgent(payload) {
       resource_id: payload.resource_id ?? null,
       exercise_id: payload.exercise_id ?? null,
       code_submission_id: payload.code_submission_id ?? null,
+      question_observation: payload.questionObservation ?? null,
     },
     allowFlatResponse: true,
     // Agent 不可用属预期降级场景，调用方负责回退到 V1，不应弹错误提示。

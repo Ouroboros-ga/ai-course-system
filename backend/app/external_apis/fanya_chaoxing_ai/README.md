@@ -5,7 +5,7 @@
 - 对外基址：`/api/v1/compat`。
 - 对外响应：`code`、`msg`、`data`、`requestId`。
 - 认证：本包独立校验 `time`、`enc`。生产对接应设置 `FANYA_CHAOXING_AI_COMPAT_STATIC_KEY`；未设置时仅为了本地兼容回退到旧 `STATIC_KEY`。
-- 当前真实映射：文本问答、学习进度追踪、节奏调整；全部经既有 Course Access v1 校验。
+- 当前真实映射：文本问答、学习进度追踪，以及受真实 TeachingAgent 回合约束的兼容节奏调整；全部经既有 Course Access v1 校验。
 - 当前明确未提供：外部 URL 课件导入、脚本/媒体资源映射、ASR。它们返回结构化 503，不伪造任务或生成结果。
 
 ## 移除
@@ -19,7 +19,7 @@
 | `POST /qa/interact` | 文本问答；复用 TeachingAgent，并先经 Course Access v1 校验。语音问答明确返回不可用。 |
 | `POST /qa/voiceToText` | 返回 `503 ASR_UNAVAILABLE`，不伪造转写结果。 |
 | `POST /progress/track` | 在 Course Access v1 校验通过后，更新已有 `LearningProgress`。进度只会单调增加。 |
-| `POST /progress/adjust` | 根据传入的理解等级返回确定性的“补充/正常/加速”建议；不写入正式掌握度证据。 |
+| `POST /progress/adjust` | 不根据 `understandingLevel` 伪造建议。仅当 `qaRecordId` 关联同一学习者、同一课程、仍有效冻结回顾目标的调整提案，且 Conversation Domain 存在同 trace 的助手回答时，返回该已验证回答作为 `supplementContent`；否则返回 `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`。不写入正式掌握度证据，也不控制浏览器播放器。 |
 | `POST /lesson/parse` | 返回 `503 EXTERNAL_URL_IMPORT_UNAVAILABLE`。 |
 | `POST /lesson/generateScript` | 返回 `503 SCRIPT_MAPPING_UNAVAILABLE`。 |
 | `POST /lesson/generateAudio` | 返回 `503 MEDIA_MAPPING_UNAVAILABLE`。 |

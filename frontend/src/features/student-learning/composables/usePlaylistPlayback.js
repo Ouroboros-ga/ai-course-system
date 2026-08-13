@@ -53,6 +53,12 @@ export function findPlaylistItemIndexAtTime(items, seconds) {
   })
 }
 
+/** Resolve an immutable media release item id without inferring from mutable titles. */
+export function findPlaylistItemIndexById(items, itemId) {
+  if (!Array.isArray(items) || itemId == null || itemId === '') return -1
+  return items.findIndex(item => sameId(item?.itemId, itemId))
+}
+
 /** Resolve one keyed playlist item back to the learner rail. */
 export function findLearningNodeIndexForPlaylistItem(nodes, item) {
   if (!Array.isArray(nodes) || !item) return -1
@@ -174,6 +180,12 @@ export function usePlaylistPlayback(playlist) {
     return index >= 0
   }
 
+  function selectByItemId(itemId) {
+    const index = findPlaylistItemIndexById(playlist.value?.items, itemId)
+    if (index >= 0) activeIndex.value = index
+    return index >= 0
+  }
+
   function next() {
     const items = playlist.value?.items ?? []
     if (activeIndex.value >= items.length - 1) return false
@@ -196,5 +208,15 @@ export function usePlaylistPlayback(playlist) {
   }
 
   watch(playlist, () => { activeIndex.value = 0 }, { deep: false })
-  return { activeIndex, activeItem, activeAudioUrl, globalOffsetSeconds, selectByNode, next, previous, seekGlobal }
+  return {
+    activeIndex,
+    activeItem,
+    activeAudioUrl,
+    globalOffsetSeconds,
+    selectByNode,
+    selectByItemId,
+    next,
+    previous,
+    seekGlobal,
+  }
 }

@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookMarked, Code2, Lightbulb, ListChecks, LineChart, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
+import { BookMarked, Code2, CornerUpLeft, Lightbulb, ListChecks, LineChart, MapPinned, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
+import SfxButton from '@/app/ui/SfxButton.vue'
 
 /**
  * 课程智能体面板（page-design §12.5 UNDERSTAND / §13.1 统一人格 / §6.7 SystemResponsePanel）。
@@ -16,9 +17,19 @@ import { BookMarked, Code2, Lightbulb, ListChecks, LineChart, RefreshCw, SendHor
 const props = defineProps({
   ws: { type: Object, required: true },
   anchor: { type: Object, default: null },
+  activeAdjustment: { type: Object, default: null },
+  adjustmentBusy: { type: Boolean, default: false },
+  adjustmentNotice: { type: String, default: '' },
 })
 
-const emit = defineEmits(['exit', 'action'])
+const emit = defineEmits([
+  'exit',
+  'action',
+  'accept-adjustment',
+  'dismiss-adjustment',
+  'retry-opening-review',
+  'return-adjustment',
+])
 
 const rootRef = ref(null)
 const inputRef = ref(null)
@@ -81,6 +92,32 @@ function formatTime(seconds) {
   const value = Math.max(0, Number(seconds) || 0)
   return `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`
 }
+
+function reviewPage(adjustment) {
+  return adjustment?.review_target?.page ?? null
+}
+
+function isActiveAdjustment(adjustment) {
+  return String(props.activeAdjustment?.proposal?.adjustment_id || '') === String(adjustment?.adjustment_id || '')
+}
+
+function isReviewingAdjustment(adjustment) {
+  return isActiveAdjustment(adjustment) && props.activeAdjustment?.navigationStatus === 'reviewing'
+}
+
+function isVisibleProposal(adjustment) {
+  return adjustment?.status === 'proposed'
+    && !adjustment?.declined_at
+    && !adjustment?.invalidated_at
+    && !isActiveAdjustment(adjustment)
+}
+
+function hasMessageForActiveAdjustment() {
+  const adjustmentId = props.activeAdjustment?.proposal?.adjustment_id
+  return Boolean(adjustmentId && props.ws.messages.value.some(message => (
+    String(message.learningAdjustment?.adjustment_id || '') === String(adjustmentId)
+  )))
+}
 </script>
 
 <template>
@@ -137,6 +174,66 @@ function formatTime(seconds) {
               </li>
             </ul>
 
+            <section
+              v-if="isVisibleProposal(message.learningAdjustment)"
+              class="sfx-agent-adjustment"
+              aria-label="学习回顾建议"
+            >
+              <p class="sfx-agent-adjustment-title sfx-t-ui">
+                <MapPinned :size="15" /> 建议回顾第 {{ reviewPage(message.learningAdjustment) }} 页
+              </p>
+              <p class="sfx-t-caption">
+                回顾后由你自行选择何时返回原学习位置。
+              </p>
+              <div class="sfx-agent-adjustment-actions">
+                <SfxButton
+                  variant="secondary"
+                  size="sm"
+                  :loading="adjustmentBusy"
+                  :disabled="adjustmentBusy"
+                  @click="emit('accept-adjustment', message.learningAdjustment)"
+                >回顾并补充讲解</SfxButton>
+                <SfxButton
+                  variant="tertiary"
+                  size="sm"
+                  :disabled="adjustmentBusy"
+                  @click="emit('dismiss-adjustment', message.learningAdjustment)"
+                >继续当前位置</SfxButton>
+              </div>
+            </section>
+
+            <section
+              v-if="isActiveAdjustment(message.learningAdjustment)"
+              class="sfx-agent-adjustment is-active"
+              aria-label="正在回顾"
+            >
+              <template v-if="isReviewingAdjustment(message.learningAdjustment)">
+                <p class="sfx-agent-adjustment-title sfx-t-ui">
+                  <CornerUpLeft :size="15" /> 正在回顾，原学习位置已保留
+                </p>
+                <SfxButton
+                  variant="secondary"
+                  size="sm"
+                  :loading="adjustmentBusy"
+                  :disabled="adjustmentBusy"
+                  @click="emit('return-adjustment')"
+                >返回原学习位置</SfxButton>
+              </template>
+              <template v-else>
+                <p class="sfx-agent-adjustment-title sfx-t-ui">
+                  <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
+                </p>
+                <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
+                <SfxButton
+                  variant="secondary"
+                  size="sm"
+                  :loading="adjustmentBusy"
+                  :disabled="adjustmentBusy"
+                  @click="emit('retry-opening-review')"
+                >重试打开回顾</SfxButton>
+              </template>
+            </section>
+
             <button v-if="message.error" type="button" class="sfx-agent-retry sfx-t-ui"
                     @click="retry(message)">
               <RefreshCw :size="13" /> 重试
@@ -144,6 +241,42 @@ function formatTime(seconds) {
           </div>
         </template>
       </div>
+
+      <section
+        v-if="activeAdjustment && !hasMessageForActiveAdjustment()"
+        class="sfx-agent-adjustment is-active"
+        aria-label="待继续的学习回顾"
+      >
+        <template v-if="activeAdjustment.navigationStatus === 'reviewing'">
+          <p class="sfx-agent-adjustment-title sfx-t-ui">
+            <CornerUpLeft :size="15" /> 正在回顾，原学习位置已保留
+          </p>
+          <SfxButton
+            variant="secondary"
+            size="sm"
+            :loading="adjustmentBusy"
+            :disabled="adjustmentBusy"
+            @click="emit('return-adjustment')"
+          >返回原学习位置</SfxButton>
+        </template>
+        <template v-else>
+          <p class="sfx-agent-adjustment-title sfx-t-ui">
+            <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
+          </p>
+          <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
+          <SfxButton
+            variant="secondary"
+            size="sm"
+            :loading="adjustmentBusy"
+            :disabled="adjustmentBusy"
+            @click="emit('retry-opening-review')"
+          >重试打开回顾</SfxButton>
+        </template>
+      </section>
+
+      <p v-if="adjustmentNotice" class="sfx-agent-adjustment-notice sfx-t-caption" role="status">
+        <TriangleAlert :size="13" /> {{ adjustmentNotice }}
+      </p>
 
       <div v-if="ws.isAsking.value" class="sfx-agent-thinking sfx-t-caption" role="status">
         课程智能体正在结合当前课程内容生成回答…
@@ -315,6 +448,36 @@ function formatTime(seconds) {
   font-size: var(--ui-sm-size);
   color: var(--text-secondary);
 }
+
+.sfx-agent-adjustment {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--amber-300);
+  border-radius: var(--radius-md);
+  background: var(--amber-100);
+}
+
+.sfx-agent-adjustment.is-active {
+  border-color: var(--green-300);
+  background: var(--green-100);
+}
+
+.sfx-agent-adjustment-title,
+.sfx-agent-adjustment-notice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.sfx-agent-adjustment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.sfx-agent-adjustment-notice { color: var(--amber-700); }
 
 .sfx-agent-retry {
   display: inline-flex;

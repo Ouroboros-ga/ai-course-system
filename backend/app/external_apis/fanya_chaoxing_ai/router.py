@@ -26,10 +26,12 @@ from sqlmodel import Session, select
 from app.core.config import settings
 from app.core.time_utils import to_aware, utcnow_aware
 from app.models.course_model import Course, CourseScript, ScriptNode
+from app.models.conversation_model import ConversationMessage
 from app.models.database import get_session
 from app.models.progress_model import LearningProgress, LearningStatus
 from app.models.user_model import User
 from app.services.course_access_service import require_course_permission
+from app.services.learning_adjustment_service import learning_adjustment_service
 
 
 def _request_id(request: Request) -> str:
@@ -275,6 +277,7 @@ async def compat_qa_interact(
             resource_id=section_id,
             exercise_id=None,
             code_submission_id=None,
+            question_observation=None,
             runtime_source=get_runtime(request),
             session=session,
         )
@@ -369,20 +372,40 @@ async def compat_progress_adjust(
     if not context.analytics_eligible:
         raise HTTPException(status_code=403, detail={"code": "COURSE_ACCESS_DENIED"})
 
-    level = body.understandingLevel.lower()
-    if level in {"none", "partial", "low"}:
-        adjust_type = "supplement"
-    elif level in {"full", "high", "excellent"}:
-        adjust_type = "accelerate"
-    elif level in {"medium", "normal"}:
-        adjust_type = "normal"
-    else:
-        raise HTTPException(status_code=400, detail={"code": "VALIDATION_FAILED"})
+    # ``understandingLevel`` is an external interaction hint, not a mastery
+    # fact.  A supplement is available only when ``qaRecordId`` resolves to a
+    # release-pinned proposal created by this learner's actual TeachingAgent
+    # turn, and that same turn has a persisted assistant answer.
+    proposal = learning_adjustment_service.find_compatibility_proposal(
+        session,
+        course_id=int(course.id),
+        student_id=int(user.id),
+        trace_id=body.qaRecordId,
+    )
+    answer = None
+    if proposal is not None:
+        answer = session.exec(
+            select(ConversationMessage.content)
+            .where(
+                ConversationMessage.course_id == course.id,
+                ConversationMessage.student_id == user.id,
+                ConversationMessage.trace_id == body.qaRecordId,
+                ConversationMessage.role == "assistant",
+            )
+            .order_by(ConversationMessage.created_at.desc())
+        ).first()
+    if not isinstance(answer, str) or not answer.strip():
+        return _envelope(
+            request,
+            503,
+            "LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE",
+            {"code": "LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE"},
+        )
     return _envelope(request, 200, "SUCCESS", {
         "adjustPlan": {
             "continueSectionId": section_id,
-            "adjustType": adjust_type,
-            "supplementContent": None,
+            "adjustType": "supplement",
+            "supplementContent": answer,
             "nextSections": [],
         }
     })

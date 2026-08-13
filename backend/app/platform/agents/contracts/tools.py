@@ -15,8 +15,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
+from .constraint import ConversationHistoryPort, TeachingConstraintPort
 from .experiment import ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
+from .learning_adjustment import LearningAdjustmentPort
 from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
 from .sandbox import CodingDiagnosisPort, SandboxPort
@@ -47,6 +49,9 @@ class TeachingTools:
     teacher_safety_valve: Optional[TeacherSafetyValvePort] = None
     experiment: Optional[ExperimentPort] = None
     visualization: Optional[VisualizationPort] = None
+    teaching_constraints: Optional[TeachingConstraintPort] = None
+    conversation_history: Optional[ConversationHistoryPort] = None
+    learning_adjustment: Optional[LearningAdjustmentPort] = None
 
 
 __all__ = ["TeachingTools"]
