@@ -92,13 +92,13 @@ async def test_integration(integration_key: str, session: Session = Depends(get_
     from app.models.platform_admin_model import PlatformIntegrationConfig
     from app.services.platform_admin_service import decrypt_secret
     from app.services.platform_provider_manager import provider_manager
-    if integration_key in {"llm", "tts", "ppt"}:
+    if integration_key in {"llm", "tts", "ppt", "asr"}:
         item = session.exec(select(PlatformIntegrationConfig).where(PlatformIntegrationConfig.integration_key == integration_key)).first()
         if item is None:
             return unified_response(503, "PROVIDER_NOT_CONFIGURED", {"integration_key": integration_key, "status": "not_configured"})
         probe = await provider_manager.probe(integration_key, provider=item.provider, base_url=item.base_url, model_name=item.model_name, api_key=decrypt_secret(item.encrypted_api_key), extra_config=item.extra_config)
-        return unified_response(200 if probe.status == "reachable" else 503, probe.message, {"integration_key": integration_key, "status": probe.status})
-    if integration_key not in {"llm", "tts", "ppt"}:
+        return unified_response(200 if probe.status in {"reachable", "configured"} else 503, probe.message, {"integration_key": integration_key, "status": probe.status})
+    if integration_key not in {"llm", "tts", "ppt", "asr"}:
         return unified_response(404, "不支持的集成类型", None)
     # The actual Provider Manager can replace this probe without changing the API.
     return unified_response(200, "配置格式校验通过；运行时健康检查将在 Provider 刷新时执行", {"integration_key": integration_key, "status": "accepted"})

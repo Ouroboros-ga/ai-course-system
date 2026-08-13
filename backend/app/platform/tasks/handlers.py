@@ -1297,7 +1297,7 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
     def run_in_worker_thread() -> tuple[str | None, str | None]:
         from sqlmodel import select
         from app.models.media_release_model import MediaGenerationJob
-        from app.services.media_release_service import tts_execution_service
+        from app.services.media_release_service import tts_execution_service, media_generation_job_service
 
         with ctx.session_factory() as session:
             job = session.exec(select(MediaGenerationJob).where(

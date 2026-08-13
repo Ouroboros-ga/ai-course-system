@@ -61,13 +61,18 @@ def serialize_integration(config: PlatformIntegrationConfig) -> dict[str, Any]:
     }
 
 
+_INTEGRATION_KEYS: tuple = ("llm", "tts", "ppt", "asr")
+#: 支持管理员一键开关（真实接入 true/false）的集成；ppt 仅保留配置管理兼容。
+_TOGGLE_KEYS: tuple = ("llm", "tts", "asr")
+
+
 def list_integrations(session: Session) -> list[dict[str, Any]]:
     values = {item.integration_key: item for item in session.exec(select(PlatformIntegrationConfig)).all()}
-    return [serialize_integration(values[key]) if key in values else {"integration_key": key, "provider": "", "base_url": "", "model_name": "", "key_configured": False, "key_last4": None, "extra_config": {}, "enabled": False, "version": 0, "health_status": "not_configured", "health_message": "尚未配置"} for key in ("llm", "tts", "ppt")]
+    return [serialize_integration(values[key]) if key in values else {"integration_key": key, "provider": "", "base_url": "", "model_name": "", "key_configured": False, "key_last4": None, "extra_config": {}, "enabled": False, "version": 0, "health_status": "not_configured", "health_message": "尚未配置"} for key in _INTEGRATION_KEYS]
 
 
 async def update_integration(session: Session, actor_id: int, key: str, payload: dict[str, Any]) -> dict[str, Any]:
-    if key not in {"llm", "tts", "ppt"}:
+    if key not in _INTEGRATION_KEYS:
         raise HTTPException(status_code=404, detail="不支持的集成类型")
     item = session.exec(select(PlatformIntegrationConfig).where(PlatformIntegrationConfig.integration_key == key)).first()
     expected = payload.get("expected_version")
@@ -75,6 +80,7 @@ async def update_integration(session: Session, actor_id: int, key: str, payload:
         item = PlatformIntegrationConfig(integration_key=key)
     elif expected is not None and int(expected) != item.version:
         raise HTTPException(status_code=409, detail="配置版本冲突，请刷新后重试")
+    enabled_now = bool(payload.get("enabled", item.enabled))
     for field in ("provider", "base_url", "model_name", "enabled"):
         if field in payload and payload[field] is not None:
             setattr(item, field, payload[field])
@@ -87,9 +93,23 @@ async def update_integration(session: Session, actor_id: int, key: str, payload:
     item.version = max(1, item.version + (0 if item.id is None else 1))
     item.updated_by = actor_id
     item.updated_at = utcnow_aware()
+
+    secret = decrypt_secret(item.encrypted_api_key)
+    # 管理员开关语义：enabled=false 直接保存并应用禁用态，不要求 Provider 可达；
+    # enabled=true 必须先通过配置校验（probe）再热刷新真实接入。
+    if not enabled_now:
+        item.health_status = "disabled"
+        item.health_message = "真实接入已关闭；未调用外部服务"
+        item.last_checked_at = utcnow_aware()
+        session.add(item)
+        audit(session, actor_id, "integration.disable", "integration", key, {"version": item.version})
+        session.commit()
+        session.refresh(item)
+        provider_manager.apply_disabled(key)
+        return serialize_integration(item)
+
     item.health_status = "pending"
     item.health_message = "配置已保存，等待 Provider 健康检查"
-    secret = decrypt_secret(item.encrypted_api_key)
     probe = await provider_manager.probe(key, provider=item.provider, base_url=item.base_url, model_name=item.model_name, api_key=secret, extra_config=item.extra_config)
     if probe.status not in {"reachable", "configured"}:
         session.rollback()
@@ -103,7 +123,7 @@ async def update_integration(session: Session, actor_id: int, key: str, payload:
     item.health_message = probe.message
     item.last_checked_at = utcnow_aware()
     session.add(item)
-    audit(session, actor_id, "integration.update", "integration", key, {"version": item.version})
+    audit(session, actor_id, "integration.enable", "integration", key, {"version": item.version})
     session.commit()
     session.refresh(item)
     return serialize_integration(item)

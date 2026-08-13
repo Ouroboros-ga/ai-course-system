@@ -111,9 +111,28 @@ async function probe(item) {
   try {
     const result = await testIntegration(item.integration_key)
     item.health_status = result.status
-    showToast(`连通性检查：${result.status}`, result.status === 'reachable' ? 'success' : 'warning')
+    showToast(`连通性检查：${result.status}`, result.status === 'reachable' || result.status === 'configured' ? 'success' : 'warning')
   } catch (caught) {
     showToast(caught?.message || 'Provider 不可用', 'error')
+  } finally { saving.value = '' }
+}
+
+/**
+ * 一键开关：只发送 enabled + expected_version，其余字段保留服务端已存配置。
+ * 启用时后端会先做配置校验（probe），配置不完整会返回错误并提示先填表单。
+ */
+async function toggleIntegration(item) {
+  saving.value = `toggle-${item.integration_key}`
+  const next = !item.enabled
+  try {
+    const updated = await updateIntegration(item.integration_key, { enabled: next, expected_version: item.version })
+    Object.assign(item, updated)
+    drafts[item.integration_key] = integrationDraft(item)
+    showToast(next ? `${item.integration_key.toUpperCase()} 真实接入已开启` : `${item.integration_key.toUpperCase()} 真实接入已关闭`, 'success')
+  } catch (caught) {
+    const detail = caught?.response?.data?.detail
+    const message = typeof detail === 'object' ? (detail.message || '') : (caught?.message || '切换失败')
+    showToast(message || `开启 ${item.integration_key.toUpperCase()} 前请先完整填写 Provider 配置`, 'error')
   } finally { saving.value = '' }
 }
 
@@ -172,12 +191,17 @@ onMounted(load)
 
       <section class="sfx-panel admin-section">
         <div class="section-head"><h2 class="sfx-t-title3"><SlidersHorizontal :size="19" /> Provider 配置</h2><span class="sfx-t-caption">密钥仅显示配置状态；留空保存会保留旧密钥。</span></div>
-        <div class="provider-grid"><article v-for="item in integrations" :key="item.integration_key" class="provider-card"><header><h3>{{ item.integration_key.toUpperCase() }}</h3><span class="health" :data-status="item.health_status">{{ item.health_status || 'not_configured' }}</span></header>
+        <div class="provider-grid"><article v-for="item in integrations" :key="item.integration_key" class="provider-card"><header>
+            <h3>{{ item.integration_key.toUpperCase() }}<span v-if="['llm', 'tts', 'asr'].includes(item.integration_key)" class="toggle-caption">{{ item.enabled ? '真实接入' : '已关闭' }}</span></h3>
+            <span class="card-actions"><span class="health" :data-status="item.health_status">{{ item.health_status || 'not_configured' }}</span>
+              <SfxButton v-if="['llm', 'tts', 'asr'].includes(item.integration_key)" size="sm" :variant="item.enabled ? 'secondary' : 'primary'" :loading="saving === `toggle-${item.integration_key}`" @click="toggleIntegration(item)">{{ item.enabled ? '关闭真实接入' : '开启真实接入' }}</SfxButton>
+            </span>
+          </header>
           <label>Provider<input v-model="drafts[item.integration_key].provider" class="sfx-input" placeholder="openai / volcengine / xfyun" /></label>
           <label>Base URL<input v-model="drafts[item.integration_key].base_url" class="sfx-input" placeholder="https://…" /></label>
           <label>Model Name<input v-model="drafts[item.integration_key].model_name" class="sfx-input" placeholder="模型或端点名称" /></label>
           <label>API Key<input v-model="drafts[item.integration_key].api_key" class="sfx-input" type="password" :placeholder="item.key_configured ? `已配置（末四位 ${item.key_last4 || '****'}）` : '输入新密钥'" /></label>
-          <label class="checkbox-line"><input v-model="drafts[item.integration_key].enabled" type="checkbox" /> 启用该 Provider</label>
+          <label class="checkbox-line"><input v-model="drafts[item.integration_key].enabled" type="checkbox" /> 保存后启用该 Provider</label>
           <details><summary>高级配置（JSON）</summary><textarea v-model="drafts[item.integration_key].extra_config" class="sfx-input json-input" rows="4" /></details>
           <footer><SfxButton size="sm" :loading="saving === `integration-${item.integration_key}`" @click="saveIntegration(item)">保存并热刷新</SfxButton><SfxButton size="sm" variant="secondary" :loading="saving === `probe-${item.integration_key}`" @click="probe(item)">测试</SfxButton></footer>
         </article></div>
@@ -192,6 +216,6 @@ onMounted(load)
 .actions, .password-row-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
-.provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
+.provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; display:flex; align-items:center; gap:var(--space-2); }.card-actions { display:flex; align-items:center; gap:var(--space-2); }.toggle-caption { font-size:var(--caption-size); font-weight:400; color:var(--text-secondary); background:var(--surface-cool); padding:1px 8px; border-radius:999px; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.health[data-status="disabled"] { background:var(--surface-cool); color:var(--text-secondary); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
 .concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
 </style>

@@ -420,8 +420,19 @@ class LLMClient:
         return cls._instance
 
     def __init__(self):
+        if not hasattr(self, "_enabled"):
+            self._enabled = True
         if self._client is None:
             self._client = self._create_client()
+
+    def set_enabled(self, enabled: bool) -> None:
+        """管理员开关：false 时所有 chat 调用 fail-closed，不静默降级。"""
+        self._enabled = bool(enabled)
+        if not self._enabled:
+            # 保留当前 client 引用（配置可能随后恢复），只拒绝新调用。
+            logger.info("LLM real provider disabled by administrator; chat calls will fail closed")
+        else:
+            logger.info("LLM real provider enabled by administrator")
 
     def _create_client(self) -> BaseLLMClient:
         provider = settings.LLM_PROVIDER.lower()
@@ -456,6 +467,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         **kwargs,
     ) -> LLMResponse:
+        self._require_enabled()
         return await self._client.chat(messages, temperature, max_tokens, **kwargs)
 
     async def chat_stream(
@@ -465,6 +477,7 @@ class LLMClient:
         max_tokens: Optional[int] = None,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
+        self._require_enabled()
         async for chunk in self._client.chat_stream(messages, temperature, max_tokens, **kwargs):
             yield chunk
 
@@ -482,6 +495,11 @@ class LLMClient:
 
         response = await self.chat(messages, temperature, max_tokens)
         return response.content
+
+    def _require_enabled(self) -> None:
+        """Fail closed when the administrator disabled the real LLM provider."""
+        if not self._enabled:
+            raise LLMError("LLM_DISABLED", reason_code="LLM_DISABLED")
 
     @classmethod
     def reset(cls):

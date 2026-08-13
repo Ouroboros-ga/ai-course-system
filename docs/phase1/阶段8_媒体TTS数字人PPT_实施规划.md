@@ -1,5 +1,20 @@
 # 阶段8：课程媒体、TTS、PPT 与浏览器数字人架构及执行规划
 
+> **2026-08-13 真实豆包长文本端到端验证**：将本地切为正式模式
+> （`MEDIA_DEMO_MODE=false` + `STAGE8_TTS_PROVIDER=doubao`），课程 87 三知识点真实讲稿
+> （共 316 字符）经批量确认（`paid_tts_confirmed=true`）→ `media.tts` Worker →
+> 豆包 `seed-tts-2.0` 真实调用成功。真实计费调用仅 1 次；二次确认命中缓存
+> （`cache_hit_count=3`、`billable_chars=0`），证明幂等/缓存不重复计费。产物为
+> `mrel_64097674691748ed9f788bd142d1f5ed`（ready 草稿，未激活未发布）：3 个真实
+> MP3（ID3v2.4 + MPEG 帧同步，155–181KB）、3 份 `subtitle-manifest/v1`、3 份
+> `avatar-cues/v1`（`timing_source=provider_word_timing`，`phoneme_count=0`，明确
+> 标注非精确口型）。本回合修复两个链路问题：(1) `media_tts_handler` 缺少
+> `media_generation_job_service` 导入导致 Cue 排程 NameError 中断；(2) 本地 SQLite
+> 必须执行 `alembic upgrade head`（当前 head 0058），否则缺
+> `platform_task_concurrency_configs` 表时任务静默卡 pending。课程 87 已发布的 Fake
+> 快照未被覆盖；正式验证完成后本地 `backend/.env` 可恢复
+> `MEDIA_DEMO_MODE=true` 回到 demo 模式。
+
 > **2026-08-11 PPT manifest 异步化**：`POST /api/v1/media/course/{course_id}/releases/{release_id}/ppt-manifest` 只创建 `media.ppt_manifest` 任务并立即返回。Worker 先盘点 `ppt_slide_image` 缓存，对 PPTX 仅将缺页交给 LibreOffice；任务的 `output_metadata.page_progress` 记录总页数、已处理页、缓存页和待补页。建设页每 5 秒轮询既有媒体任务列表显示进度。服务重启扫尾后的 `media.ppt_manifest` 会从安全任务载荷重新入队。激活只校验已经冻结的 manifest，绝不在 HTTP 请求内重新渲染；没有 PPT/PDF 源的纯音频 Release 保持可激活。
 
 > **2026-08-10 当前角色路线更新**：新建设默认角色为 `platform-female-instructor-v1@1.0.0`，为平台自有、虚构的女性讲师肖像预设；渲染模式为 `portrait_patch_v1`（960px 静默主图 + 8 个口型补丁 + 闭眼补丁）。纹理作为内容寻址对象存储资产，由播放响应按 `course_id + release_id + preset_id + preset_version` 签发短期 URL；PixiJS 只以音频时钟选择补丁，不产生第二时钟。旧 `platform-instructor-real-v1@1.0.0` 汽车教师已退休，只为已冻结 Release 兼容解析。课程 87 的旧快照不得原地改脸，需新建、激活媒体版本后再正式发布。源图和哈希记录见 `frontend/src/assets/platform-avatar-presets/platform-female-instructor-v1/source/SOURCE.md`；这些源图为 1254×1254，未宣称为 2K。
@@ -549,8 +564,11 @@ dispose()
   缓存命中以及 v3 协议帧；未在本次开发回归中调用付费 Provider。
 - 已将 `websockets` 明确写入后端部署依赖清单；Provider 仍仅在 Media Worker 中按需
   导入它，运行时缺失会以 `TTS_DEPENDENCY_UNAVAILABLE` 失败，不会伪造音频。
-- 尚未完成：对长文本做一次新的人工授权限量 POC，以及接入教师端的“确认后生成”
-  界面（P4）。
+- **2026-08-13 更新**：教师端“确认后生成”界面已在前端建设页就绪（费用确认
+  checkbox + Provider 状态条），且课程 87 三知识点真实讲稿（316 字符）已通过
+  批量确认→Worker→豆包真实调用完成一次长文本端到端验证，二次确认命中缓存
+  不重复计费。长文本人工授权 POC 因此完成；`seed-icl-2.0` 复刻音色与讯飞
+  `x5_clone` 的 `pybuf` 验证仍属后续扩展。
 
 ### P2：Cue Worker 与发布冻结
 
@@ -705,7 +723,11 @@ dispose()
 
 1. 在最终目标 Windows 设备用有头浏览器补做连续 10 分钟记录：初始化时间、平均 FPS、掉帧率、
    音频同步偏差和 compatibility 切换；当前只有 4.123 秒无头 Chrome 短测，不得外推长时稳定性。
-2. 将本次豆包 POC 结论纳入 Provider 选择：`words` 可用于字幕/Cue，`phonemes` 为空，不能宣称精确口型。
-   若要创建真实 TTS 课程版本，必须由教师重新确认批次费用并新建 MediaRelease，绝不覆盖 Fake 版本。
+2. **2026-08-13 已落地**：豆包 POC 结论已纳入 Provider 选择（`words` 用于字幕/Cue、
+   `phonemes` 为空不做精确口型），并完成一次真实长文本端到端验证（见文首更新）。
+   后续若要发布真实 TTS 课程版本，仍必须由教师确认批次费用并新建 MediaRelease，绝不覆盖
+   Fake 版本。
 3. 决定 `PlaybackCapabilityProfile` 性能记录由哪类经授权角色提交和审核，然后新增受控写入接口；
    在这之前不虚构设备性能数据。
+4. 后续可扩展项：豆包 `seed-icl-2.0` 复刻音色验证、讯飞 `x5_clone` 的 `rhy=1 + pybuffer=1`
+   口型时序验证；均需单独限量 POC，不自动重复调用。

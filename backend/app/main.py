@@ -254,6 +254,15 @@ async def recover_durable_task_queues() -> None:
         await recover_learning_projection_outbox()
     except Exception:
         logger.exception("Learning projection outbox recovery failed")
+    try:
+        # 管理员开关（真实接入 true/false）从数据库恢复为进程内运行时状态；
+        # 恢复失败一律落到禁用态（fail-closed），不让未授权外部调用发生。
+        from app.models.database import session_factory
+        from app.services.platform_provider_manager import provider_manager
+
+        provider_manager.restore_from_db(session_factory)
+    except Exception:
+        logger.exception("Platform provider integration restore failed")
 
 # P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
 # disabled -> no injection -> the endpoint stays 503. KG-MEST reports and

@@ -87,6 +87,20 @@ class VolcengineAsrClient:
         self.submit_url = settings.VOLCENGINE_ASR_SUBMIT_URL or _DEFAULT_SUBMIT_URL
         self.query_url = settings.VOLCENGINE_ASR_QUERY_URL or _DEFAULT_QUERY_URL
         self.timeout = settings.ASR_HTTP_TIMEOUT_SECONDS or 60
+        self._enabled = bool(self.api_key)
+
+    def replace_from_config(self, *, api_key: str, resource_id: str = "", submit_url: str = "", query_url: str = "", timeout: int | None = None) -> None:
+        """管理员刷新真实 ASR 配置（不触发任何网络调用）。"""
+        self.api_key = (api_key or "").strip()
+        self.resource_id = resource_id or _DEFAULT_RESOURCE_ID
+        self.submit_url = submit_url or _DEFAULT_SUBMIT_URL
+        self.query_url = query_url or _DEFAULT_QUERY_URL
+        if timeout:
+            self.timeout = int(timeout)
+
+    def set_enabled(self, enabled: bool) -> None:
+        """管理员开关：false 时 submit/query 一律 fail-closed，不静默降级。"""
+        self._enabled = bool(enabled)
 
     # ------------------------------------------------------------------
     # 公共边界
@@ -94,6 +108,7 @@ class VolcengineAsrClient:
 
     def submit(self, audio_url: str, *, audio_format: str = "wav", uid: str = "ai-course-system", task_id: str | None = None) -> AsrSubmitResult:
         """提交音频转写任务。task_id 可复用调用方生成的 UUID（用于对象清理）。"""
+        self._require_enabled()
         task_id = task_id or str(uuid.uuid4())
         payload = {
             "user": {"uid": uid},
@@ -136,6 +151,7 @@ class VolcengineAsrClient:
 
     def query(self, task_id: str) -> AsrQueryResult:
         """查询任务状态。调用方负责轮询直至 completed / failed。"""
+        self._require_enabled()
         try:
             with httpx.Client(timeout=self.timeout) as client:
                 response = client.post(
@@ -174,6 +190,15 @@ class VolcengineAsrClient:
     # ------------------------------------------------------------------
     # 内部
     # ------------------------------------------------------------------
+
+    def _require_enabled(self) -> None:
+        """Fail closed when the administrator disabled the real ASR provider."""
+        if not self._enabled:
+            raise VolcengineAsrError(
+                "ASR_DISABLED",
+                "语音识别已被管理员关闭，请先在后端开启真实接入",
+                retryable=False,
+            )
 
     def _headers(self, task_id: str) -> dict[str, str]:
         if not self.api_key:

@@ -1962,3 +1962,88 @@ def json_dumps(value) -> str:
 def asyncio_run(awaitable):
     import asyncio
     return asyncio.run(awaitable)
+
+
+def test_knowledge_point_positions_derive_lesson_order():
+    from app.schemas.controlled_prep import OutlineCandidate
+
+    outline = OutlinePlannerResult(
+        candidates=[
+            OutlineCandidate(candidate_id="ch", node_type="chapter", title="发动机", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="sec", node_type="section", title="总体构造", parent_candidate_id="ch", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="曲柄连杆", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="配气机构", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="供给系统", parent_candidate_id="sec", evidence_ids=["es_1"]),
+        ],
+        prerequisites=[],
+    )
+
+    positions = PrepLLMAdapter._knowledge_point_positions(outline)
+    assert positions["kp_1"]["is_first"] is True
+    assert positions["kp_1"]["is_last"] is False
+    assert positions["kp_1"]["previous_title"] is None
+    assert positions["kp_1"]["next_title"] == "配气机构"
+    assert positions["kp_2"]["is_first"] is False
+    assert positions["kp_2"]["previous_title"] == "曲柄连杆"
+    assert positions["kp_2"]["next_title"] == "供给系统"
+    assert positions["kp_3"]["is_last"] is True
+
+    sequence = PrepLLMAdapter._knowledge_point_sequence(outline)
+    assert [item["title"] for item in sequence] == ["曲柄连杆", "配气机构", "供给系统"]
+    assert [item["index"] for item in sequence] == [1, 2, 3]
+
+
+def test_script_writer_batch_payload_carries_position_and_sequence():
+    from app.schemas.controlled_prep import OutlineCandidate
+
+    captured = {}
+
+    class CapturingPort:
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            captured["messages"] = messages
+            scripts = [
+                {
+                    "stage": "script_writer",
+                    "candidate_id": cid,
+                    "title": "t",
+                    "course_positioning": "p",
+                    "prerequisites": [],
+                    "style": {"level": "beginner", "tone": "calm", "language": "zh-CN"},
+                    "content": "内容。",
+                    "claims": ["c"],
+                }
+                for cid in ("kp_1", "kp_2", "kp_3")
+            ]
+            wire = {"stage": "script_writer_batch", "scripts": scripts}
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(wire),
+                "content": json.dumps(wire, ensure_ascii=False),
+            })()
+
+    outline = OutlinePlannerResult(
+        candidates=[
+            OutlineCandidate(candidate_id="ch", node_type="chapter", title="发动机", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="sec", node_type="section", title="总体构造", parent_candidate_id="ch", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="曲柄连杆", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="配气机构", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="供给系统", parent_candidate_id="sec", evidence_ids=["es_1"]),
+        ],
+        prerequisites=[],
+    )
+    request = ControlledPrepInput(
+        evidence=[EvidenceReference(evidence_id="es_1", text="内容", page=1)],
+        course_positioning="汽车构造",
+        style=TeachingStyleConfig(),
+    )
+    candidates = [c for c in outline.candidates if c.node_type == "knowledge_point"]
+
+    asyncio_run(PrepLLMAdapter(structured_llm=CapturingPort()).write_scripts_batch(
+        request, outline, candidates,
+    ))
+
+    user_prompt = next(m["content"] for m in captured["messages"] if m["role"] == "user")
+    payload = json.loads(user_prompt)
+    assert "knowledge_point_sequence" in payload
+    assert [c["position"]["is_first"] for c in payload["candidates"]] == [True, False, False]
+    assert payload["candidates"][1]["position"]["previous_title"] == "曲柄连杆"
+    assert payload["candidates"][2]["position"]["is_last"] is True
