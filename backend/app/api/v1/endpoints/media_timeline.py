@@ -211,6 +211,20 @@ async def get_asset_content(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="object_key 不安全") from exc
 
+    # ASR 语音输入的服务间只读:火山引擎 ASR 无登录态,只能凭后端签发的
+    # 签名 URL 拉取录音。签名本身已绑定 course_id/purpose/有效期,且对象
+    # 限定在 asr_audio/ 前缀下、转写完成后即被清理,故此处免登录直接返回。
+    if signed_scope.get("purpose") == "asr_transcribe":
+        if not object_key.startswith("asr_audio/"):
+            raise HTTPException(status_code=403, detail="ASR 媒体签名范围无效")
+        try:
+            file_path = storage._safe_full_path(object_key)
+            if not Path(file_path).is_file():
+                raise FileNotFoundError(object_key)
+            return FileResponse(path=file_path, media_type="audio/wav", filename=None)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="媒体文件不存在") from exc
+
     # Platform avatar manifests and textures are immutable shared registry
     # assets, not course-owned MediaAsset rows.  Their signed URLs still bind
     # the exact course/release/preset and this branch repeats Course Access
