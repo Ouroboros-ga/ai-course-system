@@ -126,6 +126,7 @@ from app.api.v1.endpoints import (
     canary_v2,          # P1-09 G5A V2 Canary quality-gate (no real services, ADR-0006)
     retrieval_demo,     # Shadow-1 local retrieval demo (isolated from V1)
     teaching_agent,     # Controlled LangGraph single-agent workflow; runtime injected explicitly
+    learning_adjustments,  # Learner-confirmed review and manual return transitions
     note,               # 笔记模块
     dashboard,          # 首页与课程概览聚合
     confirmation,       # 教师确认持久化
@@ -361,6 +362,7 @@ app.include_router(retrieval_demo.router, prefix="/api/v1/retrieval-demo", tags=
 # TeachingAgent is intentionally independent from V1 chat. It returns 503 until
 # an application composition root injects scope-checked domain Ports.
 app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=["TeachingAgent"])
+app.include_router(learning_adjustments.router, prefix="/api/v1/learning-adjustments", tags=["Learning adjustments"])
 
 # 阶段0：统一任务中心（OCR/解析/图谱/媒体/实验/同步等长任务的持久化与状态机）
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务中心"])

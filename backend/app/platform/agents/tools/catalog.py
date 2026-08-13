@@ -48,6 +48,8 @@ class ToolDescriptor:
     required_permission: str = ""
     default_enabled: bool = True
     description: str = ""
+    configurable: bool = True
+    status: str = "active"
 
     @property
     def requires_teacher_confirmation(self) -> bool:
@@ -106,18 +108,27 @@ def build_default_catalog() -> ToolCatalog:
     for name in (
         "graph", "retrieval", "cognition", "question_bank",
         "experiment", "visualization", "sandbox", "coding_diagnosis",
-        "student_history", "student_modeling",
+        "student_history", "student_modeling", "recommendation",
     ):
         catalog.register(ToolDescriptor(
             name=name, risk=ToolRisk.LOW,
             description=f"read-only {name} context tool",
         ))
     # Audit/context recording tools (MEDIUM risk)
-    for name in ("learning_events", "conversation_context"):
-        catalog.register(ToolDescriptor(
-            name=name, risk=ToolRisk.MEDIUM,
-            description=f"{name} audit/context recording tool",
-        ))
+    catalog.register(ToolDescriptor(
+        name="conversation_context",
+        risk=ToolRisk.MEDIUM,
+        description="conversation context recording tool",
+    ))
+    # Runtime audit is a platform invariant. Historical per-course rows remain
+    # readable, but this old switch cannot disable platform audit collection.
+    catalog.register(ToolDescriptor(
+        name="learning_event",
+        risk=ToolRisk.MEDIUM,
+        description="legacy learning-event policy; runtime audit is platform-managed",
+        configurable=False,
+        status="deprecated_non_configurable",
+    ))
     # 出题工具（MEDIUM risk）：写 question_generation_drafts 草稿，须经教师审核 approve
     catalog.register(ToolDescriptor(
         name="question_generation", risk=ToolRisk.MEDIUM,
@@ -134,9 +145,18 @@ def build_default_catalog() -> ToolCatalog:
     return catalog
 
 
+# One immutable catalog instance is the public source for schemas, services
+# and composition metadata. Runtime allow decisions still intersect Course
+# Access, teacher policy and the per-request hardness envelope.
+DEFAULT_TOOL_CATALOG = build_default_catalog()
+BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(DEFAULT_TOOL_CATALOG.names())
+
+
 __all__ = [
     "ToolRisk",
     "ToolDescriptor",
     "ToolCatalog",
     "build_default_catalog",
+    "DEFAULT_TOOL_CATALOG",
+    "BUILTIN_TOOL_NAMES",
 ]

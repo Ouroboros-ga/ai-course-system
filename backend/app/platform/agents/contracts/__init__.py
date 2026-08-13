@@ -25,8 +25,10 @@ Submodule layout:
 from __future__ import annotations
 
 from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
+from .constraint import ConversationHistoryPort, TeachingConstraintPort
 from .experiment import ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
+from .learning_adjustment import LearningAdjustmentPort
 from .research import (
     CodeReproductionPort,
     PaperSearchPort,
@@ -68,5 +70,8 @@ __all__ = [
     "TeacherSafetyValvePort",
     "ExperimentPort",
     "VisualizationPort",
+    "TeachingConstraintPort",
+    "ConversationHistoryPort",
+    "LearningAdjustmentPort",
     "TeachingTools",
 ]

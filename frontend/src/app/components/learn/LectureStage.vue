@@ -62,6 +62,8 @@ const emit = defineEmits([
   'captions-change',
   'playlist-next',
   'playlist-previous',
+  'media-seeked',
+  'media-error',
 ])
 
 const audioRef = ref(null)
@@ -221,6 +223,20 @@ function handleTimeUpdate(event) {
   if (!applyingExternalTime) emitPlayback(undefined, element)
 }
 
+function emitMediaSeeked(element = mediaElement.value) {
+  if (!isActiveMediaElement(element) || switchingMediaSource) return
+  const item = activePlaylistItem.value
+  emit('media-seeked', {
+    mediaReleaseItemId: item?.itemId ?? null,
+    localTimeMs: Math.round(Math.max(0, Number(element.currentTime) || 0) * 1_000),
+    globalTimeMs: Math.round(globalTimeFromElement(element) * 1_000),
+  })
+}
+
+function handleSeeked(event) {
+  emitMediaSeeked(event?.currentTarget || mediaElement.value)
+}
+
 function handlePause(event) {
   const element = event?.currentTarget || mediaElement.value
   // Natural media completion emits pause before ended in some browsers.
@@ -233,12 +249,20 @@ function handleAudioError(event) {
   if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   switchingMediaSource = false
   audioError.value = '发布的讲解音频无法加载'
+  emit('media-error', {
+    code: 'MEDIA_SOURCE_UNAVAILABLE',
+    mediaReleaseItemId: activePlaylistItem.value?.itemId ?? null,
+  })
   emitPlayback(false)
 }
 
 function handleLegacyVideoError(event) {
   if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   legacyVideoError.value = '兼容讲解视频无法加载'
+  emit('media-error', {
+    code: 'MEDIA_SOURCE_UNAVAILABLE',
+    mediaReleaseItemId: null,
+  })
   emitPlayback(false)
 }
 
@@ -376,6 +400,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         class="sfx-stage-clock"
         @loadedmetadata="handleLoadedMetadata"
         @timeupdate="handleTimeUpdate"
+        @seeked="handleSeeked"
         @play="emitPlayback(true, $event.currentTarget)"
         @pause="handlePause"
         @ended="handleEnded"
@@ -401,6 +426,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         preload="metadata"
         @loadedmetadata="handleLoadedMetadata"
         @timeupdate="handleTimeUpdate"
+        @seeked="handleSeeked"
         @play="emitPlayback(true, $event.currentTarget)"
         @pause="handlePause"
         @ended="handleEnded"

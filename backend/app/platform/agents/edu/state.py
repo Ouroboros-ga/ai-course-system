@@ -58,3 +58,17 @@ class TeachingState(TypedDict, total=False):
     visualization_plans: list[dict[str, Any]]
     pending_proposals: list[dict[str, Any]]
     governance_skipped_tools: list[str]
+    # Per-run resolved policy only; full policy history never enters runtime state.
+    constraint_policy_version: int
+    constraint_level: str
+    constraint_envelope: dict[str, Any]
+    matched_constraint_rule_ids: list[str]
+    constraint_decision_codes: list[str]
+    context_budget_summary: dict[str, Any]
+    # Conversation Domain text is ephemeral and removed from audit projections.
+    conversation_turns: list[dict[str, Any]]
+    # Playback coordinates are deliberately distinct. The learner supplies a
+    # question observation; the deterministic Port derives a review target;
+    # a return anchor does not exist until the learner accepts review.
+    question_observation: dict[str, Any] | None
+    learning_adjustment: dict[str, Any] | None

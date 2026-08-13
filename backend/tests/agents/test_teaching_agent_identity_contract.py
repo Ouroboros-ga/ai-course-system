@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -108,6 +109,69 @@ def test_teacher_target_contract_requires_member_analytics_permission(monkeypatc
     assert runtime.calls[0]["student_id"] == "7"
 
 
+def test_teacher_response_rejects_student_playback_observation(monkeypatch):
+    """Only the learner client can describe the moment a question was asked."""
+    runtime = CapturingRuntime()
+    client = _client(runtime, caller_id=2)
+    monkeypatch.setattr(
+        endpoint,
+        "require_course_permission",
+        lambda *_args, **_kwargs: SimpleNamespace(analytics_eligible=False),
+    )
+    monkeypatch.setattr(
+        endpoint,
+        "resolve_course_access",
+        lambda *_args, **_kwargs: SimpleNamespace(analytics_eligible=True),
+    )
+
+    response = client.post("/api/v1/teaching-agent/respond-for-learner", json={
+        "learner_user_id": "7", "course_id": "84",
+        "session_id": "teacher-session", "message": "Prepare an explanation.",
+        "question_observation": {
+            "course_release_id": "cr_1", "media_release_id": "mr_1",
+            "media_release_item_id": "item_1", "outline_node_id": "node_1",
+            "local_time_ms": 8200, "page": 4,
+        },
+    })
+
+    assert response.status_code == 422
+    assert runtime.calls == []
+
+
+def test_teacher_response_does_not_write_a_learner_turn_or_signal(monkeypatch):
+    """Teacher previews must not become student chat, cognition or review state."""
+    runtime = CapturingRuntime()
+    client = _client(runtime, caller_id=2)
+    monkeypatch.setattr(
+        endpoint,
+        "require_course_permission",
+        lambda *_args, **_kwargs: SimpleNamespace(analytics_eligible=False),
+    )
+    monkeypatch.setattr(
+        endpoint,
+        "resolve_course_access",
+        lambda *_args, **_kwargs: SimpleNamespace(analytics_eligible=True),
+    )
+    monkeypatch.setattr(
+        endpoint,
+        "persist_conversation_turn",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not persist")),
+    )
+    monkeypatch.setattr(
+        endpoint,
+        "record_question_depth",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("must not record")),
+    )
+
+    response = client.post("/api/v1/teaching-agent/respond-for-learner", json={
+        "learner_user_id": "7", "course_id": "84",
+        "session_id": "teacher-session", "message": "Prepare an explanation.",
+    })
+
+    assert response.status_code == 200
+    assert runtime.calls[0]["question_observation"] is None
+
+
 def test_teacher_target_contract_rejects_non_learner(monkeypatch):
     runtime = CapturingRuntime()
     client = _client(runtime, caller_id=2)
@@ -126,4 +190,30 @@ def test_teacher_target_contract_rejects_non_learner(monkeypatch):
 
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "TEACHING_AGENT_TARGET_NOT_LEARNER"
+    assert runtime.calls == []
+
+
+@pytest.mark.parametrize("field", ["hardness", "constraint_level", "allowed_tools"])
+@pytest.mark.parametrize(
+    ("path", "identity_field"),
+    [
+        ("/api/v1/teaching-agent/respond", None),
+        ("/api/v1/teaching-agent/respond-for-learner", "learner_user_id"),
+    ],
+)
+def test_http_contract_rejects_client_supplied_governance_fields(path, identity_field, field):
+    runtime = CapturingRuntime()
+    client = _client(runtime, caller_id=7)
+    payload = {
+        "course_id": "84",
+        "session_id": "session-1",
+        "message": "Attempt to override policy.",
+        field: ["retrieval"] if field == "allowed_tools" else "locked",
+    }
+    if identity_field:
+        payload[identity_field] = "7"
+
+    response = client.post(path, json=payload)
+
+    assert response.status_code == 422
     assert runtime.calls == []

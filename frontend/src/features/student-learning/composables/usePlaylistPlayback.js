@@ -23,6 +23,12 @@ export function findPlaylistItemIndexAtTime(items, seconds) {
   })
 }
 
+/** Resolve an immutable media release item id without inferring from mutable titles. */
+export function findPlaylistItemIndexById(items, itemId) {
+  if (!Array.isArray(items) || itemId == null || itemId === '') return -1
+  return items.findIndex(item => sameId(item?.itemId, itemId))
+}
+
 /** Resolve a directory click to the playlist clock, with legacy node fallback. */
 export function resolvePlaylistSelection(items, node) {
   const playlistIndex = findPlaylistItemIndex(items, node)
@@ -44,6 +50,12 @@ export function usePlaylistPlayback(playlist) {
       sameId(item.nodeId, nodeId)
       || sameId(item.outlineNodeId, nodeId)
     )) ?? -1
+    if (index >= 0) activeIndex.value = index
+    return index >= 0
+  }
+
+  function selectByItemId(itemId) {
+    const index = findPlaylistItemIndexById(playlist.value?.items, itemId)
     if (index >= 0) activeIndex.value = index
     return index >= 0
   }
@@ -70,5 +82,15 @@ export function usePlaylistPlayback(playlist) {
   }
 
   watch(playlist, () => { activeIndex.value = 0 }, { deep: false })
-  return { activeIndex, activeItem, activeAudioUrl, globalOffsetSeconds, selectByNode, next, previous, seekGlobal }
+  return {
+    activeIndex,
+    activeItem,
+    activeAudioUrl,
+    globalOffsetSeconds,
+    selectByNode,
+    selectByItemId,
+    next,
+    previous,
+    seekGlobal,
+  }
 }

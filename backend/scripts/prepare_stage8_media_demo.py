@@ -329,6 +329,7 @@ def _ensure_outline_and_scripts(
 
     for index, (title, body) in enumerate(LESSON_ITEMS, start=1):
         outline_node_id = f"on_stage8_media_demo_{course_id}_kp{index}"
+        concept_key = f"kg_stage8_media_demo_{course_id}_kp{index}"
         outline_node = session.exec(
             select(CourseOutlineNode).where(CourseOutlineNode.outline_node_id == outline_node_id)
         ).first()
@@ -342,10 +343,18 @@ def _ensure_outline_and_scripts(
                 title=title,
                 order_index=index - 1,
                 page_range=str(index),
+                # The local fixture deliberately uses deterministic synthetic
+                # graph keys so a release-pinned review can be exercised.
+                knowledge_graph_node_id=concept_key,
                 content_hash=hashlib.sha256(title.encode("utf-8")).hexdigest(),
             )
             session.add(outline_node)
             session.flush()
+        elif not outline_node.knowledge_graph_node_id:
+            # Older copies of this local-only fixture predate learning
+            # adjustments.  Backfill only this script-owned synthetic node.
+            outline_node.knowledge_graph_node_id = concept_key
+            session.add(outline_node)
 
         script_node_id = f"tsn_stage8_media_demo_{course_id}_kp{index}"
         script_node = session.exec(

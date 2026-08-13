@@ -78,6 +78,7 @@
 | 六维认知状态 + 掌握度（规则基线） | ✅ | `rule_baseline.py` 为真实实现；**BKT/DKT/IRT 仅接口定义** |
 | 认知推荐 | ✅ | `cognitive_recommendation.py` + `recommendation_consumed` 事件 |
 | 课程内问答（TeachingAgent 六段工作流） | ✅ | 上下文锚定 `course_id+release_id+outline_node_id`，证据引用，Conversation 域独立持久化（默认 90 天保留） |
+| TeachingAgent 受控回顾与进度续接 | 🧪 | 已实现本地 P0：提问位置、冻结回顾目标和点击时返回锚点三者分离；回顾须由学习者确认，且不会写入掌握度。跨媒体项、浏览器 seek 失败和主动返回仍待非生产人工验收。 |
 | 练习/测验、前置知识跳转补学 | ✅ | `question_bank.py`、`prerequisite.py` |
 
 ### 2.4 代码实验（CS 垂类）
@@ -319,6 +320,7 @@ npm run smoke:app
 - **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
 - **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
 - **2026-08-12**：ResearchAgent 的真实部署数据库兼容基线确认为 PostgreSQL 16.14 + pgvector 0.7.4；vector 类型、`<=>` 余弦运算符与 Alembic `0053` 五张工作区表均只读验收。运行时将 pgvector SQL 不可用降级为关键词检索，不修改数据库配置或服务。
+- **2026-08-13**：TeachingAgent 学习调整 P0 增加 release-pinned 回顾提案与学习者确认的返回锚点；`applied` 仅表示已接受回顾，不表示浏览器跳转成功。泛雅兼容 `/progress/adjust` 不再根据外部理解等级伪造建议，只有关联同一学习者、课程、有效冻结目标及已持久化助手回答的真实回合才返回补充内容；否则明确返回 `503`。本地定向测试已通过，浏览器人工验收和部署仍待执行。
 - **2026-08-11**：ResearchAgent Harness v1（真实条件 LangGraph、科研工作区、Todo/Notepad/Scope/Memory、pgvector 迁移与五视图前端）；多源检索、全文、写作与完整仓库复现仍未接通。
 - **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。
 

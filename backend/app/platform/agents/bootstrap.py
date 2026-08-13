@@ -54,6 +54,15 @@ from app.platform.agents.tools.visualization import (
     make_session_scoped_visualization_port,
 )
 from app.platform.agents.tools.web_research import make_session_scoped_web_research_port
+from app.platform.agents.providers.governance.teaching_constraints import (
+    make_session_scoped_teaching_constraint_port,
+)
+from app.platform.agents.providers.teaching.conversation_history import (
+    make_session_scoped_conversation_history_port,
+)
+from app.platform.agents.providers.teaching.learning_adjustment import (
+    make_session_scoped_learning_adjustment_port,
+)
 from app.platform.retrieval_demo.service import DemoService
 
 logger = logging.getLogger(__name__)
@@ -283,6 +292,15 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             visualization=make_session_scoped_visualization_port(session_factory),
             coding_diagnosis=coding_diagnosis,
             student_history=student_history,
+            teaching_constraints=make_session_scoped_teaching_constraint_port(
+                session_factory
+            ),
+            conversation_history=make_session_scoped_conversation_history_port(
+                session_factory
+            ),
+            learning_adjustment=make_session_scoped_learning_adjustment_port(
+                session_factory
+            ),
         )
         app.state.teaching_agent_runtime_registry = registry
 
