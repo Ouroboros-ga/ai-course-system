@@ -39,6 +39,7 @@ from app.models.access_control_model import (
 )
 from app.models.agent_governance_model import AgentActionProposal
 from app.models.cognitive_state_model import LearningEvidenceRecord
+from app.models.graph_production_model import CourseKnowledgeNode
 from app.models.experiment_model import (
     AttemptStatus,
     CodingHintLevel,
@@ -64,6 +65,7 @@ from app.services.sandbox_client import (
     sandbox_client,
 )
 from app.services.learning_evidence_context_service import upsert_learning_evidence_context
+from app.domain.learning.evidence import EvidenceType
 
 
 logger = logging.getLogger(__name__)
@@ -1070,8 +1072,15 @@ class ExperimentFinalizeService:
         attempt.updated_at = utcnow_aware()
 
         # 只有评分策略允许且通过时才写入正式 LearningEvidence
-        if version.writes_formal_evidence and passed:
-            evidence = self._write_formal_evidence(
+        if version.writes_formal_evidence and latest_run.outcome in {
+            RunOutcome.ACCEPTED,
+            RunOutcome.WRONG_ANSWER,
+            RunOutcome.TIME_LIMIT_EXCEEDED,
+            RunOutcome.MEMORY_LIMIT_EXCEEDED,
+            RunOutcome.RUNTIME_ERROR,
+            RunOutcome.COMPILATION_ERROR,
+        }:
+            evidence_records = self._write_formal_evidence(
                 session,
                 course_id=course_id,
                 student_id=attempt.student_id,
@@ -1079,7 +1088,10 @@ class ExperimentFinalizeService:
                 run=latest_run,
                 version=version,
             )
-            attempt.evidence_id = evidence.evidence_id
+            if evidence_records:
+                # Retain the legacy singular reference for LabRecord callers;
+                # every mapped node still has its own queryable evidence row.
+                attempt.evidence_id = evidence_records[0].evidence_id
 
         ExperimentLabProjectionService().project_terminated_attempt(
             session, attempt=attempt, run=latest_run,
@@ -1098,40 +1110,90 @@ class ExperimentFinalizeService:
         attempt: ExperimentAttempt,
         run: ExperimentRun,
         version: ExperimentVersion,
-    ) -> LearningEvidenceRecord:
-        """写入正式评分型 LearningEvidence（复用 cognitive_state_model）"""
-        # Stable evidence_id derived from attempt to ensure idempotency
-        stable_key = f"experiment_attempt|{attempt.attempt_id}|experiment_scored"
-        evidence_id = "ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex
+    ) -> list[LearningEvidenceRecord]:
+        """Write source-free, node-specific formal code evidence.
 
-        existing = session.exec(
-            select(LearningEvidenceRecord).where(
-                LearningEvidenceRecord.evidence_id == evidence_id,
-            )
-        ).first()
-        if existing is not None:
-            upsert_learning_evidence_context(session, existing)
-            return existing
-
-        evidence = LearningEvidenceRecord(
-            evidence_id=evidence_id,
-            student_id=student_id,
+        Mapping is fail-closed: an experiment without a valid course-owned
+        knowledge node is finalized as a lab result but cannot change
+        cognition through a guessed identity.
+        """
+        definition = definition_service.get_definition(
+            session,
             course_id=course_id,
-            node_id=None,
-            evidence_type="experiment_completion",
-            value=run.score,
-            confidence=1.0,
-            label="实验完成" if attempt.passed else "实验未通过",
-            description=f"实验 {attempt.experiment_id} 尝试 {attempt.attempt_id} 评分 {run.score:.2f}",
-            source="experiment_finalize_service",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            event_refs=[attempt.attempt_id, run.run_id],
-            policy_version=CODING_HINT_POLICY_VERSION,
+            experiment_id=attempt.experiment_id,
         )
-        session.add(evidence)
-        session.flush()
-        upsert_learning_evidence_context(session, evidence)
-        return evidence
+        requested_node_ids = [
+            node_id
+            for node_id in (definition.knowledge_node_ids or [])
+            if isinstance(node_id, int) and not isinstance(node_id, bool)
+        ]
+        if not requested_node_ids:
+            return []
+        course_node_ids = set(session.exec(select(CourseKnowledgeNode.id).where(
+            CourseKnowledgeNode.course_id == course_id,
+            CourseKnowledgeNode.id.in_(requested_node_ids),
+        )).all())
+        evidence_records: list[LearningEvidenceRecord] = []
+        seen_node_ids: set[int] = set()
+        for node_id in requested_node_ids:
+            if node_id not in course_node_ids or node_id in seen_node_ids:
+                continue
+            seen_node_ids.add(node_id)
+            stable_key = (
+                f"experiment_attempt|{attempt.attempt_id}|"
+                f"{EvidenceType.CODING_EXECUTION.value}|{node_id}"
+            )
+            evidence_id = "ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex
+            existing = session.exec(select(LearningEvidenceRecord).where(
+                LearningEvidenceRecord.evidence_id == evidence_id,
+            )).first()
+            if existing is not None:
+                upsert_learning_evidence_context(session, existing)
+                evidence_records.append(existing)
+                continue
+            score = 1.0 if attempt.passed else 0.0
+            evidence = LearningEvidenceRecord(
+                evidence_id=evidence_id,
+                student_id=student_id,
+                course_id=course_id,
+                node_id=node_id,
+                evidence_type=EvidenceType.CODING_EXECUTION.value,
+                value=score,
+                confidence=1.0,
+                label="Code assessment passed" if attempt.passed else "Code assessment not passed",
+                description=(
+                    f"Experiment {attempt.experiment_id} attempt {attempt.attempt_id} "
+                    f"server-scored code result {score:.2f}"
+                ),
+                source="experiment_finalize_service",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                event_refs=[attempt.attempt_id, run.run_id],
+                policy_version=CODING_HINT_POLICY_VERSION,
+            )
+            session.add(evidence)
+            session.flush()
+            upsert_learning_evidence_context(session, evidence)
+            evidence_records.append(evidence)
+        return evidence_records
+
+    def get_cognitive_evidence_node_ids(
+        self,
+        session: Session,
+        *,
+        attempt: ExperimentAttempt,
+    ) -> list[int]:
+        """Return only this attempt's persisted code-evidence node IDs."""
+        records = session.exec(select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.student_id == attempt.student_id,
+            LearningEvidenceRecord.course_id == attempt.course_id,
+            LearningEvidenceRecord.evidence_type == EvidenceType.CODING_EXECUTION.value,
+            LearningEvidenceRecord.source == "experiment_finalize_service",
+        )).all()
+        return sorted({
+            int(record.node_id)
+            for record in records
+            if record.node_id is not None and attempt.attempt_id in (record.event_refs or [])
+        })
 
 
 class ExperimentLabProjectionService:

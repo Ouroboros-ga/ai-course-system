@@ -24,7 +24,10 @@ from app.platform.agents.kg_mest_report_store import KGMestShadowReportStore
 from app.platform.agents.platform import LegacyAgentPlatform
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime.profile import AgentType
-from app.platform.agents.tools.coding import make_session_scoped_coding_ports
+from app.platform.agents.tools.coding import (
+    make_session_scoped_code_submission_port,
+    make_session_scoped_coding_ports,
+)
 from app.platform.agents.tools.cognition import make_session_scoped_cognition_port
 from app.platform.agents.tools.conversation_context import (
     make_session_scoped_conversation_context_port,
@@ -87,12 +90,14 @@ def bootstrap_coding_agent(app: Any) -> bool:
             platform = LegacyAgentPlatform()
         session_factory = lambda: Session(engine)
         coding_diagnosis, _ = make_session_scoped_coding_ports(session_factory)
+        code_submission = make_session_scoped_code_submission_port(session_factory)
 
         sandbox_port = getattr(app.state, "coding_agent_sandbox_port", None)
         if sandbox_port is None:
             sandbox_port = Judge0SandboxPort(session_factory=session_factory)
             app.state.coding_agent_sandbox_port = sandbox_port
         app.state.coding_agent_diagnosis_port = coding_diagnosis
+        app.state.coding_agent_code_submission_port = code_submission
 
         llm = None
         base_url = (getattr(settings, "LLM_API_BASE", "") or "").strip()
@@ -110,6 +115,7 @@ def bootstrap_coding_agent(app: Any) -> bool:
             builder=build_coding_graph_factory(
                 sandbox=sandbox_port,
                 coding_diagnosis=coding_diagnosis,
+                code_submission=code_submission,
                 llm=llm,
             ),
         )

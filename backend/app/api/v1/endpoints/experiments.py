@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlmodel import Session, select
@@ -998,11 +998,12 @@ async def create_run_diagnosis(
 @experiment_router.post("/runs/{run_id}/explanation")
 async def explain_run(
     run_id: str,
+    request: Request,
     course_id: int = Query(...),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return deterministic CodingAgent feedback from a bounded diagnosis only."""
+    """Return an owner-scoped CodingAgent explanation with safe fallback."""
     context = require_course_permission(session, current_user, course_id, "experiment.view")
     user_id = int(current_user["user_id"])
     run = run_service.get_run(
@@ -1024,10 +1025,36 @@ async def explain_run(
             message="No coding explanation is available yet",
             data={"run_id": run_id, "explanation": None},
         )
+    explanation = build_rule_explanation(diagnosis)
+    is_student_owner = (
+        context.role is not None
+        and context.role.value == "student"
+        and run.student_id == user_id
+    )
+    platform = getattr(request.app.state, "agent_platform", None)
+    if is_student_owner and platform is not None:
+        from app.platform.agents.runtime.base import AgentRunContext
+        from app.platform.agents.runtime.profile import AgentType
+
+        if platform.is_registered(AgentType.CODING):
+            result = await platform.respond(AgentRunContext(
+                agent_type=AgentType.CODING.value,
+                scope=(str(run.student_id), str(course_id)),
+                student_id=str(run.student_id),
+                course_id=str(course_id),
+                code_submission_id=run.run_id,
+            ))
+            answer = result.get("final_answer")
+            if answer and result.get("status") not in {
+                "no_sandbox_result", "unavailable", "timeout", "runtime_error",
+            } and not result.get("errors"):
+                explanation["summary"] = str(answer)
+                explanation["source"] = "coding-agent"
+                explanation["agent_status"] = result.get("status", "ok")
     return unified_response(
         code=200,
         message="Coding explanation retrieved",
-        data=build_rule_explanation(diagnosis),
+        data=explanation,
     )
 
 

@@ -922,7 +922,13 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
         SandboxExecutionLeaseService,
         version_service,
     )
+    from app.services.learning_projection_outbox_service import (
+        dispatch_learning_projection,
+        enqueue_learning_projection,
+    )
     from sqlmodel import select
+
+    projection_event_ids: list[str] = []
 
     # 1. 标记 running
     with ctx.session_factory() as session:
@@ -1029,13 +1035,32 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             if completed_run.cancel_requested_at is None:
                 run_service._ensure_coding_diagnosis(completion_session, completed_run)
                 if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
-                    finalize_service.finalize_attempt(
+                    finalized_attempt = finalize_service.finalize_attempt(
                         completion_session,
                         course_id=int(course_id),
                         attempt_id=attempt_id,
                         student_id=completed_run.student_id,
                     )
+                    for node_id in finalize_service.get_cognitive_evidence_node_ids(
+                        completion_session,
+                        attempt=finalized_attempt,
+                    ):
+                        event = enqueue_learning_projection(
+                            completion_session,
+                            attempt_id=None,
+                            source_type="experiment_attempt",
+                            source_ref=finalized_attempt.attempt_id,
+                            student_id=finalized_attempt.student_id,
+                            course_id=finalized_attempt.course_id,
+                            knowledge_node_id=node_id,
+                        )
+                        if event is not None:
+                            projection_event_ids.append(event.event_id)
             completion_session.commit()
+            # Events are durable before dispatch. The dispatcher is
+            # non-blocking, so projection retries cannot alter this result.
+            for event_id in projection_event_ids:
+                dispatch_learning_projection(event_id)
     finally:
         with ctx.session_factory() as release_session:
             try:

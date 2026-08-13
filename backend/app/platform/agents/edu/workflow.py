@@ -176,6 +176,115 @@ def _fit_context_to_budget(
     }
 
 
+_CODING_SIGNAL_OUTCOMES = frozenset({
+    "accepted",
+    "wrong_answer",
+    "time_limit_exceeded",
+    "memory_limit_exceeded",
+    "runtime_error",
+    "compilation_error",
+    "sandbox_unavailable",
+    "unknown",
+})
+_CODING_SIGNAL_ERROR_CLASSES = frozenset({
+    "syntax", "compile", "runtime", "logic", "complexity",
+    "environment", "none", "unknown",
+})
+_SAFE_CODING_ACTIONS = {
+    "syntax": ["先查看编译器指出的行附近代码", "检查括号、缩进、关键字和语句结束符"],
+    "compile": ["确认语言版本和入口函数符合题目要求", "阅读第一条编译错误而不是后续连锁错误"],
+    "runtime": ["用最小输入复现错误", "检查边界条件和变量初始化"],
+    "logic": ["找一个最小反例", "手工对照题目要求执行关键分支"],
+    "complexity": ["估算主要循环或递归的时间复杂度", "检查是否重复计算相同子问题"],
+    "environment": ["稍后重试沙箱执行", "确认课程沙箱状态后再提交"],
+    "none": ["解释关键步骤的作用", "如需提升难度，请请求下一道课程练习"],
+    "unknown": ["等待一次有效执行结果后再诊断", "不要根据猜测修改多个地方"],
+}
+
+
+def _bounded_int(value: Any, *, minimum: int = 0, maximum: int = 1_000_000) -> int | None:
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value if minimum <= value <= maximum else None
+
+
+def _allowed_coding_signal_value(value: Any, allowed: frozenset[str]) -> str | None:
+    return value if isinstance(value, str) and value in allowed else None
+
+
+def _sanitize_coding_diagnosis_for_edu(payload: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Allow only the structural CodingAgent contract into EduAgent state.
+
+    This consumer-side whitelist is intentionally independent of the provider:
+    a future port regression cannot turn source, artifacts, output, free-form
+    summaries, or diagnostic prompts into EduAgent/LLM context.  Recommended
+    actions are selected from this local controlled vocabulary rather than
+    copied from the producer payload.
+    """
+    if not isinstance(payload, Mapping):
+        return None
+    error_class = _allowed_coding_signal_value(
+        payload.get("error_class"), _CODING_SIGNAL_ERROR_CLASSES,
+    )
+    outcome = _allowed_coding_signal_value(
+        payload.get("outcome"), _CODING_SIGNAL_OUTCOMES,
+    )
+    safe: dict[str, Any] = {}
+    if outcome is not None:
+        safe["outcome"] = outcome
+    if error_class is not None:
+        safe["error_class"] = error_class
+    for field in ("line", "column", "passed_count", "total_count"):
+        if (value := _bounded_int(payload.get(field))) is not None:
+            safe[field] = value
+
+    source_signal = payload.get("learning_signal")
+    if not isinstance(source_signal, Mapping):
+        return safe or None
+    signal_error_class = _allowed_coding_signal_value(
+        source_signal.get("error_class") or error_class,
+        _CODING_SIGNAL_ERROR_CLASSES,
+    )
+    signal_outcome = _allowed_coding_signal_value(
+        source_signal.get("outcome") or outcome,
+        _CODING_SIGNAL_OUTCOMES,
+    )
+    signal: dict[str, Any] = {"schema_version": "coding-learning-signal/1"}
+    if signal_outcome is not None:
+        signal["outcome"] = signal_outcome
+    if signal_error_class is not None:
+        signal["error_class"] = signal_error_class
+    node_ids = [
+        node_id
+        for node_id in (source_signal.get("knowledge_node_ids") or [])
+        if _bounded_int(node_id, minimum=1) is not None
+    ][:20]
+    if node_ids:
+        signal["knowledge_node_ids"] = node_ids
+    repeated = source_signal.get("repeated_error")
+    if isinstance(repeated, Mapping):
+        repeated_error: dict[str, Any] = {}
+        repeated_class = _allowed_coding_signal_value(
+            repeated.get("error_class") or signal_error_class,
+            _CODING_SIGNAL_ERROR_CLASSES,
+        )
+        if repeated_class is not None:
+            repeated_error["error_class"] = repeated_class
+        if (count := _bounded_int(repeated.get("recent_count"), maximum=5)) is not None:
+            repeated_error["recent_count"] = count
+            repeated_error["is_repeated"] = count >= 2
+        elif isinstance(repeated.get("is_repeated"), bool):
+            repeated_error["is_repeated"] = repeated["is_repeated"]
+        if repeated_error:
+            signal["repeated_error"] = repeated_error
+    if signal_error_class is not None:
+        signal["recommended_actions"] = list(
+            _SAFE_CODING_ACTIONS[signal_error_class]
+        )
+    safe["learning_signal"] = signal
+    return safe
+
+
 def _truncate_answer(answer: str, max_chars: int) -> tuple[str, bool]:
     if len(answer) <= max_chars:
         return answer, False
@@ -839,7 +948,7 @@ def build_teaching_workflow(tools: TeachingTools):
                 run_id=state.get("current_code_submission_id"),
             )
             return {
-                "coding_diagnosis": dict(diagnosis) if diagnosis else None,
+                "coding_diagnosis": _sanitize_coding_diagnosis_for_edu(diagnosis),
                 "trace": _trace(state, "load_coding_diagnosis", available=diagnosis is not None),
             }
         except Exception as error:  # noqa: BLE001 -- diagnosis is optional context

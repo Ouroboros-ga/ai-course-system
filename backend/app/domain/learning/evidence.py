@@ -34,6 +34,10 @@ class EvidenceType(str, enum.Enum):
     QUIZ_PATTERN = "quiz_pattern"
     """Evidence of repeated error patterns in quizzes."""
 
+    # Server-verified coding evidence
+    CODING_EXECUTION = "coding_execution"
+    """Evidence from a terminal, server-scored code-execution result."""
+
     # Engagement evidence
     ENGAGEMENT = "engagement"
     """Evidence of student engagement (access frequency, time spent)."""

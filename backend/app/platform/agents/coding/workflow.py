@@ -18,12 +18,13 @@ would be HIGH-risk (not implemented in this skeleton).
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional
 
 from langgraph.graph import END, START, StateGraph
 
-from ..contracts.sandbox import CodingDiagnosisPort, SandboxPort
+from ..contracts.sandbox import CodeSubmissionPort, CodingDiagnosisPort, SandboxPort
 from ..contracts.teaching import TeachingLLMPort
 
 from .state import CodingState
@@ -42,6 +43,7 @@ class CodingTools:
 
     sandbox: SandboxPort
     coding_diagnosis: Optional[CodingDiagnosisPort] = None
+    code_submission: Optional[CodeSubmissionPort] = None
     llm: Optional[TeachingLLMPort] = None
 
 
@@ -120,6 +122,31 @@ def _llm_diagnosis_context(
     return context
 
 
+def _normalise_source_fragment(value: str) -> str:
+    """Normalise whitespace only for source-echo detection, never storage."""
+    return re.sub(r"\s+", "", value)
+
+
+def _answer_echoes_submission_source(*, answer: str, source_code: str) -> bool:
+    """Reject a model response that repeats the private submission.
+
+    CodingAgent may inspect the authorized source to locate an issue, but the
+    response becomes product-facing data and can be retained by the
+    conversation domain.  Detect the whole source plus meaningful source
+    lines after whitespace normalisation; return a source-free rule diagnosis
+    instead of attempting to redact an LLM answer in place.
+    """
+    compact_answer = _normalise_source_fragment(answer)
+    compact_source = _normalise_source_fragment(source_code)
+    if compact_source and compact_source in compact_answer:
+        return True
+    return any(
+        len(compact_line) >= 3 and compact_line in compact_answer
+        for line in source_code.splitlines()
+        if (compact_line := _normalise_source_fragment(line))
+    )
+
+
 def build_coding_workflow(tools: CodingTools):
     """Compile the Coding Agent LangGraph workflow."""
 
@@ -196,15 +223,48 @@ def build_coding_workflow(tools: CodingTools):
         # Try LLM-based diagnosis when configured.
         if tools.llm is not None:
             try:
-                response = await tools.llm.generate_teaching_response(context={
+                submission_context: dict[str, Any] | None = None
+                source_code = ""
+                if tools.code_submission is not None:
+                    submission = await tools.code_submission.get_submission_for_diagnosis(
+                        student_id=state["student_id"],
+                        course_id=state["course_id"],
+                        run_id=state.get("code_submission_id", ""),
+                    )
+                    if isinstance(submission, Mapping) and isinstance(submission.get("source_code"), str):
+                        source_code = submission["source_code"]
+                        submission_context = {
+                            "language": str(submission.get("language") or ""),
+                            "source_code": source_code,
+                        }
+                llm_context: dict[str, Any] = {
                     "agent_type": "coding",
                     "diagnosis": _llm_diagnosis_context(
                         state.get("coding_diagnosis"),
                         sandbox_result,
                     ),
+                }
+                if submission_context is not None:
+                    llm_context["submission"] = submission_context
+                response = await tools.llm.generate_teaching_response(context={
+                    **llm_context,
                 })
                 answer = response.get("answer") or response.get("content") or ""
                 if answer:
+                    if source_code and _answer_echoes_submission_source(
+                        answer=str(answer), source_code=source_code,
+                    ):
+                        return {
+                            "final_answer": _rule_based_diagnosis(
+                                sandbox_result, state.get("coding_diagnosis"),
+                            ),
+                            "warnings": [*state.get("warnings", []), "SOURCE_ECHO_BLOCKED"],
+                            "trace": _trace(
+                                state,
+                                "generate_diagnosis_response",
+                                source="rule_based_source_echo_blocked",
+                            ),
+                        }
                     return {
                         "final_answer": answer,
                         "trace": _trace(state, "generate_diagnosis_response", source="llm"),

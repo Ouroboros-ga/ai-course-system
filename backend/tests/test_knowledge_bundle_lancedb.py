@@ -521,6 +521,69 @@ def test_learning_projection_outbox_retries_without_process_restart(
     assert duplicate.retry_count == 2
 
 
+def test_learning_projection_outbox_accepts_idempotent_code_evidence_sources(
+    session,
+    teacher_user,
+    student_user,
+):
+    course = Course(
+        fanya_course_id="outbox-code-evidence-course",
+        fanya_course_name="Outbox code evidence course",
+        title="Outbox code evidence course",
+        teacher_id=teacher_user.id,
+    )
+    session.add(course)
+    session.flush()
+
+    first = projection_outbox.enqueue_learning_projection(
+        session,
+        attempt_id=None,
+        source_type="experiment_attempt",
+        source_ref="att_code_evidence_1",
+        student_id=student_user.id,
+        course_id=course.id,
+        knowledge_node_id=321,
+    )
+    duplicate = projection_outbox.enqueue_learning_projection(
+        session,
+        attempt_id=None,
+        source_type="experiment_attempt",
+        source_ref="att_code_evidence_1",
+        student_id=student_user.id,
+        course_id=course.id,
+        knowledge_node_id=321,
+    )
+    session.commit()
+
+    assert first is not None
+    assert duplicate is not None
+    assert duplicate.event_id == first.event_id
+    assert first.attempt_id is None
+    assert first.source_type == "experiment_attempt"
+    assert first.source_ref == "att_code_evidence_1"
+
+    other_course = Course(
+        fanya_course_id="outbox-code-evidence-other-course",
+        fanya_course_name="Outbox code evidence other course",
+        title="Outbox code evidence other course",
+        teacher_id=teacher_user.id,
+    )
+    session.add(other_course)
+    session.flush()
+    scoped = projection_outbox.enqueue_learning_projection(
+        session,
+        attempt_id=None,
+        source_type="experiment_attempt",
+        source_ref="att_code_evidence_1",
+        student_id=student_user.id,
+        course_id=other_course.id,
+        knowledge_node_id=321,
+    )
+    session.commit()
+    assert scoped is not None
+    assert scoped.event_id != first.event_id
+
+
 def test_real_lancedb_is_persistent_course_isolated_and_citation_closed(tmp_path):
     embedding = FixedEmbeddingProvider(dimension=8)
     provider = LanceDbCourseVectorProvider(

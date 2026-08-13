@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from typing import Callable, Optional
 
-from ..contracts.sandbox import CodingDiagnosisPort, SandboxPort
+from ..contracts.sandbox import CodeSubmissionPort, CodingDiagnosisPort, SandboxPort
 from ..contracts.teaching import TeachingLLMPort
 from ..runtime.base import RunnableGraph
 from .profile import build_coding_profile
@@ -28,6 +28,7 @@ def build_coding_graph_factory(
     *,
     sandbox: SandboxPort,
     coding_diagnosis: CodingDiagnosisPort | None = None,
+    code_submission: CodeSubmissionPort | None = None,
     llm: TeachingLLMPort | None = None,
 ) -> Callable[[tuple[str, ...]], Optional[RunnableGraph]]:
     """Return a ``RuntimeBuilder`` closure for the Coding Agent.
@@ -36,6 +37,8 @@ def build_coding_graph_factory(
         sandbox: Required ``SandboxPort`` for reading execution results.
         coding_diagnosis: Optional ``CodingDiagnosisPort`` for server-side
             diagnosis. When ``None``, the workflow skips this node.
+        code_submission: CodingAgent-only source reader for the exact scoped
+            submission. The workflow never stores its return value.
         llm: Optional ``TeachingLLMPort`` for LLM-based diagnosis. When
             ``None``, the workflow uses a rule-based fallback.
 
@@ -45,7 +48,12 @@ def build_coding_graph_factory(
         because identifiers are in the state). It returns ``None`` only if
         the workflow fails to compile.
     """
-    tools = CodingTools(sandbox=sandbox, coding_diagnosis=coding_diagnosis, llm=llm)
+    tools = CodingTools(
+        sandbox=sandbox,
+        coding_diagnosis=coding_diagnosis,
+        code_submission=code_submission,
+        llm=llm,
+    )
 
     try:
         compiled = build_coding_workflow(tools)

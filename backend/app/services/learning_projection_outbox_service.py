@@ -25,15 +25,26 @@ _dispatching_event_ids: set[str] = set()
 def enqueue_learning_projection(
     session: Session,
     *,
-    attempt_id: int,
+    attempt_id: int | None = None,
+    source_type: str = "question_attempt",
+    source_ref: str | None = None,
     student_id: int,
     course_id: int,
     knowledge_node_id: int | None,
 ) -> Optional[LearningProjectionOutbox]:
     if knowledge_node_id is None:
         return None
+    normalized_source_type = str(source_type or "").strip()
+    normalized_source_ref = str(source_ref or "").strip()
+    if not normalized_source_ref and attempt_id is not None:
+        normalized_source_ref = str(attempt_id)
+    if not normalized_source_type or not normalized_source_ref:
+        raise ValueError("projection_source_identity_required")
     existing = session.exec(select(LearningProjectionOutbox).where(
-        LearningProjectionOutbox.attempt_id == attempt_id,
+        LearningProjectionOutbox.source_type == normalized_source_type,
+        LearningProjectionOutbox.source_ref == normalized_source_ref,
+        LearningProjectionOutbox.student_id == student_id,
+        LearningProjectionOutbox.course_id == course_id,
         LearningProjectionOutbox.knowledge_node_id == knowledge_node_id,
     )).first()
     if existing is not None:
@@ -51,6 +62,8 @@ def enqueue_learning_projection(
         return existing
     event = LearningProjectionOutbox(
         attempt_id=attempt_id,
+        source_type=normalized_source_type,
+        source_ref=normalized_source_ref,
         student_id=student_id,
         course_id=course_id,
         knowledge_node_id=knowledge_node_id,

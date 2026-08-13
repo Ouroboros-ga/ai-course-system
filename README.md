@@ -1,5 +1,11 @@
 # AI 互动智课系统（ai-course-system）
 
+> **2026-08-13 代码作答认知更新**：CodingAgent 只可在本次提交的
+> `student_id + course_id + run_id` 授权范围内短暂读取源码；EduAgent 只接收无源码的
+> 结构化诊断摘要。Judge0 服务端验证的代码结果已与题库作答并列进入认知评判，权重分别
+> 为 1.5 和 1.0，达到 3.0 有效权重才形成掌握度结论。边界见
+> [实验室-代码沙箱可信评测契约](docs/phase1/实验室代码沙箱可信评测契约.md)。
+
 > **2026-08-11 数据库迁移状态**：服务器运行库已切换到独立 PostgreSQL 16。Alembic `0052`、可审计 SQLite 快照迁移工具和 `deploy/postgres/` 是当前基线；最终快照的 162 张表、89,561 行已完成摘要/外键校验。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。`0049/0050` 中遗留的小写枚举标签只用于兼容历史类型，`0051/0052` 补齐并归一化为 SQLAlchemy 实际持久化/读取的大写成员名：`evidence_render_assets.asset_type`、`source_material_versions.parse_status` 和 `source_materials.status` 不得保留小写活跃值，其他枚举仍 fail-closed。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
 >
 > 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。

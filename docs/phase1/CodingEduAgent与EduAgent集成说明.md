@@ -1,5 +1,36 @@
 # CodingEduAgent 与 EduAgent 集成说明
 
+## 2026-08-13 现行实现补充：分层源码授权与认知融合
+
+本节覆盖本文后续任何“CodingAgent 不得读取源码”的旧表述。边界改为按用途
+分层：`SessionScopedCodeSubmissionPort(student_id, course_id, run_id)` 只在
+CodingAgent 内部按三元身份校验后返回本次提交的 `run_id`、`language` 和
+`source_code`，用于本地诊断调用。源码是短暂上下文，不写入 LangGraph state、
+响应、`CodingDiagnosisRecord`、`LearningEvidenceRecord`、Agent trace/audit，
+也不传给 EduAgent；范围不匹配、未终结或基础设施失败即不返回源码。学生本人请求
+本次运行说明时才会调用该 CodingAgent 路径；若模型回显任意非空完整源码或规范化后的
+有效源码行，系统丢弃该回答并降级为无源码的规则诊断。EduAgent 对 Port 返回值另行执行
+白名单过滤，只接收受限结果分类、位置/计数、知识点、重复模式和本地受控的建议动作。
+
+`CodingDiagnosisPort` 和 `StudentHistoryPort` 则向 EduAgent 提供无源码的
+`coding-learning-signal/1`：`outcome`、`error_class`、显式关联的
+`knowledge_node_ids`、有界的同类错误次数、建议动作与 `evidence_refs`。该信号
+不含源码、测试产物、隐藏用例、输入输出、完整聊天或完整 LLM trace，是教学语境，
+不是学生可提交的成绩。
+
+正式代码作答仅由 `ExperimentFinalizeService` 在 Judge0 已验证终态时写入。
+`ACCEPTED`、`WRONG_ANSWER`、`TIME_LIMIT_EXCEEDED`、`MEMORY_LIMIT_EXCEEDED`、
+`RUNTIME_ERROR`、`COMPILATION_ERROR` 会按已显式关联且属于该课程的知识点各写一条
+`coding_execution` 证据，ACM/ICPC 成绩只能为 `1.0` 或 `0.0`；`PENDING`、
+`SANDBOX_UNAVAILABLE` 和基础设施失败不写认知证据。映射缺失或无效时 fail-closed，
+不猜测知识点或 release/outline 身份。
+
+认知服务把题库评分和上述代码评分并列融合：题库权重 `1.0`，代码权重 `1.5`，
+表现分为加权均值，至少需 `3.0` 有效权重才给出掌握度结论；`sample_size` 仍表示原始
+观测条数。错误类型和重复模式只作为教学诊断上下文，不能单独成为分数。终结事务提交后，
+以 `source_type=experiment_attempt`、`source_ref=attempt_id` 写入泛化 outbox，再复用
+现有异步认知/推荐刷新；题库 attempt 保留原有兼容字段。
+
 ## 当前实现
 
 ```text

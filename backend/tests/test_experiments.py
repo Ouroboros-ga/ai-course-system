@@ -37,6 +37,8 @@ from app.models.experiment_model import (
     RunOutcome,
     SandboxExecutionLease,
 )
+from app.models.graph_production_model import CourseKnowledgeNode
+from app.models.knowledge_bundle_model import LearningProjectionOutbox
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
     activate_student_membership,
@@ -254,6 +256,27 @@ def _mark_definition_published_for_fixture(
     definition.publish_status = ExperimentPublishStatus.PUBLISHED
     session.add(definition)
     session.commit()
+
+
+def _map_experiment_to_knowledge_node(session, *, course_id: int, experiment_id: str) -> CourseKnowledgeNode:
+    """Attach a verified course-owned node to a fixture experiment."""
+    node = CourseKnowledgeNode(
+        course_id=course_id,
+        node_key=f"kn_experiment_{uuid.uuid4().hex}",
+        title="Experiment concept",
+    )
+    definition = session.exec(
+        select(ExperimentDefinition).where(
+            ExperimentDefinition.course_id == course_id,
+            ExperimentDefinition.experiment_id == experiment_id,
+        )
+    ).one()
+    session.add(node)
+    session.flush()
+    definition.knowledge_node_ids = [node.id]
+    session.add(definition)
+    session.commit()
+    return node
 
 
 def _hold_formal_queue(monkeypatch) -> None:
@@ -827,6 +850,14 @@ class TestExperimentRun:
         self, client, session, teacher_user, student_user, monkeypatch,
     ):
         course, attempt_id = self._published_attempt(client, session, teacher_user, student_user)
+        attempt_before_run = attempt_service.get_attempt(
+            session, course_id=course.id, attempt_id=attempt_id, student_id=student_user.id,
+        )
+        node = _map_experiment_to_knowledge_node(
+            session,
+            course_id=course.id,
+            experiment_id=attempt_before_run.experiment_id,
+        )
         submitted = self._submit_pending_run(
             client, monkeypatch, course=course, attempt_id=attempt_id, student_user=student_user,
         )
@@ -856,6 +887,8 @@ class TestExperimentRun:
         assert attempt.final_score == 1.0
         assert attempt.passed is True
         assert evidence.value == 1.0
+        assert evidence.evidence_type == "coding_execution"
+        assert evidence.node_id == node.id
         assert len(records) == 1
         assert records[0].trusted_source is True
         assert records[0].evidence_id == attempt.evidence_id
@@ -1614,12 +1647,20 @@ class LegacyManualExperimentFinalizeContract:
 class TestExperimentFinalize:
     """The worker, rather than a student endpoint, owns terminal grades."""
 
-    def test_non_accepted_worker_run_finalizes_zero_without_evidence(
+    def test_non_accepted_worker_run_finalizes_zero_with_coding_evidence(
         self, client, session, teacher_user, student_user, monkeypatch,
     ):
         run_contract = TestExperimentRun()
         course, attempt_id = run_contract._published_attempt(
             client, session, teacher_user, student_user,
+        )
+        attempt_before_run = attempt_service.get_attempt(
+            session, course_id=course.id, attempt_id=attempt_id, student_id=student_user.id,
+        )
+        node = _map_experiment_to_knowledge_node(
+            session,
+            course_id=course.id,
+            experiment_id=attempt_before_run.experiment_id,
         )
         submitted = run_contract._submit_pending_run(
             client, monkeypatch, course=course, attempt_id=attempt_id, student_user=student_user,
@@ -1631,6 +1672,11 @@ class TestExperimentFinalize:
             sandbox_singleton,
             "submit_code",
             lambda **_kwargs: SandboxResult(status=SubmissionStatus.WRONG_ANSWER, stdout="wrong"),
+        )
+        dispatched_projection_events: list[str] = []
+        monkeypatch.setattr(
+            "app.services.learning_projection_outbox_service.dispatch_learning_projection",
+            lambda event_id: dispatched_projection_events.append(event_id),
         )
         _run_formal_task_inline(
             task_id=submitted["task_id"], course_id=course.id, attempt_id=attempt_id,
@@ -1650,12 +1696,24 @@ class TestExperimentFinalize:
         assert attempt.status == AttemptStatus.FINALIZED
         assert attempt.final_score == 0.0
         assert attempt.passed is False
-        assert attempt.evidence_id is None
-        assert evidence == []
+        assert attempt.evidence_id is not None
+        assert len(evidence) == 1
+        assert evidence[0].evidence_type == "coding_execution"
+        assert evidence[0].node_id == node.id
+        assert evidence[0].value == 0.0
+        projection_events = session.exec(select(LearningProjectionOutbox).where(
+            LearningProjectionOutbox.course_id == course.id,
+            LearningProjectionOutbox.student_id == student_user.id,
+        )).all()
+        assert len(projection_events) == 1
+        assert projection_events[0].attempt_id is None
+        assert projection_events[0].source_type == "experiment_attempt"
+        assert projection_events[0].source_ref == attempt_id
+        assert dispatched_projection_events == [projection_events[0].event_id]
         assert len(records) == 1
         assert records[0].final_score == 0.0
         assert records[0].passed is False
-        assert records[0].evidence_id is None
+        assert records[0].evidence_id == attempt.evidence_id
 
 
 class TestCodingAgentHints:
@@ -1786,6 +1844,43 @@ class TestCodingAgentRunExplanation:
         assert "source_code" not in payload
         assert "artifact" not in payload
         assert "hidden" not in payload
+
+    def test_student_explanation_invokes_scoped_coding_agent(
+        self, client, fastapi_app, monkeypatch, session, teacher_user, student_user,
+    ):
+        course = _course(session, teacher_user.id)
+        _enable_experiment_capabilities(session, course.id)
+        _enroll_student(session, course.id, student_user.id)
+        run = self._run_with_diagnosis(session, course.id, student_user.id)
+
+        class _CodingPlatform:
+            def is_registered(self, agent_type):
+                return getattr(agent_type, "value", agent_type) == "coding"
+
+            async def respond(self, context):
+                assert context.agent_type == "coding"
+                assert context.scope == (str(student_user.id), str(course.id))
+                assert context.student_id == str(student_user.id)
+                assert context.course_id == str(course.id)
+                assert context.code_submission_id == run.run_id
+                return {
+                    "status": "ok",
+                    "final_answer": "先检查循环终止条件，再用最小输入复现。",
+                    "warnings": [],
+                    "degraded_services": [],
+                }
+
+        monkeypatch.setattr(fastapi_app.state, "agent_platform", _CodingPlatform())
+        response = client.post(
+            f"{EXPERIMENTS}/runs/{run.run_id}/explanation?course_id={course.id}",
+            headers=_auth(_token(student_user)),
+        )
+
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["source"] == "coding-agent"
+        assert data["summary"] == "先检查循环终止条件，再用最小输入复现。"
+        assert "VERY_SECRET_STUDENT_SOURCE" not in str(data)
 
     def test_student_cannot_request_another_students_explanation(
         self, client, session, teacher_user, student_user,

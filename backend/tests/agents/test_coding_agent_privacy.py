@@ -1,4 +1,4 @@
-"""CodingAgent feedback must remain bounded to server-owned diagnoses."""
+"""CodingAgent may read only its scoped source while all shared data stays bounded."""
 from __future__ import annotations
 
 import asyncio
@@ -39,6 +39,16 @@ class _DiagnosisPort:
         }
 
 
+class _CodeSubmissionPort:
+    async def get_submission_for_diagnosis(self, **scope):
+        assert scope == {"student_id": "10", "course_id": "20", "run_id": "run_1"}
+        return {
+            "run_id": "run_1",
+            "language": "python3",
+            "source_code": "print('student-source-secret')",
+        }
+
+
 class _CaptureLLM:
     def __init__(self) -> None:
         self.context = None
@@ -48,11 +58,32 @@ class _CaptureLLM:
         return {"answer": "Review the loop boundary."}
 
 
-def test_coding_llm_context_excludes_source_hidden_io_artifacts_and_user_message():
+class _SourceEchoingLLM:
+    async def generate_teaching_response(self, *, context):
+        return {
+            "answer": (
+                "The submitted code was "
+                "print('student-source-secret'); change its loop boundary."
+            ),
+        }
+
+
+class _ShortCodeSubmissionPort:
+    async def get_submission_for_diagnosis(self, **_):
+        return {"run_id": "run_1", "language": "python3", "source_code": "x=1"}
+
+
+class _ShortSourceEchoingLLM:
+    async def generate_teaching_response(self, **_):
+        return {"answer": "请把 x=1 改为其他值。"}
+
+
+def test_coding_llm_context_includes_only_scoped_source_and_excludes_hidden_io_artifacts_and_user_message():
     llm = _CaptureLLM()
     workflow = build_coding_workflow(CodingTools(
         sandbox=_SensitiveSandbox(),
         coding_diagnosis=_DiagnosisPort(),
+        code_submission=_CodeSubmissionPort(),
         llm=llm,
     ))
 
@@ -81,10 +112,13 @@ def test_coding_llm_context_excludes_source_hidden_io_artifacts_and_user_message
             "debug_steps": ["Try the smallest counterexample."],
             "reason_codes": ["WRONG_ANSWER", "CHECK_LOGIC"],
         },
+        "submission": {
+            "language": "python3",
+            "source_code": "print('student-source-secret')",
+        },
     }
     rendered = str(llm.context)
     for secret in (
-        "student-source-secret",
         "hidden-output-secret",
         "judge-stderr-secret",
         "hidden-input-secret",
@@ -97,6 +131,7 @@ def test_coding_agent_uses_rule_feedback_without_llm():
     workflow = build_coding_workflow(CodingTools(
         sandbox=_SensitiveSandbox(),
         coding_diagnosis=_DiagnosisPort(),
+        code_submission=_CodeSubmissionPort(),
     ))
 
     result = asyncio.run(workflow.ainvoke({
@@ -111,6 +146,51 @@ def test_coding_agent_uses_rule_feedback_without_llm():
 
     assert result["final_answer"]
     assert result["trace"][-1]["source"] == "rule_based"
+
+
+def test_coding_agent_blocks_llm_source_echo_and_uses_source_free_fallback():
+    workflow = build_coding_workflow(CodingTools(
+        sandbox=_SensitiveSandbox(),
+        coding_diagnosis=_DiagnosisPort(),
+        code_submission=_CodeSubmissionPort(),
+        llm=_SourceEchoingLLM(),
+    ))
+
+    result = asyncio.run(workflow.ainvoke({
+        "student_id": "10",
+        "course_id": "20",
+        "code_submission_id": "run_1",
+        "warnings": [],
+        "errors": [],
+        "degraded_services": [],
+        "trace": [],
+    }))
+
+    assert "student-source-secret" not in str(result)
+    assert "SOURCE_ECHO_BLOCKED" in result["warnings"]
+    assert result["trace"][-1]["source"] == "rule_based_source_echo_blocked"
+
+
+def test_coding_agent_blocks_a_short_submission_echo_too():
+    workflow = build_coding_workflow(CodingTools(
+        sandbox=_SensitiveSandbox(),
+        coding_diagnosis=_DiagnosisPort(),
+        code_submission=_ShortCodeSubmissionPort(),
+        llm=_ShortSourceEchoingLLM(),
+    ))
+
+    result = asyncio.run(workflow.ainvoke({
+        "student_id": "10",
+        "course_id": "20",
+        "code_submission_id": "run_1",
+        "warnings": [],
+        "errors": [],
+        "degraded_services": [],
+        "trace": [],
+    }))
+
+    assert "x=1" not in str(result)
+    assert "SOURCE_ECHO_BLOCKED" in result["warnings"]
 
 
 def test_coding_agent_state_keeps_only_sanitized_sandbox_availability():
