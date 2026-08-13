@@ -144,6 +144,37 @@ def test_unsupported_asr_is_honest_and_uses_external_envelope(client):
     }
 
 
+def test_compat_text_qa_marks_the_delegated_turn_as_a_learner_turn(
+    client, session, monkeypatch
+):
+    student, course, node = _make_course_context(session)
+    from app.api.v1.endpoints import teaching_agent
+
+    async def fake_respond_for_subject(*, persist_learner_turn: bool, **_kwargs):
+        assert persist_learner_turn is True
+        return {"trace_id": "compat-trace", "answer": "Controlled answer", "concept": {}}
+
+    monkeypatch.setattr(teaching_agent, "_respond_for_subject", fake_respond_for_subject)
+    monkeypatch.setattr(teaching_agent, "get_runtime", lambda _request: object())
+
+    response = client.post(
+        f"{COMPAT_PREFIX}/qa/interact",
+        json=_signed({
+            "schoolId": "school-compat",
+            "userId": student.fanya_account_id,
+            "courseId": course.fanya_course_id,
+            "lessonId": course.fanya_course_id,
+            "sessionId": "compat-qa-session",
+            "questionType": "text",
+            "questionContent": "Explain this section.",
+            "currentSectionId": str(node.id),
+        }),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["data"]["answerContent"] == "Controlled answer"
+
+
 def test_progress_track_requires_course_access_and_persists_progress(client, session):
     student, course, node = _make_course_context(session)
     response = client.post(

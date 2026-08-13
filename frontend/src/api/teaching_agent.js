@@ -42,6 +42,7 @@ export function respondTeachingAgent(payload) {
       code_submission_id: payload.code_submission_id ?? null,
       question_observation: payload.questionObservation ?? null,
     },
+    signatureInQuery: true,
     allowFlatResponse: true,
     // Agent 不可用属预期降级场景，调用方负责回退到 V1，不应弹错误提示。
     skipErrorToast: payload.skipErrorToast ?? true,
@@ -65,6 +66,7 @@ export function respondTeachingAgentForLearner(payload) {
       exercise_id: payload.exercise_id ?? null,
       code_submission_id: payload.code_submission_id ?? null,
     },
+    signatureInQuery: true,
     allowFlatResponse: true,
     skipErrorToast: payload.skipErrorToast ?? true,
   })

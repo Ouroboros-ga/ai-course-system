@@ -278,6 +278,7 @@ async def compat_qa_interact(
             exercise_id=None,
             code_submission_id=None,
             question_observation=None,
+            persist_learner_turn=True,
             runtime_source=get_runtime(request),
             session=session,
         )

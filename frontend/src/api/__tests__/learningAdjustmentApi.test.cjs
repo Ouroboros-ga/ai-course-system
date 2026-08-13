@@ -28,6 +28,15 @@ test('learning-adjustment transition client uses the registered learner-owned ro
   assert.doesNotMatch(source, /recommended_playback_rate:\s*/)
 })
 
+test('strict TeachingAgent and learning-adjustment DTOs keep signer fields out of JSON bodies', () => {
+  const teachingSource = read('frontend/src/api/teaching_agent.js')
+  const adjustmentSource = read('frontend/src/api/learning_adjustments.js')
+
+  assert.match(teachingSource, /url:\s*['"]\/teaching-agent\/respond['"][\s\S]*?signatureInQuery:\s*true/)
+  assert.match(teachingSource, /url:\s*['"]\/teaching-agent\/respond-for-learner['"][\s\S]*?signatureInQuery:\s*true/)
+  assert.equal((adjustmentSource.match(/signatureInQuery:\s*true/g) || []).length, 3)
+})
+
 test('transition idempotency has a browser compatibility fallback when randomUUID is unavailable', () => {
   const source = read('frontend/src/api/learning_adjustments.js')
 

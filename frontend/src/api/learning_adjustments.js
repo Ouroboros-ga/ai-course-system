@@ -29,6 +29,7 @@ export function applyLearningAdjustment(adjustmentId, returnAnchor, idempotencyK
     url: adjustmentPath(adjustmentId, 'apply'),
     method: 'post',
     data: { return_anchor: returnAnchor, idempotency_key: idempotencyKey },
+    signatureInQuery: true,
     ...flat,
   })
 }
@@ -39,6 +40,7 @@ export function returnFromLearningAdjustment(adjustmentId, idempotencyKey) {
     url: adjustmentPath(adjustmentId, 'return'),
     method: 'post',
     data: { idempotency_key: idempotencyKey },
+    signatureInQuery: true,
     ...flat,
   })
 }
@@ -48,6 +50,7 @@ export function dismissLearningAdjustment(adjustmentId, idempotencyKey) {
     url: adjustmentPath(adjustmentId, 'dismiss'),
     method: 'post',
     data: { idempotency_key: idempotencyKey },
+    signatureInQuery: true,
     ...flat,
   })
 }
