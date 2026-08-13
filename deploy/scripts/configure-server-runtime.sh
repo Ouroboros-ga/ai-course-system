@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly app_root="/opt/smartcarb-git"
+readonly app_root="${SMARTCARB_APP_ROOT:-/opt/smartcarb-git}"
 readonly backend_env="${app_root}/backend/.env"
 readonly judge0_env="${app_root}/deploy/judge0/.env"
+readonly judge0_bootstrap_mode="${SMARTCARB_JUDGE0_BOOTSTRAP_MODE:-preserve}"
 
 test -f "${backend_env}"
 umask 077
@@ -32,36 +33,58 @@ set_env_value() {
   mv -f "${temporary_file}" "${target_file}"
 }
 
-if [[ ! -f "${judge0_env}" ]]; then
-  judge0_authn_token="$(openssl rand -hex 32)"
-  judge0_authz_token="$(openssl rand -hex 32)"
-  judge0_redis_password="$(openssl rand -hex 32)"
-  judge0_postgres_password="$(openssl rand -hex 32)"
-  {
-    printf 'JUDGE0_AUTHN_TOKEN=%s\n' "${judge0_authn_token}"
-    printf 'JUDGE0_AUTHZ_TOKEN=%s\n' "${judge0_authz_token}"
-    printf 'JUDGE0_REDIS_PASSWORD=%s\n' "${judge0_redis_password}"
-    printf 'JUDGE0_POSTGRES_PASSWORD=%s\n' "${judge0_postgres_password}"
-  } > "${judge0_env}"
-  chmod 600 "${judge0_env}"
-else
-  # This file contains only generated hex values and is never printed.
-  set -a
-  # shellcheck disable=SC1090
-  source "${judge0_env}"
-  set +a
-  judge0_authn_token="${JUDGE0_AUTHN_TOKEN:?missing Judge0 authn token}"
-  judge0_authz_token="${JUDGE0_AUTHZ_TOKEN:?missing Judge0 authz token}"
-  judge0_redis_password="${JUDGE0_REDIS_PASSWORD:?missing Judge0 Redis password}"
-  judge0_postgres_password="${JUDGE0_POSTGRES_PASSWORD:?missing Judge0 PostgreSQL password}"
-fi
+configure_local_judge0() {
+  local judge0_authn_token
+  local judge0_authz_token
+  local judge0_redis_password
+  local judge0_postgres_password
 
-set_env_value "${backend_env}" JUDGE0_API_URL "http://127.0.0.1:2358"
-set_env_value "${backend_env}" JUDGE0_AUTHN_HEADER "X-Auth-Token"
-set_env_value "${backend_env}" JUDGE0_AUTHN_TOKEN "${judge0_authn_token}"
-set_env_value "${backend_env}" JUDGE0_AUTHZ_HEADER "X-Auth-User"
-set_env_value "${backend_env}" JUDGE0_AUTHZ_TOKEN "${judge0_authz_token}"
-set_env_value "${backend_env}" JUDGE0_ENABLED "false"
+  if [[ ! -f "${judge0_env}" ]]; then
+    judge0_authn_token="$(openssl rand -hex 32)"
+    judge0_authz_token="$(openssl rand -hex 32)"
+    judge0_redis_password="$(openssl rand -hex 32)"
+    judge0_postgres_password="$(openssl rand -hex 32)"
+    mkdir -p "$(dirname "${judge0_env}")"
+    {
+      printf 'JUDGE0_AUTHN_TOKEN=%s\n' "${judge0_authn_token}"
+      printf 'JUDGE0_AUTHZ_TOKEN=%s\n' "${judge0_authz_token}"
+      printf 'JUDGE0_REDIS_PASSWORD=%s\n' "${judge0_redis_password}"
+      printf 'JUDGE0_POSTGRES_PASSWORD=%s\n' "${judge0_postgres_password}"
+    } > "${judge0_env}"
+    chmod 600 "${judge0_env}"
+  else
+    # This file contains only generated hex values and is never printed.
+    set -a
+    # shellcheck disable=SC1090
+    source "${judge0_env}"
+    set +a
+    judge0_authn_token="${JUDGE0_AUTHN_TOKEN:?missing Judge0 authn token}"
+    judge0_authz_token="${JUDGE0_AUTHZ_TOKEN:?missing Judge0 authz token}"
+    judge0_redis_password="${JUDGE0_REDIS_PASSWORD:?missing Judge0 Redis password}"
+    judge0_postgres_password="${JUDGE0_POSTGRES_PASSWORD:?missing Judge0 PostgreSQL password}"
+  fi
+
+  set_env_value "${backend_env}" JUDGE0_API_URL "http://127.0.0.1:2358"
+  set_env_value "${backend_env}" JUDGE0_AUTHN_HEADER "X-Auth-Token"
+  set_env_value "${backend_env}" JUDGE0_AUTHN_TOKEN "${judge0_authn_token}"
+  set_env_value "${backend_env}" JUDGE0_AUTHZ_HEADER "X-Auth-User"
+  set_env_value "${backend_env}" JUDGE0_AUTHZ_TOKEN "${judge0_authz_token}"
+  set_env_value "${backend_env}" JUDGE0_ENABLED "false"
+}
+
+case "${judge0_bootstrap_mode}" in
+  preserve)
+    # Judge0 may be an independently operated remote service. Keep its
+    # endpoint and credentials intact unless local initialization is explicit.
+    ;;
+  local)
+    configure_local_judge0
+    ;;
+  *)
+    echo "Unsupported SMARTCARB_JUDGE0_BOOTSTRAP_MODE: ${judge0_bootstrap_mode}" >&2
+    exit 2
+    ;;
+esac
 
 set_env_value "${backend_env}" PADDLEOCR_URL "http://127.0.0.1:8090"
 set_env_value "${backend_env}" PADDLEOCR_REQUIRED_FOR_PDF "true"
@@ -77,5 +100,10 @@ set_env_value "${backend_env}" GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOK
 set_env_value "${backend_env}" GRAPHRAG_MAX_ESTIMATED_COST_USD "0.70"
 set_env_value "${backend_env}" GRAPHRAG_MAX_ESTIMATED_COST "0.70"
 
-chmod 600 "${backend_env}" "${judge0_env}"
-echo "Runtime configuration prepared; Judge0 and GraphRAG remain disabled"
+chmod 600 "${backend_env}"
+if [[ "${judge0_bootstrap_mode}" == "local" ]]; then
+  chmod 600 "${judge0_env}"
+  echo "Runtime configuration prepared; local Judge0 and GraphRAG remain disabled"
+else
+  echo "Runtime configuration prepared; existing Judge0 configuration preserved and GraphRAG remains disabled"
+fi
