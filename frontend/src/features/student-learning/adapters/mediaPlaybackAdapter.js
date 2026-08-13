@@ -119,6 +119,7 @@ function normalizePlaylist(value) {
     contentSha256: String(value.content_sha256 ?? value.contentSha256 ?? ''),
     items: value.items.map((item, index) => ({
       index,
+      itemId: item?.item_id ?? item?.itemId ?? null,
       nodeId: item?.node_id ?? item?.nodeId ?? null,
       outlineNodeId: item?.outline_node_id ?? item?.outlineNodeId ?? null,
       offsetMs: nonNegativeInteger(item?.offset_ms ?? item?.offsetMs),

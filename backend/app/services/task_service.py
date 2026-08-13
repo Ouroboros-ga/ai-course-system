@@ -446,6 +446,8 @@ class TaskService:
         record.finished_at = now
         record.updated_at = now
         record.result_ref = result_ref
+        record.error_code = ""
+        record.error_message = ""
         if result_data is not None:
             record.result_data = json.dumps(result_data, ensure_ascii=False)
         session.add(record)
@@ -479,6 +481,8 @@ class TaskService:
         record.finished_at = now
         record.updated_at = now
         record.result_ref = result_ref
+        record.error_code = ""
+        record.error_message = ""
         if result_data is not None:
             record.result_data = json.dumps(result_data, ensure_ascii=False)
         session.add(record)

@@ -111,12 +111,26 @@ class SignatureMiddleware(BaseHTTPMiddleware):
 
         return calculated_enc == enc.upper()
 
+    @staticmethod
+    def _canonical_value(value: Any) -> str:
+        """Keep structured request values identical to the browser signer."""
+        if isinstance(value, (dict, list)):
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
     def _sort_params(self, params: Dict[str, Any]) -> str:
         """严格按规范：ASCII升序排列非空参数，排除enc"""
         filtered_params = {
-            k: str(v)
+            k: self._canonical_value(v)
             for k, v in params.items()
-            if k != "enc" and v is not None and str(v).strip() != ""
+            if k != "enc" and v is not None and self._canonical_value(v).strip() != ""
         }
         sorted_keys = sorted(filtered_params.keys())
         result = "".join([f"{k}{filtered_params[k]}" for k in sorted_keys])

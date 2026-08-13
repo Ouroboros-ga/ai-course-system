@@ -182,6 +182,24 @@ function md5(string) {
 }
 
 // 生成签名
+function canonicalSignatureValue(value) {
+  if (value && typeof value === 'object') {
+    const normalize = current => {
+      if (Array.isArray(current)) return current.map(normalize)
+      if (current && typeof current === 'object') {
+        return Object.keys(current).sort().reduce((result, key) => {
+          result[key] = normalize(current[key])
+          return result
+        }, {})
+      }
+      return current
+    }
+    return JSON.stringify(normalize(value))
+  }
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return String(value)
+}
+
 function generateSignature(params) {
   // 1. 获取当前时间
   const now = new Date()
@@ -198,8 +216,9 @@ function generateSignature(params) {
   // 3. 过滤空值和 enc 参数
   const filteredParams = {}
   for (const [key, value] of Object.entries(allParams)) {
-    if (key !== 'enc' && value !== null && value !== undefined && String(value).trim() !== '') {
-      filteredParams[key] = String(value)
+    const canonicalValue = canonicalSignatureValue(value)
+    if (key !== 'enc' && value !== null && value !== undefined && canonicalValue.trim() !== '') {
+      filteredParams[key] = canonicalValue
     }
   }
 
@@ -249,8 +268,8 @@ service.interceptors.request.use(
     const { time, enc } = generateSignature(allParams)
 
     // 将签名添加到请求参数中
-    if (config.method === 'get') {
-      config.params = { ...config.params, time, enc }
+    if (config.method === 'get' || config.signatureInQuery) {
+      config.params = { ...params, time, enc }
     } else {
       // 如果是 FormData，追加到 FormData 中而不是替换
       if (config.data instanceof FormData) {

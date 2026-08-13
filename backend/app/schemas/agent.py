@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from pydantic import BaseModel, Field
+from app.platform.agents.tools.catalog import BUILTIN_TOOL_NAMES as CATALOG_TOOL_NAMES
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +30,8 @@ class ToolPolicyItem(BaseModel):
     )
     locked: bool = Field(default=False, description="教师锁定项，AI 重跑不可覆盖")
     locked_reason: Optional[str] = Field(default=None, max_length=256)
+    configurable: bool = Field(default=True, description="该目录项是否允许课程级修改")
+    status: str = Field(default="active", description="active | deprecated_non_configurable")
 
 
 class ToolPolicyUpdateRequest(BaseModel):
@@ -134,20 +137,4 @@ class ToolInvocationView(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-BUILTIN_TOOL_NAMES: list[str] = [
-    "graph",
-    "retrieval",
-    "question_bank",
-    "question_generation",
-    "experiment",
-    "visualization",
-    "learning_event",
-    "web_research",
-    "sandbox",
-    "cognition",
-    "student_modeling",
-    "recommendation",
-    "conversation_context",
-    "coding_diagnosis",
-    "student_history",
-]
+BUILTIN_TOOL_NAMES: list[str] = sorted(CATALOG_TOOL_NAMES)

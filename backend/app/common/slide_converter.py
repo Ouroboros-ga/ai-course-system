@@ -46,65 +46,58 @@ def convert_office_to_pdf(input_path: str, output_dir: Optional[str] = None) -> 
     if output_dir is None:
         output_dir = str(input_file.parent)
 
-    user_profile_dir = Path(tempfile.gettempdir()) / "ai_course_libreoffice_profile"
-    user_profile_dir.mkdir(parents=True, exist_ok=True)
+    # LibreOffice locks its user profile.  A profile per conversion prevents
+    # parallel parse/media workers from making each other fail without stderr.
+    with tempfile.TemporaryDirectory(prefix="ai_course_libreoffice_profile_") as profile_dir:
+        user_profile_uri = Path(profile_dir).resolve().as_uri()
+        cmd = [
+            soffice,
+            "--headless",
+            f"-env:UserInstallation={user_profile_uri}",
+            "--convert-to", "pdf",
+            "--outdir", output_dir,
+            str(input_file),
+        ]
 
-    lock_file = user_profile_dir / ".lock"
-    if lock_file.exists():
+        logger.info(f"Converting {input_file.name} to PDF: {' '.join(cmd)}")
+
         try:
-            lock_file.unlink()
-            logger.info("Removed stale LibreOffice lock file")
-        except OSError:
-            pass
+            kwargs = {
+                "capture_output": True,
+                "timeout": 300,
+            }
 
-    cmd = [
-        soffice,
-        "--headless",
-        f"-env:UserInstallation=file:///{str(user_profile_dir).replace(os.sep, '/')}",
-        "--convert-to", "pdf",
-        "--outdir", output_dir,
-        str(input_file),
-    ]
+            if os.name == "nt":
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = subprocess.SW_HIDE
+                kwargs["startupinfo"] = si
 
-    logger.info(f"Converting {input_file.name} to PDF: {' '.join(cmd)}")
+            result = subprocess.run(cmd, **kwargs)
 
-    try:
-        kwargs = {
-            "capture_output": True,
-            "timeout": 300,
-        }
+            stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
+            stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
 
-        if os.name == "nt":
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = subprocess.SW_HIDE
-            kwargs["startupinfo"] = si
+            if result.returncode != 0:
+                logger.error(f"LibreOffice conversion failed: {stderr}")
+                return None
 
-        result = subprocess.run(cmd, **kwargs)
+            pdf_filename = input_file.stem + ".pdf"
+            pdf_path = Path(output_dir) / pdf_filename
 
-        stdout = result.stdout.decode("utf-8", errors="replace") if result.stdout else ""
-        stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+            if pdf_path.exists():
+                logger.info(f"PDF created: {pdf_path}")
+                return str(pdf_path)
+            else:
+                logger.error(f"PDF file not found after conversion: {pdf_path}")
+                return None
 
-        if result.returncode != 0:
-            logger.error(f"LibreOffice conversion failed: {stderr}")
+        except subprocess.TimeoutExpired:
+            logger.error("LibreOffice conversion timed out (300s)")
             return None
-
-        pdf_filename = input_file.stem + ".pdf"
-        pdf_path = Path(output_dir) / pdf_filename
-
-        if pdf_path.exists():
-            logger.info(f"PDF created: {pdf_path}")
-            return str(pdf_path)
-        else:
-            logger.error(f"PDF file not found after conversion: {pdf_path}")
+        except Exception as e:
+            logger.error(f"LibreOffice conversion error: {e}")
             return None
-
-    except subprocess.TimeoutExpired:
-        logger.error("LibreOffice conversion timed out (300s)")
-        return None
-    except Exception as e:
-        logger.error(f"LibreOffice conversion error: {e}")
-        return None
 
 
 async def convert_office_to_pdf_async(input_path: str, output_dir: Optional[str] = None) -> Optional[str]:

@@ -50,6 +50,11 @@ from app.models.platform_media_preset_model import (
     PlatformPresetStatus,
     PlatformVoicePreset,
 )
+from app.models.teaching_constraint_model import (
+    TeachingConstraintEvaluation,
+    TeachingConstraintPolicyVersion,
+)
+from app.models.learning_adjustment_model import LearningAdjustmentRecord
 
 __all__ = [
     "User",
@@ -96,4 +101,7 @@ __all__ = [
     "PlatformAvatarPreset",
     "PlatformPresetStatus",
     "PlatformVoicePreset",
+    "TeachingConstraintEvaluation",
+    "TeachingConstraintPolicyVersion",
+    "LearningAdjustmentRecord",
 ]

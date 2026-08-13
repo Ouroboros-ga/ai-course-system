@@ -129,7 +129,7 @@ def test_sqlite_active_course_build_index_is_partial(tmp_path):
 
 
 def test_experiment_sandbox_migration_writes_an_applied_batch_ledger(tmp_path):
-    """Revision 0055 records its auditable, server-owned grading boundary."""
+    """Revision 0057 records its auditable, server-owned grading boundary."""
     db_path = tmp_path / "experiment_sandbox_ledger.db"
     db_url = f"sqlite:///{db_path}"
 
@@ -155,7 +155,7 @@ def test_experiment_sandbox_migration_writes_an_applied_batch_ledger(tmp_path):
 
 
 def test_experiment_sandbox_migration_marks_ledger_rolled_back(tmp_path):
-    """Downgrading 0055 leaves an auditable rollback marker behind."""
+    """Downgrading 0057 leaves an auditable rollback marker behind."""
     db_path = tmp_path / "experiment_sandbox_rollback_ledger.db"
     db_url = f"sqlite:///{db_path}"
 

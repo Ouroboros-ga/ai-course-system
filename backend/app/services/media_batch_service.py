@@ -653,7 +653,7 @@ def freeze_playlist(session: Session, *, course_id: int, release_id: str) -> dic
         reject_state_conflict("仍有知识点媒体未成功或 PPT 映射未冻结", details={"items": [{"node_id": i.node_id, "status": i.status, "error_code": i.error_code} for i in items]})
     timeline = []; offset = 0
     for item in items:
-        timeline.append({"node_id": item.node_id, "outline_node_id": item.outline_node_id, "order_index": item.order_index,
+        timeline.append({"item_id": item.item_id, "node_id": item.node_id, "outline_node_id": item.outline_node_id, "order_index": item.order_index,
                          "offset_ms": offset, "duration_ms": item.duration_ms, "audio_object_key": item.audio_object_key,
                          "audio_sha256": item.audio_sha256, "subtitle_manifest_object_key": item.subtitle_manifest_object_key,
                          "avatar_cues_object_key": item.avatar_cues_object_key, "ppt_mapping_snapshot": item.ppt_mapping_snapshot})

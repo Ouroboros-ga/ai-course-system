@@ -163,6 +163,7 @@ def test_web_research_node_writes_results_when_port_injected():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=web_port,
+        teacher_safety_valve=_ApprovedSafetyValve(),
     )
     runtime = TeachingAgentRuntime(tools)
     state = _run(runtime)
@@ -191,6 +192,7 @@ def test_web_research_node_degrades_when_port_raises():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=web_port,
+        teacher_safety_valve=_ApprovedSafetyValve(),
     )
     runtime = TeachingAgentRuntime(tools)
     state = _run(runtime)
@@ -215,6 +217,27 @@ class _PendingSafetyValve:
             "proposal_id": "prop-test-1",
             "proposal_type": kwargs.get("proposal_type", "web_research"),
             "status": "pending",
+            "requires_confirmation": True,
+        }
+
+    async def list_pending_proposals(self, **_: Any) -> list[Mapping[str, Any]]:
+        return []
+
+    async def decide_proposal(self, **_: Any) -> Mapping[str, Any]:
+        return {}
+
+    async def get_proposal(self, **_: Any) -> Mapping[str, Any] | None:
+        return None
+
+
+class _ApprovedSafetyValve:
+    """Explicit teacher approval allows the test to reach the web provider."""
+
+    async def create_proposal(self, **kwargs: Any) -> Mapping[str, Any]:
+        return {
+            "proposal_id": "prop-approved",
+            "proposal_type": kwargs.get("proposal_type", "web_research"),
+            "status": "approved",
             "requires_confirmation": True,
         }
 
@@ -610,6 +633,7 @@ def test_all_three_optional_ports_injected_together():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=CallableWebResearchPort(_research),
+        teacher_safety_valve=_ApprovedSafetyValve(),
         cognition=CallableCognitionPort(_get_state, _get_rec),
         question_bank=CallableQuestionBankPort(_list),
     )

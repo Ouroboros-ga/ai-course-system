@@ -37,8 +37,20 @@ const citationImageUrl = ref('')
 const imageStatus = ref('idle')
 const detailOpen = ref(true)
 
-const nodes = computed(() => Array.isArray(graph.value?.nodes) ? graph.value.nodes : [])
-const relations = computed(() => Array.isArray(graph.value?.relations) ? graph.value.relations : [])
+// Keep the public GraphSnapshot vocabulary explicit at the view boundary.
+// The API returns the snapshot fields at the top level, while older callers
+// may still wrap them in `snapshot`; both shapes are normalized here.
+const snapshot = computed(() => graph.value?.snapshot || graph.value || null)
+const snapshotMeta = computed(() => {
+  return {
+    relations: snapshot.value.relations || [],
+    relation_count: snapshot.value.relation_count ?? 0,
+    version: snapshot.value.version ?? null,
+    ontology_version: snapshot.value.ontology_version ?? null,
+  }
+})
+const nodes = computed(() => Array.isArray(snapshot.value?.nodes) ? snapshot.value.nodes : [])
+const relations = computed(() => Array.isArray(snapshot.value?.relations) ? snapshot.value.relations : [])
 const bundle = computed(() => graph.value?.bundle || null)
 const nodeByKey = computed(() =>
   new Map(nodes.value.map((node) => [String(node.id), node])),

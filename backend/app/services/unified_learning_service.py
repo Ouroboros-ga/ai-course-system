@@ -214,6 +214,68 @@ def record_event(
     return event, projection
 
 
+def record_agent_learning_action(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    release_id: str,
+    outline_node_id: str,
+    idempotency_key: str,
+    action: str,
+    payload: dict[str, Any],
+) -> LearningEvent:
+    """Persist a bounded review audit event without changing learning state.
+
+    Accepting, dismissing, or returning from review is not evidence of
+    exposure, completion, or mastery. It therefore bypasses the learner
+    projection and does not queue any downstream evidence work.
+    """
+    release = session.exec(select(CourseRelease).where(
+        CourseRelease.course_id == course_id,
+        CourseRelease.release_id == release_id,
+        CourseRelease.status.in_([
+            ReleaseStatus.PUBLISHED,
+            ReleaseStatus.SUPERSEDED,
+            ReleaseStatus.ROLLED_BACK,
+        ]),
+    )).first()
+    if release is None:
+        raise ValueError("RELEASE_NOT_FOUND")
+    node = _node(session, release, outline_node_id)
+    if node is None:
+        raise ValueError("NODE_NOT_IN_RELEASE")
+    existing = session.exec(select(LearningEvent).where(
+        LearningEvent.student_id == student_id,
+        LearningEvent.idempotency_key == idempotency_key,
+    )).first()
+    if existing is not None:
+        if (
+            existing.course_id != course_id
+            or existing.release_id != release_id
+            or existing.outline_node_id != outline_node_id
+            or existing.event_type != LearningEventType.AGENT_LEARNING_ACTION
+            or existing.payload.get("action") != action
+        ):
+            raise ValueError("IDEMPOTENCY_KEY_CONFLICT")
+        return existing
+    event = LearningEvent(
+        idempotency_key=idempotency_key,
+        student_id=student_id,
+        course_id=course_id,
+        release_id=release_id,
+        outline_node_id=outline_node_id,
+        knowledge_node_key=node.knowledge_graph_node_id,
+        event_type=LearningEventType.AGENT_LEARNING_ACTION,
+        payload={"action": action, **payload},
+        source="learning_adjustment",
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    return event
+
+
 def _ensure_projection(session: Session, student_id: int, course_id: int, release: CourseRelease, node: CourseOutlineNode) -> StudentLearningProjection:
     projection = session.exec(select(StudentLearningProjection).where(
         StudentLearningProjection.student_id == student_id,

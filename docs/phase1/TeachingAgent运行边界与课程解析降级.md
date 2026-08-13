@@ -35,6 +35,22 @@ Evidence/图谱，但不需要为每名学生重复执行 KG-MEST。
 `LearningEvidence`，不会写入 `observed_performance_score`、`MasteryState` 或
 任何正式认知结论。只有独立契约下的 Quiz/Judge0 评分等来源才可产生评分证据。
 
+## 学习调整与回顾续接（2026-08-13 本地 P0）
+
+TeachingAgent 可在一次已验证的回答后提供可选的学习调整提案，但不拥有播放器控制权。三种坐标严格分离：
+
+- `QuestionObservation`：学生发送问题时的 item-local 位置，仅供本轮理解上下文；
+- `ReviewTarget`：服务端只由 active `CourseRelease`、active `MediaRelease`、`MediaReleaseItem` 与 frozen `MediaReleaseCue` 计算的回顾目的地；
+- `ReturnAnchor`：学生点击开始回顾瞬间的位置，用于之后主动返回。
+
+每个坐标必须包含 `media_release_id`、`media_release_item_id`、`outline_node_id`、`local_time_ms` 与 `page`。可选 `global_time_ms` 仅为同一不可变 `audio-playlist/v1` 的兼容/展示时钟，绝不单独作为定位输入。草稿、可编辑 PPT 映射、最新材料和浏览器提交的回顾目的地均不能作为回顾目标兜底来源。
+
+`LearningAdjustmentRecord` 的生命周期只有 `proposed → applied → returned`。其中 `applied` 的语义是“学习者已接受/授权回顾”，不是“浏览器已切换媒体或 seek 成功”；浏览器必须先完成本地媒体恢复，才可请求 `returned`。P0 不做 AI 自动判定“已复习”、Cue 结束自动返回或自动写入完成/掌握证据。无有效冻结目标或依赖异常时，普通问答继续可用且不显示空回顾卡片。
+
+`/api/v1/compat/progress/adjust` 不是独立理解度算法。它只能凭 `qaRecordId` 查到同一学习者、同一课程、仍有效的调整提案及 Conversation Domain 中同一 trace 的助手回答；任一关联缺失都返回 `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`。外部 `understandingLevel` 不会成为掌握度、推荐或虚构补充内容的来源。
+
+自动化验证覆盖 release/item/Cue 校验、跨学习者隔离、点击时 ReturnAnchor、幂等 transition、无证据/无媒体降级和兼容回合关联。跨媒体项回顾、浏览器 `canplay/seeked` 失败、主动返回和刷新恢复仍需非生产浏览器人工验收；ASR/语音打断不在本 P0 范围，保持 `ASR_UNAVAILABLE`。
+
 ## 迁移与回滚
 
 `agent-log-minimization-v1` 先做 SQLite 预检，再将历史原始日志替换为最小化

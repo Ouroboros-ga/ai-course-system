@@ -58,6 +58,7 @@ def make_session_scoped_teacher_safety_valve_port(session_factory: Callable[[], 
             tool_name: str,
             proposed_action: Mapping[str, Any],
             requires_confirmation: bool | None = None,
+            confirmation_mode: str | None = None,
         ) -> Mapping[str, Any]:
             try:
                 course_id_int = int(course_id)
@@ -67,6 +68,27 @@ def make_session_scoped_teacher_safety_valve_port(session_factory: Callable[[], 
                 return {"proposal_id": "", "status": "invalid_id"}
             session = session_factory()
             try:
+                risk_level = agent_governance_service._classify_risk(proposal_type)
+                if requires_confirmation is None:
+                    configured, threshold = agent_governance_service.requires_confirmation(
+                        session,
+                        course_id=course_id_int,
+                        tool_name=tool_name,
+                    )
+                    requires_confirmation = bool(configured)
+                    if threshold == "always":
+                        requires_confirmation = True
+                    elif threshold == "high_risk_only" and risk_level == "high":
+                        requires_confirmation = True
+                if confirmation_mode == "all_actions":
+                    requires_confirmation = True
+                elif (
+                    confirmation_mode == "medium_and_high"
+                    and risk_level in {"medium", "high"}
+                ):
+                    requires_confirmation = True
+                elif confirmation_mode == "high_risk" and risk_level == "high":
+                    requires_confirmation = True
                 proposal = agent_governance_service.create_proposal(
                     session,
                     course_id=course_id_int,

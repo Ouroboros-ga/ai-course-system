@@ -232,6 +232,11 @@ from app.models.agent_governance_model import (
     AgentActionDecision,
     AgentToolInvocation,
 )
+from app.models.teaching_constraint_model import (
+    TeachingConstraintEvaluation,
+    TeachingConstraintPolicyVersion,
+)
+from app.models.learning_adjustment_model import LearningAdjustmentRecord
 from app.models.agent_run_model import (
     AgentRunRecord,
     AgentRunEventRecord,

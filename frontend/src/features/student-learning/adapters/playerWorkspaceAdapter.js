@@ -180,9 +180,7 @@ export function buildProgressPayload(state) {
     // 听课时长埋点：本次保存周期内新增的听课秒数（仅 playing 时累计）。
     // 后端累加到 NodeProgress.time_spent，供认知引擎 evidence_confidence 佐证。
     // 上限 60 秒，与后端校验一致，避免后台标签页长时间未保存的跳变。
-  }
-  if (state.timeSpentDelta !== undefined && state.timeSpentDelta !== null) {
-    payload.time_spent_delta = clamp(numberOr(state.timeSpentDelta, 0), 0, 60) // time_spent_delta
+    time_spent_delta: clamp(numberOr(state.timeSpentDelta, 0), 0, 60),
   }
   return payload
 }

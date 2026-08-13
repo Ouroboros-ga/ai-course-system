@@ -1,7 +1,7 @@
 """Harden course experiment grading and laboratory projections.
 
-Revision ID: 0055
-Revises: 0054
+Revision ID: 0057
+Revises: 20260812_learning_adjust
 Create Date: 2026-08-13 09:00:00
 
 Batch ``experiment_sandbox_reliability_v1`` establishes the server-owned
@@ -14,15 +14,15 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0055"
-down_revision = "0054"
+revision = "0057"
+down_revision = "20260812_learning_adjust"
 branch_labels = None
 depends_on = None
 
 BATCH_ID = "experiment_sandbox_reliability_v1"
 BATCH_NAME = "Experiment sandbox reliability and trusted lab projections"
 BATCH_ROLLBACK_NOTES = (
-    "Drops 0055 sandbox queue, projection, and recommendation schema. "
+        "Drops 0057 sandbox queue, projection, and recommendation schema. "
     "Legacy lab records remain legacy_unverified; no trusted grade is restored."
 )
 
