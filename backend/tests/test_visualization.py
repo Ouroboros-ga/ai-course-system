@@ -403,6 +403,35 @@ def test_student_only_sees_published_plans(client, session):
     assert resp.json()["data"]["total"] == 1
 
 
+def test_list_plans_accepts_outline_node_id(client, session):
+    """新版 release 学习工作区传 outline_node_id（on_xxx）不应 422。
+
+    整数列下 outline ID 不命中任何计划，列表仍返回 200 与全量计划。
+    """
+    teacher = _user(session, "viz_outline_teacher", UserRole.TEACHER)
+    course = _course(session, teacher.id)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    session.commit()
+
+    teacher_token = _token(teacher)
+
+    resp = client.post(
+        f"{VIZ}/course/{course.id}/plan",
+        json={**_valid_plan_request(), "node_id": "on_outline_node_001"},
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 200
+
+    resp = client.get(
+        f"{VIZ}/course/{course.id}/plans",
+        params={"node_id": "on_outline_node_001"},
+        headers=_auth(teacher_token),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["code"] == 200
+    assert resp.json()["data"]["total"] == 1
+
+
 def test_get_plan_detail_for_playback(client, session):
     """获取计划详情用于回放：GET /{plan_id} 返回计划数据。
 
