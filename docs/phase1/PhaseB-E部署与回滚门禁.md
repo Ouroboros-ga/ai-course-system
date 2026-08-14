@@ -72,3 +72,41 @@ WebResearch 必须同时配置 HTTPS provider URL 和 API key；外网内容仅�
 asset backend、验证时间轴读取，最后在保留期后清理本地副本。任何一步失败都可把
 backend 切回 `local`，不改变 `object_key`、Cue 或前端契约。
 
+## 服务器部署布局（2026-08-14 规范后）
+
+云服务器 `120.26.104.247` 采用 release 目录 + `current` 软链布局，唯一工作目录为
+`/opt/smartcarb`：
+
+```
+/opt/smartcarb/
+├── current -> releases/<短hash>   # 生效 release（nginx / systemd 都指向这里）
+├── releases/<短hash>/             # 每次发布的完整 checkout，保留最近 5 个
+├── shared/
+│   ├── env/       # backend.env / database.env / runtime-paths.env / postgres.env
+│   ├── venvs/     # backend-py312（后端虚拟环境）
+│   ├── node_modules/frontend/  # 前端 pnpm 依赖缓存（构建复用）
+│   ├── media/ models/ runtime/ backups/  # 媒体、模型、运行时、备份输出
+│   └── scripts/   # backup.sh / healthcheck.sh（postgres 备份与健康检查）
+└── scripts/       # smartcarb-release.sh / smartcarb-prune-releases.sh
+```
+
+硬约束与约定：
+
+- **dist 不入 git**：前端构建产物由发布脚本在 release 内构建（复用
+  `shared/node_modules/frontend`），构建命令直接调用
+  `node node_modules/vite/bin/vite.js build`——不能走 `pnpm build`（pnpm 预检会因
+  符号链接触发重装且无 TTY 中止）。
+- **发布流程**：`bash /opt/smartcarb/scripts/smartcarb-release.sh [ref=dev-liu] [keep=5]`
+  完成 clone → 前端构建 → 原子切换 `current` → 重启后端 → 健康检查 → 清理旧 release。
+  保留策略由 `smartcarb-prune-releases.sh` 实现（保留最近 N 个，永不删除 `current`
+  指向的 release）。
+- **systemd**：后端 `smartcarb-backend.service` 为单一单元（已合并历史 drop-in），
+  指向 `current/backend` + `shared/venvs` + `shared/env`，只回环监听 8000。
+  postgres 备份/健康检查单元指向 `shared/scripts/*.sh` + `shared/env/postgres.env`。
+  nginx 站点配置为 `/etc/nginx/sites-enabled/smartcarb`，root 指向
+  `current/frontend/dist`，仓库 `deploy/nginx/frontend.conf` 与其保持一致。
+- **清理隔离区**：历史遗留工作目录（`/opt/smartcarb-git`、
+  `/opt/smartcarb-postgres-live`、`/opt/smartcarb/backend` 等）已移至
+  `/opt/_cleanup-20260814/` 隔离，确认无引用后删除；其中含旧 `.env` 密钥副本，
+  删除前注意密钥轮换。
+

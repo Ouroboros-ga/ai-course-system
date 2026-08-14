@@ -5,5 +5,5 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-EnvironmentFile=/opt/smartcarb-postgres/postgres.env
-ExecStart=/bin/sh /opt/smartcarb-git/deploy/postgres/scripts/healthcheck.sh
+EnvironmentFile=/opt/smartcarb/shared/env/postgres.env
+ExecStart=/bin/sh /opt/smartcarb/shared/scripts/healthcheck.sh

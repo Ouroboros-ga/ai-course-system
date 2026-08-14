@@ -1,0 +1,23 @@
+# SmartCarb AI Course System Backend
+# 生效路径以 release-layout 为准：/opt/smartcarb/current + shared/{venv,env}
+# 配置来源：服务器 /etc/systemd/system/smartcarb-backend.service（2026-08-14 合并 drop-in 后固化）
+[Unit]
+Description=SmartCarb AI Course System Backend
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smartcarb/current/backend
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/opt/smartcarb/shared/env/backend.env
+EnvironmentFile=/opt/smartcarb/shared/env/database.env
+EnvironmentFile=/opt/smartcarb/shared/env/runtime-paths.env
+ExecStart=/opt/smartcarb/shared/venvs/backend-py312/bin/python -m uvicorn app.main:app --app-dir /opt/smartcarb/current/backend --host 127.0.0.1 --port 8000 --workers 2
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
