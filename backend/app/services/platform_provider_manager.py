@@ -368,8 +368,13 @@ class PlatformProviderManager:
 
                     if needs_update:
                         try:
+                            from sqlmodel import select as _select
                             with session_factory() as w_session:
-                                w_item = w_session.get(PlatformIntegrationConfig, item.integration_key)
+                                w_item = w_session.exec(
+                                    _select(PlatformIntegrationConfig).where(
+                                        PlatformIntegrationConfig.integration_key == item.integration_key
+                                    )
+                                ).first()
                                 if w_item is not None:
                                     w_item.provider = patched_provider
                                     w_item.base_url = patched_base
@@ -382,7 +387,7 @@ class PlatformProviderManager:
                                     w_item.health_message = "ENV_PATCHED_AT_STARTUP"
                                     w_session.add(w_item)
                                     w_session.commit()
-                                logger.info("Patched incomplete %s config in DB from env values", key)
+                                    logger.info("Patched incomplete %s config in DB from env values", key)
                         except Exception:
                             logger.exception("Failed to patch %s config in DB; runtime uses patched values", key)
                 else:
