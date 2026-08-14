@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 TOGGLE_KEYS = ("llm", "tts", "asr")
 ALL_KEYS = ("llm", "tts", "ppt", "asr")
 
-#: 豆包 TTS 的 provider 别名（火山引擎豆包 TTS 即豆包语音）
-_DOUBAO_TTS_ALIASES = {"doubao", "doubao_tts", "volcengine_doubao_tts", "volcengine"}
+#: 明确的豆包 TTS provider 别名
+_DOUBAO_TTS_ALIASES = {"doubao", "doubao_tts", "volcengine_doubao_tts"}
 
 
 @dataclass(frozen=True)
@@ -37,8 +37,21 @@ class ProviderProbe:
     message: str
 
 
-def _is_doubao_tts(provider: str) -> bool:
-    return (provider or "").strip().lower() in _DOUBAO_TTS_ALIASES
+def _is_doubao_tts(provider: str, base_url: str = "") -> bool:
+    """判断 TTS 配置是否走豆包 v3 (WebSocket) 路径。
+
+    判定规则（任一命中即认为是豆包 TTS）：
+    1. provider 名是明确的豆包别名（doubao / doubao_tts / volcengine_doubao_tts）
+    2. provider 是 volcengine 且 base_url 是 WebSocket 协议（wss://）——
+       旧版火山引擎 TTS 走 HTTP POST，豆包 v3 走 WebSocket
+    """
+    name = (provider or "").strip().lower()
+    if name in _DOUBAO_TTS_ALIASES:
+        return True
+    url = (base_url or "").strip().lower()
+    if name == "volcengine" and url.startswith("wss://"):
+        return True
+    return False
 
 
 class PlatformProviderManager:
@@ -52,7 +65,7 @@ class PlatformProviderManager:
             return ProviderProbe("configured", "CONFIGURATION_READY")
         if key in {"llm", "ppt"} and not base_url:
             return ProviderProbe("not_configured", "PROVIDER_NOT_CONFIGURED")
-        if key == "tts" and _is_doubao_tts(provider):
+        if key == "tts" and _is_doubao_tts(provider, base_url):
             values = extra_config or {}
             if not base_url or not model_name or not (values.get("speaker") or values.get("voice")):
                 return ProviderProbe("not_configured", "PROVIDER_NOT_CONFIGURED")
@@ -62,6 +75,8 @@ class PlatformProviderManager:
             return ProviderProbe("configured", "CONFIGURATION_READY")
         # A GET/HEAD reachability check avoids sending prompts, audio or paid
         # generation requests. Authentication failures still prove reachability.
+        if not base_url:
+            return ProviderProbe("not_configured", "PROVIDER_NOT_CONFIGURED")
         try:
             async with httpx.AsyncClient(timeout=8, follow_redirects=True) as client:
                 response = await client.get(base_url.rstrip("/"))
@@ -79,9 +94,8 @@ class PlatformProviderManager:
         elif key == "tts":
             from app.core.config import settings
             values = extra_config or {}
-            if _is_doubao_tts(provider):
-                # 豆包 TTS（火山引擎豆包语音）用于 Stage 8 媒体生成，
-                # 统一设置 STAGE8_TTS_PROVIDER=doubao 并关闭 demo 模式。
+            if _is_doubao_tts(provider, base_url):
+                # 豆包 TTS v3（WebSocket，火山引擎豆包语音）用于 Stage 8 媒体生成
                 settings.MEDIA_DEMO_MODE = False
                 settings.STAGE8_TTS_PROVIDER = "doubao"
                 settings.VOLCENGINE_DOUBAO_TTS_WS_URL = base_url
@@ -90,17 +104,6 @@ class PlatformProviderManager:
                 settings.VOLCENGINE_DOUBAO_TTS_SPEAKER = str(values.get("speaker") or values.get("voice") or "")
             else:
                 tts_client.replace_from_config(provider=provider, api_key=api_key, extra_config=values)
-            # 批量媒体建设的字符数/节点数限额（可选，由管理员在 extra_config 中覆盖默认值）
-            if values.get("max_billable_chars"):
-                try:
-                    settings.MEDIA_BATCH_MAX_BILLABLE_CHARS = max(1000, int(values["max_billable_chars"]))
-                except (TypeError, ValueError):
-                    pass
-            if values.get("max_nodes"):
-                try:
-                    settings.MEDIA_BATCH_MAX_NODES = max(1, int(values["max_nodes"]))
-                except (TypeError, ValueError):
-                    pass
         elif key == "ppt":
             from app.services.ppt_generation_service import ppt_generation_service
             ppt_generation_service.xfyun_client.configure(base_url=base_url, api_key=api_key, extra_config=extra_config or {})
@@ -129,8 +132,6 @@ class PlatformProviderManager:
             from app.core.config import settings
             settings.MEDIA_DEMO_MODE = True
             settings.STAGE8_TTS_PROVIDER = "fake"
-            settings.MEDIA_BATCH_MAX_BILLABLE_CHARS = 50_000
-            settings.MEDIA_BATCH_MAX_NODES = 20
         elif key == "asr":
             from app.services.volcengine_asr import asr_client
             asr_client.set_enabled(False)
@@ -214,13 +215,11 @@ class PlatformProviderManager:
 
         if key == "tts":
             # 优先识别 Stage 8 的豆包 TTS 配置（正式媒体生成路径）
-            stage8_provider = (getattr(settings, "STAGE8_TTS_PROVIDER", "") or "").strip().lower()
             ws_url = getattr(settings, "VOLCENGINE_DOUBAO_TTS_WS_URL", "") or ""
             api_key = getattr(settings, "VOLCENGINE_DOUBAO_TTS_API_KEY", "") or ""
             resource_id = getattr(settings, "VOLCENGINE_DOUBAO_TTS_RESOURCE_ID", "") or ""
             speaker = getattr(settings, "VOLCENGINE_DOUBAO_TTS_SPEAKER", "") or ""
-            demo_mode = bool(getattr(settings, "MEDIA_DEMO_MODE", False))
-            if stage8_provider == "doubao" and not demo_mode and api_key and ws_url and resource_id and speaker:
+            if api_key and ws_url and resource_id and speaker:
                 return {
                     "provider": "doubao",
                     "base_url": ws_url,
@@ -312,20 +311,80 @@ class PlatformProviderManager:
                 except Exception:
                     logger.exception("Failed to decrypt integration secret for %s at startup", key)
                     secret = ""
-                if item.enabled and secret:
+
+                # 配置校准：若 DB 中已有记录但配置不完整（如豆包 TTS 缺 speaker），
+                # 且环境变量中有同类型集成的完整值，则用 env 补全并写回 DB。
+                # 这样可以避免历史遗留的不完整配置导致保存时 probe 失败。
+                env_cfg = self.read_env_config(key)
+                patched_extra = dict(item.extra_config or {})
+                patched_provider = item.provider
+                patched_base = item.base_url
+                patched_model = item.model_name
+                patched_secret = secret
+                needs_update = False
+
+                if env_cfg is not None and item.enabled:
+                    # 判定是否为同一类型的集成（provider 相同 或 base_url 指向同一服务）
+                    same_kind = (
+                        item.provider.lower() == env_cfg["provider"].lower()
+                        or (item.base_url and env_cfg["base_url"] and item.base_url.rstrip("/") == env_cfg["base_url"].rstrip("/"))
+                    )
+                    if not same_kind and key == "tts":
+                        same_kind = _is_doubao_tts(item.provider, item.base_url) and _is_doubao_tts(env_cfg["provider"], env_cfg["base_url"])
+                    if same_kind:
+                        # 用 env 补全缺失的字段（不覆盖已有非空值）
+                        if not patched_provider and env_cfg["provider"]:
+                            patched_provider = env_cfg["provider"]
+                            needs_update = True
+                        if not patched_base and env_cfg["base_url"]:
+                            patched_base = env_cfg["base_url"]
+                            needs_update = True
+                        if not patched_model and env_cfg["model_name"]:
+                            patched_model = env_cfg["model_name"]
+                            needs_update = True
+                        if not patched_secret and env_cfg["api_key"]:
+                            patched_secret = env_cfg["api_key"]
+                            needs_update = True
+                        env_extra = env_cfg.get("extra_config") or {}
+                        for ek, ev in env_extra.items():
+                            if ev and not patched_extra.get(ek):
+                                patched_extra[ek] = ev
+                                needs_update = True
+
+                if item.enabled and patched_secret:
                     try:
                         self.refresh(
                             key,
-                            provider=item.provider,
-                            base_url=item.base_url,
-                            model_name=item.model_name,
-                            api_key=secret,
-                            extra_config=item.extra_config,
+                            provider=patched_provider,
+                            base_url=patched_base,
+                            model_name=patched_model,
+                            api_key=patched_secret,
+                            extra_config=patched_extra,
                         )
                         logger.info("Restored real provider integration %s (enabled)", key)
                     except Exception:
                         logger.exception("Restore of integration %s failed; applying disabled state", key)
                         self.apply_disabled(key)
+
+                    if needs_update:
+                        try:
+                            with session_factory() as w_session:
+                                w_item = w_session.get(PlatformIntegrationConfig, item.integration_key)
+                                if w_item is not None:
+                                    w_item.provider = patched_provider
+                                    w_item.base_url = patched_base
+                                    w_item.model_name = patched_model
+                                    if patched_secret and patched_secret != secret:
+                                        w_item.encrypted_api_key = encrypt_secret(patched_secret)
+                                        w_item.api_key_last4 = patched_secret[-4:]
+                                    w_item.extra_config = patched_extra
+                                    w_item.health_status = "healthy"
+                                    w_item.health_message = "ENV_PATCHED_AT_STARTUP"
+                                    w_session.add(w_item)
+                                    w_session.commit()
+                                logger.info("Patched incomplete %s config in DB from env values", key)
+                        except Exception:
+                            logger.exception("Failed to patch %s config in DB; runtime uses patched values", key)
                 else:
                     self.apply_disabled(key)
                 continue
