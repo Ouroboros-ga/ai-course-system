@@ -407,7 +407,7 @@ class PromptSpec:
 |---|-----------|------|------|
 | 1 | prep.evidence_segmenter v2.1 | 有界证据 Map（模型不返回证据 ID） | Initial |
 | 2 | prep.evidence_reducer v1.3 | 层级证据 Reduce（中间层瘦合并、末级补全 examples/exercises、不返回证据 ID） | Initial |
-| 3 | prep.outline_planner v2.1 | 目录规划（最多 24 知识点/64 节点，不返回证据 ID） | Initial |
+| 3 | prep.outline_planner v2.4 | 目录规划（最多 24 知识点/64 节点；标题须为单行教学概念 2-40 字，禁止行动描述/图注/OCR/编号枚举，不返回证据 ID） | Initial |
 | 4 | prep.script_writer / batch v1.2 | 讲稿撰写（不返回证据 ID / paragraph_evidence） | Initial |
 | 5 | prep.evidence_verifier v1.2 | 证据校验（不返回证据 ID） | Initial |
 | 6 | prep.incremental_planner v2.0 | 增量规划 | Incremental |

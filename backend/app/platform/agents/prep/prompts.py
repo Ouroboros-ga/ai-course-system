@@ -59,7 +59,7 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
 
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="2.3",
+    version="2.4",
     system_template=(
         "你是 OutlinePlanner。首次智能备课的目标是生成一份可审核的课程骨架，"
         "而不是复刻整本教材目录、训练题标题或书签。\n"
@@ -72,6 +72,13 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
         "归属 section；\n"
         "- candidates 中必须包含至少 1 个 knowledge_point；只输出目录层级、不产出"
         "任何可讲授知识点，是无效结果。\n"
+        "标题规范（硬性要求，违反任一即整单失败）：\n"
+        "- 每个标题必须是单行教学概念短语，长度 2-40 字，禁止换行；\n"
+        "- 必须是课程中真实可讲授的概念或单元，禁止复述行动描述、任务步骤或"
+        "流程说明（如“汇总已解析课程材料”“生成课程建设草稿”）；\n"
+        "- 禁止图注/表注（如“图 2-28”“表 3-1”）、页码、页眉页脚、OCR 碎片、"
+        "零件清单、习题编号及 a）/b）/c）式枚举；\n"
+        "- 禁止在标题中使用编号前缀或连字符列表（如“1.”“一、”“-”）。\n"
         "数量目标（见 constraints 中的 target_*，是理想范围而非硬性配额）：\n"
         "- 主题单元（section）目标 8-12 个，硬上限 12；\n"
         "- 知识点目标 12-24 个，硬上限 24；\n"

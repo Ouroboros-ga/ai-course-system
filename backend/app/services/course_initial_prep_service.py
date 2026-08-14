@@ -556,10 +556,21 @@ class InitialCoursePrepService:
         seen_titles: set[tuple[str | None, str]] = set()
         for candidate in candidates:
             title = " ".join(candidate.title.split())
-            if len(title) < 2 or len(title) > 120 or "\n" in candidate.title:
-                raise InitialCoursePreparationError("智能备课结果包含不适合作为教学标题的内容")
+            brief = title if len(title) <= 40 else f"{title[:40]}…"
+            if "\n" in candidate.title:
+                raise InitialCoursePreparationError(
+                    f"智能备课结果包含不适合作为教学标题的内容（标题包含换行：{brief}）"
+                )
+            if len(title) < 2:
+                raise InitialCoursePreparationError("智能备课结果包含不适合作为教学标题的内容（标题为空或过短）")
+            if len(title) > 120:
+                raise InitialCoursePreparationError(
+                    f"智能备课结果包含不适合作为教学标题的内容（标题超过 120 字上限：{brief}）"
+                )
             if re.match(r"^(图|表)\s*\d", title) or title.count("-") >= 3:
-                raise InitialCoursePreparationError("智能备课结果将图注或部件清单误作教学标题")
+                raise InitialCoursePreparationError(
+                    f"智能备课结果将图注或部件清单误作教学标题：{brief}"
+                )
             if candidate.node_type == "chapter" and candidate.parent_candidate_id:
                 raise InitialCoursePreparationError("章节不能拥有父节点")
             if candidate.parent_candidate_id:
