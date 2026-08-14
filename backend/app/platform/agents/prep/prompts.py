@@ -281,7 +281,7 @@ STRUCTURE_PLANNER_PROMPT = PromptSpec(
 
 PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
     name="prep.ppt_mapping_optimizer",
-    version="1.1",
+    version="1.2",
     system_template=(
         "你是 PPT 映射优化助手。根据 PPT 每页的 OCR 文本，"
         "判断哪些页最匹配哪个知识点，输出映射建议。\n\n"
@@ -295,18 +295,24 @@ PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
         "2. 一页 PPT 可以映射到多个知识点（如果该页内容确实覆盖多个知识点）\n"
         "3. 只能使用提供的知识点 ID 列表中的 outline_node_id\n"
         "4. 如果某页不属于任何知识点，不要为它生成建议\n"
-        "5. confidence 低于 0.6 的建议仍需输出，由教师决定是否接受\n"
-        "6. reason 必须说明匹配依据（OCR 文本中的关键词、与讲稿/标题的语义关联）\n"
-        "7. 不得修改 teacher_locked=True 的映射\n"
-        "8. 对于 nodes 中已有 mappings 的知识点，参考现有 page_refs 和 source_block_refs，"
+        "5. 只为确实能在 OCR 文本中找到对应内容的知识点输出建议；"
+        "如果某个知识点在本 PPT 中没有任何匹配页，直接省略它（保持未映射），"
+        "绝不要用低置信度把它挂到全部页或大段连续页上凑数\n"
+        "6. 禁止全 deck fallback：page_refs 不得覆盖该 PPT 的全部页或几乎全部页；"
+        "一个知识点真正覆盖整本 PPT 的情况不存在\n"
+        "7. confidence 反映匹配把握：有明确关键词/语义证据时给 0.6 以上，"
+        "证据较弱时给 0.3-0.6，完全没有证据就不要输出该知识点\n"
+        "8. reason 必须说明匹配依据（OCR 文本中的关键词、与讲稿/标题的语义关联）\n"
+        "9. 不得修改 teacher_locked=True 的映射\n"
+        "10. 对于 nodes 中已有 mappings 的知识点，参考现有 page_refs 和 source_block_refs，"
         "结合 OCR 文本判断是否需要调整\n"
-        "9. 对于 nodes 中没有 mappings 的知识点（教师新增节点），根据 OCR 文本和"
+        "11. 对于 nodes 中没有 mappings 的知识点（教师新增节点），根据 OCR 文本和"
         "script_content/parent_title 语义匹配生成新映射\n\n"
         "返回纯 JSON，结构为：\n"
         "{\"suggestions\": [{\"outline_node_id\": \"...\", \"page_refs\": [3,5], "
         "\"confidence\": 0.8, \"reason\": \"...\"}, ...]}"
     ),
-    output_schema_version="1.1",
+    output_schema_version="1.2",
 )
 
 

@@ -111,6 +111,24 @@ def salvage_suggestions(raw_text: str) -> list[dict]:
     return candidates
 
 
+def is_full_deck_fallback(page_refs: Sequence[int], max_page: int) -> bool:
+    """Detect the LLM "I cannot decide" fallback of mapping a knowledge
+    point onto (almost) every slide of a deck.
+
+    When the PPT content is unrelated to the outline, a weak model tends to
+    emit one suggestion per node whose ``page_refs`` covers the whole deck
+    with a very low confidence.  Such rows are useless to the teacher and
+    hide the honest "unmapped" state, so both new suggestions and existing
+    draft rows matching this shape are rejected / cleaned up.
+    """
+    if max_page < 3:
+        return False
+    distinct = {int(page) for page in page_refs if int(page) > 0}
+    if not distinct:
+        return False
+    return len(distinct) >= max(3, int(max_page * 0.8))
+
+
 @dataclass
 class PptMappingSuggestion:
     """One LLM-produced mapping suggestion.
@@ -339,8 +357,38 @@ class PptMappingOptimizationService:
                     allowed_pages=(page_refs_by_material or {}).get(version_id),
                 )
             ]
+            # Repair legacy full-deck fallback rows written before the
+            # validator rejected them: draft, unlocked, no OCR provenance,
+            # low confidence and covering (almost) the whole deck.  Teacher
+            # locked rows and evidence-seeded rows are never touched here.
+            max_page = self._max_page(blocks)
+            kept_existing: list[CoursePptMapping] = []
+            cleaned = 0
+            for mapping in existing:
+                fallback_pages = mapping.page_refs or list(
+                    range(mapping.page_start, mapping.page_end + 1)
+                )
+                if (
+                    mapping.status == "draft"
+                    and not mapping.teacher_locked
+                    and not (mapping.source_block_refs or [])
+                    and float(mapping.confidence or 0.0) < 0.5
+                    and is_full_deck_fallback(fallback_pages, max_page)
+                ):
+                    logger.warning(
+                        "PptMappingOptimization: removing legacy full-deck fallback "
+                        "mapping node=%s version=%s pages=%d/%d",
+                        mapping.outline_node_id, version_id,
+                        len(fallback_pages), max_page,
+                    )
+                    session.delete(mapping)
+                    cleaned += 1
+                    continue
+                kept_existing.append(mapping)
+            existing = kept_existing
+
             total_mappings += len(existing)
-            updated += self._apply_suggestions(
+            updated += cleaned + self._apply_suggestions(
                 session,
                 course_id=course_id,
                 material_version_id=version_id,
@@ -1004,7 +1052,14 @@ class PptMappingOptimizationService:
                 or max_page < 1
                 or any(page < 1 or page > max_page for page in page_refs)
                 or (allowed_page_set and not set(page_refs).issubset(allowed_page_set))
+                or is_full_deck_fallback(page_refs, max_page)
             ):
+                if page_refs and suggestion.outline_node_id in valid_ids and is_full_deck_fallback(page_refs, max_page):
+                    logger.warning(
+                        "PptMappingOptimization: rejected full-deck fallback suggestion "
+                        "node=%s pages=%d/%d",
+                        suggestion.outline_node_id, len(page_refs), max_page,
+                    )
                 continue
             valid.append(replace(suggestion, page_refs=page_refs))
         return valid
@@ -1077,5 +1132,6 @@ __all__ = [
     "PptMappingOptimizationSummary",
     "PptMappingOptimizationService",
     "ppt_mapping_optimization_service",
+    "is_full_deck_fallback",
     "salvage_suggestions",
 ]

@@ -706,3 +706,108 @@ def test_optimize_mappings_salvages_truncated_llm_json(session, monkeypatch):
     assert mapping is not None
     assert mapping.page_refs == [3]
     assert summary.updated_count >= 1
+
+
+def test_is_full_deck_fallback_detection():
+    """全 deck fallback 判定：覆盖几乎全部页才算，局部映射不误伤。"""
+    from app.services.ppt_mapping_optimization_service import is_full_deck_fallback
+
+    assert is_full_deck_fallback(list(range(1, 23)), 22) is True
+    assert is_full_deck_fallback(list(range(5, 23)), 22) is True  # 18/22 >= 80%
+    assert is_full_deck_fallback(list(range(13, 23)), 22) is False  # 10/22
+    assert is_full_deck_fallback([1, 2], 22) is False
+    assert is_full_deck_fallback([], 22) is False
+    assert is_full_deck_fallback([1, 2], 2) is False  # 过小的 deck 不判定
+
+
+def _add_deck_pages(session, *, course_id, material_version_id, pages, run_id="run_deck"):
+    for page in pages:
+        session.add(DocumentBlock(
+            course_id=course_id,
+            material_version_id=material_version_id,
+            run_id=run_id,
+            block_id=f"deck_block_{page:03d}",
+            block_type="TEXT",
+            page_or_slide=page,
+            text=f"类与对象 第 {page} 页 无关内容",
+        ))
+    session.commit()
+
+
+def test_full_deck_fallback_suggestions_are_rejected(session, monkeypatch):
+    """LLM 对不相关 PPT 输出全 deck 低置信建议时，不得写库。"""
+    monkeypatch.setattr(PptMappingOptimizationService, "_llm_is_configured", staticmethod(lambda: True))
+    _teacher, course, _outline_ver, existing_kp, new_kp, material_version_id = _setup_course_with_outline_and_ppt(
+        session, with_existing_mapping=True,
+    )
+    _add_deck_pages(session, course_id=course.id, material_version_id=material_version_id, pages=range(4, 23))
+
+    full_deck = list(range(1, 23))
+    fake_client = _FakeLLMClient(json.dumps({"suggestions": [
+        {"outline_node_id": existing_kp.outline_node_id, "page_refs": full_deck,
+         "confidence": 0.2, "reason": "无法确定"},
+        {"outline_node_id": new_kp.outline_node_id, "page_refs": full_deck,
+         "confidence": 0.2, "reason": "无法确定"},
+    ]}))
+    summary = asyncio.run(PptMappingOptimizationService(client=fake_client).optimize_mappings(
+        session, course_id=course.id, material_version_id=material_version_id,
+    ))
+
+    # new_kp 没有证据种子，fallback 建议被拒绝后应保持未映射
+    new_mapping = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.outline_node_id == new_kp.outline_node_id,
+        CoursePptMapping.material_version_id == material_version_id,
+    )).first()
+    assert new_mapping is None
+    assert new_kp.outline_node_id in summary.unmapped_node_ids
+
+    # existing_kp 由证据种子定位为 [1,2]，不被 fallback 覆盖成全页
+    seeded = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.outline_node_id == existing_kp.outline_node_id,
+        CoursePptMapping.material_version_id == material_version_id,
+    )).first()
+    assert seeded is not None
+    assert seeded.page_refs == [1, 2]
+
+
+def test_legacy_full_deck_fallback_rows_are_cleaned(session, monkeypatch):
+    """历史版本写入的全 deck 脏行（draft、未锁定、无证据、低置信）应被清理。"""
+    monkeypatch.setattr(PptMappingOptimizationService, "_llm_is_configured", staticmethod(lambda: True))
+    _teacher, course, _outline_ver, existing_kp, new_kp, material_version_id = _setup_course_with_outline_and_ppt(
+        session, with_existing_mapping=True,
+    )
+    _add_deck_pages(session, course_id=course.id, material_version_id=material_version_id, pages=range(4, 23))
+
+    # 模拟旧版本写下的脏行
+    session.add(CoursePptMapping(
+        course_id=course.id,
+        outline_node_id=new_kp.outline_node_id,
+        material_version_id=material_version_id,
+        page_start=1,
+        page_end=22,
+        page_refs=list(range(1, 23)),
+        confidence=0.2,
+        status="draft",
+        teacher_locked=False,
+        source_block_refs=[],
+    ))
+    session.commit()
+
+    fake_client = _FakeLLMClient(json.dumps({"suggestions": []}))
+    summary = asyncio.run(PptMappingOptimizationService(client=fake_client).optimize_mappings(
+        session, course_id=course.id, material_version_id=material_version_id,
+    ))
+
+    cleaned = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.outline_node_id == new_kp.outline_node_id,
+        CoursePptMapping.material_version_id == material_version_id,
+    )).first()
+    assert cleaned is None
+    assert new_kp.outline_node_id in summary.unmapped_node_ids
+
+    # 教师手工锁定或带证据的行不受清理影响
+    locked = session.exec(select(CoursePptMapping).where(
+        CoursePptMapping.outline_node_id == existing_kp.outline_node_id,
+        CoursePptMapping.material_version_id == material_version_id,
+    )).first()
+    assert locked is not None
