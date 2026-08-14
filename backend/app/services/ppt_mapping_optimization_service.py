@@ -117,16 +117,22 @@ def is_full_deck_fallback(page_refs: Sequence[int], max_page: int) -> bool:
 
     When the PPT content is unrelated to the outline, a weak model tends to
     emit one suggestion per node whose ``page_refs`` covers the whole deck
-    with a very low confidence.  Such rows are useless to the teacher and
-    hide the honest "unmapped" state, so both new suggestions and existing
-    draft rows matching this shape are rejected / cleaned up.
+    (or a large contiguous chunk of it) with a low or even fabricated
+    confidence.  Such rows are useless to the teacher and hide the honest
+    "unmapped" state, so both new suggestions and existing draft rows
+    matching this shape are rejected / cleaned up.
+
+    A single knowledge point genuinely covering a large contiguous chunk of
+    a deck does not happen in practice, so >=40% coverage is treated as
+    fallback (the model also emits "second half of the deck" shapes like
+    13-22 of 22 when it cannot decide).
     """
     if max_page < 3:
         return False
     distinct = {int(page) for page in page_refs if int(page) > 0}
     if not distinct:
         return False
-    return len(distinct) >= max(3, int(max_page * 0.8))
+    return len(distinct) >= max(3, int(max_page * 0.4))
 
 
 @dataclass
@@ -1052,14 +1058,22 @@ class PptMappingOptimizationService:
                 or max_page < 1
                 or any(page < 1 or page > max_page for page in page_refs)
                 or (allowed_page_set and not set(page_refs).issubset(allowed_page_set))
+                or float(suggestion.confidence) < 0.3
                 or is_full_deck_fallback(page_refs, max_page)
             ):
-                if page_refs and suggestion.outline_node_id in valid_ids and is_full_deck_fallback(page_refs, max_page):
-                    logger.warning(
-                        "PptMappingOptimization: rejected full-deck fallback suggestion "
-                        "node=%s pages=%d/%d",
-                        suggestion.outline_node_id, len(page_refs), max_page,
-                    )
+                if page_refs and suggestion.outline_node_id in valid_ids:
+                    if is_full_deck_fallback(page_refs, max_page):
+                        logger.warning(
+                            "PptMappingOptimization: rejected full-deck fallback suggestion "
+                            "node=%s pages=%d/%d",
+                            suggestion.outline_node_id, len(page_refs), max_page,
+                        )
+                    elif float(suggestion.confidence) < 0.3:
+                        logger.warning(
+                            "PptMappingOptimization: rejected low-confidence suggestion "
+                            "node=%s confidence=%.2f",
+                            suggestion.outline_node_id, float(suggestion.confidence),
+                        )
                 continue
             valid.append(replace(suggestion, page_refs=page_refs))
         return valid
