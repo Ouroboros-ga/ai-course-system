@@ -19,6 +19,7 @@ from app.models.course_model import Course, CourseScript, DoclingDocument, Docli
 from app.services.qa_service import qa_service
 from app.services.progress_service import progress_service
 from app.services.course_access_service import require_course_permission
+from app.services.conversation_service import persist_conversation_turn
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -170,6 +171,7 @@ async def ask_question(
     question: str = Body(..., description="用户问题"),
     currentNodeId: Optional[Union[int, str]] = Body(None, description="当前学习节点ID：兼容旧版数值 ScriptNode ID 与新版 release outline_node_id（如 on_xxx）"),
     strictMode: bool = Body(False, description="是否使用严格知识库模式（带引用标注）"),
+    sessionId: Optional[str] = Body(None, description="学习会话 ID，用于 Conversation Domain 持久化分组（TeachingAgent 回退 V1 时透传，使刷新后可恢复对话）"),
 ):
     """
     Compatibility boundary: the new learning workspace must fall back here
@@ -340,6 +342,27 @@ async def ask_question(
         session.add(assistant_message)
         session.commit()
         session.refresh(assistant_message)
+
+        # Conversation Domain (AGENTS.md §5.1)：V1 作为 TeachingAgent 回退路径时，
+        # 同样把本轮 Q/A 持久化到 conversation_messages，使学习者刷新 / 重进课程后
+        # 可恢复对话。仅对课程内真实学习者（analytics_eligible）落库；非阻塞，
+        # 失败不影响回答主流程（persist_conversation_turn 内部已吞错并 rollback）。
+        if courseId and course_access and course_access.analytics_eligible:
+            try:
+                persist_conversation_turn(
+                    session,
+                    student_id=user_id,
+                    course_id=courseId,
+                    session_id=sessionId or f"v1-{user_id}-{courseId}",
+                    trace_id="",
+                    user_message=question,
+                    assistant_answer=ai_answer,
+                    concept_id=str(currentNodeId) if currentNodeId is not None else None,
+                    resource_id=str(currentNodeId) if currentNodeId is not None else None,
+                    citations=list(rag_sources) if isinstance(rag_sources, list) else None,
+                )
+            except Exception:  # noqa: BLE001 -- 非阻塞：对话持久化失败不得影响回答
+                pass
 
         understanding_analysis = None
         if (

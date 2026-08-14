@@ -330,19 +330,22 @@ export function useLearningWorkspace(courseId, options = {}) {
   }
 
   // Conversation Domain：恢复学生教学智能体对话历史。
-  // 仅在 TeachingAgent 受控条件齐备（cognitive_analysis + analytics_eligible +
-  // studentId）时拉取；失败静默（skipErrorToast），不影响学习页面就绪态。
-  // 刷新 / 重新进入课程后，历史消息重建到 messages，学生可继续上下文对话。
+  // 这是产品体验域，不依赖 cognitive_analysis 能力开关：V1 回退路径同样持久化到
+  // conversation_messages，因此任何真实学习者（analytics_eligible + studentId）
+  // 都应能在刷新 / 重新进入课程后恢复历史对话。失败静默（skipErrorToast），
+  // 不影响学习页面就绪态。
   async function loadConversationHistory() {
     if (previewMode) return
     const studentId = getStudentId()
     const analyticsEligible = getAnalyticsEligible()
-    const capabilities = getCapabilities()
-    if (!capabilities?.cognitive_analysis || !analyticsEligible || studentId == null) return
+    if (!analyticsEligible || studentId == null) return
     try {
       const data = await getConversationHistory(courseId, { limit: 200 })
       const items = Array.isArray(data?.messages) ? data.messages : []
       if (!items.length) return
+      // 避免与并发的用户新提问冲突：仅在消息列表为空时填充历史，
+      // 否则保留用户刚发出的消息不被覆盖（历史留待下次进入时加载）。
+      if (messages.value.length) return
       messages.value = items.map(msg => ({
         id: 'restored-' + msg.id,
         role: msg.role === 'assistant' ? 'assistant' : 'user',
@@ -703,6 +706,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       question,
       courseId: course.value.courseId,
       currentNodeId: currentNodeId.value,
+      sessionId: teachingSessionId,
     })
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),

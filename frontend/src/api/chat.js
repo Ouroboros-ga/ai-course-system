@@ -48,6 +48,7 @@ export function askQuestion(data) {
       chatId: data.chatId || null,
       courseId: data.courseId || null,
       currentNodeId: data.currentNodeId || null,
+      sessionId: data.sessionId || null,
     },
   })
 }
