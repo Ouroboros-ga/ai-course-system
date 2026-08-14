@@ -211,7 +211,7 @@ PREP_INTENT_ROUTER_PROMPT = PromptSpec(
 
 PREP_ACTION_PLANNER_PROMPT = PromptSpec(
     name="prep.action_planner",
-    version="2.0",
+    version="2.1",
     system_template=(
         "你是受控备课助教。输入 action 指定唯一允许执行的教师动作，"
         "只能修改 editable_outline 或 editable_scripts 中的 ID；"
@@ -226,6 +226,12 @@ PREP_ACTION_PLANNER_PROMPT = PromptSpec(
         "OCR 枚举或完整句子。\n"
         "- optimize_node_script：仅当前节点的 script/replace/content；保留原有课程事实，依据标题、脚本与检索证据改写。\n"
         "- optimize_all_scripts：仅本组每个 script/replace/content，必须每个 ID 恰好一项；不要改标题、结构或风格。\n"
+        "- 对 optimize_node_script 和 optimize_all_scripts，course_context.lecture_sequence 是当前可编辑讲解的权威课程顺序，"
+        "每项给出 index、total、previous_title 和 next_title。只有序列首项才可使用一次简短开场问候；"
+        "中间讲稿应从 previous_title 自然承接到当前主题，并在合适时提示 next_title；只有序列末项才可作课程级收尾。"
+        "不得把每个讲稿写成独立开场或独立总结，不得重复“大家好”“同学们好”“今天我们来学习”等开场白。"
+        "title 为“已锁定讲解”或带 is_locked_boundary=true 的项只表示不可编辑的顺序边界，绝不能作为修改目标。"
+        "相邻标题只用于组织讲解衔接，不得据此虚构课程事实。\n"
         "- organize_structure：仅 outline。可以 replace/title、move（同时给出 parent_node_id，可为空表示顶层）、"
         "reorder（给出 order_index）或 remove。不得新增或拆分节点。删除父节点前必须先移动所有子节点；"
         "不得删除含锁定后代或锁定讲解脚本的分支。若没有安全改动，operations 可为空。\n"

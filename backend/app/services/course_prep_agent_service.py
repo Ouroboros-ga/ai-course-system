@@ -54,6 +54,11 @@ BatchAction = Literal["organize_structure", "optimize_scripts", "optimize_all_sc
 # ceiling so an unexpectedly huge course fails closed instead of truncating.
 _BATCH_MAX_TARGETS = 500
 _BATCH_MAX_INPUT_CHARS = 120_000
+# Every script-planning request receives this compact sequence.  A bounded
+# title budget prevents a large course from turning one grouped rewrite into
+# an oversized context request.
+_SCRIPT_SEQUENCE_MAX_CHARS = 24_000
+_SCRIPT_SEQUENCE_TITLE_MAX_CHARS = 160
 # An outline operation emits a short title plus JSON metadata, while a script
 # operation must carry the rewritten sentence(s).  A single 1,200-character
 # reserve for both made normal 40–60-node courses fail before the model saw
@@ -516,6 +521,10 @@ class CoursePrepAgentService:
             ]
             if not target_scripts:
                 raise ValueError("当前节点没有可优化的未锁定讲解脚本")
+            self._validate_script_continuity_capacity(
+                outline=outline,
+                scripts=scripts,
+            )
             evidence = await self.retrieve_action_evidence(
                 session,
                 course_id=course_id,
@@ -530,6 +539,8 @@ class CoursePrepAgentService:
                 evidence=evidence,
                 course_outline_context=editable_outline,
                 course_script_context=target_scripts,
+                lecture_sequence_outline=outline,
+                lecture_sequence_scripts=scripts,
             )
             operations, excluded, discarded = self._filter_operations(
                 plan=plan,
@@ -554,6 +565,7 @@ class CoursePrepAgentService:
                 course_id=course_id,
                 instruction=instruction,
                 outline=outline,
+                scripts=scripts,
                 editable_scripts=editable_scripts,
                 locked_targets=locked_targets,
             )
@@ -618,6 +630,8 @@ class CoursePrepAgentService:
         evidence: list[dict[str, Any]],
         course_outline_context: list[CourseOutlineNode],
         course_script_context: list[TeachingScriptNode],
+        lecture_sequence_outline: list[CourseOutlineNode] | None = None,
+        lecture_sequence_scripts: list[TeachingScriptNode] | None = None,
         ) -> AgentPlan:
         try:
             plan = await self._plan_with_llm(
@@ -628,6 +642,8 @@ class CoursePrepAgentService:
                 batch_action=action.value,
                 course_outline_context=course_outline_context,
                 course_script_context=course_script_context,
+                lecture_sequence_outline=lecture_sequence_outline,
+                lecture_sequence_scripts=lecture_sequence_scripts,
                 structure_mode=action == PrepAction.ORGANIZE_STRUCTURE,
             )
         except StructuredOutputError as exc:
@@ -719,11 +735,16 @@ class CoursePrepAgentService:
         course_id: int,
         instruction: str,
         outline: list[CourseOutlineNode],
+        scripts: list[TeachingScriptNode],
         editable_scripts: list[TeachingScriptNode],
         locked_targets: set[str],
     ) -> CoursePrepAgentResult:
         if not editable_scripts:
             raise ValueError("当前草稿没有可优化的未锁定讲解脚本")
+        self._validate_script_continuity_capacity(
+            outline=outline,
+            scripts=scripts,
+        )
         # Keep each request bounded and let the dedicated script budget cap
         # the rewritten text. The previous path inherited the global 8192
         # budget and allowed hidden reasoning to consume it before JSON was
@@ -754,6 +775,8 @@ class CoursePrepAgentService:
                     evidence=evidence,
                     course_outline_context=compact_outline,
                     course_script_context=group,
+                    lecture_sequence_outline=outline,
+                    lecture_sequence_scripts=scripts,
                 )
             return group, plan, evidence
 
@@ -1137,6 +1160,110 @@ class CoursePrepAgentService:
         return [node for node in outline if node.outline_node_id in needed]
 
     @staticmethod
+    def _lecture_sequence(
+        outline: list[CourseOutlineNode],
+        scripts: list[TeachingScriptNode],
+    ) -> list[dict[str, Any]]:
+        """Describe the editable lecture order without duplicating script bodies.
+
+        ``order_index`` is only unique among siblings.  We therefore traverse
+        the course tree instead of flat-sorting nodes, then attach each
+        editable script to its outline node.  Batches receive only the source
+        text they can change, while this compact sequence preserves enough
+        whole-course context to generate an opening, transition, or ending in
+        the right place.
+        """
+        outline_by_id = {node.outline_node_id: node for node in outline}
+        scripts_by_outline_id: dict[str, list[TeachingScriptNode]] = {}
+        for script in scripts:
+            scripts_by_outline_id.setdefault(script.outline_node_id, []).append(script)
+        for node_scripts in scripts_by_outline_id.values():
+            node_scripts.sort(key=lambda item: item.script_node_id)
+
+        children: dict[str | None, list[CourseOutlineNode]] = {}
+        for node in outline:
+            children.setdefault(node.parent_node_id, []).append(node)
+        for siblings in children.values():
+            siblings.sort(key=lambda item: (item.order_index, item.outline_node_id))
+
+        ordered_pairs: list[tuple[CourseOutlineNode | None, TeachingScriptNode]] = []
+        visited_nodes: set[str] = set()
+
+        def visit(node: CourseOutlineNode) -> None:
+            if node.outline_node_id in visited_nodes:
+                return
+            visited_nodes.add(node.outline_node_id)
+            ordered_pairs.extend(
+                (node, script)
+                for script in scripts_by_outline_id.pop(node.outline_node_id, [])
+            )
+            for child in children.get(node.outline_node_id, []):
+                visit(child)
+
+        for node in children.get(None, []):
+            visit(node)
+        # Retain malformed historical rows deterministically rather than
+        # silently changing a script's place in the lecture.
+        for node in sorted(outline, key=lambda item: (item.order_index, item.outline_node_id)):
+            visit(node)
+        for outline_node_id in sorted(scripts_by_outline_id):
+            node = outline_by_id.get(outline_node_id)
+            ordered_pairs.extend(
+                (node, script)
+                for script in scripts_by_outline_id[outline_node_id]
+            )
+
+        titles = [
+            "已锁定讲解"
+            if script.locked_by is not None
+            else "已锁定目录节点"
+            if node is not None and node.locked_by is not None
+            else "未关联课程节点"
+            if node is None
+            else (node.title or "未命名课程节点")[:_SCRIPT_SEQUENCE_TITLE_MAX_CHARS]
+            for node, script in ordered_pairs
+        ]
+        total = len(ordered_pairs)
+        return [
+            {
+                "index": index + 1,
+                "total": total,
+                "title": titles[index],
+                "previous_title": titles[index - 1] if index else None,
+                "next_title": titles[index + 1] if index + 1 < total else None,
+                **({
+                    "is_locked_boundary": True,
+                } if script.locked_by is not None else {
+                    "script_id": script.script_node_id,
+                    "outline_node_id": script.outline_node_id,
+                    **({"has_locked_outline": True} if node is not None and node.locked_by is not None else {}),
+                }),
+            }
+            for index, (node, script) in enumerate(ordered_pairs)
+        ]
+
+    @staticmethod
+    def _validate_script_continuity_capacity(
+        *,
+        outline: list[CourseOutlineNode],
+        scripts: list[TeachingScriptNode],
+    ) -> None:
+        """Fail closed when full-course sequence metadata cannot stay compact."""
+        if len(scripts) > _BATCH_MAX_TARGETS:
+            raise CoursePrepAgentPlanningError(
+                "当前课程的讲解节点数量超过连续讲解优化上限，未执行任何修改"
+            )
+        sequence_chars = len(json.dumps(
+            CoursePrepAgentService._lecture_sequence(outline, scripts),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ))
+        if sequence_chars > _SCRIPT_SEQUENCE_MAX_CHARS:
+            raise CoursePrepAgentPlanningError(
+                "课程顺序上下文超过单次模型容量，未执行任何修改"
+            )
+
+    @staticmethod
     def _filter_operations(
         *,
         plan: AgentPlan,
@@ -1289,6 +1416,8 @@ class CoursePrepAgentService:
         batch_action: BatchAction | None = None,
         course_outline_context: list[CourseOutlineNode] | None = None,
         course_script_context: list[TeachingScriptNode] | None = None,
+        lecture_sequence_outline: list[CourseOutlineNode] | None = None,
+        lecture_sequence_scripts: list[TeachingScriptNode] | None = None,
         structure_mode: bool = False,
     ) -> AgentPlan | StructurePlan | None:
         if not self._llm_is_configured():
@@ -1344,6 +1473,8 @@ class CoursePrepAgentService:
         if batch_action is not None and not structure_mode:
             context_outline = course_outline_context if course_outline_context is not None else outline
             context_scripts = course_script_context if course_script_context is not None else scripts
+            sequence_outline = lecture_sequence_outline if lecture_sequence_outline is not None else context_outline
+            sequence_scripts = lecture_sequence_scripts if lecture_sequence_scripts is not None else context_scripts
             context_outline_ids = {item.outline_node_id for item in context_outline}
             # Full original text lives only in course_context. The editable
             # lists are an allow-list, avoiding a second copy of every script.
@@ -1379,6 +1510,10 @@ class CoursePrepAgentService:
                         }
                         for item in context_scripts
                     ],
+                    "lecture_sequence": self._lecture_sequence(
+                        sequence_outline,
+                        sequence_scripts,
+                    ),
                 }
             # In structure mode editable_outline is already the complete,
             # compact tree snapshot.  Do not duplicate it as course_context.
@@ -1450,6 +1585,9 @@ class CoursePrepAgentService:
                 "For optimize_node_title return exactly one outline replace/title. "
                 "For optimize_node_script return only selected script replace/content operations. "
                 "For optimize_all_scripts return exactly one script replace/content operation for each editable script. "
+                "For script actions, course_context.lecture_sequence is the canonical editable lecture order. "
+                "Only its first item may greet, middle items must transition from previous_title without restarting the course, "
+                "and only its final item may close the course; never turn every script into an independent opening or ending. "
                 "For organize_structure return only outline operations: replace/title, move with parent_node_id, "
                 "reorder with order_index, or remove. Do not add nodes, create cycles, move into locked parents, "
                 "or remove a branch containing locked descendants."

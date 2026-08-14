@@ -16,6 +16,7 @@ from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.course_prep_agent_service import AgentPlan, CoursePrepAgentPlanningError, CoursePrepAgentService, course_prep_agent_service
 from app.platform.agents.prep.actions import PrepAction
+from app.platform.agents.prep.prompts import PREP_ACTION_PLANNER_PROMPT
 
 
 def test_agent_instruction_excludes_locked_node_and_returns_proposal_data(session, monkeypatch):
@@ -538,6 +539,201 @@ class _BatchPlanner:
         return AgentPlan.model_validate({"summary": "批量完成", "operations": operations})
 
 
+def test_selected_script_planning_receives_the_full_lecture_sequence(session):
+    """A middle script must know its immutable place in the course, not act alone."""
+    _, course, first_node, first_script = _setup_course_with_script(session)
+    second_node = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=first_node.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="汽车的分类",
+        order_index=1,
+    )
+    third_node = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=first_node.outline_version_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="发动机基础",
+        order_index=2,
+    )
+    session.add(second_node)
+    session.add(third_node)
+    session.flush()
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=first_script.script_version_id,
+        outline_node_id=second_node.outline_node_id,
+        content="汽车可按用途和动力形式分类。",
+        style="academic",
+    ))
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=first_script.script_version_id,
+        outline_node_id=third_node.outline_node_id,
+        content="发动机为汽车提供动力。",
+        style="academic",
+    ))
+    session.commit()
+    planner = _BatchPlanner()
+
+    asyncio.run(CoursePrepAgentService(llm=planner).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.OPTIMIZE_NODE_SCRIPT,
+        outline_node_id=second_node.outline_node_id,
+    ))
+
+    payload = planner.payloads[0]
+    assert [item["id"] for item in payload["editable_scripts"]] == [
+        next(item["id"] for item in payload["course_context"]["scripts"] if item["outline_node_id"] == second_node.outline_node_id)
+    ]
+    assert [
+        (item["index"], item["total"], item["title"], item["previous_title"], item["next_title"])
+        for item in payload["course_context"]["lecture_sequence"]
+    ] == [
+        (1, 3, "16.1 活塞销内孔形状", None, "汽车的分类"),
+        (2, 3, "汽车的分类", "16.1 活塞销内孔形状", "发动机基础"),
+        (3, 3, "发动机基础", "汽车的分类", None),
+    ]
+
+
+def test_script_action_prompt_forbids_repeated_independent_openings():
+    """Removing the continuity rule would let every script restart with a greeting."""
+    prompt = PREP_ACTION_PLANNER_PROMPT.system_template
+
+    assert "lecture_sequence" in prompt
+    assert "只有序列首项" in prompt
+    assert "不得把每个讲稿写成独立开场" in prompt
+
+
+def test_selected_script_sequence_keeps_locked_boundaries_and_tree_order(session):
+    """A locked opening remains an opaque first boundary, never a new greeting slot."""
+    teacher, course, locked_chapter, locked_script = _setup_course_with_script(session)
+    locked_chapter.node_type = OutlineNodeType.CHAPTER
+    locked_chapter.title = "已锁定的课程开篇"
+    locked_chapter.locked_by = teacher.id
+    locked_script.locked_by = teacher.id
+    selected_point = CourseOutlineNode(
+        course_id=course.id,
+        outline_version_id=locked_chapter.outline_version_id,
+        parent_node_id=locked_chapter.outline_node_id,
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+        title="发动机的作用",
+        order_index=0,
+    )
+    session.add(selected_point)
+    session.flush()
+    session.add(TeachingScriptNode(
+        course_id=course.id,
+        script_version_id=locked_script.script_version_id,
+        outline_node_id=selected_point.outline_node_id,
+        content="发动机向汽车提供动力。",
+    ))
+    session.commit()
+    planner = _BatchPlanner()
+
+    asyncio.run(CoursePrepAgentService(llm=planner).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.OPTIMIZE_NODE_SCRIPT,
+        outline_node_id=selected_point.outline_node_id,
+    ))
+
+    sequence = planner.payloads[0]["course_context"]["lecture_sequence"]
+    assert [
+        (item["index"], item["total"], item["title"], item["previous_title"], item["next_title"])
+        for item in sequence
+    ] == [
+        (1, 2, "已锁定讲解", None, "发动机的作用"),
+        (2, 2, "发动机的作用", "已锁定讲解", None),
+    ]
+    assert "script_id" not in sequence[0]
+    assert sequence[1]["script_id"] != locked_script.script_node_id
+
+
+def test_script_continuity_preflight_rejects_an_oversized_sequence():
+    """Dropping the sequence-capacity guard would send one oversized context per group."""
+    outline = [
+        SimpleNamespace(
+            outline_node_id=f"node-{index}",
+            parent_node_id=None,
+            order_index=index,
+            title="课程主题" * 100,
+            locked_by=None,
+        )
+        for index in range(200)
+    ]
+    scripts = [
+        SimpleNamespace(
+            script_node_id=f"script-{index}",
+            outline_node_id=f"node-{index}",
+            locked_by=None,
+        )
+        for index in range(200)
+    ]
+
+    with pytest.raises(CoursePrepAgentPlanningError, match="课程顺序上下文超过单次模型容量"):
+        CoursePrepAgentService._validate_script_continuity_capacity(
+            outline=outline,
+            scripts=scripts,
+        )
+
+
+def test_selected_script_under_a_locked_outline_stays_targetable_in_sequence(session):
+    """Locking a title must not hide a separately editable script's position or ID."""
+    teacher, course, locked_outline, editable_script = _setup_course_with_script(session)
+    locked_outline.locked_by = teacher.id
+    session.commit()
+    planner = _BatchPlanner()
+
+    asyncio.run(CoursePrepAgentService(llm=planner).plan_action(
+        session,
+        course_id=course.id,
+        action=PrepAction.OPTIMIZE_NODE_SCRIPT,
+        outline_node_id=locked_outline.outline_node_id,
+    ))
+
+    sequence = planner.payloads[0]["course_context"]["lecture_sequence"]
+    assert sequence == [{
+        "script_id": editable_script.script_node_id,
+        "outline_node_id": locked_outline.outline_node_id,
+        "index": 1,
+        "total": 1,
+        "title": "已锁定目录节点",
+        "previous_title": None,
+        "next_title": None,
+        "has_locked_outline": True,
+    }]
+
+
+def test_script_continuity_preflight_counts_serialized_neighbour_titles():
+    """A guard that counts each title once misses its title/previous/next copies."""
+    outline = [
+        SimpleNamespace(
+            outline_node_id=f"node-{index}",
+            parent_node_id=None,
+            order_index=index,
+            title="课程主题" * 25,
+            locked_by=None,
+        )
+        for index in range(100)
+    ]
+    scripts = [
+        SimpleNamespace(
+            script_node_id=f"script-{index}",
+            outline_node_id=f"node-{index}",
+            locked_by=None,
+        )
+        for index in range(100)
+    ]
+
+    with pytest.raises(CoursePrepAgentPlanningError, match="课程顺序上下文超过单次模型容量"):
+        CoursePrepAgentService._validate_script_continuity_capacity(
+            outline=outline,
+            scripts=scripts,
+        )
+
+
 def test_batch_structure_planning_covers_every_unlocked_node(session):
     teacher, course, node, _ = _setup_course_with_script(session)
     second = CourseOutlineNode(
@@ -779,6 +975,9 @@ def test_batch_script_planning_uses_five_script_groups_with_compact_outline_cont
     # improving the rewrite.
     assert all(1 <= len(payload["course_context"]["hierarchy"]) <= 5 for payload in planner.payloads)
     assert all(len(payload["course_context"]["scripts"]) <= 5 for payload in planner.payloads)
+    assert all(len(payload["course_context"]["lecture_sequence"]) == 25 for payload in planner.payloads)
+    assert all(payload["course_context"]["lecture_sequence"][0]["index"] == 1 for payload in planner.payloads)
+    assert all(payload["course_context"]["lecture_sequence"][-1]["index"] == 25 for payload in planner.payloads)
     first_payload = next(
         payload for payload in planner.payloads
         if any(item["id"] == first_script.script_node_id for item in payload["editable_scripts"])
