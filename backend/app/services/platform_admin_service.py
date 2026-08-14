@@ -74,7 +74,47 @@ _TOGGLE_KEYS: tuple = ("llm", "tts", "asr")
 
 def list_integrations(session: Session) -> list[dict[str, Any]]:
     values = {item.integration_key: item for item in session.exec(select(PlatformIntegrationConfig)).all()}
-    return [serialize_integration(values[key]) if key in values else {"integration_key": key, "provider": "", "base_url": "", "model_name": "", "key_configured": False, "key_last4": None, "extra_config": {}, "enabled": False, "version": 0, "health_status": "not_configured", "health_message": "尚未配置"} for key in _INTEGRATION_KEYS]
+    result = []
+    for key in _INTEGRATION_KEYS:
+        if key in values:
+            data = serialize_integration(values[key])
+        else:
+            data = {
+                "integration_key": key,
+                "provider": "",
+                "base_url": "",
+                "model_name": "",
+                "key_configured": False,
+                "key_last4": None,
+                "extra_config": {},
+                "enabled": False,
+                "version": 0,
+                "health_status": "not_configured",
+                "health_message": "尚未配置",
+            }
+        runtime_status, runtime_message = provider_manager.get_runtime_health(key)
+        _reconcile_health(data, runtime_status, runtime_message)
+        result.append(data)
+    return result
+
+
+def _reconcile_health(data: dict[str, Any], runtime_status: str, runtime_message: str) -> None:
+    """用运行时真实状态校准界面显示的 health_status。
+
+    规则：
+    - 运行时 disabled / not_configured / unavailable 优先展示，避免"显示 healthy 实际不可用"
+    - 运行时 healthy 且 DB 也是 healthy/reachable/configured → 保留 DB 原值（含具体探测结果）
+    - 运行时 healthy 但 DB 是 not_configured/unknown → 显示 healthy（如 env 启动未写 DB 的过渡态）
+    """
+    db_status = data.get("health_status") or "unknown"
+    if runtime_status in {"disabled", "not_configured", "unavailable"}:
+        data["health_status"] = runtime_status
+        data["health_message"] = runtime_message or data.get("health_message", "")
+        if runtime_status == "disabled":
+            data["enabled"] = False
+    elif runtime_status == "healthy" and db_status in {"not_configured", "unknown", "pending"}:
+        data["health_status"] = "healthy"
+        data["health_message"] = runtime_message or data.get("health_message", "")
 
 
 async def update_integration(session: Session, actor_id: int, key: str, payload: dict[str, Any]) -> dict[str, Any]:

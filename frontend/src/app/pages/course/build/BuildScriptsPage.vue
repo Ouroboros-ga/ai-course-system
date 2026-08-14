@@ -272,7 +272,7 @@ onBeforeUnmount(() => { window.removeEventListener('course-build-proposal-decide
 .script-editor header h3{margin:var(--space-1) 0 0;color:var(--text-primary);font-size:var(--ui-md-size)}
 .script-editor label{display:grid;gap:var(--space-1);color:var(--text-secondary);font-size:var(--ui-sm-size);font-weight:600}
 .script-editor textarea,.script-editor input{box-sizing:border-box;width:100%;border:1px solid var(--border-default);border-radius:var(--radius-md);outline:none;background:var(--surface-panel);color:var(--text-primary);font:inherit}
-.script-editor textarea{min-height:280px;padding:var(--space-3);font-size:var(--body-md-size);line-height:var(--body-md-line);resize:vertical}
+.script-editor textarea{min-height:440px;padding:var(--space-3);font-size:var(--body-md-size);line-height:var(--body-md-line);resize:vertical}
 .script-editor input{height:40px;padding:0 var(--space-3);font-size:var(--ui-md-size)}
 .script-editor textarea:focus,.script-editor input:focus{border-color:var(--ink-500);box-shadow:0 0 0 2px var(--ink-100)}
 .script-editor textarea:disabled,.script-editor input:disabled{background:var(--surface-cool);color:var(--text-secondary)}
