@@ -85,3 +85,18 @@ def now_utc_iso() -> str:
     用于日志、审计、JSON 序列化等非 DB 路径。
     """
     return utcnow_aware().isoformat()
+
+
+def to_iso(dt: datetime | None) -> str:
+    """将 datetime 序列化为带 UTC 时区标记的 ISO 8601 字符串。
+
+    - 若 dt 为 None，返回空字符串。
+    - 若 dt 是 naive（无时区），假定为 UTC 并补上 ``+00:00``。
+    - 若 dt 已带时区，转换为 UTC 后输出。
+
+    用途：API 响应中的时间字段，确保前端 ``new Date(value)`` 能正确识别并
+    转换为浏览器本地时区显示。
+    """
+    if dt is None:
+        return ""
+    return to_aware(dt).isoformat()

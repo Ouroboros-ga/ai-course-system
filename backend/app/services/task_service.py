@@ -1,4 +1,4 @@
-﻿"""统一任务中心服务（阶段0）。
+"""统一任务中心服务（阶段0）。
 
 不依赖 Redis/Celery；使用 SQLModel 持久化 + 可替换的本地 worker 适配接口。
 后续可替换为 RQ/Celery/Dramatiq，只要保留相同的 TaskService 接口。
@@ -29,7 +29,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_iso, utcnow_aware
 from app.models.task_model import (
     IdempotencyKeyRecord,
     TaskEventRecord,
@@ -94,8 +94,8 @@ class TaskViewModel:
         *,
         links: Iterable[TaskResourceLinkRecord] = (),
     ) -> "TaskViewModel":
-        def _iso(value: Optional[datetime]) -> Optional[str]:
-            return value.isoformat() if value else None
+        def _iso_opt(value: Optional[datetime]) -> Optional[str]:
+            return to_iso(value) if value else None
 
         try:
             result_data = json.loads(record.result_data) if record.result_data else {}
@@ -118,13 +118,13 @@ class TaskViewModel:
             error_message=record.error_message,
             retryable=record.retryable,
             acknowledged=record.acknowledged,
-            acknowledged_at=_iso(record.acknowledged_at),
+            acknowledged_at=_iso_opt(record.acknowledged_at),
             parent_task_id=record.parent_task_id,
             idempotency_key=record.idempotency_key,
-            created_at=record.created_at.isoformat() if record.created_at else "",
-            updated_at=record.updated_at.isoformat() if record.updated_at else "",
-            started_at=_iso(record.started_at),
-            finished_at=_iso(record.finished_at),
+            created_at=to_iso(record.created_at),
+            updated_at=to_iso(record.updated_at),
+            started_at=_iso_opt(record.started_at),
+            finished_at=_iso_opt(record.finished_at),
             affected_resources=[
                 {
                     "resource_kind": link.resource_kind,
@@ -866,7 +866,7 @@ class TaskService:
                 "message": e.message,
                 "error_code": e.error_code,
                 "event_data": json.loads(e.event_data) if e.event_data else {},
-                "created_at": e.created_at.isoformat() if e.created_at else "",
+                "created_at": to_iso(e.created_at),
             }
             for e in events
         ]
