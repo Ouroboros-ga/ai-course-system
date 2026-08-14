@@ -114,6 +114,12 @@ test('agent_governance.js: 教学约束、工具策略与审计路由和后端�
   assert.match(frontend, /\/agent-governance\/course\/\$\{course\(courseId\)\}\/tools/)
   assert.match(backend, /@agent_governance_router\.put\("\/course\/\{course_id\}\/teaching-constraints"\)/)
   assert.match(backend, /@agent_governance_router\.get\("\/course\/\{course_id\}\/tools"\)/)
+  // 教学约束写接口对应 extra="forbid" 的严格 schema，签名参数必须放 query，
+  // 否则 time/enc 混入 body 会被 Pydantic 拒绝（422）。
+  assert.match(frontend, /updateTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(frontend, /rollbackTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(frontend, /previewTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(backend, /class TeachingConstraint(Update|Rollback|Preview)Request\(_StrictRequest\)/)
 })
 
 test('course_lifecycle.js: 课程分组只读 client 对应真实后端路由', () => {
