@@ -73,7 +73,7 @@ const selectedNodeDbId = computed(() => Number(selectedScript.value?.script_node
 const workingRelease = computed(() => releaseDetail.value ?? releases.value.find((item) => item.release_id === selectedReleaseId.value) ?? null)
 const provider = computed(() => providerHealth.value?.tts ?? null)
 const providerKey = computed(() => provider.value?.provider_key || '')
-const providerDisplayName = computed(() => provider.value?.effective_provider || '未配置')
+const providerDisplayName = computed(() => provider.value?.display_name || provider.value?.effective_provider || '未配置')
 const providerReady = computed(() => provider.value?.status === 'ready' && Boolean(providerKey.value))
 const providerNeedsConfirmation = computed(() => Boolean(provider.value?.requires_confirmation))
 const providerIsDemo = computed(() => Boolean(provider.value?.demo_mode))

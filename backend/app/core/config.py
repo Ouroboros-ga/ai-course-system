@@ -354,7 +354,7 @@ class Settings(BaseSettings):
 
     # P4 批量媒体建设。前端只能展示计划，所有限制均由服务端重新计算。
     MEDIA_BATCH_MAX_NODES: int = 20
-    MEDIA_BATCH_MAX_BILLABLE_CHARS: int = 10_000
+    MEDIA_BATCH_MAX_BILLABLE_CHARS: int = 50_000
     MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER: int = 2
 
     # --------------------------

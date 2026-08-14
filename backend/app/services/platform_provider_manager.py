@@ -90,6 +90,17 @@ class PlatformProviderManager:
                 settings.VOLCENGINE_DOUBAO_TTS_SPEAKER = str(values.get("speaker") or values.get("voice") or "")
             else:
                 tts_client.replace_from_config(provider=provider, api_key=api_key, extra_config=values)
+            # 批量媒体建设的字符数/节点数限额（可选，由管理员在 extra_config 中覆盖默认值）
+            if values.get("max_billable_chars"):
+                try:
+                    settings.MEDIA_BATCH_MAX_BILLABLE_CHARS = max(1000, int(values["max_billable_chars"]))
+                except (TypeError, ValueError):
+                    pass
+            if values.get("max_nodes"):
+                try:
+                    settings.MEDIA_BATCH_MAX_NODES = max(1, int(values["max_nodes"]))
+                except (TypeError, ValueError):
+                    pass
         elif key == "ppt":
             from app.services.ppt_generation_service import ppt_generation_service
             ppt_generation_service.xfyun_client.configure(base_url=base_url, api_key=api_key, extra_config=extra_config or {})
@@ -118,6 +129,8 @@ class PlatformProviderManager:
             from app.core.config import settings
             settings.MEDIA_DEMO_MODE = True
             settings.STAGE8_TTS_PROVIDER = "fake"
+            settings.MEDIA_BATCH_MAX_BILLABLE_CHARS = 50_000
+            settings.MEDIA_BATCH_MAX_NODES = 20
         elif key == "asr":
             from app.services.volcengine_asr import asr_client
             asr_client.set_enabled(False)

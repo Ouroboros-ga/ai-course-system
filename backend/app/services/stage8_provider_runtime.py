@@ -17,6 +17,7 @@ class Stage8TtsRuntime:
     effective_provider: str
     provider_key: str
     provider_version: str
+    display_name: str
     demo_mode: bool
     billable: bool
     requires_confirmation: bool
@@ -32,6 +33,7 @@ class Stage8TtsRuntime:
             "effective_provider": self.effective_provider,
             "provider_key": self.provider_key,
             "provider_version": self.provider_version,
+            "display_name": self.display_name,
             "demo_mode": self.demo_mode,
             "billable": self.billable,
             "requires_confirmation": self.requires_confirmation,
@@ -62,6 +64,7 @@ def resolve_stage8_tts_runtime() -> Stage8TtsRuntime:
             effective_provider="fake-demo",
             provider_key=provider.provider_key,
             provider_version=provider.provider_version,
+            display_name="本地演示模式",
             demo_mode=True,
             billable=False,
             requires_confirmation=False,
@@ -77,6 +80,7 @@ def resolve_stage8_tts_runtime() -> Stage8TtsRuntime:
             effective_provider="",
             provider_key="",
             provider_version="",
+            display_name="未配置",
             demo_mode=False,
             billable=True,
             requires_confirmation=True,
@@ -93,6 +97,7 @@ def resolve_stage8_tts_runtime() -> Stage8TtsRuntime:
         effective_provider="doubao",
         provider_key=provider.provider_key,
         provider_version=provider.provider_version,
+        display_name="豆包语音",
         demo_mode=False,
         billable=True,
         requires_confirmation=True,
