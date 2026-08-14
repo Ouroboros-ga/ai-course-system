@@ -149,13 +149,20 @@ function hasMessageForActiveAdjustment() {
 </script>
 
 <template>
-  <aside ref="rootRef" class="sfx-agent" aria-label="课程智能体" @keydown="handleKeydown">
+  <aside ref="rootRef" class="sfx-agent is-chat-layout" aria-label="课程智能体" @keydown="handleKeydown">
     <header class="sfx-agent-header">
       <div class="sfx-agent-anchor">
-        <span class="sfx-agent-title sfx-t-ui">课程智能体</span>
-        <span class="sfx-agent-anchor-text sfx-t-caption" v-if="anchor">
-          锚点：{{ anchor.sourceNodeTitle }}<template v-if="anchor.sourcePage"> · 第 {{ anchor.sourcePage }} 页</template><template v-if="anchor.sourceTime != null"> · {{ formatTime(anchor.sourceTime) }}</template>
-        </span>
+        <div class="sfx-agent-title-row">
+          <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
+            <span class="sfx-agent-avatar-initials">AI</span>
+          </span>
+          <div class="sfx-agent-title-col">
+            <span class="sfx-agent-title sfx-t-ui">课程智能体</span>
+            <span class="sfx-agent-anchor-text sfx-t-caption" v-if="anchor">
+              锚点：{{ anchor.sourceNodeTitle }}<template v-if="anchor.sourcePage"> · 第 {{ anchor.sourcePage }} 页</template><template v-if="anchor.sourceTime != null"> · {{ formatTime(anchor.sourceTime) }}</template>
+            </span>
+          </div>
+        </div>
       </div>
       <button type="button" class="sfx-agent-close" aria-label="关闭提问面板（Esc）" @click="emit('exit')">
         <X :size="18" />
@@ -164,149 +171,144 @@ function hasMessageForActiveAdjustment() {
 
     <div ref="listRef" class="sfx-agent-messages">
       <div v-if="!ws.messages.value.length" class="sfx-agent-greeting">
-        <p class="sfx-t-body">就当前知识点向我提问。</p>
-        <p class="sfx-t-caption">回答会结合当前课程内容；有来源时显示原文引用，没有可靠来源时会明确说明。</p>
+        <div class="sfx-agent-greeting-avatar" aria-hidden="true">
+          <Lightbulb :size="22" />
+        </div>
+        <div class="sfx-agent-greeting-text">
+          <p class="sfx-t-body sfx-agent-greeting-title">就当前知识点向我提问</p>
+          <p class="sfx-t-caption">回答会结合当前课程内容；有来源时显示原文引用，没有可靠来源时会明确说明。</p>
+        </div>
       </div>
 
       <div v-for="message in ws.messages.value" :key="message.id"
            class="sfx-agent-message" :class="`is-${message.role}`">
+        <!-- 用户消息：右侧气泡 + 头像 -->
         <template v-if="message.role === 'user'">
-          <p class="sfx-agent-question sfx-t-ui">{{ message.content }}</p>
+          <div class="sfx-agent-msg-row">
+            <div class="sfx-agent-msg-bubble-wrap is-user">
+              <div class="sfx-agent-question sfx-t-ui">{{ message.content }}</div>
+            </div>
+            <span class="sfx-agent-avatar sfx-agent-avatar-user" aria-hidden="true">
+              <span class="sfx-agent-avatar-initials">我</span>
+            </span>
+          </div>
         </template>
+
+        <!-- 智能体消息：左侧头像 + 气泡 -->
         <template v-else>
-          <div class="sfx-agent-answer" :class="{ 'is-error': message.error }">
-            <!-- ① 系统观察（§6.7）：真实锚点上下文，非伪造 -->
-            <p class="sfx-agent-observe sfx-t-caption" v-if="message.nodeId != null">
-              <span class="sfx-agent-seg-label">系统观察</span>
-              结合当前知识点<template v-if="message.page"> · 第 {{ message.page }} 页</template>
-            </p>
+          <div class="sfx-agent-msg-row is-assistant">
+            <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
+              <span class="sfx-agent-avatar-initials">AI</span>
+            </span>
+            <div class="sfx-agent-msg-bubble-wrap is-assistant">
+              <div class="sfx-agent-answer" :class="{ 'is-error': message.error }">
+                <!-- ① 系统观察（§6.7）：弱化显示为元信息 -->
+                <div class="sfx-agent-observe sfx-t-caption" v-if="message.nodeId != null">
+                  <span class="sfx-agent-seg-label">系统观察</span>
+                  <span>结合当前知识点<template v-if="message.page"> · 第 {{ message.page }} 页</template></span>
+                </div>
 
-            <!-- ③ 回答 -->
-            <p class="sfx-agent-answer-text sfx-t-body">{{ message.content }}</p>
+                <!-- ③ 回答 - 更宽松的正文排版 -->
+                <div class="sfx-agent-answer-text sfx-t-body">{{ message.content }}</div>
 
-            <div v-if="message.lowConfidence" class="sfx-agent-lowconf sfx-t-caption">
-              <TriangleAlert :size="13" /> 本次回答置信度较低，建议核对下方原文引用。
-            </div>
-            <div v-if="message.fallbackNotice" class="sfx-agent-lowconf sfx-t-caption">
-              <TriangleAlert :size="13" /> {{ message.fallbackNotice }}
-            </div>
+                <div v-if="message.lowConfidence" class="sfx-agent-lowconf sfx-t-caption">
+                  <TriangleAlert :size="13" /> 本次回答置信度较低，建议核对下方原文引用。
+                </div>
+                <div v-if="message.fallbackNotice" class="sfx-agent-lowconf sfx-t-caption">
+                  <TriangleAlert :size="13" /> {{ message.fallbackNotice }}
+                </div>
 
-            <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
-            <ul v-if="message.citations?.length" class="sfx-agent-citations">
-              <li class="sfx-agent-seg-label">依据</li>
-              <li v-for="(citation, index) in message.citations" :key="citation.id || index"
-                  class="sfx-agent-citation">
-                <BookMarked :size="13" />
-                <span>{{ citation.title || citation.source || '课程资料' }}</span>
-                <span v-if="citation.page != null" class="sfx-t-caption">p.{{ citation.page }}</span>
-              </li>
-            </ul>
+                <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
+                <ul v-if="message.citations?.length" class="sfx-agent-citations">
+                  <li class="sfx-agent-seg-label sfx-agent-citations-title">依据</li>
+                  <li v-for="(citation, index) in message.citations" :key="citation.id || index"
+                      class="sfx-agent-citation">
+                    <BookMarked :size="13" />
+                    <span>{{ citation.title || citation.source || '课程资料' }}</span>
+                    <span v-if="citation.page != null" class="sfx-t-caption">p.{{ citation.page }}</span>
+                  </li>
+                </ul>
 
-            <section
-              v-if="isVisibleProposal(message.learningAdjustment)"
-              class="sfx-agent-adjustment"
-              aria-label="学习回顾建议"
-            >
-              <p class="sfx-agent-adjustment-title sfx-t-ui">
-                <MapPinned :size="15" /> 建议回顾第 {{ reviewPage(message.learningAdjustment) }} 页
-              </p>
-              <p class="sfx-t-caption">
-                回顾后由你自行选择何时返回原学习位置。
-              </p>
-              <div class="sfx-agent-adjustment-actions">
-                <SfxButton
-                  variant="secondary"
-                  size="sm"
-                  :loading="adjustmentBusy"
-                  :disabled="adjustmentBusy"
-                  @click="emit('accept-adjustment', message.learningAdjustment)"
-                >回顾并补充讲解</SfxButton>
-                <SfxButton
-                  variant="tertiary"
-                  size="sm"
-                  :disabled="adjustmentBusy"
-                  @click="emit('dismiss-adjustment', message.learningAdjustment)"
-                >继续当前位置</SfxButton>
+                <!-- 回顾建议：仅在消息内出现，不额外持久化到页面底部 -->
+                <section
+                  v-if="isVisibleProposal(message.learningAdjustment)"
+                  class="sfx-agent-adjustment"
+                  aria-label="学习回顾建议"
+                >
+                  <p class="sfx-agent-adjustment-title sfx-t-ui">
+                    <MapPinned :size="15" /> 建议回顾第 {{ reviewPage(message.learningAdjustment) }} 页
+                  </p>
+                  <p class="sfx-t-caption">
+                    回顾后由你自行选择何时返回原学习位置。
+                  </p>
+                  <div class="sfx-agent-adjustment-actions">
+                    <SfxButton
+                      variant="secondary"
+                      size="sm"
+                      :loading="adjustmentBusy"
+                      :disabled="adjustmentBusy"
+                      @click="emit('accept-adjustment', message.learningAdjustment)"
+                    >回顾并补充讲解</SfxButton>
+                    <SfxButton
+                      variant="tertiary"
+                      size="sm"
+                      :disabled="adjustmentBusy"
+                      @click="emit('dismiss-adjustment', message.learningAdjustment)"
+                    >继续当前位置</SfxButton>
+                  </div>
+                </section>
+
+                <section
+                  v-if="isActiveAdjustment(message.learningAdjustment)"
+                  class="sfx-agent-adjustment is-active"
+                  aria-label="正在回顾"
+                >
+                  <template v-if="isReviewingAdjustment(message.learningAdjustment)">
+                    <p class="sfx-agent-adjustment-title sfx-t-ui">
+                      <CornerUpLeft :size="15" /> 正在回顾，原学习位置已保留
+                    </p>
+                    <SfxButton
+                      variant="secondary"
+                      size="sm"
+                      :loading="adjustmentBusy"
+                      :disabled="adjustmentBusy"
+                      @click="emit('return-adjustment')"
+                    >返回原学习位置</SfxButton>
+                  </template>
+                  <template v-else>
+                    <p class="sfx-agent-adjustment-title sfx-t-ui">
+                      <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
+                    </p>
+                    <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
+                    <SfxButton
+                      variant="secondary"
+                      size="sm"
+                      :loading="adjustmentBusy"
+                      :disabled="adjustmentBusy"
+                      @click="emit('retry-opening-review')"
+                    >重试打开回顾</SfxButton>
+                  </template>
+                </section>
+
+                <button v-if="message.error" type="button" class="sfx-agent-retry sfx-t-ui"
+                        @click="retry(message)">
+                  <RefreshCw :size="13" /> 重试
+                </button>
               </div>
-            </section>
-
-            <section
-              v-if="isActiveAdjustment(message.learningAdjustment)"
-              class="sfx-agent-adjustment is-active"
-              aria-label="正在回顾"
-            >
-              <template v-if="isReviewingAdjustment(message.learningAdjustment)">
-                <p class="sfx-agent-adjustment-title sfx-t-ui">
-                  <CornerUpLeft :size="15" /> 正在回顾，原学习位置已保留
-                </p>
-                <SfxButton
-                  variant="secondary"
-                  size="sm"
-                  :loading="adjustmentBusy"
-                  :disabled="adjustmentBusy"
-                  @click="emit('return-adjustment')"
-                >返回原学习位置</SfxButton>
-              </template>
-              <template v-else>
-                <p class="sfx-agent-adjustment-title sfx-t-ui">
-                  <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
-                </p>
-                <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
-                <SfxButton
-                  variant="secondary"
-                  size="sm"
-                  :loading="adjustmentBusy"
-                  :disabled="adjustmentBusy"
-                  @click="emit('retry-opening-review')"
-                >重试打开回顾</SfxButton>
-              </template>
-            </section>
-
-            <button v-if="message.error" type="button" class="sfx-agent-retry sfx-t-ui"
-                    @click="retry(message)">
-              <RefreshCw :size="13" /> 重试
-            </button>
+            </div>
           </div>
         </template>
       </div>
 
-      <section
-        v-if="activeAdjustment && !hasMessageForActiveAdjustment()"
-        class="sfx-agent-adjustment is-active"
-        aria-label="待继续的学习回顾"
-      >
-        <template v-if="activeAdjustment.navigationStatus === 'reviewing'">
-          <p class="sfx-agent-adjustment-title sfx-t-ui">
-            <CornerUpLeft :size="15" /> 正在回顾，原学习位置已保留
-          </p>
-          <SfxButton
-            variant="secondary"
-            size="sm"
-            :loading="adjustmentBusy"
-            :disabled="adjustmentBusy"
-            @click="emit('return-adjustment')"
-          >返回原学习位置</SfxButton>
-        </template>
-        <template v-else>
-          <p class="sfx-agent-adjustment-title sfx-t-ui">
-            <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
-          </p>
-          <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
-          <SfxButton
-            variant="secondary"
-            size="sm"
-            :loading="adjustmentBusy"
-            :disabled="adjustmentBusy"
-            @click="emit('retry-opening-review')"
-          >重试打开回顾</SfxButton>
-        </template>
-      </section>
-
+      <!-- 全局调整通知：仅显示错误/提示，不再把"已确认回顾"作为无来源的持久化框常驻 -->
       <p v-if="adjustmentNotice" class="sfx-agent-adjustment-notice sfx-t-caption" role="status">
         <TriangleAlert :size="13" /> {{ adjustmentNotice }}
       </p>
 
       <div v-if="ws.isAsking.value" class="sfx-agent-thinking sfx-t-caption" role="status">
+        <span class="sfx-agent-thinking-dots">
+          <span></span><span></span><span></span>
+        </span>
         课程智能体正在结合当前课程内容生成回答…
       </div>
     </div>
@@ -379,30 +381,45 @@ function hasMessageForActiveAdjustment() {
   flex-direction: column;
   min-width: 0;
   min-height: 0;
-  background: var(--surface-panel);
+  background: var(--surface-canvas);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   overflow: hidden;
 }
 
+/* ========== 头部：智能体身份卡片 ========== */
 .sfx-agent-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
   padding: var(--space-4);
+  background: var(--surface-panel);
   border-bottom: 1px solid var(--border-subtle);
 }
 
-.sfx-agent-anchor {
+.sfx-agent-title-row {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  align-items: center;
+  gap: var(--space-3);
   min-width: 0;
 }
 
-.sfx-agent-title { font-weight: 600; color: var(--ink-900); }
-.sfx-agent-anchor-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sfx-agent-title-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.sfx-agent-title { font-weight: 600; color: var(--ink-900); font-size: var(--ui-md-size); }
+.sfx-agent-anchor-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  max-width: 280px;
+}
 
 .sfx-agent-close {
   width: 32px;
@@ -416,49 +433,140 @@ function hasMessageForActiveAdjustment() {
 }
 .sfx-agent-close:hover { background: var(--surface-cool); color: var(--ink-700); }
 
+/* ========== 通用头像 ========== */
+.sfx-agent-avatar {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: var(--caption-size);
+  line-height: 1;
+  user-select: none;
+}
+.sfx-agent-avatar-ai {
+  background: linear-gradient(135deg, var(--ink-700), var(--ink-500));
+  color: var(--text-inverse);
+  box-shadow: 0 1px 2px rgb(20 33 61 / 18%);
+}
+.sfx-agent-avatar-user {
+  background: var(--amber-200);
+  color: var(--amber-900);
+  box-shadow: 0 1px 2px rgb(155 102 24 / 12%);
+}
+.sfx-agent-avatar-initials { letter-spacing: 0.02em; }
+
+/* ========== 消息列表 ========== */
 .sfx-agent-messages {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--space-4);
+  padding: var(--space-6) var(--space-5);
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
+  gap: var(--space-6);
 }
 
+/* ========== 欢迎/空状态 ========== */
 .sfx-agent-greeting {
   display: flex;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding: var(--space-5);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+.sfx-agent-greeting-avatar {
+  flex-shrink: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--amber-200), var(--amber-100));
+  color: var(--amber-700);
+}
+.sfx-agent-greeting-text {
+  display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  color: var(--text-secondary);
+  gap: var(--space-1);
+  min-width: 0;
 }
-
-.sfx-agent-message.is-user {
-  align-self: flex-end;
-  max-width: 88%;
-}
-
-.sfx-agent-question {
-  background: var(--ink-100);
+.sfx-agent-greeting-title {
+  font-weight: 600;
   color: var(--ink-900);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
+  margin: 0;
+}
+.sfx-agent-greeting-text p:last-child {
+  color: var(--text-secondary);
+  margin: 0;
 }
 
-.sfx-agent-message.is-assistant { max-width: 100%; }
+/* ========== 消息行：用户/智能体左右区分 ========== */
+.sfx-agent-message {
+  display: flex;
+  width: 100%;
+}
+.sfx-agent-msg-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  width: 100%;
+}
+.sfx-agent-msg-row.is-assistant {
+  justify-content: flex-start;
+}
+.sfx-agent-msg-row:not(.is-assistant) {
+  justify-content: flex-end;
+}
 
+/* 消息气泡外层 */
+.sfx-agent-msg-bubble-wrap {
+  min-width: 0;
+  max-width: calc(100% - 52px);
+  display: flex;
+  flex-direction: column;
+}
+.sfx-agent-msg-bubble-wrap.is-user {
+  align-items: flex-end;
+}
+.sfx-agent-msg-bubble-wrap.is-assistant {
+  align-items: stretch;
+}
+
+/* ========== 用户气泡 ========== */
+.sfx-agent-question {
+  background: var(--color-brand);
+  color: var(--text-inverse);
+  border-radius: var(--radius-md) 4px var(--radius-md) var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  line-height: 1.7;
+  box-shadow: 0 1px 2px rgb(20 33 61 / 10%);
+  word-break: break-word;
+  font-size: var(--ui-md-size);
+}
+
+/* ========== 智能体气泡 ========== */
 .sfx-agent-answer {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px var(--radius-md) var(--radius-md) var(--radius-md);
   color: var(--text-primary);
+  box-shadow: 0 1px 2px rgb(16 26 49 / 4%);
 }
 
 .sfx-agent-answer.is-error {
   background: var(--red-100);
-  border: 1px solid var(--red-300);
-  border-radius: var(--radius-md);
-  padding: var(--space-3) var(--space-4);
+  border-color: var(--red-300);
 }
 
 /* 结构化分段标签（§6.7） */
@@ -470,86 +578,165 @@ function hasMessageForActiveAdjustment() {
   letter-spacing: 0.02em;
 }
 
+/* 系统观察：弱化元信息 */
 .sfx-agent-observe {
-  display: flex;
+  display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-cool);
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
+  width: fit-content;
 }
 
-.sfx-agent-answer-text { color: var(--text-primary); }
+/* 回答正文：更宽松的阅读排版 */
+.sfx-agent-answer-text {
+  color: var(--text-primary);
+  font-size: var(--body-md-size);
+  line-height: 1.85;
+  letter-spacing: 0.005em;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
 
+/* 低置信度提示 */
 .sfx-agent-lowconf {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--amber-100);
+  border: 1px solid var(--amber-200);
+  border-radius: var(--radius-sm);
   color: var(--amber-700);
+  width: fit-content;
 }
 
+/* 依据：原文引用 */
 .sfx-agent-citations {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
   background: var(--surface-cool);
   border-left: 3px solid var(--ink-500);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   padding: var(--space-3) var(--space-4);
+  margin: 0;
+  list-style: none;
 }
-
+.sfx-agent-citations-title {
+  margin-bottom: var(--space-1);
+}
 .sfx-agent-citation {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   font-size: var(--ui-sm-size);
   color: var(--text-secondary);
+  line-height: 1.6;
 }
 
+/* 学习回顾建议/正在回顾卡片 */
 .sfx-agent-adjustment {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-4);
   border: 1px solid var(--amber-300);
   border-radius: var(--radius-md);
   background: var(--amber-100);
 }
-
 .sfx-agent-adjustment.is-active {
   border-color: var(--green-300);
   background: var(--green-100);
 }
-
 .sfx-agent-adjustment-title,
 .sfx-agent-adjustment-notice {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  margin: 0;
 }
-
+.sfx-agent-adjustment-title {
+  color: var(--amber-800);
+  font-weight: 600;
+}
+.sfx-agent-adjustment.is-active .sfx-agent-adjustment-title {
+  color: var(--green-800);
+}
+.sfx-agent-adjustment > .sfx-t-caption {
+  margin: 0;
+  color: var(--text-secondary);
+}
 .sfx-agent-adjustment-actions {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.sfx-agent-adjustment-notice {
+  padding: var(--space-3) var(--space-4);
+  background: var(--amber-100);
+  border: 1px dashed var(--amber-300);
+  border-radius: var(--radius-md);
+  color: var(--amber-700);
 }
 
-.sfx-agent-adjustment-notice { color: var(--amber-700); }
-
+/* 重试按钮 */
 .sfx-agent-retry {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
   color: var(--red-700);
   font-weight: 500;
+  align-self: flex-start;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--red-50);
 }
 
-.sfx-agent-thinking { color: var(--text-muted); }
+/* 思考中动画 */
+.sfx-agent-thinking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  color: var(--text-muted);
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-panel);
+  border: 1px dashed var(--border-default);
+  border-radius: var(--radius-md);
+  align-self: flex-start;
+  margin-left: 48px;
+}
+.sfx-agent-thinking-dots {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+.sfx-agent-thinking-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ink-300);
+  animation: sfx-thinking-bounce 1.2s infinite ease-in-out;
+}
+.sfx-agent-thinking-dots span:nth-child(2) { animation-delay: 0.15s; }
+.sfx-agent-thinking-dots span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes sfx-thinking-bounce {
+  0%, 80%, 100% { transform: scale(0.7); opacity: 0.5; }
+  40% { transform: scale(1); opacity: 1; }
+}
 
+/* ========== 底部：快捷操作 + 输入区 ========== */
 .sfx-agent-footer {
   border-top: 1px solid var(--border-subtle);
-  padding: var(--space-3) var(--space-4);
+  padding: var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
+  gap: var(--space-4);
+  background: var(--surface-panel);
 }
 
 .sfx-agent-next {
@@ -568,43 +755,59 @@ function hasMessageForActiveAdjustment() {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  height: 30px;
+  height: 34px;
   padding: 0 var(--space-3);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-full);
   border: 1px solid var(--border-default);
   background: var(--surface-panel);
   color: var(--ink-700);
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
 }
-.sfx-agent-quick-btn:hover:not(:disabled) { background: var(--surface-cool); }
+.sfx-agent-quick-btn:hover:not(:disabled) {
+  background: var(--ink-50);
+  border-color: var(--ink-200);
+  color: var(--ink-900);
+}
 .sfx-agent-quick-btn:disabled { color: var(--text-disabled); cursor: not-allowed; }
 
+/* 输入行 */
 .sfx-agent-input {
   display: flex;
   align-items: flex-end;
   gap: var(--space-2);
+  padding: var(--space-2);
+  background: var(--surface-canvas);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+.sfx-agent-input:focus-within {
+  border-color: var(--color-focus);
+  box-shadow: 0 0 0 3px var(--ink-100);
 }
 
 .sfx-agent-input textarea {
   flex: 1;
-  min-height: 44px;
-  max-height: 120px;
+  min-height: 40px;
+  max-height: 140px;
   resize: none;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
-  padding: var(--space-3);
+  border: 0;
+  background: transparent;
+  padding: var(--space-2) var(--space-2);
   font-family: inherit;
   font-size: var(--ui-md-size);
+  line-height: 1.6;
   color: var(--text-primary);
-  background: var(--surface-panel);
+  outline: none;
 }
-
-.sfx-agent-input textarea:hover { border-color: var(--border-strong); }
-.sfx-agent-input textarea:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 0; }
 .sfx-agent-input textarea::placeholder { color: var(--text-muted); }
 
 .sfx-agent-send {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
@@ -612,25 +815,36 @@ function hasMessageForActiveAdjustment() {
   border-radius: var(--radius-md);
   background: var(--color-brand);
   color: var(--text-inverse);
+  transition: background var(--duration-fast) var(--ease-out),
+              transform var(--duration-fast) var(--ease-out);
 }
-.sfx-agent-send:hover:not(:disabled) { background: var(--color-brand-hover); }
-.sfx-agent-send:disabled { background: var(--border-strong); cursor: not-allowed; }
+.sfx-agent-send:hover:not(:disabled) {
+  background: var(--color-brand-hover);
+  transform: translateY(-1px);
+}
+.sfx-agent-send:disabled { background: var(--border-strong); cursor: not-allowed; transform: none; }
 
 .sfx-agent-mic {
-  width: 44px;
-  height: 44px;
+  width: 40px;
+  height: 40px;
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-1);
   border-radius: var(--radius-md);
-  border: 1px solid var(--border-default);
-  background: var(--surface-panel);
+  border: 1px solid transparent;
+  background: transparent;
   color: var(--text-secondary);
   cursor: pointer;
+  transition: background var(--duration-fast) var(--ease-out),
+              border-color var(--duration-fast) var(--ease-out),
+              color var(--duration-fast) var(--ease-out);
 }
-.sfx-agent-mic:hover:not(:disabled) { border-color: var(--border-strong); color: var(--ink-700); }
+.sfx-agent-mic:hover:not(:disabled) {
+  background: var(--ink-50);
+  color: var(--ink-700);
+}
 .sfx-agent-mic:disabled { color: var(--text-disabled); cursor: not-allowed; }
 .sfx-agent-mic.is-recording {
   border-color: var(--red-500);
@@ -663,5 +877,13 @@ function hasMessageForActiveAdjustment() {
 }
 @keyframes sfx-mic-spin {
   to { transform: rotate(360deg); }
+}
+
+/* 响应式：窄屏下消息间距收窄 */
+@media (max-width: 900px) {
+  .sfx-agent-messages { padding: var(--space-4) var(--space-3); gap: var(--space-5); }
+  .sfx-agent-answer { padding: var(--space-3) var(--space-4); gap: var(--space-3); }
+  .sfx-agent-msg-bubble-wrap { max-width: calc(100% - 44px); }
+  .sfx-agent-avatar { width: 32px; height: 32px; }
 }
 </style>

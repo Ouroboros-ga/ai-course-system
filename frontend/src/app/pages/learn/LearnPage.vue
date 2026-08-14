@@ -396,9 +396,12 @@ const readStoredTrack = () => {
   try { return localStorage.getItem(TRACK_STORAGE_KEY) === '1' } catch { return null }
 }
 const trackManualOverride = ref(readStoredTrack())
-const trackCollapsed = computed(() =>
-  trackManualOverride.value ?? ![LEARN_STATES.LEARN, LEARN_STATES.UNDERSTAND].includes(learnState.value)
-)
+// 进入智能体(UNDERSTAND)状态时自动收起学习轨道，为对话和内容留出更多空间
+const isAgentOpen = computed(() => learnState.value === LEARN_STATES.UNDERSTAND)
+const trackCollapsed = computed(() => {
+  if (isAgentOpen.value) return true
+  return trackManualOverride.value ?? ![LEARN_STATES.LEARN].includes(learnState.value)
+})
 function handleTrackToggle() {
   const next = !trackCollapsed.value
   trackManualOverride.value = next
@@ -689,6 +692,7 @@ watch(
             :media-status="media.status.value"
             :media-message="media.manifest.value.message || media.error.value"
             :legacy-video-url="ws.currentVideoUrl.value"
+            :agent-panel-open="isAgentOpen"
             @playback="handlePlayback"
             @media-seeked="handleMediaSeeked"
             @media-error="handleMediaError"

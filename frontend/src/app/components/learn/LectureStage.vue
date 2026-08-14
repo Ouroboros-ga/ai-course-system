@@ -50,6 +50,8 @@ const props = defineProps({
   mediaStatus: { type: String, default: 'idle' },
   mediaMessage: { type: String, default: '' },
   legacyVideoUrl: { type: String, default: '' },
+  // 智能体面板是否打开：打开时左侧数字人区域切换为 PPT 缩略图
+  agentPanelOpen: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -384,7 +386,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 </script>
 
 <template>
-  <div class="sfx-stage">
+  <div class="sfx-stage" :class="{ 'is-agent-open': agentPanelOpen }">
     <section class="sfx-stage-pane sfx-stage-lecture" aria-label="讲解与字幕">
       <header class="sfx-stage-pane-label">
         <span><MonitorPlay :size="15" /> {{ mediaLabel }}</span>
@@ -408,33 +410,63 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         @error="handleAudioError"
       />
 
-      <AvatarViewport
-        v-if="hasAudio && avatarCues"
-        :cues="avatarCues"
-        :sprite-manifest="avatarSpriteManifest"
-        :current-time="avatarPlaybackTime"
-        :audio-element="audioRef"
-        :default-playback-mode="defaultPlaybackMode"
-        :asset-source="avatarAssetSource"
-      />
-      <video
-        v-if="!hasAudio && hasLegacyVideo"
-        ref="legacyVideoRef"
-        class="sfx-stage-video"
-        :key="legacyVideoUrl"
-        :src="legacyVideoUrl"
-        playsinline
-        preload="metadata"
-        @loadedmetadata="handleLoadedMetadata"
-        @timeupdate="handleTimeUpdate"
-        @seeked="handleSeeked"
-        @play="emitPlayback(true, $event.currentTarget)"
-        @pause="handlePause"
-        @ended="handleEnded"
-        @error="handleLegacyVideoError"
-      />
+      <!-- 智能体面板打开时：优先显示 PPT 缩略图，而非数字人 -->
+      <div
+        v-if="agentPanelOpen && (effectiveSlide || currentPptPage)"
+        class="sfx-stage-slide-frame sfx-stage-lecture-ppt"
+      >
+        <img
+          v-if="effectiveSlide && !slideError"
+          :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
+          :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
+          :alt="`课程课件第 ${displayedPage} 页`"
+          @error="slideError = true"
+        />
+        <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
+          <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
+          <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
+          <p class="sfx-t-body">{{ currentPptPage.content }}</p>
+        </div>
+        <div v-else class="sfx-stage-fallback is-light">
+          <FileQuestion :size="28" :stroke-width="1.6" />
+          <strong>当前页暂无可显示的课件</strong>
+        </div>
+      </div>
+      <!-- 默认（非智能体）状态：显示数字人或兼容视频 -->
+      <template v-else>
+        <AvatarViewport
+          v-if="hasAudio && avatarCues"
+          :cues="avatarCues"
+          :sprite-manifest="avatarSpriteManifest"
+          :current-time="avatarPlaybackTime"
+          :audio-element="audioRef"
+          :default-playback-mode="defaultPlaybackMode"
+          :asset-source="avatarAssetSource"
+        />
+        <video
+          v-if="!hasAudio && hasLegacyVideo"
+          ref="legacyVideoRef"
+          class="sfx-stage-video"
+          :key="legacyVideoUrl"
+          :src="legacyVideoUrl"
+          playsinline
+          preload="metadata"
+          @loadedmetadata="handleLoadedMetadata"
+          @timeupdate="handleTimeUpdate"
+          @seeked="handleSeeked"
+          @play="emitPlayback(true, $event.currentTarget)"
+          @pause="handlePause"
+          @ended="handleEnded"
+          @error="handleLegacyVideoError"
+        />
+      </template>
 
-      <div v-if="!hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
+      <div v-if="!agentPanelOpen && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
+        <VideoOff :size="32" :stroke-width="1.6" />
+        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
+        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
+      </div>
+      <div v-else-if="agentPanelOpen && !effectiveSlide && !currentPptPage?.content && !currentPptPage?.title && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback is-light">
         <VideoOff :size="32" :stroke-width="1.6" />
         <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
         <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
@@ -562,6 +594,27 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   padding: var(--space-4);
   background: var(--surface-canvas);
   overflow: hidden;
+  transition: grid-template-columns var(--duration-normal) var(--ease-out);
+}
+/* 智能体面板打开时：左侧压缩给 PPT 缩略图，右侧对话获得更多阅读空间 */
+.sfx-stage.is-agent-open {
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 3.25fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+/* 智能体模式下的 PPT 缩略图区域样式 */
+.sfx-stage-lecture-ppt {
+  min-height: 160px;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 1;
+  min-height: 0;
+}
+.sfx-stage-lecture-ppt img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .sfx-stage-pane {
