@@ -126,7 +126,7 @@ class Settings(BaseSettings):
     # failure (accurate diagnostics), not a budget-exhausted failure.
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_LEVELS: int = 8
     PREP_INITIAL_OUTLINE_MAX_TOKENS: int = 16384
-    PREP_INITIAL_VERIFIER_MAX_TOKENS: int = 4096
+    PREP_INITIAL_VERIFIER_MAX_TOKENS: int = 8192
     PREP_INITIAL_MAX_KNOWLEDGE_POINTS: int = 24
     PREP_INITIAL_MAX_OUTLINE_NODES: int = 64
     # Local-only, explicit debugging aid.  The per-course enable state and
