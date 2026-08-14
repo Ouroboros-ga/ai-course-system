@@ -1,8 +1,7 @@
 <script setup>
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { listFacadeCourses } from '@/api/facade.js'
-import { listLabRecords } from '@/api/labs.js'
+import { listLabRecords, listExperimentCourses } from '@/api/labs.js'
 import { courseExperimentPath } from '@/api/labProjectionContract.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
@@ -13,7 +12,7 @@ import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 const router = useRouter()
 const courses = ref([]); const courseId = ref(''); const state = ref('loading'); const records = ref([]); const error = ref('')
 function score(record) { return record.final_score == null ? '未评分' : `${Math.round(record.final_score * 100)}%` }
-async function loadCourses() { const [learning, building] = await Promise.all([listFacadeCourses('learning'), listFacadeCourses('building')]); const unique = new Map(); for (const course of [...(learning?.items || []), ...(building?.items || [])]) unique.set(String(course.course_id), course); courses.value = [...unique.values()]; courseId.value = courses.value[0] ? String(courses.value[0].course_id) : '' }
+async function loadCourses() { courses.value = await listExperimentCourses(); courseId.value = courses.value[0] ? String(courses.value[0].course_id) : '' }
 async function load() { if (!courseId.value) { state.value = 'empty'; return }; state.value = 'loading'; try { const data = await listLabRecords(courseId.value); records.value = Array.isArray(data?.items) ? data.items : []; state.value = records.value.length ? 'ready' : 'empty' } catch (caught) { error.value = caught?.response?.data?.detail || caught?.message || 'Unable to load trusted experiment records.'; state.value = 'error' } }
 function enterExperiment() { router.push(courseExperimentPath(courseId.value)) }
 watch(courseId, load)

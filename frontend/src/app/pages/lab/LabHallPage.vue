@@ -2,8 +2,7 @@
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { FlaskConical } from 'lucide-vue-next'
-import { listFacadeCourses } from '@/api/facade.js'
-import { listLabCatalog } from '@/api/labs.js'
+import { listLabCatalog, listExperimentCourses } from '@/api/labs.js'
 import { courseExperimentPath } from '@/api/labProjectionContract.js'
 import { getSandboxHealth, getSandboxLanguages } from '@/api/sandbox.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
@@ -22,10 +21,7 @@ const languages = ref([])
 const error = ref('')
 
 async function loadCourses() {
-  const [learning, building] = await Promise.all([listFacadeCourses('learning'), listFacadeCourses('building')])
-  const unique = new Map()
-  for (const course of [...(learning?.items || []), ...(building?.items || [])]) unique.set(String(course.course_id), course)
-  courses.value = [...unique.values()]
+  courses.value = await listExperimentCourses()
   courseId.value = courses.value[0] ? String(courses.value[0].course_id) : ''
 }
 
