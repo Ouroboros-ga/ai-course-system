@@ -527,7 +527,8 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
       </section>
     </slot>
 
-    <footer class="sfx-stage-controls" aria-label="播放控制">
+    <footer class="sfx-stage-controls" :class="{ 'is-agent-input': agentPanelOpen }" aria-label="播放控制">
+      <slot name="footer">
       <SfxButton variant="primary" size="sm" :disabled="!mediaElement" :aria-label="isPlaying ? '暂停讲解' : '播放讲解'" @click="togglePlay">
         <template #icon><Pause v-if="isPlaying" :size="16" /><Play v-else :size="16" /></template>
         {{ isPlaying ? '暂停' : '播放' }}
@@ -576,6 +577,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         <span class="sfx-visually-hidden">音量</span>
         <input type="range" min="0" max="1" step="0.05" :value="isMuted ? 0 : volume" :disabled="!mediaElement" @input="emit('volume-change', Number($event.target.value))" />
       </label>
+      </slot>
     </footer>
   </div>
 </template>
@@ -705,6 +707,15 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 }
 
 .sfx-stage-controls :deep(.sfx-btn.is-sm) { min-width: 0; }
+.sfx-stage-controls.is-agent-input {
+  padding: 0;
+  overflow: hidden;
+}
+.sfx-stage-controls.is-agent-input :deep(.sfx-agent-input-form) {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+}
 .sfx-stage-time { min-width: 38px; color: var(--text-secondary); font-size: var(--caption-size); font-variant-numeric: tabular-nums; text-align: center; }
 .sfx-stage-seek { flex: 1 1 140px; min-width: 100px; }
 .sfx-stage-seek input, .sfx-stage-volume input { width: 100%; accent-color: var(--ink-700); }

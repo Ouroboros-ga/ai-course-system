@@ -1,8 +1,8 @@
 <script setup>
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { BookMarked, Code2, CornerUpLeft, Lightbulb, ListChecks, LineChart, MapPinned, Mic, RefreshCw, SendHorizonal, TriangleAlert, X } from 'lucide-vue-next'
+import { BookMarked, CornerUpLeft, Lightbulb, ListChecks, MapPinned, RefreshCw, TriangleAlert, X } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
-import { useVoiceInput } from '@/features/student-learning/composables/useVoiceInput.js'
+import AgentInputForm from '@/app/components/learn/AgentInputForm.vue'
 
 /**
  * 课程智能体面板（page-design §12.5 UNDERSTAND / §13.1 统一人格 / §6.7 SystemResponsePanel）。
@@ -21,6 +21,7 @@ const props = defineProps({
   activeAdjustment: { type: Object, default: null },
   adjustmentBusy: { type: Boolean, default: false },
   adjustmentNotice: { type: String, default: '' },
+  hideFooterInput: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -33,7 +34,7 @@ const emit = defineEmits([
 ])
 
 const rootRef = ref(null)
-const inputRef = ref(null)
+const inputFormRef = ref(null)
 const listRef = ref(null)
 
 const quickActions = [
@@ -41,7 +42,6 @@ const quickActions = [
   { id: 'example', label: '举个例子', icon: Lightbulb, prompt: '请举一个具体例子说明：' },
   { id: 'quiz', label: '出一道小题', icon: ListChecks, prompt: '请针对这个知识点出一道小题考我：' },
 ]
-const teachingActions = [{ id: 'visualize', label: '看可视化', icon: LineChart }, { id: 'practice', label: '用代码验证', icon: Code2 }]
 
 function send(question) {
   props.ws.sendQuestion(question)
@@ -50,41 +50,6 @@ function send(question) {
 function handleQuick(action) {
   const base = props.ws.currentNode.value?.title || '当前知识点'
   send(`${action.prompt}${base}`)
-}
-
-function handleSubmit() {
-  send(props.ws.questionDraft.value)
-}
-
-// 语音输入：录音 → 后端豆包 ASR 转写 → 文本填入问题草稿（用户确认后发送）
-const {
-  status: voiceStatus,
-  supported: voiceSupported,
-  durationMs: voiceDurationMs,
-  start: startVoice,
-  stop: stopVoice,
-} = useVoiceInput({
-  getCourseId: () => props.ws.course.value?.courseId ?? null,
-  onText: (text) => {
-    props.ws.questionDraft.value = text
-    nextTick(() => inputRef.value?.focus())
-  },
-})
-
-function handleVoiceClick() {
-  if (voiceStatus.value === 'recording') {
-    stopVoice()
-  } else {
-    startVoice()
-  }
-}
-
-function formatVoiceSeconds() {
-  return Math.floor(voiceDurationMs.value / 1000)
-}
-
-function handleInput(e) {
-  props.ws.questionDraft.value = e.target.value
 }
 
 function retry(message) {
@@ -101,7 +66,7 @@ function handleKeydown(e) {
 
 onMounted(() => {
   window.addEventListener('keydown', handleKeydown)
-  nextTick(() => inputRef.value?.focus())
+  nextTick(() => inputFormRef.value?.focus())
 })
 
 onBeforeUnmount(() => {
@@ -324,53 +289,9 @@ function hasMessageForActiveAdjustment() {
             <component :is="action.icon" :size="14" /> {{ action.label }}
           </button>
         </div>
-        <div class="sfx-agent-quick"><button v-for="action in teachingActions" :key="action.id" type="button" class="sfx-agent-quick-btn sfx-t-sm" @click="emit('action', action.id)"><component :is="action.icon" :size="14" /> {{ action.label }}</button></div>
       </div>
 
-      <form class="sfx-agent-input" @submit.prevent="handleSubmit">
-        <textarea
-          ref="inputRef"
-          :value="ws.questionDraft.value"
-          rows="2"
-          maxlength="2000"
-          placeholder="就当前知识点提问…（Enter 发送，Shift+Enter 换行）"
-          aria-label="向课程智能体提问"
-          @input="handleInput"
-          @keydown.enter.exact.prevent="handleSubmit"
-        />
-        <button
-          v-if="voiceStatus === 'idle'"
-          type="button"
-          class="sfx-agent-mic"
-          :disabled="!voiceSupported"
-          :title="voiceSupported ? '语音输入（录音转文字）' : '当前浏览器不支持语音输入'"
-          aria-label="语音输入"
-          @click="handleVoiceClick"
-        >
-          <Mic :size="17" />
-        </button>
-        <button
-          v-else
-          type="button"
-          class="sfx-agent-mic"
-          :class="{ 'is-recording': voiceStatus === 'recording' }"
-          :disabled="voiceStatus === 'transcribing'"
-          :title="voiceStatus === 'recording' ? '点击停止录音' : '正在转写…'"
-          aria-label="停止录音并转写"
-          @click="handleVoiceClick"
-        >
-          <template v-if="voiceStatus === 'recording'">
-            <span class="sfx-agent-mic-dot"></span>
-            <span class="sfx-agent-mic-timer">{{ formatVoiceSeconds() }}s</span>
-          </template>
-          <span v-else class="sfx-agent-mic-spinner"></span>
-        </button>
-        <button type="submit" class="sfx-agent-send"
-                :disabled="ws.isAsking.value || !ws.questionDraft.value.trim()"
-                aria-label="发送问题">
-          <SendHorizonal :size="17" />
-        </button>
-      </form>
+      <AgentInputForm v-if="!hideFooterInput" ref="inputFormRef" :ws="ws" :autofocus="true" />
     </footer>
   </aside>
 </template>
@@ -771,113 +692,6 @@ function hasMessageForActiveAdjustment() {
   color: var(--ink-900);
 }
 .sfx-agent-quick-btn:disabled { color: var(--text-disabled); cursor: not-allowed; }
-
-/* 输入行 */
-.sfx-agent-input {
-  display: flex;
-  align-items: flex-end;
-  gap: var(--space-2);
-  padding: var(--space-2);
-  background: var(--surface-canvas);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  transition: border-color var(--duration-fast) var(--ease-out),
-              box-shadow var(--duration-fast) var(--ease-out);
-}
-.sfx-agent-input:focus-within {
-  border-color: var(--color-focus);
-  box-shadow: 0 0 0 3px var(--ink-100);
-}
-
-.sfx-agent-input textarea {
-  flex: 1;
-  min-height: 40px;
-  max-height: 140px;
-  resize: none;
-  border: 0;
-  background: transparent;
-  padding: var(--space-2) var(--space-2);
-  font-family: inherit;
-  font-size: var(--ui-md-size);
-  line-height: 1.6;
-  color: var(--text-primary);
-  outline: none;
-}
-.sfx-agent-input textarea::placeholder { color: var(--text-muted); }
-
-.sfx-agent-send {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--radius-md);
-  background: var(--color-brand);
-  color: var(--text-inverse);
-  transition: background var(--duration-fast) var(--ease-out),
-              transform var(--duration-fast) var(--ease-out);
-}
-.sfx-agent-send:hover:not(:disabled) {
-  background: var(--color-brand-hover);
-  transform: translateY(-1px);
-}
-.sfx-agent-send:disabled { background: var(--border-strong); cursor: not-allowed; transform: none; }
-
-.sfx-agent-mic {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  border-radius: var(--radius-md);
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-  transition: background var(--duration-fast) var(--ease-out),
-              border-color var(--duration-fast) var(--ease-out),
-              color var(--duration-fast) var(--ease-out);
-}
-.sfx-agent-mic:hover:not(:disabled) {
-  background: var(--ink-50);
-  color: var(--ink-700);
-}
-.sfx-agent-mic:disabled { color: var(--text-disabled); cursor: not-allowed; }
-.sfx-agent-mic.is-recording {
-  border-color: var(--red-500);
-  background: var(--red-100);
-  color: var(--red-700);
-}
-.sfx-agent-mic-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--red-700);
-  animation: sfx-mic-pulse 1s ease-in-out infinite;
-}
-.sfx-agent-mic-timer {
-  font-size: var(--caption-size);
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-}
-.sfx-agent-mic-spinner {
-  width: 16px;
-  height: 16px;
-  border: 2px solid var(--border-strong);
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: sfx-mic-spin 0.8s linear infinite;
-}
-@keyframes sfx-mic-pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.45; transform: scale(0.8); }
-}
-@keyframes sfx-mic-spin {
-  to { transform: rotate(360deg); }
-}
 
 /* 响应式：窄屏下消息间距收窄 */
 @media (max-width: 900px) {

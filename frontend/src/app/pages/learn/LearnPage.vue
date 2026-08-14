@@ -29,6 +29,7 @@ import LearningTrack from '@/app/components/learn/LearningTrack.vue'
 import LectureStage from '@/app/components/learn/LectureStage.vue'
 import LearningActionDock from '@/app/components/learn/LearningActionDock.vue'
 import CourseAgentPanel from '@/app/components/learn/CourseAgentPanel.vue'
+import AgentInputForm from '@/app/components/learn/AgentInputForm.vue'
 import CitationStage from '@/app/components/learn/CitationStage.vue'
 import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
@@ -712,6 +713,7 @@ watch(
                 :active-adjustment="activeLearningAdjustment"
                 :adjustment-busy="learningAdjustmentBusy"
                 :adjustment-notice="learningAdjustmentNotice"
+                :hide-footer-input="true"
                 @exit="exitBranch"
                 @action="handleAgentAction"
                 @accept-adjustment="acceptLearningAdjustment"
@@ -719,6 +721,9 @@ watch(
                 @retry-opening-review="retryOpeningLearningAdjustment"
                 @return-adjustment="returnToLearningAnchor"
               />
+            </template>
+            <template v-if="learnState === LEARN_STATES.UNDERSTAND" #footer>
+              <AgentInputForm :ws="ws" :autofocus="true" />
             </template>
           </LectureStage>
 
