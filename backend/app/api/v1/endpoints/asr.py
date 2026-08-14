@@ -27,10 +27,13 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
+from sqlmodel import Session
 
 from app.common.media_tools import ffmpeg_binary
 from app.core.config import settings
 from app.core.security import get_current_user
+from app.models.database import get_session
+from app.services.course_access_service import require_course_permission
 from app.services.object_storage import get_object_storage
 from app.services.volcengine_asr import (
     AsrQueryResult,
@@ -138,9 +141,18 @@ async def transcribe_audio(
     file: UploadFile = File(...),
     course_id: str = Form(..., min_length=1, max_length=128),
     current_user: dict = Depends(get_current_user),
+    session: Session = Depends(get_session),
 ):
-    """接收录音文件，提交豆包语音识别，返回 task_id。"""
+    """接收录音文件，提交豆包语音识别，返回 task_id。
+
+    与教学问答同权：仅课程成员且具备 course.question.ask 能力时允许提交，
+    course_id 由 Course Access v1 校验，已登录用户不能携任意课程提交。
+    """
     user_id = int(current_user["user_id"])
+    # Course Access v1：录音用于本课程问答输入，校验成员身份与提问能力
+    require_course_permission(
+        session, current_user, int(course_id), "course.question.ask"
+    )
 
     mime = (file.content_type or "").lower()
     if mime not in _ALLOWED_MIMES:
