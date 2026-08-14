@@ -1954,6 +1954,70 @@ def test_initial_runtime_failure_preserves_stage_label():
     assert failure.stage == "plan_outline"
 
 
+def test_empty_outline_titles_backfilled_from_evidence_and_pass_gate():
+    # OCR-heavy PPTs leak icon/page-number fragments (e.g. "\uf06c", "P3")
+    # into node titles; these must be backfilled so the title hard gate does
+    # not abort the whole build, while still surfacing a review warning.
+    from app.schemas.controlled_prep import OutlineCandidate
+    outline = OutlinePlannerResult(
+        stage="outline_planner",
+        candidates=[
+            OutlineCandidate(candidate_id="ch_1", node_type="chapter", title="数据结构",
+                             parent_candidate_id=None, evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="s_1", node_type="section", title="基本概念",
+                             parent_candidate_id="ch_1", evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_2"], rationale=""),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_3"], rationale=""),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_4"], rationale=""),
+        ],
+        prerequisites=[],
+    )
+    blocks = {
+        "blk_1": DocumentBlock(course_id=4, run_id="r", block_id="blk_1", text="数据结构基础"),
+        "blk_2": DocumentBlock(course_id=4, run_id="r", block_id="blk_2", text="\uf06c 二分查找算法"),
+        "blk_3": DocumentBlock(course_id=4, run_id="r", block_id="blk_3", text="P3"),
+        "blk_4": DocumentBlock(course_id=4, run_id="r", block_id="blk_4", text="\uf06c"),
+    }
+    filled_outline, filled = InitialCoursePrepService._fill_empty_outline_titles(outline, blocks)
+    assert len(filled) == 3
+    titles = {c.candidate_id: c.title for c in filled_outline.candidates}
+    assert titles["kp_1"] == "二分查找算法"      # 图标字符被剥离后取真实文本
+    assert titles["kp_2"] == "P3"               # 非纯数字的短碎片仍可被教师复核
+    assert titles["kp_3"] == "未命名知识点"      # 纯图标块无法提取时使用占位名
+    InitialCoursePrepService._validate_initial_outline(filled_outline)
+
+
+def test_empty_title_backfill_deduplicates_within_parent():
+    from app.schemas.controlled_prep import OutlineCandidate
+    outline = OutlinePlannerResult(
+        stage="outline_planner",
+        candidates=[
+            OutlineCandidate(candidate_id="ch_1", node_type="chapter", title="数据结构",
+                             parent_candidate_id=None, evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="s_1", node_type="section", title="基本概念",
+                             parent_candidate_id="ch_1", evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_2"], rationale=""),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_3"], rationale=""),
+        ],
+        prerequisites=[],
+    )
+    blocks = {
+        "blk_1": DocumentBlock(course_id=4, run_id="r", block_id="blk_1", text="数据结构基础"),
+        "blk_2": DocumentBlock(course_id=4, run_id="r", block_id="blk_2", text="\uf06c"),
+        "blk_3": DocumentBlock(course_id=4, run_id="r", block_id="blk_3", text="\uf06c"),
+    }
+    filled_outline, filled = InitialCoursePrepService._fill_empty_outline_titles(outline, blocks)
+    titles = {c.candidate_id: c.title for c in filled_outline.candidates}
+    assert titles["kp_1"] == "未命名知识点"
+    assert titles["kp_2"] == "未命名知识点2"
+    InitialCoursePrepService._validate_initial_outline(filled_outline)
+
+
 def json_dumps(value) -> str:
     import json
     return json.dumps(value, ensure_ascii=False)
