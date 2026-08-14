@@ -343,7 +343,8 @@ function toggleBatchNode(script) {
 
 // 返回某知识点在批量结果中可试听的 item（无音频时为 null）。试听入口统一在左侧列表。
 function scriptItemAudio(script) {
-  return findBatchItemForScript(script)
+  const item = findBatchItemForScript(script)
+  return item?.audio_object_key ? item : null
 }
 
 function withPreviewAccessToken(url) {
