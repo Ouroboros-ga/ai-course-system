@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu } from 'lucide-vue-next'
-import { getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
+import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu, ToggleLeft } from 'lucide-vue-next'
+import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
 import { showToast } from '@/utils/toast.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -20,6 +20,19 @@ const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
 const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1 })
+
+const CAPABILITY_FIELDS = [
+  { key: 'learning', label: '学习' },
+  { key: 'course_building', label: '建设' },
+  { key: 'knowledge_graph', label: '图谱' },
+  { key: 'evidence', label: '证据' },
+  { key: 'experiment', label: '实验' },
+  { key: 'coding_sandbox', label: '沙箱' },
+  { key: 'cognitive_analysis', label: '认知' },
+  { key: 'safety_policy', label: '安全' },
+]
+const ALL_CAPS_ON = Object.fromEntries(CAPABILITY_FIELDS.map(field => [field.key, true]))
+const courseCaps = ref([])
 
 function userPatch(user) {
   return { username: user.username || '', role: user.role, is_active: user.is_active }
@@ -44,12 +57,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [userResult, integrationResult, concurrencyResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency()])
+    const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
     users.value = userResult.items || []
     total.value = userResult.total || 0
     integrations.value = integrationResult.items || []
     integrations.value.forEach(item => { drafts[item.integration_key] = integrationDraft(item) })
     Object.assign(concurrency, concurrencyResult || {})
+    courseCaps.value = (capsResult.items || []).map(item => ({ ...item, draft: { ...item.capabilities } }))
   } catch (caught) {
     error.value = caught?.response?.data?.detail?.message || caught?.message || '无法读取平台管理数据'
   } finally {
@@ -136,6 +150,38 @@ async function toggleIntegration(item) {
   } finally { saving.value = '' }
 }
 
+async function saveCourseCaps(course) {
+  saving.value = `caps-${course.course_id}`
+  try {
+    const updated = await updateAdminCourseCapabilities(course.course_id, course.draft)
+    course.capabilities = updated.capabilities
+    course.draft = { ...updated.capabilities }
+    showToast(`课程「${course.title}」能力开关已保存`, 'success')
+  } catch (caught) {
+    showToast(caught?.message || '能力开关保存失败', 'error')
+  } finally { saving.value = '' }
+}
+
+async function enableAllCaps(course) {
+  course.draft = { ...ALL_CAPS_ON }
+  await saveCourseCaps(course)
+}
+
+async function enableAllCoursesCaps() {
+  if (!courseCaps.value.length) return
+  saving.value = 'caps-all'
+  try {
+    for (const course of courseCaps.value) {
+      const updated = await updateAdminCourseCapabilities(course.course_id, { ...ALL_CAPS_ON })
+      course.capabilities = updated.capabilities
+      course.draft = { ...updated.capabilities }
+    }
+    showToast('已为全部课程开启所有能力开关', 'success')
+  } catch (caught) {
+    showToast(caught?.message || '批量开启失败', 'error')
+  } finally { saving.value = '' }
+}
+
 onMounted(load)
 </script>
 
@@ -170,6 +216,20 @@ onMounted(load)
               <td><label class="state-check"><input v-model="user.is_active" type="checkbox" /> {{ user.is_active ? '启用' : '停用' }}</label></td>
               <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = user.id; password = ''">重置密码</SfxButton></span></td></tr>
               <tr v-if="passwordFor === user.id" class="password-row"><td colspan="5"><span class="password-row-actions"><input v-model="password" class="sfx-input" type="password" autocomplete="new-password" placeholder="输入至少 8 位的新密码" /><SfxButton size="sm" :loading="saving === `password-${user.id}`" @click="setPassword(user)">确认重置</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = null">取消</SfxButton></span></td></tr></template>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sfx-panel admin-section">
+        <div class="section-head"><h2 class="sfx-t-title3"><ToggleLeft :size="19" /> 课程能力开关</h2><span class="sfx-t-caption">能力开关门控课程权限；关闭后对应接口返回 403。平台管理员可在此一键解锁全部课程。</span></div>
+        <div class="caps-toolbar"><SfxButton size="sm" variant="primary" :loading="saving === 'caps-all'" @click="enableAllCoursesCaps">一键开启全部课程能力</SfxButton></div>
+        <SfxEmpty v-if="!courseCaps.length" title="暂无课程" description="平台还没有任何课程。" />
+        <div v-else class="sfx-table-wrap">
+          <table class="sfx-table caps-table"><thead><tr><th>课程</th><th v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-th">{{ field.label }}</th><th>操作</th></tr></thead>
+            <tbody><tr v-for="course in courseCaps" :key="course.course_id"><td class="caps-title">#{{ course.course_id }} {{ course.title }}<span class="sfx-t-caption caps-status">{{ course.status }}</span></td>
+              <td v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-td"><label class="caps-check"><input v-model="course.draft[field.key]" type="checkbox" :aria-label="field.label" /></label></td>
+              <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `caps-${course.course_id}`" @click="saveCourseCaps(course)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="enableAllCaps(course)">全开</SfxButton></span></td></tr>
             </tbody>
           </table>
         </div>
@@ -218,4 +278,6 @@ onMounted(load)
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
 .provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; display:flex; align-items:center; gap:var(--space-2); }.card-actions { display:flex; align-items:center; gap:var(--space-2); }.toggle-caption { font-size:var(--caption-size); font-weight:400; color:var(--text-secondary); background:var(--surface-cool); padding:1px 8px; border-radius:999px; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.health[data-status="disabled"] { background:var(--surface-cool); color:var(--text-secondary); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
 .concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
+.caps-toolbar { display:flex; justify-content:flex-start; margin-bottom:var(--space-4); }
+.caps-table { min-width:760px; }.caps-th { text-align:center; white-space:nowrap; }.caps-td { text-align:center; }.caps-check { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }.caps-check input { width:16px; height:16px; accent-color:var(--ink-700); }.caps-title { white-space:nowrap; }.caps-status { margin-left:var(--space-2); padding:1px 6px; border-radius:999px; background:var(--surface-cool); }
 </style>

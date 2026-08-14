@@ -13,9 +13,15 @@ from sqlmodel import Session, select, func
 from app.core.config import settings
 from app.core.security import get_password_hash
 from app.core.time_utils import utcnow_aware
-from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
+from app.models.access_control_model import (
+    CourseCapability,
+    PlatformPermission,
+    PlatformPermissionAssignment,
+)
+from app.models.course_model import Course
 from app.models.platform_admin_model import PlatformAdminAuditEvent, PlatformIntegrationConfig
 from app.models.user_model import User, UserRole, normalize_username
+from app.services.course_access_service import CAPABILITY_NAMES
 from app.services.platform_provider_manager import provider_manager
 
 
@@ -220,3 +226,72 @@ def reset_password(session: Session, actor_id: int, target_id: int, password: st
     user.auth_version += 1
     user.updated_at = utcnow_aware()
     session.add(user); audit(session, actor_id, "user.reset_password", "user", str(target_id)); session.commit()
+
+
+def _capability_dict(capability: CourseCapability | None) -> dict[str, bool]:
+    if capability is None:
+        return {name: False for name in CAPABILITY_NAMES}
+    return {name: bool(getattr(capability, name)) for name in CAPABILITY_NAMES}
+
+
+def list_course_capabilities(session: Session) -> list[dict[str, Any]]:
+    """Return every course paired with its capability switches for admin oversight.
+
+    Platform admins need a cross-course view to unlock demo capabilities without
+    navigating into each course's owner-only settings.  A missing
+    ``CourseCapability`` row (e.g. legacy courses predating the baseline) is
+    reported as all-False so the operator can see exactly what is locked.
+    """
+    rows = session.exec(
+        select(Course, CourseCapability)
+        .outerjoin(CourseCapability, CourseCapability.course_id == Course.id)
+        .order_by(Course.id)
+    ).all()
+    return [
+        {
+            "course_id": course.id,
+            "title": course.title,
+            "status": course.status.value if course.status else None,
+            "teacher_id": course.teacher_id,
+            "capabilities": _capability_dict(capability),
+        }
+        for course, capability in rows
+    ]
+
+
+def update_course_capabilities(
+    session: Session,
+    course_id: int,
+    values: dict[str, bool],
+    actor_id: int,
+) -> dict[str, Any]:
+    """Create or overwrite a course's capability switches with admin authority.
+
+    Unlike the course-scoped ``PUT /course-access/.../capabilities`` endpoint
+    (which requires ``permission.manage`` and therefore course ownership), this
+    path is authorized by the platform admin permission and can repair legacy
+    courses whose capabilities were never initialised.
+    """
+    course = session.get(Course, course_id)
+    if course is None:
+        raise HTTPException(status_code=404, detail="课程不存在")
+    capability = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course_id)
+    ).first()
+    cleaned = {name: bool(values.get(name, False)) for name in CAPABILITY_NAMES}
+    # Preserve the invariant shared with the teacher-facing endpoint: the only
+    # current experiment runtime is the code sandbox, so experiment cannot stay
+    # on when coding_sandbox is off.
+    if not cleaned["coding_sandbox"]:
+        cleaned["experiment"] = False
+    if capability is None:
+        capability = CourseCapability(course_id=course_id, **cleaned)
+    else:
+        for name, value in cleaned.items():
+            setattr(capability, name, value)
+        capability.updated_at = utcnow_aware()
+    session.add(capability)
+    audit(session, actor_id, "course.capability.update", "course", str(course_id), {"capabilities": cleaned})
+    session.commit()
+    session.refresh(capability)
+    return {"course_id": course_id, "capabilities": _capability_dict(capability)}
