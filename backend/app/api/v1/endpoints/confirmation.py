@@ -241,7 +241,7 @@ async def get_course_confirmation_status(
         user_map = {}
         if user_ids:
             users = session.exec(select(User).where(User.id.in_(list(user_ids)))).all()
-            user_map = {u.id: u.real_name or u.username for u in users}
+            user_map = {u.id: u.username for u in users}
 
         # 每种类型取最新一条（按id降序，首次出现即最新）
         seen = set()
