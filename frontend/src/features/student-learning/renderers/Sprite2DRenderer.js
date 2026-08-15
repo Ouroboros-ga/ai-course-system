@@ -8,16 +8,23 @@ const expressionTint = {
   attentive: 0xF5FAFF,
 }
 
-// Signed local/OSS proxy routes end in `/content`, so Pixi cannot infer an
-// image loader from the URL suffix.  Pin the parser explicitly; otherwise
-// Assets.load() resolves to null even when the response is a valid PNG.
-export const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
+const MOUTH_OPENNESS = {
+  sil: 0.0,
+  fv: 0.05,
+  mbp: 0.02,
+  e: 0.35,
+  i: 0.25,
+  u: 0.2,
+  o: 0.5,
+  a: 1.0,
+}
 
-/**
- * The renderer owns pixels only.  It never creates a playback timer: callers
- * set a frame derived from HTMLAudioElement time, which keeps PixiJS from
- * becoming a competing clock.
- */
+const MOUTH_TRANSITION_MS = 55
+const RAPID_TRANSITION_MS = 25
+const MIN_VISEME_HOLD_MS = 40
+
+const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
+
 export class Sprite2DRenderer {
   constructor({ container, quality = 'auto', onMetrics = () => {} }) {
     this.container = container
@@ -25,13 +32,14 @@ export class Sprite2DRenderer {
     this.onMetrics = onMetrics
     this.app = null
     this.root = null
-    this.eyes = null
     this.head = null
     this.portraitBody = null
-    this.leftArm = null
-    this.rightArm = null
     this.mouths = new Map()
-    this.currentMouth = null
+    this.currentViseme = 'sil'
+    this.targetViseme = 'sil'
+    this.transitionStartMs = 0
+    this.transitionDurationMs = MOUTH_TRANSITION_MS
+    this.lastSetFrameMs = 0
     this.manifest = null
   }
 
@@ -109,10 +117,12 @@ export class Sprite2DRenderer {
       for (const key of MOUTH_KEYS) {
         const mouth = this.#sprite(textures.get(`mouth:${key}`), layout.mouth)
         mouth.visible = key === 'sil'
+        mouth.alpha = key === 'sil' ? 1 : 0
         root.addChild(mouth)
         this.mouths.set(key, mouth)
       }
-      this.currentMouth = this.mouths.get('sil')
+      this.currentViseme = 'sil'
+      this.targetViseme = 'sil'
       return
     }
 
@@ -128,10 +138,12 @@ export class Sprite2DRenderer {
     for (const key of MOUTH_KEYS) {
       const mouth = this.#sprite(textures.get(`mouth:${key}`), { x: 240, y: 286, width: 74, height: 42 })
       mouth.visible = key === 'sil'
+      mouth.alpha = key === 'sil' ? 1 : 0
       root.addChild(mouth)
       this.mouths.set(key, mouth)
     }
-    this.currentMouth = this.mouths.get('sil')
+    this.currentViseme = 'sil'
+    this.targetViseme = 'sil'
   }
 
   #layout() {
@@ -148,32 +160,121 @@ export class Sprite2DRenderer {
   setFrame({ viseme = 'sil', speaking = false, precision = 'none', timeMs = 0 }) {
     if (!this.app) return
     this.#layout()
-    const safeViseme = MOUTH_KEYS.includes(viseme) ? viseme : (speaking ? 'a' : 'sil')
-    if (this.currentMouth !== this.mouths.get(safeViseme)) {
-      this.currentMouth.visible = false
-      this.currentMouth = this.mouths.get(safeViseme)
-      this.currentMouth.visible = true
+
+    const nextViseme = MOUTH_KEYS.includes(viseme) ? viseme : (speaking ? 'a' : 'sil')
+    const nowMs = timeMs
+    if (nextViseme !== this.targetViseme) {
+      const sinceLast = nowMs - this.lastSetFrameMs
+      const duration = sinceLast > 0 && sinceLast < MIN_VISEME_HOLD_MS
+        ? RAPID_TRANSITION_MS
+        : MOUTH_TRANSITION_MS
+      this.currentViseme = this.#snapshotVisemeAt(nowMs)
+      this.targetViseme = nextViseme
+      this.transitionStartMs = nowMs
+      this.transitionDurationMs = duration
+    }
+    this.lastSetFrameMs = nowMs
+
+    this.#applyMouthBlend(nowMs)
+    this.#applyExpression(nowMs, speaking, precision)
+  }
+
+  #snapshotVisemeAt(nowMs) {
+    const progress = Math.min(1, Math.max(0, (nowMs - this.transitionStartMs) / this.transitionDurationMs))
+    const easeProgress = 1 - Math.pow(1 - progress, 3)
+    if (easeProgress >= 0.99) return this.targetViseme
+    const fromOpen = MOUTH_OPENNESS[this.currentViseme] ?? 0
+    const toOpen = MOUTH_OPENNESS[this.targetViseme] ?? 0
+    const currentOpen = fromOpen + (toOpen - fromOpen) * easeProgress
+    let closest = this.currentViseme
+    let closestDist = Infinity
+    for (const key of MOUTH_KEYS) {
+      const dist = Math.abs((MOUTH_OPENNESS[key] ?? 0) - currentOpen)
+      if (dist < closestDist) { closestDist = dist; closest = key }
+    }
+    return closest
+  }
+
+  #applyMouthBlend(nowMs) {
+    const progress = Math.min(1, Math.max(0, (nowMs - this.transitionStartMs) / this.transitionDurationMs))
+    const easeProgress = progress < 0.5
+      ? 2 * progress * progress
+      : 1 - Math.pow(-2 * progress + 2, 2) / 2
+
+    const fromSprite = this.mouths.get(this.currentViseme)
+    const toSprite = this.mouths.get(this.targetViseme)
+
+    for (const [key, mouth] of this.mouths) {
+      if (key === this.currentViseme || key === this.targetViseme) continue
+      if (mouth.visible) { mouth.visible = false; mouth.alpha = 0 }
     }
 
-    // Decorative motion is a deterministic function of audio time, not wall time.
+    if (fromSprite && toSprite && fromSprite !== toSprite) {
+      fromSprite.visible = true
+      toSprite.visible = true
+      fromSprite.alpha = 1 - easeProgress
+      toSprite.alpha = easeProgress
+    } else if (toSprite) {
+      toSprite.visible = true
+      toSprite.alpha = 1
+      if (fromSprite && fromSprite !== toSprite) {
+        fromSprite.visible = false
+        fromSprite.alpha = 0
+      }
+    }
+  }
+
+  #applyExpression(timeMs, speaking, precision) {
     const seconds = Math.max(0, Number(timeMs) || 0) / 1000
-    const blinkCycle = seconds % 4.6
-    const blink = blinkCycle > 4.25 && blinkCycle < 4.42
+
+    const blinkCycle = seconds % 4.2
+    const blinkPhase = blinkCycle - 3.95
+    let eyeScale = 1
+    if (blinkPhase >= 0 && blinkPhase < 0.2) {
+      const t = blinkPhase / 0.2
+      eyeScale = t < 0.5
+        ? 1 - Math.sin(t * Math.PI)
+        : Math.sin((t - 0.5) * Math.PI)
+    }
     if (this.manifest.renderMode === 'portrait_patch_v1') {
-      // The closed-eye patch is part of the same fictional portrait package;
-      // it is selected from audio time rather than from a wall-clock timer.
-      this.eyes.visible = blink
+      this.eyes.visible = eyeScale < 0.5
+    } else {
+      this.eyes.scale.y = Math.max(0.05, eyeScale)
+    }
+
+    const breathY = Math.sin(seconds * 0.85) * 0.6 + Math.sin(seconds * 1.7 + 0.4) * 0.25
+    const sway = Math.sin(seconds * 0.5) * 0.006
+
+    if (this.manifest.renderMode === 'portrait_patch_v1') {
+      if (this.portraitBody) {
+        this.portraitBody.y = (this.manifest.layout?.body?.y ?? 240) + breathY
+      }
+      if (this.eyes) {
+        this.eyes.y = (this.manifest.layout?.eyes?.y ?? 210) + breathY
+      }
+      for (const mouth of this.mouths.values()) {
+        mouth.y = (this.manifest.layout?.mouth?.y ?? 286) + breathY
+      }
+      if (this.portraitBody) this.portraitBody.rotation = sway
+      if (this.eyes) this.eyes.rotation = sway
+      for (const mouth of this.mouths.values()) { mouth.rotation = sway }
       return
     }
 
-    this.eyes.scale.y = blink ? 0.12 : 1
+    if (this.head) {
+      this.head.y = 210 + breathY
+      if (this.eyes) this.eyes.y = this.head.y
+    }
+    if (this.head) this.head.rotation = sway
+    if (this.eyes && this.eyes !== this.head) this.eyes.rotation = sway
+
     const expression = speaking ? (precision === 'phoneme' ? 'attentive' : 'warm') : 'neutral'
     this.head.tint = expressionTint[expression]
     this.eyes.tint = expressionTint[expression]
     const gesture = speaking && Math.floor(seconds / 2.4) % 2 === 1 ? 'emphasis' : 'rest'
-    const sway = gesture === 'emphasis' ? Math.sin(seconds * 8) * 0.22 : 0
-    this.leftArm.rotation = -0.2 + sway
-    this.rightArm.rotation = 0.2 - sway
+    const armSway = gesture === 'emphasis' ? Math.sin(seconds * 8) * 0.22 : 0
+    if (this.leftArm) this.leftArm.rotation = -0.2 + armSway
+    if (this.rightArm) this.rightArm.rotation = 0.2 - armSway
   }
 
   destroy() {
@@ -182,8 +283,11 @@ export class Sprite2DRenderer {
     this.app = null
     this.root = null
     this.portraitBody = null
+    this.head = null
+    this.eyes = null
     this.mouths.clear()
-    this.currentMouth = null
+    this.currentViseme = 'sil'
+    this.targetViseme = 'sil'
     this.container?.replaceChildren()
   }
 }

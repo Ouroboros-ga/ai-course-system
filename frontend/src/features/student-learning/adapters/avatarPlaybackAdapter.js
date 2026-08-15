@@ -21,16 +21,50 @@ function normaliseTimedEntries(value, field) {
     .sort((left, right) => left.startMs - right.startMs || left.endMs - right.endMs || left.index - right.index)
 }
 
-/**
- * Parses the provider-neutral, immutable P2 asset.  Raw provider frames must
- * never enter the browser; this is the only timing input accepted by P3.
- */
+function smoothVisemes(entries) {
+  if (entries.length === 0) return entries
+  const MIN_FLAP_MS = 45
+  const smoothed = []
+  let i = 0
+  while (i < entries.length) {
+    const current = entries[i]
+    const duration = current.endMs - current.startMs
+    if (
+      duration >= MIN_FLAP_MS
+      || current.viseme === 'sil'
+      || i === 0
+      || i === entries.length - 1
+    ) {
+      smoothed.push(current)
+      i++
+      continue
+    }
+    const prev = smoothed[smoothed.length - 1]
+    const next = entries[i + 1]
+    if (prev.viseme === next.viseme) {
+      prev.endMs = next.endMs
+      i += 2
+      continue
+    }
+    if (prev.viseme === current.viseme) {
+      prev.endMs = current.endMs
+      i++
+      continue
+    }
+    smoothed.push(current)
+    i++
+  }
+  return smoothed
+}
+
 export function normalizeAvatarCueManifest(rawValue) {
   const raw = rawValue?.data ?? rawValue ?? {}
   if (raw.schema !== 'avatar-cues/v1' || !raw.audio?.object_key || !raw.audio?.sha256) return null
 
-  const visemes = normaliseTimedEntries(raw.visemes, 'viseme')
-    .filter(entry => VISEMES.has(entry.viseme))
+  const visemes = smoothVisemes(
+    normaliseTimedEntries(raw.visemes, 'viseme')
+      .filter(entry => VISEMES.has(entry.viseme))
+  )
   const mouthActivity = normaliseTimedEntries(raw.mouth_activity ?? raw.mouthActivity, 'state')
     .filter(entry => entry.state === 'speaking' || entry.state === 'silence')
 
@@ -65,11 +99,6 @@ function activeEntry(entries, timeMs) {
   return null
 }
 
-/**
- * All render decisions are derived from audio time.  When P1 supplied no
- * phonemes, a speaking interval intentionally falls back to a generic open
- * mouth instead of pretending to provide precise lip synchronisation.
- */
 export function resolveAvatarFrame(cues, timeMs) {
   if (!cues) return { viseme: 'sil', speaking: false, precision: 'none' }
   const viseme = activeEntry(cues.visemes, timeMs)?.viseme
@@ -81,10 +110,6 @@ export function resolveAvatarFrame(cues, timeMs) {
   }
 }
 
-/**
- * Compatibility is a terminal safe mode: no renderer initialisation is
- * attempted.  The caller can always render a static, platform-owned portrait.
- */
 export function selectAvatarPlaybackMode(requestedMode, capability = {}) {
   const requested = ['auto', 'low_resource', 'compatibility'].includes(requestedMode)
     ? requestedMode
