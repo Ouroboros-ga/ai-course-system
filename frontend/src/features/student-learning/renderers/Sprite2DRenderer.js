@@ -137,11 +137,11 @@ export class Sprite2DRenderer {
   #layout() {
     if (!this.app || !this.root || !this.manifest) return
     const stage = this.manifest.stage
-    const scale = Math.max(0.1, Math.min(this.app.renderer.width / stage.width, this.app.renderer.height / stage.height))
+    const scale = Math.max(0.1, Math.max(this.app.renderer.width / stage.width, this.app.renderer.height / stage.height))
     this.root.scale.set(scale)
     this.root.position.set(
       (this.app.renderer.width - stage.width * scale) / 2,
-      Math.max(0, (this.app.renderer.height - stage.height * scale) / 2),
+      (this.app.renderer.height - stage.height * scale) / 2,
     )
   }
 
