@@ -467,11 +467,12 @@ def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> Cou
             CourseOutlineNode.outline_version_id == published.outline_version_id,
         )).all()
         id_map: dict[str, str] = {}
-        for old in sorted(nodes, key=lambda n: n.order_index):
+
+        def copy_node(old: CourseOutlineNode, parent_id: str | None) -> None:
             new = CourseOutlineNode(
                 outline_version_id=draft.outline_version_id,
                 course_id=course_id,
-                parent_node_id=id_map.get(old.parent_node_id),
+                parent_node_id=parent_id,
                 node_type=old.node_type,
                 title=old.title,
                 order_index=old.order_index,
@@ -485,6 +486,23 @@ def _ensure_draft_outline(session: Session, course_id: int, user_id: int) -> Cou
             session.add(new)
             session.flush()
             id_map[old.outline_node_id] = new.outline_node_id
+
+        # order_index 是父节点内的局部序号，仅按它排序会把 order_index 小于
+        # 父节点的孩子先克隆（id_map 尚无父节点新 ID）从而甩到顶层。必须
+        # 等父节点克隆完成后再克隆子节点；悬挂父引用退化为顶层副本而非丢弃。
+        pending = list(nodes)
+        while pending:
+            progressed = False
+            for old in list(pending):
+                if old.parent_node_id and old.parent_node_id not in id_map:
+                    continue
+                copy_node(old, id_map.get(old.parent_node_id))
+                pending.remove(old)
+                progressed = True
+            if not progressed:
+                for old in pending:
+                    copy_node(old, None)
+                break
         mappings = session.exec(select(CoursePptMapping).where(
             CoursePptMapping.course_id == course_id,
             CoursePptMapping.status == "published",

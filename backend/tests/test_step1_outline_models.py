@@ -166,6 +166,85 @@ def test_published_outline_can_seed_next_editable_draft(session):
     assert session.get(CourseOutlineNode, old_node.id).title == "Immutable published title"
 
 
+def test_draft_seed_keeps_hierarchy_when_child_order_index_precedes_parent(session):
+    """回归：order_index 是父节点内的局部序号。
+
+    若按 order_index 全局排序克隆，order_index 小于其父节点的孩子（如第 2 节
+    下第 0 个知识点 vs 第 2 节自身 order_index=2）会先于父节点被处理，
+    id_map 尚无父节点新 ID，孩子被甩到顶层（线上课程 4 草稿出现
+    顶层知识点、编号 1.3 冲突与"树与二叉树"重复即此因）。
+    """
+    from app.api.v1.endpoints.course_build_editor import _ensure_draft_outline
+
+    user = _user(session, "s1_seed_hierarchy_user")
+    course = _course(session, user.id, "Seed hierarchy course")
+    published = CourseOutlineVersion(
+        course_id=course.id, version=1,
+        lifecycle_status=OutlineLifecycleStatus.PUBLISHED,
+        created_by=user.id,
+    )
+    session.add(published)
+    session.commit()
+    session.refresh(published)
+
+    def _node(node_type, title, order, parent=None):
+        node = CourseOutlineNode(
+            outline_version_id=published.outline_version_id,
+            course_id=course.id,
+            parent_node_id=parent.outline_node_id if parent else None,
+            node_type=node_type, title=title, order_index=order,
+        )
+        session.add(node)
+        session.flush()
+        return node
+
+    chapter = _node(OutlineNodeType.CHAPTER, "数据结构基础", 0)
+    chapter2 = _node(OutlineNodeType.CHAPTER, "树与二叉树", 1)
+    sec_intro = _node(OutlineNodeType.SECTION, "绪论与算法分析", 0, chapter)
+    sec_list = _node(OutlineNodeType.SECTION, "线性表", 1, chapter)
+    sec_stack = _node(OutlineNodeType.SECTION, "栈与队列", 2, chapter)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "数据结构基本概念", 0, sec_intro)
+    # order_index(0/1) 均小于所属节的 order_index(1/2)：旧排序会先克隆它们
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "顺序表及其操作", 0, sec_list)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "链表及其变体", 1, sec_list)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "栈的实现与应用", 0, sec_stack)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "循环队列", 1, sec_stack)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "链队列", 2, sec_stack)
+    sec_tree = _node(OutlineNodeType.SECTION, "树与二叉树", 0, chapter2)
+    _node(OutlineNodeType.KNOWLEDGE_POINT, "二叉树性质与存储", 0, sec_tree)
+    session.commit()
+
+    published_nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == published.outline_version_id,
+    )).all()
+    published_by_id = {n.outline_node_id: n for n in published_nodes}
+
+    draft = _ensure_draft_outline(session, course.id, user.id)
+    session.commit()
+    draft_nodes = session.exec(select(CourseOutlineNode).where(
+        CourseOutlineNode.outline_version_id == draft.outline_version_id,
+    )).all()
+
+    assert len(draft_nodes) == len(published_nodes)
+    draft_by_id = {n.outline_node_id: n for n in draft_nodes}
+    # 校验每个克隆节点的父级标题与发布版一致（含同为顶层）
+    title_counts: dict[str, int] = {}
+    for old in published_nodes:
+        matches = [n for n in draft_nodes if n.title == old.title and n.node_type == old.node_type]
+        assert matches, f"草稿缺少节点: {old.title}"
+        title_counts[old.title] = len(matches)
+        for new in matches:
+            old_parent = published_by_id.get(old.parent_node_id) if old.parent_node_id else None
+            if new.parent_node_id:
+                new_parent = draft_by_id[new.parent_node_id]
+                assert new_parent.title == old_parent.title, (
+                    f"节点 {old.title} 父级错误: {new_parent.title} != {old_parent.title}"
+                )
+            else:
+                assert old_parent is None, f"节点 {old.title} 被甩到顶层"
+    assert all(count == 1 for count in title_counts.values()), "克隆不应产生重复节点"
+
+
 # ---------------------------------------------------------------------------
 # 2. 课程树是真正的有序树（parent_node_id FK 自引用）
 # ---------------------------------------------------------------------------
