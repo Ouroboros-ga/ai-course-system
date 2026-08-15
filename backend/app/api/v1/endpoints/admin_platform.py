@@ -64,6 +64,8 @@ class TaskConcurrencyUpdate(BaseModel):
     graphrag: int = Field(default=1, ge=1, le=32)
     vector_index: int = Field(default=1, ge=1, le=32)
     sandbox_execution: int = Field(default=1, ge=1, le=32)
+    # GraphRAG 单次构建的最大输入 token 预算（0 = 使用环境默认值）。
+    graphrag_max_input_tokens: int = Field(default=0, ge=0, le=2000000)
 
 
 class AdminCapabilityUpdate(BaseModel):

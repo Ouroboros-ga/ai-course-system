@@ -19,7 +19,7 @@ const passwordFor = ref(null)
 const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
-const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1 })
+const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1, graphrag_max_input_tokens: 0 })
 
 const CAPABILITY_FIELDS = [
   { key: 'learning', label: '学习' },
@@ -245,6 +245,7 @@ onMounted(load)
           <label>代码沙箱评测<input v-model.number="concurrency.sandbox_execution" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label class="budget-line">GraphRAG 单次输入 token 上限<input v-model.number="concurrency.graphrag_max_input_tokens" class="sfx-input" type="number" min="0" step="1000" /><small class="sfx-t-caption">0 = 使用服务器环境默认值；按 token 计，不按美元估算。</small></label>
         </div>
         <div class="section-actions"><SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置</SfxButton></div>
       </section>
@@ -277,7 +278,7 @@ onMounted(load)
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
 .provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; display:flex; align-items:center; gap:var(--space-2); }.card-actions { display:flex; align-items:center; gap:var(--space-2); }.toggle-caption { font-size:var(--caption-size); font-weight:400; color:var(--text-secondary); background:var(--surface-cool); padding:1px 8px; border-radius:999px; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.health[data-status="disabled"] { background:var(--surface-cool); color:var(--text-secondary); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
-.concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
+.concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.concurrency-grid .budget-line { grid-column:1/-1; }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
 .caps-toolbar { display:flex; justify-content:flex-start; margin-bottom:var(--space-4); }
 .caps-table { min-width:760px; }.caps-th { text-align:center; white-space:nowrap; }.caps-td { text-align:center; }.caps-check { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }.caps-check input { width:16px; height:16px; accent-color:var(--ink-700); }.caps-title { white-space:nowrap; }.caps-status { margin-left:var(--space-2); padding:1px 6px; border-radius:999px; background:var(--surface-cool); }
 </style>

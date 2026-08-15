@@ -20,7 +20,7 @@ from app.models.course_model import Course, CourseStatus
 from app.models.database import engine
 from app.models.platform_admin_model import PlatformTaskConcurrencyConfig
 from app.models.task_model import TaskRecord
-from app.services.platform_task_concurrency_service import get_group_limit, update_config
+from app.services.platform_task_concurrency_service import get_config, get_group_limit, update_config
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.task_service import TaskCreateRequest, task_service
@@ -96,6 +96,28 @@ def test_experiment_run_uses_the_dedicated_sandbox_execution_limit(session):
 
     assert total_limit == 4
     assert group_limit == 1
+
+
+def test_graphrag_token_budget_is_clamped_and_persisted(session):
+    """平台管理的 GraphRAG token 预算不被 1..32 并发钳制，且可回落环境默认（0）。"""
+    update_config(
+        session,
+        actor_user_id=1,
+        payload={
+            "developer_mode": True,
+            "graphrag_max_input_tokens": 60000,
+        },
+    )
+    config = get_config(session)
+    assert config["graphrag_max_input_tokens"] == 60000
+
+    # 超上限会被钳制，负值回落到 0。
+    update_config(
+        session,
+        actor_user_id=1,
+        payload={"graphrag_max_input_tokens": -5},
+    )
+    assert get_config(session)["graphrag_max_input_tokens"] == 0
 
 
 # ---------------------------------------------------------------------------
