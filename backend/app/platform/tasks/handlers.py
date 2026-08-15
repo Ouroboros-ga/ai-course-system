@@ -1330,10 +1330,12 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
     # live paid WebSocket for the same provider.
     from app.core.config import settings
     from app.services.media_batch_service import enqueue_batch_cue, project_tts_result_to_batch_item
-    # ``media_generation_job_service`` is imported here instead of inside
-    # ``run_in_worker_thread`` because the post-success projection below runs
-    # in the handler scope; a function-local import would raise NameError and
-    # silently leave batch items pending after a paid synthesis succeeded.
+    # ``media_generation_job_service`` / ``MediaGenerationStatus`` are imported
+    # here instead of inside ``run_in_worker_thread`` because the post-success
+    # projection below runs in the handler scope; a function-local import would
+    # raise NameError and silently leave batch items pending after a paid
+    # synthesis succeeded.
+    from app.models.media_release_model import MediaGenerationStatus
     from app.services.media_release_service import media_generation_job_service
     limit = max(1, int(getattr(settings, "MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER", 2) or 2))
     semaphore = _tts_provider_semaphore(provider_key, limit)
