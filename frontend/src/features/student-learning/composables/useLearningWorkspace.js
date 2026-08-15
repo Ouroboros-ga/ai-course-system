@@ -553,26 +553,32 @@ export function useLearningWorkspace(courseId, options = {}) {
     mediaError.value = ''
   }
 
+  function resolveNodeIndexFromPayload(payload) {
+    const mediaNodeIndex = Number(payload?.nodeIndex ?? payload?.playlistNodeIndex)
+    if (Number.isInteger(mediaNodeIndex)
+      && mediaNodeIndex >= 0
+      && mediaNodeIndex < nodes.value.length) {
+      return mediaNodeIndex
+    }
+    const cueNodeIndex = nodes.value.findIndex(node => {
+      const nodeIdMatches = payload?.nodeId != null && String(node.id) === String(payload.nodeId)
+      const outlineNodeIdMatches = payload?.outlineNodeId != null
+        && String(node.outlineNodeId) === String(payload.outlineNodeId)
+      return nodeIdMatches || outlineNodeIdMatches
+    })
+    if (cueNodeIndex >= 0) return cueNodeIndex
+    const resolved = findNodeIndexAtTime(nodes.value, Number(payload?.globalTime), currentNodeIndex.value)
+    return Number.isInteger(resolved) && resolved >= 0 && resolved < nodes.value.length
+      ? resolved
+      : currentNodeIndex.value
+  }
+
   function updatePlayback(payload) {
     const globalTime = Number(payload?.globalTime)
     if (Number.isFinite(globalTime)) {
       const previousIndex = currentNodeIndex.value
-      const mediaNodeIndex = Number(payload?.nodeIndex ?? payload?.playlistNodeIndex)
-      const hasMediaNodeIndex = Number.isInteger(mediaNodeIndex)
-        && mediaNodeIndex >= 0
-        && mediaNodeIndex < nodes.value.length
-      seekTo(globalTime, hasMediaNodeIndex ? { nodeIndex: mediaNodeIndex } : {})
-      // A frozen media release owns its cue-to-node/page mapping.  The legacy
-      // script timing remains a fallback while P0 still borrows its PPT assets.
-      const cueNodeIndex = nodes.value.findIndex(node => {
-        const nodeIdMatches = payload?.nodeId != null && String(node.id) === String(payload.nodeId)
-        const outlineNodeIdMatches = payload?.outlineNodeId != null
-          && String(node.outlineNodeId) === String(payload.outlineNodeId)
-        return nodeIdMatches || outlineNodeIdMatches
-      })
-      if (!hasMediaNodeIndex && cueNodeIndex >= 0) {
-        currentNodeIndex.value = cueNodeIndex
-      }
+      const resolvedNodeIndex = resolveNodeIndexFromPayload(payload)
+      seekTo(globalTime, { nodeIndex: resolvedNodeIndex })
       const cuePage = Number(payload?.page)
       if (Number.isFinite(cuePage) && cuePage >= 1) {
         currentPage.value = clamp(cuePage, 1, totalPages.value)

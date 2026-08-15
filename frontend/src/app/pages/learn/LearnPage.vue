@@ -5,6 +5,7 @@ import { useLearningWorkspace } from '@/features/student-learning/composables/us
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
+  findLearningNodeIndexForPlaylistItem,
   findPlaylistItemIndex,
   findPlaylistItemIndexById,
   resolvePlaylistPlaybackTarget,
@@ -241,17 +242,12 @@ function selectFrozenCoordinate(coordinate) {
   const playlistIndex = findPlaylistItemIndexById(items, coordinate.media_release_item_id)
   if (playlistIndex < 0) throw new Error('MEDIA_ITEM_UNAVAILABLE')
   const item = items[playlistIndex]
-  const nodeIndex = ws.nodes.value.findIndex(node => (
-    sameIdentifier(node.id, item.nodeId)
-    || sameIdentifier(node.outlineNodeId, item.outlineNodeId)
-  ))
+  const nodeIndex = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
   if (nodeIndex < 0) throw new Error('COURSE_NODE_UNAVAILABLE')
   const targetGlobalSeconds = resolveFrozenCoordinateGlobalSeconds(coordinate, item)
   if (targetGlobalSeconds == null) throw new Error('MEDIA_COORDINATE_UNAVAILABLE')
   playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nodeIndex, { play: false, preserveTime: true, page: coordinate.page })
-  // Keep the legacy learner rail synchronized when a frozen coordinate crosses
-  // from one released media item to another.
   ws.seekTo(targetGlobalSeconds, { nodeIndex })
   ws.isPlaying.value = false
 }
@@ -538,10 +534,7 @@ function handlePlaylistNext() {
   const items = media.playlist.value?.items || []
   const item = items[nextIndex]
   if (!item) return
-  const index = ws.nodes.value.findIndex(node => (
-    (item.nodeId != null && String(node.id) === String(item.nodeId))
-    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-  ))
+  const index = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.next()
 }
@@ -550,10 +543,7 @@ function handlePlaylistPrevious() {
   const items = media.playlist.value?.items || []
   const item = items[previousIndex]
   if (!item) return
-  const index = ws.nodes.value.findIndex(node => (
-    (item.nodeId != null && String(node.id) === String(item.nodeId))
-    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-  ))
+  const index = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.previous()
 }
@@ -563,18 +553,18 @@ watch(
   () => {
     const node = ws.currentNode.value
     if (!node || !media.playlist.value?.items?.length) return
-    const matched = media.playlist.value.items.find(item => (
-      String(item.nodeId) === String(node.id)
-      || (node.outlineNodeId && String(item.outlineNodeId) === String(node.outlineNodeId))
-    ))
-    if (matched) playlistPlayback.selectByNode(matched.outlineNodeId || matched.nodeId)
+    const index = findPlaylistItemIndex(media.playlist.value.items, node)
+    if (index >= 0) playlistPlayback.activeIndex.value = index
   },
   { immediate: true },
 )
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
 async function handleRecommendationAction({ node, recommendation, action }) {
-  const nodeIndex = ws.nodes.value.findIndex(item => String(item.outlineNodeId) === String(node?.outlineNodeId))
+  const nodeIndex = ws.nodes.value.findIndex(item => (
+    (node?.outlineNodeId && String(item.outlineNodeId) === String(node.outlineNodeId))
+    || (node?.id && String(item.id) === String(node.id))
+  ))
   if (nodeIndex >= 0) handleTrackSelect(nodeIndex, { play: action === 'continue' })
 
   if (action === 'practice') {

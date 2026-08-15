@@ -292,12 +292,10 @@ function seekTo(value) {
     }) ?? -1
     if (targetIndex >= 0 && targetIndex !== props.playlistIndex) {
       const targetItem = props.playlist.items[targetIndex]
-      // Seek the underlying element as well.  The parent switches the active
-      // playlist index and re-syncs, but when the target item shares the same
-      // audio file the src does not reload, so without this the position
-      // would stay where it was before the drag.
       const localTime = sourceTimeForGlobal(globalTime)
+      applyingExternalTime = true
       element.currentTime = Math.min(localTime, element.duration || localTime)
+      applyingExternalTime = false
       const targetCue = hasAudio.value ? resolvePptCueAtTime(props.pptTimeline, targetMs) : null
       emit('playback', {
         globalTime,
@@ -311,7 +309,9 @@ function seekTo(value) {
     }
   }
   const target = sourceTimeForGlobal(globalTime)
+  applyingExternalTime = true
   element.currentTime = Math.min(target, element.duration || target)
+  applyingExternalTime = false
   emitPlayback(!element.paused)
 }
 
