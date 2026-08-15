@@ -55,6 +55,7 @@ from app.models.course_outline_model import (
 )
 from app.models.document_parse_model import RetrievalChunk
 from app.models.graph_production_model import GraphSnapshotRecord, SnapshotStatus
+from app.models.course_model import Course
 from app.services.course_corpus_service import course_corpus_service
 
 
@@ -1033,13 +1034,22 @@ class QualityGateService:
         # A release normally freezes a reviewed graph snapshot.  The graph is
         # an optional course enhancement, not a publication prerequisite: a
         # course whose GraphRAG bundle is still pending/failed must still be
-        # publishable.  Absence is reported as a teacher-confirmable warning.
+        # publishable.  Absence is reported as a teacher-confirmable warning,
+        # unless the teacher opted out of the knowledge-graph capability for
+        # this course (graphrag_enabled=False), in which case the check is
+        # skipped entirely instead of surfacing a spurious warning.
         graph = session.exec(select(GraphSnapshotRecord).where(
             GraphSnapshotRecord.course_id == course_id,
             GraphSnapshotRecord.is_active == True,  # noqa: E712
             GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
         ).order_by(GraphSnapshotRecord.version.desc())).first()
-        if graph is None:
+        course_record = session.exec(
+            select(Course).where(Course.id == course_id)
+        ).first()
+        graph_opt_out = bool(course_record is not None and not course_record.graphrag_enabled)
+        if graph_opt_out:
+            checks.append({"check_id": "graph.release_ready", "name": "课程知识图谱", "severity": GateSeverity.INFO.value, "passed": True, "message": "本课程已关闭知识图谱能力；本次发布将不包含知识图谱"})
+        elif graph is None:
             checks.append({"check_id": "graph.release_ready", "name": "已审核课程知识图谱", "severity": GateSeverity.WARNING.value, "passed": False, "message": "尚未发布可冻结的课程知识图谱快照；本次发布将不包含知识图谱"})
             warning_count += 1
         else:

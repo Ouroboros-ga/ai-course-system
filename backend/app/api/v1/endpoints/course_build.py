@@ -31,6 +31,7 @@ from app.models.course_build_model import (
     SourceMaterial,
     SourceMaterialVersion,
 )
+from app.models.course_model import Course
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
 from app.services.course_build_service import (
@@ -157,6 +158,53 @@ async def list_materials(
             "duplicate_items_merged": duplicate_count,
         },
     )
+
+
+@course_build_router.get("/course/{course_id}/graphrag-setting")
+async def get_course_graphrag_setting(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """读取课程知识图谱(GraphRAG)能力开关。"""
+    require_course_permission(session, current_user, course_id, "course.view")
+    course = session.exec(select(Course).where(Course.id == course_id)).first()
+    if course is None:
+        return unified_response(code=404, message="课程不存在", data={"error_code": "COURSE_NOT_FOUND"})
+    return unified_response(code=200, message="获取知识图谱设置成功", data={
+        "course_id": course_id,
+        "graphrag_enabled": bool(course.graphrag_enabled),
+    })
+
+
+class GraphRagSettingUpdate(BaseModel):
+    graphrag_enabled: bool
+
+
+@course_build_router.put("/course/{course_id}/graphrag-setting")
+async def update_course_graphrag_setting(
+    course_id: int,
+    payload: GraphRagSettingUpdate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """更新课程知识图谱(GraphRAG)能力开关。
+
+    关闭后不再自动触发 GraphRAG 构建，发布门禁也不再要求已审核图谱快照。
+    """
+    context = require_course_permission(session, current_user, course_id, "course.edit")
+    course = session.exec(select(Course).where(Course.id == course_id)).first()
+    if course is None:
+        return unified_response(code=404, message="课程不存在", data={"error_code": "COURSE_NOT_FOUND"})
+    course.graphrag_enabled = payload.graphrag_enabled
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    return unified_response(code=200, message="知识图谱设置已更新", data={
+        "course_id": course_id,
+        "graphrag_enabled": bool(course.graphrag_enabled),
+        "updated_by": context.user_id,
+    })
 
 
 @course_build_router.get("/course/{course_id}/draft-build-status")

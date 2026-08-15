@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from sqlalchemy import Index
 from sqlmodel import SQLModel, Field, JSON, Column
@@ -75,6 +75,10 @@ class Course(SQLModel, table=True):
 
     total_duration: int = Field(default=0, description="总时长(秒)")
     total_nodes: int = Field(default=0, description="脚本总节点数")
+
+    # 教师级知识图谱能力开关：默认启用。关闭后不自动触发 GraphRAG 构建，
+    # 发布门禁也不再要求已审核图谱快照，避免大课程抽取成本不可控。
+    graphrag_enabled: bool = Field(default=True, description="是否启用课程知识图谱(GraphRAG)能力")
 
     source_file_name: Optional[str] = Field(default=None, description="原始文件名")
     source_file_path: Optional[str] = Field(default=None, description="原始文件存储路径")

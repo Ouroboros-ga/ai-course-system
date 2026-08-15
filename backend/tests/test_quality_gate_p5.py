@@ -143,6 +143,23 @@ def test_quality_gate_without_graph_is_confirmable_warning(session):
     assert graph_check["passed"] is True
 
 
+def test_quality_gate_graph_opt_out_skips_warning(session):
+    """graphrag_enabled=False 的课程不产生 graph.release_ready 警告。"""
+    course, teacher = _course_and_teacher(session)
+    course.graphrag_enabled = False
+    session.add(course)
+    session.commit()
+
+    run = quality_gate_service.run_checks(
+        session, course_id=course.id, initiated_by=teacher.id,
+    )
+    graph_check = next(item for item in run.checks if item["check_id"] == "graph.release_ready")
+    assert graph_check["severity"] == GateSeverity.INFO.value
+    assert graph_check["passed"] is True
+    assert run.warning_count == 0
+    assert "关闭知识图谱" in graph_check["message"]
+
+
 def test_missing_or_empty_knowledge_point_scripts_are_unbypassable_blockers(session):
     course, teacher = _course_and_teacher(session)
     outline = CourseOutlineVersion(
