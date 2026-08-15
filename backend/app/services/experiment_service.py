@@ -30,7 +30,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import to_naive, utcnow_aware
+from app.core.time_utils import to_aware, to_naive, utcnow_aware
 from app.models.access_control_model import (
     CourseCapability,
     CourseMembership,
@@ -556,7 +556,7 @@ class ExperimentAttemptService:
         ).first()
         if latest_attempt and latest_attempt.created_at:
             cooldown = timedelta(minutes=definition.cooldown_minutes)
-            if utcnow_aware() - latest_attempt.created_at < cooldown:
+            if utcnow_aware() - to_aware(latest_attempt.created_at) < cooldown:
                 reject_state_conflict("尝试冷却中，请稍后再试")
 
         attempt = ExperimentAttempt(
