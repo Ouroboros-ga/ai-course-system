@@ -119,7 +119,8 @@ export function useLearningWorkspace(courseId, options = {}) {
   // 听课时长埋点：记录上次进度保存时间戳，用于计算本次保存周期内的听课秒数。
   // 仅在 isPlaying 时累计 delta，后端累加到 NodeProgress.time_spent。
   let lastProgressSaveAt = 0
-  let flushingLearningEvents = false
+  // 学习事件发送的 in-flight Promise；并发调用方共享同一次 flush 的结果。
+  let flushingLearningEvents = null
 
   const nodes = computed(() => course.value?.nodes ?? [])
   const slides = computed(() => course.value?.slides ?? [])
@@ -824,8 +825,9 @@ export function useLearningWorkspace(courseId, options = {}) {
             time_spent_delta: timeSpentDelta,
           })
         }
-        await flushLearningEvents()
-        saveState.value = 'saved'
+        // flush 失败（网络/接口错误）时如实进入 error 态，事件留在本地队列待重试。
+        const flushed = await flushLearningEvents()
+        saveState.value = flushed ? 'saved' : 'error'
         return
       }
       await savePlayerProgress(
@@ -876,22 +878,28 @@ export function useLearningWorkspace(courseId, options = {}) {
   }
 
   async function flushLearningEvents() {
-    if (previewMode || flushingLearningEvents || !pendingLearningEvents.value.length) return
-    flushingLearningEvents = true
-    try {
-      const queue = [...pendingLearningEvents.value]
-      for (const event of queue) {
-        try {
-          await recordLearningEvent(courseId, event)
-          pendingLearningEvents.value = pendingLearningEvents.value.filter(item => item.idempotency_key !== event.idempotency_key)
-          writeJson(learningQueueStorageKey, pendingLearningEvents.value)
-        } catch {
-          break
+    if (previewMode || !pendingLearningEvents.value.length) return true
+    if (flushingLearningEvents) return flushingLearningEvents
+    flushingLearningEvents = (async () => {
+      try {
+        while (pendingLearningEvents.value.length) {
+          const [event] = pendingLearningEvents.value
+          try {
+            await recordLearningEvent(courseId, event)
+            pendingLearningEvents.value = pendingLearningEvents.value.filter(item => item.idempotency_key !== event.idempotency_key)
+            writeJson(learningQueueStorageKey, pendingLearningEvents.value)
+          } catch {
+            break
+          }
         }
+        return pendingLearningEvents.value.length === 0
+      } catch {
+        return false
+      } finally {
+        flushingLearningEvents = null
       }
-    } finally {
-      flushingLearningEvents = false
-    }
+    })()
+    return flushingLearningEvents
   }
 
   function startProgressTimer() {

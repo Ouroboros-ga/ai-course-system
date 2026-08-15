@@ -13,7 +13,7 @@ from app.platform.agents.platform import AgentPlatform
 from app.platform.agents.registry import TeachingAgentRuntimeRegistry
 from app.platform.agents.runtime import TeachingAgentRuntime
 from app.platform.agents.runtime.profile import AgentType
-from app.services.cognitive_service import record_question_depth
+from app.services.cognitive_service import compute_cognitive_state, record_question_depth
 from app.services.conversation_service import (
     derive_question_inference_signals,
     list_conversation_messages,
@@ -139,15 +139,24 @@ async def _respond_for_subject(
     depth = state.get("inquiry_depth")
     if persist_learner_turn and depth is not None:
         try:
+            node_id = _safe_node_id(session, course_id, state.get("current_concept_id"))
             record_question_depth(
                 session,
                 student_id=subject_user_id,
                 course_id=course_id,
-                node_id=_safe_node_id(state.get("current_concept_id")),
+                node_id=node_id,
                 depth_score=float(depth),
                 trace_id=str(state.get("trace_id", "")),
             )
-        except Exception:  # noqa: BLE001 - 深度标定记录失败不阻断回答
+            # 提问本身就是认知证据：深度记录落库后立即重算六维认知，
+            # 让 inquiry_depth 随提问及时更新，而不是只等答题触发。
+            compute_cognitive_state(
+                session,
+                student_id=subject_user_id,
+                course_id=course_id,
+                node_id=node_id,
+            )
+        except Exception:  # noqa: BLE001 - 认知采集失败不阻断回答
             pass
 
     degraded = set(state.get("degraded_services", []))
@@ -250,13 +259,21 @@ async def respond_for_learner(
     )
 
 
-def _safe_node_id(value: Any) -> int | None:
-    """把概念/节点 ID 转成 int；缺失或非法时返回 None（对应课程级）。"""
+def _safe_node_id(session: Session, course_id: int, value: Any) -> int | None:
+    """把概念/节点 ID（数字或 ``kn_*`` node_key）解析为课程内数字节点 ID。
+
+    教学工作流中的 ``current_concept_id`` 是知识图谱的稳定公开 node_key
+    （如 ``kn_xxx``），而提问深度/认知表使用 ``CourseKnowledgeNode.id``。
+    解析必须课程隔离；缺失、非法或跨课程时返回 None（对应课程级），
+    绝不静默把别的课程节点当作本课程节点。
+    """
     if value is None or value == "":
         return None
     try:
-        return int(value)
-    except (TypeError, ValueError):
+        from app.services.knowledge_node_identity_service import resolve_node_id
+
+        return resolve_node_id(session, course_id, value)
+    except Exception:  # noqa: BLE001 - 身份解析失败退化为课程级，不阻断回答
         return None
 
 
