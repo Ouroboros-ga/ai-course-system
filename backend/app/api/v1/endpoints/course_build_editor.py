@@ -1002,9 +1002,13 @@ async def delete_outline_node(course_id: int, node_id: str, session: Session = D
         mapping.updated_at = utcnow_aware()
         session.add(mapping)
     session.delete(node)
-    # 重新整理剩余节点顺序，避免 order_index 出现空洞
+    # 重新整理同一父级下剩余节点的顺序，避免 order_index 出现空洞。
+    # order_index 按父级隔离，只能重排被删节点的兄弟组；若像旧实现那样对整版本
+    # 平铺重排，UPDATE 过程中新索引会与尚未更新的兄弟现值冲突，触发
+    # uq_outline_node_order_within_parent 唯一约束导致 500。
     remaining = session.exec(select(CourseOutlineNode).where(
         CourseOutlineNode.outline_version_id == version_id,
+        CourseOutlineNode.parent_node_id == node.parent_node_id,
     ).order_by(CourseOutlineNode.order_index)).all()
     for index, n in enumerate(remaining):
         n.order_index = index; n.updated_at = utcnow_aware(); session.add(n)
