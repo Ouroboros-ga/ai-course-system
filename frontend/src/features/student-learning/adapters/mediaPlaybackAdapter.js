@@ -122,6 +122,10 @@ function normalizePlaylist(value) {
       itemId: item?.item_id ?? item?.itemId ?? null,
       nodeId: item?.node_id ?? item?.nodeId ?? null,
       outlineNodeId: item?.outline_node_id ?? item?.outlineNodeId ?? null,
+      // Stable cross-version keys attached at signing time; the draft-preview
+      // bridge matches on these because draft/released outline ids differ.
+      knowledgeGraphNodeId: item?.knowledge_graph_node_id ?? item?.knowledgeGraphNodeId ?? null,
+      title: String(item?.title ?? ''),
       offsetMs: nonNegativeInteger(item?.offset_ms ?? item?.offsetMs),
       durationMs: nonNegativeInteger(item?.duration_ms ?? item?.durationMs),
       audioUrl: String(item?.audio_url ?? item?.audioUrl ?? ''),

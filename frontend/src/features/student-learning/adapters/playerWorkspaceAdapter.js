@@ -22,6 +22,7 @@ function normalizeNode(raw, index) {
     title: String(raw?.title || '知识点 ' + (index + 1)),
     content: String(raw?.content || ''),
     chapterId: raw?.chapter_id ?? raw?.chapterId ?? null,
+    knowledgeGraphNodeId: raw?.knowledge_graph_node_id ?? raw?.knowledgeGraphNodeId ?? null,
     timestampStart: start,
     timestampEnd: end,
     duration: duration || Math.max(0, end - start),

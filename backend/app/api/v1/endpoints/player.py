@@ -192,6 +192,9 @@ def _versioned_player_data(
             "title": outline_node.title,
             "content": (script_node.content if script_node else "")[:200],
             "chapter_id": outline_node.parent_node_id,
+            # Stable knowledge-graph concept id shared across outline versions;
+            # the draft-preview bridge uses it to match released playlist items.
+            "knowledge_graph_node_id": outline_node.knowledge_graph_node_id,
             "timestamp_start": 0,
             "timestamp_end": 0,
             "duration": 0,

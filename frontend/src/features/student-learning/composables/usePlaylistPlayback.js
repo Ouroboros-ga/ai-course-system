@@ -65,16 +65,31 @@ function isDescendantOf(nodes, indexById, childIndex, ancestorIndex, maxDepth = 
   return false
 }
 
+function normalizeMatchKey(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
+function knowledgeGraphKeyOf(entry) {
+  return normalizeMatchKey(entry?.knowledgeGraphNodeId ?? entry?.knowledge_graph_node_id)
+}
+
+function titleKeyOf(entry) {
+  return normalizeMatchKey(entry?.title)
+}
+
 /**
- * Positional fallback bridge for teacher draft preview.
+ * Stable-key bridge for teacher draft preview.
  *
  * A draft outline and the frozen media release own different
  * ``outline_node_id`` values, so every id-based matcher fails and the rail,
- * the playlist clock and review jumps silently desynchronize. Both sides are
- * produced by the same preorder traversal, therefore their knowledge-point
- * sequences align one-to-one; map them by position so preview playback stays
- * navigable. Non-knowledge nodes (chapter/section) fall back to their first
- * descendant knowledge point so authoring clicks still land on media.
+ * the playlist clock and review jumps silently desynchronize.  The two sides
+ * also do NOT share a knowledge-point order (drafts reorder nodes freely),
+ * so positional mapping is unreliable.  Instead, match each draft knowledge
+ * point to a playlist item by the stable knowledge-graph concept id first,
+ * then by normalized title, and only fall back to positional pairing for
+ * unmatched leftovers.  Non-knowledge nodes (chapter/section) fall back to
+ * their first descendant knowledge point so authoring clicks still land on
+ * media.
  */
 export function buildPreviewPlaylistBridge(nodes, items) {
   if (!Array.isArray(nodes) || !Array.isArray(items) || !items.length) return null
@@ -84,12 +99,51 @@ export function buildPreviewPlaylistBridge(nodes, items) {
   nodes.forEach((node, index) => {
     if (isKnowledgePointNode(node)) knowledgeIndexes.push(index)
   })
-  const count = Math.min(knowledgeIndexes.length, items.length)
-  for (let position = 0; position < count; position += 1) {
-    const nodeIndex = knowledgeIndexes[position]
+
+  const itemIndexesByGraphKey = new Map()
+  const itemIndexesByTitleKey = new Map()
+  items.forEach((item, position) => {
+    const graphKey = knowledgeGraphKeyOf(item)
+    if (graphKey) {
+      if (!itemIndexesByGraphKey.has(graphKey)) itemIndexesByGraphKey.set(graphKey, [])
+      itemIndexesByGraphKey.get(graphKey).push(position)
+    }
+    const title = titleKeyOf(item)
+    if (title) {
+      if (!itemIndexesByTitleKey.has(title)) itemIndexesByTitleKey.set(title, [])
+      itemIndexesByTitleKey.get(title).push(position)
+    }
+  })
+
+  const claim = (nodeIndex, position) => {
+    if (nodeToItem[nodeIndex] >= 0 || itemToNode[position] >= 0) return false
     nodeToItem[nodeIndex] = position
     itemToNode[position] = nodeIndex
+    return true
   }
+  const claimFirstFree = (nodeIndex, positions) => {
+    if (!positions) return false
+    return positions.some(position => claim(nodeIndex, position))
+  }
+
+  // Pass 1: stable knowledge-graph concept id.
+  knowledgeIndexes.forEach(nodeIndex => {
+    claimFirstFree(nodeIndex, itemIndexesByGraphKey.get(knowledgeGraphKeyOf(nodes[nodeIndex])))
+  })
+  // Pass 2: normalized title for nodes/items without a shared concept id.
+  knowledgeIndexes.forEach(nodeIndex => {
+    if (nodeToItem[nodeIndex] >= 0) return
+    claimFirstFree(nodeIndex, itemIndexesByTitleKey.get(titleKeyOf(nodes[nodeIndex])))
+  })
+  // Pass 3: positional fallback only for whatever remains unmatched, so a
+  // partially keyed outline still degrades gracefully instead of freezing.
+  const freeNodes = knowledgeIndexes.filter(nodeIndex => nodeToItem[nodeIndex] < 0)
+  const freeItems = items.map((_, position) => position).filter(position => itemToNode[position] < 0)
+  const fallbackCount = Math.min(freeNodes.length, freeItems.length)
+  for (let position = 0; position < fallbackCount; position += 1) {
+    claim(freeNodes[position], freeItems[position])
+  }
+
   const indexById = new Map(nodes.map((node, index) => [String(outlineIdOf(node)), index]))
   nodes.forEach((node, index) => {
     if (nodeToItem[index] >= 0) return

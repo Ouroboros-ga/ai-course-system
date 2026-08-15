@@ -157,6 +157,72 @@ test('preview bridge maps draft nodes to released playlist items by position', (
   assert.equal(bridge.nodeToItem[2], 1)
 })
 
+test('preview bridge matches by knowledge-graph key when orders differ', () => {
+  // Drafts reorder knowledge points freely; the positional assumption breaks.
+  // Stable concept ids must win over position.
+  const draftNodes = [
+    { id: 'd-kp1', outlineNodeId: 'd-kp1', type: 'knowledge_point', chapterId: null, knowledgeGraphNodeId: 'kg-b', title: '乙' },
+    { id: 'd-kp2', outlineNodeId: 'd-kp2', type: 'knowledge_point', chapterId: null, knowledgeGraphNodeId: 'kg-a', title: '甲' },
+    { id: 'd-kp3', outlineNodeId: 'd-kp3', type: 'knowledge_point', chapterId: null, knowledgeGraphNodeId: 'kg-c', title: '丙' },
+  ]
+  const releasedItems = [
+    { nodeId: 101, outlineNodeId: 'r-kp1', knowledgeGraphNodeId: 'kg-a', title: '甲', offsetMs: 0, durationMs: 2_000 },
+    { nodeId: 102, outlineNodeId: 'r-kp2', knowledgeGraphNodeId: 'kg-b', title: '乙', offsetMs: 2_000, durationMs: 3_000 },
+    { nodeId: 103, outlineNodeId: 'r-kp3', knowledgeGraphNodeId: 'kg-c', title: '丙', offsetMs: 5_000, durationMs: 1_000 },
+  ]
+
+  const bridge = buildPreviewPlaylistBridge(draftNodes, releasedItems)
+  assert.deepEqual(bridge.nodeToItem, [1, 0, 2])
+  assert.deepEqual(bridge.itemToNode, [1, 0, 2])
+})
+
+test('preview bridge falls back to title matching without graph keys', () => {
+  const draftNodes = [
+    { id: 'd-kp1', outlineNodeId: 'd-kp1', type: 'knowledge_point', chapterId: null, title: ' 链表及其变体 ' },
+    { id: 'd-kp2', outlineNodeId: 'd-kp2', type: 'knowledge_point', chapterId: null, title: '栈的实现与应用' },
+  ]
+  const releasedItems = [
+    { nodeId: 101, outlineNodeId: 'r-kp1', title: '栈的实现与应用', offsetMs: 0, durationMs: 2_000 },
+    { nodeId: 102, outlineNodeId: 'r-kp2', title: '链表及其变体', offsetMs: 2_000, durationMs: 3_000 },
+  ]
+
+  const bridge = buildPreviewPlaylistBridge(draftNodes, releasedItems)
+  assert.deepEqual(bridge.nodeToItem, [1, 0])
+  assert.deepEqual(bridge.itemToNode, [1, 0])
+})
+
+test('preview bridge mixes keyed matches with positional leftovers', () => {
+  const draftNodes = [
+    { id: 'd-kp1', outlineNodeId: 'd-kp1', type: 'knowledge_point', chapterId: null, knowledgeGraphNodeId: 'kg-x', title: '已命名' },
+    { id: 'd-kp2', outlineNodeId: 'd-kp2', type: 'knowledge_point', chapterId: null, title: '未命名甲' },
+    { id: 'd-kp3', outlineNodeId: 'd-kp3', type: 'knowledge_point', chapterId: null, title: '未命名乙' },
+  ]
+  const releasedItems = [
+    { nodeId: 101, outlineNodeId: 'r-kp1', title: '旧名甲', offsetMs: 0, durationMs: 1_000 },
+    { nodeId: 102, outlineNodeId: 'r-kp2', knowledgeGraphNodeId: 'kg-x', title: '旧名', offsetMs: 1_000, durationMs: 1_000 },
+    { nodeId: 103, outlineNodeId: 'r-kp3', title: '旧名乙', offsetMs: 2_000, durationMs: 1_000 },
+  ]
+
+  const bridge = buildPreviewPlaylistBridge(draftNodes, releasedItems)
+  // Graph key claims item 1 first; the two unkeyed nodes take items 0 and 2.
+  assert.deepEqual(bridge.nodeToItem, [1, 0, 2])
+  assert.deepEqual(bridge.itemToNode, [1, 0, 2])
+})
+
+test('preview bridge never double-books an item across matching passes', () => {
+  const draftNodes = [
+    { id: 'd-kp1', outlineNodeId: 'd-kp1', type: 'knowledge_point', chapterId: null, knowledgeGraphNodeId: 'kg-a', title: '同名' },
+    { id: 'd-kp2', outlineNodeId: 'd-kp2', type: 'knowledge_point', chapterId: null, title: '同名' },
+  ]
+  const releasedItems = [
+    { nodeId: 101, outlineNodeId: 'r-kp1', knowledgeGraphNodeId: 'kg-a', title: '同名', offsetMs: 0, durationMs: 1_000 },
+  ]
+
+  const bridge = buildPreviewPlaylistBridge(draftNodes, releasedItems)
+  assert.deepEqual(bridge.nodeToItem, [0, -1])
+  assert.deepEqual(bridge.itemToNode, [0])
+})
+
 test('preview bridge returns null without playlist items', () => {
   assert.equal(buildPreviewPlaylistBridge([], null), null)
   assert.equal(buildPreviewPlaylistBridge([], []), null)
