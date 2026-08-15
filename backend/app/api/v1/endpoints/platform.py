@@ -150,7 +150,6 @@ async def sso_callback(
             }
         else:
             username = user_info.get("username") or f"fanya_{fanya_id}"
-            real_name = user_info.get("realName") or user_info.get("name")
             role = UserRole.USER
 
             new_user = User(
@@ -159,7 +158,7 @@ async def sso_callback(
                 fanya_account_id=fanya_id,
                 is_fanya_verified=True,
                 role=role,
-                real_name=real_name,
+                real_name=username,
                 school_id=user_info.get("schoolId"),
                 is_active=True,
             )
@@ -206,8 +205,7 @@ async def sync_user(
         existing_user = session.exec(statement).first()
 
         if existing_user:
-            if request.real_name:
-                existing_user.real_name = request.real_name
+            existing_user.real_name = existing_user.username
             if request.email:
                 existing_user.email = request.email
             if request.role == "admin":
@@ -239,7 +237,7 @@ async def sync_user(
             fanya_account_id=request.fanya_user_id,
             is_fanya_verified=True,
             role=role,
-            real_name=request.real_name,
+            real_name=username,
             email=request.email,
             school_id=request.school_id,
             is_active=True,

@@ -974,7 +974,7 @@ class FacadeHomeService:
         owner = session.get(User, owner_id)
         if owner is None:
             return None
-        return owner.real_name or owner.username
+        return owner.username
 
     def _infer_join_method(self, course: Course) -> str:
         """推断课程大厅中显示的加入方式。"""
