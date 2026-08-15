@@ -115,15 +115,17 @@ def test_prerequisite_cycle_and_non_prerequisite_relation_detection():
     assert _prerequisite_cycle_nodes(relations) == {"a", "b", "c"}
 
 
-def test_quality_gate_requires_a_published_graph_snapshot(session):
+def test_quality_gate_without_graph_is_confirmable_warning(session):
     course, teacher = _course_and_teacher(session)
 
     without_graph = quality_gate_service.run_checks(
         session, course_id=course.id, initiated_by=teacher.id,
     )
     graph_check = next(item for item in without_graph.checks if item["check_id"] == "graph.release_ready")
-    assert graph_check["severity"] == GateSeverity.ERROR.value
+    # 知识图谱是可选增强：缺少已发布图谱是教师可确认的 warning，不再是 error 硬约束。
+    assert graph_check["severity"] == GateSeverity.WARNING.value
     assert graph_check["passed"] is False
+    assert without_graph.warning_count >= 1
 
     session.add(GraphSnapshotRecord(
         snapshot_id=f"p5-graph-{uuid.uuid4().hex}",

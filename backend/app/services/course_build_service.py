@@ -1,4 +1,4 @@
-﻿"""阶段3 统一任务中心与教师课程建设工作流服务。
+"""阶段3 统一任务中心与教师课程建设工作流服务。
 
 承载路线图 §6 七步建设状态：
     materials → structure → scripts → page_mappings → media → validate → release
@@ -1030,16 +1030,18 @@ class QualityGateService:
             checks.append({"check_id": "structure.outline_exists", "name": "课程结构草稿存在", "severity": GateSeverity.ERROR.value, "passed": False, "message": "尚未生成可发布的课程目录草稿"})
             error_count += 1
 
-        # A release always freezes a reviewed graph snapshot.  Candidate graph
-        # batches are useful while building, but are never learner content.
+        # A release normally freezes a reviewed graph snapshot.  The graph is
+        # an optional course enhancement, not a publication prerequisite: a
+        # course whose GraphRAG bundle is still pending/failed must still be
+        # publishable.  Absence is reported as a teacher-confirmable warning.
         graph = session.exec(select(GraphSnapshotRecord).where(
             GraphSnapshotRecord.course_id == course_id,
             GraphSnapshotRecord.is_active == True,  # noqa: E712
             GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
         ).order_by(GraphSnapshotRecord.version.desc())).first()
         if graph is None:
-            checks.append({"check_id": "graph.release_ready", "name": "已审核课程知识图谱", "severity": GateSeverity.ERROR.value, "passed": False, "message": "尚未发布可冻结的课程知识图谱快照"})
-            error_count += 1
+            checks.append({"check_id": "graph.release_ready", "name": "已审核课程知识图谱", "severity": GateSeverity.WARNING.value, "passed": False, "message": "尚未发布可冻结的课程知识图谱快照；本次发布将不包含知识图谱"})
+            warning_count += 1
         else:
             graph_node_ids = {
                 str(node.get("id") or node.get("node_id") or "")
@@ -1326,16 +1328,19 @@ class CourseReleaseService:
         # Freeze the currently published graph with this release.  The caller
         # may name it explicitly, but cannot select an unpublished or stale
         # graph draft after the quality gate has reviewed the active snapshot.
+        # A course without a published graph is still publishable: the graph is
+        # an optional enhancement, so the release simply carries no graph ref.
         active_graph = session.exec(select(GraphSnapshotRecord).where(
             GraphSnapshotRecord.course_id == course_id,
             GraphSnapshotRecord.is_active == True,  # noqa: E712
             GraphSnapshotRecord.status == SnapshotStatus.PUBLISHED,
         ).order_by(GraphSnapshotRecord.version.desc())).first()
-        if active_graph is None:
-            reject_state_conflict("没有已发布的课程知识图谱，无法正式发布")
-        if graph_snapshot_ref is not None and graph_snapshot_ref != active_graph.snapshot_id:
-            reject_state_conflict("发布只能冻结当前已发布的活动知识图谱快照")
-        graph_snapshot_ref = active_graph.snapshot_id
+        if graph_snapshot_ref is not None:
+            if active_graph is None or graph_snapshot_ref != active_graph.snapshot_id:
+                reject_state_conflict("发布只能冻结当前已发布的活动知识图谱快照")
+            graph_snapshot_ref = active_graph.snapshot_id
+        elif active_graph is not None:
+            graph_snapshot_ref = active_graph.snapshot_id
 
         # A teacher may publish with a previously reviewed gate run.  When no
         # ID is supplied we create a fresh run, which will stop on any Warning
