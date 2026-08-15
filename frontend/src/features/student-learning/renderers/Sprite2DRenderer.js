@@ -19,8 +19,10 @@ const MOUTH_OPENNESS = {
   a: 1.0,
 }
 
-const MOUTH_TRANSITION_MS = 55
-const RAPID_TRANSITION_MS = 25
+// 自然口型不对称：张口（起音）更快、合口（收尾）更慢，避免机械抖动
+const MOUTH_ATTACK_MS = 32
+const MOUTH_RELEASE_MS = 68
+const RAPID_TRANSITION_MS = 22
 const MIN_VISEME_HOLD_MS = 40
 
 const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
@@ -38,9 +40,10 @@ export class Sprite2DRenderer {
     this.currentViseme = 'sil'
     this.targetViseme = 'sil'
     this.transitionStartMs = 0
-    this.transitionDurationMs = MOUTH_TRANSITION_MS
+    this.transitionDurationMs = MOUTH_ATTACK_MS
     this.lastSetFrameMs = 0
     this.manifest = null
+    this._lastViewport = { width: 0, height: 0 }
   }
 
   async init(manifest) {
@@ -148,12 +151,16 @@ export class Sprite2DRenderer {
 
   #layout() {
     if (!this.app || !this.root || !this.manifest) return
+    const width = this.app.renderer.width
+    const height = this.app.renderer.height
+    if (width === this._lastViewport.width && height === this._lastViewport.height) return
+    this._lastViewport = { width, height }
     const stage = this.manifest.stage
-    const scale = Math.max(0.1, Math.max(this.app.renderer.width / stage.width, this.app.renderer.height / stage.height))
+    const scale = Math.max(0.1, Math.max(width / stage.width, height / stage.height))
     this.root.scale.set(scale)
     this.root.position.set(
-      (this.app.renderer.width - stage.width * scale) / 2,
-      (this.app.renderer.height - stage.height * scale) / 2,
+      (width - stage.width * scale) / 2,
+      (height - stage.height * scale) / 2,
     )
   }
 
@@ -165,9 +172,12 @@ export class Sprite2DRenderer {
     const nowMs = timeMs
     if (nextViseme !== this.targetViseme) {
       const sinceLast = nowMs - this.lastSetFrameMs
+      // 依据口型开合方向选过渡时长：张口快（起音干脆）、合口慢（收尾自然）
+      const opening = (MOUTH_OPENNESS[nextViseme] ?? 0) > (MOUTH_OPENNESS[this.targetViseme] ?? 0)
+      const baseDuration = opening ? MOUTH_ATTACK_MS : MOUTH_RELEASE_MS
       const duration = sinceLast > 0 && sinceLast < MIN_VISEME_HOLD_MS
-        ? RAPID_TRANSITION_MS
-        : MOUTH_TRANSITION_MS
+        ? Math.min(RAPID_TRANSITION_MS, baseDuration)
+        : baseDuration
       this.currentViseme = this.#snapshotVisemeAt(nowMs)
       this.targetViseme = nextViseme
       this.transitionStartMs = nowMs
@@ -262,19 +272,44 @@ export class Sprite2DRenderer {
     }
 
     if (this.head) {
-      this.head.y = 210 + breathY
-      if (this.eyes) this.eyes.y = this.head.y
+      // 呼吸起伏 + 说话时的轻点头（周期 ~1.1s，仅向上脉冲，幅度小）
+      const nod = speaking ? Math.max(0, Math.sin(seconds * 1.15 + 0.4)) * 1.4 : 0
+      this.head.y = 210 + breathY + nod
+      // 视线缓慢巡视：双眼沿椭圆轨迹轻微偏移，不跳帧
+      const gazeX = Math.sin(seconds * 0.31 + 0.8) * 4.5
+      const gazeY = Math.cos(seconds * 0.23 + 1.2) * 2.5
+      if (this.eyes) {
+        this.eyes.y = this.head.y + gazeY
+        this.eyes.x = 240 + gazeX
+      }
     }
     if (this.head) this.head.rotation = sway
     if (this.eyes && this.eyes !== this.head) this.eyes.rotation = sway
 
-    const expression = speaking ? (precision === 'phoneme' ? 'attentive' : 'warm') : 'neutral'
-    this.head.tint = expressionTint[expression]
-    this.eyes.tint = expressionTint[expression]
+    // 表情 tint 逐帧插值：状态切换不再瞬间跳变，过渡更柔和
+    const targetExpression = speaking ? (precision === 'phoneme' ? 'attentive' : 'warm') : 'neutral'
+    const targetTint = expressionTint[targetExpression]
+    this.#lerpTint(this.head, targetTint)
+    this.#lerpTint(this.eyes, targetTint)
     const gesture = speaking && Math.floor(seconds / 2.4) % 2 === 1 ? 'emphasis' : 'rest'
     const armSway = gesture === 'emphasis' ? Math.sin(seconds * 8) * 0.22 : 0
     if (this.leftArm) this.leftArm.rotation = -0.2 + armSway
     if (this.rightArm) this.rightArm.rotation = 0.2 - armSway
+  }
+
+  #lerpTint(sprite, targetColor, factor = 0.25) {
+    if (!sprite) return
+    const current = sprite.tint ?? 0xFFFFFF
+    const cr = (current >> 16) & 0xFF
+    const cg = (current >> 8) & 0xFF
+    const cb = current & 0xFF
+    const tr = (targetColor >> 16) & 0xFF
+    const tg = (targetColor >> 8) & 0xFF
+    const tb = targetColor & 0xFF
+    const r = Math.round(cr + (tr - cr) * factor)
+    const g = Math.round(cg + (tg - cg) * factor)
+    const b = Math.round(cb + (tb - cb) * factor)
+    sprite.tint = (r << 16) | (g << 8) | b
   }
 
   destroy() {
