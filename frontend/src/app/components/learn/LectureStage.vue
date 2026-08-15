@@ -5,6 +5,7 @@ import {
   ChevronLeft,
   ChevronRight,
   FileQuestion,
+  LocateFixed,
   MonitorPlay,
   Pause,
   Play,
@@ -74,6 +75,10 @@ const slideError = ref(false)
 const audioError = ref('')
 const legacyVideoError = ref('')
 const mediaDuration = ref(0)
+const transcriptListRef = ref(null)
+// 讲解原文滚动默认跟随语音播放；用户手动滚动后暂停跟随，点"回到进度"恢复。
+const followPlayback = ref(true)
+let programmaticScroll = false
 let applyingExternalTime = false
 let switchingMediaSource = false
 
@@ -319,6 +324,32 @@ function skipBy(seconds) {
   seekTo((Number(props.currentTime) || 0) + seconds)
 }
 
+// 把当前高亮句滚动到原文容器可视区中部（仅改容器自身的 scrollTop，不触发祖先滚动）。
+function scrollTranscriptToActive(index) {
+  const list = transcriptListRef.value
+  if (!list) return
+  const item = list.children[index]
+  if (!item) return
+  programmaticScroll = true
+  const listRect = list.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  const top = list.scrollTop + (itemRect.top - listRect.top)
+  list.scrollTop = Math.max(0, top - (list.clientHeight - itemRect.height) / 2)
+  requestAnimationFrame(() => { programmaticScroll = false })
+}
+
+function handleTranscriptScroll() {
+  if (programmaticScroll) return
+  // 用户手动滚动：暂停自动跟随，露出"回到进度"按钮。
+  followPlayback.value = false
+}
+
+function resumeFollow() {
+  followPlayback.value = true
+  const index = activeSubtitleIndex.value
+  if (index >= 0) scrollTranscriptToActive(index)
+}
+
 function handleEnded(event) {
   if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   // An old keyed element may report ended again while Vue removes it.  The
@@ -350,6 +381,8 @@ watch([() => props.audioUrl, () => props.playlistIndex], async () => {
   switchingMediaSource = true
   audioError.value = ''
   mediaDuration.value = 0
+  // 切换到新知识点后默认重新跟随语音播放进度
+  followPlayback.value = true
   await nextTick()
   audioRef.value?.load()
 })
@@ -373,6 +406,12 @@ watch(() => props.currentTime, value => {
     element.currentTime = Math.min(target, element.duration || target)
     applyingExternalTime = false
   }
+})
+
+// 语音播到对应语句时高亮更新，跟随滚动原文容器；用户手动滚动后会暂停跟随。
+watch(activeSubtitleIndex, index => {
+  if (!followPlayback.value || index < 0) return
+  scrollTranscriptToActive(index)
 })
 
 watch(() => props.isPlaying, async shouldPlay => {
@@ -474,7 +513,20 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 
       <section class="sfx-stage-transcript" aria-label="讲解原文">
         <header>
-          <span class="sfx-t-caption">讲解原文</span>
+          <div class="sfx-stage-transcript-tools">
+            <span class="sfx-t-caption">讲解原文</span>
+            <SfxButton
+              v-if="!followPlayback"
+              variant="tertiary"
+              size="sm"
+              class="sfx-transcript-follow"
+              aria-label="回到播放进度"
+              @click="resumeFollow"
+            >
+              <template #icon><LocateFixed :size="14" /></template>
+              回到进度
+            </SfxButton>
+          </div>
           <nav class="sfx-stage-slide-nav" aria-label="课件翻页">
             <SfxButton variant="tertiary" size="sm" :disabled="currentPage <= 1" aria-label="上一页课件" @click="handlePageChange(currentPage - 1)">
               <template #icon><ChevronLeft :size="16" /></template>
@@ -485,7 +537,12 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
             </SfxButton>
           </nav>
         </header>
-        <ol v-if="visibleTranscript.length" class="sfx-stage-transcript-list">
+        <ol
+          v-if="visibleTranscript.length"
+          ref="transcriptListRef"
+          class="sfx-stage-transcript-list"
+          @scroll="handleTranscriptScroll"
+        >
           <li
             v-for="(segment, index) in visibleTranscript"
             :key="segment.index ?? index"
@@ -683,6 +740,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 .sfx-stage-fallback strong { font-size: var(--ui-md-size); }
 
 .sfx-stage-transcript { min-height: 128px; max-height: 178px; display: flex; flex-direction: column; }
+.sfx-stage-transcript-tools { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .sfx-stage-transcript header { padding-block: var(--space-2); }
 .sfx-stage-transcript-list { min-height: 0; overflow-y: auto; margin: 0; padding: var(--space-2) var(--space-4); list-style: none; }
 .sfx-stage-transcript-list li { padding: var(--space-2) var(--space-3); border-left: 2px solid transparent; color: var(--text-secondary); font-size: var(--ui-sm-size); line-height: 1.65; }
