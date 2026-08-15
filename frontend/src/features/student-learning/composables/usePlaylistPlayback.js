@@ -42,6 +42,65 @@ export function findPlaylistItemIndex(items, node) {
   return items.findIndex(item => sameId(item?.outlineNodeId, node.outlineNodeId))
 }
 
+const KNOWLEDGE_NODE_TYPES = new Set(['knowledge_point', 'KNOWLEDGE_POINT'])
+
+function isKnowledgePointNode(node) {
+  return KNOWLEDGE_NODE_TYPES.has(String(node?.type ?? node?.nodeType ?? ''))
+}
+
+function outlineIdOf(node) {
+  return node?.outlineNodeId ?? node?.id ?? null
+}
+
+function isDescendantOf(nodes, indexById, childIndex, ancestorIndex, maxDepth = 24) {
+  const ancestorId = outlineIdOf(nodes[ancestorIndex])
+  if (ancestorId == null) return false
+  let parent = nodes[childIndex]?.chapterId ?? null
+  let depth = 0
+  while (parent != null && depth < maxDepth) {
+    if (String(parent) === String(ancestorId)) return true
+    parent = nodes[indexById.get(String(parent))]?.chapterId ?? null
+    depth += 1
+  }
+  return false
+}
+
+/**
+ * Positional fallback bridge for teacher draft preview.
+ *
+ * A draft outline and the frozen media release own different
+ * ``outline_node_id`` values, so every id-based matcher fails and the rail,
+ * the playlist clock and review jumps silently desynchronize. Both sides are
+ * produced by the same preorder traversal, therefore their knowledge-point
+ * sequences align one-to-one; map them by position so preview playback stays
+ * navigable. Non-knowledge nodes (chapter/section) fall back to their first
+ * descendant knowledge point so authoring clicks still land on media.
+ */
+export function buildPreviewPlaylistBridge(nodes, items) {
+  if (!Array.isArray(nodes) || !Array.isArray(items) || !items.length) return null
+  const nodeToItem = new Array(nodes.length).fill(-1)
+  const itemToNode = new Array(items.length).fill(-1)
+  const knowledgeIndexes = []
+  nodes.forEach((node, index) => {
+    if (isKnowledgePointNode(node)) knowledgeIndexes.push(index)
+  })
+  const count = Math.min(knowledgeIndexes.length, items.length)
+  for (let position = 0; position < count; position += 1) {
+    const nodeIndex = knowledgeIndexes[position]
+    nodeToItem[nodeIndex] = position
+    itemToNode[position] = nodeIndex
+  }
+  const indexById = new Map(nodes.map((node, index) => [String(outlineIdOf(node)), index]))
+  nodes.forEach((node, index) => {
+    if (nodeToItem[index] >= 0) return
+    const descendant = knowledgeIndexes.find(knowledgeIndex => (
+      knowledgeIndex > index && isDescendantOf(nodes, indexById, knowledgeIndex, index)
+    ))
+    if (descendant != null) nodeToItem[index] = nodeToItem[descendant]
+  })
+  return { nodeToItem, itemToNode }
+}
+
 /** Resolve the playlist item whose global offset contains the current time. */
 export function findPlaylistItemIndexAtTime(items, seconds) {
   if (!Array.isArray(items) || !items.length) return -1

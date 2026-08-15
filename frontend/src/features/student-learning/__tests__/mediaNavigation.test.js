@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  buildPreviewPlaylistBridge,
   findPlaylistItemIndex,
   findPlaylistItemIndexAtTime,
   isActiveAudioClockEvent,
@@ -133,4 +134,30 @@ test('frozen media time projects directory, playlist, and PPT state together', (
     page: 4,
     materialVersionId: 'primary',
   })
+})
+
+test('preview bridge maps draft nodes to released playlist items by position', () => {
+  // Draft outline ids never equal released ids; knowledge points align 1:1.
+  const draftNodes = [
+    { id: 'd-ch1', outlineNodeId: 'd-ch1', type: 'chapter', chapterId: null },
+    { id: 'd-kp1', outlineNodeId: 'd-kp1', type: 'knowledge_point', chapterId: 'd-ch1' },
+    { id: 'd-sec', outlineNodeId: 'd-sec', type: 'section', chapterId: 'd-ch1' },
+    { id: 'd-kp2', outlineNodeId: 'd-kp2', type: 'knowledge_point', chapterId: 'd-sec' },
+  ]
+  const releasedItems = [
+    { nodeId: 101, outlineNodeId: 'r-kp1', offsetMs: 0, durationMs: 2_000 },
+    { nodeId: 102, outlineNodeId: 'r-kp2', offsetMs: 2_000, durationMs: 3_000 },
+  ]
+
+  const bridge = buildPreviewPlaylistBridge(draftNodes, releasedItems)
+  assert.deepEqual(bridge.nodeToItem, [0, 0, 1, 1])
+  assert.deepEqual(bridge.itemToNode, [1, 3])
+  // Chapter/section fall back to their first descendant knowledge point.
+  assert.equal(bridge.nodeToItem[0], 0)
+  assert.equal(bridge.nodeToItem[2], 1)
+})
+
+test('preview bridge returns null without playlist items', () => {
+  assert.equal(buildPreviewPlaylistBridge([], null), null)
+  assert.equal(buildPreviewPlaylistBridge([], []), null)
 })

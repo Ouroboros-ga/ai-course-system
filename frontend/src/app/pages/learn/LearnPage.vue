@@ -5,6 +5,7 @@ import { useLearningWorkspace } from '@/features/student-learning/composables/us
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
+  buildPreviewPlaylistBridge,
   findLearningNodeIndexForPlaylistItem,
   findPlaylistItemIndex,
   findPlaylistItemIndexById,
@@ -79,6 +80,41 @@ const ws = useLearningWorkspace(courseId, {
 media = useMediaPlayback(courseId)
 const avatar = useAvatarPlayback()
 playlistPlayback = usePlaylistPlayback(media.playlist)
+
+// Teacher draft preview renders draft outline ids while the frozen media
+// release keeps its own released ids. Id-based matchers then all fail, so a
+// positional knowledge-point bridge keeps rail / playlist / review in sync.
+const previewBridge = computed(() => (
+  previewMode.value
+    ? buildPreviewPlaylistBridge(ws.nodes.value, media.playlist.value?.items)
+    : null
+))
+
+function previewNodeToItemIndex(nodeIndex) {
+  const bridge = previewBridge.value
+  if (!bridge || !Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= bridge.nodeToItem.length) return -1
+  return bridge.nodeToItem[nodeIndex]
+}
+
+function previewItemToNodeIndex(itemIndex) {
+  const bridge = previewBridge.value
+  if (!bridge || !Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= bridge.itemToNode.length) return -1
+  return bridge.itemToNode[itemIndex]
+}
+
+function effectivePlaylistIndexForNode(nodeIndex) {
+  const items = media.playlist.value?.items || []
+  const direct = findPlaylistItemIndex(items, ws.nodes.value[nodeIndex])
+  if (direct >= 0) return direct
+  return previewNodeToItemIndex(nodeIndex)
+}
+
+function effectiveNodeIndexForItem(itemIndex) {
+  const items = media.playlist.value?.items || []
+  const direct = findLearningNodeIndexForPlaylistItem(ws.nodes.value, items[itemIndex])
+  if (direct >= 0) return direct
+  return previewItemToNodeIndex(itemIndex)
+}
 
 const mediaTotalPages = computed(() => {
   const manifestPages = media.ppt.value?.decks?.flatMap(deck => deck.pages || []) || []
@@ -241,10 +277,9 @@ function selectFrozenCoordinate(coordinate) {
   const items = media.playlist.value?.items || []
   const playlistIndex = findPlaylistItemIndexById(items, coordinate.media_release_item_id)
   if (playlistIndex < 0) throw new Error('MEDIA_ITEM_UNAVAILABLE')
-  const item = items[playlistIndex]
-  const nodeIndex = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
+  const nodeIndex = effectiveNodeIndexForItem(playlistIndex)
   if (nodeIndex < 0) throw new Error('COURSE_NODE_UNAVAILABLE')
-  const targetGlobalSeconds = resolveFrozenCoordinateGlobalSeconds(coordinate, item)
+  const targetGlobalSeconds = resolveFrozenCoordinateGlobalSeconds(coordinate, items[playlistIndex])
   if (targetGlobalSeconds == null) throw new Error('MEDIA_COORDINATE_UNAVAILABLE')
   playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nodeIndex, { play: false, preserveTime: true, page: coordinate.page })
@@ -483,12 +518,13 @@ function handlePlayback(payload) {
       playlistPlayback.activeIndex.value = target.playlistIndex
       const item = items[target.playlistIndex]
       // The playlist is authoritative for release playback. Supplying its
-      // node id keeps the legacy workspace index in sync for the rail.
+      // node id keeps the legacy workspace index in sync for the rail; the
+      // preview bridge covers draft-preview ids that cannot match directly.
       payload = {
         ...payload,
         nodeId: item.nodeId,
         outlineNodeId: item.outlineNodeId,
-        nodeIndex: target.nodeIndex,
+        nodeIndex: effectiveNodeIndexForItem(target.playlistIndex),
       }
     }
   } else if (Number.isFinite(globalTime)) {
@@ -518,7 +554,10 @@ function handleTrackSelect(index, options = {}) {
   if (!node) return
   const wasPlaying = options.play ?? ws.isPlaying.value
   const items = media.playlist.value?.items || []
-  const { playlistIndex, targetTime } = resolvePlaylistSelection(items, node, media.pptTimeline.value)
+  const playlistIndex = effectivePlaylistIndexForNode(nextIndex)
+  const targetTime = playlistIndex >= 0
+    ? Math.max(0, Number(items[playlistIndex]?.offsetMs) || 0) / 1000
+    : resolvePlaylistSelection(items, node, media.pptTimeline.value).targetTime
 
   if (playlistIndex >= 0) playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
@@ -534,7 +573,7 @@ function handlePlaylistNext() {
   const items = media.playlist.value?.items || []
   const item = items[nextIndex]
   if (!item) return
-  const index = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
+  const index = effectiveNodeIndexForItem(nextIndex)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.next()
 }
@@ -543,17 +582,16 @@ function handlePlaylistPrevious() {
   const items = media.playlist.value?.items || []
   const item = items[previousIndex]
   if (!item) return
-  const index = findLearningNodeIndexForPlaylistItem(ws.nodes.value, item)
+  const index = effectiveNodeIndexForItem(previousIndex)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.previous()
 }
 
 watch(
-  [() => ws.currentNode.value?.id, () => ws.currentNode.value?.outlineNodeId, () => media.playlist.value],
+  [() => ws.currentNodeIndex.value, () => media.playlist.value],
   () => {
-    const node = ws.currentNode.value
-    if (!node || !media.playlist.value?.items?.length) return
-    const index = findPlaylistItemIndex(media.playlist.value.items, node)
+    if (!media.playlist.value?.items?.length) return
+    const index = effectivePlaylistIndexForNode(ws.currentNodeIndex.value)
     if (index >= 0) playlistPlayback.activeIndex.value = index
   },
   { immediate: true },
