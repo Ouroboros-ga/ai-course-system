@@ -166,6 +166,14 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
             component: () => import('./pages/account/AccountPage.vue'),
           },
 
+          // 证据查看器：读取 Canonical DocumentIR 原文，全宽阅读体验，
+          // 直接挂 AppShell 一级导航（无课程二级菜单）。
+          {
+            path: 'evidence-viewer/:courseId?/:runId?',
+            name: 'app-evidence-viewer',
+            component: () => import('@/views/EvidenceViewerPage.vue'),
+          },
+
           // ── 课程空间（page-design §10–§18） ──
           {
             path: 'course/:courseId(\\d+)',
