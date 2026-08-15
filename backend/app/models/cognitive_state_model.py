@@ -29,7 +29,7 @@ from app.core.time_utils import utcnow_aware
 
 
 # 策略版本号，每次推荐策略变更时递增
-COGNITIVE_POLICY_VERSION = "cognitive-policy-v1.1"
+COGNITIVE_POLICY_VERSION = "cognitive-policy-v1.2"
 
 
 class CognitiveDimension(str, Enum):

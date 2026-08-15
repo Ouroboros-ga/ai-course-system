@@ -12,11 +12,15 @@
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional
 
+from sqlalchemy import case, or_, update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, func, select
 
 from app.core.exceptions import (
@@ -26,8 +30,16 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_naive, utcnow_aware
+from app.models.access_control_model import (
+    CourseCapability,
+    CourseMembership,
+    CourseRole,
+    MembershipStatus,
+)
+from app.models.agent_governance_model import AgentActionProposal
 from app.models.cognitive_state_model import LearningEvidenceRecord
+from app.models.graph_production_model import CourseKnowledgeNode
 from app.models.experiment_model import (
     AttemptStatus,
     CodingHintLevel,
@@ -37,12 +49,15 @@ from app.models.experiment_model import (
     ExperimentPublishStatus,
     ExperimentRun,
     ExperimentRunArtifact,
+    ExperimentLabProjection,
+    ExperimentRecommendation,
     ExperimentTestCase,
     ExperimentVersion,
     FreeSandboxQuotaWindow,
-    SandboxExecutionLease,
     RunOutcome,
+    SandboxExecutionLease,
 )
+from app.models.resource_model import LabRecord
 from app.services.sandbox_client import (
     ALLOWED_LANGUAGES,
     SandboxResourceLimits,
@@ -50,6 +65,7 @@ from app.services.sandbox_client import (
     sandbox_client,
 )
 from app.services.learning_evidence_context_service import upsert_learning_evidence_context
+from app.domain.learning.evidence import EvidenceType
 
 
 logger = logging.getLogger(__name__)
@@ -62,101 +78,19 @@ CODING_HINT_POLICY_VERSION = "coding-hint-v1.0"
 # full_solution 是否被允许；当前无策略查询逻辑，硬编码为 False，
 # 且客户端不可覆盖（端点已移除 full_solution_allowed 字段）。
 DEFAULT_FULL_SOLUTION_ALLOWED = False
+FORMAL_LEASE_KEY = "formal_judge0"
+FORMAL_LEASE_SECONDS = 90
+FREE_SANDBOX_WINDOW_SECONDS = 10 * 60
+FREE_SANDBOX_MAX_RUNS = 10
 
 
-FREE_SANDBOX_WINDOW = timedelta(minutes=10)
-FREE_SANDBOX_LIMIT = 10
-FORMAL_SANDBOX_LEASE_SECONDS = 90
-
-
-class FreeSandboxQuotaService:
-    """Server-owned quota for non-scoring free code runs.
-
-    This intentionally persists no source, stdin or sandbox output.  Keeping
-    the counter in the database makes the 10/10-minute rule consistent across
-    application processes without introducing another rate-limit dependency.
-    """
-
-    def consume(self, session: Session, *, course_id: int, student_id: int) -> int:
-        now = utcnow_aware()
-        cutoff = now - FREE_SANDBOX_WINDOW
-        window = session.exec(
-            select(FreeSandboxQuotaWindow)
-            .where(
-                FreeSandboxQuotaWindow.course_id == course_id,
-                FreeSandboxQuotaWindow.student_id == student_id,
-                FreeSandboxQuotaWindow.window_started_at >= cutoff,
-            )
-            .order_by(FreeSandboxQuotaWindow.window_started_at.desc())
-        ).first()
-        if window is None:
-            window = FreeSandboxQuotaWindow(
-                course_id=course_id,
-                student_id=student_id,
-                window_started_at=now,
-                request_count=0,
-            )
-            session.add(window)
-            session.flush()
-
-        if window.request_count >= FREE_SANDBOX_LIMIT:
-            retry_after = max(
-                1,
-                int((window.window_started_at + FREE_SANDBOX_WINDOW - now).total_seconds()),
-            )
-            return retry_after
-        window.request_count += 1
-        window.updated_at = now
-        session.add(window)
-        session.flush()
-        return 0
-
-
-class SandboxExecutionLeaseService:
-    """A database lease complements the process-local worker semaphore."""
-
-    def acquire(self, session: Session, *, task_id: str) -> bool:
-        now = utcnow_aware()
-        lease = session.get(SandboxExecutionLease, "judge0_formal")
-        if lease is None:
-            lease = SandboxExecutionLease(
-                lease_name="judge0_formal",
-                holder_task_id=task_id,
-                lease_expires_at=now + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS),
-                updated_at=now,
-            )
-            session.add(lease)
-            session.flush()
-            return True
-        if lease.holder_task_id not in (None, task_id) and (
-            lease.lease_expires_at is None or lease.lease_expires_at > now
-        ):
-            return False
-        lease.holder_task_id = task_id
-        lease.lease_expires_at = now + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS)
-        lease.updated_at = now
-        session.add(lease)
-        session.flush()
-        return True
-
-    def renew(self, session: Session, *, task_id: str) -> bool:
-        lease = session.get(SandboxExecutionLease, "judge0_formal")
-        if lease is None or lease.holder_task_id != task_id:
-            return False
-        lease.lease_expires_at = utcnow_aware() + timedelta(seconds=FORMAL_SANDBOX_LEASE_SECONDS)
-        lease.updated_at = utcnow_aware()
-        session.add(lease)
-        session.flush()
-        return True
-
-    def release(self, session: Session, *, task_id: str) -> None:
-        lease = session.get(SandboxExecutionLease, "judge0_formal")
-        if lease is not None and lease.holder_task_id == task_id:
-            lease.holder_task_id = None
-            lease.lease_expires_at = None
-            lease.updated_at = utcnow_aware()
-            session.add(lease)
-            session.flush()
+def _require_formal_experiment_capabilities(session: Session, *, course_id: int) -> None:
+    """Keep publication, attempts, previews, and runs behind both switches."""
+    capability = session.exec(
+        select(CourseCapability).where(CourseCapability.course_id == course_id)
+    ).first()
+    if capability is None or not capability.experiment or not capability.coding_sandbox:
+        reject_capability_disabled("The course has not enabled formal code experiments.")
 
 
 # ---------------------------------------------------------------------------
@@ -272,11 +206,18 @@ class ExperimentDefinitionService:
         experiment_id: str,
     ) -> ExperimentDefinition:
         definition = self.get_definition(session, course_id=course_id, experiment_id=experiment_id)
-        publish_validator.validate(session, definition=definition)
+        ExperimentPublishValidator().validate_existing(session, definition=definition)
+        if not definition.default_version_id:
+            reject_state_conflict("实验缺少激活版本，无法发布")
         definition.publish_status = ExperimentPublishStatus.PUBLISHED
         definition.updated_at = utcnow_aware()
         session.add(definition)
         session.flush()
+        ExperimentLabProjectionService().ensure_projection(
+            session,
+            course_id=definition.course_id,
+            experiment_id=definition.experiment_id,
+        )
         return definition
 
     def archive_definition(
@@ -321,18 +262,17 @@ class ExperimentVersionService:
         test_cases: Optional[list[dict]] = None,
         activate: bool = True,
     ) -> ExperimentVersion:
+        if passing_score != 1.0:
+            reject_validation_failed("Formal programming experiments require passing_score=1.0")
+        if not test_cases:
+            reject_validation_failed("An experiment version requires at least one test case")
+        total_weight = sum(float(case.get("weight", 1.0)) for case in test_cases)
+        if abs(total_weight - 1.0) > 1e-9:
+            reject_validation_failed("Experiment test case weights must total 1.0")
         # 验证实验存在
         definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id,
         )
-
-        if passing_score != 1.0:
-            reject_validation_failed("正式编程评测采用 ACM/ICPC，passing_score 必须为 1.0")
-        if not test_cases:
-            reject_validation_failed("实验版本至少需要一个公开或隐藏测试用例")
-        total_weight = sum(float(case.get("weight", 1.0)) for case in test_cases)
-        if abs(total_weight - 1.0) > 1e-6:
-            reject_validation_failed("测试用例权重总和必须为 1")
 
         # 计算版本号
         max_version = session.exec(
@@ -374,9 +314,6 @@ class ExperimentVersionService:
                 time_limit_override=case_data.get("time_limit_override"),
             )
             session.add(case)
-
-        if activate:
-            self._activate_version(session, course_id=course_id, version_id=version.version_id)
 
         session.flush()
         return version
@@ -445,6 +382,8 @@ class ExperimentVersionService:
         version_id: str,
     ) -> ExperimentVersion:
         version = self.get_version(session, course_id=course_id, version_id=version_id)
+        if not version.is_locked or version.reference_preview_verified_at is None:
+            reject_state_conflict("Only a locked version with a verified reference preview may become active")
 
         # 失活同实验其他版本
         other_versions = session.exec(
@@ -486,53 +425,19 @@ class ExperimentVersionService:
         locked: bool = True,
     ) -> ExperimentVersion:
         version = self.get_version(session, course_id=course_id, version_id=version_id)
+        if locked and version.reference_preview_verified_at is None:
+            reject_state_conflict("Reference solution preview has not verified all test cases")
         version.is_locked = locked
         session.add(version)
         session.flush()
+        if locked:
+            # Locking is the deliberate handoff from the editable test set to
+            # the version students may receive.  Creation itself never changes
+            # a published experiment's default version.
+            return self._activate_version(session, course_id=course_id, version_id=version_id)
         return version
 
-
-class ExperimentPublishValidator:
-    """The one release gate for a formal, server-owned programming experiment."""
-
-    def validate(self, session: Session, *, definition: ExperimentDefinition) -> ExperimentVersion:
-        if not definition.language_whitelist:
-            reject_validation_failed("发布前必须配置至少一种允许语言")
-        invalid = [language for language in definition.language_whitelist if language not in ALLOWED_LANGUAGES]
-        if invalid:
-            reject_validation_failed(f"发布语言不受支持: {invalid}")
-        if not definition.default_version_id:
-            reject_state_conflict("实验缺少激活默认版本，无法发布")
-
-        version = version_service.get_version(
-            session,
-            course_id=definition.course_id,
-            version_id=definition.default_version_id,
-        )
-        if not version.is_active or not version.is_locked:
-            reject_state_conflict("发布前必须锁定活动默认版本")
-        if version.passing_score != 1.0:
-            reject_validation_failed("正式编程评测必须使用 ACM/ICPC 的 passing_score=1.0")
-        if version.reference_preview_verified_at is None:
-            reject_state_conflict("参考解预览尚未全 AC，无法发布")
-        if not (1 <= version.cpu_time_limit <= 30 and 16_000 <= version.memory_limit <= 512_000):
-            reject_validation_failed("资源边界不合规")
-
-        cases = version_service.list_test_cases(
-            session,
-            course_id=definition.course_id,
-            version_id=version.version_id,
-            include_hidden=True,
-        )
-        if not cases:
-            reject_validation_failed("发布前至少需要一个测试用例")
-        if abs(sum(case.weight for case in cases) - 1.0) > 1e-6:
-            reject_validation_failed("测试用例权重总和必须为 1")
-        if not sandbox_client.health_check():
-            reject_capability_disabled("SANDBOX_UNAVAILABLE")
-        return version
-
-    def verify_reference_solution(
+    def preview_reference_solution(
         self,
         session: Session,
         *,
@@ -541,16 +446,24 @@ class ExperimentPublishValidator:
         language: str,
         source_code: str,
     ) -> dict[str, Any]:
-        """Run a temporary reference solution without persisting code or artifacts."""
-        version = version_service.get_version(session, course_id=course_id, version_id=version_id)
+        """Verify a transient teacher reference solution against every case.
+
+        The source stays in request memory only.  No run/artifact/agent record
+        is created because those stores are student-product data and must not
+        receive teacher answers or hidden inputs.
+        """
+        _require_formal_experiment_capabilities(session, course_id=course_id)
+        version = self.get_version(session, course_id=course_id, version_id=version_id)
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=version.experiment_id,
         )
         if language not in definition.language_whitelist:
             reject_validation_failed("参考解语言不在实验白名单中")
         if not sandbox_client.health_check():
-            reject_capability_disabled("SANDBOX_UNAVAILABLE")
-
+            reject_state_conflict("Judge0 健康检查未通过，无法预览参考解")
+        cases = self.list_test_cases(session, course_id=course_id, version_id=version_id)
+        if not cases:
+            reject_validation_failed("参考解预览需要至少一个测试用例")
         limits = SandboxResourceLimits(
             cpu_time_limit=version.cpu_time_limit,
             memory_limit=version.memory_limit,
@@ -559,10 +472,7 @@ class ExperimentPublishValidator:
             max_file_size=version.max_file_size,
             enable_network=False,
         )
-        cases = version_service.list_test_cases(
-            session, course_id=course_id, version_id=version_id, include_hidden=True,
-        )
-        outcomes: list[str] = []
+        passed_count = 0
         for case in cases:
             result = sandbox_client.submit_code(
                 source_code=source_code,
@@ -571,21 +481,19 @@ class ExperimentPublishValidator:
                 expected_output=case.expected_stdout,
                 limits=limits,
             )
-            outcomes.append(self._safe_preview_status(result.status))
-            if result.status != SubmissionStatus.ACCEPTED:
-                break
-        passed = len(cases) > 0 and len(outcomes) == len(cases) and all(
-            item == "accepted" for item in outcomes
-        )
-        if passed:
+            if result.status == SubmissionStatus.ACCEPTED:
+                passed_count += 1
+        accepted = passed_count == len(cases)
+        if accepted:
             version.reference_preview_verified_at = utcnow_aware()
             session.add(version)
             session.flush()
-        return {"passed": passed, "total_count": len(cases), "passed_count": len(outcomes) if passed else max(0, len(outcomes) - 1)}
-
-    @staticmethod
-    def _safe_preview_status(status: SubmissionStatus) -> str:
-        return "accepted" if status == SubmissionStatus.ACCEPTED else "failed"
+        return {
+            "version_id": version.version_id,
+            "accepted": accepted,
+            "passed_count": passed_count,
+            "total_count": len(cases),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -608,6 +516,7 @@ class ExperimentAttemptService:
         definition = definition_service.get_definition(
             session, course_id=course_id, experiment_id=experiment_id,
         )
+        _require_formal_experiment_capabilities(session, course_id=course_id)
         if definition.publish_status != ExperimentPublishStatus.PUBLISHED:
             reject_state_conflict("实验未发布，无法创建尝试")
         if not definition.default_version_id:
@@ -615,6 +524,17 @@ class ExperimentAttemptService:
 
         # 检查尝试次数限制：统计所有非 CANCELLED 尝试（含已终结化），
         # 防止学生通过"创建→提交→终结化→创建"循环绕过 max_attempts 总次数限制。
+        version = version_service.get_version(
+            session, course_id=course_id, version_id=definition.default_version_id,
+        )
+        if (
+            version.experiment_id != definition.experiment_id
+            or not version.is_active
+            or not version.is_locked
+            or version.reference_preview_verified_at is None
+        ):
+            reject_state_conflict("The published experiment has no verified locked active version")
+
         all_attempts = session.exec(
             select(ExperimentAttempt).where(
                 ExperimentAttempt.experiment_id == experiment_id,
@@ -728,17 +648,30 @@ class ExperimentRunService:
         language: str,
         source_code: str,
         student_id: int,
-        execute: bool = True,
         idempotency_key: Optional[str] = None,
     ) -> ExperimentRun:
         """创建代码运行记录。
 
-        - execute=True（默认）：同步执行沙箱（兼容现有测试）
-        - execute=False：仅创建 PENDING 记录，由调用方异步触发 _execute_run
+        Formal execution is always asynchronous.  This method only reserves a
+        pending server-owned run; the task worker is the sole caller of
+        ``_execute_run``.
         """
         attempt = attempt_service.get_attempt(
             session, course_id=course_id, attempt_id=attempt_id, student_id=student_id,
         )
+        if idempotency_key:
+            existing = session.exec(
+                select(ExperimentRun).where(
+                    ExperimentRun.attempt_id == attempt_id,
+                    ExperimentRun.course_id == course_id,
+                    ExperimentRun.student_id == student_id,
+                    ExperimentRun.idempotency_key == idempotency_key,
+                )
+            ).first()
+            if existing is not None:
+                return existing
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            reject_state_conflict("The experiment attempt is already submitted or finalized")
 
         # 校验语言白名单
         definition = definition_service.get_definition(
@@ -751,31 +684,31 @@ class ExperimentRunService:
             session, course_id=course_id, version_id=attempt.version_id,
         )
 
-        if idempotency_key:
+        try:
+            # The database constraint protects this query-then-insert path
+            # across multiple Uvicorn processes.
+            with session.begin_nested():
+                return self._create_run_record(
+                    session,
+                    course_id=course_id,
+                    attempt_id=attempt_id,
+                    language=language,
+                    source_code=source_code,
+                    student_id=student_id,
+                    idempotency_key=idempotency_key,
+                )
+        except IntegrityError:
             existing = session.exec(
                 select(ExperimentRun).where(
                     ExperimentRun.attempt_id == attempt_id,
+                    ExperimentRun.course_id == course_id,
+                    ExperimentRun.student_id == student_id,
                     ExperimentRun.idempotency_key == idempotency_key,
                 )
             ).first()
             if existing is not None:
                 return existing
-
-        run = self._create_run_record(
-            session,
-            course_id=course_id,
-            attempt_id=attempt_id,
-            language=language,
-            source_code=source_code,
-            student_id=student_id,
-            idempotency_key=idempotency_key,
-        )
-
-        if execute:
-            # 同步执行沙箱（测试场景）；生产应通过任务中心异步执行
-            await self._execute_run(session, run=run, attempt=attempt, version=version)
-            self._ensure_coding_diagnosis(session, run)
-        return run
+            raise
 
     @staticmethod
     def _ensure_coding_diagnosis(session: Session, run: ExperimentRun) -> None:
@@ -816,10 +749,10 @@ class ExperimentRunService:
         student_id: int,
         idempotency_key: Optional[str] = None,
     ) -> ExperimentRun:
-        """仅创建 ExperimentRun 记录（PENDING），不执行沙箱。
+        """Create a pending formal run record without executing student code.
 
-        异步路径（async_run=true）调用此方法创建记录，随后由 worker
-        通过 _execute_run 异步执行。
+        The assessed-execution endpoint always enqueues this record for the
+        durable worker; it has no synchronous Judge0 mode.
         """
         run = ExperimentRun(
             attempt_id=attempt_id,
@@ -841,8 +774,10 @@ class ExperimentRunService:
         run: ExperimentRun,
         attempt: ExperimentAttempt,
         version: ExperimentVersion,
-        cancel_check: Optional[Callable[[], bool]] = None,
+        before_case: Callable[[], Awaitable[bool]] | None = None,
     ) -> None:
+        if run.outcome != RunOutcome.PENDING:
+            return
         # 加载测试用例
         cases = version_service.list_test_cases(
             session, course_id=run.course_id, version_id=version.version_id,
@@ -878,16 +813,13 @@ class ExperimentRunService:
         first_wrong_answer = ""
 
         for case in cases:
-            # A running cancellation takes effect after the currently active
-            # Judge0 case returns.  Do not finalise the attempt or create
-            # evidence; the student may start a new attempt deliberately.
-            if cancel_check is not None and cancel_check():
-                run.error_code = "CANCELLED"
-                run.error_message = "评测任务已取消，未形成终结成绩"
-                run.test_summary = {"cases": test_summary, "cancelled": True}
-                session.add(run)
-                session.flush()
+            session.refresh(run)
+            if run.cancel_requested_at is not None:
+                # A cancellation never becomes a grade.  The handler sees the
+                # task cancellation and leaves this attempt in submitted state.
                 return
+            if before_case is not None and not await before_case():
+                raise RuntimeError("sandbox_execution_lease_lost")
             try:
                 case_limits = limits
                 if case.time_limit_override is not None:
@@ -908,12 +840,28 @@ class ExperimentRunService:
                     limits=case_limits,
                 )
 
+                # Infrastructure failures never become a student zero.  Leave
+                # the attempt submitted so the task can be retried safely.
+                if result.status in (
+                    SubmissionStatus.SANDBOX_UNAVAILABLE,
+                    SubmissionStatus.INTERNAL_ERROR,
+                ):
+                    run.outcome = RunOutcome.SANDBOX_UNAVAILABLE
+                    run.error_code = "SANDBOX_UNAVAILABLE"
+                    run.error_message = "Code sandbox became unavailable during assessment."
+                    run.compile_ok = compile_ok
+                    run.test_summary = {"cases": test_summary}
+                    run.finished_at = utcnow_aware()
+                    session.add(run)
+                    session.flush()
+                    return
+
                 # 检查编译错误（只记录一次）
                 if result.status == SubmissionStatus.COMPILATION_ERROR:
                     compile_ok = False
                     compile_message = result.compile_output or "编译失败"
                     test_summary.append({
-                        "case_name": case.case_name,
+                        "case_name": case.case_name if not case.is_hidden else f"hidden_{case.case_id[:8]}",
                         "passed": False,
                         "reason": "compilation_error",
                         "hidden": case.is_hidden,
@@ -953,9 +901,9 @@ class ExperimentRunService:
 
             except Exception as exc:
                 logger.warning("Experiment run case execution failed: %s", exc)
-                run.outcome = RunOutcome.INTERNAL_ERROR
-                run.error_code = "INTERNAL_ERROR"
-                run.error_message = str(exc)
+                run.outcome = RunOutcome.SANDBOX_UNAVAILABLE
+                run.error_code = "SANDBOX_UNAVAILABLE"
+                run.error_message = "Code sandbox became unavailable during assessment."
                 run.finished_at = utcnow_aware()
                 run.compile_ok = compile_ok
                 run.test_summary = {"cases": test_summary}
@@ -988,8 +936,7 @@ class ExperimentRunService:
             else:
                 run.outcome = RunOutcome.WRONG_ANSWER
 
-        # ACM/ICPC 正式结果只有全 AC 或未通过。权重只用于发布完整性校验，
-        # 诊断仍保留通过数量和首个错误分类。
+        # Formal grading is ACM/ICPC: partial case success is diagnostic-only.
         run.score = 1.0 if run.outcome == RunOutcome.ACCEPTED else 0.0
         run.finished_at = utcnow_aware()
         session.add(run)
@@ -1029,20 +976,6 @@ class ExperimentRunService:
             reject_course_access_denied("无权访问他人运行")
         return run
 
-    def get_run_by_idempotency(
-        self,
-        session: Session,
-        *,
-        attempt_id: str,
-        idempotency_key: str,
-    ) -> Optional[ExperimentRun]:
-        return session.exec(
-            select(ExperimentRun).where(
-                ExperimentRun.attempt_id == attempt_id,
-                ExperimentRun.idempotency_key == idempotency_key,
-            )
-        ).first()
-
     def list_runs(
         self,
         session: Session,
@@ -1058,6 +991,37 @@ class ExperimentRunService:
             stmt = stmt.where(ExperimentRun.student_id == student_id)
         stmt = stmt.order_by(ExperimentRun.submitted_at.desc())
         return list(session.exec(stmt).all())
+
+    def request_cancel(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        student_id: int,
+    ) -> ExperimentRun:
+        # This row lock is shared with the handler's completion transaction.
+        # Whoever commits first decides the result: a pending run becomes
+        # cancelled, while a terminal run remains the immutable assessment
+        # fact and cannot make its task look cancelled afterwards.
+        run = session.exec(
+            select(ExperimentRun)
+            .where(
+                ExperimentRun.course_id == course_id,
+                ExperimentRun.run_id == run_id,
+                ExperimentRun.student_id == student_id,
+            )
+            .with_for_update()
+        ).first()
+        if run is None:
+            reject_resource_not_found("Experiment run does not exist or is not accessible")
+        if run.outcome != RunOutcome.PENDING or run.cancel_requested_at is not None:
+            reject_state_conflict("Only a pending formal assessment can be cancelled")
+
+        run.cancel_requested_at = utcnow_aware()
+        session.add(run)
+        session.flush()
+        return run
 
 
 # ---------------------------------------------------------------------------
@@ -1080,7 +1044,9 @@ class ExperimentFinalizeService:
             session, course_id=course_id, attempt_id=attempt_id, student_id=student_id,
         )
 
-        if attempt.status not in (AttemptStatus.SUBMITTED, AttemptStatus.FAILED):
+        if attempt.status == AttemptStatus.FINALIZED:
+            return attempt
+        if attempt.status != AttemptStatus.SUBMITTED:
             reject_state_conflict(f"尝试状态 {attempt.status.value} 不可终结化")
 
         # 获取最后一次运行
@@ -1095,22 +1061,26 @@ class ExperimentFinalizeService:
             session, course_id=course_id, version_id=attempt.version_id,
         )
 
-        if latest_run.outcome == RunOutcome.SANDBOX_UNAVAILABLE:
-            reject_state_conflict("SANDBOX_UNAVAILABLE：评测尚未终结，可重试")
-        if latest_run.outcome == RunOutcome.PENDING:
-            reject_state_conflict("评测尚未终结，不能写入正式记录")
+        # 计算最终分数
+        passed = latest_run.outcome == RunOutcome.ACCEPTED and latest_run.passed_count == latest_run.total_count
+        score = 1.0 if passed else 0.0
 
-        # ACM/ICPC：所有测试 Accepted 才是 1；其余终态均是 0。
-        passed = latest_run.outcome == RunOutcome.ACCEPTED
-        attempt.final_score = 1.0 if passed else 0.0
+        attempt.final_score = score
         attempt.passed = passed
         attempt.finalized_at = utcnow_aware()
-        attempt.status = AttemptStatus.FINALIZED if passed else AttemptStatus.FAILED
+        attempt.status = AttemptStatus.FINALIZED
         attempt.updated_at = utcnow_aware()
 
         # 只有评分策略允许且通过时才写入正式 LearningEvidence
-        if version.writes_formal_evidence and passed:
-            evidence = self._write_formal_evidence(
+        if version.writes_formal_evidence and latest_run.outcome in {
+            RunOutcome.ACCEPTED,
+            RunOutcome.WRONG_ANSWER,
+            RunOutcome.TIME_LIMIT_EXCEEDED,
+            RunOutcome.MEMORY_LIMIT_EXCEEDED,
+            RunOutcome.RUNTIME_ERROR,
+            RunOutcome.COMPILATION_ERROR,
+        }:
+            evidence_records = self._write_formal_evidence(
                 session,
                 course_id=course_id,
                 student_id=attempt.student_id,
@@ -1118,7 +1088,14 @@ class ExperimentFinalizeService:
                 run=latest_run,
                 version=version,
             )
-            attempt.evidence_id = evidence.evidence_id
+            if evidence_records:
+                # Retain the legacy singular reference for LabRecord callers;
+                # every mapped node still has its own queryable evidence row.
+                attempt.evidence_id = evidence_records[0].evidence_id
+
+        ExperimentLabProjectionService().project_terminated_attempt(
+            session, attempt=attempt, run=latest_run,
+        )
 
         session.add(attempt)
         session.flush()
@@ -1133,40 +1110,733 @@ class ExperimentFinalizeService:
         attempt: ExperimentAttempt,
         run: ExperimentRun,
         version: ExperimentVersion,
-    ) -> LearningEvidenceRecord:
-        """写入正式评分型 LearningEvidence（复用 cognitive_state_model）"""
-        # Stable evidence_id derived from attempt to ensure idempotency
-        stable_key = f"experiment_attempt|{attempt.attempt_id}|experiment_scored"
-        evidence_id = "ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex
+    ) -> list[LearningEvidenceRecord]:
+        """Write source-free, node-specific formal code evidence.
+
+        Mapping is fail-closed: an experiment without a valid course-owned
+        knowledge node is finalized as a lab result but cannot change
+        cognition through a guessed identity.
+        """
+        definition = definition_service.get_definition(
+            session,
+            course_id=course_id,
+            experiment_id=attempt.experiment_id,
+        )
+        requested_node_ids = [
+            node_id
+            for node_id in (definition.knowledge_node_ids or [])
+            if isinstance(node_id, int) and not isinstance(node_id, bool)
+        ]
+        if not requested_node_ids:
+            return []
+        course_node_ids = set(session.exec(select(CourseKnowledgeNode.id).where(
+            CourseKnowledgeNode.course_id == course_id,
+            CourseKnowledgeNode.id.in_(requested_node_ids),
+        )).all())
+        evidence_records: list[LearningEvidenceRecord] = []
+        seen_node_ids: set[int] = set()
+        for node_id in requested_node_ids:
+            if node_id not in course_node_ids or node_id in seen_node_ids:
+                continue
+            seen_node_ids.add(node_id)
+            stable_key = (
+                f"experiment_attempt|{attempt.attempt_id}|"
+                f"{EvidenceType.CODING_EXECUTION.value}|{node_id}"
+            )
+            evidence_id = "ev_" + uuid.uuid5(uuid.NAMESPACE_URL, stable_key).hex
+            existing = session.exec(select(LearningEvidenceRecord).where(
+                LearningEvidenceRecord.evidence_id == evidence_id,
+            )).first()
+            if existing is not None:
+                upsert_learning_evidence_context(session, existing)
+                evidence_records.append(existing)
+                continue
+            score = 1.0 if attempt.passed else 0.0
+            evidence = LearningEvidenceRecord(
+                evidence_id=evidence_id,
+                student_id=student_id,
+                course_id=course_id,
+                node_id=node_id,
+                evidence_type=EvidenceType.CODING_EXECUTION.value,
+                value=score,
+                confidence=1.0,
+                label="Code assessment passed" if attempt.passed else "Code assessment not passed",
+                description=(
+                    f"Experiment {attempt.experiment_id} attempt {attempt.attempt_id} "
+                    f"server-scored code result {score:.2f}"
+                ),
+                source="experiment_finalize_service",
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                event_refs=[attempt.attempt_id, run.run_id],
+                policy_version=CODING_HINT_POLICY_VERSION,
+            )
+            session.add(evidence)
+            session.flush()
+            upsert_learning_evidence_context(session, evidence)
+            evidence_records.append(evidence)
+        return evidence_records
+
+    def get_cognitive_evidence_node_ids(
+        self,
+        session: Session,
+        *,
+        attempt: ExperimentAttempt,
+    ) -> list[int]:
+        """Return only this attempt's persisted code-evidence node IDs."""
+        records = session.exec(select(LearningEvidenceRecord).where(
+            LearningEvidenceRecord.student_id == attempt.student_id,
+            LearningEvidenceRecord.course_id == attempt.course_id,
+            LearningEvidenceRecord.evidence_type == EvidenceType.CODING_EXECUTION.value,
+            LearningEvidenceRecord.source == "experiment_finalize_service",
+        )).all()
+        return sorted({
+            int(record.node_id)
+            for record in records
+            if record.node_id is not None and attempt.attempt_id in (record.event_refs or [])
+        })
+
+
+class ExperimentLabProjectionService:
+    """Build trusted laboratory records only from a terminated attempt."""
+
+    @staticmethod
+    def ensure_projection(
+        session: Session,
+        *,
+        course_id: int,
+        experiment_id: str,
+    ) -> ExperimentLabProjection:
+        projection = session.exec(
+            select(ExperimentLabProjection).where(
+                ExperimentLabProjection.course_id == course_id,
+                ExperimentLabProjection.experiment_id == experiment_id,
+            )
+        ).first()
+        if projection is None:
+            projection = ExperimentLabProjection(
+                course_id=course_id,
+                experiment_id=experiment_id,
+            )
+            session.add(projection)
+            session.flush()
+        return projection
+
+    def project_terminated_attempt(
+        self,
+        session: Session,
+        *,
+        attempt: ExperimentAttempt,
+        run: ExperimentRun,
+    ) -> LabRecord:
+        if attempt.status != AttemptStatus.FINALIZED or attempt.final_score not in (0.0, 1.0):
+            raise ValueError("attempt_must_be_terminated_by_server")
+        if run.attempt_id != attempt.attempt_id or run.course_id != attempt.course_id:
+            raise ValueError("run_attempt_scope_mismatch")
+        definition = definition_service.get_definition(
+            session, course_id=attempt.course_id, experiment_id=attempt.experiment_id,
+        )
+        if definition.course_id != attempt.course_id:
+            raise ValueError("definition_course_scope_mismatch")
+
+        projection = self.ensure_projection(
+            session,
+            course_id=attempt.course_id,
+            experiment_id=attempt.experiment_id,
+        )
 
         existing = session.exec(
-            select(LearningEvidenceRecord).where(
-                LearningEvidenceRecord.evidence_id == evidence_id,
+            select(LabRecord).where(
+                LabRecord.attempt_id == attempt.attempt_id,
+                LabRecord.trusted_source == True,  # noqa: E712
             )
         ).first()
         if existing is not None:
-            upsert_learning_evidence_context(session, existing)
             return existing
 
-        evidence = LearningEvidenceRecord(
-            evidence_id=evidence_id,
-            student_id=student_id,
-            course_id=course_id,
-            node_id=None,
-            evidence_type="experiment_completion",
-            value=run.score,
-            confidence=1.0,
-            label="实验完成" if attempt.passed else "实验未通过",
-            description=f"实验 {attempt.experiment_id} 尝试 {attempt.attempt_id} 评分 {run.score:.2f}",
-            source="experiment_finalize_service",
-            timestamp=datetime.now(timezone.utc).isoformat(),
-            event_refs=[attempt.attempt_id, run.run_id],
-            policy_version=CODING_HINT_POLICY_VERSION,
+        record = LabRecord(
+            lab_id=projection.projection_id,
+            course_id=attempt.course_id,
+            experiment_id=attempt.experiment_id,
+            projection_id=projection.projection_id,
+            student_id=attempt.student_id,
+            attempt_id=attempt.attempt_id,
+            final_score=attempt.final_score,
+            passed=attempt.passed,
+            evidence_id=attempt.evidence_id,
+            return_anchor=dict(attempt.return_anchor or {}),
+            source_kind="experiment_attempt_terminated",
+            trusted_source=True,
         )
-        session.add(evidence)
+        session.add(record)
         session.flush()
-        upsert_learning_evidence_context(session, evidence)
-        return evidence
+        return record
+
+
+class ExperimentRecommendationDispatchError(ValueError):
+    """A governed TeachingAgent recommendation could not be materialized."""
+
+    def __init__(self, code: str) -> None:
+        self.code = code
+        super().__init__(code)
+
+
+class ExperimentRecommendationService:
+    """Turn an approved proposal into a recommendation, never execution state."""
+
+    _FORBIDDEN_ACTION_FIELDS = frozenset({
+        "source_code", "code", "language", "stdin", "expected_stdout",
+        "test_cases", "resource_limits", "run_id", "attempt_id",
+    })
+
+    @classmethod
+    def _contains_execution_payload(cls, action: dict[str, Any]) -> bool:
+        return any(field in action for field in cls._FORBIDDEN_ACTION_FIELDS)
+
+    def create_from_approved_proposal(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        proposal_id: str,
+        proposed_action: dict[str, Any],
+    ) -> tuple[ExperimentRecommendation, bool]:
+        experiment_id = str(proposed_action.get("experiment_id") or "").strip()
+        if not experiment_id:
+            raise ExperimentRecommendationDispatchError("missing_experiment_id")
+        if not proposal_id:
+            raise ExperimentRecommendationDispatchError("missing_proposal_id")
+        if self._contains_execution_payload(proposed_action):
+            raise ExperimentRecommendationDispatchError("invalid_trigger_payload")
+
+        proposal = session.exec(
+            select(AgentActionProposal).where(
+                AgentActionProposal.proposal_id == proposal_id,
+                AgentActionProposal.course_id == course_id,
+            )
+        ).first()
+        if proposal is None:
+            raise ExperimentRecommendationDispatchError("proposal_not_found")
+        if proposal.proposal_type != "trigger_experiment":
+            raise ExperimentRecommendationDispatchError("proposal_type_mismatch")
+        if proposal.status != "approved":
+            raise ExperimentRecommendationDispatchError("proposal_not_approved")
+        if proposal.student_id != student_id:
+            raise ExperimentRecommendationDispatchError("proposal_student_mismatch")
+
+        try:
+            persisted_action = json.loads(proposal.proposed_action or "{}")
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ExperimentRecommendationDispatchError("invalid_stored_proposal") from exc
+        if not isinstance(persisted_action, dict):
+            raise ExperimentRecommendationDispatchError("invalid_stored_proposal")
+        if self._contains_execution_payload(persisted_action):
+            raise ExperimentRecommendationDispatchError("invalid_trigger_payload")
+        if str(persisted_action.get("experiment_id") or "").strip() != experiment_id:
+            raise ExperimentRecommendationDispatchError("proposal_experiment_mismatch")
+
+        requested_node_id = proposed_action.get("outline_node_id")
+        stored_node_id = persisted_action.get("outline_node_id")
+        if requested_node_id is not None and str(requested_node_id) != str(stored_node_id):
+            raise ExperimentRecommendationDispatchError("proposal_outline_node_mismatch")
+        outline_node_id = str(stored_node_id) if stored_node_id is not None else None
+
+        capability = session.exec(
+            select(CourseCapability).where(CourseCapability.course_id == course_id)
+        ).first()
+        if capability is None or not capability.experiment or not capability.coding_sandbox:
+            raise ExperimentRecommendationDispatchError("experiment_capability_disabled")
+        membership = session.exec(
+            select(CourseMembership).where(
+                CourseMembership.course_id == course_id,
+                CourseMembership.user_id == student_id,
+            )
+        ).first()
+        if (
+            membership is None
+            or membership.status != MembershipStatus.ACTIVE
+            or membership.role != CourseRole.STUDENT
+        ):
+            raise ExperimentRecommendationDispatchError("student_membership_invalid")
+
+        definition = session.exec(
+            select(ExperimentDefinition).where(
+                ExperimentDefinition.course_id == course_id,
+                ExperimentDefinition.experiment_id == experiment_id,
+            )
+        ).first()
+        if definition is None or definition.publish_status != ExperimentPublishStatus.PUBLISHED:
+            raise ExperimentRecommendationDispatchError("experiment_not_published")
+        if not definition.default_version_id:
+            raise ExperimentRecommendationDispatchError("default_version_missing")
+        version = session.exec(
+            select(ExperimentVersion).where(
+                ExperimentVersion.course_id == course_id,
+                ExperimentVersion.experiment_id == experiment_id,
+                ExperimentVersion.version_id == definition.default_version_id,
+            )
+        ).first()
+        if version is None or not version.is_active or not version.is_locked:
+            raise ExperimentRecommendationDispatchError("default_version_not_recommendable")
+        if outline_node_id is not None and outline_node_id not in {
+            str(node_id) for node_id in (definition.knowledge_node_ids or [])
+        }:
+            raise ExperimentRecommendationDispatchError("outline_node_not_in_experiment")
+
+        existing = session.exec(
+            select(ExperimentRecommendation).where(
+                ExperimentRecommendation.course_id == course_id,
+                ExperimentRecommendation.student_id == student_id,
+                ExperimentRecommendation.experiment_id == experiment_id,
+            )
+        ).first()
+        if existing is not None:
+            return existing, False
+
+        recommendation = ExperimentRecommendation(
+            course_id=course_id,
+            student_id=student_id,
+            experiment_id=experiment_id,
+            version_id=version.version_id,
+            outline_node_id=outline_node_id,
+            proposal_id=proposal.proposal_id,
+        )
+        session.add(recommendation)
+        session.flush()
+        return recommendation, True
+
+
+class ExperimentLabReadService:
+    """Read-only laboratory views backed by course experiments.
+
+    ``LabCatalogEntry`` and ``LabEnrollment`` remain migration-only legacy
+    storage.  Student product pages read this projection instead so an
+    independently-written row can never look like a formal experiment or a
+    trusted result.
+    """
+
+    @staticmethod
+    def _projection_by_experiment(
+        session: Session, *, course_id: int,
+    ) -> dict[str, ExperimentLabProjection]:
+        projections = session.exec(
+            select(ExperimentLabProjection).where(
+                ExperimentLabProjection.course_id == course_id,
+            )
+        ).all()
+        return {item.experiment_id: item for item in projections}
+
+    @staticmethod
+    def _serialize_experiment(
+        definition: ExperimentDefinition,
+        projection: ExperimentLabProjection | None,
+    ) -> dict[str, Any]:
+        return {
+            # ``lab_id`` is retained only as a view identifier for current
+            # clients.  Navigation must use course_id + experiment_id.
+            "lab_id": projection.projection_id if projection else None,
+            "projection_id": projection.projection_id if projection else None,
+            "course_id": definition.course_id,
+            "experiment_id": definition.experiment_id,
+            "title": definition.title,
+            "description": definition.description,
+            "statement_object_key": definition.statement_object_key,
+            "language_whitelist": list(definition.language_whitelist or []),
+            "default_version_id": definition.default_version_id,
+            "publish_status": definition.publish_status.value,
+            "knowledge_node_ids": list(definition.knowledge_node_ids or []),
+            "entry_kind": "course_experiment_projection",
+        }
+
+    def list_catalog(
+        self,
+        session: Session,
+        *,
+        course_id: int | None = None,
+        cursor: str | None = None,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        stmt = select(ExperimentDefinition).where(
+            ExperimentDefinition.publish_status == ExperimentPublishStatus.PUBLISHED,
+        )
+        if course_id is not None:
+            stmt = stmt.where(ExperimentDefinition.course_id == course_id)
+        definitions = list(session.exec(
+            stmt.order_by(ExperimentDefinition.created_at.desc())
+        ).all())
+        projections_by_course = {
+            definition.course_id: self._projection_by_experiment(
+                session, course_id=definition.course_id,
+            )
+            for definition in definitions
+        }
+        if cursor:
+            cursor_index = next(
+                (index for index, definition in enumerate(definitions)
+                 if definition.experiment_id == cursor),
+                len(definitions),
+            )
+            definitions = definitions[cursor_index + 1:]
+        page = definitions[:page_size]
+        return {
+            "items": [
+                self._serialize_experiment(
+                    definition,
+                    projections_by_course[definition.course_id].get(definition.experiment_id),
+                )
+                for definition in page
+            ],
+            "next_cursor": page[-1].experiment_id if len(definitions) > page_size and page else None,
+            "total": len(definitions),
+        }
+
+    def list_course_tasks(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        definitions = definition_service.list_definitions(
+            session,
+            course_id=course_id,
+            publish_status=ExperimentPublishStatus.PUBLISHED,
+        )
+        projections = self._projection_by_experiment(session, course_id=course_id)
+        recommendations: dict[str, ExperimentRecommendation] = {}
+        attempts: dict[str, ExperimentAttempt] = {}
+        records: dict[str, LabRecord] = {}
+        if student_id is not None:
+            recommendations = {
+                item.experiment_id: item
+                for item in session.exec(
+                    select(ExperimentRecommendation).where(
+                        ExperimentRecommendation.course_id == course_id,
+                        ExperimentRecommendation.student_id == student_id,
+                    )
+                ).all()
+            }
+            for attempt in session.exec(
+                select(ExperimentAttempt).where(
+                    ExperimentAttempt.course_id == course_id,
+                    ExperimentAttempt.student_id == student_id,
+                ).order_by(ExperimentAttempt.created_at.desc())
+            ).all():
+                attempts.setdefault(attempt.experiment_id, attempt)
+            for record in session.exec(
+                select(LabRecord).where(
+                    LabRecord.course_id == course_id,
+                    LabRecord.student_id == student_id,
+                    LabRecord.trusted_source == True,  # noqa: E712
+                    LabRecord.source_kind == "experiment_attempt_terminated",
+                ).order_by(LabRecord.created_at.desc())
+            ).all():
+                if record.experiment_id:
+                    records.setdefault(record.experiment_id, record)
+
+        items: list[dict[str, Any]] = []
+        for definition in definitions:
+            attempt = attempts.get(definition.experiment_id)
+            record = records.get(definition.experiment_id)
+            recommendation = recommendations.get(definition.experiment_id)
+            item = self._serialize_experiment(
+                definition, projections.get(definition.experiment_id),
+            )
+            item.update({
+                "recommended": recommendation is not None,
+                "recommendation_id": recommendation.recommendation_id if recommendation else None,
+                "last_attempt_id": attempt.attempt_id if attempt else None,
+                "last_attempt_status": attempt.status.value if attempt else None,
+                "best_score": record.final_score if record else None,
+                "passed": record.passed if record else None,
+            })
+            items.append(item)
+        return items
+
+    def list_my_experiments(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        student_id: int,
+        active_only: bool = True,
+    ) -> list[dict[str, Any]]:
+        """Show only a student's recommendations and server-owned attempts."""
+        recommendations = session.exec(
+            select(ExperimentRecommendation).where(
+                ExperimentRecommendation.course_id == course_id,
+                ExperimentRecommendation.student_id == student_id,
+            ).order_by(ExperimentRecommendation.updated_at.desc())
+        ).all()
+        attempts = session.exec(
+            select(ExperimentAttempt).where(
+                ExperimentAttempt.course_id == course_id,
+                ExperimentAttempt.student_id == student_id,
+            ).order_by(ExperimentAttempt.updated_at.desc())
+        ).all()
+        sources: dict[tuple[int, str], dict[str, Any]] = {}
+        for recommendation in recommendations:
+            sources[(recommendation.course_id, recommendation.experiment_id)] = {
+                "recommended": True,
+                "recommendation_id": recommendation.recommendation_id,
+                "last_attempt_id": None,
+                "last_attempt_status": None,
+                "updated_at": recommendation.updated_at,
+            }
+        for attempt in attempts:
+            key = (attempt.course_id, attempt.experiment_id)
+            current = sources.setdefault(key, {
+                "recommended": False,
+                "recommendation_id": None,
+                "last_attempt_id": None,
+                "last_attempt_status": None,
+                "updated_at": attempt.updated_at,
+            })
+            if current["last_attempt_id"] is None:
+                current["last_attempt_id"] = attempt.attempt_id
+                current["last_attempt_status"] = attempt.status.value
+            current["updated_at"] = max(current["updated_at"], attempt.updated_at)
+
+        result: list[dict[str, Any]] = []
+        for (course_id, experiment_id), metadata in sources.items():
+            definition = session.exec(
+                select(ExperimentDefinition).where(
+                    ExperimentDefinition.course_id == course_id,
+                    ExperimentDefinition.experiment_id == experiment_id,
+                )
+            ).first()
+            if definition is None:
+                continue
+            if active_only and definition.publish_status != ExperimentPublishStatus.PUBLISHED:
+                continue
+            projection = self._projection_by_experiment(
+                session, course_id=course_id,
+            ).get(experiment_id)
+            item = self._serialize_experiment(definition, projection)
+            item.update({key: value for key, value in metadata.items() if key != "updated_at"})
+            item["updated_at"] = metadata["updated_at"].isoformat() if metadata["updated_at"] else None
+            result.append(item)
+        return sorted(result, key=lambda item: item.get("updated_at") or "", reverse=True)
+
+    def list_records(
+        self,
+        session: Session,
+        *,
+        student_id: int,
+        course_id: int | None = None,
+    ) -> list[dict[str, Any]]:
+        stmt = select(LabRecord).where(
+            LabRecord.student_id == student_id,
+            LabRecord.trusted_source == True,  # noqa: E712
+            LabRecord.source_kind == "experiment_attempt_terminated",
+        )
+        if course_id is not None:
+            stmt = stmt.where(LabRecord.course_id == course_id)
+        records = session.exec(stmt.order_by(LabRecord.created_at.desc())).all()
+        result: list[dict[str, Any]] = []
+        for record in records:
+            if record.course_id is None or not record.experiment_id or not record.attempt_id:
+                continue
+            attempt = session.exec(
+                select(ExperimentAttempt).where(
+                    ExperimentAttempt.attempt_id == record.attempt_id,
+                    ExperimentAttempt.course_id == record.course_id,
+                    ExperimentAttempt.student_id == student_id,
+                    ExperimentAttempt.status == AttemptStatus.FINALIZED,
+                )
+            ).first()
+            definition = session.exec(
+                select(ExperimentDefinition).where(
+                    ExperimentDefinition.course_id == record.course_id,
+                    ExperimentDefinition.experiment_id == record.experiment_id,
+                )
+            ).first()
+            if attempt is None or definition is None or attempt.experiment_id != record.experiment_id:
+                continue
+            result.append({
+                "record_id": record.record_id,
+                "projection_id": record.projection_id,
+                "course_id": record.course_id,
+                "experiment_id": record.experiment_id,
+                "lab_id": record.lab_id,
+                "lab_title": definition.title,
+                "attempt_id": record.attempt_id,
+                "final_score": record.final_score,
+                "passed": record.passed,
+                "evidence_id": record.evidence_id,
+                "return_anchor": dict(record.return_anchor or {}),
+                "created_at": record.created_at.isoformat() if record.created_at else None,
+                "updated_at": record.updated_at.isoformat() if record.updated_at else None,
+            })
+        return result
+
+
+class ExperimentPublishValidator:
+    """Single server authority for all formal experiment publish preconditions."""
+
+    def validate(
+        self, session: Session, *, course_id: int, experiment_id: str,
+    ) -> ExperimentDefinition:
+        definition = definition_service.get_definition(
+            session, course_id=course_id, experiment_id=experiment_id,
+        )
+        self.validate_existing(session, definition=definition)
+        return definition
+
+    def validate_existing(self, session: Session, *, definition: ExperimentDefinition) -> None:
+        _require_formal_experiment_capabilities(session, course_id=definition.course_id)
+        if not definition.language_whitelist or any(lang not in ALLOWED_LANGUAGES for lang in definition.language_whitelist):
+            reject_validation_failed("实验语言白名单为空或包含不支持的语言")
+        if not definition.default_version_id:
+            reject_state_conflict("实验缺少活动默认版本，无法发布")
+        version = version_service.get_version(
+            session, course_id=definition.course_id, version_id=definition.default_version_id,
+        )
+        if version.experiment_id != definition.experiment_id or not version.is_active:
+            reject_state_conflict("默认版本不是该实验的活动版本")
+        if not version.is_locked:
+            reject_state_conflict("活动默认版本必须先锁定")
+        if version.reference_preview_verified_at is None:
+            reject_state_conflict("参考解预览尚未全量通过")
+        if version.passing_score != 1.0:
+            reject_validation_failed("正式实验必须使用 ACM/ICPC 通过阈值 1.0")
+        if not (1 <= version.cpu_time_limit <= 30 and 16_000 <= version.memory_limit <= 512_000 and 1 <= version.wall_time_limit <= 60):
+            reject_validation_failed("实验资源限制超出安全边界")
+        cases = version_service.list_test_cases(
+            session, course_id=definition.course_id, version_id=version.version_id,
+        )
+        if not cases:
+            reject_validation_failed("实验至少需要一个测试用例")
+        if abs(sum(case.weight for case in cases) - 1.0) > 1e-9:
+            reject_validation_failed("测试用例权重总和必须为 1")
+        if not sandbox_client.health_check():
+            reject_state_conflict("Judge0 健康检查未通过，无法发布")
+
+
+class SandboxExecutionLeaseService:
+    """Lease one formal Judge0 slot across every Uvicorn process."""
+
+    def acquire(self, session: Session, *, task_id: str, now: Optional[datetime] = None) -> bool:
+        now = now or utcnow_aware()
+        expires_at = now + timedelta(seconds=FORMAL_LEASE_SECONDS)
+        # Revision 0055 uses ``DateTime()`` columns. SQLite returns those
+        # values without tzinfo, so SQL predicates must bind comparable UTC
+        # values even though service time is always timezone-aware UTC.
+        db_now = to_naive(now)
+        db_expires_at = to_naive(expires_at)
+        row = session.exec(
+            select(SandboxExecutionLease).where(SandboxExecutionLease.lease_key == FORMAL_LEASE_KEY)
+        ).first()
+        if row is None:
+            row = SandboxExecutionLease(
+                lease_key=FORMAL_LEASE_KEY,
+                holder_task_id=task_id,
+                acquired_at=db_now,
+                renewed_at=db_now,
+                lease_expires_at=db_expires_at,
+            )
+            try:
+                # A unique-key collision means a peer claimed the absent slot first.
+                # Keep the caller's outer transaction usable so the worker can wait.
+                with session.begin_nested():
+                    session.add(row)
+                    session.flush()
+            except IntegrityError:
+                return False
+            return True
+
+        # Re-check eligibility in SQL. A process may have renewed or reclaimed the
+        # row after the read above, so mutating the loaded object would be racy.
+        result = session.exec(
+            update(SandboxExecutionLease)
+            .where(
+                SandboxExecutionLease.lease_key == FORMAL_LEASE_KEY,
+                or_(
+                    SandboxExecutionLease.holder_task_id == task_id,
+                    SandboxExecutionLease.lease_expires_at.is_(None),
+                    SandboxExecutionLease.lease_expires_at <= db_now,
+                ),
+            )
+            .values(
+                holder_task_id=task_id,
+                acquired_at=case(
+                    (
+                        SandboxExecutionLease.holder_task_id == task_id,
+                        func.coalesce(SandboxExecutionLease.acquired_at, db_now),
+                    ),
+                    else_=db_now,
+                ),
+                renewed_at=db_now,
+                lease_expires_at=db_expires_at,
+            )
+        )
+        return result.rowcount == 1
+
+    def renew(self, session: Session, *, task_id: str) -> bool:
+        now = utcnow_aware()
+        db_now = to_naive(now)
+        result = session.exec(
+            update(SandboxExecutionLease)
+            .where(
+                SandboxExecutionLease.lease_key == FORMAL_LEASE_KEY,
+                SandboxExecutionLease.holder_task_id == task_id,
+                SandboxExecutionLease.lease_expires_at > db_now,
+            )
+            .values(
+                renewed_at=db_now,
+                lease_expires_at=to_naive(now + timedelta(seconds=FORMAL_LEASE_SECONDS)),
+            )
+        )
+        return result.rowcount == 1
+
+    def release(self, session: Session, *, task_id: str) -> None:
+        row = session.exec(
+            select(SandboxExecutionLease).where(SandboxExecutionLease.lease_key == FORMAL_LEASE_KEY)
+        ).first()
+        if row is not None and row.holder_task_id == task_id:
+            row.holder_task_id = ""
+            row.lease_expires_at = to_naive(utcnow_aware())
+            session.add(row)
+            session.flush()
+
+
+class FreeSandboxQuotaService:
+    def consume(self, session: Session, *, student_id: int, course_id: int) -> int:
+        now = utcnow_aware()
+        epoch = int(now.timestamp())
+        window_started_at = datetime.fromtimestamp(
+            epoch - (epoch % FREE_SANDBOX_WINDOW_SECONDS), tz=now.tzinfo,
+        )
+        increment = (
+            update(FreeSandboxQuotaWindow)
+            .where(
+                FreeSandboxQuotaWindow.student_id == student_id,
+                FreeSandboxQuotaWindow.course_id == course_id,
+                FreeSandboxQuotaWindow.window_started_at == window_started_at,
+                FreeSandboxQuotaWindow.run_count < FREE_SANDBOX_MAX_RUNS,
+            )
+            .values(
+                run_count=FreeSandboxQuotaWindow.run_count + 1,
+                updated_at=now,
+            )
+        )
+        if session.exec(increment).rowcount == 1:
+            return 0
+        try:
+            with session.begin_nested():
+                session.add(FreeSandboxQuotaWindow(
+                    student_id=student_id,
+                    course_id=course_id,
+                    window_started_at=window_started_at,
+                    run_count=1,
+                    updated_at=now,
+                ))
+                session.flush()
+                return 0
+        except IntegrityError:
+            if session.exec(increment).rowcount == 1:
+                return 0
+        return max(1, FREE_SANDBOX_WINDOW_SECONDS - (epoch % FREE_SANDBOX_WINDOW_SECONDS))
 
 
 # ---------------------------------------------------------------------------
@@ -1271,10 +1941,9 @@ class CodingHintService:
 
 definition_service = ExperimentDefinitionService()
 version_service = ExperimentVersionService()
-publish_validator = ExperimentPublishValidator()
 attempt_service = ExperimentAttemptService()
 run_service = ExperimentRunService()
 finalize_service = ExperimentFinalizeService()
 coding_hint_service = CodingHintService()
-free_sandbox_quota_service = FreeSandboxQuotaService()
-sandbox_execution_lease_service = SandboxExecutionLeaseService()
+recommendation_service = ExperimentRecommendationService()
+experiment_lab_read_service = ExperimentLabReadService()

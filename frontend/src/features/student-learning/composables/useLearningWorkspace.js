@@ -1,7 +1,8 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { askQuestion } from '@/api/chat.js'
-import { respondTeachingAgent, getConversationHistory } from '@/api/teaching_agent.js'
+import { respondTeachingAgent } from '@/api/teaching_agent.js'
+import { getConversationHistory } from '@/api/teaching_agent.js'
 import { getPlayerInitData, savePlayerProgress } from '@/api/player.js'
 import { getLearningContext, recordLearningEvent, completeLearningAction } from '@/api/facade.js'
 import { getCognitiveState } from '@/api/cognitive.js'
@@ -49,6 +50,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   const getStudentId = options?.getStudentId ?? (() => null)
   const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
   const getCapabilities = options?.getCapabilities ?? (() => ({}))
+  const getQuestionObservation = options?.getQuestionObservation ?? (() => null)
   // CodingEduAgent receives only a server-issued ExperimentRun id. The
   // coding runner can update this value after a verified submission; no
   // source code or Judge0 token is ever placed in the TeachingAgent payload.
@@ -328,19 +330,22 @@ export function useLearningWorkspace(courseId, options = {}) {
   }
 
   // Conversation Domain：恢复学生教学智能体对话历史。
-  // 仅在 TeachingAgent 受控条件齐备（cognitive_analysis + analytics_eligible +
-  // studentId）时拉取；失败静默（skipErrorToast），不影响学习页面就绪态。
-  // 刷新 / 重新进入课程后，历史消息重建到 messages，学生可继续上下文对话。
+  // 这是产品体验域，不依赖 cognitive_analysis 能力开关：V1 回退路径同样持久化到
+  // conversation_messages，因此任何真实学习者（analytics_eligible + studentId）
+  // 都应能在刷新 / 重新进入课程后恢复历史对话。失败静默（skipErrorToast），
+  // 不影响学习页面就绪态。
   async function loadConversationHistory() {
     if (previewMode) return
     const studentId = getStudentId()
     const analyticsEligible = getAnalyticsEligible()
-    const capabilities = getCapabilities()
-    if (!capabilities?.cognitive_analysis || !analyticsEligible || studentId == null) return
+    if (!analyticsEligible || studentId == null) return
     try {
       const data = await getConversationHistory(courseId, { limit: 200 })
       const items = Array.isArray(data?.messages) ? data.messages : []
       if (!items.length) return
+      // 避免与并发的用户新提问冲突：仅在消息列表为空时填充历史，
+      // 否则保留用户刚发出的消息不被覆盖（历史留待下次进入时加载）。
+      if (messages.value.length) return
       messages.value = items.map(msg => ({
         id: 'restored-' + msg.id,
         role: msg.role === 'assistant' ? 'assistant' : 'user',
@@ -548,26 +553,32 @@ export function useLearningWorkspace(courseId, options = {}) {
     mediaError.value = ''
   }
 
+  function resolveNodeIndexFromPayload(payload) {
+    const mediaNodeIndex = Number(payload?.nodeIndex ?? payload?.playlistNodeIndex)
+    if (Number.isInteger(mediaNodeIndex)
+      && mediaNodeIndex >= 0
+      && mediaNodeIndex < nodes.value.length) {
+      return mediaNodeIndex
+    }
+    const cueNodeIndex = nodes.value.findIndex(node => {
+      const nodeIdMatches = payload?.nodeId != null && String(node.id) === String(payload.nodeId)
+      const outlineNodeIdMatches = payload?.outlineNodeId != null
+        && String(node.outlineNodeId) === String(payload.outlineNodeId)
+      return nodeIdMatches || outlineNodeIdMatches
+    })
+    if (cueNodeIndex >= 0) return cueNodeIndex
+    const resolved = findNodeIndexAtTime(nodes.value, Number(payload?.globalTime), currentNodeIndex.value)
+    return Number.isInteger(resolved) && resolved >= 0 && resolved < nodes.value.length
+      ? resolved
+      : currentNodeIndex.value
+  }
+
   function updatePlayback(payload) {
     const globalTime = Number(payload?.globalTime)
     if (Number.isFinite(globalTime)) {
       const previousIndex = currentNodeIndex.value
-      const mediaNodeIndex = Number(payload?.nodeIndex ?? payload?.playlistNodeIndex)
-      const hasMediaNodeIndex = Number.isInteger(mediaNodeIndex)
-        && mediaNodeIndex >= 0
-        && mediaNodeIndex < nodes.value.length
-      seekTo(globalTime, hasMediaNodeIndex ? { nodeIndex: mediaNodeIndex } : {})
-      // A frozen media release owns its cue-to-node/page mapping.  The legacy
-      // script timing remains a fallback while P0 still borrows its PPT assets.
-      const cueNodeIndex = nodes.value.findIndex(node => {
-        const nodeIdMatches = payload?.nodeId != null && String(node.id) === String(payload.nodeId)
-        const outlineNodeIdMatches = payload?.outlineNodeId != null
-          && String(node.outlineNodeId) === String(payload.outlineNodeId)
-        return nodeIdMatches || outlineNodeIdMatches
-      })
-      if (!hasMediaNodeIndex && cueNodeIndex >= 0) {
-        currentNodeIndex.value = cueNodeIndex
-      }
+      const resolvedNodeIndex = resolveNodeIndexFromPayload(payload)
+      seekTo(globalTime, { nodeIndex: resolvedNodeIndex })
       const cuePage = Number(payload?.page)
       if (Number.isFinite(cuePage) && cuePage >= 1) {
         currentPage.value = clamp(cuePage, 1, totalPages.value)
@@ -651,7 +662,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   // TeachingAgent 受控接入（P1）：调用 /teaching-agent/respond 并归一化响应。
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
-  async function askTeachingAgent(question) {
+  async function askTeachingAgent(question, questionObservation = null) {
     const verifiedRunId = getCodeSubmissionId()
     const result = await respondTeachingAgent({
       course_id: String(course.value.courseId),
@@ -659,6 +670,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       message: question,
       resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
       code_submission_id: verifiedRunId ? String(verifiedRunId) : null,
+      questionObservation: questionObservation ?? null,
     })
     const warnings = Array.isArray(result?.warnings) ? result.warnings : []
     // 合并 fallback_reason 与 warnings 去重后的可读文案
@@ -681,6 +693,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       // TeachingAgent 不返回 confidence 数值；有 warnings/degraded_services 时标低置信。
       lowConfidence:
         Boolean(warnings.length) || Boolean(result?.degraded_services?.length),
+      learningAdjustment: result?.learning_adjustment ?? null,
     }
   }
 
@@ -699,6 +712,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       question,
       courseId: course.value.courseId,
       currentNodeId: currentNodeId.value,
+      sessionId: teachingSessionId,
     })
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
@@ -710,6 +724,7 @@ export function useLearningWorkspace(courseId, options = {}) {
   async function sendQuestion(explicitQuestion) {
     const question = String(explicitQuestion ?? questionDraft.value).trim()
     if (!question || isAsking.value || !currentNode.value) return
+    const questionObservation = getQuestionObservation()
 
     const userMessage = {
       id: 'user-' + Date.now(),
@@ -737,7 +752,7 @@ export function useLearningWorkspace(courseId, options = {}) {
       if (canUseTeachingAgent) {
         // Agent 503/失败属预期降级场景（skipErrorToast 已静默），回退 V1 不影响 Q&A。
         try {
-          result = await askTeachingAgent(question)
+          result = await askTeachingAgent(question, questionObservation)
           if (result.fallbackRequired) {
             const fallback = await askV1(question)
             result = {
@@ -746,7 +761,7 @@ export function useLearningWorkspace(courseId, options = {}) {
               warnings: result.warnings,
             }
           }
-        } catch {
+        } catch (agentError) {
           result = await askV1(question)
         }
       } else {
@@ -763,6 +778,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,
           page: currentPage.value,
+          learningAdjustment: result?.learningAdjustment ?? null,
         },
       ]
     } catch {

@@ -67,7 +67,9 @@ class PlatformTaskConcurrencyConfig(SQLModel, table=True):
     course_draft_build: int = Field(default=1, ge=1)
     graphrag: int = Field(default=1, ge=1)
     vector_index: int = Field(default=1, ge=1)
-    sandbox_execution: int = Field(default=1, ge=1, description="本地正式评测等待上限")
+    sandbox_execution: int = Field(default=1, ge=1)
+    # GraphRAG 每次构建的最大输入 token 预算（0 = 使用环境默认 GRAPHRAG_MAX_INPUT_TOKENS）。
+    graphrag_max_input_tokens: int = Field(default=0, ge=0)
     updated_by: Optional[int] = Field(default=None, foreign_key="users.id")
     updated_at: datetime = Field(default_factory=utcnow_aware)
     created_at: datetime = Field(default_factory=utcnow_aware)

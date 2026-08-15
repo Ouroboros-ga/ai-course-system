@@ -211,6 +211,9 @@ class KnowledgeBundleService:
         session.commit()
         if progress:
             progress(45, "classify_relations")
+        from app.services.platform_task_concurrency_service import get_config as get_platform_runtime_config
+        runtime_config = get_platform_runtime_config(session)
+        admin_budget = int(runtime_config.get("graphrag_max_input_tokens") or 0)
         artifacts = GraphRagRunner().run(
             manifest=manifest,
             artifact_root=root,
@@ -221,6 +224,7 @@ class KnowledgeBundleService:
                 "relation_profile": run.relation_profile or [],
                 "prompt_policy_version": run.prompt_policy_version,
             },
+            max_input_tokens=admin_budget or settings.GRAPHRAG_MAX_INPUT_TOKENS,
         )
         run.status = GraphRagRunStatus.RECONCILING
         session.add(run)

@@ -490,6 +490,13 @@ def test_playlist_playback_projects_global_time_without_second_offset(session, t
     session.commit()
 
     playback = media_playback_service.get_current_playback(session, course_id=course.id)
+    frozen_items = list(session.exec(select(MediaReleaseItem).where(
+        MediaReleaseItem.release_id == release.release_id,
+    ).order_by(MediaReleaseItem.order_index)).all())
+    # Item identity is part of the public frozen playback coordinate.  A
+    # learner must never have to guess an item from a bare global timestamp.
+    assert [item["item_id"] for item in result["items"]] == [item.item_id for item in frozen_items]
+    assert [item["item_id"] for item in playback["playlist"]["items"]] == [item.item_id for item in frozen_items]
     assert playback["playlist"]["items"][1]["ppt_timeline"][0]["start_ms"] == 1_000
     assert playback["playlist"]["items"][1]["ppt_timeline"][1]["start_ms"] == 2_000
     assert playback["playlist"]["items"][1]["subtitle_segments"][0]["start_ms"] == 100

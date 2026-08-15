@@ -158,11 +158,17 @@ const router = createRouter({
       meta: { requiresAuth: true, requiredPlatformPermission: 'platform.admin' }
     },
     {
-      // Production Viewer reads Canonical DocumentIR by course and parse run.
+      // 证据查看器已迁入新壳 /app/evidence-viewer/:courseId/:runId(见 app/router.js)。
+      // 保留旧路径与 name 'evidence-viewer' 作为 redirect,旧外链与
+      // KnowledgeReviewsPage / KnowledgeEvidencePage / graph-browser 的
+      // router.push({ name: 'evidence-viewer', ... }) 调用全部自动落入新 UI,
+      // 不再套旧版 NavigationBar 壳。
       path: '/evidence-viewer/:courseId?/:runId?',
       name: 'evidence-viewer',
-      component: loadView('EvidenceViewerPage'),
-      meta: { requiresAuth: true }
+      redirect: (to) => {
+        const parts = [to.params.courseId, to.params.runId].filter(Boolean)
+        return { path: `/app/evidence-viewer/${parts.join('/')}`, query: to.query }
+      },
     },
     {
       // Graph browser (P1-09 follow-up): visualizes ONLY real-endpoint-provable

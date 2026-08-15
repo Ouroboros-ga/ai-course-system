@@ -53,6 +53,7 @@ class GraphRagRunner:
         artifact_root: Path,
         policy_context: dict[str, Any] | None = None,
         allow_isolated_worker: bool = True,
+        max_input_tokens: int | None = None,
     ) -> GraphRagArtifacts:
         if not settings.GRAPHRAG_ENABLED:
             raise GraphRagRunError("GRAPHRAG_NOT_CONFIGURED")
@@ -62,11 +63,26 @@ class GraphRagRunner:
             and allow_isolated_worker
             and os.environ.get("AI_COURSE_GRAPHRAG_IN_WORKER") != "1"
         ):
-            return self._run_isolated_worker(
-                manifest=manifest,
-                artifact_root=artifact_root,
-                policy_context=policy_context,
-            )
+            worker_python = Path(os.path.abspath(settings.GRAPHRAG_WORKER_PYTHON))
+            if worker_python.is_file():
+                return self._run_isolated_worker(
+                    manifest=manifest,
+                    artifact_root=artifact_root,
+                    policy_context=policy_context,
+                )
+            # The configured worker venv no longer exists (stale path after a
+            # workspace re-layout, for example).  When GraphRAG is importable
+            # in the current process, fall back to in-process execution instead
+            # of failing the whole build; otherwise report the worker gap.
+            if _graphrag_importable_in_process():
+                return self.run(
+                    manifest=manifest,
+                    artifact_root=artifact_root,
+                    policy_context=policy_context,
+                    allow_isolated_worker=False,
+                    max_input_tokens=max_input_tokens,
+                )
+            raise GraphRagRunError("GRAPHRAG_WORKER_UNAVAILABLE")
         artifact_root.mkdir(parents=True, exist_ok=True)
         output_dir = artifact_root / "output"
         reports_dir = artifact_root / "reports"
@@ -87,20 +103,14 @@ class GraphRagRunner:
         estimated_cost = (
             estimated_tokens / 1_000_000
         ) * settings.GRAPHRAG_ESTIMATED_INPUT_COST_USD_PER_MILLION_TOKENS
-        max_estimated_cost_usd = (
-            settings.GRAPHRAG_MAX_ESTIMATED_COST_USD
-            if settings.GRAPHRAG_MAX_ESTIMATED_COST_USD > 0
-            else settings.GRAPHRAG_MAX_ESTIMATED_COST
+        # 预算闸门以输入 token 数为唯一口径（管理员可在平台管理界面调整；0 = 不限制）。
+        # 成本估算仅记录在产物/运行记录中，不作为硬性拒绝条件。
+        max_input_tokens = (
+            max_input_tokens
+            if max_input_tokens is not None
+            else settings.GRAPHRAG_MAX_INPUT_TOKENS
         )
-        if (
-            settings.GRAPHRAG_MAX_INPUT_TOKENS > 0
-            and estimated_tokens > settings.GRAPHRAG_MAX_INPUT_TOKENS
-        ):
-            raise GraphRagRunError("LLM_BUDGET_EXCEEDED")
-        if (
-            max_estimated_cost_usd > 0
-            and estimated_cost > max_estimated_cost_usd
-        ):
+        if max_input_tokens > 0 and estimated_tokens > max_input_tokens:
             raise GraphRagRunError("LLM_BUDGET_EXCEEDED")
         outputs = self._load_complete_outputs(output_dir, manifest=manifest)
         if outputs is None:
@@ -615,6 +625,15 @@ def _normalize_relationship_endpoints(
             row[key] = by_title[title]
         normalized.append(row)
     return normalized
+
+
+def _graphrag_importable_in_process() -> bool:
+    """True when the current interpreter can run the in-process GraphRAG path."""
+    try:
+        import importlib.util
+        return importlib.util.find_spec("graphrag") is not None
+    except Exception:
+        return False
 
 
 def _estimate_tokens(texts: list[str]) -> int:

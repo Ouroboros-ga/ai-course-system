@@ -86,7 +86,7 @@ test('SettingsSandboxPage.vue: 教师通过实验平台开关而非全量能力�
   assert.doesNotMatch(src, /updateCourseCapabilities/)
 })
 
-test('SettingsAgentPage.vue: 读取真实 course-settings 顶层契约并只暴露启动开关', () => {
+test('SettingsAgentPage.vue: 智能体启动与版本化教学约束使用独立保存链路', () => {
   const frontend = read('frontend/src/app/pages/course/settings/SettingsAgentPage.vue')
   const backend = read('backend/app/services/course_lifecycle_service.py')
 
@@ -95,8 +95,40 @@ test('SettingsAgentPage.vue: 读取真实 course-settings 顶层契约并只暴�
   assert.doesNotMatch(frontend, /current_setting/)
   assert.match(frontend, /智能体启动/)
   assert.match(backend, /_AGENT_POLICY_FIELDS\s*=\s*\{\s*["']enabled["']\s*,?\s*\}/)
-  assert.doesNotMatch(frontend, /enabled_tools|require_teacher_confirmation|web_research_enabled/)
+  assert.match(frontend, /TeachingHardnessEditor/)
+  assert.match(frontend, /TeachingConstraintRules/)
+  assert.match(frontend, /TeachingToolPolicyTable/)
+  assert.match(frontend, /updateTeachingConstraints/)
   assert.doesNotMatch(backend, /["']agent_name["']/)
+})
+
+test('agent_governance.js: 教学约束、工具策略与审计路由和后端一致', () => {
+  const frontend = read('frontend/src/api/agent_governance.js')
+  const backend = read('backend/app/api/v1/endpoints/agent_governance.py')
+
+  assert.match(frontend, /\/agent-governance\/course\/\$\{course\(courseId\)\}\/teaching-constraints/)
+  assert.match(frontend, /teaching-constraints\/versions/)
+  assert.match(frontend, /teaching-constraints\/rollback/)
+  assert.match(frontend, /teaching-constraints\/preview/)
+  assert.match(frontend, /teaching-constraints\/evaluations/)
+  assert.match(frontend, /\/agent-governance\/course\/\$\{course\(courseId\)\}\/tools/)
+  assert.match(backend, /@agent_governance_router\.put\("\/course\/\{course_id\}\/teaching-constraints"\)/)
+  assert.match(backend, /@agent_governance_router\.get\("\/course\/\{course_id\}\/tools"\)/)
+  // 教学约束写接口对应 extra="forbid" 的严格 schema，签名参数必须放 query，
+  // 否则 time/enc 混入 body 会被 Pydantic 拒绝（422）。
+  assert.match(frontend, /updateTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(frontend, /rollbackTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(frontend, /previewTeachingConstraints[\s\S]*?signatureInQuery:\s*true/)
+  assert.match(backend, /class TeachingConstraint(Update|Rollback|Preview)Request\(_StrictRequest\)/)
+})
+
+test('course_lifecycle.js: 课程分组只读 client 对应真实后端路由', () => {
+  const frontend = read('frontend/src/api/course_lifecycle.js')
+  const backend = read('backend/app/api/v1/endpoints/course_lifecycle.py')
+
+  assert.match(frontend, /listCourseGroups/)
+  assert.match(frontend, /\/course-groups\/course\/\$\{course\(courseId\)\}\/groups/)
+  assert.match(backend, /@course_groups_router\.get\("\/course\/\{course_id\}\/groups"\)/)
 })
 
 test('SettingsProfilePage.vue: 读取真实 course-settings 顶层 profile', () => {

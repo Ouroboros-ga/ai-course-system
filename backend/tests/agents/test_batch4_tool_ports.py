@@ -40,6 +40,51 @@ from app.platform.agents.tools.question_bank import CallableQuestionBankPort
 from app.platform.agents.tools.web_research import CallableWebResearchPort
 
 
+class _SourceFreeCodingDiagnosis:
+    async def get_latest_diagnosis(self, **_: Any) -> Mapping[str, Any]:
+        return {
+            "outcome": "wrong_answer",
+            "error_class": "logic",
+            "learning_signal": {
+                "schema_version": "coding-learning-signal/1",
+                "error_class": "logic",
+                "knowledge_node_ids": [42],
+                "repeated_error": {"recent_count": 2, "is_repeated": True},
+                "recommended_actions": ["检查循环边界"],
+            },
+        }
+
+
+class _HostileCodingDiagnosis:
+    async def get_latest_diagnosis(self, **_: Any) -> Mapping[str, Any]:
+        return {
+            "outcome": "wrong_answer",
+            "error_class": "logic",
+            "source_code": "x=1",
+            "stdout": "PRIVATE_EXECUTION_OUTPUT",
+            "artifacts": [{"content": "PRIVATE_HIDDEN_ARTIFACT"}],
+            "summary": "x=1 需要修复",
+            "debug_steps": ["x=1"],
+            "learning_signal": {
+                "schema_version": "coding-learning-signal/1",
+                "error_class": "logic",
+                "knowledge_node_ids": [42],
+                "repeated_error": {"recent_count": 2, "is_repeated": True},
+                "recommended_actions": ["x=1"],
+            },
+        }
+
+
+class _CapturingTeachingLLM(FakeLLM):
+    def __init__(self) -> None:
+        super().__init__()
+        self.response_context: Mapping[str, Any] | None = None
+
+    async def generate_teaching_response(self, *, context: Mapping[str, Any]) -> Mapping[str, Any]:
+        self.response_context = context
+        return {"answer": "请先检查循环边界。", "citations": []}
+
+
 # ==================== WebResearchPort 契约测试 ====================
 
 
@@ -74,6 +119,53 @@ def test_web_research_port_always_marks_supplementary_contract():
     assert result["cannot_modify_graph"] is True
     # 原始字段保留
     assert result["results"][0]["url"] == "https://example.com"
+
+
+def test_edu_llm_receives_only_source_free_coding_signal():
+    llm = _CapturingTeachingLLM()
+    tools = TeachingTools(
+        scope=FakeScope(),
+        knowledge_graph=FakeGraph(),
+        retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(),
+        recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(),
+        learning_events=FakeEvents(),
+        llm=llm,
+        coding_diagnosis=_SourceFreeCodingDiagnosis(),
+    )
+    runtime = TeachingAgentRuntime(tools)
+    state = _run(runtime, code_submission_id="run_source_free_signal")
+
+    assert state["coding_diagnosis"]["learning_signal"]["knowledge_node_ids"] == [42]
+    assert llm.response_context is not None
+    rendered = str(llm.response_context)
+    assert "source_code" not in rendered
+    assert "private source" not in rendered
+
+
+def test_edu_whitelists_a_hostile_coding_diagnosis_before_state_and_llm_prompt():
+    llm = _CapturingTeachingLLM()
+    tools = TeachingTools(
+        scope=FakeScope(),
+        knowledge_graph=FakeGraph(),
+        retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(),
+        recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(),
+        learning_events=FakeEvents(),
+        llm=llm,
+        coding_diagnosis=_HostileCodingDiagnosis(),
+    )
+    runtime = TeachingAgentRuntime(tools)
+    state = _run(runtime, code_submission_id="run_hostile_signal")
+
+    assert state["coding_diagnosis"] is not None
+    rendered_state = str(state["coding_diagnosis"])
+    rendered_prompt = str(llm.response_context)
+    for forbidden in ("source_code", "x=1", "PRIVATE_EXECUTION_OUTPUT", "PRIVATE_HIDDEN_ARTIFACT"):
+        assert forbidden not in rendered_state
+        assert forbidden not in rendered_prompt
 
 
 def test_web_research_port_preserves_callable_marker_when_already_present():
@@ -163,6 +255,7 @@ def test_web_research_node_writes_results_when_port_injected():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=web_port,
+        teacher_safety_valve=_ApprovedSafetyValve(),
     )
     runtime = TeachingAgentRuntime(tools)
     state = _run(runtime)
@@ -191,6 +284,7 @@ def test_web_research_node_degrades_when_port_raises():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=web_port,
+        teacher_safety_valve=_ApprovedSafetyValve(),
     )
     runtime = TeachingAgentRuntime(tools)
     state = _run(runtime)
@@ -215,6 +309,27 @@ class _PendingSafetyValve:
             "proposal_id": "prop-test-1",
             "proposal_type": kwargs.get("proposal_type", "web_research"),
             "status": "pending",
+            "requires_confirmation": True,
+        }
+
+    async def list_pending_proposals(self, **_: Any) -> list[Mapping[str, Any]]:
+        return []
+
+    async def decide_proposal(self, **_: Any) -> Mapping[str, Any]:
+        return {}
+
+    async def get_proposal(self, **_: Any) -> Mapping[str, Any] | None:
+        return None
+
+
+class _ApprovedSafetyValve:
+    """Explicit teacher approval allows the test to reach the web provider."""
+
+    async def create_proposal(self, **kwargs: Any) -> Mapping[str, Any]:
+        return {
+            "proposal_id": "prop-approved",
+            "proposal_type": kwargs.get("proposal_type", "web_research"),
+            "status": "approved",
             "requires_confirmation": True,
         }
 
@@ -610,6 +725,7 @@ def test_all_three_optional_ports_injected_together():
         learning_events=FakeEvents(),
         llm=_fake_llm_default(),
         web_research=CallableWebResearchPort(_research),
+        teacher_safety_valve=_ApprovedSafetyValve(),
         cognition=CallableCognitionPort(_get_state, _get_rec),
         question_bank=CallableQuestionBankPort(_list),
     )

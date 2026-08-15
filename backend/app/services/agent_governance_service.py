@@ -35,25 +35,26 @@ from app.models.agent_governance_model import (
     AgentToolInvocation,
     AgentToolPolicy,
 )
+from app.platform.agents.tools.catalog import (
+    BUILTIN_TOOL_NAMES,
+    DEFAULT_TOOL_CATALOG,
+    ToolRisk,
+)
 
 logger = logging.getLogger(__name__)
 
 
 # 内置工具名清单；防止教师配置未知工具导致 Agent 异常
-BUILTIN_TOOL_NAMES: frozenset[str] = frozenset({
-    "graph", "retrieval", "question_bank", "question_generation", "experiment",
-    "visualization", "learning_event", "web_research", "sandbox",
-    "cognition", "student_modeling", "recommendation", "conversation_context",
-    # Read-only teaching context exposed by the CodingEduAgent integration.
-    # These must be configurable so a teacher can disable code diagnostics or
-    # historical context independently of code execution itself.
-    "coding_diagnosis", "student_history",
-})
-
-# 默认工具策略：所有内置工具启用，不需要确认
+# Defaults derive from the catalog rather than a second handwritten name list.
 DEFAULT_TOOL_POLICY: dict[str, dict[str, Any]] = {
-    name: {"enabled": True, "require_confirmation": False, "confirmation_threshold": "never"}
-    for name in BUILTIN_TOOL_NAMES
+    descriptor.name: {
+        "enabled": descriptor.default_enabled,
+        "require_confirmation": descriptor.risk is ToolRisk.HIGH,
+        "confirmation_threshold": (
+            "high_risk_only" if descriptor.risk is ToolRisk.HIGH else "never"
+        ),
+    }
+    for descriptor in DEFAULT_TOOL_CATALOG.all_descriptors().values()
 }
 
 # 高风险动作类型 → 风险等级映射，用于安全阀判定
@@ -61,7 +62,7 @@ HIGH_RISK_PROPOSAL_TYPES: frozenset[str] = frozenset({
     "trigger_experiment", "web_research", "change_topic",
 })
 MEDIUM_RISK_PROPOSAL_TYPES: frozenset[str] = frozenset({
-    "recommend_resource", "offer_hint",
+    "recommend_resource", "offer_hint", "question_generation",
 })
 
 
@@ -199,6 +200,9 @@ class AgentGovernanceService:
             tool_name = str(upd.get("tool_name", ""))
             if tool_name not in BUILTIN_TOOL_NAMES:
                 reject_validation_failed(f"未知工具名: {tool_name}")
+            descriptor = DEFAULT_TOOL_CATALOG.get(tool_name)
+            if descriptor is not None and not descriptor.configurable:
+                reject_validation_failed(f"工具不可配置: {tool_name}")
 
         # 创建新版本
         snapshot: dict[str, Any] = {}

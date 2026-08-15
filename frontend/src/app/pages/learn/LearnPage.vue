@@ -5,18 +5,33 @@ import { useLearningWorkspace } from '@/features/student-learning/composables/us
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
 import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
+  buildPreviewPlaylistBridge,
+  findLearningNodeIndexForPlaylistItem,
   findPlaylistItemIndex,
+  findPlaylistItemIndexById,
   resolvePlaylistPlaybackTarget,
   resolvePlaylistSelection,
   resolveTimelinePlaybackTarget,
   usePlaylistPlayback,
 } from '@/features/student-learning/composables/usePlaylistPlayback.js'
+import {
+  createPlaybackCoordinate,
+  resolveFrozenCoordinateGlobalSeconds,
+} from '@/features/student-learning/adapters/learningAdjustmentCoordinate.js'
+import {
+  applyLearningAdjustment,
+  createLearningAdjustmentIdempotencyKey,
+  dismissLearningAdjustment,
+  listRecentLearningAdjustments,
+  returnFromLearningAdjustment,
+} from '@/api/learning_adjustments.js'
 import { createLearnMachine, LEARN_STATES, SLICE_ENABLED_STATES } from '@/app/lib/learnMachine.js'
 import { useCounterStore } from '@/stores/counter.js'
 import LearningTrack from '@/app/components/learn/LearningTrack.vue'
 import LectureStage from '@/app/components/learn/LectureStage.vue'
 import LearningActionDock from '@/app/components/learn/LearningActionDock.vue'
 import CourseAgentPanel from '@/app/components/learn/CourseAgentPanel.vue'
+import AgentInputForm from '@/app/components/learn/AgentInputForm.vue'
 import CitationStage from '@/app/components/learn/CitationStage.vue'
 import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
@@ -37,6 +52,20 @@ const courseId = Number(route.params.courseId)
 // observers all use the content-only preview branch.
 const previewMode = computed(() => !analyticsEligible.value)
 
+let media = null
+let playlistPlayback = null
+
+function getQuestionObservation() {
+  if (!media || !playlistPlayback) return null
+  return createPlaybackCoordinate({
+    courseReleaseId: ws.releaseId.value,
+    mediaReleaseId: media.manifest.value.releaseId,
+    item: playlistPlayback.activeItem.value,
+    cue: media.resolvePptCue(ws.currentTime.value),
+    globalTimeSeconds: ws.currentTime.value,
+  })
+}
+
 // TeachingAgent 受控接入（P1）：将 courseContext 的 analyticsEligible/capabilities
 // 与当前用户 ID 以 getter 形式注入 workspace。workspace 在 sendQuestion 时读取最新值，
 // 仅当 cognitive_analysis 能力开关开启 + analyticsEligible（真实学生）+ studentId
@@ -46,10 +75,46 @@ const ws = useLearningWorkspace(courseId, {
   getStudentId: () => counter.userData?.id ?? null,
   getAnalyticsEligible: () => analyticsEligible.value,
   getCapabilities: () => capabilities.value,
+  getQuestionObservation: () => getQuestionObservation(),
 })
-const media = useMediaPlayback(courseId)
+media = useMediaPlayback(courseId)
 const avatar = useAvatarPlayback()
-const playlistPlayback = usePlaylistPlayback(media.playlist)
+playlistPlayback = usePlaylistPlayback(media.playlist)
+
+// Teacher draft preview renders draft outline ids while the frozen media
+// release keeps its own released ids. Id-based matchers then all fail, so a
+// positional knowledge-point bridge keeps rail / playlist / review in sync.
+const previewBridge = computed(() => (
+  previewMode.value
+    ? buildPreviewPlaylistBridge(ws.nodes.value, media.playlist.value?.items)
+    : null
+))
+
+function previewNodeToItemIndex(nodeIndex) {
+  const bridge = previewBridge.value
+  if (!bridge || !Number.isInteger(nodeIndex) || nodeIndex < 0 || nodeIndex >= bridge.nodeToItem.length) return -1
+  return bridge.nodeToItem[nodeIndex]
+}
+
+function previewItemToNodeIndex(itemIndex) {
+  const bridge = previewBridge.value
+  if (!bridge || !Number.isInteger(itemIndex) || itemIndex < 0 || itemIndex >= bridge.itemToNode.length) return -1
+  return bridge.itemToNode[itemIndex]
+}
+
+function effectivePlaylistIndexForNode(nodeIndex) {
+  const items = media.playlist.value?.items || []
+  const direct = findPlaylistItemIndex(items, ws.nodes.value[nodeIndex])
+  if (direct >= 0) return direct
+  return previewNodeToItemIndex(nodeIndex)
+}
+
+function effectiveNodeIndexForItem(itemIndex) {
+  const items = media.playlist.value?.items || []
+  const direct = findLearningNodeIndexForPlaylistItem(ws.nodes.value, items[itemIndex])
+  if (direct >= 0) return direct
+  return previewItemToNodeIndex(itemIndex)
+}
 
 const mediaTotalPages = computed(() => {
   const manifestPages = media.ppt.value?.decks?.flatMap(deck => deck.pages || []) || []
@@ -69,6 +134,293 @@ const machine = createLearnMachine({
 const learnState = ref(machine.state)
 const branchContext = ref(null)
 const dockRef = ref(null)
+const pendingMediaSeek = ref(null)
+const activeLearningAdjustment = ref(null)
+const learningAdjustmentNotice = ref('')
+const learningAdjustmentBusy = ref(false)
+const LEARNING_ADJUSTMENT_STORAGE_KEY = `sfx:learning-adjustment:${courseId}:${counter.userData?.id ?? 'unknown'}`
+
+function sameIdentifier(left, right) {
+  return left != null && right != null && String(left) === String(right)
+}
+
+function coordinateForCurrentPlayback() {
+  return getQuestionObservation()
+}
+
+function isStoredAdjustment(value) {
+  const proposal = value?.proposal
+  return Boolean(
+    proposal?.adjustment_id
+    && proposal?.status === 'applied'
+    && proposal?.review_target?.media_release_item_id
+    && proposal?.return_anchor?.media_release_item_id
+  )
+}
+
+function persistActiveLearningAdjustment() {
+  const active = activeLearningAdjustment.value
+  try {
+    if (!active?.proposal?.adjustment_id) {
+      sessionStorage.removeItem(LEARNING_ADJUSTMENT_STORAGE_KEY)
+      return
+    }
+    sessionStorage.setItem(LEARNING_ADJUSTMENT_STORAGE_KEY, JSON.stringify({
+      proposal: active.proposal,
+      previousRate: active.previousRate,
+      wasPlaying: active.wasPlaying,
+      navigationStatus: active.navigationStatus,
+    }))
+  } catch {
+    // Browser storage is only a recovery aid; it cannot block learning.
+  }
+}
+
+function setActiveLearningAdjustment(active) {
+  activeLearningAdjustment.value = active
+  persistActiveLearningAdjustment()
+}
+
+function clearActiveLearningAdjustment() {
+  activeLearningAdjustment.value = null
+  persistActiveLearningAdjustment()
+}
+
+function restoreActiveLearningAdjustment() {
+  try {
+    const stored = JSON.parse(sessionStorage.getItem(LEARNING_ADJUSTMENT_STORAGE_KEY) || 'null')
+    if (!isStoredAdjustment(stored)) return
+    // Reloading the page cannot prove the media element remains at its old
+    // target. Require a fresh browser-confirmed seek before showing review.
+    activeLearningAdjustment.value = {
+      proposal: stored.proposal,
+      previousRate: Number(stored.previousRate) || 1,
+      wasPlaying: Boolean(stored.wasPlaying),
+      navigationStatus: 'accepted',
+    }
+  } catch {
+    // Corrupt or unavailable session storage must not affect the player.
+  }
+}
+
+function updateMessageLearningAdjustment(proposal) {
+  if (!proposal?.adjustment_id) return
+  ws.messages.value = ws.messages.value.map(message => (
+    String(message.learningAdjustment?.adjustment_id || '') === String(proposal.adjustment_id)
+      ? { ...message, learningAdjustment: proposal }
+      : message
+  ))
+}
+
+async function recoverAcceptedLearningAdjustment(adjustmentId, previousRate, wasPlaying) {
+  try {
+    const response = await listRecentLearningAdjustments(courseId, { limit: 20 })
+    const payload = response?.data ?? response
+    const proposal = (payload?.items || []).find(item => (
+      String(item?.adjustment_id || '') === String(adjustmentId)
+      && item?.status === 'applied'
+      && item?.return_anchor
+    ))
+    if (!proposal) return null
+    updateMessageLearningAdjustment(proposal)
+    const active = { proposal, previousRate, wasPlaying, navigationStatus: 'accepted' }
+    setActiveLearningAdjustment(active)
+    return active
+  } catch {
+    return null
+  }
+}
+
+function waitForMediaSeek(target) {
+  return new Promise((resolve, reject) => {
+    pendingMediaSeek.value?.fail(new Error('MEDIA_SEEK_SUPERSEDED'))
+    let timeoutId = null
+    const complete = () => {
+      if (pendingMediaSeek.value?.complete === complete) pendingMediaSeek.value = null
+      window.clearTimeout(timeoutId)
+      resolve()
+    }
+    const fail = error => {
+      if (pendingMediaSeek.value?.fail === fail) pendingMediaSeek.value = null
+      window.clearTimeout(timeoutId)
+      reject(error)
+    }
+    timeoutId = window.setTimeout(() => {
+      if (pendingMediaSeek.value?.complete === complete) pendingMediaSeek.value = null
+      reject(new Error('MEDIA_SEEK_TIMEOUT'))
+    }, 12_000)
+    pendingMediaSeek.value = {
+      target,
+      complete,
+      fail,
+    }
+  })
+}
+
+function handleMediaSeeked(payload) {
+  const pending = pendingMediaSeek.value
+  if (!pending) return
+  const target = pending.target
+  if (!sameIdentifier(payload?.mediaReleaseItemId, target?.media_release_item_id)) return
+  if (Math.abs(Number(payload?.localTimeMs) - Number(target?.local_time_ms)) > 1_250) return
+  pending.complete()
+}
+
+function handleMediaError(payload) {
+  const pending = pendingMediaSeek.value
+  if (!pending) return
+  if (!sameIdentifier(payload?.mediaReleaseItemId, pending.target?.media_release_item_id)) return
+  pending.fail(new Error('MEDIA_SOURCE_UNAVAILABLE'))
+}
+
+function selectFrozenCoordinate(coordinate) {
+  const items = media.playlist.value?.items || []
+  const playlistIndex = findPlaylistItemIndexById(items, coordinate.media_release_item_id)
+  if (playlistIndex < 0) throw new Error('MEDIA_ITEM_UNAVAILABLE')
+  const nodeIndex = effectiveNodeIndexForItem(playlistIndex)
+  if (nodeIndex < 0) throw new Error('COURSE_NODE_UNAVAILABLE')
+  const targetGlobalSeconds = resolveFrozenCoordinateGlobalSeconds(coordinate, items[playlistIndex])
+  if (targetGlobalSeconds == null) throw new Error('MEDIA_COORDINATE_UNAVAILABLE')
+  playlistPlayback.activeIndex.value = playlistIndex
+  ws.selectNode(nodeIndex, { play: false, preserveTime: true, page: coordinate.page })
+  ws.seekTo(targetGlobalSeconds, { nodeIndex })
+  ws.isPlaying.value = false
+}
+
+async function restoreLocalAnchor(anchor, previousRate, wasPlaying) {
+  if (!anchor) return
+  const seeked = waitForMediaSeek(anchor)
+  selectFrozenCoordinate(anchor)
+  await seeked
+  ws.playbackRate.value = previousRate
+  ws.isPlaying.value = wasPlaying
+}
+
+async function openAcceptedLearningAdjustment(active) {
+  const target = active?.proposal?.review_target
+  if (!target) throw new Error('ADJUSTMENT_TARGET_UNAVAILABLE')
+  const seeked = waitForMediaSeek(target)
+  selectFrozenCoordinate(target)
+  await seeked
+  ws.playbackRate.value = active.proposal.recommended_playback_rate
+  setActiveLearningAdjustment({ ...active, navigationStatus: 'reviewing' })
+}
+
+async function restoreAfterFailedReviewOpen(active) {
+  try {
+    await restoreLocalAnchor(active.proposal.return_anchor, active.previousRate, active.wasPlaying)
+    return true
+  } catch {
+    ws.playbackRate.value = active.previousRate
+    ws.isPlaying.value = false
+    return false
+  }
+}
+
+async function acceptLearningAdjustment(initialProposal) {
+  if (!initialProposal?.adjustment_id || learningAdjustmentBusy.value || activeLearningAdjustment.value) return
+  const returnAnchor = coordinateForCurrentPlayback()
+  if (!returnAnchor) {
+    learningAdjustmentNotice.value = '当前播放位置未能对应到已发布媒体，无法安全开始回顾。'
+    return
+  }
+  const previousRate = ws.playbackRate.value
+  const wasPlaying = ws.isPlaying.value
+  learningAdjustmentBusy.value = true
+  learningAdjustmentNotice.value = ''
+  ws.isPlaying.value = false
+  try {
+    const accepted = await applyLearningAdjustment(
+      initialProposal.adjustment_id,
+      returnAnchor,
+      createLearningAdjustmentIdempotencyKey('apply', initialProposal.adjustment_id),
+    )
+    const proposal = accepted?.data ?? accepted
+    if (proposal?.status !== 'applied' || !proposal?.review_target || !proposal?.return_anchor) {
+      throw new Error('ADJUSTMENT_ACCEPTANCE_UNAVAILABLE')
+    }
+    updateMessageLearningAdjustment(proposal)
+    const active = { proposal, previousRate, wasPlaying, navigationStatus: 'accepted' }
+    setActiveLearningAdjustment(active)
+    await openAcceptedLearningAdjustment(active)
+  } catch {
+    const active = activeLearningAdjustment.value
+      || await recoverAcceptedLearningAdjustment(initialProposal.adjustment_id, previousRate, wasPlaying)
+    if (!active) {
+      learningAdjustmentNotice.value = '未能确认回顾请求；当前学习位置没有改变。'
+      ws.playbackRate.value = previousRate
+      ws.isPlaying.value = wasPlaying
+      return
+    }
+    const restored = await restoreAfterFailedReviewOpen(active)
+    learningAdjustmentNotice.value = restored
+      ? '已确认回顾，但未能打开内容；已返回原学习位置，可重试。'
+      : '已确认回顾，但未能打开内容，也未能自动恢复原位置；请手动恢复后重试。'
+  } finally {
+    learningAdjustmentBusy.value = false
+  }
+}
+
+async function retryOpeningLearningAdjustment() {
+  const active = activeLearningAdjustment.value
+  if (!active?.proposal?.adjustment_id || learningAdjustmentBusy.value) return
+  learningAdjustmentBusy.value = true
+  learningAdjustmentNotice.value = ''
+  ws.isPlaying.value = false
+  try {
+    await openAcceptedLearningAdjustment(active)
+  } catch {
+    const restored = await restoreAfterFailedReviewOpen(active)
+    learningAdjustmentNotice.value = restored
+      ? '仍未能打开回顾内容；已返回原学习位置，可稍后重试。'
+      : '仍未能打开回顾内容；请手动恢复学习位置后再试。'
+  } finally {
+    learningAdjustmentBusy.value = false
+  }
+}
+
+async function returnToLearningAnchor() {
+  const active = activeLearningAdjustment.value
+  const anchor = active?.proposal?.return_anchor
+  if (
+    !active?.proposal?.adjustment_id
+    || !anchor
+    || active.navigationStatus !== 'reviewing'
+    || learningAdjustmentBusy.value
+  ) return
+  learningAdjustmentBusy.value = true
+  learningAdjustmentNotice.value = ''
+  ws.isPlaying.value = false
+  try {
+    await restoreLocalAnchor(anchor, active.previousRate, active.wasPlaying)
+    await returnFromLearningAdjustment(
+      active.proposal.adjustment_id,
+      createLearningAdjustmentIdempotencyKey('return', active.proposal.adjustment_id),
+    )
+    clearActiveLearningAdjustment()
+  } catch {
+    learningAdjustmentNotice.value = '未能回到原学习位置；可以再次尝试返回。'
+    ws.isPlaying.value = false
+  } finally {
+    learningAdjustmentBusy.value = false
+  }
+}
+
+async function dismissLearningAdjustmentProposal(proposal) {
+  if (!proposal?.adjustment_id || learningAdjustmentBusy.value) return
+  learningAdjustmentBusy.value = true
+  try {
+    const dismissed = await dismissLearningAdjustment(
+      proposal.adjustment_id,
+      createLearningAdjustmentIdempotencyKey('dismiss', proposal.adjustment_id),
+    )
+    updateMessageLearningAdjustment(dismissed?.data ?? dismissed)
+  } catch {
+    learningAdjustmentNotice.value = '未能保存“继续当前位置”的选择，请稍后重试。'
+  } finally {
+    learningAdjustmentBusy.value = false
+  }
+}
 
 // 学习轨道收起状态（与 BuildLayout 一致：用户手动选择后按设备记忆）
 const TRACK_STORAGE_KEY = 'sfx:rail:learn'
@@ -76,9 +428,12 @@ const readStoredTrack = () => {
   try { return localStorage.getItem(TRACK_STORAGE_KEY) === '1' } catch { return null }
 }
 const trackManualOverride = ref(readStoredTrack())
-const trackCollapsed = computed(() =>
-  trackManualOverride.value ?? ![LEARN_STATES.LEARN, LEARN_STATES.UNDERSTAND].includes(learnState.value)
-)
+// 进入智能体(UNDERSTAND)状态时自动收起学习轨道，为对话和内容留出更多空间
+const isAgentOpen = computed(() => learnState.value === LEARN_STATES.UNDERSTAND)
+const trackCollapsed = computed(() => {
+  if (isAgentOpen.value) return true
+  return trackManualOverride.value ?? ![LEARN_STATES.LEARN].includes(learnState.value)
+})
 function handleTrackToggle() {
   const next = !trackCollapsed.value
   trackManualOverride.value = next
@@ -163,12 +518,13 @@ function handlePlayback(payload) {
       playlistPlayback.activeIndex.value = target.playlistIndex
       const item = items[target.playlistIndex]
       // The playlist is authoritative for release playback. Supplying its
-      // node id keeps the legacy workspace index in sync for the rail.
+      // node id keeps the legacy workspace index in sync for the rail; the
+      // preview bridge covers draft-preview ids that cannot match directly.
       payload = {
         ...payload,
         nodeId: item.nodeId,
         outlineNodeId: item.outlineNodeId,
-        nodeIndex: target.nodeIndex,
+        nodeIndex: effectiveNodeIndexForItem(target.playlistIndex),
       }
     }
   } else if (Number.isFinite(globalTime)) {
@@ -198,7 +554,10 @@ function handleTrackSelect(index, options = {}) {
   if (!node) return
   const wasPlaying = options.play ?? ws.isPlaying.value
   const items = media.playlist.value?.items || []
-  const { playlistIndex, targetTime } = resolvePlaylistSelection(items, node, media.pptTimeline.value)
+  const playlistIndex = effectivePlaylistIndexForNode(nextIndex)
+  const targetTime = playlistIndex >= 0
+    ? Math.max(0, Number(items[playlistIndex]?.offsetMs) || 0) / 1000
+    : resolvePlaylistSelection(items, node, media.pptTimeline.value).targetTime
 
   if (playlistIndex >= 0) playlistPlayback.activeIndex.value = playlistIndex
   ws.selectNode(nextIndex, { play: wasPlaying, preserveTime: true })
@@ -214,10 +573,7 @@ function handlePlaylistNext() {
   const items = media.playlist.value?.items || []
   const item = items[nextIndex]
   if (!item) return
-  const index = ws.nodes.value.findIndex(node => (
-    (item.nodeId != null && String(node.id) === String(item.nodeId))
-    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-  ))
+  const index = effectiveNodeIndexForItem(nextIndex)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.next()
 }
@@ -226,31 +582,27 @@ function handlePlaylistPrevious() {
   const items = media.playlist.value?.items || []
   const item = items[previousIndex]
   if (!item) return
-  const index = ws.nodes.value.findIndex(node => (
-    (item.nodeId != null && String(node.id) === String(item.nodeId))
-    || (item.outlineNodeId && String(node.outlineNodeId) === String(item.outlineNodeId))
-  ))
+  const index = effectiveNodeIndexForItem(previousIndex)
   if (index >= 0) handleTrackSelect(index, { play: true })
   else playlistPlayback.previous()
 }
 
 watch(
-  [() => ws.currentNode.value?.id, () => ws.currentNode.value?.outlineNodeId, () => media.playlist.value],
+  [() => ws.currentNodeIndex.value, () => media.playlist.value],
   () => {
-    const node = ws.currentNode.value
-    if (!node || !media.playlist.value?.items?.length) return
-    const matched = media.playlist.value.items.find(item => (
-      String(item.nodeId) === String(node.id)
-      || (node.outlineNodeId && String(item.outlineNodeId) === String(node.outlineNodeId))
-    ))
-    if (matched) playlistPlayback.selectByNode(matched.outlineNodeId || matched.nodeId)
+    if (!media.playlist.value?.items?.length) return
+    const index = effectivePlaylistIndexForNode(ws.currentNodeIndex.value)
+    if (index >= 0) playlistPlayback.activeIndex.value = index
   },
   { immediate: true },
 )
 function handleAgentAction(action) { handleDockAction({ id: action, target: action === 'visualize' ? LEARN_STATES.VISUALIZE : LEARN_STATES.PRACTICE }) }
 
 async function handleRecommendationAction({ node, recommendation, action }) {
-  const nodeIndex = ws.nodes.value.findIndex(item => String(item.outlineNodeId) === String(node?.outlineNodeId))
+  const nodeIndex = ws.nodes.value.findIndex(item => (
+    (node?.outlineNodeId && String(item.outlineNodeId) === String(node.outlineNodeId))
+    || (node?.id && String(item.id) === String(node.id))
+  ))
   if (nodeIndex >= 0) handleTrackSelect(nodeIndex, { play: action === 'continue' })
 
   if (action === 'practice') {
@@ -285,6 +637,7 @@ async function completeNode() {
 
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
+  restoreActiveLearningAdjustment()
 })
 
 watch(
@@ -368,7 +721,10 @@ watch(
             :media-status="media.status.value"
             :media-message="media.manifest.value.message || media.error.value"
             :legacy-video-url="ws.currentVideoUrl.value"
+            :agent-panel-open="isAgentOpen"
             @playback="handlePlayback"
+            @media-seeked="handleMediaSeeked"
+            @media-error="handleMediaError"
             @page-change="ws.setPage"
             @node-change="handleNodeChange"
             @playlist-next="handlePlaylistNext"
@@ -382,9 +738,20 @@ watch(
               <CourseAgentPanel
                 :ws="ws"
                 :anchor="branchContext"
+                :active-adjustment="activeLearningAdjustment"
+                :adjustment-busy="learningAdjustmentBusy"
+                :adjustment-notice="learningAdjustmentNotice"
+                :hide-footer-input="true"
                 @exit="exitBranch"
                 @action="handleAgentAction"
+                @accept-adjustment="acceptLearningAdjustment"
+                @dismiss-adjustment="dismissLearningAdjustmentProposal"
+                @retry-opening-review="retryOpeningLearningAdjustment"
+                @return-adjustment="returnToLearningAnchor"
               />
+            </template>
+            <template v-if="learnState === LEARN_STATES.UNDERSTAND" #footer>
+              <AgentInputForm :ws="ws" :autofocus="true" />
             </template>
           </LectureStage>
 

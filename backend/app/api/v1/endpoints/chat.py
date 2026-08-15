@@ -4,7 +4,7 @@
 需要用户登录认证
 """
 
-from typing import Optional
+from typing import Optional, Union
 
 from fastapi import APIRouter, Depends, Query, HTTPException, Request, Body
 from sqlmodel import Session, select
@@ -19,6 +19,7 @@ from app.models.course_model import Course, CourseScript, DoclingDocument, Docli
 from app.services.qa_service import qa_service
 from app.services.progress_service import progress_service
 from app.services.course_access_service import require_course_permission
+from app.services.conversation_service import persist_conversation_turn
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -168,8 +169,9 @@ async def ask_question(
     chatId: Optional[int] = Body(None, description="会话ID，不传则创建新会话"),
     courseId: Optional[int] = Body(None, description="课程ID，用于基于文档问答"),
     question: str = Body(..., description="用户问题"),
-    currentNodeId: Optional[int] = Body(None, description="当前学习节点ID，用于理解度分析"),
+    currentNodeId: Optional[Union[int, str]] = Body(None, description="当前学习节点ID：兼容旧版数值 ScriptNode ID 与新版 release outline_node_id（如 on_xxx）"),
     strictMode: bool = Body(False, description="是否使用严格知识库模式（带引用标注）"),
+    sessionId: Optional[str] = Body(None, description="学习会话 ID，用于 Conversation Domain 持久化分组（TeachingAgent 回退 V1 时透传，使刷新后可恢复对话）"),
 ):
     """
     Compatibility boundary: the new learning workspace must fall back here
@@ -249,7 +251,11 @@ async def ask_question(
         print(f"[聊天] 调用QA服务生成回答...")
         
         current_node_info = None
-        if currentNodeId:
+        # 兼容两类调用方：旧版学习页传 ScriptNode 数值 ID；新版 release 学习
+        # 工作区传 CourseOutlineNode.outline_node_id（如 on_xxx）。只有数值 ID
+        # 才能落到旧版理解度分析；outline ID 仅用于回答上下文，不伪造分析。
+        current_node_analysis_id = None
+        if currentNodeId is not None and str(currentNodeId) != "":
             from app.models.course_model import ScriptNode
             if courseId is None:
                 return unified_response(
@@ -257,22 +263,50 @@ async def ask_question(
                     message="提供学习节点时必须同时提供课程",
                     data=None,
                 )
-            script_node = session.get(ScriptNode, currentNodeId)
-            if script_node is None:
-                return unified_response(code=404, message="学习节点不存在", data=None)
-            node_script = session.get(CourseScript, script_node.script_id)
-            if node_script is None or node_script.course_id != courseId:
-                return unified_response(
-                    code=400,
-                    message="学习节点不属于当前课程",
-                    data=None,
-                )
-            current_node_info = {
-                "title": script_node.title,
-                "content": script_node.content,
-                "node_type": script_node.node_type,
-                "node_index": script_node.node_index,
-            }
+            raw_node_id = str(currentNodeId)
+            if raw_node_id.isdigit():
+                script_node = session.get(ScriptNode, int(raw_node_id))
+                if script_node is None:
+                    return unified_response(code=404, message="学习节点不存在", data=None)
+                node_script = session.get(CourseScript, script_node.script_id)
+                if node_script is None or node_script.course_id != courseId:
+                    return unified_response(
+                        code=400,
+                        message="学习节点不属于当前课程",
+                        data=None,
+                    )
+                current_node_analysis_id = int(raw_node_id)
+                current_node_info = {
+                    "title": script_node.title,
+                    "content": script_node.content,
+                    "node_type": script_node.node_type,
+                    "node_index": script_node.node_index,
+                }
+            else:
+                from app.models.course_outline_model import CourseOutlineNode
+                outline_node = session.exec(
+                    select(CourseOutlineNode).where(
+                        CourseOutlineNode.outline_node_id == raw_node_id
+                    )
+                ).first()
+                if outline_node is None:
+                    return unified_response(code=404, message="学习节点不存在", data=None)
+                if outline_node.course_id != courseId:
+                    return unified_response(
+                        code=400,
+                        message="学习节点不属于当前课程",
+                        data=None,
+                    )
+                current_node_info = {
+                    "title": outline_node.title,
+                    "content": "",
+                    "node_type": (
+                        outline_node.node_type.value
+                        if hasattr(outline_node.node_type, "value")
+                        else outline_node.node_type
+                    ),
+                    "node_index": outline_node.order_index,
+                }
         
         qa_result = await qa_service.ask_question_with_rag(
             question=question,
@@ -309,10 +343,31 @@ async def ask_question(
         session.commit()
         session.refresh(assistant_message)
 
+        # Conversation Domain (AGENTS.md §5.1)：V1 作为 TeachingAgent 回退路径时，
+        # 同样把本轮 Q/A 持久化到 conversation_messages，使学习者刷新 / 重进课程后
+        # 可恢复对话。仅对课程内真实学习者（analytics_eligible）落库；非阻塞，
+        # 失败不影响回答主流程（persist_conversation_turn 内部已吞错并 rollback）。
+        if courseId and course_access and course_access.analytics_eligible:
+            try:
+                persist_conversation_turn(
+                    session,
+                    student_id=user_id,
+                    course_id=courseId,
+                    session_id=sessionId or f"v1-{user_id}-{courseId}",
+                    trace_id="",
+                    user_message=question,
+                    assistant_answer=ai_answer,
+                    concept_id=str(currentNodeId) if currentNodeId is not None else None,
+                    resource_id=str(currentNodeId) if currentNodeId is not None else None,
+                    citations=list(rag_sources) if isinstance(rag_sources, list) else None,
+                )
+            except Exception:  # noqa: BLE001 -- 非阻塞：对话持久化失败不得影响回答
+                pass
+
         understanding_analysis = None
         if (
             courseId
-            and currentNodeId
+            and current_node_analysis_id
             and course_access is not None
             and course_access.analytics_eligible
         ):
@@ -323,7 +378,7 @@ async def ask_question(
                     user_id=user_id,
                     course_id=courseId,
                     question=question,
-                    current_node_id=currentNodeId,
+                    current_node_id=current_node_analysis_id,
                     chat_messages=history_messages_orm,
                 )
                 understanding_analysis = {

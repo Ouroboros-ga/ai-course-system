@@ -4,6 +4,7 @@ import os
 from importlib.util import find_spec
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.signature_middleware import SignatureMiddleware
@@ -126,6 +127,7 @@ from app.api.v1.endpoints import (
     canary_v2,          # P1-09 G5A V2 Canary quality-gate (no real services, ADR-0006)
     retrieval_demo,     # Shadow-1 local retrieval demo (isolated from V1)
     teaching_agent,     # Controlled LangGraph single-agent workflow; runtime injected explicitly
+    learning_adjustments,  # Learner-confirmed review and manual return transitions
     note,               # 笔记模块
     dashboard,          # 首页与课程概览聚合
     confirmation,       # 教师确认持久化
@@ -159,6 +161,7 @@ from app.api.v1.endpoints import (
     historical_rebuild, # 阶段10 历史课程补建清单编排
     storage_admin,      # G5 对象存储运维（refs/GC/回读校验）
     admin_platform,     # 平台 Provider 配置与用户管理
+    asr,                # 豆包语音输入（ASR 录音转文字）
 )
 from app.schemas import UnifiedResponse
 
@@ -203,7 +206,7 @@ app.state.startup_dependency_report = startup_dependency_report
 
 @app.on_event("startup")
 async def recover_durable_task_queues() -> None:
-    """Recover parse and course-build work interrupted by a local restart."""
+    """Recover durable work that is safe to resume after a local restart."""
     try:
         from app.models.database import session_factory
         from app.platform.tasks.document_parse_queue import document_parse_queue
@@ -236,37 +239,13 @@ async def recover_durable_task_queues() -> None:
     except Exception:
         logger.exception("PPT manifest task recovery failed")
     try:
-        # Formal experiment runs are safe to resume only when Judge0 has not
-        # written a terminal result.  The handler's idempotent run/attempt and
-        # projection checks prevent duplicate scoring after a process restart.
-        import json
-        from sqlmodel import select
-        from app.models.experiment_model import ExperimentRun, RunOutcome
-        from app.models.task_model import TaskRecord
         from app.models.database import session_factory
+        from app.platform.tasks.experiment_run_queue import recover_experiment_run_tasks
         from app.platform.tasks.worker import local_task_worker
-        from app.services.task_service import task_service
 
-        to_resume: list[tuple[str, dict]] = []
-        with session_factory() as session:
-            tasks = list(session.exec(select(TaskRecord).where(
-                TaskRecord.task_type == "experiment_run",
-                TaskRecord.status == "interrupted",
-            )).all())
-            for task in tasks:
-                payload = json.loads(task.input_payload or "{}")
-                run = session.exec(select(ExperimentRun).where(
-                    ExperimentRun.run_id == payload.get("run_id"),
-                )).first()
-                if run is None or run.outcome != RunOutcome.PENDING:
-                    continue
-                task_service.retry(session, task.task_id)
-                to_resume.append((task.task_id, payload))
-        for task_id, payload in to_resume:
-            local_task_worker.submit(session_factory, task_id, payload)
-        logger.info("Experiment run recovery requeued %d pending task(s)", len(to_resume))
+        await recover_experiment_run_tasks(session_factory, local_task_worker)
     except Exception:
-        logger.exception("Experiment run recovery failed")
+        logger.exception("Formal experiment run recovery failed")
     try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
@@ -275,6 +254,15 @@ async def recover_durable_task_queues() -> None:
         await recover_learning_projection_outbox()
     except Exception:
         logger.exception("Learning projection outbox recovery failed")
+    try:
+        # 管理员开关（真实接入 true/false）从数据库恢复为进程内运行时状态；
+        # 恢复失败一律落到禁用态（fail-closed），不让未授权外部调用发生。
+        from app.models.database import session_factory
+        from app.services.platform_provider_manager import provider_manager
+
+        provider_manager.restore_from_db(session_factory)
+    except Exception:
+        logger.exception("Platform provider integration restore failed")
 
 # P1: opt-in TeachingAgent runtime injection. Default TEACHING_AGENT_MODE=
 # disabled -> no injection -> the endpoint stays 503. KG-MEST reports and
@@ -288,8 +276,8 @@ from app.platform.agents.bootstrap import (
 )
 bootstrap_prep_agent(app)
 bootstrap_research_agent(app)
-bootstrap_teaching_agent(app)
 bootstrap_coding_agent(app)
+bootstrap_teaching_agent(app)
 
 # 注册签名验证中间件（必须在CORS之后，路由之前）
 app.add_middleware(SignatureMiddleware)
@@ -395,6 +383,10 @@ app.include_router(retrieval_demo.router, prefix="/api/v1/retrieval-demo", tags=
 # TeachingAgent is intentionally independent from V1 chat. It returns 503 until
 # an application composition root injects scope-checked domain Ports.
 app.include_router(teaching_agent.router, prefix="/api/v1/teaching-agent", tags=["TeachingAgent"])
+app.include_router(learning_adjustments.router, prefix="/api/v1/learning-adjustments", tags=["Learning adjustments"])
+
+# 豆包语音输入（ASR 录音转文字）
+app.include_router(asr.router, prefix="/api/v1/asr", tags=["语音识别"])
 
 # 阶段0：统一任务中心（OCR/解析/图谱/媒体/实验/同步等长任务的持久化与状态机）
 app.include_router(tasks.router, prefix="/api/v1/tasks", tags=["任务中心"])
@@ -559,5 +551,11 @@ async def error_monitor_snapshot():
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"], include_in_schema=False)
 async def catch_all(path: str):
     if path.startswith("@vite/") or path.startswith("src/") or path.endswith((".js", ".css", ".html", ".ico", ".png", ".svg")):
-        return unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None)
-    return unified_response(404, f"接口不存在: /{path}", None)
+        return JSONResponse(
+            status_code=404,
+            content=unified_response(404, "前端资源请通过 Vite 开发服务器访问 (localhost:5173)", None),
+        )
+    return JSONResponse(
+        status_code=404,
+        content=unified_response(404, f"接口不存在: /{path}", None),
+    )

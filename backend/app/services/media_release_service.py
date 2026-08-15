@@ -1,4 +1,4 @@
-﻿"""阶段8 媒体生成与发布服务
+"""阶段8 媒体生成与发布服务
 
 实现「讲稿 → TTS → 字幕/PPT 时间轴 → MediaRelease → 学生端播放」的服务编排。
 
@@ -1042,6 +1042,21 @@ class MediaPlaybackService:
                         expected_ids = [str(node.outline_node_id) for node in expected_nodes]
                         actual_ids = [str(item.get("outline_node_id") or "") for item in playlist["items"]]
                         set_mismatch, order_differs = _playlist_node_alignment(expected_ids, actual_ids)
+                        # Attach stable cross-version keys at signing time (the
+                        # immutable playlist JSON is not rewritten).  A teacher
+                        # draft preview owns different outline_node_ids, so the
+                        # client bridge matches items by knowledge-graph concept
+                        # id / title instead of relying on identical ordering.
+                        released_node_by_outline = {
+                            str(node.outline_node_id): node for node in expected_nodes
+                        }
+                        for item in playlist["items"]:
+                            released_node = released_node_by_outline.get(
+                                str(item.get("outline_node_id") or "")
+                            )
+                            if released_node is not None:
+                                item["knowledge_graph_node_id"] = released_node.knowledge_graph_node_id
+                                item["title"] = released_node.title
                         if set_mismatch:
                             # The node set must match the released outline.  Order
                             # is deliberately NOT compared here: older playlists

@@ -1,37 +1,22 @@
 import request from '@/utils/request.js'
+import { buildFormalRunRequest, runResourcePaths } from './experimentRunContract.js'
+import { buildVersionRequest, experimentPublishPaths } from './experimentPublishContract.js'
 
-function idempotencyKey() {
-  return globalThis.crypto?.randomUUID?.() || `run-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-/** Formal submissions are always asynchronous and require a stable key. */
-export function createExperimentRun(attemptId, courseId, payload, key = idempotencyKey()) {
-  return request.post(
-    `/experiments/attempts/${encodeURIComponent(attemptId)}/runs?course_id=${encodeURIComponent(courseId)}`,
-    { language: payload.language, source_code: payload.source_code },
-    { skipErrorToast: true, headers: { 'Idempotency-Key': key } },
-  )
-}
-
-export function getExperimentRun(courseId, runId) {
-  return request.get(`/experiments/runs/${encodeURIComponent(runId)}?course_id=${encodeURIComponent(courseId)}`, { skipErrorToast: true })
-}
-
-export function getExperimentAttempt(courseId, attemptId) {
-  return request.get(`/experiments/attempts/${encodeURIComponent(attemptId)}?course_id=${encodeURIComponent(courseId)}`, { skipErrorToast: true })
-}
-
-export function getTask(taskId) {
-  return request.get(`/tasks/${encodeURIComponent(taskId)}`, { skipErrorToast: true })
-}
-
-export function cancelTask(taskId) {
-  return request.post(`/tasks/${encodeURIComponent(taskId)}/cancel`, { reason: 'student_cancelled_experiment_run' }, { skipErrorToast: true })
+/**
+ * Server-owned coding run APIs.
+ *
+ * The returned run_id is the only identifier that may be passed to
+ * TeachingAgent. Judge0 tokens and source code never cross this boundary.
+ */
+export function createExperimentRun(attemptId, courseId, payload, idempotencyKey) {
+  const requestData = buildFormalRunRequest(attemptId, courseId, payload, idempotencyKey)
+  return request.post(requestData.url, requestData.body, requestData.config)
 }
 
 export function listPublishedExperiments(courseId) {
   return request.get(`/experiments/course/${encodeURIComponent(courseId)}/definitions`, {
-    params: { publish_status: 'published' }, skipErrorToast: true,
+    params: { publish_status: 'published' },
+    skipErrorToast: true,
   })
 }
 
@@ -43,20 +28,31 @@ export function createExperimentDefinition(courseId, payload) {
   return request.post(`/experiments/course/${encodeURIComponent(courseId)}/definitions`, payload)
 }
 
+export function updateExperimentDefinition(courseId, experimentId, payload) {
+  return request.put(experimentPublishPaths(courseId, experimentId, '').definition, payload)
+}
+
 export function publishExperimentDefinition(courseId, experimentId) {
-  return request.post(`/experiments/course/${encodeURIComponent(courseId)}/definitions/${encodeURIComponent(experimentId)}/publish`)
+  return request.post(experimentPublishPaths(courseId, experimentId, '').publish)
 }
 
-export function createExperimentVersion(courseId, experimentId, payload) {
-  return request.post(`/experiments/${encodeURIComponent(experimentId)}/versions?course_id=${encodeURIComponent(courseId)}`, payload)
+export function createExperimentVersion(courseId, experimentId, form) {
+  return request.post(
+    experimentPublishPaths(courseId, experimentId, '').versions,
+    buildVersionRequest(form),
+  )
 }
 
-export function previewExperimentReference(courseId, versionId, payload) {
-  return request.post(`/experiments/versions/${encodeURIComponent(versionId)}/reference-preview?course_id=${encodeURIComponent(courseId)}`, payload, { skipErrorToast: true })
+export function previewExperimentReferenceSolution(courseId, versionId, payload) {
+  return request.post(
+    experimentPublishPaths(courseId, '', versionId).preview,
+    { language: payload.language, source_code: payload.source_code },
+    { skipErrorToast: true },
+  )
 }
 
 export function lockExperimentVersion(courseId, versionId) {
-  return request.post(`/experiments/versions/${encodeURIComponent(versionId)}/lock?course_id=${encodeURIComponent(courseId)}&locked=true`)
+  return request.post(experimentPublishPaths(courseId, '', versionId).lock)
 }
 
 export function createExperimentAttempt(experimentId, courseId, returnAnchor = {}) {
@@ -67,10 +63,29 @@ export function createExperimentAttempt(experimentId, courseId, returnAnchor = {
   )
 }
 
-export function getCodingFeedback(courseId, runId) {
-  return request.get(`/experiments/runs/${encodeURIComponent(runId)}/feedback?course_id=${encodeURIComponent(courseId)}`, { skipErrorToast: true })
+export function createCodingDiagnosis(courseId, runId) {
+  return request.post(
+    `/experiments/runs/${encodeURIComponent(runId)}/diagnosis?course_id=${encodeURIComponent(courseId)}`,
+    null,
+    { skipErrorToast: true },
+  )
 }
 
 export function getCodingDiagnosis(courseId, runId) {
-  return request.get(`/experiments/runs/${encodeURIComponent(runId)}/diagnosis?course_id=${encodeURIComponent(courseId)}`, { skipErrorToast: true })
+  return request.get(
+    `/experiments/runs/${encodeURIComponent(runId)}/diagnosis?course_id=${encodeURIComponent(courseId)}`,
+    { skipErrorToast: true },
+  )
+}
+
+export function getExperimentRun(courseId, runId) {
+  return request.get(runResourcePaths(courseId, runId).run, { skipErrorToast: true })
+}
+
+export function cancelExperimentRun(courseId, runId) {
+  return request.post(runResourcePaths(courseId, runId).cancel, null, { skipErrorToast: true })
+}
+
+export function getCodingRunExplanation(courseId, runId) {
+  return request.post(runResourcePaths(courseId, runId).explanation, null, { skipErrorToast: true })
 }

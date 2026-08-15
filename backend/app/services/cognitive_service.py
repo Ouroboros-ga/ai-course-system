@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -42,6 +43,9 @@ MIN_SAMPLE_FOR_CONFIDENCE = 5
 MIN_SAMPLE_FOR_CONFUSION = 3
 MIN_SAMPLE_FOR_HINT = 2
 PERFORMANCE_WINDOW_SIZE = 5
+QUIZ_PERFORMANCE_WEIGHT = 1.0
+CODING_EXECUTION_PERFORMANCE_WEIGHT = 1.5
+MIN_EFFECTIVE_SCORED_WEIGHT = 3.0
 # 提问深度：LLM 标定记录的最少条数，不足时保持 unknown（不武断判断）
 MIN_SAMPLE_FOR_INQUIRY = 2
 INQUIRY_WINDOW_SIZE = 10
@@ -61,6 +65,69 @@ def _attempt_score(attempt: QuestionAttempt) -> Optional[float]:
     if attempt.is_correct is not None:
         return float(attempt.is_correct)
     return None
+
+
+@dataclass(frozen=True)
+class _ScoredObservation:
+    """One normalized, source-free server-scored performance observation."""
+
+    score: float
+    weight: float
+    source_kind: str
+    source_ref: str
+    created_order: str
+
+
+def _scored_observations(
+    session: Session,
+    *,
+    judged_attempts: list[QuestionAttempt],
+    student_id: int,
+    course_id: int,
+    node_id: Optional[int],
+) -> list[_ScoredObservation]:
+    """Combine quiz and finalized-code scores without exposing source code.
+
+    Only code evidence written by ``ExperimentFinalizeService`` is eligible;
+    a CodingAgent diagnosis or a client-supplied score can never enter this
+    path.  A shared recent window preserves existing quiz-only behavior.
+    """
+    observations = [
+        _ScoredObservation(
+            score=score,
+            weight=QUIZ_PERFORMANCE_WEIGHT,
+            source_kind="quiz_accuracy",
+            source_ref=_attempt_ref(attempt),
+            created_order=(attempt.created_at.isoformat() if attempt.created_at else ""),
+        )
+        for attempt in judged_attempts
+        if (score := _attempt_score(attempt)) is not None
+    ]
+    code_stmt = select(LearningEvidenceRecord).where(
+        LearningEvidenceRecord.student_id == student_id,
+        LearningEvidenceRecord.course_id == course_id,
+        LearningEvidenceRecord.evidence_type == EvidenceType.CODING_EXECUTION.value,
+        LearningEvidenceRecord.source == "experiment_finalize_service",
+        LearningEvidenceRecord.value.is_not(None),
+    )
+    if node_id is not None:
+        code_stmt = code_stmt.where(LearningEvidenceRecord.node_id == node_id)
+    code_records = list(session.exec(code_stmt).all())
+    observations.extend(
+        _ScoredObservation(
+            score=max(0.0, min(float(record.value), 1.0)),
+            weight=CODING_EXECUTION_PERFORMANCE_WEIGHT,
+            source_kind="coding_execution",
+            source_ref=record.evidence_id,
+            created_order=(record.created_at.isoformat() if record.created_at else ""),
+        )
+        for record in code_records
+    )
+    observations.sort(
+        key=lambda item: (item.created_order, item.source_ref),
+        reverse=True,
+    )
+    return observations[:PERFORMANCE_WINDOW_SIZE]
 
 
 def compute_cognitive_state(
@@ -118,39 +185,64 @@ def compute_cognitive_state(
             )
 
     attempts = list(session.exec(attempt_stmt).all())
-    judged_attempts = [a for a in attempts if _attempt_score(a) is not None]
-    judged_attempts.sort(
+    all_judged_attempts = [a for a in attempts if _attempt_score(a) is not None]
+    all_judged_attempts.sort(
         key=lambda item: (item.created_at, item.id or 0),
         reverse=True,
     )
-    judged_attempts = judged_attempts[:PERFORMANCE_WINDOW_SIZE]
-    total_attempts = len(judged_attempts)
-    score_values = [_attempt_score(a) for a in judged_attempts]
+    # Retain the quiz-only window for the historical confusion calculation.
+    judged_attempts = all_judged_attempts[:PERFORMANCE_WINDOW_SIZE]
+    observations = _scored_observations(
+        session,
+        judged_attempts=all_judged_attempts,
+        student_id=student_id,
+        course_id=course_id,
+        node_id=node_id,
+    )
+    total_attempts = len(observations)
+    effective_scored_weight = sum(item.weight for item in observations)
+    observation_kinds = {item.source_kind for item in observations}
+    evidence_refs.extend(
+        item.source_ref for item in observations if item.source_kind == "coding_execution"
+    )
 
     # 2. 计算 observed_performance_score（仅评分型显性证据）
     observed_performance: Optional[float] = None
-    if len(judged_attempts) >= MIN_SAMPLE_FOR_PERFORMANCE:
-        observed_performance = (
-            sum(score for score in score_values if score is not None)
-            / len(judged_attempts)
-        )
+    if effective_scored_weight >= MIN_EFFECTIVE_SCORED_WEIGHT:
+        observed_performance = sum(
+            item.score * item.weight for item in observations
+        ) / effective_scored_weight
+        if observation_kinds == {"quiz_accuracy"}:
+            performance_evidence_type = EvidenceType.QUIZ_ACCURACY
+        elif observation_kinds == {"coding_execution"}:
+            performance_evidence_type = EvidenceType.CODING_EXECUTION
+        else:
+            performance_evidence_type = EvidenceType.MASTERY
         evidence = _create_evidence(
             student_id, course_id, node_id,
-            EvidenceType.QUIZ_ACCURACY,
+            performance_evidence_type,
             value=observed_performance,
-            confidence=min(len(judged_attempts) / 10.0, 1.0),
+            confidence=min(effective_scored_weight / 10.0, 1.0),
             label=f"评分型表现 {observed_performance:.0%}",
             description=(
-                f"基于最近 {len(judged_attempts)} 个独立评分项，"
+                f"基于最近 {len(observations)} 个独立评分项，"
                 f"窗口上限 {PERFORMANCE_WINDOW_SIZE}"
             ),
-            event_refs=sorted(_attempt_ref(a) for a in judged_attempts),
+            event_refs=sorted(item.source_ref for item in observations),
         )
         evidence_refs.append(evidence.evidence_id)
         _persist_evidence(session, evidence, question_attempt_id=None)
-        reason_codes.append("performance_from_quiz_accuracy")
+        if "quiz_accuracy" in observation_kinds:
+            reason_codes.append("performance_from_quiz_accuracy")
+        if "coding_execution" in observation_kinds:
+            reason_codes.append("performance_from_coding_execution")
+        if len(observation_kinds) > 1:
+            reason_codes.append("performance_from_weighted_fusion")
     elif total_attempts > 0:
-        reason_codes.append("insufficient_judged_attempts")
+        if "coding_execution" in observation_kinds:
+            reason_codes.append("insufficient_effective_scored_weight")
+        else:
+            reason_codes.append("insufficient_judged_attempts")
     else:
         reason_codes.append("no_attempt_data")
 
@@ -227,6 +319,9 @@ def compute_cognitive_state(
         reason_codes.append("inquiry_insufficient_samples")
     else:
         reason_codes.append("inquiry_no_calibration_records")
+        # Keep the established public reason for clients that distinguish an
+        # absent semantic calibration from a merely insufficient sample.
+        reason_codes.append("inquiry_unknown_without_semantic_evidence")
 
     # 6. 计算 hint_dependency（提示依赖度）
     # 从 cognitive_context 中读取 hint 使用情况

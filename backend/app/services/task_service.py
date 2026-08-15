@@ -1,4 +1,4 @@
-﻿"""统一任务中心服务（阶段0）。
+"""统一任务中心服务（阶段0）。
 
 不依赖 Redis/Celery；使用 SQLModel 持久化 + 可替换的本地 worker 适配接口。
 后续可替换为 RQ/Celery/Dramatiq，只要保留相同的 TaskService 接口。
@@ -29,7 +29,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
-from app.core.time_utils import utcnow_aware
+from app.core.time_utils import to_iso, utcnow_aware
 from app.models.task_model import (
     IdempotencyKeyRecord,
     TaskEventRecord,
@@ -94,8 +94,8 @@ class TaskViewModel:
         *,
         links: Iterable[TaskResourceLinkRecord] = (),
     ) -> "TaskViewModel":
-        def _iso(value: Optional[datetime]) -> Optional[str]:
-            return value.isoformat() if value else None
+        def _iso_opt(value: Optional[datetime]) -> Optional[str]:
+            return to_iso(value) if value else None
 
         try:
             result_data = json.loads(record.result_data) if record.result_data else {}
@@ -118,13 +118,13 @@ class TaskViewModel:
             error_message=record.error_message,
             retryable=record.retryable,
             acknowledged=record.acknowledged,
-            acknowledged_at=_iso(record.acknowledged_at),
+            acknowledged_at=_iso_opt(record.acknowledged_at),
             parent_task_id=record.parent_task_id,
             idempotency_key=record.idempotency_key,
-            created_at=record.created_at.isoformat() if record.created_at else "",
-            updated_at=record.updated_at.isoformat() if record.updated_at else "",
-            started_at=_iso(record.started_at),
-            finished_at=_iso(record.finished_at),
+            created_at=to_iso(record.created_at),
+            updated_at=to_iso(record.updated_at),
+            started_at=_iso_opt(record.started_at),
+            finished_at=_iso_opt(record.finished_at),
             affected_resources=[
                 {
                     "resource_kind": link.resource_kind,
@@ -188,7 +188,13 @@ class TaskService:
 
     # --- 创建 ---------------------------------------------------------------
 
-    def create_task(self, session: Session, request: TaskCreateRequest) -> TaskViewModel:
+    def create_task(
+        self,
+        session: Session,
+        request: TaskCreateRequest,
+        *,
+        commit: bool = True,
+    ) -> TaskViewModel:
         if not request.task_type:
             reject_validation_failed("task_type 不能为空")
         if not request.owner_user_id:
@@ -264,7 +270,10 @@ class TaskService:
             created_at=now,
         ))
 
-        session.commit()
+        if commit:
+            session.commit()
+        else:
+            session.flush()
         session.refresh(record)
         return TaskViewModel.from_record(record, links=link_records)
 
@@ -437,6 +446,8 @@ class TaskService:
         record.finished_at = now
         record.updated_at = now
         record.result_ref = result_ref
+        record.error_code = ""
+        record.error_message = ""
         if result_data is not None:
             record.result_data = json.dumps(result_data, ensure_ascii=False)
         session.add(record)
@@ -470,6 +481,8 @@ class TaskService:
         record.finished_at = now
         record.updated_at = now
         record.result_ref = result_ref
+        record.error_code = ""
+        record.error_message = ""
         if result_data is not None:
             record.result_data = json.dumps(result_data, ensure_ascii=False)
         session.add(record)
@@ -535,11 +548,91 @@ class TaskService:
         record.finished_at = now
         record.updated_at = now
         session.add(record)
+        if record.task_type == "experiment_run":
+            # A pending cancellation prevents worker execution; a running one
+            # is observed between Judge0 cases.  Neither path finalizes the
+            # attempt or creates trusted evidence.
+            try:
+                from app.models.experiment_model import ExperimentRun
+
+                run = session.exec(
+                    select(ExperimentRun).where(ExperimentRun.task_id == task_id)
+                ).first()
+                if run is not None:
+                    run.cancel_requested_at = now
+                    session.add(run)
+            except Exception:
+                logger.exception("Unable to mark experiment run %s cancelled", task_id)
         session.add(TaskEventRecord(
             task_id=task_id,
             event_type="cancelled",
             stage=record.stage,
             message=reason or "用户取消",
+            created_at=now,
+        ))
+        session.commit()
+        session.refresh(record)
+        return TaskViewModel.from_record(record)
+
+    def reconcile_experiment_run_terminal(
+        self,
+        session: Session,
+        task_id: str,
+        *,
+        terminal_status: str,
+        result_ref: str = "",
+        result_data: Optional[dict[str, Any]] = None,
+        error_code: str = "",
+        error_message: str = "",
+        retryable: bool = False,
+    ) -> TaskViewModel:
+        """Reconcile a completed formal run after process recovery.
+
+        A worker can finish Judge0 evaluation before the process writes the
+        corresponding ``TaskRecord`` terminal state.  Recovery must reflect
+        that server-owned result without submitting the same student code a
+        second time.  This narrow helper is intentionally limited to
+        ``experiment_run`` records and only repairs non-terminal task states.
+        """
+        if terminal_status not in {"succeeded", "failed", "cancelled"}:
+            reject_validation_failed("experiment run terminal_status is invalid")
+
+        record = self._require_task(session, task_id)
+        if record.task_type != "experiment_run":
+            reject_validation_failed("only experiment_run tasks may be reconciled")
+        if record.status in {"succeeded", "failed", "cancelled"}:
+            return TaskViewModel.from_record(record)
+        if record.status not in {"pending", "running", "interrupted"}:
+            reject_state_conflict(
+                f"task status {record.status} cannot be reconciled",
+            )
+
+        now = utcnow_aware()
+        record.status = terminal_status
+        record.updated_at = now
+        record.finished_at = now
+        if terminal_status == "succeeded":
+            record.progress = 100
+            record.result_ref = result_ref
+            if result_data is not None:
+                record.result_data = json.dumps(result_data, ensure_ascii=False)
+            record.error_code = ""
+            record.error_message = ""
+            record.retryable = False
+        elif terminal_status == "failed":
+            record.error_code = error_code[:64]
+            record.error_message = error_message[:500]
+            record.retryable = retryable
+
+        session.add(record)
+        session.add(TaskEventRecord(
+            task_id=task_id,
+            event_type="reconciled",
+            stage=record.stage,
+            progress=record.progress,
+            message="experiment run terminal state reconciled after restart",
+            error_code=record.error_code,
+            event_data=record.result_data if terminal_status == "succeeded" else "{}",
             created_at=now,
         ))
         session.commit()
@@ -674,6 +767,11 @@ class TaskService:
         record = self._require_task(session, task_id)
         if operator_user_id is not None and record.owner_user_id != operator_user_id:
             reject_resource_not_found("任务不存在或无权访问")
+        if record.task_type == "experiment_run" and record.status == "cancelled":
+            # A cancellation is a terminal student intent for formal work.
+            # Requeuing it could later create a grade, evidence, and lab
+            # projection after the student has withdrawn the submission.
+            reject_state_conflict("已取消的正式评测不可重试")
         if not record.retryable:
             reject_state_conflict("任务不可重试")
         _assert_transition(record.status, "pending")
@@ -686,6 +784,22 @@ class TaskService:
         record.finished_at = None
         record.updated_at = now
         session.add(record)
+        if record.task_type == "experiment_run":
+            try:
+                from app.models.experiment_model import ExperimentRun, RunOutcome
+
+                run = session.exec(
+                    select(ExperimentRun).where(ExperimentRun.task_id == task_id)
+                ).first()
+                if run is not None and run.outcome.value == "sandbox_unavailable":
+                    run.outcome = RunOutcome.PENDING
+                    run.error_code = ""
+                    run.error_message = ""
+                    run.finished_at = None
+                    run.cancel_requested_at = None
+                    session.add(run)
+            except Exception:
+                logger.exception("Unable to reset experiment run %s for retry", task_id)
         session.add(TaskEventRecord(
             task_id=task_id,
             event_type="retried",
@@ -752,7 +866,7 @@ class TaskService:
                 "message": e.message,
                 "error_code": e.error_code,
                 "event_data": json.loads(e.event_data) if e.event_data else {},
-                "created_at": e.created_at.isoformat() if e.created_at else "",
+                "created_at": to_iso(e.created_at),
             }
             for e in events
         ]

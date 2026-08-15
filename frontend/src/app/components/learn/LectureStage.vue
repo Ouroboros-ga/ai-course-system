@@ -50,6 +50,8 @@ const props = defineProps({
   mediaStatus: { type: String, default: 'idle' },
   mediaMessage: { type: String, default: '' },
   legacyVideoUrl: { type: String, default: '' },
+  // 智能体面板是否打开：打开时左侧数字人区域切换为 PPT 缩略图
+  agentPanelOpen: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -62,6 +64,8 @@ const emit = defineEmits([
   'captions-change',
   'playlist-next',
   'playlist-previous',
+  'media-seeked',
+  'media-error',
 ])
 
 const audioRef = ref(null)
@@ -222,6 +226,20 @@ function handleTimeUpdate(event) {
   if (!applyingExternalTime) emitPlayback(undefined, element)
 }
 
+function emitMediaSeeked(element = mediaElement.value) {
+  if (!isActiveMediaElement(element) || switchingMediaSource) return
+  const item = activePlaylistItem.value
+  emit('media-seeked', {
+    mediaReleaseItemId: item?.itemId ?? null,
+    localTimeMs: Math.round(Math.max(0, Number(element.currentTime) || 0) * 1_000),
+    globalTimeMs: Math.round(globalTimeFromElement(element) * 1_000),
+  })
+}
+
+function handleSeeked(event) {
+  emitMediaSeeked(event?.currentTarget || mediaElement.value)
+}
+
 function handlePause(event) {
   const element = event?.currentTarget || mediaElement.value
   // Natural media completion emits pause before ended in some browsers.
@@ -234,12 +252,20 @@ function handleAudioError(event) {
   if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   switchingMediaSource = false
   audioError.value = '发布的讲解音频无法加载'
+  emit('media-error', {
+    code: 'MEDIA_SOURCE_UNAVAILABLE',
+    mediaReleaseItemId: activePlaylistItem.value?.itemId ?? null,
+  })
   emitPlayback(false)
 }
 
 function handleLegacyVideoError(event) {
   if (event?.currentTarget && !isActiveMediaElement(event.currentTarget)) return
   legacyVideoError.value = '兼容讲解视频无法加载'
+  emit('media-error', {
+    code: 'MEDIA_SOURCE_UNAVAILABLE',
+    mediaReleaseItemId: null,
+  })
   emitPlayback(false)
 }
 
@@ -266,12 +292,10 @@ function seekTo(value) {
     }) ?? -1
     if (targetIndex >= 0 && targetIndex !== props.playlistIndex) {
       const targetItem = props.playlist.items[targetIndex]
-      // Seek the underlying element as well.  The parent switches the active
-      // playlist index and re-syncs, but when the target item shares the same
-      // audio file the src does not reload, so without this the position
-      // would stay where it was before the drag.
       const localTime = sourceTimeForGlobal(globalTime)
+      applyingExternalTime = true
       element.currentTime = Math.min(localTime, element.duration || localTime)
+      applyingExternalTime = false
       const targetCue = hasAudio.value ? resolvePptCueAtTime(props.pptTimeline, targetMs) : null
       emit('playback', {
         globalTime,
@@ -285,7 +309,9 @@ function seekTo(value) {
     }
   }
   const target = sourceTimeForGlobal(globalTime)
+  applyingExternalTime = true
   element.currentTime = Math.min(target, element.duration || target)
+  applyingExternalTime = false
   emitPlayback(!element.paused)
 }
 
@@ -360,7 +386,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 </script>
 
 <template>
-  <div class="sfx-stage">
+  <div class="sfx-stage" :class="{ 'is-agent-open': agentPanelOpen }">
     <section class="sfx-stage-pane sfx-stage-lecture" aria-label="讲解与字幕">
       <header class="sfx-stage-pane-label">
         <span><MonitorPlay :size="15" /> {{ mediaLabel }}</span>
@@ -377,38 +403,70 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         class="sfx-stage-clock"
         @loadedmetadata="handleLoadedMetadata"
         @timeupdate="handleTimeUpdate"
+        @seeked="handleSeeked"
         @play="emitPlayback(true, $event.currentTarget)"
         @pause="handlePause"
         @ended="handleEnded"
         @error="handleAudioError"
       />
 
-      <AvatarViewport
-        v-if="hasAudio && avatarCues"
-        :cues="avatarCues"
-        :sprite-manifest="avatarSpriteManifest"
-        :current-time="avatarPlaybackTime"
-        :audio-element="audioRef"
-        :default-playback-mode="defaultPlaybackMode"
-        :asset-source="avatarAssetSource"
-      />
-      <video
-        v-if="!hasAudio && hasLegacyVideo"
-        ref="legacyVideoRef"
-        class="sfx-stage-video"
-        :key="legacyVideoUrl"
-        :src="legacyVideoUrl"
-        playsinline
-        preload="metadata"
-        @loadedmetadata="handleLoadedMetadata"
-        @timeupdate="handleTimeUpdate"
-        @play="emitPlayback(true, $event.currentTarget)"
-        @pause="handlePause"
-        @ended="handleEnded"
-        @error="handleLegacyVideoError"
-      />
+      <!-- 智能体面板打开时：优先显示 PPT 缩略图，而非数字人 -->
+      <div
+        v-if="agentPanelOpen && (effectiveSlide || currentPptPage)"
+        class="sfx-stage-slide-frame sfx-stage-lecture-ppt"
+      >
+        <img
+          v-if="effectiveSlide && !slideError"
+          :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
+          :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
+          :alt="`课程课件第 ${displayedPage} 页`"
+          @error="slideError = true"
+        />
+        <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
+          <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
+          <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
+          <p class="sfx-t-body">{{ currentPptPage.content }}</p>
+        </div>
+        <div v-else class="sfx-stage-fallback is-light">
+          <FileQuestion :size="28" :stroke-width="1.6" />
+          <strong>当前页暂无可显示的课件</strong>
+        </div>
+      </div>
+      <!-- 默认（非智能体）状态：显示数字人或兼容视频 -->
+      <template v-else>
+        <AvatarViewport
+          v-if="hasAudio && avatarCues"
+          :cues="avatarCues"
+          :sprite-manifest="avatarSpriteManifest"
+          :current-time="avatarPlaybackTime"
+          :audio-element="audioRef"
+          :default-playback-mode="defaultPlaybackMode"
+          :asset-source="avatarAssetSource"
+        />
+        <video
+          v-if="!hasAudio && hasLegacyVideo"
+          ref="legacyVideoRef"
+          class="sfx-stage-video"
+          :key="legacyVideoUrl"
+          :src="legacyVideoUrl"
+          playsinline
+          preload="metadata"
+          @loadedmetadata="handleLoadedMetadata"
+          @timeupdate="handleTimeUpdate"
+          @seeked="handleSeeked"
+          @play="emitPlayback(true, $event.currentTarget)"
+          @pause="handlePause"
+          @ended="handleEnded"
+          @error="handleLegacyVideoError"
+        />
+      </template>
 
-      <div v-if="!hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
+      <div v-if="!agentPanelOpen && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
+        <VideoOff :size="32" :stroke-width="1.6" />
+        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
+        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
+      </div>
+      <div v-else-if="agentPanelOpen && !effectiveSlide && !currentPptPage?.content && !currentPptPage?.title && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback is-light">
         <VideoOff :size="32" :stroke-width="1.6" />
         <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
         <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
@@ -469,7 +527,8 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
       </section>
     </slot>
 
-    <footer class="sfx-stage-controls" aria-label="播放控制">
+    <footer class="sfx-stage-controls" :class="{ 'is-agent-input': agentPanelOpen }" aria-label="播放控制">
+      <slot name="footer">
       <SfxButton variant="primary" size="sm" :disabled="!mediaElement" :aria-label="isPlaying ? '暂停讲解' : '播放讲解'" @click="togglePlay">
         <template #icon><Pause v-if="isPlaying" :size="16" /><Play v-else :size="16" /></template>
         {{ isPlaying ? '暂停' : '播放' }}
@@ -518,6 +577,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         <span class="sfx-visually-hidden">音量</span>
         <input type="range" min="0" max="1" step="0.05" :value="isMuted ? 0 : volume" :disabled="!mediaElement" @input="emit('volume-change', Number($event.target.value))" />
       </label>
+      </slot>
     </footer>
   </div>
 </template>
@@ -536,6 +596,27 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   padding: var(--space-4);
   background: var(--surface-canvas);
   overflow: hidden;
+  transition: grid-template-columns var(--duration-normal) var(--ease-out);
+}
+/* 智能体面板打开时：左侧压缩给 PPT 缩略图，右侧对话获得更多阅读空间 */
+.sfx-stage.is-agent-open {
+  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 3.25fr);
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+/* 智能体模式下的 PPT 缩略图区域样式 */
+.sfx-stage-lecture-ppt {
+  min-height: 160px;
+  background: var(--surface-panel);
+  border-bottom: 1px solid var(--border-subtle);
+  flex: 1;
+  min-height: 0;
+}
+.sfx-stage-lecture-ppt img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .sfx-stage-pane {
@@ -626,6 +707,15 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 }
 
 .sfx-stage-controls :deep(.sfx-btn.is-sm) { min-width: 0; }
+.sfx-stage-controls.is-agent-input {
+  padding: 0;
+  overflow: hidden;
+}
+.sfx-stage-controls.is-agent-input :deep(.sfx-agent-input-form) {
+  width: 100%;
+  border: none;
+  border-radius: 0;
+}
 .sfx-stage-time { min-width: 38px; color: var(--text-secondary); font-size: var(--caption-size); font-variant-numeric: tabular-nums; text-align: center; }
 .sfx-stage-seek { flex: 1 1 140px; min-width: 100px; }
 .sfx-stage-seek input, .sfx-stage-volume input { width: 100%; accent-color: var(--ink-700); }

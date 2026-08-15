@@ -250,6 +250,7 @@ InitialCoursePrepPort.build(
 - **课程骨架预算对象**：`CourseSkeletonBudget`（`mode=course_skeleton`、`target_sections/target_knowledge_points/target_total_nodes`、`max_*` 硬上限）作为单一事实源接入 `ControlledPrepInput.skeleton_budget`；`plan_outline` 调用前按证据分段数 `for_evidence_segment_count` 动态校准目标（577 页 32 段 -> 8-12 单元；3 页 2 段 -> 1-2 单元），小材料不强行凑够 8 个单元。adapter 把 `mode + target_* + max_*` 统一写进 `constraints`，不再散落在 Prompt/配置/工作流里。
 - **四级恢复阶梯**（`plan_outline`）：1) 正常生成（含 JSON 自动修复）；2) 超预算或树不合法时一次"压缩课程骨架"调用（`_compact_outline_recovery`，`target_*` 与 `max_*` 同步收紧，返回结果按紧凑硬上限再次校验）；3) 仍缺知识点时仅为叶子 section 确定性回填同名 `knowledge_point`（`PREP_OUTLINE_KNOWLEDGE_POINT_BACKFILLED`），并受剩余总节点预算约束；4) 紧凑调用仍返回坏格式或完全无可用树时，从证据分段标题确定性编译合法的 `chapter -> section -> knowledge_point` 三层骨架（`PREP_OUTLINE_DETERMINISTIC_FALLBACK`），不调用模型、不伪造证据、不泄漏证据 ID。紧凑调用的第二次结构化失败不会再中断整次备课。
 - **程序硬门**：`_validate_outline_tree` 拒绝重复 `candidate_id`、缺失 chapter、错误父节点类型及任何非 `chapter -> section -> knowledge_point` 关系；`_is_outline_within_budget` 同时执行 `max_sections`、`max_knowledge_points` 和 `max_total_nodes`，不再只依赖 Prompt 约束。32 个证据分段的确定性保底固定收敛为 1 chapter / 10 sections / 16 knowledge points（27 节点），仍需教师复核内容质量。
+- **空/过短标题兜底**：OCR 课件常把图标、页码或 1 字符碎片（`\uf06c`、`P3`）写进节点标题，标题硬门会因此整单失败。`InitialCoursePrepService._fill_empty_outline_titles` 在硬门前用节点证据块文本确定性兜底（剥离私有区图标后截取 ≤40 字），无可用证据时用"未命名章节/单元/知识点"占位并按父级去重；每次兜底经 `PREP_EMPTY_TITLE_FALLBACK` warning 提示教师复核，不静默改稿。
 - **错误与警告链路**：`TaskExecutionError` 新增 `stage` 透传，`_initial_runtime_failure` 保留失败阶段，教师端显示"课程结构规划"而非"未知阶段"；`DraftAssetResult.to_progress_data()` 含 `warnings`，`course_draft_build_handler` 存入 persisting checkpoint；`draft-build-status` 接口在 succeeded 时返回 `warnings` 与 `skeleton_summary`（节点数摘要），前端 `BuildMaterialsPage` 消费后展示非阻塞提示（如"已生成课程骨架：N 个节点，系统已合并细碎目录，进入结构页可继续调整"）。
 - **明确的失败码**：仅在连证据分段也不存在时返回 `PREP_OUTLINE_NO_KNOWLEDGE_POINTS`，教师端显示安全中文文案并附诊断编号。
 
@@ -407,7 +408,7 @@ class PromptSpec:
 |---|-----------|------|------|
 | 1 | prep.evidence_segmenter v2.1 | 有界证据 Map（模型不返回证据 ID） | Initial |
 | 2 | prep.evidence_reducer v1.3 | 层级证据 Reduce（中间层瘦合并、末级补全 examples/exercises、不返回证据 ID） | Initial |
-| 3 | prep.outline_planner v2.1 | 目录规划（最多 24 知识点/64 节点，不返回证据 ID） | Initial |
+| 3 | prep.outline_planner v2.4 | 目录规划（最多 24 知识点/64 节点；标题须为单行教学概念 2-40 字，禁止行动描述/图注/OCR/编号枚举，不返回证据 ID） | Initial |
 | 4 | prep.script_writer / batch v1.2 | 讲稿撰写（不返回证据 ID / paragraph_evidence） | Initial |
 | 5 | prep.evidence_verifier v1.2 | 证据校验（不返回证据 ID） | Initial |
 | 6 | prep.incremental_planner v2.0 | 增量规划 | Incremental |

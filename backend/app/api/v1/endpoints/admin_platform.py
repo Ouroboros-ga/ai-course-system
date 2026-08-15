@@ -12,7 +12,9 @@ from app.models.database import get_session
 from app.models.access_control_model import PlatformPermission
 from app.services.course_access_service import require_platform_permission
 from app.services.platform_admin_service import (
+    list_course_capabilities,
     list_integrations,
+    update_course_capabilities,
     update_integration,
     list_users,
     update_user,
@@ -61,6 +63,20 @@ class TaskConcurrencyUpdate(BaseModel):
     course_draft_build: int = Field(default=1, ge=1, le=32)
     graphrag: int = Field(default=1, ge=1, le=32)
     vector_index: int = Field(default=1, ge=1, le=32)
+    sandbox_execution: int = Field(default=1, ge=1, le=32)
+    # GraphRAG 单次构建的最大输入 token 预算（0 = 使用环境默认值）。
+    graphrag_max_input_tokens: int = Field(default=0, ge=0, le=2000000)
+
+
+class AdminCapabilityUpdate(BaseModel):
+    learning: bool
+    course_building: bool
+    knowledge_graph: bool
+    evidence: bool
+    experiment: bool
+    coding_sandbox: bool
+    cognitive_analysis: bool
+    safety_policy: bool
 
 
 @router.get("/integrations")
@@ -91,13 +107,13 @@ async def test_integration(integration_key: str, session: Session = Depends(get_
     from app.models.platform_admin_model import PlatformIntegrationConfig
     from app.services.platform_admin_service import decrypt_secret
     from app.services.platform_provider_manager import provider_manager
-    if integration_key in {"llm", "tts", "ppt"}:
+    if integration_key in {"llm", "tts", "ppt", "asr"}:
         item = session.exec(select(PlatformIntegrationConfig).where(PlatformIntegrationConfig.integration_key == integration_key)).first()
         if item is None:
             return unified_response(503, "PROVIDER_NOT_CONFIGURED", {"integration_key": integration_key, "status": "not_configured"})
         probe = await provider_manager.probe(integration_key, provider=item.provider, base_url=item.base_url, model_name=item.model_name, api_key=decrypt_secret(item.encrypted_api_key), extra_config=item.extra_config)
-        return unified_response(200 if probe.status == "reachable" else 503, probe.message, {"integration_key": integration_key, "status": probe.status})
-    if integration_key not in {"llm", "tts", "ppt"}:
+        return unified_response(200 if probe.status in {"reachable", "configured"} else 503, probe.message, {"integration_key": integration_key, "status": probe.status})
+    if integration_key not in {"llm", "tts", "ppt", "asr"}:
         return unified_response(404, "不支持的集成类型", None)
     # The actual Provider Manager can replace this probe without changing the API.
     return unified_response(200, "配置格式校验通过；运行时健康检查将在 Provider 刷新时执行", {"integration_key": integration_key, "status": "accepted"})
@@ -127,3 +143,14 @@ async def patch_user(user_id: int, payload: UserUpdate, session: Session = Depen
 async def post_reset_password(user_id: int, payload: PasswordReset, session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
     reset_password(session, int(current_user["user_id"]), user_id, payload.password)
     return unified_response(200, "密码已重置", {"user_id": user_id})
+
+
+@router.get("/courses/capabilities")
+async def get_course_capabilities(session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
+    return unified_response(200, "获取课程能力开关成功", {"items": list_course_capabilities(session)})
+
+
+@router.put("/courses/{course_id}/capabilities")
+async def put_course_capabilities(course_id: int, payload: AdminCapabilityUpdate, session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
+    data = update_course_capabilities(session, course_id, payload.model_dump(), int(current_user["user_id"]))
+    return unified_response(200, "课程能力开关已保存", data)

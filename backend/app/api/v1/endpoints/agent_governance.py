@@ -19,10 +19,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlmodel import Session, select
 
 from app.core.exceptions import (
@@ -37,6 +37,10 @@ from app.models.agent_governance_model import (
     AgentPolicyVersion,
     AgentToolInvocation,
     AgentToolPolicy,
+)
+from app.models.teaching_constraint_model import (
+    TeachingConstraintEvaluation,
+    TeachingConstraintPolicyVersion,
 )
 from app.models.database import get_session
 from app.schemas.agent import (
@@ -56,6 +60,9 @@ from app.services.agent_governance_service import (
     agent_governance_service,
 )
 from app.services.course_access_service import require_course_permission
+from app.services.teaching_constraint_service import teaching_constraint_service
+from app.platform.agents.edu.constraints import canonicalize_snapshot
+from app.platform.agents.tools.catalog import DEFAULT_TOOL_CATALOG
 
 
 agent_governance_router = APIRouter()
@@ -77,6 +84,7 @@ def _serialize_version(version: AgentPolicyVersion) -> dict[str, Any]:
 
 
 def _serialize_tool_policy(row: AgentToolPolicy) -> dict[str, Any]:
+    descriptor = DEFAULT_TOOL_CATALOG.get(row.tool_name)
     return {
         "tool_name": row.tool_name,
         "enabled": bool(row.enabled),
@@ -84,6 +92,8 @@ def _serialize_tool_policy(row: AgentToolPolicy) -> dict[str, Any]:
         "confirmation_threshold": row.confirmation_threshold,
         "locked": bool(row.locked),
         "locked_reason": row.locked_reason,
+        "configurable": descriptor.configurable if descriptor is not None else True,
+        "status": descriptor.status if descriptor is not None else "active",
     }
 
 
@@ -154,6 +164,7 @@ def _build_tool_policy_view(
     rows_by_name = {row.tool_name: row for row in rows}
     items: list[dict[str, Any]] = []
     for name in BUILTIN_TOOL_NAMES:
+        descriptor = DEFAULT_TOOL_CATALOG.get(name)
         row = rows_by_name.get(name)
         if row is None:
             default = DEFAULT_TOOL_POLICY.get(name, {})
@@ -164,6 +175,8 @@ def _build_tool_policy_view(
                 "confirmation_threshold": str(default.get("confirmation_threshold", "never")),
                 "locked": False,
                 "locked_reason": None,
+                "configurable": descriptor.configurable if descriptor is not None else True,
+                "status": descriptor.status if descriptor is not None else "active",
             })
         else:
             items.append(_serialize_tool_policy(row))
@@ -172,6 +185,95 @@ def _build_tool_policy_view(
         "course_id": course_id,
         "active_version": _serialize_version(active_version) if active_version else None,
         "items": items,
+    }
+
+
+class _StrictRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+
+class TeachingConstraintUpdateRequest(_StrictRequest):
+    expected_version: int = Field(ge=0)
+    change_reason: str = Field(min_length=3, max_length=256)
+    policy: dict[str, Any]
+
+
+class TeachingConstraintRollbackRequest(_StrictRequest):
+    target_version: int = Field(ge=1)
+    expected_version: int = Field(ge=1)
+    change_reason: str = Field(min_length=3, max_length=256)
+
+
+class TeachingConstraintPreviewRequest(_StrictRequest):
+    student_id: int = Field(ge=1)
+    intent: Literal[
+        "concept_question",
+        "code_debugging",
+        "learning_guidance",
+        "other",
+    ] | None = None
+    concept_id: str | None = Field(default=None, min_length=1, max_length=128)
+    policy: dict[str, Any] | None = None
+
+
+def _serialize_constraint_version(
+    row: TeachingConstraintPolicyVersion | None,
+    *,
+    include_policy: bool,
+) -> dict[str, Any]:
+    if row is None:
+        snapshot = teaching_constraint_service.parse_snapshot(None)
+        return {
+            "id": None,
+            "version": 0,
+            "policy_hash": None,
+            "is_active": True,
+            "change_reason": "platform default",
+            "created_by": None,
+            "created_at": None,
+            "policy": snapshot.model_dump(mode="json") if include_policy else None,
+        }
+    payload = {
+        "id": row.id,
+        "version": row.version,
+        "policy_hash": row.policy_hash,
+        "is_active": bool(row.is_active),
+        "change_reason": row.change_reason,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+    }
+    if include_policy:
+        payload["policy"] = teaching_constraint_service.parse_snapshot(row).model_dump(
+            mode="json"
+        )
+    return payload
+
+
+def _safe_json_array(value: str) -> list[str]:
+    try:
+        parsed = json.loads(value or "[]")
+    except (TypeError, ValueError):
+        return []
+    return [str(item) for item in parsed] if isinstance(parsed, list) else []
+
+
+def _serialize_constraint_evaluation(
+    row: TeachingConstraintEvaluation,
+) -> dict[str, Any]:
+    return {
+        "trace_id": row.trace_id,
+        "course_id": row.course_id,
+        "student_id": row.student_id,
+        "policy_version_id": row.policy_version_id,
+        "effective_level": row.effective_level,
+        "matched_rule_ids": _safe_json_array(row.matched_rule_ids),
+        "applied_scopes": _safe_json_array(row.applied_scopes),
+        "decision_codes": _safe_json_array(row.decision_codes),
+        "context_input_chars": row.context_input_chars,
+        "context_output_chars": row.context_output_chars,
+        "valid_citation_count": row.valid_citation_count,
+        "enforcement_status": row.enforcement_status,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
     }
 
 
@@ -223,6 +325,184 @@ async def update_tool_policies(
             "course_id": course_id,
             "active_version": _serialize_version(version),
             "items": [_serialize_tool_policy(row) for row in rows],
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# TeachingAgent hardness / constraint policy
+# ---------------------------------------------------------------------------
+
+
+@agent_governance_router.get("/course/{course_id}/teaching-constraints")
+async def get_teaching_constraints(
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "agent.policy.view")
+    current = teaching_constraint_service.get_current(session, course_id=course_id)
+    return unified_response(
+        200,
+        "获取教学约束策略成功",
+        {
+            "course_id": course_id,
+            "active_version": _serialize_constraint_version(
+                current, include_policy=True
+            ),
+        },
+    )
+
+
+@agent_governance_router.put("/course/{course_id}/teaching-constraints")
+async def update_teaching_constraints(
+    course_id: int,
+    payload: TeachingConstraintUpdateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(
+        session, current_user, course_id, "agent.policy.configure"
+    )
+    row = teaching_constraint_service.save(
+        session,
+        course_id=course_id,
+        expected_version=payload.expected_version,
+        actor_user_id=int(current_user["user_id"]),
+        change_reason=payload.change_reason,
+        payload=payload.policy,
+    )
+    session.commit()
+    session.refresh(row)
+    return unified_response(
+        200,
+        "教学约束策略已保存",
+        {
+            "course_id": course_id,
+            "active_version": _serialize_constraint_version(row, include_policy=True),
+        },
+    )
+
+
+@agent_governance_router.get(
+    "/course/{course_id}/teaching-constraints/versions"
+)
+async def list_teaching_constraint_versions(
+    course_id: int,
+    limit: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "agent.policy.view")
+    rows = teaching_constraint_service.list_versions(
+        session, course_id=course_id, limit=limit
+    )
+    return unified_response(
+        200,
+        "获取教学约束版本成功",
+        {
+            "course_id": course_id,
+            "items": [
+                _serialize_constraint_version(row, include_policy=False) for row in rows
+            ],
+            "total": len(rows),
+        },
+    )
+
+
+@agent_governance_router.post(
+    "/course/{course_id}/teaching-constraints/rollback"
+)
+async def rollback_teaching_constraints(
+    course_id: int,
+    payload: TeachingConstraintRollbackRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(
+        session, current_user, course_id, "agent.policy.configure"
+    )
+    row = teaching_constraint_service.rollback(
+        session,
+        course_id=course_id,
+        target_version=payload.target_version,
+        expected_version=payload.expected_version,
+        actor_user_id=int(current_user["user_id"]),
+        change_reason=payload.change_reason,
+    )
+    session.commit()
+    session.refresh(row)
+    return unified_response(
+        200,
+        "教学约束策略已回滚为新版本",
+        {
+            "course_id": course_id,
+            "active_version": _serialize_constraint_version(row, include_policy=True),
+        },
+    )
+
+
+@agent_governance_router.post(
+    "/course/{course_id}/teaching-constraints/preview"
+)
+async def preview_teaching_constraints(
+    course_id: int,
+    payload: TeachingConstraintPreviewRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "agent.policy.view")
+    snapshot = None
+    if payload.policy is not None:
+        try:
+            snapshot = canonicalize_snapshot(payload.policy)
+        except ValidationError as exc:
+            reject_validation_failed(
+                "教学约束策略不符合契约",
+                details={
+                    "reason_code": "CONSTRAINT_POLICY_INVALID",
+                    "errors": exc.errors(include_url=False, include_input=False),
+                },
+            )
+    envelope = teaching_constraint_service.preview(
+        session,
+        course_id=course_id,
+        student_id=payload.student_id,
+        snapshot=snapshot,
+        intent=payload.intent,
+        concept_id=payload.concept_id,
+    )
+    return unified_response(
+        200,
+        "教学约束预览成功",
+        {
+            "course_id": course_id,
+            "student_id": payload.student_id,
+            "effective": envelope.model_dump(mode="json"),
+        },
+    )
+
+
+@agent_governance_router.get(
+    "/course/{course_id}/teaching-constraints/evaluations"
+)
+async def list_teaching_constraint_evaluations(
+    course_id: int,
+    limit: int = Query(default=100, ge=1, le=200),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "agent.policy.view")
+    rows = teaching_constraint_service.list_evaluations(
+        session, course_id=course_id, limit=limit
+    )
+    return unified_response(
+        200,
+        "获取教学约束执行审计成功",
+        {
+            "course_id": course_id,
+            "items": [_serialize_constraint_evaluation(row) for row in rows],
+            "total": len(rows),
         },
     )
 
@@ -514,6 +794,14 @@ async def list_builtin_tools(
             "items": [
                 {
                     "tool_name": name,
+                    "configurable": (
+                        DEFAULT_TOOL_CATALOG.get(name).configurable
+                        if DEFAULT_TOOL_CATALOG.get(name) is not None else True
+                    ),
+                    "status": (
+                        DEFAULT_TOOL_CATALOG.get(name).status
+                        if DEFAULT_TOOL_CATALOG.get(name) is not None else "active"
+                    ),
                     "default": DEFAULT_TOOL_POLICY.get(name, {
                         "enabled": True,
                         "require_confirmation": False,

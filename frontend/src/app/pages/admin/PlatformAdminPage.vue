@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu } from 'lucide-vue-next'
-import { getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
+import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu, ToggleLeft } from 'lucide-vue-next'
+import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
 import { showToast } from '@/utils/toast.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -19,7 +19,20 @@ const passwordFor = ref(null)
 const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
-const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1 })
+const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1, graphrag_max_input_tokens: 0 })
+
+const CAPABILITY_FIELDS = [
+  { key: 'learning', label: '学习' },
+  { key: 'course_building', label: '建设' },
+  { key: 'knowledge_graph', label: '图谱' },
+  { key: 'evidence', label: '证据' },
+  { key: 'experiment', label: '实验' },
+  { key: 'coding_sandbox', label: '沙箱' },
+  { key: 'cognitive_analysis', label: '认知' },
+  { key: 'safety_policy', label: '安全' },
+]
+const ALL_CAPS_ON = Object.fromEntries(CAPABILITY_FIELDS.map(field => [field.key, true]))
+const courseCaps = ref([])
 
 function userPatch(user) {
   return { username: user.username || '', role: user.role, is_active: user.is_active }
@@ -44,12 +57,13 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [userResult, integrationResult, concurrencyResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency()])
+    const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
     users.value = userResult.items || []
     total.value = userResult.total || 0
     integrations.value = integrationResult.items || []
     integrations.value.forEach(item => { drafts[item.integration_key] = integrationDraft(item) })
     Object.assign(concurrency, concurrencyResult || {})
+    courseCaps.value = (capsResult.items || []).map(item => ({ ...item, draft: { ...item.capabilities } }))
   } catch (caught) {
     error.value = caught?.response?.data?.detail?.message || caught?.message || '无法读取平台管理数据'
   } finally {
@@ -111,9 +125,60 @@ async function probe(item) {
   try {
     const result = await testIntegration(item.integration_key)
     item.health_status = result.status
-    showToast(`连通性检查：${result.status}`, result.status === 'reachable' ? 'success' : 'warning')
+    showToast(`连通性检查：${result.status}`, result.status === 'reachable' || result.status === 'configured' ? 'success' : 'warning')
   } catch (caught) {
     showToast(caught?.message || 'Provider 不可用', 'error')
+  } finally { saving.value = '' }
+}
+
+/**
+ * 一键开关：只发送 enabled + expected_version，其余字段保留服务端已存配置。
+ * 启用时后端会先做配置校验（probe），配置不完整会返回错误并提示先填表单。
+ */
+async function toggleIntegration(item) {
+  saving.value = `toggle-${item.integration_key}`
+  const next = !item.enabled
+  try {
+    const updated = await updateIntegration(item.integration_key, { enabled: next, expected_version: item.version })
+    Object.assign(item, updated)
+    drafts[item.integration_key] = integrationDraft(item)
+    showToast(next ? `${item.integration_key.toUpperCase()} 真实接入已开启` : `${item.integration_key.toUpperCase()} 真实接入已关闭`, 'success')
+  } catch (caught) {
+    const detail = caught?.response?.data?.detail
+    const message = typeof detail === 'object' ? (detail.message || '') : (caught?.message || '切换失败')
+    showToast(message || `开启 ${item.integration_key.toUpperCase()} 前请先完整填写 Provider 配置`, 'error')
+  } finally { saving.value = '' }
+}
+
+async function saveCourseCaps(course) {
+  saving.value = `caps-${course.course_id}`
+  try {
+    const updated = await updateAdminCourseCapabilities(course.course_id, course.draft)
+    course.capabilities = updated.capabilities
+    course.draft = { ...updated.capabilities }
+    showToast(`课程「${course.title}」能力开关已保存`, 'success')
+  } catch (caught) {
+    showToast(caught?.message || '能力开关保存失败', 'error')
+  } finally { saving.value = '' }
+}
+
+async function enableAllCaps(course) {
+  course.draft = { ...ALL_CAPS_ON }
+  await saveCourseCaps(course)
+}
+
+async function enableAllCoursesCaps() {
+  if (!courseCaps.value.length) return
+  saving.value = 'caps-all'
+  try {
+    for (const course of courseCaps.value) {
+      const updated = await updateAdminCourseCapabilities(course.course_id, { ...ALL_CAPS_ON })
+      course.capabilities = updated.capabilities
+      course.draft = { ...updated.capabilities }
+    }
+    showToast('已为全部课程开启所有能力开关', 'success')
+  } catch (caught) {
+    showToast(caught?.message || '批量开启失败', 'error')
   } finally { saving.value = '' }
 }
 
@@ -157,26 +222,47 @@ onMounted(load)
       </section>
 
       <section class="sfx-panel admin-section">
+        <div class="section-head"><h2 class="sfx-t-title3"><ToggleLeft :size="19" /> 课程能力开关</h2><span class="sfx-t-caption">能力开关门控课程权限；关闭后对应接口返回 403。平台管理员可在此一键解锁全部课程。</span></div>
+        <div class="caps-toolbar"><SfxButton size="sm" variant="primary" :loading="saving === 'caps-all'" @click="enableAllCoursesCaps">一键开启全部课程能力</SfxButton></div>
+        <SfxEmpty v-if="!courseCaps.length" title="暂无课程" description="平台还没有任何课程。" />
+        <div v-else class="sfx-table-wrap">
+          <table class="sfx-table caps-table"><thead><tr><th>课程</th><th v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-th">{{ field.label }}</th><th>操作</th></tr></thead>
+            <tbody><tr v-for="course in courseCaps" :key="course.course_id"><td class="caps-title">#{{ course.course_id }} {{ course.title }}<span class="sfx-t-caption caps-status">{{ course.status }}</span></td>
+              <td v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-td"><label class="caps-check"><input v-model="course.draft[field.key]" type="checkbox" :aria-label="field.label" /></label></td>
+              <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `caps-${course.course_id}`" @click="saveCourseCaps(course)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="enableAllCaps(course)">全开</SfxButton></span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sfx-panel admin-section">
         <div class="section-head"><h2 class="sfx-t-title3"><Cpu :size="19" /> 后台任务并发</h2><span class="sfx-t-caption">开发者模式下可限制后台任务的并发数量，避免本机资源过载。</span></div>
         <div class="concurrency-grid">
           <label class="checkbox-line"><input v-model="concurrency.developer_mode" type="checkbox" /> 开发者模式</label>
           <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label>代码沙箱评测<input v-model.number="concurrency.sandbox_execution" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
           <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
+          <label class="budget-line">GraphRAG 单次输入 token 上限<input v-model.number="concurrency.graphrag_max_input_tokens" class="sfx-input" type="number" min="0" step="1000" /><small class="sfx-t-caption">0 = 使用服务器环境默认值；按 token 计，不按美元估算。</small></label>
         </div>
         <div class="section-actions"><SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置</SfxButton></div>
       </section>
 
       <section class="sfx-panel admin-section">
         <div class="section-head"><h2 class="sfx-t-title3"><SlidersHorizontal :size="19" /> Provider 配置</h2><span class="sfx-t-caption">密钥仅显示配置状态；留空保存会保留旧密钥。</span></div>
-        <div class="provider-grid"><article v-for="item in integrations" :key="item.integration_key" class="provider-card"><header><h3>{{ item.integration_key.toUpperCase() }}</h3><span class="health" :data-status="item.health_status">{{ item.health_status || 'not_configured' }}</span></header>
+        <div class="provider-grid"><article v-for="item in integrations" :key="item.integration_key" class="provider-card"><header>
+            <h3>{{ item.integration_key.toUpperCase() }}<span v-if="['llm', 'tts', 'asr'].includes(item.integration_key)" class="toggle-caption">{{ item.enabled ? '真实接入' : '已关闭' }}</span></h3>
+            <span class="card-actions"><span class="health" :data-status="item.health_status">{{ item.health_status || 'not_configured' }}</span>
+              <SfxButton v-if="['llm', 'tts', 'asr'].includes(item.integration_key)" size="sm" :variant="item.enabled ? 'secondary' : 'primary'" :loading="saving === `toggle-${item.integration_key}`" @click="toggleIntegration(item)">{{ item.enabled ? '关闭真实接入' : '开启真实接入' }}</SfxButton>
+            </span>
+          </header>
           <label>Provider<input v-model="drafts[item.integration_key].provider" class="sfx-input" placeholder="openai / volcengine / xfyun" /></label>
           <label>Base URL<input v-model="drafts[item.integration_key].base_url" class="sfx-input" placeholder="https://…" /></label>
           <label>Model Name<input v-model="drafts[item.integration_key].model_name" class="sfx-input" placeholder="模型或端点名称" /></label>
           <label>API Key<input v-model="drafts[item.integration_key].api_key" class="sfx-input" type="password" :placeholder="item.key_configured ? `已配置（末四位 ${item.key_last4 || '****'}）` : '输入新密钥'" /></label>
-          <label class="checkbox-line"><input v-model="drafts[item.integration_key].enabled" type="checkbox" /> 启用该 Provider</label>
+          <label class="checkbox-line"><input v-model="drafts[item.integration_key].enabled" type="checkbox" /> 保存后启用该 Provider</label>
           <details><summary>高级配置（JSON）</summary><textarea v-model="drafts[item.integration_key].extra_config" class="sfx-input json-input" rows="4" /></details>
           <footer><SfxButton size="sm" :loading="saving === `integration-${item.integration_key}`" @click="saveIntegration(item)">保存并热刷新</SfxButton><SfxButton size="sm" variant="secondary" :loading="saving === `probe-${item.integration_key}`" @click="probe(item)">测试</SfxButton></footer>
         </article></div>
@@ -191,6 +277,8 @@ onMounted(load)
 .actions, .password-row-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
-.provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
-.concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
+.provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; display:flex; align-items:center; gap:var(--space-2); }.card-actions { display:flex; align-items:center; gap:var(--space-2); }.toggle-caption { font-size:var(--caption-size); font-weight:400; color:var(--text-secondary); background:var(--surface-cool); padding:1px 8px; border-radius:999px; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.health[data-status="disabled"] { background:var(--surface-cool); color:var(--text-secondary); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
+.concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.concurrency-grid .budget-line { grid-column:1/-1; }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
+.caps-toolbar { display:flex; justify-content:flex-start; margin-bottom:var(--space-4); }
+.caps-table { min-width:760px; }.caps-th { text-align:center; white-space:nowrap; }.caps-td { text-align:center; }.caps-check { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }.caps-check input { width:16px; height:16px; accent-color:var(--ink-700); }.caps-title { white-space:nowrap; }.caps-status { margin-left:var(--space-2); padding:1px 6px; border-radius:999px; background:var(--surface-cool); }
 </style>

@@ -224,12 +224,23 @@ class CourseKnowledgeBuildLease(SQLModel, table=True):
 class LearningProjectionOutbox(SQLModel, table=True):
     __tablename__ = "learning_projection_outbox"
     __table_args__ = (
-        UniqueConstraint("attempt_id", "knowledge_node_id", name="uq_projection_attempt_node"),
+        UniqueConstraint(
+            "source_type",
+            "source_ref",
+            "student_id",
+            "course_id",
+            "knowledge_node_id",
+            name="uq_projection_source_scope_node",
+        ),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     event_id: str = Field(default_factory=lambda: _public_id("lpo"), unique=True, index=True)
-    attempt_id: int = Field(foreign_key="question_attempts.id", index=True)
+    # Retained for legacy question-attempt consumers.  New sources use the
+    # generic source identity below and must not forge a question FK.
+    attempt_id: Optional[int] = Field(default=None, foreign_key="question_attempts.id", index=True)
+    source_type: str = Field(default="question_attempt", max_length=32, index=True)
+    source_ref: str = Field(default="", max_length=128, index=True)
     student_id: int = Field(foreign_key="users.id", index=True)
     course_id: int = Field(foreign_key="courses.id", index=True)
     knowledge_node_id: int = Field(index=True)

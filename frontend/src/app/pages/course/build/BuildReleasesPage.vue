@@ -39,7 +39,10 @@ async function publish () {
     message.value = data?.draft?.editable
       ? '课程已发布，已自动创建下一版可编辑草稿。'
       : (data?.message || '课程已正式发布')
-  } catch (error) { message.value = error?.response?.data?.detail?.message || error?.message || '正式发布失败' } finally { loading.value = false }
+  } catch (error) {
+    const detail = error?.response?.data?.detail
+    message.value = (typeof detail === 'string' ? detail : detail?.message) || error?.message || '正式发布失败'
+  } finally { loading.value = false }
 }
 </script>
 <template>

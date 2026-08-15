@@ -59,7 +59,7 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
 
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
-    version="2.3",
+    version="2.4",
     system_template=(
         "你是 OutlinePlanner。首次智能备课的目标是生成一份可审核的课程骨架，"
         "而不是复刻整本教材目录、训练题标题或书签。\n"
@@ -72,6 +72,13 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
         "归属 section；\n"
         "- candidates 中必须包含至少 1 个 knowledge_point；只输出目录层级、不产出"
         "任何可讲授知识点，是无效结果。\n"
+        "标题规范（硬性要求，违反任一即整单失败）：\n"
+        "- 每个标题必须是单行教学概念短语，长度 2-40 字，禁止换行；\n"
+        "- 必须是课程中真实可讲授的概念或单元，禁止复述行动描述、任务步骤或"
+        "流程说明（如“汇总已解析课程材料”“生成课程建设草稿”）；\n"
+        "- 禁止图注/表注（如“图 2-28”“表 3-1”）、页码、页眉页脚、OCR 碎片、"
+        "零件清单、习题编号及 a）/b）/c）式枚举；\n"
+        "- 禁止在标题中使用编号前缀或连字符列表（如“1.”“一、”“-”）。\n"
         "数量目标（见 constraints 中的 target_*，是理想范围而非硬性配额）：\n"
         "- 主题单元（section）目标 8-12 个，硬上限 12；\n"
         "- 知识点目标 12-24 个，硬上限 24；\n"
@@ -85,22 +92,39 @@ OUTLINE_PLANNER_PROMPT = PromptSpec(
 
 SCRIPT_WRITER_PROMPT = PromptSpec(
     name="prep.script_writer",
-    version="1.2",
+    version="1.4",
     system_template=(
         "你是 ScriptWriter。只为一个知识点生成讲稿。段落之间用两个换行分隔，"
         "不得虚构材料中不存在的课程事实。不要输出任何证据 ID 或引用字段；"
-        "证据归属由系统在调用后确定。"
+        "证据归属由系统在调用后确定。\n"
+        "课程是一段连续讲解，本知识点只是序列中的一环。输入会给出 position"
+        "（index/total、is_first、is_last、previous_title、next_title）："
+        "只有 is_first=true 时才可用开场问候（如“同学们好”）；只有 is_last=true "
+        "时才可写总结收尾；其余知识点应直接承接 previous_title 自然过渡到本知识点，"
+        "禁止重复“大家好”“同学们好”“今天我们来学习”等开场白，禁止在每个知识点结尾都写总结。\n"
+        "输出 JSON 必须包含 claims 字段：claims 不是证据 ID 或引用编号，而是本知识点"
+        "讲稿所依据的核心论断，用 1~10 条自然语言短句描述（每条即一条论断），"
+        "必须至少 1 条，不能省略该字段。"
     ),
     output_schema_version="2.0",
 )
 
 SCRIPT_WRITER_BATCH_PROMPT = PromptSpec(
     name="prep.script_writer_batch",
-    version="1.2",
+    version="1.4",
     system_template=(
         "你是 ScriptWriter。一次为给定的全部知识点生成讲稿。"
         "不要生成候选列表之外的知识点。不要输出任何证据 ID 或引用字段；"
-        "证据归属由系统在调用后确定。"
+        "证据归属由系统在调用后确定。\n"
+        "输入的知识点构成一段连续讲解：candidates 里每个知识点都带 position"
+        "（index/total、is_first、is_last、previous_title、next_title），"
+        "并附 knowledge_point_sequence 展示全部知识点顺序。只有 is_first=true 的"
+        "知识点才可用开场问候（如“同学们好”）；只有 is_last=true 的知识点才可写"
+        "总结收尾；其余知识点应直接承接上一个知识点自然过渡，禁止重复“大家好”"
+        "“同学们好”“今天我们来学习”等开场白，禁止每个知识点结尾都写总结。\n"
+        "每个脚本对象必须包含 claims 字段：claims 不是证据 ID 或引用编号，而是该"
+        "知识点讲稿所依据的核心论断，用 1~10 条自然语言短句描述（每条即一条论断），"
+        "必须至少 1 条，不能省略该字段。"
     ),
     output_schema_version="2.0",
 )
@@ -194,7 +218,7 @@ PREP_INTENT_ROUTER_PROMPT = PromptSpec(
 
 PREP_ACTION_PLANNER_PROMPT = PromptSpec(
     name="prep.action_planner",
-    version="2.0",
+    version="2.1",
     system_template=(
         "你是受控备课助教。输入 action 指定唯一允许执行的教师动作，"
         "只能修改 editable_outline 或 editable_scripts 中的 ID；"
@@ -209,6 +233,12 @@ PREP_ACTION_PLANNER_PROMPT = PromptSpec(
         "OCR 枚举或完整句子。\n"
         "- optimize_node_script：仅当前节点的 script/replace/content；保留原有课程事实，依据标题、脚本与检索证据改写。\n"
         "- optimize_all_scripts：仅本组每个 script/replace/content，必须每个 ID 恰好一项；不要改标题、结构或风格。\n"
+        "- 对 optimize_node_script 和 optimize_all_scripts，course_context.lecture_sequence 是当前可编辑讲解的权威课程顺序，"
+        "每项给出 index、total、previous_title 和 next_title。只有序列首项才可使用一次简短开场问候；"
+        "中间讲稿应从 previous_title 自然承接到当前主题，并在合适时提示 next_title；只有序列末项才可作课程级收尾。"
+        "不得把每个讲稿写成独立开场或独立总结，不得重复“大家好”“同学们好”“今天我们来学习”等开场白。"
+        "title 为“已锁定讲解”或带 is_locked_boundary=true 的项只表示不可编辑的顺序边界，绝不能作为修改目标。"
+        "相邻标题只用于组织讲解衔接，不得据此虚构课程事实。\n"
         "- organize_structure：仅 outline。可以 replace/title、move（同时给出 parent_node_id，可为空表示顶层）、"
         "reorder（给出 order_index）或 remove。不得新增或拆分节点。删除父节点前必须先移动所有子节点；"
         "不得删除含锁定后代或锁定讲解脚本的分支。若没有安全改动，operations 可为空。\n"
@@ -251,7 +281,7 @@ STRUCTURE_PLANNER_PROMPT = PromptSpec(
 
 PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
     name="prep.ppt_mapping_optimizer",
-    version="1.1",
+    version="1.2",
     system_template=(
         "你是 PPT 映射优化助手。根据 PPT 每页的 OCR 文本，"
         "判断哪些页最匹配哪个知识点，输出映射建议。\n\n"
@@ -265,18 +295,24 @@ PPT_MAPPING_OPTIMIZER_PROMPT = PromptSpec(
         "2. 一页 PPT 可以映射到多个知识点（如果该页内容确实覆盖多个知识点）\n"
         "3. 只能使用提供的知识点 ID 列表中的 outline_node_id\n"
         "4. 如果某页不属于任何知识点，不要为它生成建议\n"
-        "5. confidence 低于 0.6 的建议仍需输出，由教师决定是否接受\n"
-        "6. reason 必须说明匹配依据（OCR 文本中的关键词、与讲稿/标题的语义关联）\n"
-        "7. 不得修改 teacher_locked=True 的映射\n"
-        "8. 对于 nodes 中已有 mappings 的知识点，参考现有 page_refs 和 source_block_refs，"
+        "5. 只为确实能在 OCR 文本中找到对应内容的知识点输出建议；"
+        "如果某个知识点在本 PPT 中没有任何匹配页，直接省略它（保持未映射），"
+        "绝不要用低置信度把它挂到全部页或大段连续页上凑数\n"
+        "6. 禁止全 deck fallback：page_refs 不得覆盖该 PPT 的全部页或几乎全部页；"
+        "一个知识点真正覆盖整本 PPT 的情况不存在\n"
+        "7. confidence 反映匹配把握：有明确关键词/语义证据时给 0.6 以上，"
+        "证据较弱时给 0.3-0.6，完全没有证据就不要输出该知识点\n"
+        "8. reason 必须说明匹配依据（OCR 文本中的关键词、与讲稿/标题的语义关联）\n"
+        "9. 不得修改 teacher_locked=True 的映射\n"
+        "10. 对于 nodes 中已有 mappings 的知识点，参考现有 page_refs 和 source_block_refs，"
         "结合 OCR 文本判断是否需要调整\n"
-        "9. 对于 nodes 中没有 mappings 的知识点（教师新增节点），根据 OCR 文本和"
+        "11. 对于 nodes 中没有 mappings 的知识点（教师新增节点），根据 OCR 文本和"
         "script_content/parent_title 语义匹配生成新映射\n\n"
         "返回纯 JSON，结构为：\n"
         "{\"suggestions\": [{\"outline_node_id\": \"...\", \"page_refs\": [3,5], "
         "\"confidence\": 0.8, \"reason\": \"...\"}, ...]}"
     ),
-    output_schema_version="1.1",
+    output_schema_version="1.2",
 )
 
 

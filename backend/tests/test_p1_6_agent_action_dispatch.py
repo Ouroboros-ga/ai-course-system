@@ -11,6 +11,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +22,22 @@ from app.platform.tasks.handlers import (
     _dispatch_trigger_experiment,
     _dispatch_web_research,
 )
+from app.models.access_control_model import CourseCapability
+from app.models.agent_governance_model import AgentActionProposal
+from app.models.course_model import Course, CourseStatus
+from app.models.experiment_model import (
+    ExperimentAttempt,
+    ExperimentDefinition,
+    ExperimentPublishStatus,
+    ExperimentRecommendation,
+    ExperimentRun,
+    ExperimentVersion,
+)
+from app.services.course_access_service import (
+    activate_student_membership,
+    establish_course_access_baseline,
+)
+from sqlmodel import select
 
 
 def _ctx_factory(session_mock):
@@ -154,6 +172,76 @@ class TestWebResearchDispatch:
 class TestTriggerExperimentDispatch:
     """测试4: trigger_experiment 派发"""
 
+    @staticmethod
+    def _session_factory(session):
+        @contextmanager
+        def factory():
+            yield session
+        return factory
+
+    @staticmethod
+    def _recommendable_experiment(session, teacher_user, student_user):
+        course = Course(
+            fanya_course_id=f"dispatch-{teacher_user.id}-{student_user.id}",
+            fanya_course_name="Dispatch course",
+            title="Dispatch course",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.PUBLISHED,
+        )
+        session.add(course)
+        session.flush()
+        establish_course_access_baseline(session, course.id, teacher_user.id)
+        activate_student_membership(session, course.id, student_user.id)
+        capability = session.exec(select(CourseCapability).where(
+            CourseCapability.course_id == course.id,
+        )).first()
+        capability.experiment = True
+        capability.coding_sandbox = True
+        definition = ExperimentDefinition(
+            course_id=course.id,
+            title="Published task",
+            language_whitelist=["python3"],
+            knowledge_node_ids=[7],
+            publish_status=ExperimentPublishStatus.PUBLISHED,
+            created_by=teacher_user.id,
+        )
+        session.add(definition)
+        session.flush()
+        version = ExperimentVersion(
+            course_id=course.id,
+            experiment_id=definition.experiment_id,
+            version_number=1,
+            is_active=True,
+            is_locked=True,
+            created_by=teacher_user.id,
+        )
+        definition.default_version_id = version.version_id
+        session.add(version)
+        session.add(definition)
+        session.add(capability)
+        session.commit()
+        return course, definition, version
+
+    @staticmethod
+    def _proposal(session, *, course_id, student_id, experiment_id, status="approved", action=None):
+        action = action or {"experiment_id": experiment_id, "outline_node_id": "7"}
+        proposal = AgentActionProposal(
+            proposal_id=f"ap_dispatch_{course_id}_{student_id}_{status}_{experiment_id[-8:]}",
+            trace_id="trace-dispatch",
+            student_id=student_id,
+            course_id=course_id,
+            session_id="dispatch-session",
+            proposal_type="trigger_experiment",
+            tool_name="experiment_dispatch",
+            proposed_action=json.dumps(action),
+            risk_level="medium",
+            requires_confirmation=True,
+            status=status,
+        )
+        session.add(proposal)
+        session.commit()
+        return proposal
+
     def test_missing_experiment_id_returns_dispatched_false(self) -> None:
         result = asyncio.run(_dispatch_trigger_experiment(
             course_id=1,
@@ -161,6 +249,7 @@ class TestTriggerExperimentDispatch:
             proposed_action={},
             session_factory=MagicMock(),
             decided_by=1,
+            proposal_id="ap_missing",
             dispatched_at="2026-07-27T00:00:00",
         ))
 
@@ -174,105 +263,113 @@ class TestTriggerExperimentDispatch:
             proposed_action={"experiment_id": "exp_1"},
             session_factory=MagicMock(),
             decided_by=1,
+            proposal_id="ap_missing_student",
             dispatched_at="2026-07-27T00:00:00",
         ))
 
         assert result["dispatched"] is False
         assert result["outcome"] == "missing_student_id"
 
-    def test_creates_attempt_only_when_no_code(self) -> None:
-        session = MagicMock()
-        factory = _ctx_factory(session)
+    def test_approved_proposal_creates_one_recommendation_not_attempt_or_run(
+        self, session, teacher_user, student_user,
+    ) -> None:
+        course, definition, version = self._recommendable_experiment(session, teacher_user, student_user)
+        proposal = self._proposal(
+            session,
+            course_id=course.id,
+            student_id=student_user.id,
+            experiment_id=definition.experiment_id,
+        )
+        factory = self._session_factory(session)
+        action = {"experiment_id": definition.experiment_id, "outline_node_id": "7"}
 
-        attempt = MagicMock()
-        attempt.attempt_id = "att_001"
+        first = asyncio.run(_dispatch_trigger_experiment(
+            course_id=course.id, student_id=student_user.id, proposed_action=action,
+            session_factory=factory, decided_by=teacher_user.id,
+            proposal_id=proposal.proposal_id, dispatched_at="2026-08-13T00:00:00+00:00",
+        ))
+        second = asyncio.run(_dispatch_trigger_experiment(
+            course_id=course.id, student_id=student_user.id, proposed_action=action,
+            session_factory=factory, decided_by=teacher_user.id,
+            proposal_id=proposal.proposal_id, dispatched_at="2026-08-13T00:00:01+00:00",
+        ))
 
-        with patch(
-            "app.services.experiment_service.attempt_service.create_attempt",
-            return_value=attempt,
-        ) as mock_create_attempt:
-            result = asyncio.run(_dispatch_trigger_experiment(
-                course_id=5,
-                student_id=20,
-                proposed_action={"experiment_id": "exp_1"},
-                session_factory=factory,
-                decided_by=1,
-                dispatched_at="2026-07-27T00:00:00",
-            ))
+        assert first["dispatched"] is True
+        assert first["outcome"] == "experiment_recommendation_created"
+        assert second["dispatched"] is True
+        assert second["outcome"] == "experiment_recommendation_existing"
+        recommendations = session.exec(select(ExperimentRecommendation).where(
+            ExperimentRecommendation.course_id == course.id,
+            ExperimentRecommendation.student_id == student_user.id,
+            ExperimentRecommendation.proposal_id == proposal.proposal_id,
+        )).all()
+        assert len(recommendations) == 1
+        assert recommendations[0].version_id == version.version_id
+        assert recommendations[0].outline_node_id == "7"
+        assert session.exec(select(ExperimentAttempt).where(
+            ExperimentAttempt.course_id == course.id,
+            ExperimentAttempt.student_id == student_user.id,
+        )).all() == []
+        assert session.exec(select(ExperimentRun).where(
+            ExperimentRun.course_id == course.id,
+            ExperimentRun.student_id == student_user.id,
+        )).all() == []
 
-        assert result["dispatched"] is True
-        assert result["outcome"] == "experiment_attempt_created"
-        assert result["details"]["attempt_id"] == "att_001"
-        assert result["details"]["run_id"] is None
-        mock_create_attempt.assert_called_once()
-        # 验证传入参数
-        call_kwargs = mock_create_attempt.call_args.kwargs
-        assert call_kwargs["course_id"] == 5
-        assert call_kwargs["experiment_id"] == "exp_1"
-        assert call_kwargs["student_id"] == 20
+    def test_unapproved_proposal_cannot_create_recommendation(
+        self, session, teacher_user, student_user,
+    ) -> None:
+        course, definition, _ = self._recommendable_experiment(session, teacher_user, student_user)
+        proposal = self._proposal(
+            session, course_id=course.id, student_id=student_user.id,
+            experiment_id=definition.experiment_id, status="pending",
+        )
+        result = asyncio.run(_dispatch_trigger_experiment(
+            course_id=course.id, student_id=student_user.id,
+            proposed_action={"experiment_id": definition.experiment_id, "outline_node_id": "7"},
+            session_factory=self._session_factory(session), decided_by=teacher_user.id,
+            proposal_id=proposal.proposal_id, dispatched_at="2026-08-13T00:00:00+00:00",
+        ))
 
-    def test_creates_attempt_and_run_when_code_provided(self) -> None:
-        session = MagicMock()
-        factory = _ctx_factory(session)
+        assert result["dispatched"] is False
+        assert result["outcome"] == "proposal_not_approved"
+        assert session.exec(select(ExperimentRecommendation).where(
+            ExperimentRecommendation.course_id == course.id,
+            ExperimentRecommendation.student_id == student_user.id,
+        )).all() == []
+        assert session.exec(select(ExperimentAttempt).where(
+            ExperimentAttempt.course_id == course.id,
+            ExperimentAttempt.student_id == student_user.id,
+        )).all() == []
 
-        attempt = MagicMock()
-        attempt.attempt_id = "att_001"
+    def test_code_payload_is_rejected_before_creating_recommendation(
+        self, session, teacher_user, student_user,
+    ) -> None:
+        course, definition, _ = self._recommendable_experiment(session, teacher_user, student_user)
+        action = {
+            "experiment_id": definition.experiment_id,
+            "outline_node_id": "7",
+            "source_code": "print('must never run')",
+        }
+        proposal = self._proposal(
+            session, course_id=course.id, student_id=student_user.id,
+            experiment_id=definition.experiment_id, action=action,
+        )
+        result = asyncio.run(_dispatch_trigger_experiment(
+            course_id=course.id, student_id=student_user.id, proposed_action=action,
+            session_factory=self._session_factory(session), decided_by=teacher_user.id,
+            proposal_id=proposal.proposal_id, dispatched_at="2026-08-13T00:00:00+00:00",
+        ))
 
-        run = MagicMock()
-        run.run_id = "run_001"
-
-        with patch(
-            "app.services.experiment_service.attempt_service.create_attempt",
-            return_value=attempt,
-        ), patch(
-            "app.services.experiment_service.run_service.create_run",
-            return_value=run,
-        ) as mock_create_run:
-            result = asyncio.run(_dispatch_trigger_experiment(
-                course_id=5,
-                student_id=20,
-                proposed_action={
-                    "experiment_id": "exp_1",
-                    "language": "python",
-                    "source_code": "print('hello')",
-                },
-                session_factory=factory,
-                decided_by=1,
-                dispatched_at="2026-07-27T00:00:00",
-            ))
-
-        assert result["dispatched"] is True
-        assert result["outcome"] == "experiment_run_created"
-        assert result["details"]["attempt_id"] == "att_001"
-        assert result["details"]["run_id"] == "run_001"
-        mock_create_run.assert_called_once()
-        # 验证 execute=False（异步执行）
-        call_kwargs = mock_create_run.call_args.kwargs
-        assert call_kwargs["execute"] is False
-        assert call_kwargs["language"] == "python"
-
-    def test_service_exception_becomes_dispatch_failed(self) -> None:
-        from app.platform.tasks.worker import TaskExecutionError
-
-        session = MagicMock()
-        factory = _ctx_factory(session)
-
-        with patch(
-            "app.services.experiment_service.attempt_service.create_attempt",
-            side_effect=RuntimeError("db locked"),
-        ):
-            with pytest.raises(TaskExecutionError) as exc_info:
-                asyncio.run(_dispatch_trigger_experiment(
-                    course_id=5,
-                    student_id=20,
-                    proposed_action={"experiment_id": "exp_1"},
-                    session_factory=factory,
-                    decided_by=1,
-                    dispatched_at="2026-07-27T00:00:00",
-                ))
-
-        assert exc_info.value.error_code == "EXPERIMENT_DISPATCH_FAILED"
-        assert "db locked" in exc_info.value.message
+        assert result["dispatched"] is False
+        assert result["outcome"] == "invalid_trigger_payload"
+        assert session.exec(select(ExperimentRecommendation).where(
+            ExperimentRecommendation.course_id == course.id,
+            ExperimentRecommendation.student_id == student_user.id,
+        )).all() == []
+        assert session.exec(select(ExperimentAttempt).where(
+            ExperimentAttempt.course_id == course.id,
+            ExperimentAttempt.student_id == student_user.id,
+        )).all() == []
 
 
 class TestDispatchedAtTimestamp:

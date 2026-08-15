@@ -264,6 +264,51 @@ class TestQARetrievalMetadata:
         assert "retrievalMetadata" in data
         assert data["retrievalMetadata"]["policy_version"] == "r2-retrieval-v1.0"
 
+    def test_ask_accepts_release_outline_node_id(self, client, session):
+        """新版 release 学习工作区传 outline_node_id（如 on_xxx）不应 422"""
+        teacher = _user(session, "r2_outline_teacher", UserRole.TEACHER)
+        student = _user(session, "r2_outline_student")
+        course = _setup_course(session, teacher, student)
+        token = _token(student)
+
+        from app.models.course_outline_model import CourseOutlineNode
+        node = CourseOutlineNode(
+            outline_node_id="on_regression_test_001",
+            outline_version_id="ov_regression_test_001",
+            course_id=course.id,
+            title="测试知识点",
+            order_index=0,
+        )
+        session.add(node)
+        session.commit()
+
+        with patch("app.api.v1.endpoints.chat.qa_service") as mock_qa:
+            mock_qa.ask_question_with_rag = AsyncMock(return_value={
+                "answer": "回答",
+                "rag_sources": None,
+                "rag_context": None,
+                "retrieval_source": "none",
+                "retrieval_metadata": {
+                    "policy_version": "r2-retrieval-v1.0",
+                    "evidence_ids": [],
+                    "fallback_reason": None,
+                    "hit_count": 0,
+                },
+            })
+            response = client.post(
+                "/api/v1/chat/ask",
+                json={
+                    "courseId": course.id,
+                    "question": "测试问题",
+                    "currentNodeId": "on_regression_test_001",
+                    "strictMode": False,
+                },
+                headers={"Authorization": f"Bearer {token}"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["code"] == 200
+
     def test_ask_returns_v1_treerag_source(self, client, session):
         """V1 检索命中时返回 v1_treerag"""
         teacher = _user(session, "r2_v1_teacher", UserRole.TEACHER)

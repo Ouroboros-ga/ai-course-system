@@ -49,6 +49,20 @@ def _tts_provider_semaphore(provider_key: str, limit: int) -> threading.BoundedS
         return current
 
 
+def _course_graphrag_enabled(session, course_id: int) -> bool:
+    """Read the course-level GraphRAG opt-out flag (defaults to enabled)."""
+    try:
+        from sqlmodel import select
+        from app.models.course_model import Course
+
+        course = session.exec(select(Course).where(Course.id == course_id)).first()
+        return bool(course is None or course.graphrag_enabled)
+    except Exception:
+        # Missing column on an un-migrated database must not break material
+        # parsing: treat the flag as enabled and let the caller decide.
+        return True
+
+
 def _course_build_failure_message(error: BaseException, *, run_id: str = "") -> str:
     """Return a safe, actionable message for a failed intelligent-prep task."""
     diagnostic = f"诊断编号：{run_id}" if run_id else ""
@@ -463,27 +477,35 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
                 # Every new course now enters the governed knowledge pipeline
                 # after all current materials are parsed: GraphRAG creates a
                 # teacher-reviewable draft, while LanceDB is deliberately
-                # deferred until that draft is approved.
-                try:
-                    from app.services.knowledge_bundle_service import knowledge_bundle_service
-                    graph_run, graph_task = knowledge_bundle_service.request_regeneration(
-                        session,
-                        course_id=int(course_id),
-                        actor_user_id=owner_user_id,
-                        reason="auto_after_materials_ready",
-                        instructions="按课程材料生成带证据闭合的 GraphRAG 草稿；等待教师审核后再构建向量索引。",
+                # deferred until that draft is approved.  The course-level
+                # ``graphrag_enabled`` flag lets a teacher opt out (e.g. for
+                # large corpora whose extraction cost is too high).
+                if not _course_graphrag_enabled(session, int(course_id)):
+                    logger.info(
+                        "Skip automatic GraphRAG task for course %s: graphrag_enabled=False",
+                        course_id,
                     )
-                    session.commit()
-                    from app.platform.tasks.knowledge_build_queue import knowledge_build_queue
-                    knowledge_build_queue.submit(ctx.session_factory, local_task_worker, str(graph_task.get("task_id") or ""))
-                    _draft_progress["graphrag_run_id"] = graph_run.run_id
-                    _draft_progress["graphrag_task_id"] = graph_task.get("task_id")
-                except Exception:
-                    # Material parsing and the course draft remain truthful;
-                    # a failed optional GraphRAG enqueue is visible in logs and
-                    # can be retried from the knowledge task surface.
-                    session.rollback()
-                    logger.exception("Could not submit automatic GraphRAG task for course %s", course_id)
+                else:
+                    try:
+                        from app.services.knowledge_bundle_service import knowledge_bundle_service
+                        graph_run, graph_task = knowledge_bundle_service.request_regeneration(
+                            session,
+                            course_id=int(course_id),
+                            actor_user_id=owner_user_id,
+                            reason="auto_after_materials_ready",
+                            instructions="按课程材料生成带证据闭合的 GraphRAG 草稿；等待教师审核后再构建向量索引。",
+                        )
+                        session.commit()
+                        from app.platform.tasks.knowledge_build_queue import knowledge_build_queue
+                        knowledge_build_queue.submit(ctx.session_factory, local_task_worker, str(graph_task.get("task_id") or ""))
+                        _draft_progress["graphrag_run_id"] = graph_run.run_id
+                        _draft_progress["graphrag_task_id"] = graph_task.get("task_id")
+                    except Exception:
+                        # Material parsing and the course draft remain truthful;
+                        # a failed optional GraphRAG enqueue is visible in logs and
+                        # can be retried from the knowledge task surface.
+                        session.rollback()
+                        logger.exception("Could not submit automatic GraphRAG task for course %s", course_id)
         except Exception:
             # Task itself is already correctly marked succeeded.  Preserve that
             # truth and log this non-critical projection repair for retry.
@@ -864,6 +886,31 @@ async def course_draft_build_handler(ctx: TaskHandlerContext) -> None:
 # ---------------------------------------------------------------------------
 
 
+async def _wait_for_formal_sandbox_lease(
+    ctx: TaskHandlerContext,
+    *,
+    poll_seconds: float = 0.25,
+) -> bool:
+    """Acquire the single formal-evaluation lease, unless the task is cancelled.
+
+    The lease is persisted so every worker process shares the same Judge0
+    capacity.  A full slot is normal backpressure, not a task failure: keep
+    this task running and poll until the current holder releases or expires.
+    """
+    from app.services.experiment_service import SandboxExecutionLeaseService
+
+    lease_service = SandboxExecutionLeaseService()
+    while True:
+        with ctx.session_factory() as session:
+            task = ctx.service.get_task(session, ctx.task_id)
+            if task.status == "cancelled":
+                return False
+            if lease_service.acquire(session, task_id=ctx.task_id):
+                session.commit()
+                return True
+        await asyncio.sleep(poll_seconds)
+
+
 async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
     """实验代码运行 handler（Judge0 异步执行）。
 
@@ -889,139 +936,174 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             retryable=False,
         )
 
-    from app.models.experiment_model import AttemptStatus, ExperimentRun, RunOutcome
+    from app.models.experiment_model import ExperimentRun, RunOutcome
     from app.services.experiment_service import (
         attempt_service,
         finalize_service,
         run_service,
-        sandbox_execution_lease_service,
+        SandboxExecutionLeaseService,
         version_service,
     )
-    from app.services.resource_service import lab_projection_service
-    from app.models.task_model import TaskRecord
+    from app.services.learning_projection_outbox_service import (
+        dispatch_learning_projection,
+        enqueue_learning_projection,
+    )
     from sqlmodel import select
 
-    # 1. 标记 running. A queued task can be cancelled before this worker
-    # owns it; do not turn that explicit cancellation into a transition error.
+    projection_event_ids: list[str] = []
+
+    # 1. 标记 running
     with ctx.session_factory() as session:
-        task = session.exec(select(TaskRecord).where(TaskRecord.task_id == ctx.task_id)).first()
-        if task is not None and task.status == "cancelled":
+        task = ctx.service.get_task(session, ctx.task_id)
+        if task.status == "cancelled":
             return
         ctx.service.mark_running(session, ctx.task_id, stage="sandbox_execution")
         # 同步 run 状态：ExperimentRun 在 create_run 时已创建为 PENDING
 
-    # 2. Acquire the cross-process Judge0 COUNT=1 lease before a worker may
-    # execute code.  The local worker semaphore limits this process; the lease
-    # prevents multiple Uvicorn processes from overfilling the same Judge0.
-    with ctx.session_factory() as session:
-        if not sandbox_execution_lease_service.acquire(session, task_id=ctx.task_id):
-            raise TaskExecutionError(
-                "SANDBOX_SLOT_UNAVAILABLE",
-                "正式评测槽位正在使用，任务将自动重试",
-                retryable=True,
-            )
-        session.commit()
+    # 2. Acquire the shared Judge0 slot before opening the run transaction.
+    # A busy slot remains queued work rather than a retryable task failure.
+    if not await _wait_for_formal_sandbox_lease(ctx):
+        return
 
-    # 3. 执行沙箱运行
-    with ctx.session_factory() as session:
-        run = session.exec(
-            select(ExperimentRun).where(
-                ExperimentRun.run_id == run_id,
-                ExperimentRun.course_id == int(course_id),
-            )
-        ).first()
-        if run is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"ExperimentRun {run_id} 不存在",
-                retryable=False,
-            )
-        # 验证学生归属：payload 中的 student_id 必须与 ExperimentRun 记录一致，
-        # 防止伪造 run_id/attempt_id 访问他人数据
-        if student_id is not None and run.student_id != int(student_id):
-            raise TaskExecutionError(
-                "STUDENT_MISMATCH",
-                f"Student ID mismatch: expected {student_id}, got {run.student_id}",
-                retryable=False,
-            )
-        # 使用 run 记录中的 student_id 校验 attempt 归属（权威来源）
-        attempt = attempt_service.get_attempt(
-            session, course_id=int(course_id), attempt_id=attempt_id,
-            student_id=run.student_id,
-        )
-        version = version_service.get_version(
-            session, course_id=int(course_id), version_id=attempt.version_id,
-        )
-        try:
-            if run.outcome == RunOutcome.PENDING:
-                def cancellation_requested() -> bool:
-                    # Renew in the same transaction before every case.  This
-                    # avoids a second SQLite/Postgres session racing the
-                    # execution transaction while still making cancellation
-                    # visible between Judge0 calls.
-                    session.expire_all()
-                    task = session.exec(select(TaskRecord).where(TaskRecord.task_id == ctx.task_id)).first()
-                    if task is not None and task.status == "cancelled":
-                        return True
-                    if not sandbox_execution_lease_service.renew(session, task_id=ctx.task_id):
-                        raise RuntimeError("SANDBOX_EXECUTION_LEASE_LOST")
-                    return False
-
-                await run_service._execute_run(
-                    session, run=run, attempt=attempt, version=version,
-                    cancel_check=cancellation_requested,
+    # 3. Every path after acquisition must release the shared slot, including
+    # malformed payloads and authorization/ownership validation failures.
+    lease_service = SandboxExecutionLeaseService()
+    try:
+        with ctx.session_factory() as session:
+            run = session.exec(
+                select(ExperimentRun).where(
+                    ExperimentRun.run_id == run_id,
+                    ExperimentRun.course_id == int(course_id),
                 )
-            # Persist the bounded diagnosis in the same worker transaction as
-            # the verified run result.  This keeps the normal path usable by
-            # EduAgent without requiring a second client request.
-            run_service._ensure_coding_diagnosis(session, run)
-            session.commit()
-        except Exception as exc:
-            sandbox_execution_lease_service.release(session, task_id=ctx.task_id)
-            session.commit()
-            raise TaskExecutionError(
-                "SANDBOX_EXECUTION_FAILED",
-                f"沙箱执行失败: {exc}",
-                retryable=True,
-            )
-
-    # 4. The worker, never a student endpoint, terminates the attempt and
-    # materializes the trusted lab-record projection exactly once.
-    with ctx.session_factory() as session:
-        run = session.exec(select(ExperimentRun).where(ExperimentRun.run_id == run_id)).first()
-        if run is not None and run.outcome not in (
-            RunOutcome.PENDING,
-            RunOutcome.SANDBOX_UNAVAILABLE,
-            RunOutcome.INTERNAL_ERROR,
-        ):
+            ).first()
+            if run is None:
+                raise TaskExecutionError(
+                    "VALIDATION_FAILED",
+                    f"ExperimentRun {run_id} 不存在",
+                    retryable=False,
+                )
+            # 验证学生归属：payload 中的 student_id 必须与 ExperimentRun 记录一致，
+            # 防止伪造 run_id/attempt_id 访问他人数据
+            if student_id is not None and run.student_id != int(student_id):
+                raise TaskExecutionError(
+                    "STUDENT_MISMATCH",
+                    f"Student ID mismatch: expected {student_id}, got {run.student_id}",
+                    retryable=False,
+                )
+            # 使用 run 记录中的 student_id 校验 attempt 归属（权威来源）
             attempt = attempt_service.get_attempt(
-                session,
-                course_id=int(course_id),
-                attempt_id=attempt_id,
+                session, course_id=int(course_id), attempt_id=attempt_id,
                 student_id=run.student_id,
             )
-            if attempt.status not in (AttemptStatus.FINALIZED, AttemptStatus.FAILED):
-                finalize_service.finalize_attempt(
-                    session,
-                    course_id=int(course_id),
-                    attempt_id=attempt_id,
-                    student_id=run.student_id,
-                )
-            lab_projection_service.project_finalized_attempt(session, attempt_id=attempt_id)
-            session.commit()
+            version = version_service.get_version(
+                session, course_id=int(course_id), version_id=attempt.version_id,
+            )
+            try:
+                if run.cancel_requested_at is not None:
+                    return
 
-    # 5. 根据 outcome 标记 succeeded / failed
+                async def renew_lease_before_case() -> bool:
+                    # Renewal must commit in its own short transaction.  The
+                    # assessment session can span remote Judge0 calls, so a
+                    # mere flush would leave every other Uvicorn process seeing
+                    # the old expiry and able to reclaim the sole worker slot.
+                    with ctx.session_factory() as lease_session:
+                        renewed = lease_service.renew(lease_session, task_id=ctx.task_id)
+                        if renewed:
+                            lease_session.commit()
+                        else:
+                            lease_session.rollback()
+                        return renewed
+
+                await run_service._execute_run(
+                    session,
+                    run=run,
+                    attempt=attempt,
+                    version=version,
+                    before_case=renew_lease_before_case,
+                )
+                # Make the server-owned run durable before the separate
+                # cancellation/finalization transaction below.
+                session.commit()
+            except TaskExecutionError:
+                session.rollback()
+                raise
+            except Exception as exc:
+                session.rollback()
+                raise TaskExecutionError(
+                    "SANDBOX_EXECUTION_FAILED",
+                    f"沙箱执行失败: {exc}",
+                    retryable=True,
+                ) from exc
+
+        # The cancel endpoint and finalization both lock the same run row.  A
+        # cancel that commits first wins and leaves the attempt submitted; a
+        # finalization that commits first makes later cancellation a no-op.
+        with ctx.session_factory() as completion_session:
+            completed_run = completion_session.exec(
+                select(ExperimentRun)
+                .where(
+                    ExperimentRun.run_id == run_id,
+                    ExperimentRun.course_id == int(course_id),
+                )
+                .with_for_update()
+            ).first()
+            if completed_run is None:
+                raise TaskExecutionError(
+                    "VALIDATION_FAILED",
+                    "Experiment run disappeared before completion.",
+                    retryable=False,
+                )
+            if completed_run.cancel_requested_at is None:
+                run_service._ensure_coding_diagnosis(completion_session, completed_run)
+                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
+                    finalized_attempt = finalize_service.finalize_attempt(
+                        completion_session,
+                        course_id=int(course_id),
+                        attempt_id=attempt_id,
+                        student_id=completed_run.student_id,
+                    )
+                    for node_id in finalize_service.get_cognitive_evidence_node_ids(
+                        completion_session,
+                        attempt=finalized_attempt,
+                    ):
+                        event = enqueue_learning_projection(
+                            completion_session,
+                            attempt_id=None,
+                            source_type="experiment_attempt",
+                            source_ref=finalized_attempt.attempt_id,
+                            student_id=finalized_attempt.student_id,
+                            course_id=finalized_attempt.course_id,
+                            knowledge_node_id=node_id,
+                        )
+                        if event is not None:
+                            projection_event_ids.append(event.event_id)
+            completion_session.commit()
+            # Events are durable before dispatch. The dispatcher is
+            # non-blocking, so projection retries cannot alter this result.
+            for event_id in projection_event_ids:
+                dispatch_learning_projection(event_id)
+    finally:
+        with ctx.session_factory() as release_session:
+            try:
+                lease_service.release(release_session, task_id=ctx.task_id)
+                release_session.commit()
+            except Exception:
+                release_session.rollback()
+                logger.exception("Failed to release formal sandbox lease for task %s", ctx.task_id)
+
+    # 4. 根据 outcome 标记 succeeded / failed
     with ctx.session_factory() as session:
         run = session.exec(
             select(ExperimentRun).where(ExperimentRun.run_id == run_id)
         ).first()
-        task = session.exec(select(TaskRecord).where(TaskRecord.task_id == ctx.task_id)).first()
-        if task is not None and task.status == "cancelled":
-            sandbox_execution_lease_service.release(session, task_id=ctx.task_id)
-            session.commit()
-            return
         outcome = run.outcome if run else RunOutcome.INTERNAL_ERROR
 
+        if run and run.cancel_requested_at is not None:
+            task = ctx.service.get_task(session, ctx.task_id)
+            if task.status != "cancelled":
+                ctx.service.cancel(session, ctx.task_id, reason="评测已取消")
+            return
         if outcome == RunOutcome.ACCEPTED:
             ctx.service.mark_succeeded(
                 session,
@@ -1035,13 +1117,11 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                     "score": run.score if run else 0.0,
                 },
             )
-        elif outcome in (RunOutcome.SANDBOX_UNAVAILABLE, RunOutcome.INTERNAL_ERROR):
+        elif outcome == RunOutcome.SANDBOX_UNAVAILABLE:
             # 沙箱不可用：明确失败 + 可重试
-            sandbox_execution_lease_service.release(session, task_id=ctx.task_id)
-            session.commit()
             raise TaskExecutionError(
-                "SANDBOX_UNAVAILABLE" if outcome == RunOutcome.SANDBOX_UNAVAILABLE else "SANDBOX_EXECUTION_FAILED",
-                "代码沙箱不可用，请稍后重试" if outcome == RunOutcome.SANDBOX_UNAVAILABLE else "正式评测执行异常，任务可重试",
+                "SANDBOX_UNAVAILABLE",
+                "代码沙箱不可用，请稍后重试",
                 retryable=True,
             )
         else:
@@ -1058,12 +1138,6 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                     "score": run.score if run else 0.0,
                 },
             )
-    # A TaskExecutionError above leaves the lease to expire naturally so a
-    # recovery task can reclaim it after a crashed/failed worker.  Normal
-    # terminal paths release it immediately.
-    with ctx.session_factory() as session:
-        sandbox_execution_lease_service.release(session, task_id=ctx.task_id)
-        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -1245,7 +1319,7 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
     def run_in_worker_thread() -> tuple[str | None, str | None]:
         from sqlmodel import select
         from app.models.media_release_model import MediaGenerationJob
-        from app.services.media_release_service import tts_execution_service
+        from app.services.media_release_service import tts_execution_service, media_generation_job_service
 
         with ctx.session_factory() as session:
             job = session.exec(select(MediaGenerationJob).where(
@@ -1278,6 +1352,13 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
     # live paid WebSocket for the same provider.
     from app.core.config import settings
     from app.services.media_batch_service import enqueue_batch_cue, project_tts_result_to_batch_item
+    # ``media_generation_job_service`` / ``MediaGenerationStatus`` are imported
+    # here instead of inside ``run_in_worker_thread`` because the post-success
+    # projection below runs in the handler scope; a function-local import would
+    # raise NameError and silently leave batch items pending after a paid
+    # synthesis succeeded.
+    from app.models.media_release_model import MediaGenerationStatus
+    from app.services.media_release_service import media_generation_job_service
     limit = max(1, int(getattr(settings, "MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER", 2) or 2))
     semaphore = _tts_provider_semaphore(provider_key, limit)
     await asyncio.to_thread(semaphore.acquire)
@@ -1741,7 +1822,6 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
 
     try:
         outcome = await _dispatch_agent_action(
-            proposal_id=str(proposal_id),
             proposal_type=proposal_type,
             course_id=int(course_id),
             student_id=int(student_id) if student_id else None,
@@ -1749,6 +1829,7 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
             session_factory=ctx.session_factory,
             decided_by=int(decided_by) if decided_by else None,
             trace_id=trace_id,
+            proposal_id=str(proposal_id),
         )
         dispatch_result.update(outcome)
     except TaskExecutionError:
@@ -1778,7 +1859,6 @@ async def agent_action_execute_handler(ctx: TaskHandlerContext) -> None:
 
 async def _dispatch_agent_action(
     *,
-    proposal_id: str,
     proposal_type: str,
     course_id: int,
     student_id: Optional[int],
@@ -1786,6 +1866,7 @@ async def _dispatch_agent_action(
     session_factory,
     decided_by: Optional[int],
     trace_id: str,
+    proposal_id: str | None = None,
 ) -> dict[str, Any]:
     """P1-6: 真实分发高风险动作到对应业务 service。
 
@@ -1807,12 +1888,12 @@ async def _dispatch_agent_action(
 
     if proposal_type == "trigger_experiment":
         return await _dispatch_trigger_experiment(
-            proposal_id=proposal_id,
             course_id=course_id,
             student_id=student_id,
             proposed_action=proposed_action,
             session_factory=session_factory,
             decided_by=decided_by,
+            proposal_id=proposal_id,
             dispatched_at=dispatched_at,
         )
 
@@ -1890,27 +1971,15 @@ async def _dispatch_web_research(
 
 async def _dispatch_trigger_experiment(
     *,
-    proposal_id: str,
     course_id: int,
     student_id: Optional[int],
     proposed_action: dict[str, Any],
     session_factory,
     decided_by: Optional[int],
+    proposal_id: str | None,
     dispatched_at: str,
 ) -> dict[str, Any]:
-    """P1-6: 派发 trigger_experiment 到 experiment_service。
-
-    proposed_action 期望字段：
-    - experiment_id: str   → 必填，标识要触发的实验
-    - language: str        → 可选，若提供则同时创建 run
-    - source_code: str     → 可选，与 language 配合创建 run
-
-    流程：
-    1. 通过 attempt_service.create_attempt 为学生创建尝试（使用实验默认版本）
-    2. 若提供 language + source_code，则通过 run_service.create_run(execute=False)
-       创建 PENDING run，由 experiment_run_handler 异步执行
-    3. 否则仅创建 attempt，学生可在 UI 中提交代码
-    """
+    """Create a governed, student-visible recommendation without executing code."""
     experiment_id = proposed_action.get("experiment_id")
     if not experiment_id:
         return {
@@ -1928,126 +1997,40 @@ async def _dispatch_trigger_experiment(
             "details": {"reason": "trigger_experiment 需要 student_id 才能创建 attempt"},
         }
 
-    # ExperimentDispatchPort is deliberately narrower than the historical
-    # action: an LLM proposal may only recommend an already published, locked
-    # experiment.  Code, language overrides, attempts and runs are rejected.
-    if any(key in proposed_action for key in ("source_code", "code", "language")):
-        raise TaskExecutionError(
-            "EXPERIMENT_DISPATCH_PAYLOAD_FORBIDDEN",
-            "TeachingAgent 调度不得携带源码或语言执行参数",
-            retryable=False,
-        )
-
-    with session_factory() as session:
-        from sqlmodel import select
-        from app.models.access_control_model import CourseMembership, MembershipStatus
-        from app.models.experiment_model import (
-            ExperimentDefinition,
-            ExperimentPublishStatus,
-            ExperimentRecommendation,
-            ExperimentVersion,
-        )
-        from app.services.course_access_service import resolve_course_access
-
-        definition = session.exec(select(ExperimentDefinition).where(
-            ExperimentDefinition.course_id == course_id,
-            ExperimentDefinition.experiment_id == str(experiment_id),
-            ExperimentDefinition.publish_status == ExperimentPublishStatus.PUBLISHED,
-        )).first()
-        if definition is None or not definition.default_version_id:
-            raise TaskExecutionError("EXPERIMENT_NOT_DISPATCHABLE", "实验未发布或没有默认版本", retryable=False)
-        version = session.exec(select(ExperimentVersion).where(
-            ExperimentVersion.course_id == course_id,
-            ExperimentVersion.version_id == definition.default_version_id,
-        )).first()
-        if version is None or not version.is_locked or not version.is_active:
-            raise TaskExecutionError("EXPERIMENT_NOT_DISPATCHABLE", "实验默认版本未锁定", retryable=False)
-        directory_node_id = proposed_action.get("directory_node_id")
-        if directory_node_id:
-            from app.models.course_outline_model import CourseOutlineNode
-
-            node = session.exec(select(CourseOutlineNode).where(
-                CourseOutlineNode.course_id == course_id,
-                CourseOutlineNode.outline_node_id == str(directory_node_id),
-            )).first()
-            if node is None:
-                raise TaskExecutionError(
-                    "EXPERIMENT_DISPATCH_NODE_INVALID",
-                    "Recommendation node is not part of this course",
-                    retryable=False,
-                )
-        membership = session.exec(select(CourseMembership).where(
-            CourseMembership.course_id == course_id,
-            CourseMembership.user_id == int(student_id),
-            CourseMembership.status == MembershipStatus.ACTIVE,
-        )).first()
-        access = resolve_course_access(session, {"user_id": int(student_id)}, course_id)
-        if membership is None or not access.capabilities.get("experiment", False) or not access.capabilities.get("coding_sandbox", False):
-            raise TaskExecutionError("EXPERIMENT_DISPATCH_ACCESS_DENIED", "学生不具备课程实验能力", retryable=False)
-        existing = session.exec(select(ExperimentRecommendation).where(
-            ExperimentRecommendation.course_id == course_id,
-            ExperimentRecommendation.student_id == int(student_id),
-            ExperimentRecommendation.experiment_id == definition.experiment_id,
-            ExperimentRecommendation.proposal_id == proposal_id,
-        )).first()
-        if existing is None:
-            existing = ExperimentRecommendation(
-                course_id=course_id,
-                student_id=int(student_id),
-                experiment_id=definition.experiment_id,
-                version_id=version.version_id,
-                proposal_id=proposal_id,
-                directory_node_id=str(directory_node_id) if directory_node_id else None,
-                created_by=decided_by,
-            )
-            session.add(existing)
-            session.flush()
-        session.commit()
-        return {
-            "dispatched": True,
-            "dispatched_at": dispatched_at,
-            "outcome": "experiment_recommendation_created",
-            "details": {
-                "recommendation_id": existing.recommendation_id,
-                "experiment_id": definition.experiment_id,
-                "version_id": version.version_id,
-                "note": "仅创建学生可见推荐；学生仍需自行开始实验",
-            },
-        }
-
-    language = proposed_action.get("language")
-    source_code = proposed_action.get("source_code") or proposed_action.get("code")
-    has_code_payload = bool(language) and bool(source_code)
-
     with session_factory() as session:
         try:
             from app.services.experiment_service import (
-                attempt_service,
-                run_service,
+                ExperimentRecommendationDispatchError,
+                recommendation_service,
             )
 
-            attempt = attempt_service.create_attempt(
+            recommendation, created = recommendation_service.create_from_approved_proposal(
                 session,
                 course_id=course_id,
-                experiment_id=str(experiment_id),
                 student_id=int(student_id),
+                proposal_id=str(proposal_id or ""),
+                proposed_action=proposed_action,
             )
-
-            run_id = None
-            if has_code_payload:
-                # 创建 PENDING run（不立即执行），由 experiment_run_handler 异步消费
-                run = await run_service.create_run(
-                    session,
-                    course_id=course_id,
-                    attempt_id=attempt.attempt_id,
-                    language=str(language),
-                    source_code=str(source_code),
-                    student_id=int(student_id),
-                    execute=False,
-                )
-                run_id = run.run_id
-
             session.commit()
+            return {
+                "dispatched": True,
+                "dispatched_at": dispatched_at,
+                "outcome": "experiment_recommendation_created" if created else "experiment_recommendation_existing",
+                "details": {
+                    "experiment_id": str(experiment_id),
+                    "recommendation_id": recommendation.recommendation_id,
+                    "version_id": recommendation.version_id,
+                    "outline_node_id": recommendation.outline_node_id,
+                },
+            }
+
+        except ExperimentRecommendationDispatchError as exc:
+            return {
+                "dispatched": False,
+                "dispatched_at": dispatched_at,
+                "outcome": exc.code,
+                "details": {"experiment_id": str(experiment_id)},
+            }
         except TaskExecutionError:
             raise
         except Exception as exc:
@@ -2056,23 +2039,6 @@ async def _dispatch_trigger_experiment(
                 f"trigger_experiment 派发失败: {exc}",
                 retryable=True,
             )
-
-        return {
-            "dispatched": True,
-            "dispatched_at": dispatched_at,
-            "outcome": "experiment_attempt_created" if not has_code_payload else "experiment_run_created",
-            "details": {
-                "experiment_id": str(experiment_id),
-                "attempt_id": attempt.attempt_id,
-                "run_id": run_id,
-                "note": (
-                    "ExperimentAttempt 已创建；学生可在 UI 中提交代码"
-                    if not has_code_payload
-                    else "ExperimentRun 已创建为 PENDING；由 experiment_run_handler 后续执行"
-                ),
-            },
-        }
-
 
 # ---------------------------------------------------------------------------
 # 注册函数

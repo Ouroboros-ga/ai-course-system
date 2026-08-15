@@ -10,10 +10,10 @@
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Optional, Any
 from pydantic import BaseModel, Field
 
-from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session
 from sqlmodel import select
 from starlette.concurrency import run_in_threadpool
@@ -23,7 +23,7 @@ from app.core.security import get_current_user
 from app.core.config import settings
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
-from app.services.experiment_service import free_sandbox_quota_service
+from app.services.experiment_service import FreeSandboxQuotaService
 from app.models.safety_policy_model import CourseSandboxPolicy
 from app.services.sandbox_client import (
     sandbox_client,
@@ -38,7 +38,7 @@ router = APIRouter(tags=["G3 代码沙箱"])
 
 
 class CodeExecutionRequest(BaseModel):
-    """FreeCodeSandboxPort 请求；它不包含评分断言或客户端资源限制。"""
+    """代码执行请求"""
     source_code: str = Field(min_length=1, max_length=100_000)
     language: str  # 必须在 ALLOWED_LANGUAGES 中
     stdin: str = Field(default="", max_length=100_000)
@@ -77,7 +77,7 @@ async def execute_code(
     context = require_course_permission(
         session, current_user, course_id, "experiment.run"
     )
-    if not context.capabilities.get("experiment", False) or not context.capabilities.get("coding_sandbox", False):
+    if not context.capabilities.get("coding_sandbox", False):
         raise HTTPException(status_code=403, detail="课程代码沙箱能力未启用")
     if payload.language not in ALLOWED_LANGUAGES:
         raise HTTPException(status_code=400, detail="不支持的编程语言")
@@ -90,32 +90,36 @@ async def execute_code(
     if course_policy and payload.language not in (course_policy.allowed_languages or []):
         raise HTTPException(status_code=400, detail="课程未允许该编程语言")
 
-    user_id = int(current_user["user_id"])
-    retry_after = free_sandbox_quota_service.consume(
-        session, course_id=course_id, student_id=user_id,
+    retry_after = FreeSandboxQuotaService().consume(
+        session,
+        student_id=int(current_user["user_id"]),
+        course_id=course_id,
     )
     if retry_after:
-        session.commit()
+        session.rollback()
         raise HTTPException(
             status_code=429,
             detail={
                 "error_code": "FREE_SANDBOX_QUOTA_EXCEEDED",
+                "message": "自由运行次数已达上限，请稍后再试",
                 "retry_after": retry_after,
-                "message": "自由运行已达到 10 次/10 分钟的课程配额",
             },
             headers={"Retry-After": str(retry_after)},
         )
     session.commit()
 
     cpu_limit = min(
+        settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
         course_policy.cpu_limit if course_policy else settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
         settings.JUDGE0_DEFAULT_CPU_TIME_LIMIT,
     )
     memory_limit = min(
+        settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
         course_policy.memory_limit if course_policy else settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
         settings.JUDGE0_DEFAULT_MEMORY_LIMIT,
     )
     wall_limit = min(
+        settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
         course_policy.wall_time_limit if course_policy else settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
         settings.JUDGE0_DEFAULT_WALL_TIME_LIMIT,
     )
@@ -125,8 +129,14 @@ async def execute_code(
         cpu_time_limit=cpu_limit,
         memory_limit=memory_limit,
         wall_time_limit=wall_limit,
-        max_processes=settings.JUDGE0_DEFAULT_MAX_PROCESSES,
-        max_file_size=settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+        max_processes=min(
+            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+            settings.JUDGE0_DEFAULT_MAX_PROCESSES,
+        ),
+        max_file_size=min(
+            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+            settings.JUDGE0_DEFAULT_MAX_FILE_SIZE,
+        ),
     )
 
     result = await run_in_threadpool(

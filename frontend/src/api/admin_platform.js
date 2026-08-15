@@ -9,3 +9,6 @@ export const updateIntegration = (key, data) => request({ url: `/admin/integrati
 export const testIntegration = (key) => request({ url: `/admin/integrations/${key}/test`, method: 'post' })
 export const getTaskConcurrency = () => request({ url: '/admin/task-concurrency', method: 'get' })
 export const updateTaskConcurrency = (data) => request({ url: '/admin/task-concurrency', method: 'put', data })
+
+export const getAdminCourseCapabilities = () => request({ url: '/admin/courses/capabilities', method: 'get' })
+export const updateAdminCourseCapabilities = (courseId, payload) => request({ url: `/admin/courses/${courseId}/capabilities`, method: 'put', data: payload })

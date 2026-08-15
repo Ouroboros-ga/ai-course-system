@@ -9,7 +9,7 @@ import pytest
 
 from app.core.config import settings
 from app.platform.knowledge.document_ir_exporter import GraphRagInputManifest
-from app.platform.knowledge.graphrag_runner import GraphRagRunner
+from app.platform.knowledge.graphrag_runner import GraphRagRunError, GraphRagRunner
 
 
 @pytest.mark.skipif(os.name == "nt", reason="Linux venv symlink regression")
@@ -116,3 +116,61 @@ def test_isolated_worker_recovers_complete_outputs_without_handoff(
     assert recovered["artifact_root"] == artifact_root
     assert recovered["policy_context"] == {"reason": "recovery"}
     assert recovered["allow_isolated_worker"] is False
+
+
+def _minimal_runner_settings(monkeypatch, tmp_path) -> GraphRagInputManifest:
+    manifest = GraphRagInputManifest(
+        schema_version="course-graphrag-input/1.0",
+        course_id=1,
+        input_content_hash="input-hash",
+        documents=(),
+    )
+    monkeypatch.setattr(settings, "GRAPHRAG_ENABLED", True)
+    monkeypatch.setattr(settings, "GRAPHRAG_COMPLETION_MODEL", "test-model")
+    monkeypatch.setattr(settings, "GRAPHRAG_COMPLETION_API_BASE", "https://example.test/v1")
+    monkeypatch.setattr(settings, "GRAPHRAG_COMPLETION_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GRAPHRAG_EMBEDDING_MODEL", "test-embed")
+    monkeypatch.setattr(settings, "GRAPHRAG_EMBEDDING_API_BASE", "https://example.test/v1")
+    monkeypatch.setattr(settings, "GRAPHRAG_EMBEDDING_API_KEY", "test-key")
+    monkeypatch.setattr(settings, "GRAPHRAG_WORKER_PYTHON", str(tmp_path / "missing" / "bin" / "python"))
+    monkeypatch.setattr(settings, "GRAPHRAG_MAX_INPUT_TOKENS", 0)
+    monkeypatch.setattr(settings, "GRAPHRAG_MAX_ESTIMATED_COST_USD", 0.0)
+    monkeypatch.setattr(settings, "GRAPHRAG_MAX_ESTIMATED_COST", 0.0)
+    return manifest
+
+
+def test_runner_falls_back_to_in_process_when_worker_python_missing(tmp_path, monkeypatch):
+    manifest = _minimal_runner_settings(monkeypatch, tmp_path)
+    from app.platform.knowledge import graphrag_runner as runner_module
+    monkeypatch.setattr(runner_module, "_graphrag_importable_in_process", lambda: True)
+
+    captured: dict[str, object] = {}
+    original_run = GraphRagRunner.run
+
+    def conditional_wrapper(self, **kwargs):
+        # 仅拦截“回退到进程内执行”的那一次调用；第一次调用仍走真实决策逻辑。
+        if kwargs.get("allow_isolated_worker") is False:
+            captured.update(kwargs)
+            return "artifacts"
+        return original_run(self, **kwargs)
+
+    monkeypatch.setattr(GraphRagRunner, "run", conditional_wrapper)
+    result = GraphRagRunner().run(
+        manifest=manifest,
+        artifact_root=tmp_path / "artifacts",
+    )
+    assert result == "artifacts"
+    assert captured["allow_isolated_worker"] is False
+
+
+def test_runner_reports_worker_unavailable_when_in_process_missing(tmp_path, monkeypatch):
+    manifest = _minimal_runner_settings(monkeypatch, tmp_path)
+    from app.platform.knowledge import graphrag_runner as runner_module
+    monkeypatch.setattr(runner_module, "_graphrag_importable_in_process", lambda: False)
+
+    with pytest.raises(GraphRagRunError) as exc_info:
+        GraphRagRunner().run(
+            manifest=manifest,
+            artifact_root=tmp_path / "artifacts",
+        )
+    assert exc_info.value.code == "GRAPHRAG_WORKER_UNAVAILABLE"

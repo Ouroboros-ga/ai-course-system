@@ -1,5 +1,11 @@
 # AI 互动智课系统（ai-course-system）
 
+> **2026-08-13 代码作答认知更新**：CodingAgent 只可在本次提交的
+> `student_id + course_id + run_id` 授权范围内短暂读取源码；EduAgent 只接收无源码的
+> 结构化诊断摘要。Judge0 服务端验证的代码结果已与题库作答并列进入认知评判，权重分别
+> 为 1.5 和 1.0，达到 3.0 有效权重才形成掌握度结论。边界见
+> [实验室-代码沙箱可信评测契约](docs/phase1/实验室代码沙箱可信评测契约.md)。
+
 > **2026-08-11 数据库迁移状态**：服务器运行库已切换到独立 PostgreSQL 16。Alembic `0052`、可审计 SQLite 快照迁移工具和 `deploy/postgres/` 是当前基线；最终快照的 162 张表、89,561 行已完成摘要/外键校验。迁移会原样保留历史 `media_release_items → script_nodes` 失效引用，并要求目标侧逐关系数量与源快照一致；该一项外键在 PostgreSQL 中为 `NOT VALID`，新写入仍被校验。`0049/0050` 中遗留的小写枚举标签只用于兼容历史类型，`0051/0052` 补齐并归一化为 SQLAlchemy 实际持久化/读取的大写成员名：`evidence_render_assets.asset_type`、`source_material_versions.parse_status` 和 `source_materials.status` 不得保留小写活跃值，其他枚举仍 fail-closed。实施入口见 [deploy/postgres/README.md](deploy/postgres/README.md) 与 [SQLite 到 PostgreSQL 迁移基线](docs/phase1/2026-08-11_SQLite到PostgreSQL迁移与服务器切换.md)。
 >
 > 历史 `deploy/DEMO部署说明.md` 中“生产 MySQL”描述已废弃，不可作为部署依据。
@@ -7,6 +13,8 @@
 > **面向高校课程的证据驱动型智能教学平台** —— 把静态课件建设为"可解析、可讲授、可互动、可追踪"的课程闭环，并承载挑战杯 XH-202620"学科垂类大模型与创新应用"的计算机学科延伸方向（助教 / 助学 / 助研）。
 >
 > 当前定位：**本地原型 Demo**。真实实现以代码、注册路由、数据库迁移、契约测试和浏览器手工行为为准；规划文档不能替代可运行证据。详见 [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md)。
+
+> **2026-08-13 代码实验状态**：正式评测已收敛为持久化异步任务和 ACM/ICPC 0/1 评分；自由运行保持非计分 Beta。实验室记录只从服务端终结尝试投影，旧 `POST /lab/{lab_id}/records` 与学生成绩提交入口已下线。现行边界、灰度限制和未完成的真实环境验收见 [实验室-代码沙箱可信评测契约](docs/phase1/实验室代码沙箱可信评测契约.md)。
 
 ---
 
@@ -78,6 +86,7 @@
 | 六维认知状态 + 掌握度（规则基线） | ✅ | `rule_baseline.py` 为真实实现；**BKT/DKT/IRT 仅接口定义** |
 | 认知推荐 | ✅ | `cognitive_recommendation.py` + `recommendation_consumed` 事件 |
 | 课程内问答（TeachingAgent 六段工作流） | ✅ | 上下文锚定 `course_id+release_id+outline_node_id`，证据引用，Conversation 域独立持久化（默认 90 天保留） |
+| TeachingAgent 受控回顾与进度续接 | 🧪 | 已实现本地 P0：提问位置、冻结回顾目标和点击时返回锚点三者分离；回顾须由学习者确认，且不会写入掌握度。跨媒体项、浏览器 seek 失败和主动返回仍待非生产人工验收。 |
 | 练习/测验、前置知识跳转补学 | ✅ | `question_bank.py`、`prerequisite.py` |
 
 ### 2.4 代码实验（CS 垂类）
@@ -319,6 +328,7 @@ npm run smoke:app
 - **2026-08-10**：智能备课材料证据 Map/Reduce 调用预算 64→160，证据 ID 服务端确定性回填；平台女性讲师成为默认 2D 角色；课程 87 Demo 发布版本本地 Chrome 播放回归通过。
 - **2026-08-09**：账户名称收敛为唯一 `username`；Ubuntu 部署基线（LanceDB/PaddleOCR/GraphRAG Worker/Judge0）审计完成，GraphRAG/Judge0 fail-closed。
 - **2026-08-12**：ResearchAgent 的真实部署数据库兼容基线确认为 PostgreSQL 16.14 + pgvector 0.7.4；vector 类型、`<=>` 余弦运算符与 Alembic `0053` 五张工作区表均只读验收。运行时将 pgvector SQL 不可用降级为关键词检索，不修改数据库配置或服务。
+- **2026-08-13**：TeachingAgent 学习调整 P0 增加 release-pinned 回顾提案与学习者确认的返回锚点；`applied` 仅表示已接受回顾，不表示浏览器跳转成功。泛雅兼容 `/progress/adjust` 不再根据外部理解等级伪造建议，只有关联同一学习者、课程、有效冻结目标及已持久化助手回答的真实回合才返回补充内容；否则明确返回 `503`。本地定向测试已通过，浏览器人工验收和部署仍待执行。
 - **2026-08-11**：ResearchAgent Harness v1（真实条件 LangGraph、科研工作区、Todo/Notepad/Scope/Memory、pgvector 迁移与五视图前端）；多源检索、全文、写作与完整仓库复现仍未接通。
 - **2026-08-07**：ResearchAgent P0（arXiv 检索）；Stage 8 Provider 配置基线（`MEDIA_DEMO_MODE`）；P5.1 音色/角色注册表、P5.2 OSS 隔离；统一学习数据链（`learning_events` + `/facade`）。
 

@@ -3,193 +3,302 @@ import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { FlaskConical } from 'lucide-vue-next'
 import { getSandboxHealth, getSandboxLanguages } from '@/api/sandbox.js'
 import {
+  cancelExperimentRun,
+  createCodingDiagnosis,
   createExperimentAttempt,
   createExperimentRun,
-  cancelTask,
-  getCodingFeedback,
-  getExperimentAttempt,
+  getCodingRunExplanation,
   getExperimentRun,
-  getTask,
   listPublishedExperiments,
 } from '@/api/experiments.js'
+import { isTerminalTaskStatus, shouldOfferFormalRunRetry } from '@/api/experimentRunContract.js'
+import { getTask, retryTask } from '@/api/tasks.js'
+import { useCounterStore } from '@/stores/counter.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
-import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxCapabilityTag from '@/app/ui/SfxCapabilityTag.vue'
+import SfxButton from '@/app/ui/SfxButton.vue'
+import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import TeacherExperimentPanel from '@/app/components/course/TeacherExperimentPanel.vue'
 
 const courseContext = inject('courseContext')
+const counter = useCounterStore()
 const isTeacher = computed(() => Boolean(courseContext.allowed.value['course.edit']))
-const courseId = computed(() => courseContext.courseId.value)
+const sandboxStatus = ref('loading')
 const sandbox = ref(null)
 const languages = ref([])
 const experiments = ref([])
 const selectedExperiment = ref(null)
-const selectedLanguage = ref('')
-const sourceCode = ref('')
 const attempt = ref(null)
+const sourceCode = ref('')
+const selectedLanguage = ref('')
 const run = ref(null)
 const task = ref(null)
-const feedback = ref(null)
-const state = ref('idle') // idle | submitting | queued | evaluating | terminal | error
-const error = ref('')
-let pollTimer
+const diagnosis = ref(null)
+const explanation = ref(null)
+const codeStatus = ref('idle')
+const codeError = ref('')
+const codeRunStorageKey = computed(
+  () => `teaching-agent-code-run:${courseContext.courseId.value}:${counter.userData?.id ?? 'anonymous'}`,
+)
 
-const terminal = computed(() => ['accepted', 'wrong_answer', 'time_limit_exceeded', 'memory_limit_exceeded', 'runtime_error', 'compilation_error', 'internal_error'].includes(run.value?.outcome))
+let pollGeneration = 0
 
-function stopPolling() {
-  if (pollTimer) window.clearInterval(pollTimer)
-  pollTimer = undefined
+function newIdempotencyKey() {
+  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID()
+  return `experiment-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-async function load() {
-  const [health, langs, definitions] = await Promise.all([
-    getSandboxHealth().catch(() => null),
-    getSandboxLanguages().catch(() => null),
-    isTeacher.value ? Promise.resolve({ items: [] }) : listPublishedExperiments(courseId.value).catch(() => ({ items: [] })),
-  ])
-  sandbox.value = health
-  languages.value = langs?.languages || []
-  experiments.value = definitions?.items || []
-  selectedExperiment.value = experiments.value[0] || null
-  selectedLanguage.value = selectedExperiment.value?.language_whitelist?.[0] || languages.value[0] || ''
+function isBusy() {
+  return ['submitting', 'queued', 'running', 'cancelling'].includes(codeStatus.value)
 }
 
-async function refreshProgress() {
-  if (!run.value?.run_id) return
+function waitForPoll() {
+  return new Promise((resolve) => window.setTimeout(resolve, 1000))
+}
+
+async function loadSandbox() {
+  sandboxStatus.value = 'loading'
   try {
-    if (run.value.task_id) task.value = await getTask(run.value.task_id)
-    run.value = await getExperimentRun(courseId.value, run.value.run_id)
-    if (terminal.value) {
-      stopPolling()
-      state.value = 'terminal'
-      feedback.value = await getCodingFeedback(courseId.value, run.value.run_id).catch(() => null)
-      if (attempt.value?.attempt_id) attempt.value = await getExperimentAttempt(courseId.value, attempt.value.attempt_id)
-    } else {
-      state.value = 'evaluating'
-    }
-  } catch (reason) {
-    error.value = reason?.message || '无法刷新评测进度'
-    state.value = 'error'
-    stopPolling()
+    const [health, supported] = await Promise.all([
+      getSandboxHealth().catch(() => null),
+      getSandboxLanguages().catch(() => null),
+    ])
+    sandbox.value = health
+    languages.value = Array.isArray(supported?.languages) ? supported.languages : []
+    sandboxStatus.value = 'ready'
+  } catch {
+    sandboxStatus.value = 'error'
   }
 }
 
-async function submit() {
-  if (!selectedExperiment.value || !sourceCode.value.trim() || state.value === 'submitting') return
-  state.value = 'submitting'
-  error.value = ''
-  feedback.value = null
+async function loadExperiments() {
+  if (isTeacher.value) return
   try {
-    if (!attempt.value) {
-      attempt.value = await createExperimentAttempt(selectedExperiment.value.experiment_id, courseId.value)
+    const result = await listPublishedExperiments(courseContext.courseId.value)
+    experiments.value = result?.items ?? []
+    selectedExperiment.value = experiments.value[0] ?? null
+    selectedLanguage.value = selectedExperiment.value?.language_whitelist?.[0] ?? languages.value[0] ?? ''
+  } catch (error) {
+    codeError.value = error?.message || 'Unable to load course experiments.'
+  }
+}
+
+async function createAttempt() {
+  const result = await createExperimentAttempt(
+    selectedExperiment.value.experiment_id,
+    courseContext.courseId.value,
+    {},
+  )
+  attempt.value = result
+  return result
+}
+
+async function loadTerminalRun(runId) {
+  run.value = await getExperimentRun(courseContext.courseId.value, runId)
+  if (run.value?.outcome === 'cancelled') {
+    codeStatus.value = 'cancelled'
+    return
+  }
+  if (run.value?.outcome === 'sandbox_unavailable') {
+    codeStatus.value = 'retryable'
+    return
+  }
+  diagnosis.value = await createCodingDiagnosis(courseContext.courseId.value, runId)
+  explanation.value = await getCodingRunExplanation(courseContext.courseId.value, runId)
+  codeStatus.value = 'done'
+}
+
+async function pollFormalRun(taskId, runId, generation) {
+  while (generation === pollGeneration) {
+    const nextTask = await getTask(taskId)
+    task.value = nextTask
+    if (isTerminalTaskStatus(nextTask?.status)) {
+      await loadTerminalRun(runId)
+      return
     }
-    const key = globalThis.crypto?.randomUUID?.() || `attempt-${Date.now()}`
-    const result = await createExperimentRun(
-      attempt.value.attempt_id,
-      courseId.value,
+    codeStatus.value = 'running'
+    await waitForPoll()
+  }
+}
+
+async function retryFormalRun() {
+  if (!task.value?.task_id || !run.value?.run_id || !shouldOfferFormalRunRetry(task.value, run.value)) return
+  codeStatus.value = 'queued'
+  codeError.value = ''
+  try {
+    task.value = await retryTask(task.value.task_id)
+    const generation = ++pollGeneration
+    await pollFormalRun(task.value.task_id, run.value.run_id, generation)
+  } catch (error) {
+    codeError.value = error?.message || 'Unable to retry the assessment.'
+    codeStatus.value = 'error'
+  }
+}
+
+async function runCode() {
+  if (!selectedExperiment.value || !sourceCode.value.trim() || isBusy()) return
+  codeStatus.value = 'submitting'
+  codeError.value = ''
+  diagnosis.value = null
+  explanation.value = null
+  task.value = null
+  run.value = null
+  try {
+    const currentAttempt = await createAttempt()
+    if (!currentAttempt?.attempt_id) throw new Error('Unable to create a formal experiment attempt.')
+    const createdRun = await createExperimentRun(
+      currentAttempt.attempt_id,
+      courseContext.courseId.value,
       { language: selectedLanguage.value, source_code: sourceCode.value },
-      key,
+      newIdempotencyKey(),
     )
-    run.value = { run_id: result.run_id, task_id: result.task_id, outcome: result.status }
-    state.value = 'queued'
-    await refreshProgress()
-    if (!terminal.value) pollTimer = window.setInterval(refreshProgress, 1800)
-  } catch (reason) {
-    const detail = reason?.response?.data?.detail || reason?.detail
-    error.value = detail?.message || reason?.message || '提交评测失败'
-    state.value = 'error'
+    if (!createdRun?.run_id || !createdRun?.task_id) throw new Error('Unable to queue the formal assessment.')
+    run.value = createdRun
+    window.localStorage.setItem(codeRunStorageKey.value, String(createdRun.run_id))
+    codeStatus.value = 'queued'
+    const generation = ++pollGeneration
+    await pollFormalRun(createdRun.task_id, createdRun.run_id, generation)
+  } catch (error) {
+    codeError.value = error?.message || 'Code assessment failed.'
+    codeStatus.value = 'error'
   }
 }
 
-async function cancelEvaluation() {
-  if (!run.value?.task_id) return
+async function cancelRun() {
+  if (!run.value?.run_id || !['queued', 'running'].includes(codeStatus.value)) return
+  codeStatus.value = 'cancelling'
+  codeError.value = ''
   try {
-    await cancelTask(run.value.task_id)
-    state.value = 'idle'
-    stopPolling()
-    error.value = ''
-  } catch (reason) { error.value = reason?.message || '取消评测失败' }
+    run.value = await cancelExperimentRun(courseContext.courseId.value, run.value.run_id)
+    pollGeneration += 1
+    codeStatus.value = 'cancelled'
+  } catch (error) {
+    codeError.value = error?.message || 'Unable to cancel the assessment.'
+    codeStatus.value = 'error'
+  }
 }
 
-function selectExperiment(item) {
-  selectedExperiment.value = item
-  selectedLanguage.value = item?.language_whitelist?.[0] || ''
+function changeExperiment() {
   attempt.value = null
   run.value = null
-  feedback.value = null
-  state.value = 'idle'
-  stopPolling()
+  task.value = null
+  diagnosis.value = null
+  explanation.value = null
+  codeStatus.value = 'idle'
+  selectedLanguage.value = selectedExperiment.value?.language_whitelist?.[0] ?? languages.value[0] ?? ''
 }
 
-onMounted(load)
-onBeforeUnmount(stopPolling)
+onMounted(async () => {
+  await loadSandbox()
+  await loadExperiments()
+})
+
+onBeforeUnmount(() => {
+  pollGeneration += 1
+})
 </script>
 
 <template>
   <div class="sfx-page">
     <header class="sfx-page-header">
       <div>
-        <h1 class="sfx-t-title1">实验任务</h1>
+        <h1 class="sfx-t-title1">课程实验</h1>
         <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">
-          {{ isTeacher ? '编辑、验证并发布课程编程实验。' : '提交后进入可信异步评测；自由运行不计入成绩。' }}
+          {{ isTeacher ? '创建、验证并发布可信编程实验。' : '提交后由服务端异步评测，只有终结结果会写入实验记录。' }}
         </p>
       </div>
       <SfxCapabilityTag level="experimental" />
     </header>
 
     <section class="sfx-panel">
-      <div class="sfx-exp-head">
-        <h2 class="sfx-panel-title">正式评测沙箱</h2>
-        <SfxBadge :tone="sandbox?.available ? 'green' : 'amber'">{{ sandbox?.available ? '可用' : '待验证' }}</SfxBadge>
+      <div class="sfx-exp-sandbox-head">
+        <h2 class="sfx-panel-title">代码沙箱</h2>
+        <SfxBadge v-if="sandboxStatus === 'ready' && sandbox?.available" tone="green">可用</SfxBadge>
+        <SfxBadge v-else-if="sandboxStatus === 'ready'" tone="amber">暂不可用</SfxBadge>
+        <SfxBadge v-else tone="neutral">检测中</SfxBadge>
       </div>
-      <p class="sfx-t-ui sfx-t-secondary">正式提交在独立 Judge0 中异步完成。课程关闭实验能力时，读取、推荐和执行都会被拒绝。</p>
-      <div class="sfx-exp-langs"><SfxBadge v-for="language in languages" :key="language" tone="ink">{{ language }}</SfxBadge></div>
+      <p v-if="sandboxStatus === 'ready'" class="sfx-t-ui sfx-t-secondary">
+        支持语言：{{ languages.length ? languages.join(' / ') : '暂未获取' }}。自由运行与正式成绩相互隔离。
+      </p>
+      <p v-else-if="sandboxStatus === 'error'" class="sfx-t-ui sfx-t-secondary">沙箱服务暂时不可达，正式评测无法提交。</p>
     </section>
 
     <TeacherExperimentPanel v-if="isTeacher" />
 
     <section v-else-if="experiments.length" class="sfx-panel sfx-code-runner">
-      <div class="sfx-exp-head">
-        <div><h2 class="sfx-panel-title">正式提交</h2><p class="sfx-t-ui sfx-t-secondary">ACM/ICPC：全部测试通过才计为完成。</p></div>
-        <SfxBadge v-if="run" :tone="terminal ? (run.outcome === 'accepted' ? 'green' : 'amber') : 'ink'">{{ run.outcome }}</SfxBadge>
+      <div class="sfx-exp-sandbox-head">
+        <div>
+          <h2 class="sfx-panel-title">正式编程评测</h2>
+          <p class="sfx-t-ui sfx-t-secondary">采用 ACM/ICPC 规则：全部测试通过才获得通过记录。</p>
+        </div>
+        <SfxBadge v-if="run?.outcome" tone="ink">{{ run.outcome }}</SfxBadge>
       </div>
-      <label class="sfx-code-label">实验任务
-        <select class="sfx-code-select" :value="selectedExperiment" @change="selectExperiment(experiments.find((item) => item.experiment_id === $event.target.value))">
-          <option v-for="item in experiments" :key="item.experiment_id" :value="item.experiment_id">{{ item.title }}</option>
+
+      <label class="sfx-code-label">
+        实验任务
+        <select v-model="selectedExperiment" class="sfx-code-select" :disabled="isBusy()" @change="changeExperiment">
+          <option v-for="item in experiments" :key="item.experiment_id" :value="item">{{ item.title }}</option>
         </select>
       </label>
-      <label class="sfx-code-label">语言
-        <select v-model="selectedLanguage" class="sfx-code-select"><option v-for="language in (selectedExperiment?.language_whitelist || [])" :key="language" :value="language">{{ language }}</option></select>
+      <label class="sfx-code-label">
+        编程语言
+        <select v-model="selectedLanguage" class="sfx-code-select" :disabled="isBusy()">
+          <option v-for="language in (selectedExperiment?.language_whitelist || languages)" :key="language" :value="language">{{ language }}</option>
+        </select>
       </label>
-      <label class="sfx-code-label">代码
-        <textarea v-model="sourceCode" class="sfx-code-editor" rows="12" spellcheck="false" placeholder="在这里编写代码…" />
+      <label class="sfx-code-label">
+        源码
+        <textarea v-model="sourceCode" class="sfx-code-editor" rows="12" spellcheck="false" :disabled="isBusy()" placeholder="在这里编写代码" />
       </label>
-      <SfxButton variant="primary" :loading="state === 'submitting'" :disabled="!sourceCode.trim() || !selectedLanguage || ['queued', 'evaluating'].includes(state)" @click="submit">
-        {{ ['queued', 'evaluating'].includes(state) ? '评测中…' : '提交正式评测' }}
-      </SfxButton>
-      <SfxButton v-if="['queued', 'evaluating'].includes(state)" variant="secondary" size="sm" @click="cancelEvaluation">取消本次评测</SfxButton>
-      <p v-if="task?.status && !terminal" class="sfx-t-ui sfx-t-secondary">任务中心状态：{{ task.status }}，正在轮询结果。</p>
-      <p v-if="error" class="sfx-code-error" role="alert">{{ error }}</p>
-      <section v-if="feedback" class="sfx-code-diagnosis" aria-live="polite">
+
+      <div class="sfx-code-actions">
+        <SfxButton variant="primary" :disabled="isBusy() || !sourceCode.trim() || !selectedExperiment" @click="runCode">
+          {{ isBusy() ? '评测中…' : '提交正式评测' }}
+        </SfxButton>
+        <SfxButton v-if="['queued', 'running'].includes(codeStatus)" variant="secondary" :loading="codeStatus === 'cancelling'" @click="cancelRun">
+          取消评测
+        </SfxButton>
+        <SfxButton v-if="shouldOfferFormalRunRetry(task, run)" variant="secondary" @click="retryFormalRun">
+          重试评测
+        </SfxButton>
+      </div>
+
+      <p v-if="task" class="sfx-t-caption sfx-t-secondary">任务 {{ task.task_id }}：{{ task.status }} · {{ task.progress }}%</p>
+      <p v-if="codeStatus === 'cancelled'" class="sfx-t-ui sfx-t-secondary">本次评测已取消，未生成正式成绩或实验记录。</p>
+      <p v-else-if="codeStatus === 'retryable'" class="sfx-t-ui sfx-t-secondary">评测机暂不可用；本次提交尚未形成成绩，可在恢复后重试。</p>
+      <p v-if="codeError" class="sfx-code-error" role="alert">{{ codeError }}</p>
+
+      <div v-if="diagnosis" class="sfx-code-diagnosis">
+        <strong>规则诊断：{{ diagnosis.error_class || diagnosis.outcome || '已完成' }}</strong>
+        <p v-if="diagnosis.summary">{{ diagnosis.summary }}</p>
+        <ul v-if="diagnosis.debug_steps?.length">
+          <li v-for="step in diagnosis.debug_steps" :key="step">{{ step }}</li>
+        </ul>
+      </div>
+      <div v-if="explanation?.explanation" class="sfx-code-diagnosis">
         <strong>本次运行讲解</strong>
-        <p>{{ feedback.summary }}</p>
-        <p class="sfx-t-caption">通过 {{ feedback.result?.passed_count }}/{{ feedback.result?.total_count }} · {{ feedback.result?.outcome }}</p>
-        <ol><li v-for="step in feedback.next_steps" :key="step">{{ step }}</li></ol>
-      </section>
-      <p v-if="attempt?.status === 'finalized' || attempt?.status === 'failed'" class="sfx-t-caption">尝试已由服务端终结，并投影到可信实验记录。</p>
+        <p>{{ explanation.explanation }}</p>
+        <ul v-if="explanation.next_steps?.length">
+          <li v-for="step in explanation.next_steps" :key="step">{{ step }}</li>
+        </ul>
+      </div>
     </section>
-    <section v-else class="sfx-panel sfx-empty-state"><FlaskConical :size="22" /><p>教师发布并完成参考解验证后，课程实验会显示在这里。</p></section>
+
+    <SfxEmpty v-else-if="!isTeacher" title="暂无已发布实验" description="教师完成版本、测试、参考解预览和锁定后，实验会显示在这里。">
+      <template #icon><FlaskConical :size="20" :stroke-width="1.9" /></template>
+    </SfxEmpty>
   </div>
 </template>
 
 <style scoped>
-.sfx-exp-head { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); }
-.sfx-exp-langs { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-top:var(--space-3); }
-.sfx-code-runner { display:flex; flex-direction:column; gap:var(--space-3); }
-.sfx-code-label { display:flex; flex-direction:column; gap:var(--space-1); color:var(--text-secondary); font-size:var(--ui-sm-size); }
-.sfx-code-select,.sfx-code-editor { width:100%; border:1px solid var(--border-subtle); border-radius:var(--radius-sm); background:var(--surface-panel); color:var(--ink-900); padding:var(--space-2) var(--space-3); }
-.sfx-code-editor { min-height:180px; resize:vertical; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; line-height:1.5; }
-.sfx-code-error { color:var(--danger-700,#b42318); }
-.sfx-code-diagnosis { padding:var(--space-3); border-radius:var(--radius-sm); background:var(--surface-soft); color:var(--ink-800); }
-.sfx-code-diagnosis p { margin:var(--space-2) 0; }.sfx-code-diagnosis ol { margin:0; padding-left:1.25rem; }.sfx-empty-state { display:flex; gap:var(--space-2); align-items:center; }
+.sfx-exp-sandbox-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.sfx-code-runner { display: flex; flex-direction: column; gap: var(--space-3); }
+.sfx-code-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sfx-code-label { display: flex; flex-direction: column; gap: var(--space-1); color: var(--text-secondary); font-size: var(--ui-sm-size); }
+.sfx-code-select, .sfx-code-editor { width: 100%; border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-panel); color: var(--ink-900); padding: var(--space-2) var(--space-3); }
+.sfx-code-editor { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; line-height: 1.5; background: var(--ink-900); color: var(--surface-panel); }
+.sfx-code-error { color: var(--red-700); }
+.sfx-code-diagnosis { padding: var(--space-3); border: 1px solid var(--border-subtle); border-radius: var(--radius-sm); background: var(--surface-soft); color: var(--ink-800); }
+.sfx-code-diagnosis p { margin: var(--space-2) 0; }
+.sfx-code-diagnosis ul { margin: 0; padding-left: 1.25rem; }
 </style>

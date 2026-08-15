@@ -15,9 +15,10 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
@@ -28,7 +29,7 @@ from app.models.experiment_model import (
     ExperimentPublishStatus,
     RunOutcome,
 )
-from app.services.course_access_service import require_course_permission as _base_require_course_permission
+from app.services.course_access_service import require_course_permission
 from app.services.experiment_service import (
     attempt_service,
     coding_hint_service,
@@ -37,28 +38,15 @@ from app.services.experiment_service import (
     run_service,
     version_service,
 )
-from app.services.coding_eduagent_service import coding_eduagent, serialize_diagnosis
+from app.services.coding_eduagent_service import (
+    build_rule_explanation,
+    coding_eduagent,
+    serialize_diagnosis,
+)
 from app.models.coding_diagnosis_model import CodingDiagnosisRecord
 
 
 experiment_router = APIRouter()
-
-
-def _require_experiment_platform(session: Session, current_user: dict, course_id: int, permission: str):
-    """The course experiment platform requires both coupled capability flags."""
-    context = _base_require_course_permission(session, current_user, course_id, permission)
-    if not context.capabilities.get("experiment", False) or not context.capabilities.get("coding_sandbox", False):
-        raise HTTPException(
-            status_code=403,
-            detail={"error_code": "EXPERIMENT_PLATFORM_DISABLED", "message": "课程实验平台未启用"},
-        )
-    return context
-
-
-# All routes in this module are inside the coupled experiment platform.  Keep
-# existing call sites fail-closed without relying on each future endpoint to
-# remember both capability checks.
-require_course_permission = _require_experiment_platform
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +103,11 @@ class HintRequest(BaseModel):
 class HintReviewRequest(BaseModel):
     decision: str = Field(..., description="approved|rejected")
     note: str = Field(default="", max_length=2000)
+
+
+class ReferencePreviewRequest(BaseModel):
+    language: str = Field(min_length=1, max_length=50)
+    source_code: str = Field(min_length=1, max_length=100_000)
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +289,7 @@ async def create_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师创建实验定义。"""
-    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
+    require_course_permission(session, current_user, course_id, "experiment.configure")
     user_id = int(current_user["user_id"])
     definition = definition_service.create_definition(
         session,
@@ -326,7 +319,7 @@ async def get_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """获取实验定义详情（学生视图不返回 draft/archived）。"""
-    context = _require_experiment_platform(session, current_user, course_id, "experiment.view")
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
     definition = definition_service.get_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -350,7 +343,7 @@ async def update_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师更新实验定义。"""
-    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
+    require_course_permission(session, current_user, course_id, "experiment.configure")
     definition = definition_service.update_definition(
         session,
         course_id=course_id,
@@ -378,7 +371,12 @@ async def publish_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师发布实验。"""
-    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
+    context = require_course_permission(session, current_user, course_id, "experiment.configure")
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
+        )
     definition = definition_service.publish_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -399,7 +397,7 @@ async def archive_definition(
     current_user: dict = Depends(get_current_user),
 ):
     """教师归档实验。"""
-    _require_experiment_platform(session, current_user, course_id, "experiment.configure")
+    require_course_permission(session, current_user, course_id, "experiment.configure")
     definition = definition_service.archive_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -554,29 +552,6 @@ async def activate_version(
     )
 
 
-@experiment_router.post("/versions/{version_id}/reference-preview")
-async def preview_reference_solution(
-    version_id: str,
-    payload: ReferencePreviewRequest,
-    course_id: int = Query(...),
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """Validate a transient reference solution without storing its source."""
-    require_course_permission(session, current_user, course_id, "experiment.configure")
-    from app.services.experiment_service import publish_validator
-
-    result = publish_validator.verify_reference_solution(
-        session,
-        course_id=course_id,
-        version_id=version_id,
-        language=payload.language,
-        source_code=payload.source_code,
-    )
-    session.commit()
-    return unified_response(code=200, message="参考解预览完成", data=result)
-
-
 @experiment_router.post("/versions/{version_id}/lock")
 async def lock_version(
     version_id: str,
@@ -613,7 +588,12 @@ async def create_attempt(
     current_user: dict = Depends(get_current_user),
 ):
     """学生创建一次实验尝试。"""
-    require_course_permission(session, current_user, course_id, "experiment.run")
+    context = require_course_permission(session, current_user, course_id, "experiment.run")
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
+        )
     user_id = int(current_user["user_id"])
     attempt = attempt_service.create_attempt(
         session,
@@ -666,11 +646,16 @@ async def create_run(
     attempt_id: str,
     payload: RunCreateRequest,
     course_id: int = Query(...),
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=1, max_length=128),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key", max_length=128),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """创建正式异步评测任务；永不在请求内等待 Judge0。"""
+    """Submit a formal run to the durable assessment queue.
+
+    Every formal submission requires ``Idempotency-Key`` and returns ``202``
+    with a task id.  The request never waits for Judge0; clients poll the task
+    and then read the server-owned run result.
+    """
     context = require_course_permission(session, current_user, course_id, "experiment.run")
     if not context.capabilities.get("coding_sandbox", False):
         raise HTTPException(
@@ -678,29 +663,15 @@ async def create_run(
             detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "课程未启用代码沙箱能力"},
         )
     user_id = int(current_user["user_id"])
+    if not idempotency_key:
+        from app.core.exceptions import reject_validation_failed
 
-    # 创建 ExperimentRun（PENDING）+ TaskRecord，返回 202 + task_id。
-    # 同一 Idempotency-Key 返回现有运行，不重复评分或生成实验记录。
+        reject_validation_failed("正式评测必须提供 Idempotency-Key")
+
+    # Formal assessment always goes through the durable task queue.
     from app.services.task_service import TaskCreateRequest, task_service
 
-    existing = run_service.get_run_by_idempotency(
-        session, attempt_id=attempt_id, idempotency_key=idempotency_key,
-    )
-    if existing is not None:
-        return unified_response(
-            code=202,
-            message="代码运行任务已存在",
-            data={"run_id": existing.run_id, "task_id": existing.task_id, "status": existing.outcome.value},
-        )
-
-    attempt = attempt_service.get_attempt(
-        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
-    )
-    if attempt.status == AttemptStatus.IN_PROGRESS:
-        attempt_service.submit_attempt(session, course_id=course_id, attempt_id=attempt_id)
-    elif attempt.status != AttemptStatus.SUBMITTED:
-        raise HTTPException(status_code=409, detail="该实验尝试已经终结或取消")
-
+    # 创建 ExperimentRun（不执行沙箱；校验仍在 create_run 内完成）
     run = await run_service.create_run(
         session,
         course_id=course_id,
@@ -708,8 +679,27 @@ async def create_run(
         language=payload.language,
         source_code=payload.source_code,
         student_id=user_id,
-        execute=False,
         idempotency_key=idempotency_key,
+    )
+
+    if run.task_id:
+        return JSONResponse(
+            status_code=202,
+            content=unified_response(
+                code=202,
+                message="代码运行任务已存在",
+                data={
+                    "run_id": run.run_id,
+                    "task_id": run.task_id,
+                    "status": run.outcome.value,
+                },
+            ),
+        )
+
+    # A submission is owned by this server transition.  The removed public
+    # submit endpoint cannot be used to manufacture a final score.
+    attempt_service.submit_attempt(
+        session, course_id=course_id, attempt_id=attempt_id,
     )
 
     task_view = task_service.create_task(session, TaskCreateRequest(
@@ -724,13 +714,13 @@ async def create_run(
             "language": payload.language,
             "student_id": user_id,
         },
+        idempotency_key=f"experiment-run:{course_id}:{attempt_id}:{idempotency_key}",
         resource_links=[
             {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
             {"resource_kind": "experiment_attempt", "resource_id": attempt_id, "relation": "input"},
             {"resource_kind": "experiment_run", "resource_id": run.run_id, "relation": "output"},
         ],
-        idempotency_key=f"experiment_run:{attempt_id}:{idempotency_key}",
-    ))
+    ), commit=False)
 
     # 关联 task_id 到 run（便于后续查询）
     run.task_id = task_view.task_id
@@ -761,15 +751,44 @@ async def create_run(
             exc_info=True,
         )
 
-    return unified_response(
-        code=202,
-        message="代码运行任务已创建",
-        data={
-            "run_id": run.run_id,
-            "task_id": task_view.task_id,
-            "status": run.outcome.value if hasattr(run.outcome, "value") else str(run.outcome),
-        },
+    return JSONResponse(
+        status_code=202,
+        content=unified_response(
+            code=202,
+            message="代码运行任务已创建",
+            data={
+                "run_id": run.run_id,
+                "task_id": task_view.task_id,
+                "status": run.outcome.value,
+            },
+        ),
     )
+
+
+@experiment_router.post("/versions/{version_id}/reference-preview")
+async def preview_reference_solution(
+    version_id: str,
+    payload: ReferencePreviewRequest,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Transient teacher-only reference solution preview; source is never persisted."""
+    context = require_course_permission(session, current_user, course_id, "experiment.configure")
+    if not context.capabilities.get("coding_sandbox", False):
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
+        )
+    result = version_service.preview_reference_solution(
+        session,
+        course_id=course_id,
+        version_id=version_id,
+        language=payload.language,
+        source_code=payload.source_code,
+    )
+    session.commit()
+    return unified_response(200, "参考解预览完成", result)
 
 
 @experiment_router.get("/attempts/{attempt_id}/runs")
@@ -806,15 +825,48 @@ async def get_run(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Read one formal run without exposing source or hidden-test artifacts."""
-    context = _require_experiment_platform(session, current_user, course_id, "experiment.view")
+    """Read the server-owned result for task polling without source exposure."""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    student_id = int(current_user["user_id"]) if context.role is None or context.role.value == "student" else None
     run = run_service.get_run(
         session,
         course_id=course_id,
         run_id=run_id,
-        student_id=int(current_user["user_id"]) if context.role is not None and context.role.value == "student" else None,
+        student_id=student_id,
     )
-    return unified_response(code=200, message="获取运行结果成功", data=_serialize_run(run))
+    return unified_response(200, "获取运行结果成功", _serialize_run(run))
+
+
+@experiment_router.post("/runs/{run_id}/cancel")
+async def cancel_run(
+    run_id: str,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "experiment.run")
+    run = run_service.request_cancel(
+        session,
+        course_id=course_id,
+        run_id=run_id,
+        student_id=int(current_user["user_id"]),
+    )
+    if run.task_id:
+        from app.services.task_service import task_service
+
+        task_service.cancel(
+            session,
+            run.task_id,
+            reason="学生取消正式评测",
+            operator_user_id=int(current_user["user_id"]),
+        )
+    session.commit()
+    return unified_response(200, "已请求取消评测", _serialize_run(run))
+
+
+# ---------------------------------------------------------------------------
+# 终结化
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -943,6 +995,69 @@ async def create_run_diagnosis(
     return unified_response(code=201, message="代码诊断已生成", data=serialize_diagnosis(diagnosis))
 
 
+@experiment_router.post("/runs/{run_id}/explanation")
+async def explain_run(
+    run_id: str,
+    request: Request,
+    course_id: int = Query(...),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """Return an owner-scoped CodingAgent explanation with safe fallback."""
+    context = require_course_permission(session, current_user, course_id, "experiment.view")
+    user_id = int(current_user["user_id"])
+    run = run_service.get_run(
+        session,
+        course_id=course_id,
+        run_id=run_id,
+        student_id=user_id if context.role is not None and context.role.value == "student" else None,
+    )
+    diagnosis = session.exec(
+        select(CodingDiagnosisRecord).where(
+            CodingDiagnosisRecord.run_id == run.run_id,
+            CodingDiagnosisRecord.course_id == course_id,
+            CodingDiagnosisRecord.student_id == run.student_id,
+        )
+    ).first()
+    if diagnosis is None:
+        return unified_response(
+            code=200,
+            message="No coding explanation is available yet",
+            data={"run_id": run_id, "explanation": None},
+        )
+    explanation = build_rule_explanation(diagnosis)
+    is_student_owner = (
+        context.role is not None
+        and context.role.value == "student"
+        and run.student_id == user_id
+    )
+    platform = getattr(request.app.state, "agent_platform", None)
+    if is_student_owner and platform is not None:
+        from app.platform.agents.runtime.base import AgentRunContext
+        from app.platform.agents.runtime.profile import AgentType
+
+        if platform.is_registered(AgentType.CODING):
+            result = await platform.respond(AgentRunContext(
+                agent_type=AgentType.CODING.value,
+                scope=(str(run.student_id), str(course_id)),
+                student_id=str(run.student_id),
+                course_id=str(course_id),
+                code_submission_id=run.run_id,
+            ))
+            answer = result.get("final_answer")
+            if answer and result.get("status") not in {
+                "no_sandbox_result", "unavailable", "timeout", "runtime_error",
+            } and not result.get("errors"):
+                explanation["summary"] = str(answer)
+                explanation["source"] = "coding-agent"
+                explanation["agent_status"] = result.get("status", "ok")
+    return unified_response(
+        code=200,
+        message="Coding explanation retrieved",
+        data=explanation,
+    )
+
+
 @experiment_router.get("/runs/{run_id}/diagnosis")
 async def get_run_diagnosis(
     run_id: str,
@@ -967,62 +1082,3 @@ async def get_run_diagnosis(
     if diagnosis is None:
         return unified_response(code=200, message="尚未生成代码诊断", data={"run_id": run_id, "diagnosis": None})
     return unified_response(code=200, message="获取代码诊断成功", data=serialize_diagnosis(diagnosis))
-
-
-@experiment_router.get("/runs/{run_id}/feedback")
-async def get_run_feedback(
-    run_id: str,
-    course_id: int = Query(...),
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """Return a CodingAgent-safe explanation with a deterministic fallback.
-
-    The payload is assembled from the server-owned diagnosis record only.  It
-    intentionally excludes source, stdin/stdout, hidden tests, artifacts and
-    Judge0 configuration, so future LLM enrichment has the same boundary.
-    """
-    context = require_course_permission(session, current_user, course_id, "experiment.view")
-    user_id = int(current_user["user_id"])
-    run = run_service.get_run(
-        session,
-        course_id=course_id,
-        run_id=run_id,
-        student_id=user_id if context.role is not None and context.role.value == "student" else None,
-    )
-    diagnosis = session.exec(select(CodingDiagnosisRecord).where(
-        CodingDiagnosisRecord.run_id == run_id,
-        CodingDiagnosisRecord.course_id == course_id,
-        CodingDiagnosisRecord.student_id == run.student_id,
-    )).first()
-    if diagnosis is None and run.outcome != RunOutcome.PENDING:
-        diagnosis = coding_eduagent.diagnose_run(
-            session, course_id=course_id, student_id=run.student_id, run_id=run_id,
-        )
-        session.commit()
-    if diagnosis is None:
-        return unified_response(
-            code=200,
-            message="运行尚未终结",
-            data={"run_id": run_id, "status": "pending", "feedback": None},
-        )
-    return unified_response(
-        code=200,
-        message="获取本次运行讲解成功",
-        data={
-            "run_id": run_id,
-            "feedback_source": "coding-rules",
-            "summary": diagnosis.summary,
-            "next_steps": list(diagnosis.debug_steps or []),
-            "reason_codes": list(diagnosis.reason_codes or []),
-            "line": diagnosis.line,
-            "result": {
-                "outcome": diagnosis.outcome,
-                "passed_count": run.passed_count,
-                "total_count": run.total_count,
-                "cpu_time_ms": run.cpu_time_ms,
-                "wall_time_ms": run.wall_time_ms,
-                "memory_kb": run.memory_kb,
-            },
-        },
-    )

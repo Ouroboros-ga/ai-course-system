@@ -204,6 +204,24 @@ def test_postgres_0051_adds_uppercase_orm_enum_member_labels():
         engine.dispose()
 
 
+def test_postgres_0059_adds_safety_audit_enum_labels():
+    """SafetyAuditLog inserts (e.g. sandbox-policy PUT) no longer hit InvalidTextRepresentation."""
+    postgres_url = _postgres_url_or_skip()
+    _reset_postgres_public_schema(postgres_url)
+    _upgrade_to_head(postgres_url)
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            values = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::auditeventtype))::text")
+            ).scalars())
+        assert {"POLICY_CHANGE", "HIT", "PASS", "BLOCK", "CONFIRM",
+                "SANDBOX_RUN", "SANDBOX_BLOCK"} <= values
+    finally:
+        engine.dispose()
+
+
 def test_postgres_0052_normalizes_legacy_rows_and_keeps_them_orm_readable():
     """The deployed 0050 state repairs without losing ORM readability."""
     postgres_url = _postgres_url_or_skip()

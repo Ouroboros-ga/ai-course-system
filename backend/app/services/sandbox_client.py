@@ -275,13 +275,13 @@ class SandboxClient:
         except httpx.TimeoutException:
             logger.warning("Judge0 沙箱超时")
             return SandboxResult(
-                status=SubmissionStatus.TIME_LIMIT_EXCEEDED,
+                status=SubmissionStatus.SANDBOX_UNAVAILABLE,
                 message="沙箱执行超时",
             )
         except Exception:
             logger.exception("Judge0 沙箱请求失败")
             return SandboxResult(
-                status=SubmissionStatus.INTERNAL_ERROR,
+                status=SubmissionStatus.SANDBOX_UNAVAILABLE,
                 message="沙箱内部错误",
             )
 

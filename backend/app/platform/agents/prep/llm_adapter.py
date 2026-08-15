@@ -259,6 +259,58 @@ class PrepLLMAdapter:
         return data
 
     @staticmethod
+    def _knowledge_point_positions(
+        outline: "OutlinePlannerResult",
+    ) -> dict[str, dict[str, Any]]:
+        """Map each knowledge point to its position in the full lesson sequence.
+
+        The initial script stage previously sent every knowledge point an
+        isolated request, so the model had no idea whether a node opened the
+        lesson, closed it, or sat in the middle.  Without that context it
+        prefixed every node with a fresh greeting ("同学们好") and repeated the
+        closing summary.  This helper derives the deterministic in-outline
+        order (the same order ``_group_script_candidates`` preserves) so the
+        model can write a continuous lecture instead of N standalone lessons.
+        """
+        knowledge_points = [
+            item for item in outline.candidates if item.node_type == "knowledge_point"
+        ]
+        total = len(knowledge_points)
+        positions: dict[str, dict[str, Any]] = {}
+        for index, candidate in enumerate(knowledge_points):
+            previous = knowledge_points[index - 1] if index > 0 else None
+            following = (
+                knowledge_points[index + 1] if index + 1 < total else None
+            )
+            positions[candidate.candidate_id] = {
+                "index": index + 1,
+                "total": total,
+                "is_first": index == 0,
+                "is_last": index == total - 1,
+                "previous_title": previous.title if previous else None,
+                "next_title": following.title if following else None,
+            }
+        return positions
+
+    @staticmethod
+    def _knowledge_point_sequence(
+        outline: "OutlinePlannerResult",
+    ) -> list[dict[str, Any]]:
+        """Ordered, title-only overview of every knowledge point in the course.
+
+        Sent alongside a script batch so the model can see where the current
+        group sits in the full lecture, even when the group is only a subset.
+        """
+        return [
+            {"index": index + 1, "title": item.title}
+            for index, item in enumerate(
+                candidate
+                for candidate in outline.candidates
+                if candidate.node_type == "knowledge_point"
+            )
+        ]
+
+    @staticmethod
     def _outline_context(
         outline: "OutlinePlannerResult",
         candidate_ids: set[str],
@@ -600,6 +652,8 @@ class PrepLLMAdapter:
             **self._request_context(request),
             "outline": self._outline_context(outline, {candidate_id}),
             "candidate_id": candidate_id,
+            "position": PrepLLMAdapter._knowledge_point_positions(outline).get(candidate_id),
+            "knowledge_point_sequence": PrepLLMAdapter._knowledge_point_sequence(outline),
             "evidence": [
                 item.llm_payload()
                 for item in self._bounded_evidence_items(
@@ -646,10 +700,18 @@ class PrepLLMAdapter:
             for candidate in candidates
             for evidence_id in candidate.evidence_ids
         }
+        positions = PrepLLMAdapter._knowledge_point_positions(outline)
         user_payload = {
             **self._request_context(request),
             "outline": self._outline_context(outline, candidate_ids),
-            "candidates": [PrepLLMAdapter._candidate_llm_payload(c) for c in candidates],
+            "candidates": [
+                {
+                    **PrepLLMAdapter._candidate_llm_payload(c),
+                    "position": positions.get(c.candidate_id),
+                }
+                for c in candidates
+            ],
+            "knowledge_point_sequence": PrepLLMAdapter._knowledge_point_sequence(outline),
             "evidence": [
                 item.llm_payload()
                 for item in self._bounded_evidence_items(

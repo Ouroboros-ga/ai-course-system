@@ -21,4 +21,17 @@ class CodingDiagnosisPort(Protocol):
     ) -> Mapping[str, Any] | None: ...
 
 
-__all__ = ["SandboxPort", "CodingDiagnosisPort"]
+class CodeSubmissionPort(Protocol):
+    """Return source only to CodingAgent for one explicitly scoped submission.
+
+    Implementations must validate student, course, and run identity themselves.
+    The returned source is ephemeral teaching context: callers must not persist
+    it in graph state, diagnosis records, audit traces, or cross-agent payloads.
+    """
+
+    async def get_submission_for_diagnosis(
+        self, *, student_id: str, course_id: str, run_id: str,
+    ) -> Mapping[str, Any] | None: ...
+
+
+__all__ = ["SandboxPort", "CodingDiagnosisPort", "CodeSubmissionPort"]

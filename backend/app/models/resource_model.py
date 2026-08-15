@@ -374,12 +374,13 @@ class LabRecord(SQLModel, table=True):
     final_score: Optional[float] = Field(default=None)
     passed: Optional[bool] = Field(default=None)
     evidence_id: Optional[str] = Field(default=None, index=True)
-    record_source: str = Field(
-        default="legacy_unverified",
-        index=True,
-        description="legacy_unverified|experiment_finalization；只有后者可显示为正式记录",
-    )
+    # Only ``experiment_attempt_terminated`` is eligible for the formal
+    # laboratory view.  Historical independently-written rows remain visible
+    # only as legacy data and cannot become course evidence.
+    source_kind: str = Field(default="legacy_unverified", index=True)
     projection_id: Optional[str] = Field(default=None, index=True)
+    experiment_id: Optional[str] = Field(default=None, index=True)
+    trusted_source: bool = Field(default=False, index=True)
 
     return_anchor: dict = Field(default_factory=dict, sa_column=Column(JSON))
     created_at: datetime = Field(default_factory=utcnow_aware)

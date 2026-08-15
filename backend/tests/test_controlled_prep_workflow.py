@@ -1954,6 +1954,70 @@ def test_initial_runtime_failure_preserves_stage_label():
     assert failure.stage == "plan_outline"
 
 
+def test_empty_outline_titles_backfilled_from_evidence_and_pass_gate():
+    # OCR-heavy PPTs leak icon/page-number fragments (e.g. "\uf06c", "P3")
+    # into node titles; these must be backfilled so the title hard gate does
+    # not abort the whole build, while still surfacing a review warning.
+    from app.schemas.controlled_prep import OutlineCandidate
+    outline = OutlinePlannerResult(
+        stage="outline_planner",
+        candidates=[
+            OutlineCandidate(candidate_id="ch_1", node_type="chapter", title="数据结构",
+                             parent_candidate_id=None, evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="s_1", node_type="section", title="基本概念",
+                             parent_candidate_id="ch_1", evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_2"], rationale=""),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_3"], rationale=""),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_4"], rationale=""),
+        ],
+        prerequisites=[],
+    )
+    blocks = {
+        "blk_1": DocumentBlock(course_id=4, run_id="r", block_id="blk_1", text="数据结构基础"),
+        "blk_2": DocumentBlock(course_id=4, run_id="r", block_id="blk_2", text="\uf06c 二分查找算法"),
+        "blk_3": DocumentBlock(course_id=4, run_id="r", block_id="blk_3", text="P3"),
+        "blk_4": DocumentBlock(course_id=4, run_id="r", block_id="blk_4", text="\uf06c"),
+    }
+    filled_outline, filled = InitialCoursePrepService._fill_empty_outline_titles(outline, blocks)
+    assert len(filled) == 3
+    titles = {c.candidate_id: c.title for c in filled_outline.candidates}
+    assert titles["kp_1"] == "二分查找算法"      # 图标字符被剥离后取真实文本
+    assert titles["kp_2"] == "P3"               # 非纯数字的短碎片仍可被教师复核
+    assert titles["kp_3"] == "未命名知识点"      # 纯图标块无法提取时使用占位名
+    InitialCoursePrepService._validate_initial_outline(filled_outline)
+
+
+def test_empty_title_backfill_deduplicates_within_parent():
+    from app.schemas.controlled_prep import OutlineCandidate
+    outline = OutlinePlannerResult(
+        stage="outline_planner",
+        candidates=[
+            OutlineCandidate(candidate_id="ch_1", node_type="chapter", title="数据结构",
+                             parent_candidate_id=None, evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="s_1", node_type="section", title="基本概念",
+                             parent_candidate_id="ch_1", evidence_ids=["blk_1"], rationale=""),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_2"], rationale=""),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="\uf06c",
+                             parent_candidate_id="s_1", evidence_ids=["blk_3"], rationale=""),
+        ],
+        prerequisites=[],
+    )
+    blocks = {
+        "blk_1": DocumentBlock(course_id=4, run_id="r", block_id="blk_1", text="数据结构基础"),
+        "blk_2": DocumentBlock(course_id=4, run_id="r", block_id="blk_2", text="\uf06c"),
+        "blk_3": DocumentBlock(course_id=4, run_id="r", block_id="blk_3", text="\uf06c"),
+    }
+    filled_outline, filled = InitialCoursePrepService._fill_empty_outline_titles(outline, blocks)
+    titles = {c.candidate_id: c.title for c in filled_outline.candidates}
+    assert titles["kp_1"] == "未命名知识点"
+    assert titles["kp_2"] == "未命名知识点2"
+    InitialCoursePrepService._validate_initial_outline(filled_outline)
+
+
 def json_dumps(value) -> str:
     import json
     return json.dumps(value, ensure_ascii=False)
@@ -1962,3 +2026,88 @@ def json_dumps(value) -> str:
 def asyncio_run(awaitable):
     import asyncio
     return asyncio.run(awaitable)
+
+
+def test_knowledge_point_positions_derive_lesson_order():
+    from app.schemas.controlled_prep import OutlineCandidate
+
+    outline = OutlinePlannerResult(
+        candidates=[
+            OutlineCandidate(candidate_id="ch", node_type="chapter", title="发动机", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="sec", node_type="section", title="总体构造", parent_candidate_id="ch", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="曲柄连杆", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="配气机构", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="供给系统", parent_candidate_id="sec", evidence_ids=["es_1"]),
+        ],
+        prerequisites=[],
+    )
+
+    positions = PrepLLMAdapter._knowledge_point_positions(outline)
+    assert positions["kp_1"]["is_first"] is True
+    assert positions["kp_1"]["is_last"] is False
+    assert positions["kp_1"]["previous_title"] is None
+    assert positions["kp_1"]["next_title"] == "配气机构"
+    assert positions["kp_2"]["is_first"] is False
+    assert positions["kp_2"]["previous_title"] == "曲柄连杆"
+    assert positions["kp_2"]["next_title"] == "供给系统"
+    assert positions["kp_3"]["is_last"] is True
+
+    sequence = PrepLLMAdapter._knowledge_point_sequence(outline)
+    assert [item["title"] for item in sequence] == ["曲柄连杆", "配气机构", "供给系统"]
+    assert [item["index"] for item in sequence] == [1, 2, 3]
+
+
+def test_script_writer_batch_payload_carries_position_and_sequence():
+    from app.schemas.controlled_prep import OutlineCandidate
+
+    captured = {}
+
+    class CapturingPort:
+        async def complete(self, *, messages, output_schema, **_kwargs):
+            captured["messages"] = messages
+            scripts = [
+                {
+                    "stage": "script_writer",
+                    "candidate_id": cid,
+                    "title": "t",
+                    "course_positioning": "p",
+                    "prerequisites": [],
+                    "style": {"level": "beginner", "tone": "calm", "language": "zh-CN"},
+                    "content": "内容。",
+                    "claims": ["c"],
+                }
+                for cid in ("kp_1", "kp_2", "kp_3")
+            ]
+            wire = {"stage": "script_writer_batch", "scripts": scripts}
+            return type("Response", (), {
+                "parsed": output_schema.model_validate(wire),
+                "content": json.dumps(wire, ensure_ascii=False),
+            })()
+
+    outline = OutlinePlannerResult(
+        candidates=[
+            OutlineCandidate(candidate_id="ch", node_type="chapter", title="发动机", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="sec", node_type="section", title="总体构造", parent_candidate_id="ch", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_1", node_type="knowledge_point", title="曲柄连杆", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_2", node_type="knowledge_point", title="配气机构", parent_candidate_id="sec", evidence_ids=["es_1"]),
+            OutlineCandidate(candidate_id="kp_3", node_type="knowledge_point", title="供给系统", parent_candidate_id="sec", evidence_ids=["es_1"]),
+        ],
+        prerequisites=[],
+    )
+    request = ControlledPrepInput(
+        evidence=[EvidenceReference(evidence_id="es_1", text="内容", page=1)],
+        course_positioning="汽车构造",
+        style=TeachingStyleConfig(),
+    )
+    candidates = [c for c in outline.candidates if c.node_type == "knowledge_point"]
+
+    asyncio_run(PrepLLMAdapter(structured_llm=CapturingPort()).write_scripts_batch(
+        request, outline, candidates,
+    ))
+
+    user_prompt = next(m["content"] for m in captured["messages"] if m["role"] == "user")
+    payload = json.loads(user_prompt)
+    assert "knowledge_point_sequence" in payload
+    assert [c["position"]["is_first"] for c in payload["candidates"]] == [True, False, False]
+    assert payload["candidates"][1]["position"]["previous_title"] == "曲柄连杆"
+    assert payload["candidates"][2]["position"]["is_last"] is True

@@ -126,6 +126,9 @@ class ExperimentVersion(SQLModel, table=True):
     enable_network: bool = Field(default=False, description="始终关闭")
 
     # 评分策略
+    # Formal experiments use ACM/ICPC semantics.  We retain this persisted
+    # field only for historical schema compatibility; all new versions must be
+    # exactly 1.0 and publication rejects every other value.
     passing_score: float = Field(default=1.0, description="ACM/ICPC 固定为 1.0")
     writes_formal_evidence: bool = Field(
         default=True,
@@ -136,7 +139,7 @@ class ExperimentVersion(SQLModel, table=True):
     is_active: bool = Field(default=False, index=True, description="当前激活版本")
     reference_preview_verified_at: Optional[datetime] = Field(
         default=None,
-        description="临时参考解已全 AC；源码不持久化",
+        description="临时参考解在当前测试集全 AC 的服务端验证时间；源码不持久化",
     )
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware)
@@ -246,8 +249,11 @@ class ExperimentRun(SQLModel, table=True):
     __tablename__ = "experiment_runs"
     __table_args__ = (
         UniqueConstraint(
-            "attempt_id", "idempotency_key",
-            name="uq_experiment_run_attempt_idempotency",
+            "course_id",
+            "attempt_id",
+            "student_id",
+            "idempotency_key",
+            name="uq_experiment_run_assessed_idempotency",
         ),
     )
 
@@ -262,8 +268,8 @@ class ExperimentRun(SQLModel, table=True):
     task_id: Optional[str] = Field(default=None, index=True, description="关联 TaskRecord.task_id")
     idempotency_key: Optional[str] = Field(
         default=None,
-        max_length=128,
-        description="正式提交的 Idempotency-Key；同一尝试只能创建一个运行",
+        index=True,
+        description="学生正式提交的请求幂等键；同一学生/课程/attempt 唯一",
     )
 
     language: str = Field(default="", description="编程语言（必须在白名单）")
@@ -293,44 +299,40 @@ class ExperimentRun(SQLModel, table=True):
 
     submitted_at: datetime = Field(default_factory=utcnow_aware)
     finished_at: Optional[datetime] = Field(default=None)
-
-
-class FreeSandboxQuotaWindow(SQLModel, table=True):
-    """FreeCodeSandboxPort 的最小化持久化限流窗口。
-
-    只保存课程/学生窗口起点和计数，绝不保存源码、stdin 或执行结果，也不能作为
-    正式成绩或学习证据来源。
-    """
-
-    __tablename__ = "free_sandbox_quota_windows"
-    __table_args__ = (
-        UniqueConstraint(
-            "course_id", "student_id", "window_started_at",
-            name="uq_free_sandbox_quota_window",
-        ),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    course_id: int = Field(foreign_key="courses.id", index=True)
-    student_id: int = Field(foreign_key="users.id", index=True)
-    window_started_at: datetime = Field(default_factory=utcnow_aware, index=True)
-    request_count: int = Field(default=0)
-    updated_at: datetime = Field(default_factory=utcnow_aware)
+    cancel_requested_at: Optional[datetime] = Field(default=None)
 
 
 class SandboxExecutionLease(SQLModel, table=True):
-    """跨 Uvicorn 实例的正式评测槽位租约。"""
+    """One database-backed formal Judge0 execution slot across web workers."""
 
     __tablename__ = "sandbox_execution_leases"
 
-    lease_name: str = Field(default="judge0_formal", primary_key=True, max_length=80)
-    holder_task_id: Optional[str] = Field(default=None, index=True)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lease_key: str = Field(default="formal_judge0", unique=True, index=True)
+    holder_task_id: str = Field(default="", index=True)
     lease_expires_at: Optional[datetime] = Field(default=None, index=True)
+    acquired_at: Optional[datetime] = Field(default=None)
+    renewed_at: Optional[datetime] = Field(default=None)
+
+
+class FreeSandboxQuotaWindow(SQLModel, table=True):
+    """Minimal persistent counter for non-scoring free sandbox usage."""
+
+    __tablename__ = "free_sandbox_quota_windows"
+    __table_args__ = (
+        UniqueConstraint("student_id", "course_id", "window_started_at", name="uq_free_sandbox_quota_window"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    window_started_at: datetime = Field(index=True)
+    run_count: int = Field(default=0)
     updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ExperimentLabProjection(SQLModel, table=True):
-    """课程实验到实验室读模型的一对一映射。"""
+    """The only supported laboratory representation of a course experiment."""
 
     __tablename__ = "experiment_lab_projections"
     __table_args__ = (
@@ -346,22 +348,20 @@ class ExperimentLabProjection(SQLModel, table=True):
     course_id: int = Field(foreign_key="courses.id", index=True)
     experiment_id: str = Field(index=True)
     created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ExperimentRecommendation(SQLModel, table=True):
-    """教师确认后的推荐；不会创建学生尝试或运行代码。"""
+    """Teacher-approved, student-visible recommendation.  It never starts a run."""
 
     __tablename__ = "experiment_recommendations"
     __table_args__ = (
-        UniqueConstraint(
-            "course_id", "student_id", "experiment_id", "proposal_id",
-            name="uq_experiment_recommendation_proposal",
-        ),
+        UniqueConstraint("course_id", "student_id", "experiment_id", name="uq_experiment_recommendation"),
     )
 
     id: Optional[int] = Field(default=None, primary_key=True)
     recommendation_id: str = Field(
-        default_factory=lambda: "exrec_" + uuid.uuid4().hex,
+        default_factory=lambda: "exprec_" + uuid.uuid4().hex,
         unique=True,
         index=True,
     )
@@ -369,10 +369,10 @@ class ExperimentRecommendation(SQLModel, table=True):
     student_id: int = Field(foreign_key="users.id", index=True)
     experiment_id: str = Field(index=True)
     version_id: str = Field(index=True)
-    proposal_id: str = Field(index=True)
-    directory_node_id: Optional[str] = Field(default=None, index=True)
-    created_by: Optional[int] = Field(default=None, foreign_key="users.id")
+    outline_node_id: Optional[str] = Field(default=None, index=True)
+    proposal_id: Optional[str] = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utcnow_aware)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
 
 
 class ExperimentRunArtifact(SQLModel, table=True):

@@ -163,6 +163,11 @@ class InitialCoursePrepService:
             if outcome is not None:
                 await outcome
         prepared = self._expand_prepared_evidence(prepared, evidence)
+        by_block_id = {block.block_id: block for block in blocks}
+        prepared["outline"], filled_titles = self._fill_empty_outline_titles(
+            prepared["outline"],
+            by_block_id,
+        )
         self._validate_initial_outline(prepared["outline"])
 
         result = DraftAssetResult(
@@ -178,9 +183,13 @@ class InitialCoursePrepService:
                 f"{evidence_stats.selected_chars}/{evidence_stats.total_chars} chars selected)"
             )
         result.warnings.extend(list(prepared.get("warnings") or []))
+        if filled_titles:
+            result.warnings.append(
+                f"PREP_EMPTY_TITLE_FALLBACK: {len(filled_titles)} 个节点标题为空或过短，"
+                "已用材料文本兜底，请教师进入结构页复核标题"
+            )
         if replace_unreviewed_initial:
             self._archive_unreviewed_initial_draft(session, course_id=course_id)
-        by_block_id = {block.block_id: block for block in blocks}
         candidate_to_node = self._persist_outline(
             session,
             course_id=course_id,
@@ -545,6 +554,78 @@ class InitialCoursePrepService:
             "verifications": expanded_verifications,
         }
 
+    _NODE_TYPE_LABEL = {
+        "chapter": "未命名章节",
+        "section": "未命名单元",
+        "knowledge_point": "未命名知识点",
+    }
+
+    @classmethod
+    def _fill_empty_outline_titles(
+        cls,
+        outline: Any,
+        by_block_id: dict[str, Any],
+    ) -> tuple[Any, list[str]]:
+        """Deterministically backfill empty or too-short outline titles.
+
+        OCR-heavy courseware frequently emits icon/page-number fragments
+        (e.g. ``\\uf06c``, ``P3``) that the planner may copy into a node title
+        verbatim; such titles fail the teaching-title gate and would abort the
+        whole build.  This pass replaces them with a real evidence-block text
+        snippet, or a type-based placeholder when no usable block exists, and
+        keeps the title unique within its parent so the hard gate below still
+        passes.  Every filled title is reported back as a teacher-review
+        warning instead of silently changing the draft.
+        """
+        used_by_parent: dict[str | None, set[str]] = defaultdict(set)
+        for candidate in outline.candidates:
+            title = " ".join(candidate.title.split())
+            if len(title) >= 2:
+                used_by_parent[candidate.parent_candidate_id].add(title.casefold())
+
+        filled: list[str] = []
+        candidates: list[Any] = []
+        for candidate in outline.candidates:
+            title = " ".join(candidate.title.split())
+            if len(title) >= 2:
+                candidates.append(candidate)
+                continue
+            fallback = cls._candidate_fallback_title(candidate, by_block_id)
+            if fallback is None:
+                fallback = cls._NODE_TYPE_LABEL.get(candidate.node_type, "未命名知识点")
+            parent = candidate.parent_candidate_id
+            unique = fallback
+            suffix = 2
+            while unique.casefold() in used_by_parent.setdefault(parent, set()):
+                unique = f"{fallback}{suffix}"
+                suffix += 1
+            used_by_parent[parent].add(unique.casefold())
+            candidates.append(candidate.model_copy(update={"title": unique}))
+            filled.append(unique)
+        return outline.model_copy(update={"candidates": candidates}), filled
+
+    @staticmethod
+    def _candidate_fallback_title(candidate: Any, by_block_id: dict[str, Any]) -> str | None:
+        """Derive a real teaching-title candidate from the node's evidence blocks."""
+        for block_id in candidate.evidence_ids:
+            block = by_block_id.get(block_id)
+            if block is None:
+                continue
+            raw = " ".join((block.text or "").split())
+            # Strip PPT private-use-area icons, control chars and common
+            # OCR fragment markers so ``\\uf06c`` / ``P3`` do not leak in.
+            cleaned = "".join(
+                ch for ch in raw
+                if ord(ch) >= 32 and not 0xE000 <= ord(ch) <= 0xF8FF
+            )
+            cleaned = " ".join(cleaned.split())
+            if len(cleaned) < 2 or cleaned.isdigit():
+                continue
+            if re.match(r"^(图|表)\s*\d", cleaned) or cleaned.count("-") >= 3:
+                continue
+            return cleaned[:40]
+        return None
+
     @staticmethod
     def _validate_initial_outline(outline: Any) -> None:
         candidates = list(outline.candidates)
@@ -556,10 +637,21 @@ class InitialCoursePrepService:
         seen_titles: set[tuple[str | None, str]] = set()
         for candidate in candidates:
             title = " ".join(candidate.title.split())
-            if len(title) < 2 or len(title) > 120 or "\n" in candidate.title:
-                raise InitialCoursePreparationError("智能备课结果包含不适合作为教学标题的内容")
+            brief = title if len(title) <= 40 else f"{title[:40]}…"
+            if "\n" in candidate.title:
+                raise InitialCoursePreparationError(
+                    f"智能备课结果包含不适合作为教学标题的内容（标题包含换行：{brief}）"
+                )
+            if len(title) < 2:
+                raise InitialCoursePreparationError("智能备课结果包含不适合作为教学标题的内容（标题为空或过短）")
+            if len(title) > 120:
+                raise InitialCoursePreparationError(
+                    f"智能备课结果包含不适合作为教学标题的内容（标题超过 120 字上限：{brief}）"
+                )
             if re.match(r"^(图|表)\s*\d", title) or title.count("-") >= 3:
-                raise InitialCoursePreparationError("智能备课结果将图注或部件清单误作教学标题")
+                raise InitialCoursePreparationError(
+                    f"智能备课结果将图注或部件清单误作教学标题：{brief}"
+                )
             if candidate.node_type == "chapter" and candidate.parent_candidate_id:
                 raise InitialCoursePreparationError("章节不能拥有父节点")
             if candidate.parent_candidate_id:

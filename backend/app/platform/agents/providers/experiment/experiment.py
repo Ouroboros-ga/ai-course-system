@@ -15,6 +15,7 @@ from app.models.experiment_model import (
     ExperimentDefinition,
     ExperimentPublishStatus,
 )
+from app.models.access_control_model import CourseCapability
 from app.models.database import engine
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,11 @@ def make_session_scoped_experiment_port(session_factory: Callable[[], Session]):
                 return []
             session = session_factory()
             try:
+                capability = session.exec(
+                    select(CourseCapability).where(CourseCapability.course_id == course_id_int)
+                ).first()
+                if capability is None or not capability.experiment or not capability.coding_sandbox:
+                    return []
                 stmt = (
                     select(ExperimentDefinition)
                     .where(
@@ -113,6 +119,11 @@ def make_session_scoped_experiment_port(session_factory: Callable[[], Session]):
                 return None
             session = session_factory()
             try:
+                capability = session.exec(
+                    select(CourseCapability).where(CourseCapability.course_id == course_id_int)
+                ).first()
+                if capability is None or not capability.experiment or not capability.coding_sandbox:
+                    return None
                 stmt = (
                     select(ExperimentAttempt)
                     .where(

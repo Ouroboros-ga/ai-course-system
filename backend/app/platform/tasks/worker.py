@@ -75,17 +75,19 @@ def _task_group(task_type: str) -> str | None:
     }.get(task_type)
 
 
-async def _acquire_task_limits(session, task_type: str):
+def _read_task_limits(session, task_type: str) -> tuple[str | None, int, int]:
+    """Synchronously read the configured concurrency limits for a task type.
+
+    Returns ``(group, total_limit, group_limit)``.  The async slot wait must
+    happen after this session is closed: holding a pooled connection across
+    ``_concurrency_controller.acquire`` exhausted the 5+5 QueuePool when a
+    batch dispatched many tasks at once, leaving queued tasks stuck PENDING
+    while long-running handlers held the remaining connections.
+    """
     from app.services.platform_task_concurrency_service import get_group_limit
 
     total_limit, group_limit = get_group_limit(session, task_type)
-    group = _task_group(task_type)
-    await _concurrency_controller.acquire(
-        group=group,
-        total_limit=total_limit,
-        group_limit=group_limit,
-    )
-    return group
+    return _task_group(task_type), total_limit, group_limit
 
 
 class SessionFactory(Protocol):
@@ -249,8 +251,16 @@ class LocalTaskWorker:
         task_group = None
         acquired = False
         try:
+            # Read limits synchronously and release the connection before
+            # waiting for a slot (see ``_read_task_limits``); never hold a
+            # pooled connection across the async acquire.
             with session_factory() as limit_session:
-                task_group = await _acquire_task_limits(limit_session, task_type)
+                task_group, total_limit, group_limit = _read_task_limits(limit_session, task_type)
+            await _concurrency_controller.acquire(
+                group=task_group,
+                total_limit=total_limit,
+                group_limit=group_limit,
+            )
             acquired = True
             try:
                 await handler(ctx)

@@ -1,4 +1,4 @@
-﻿"""G4 算法可视化 API
+"""G4 算法可视化 API
 
 使用统一权限解析器进行课程级权限校验。
 - 创建/验证计划: course.mapping.edit (教师)
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import uuid
 from app.core.time_utils import utcnow_aware
-from typing import Optional, Any
+from typing import Optional, Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Body
 from pydantic import BaseModel, Field
@@ -40,7 +40,19 @@ class CreatePlanRequest(BaseModel):
     highlights: list[dict] = Field(default_factory=list, max_length=200)
     playback_speed: float = Field(default=1.0, ge=0.1, le=5.0)
     return_anchor: Optional[dict] = None
-    node_id: Optional[int] = None
+    # 兼容旧版数值 ScriptNode ID 与新版 release outline_node_id（如 on_xxx）。
+    # 数据库列仍为整数：outline ID 无法落库时按空处理，只拒绝真实非法值。
+    node_id: Optional[Union[int, str]] = None
+
+
+def _int_node_id(value) -> Optional[int]:
+    """把数值或可解析为整数的 node_id 归一化；outline 字符串等返回 None。"""
+    if value is None or value == "":
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value)
+    return int(text) if text.isdigit() else None
 
 
 @router.get("/algorithms")
@@ -96,11 +108,15 @@ async def create_plan(
     record = VisualizationPlanRecord(
         plan_id=str(uuid.uuid4()),
         course_id=course_id,
-        node_id=payload.node_id,
+        node_id=_int_node_id(payload.node_id),
         algorithm_id=result.algorithm_spec.algorithm_id,
         algorithm_name=result.algorithm_spec.name,
         plan_data=result.sanitized_plan,
-        return_anchor_node_id=payload.return_anchor.get("node_id") if payload.return_anchor else None,
+        return_anchor_node_id=(
+            _int_node_id(payload.return_anchor.get("node_id"))
+            if payload.return_anchor
+            else None
+        ),
         return_anchor_label=str(payload.return_anchor.get("label", "")) if payload.return_anchor else "",
         status=VisualizationStatus.VALIDATED,
         created_by=user_id,
@@ -119,7 +135,7 @@ async def create_plan(
 @router.get("/course/{course_id}/plans")
 async def list_plans(
     course_id: int,
-    node_id: Optional[int] = Query(None, description="按知识点筛选"),
+    node_id: Optional[Union[int, str]] = Query(None, description="按知识点筛选（兼容 outline_node_id；整数列下 outline ID 不命中任何计划）"),
     status: Optional[str] = Query(None, description="按状态筛选"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
@@ -131,7 +147,9 @@ async def list_plans(
         VisualizationPlanRecord.course_id == course_id,
     )
     if node_id:
-        stmt = stmt.where(VisualizationPlanRecord.node_id == node_id)
+        numeric_node_id = _int_node_id(node_id)
+        if numeric_node_id is not None:
+            stmt = stmt.where(VisualizationPlanRecord.node_id == numeric_node_id)
     if status:
         stmt = stmt.where(VisualizationPlanRecord.status == VisualizationStatus(status))
 

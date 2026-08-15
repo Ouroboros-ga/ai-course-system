@@ -228,14 +228,20 @@ class TestBuiltinTools:
             assert required in names, f"缺少内置工具: {required}"
 
     def test_builtin_tools_default_policy(self, client, teacher_token):
-        """内置工具默认策略：enabled=True, require_confirmation=False, threshold=never。"""
+        """内置工具默认策略必须与统一目录中的风险等级一致。"""
         resp = client.get(f"{AGENT_GOV}/builtin-tools", headers=_auth(teacher_token))
         items = resp.json()["data"]["items"]
         for item in items:
             default = item["default"]
-            assert default["enabled"] is True
-            assert default["require_confirmation"] is False
-            assert default["confirmation_threshold"] == "never"
+            expected = DEFAULT_TOOL_POLICY[item["tool_name"]]
+            assert default == expected
+
+    def test_learning_event_is_exposed_as_non_configurable_audit_history(self, client, teacher_token):
+        resp = client.get(f"{AGENT_GOV}/builtin-tools", headers=_auth(teacher_token))
+        items = resp.json()["data"]["items"]
+        learning_event = next(item for item in items if item["tool_name"] == "learning_event")
+        assert learning_event["configurable"] is False
+        assert learning_event["status"] == "deprecated_non_configurable"
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +271,9 @@ class TestToolPolicyList:
         items = data["items"]
         assert len(items) == len(BUILTIN_TOOL_NAMES)
         for item in items:
-            assert item["enabled"] is True
+            assert item["enabled"] is DEFAULT_TOOL_POLICY[item["tool_name"]]["enabled"]
+            assert item["require_confirmation"] is DEFAULT_TOOL_POLICY[item["tool_name"]]["require_confirmation"]
+            assert item["confirmation_threshold"] == DEFAULT_TOOL_POLICY[item["tool_name"]]["confirmation_threshold"]
             assert item["locked"] is False
             assert item["locked_reason"] is None
 
@@ -298,7 +306,12 @@ class TestToolPolicyList:
     def test_safety_policy_capability_required(self, client, session, teacher_user):
         """safety_policy capability 关闭时教师也无权访问。"""
         course = _course(session, teacher_user.id)
-        # 不调用 _enable_safety_capabilities，默认 safety_policy=False
+        capability = session.exec(
+            select(CourseCapability).where(CourseCapability.course_id == course.id)
+        ).one()
+        capability.safety_policy = False
+        session.add(capability)
+        session.commit()
         token = _token(teacher_user)
 
         resp = client.get(
@@ -315,6 +328,27 @@ class TestToolPolicyList:
 
 class TestToolPolicyUpdate:
     """教师批量更新工具策略。"""
+
+    def test_learning_event_audit_cannot_be_disabled(self, client, session, teacher_user):
+        course = _course(session, teacher_user.id)
+        _enable_safety_capabilities(session, course.id)
+        token = _token(teacher_user)
+
+        resp = client.put(
+            f"{AGENT_GOV}/course/{course.id}/tools",
+            headers=_auth(token),
+            json={
+                "updates": [{
+                    "tool_name": "learning_event",
+                    "enabled": False,
+                    "require_confirmation": False,
+                    "confirmation_threshold": "never",
+                    "locked": False,
+                }],
+            },
+        )
+
+        assert resp.status_code == 422, resp.text
 
     def test_teacher_disables_tool_creates_version(self, client, session, teacher_user):
         """教师禁用工具后生成新策略版本；Agent 工作流将跳过该工具。"""
@@ -480,7 +514,8 @@ class TestToolPolicyUpdate:
         # 课程 A 禁用 web_research
         _disable_tool_via_api(client, token, course_a.id, "web_research", enabled=False)
 
-        # 课程 B 的 web_research 仍启用
+        # 课程 B 显式启用同一高风险工具，证明两门课程互不覆盖。
+        _disable_tool_via_api(client, token, course_b.id, "web_research", enabled=True)
         resp = client.get(
             f"{AGENT_GOV}/course/{course_b.id}/tools",
             headers=_auth(token),
@@ -1200,9 +1235,22 @@ class TestToolGovernancePortIntegration:
             }],
             created_by=teacher_user.id,
         )
+        agent_governance_service.upsert_tool_policies(
+            session,
+            course_id=course_b.id,
+            updates=[{
+                "tool_name": "web_research",
+                "enabled": True,
+                "require_confirmation": True,
+                "confirmation_threshold": "high_risk_only",
+                "locked": False,
+                "locked_reason": None,
+            }],
+            created_by=teacher_user.id,
+        )
         session.commit()
 
-        # 课程 B 仍启用
+        # 课程 B 的显式开启不受课程 A 的关闭影响。
         assert agent_governance_service.is_tool_enabled(
             session, course_id=course_b.id, tool_name="web_research",
         ) is True

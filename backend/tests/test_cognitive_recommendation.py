@@ -419,6 +419,85 @@ def test_performance_score_only_from_quiz_accuracy(session):
     assert "inquiry_unknown_without_semantic_evidence" in state.reason_codes
 
 
+def test_cognition_fuses_scored_quiz_and_server_verified_code_evidence_by_weight(session):
+    teacher = _user(session, "cr_fusion_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_fusion_student")
+    course = _setup_course(session, teacher, student)
+    node = CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_cognition_fusion",
+        title="Loop boundary",
+    )
+    session.add(node)
+    session.flush()
+
+    for is_correct in (True, False):
+        question = _create_published_question(session, course.id)
+        question.knowledge_node_ids = [node.id]
+        session.add(question)
+        session.commit()
+        _create_attempt(
+            session, student.id, course.id, question.id, is_correct=is_correct,
+        )
+
+    code_evidence = LearningEvidenceRecord(
+        evidence_id="ev_coding_fusion_1",
+        student_id=student.id,
+        course_id=course.id,
+        node_id=node.id,
+        evidence_type="coding_execution",
+        value=0.0,
+        confidence=1.0,
+        source="experiment_finalize_service",
+        event_refs=["att_coding_fusion_1", "run_coding_fusion_1"],
+    )
+    session.add(code_evidence)
+    session.commit()
+
+    state = compute_cognitive_state(session, student.id, course.id, node_id=node.id)
+
+    # (1.0 * 1.0 + 0.0 * 1.0 + 0.0 * 1.5) / 3.5
+    assert state.observed_performance_score == pytest.approx(1 / 3.5)
+    assert state.sample_size == 3
+    assert code_evidence.evidence_id in state.evidence_refs
+    assert "performance_from_quiz_accuracy" in state.reason_codes
+    assert "performance_from_coding_execution" in state.reason_codes
+    assert "performance_from_weighted_fusion" in state.reason_codes
+    assert "source_code" not in str(state.model_dump())
+
+
+def test_one_server_verified_code_failure_is_insufficient_for_mastery_conclusion(session):
+    teacher = _user(session, "cr_code_only_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_code_only_student")
+    course = _setup_course(session, teacher, student)
+    node = CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_code_only",
+        title="Array bounds",
+    )
+    session.add(node)
+    session.flush()
+    session.add(LearningEvidenceRecord(
+        evidence_id="ev_coding_only_failure",
+        student_id=student.id,
+        course_id=course.id,
+        node_id=node.id,
+        evidence_type="coding_execution",
+        value=0.0,
+        confidence=1.0,
+        source="experiment_finalize_service",
+        event_refs=["att_coding_only", "run_coding_only"],
+    ))
+    session.commit()
+
+    state = compute_cognitive_state(session, student.id, course.id, node_id=node.id)
+
+    assert state.sample_size == 1
+    assert state.observed_performance_score is None
+    assert state.mastery_level == "unknown"
+    assert "insufficient_effective_scored_weight" in state.reason_codes
+
+
 def test_low_performance_high_confidence_recommendation(session):
     """低表现+高置信度：表现分<0.5且置信度>=0.6时，推荐策略为补弱练习(PRACTICE_QUIZ, HIGH)。
 

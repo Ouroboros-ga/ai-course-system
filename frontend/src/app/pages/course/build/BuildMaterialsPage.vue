@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { FilePlus2, Upload } from 'lucide-vue-next'
-import { getDraftBuildStatus, listBuildMaterials, rebuildInitialDraft, uploadCourseMaterials } from '@/api/course_build.js'
+import { getCourseGraphRagSetting, getDraftBuildStatus, listBuildMaterials, rebuildInitialDraft, updateCourseGraphRagSetting, uploadCourseMaterials } from '@/api/course_build.js'
 import { createPendingFileId } from '@/app/lib/pendingFileId.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxError from '@/app/ui/SfxError.vue'
@@ -22,6 +22,40 @@ const uploading = ref(false)
 const rebuilding = ref(false)
 const uploadPercent = ref(0)
 let pollTimer = null
+
+// 课程级知识图谱(GraphRAG)能力开关：默认启用。教师可关闭以避免大课程
+// 抽取成本不可控；关闭后不再自动构建图谱，发布也不要求已审核图谱。
+const graphragEnabled = ref(true)
+const graphragSaving = ref(false)
+const graphragError = ref('')
+const graphragLoaded = ref(false)
+const isDraftBuilding = computed(() => ['parsing_materials', 'assembling_corpus', 'submitting_build', 'building'].includes(draftBuild.value?.phase))
+const canToggleGraphRag = computed(() => !uploading.value && !graphragSaving.value && !isDraftBuilding.value)
+async function loadGraphRagSetting() {
+  try {
+    const data = await getCourseGraphRagSetting(courseId.value)
+    graphragEnabled.value = Boolean(data?.graphrag_enabled ?? true)
+    graphragLoaded.value = true
+    graphragError.value = ''
+  } catch {
+    // 静默失败：开关读取失败不阻塞资料页，默认启用
+    graphragLoaded.value = true
+  }
+}
+async function toggleGraphRag() {
+  if (!canToggleGraphRag.value) return
+  graphragSaving.value = true
+  graphragError.value = ''
+  const next = !graphragEnabled.value
+  try {
+    const data = await updateCourseGraphRagSetting(courseId.value, next)
+    graphragEnabled.value = Boolean(data?.graphrag_enabled ?? next)
+  } catch (err) {
+    graphragError.value = err?.message || '知识图谱设置保存失败，请稍后重试。'
+  } finally {
+    graphragSaving.value = false
+  }
+}
 
 const roleOptions = [
   ['primary_courseware', '主课件'],
@@ -164,7 +198,7 @@ watch([loading], () => {
     }
   }
 }, { immediate: true })
-onMounted(async () => { await load(); startPolling() })
+onMounted(async () => { await load(); loadGraphRagSetting(); startPolling() })
 onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbench.stageActions = null })
 </script>
 
@@ -178,6 +212,11 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
         <article v-for="item in pendingFiles" :key="item.id" class="pending-file"><div><strong>{{ item.file.name }}</strong><p class="sfx-t-caption sfx-t-secondary">{{ Math.ceil(item.file.size / 1024) }} KB</p></div><label class="sfx-t-caption">材料角色<select v-model="item.role" class="sfx-select"><option v-for="option in roleOptions" :key="option[0]" :value="option[0]">{{ option[1] }}</option></select></label><SfxButton variant="danger" size="sm" :disabled="uploading" :aria-label="`移除 ${item.file.name}`" @click="removePending(item.id)">移除</SfxButton></article>
       </div>
       <div v-if="uploading" class="upload-status" role="status"><span>正在上传 {{ pendingFiles.length }} 份材料</span><strong>{{ uploadPercent }}%</strong><progress :value="uploadPercent" max="100" /></div>
+      <label class="graphrag-toggle" :class="{ disabled: !canToggleGraphRag }">
+        <span class="toggle-copy"><strong>课程知识图谱</strong><small class="sfx-t-caption sfx-t-secondary">启用后系统会从课程材料自动生成知识图谱，供助教回答与推荐使用（会产生模型抽取成本）；大课程可关闭以控制成本。</small></span>
+        <button type="button" role="switch" :aria-checked="graphragEnabled" :disabled="!canToggleGraphRag || graphragSaving" class="toggle-switch" :class="{ on: graphragEnabled }" @click="toggleGraphRag"><span class="knob" /></button>
+      </label>
+      <p v-if="graphragError" class="error" role="alert">{{ graphragError }}</p>
       <p v-if="uploadError" class="error" role="alert">{{ uploadError }}</p>
       <div class="upload-actions"><SfxButton variant="primary" :disabled="!pendingFiles.length" :loading="uploading" @click="upload">保存并开始解析</SfxButton></div>
     </section>
@@ -214,6 +253,15 @@ onBeforeUnmount(() => { window.clearInterval(pollTimer); if (workbench) workbenc
 .pending-file label{display:grid;gap:var(--space-1);color:var(--text-secondary)}
 .upload-status{display:grid;grid-template-columns:1fr auto;gap:var(--space-2);color:var(--text-secondary);font-size:var(--ui-sm-size)}
 .upload-status progress{grid-column:1/-1;width:100%;accent-color:var(--ink-700)}
+.graphrag-toggle{display:flex;align-items:center;justify-content:space-between;gap:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-md);padding:var(--space-3);background:var(--surface-panel);cursor:pointer}
+.graphrag-toggle.disabled{opacity:.55;cursor:not-allowed}
+.toggle-copy{display:grid;gap:var(--space-1)}
+.toggle-copy strong{color:var(--text-primary);font-size:var(--ui-md-size)}
+.toggle-switch{position:relative;width:44px;height:24px;flex:none;border-radius:999px;border:1px solid var(--border-strong);background:var(--surface-cool);transition:background .18s ease;cursor:pointer}
+.toggle-switch .knob{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:50%;background:var(--surface-panel);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:transform .18s ease}
+.toggle-switch.on{background:var(--green-500);border-color:var(--green-500)}
+.toggle-switch.on .knob{transform:translateX(20px)}
+.toggle-switch:disabled{cursor:not-allowed}
 .upload-actions{display:flex;justify-content:flex-end}
 .materials-head{display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-3);margin:var(--space-4) 0 var(--space-3)}
 .materials-head h2{margin:0;color:var(--text-primary);font-size:var(--title-3-size)}

@@ -128,6 +128,53 @@ def test_sqlite_active_course_build_index_is_partial(tmp_path):
         engine.dispose()
 
 
+def test_experiment_sandbox_migration_writes_an_applied_batch_ledger(tmp_path):
+    """Revision 0057 records its auditable, server-owned grading boundary."""
+    db_path = tmp_path / "experiment_sandbox_ledger.db"
+    db_url = f"sqlite:///{db_path}"
+
+    _run_alembic(db_url, "upgrade", "head")
+    _run_alembic(db_url, "upgrade", "head")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            count = conn.execute(text(
+                "SELECT COUNT(*) FROM schema_migration_records "
+                "WHERE batch_id = 'experiment_sandbox_reliability_v1'"
+            )).scalar_one()
+            row = conn.execute(text(
+                "SELECT status, preflight_ok, applied_rows "
+                "FROM schema_migration_records "
+                "WHERE batch_id = 'experiment_sandbox_reliability_v1'"
+            )).one()
+        assert count == 1
+        assert row == ("applied", 1, 0)
+    finally:
+        engine.dispose()
+
+
+def test_experiment_sandbox_migration_marks_ledger_rolled_back(tmp_path):
+    """Downgrading 0057 leaves an auditable rollback marker behind."""
+    db_path = tmp_path / "experiment_sandbox_rollback_ledger.db"
+    db_url = f"sqlite:///{db_path}"
+
+    _run_alembic(db_url, "upgrade", "head")
+    _run_alembic(db_url, "downgrade", "0054")
+
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text(
+                "SELECT status, preflight_ok, applied_rows "
+                "FROM schema_migration_records "
+                "WHERE batch_id = 'experiment_sandbox_reliability_v1'"
+            )).one()
+        assert row == ("rolled_back", 1, 0)
+    finally:
+        engine.dispose()
+
+
 # ==================== 场景2：旧 SQLite fixture stamp + upgrade 演练 ====================
 
 
