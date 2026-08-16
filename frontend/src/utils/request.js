@@ -396,7 +396,10 @@ service.interceptors.response.use(
 
     // skipErrorToast：调用方声明本次请求失败由自身处理（如 Agent 503 回退 V1），
     // 不向用户弹错误提示，避免降级场景造成「先报错再成功」的误导。
-    if (!error.config?.skipErrorToast) {
+    // RELEASE_NOT_FOUND：课程尚未发布，页面会展示专门的未发布空态，同样不属于
+    // 真实故障，不弹全局错误提示。
+    const isUnpublished = backendMessage === 'RELEASE_NOT_FOUND'
+    if (!error.config?.skipErrorToast && !isUnpublished) {
       showToast(message, 'error')
     }
     // Callers that render their own status must receive the server detail too.

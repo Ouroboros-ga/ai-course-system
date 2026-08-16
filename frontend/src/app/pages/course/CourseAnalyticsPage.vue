@@ -356,6 +356,13 @@ async function load() {
     analytics.value = response?.data ?? response
     state.value = 'ready'
   } catch (e) {
+    // 课程尚未发布时后端返回 RELEASE_NOT_FOUND。这并非加载故障，而是
+    // 学习分析按当前发布版本统计、无发布版本可统计；页面内显示未发布
+    // 空态而非错误卡片，也不触发全局错误提示。
+    if (e?.message === 'RELEASE_NOT_FOUND') {
+      state.value = 'unpublished'
+      return
+    }
     error.value = e?.message || '学习统计加载失败'
     state.value = 'error'
   }
@@ -373,6 +380,11 @@ onMounted(load)
 <template>
   <div class="sfx-page sfx-analytics-page">
     <SfxSkeleton v-if="state === 'loading'" :lines="5" block />
+    <SfxEmpty
+      v-else-if="state === 'unpublished'"
+      title="课程尚未发布"
+      description="学习分析按当前发布版本统计；课程正式发布后，这里将展示知识点学习进度与认知分析。"
+    />
     <SfxError v-else-if="state === 'error'" :description="error" @retry="load" />
     <template v-else>
       <header class="sfx-page-head">

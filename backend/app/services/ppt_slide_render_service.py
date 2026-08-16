@@ -74,8 +74,8 @@ def _load_source_version(
     )).first()
     if version is None or not version.file_path:
         raise PptSlideRenderError("PPT_SOURCE_UNAVAILABLE", "PPT source version is unavailable")
-    if Path(version.file_path).suffix.lower() not in {".pptx", ".ppt"}:
-        raise PptSlideRenderError("PPT_SOURCE_INVALID", "Source material is not a PPT/PPTX file")
+    if Path(version.file_path).suffix.lower() not in {".pptx", ".ppt", ".pdf"}:
+        raise PptSlideRenderError("PPT_SOURCE_INVALID", "Source material is not a PPT/PPTX/PDF file")
     return version
 
 
@@ -115,7 +115,8 @@ def _expected_page_count(
     cached_pages: Iterable[int],
 ) -> Optional[int]:
     """Resolve deck size without converting the deck again."""
-    if Path(version.file_path).suffix.lower() == ".pptx":
+    source_suffix = Path(version.file_path).suffix.lower()
+    if source_suffix == ".pptx":
         try:
             from pptx import Presentation
 
@@ -124,6 +125,14 @@ def _expected_page_count(
         except Exception:
             # The renderer remains the authoritative failure path when the
             # source is actually needed. Inventory inspection is best-effort.
+            pass
+    elif source_suffix == ".pdf":
+        try:
+            import fitz
+
+            with fitz.open(stream=storage.get(version.file_path), filetype="pdf") as doc:
+                return doc.page_count
+        except Exception:
             pass
 
     # Legacy .ppt has no native in-process counter.  Its parse projection is
@@ -202,10 +211,10 @@ def ensure_ppt_source_slide_renders(
         SourceMaterialVersion.version_id == material_version_id,
     )).first()
     if version is None or not version.file_path:
-        raise PptSlideRenderError("PPT_SOURCE_UNAVAILABLE", "未找到当前 PPT 原课件版本。")
+        raise PptSlideRenderError("PPT_SOURCE_UNAVAILABLE", "未找到当前 PPT/PDF 原课件版本。")
     suffix = Path(version.file_path).suffix.lower()
-    if suffix not in {".pptx", ".ppt"}:
-        raise PptSlideRenderError("PPT_SOURCE_INVALID", "当前材料不是可渲染的 PPT/PPTX 原课件。")
+    if suffix not in {".pptx", ".ppt", ".pdf"}:
+        raise PptSlideRenderError("PPT_SOURCE_INVALID", "当前材料不是可渲染的 PPT/PPTX/PDF 原课件。")
 
     requested_pages = _normalise_pages(page_numbers)
     existing_rows = list(session.exec(select(EvidenceRenderAsset).where(
@@ -246,8 +255,25 @@ def ensure_ppt_source_slide_renders(
     missing = [page for page in requested_pages if page not in existing_by_page]
     if page_numbers is None and expected_page_count is not None and not missing and not force_full:
         return existing_by_page
+    if missing:
+        # A mapping workspace requests a fixed page window (default 12) that
+        # may exceed the actual deck size.  Clipping missing pages to the real
+        # extent keeps the renderer from asking a short PDF/PPTX for pages it
+        # does not have, which would otherwise yield zero images and surface a
+        # spurious ``render_warning`` on an already complete deck.
+        page_extent = _expected_page_count(
+            session,
+            course_id=course_id,
+            version=version,
+            storage=storage,
+            cached_pages=existing_by_page,
+        )
+        if page_extent is not None:
+            missing = [page for page in missing if page <= page_extent]
     if page_numbers is not None and not missing:
-        return {page: existing_by_page[page] for page in requested_pages}
+        # Filter on the cached inventory: the requested window can reach past
+        # the end of a short deck, and only rendered pages are manifest pages.
+        return {page: existing_by_page[page] for page in requested_pages if page in existing_by_page}
     rendered_images: list[tuple[int, bytes]] = []
     try:
         content = storage.get(version.file_path)
@@ -264,13 +290,20 @@ def ensure_ppt_source_slide_renders(
         with tempfile.TemporaryDirectory(prefix="ppt_source_slide_") as temp_dir:
             source_path = Path(temp_dir) / f"source{suffix}"
             source_path.write_bytes(content)
-            conversion = libreoffice_converter.convert_to_pdf(str(source_path), output_dir=temp_dir)
+            if suffix == ".pdf":
+                # An uploaded PDF is already the renderable page stream.
+                # Rendering it directly skips a needless Office round-trip
+                # while keeping the same immutable PNG manifest contract.
+                pdf_path = str(source_path)
+            else:
+                conversion = libreoffice_converter.convert_to_pdf(str(source_path), output_dir=temp_dir)
+                pdf_path = conversion.pdf_path
             # ``requested_pages`` is populated with the full PPTX inventory
             # for manifest construction.  That makes a partial cache render
             # only the gaps rather than re-rendering every cached slide.
             target_pages = None if force_full or not requested_pages else missing
             image_paths = libreoffice_converter.render_pages(
-                conversion.pdf_path,
+                pdf_path,
                 output_dir=temp_dir,
                 pages=target_pages,
             )
