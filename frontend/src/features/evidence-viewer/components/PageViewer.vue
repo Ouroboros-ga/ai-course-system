@@ -160,14 +160,18 @@ const emit = defineEmits([
 const containerRef = ref(null)
 const imageRef = ref(null)
 
-/** CSS display dimensions (computed from container width) */
+/** CSS display dimensions (computed from the source page aspect ratio) */
 const displayWidth = ref(800)
 const displayHeight = ref(600)
+/** Source page natural size, keeps the render fully visible (contain) */
+const naturalWidth = ref(800)
+const naturalHeight = ref(600)
 
 function onImageLoad() {
   if (imageRef.value) {
-    displayWidth.value = imageRef.value.naturalWidth || imageRef.value.clientWidth || 800
-    displayHeight.value = imageRef.value.naturalHeight || imageRef.value.clientHeight || 600
+    naturalWidth.value = imageRef.value.naturalWidth || imageRef.value.clientWidth || 800
+    naturalHeight.value = imageRef.value.naturalHeight || imageRef.value.clientHeight || 600
+    updateContainerSize()
   }
 }
 
@@ -182,13 +186,19 @@ function onPageInput(e) {
 function updateContainerSize() {
   if (containerRef.value) {
     const rect = containerRef.value.getBoundingClientRect()
-    // Reserve space for toolbar
-    const availableWidth = rect.width - 32
-    const availableHeight = rect.height - 56
-    if (availableWidth > 100 && availableHeight > 100) {
-      displayWidth.value = Math.min(availableWidth, 1200)
-      displayHeight.value = Math.min(availableHeight * 0.8, (displayWidth.value * 3) / 4)
+    // Reserve space for toolbar; scale the page proportionally (contain) so
+    // the whole page stays visible instead of being clipped by the container.
+    const availableWidth = Math.max(rect.width - 32, 100)
+    const availableHeight = Math.max(rect.height - 56, 100)
+    const ratio = naturalHeight.value / naturalWidth.value
+    let width = Math.min(availableWidth, 1200)
+    let height = width * ratio
+    if (height > availableHeight) {
+      height = availableHeight
+      width = height / ratio
     }
+    displayWidth.value = Math.round(width)
+    displayHeight.value = Math.round(height)
   }
 }
 
