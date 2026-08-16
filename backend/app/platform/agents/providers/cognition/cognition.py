@@ -11,9 +11,8 @@ does not create new records.
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable, Mapping
-
-from ...contracts import CognitionPort
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
 
 
 class CallableCognitionPort:
@@ -73,8 +72,8 @@ def make_session_scoped_cognition_port(
             course_id_int = int(course_id)
         except (TypeError, ValueError):
             return None
-        node_id_int = _parse_node_id(node_id)
         with session_factory() as session:
+            node_id_int = _resolve_node_id_int(session, course_id_int, node_id)
             state = get_latest_cognitive_state(
                 session, student_id_int, course_id_int, node_id_int,
             )
@@ -93,16 +92,22 @@ def make_session_scoped_cognition_port(
             course_id_int = int(course_id)
         except (TypeError, ValueError):
             return None
-        node_id_int = _parse_node_id(node_id)
         with session_factory() as session:
-            from app.models.cognitive_state_model import RecommendationRecord
             from sqlmodel import select
+
+            from app.models.cognitive_state_model import RecommendationRecord
+
+            node_id_int = _resolve_node_id_int(session, course_id_int, node_id)
             stmt = select(RecommendationRecord).where(
                 RecommendationRecord.student_id == student_id_int,
                 RecommendationRecord.course_id == course_id_int,
             )
             if node_id_int is None:
-                stmt = stmt.where(RecommendationRecord.node_id.is_(None))
+                # 课程级读取：取该学生在本课程最近一条推荐，不限 node 作用域。
+                # 前置复习（prereq_review）推荐挂在当前知识点 node 上，若只查
+                # node_id IS NULL 会永远取不到，导致 weak_concepts 恒为空，
+                # 教学策略的 prerequisite_review 分支不可达。
+                pass
             else:
                 stmt = stmt.where(RecommendationRecord.node_id == node_id_int)
             stmt = stmt.order_by(RecommendationRecord.created_at.desc()).limit(1)
@@ -121,6 +126,23 @@ def _parse_node_id(node_id: str | None) -> int | None:
         return int(node_id)
     except (TypeError, ValueError):
         return None
+
+
+def _resolve_node_id_int(
+    session: Any, course_id: int, node_id: str | None
+) -> int | None:
+    """Resolve a workflow-supplied node reference to a course-local numeric id.
+
+    数字字符串/整数直接使用；node_key（如 ``kn_xxx``）经课程身份表解析，
+    解析失败（含身份表缺失）回退 None（课程级读取），不抛错。
+    """
+    if node_id is None or node_id == "":
+        return None
+    if isinstance(node_id, int) or (isinstance(node_id, str) and node_id.isdigit()):
+        return int(node_id)
+    from app.services.knowledge_node_identity_service import resolve_node_id
+
+    return resolve_node_id(session, course_id, node_id)
 
 
 def _serialize_state(state: Any) -> Mapping[str, Any]:
@@ -145,6 +167,15 @@ def _serialize_state(state: Any) -> Mapping[str, Any]:
 
 
 def _serialize_recommendation(record: Any) -> Mapping[str, Any]:
+    # 批次3的 prereq_review 推荐把薄弱前置节点编码在 reason_codes 里
+    # （weak_prerequisite_node={graph_node_key}），这里还原为结构化集合，
+    # 供 StudentModelingPort.get_weak_concepts 直接消费。
+    weak_prerequisite_set: list[dict[str, str]] = []
+    for code in record.reason_codes or []:
+        if str(code).startswith("weak_prerequisite_node="):
+            node_id = str(code).split("=", 1)[1]
+            if node_id:
+                weak_prerequisite_set.append({"concept_id": node_id})
     return {
         "recommendation_id": record.recommendation_id,
         "recommendation_type": record.recommendation_type,
@@ -158,5 +189,7 @@ def _serialize_recommendation(record: Any) -> Mapping[str, Any]:
         "knowledge_node_ids": list(record.knowledge_node_ids or []),
         "consumed": record.consumed,
         "is_locked": record.is_locked,
+        "confirmed_weak_prerequisite_set": weak_prerequisite_set,
+        "cognitive_snapshot": dict(record.cognitive_snapshot or {}),
         "created_at": record.created_at.isoformat() if record.created_at else None,
     }
