@@ -1,12 +1,15 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
 import { RefreshCw, ShieldCheck, ShieldAlert, SlidersHorizontal, UsersRound, Cpu, ToggleLeft, Plus, Trash2 } from 'lucide-vue-next'
+import { useSettingsStore } from '@/stores/userSettings'
 import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getSafetyKeywords, createSafetyKeyword, updateSafetyKeyword, deleteSafetyKeyword, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
 import { showToast } from '@/utils/toast.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
+
+const settings = useSettingsStore()
 
 const loading = ref(true)
 const error = ref('')
@@ -41,164 +44,160 @@ const CATEGORY_TABS = [
 ]
 
 const CAPABILITY_FIELDS = [
-  { key: 'learning', label: '学习' },
-  { key: 'course_building', label: '建设' },
-  { key: 'knowledge_graph', label: '图谱' },
-  { key: 'evidence', label: '证据' },
-  { key: 'experiment', label: '实验' },
-  { key: 'coding_sandbox', label: '沙箱' },
-  { key: 'cognitive_analysis', label: '认知' },
-  { key: 'safety_policy', label: '安全' },
+    { key: 'learning', label: '学习' },
+    { key: 'course_building', label: '建设' },
+    { key: 'knowledge_graph', label: '图谱' },
+    { key: 'evidence', label: '证据' },
+    { key: 'experiment', label: '实验' },
+    { key: 'coding_sandbox', label: '沙箱' },
+    { key: 'cognitive_analysis', label: '认知' },
+    { key: 'safety_policy', label: '安全' },
 ]
 const ALL_CAPS_ON = Object.fromEntries(CAPABILITY_FIELDS.map(field => [field.key, true]))
 const courseCaps = ref([])
 
 function userPatch(user) {
-  return { username: user.username || '', role: user.role, is_active: user.is_active }
+    return { username: user.username || '', role: user.role, is_active: user.is_active }
 }
 
 function integrationDraft(item) {
-  return { provider: item.provider || '', base_url: item.base_url || '', model_name: item.model_name || '', api_key: '', extra_config: JSON.stringify(item.extra_config || {}, null, 2), enabled: Boolean(item.enabled), expected_version: item.version }
+    return { provider: item.provider || '', base_url: item.base_url || '', model_name: item.model_name || '', api_key: '', extra_config: JSON.stringify(item.extra_config || {}, null, 2), enabled: Boolean(item.enabled), expected_version: item.version }
 }
 
 async function loadUsers() {
-  const params = { page: page.value, page_size: 20 }
-  if (filters.user_id) params.user_id = filters.user_id
-  if (filters.query) params.query = filters.query
-  if (filters.role) params.role = filters.role
-  if (filters.is_active !== '') params.is_active = filters.is_active === 'true'
-  const result = await getAdminUsers(params)
-  users.value = result.items || []
-  total.value = result.total || 0
+    const params = { page: page.value, page_size: 20 }
+    if (filters.user_id) params.user_id = filters.user_id
+    if (filters.query) params.query = filters.query
+    if (filters.role) params.role = filters.role
+    if (filters.is_active !== '') params.is_active = filters.is_active === 'true'
+    const result = await getAdminUsers(params)
+    users.value = result.items || []
+    total.value = result.total || 0
 }
 
 async function load() {
-  loading.value = true
-  error.value = ''
-  try {
-    const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
-    users.value = userResult.items || []
-    total.value = userResult.total || 0
-    integrations.value = integrationResult.items || []
-    integrations.value.forEach(item => { drafts[item.integration_key] = integrationDraft(item) })
-    Object.assign(concurrency, concurrencyResult || {})
-    courseCaps.value = (capsResult.items || []).map(item => ({ ...item, draft: { ...item.capabilities } }))
-  } catch (caught) {
-    error.value = caught?.response?.data?.detail?.message || caught?.message || '无法读取平台管理数据'
-  } finally {
-    loading.value = false
-  }
+    loading.value = true
+    error.value = ''
+    try {
+        const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
+        users.value = userResult.items || []
+        total.value = userResult.total || 0
+        integrations.value = integrationResult.items || []
+        integrations.value.forEach(item => { drafts[item.integration_key] = integrationDraft(item) })
+        Object.assign(concurrency, concurrencyResult || {})
+        courseCaps.value = (capsResult.items || []).map(item => ({ ...item, draft: { ...item.capabilities } }))
+    } catch (caught) {
+        error.value = caught?.response?.data?.detail?.message || caught?.message || '无法读取平台管理数据'
+    } finally {
+        loading.value = false
+    }
 }
 
 async function saveConcurrency() {
-  saving.value = 'task-concurrency'
-  try {
-    const updated = await updateTaskConcurrency({ ...concurrency })
-    Object.assign(concurrency, updated || {})
-    showToast('后台任务并发配置已保存', 'success')
-  } catch (caught) {
-    showToast(caught?.message || '并发配置保存失败', 'error')
-  } finally { saving.value = '' }
+    saving.value = 'task-concurrency'
+    try {
+        const updated = await updateTaskConcurrency({ ...concurrency })
+        Object.assign(concurrency, updated || {})
+        showToast('后台任务并发配置已保存', 'success')
+    } catch (caught) {
+        showToast(caught?.message || '并发配置保存失败', 'error')
+    } finally { saving.value = '' }
 }
 
 async function saveUser(user) {
-  saving.value = `user-${user.id}`
-  try {
-    const updated = await updateAdminUser(user.id, userPatch(user))
-    Object.assign(user, updated)
-    showToast('用户资料已更新', 'success')
-  } catch (caught) {
-    showToast(caught?.message || '用户更新失败', 'error')
-  } finally { saving.value = '' }
+    saving.value = `user-${user.id}`
+    try {
+        const updated = await updateAdminUser(user.id, userPatch(user))
+        Object.assign(user, updated)
+        showToast('用户资料已更新', 'success')
+    } catch (caught) {
+        showToast(caught?.message || '用户更新失败', 'error')
+    } finally { saving.value = '' }
 }
 
 async function setPassword(user) {
-  if (!password.value || password.value.length < 8) return showToast('新密码至少需要 8 位', 'warning')
-  saving.value = `password-${user.id}`
-  try {
-    await resetAdminPassword(user.id, password.value)
-    password.value = ''
-    passwordFor.value = null
-    showToast('密码已重置，旧登录凭据已失效', 'success')
-  } catch (caught) {
-    showToast(caught?.message || '重置密码失败', 'error')
-  } finally { saving.value = '' }
+    if (!password.value || password.value.length < 8) return showToast('新密码至少需要 8 位', 'warning')
+    saving.value = `password-${user.id}`
+    try {
+        await resetAdminPassword(user.id, password.value)
+        password.value = ''
+        passwordFor.value = null
+        showToast('密码已重置，旧登录凭据已失效', 'success')
+    } catch (caught) {
+        showToast(caught?.message || '重置密码失败', 'error')
+    } finally { saving.value = '' }
 }
 
 async function saveIntegration(item) {
-  const draft = drafts[item.integration_key]
-  saving.value = `integration-${item.integration_key}`
-  try {
-    const extra = draft.extra_config.trim() ? JSON.parse(draft.extra_config) : {}
-    const updated = await updateIntegration(item.integration_key, { ...draft, extra_config: extra })
-    Object.assign(item, updated)
-    drafts[item.integration_key] = integrationDraft(item)
-    showToast(`${item.integration_key.toUpperCase()} 配置已保存并热刷新`, 'success')
-  } catch (caught) {
-    showToast(caught instanceof SyntaxError ? '高级配置必须是 JSON 对象' : (caught?.message || 'Provider 保存失败'), 'error')
-  } finally { saving.value = '' }
+    const draft = drafts[item.integration_key]
+    saving.value = `integration-${item.integration_key}`
+    try {
+        const extra = draft.extra_config.trim() ? JSON.parse(draft.extra_config) : {}
+        const updated = await updateIntegration(item.integration_key, { ...draft, extra_config: extra })
+        Object.assign(item, updated)
+        drafts[item.integration_key] = integrationDraft(item)
+        showToast(`${item.integration_key.toUpperCase()} 配置已保存并热刷新`, 'success')
+    } catch (caught) {
+        showToast(caught instanceof SyntaxError ? '高级配置必须是 JSON 对象' : (caught?.message || 'Provider 保存失败'), 'error')
+    } finally { saving.value = '' }
 }
 
 async function probe(item) {
-  saving.value = `probe-${item.integration_key}`
-  try {
-    const result = await testIntegration(item.integration_key)
-    item.health_status = result.status
-    showToast(`连通性检查：${result.status}`, result.status === 'reachable' || result.status === 'configured' ? 'success' : 'warning')
-  } catch (caught) {
-    showToast(caught?.message || 'Provider 不可用', 'error')
-  } finally { saving.value = '' }
+    saving.value = `probe-${item.integration_key}`
+    try {
+        const result = await testIntegration(item.integration_key)
+        item.health_status = result.status
+        showToast(`连通性检查：${result.status}`, result.status === 'reachable' || result.status === 'configured' ? 'success' : 'warning')
+    } catch (caught) {
+        showToast(caught?.message || 'Provider 不可用', 'error')
+    } finally { saving.value = '' }
 }
 
-/**
- * 一键开关：只发送 enabled + expected_version，其余字段保留服务端已存配置。
- * 启用时后端会先做配置校验（probe），配置不完整会返回错误并提示先填表单。
- */
 async function toggleIntegration(item) {
-  saving.value = `toggle-${item.integration_key}`
-  const next = !item.enabled
-  try {
-    const updated = await updateIntegration(item.integration_key, { enabled: next, expected_version: item.version })
-    Object.assign(item, updated)
-    drafts[item.integration_key] = integrationDraft(item)
-    showToast(next ? `${item.integration_key.toUpperCase()} 真实接入已开启` : `${item.integration_key.toUpperCase()} 真实接入已关闭`, 'success')
-  } catch (caught) {
-    const detail = caught?.response?.data?.detail
-    const message = typeof detail === 'object' ? (detail.message || '') : (caught?.message || '切换失败')
-    showToast(message || `开启 ${item.integration_key.toUpperCase()} 前请先完整填写 Provider 配置`, 'error')
-  } finally { saving.value = '' }
+    saving.value = `toggle-${item.integration_key}`
+    const next = !item.enabled
+    try {
+        const updated = await updateIntegration(item.integration_key, { enabled: next, expected_version: item.version })
+        Object.assign(item, updated)
+        drafts[item.integration_key] = integrationDraft(item)
+        showToast(next ? `${item.integration_key.toUpperCase()} 真实接入已开启` : `${item.integration_key.toUpperCase()} 真实接入已关闭`, 'success')
+    } catch (caught) {
+        const detail = caught?.response?.data?.detail
+        const message = typeof detail === 'object' ? (detail.message || '') : (caught?.message || '切换失败')
+        showToast(message || `开启 ${item.integration_key.toUpperCase()} 前请先完整填写 Provider 配置`, 'error')
+    } finally { saving.value = '' }
 }
 
 async function saveCourseCaps(course) {
-  saving.value = `caps-${course.course_id}`
-  try {
-    const updated = await updateAdminCourseCapabilities(course.course_id, course.draft)
-    course.capabilities = updated.capabilities
-    course.draft = { ...updated.capabilities }
-    showToast(`课程「${course.title}」能力开关已保存`, 'success')
-  } catch (caught) {
-    showToast(caught?.message || '能力开关保存失败', 'error')
-  } finally { saving.value = '' }
+    saving.value = `caps-${course.course_id}`
+    try {
+        const updated = await updateAdminCourseCapabilities(course.course_id, course.draft)
+        course.capabilities = updated.capabilities
+        course.draft = { ...updated.capabilities }
+        showToast(`课程「${course.title}」能力开关已保存`, 'success')
+    } catch (caught) {
+        showToast(caught?.message || '能力开关保存失败', 'error')
+    } finally { saving.value = '' }
 }
 
 async function enableAllCaps(course) {
-  course.draft = { ...ALL_CAPS_ON }
-  await saveCourseCaps(course)
+    course.draft = { ...ALL_CAPS_ON }
+    await saveCourseCaps(course)
 }
 
 async function enableAllCoursesCaps() {
-  if (!courseCaps.value.length) return
-  saving.value = 'caps-all'
-  try {
-    for (const course of courseCaps.value) {
-      const updated = await updateAdminCourseCapabilities(course.course_id, { ...ALL_CAPS_ON })
-      course.capabilities = updated.capabilities
-      course.draft = { ...updated.capabilities }
-    }
-    showToast('已为全部课程开启所有能力开关', 'success')
-  } catch (caught) {
-    showToast(caught?.message || '批量开启失败', 'error')
-  } finally { saving.value = '' }
+    if (!courseCaps.value.length) return
+    saving.value = 'caps-all'
+    try {
+        for (const course of courseCaps.value) {
+            const updated = await updateAdminCourseCapabilities(course.course_id, { ...ALL_CAPS_ON })
+            course.capabilities = updated.capabilities
+            course.draft = { ...updated.capabilities }
+        }
+        showToast('已为全部课程开启所有能力开关', 'success')
+    } catch (caught) {
+        showToast(caught?.message || '批量开启失败', 'error')
+    } finally { saving.value = '' }
 }
 
 // ---- 安全屏蔽词操作 ----
@@ -277,69 +276,168 @@ onMounted(() => { load(); loadKeywords() })
 </script>
 
 <template>
-  <div class="sfx-page admin-page">
-    <header class="sfx-page-header">
-      <div>
-        <h1 class="sfx-t-title1"><ShieldCheck :size="25" /> 平台管理</h1>
-        <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">管理平台用户账号与系统配置；课程内的教学角色由各课程单独授权。</p>
-      </div>
-      <SfxButton variant="secondary" size="sm" :disabled="loading" @click="load"><RefreshCw :size="15" /> 刷新</SfxButton>
-    </header>
+    <div class="sfx-page admin-page">
+        <header class="sfx-page-header">
+            <div>
+                <h1 class="sfx-t-title1">
+                    <ShieldCheck :size="25" /> 平台管理
+                </h1>
+                <p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">管理平台用户账号与系统配置；课程内的教学角色由各课程单独授权。</p>
+            </div>
+            <div class="header-actions">
+                <SfxButton variant="secondary" size="sm" @click="settings.nextAvatar">
+                    <span>切换头像 ({{ settings.avatarIndex }})</span>
+                </SfxButton>
+                <SfxButton variant="secondary" size="sm" :disabled="loading" @click="load">
+                    <RefreshCw :size="15" /> 刷新
+                </SfxButton>
+            </div>
+        </header>
 
-    <SfxSkeleton v-if="loading" :lines="8" block />
-    <SfxError v-else-if="error" :description="error" @retry="load" />
-    <template v-else>
-      <section class="sfx-panel admin-section">
-        <div class="section-head"><h2 class="sfx-t-title3"><UsersRound :size="19" /> 用户管理</h2><span class="sfx-t-caption">{{ total }} 个账号</span></div>
-        <form class="filters" @submit.prevent="page = 1; loadUsers()">
-          <input v-model="filters.user_id" class="sfx-input" inputmode="numeric" placeholder="用户 ID" />
-          <input v-model="filters.query" class="sfx-input" placeholder="用户名搜索" />
-          <select v-model="filters.role" class="sfx-select"><option value="">全部角色</option><option value="user">用户</option><option value="admin">管理员</option></select>
-          <select v-model="filters.is_active" class="sfx-select"><option value="">全部状态</option><option value="true">启用</option><option value="false">停用</option></select>
-          <SfxButton type="submit" size="sm" variant="secondary">筛选</SfxButton>
-        </form>
-        <SfxEmpty v-if="!users.length" title="没有匹配账号" description="调整搜索条件后再试。" />
-        <div v-else class="sfx-table-wrap">
-          <table class="sfx-table"><thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>操作</th></tr></thead>
-            <tbody><template v-for="user in users" :key="user.id"><tr><td>{{ user.id }}</td>
-              <td><input v-model="user.username" class="sfx-input compact" maxlength="50" aria-label="用户名" /></td>
-              <td><select v-model="user.role" class="sfx-select compact"><option value="user">用户</option><option value="admin">管理员</option></select></td>
-              <td><label class="state-check"><input v-model="user.is_active" type="checkbox" /> {{ user.is_active ? '启用' : '停用' }}</label></td>
-              <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = user.id; password = ''">重置密码</SfxButton></span></td></tr>
-              <tr v-if="passwordFor === user.id" class="password-row"><td colspan="5"><span class="password-row-actions"><input v-model="password" class="sfx-input" type="password" autocomplete="new-password" placeholder="输入至少 8 位的新密码" /><SfxButton size="sm" :loading="saving === `password-${user.id}`" @click="setPassword(user)">确认重置</SfxButton><SfxButton size="sm" variant="tertiary" @click="passwordFor = null">取消</SfxButton></span></td></tr></template>
-            </tbody>
-          </table>
-        </div>
-      </section>
+        <SfxSkeleton v-if="loading" :lines="8" block />
+        <SfxError v-else-if="error" :description="error" @retry="load" />
+        <template v-else>
+            <section class="sfx-panel admin-section">
+                <div class="section-head">
+                    <h2 class="sfx-t-title3">
+                        <UsersRound :size="19" /> 用户管理
+                    </h2><span class="sfx-t-caption">{{ total }} 个账号</span>
+                </div>
+                <form class="filters" @submit.prevent="page = 1; loadUsers()">
+                    <input v-model="filters.user_id" class="sfx-input" inputmode="numeric" placeholder="用户 ID" />
+                    <input v-model="filters.query" class="sfx-input" placeholder="用户名搜索" />
+                    <select v-model="filters.role" class="sfx-select">
+                        <option value="">全部角色</option>
+                        <option value="user">用户</option>
+                        <option value="admin">管理员</option>
+                    </select>
+                    <select v-model="filters.is_active" class="sfx-select">
+                        <option value="">全部状态</option>
+                        <option value="true">启用</option>
+                        <option value="false">停用</option>
+                    </select>
+                    <SfxButton type="submit" size="sm" variant="secondary">筛选</SfxButton>
+                </form>
+                <SfxEmpty v-if="!users.length" title="没有匹配账号" description="调整搜索条件后再试。" />
+                <div v-else class="sfx-table-wrap">
+                    <table class="sfx-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>角色</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody><template v-for="user in users" :key="user.id">
+                                <tr>
+                                    <td>{{ user.id }}</td>
+                                    <td><input v-model="user.username" class="sfx-input compact" maxlength="50"
+                                            aria-label="用户名" /></td>
+                                    <td><select v-model="user.role" class="sfx-select compact">
+                                            <option value="user">用户</option>
+                                            <option value="admin">管理员</option>
+                                        </select></td>
+                                    <td><label class="state-check"><input v-model="user.is_active" type="checkbox" /> {{
+                                        user.is_active ? '启用' : '停用' }}</label></td>
+                                    <td><span class="actions">
+                                            <SfxButton size="sm" variant="secondary"
+                                                :loading="saving === `user-${user.id}`" @click="saveUser(user)">保存
+                                            </SfxButton>
+                                            <SfxButton size="sm" variant="tertiary"
+                                                @click="passwordFor = user.id; password = ''">重置密码</SfxButton>
+                                        </span></td>
+                                </tr>
+                                <tr v-if="passwordFor === user.id" class="password-row">
+                                    <td colspan="5"><span class="password-row-actions"><input v-model="password"
+                                                class="sfx-input" type="password" autocomplete="new-password"
+                                                placeholder="输入至少 8 位的新密码" />
+                                            <SfxButton size="sm" :loading="saving === `password-${user.id}`"
+                                                @click="setPassword(user)">确认重置</SfxButton>
+                                            <SfxButton size="sm" variant="tertiary" @click="passwordFor = null">取消
+                                            </SfxButton>
+                                        </span></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
 
-      <section class="sfx-panel admin-section">
-        <div class="section-head"><h2 class="sfx-t-title3"><ToggleLeft :size="19" /> 课程能力开关</h2><span class="sfx-t-caption">能力开关门控课程权限；关闭后对应接口返回 403。平台管理员可在此一键解锁全部课程。</span></div>
-        <div class="caps-toolbar"><SfxButton size="sm" variant="primary" :loading="saving === 'caps-all'" @click="enableAllCoursesCaps">一键开启全部课程能力</SfxButton></div>
-        <SfxEmpty v-if="!courseCaps.length" title="暂无课程" description="平台还没有任何课程。" />
-        <div v-else class="sfx-table-wrap">
-          <table class="sfx-table caps-table"><thead><tr><th>课程</th><th v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-th">{{ field.label }}</th><th>操作</th></tr></thead>
-            <tbody><tr v-for="course in courseCaps" :key="course.course_id"><td class="caps-title">#{{ course.course_id }} {{ course.title }}<span class="sfx-t-caption caps-status">{{ course.status }}</span></td>
-              <td v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-td"><label class="caps-check"><input v-model="course.draft[field.key]" type="checkbox" :aria-label="field.label" /></label></td>
-              <td><span class="actions"><SfxButton size="sm" variant="secondary" :loading="saving === `caps-${course.course_id}`" @click="saveCourseCaps(course)">保存</SfxButton><SfxButton size="sm" variant="tertiary" @click="enableAllCaps(course)">全开</SfxButton></span></td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
+            <section class="sfx-panel admin-section">
+                <div class="section-head">
+                    <h2 class="sfx-t-title3">
+                        <ToggleLeft :size="19" /> 课程能力开关
+                    </h2><span class="sfx-t-caption">能力开关门控课程权限；关闭后对应接口返回 403。平台管理员可在此一键解锁全部课程。</span>
+                </div>
+                <div class="caps-toolbar">
+                    <SfxButton size="sm" variant="primary" :loading="saving === 'caps-all'"
+                        @click="enableAllCoursesCaps">一键开启全部课程能力
+                    </SfxButton>
+                </div>
+                <SfxEmpty v-if="!courseCaps.length" title="暂无课程" description="平台还没有任何课程。" />
+                <div v-else class="sfx-table-wrap">
+                    <table class="sfx-table caps-table">
+                        <thead>
+                            <tr>
+                                <th>课程</th>
+                                <th v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-th">{{ field.label
+                                }}</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="course in courseCaps" :key="course.course_id">
+                                <td class="caps-title">#{{ course.course_id }} {{ course.title }}<span
+                                        class="sfx-t-caption caps-status">{{ course.status }}</span></td>
+                                <td v-for="field in CAPABILITY_FIELDS" :key="field.key" class="caps-td"><label
+                                        class="caps-check"><input v-model="course.draft[field.key]" type="checkbox"
+                                            :aria-label="field.label" /></label></td>
+                                <td><span class="actions">
+                                        <SfxButton size="sm" variant="secondary"
+                                            :loading="saving === `caps-${course.course_id}`"
+                                            @click="saveCourseCaps(course)">保存</SfxButton>
+                                        <SfxButton size="sm" variant="tertiary" @click="enableAllCaps(course)">全开
+                                        </SfxButton>
+                                    </span></td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </section>
 
-      <section class="sfx-panel admin-section">
-        <div class="section-head"><h2 class="sfx-t-title3"><Cpu :size="19" /> 后台任务并发</h2><span class="sfx-t-caption">开发者模式下可限制后台任务的并发数量，避免本机资源过载。</span></div>
-        <div class="concurrency-grid">
-          <label class="checkbox-line"><input v-model="concurrency.developer_mode" type="checkbox" /> 开发者模式</label>
-          <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>代码沙箱评测<input v-model.number="concurrency.sandbox_execution" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number" min="1" max="32" /></label>
-          <label class="budget-line">GraphRAG 单次输入 token 上限<input v-model.number="concurrency.graphrag_max_input_tokens" class="sfx-input" type="number" min="0" step="1000" /><small class="sfx-t-caption">0 = 使用服务器环境默认值；按 token 计，不按美元估算。</small></label>
-        </div>
-        <div class="section-actions"><SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置</SfxButton></div>
-      </section>
+            <section class="sfx-panel admin-section">
+                <div class="section-head">
+                    <h2 class="sfx-t-title3">
+                        <Cpu :size="19" /> 后台任务并发
+                    </h2><span class="sfx-t-caption">开发者模式下可限制后台任务的并发数量，避免本机资源过载。</span>
+                </div>
+                <div class="concurrency-grid">
+                    <label class="checkbox-line"><input v-model="concurrency.developer_mode" type="checkbox" />
+                        开发者模式</label>
+                    <label>总并发上限<input v-model.number="concurrency.max_total" class="sfx-input" type="number" min="1"
+                            max="32" /></label>
+                    <label>文件解析<input v-model.number="concurrency.document_parse" class="sfx-input" type="number"
+                            min="1" max="32" /></label>
+                    <label>课程备课<input v-model.number="concurrency.course_draft_build" class="sfx-input" type="number"
+                            min="1" max="32" /></label>
+                    <label>代码沙箱评测<input v-model.number="concurrency.sandbox_execution" class="sfx-input" type="number"
+                            min="1" max="32" /></label>
+                    <label>GraphRAG<input v-model.number="concurrency.graphrag" class="sfx-input" type="number" min="1"
+                            max="32" /></label>
+                    <label>向量检索索引<input v-model.number="concurrency.vector_index" class="sfx-input" type="number"
+                            min="1" max="32" /></label>
+                    <label class="budget-line">GraphRAG 单次输入 token 上限<input
+                            v-model.number="concurrency.graphrag_max_input_tokens" class="sfx-input" type="number"
+                            min="0" step="1000" /><small class="sfx-t-caption">0 = 使用服务器环境默认值；按
+                            token 计，不按美元估算。</small></label>
+                </div>
+                <div class="section-actions">
+                    <SfxButton size="sm" :loading="saving === 'task-concurrency'" @click="saveConcurrency">保存并发配置
+                    </SfxButton>
+                </div>
+            </section>
 
       <section class="sfx-panel admin-section">
         <div class="section-head">
