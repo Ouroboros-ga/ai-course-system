@@ -16,9 +16,9 @@ const router = useRouter()
 const counter = useCounterStore()
 
 const tabs = [
-  { key: 'learning', label: '我学习的', to: '/app/courses/learning' },
-  { key: 'building', label: '我建设的', to: '/app/courses/building' },
-  { key: 'hall', label: '课程大厅', to: '/app/courses/hall' },
+    { key: 'learning', label: '我学习的', to: '/app/courses/learning' },
+    { key: 'building', label: '我建设的', to: '/app/courses/building' },
+    { key: 'hall', label: '课程大厅', to: '/app/courses/hall' },
 ]
 
 const activeKey = computed(() => tabs.find((t) => route.path.startsWith(t.to))?.key ?? 'learning')
@@ -32,134 +32,170 @@ function openCreateCourse() { router.push('/app/courses/create') }
 // 加入成功后子页面可监听该信号刷新列表
 const joinRefreshTick = ref(0)
 function handleJoined() {
-  joinRefreshTick.value += 1
+    joinRefreshTick.value += 1
 }
 provide('coursesContext', { openJoin, joinRefreshTick })
 </script>
 
 <template>
-  <div class="sfx-courses-layout">
-    <div class="sfx-l2nav">
-      <div class="sfx-l2nav-inner">
-        <nav class="sfx-l2nav-links" aria-label="我的课程导航">
-          <RouterLink
-            v-for="tab in tabs"
-            :key="tab.key"
-            :to="tab.to"
-            class="sfx-l2nav-link"
-            :class="{ 'is-active': activeKey === tab.key }"
-          >{{ tab.label }}</RouterLink>
-        </nav>
-        <div class="sfx-l2nav-actions">
-          <SfxButton v-if="canImportCourses" variant="primary" @click="openCreateCourse">
-            <template #icon><FilePlus2 :size="16" /></template>
-            创建课程
-          </SfxButton>
-          <SfxButton variant="secondary" @click="openJoin">
-            <template #icon><UserRoundPlus :size="16" /></template>
-            加入课程
-          </SfxButton>
+    <div class="sfx-courses-layout">
+        <div class="sfx-l2nav">
+            <div class="sfx-l2nav-inner">
+                <nav class="sfx-l2nav-links" aria-label="我的课程导航">
+                    <RouterLink v-for="tab in tabs" :key="tab.key" :to="tab.to" class="sfx-l2nav-link"
+                        :class="{ 'is-active': activeKey === tab.key }">{{ tab.label }}</RouterLink>
+                </nav>
+                <div class="sfx-l2nav-actions">
+                    <SfxButton v-if="canImportCourses" variant="primary" @click="openCreateCourse">
+                        <template #icon>
+                            <FilePlus2 :size="16" />
+                        </template>
+                        创建课程
+                    </SfxButton>
+                    <SfxButton variant="secondary" @click="openJoin">
+                        <template #icon>
+                            <UserRoundPlus :size="16" />
+                        </template>
+                        加入课程
+                    </SfxButton>
+                </div>
+            </div>
         </div>
-      </div>
+
+        <router-view v-slot="{ Component, route }">
+            <Transition name="sfx-page" mode="out-in">
+                <component :is="Component" :key="route.path" />
+            </Transition>
+        </router-view>
+
+        <JoinCourseDrawer :open="joinOpen" @close="closeJoin" @joined="handleJoined" />
     </div>
-
-    <router-view v-slot="{ Component, route }">
-      <Transition name="sfx-page" mode="out-in">
-        <component :is="Component" :key="route.path" />
-      </Transition>
-    </router-view>
-
-    <JoinCourseDrawer :open="joinOpen" @close="closeJoin" @joined="handleJoined" />
-  </div>
 </template>
 
 <style scoped>
 .sfx-courses-layout {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
 }
 
 .sfx-l2nav {
-  height: var(--nav-l2-height);
-  background: var(--surface-panel);
-  border-bottom: 1px solid var(--border-default);
-  flex-shrink: 0;
-  position: sticky;
-  top: 0;
-  z-index: 30;
+    /* 高度必须 = 按钮(40px) + 顶部 padding(8px) + 底部 padding(16px) = 64px，
+       否则 border-box 下内容会溢出侵占 padding，底部空隙不精确 */
+    height: calc(var(--control-height) + 24px);
+    background: var(--surface-panel);
+    border-bottom: 1px solid var(--border-default);
+    flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 30;
 }
 
 .sfx-l2nav-inner {
-  height: 100%;
-  max-width: var(--content-max-width);
-  margin: 0 auto;
-  padding: 0 var(--space-6);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-6);
+    height: 100%;
+    max-width: var(--content-max-width);
+    margin: 0 auto;
+    /* 底部 16px 空隙：按钮底边不再紧贴导航下边界；顶部 8px 留白 */
+    padding: 8px var(--space-6) 8px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-6);
 }
 
 .sfx-l2nav-links {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  height: 100%;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    height: 100%;
 }
 
 .sfx-l2nav-link {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  height: 100%;
-  padding: 0 var(--space-4);
-  color: var(--text-secondary);
-  font-size: var(--ui-md-size);
-  font-weight: var(--ui-md-weight);
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    height: 100%;
+    padding: 0 var(--space-4);
+    color: var(--text-secondary);
+    font-size: var(--ui-md-size);
+    font-weight: var(--ui-md-weight);
 }
 
-.sfx-l2nav-link:hover { color: var(--ink-700); }
+.sfx-l2nav-link:hover {
+    color: var(--ink-700);
+}
 
-.sfx-l2nav-link.is-active { color: var(--ink-900); }
+.sfx-l2nav-link.is-active {
+    color: var(--ink-900);
+}
 
 .sfx-l2nav-link.is-active::after {
-  content: '';
-  position: absolute;
-  left: var(--space-4);
-  right: var(--space-4);
-  bottom: -1px;
-  height: 2px;
-  background: var(--ink-900);
+    content: '';
+    position: absolute;
+    left: var(--space-4);
+    right: var(--space-4);
+    bottom: -1px;
+    height: 2px;
+    background: var(--ink-900);
 }
 
 .sfx-l2nav-join {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-2);
-  height: 34px;
-  padding: 0 var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--color-brand);
-  color: var(--text-inverse);
-  font-size: var(--ui-sm-size);
-  font-weight: var(--ui-md-weight);
-  cursor: pointer;
-  white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 34px;
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-md);
+    background: var(--color-brand);
+    color: var(--text-inverse);
+    font-size: var(--ui-sm-size);
+    font-weight: var(--ui-md-weight);
+    cursor: pointer;
+    white-space: nowrap;
 }
 
-.sfx-l2nav-join:hover { background: var(--color-brand-hover); }
+.sfx-l2nav-join:hover {
+    background: var(--color-brand-hover);
+}
 
-.sfx-l2nav-actions { display: flex; align-items: center; gap: var(--space-2); }
+.sfx-l2nav-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
 
 @media (max-width: 640px) {
-  .sfx-l2nav-inner { justify-content: flex-start; gap: var(--space-2); padding: 0 var(--space-3); overflow-x: auto; scrollbar-width: none; }
-  .sfx-l2nav-inner::-webkit-scrollbar { display: none; }
-  .sfx-l2nav-links, .sfx-l2nav-actions { flex: 0 0 auto; }
-  .sfx-l2nav-link { white-space: nowrap; padding: 0 var(--space-2); font-size: var(--ui-sm-size); }
-  .sfx-l2nav-link.is-active::after { left: var(--space-2); right: var(--space-2); }
-  .sfx-l2nav-join { padding: 0 var(--space-3); }
-}
+    .sfx-l2nav-inner {
+        justify-content: flex-start;
+        gap: var(--space-2);
+        padding: 0 var(--space-3);
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
 
+    .sfx-l2nav-inner::-webkit-scrollbar {
+        display: none;
+    }
+
+    .sfx-l2nav-links,
+    .sfx-l2nav-actions {
+        flex: 0 0 auto;
+    }
+
+    .sfx-l2nav-link {
+        white-space: nowrap;
+        padding: 0 var(--space-2);
+        font-size: var(--ui-sm-size);
+    }
+
+    .sfx-l2nav-link.is-active::after {
+        left: var(--space-2);
+        right: var(--space-2);
+    }
+
+    .sfx-l2nav-join {
+        padding: 0 var(--space-3);
+    }
+}
 </style>

@@ -51,7 +51,14 @@ from app.models.access_control_model import MembershipStatus
 from app.models.unified_learning_model import LearningEventType, StudentLearningProjection, CourseLearningStatsProjection, ExposureStatus
 from app.models.cognitive_state_model import CognitiveState, LearningEvidenceRecord, RecommendationRecord
 from app.models.graph_production_model import CourseKnowledgeNode
-from app.services.unified_learning_service import active_release, release_nodes, record_event, student_context, refresh_course_stats
+from app.services.unified_learning_service import (
+    active_release,
+    release_nodes,
+    record_event,
+    student_context,
+    refresh_course_stats,
+    course_trend_and_metrics,
+)
 from pydantic import BaseModel, Field
 
 router = APIRouter(tags=["Phase A 门面层"])
@@ -250,7 +257,7 @@ async def complete_learning_action(course_id: int, release_id: str, outline_node
 
 
 @router.get("/course/{course_id}/analytics")
-async def get_learning_analytics(course_id: int, release_id: Optional[str] = Query(None), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
+async def get_learning_analytics(course_id: int, release_id: Optional[str] = Query(None), days: int = Query(7, ge=1, le=90), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
     require_course_permission(session, current_user, course_id, "analytics.view_course")
     release = active_release(session, course_id) if release_id is None else session.exec(select(CourseRelease).where(CourseRelease.course_id == course_id, CourseRelease.release_id == release_id)).first()
     if release is None:
@@ -311,12 +318,15 @@ async def get_learning_analytics(course_id: int, release_id: Optional[str] = Que
             "total": len(nodes),
             "completion_rate": completed / len(nodes) if nodes else 0.0,
         })
+    trend_metrics = course_trend_and_metrics(session, course_id=course_id, days=days)
     return unified_response(200, "获取课程学习统计成功", {
         "course_id": course_id,
         "release_id": release.release_id,
         "student_count": len(students),
         "knowledge_points": items,
         "students": student_summaries,
+        "trend": trend_metrics["trend"],
+        "core_metrics": trend_metrics["core_metrics"],
     })
 
 
