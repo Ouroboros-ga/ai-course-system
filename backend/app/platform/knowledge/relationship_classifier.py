@@ -4,11 +4,19 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
+import logging
+import time
 from enum import Enum
 
 import httpx
 
 from app.core.config import settings
+
+log = logging.getLogger(__name__)
+
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+_MAX_CALL_RETRIES = 2
+_RETRY_BASE_DELAY_SECONDS = 2.0
 
 
 class EducationalRelationType(str, Enum):
@@ -23,6 +31,10 @@ class EducationalRelationType(str, Enum):
 
 
 class RelationshipClassificationError(RuntimeError):
+    pass
+
+
+class _BalanceExhaustedError(RelationshipClassificationError):
     pass
 
 
@@ -63,6 +75,7 @@ class EducationalRelationshipClassifier:
             for offset in range(0, len(relations), self.batch_size)
         ]
         classified_batches: dict[int, list[dict]] = {}
+        failed_batches: list[int] = []
         with ThreadPoolExecutor(
             max_workers=min(self.max_workers, len(batches)),
             thread_name_prefix="graph-relation-classifier",
@@ -77,18 +90,31 @@ class EducationalRelationshipClassifier:
                 ): offset
                 for offset, batch in batches
             }
-            try:
-                for future in as_completed(future_offsets):
-                    classified_batches[future_offsets[future]] = future.result()
-            except Exception:
-                for future in future_offsets:
-                    future.cancel()
-                raise
-        output = [
-            relation
-            for offset, _batch in batches
-            for relation in classified_batches[offset]
-        ]
+            for future in as_completed(future_offsets):
+                offset = future_offsets[future]
+                try:
+                    classified_batches[offset] = future.result()
+                except _BalanceExhaustedError:
+                    for f in future_offsets:
+                        f.cancel()
+                    raise
+                except Exception:
+                    log.exception("Relation classification batch %d failed", offset)
+                    failed_batches.append(offset)
+        if failed_batches and not classified_batches:
+            raise RelationshipClassificationError("RELATION_CLASSIFICATION_FAILED")
+        output: list[dict] = []
+        for offset, batch in batches:
+            if offset in classified_batches:
+                output.extend(classified_batches[offset])
+            else:
+                for relation in batch:
+                    output.append(normalize_typed_relation({
+                        **relation,
+                        "type": EducationalRelationType.RELATED_TO.value,
+                        "confidence": 0.0,
+                        "reason": "分类批次失败，降级为 RELATED_TO",
+                    }))
         validate_prerequisite_dag(output)
         return output
 
@@ -116,9 +142,17 @@ class EducationalRelationshipClassifier:
         for original, request_row in zip(batch, payload):
             decision = by_id.get(request_row["id"])
             if decision is None:
-                raise RelationshipClassificationError(
-                    "RELATION_CLASSIFICATION_FAILED"
-                )
+                normalized = normalize_typed_relation({
+                    **original,
+                    "type": EducationalRelationType.RELATED_TO.value,
+                    "confidence": 0.0,
+                    "reason": "LLM 未返回该关系的分类结果，降级为 RELATED_TO",
+                    "source": original.get("source"),
+                    "target": original.get("target"),
+                    "text_unit_ids": original.get("text_unit_ids") or [],
+                })
+                output.append(normalized)
+                continue
             normalized = normalize_typed_relation({
                 **original,
                 **decision,
@@ -148,35 +182,61 @@ class EducationalRelationshipClassifier:
             f"本次允许的关系类型仅为：{allowed_text}。"
             "每项保留 id，并给出 type、confidence(0..1)、reason。"
         )
-        response = httpx.post(
-            endpoint,
-            headers={"Authorization": f"Bearer {settings.GRAPHRAG_COMPLETION_API_KEY}"},
-            json={
-                "model": settings.GRAPHRAG_COMPLETION_MODEL,
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user", "content": json.dumps(rows, ensure_ascii=False)},
-                ],
-            },
-            timeout=min(float(settings.GRAPHRAG_RUN_TIMEOUT_SECONDS), 300.0),
+        for attempt in range(1 + _MAX_CALL_RETRIES):
+            try:
+                response = httpx.post(
+                    endpoint,
+                    headers={
+                        "Authorization": f"Bearer {settings.GRAPHRAG_COMPLETION_API_KEY}",
+                    },
+                    json={
+                        "model": settings.GRAPHRAG_COMPLETION_MODEL,
+                        "temperature": 0,
+                        "response_format": {"type": "json_object"},
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": json.dumps(rows, ensure_ascii=False)},
+                        ],
+                    },
+                    timeout=min(float(settings.GRAPHRAG_RUN_TIMEOUT_SECONDS), 300.0),
+                )
+            except httpx.HTTPError as exc:
+                if attempt < _MAX_CALL_RETRIES:
+                    time.sleep(_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+                    continue
+                raise RelationshipClassificationError(
+                    f"GRAPHRAG_PROVIDER_UNAVAILABLE:{type(exc).__name__}"
+                ) from exc
+            if response.status_code == 402 or _is_balance_error_response(response):
+                raise _BalanceExhaustedError(
+                    "LLM_BUDGET_EXCEEDED:insufficient_balance"
+                )
+            if response.status_code in _RETRYABLE_STATUS_CODES and attempt < _MAX_CALL_RETRIES:
+                time.sleep(_RETRY_BASE_DELAY_SECONDS * (2 ** attempt))
+                continue
+            if response.status_code >= 400:
+                raise RelationshipClassificationError(
+                    f"GRAPHRAG_PROVIDER_UNAVAILABLE:{response.status_code}"
+                )
+            try:
+                content = response.json()["choices"][0]["message"]["content"]
+                result = json.loads(content)
+                rows = result.get("relations")
+            except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+                raise RelationshipClassificationError(
+                    "RELATION_CLASSIFICATION_FAILED"
+                ) from exc
+            if not isinstance(rows, list):
+                raise RelationshipClassificationError("RELATION_CLASSIFICATION_FAILED")
+            return rows
+        raise RelationshipClassificationError(
+            f"GRAPHRAG_PROVIDER_UNAVAILABLE:retries_exhausted"
         )
-        if response.status_code >= 400:
-            raise RelationshipClassificationError(
-                f"GRAPHRAG_PROVIDER_UNAVAILABLE:{response.status_code}"
-            )
-        try:
-            content = response.json()["choices"][0]["message"]["content"]
-            result = json.loads(content)
-            rows = result.get("relations")
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-            raise RelationshipClassificationError(
-                "RELATION_CLASSIFICATION_FAILED"
-            ) from exc
-        if not isinstance(rows, list):
-            raise RelationshipClassificationError("RELATION_CLASSIFICATION_FAILED")
-        return rows
+
+
+def _is_balance_error_response(response: httpx.Response) -> bool:
+    text = response.text[:500].lower()
+    return any(kw in text for kw in ("insufficient", "balance", "quota", "credit"))
 
 
 def normalize_typed_relation(relation: dict) -> dict:
