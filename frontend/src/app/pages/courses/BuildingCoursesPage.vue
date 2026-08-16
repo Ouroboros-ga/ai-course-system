@@ -1,8 +1,11 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Hammer, Search } from 'lucide-vue-next'
+import { Hammer, Search, Trash2, TriangleAlert } from 'lucide-vue-next'
 import { listFacadeCourses } from '@/api/facade.js'
+import { deleteCourse } from '@/api/courses.js'
+import { showToast } from '@/utils/toast.js'
+import UiModal from '@/components/ui/UiModal.vue'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -62,6 +65,45 @@ function continueBuild(course) {
 
 function openOverview(course) {
   router.push(`/app/course/${course.course_id}/overview`)
+}
+
+// ---- 删除课程（二次确认） ----
+const deleteTarget = ref(null)
+const deleteDialogOpen = ref(false)
+const deleteConfirmation = ref('')
+const deleting = ref(false)
+const deleteError = ref('')
+const deleteConfirmed = computed(() => (
+  Boolean(deleteTarget.value)
+  && deleteConfirmation.value === String(deleteTarget.value.title || '')
+))
+
+function openDeleteDialog(course) {
+  deleteTarget.value = course
+  deleteConfirmation.value = ''
+  deleteError.value = ''
+  deleteDialogOpen.value = true
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value || !deleteConfirmed.value || deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    const report = await deleteCourse(deleteTarget.value.course_id, deleteConfirmation.value)
+    deleteDialogOpen.value = false
+    deleteTarget.value = null
+    if (report?.cleanup_complete === false) {
+      showToast('课程数据已删除，但部分外部文件清理失败，请查看服务端日志。', 'warning')
+    } else {
+      showToast('课程及其全部数据已永久删除。', 'success')
+    }
+    await load()
+  } catch (e) {
+    deleteError.value = e?.message || '删除课程失败'
+  } finally {
+    deleting.value = false
+  }
 }
 
 function formatDate(iso) {
@@ -139,6 +181,10 @@ onMounted(load)
           <div class="sfx-build-actions">
             <SfxButton variant="primary" size="sm" @click="continueBuild(course)">继续建设</SfxButton>
             <SfxButton variant="tertiary" size="sm" @click="openOverview(course)">课程概览</SfxButton>
+            <SfxButton variant="danger" size="sm" @click="openDeleteDialog(course)">
+              <template #icon><Trash2 :size="15" /></template>
+              删除课程
+            </SfxButton>
           </div>
         </li>
       </ul>
@@ -147,6 +193,38 @@ onMounted(load)
         部分建设进度指标将在后续版本中展示。
       </p>
     </template>
+
+    <UiModal v-model="deleteDialogOpen" title="永久删除课程" width="560px">
+      <div class="sfx-delete-dialog">
+        <div class="sfx-delete-warning">
+          <TriangleAlert :size="22" aria-hidden="true" />
+          <div>
+            <strong>此操作不可恢复</strong>
+            <p>课程内容、作业、媒体资产等全部数据将被永久删除，学生将无法再访问。</p>
+          </div>
+        </div>
+        <label>
+          输入课程名称 <strong>{{ deleteTarget?.title }}</strong> 以确认
+          <input
+            v-model="deleteConfirmation"
+            class="sfx-input"
+            autocomplete="off"
+            :placeholder="deleteTarget?.title"
+            @keyup.enter="confirmDelete"
+          />
+        </label>
+        <SfxError v-if="deleteError" :description="deleteError" />
+      </div>
+      <template #footer>
+        <SfxButton variant="secondary" :disabled="deleting" @click="deleteDialogOpen = false">取消</SfxButton>
+        <SfxButton
+          variant="danger"
+          :disabled="!deleteConfirmed"
+          :loading="deleting"
+          @click="confirmDelete"
+        >永久删除</SfxButton>
+      </template>
+    </UiModal>
   </div>
 </template>
 
@@ -239,6 +317,30 @@ onMounted(load)
   margin-top: var(--space-4);
   text-align: center;
 }
+
+.sfx-delete-dialog {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.sfx-delete-dialog label {
+  display: grid;
+  gap: var(--space-1);
+  font-size: var(--ui-sm-size);
+  color: var(--text-secondary);
+}
+
+.sfx-delete-warning {
+  display: flex;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px solid var(--red-300);
+  border-radius: var(--radius-md);
+  background: var(--red-100);
+  color: var(--red-700);
+}
+
+.sfx-delete-warning p { margin: var(--space-1) 0 0; line-height: 1.55; }
 
 /* 移动端（design.md §12.5）：卡片纵向排列，按钮区可换行，搜索满宽 */
 @media (max-width: 760px) {
