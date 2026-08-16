@@ -13,7 +13,7 @@ import { FileText, MessageCircle, Bot, ArrowRight, Sparkles } from 'lucide-vue-n
         </div>
 
         <h1 class="main-title">
-          AI 智课
+          SmartCarb
           <br />
           <span class="gradient-text">
             <span
