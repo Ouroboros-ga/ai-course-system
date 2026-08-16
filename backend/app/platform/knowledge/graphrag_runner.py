@@ -114,6 +114,7 @@ class GraphRagRunner:
             raise GraphRagRunError("LLM_BUDGET_EXCEEDED")
         outputs = self._load_complete_outputs(output_dir, manifest=manifest)
         if outputs is None:
+            _preflight_llm_health()
             config = self._make_config(
                 artifact_root=artifact_root,
                 output_dir=output_dir,
@@ -140,6 +141,8 @@ class GraphRagRunner:
                 ))
             except TimeoutError as exc:
                 raise GraphRagRunError("GRAPHRAG_RUN_TIMEOUT") from exc
+            except GraphRagRunError:
+                raise
             except Exception as exc:
                 raise GraphRagRunError(
                     f"GRAPHRAG_PROVIDER_UNAVAILABLE:{type(exc).__name__}"
@@ -149,6 +152,13 @@ class GraphRagRunner:
                 for item in results
                 if item.error is not None
             ]
+            balance_errors = [
+                item for item in results
+                if item.error is not None
+                and _is_balance_error(str(item.error))
+            ]
+            if balance_errors:
+                raise GraphRagRunError("LLM_BUDGET_EXCEEDED:insufficient_balance")
             if errors:
                 raise GraphRagRunError(
                     "GRAPH_OUTPUT_INVALID:"
@@ -634,6 +644,46 @@ def _graphrag_importable_in_process() -> bool:
         return importlib.util.find_spec("graphrag") is not None
     except Exception:
         return False
+
+
+_BALANCE_ERROR_KEYWORDS = (
+    "insufficient", "balance", "quota", "402", "credit",
+    "billing", "payment required", "rate_limit",
+)
+
+
+def _is_balance_error(error_text: str) -> bool:
+    lowered = str(error_text).lower()
+    return any(kw in lowered for kw in _BALANCE_ERROR_KEYWORDS)
+
+
+def _preflight_llm_health() -> None:
+    """Minimal LLM call to verify API key and account balance before expensive pipeline."""
+    import httpx
+    endpoint = settings.GRAPHRAG_COMPLETION_API_BASE.rstrip("/")
+    if not endpoint.endswith("/chat/completions"):
+        endpoint += "/chat/completions"
+    try:
+        response = httpx.post(
+            endpoint,
+            headers={"Authorization": f"Bearer {settings.GRAPHRAG_COMPLETION_API_KEY}"},
+            json={
+                "model": settings.GRAPHRAG_COMPLETION_MODEL,
+                "max_tokens": 1,
+                "messages": [{"role": "user", "content": "ping"}],
+            },
+            timeout=30.0,
+        )
+    except httpx.HTTPError as exc:
+        raise GraphRagRunError(
+            f"GRAPHRAG_PROVIDER_UNAVAILABLE:{type(exc).__name__}"
+        ) from exc
+    if response.status_code == 402 or _is_balance_error(response.text):
+        raise GraphRagRunError("LLM_BUDGET_EXCEEDED:insufficient_balance")
+    if response.status_code >= 400:
+        raise GraphRagRunError(
+            f"GRAPHRAG_PROVIDER_UNAVAILABLE:{response.status_code}"
+        )
 
 
 def _estimate_tokens(texts: list[str]) -> int:
