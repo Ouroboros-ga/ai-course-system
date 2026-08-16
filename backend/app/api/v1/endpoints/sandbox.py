@@ -24,7 +24,12 @@ from app.core.config import settings
 from app.models.database import get_session
 from app.services.course_access_service import require_course_permission
 from app.services.experiment_service import FreeSandboxQuotaService
-from app.models.safety_policy_model import CourseSandboxPolicy
+from app.models.safety_policy_model import (
+    CourseSandboxPolicy,
+    SafetyAuditLog,
+    AuditEventType,
+)
+from app.services.safety_guard_service import check_forbidden_operations
 from app.services.sandbox_client import (
     sandbox_client,
     SandboxClient,
@@ -89,6 +94,25 @@ async def execute_code(
     ).first()
     if course_policy and payload.language not in (course_policy.allowed_languages or []):
         raise HTTPException(status_code=400, detail="课程未允许该编程语言")
+
+    # 2026-08-17：平台硬边界命令黑名单接入真实执行路径（此前仅 Agent 工具层生效）。
+    # 对源代码与标准输入同时扫描，命中禁止操作直接拒绝并写审计。
+    scanned = f"{payload.source_code}\n{payload.stdin}"
+    forbidden_operation = check_forbidden_operations(scanned)
+    if forbidden_operation is not None:
+        session.add(SafetyAuditLog(
+            course_id=course_id,
+            user_id=int(current_user["user_id"]),
+            event_type=AuditEventType.SANDBOX_BLOCK,
+            action=f"沙箱执行含平台禁止操作 '{forbidden_operation}'",
+            reason="platform_hard_limit_violation",
+            details={"language": payload.language, "forbidden_operation": forbidden_operation},
+        ))
+        session.commit()
+        raise HTTPException(
+            status_code=400,
+            detail=f"代码包含平台禁止操作 '{forbidden_operation}'，无法执行",
+        )
 
     retry_after = FreeSandboxQuotaService().consume(
         session,

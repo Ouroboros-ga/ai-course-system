@@ -53,6 +53,9 @@ from app.platform.agents.tools.recommendation import (
 from app.platform.agents.tools.teacher_safety_valve import (
     make_session_scoped_teacher_safety_valve_port,
 )
+from app.platform.agents.providers.governance.safety_guard import (
+    make_session_scoped_safety_guard_port,
+)
 from app.platform.agents.tools.tool_governance import (
     make_session_scoped_tool_governance_port,
 )
@@ -369,6 +372,9 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             learning_adjustment=make_session_scoped_learning_adjustment_port(
                 session_factory
             ),
+            # 2026-08-16：内容安全闸门。在 validate_request 后执行课程安全围栏评估，
+            # 政治敏感/网安攻击类提问按课程类型拒绝并返回思政合规文案。
+            safety_guard=make_session_scoped_safety_guard_port(session_factory),
         )
         app.state.teaching_agent_runtime_registry = registry
 

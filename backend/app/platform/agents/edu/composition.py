@@ -23,6 +23,7 @@ from ..contracts import (
     QuestionGenerationPort,
     RecommendationPort,
     SandboxPort,
+    SafetyGuardPort,
     ScopePort,
     StudentModelingPort,
     StudentHistoryPort,
@@ -70,6 +71,7 @@ def build_teaching_runtime(
     teaching_constraints: Optional[TeachingConstraintPort] = None,
     conversation_history: Optional[ConversationHistoryPort] = None,
     learning_adjustment: Optional[LearningAdjustmentPort] = None,
+    safety_guard: Optional[SafetyGuardPort] = None,
 ) -> TeachingAgentRuntime:
     """Build an enabled runtime only after the composition root supplies every Port."""
     return TeachingAgentRuntime(TeachingTools(
@@ -83,6 +85,7 @@ def build_teaching_runtime(
         coding_diagnosis=coding_diagnosis, student_history=student_history,
         teaching_constraints=teaching_constraints, conversation_history=conversation_history,
         learning_adjustment=learning_adjustment,
+        safety_guard=safety_guard,
     ))
 
 
@@ -109,6 +112,7 @@ def build_course_sidecar_runtime(
     teaching_constraints: Optional[TeachingConstraintPort] = None,
     conversation_history: Optional[ConversationHistoryPort] = None,
     learning_adjustment: Optional[LearningAdjustmentPort] = None,
+    safety_guard: Optional[SafetyGuardPort] = None,
 ) -> TeachingAgentRuntime:
     """Use the existing isolated course-sidecar R2 provider for KG/evidence only.
 
@@ -142,6 +146,7 @@ def build_course_sidecar_runtime(
         coding_diagnosis=coding_diagnosis, student_history=student_history,
         teaching_constraints=teaching_constraints, conversation_history=conversation_history,
         learning_adjustment=learning_adjustment,
+        safety_guard=safety_guard,
     )
 
 
@@ -170,6 +175,7 @@ def build_kg_mest_shadow_sidecar_runtime(
     teaching_constraints: Optional[TeachingConstraintPort] = None,
     conversation_history: Optional[ConversationHistoryPort] = None,
     learning_adjustment: Optional[LearningAdjustmentPort] = None,
+    safety_guard: Optional[SafetyGuardPort] = None,
 ) -> TeachingAgentRuntime:
     """Explicitly inject one approved KG-MEST Shadow report into TeachingAgent."""
     return build_course_sidecar_runtime(
@@ -190,4 +196,5 @@ def build_kg_mest_shadow_sidecar_runtime(
         coding_diagnosis=coding_diagnosis, student_history=student_history,
         teaching_constraints=teaching_constraints, conversation_history=conversation_history,
         learning_adjustment=learning_adjustment,
+        safety_guard=safety_guard,
     )

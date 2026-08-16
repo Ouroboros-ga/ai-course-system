@@ -47,6 +47,14 @@ def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any
     }
 
 
+# 2026-08-16：内容安全闸门阻断 warning 码与兜底文案。
+# 合规文案优先来自安全评估的 compliance_reply（两套思政合规文案之一）。
+SAFETY_BLOCKED_WARNING = "SAFETY_CONTENT_BLOCKED"
+SAFETY_BLOCKED_DEFAULT_REPLY = (
+    "该提问内容超出当前课程教学范围，无法回答。如有课程相关问题，欢迎继续提问。"
+)
+
+
 def _parse_inquiry_depth(value: Any) -> float | None:
     """解析 LLM 标定的提问深度（0-1）；缺失/非法/越界时返回 None。"""
     if value is None or value == "":
@@ -399,6 +407,47 @@ def build_teaching_workflow(tools: TeachingTools):
             return {"trace": _trace(state, "validate_request", scope="accepted")}
         except (RequestValidationError, ScopeRejectedError) as error:
             return {"errors": [*state.get("errors", []), error.code], "status": "rejected", "trace": _trace(state, "validate_request", error=error.code)}
+
+    async def safety_check(state: TeachingState) -> dict[str, Any]:
+        """2026-08-16：内容安全闸门。在 validate_request 之后执行课程安全围栏评估。
+
+        无策略 / 策略未启用（draft/conflict）/ 未命中关键词时放行（保持现状）；
+        命中政治敏感或网安高危内容时阻断，返回预设思政合规文案（compliance_reply）
+        并设置 status="blocked"，后续流程停止。安全闸门端口未注入时 no-op。
+        """
+        if tools.safety_guard is None:
+            return {"safety_decision": None, "trace": _trace(state, "safety_check", skipped=True)}
+        try:
+            decision = await tools.safety_guard.check_content(
+                course_id=state["course_id"],
+                user_message=state["user_message"],
+                user_id=state.get("student_id"),
+            )
+            if not decision.get("allowed", True):
+                reply = decision.get("compliance_reply") or SAFETY_BLOCKED_DEFAULT_REPLY
+                return {
+                    "status": "blocked",
+                    "final_answer": reply,
+                    "safety_decision": dict(decision),
+                    "warnings": [*state.get("warnings", []), SAFETY_BLOCKED_WARNING],
+                    "trace": _trace(
+                        state,
+                        "safety_check",
+                        blocked=True,
+                        reason=str(decision.get("reason") or ""),
+                    ),
+                }
+            return {
+                "safety_decision": dict(decision),
+                "trace": _trace(state, "safety_check", blocked=False),
+            }
+        except Exception as error:  # noqa: BLE001 -- 安全闸门故障不阻断问答主链路
+            payload = _degrade(state, "safety_guard", "SAFETY_GUARD_UNAVAILABLE")
+            payload.update({
+                "safety_decision": None,
+                "trace": _trace(state, "safety_check", error=type(error).__name__),
+            })
+            return payload
 
     async def detect_intent(state: TeachingState) -> dict[str, Any]:
         try:
@@ -1317,7 +1366,11 @@ def build_teaching_workflow(tools: TeachingTools):
         return updates
 
     def after_validation(state: TeachingState) -> str:
-        return "record_learning_event" if state.get("status") == "rejected" else "detect_intent"
+        return "record_learning_event" if state.get("status") == "rejected" else "safety_check"
+
+    def after_safety(state: TeachingState) -> str:
+        # 2026-08-16：安全闸门阻断后直接收尾（审计 + 返回合规文案），不再进入意图解析。
+        return "record_learning_event" if state.get("status") == "blocked" else "detect_intent"
 
     def after_intent(state: TeachingState) -> str:
         return "record_learning_event" if state.get("status") == "llm_unavailable" else "resolve_concept"
@@ -1330,6 +1383,7 @@ def build_teaching_workflow(tools: TeachingTools):
 
     graph = StateGraph(TeachingState)
     graph.add_node("validate_request", validate_request)
+    graph.add_node("safety_check", safety_check)
     graph.add_node("load_session_context", load_session_context)
     graph.add_node("detect_intent", detect_intent)
     graph.add_node("resolve_concept", resolve_concept)
@@ -1355,6 +1409,7 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("record_learning_event", record_event)
     graph.add_edge(START, "validate_request")
     graph.add_conditional_edges("validate_request", after_validation)
+    graph.add_conditional_edges("safety_check", after_safety)
     graph.add_conditional_edges("detect_intent", after_intent)
     graph.add_edge("resolve_concept", "resolve_teaching_constraints")
     graph.add_edge("resolve_teaching_constraints", "load_conversation_history")

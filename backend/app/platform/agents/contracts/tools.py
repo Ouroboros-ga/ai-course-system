@@ -21,6 +21,7 @@ from .governance import TeacherSafetyValvePort, ToolGovernancePort
 from .learning_adjustment import LearningAdjustmentPort
 from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
+from .safety import SafetyGuardPort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
 
@@ -56,6 +57,9 @@ class TeachingTools:
     teaching_constraints: Optional[TeachingConstraintPort] = None
     conversation_history: Optional[ConversationHistoryPort] = None
     learning_adjustment: Optional[LearningAdjustmentPort] = None
+    # 2026-08-16：内容安全闸门端口。在 validate_request 后执行课程安全围栏评估；
+    # 未注入时安全节点 no-op 放行，不影响现有流程。
+    safety_guard: Optional[SafetyGuardPort] = None
 
 
 __all__ = ["TeachingTools"]

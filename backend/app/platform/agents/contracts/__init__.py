@@ -18,6 +18,7 @@ Submodule layout:
     - ``research``:     PaperSearchPort, WebResearchPort, QuestionBankPort
     - ``writing``:      LiteratureReviewPort, PaperStructurePort
     - ``governance``:   ToolGovernancePort, TeacherSafetyValvePort
+    - ``safety``:       SafetyGuardPort (content-safety gate)
     - ``experiment``:   ExperimentPort, VisualizationPort
     - ``tools``:        TeachingTools (assembly container)
 """
@@ -39,6 +40,7 @@ from .research import (
     WebResearchPort,
 )
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
+from .safety import SafetyGuardPort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
 from .tools import TeachingTools
@@ -68,6 +70,7 @@ __all__ = [
     "QuestionGenerationPort",
     "ToolGovernancePort",
     "TeacherSafetyValvePort",
+    "SafetyGuardPort",
     "ExperimentPort",
     "ExperimentDispatchPort",
     "VisualizationPort",

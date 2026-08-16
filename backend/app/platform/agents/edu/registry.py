@@ -31,6 +31,7 @@ from ..contracts import (
     QuestionBankPort,
     QuestionGenerationPort,
     RecommendationPort,
+    SafetyGuardPort,
     SandboxPort,
     StudentHistoryPort,
     TeacherSafetyValvePort,
@@ -87,6 +88,7 @@ class TeachingAgentRuntimeRegistry:
         teaching_constraints: Optional[TeachingConstraintPort] = None,
         conversation_history: Optional[ConversationHistoryPort] = None,
         learning_adjustment: Optional[LearningAdjustmentPort] = None,
+        safety_guard: Optional[SafetyGuardPort] = None,
     ) -> None:
         self._demo_service = demo_service
         self._llm = llm
@@ -109,6 +111,7 @@ class TeachingAgentRuntimeRegistry:
         self._teaching_constraints = teaching_constraints
         self._conversation_history = conversation_history
         self._learning_adjustment = learning_adjustment
+        self._safety_guard = safety_guard
         # P1-E3: OrderedDict 实现 LRU；值为 (runtime, created_at_monotonic) 元组以支持 TTL 淘汰。
         self._cache: "OrderedDict[tuple[str, str], tuple[TeachingAgentRuntime, float]]" = OrderedDict()
 
@@ -148,6 +151,7 @@ class TeachingAgentRuntimeRegistry:
                         coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                         teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                         learning_adjustment=self._learning_adjustment,
+                        safety_guard=self._safety_guard,
                     )
                 except (TypeError, ValueError) as error:
                     # A stale/malformed optional report must not deny normal Q&A.
@@ -164,6 +168,7 @@ class TeachingAgentRuntimeRegistry:
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
+                    safety_guard=self._safety_guard,
                 )
             elif report is None:
                 runtime = build_course_sidecar_runtime(
@@ -176,6 +181,7 @@ class TeachingAgentRuntimeRegistry:
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
+                    safety_guard=self._safety_guard,
                 )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
             logger.warning(

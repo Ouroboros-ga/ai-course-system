@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, reactive, ref } from 'vue'
-import { RefreshCw, ShieldCheck, SlidersHorizontal, UsersRound, Cpu, ToggleLeft } from 'lucide-vue-next'
-import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
+import { RefreshCw, ShieldCheck, ShieldAlert, SlidersHorizontal, UsersRound, Cpu, ToggleLeft, Plus, Trash2 } from 'lucide-vue-next'
+import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getSafetyKeywords, createSafetyKeyword, updateSafetyKeyword, deleteSafetyKeyword, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
 import { showToast } from '@/utils/toast.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxEmpty from '@/app/ui/SfxEmpty.vue'
@@ -20,6 +20,25 @@ const password = ref('')
 const filters = reactive({ user_id: '', query: '', role: '', is_active: '' })
 const drafts = reactive({})
 const concurrency = reactive({ developer_mode: false, max_total: 1, document_parse: 1, course_draft_build: 1, graphrag: 1, vector_index: 1, sandbox_execution: 1, graphrag_max_input_tokens: 0 })
+
+// ---- 平台级安全屏蔽词（2026-08-17 新增）----
+const keywordCategory = ref('')
+const keywordItems = ref([])
+const keywordDefaults = ref({})
+const keywordForm = reactive({ keyword: '', category: 'cyber', risk_level: 'medium', description: '' })
+const confirmingDelete = ref(null)
+const savingKeywordRisk = ref(null)
+const CATEGORY_META = {
+  cyber: { label: '网络安全', caption: '网安攻击类（原关键词辅助表）' },
+  political_high_risk: { label: '政治高危', caption: '主权/分裂/颠覆/极端类，任何课程命中即拒绝' },
+  political_topic: { label: '政治话题', caption: '专业/网安课程拒绝，思政课放行教学' },
+}
+const CATEGORY_TABS = [
+  { value: '', label: '全部' },
+  { value: 'cyber', label: '网络安全' },
+  { value: 'political_high_risk', label: '政治高危' },
+  { value: 'political_topic', label: '政治话题' },
+]
 
 const CAPABILITY_FIELDS = [
   { key: 'learning', label: '学习' },
@@ -182,7 +201,79 @@ async function enableAllCoursesCaps() {
   } finally { saving.value = '' }
 }
 
-onMounted(load)
+// ---- 安全屏蔽词操作 ----
+async function loadKeywords() {
+  try {
+    const params = { page_size: 200 }
+    if (keywordCategory.value) params.category = keywordCategory.value
+    const result = await getSafetyKeywords(params)
+    keywordItems.value = result.items || []
+    keywordDefaults.value = result.defaults || {}
+  } catch (caught) {
+    showToast(caught?.message || '屏蔽词列表加载失败', 'error')
+  }
+}
+
+function keywordCount(category) {
+  return keywordItems.value.filter(item => !category || item.category === category).length
+}
+
+async function addKeyword() {
+  const keyword = keywordForm.keyword.trim()
+  if (!keyword) return showToast('请输入屏蔽词', 'warning')
+  saving.value = 'keyword-add'
+  try {
+    await createSafetyKeyword({ keyword, category: keywordForm.category, risk_level: keywordForm.risk_level, description: keywordForm.description.trim() })
+    keywordForm.keyword = ''
+    keywordForm.description = ''
+    keywordForm.risk_level = 'medium'
+    showToast('屏蔽词已添加并即时生效', 'success')
+    await loadKeywords()
+  } catch (caught) {
+    showToast(caught?.message || '添加屏蔽词失败', 'error')
+  } finally { saving.value = '' }
+}
+
+async function updateKeywordRisk(item) {
+  savingKeywordRisk.value = item.id
+  try {
+    const updated = await updateSafetyKeyword(item.id, { risk_level: item.risk_level })
+    Object.assign(item, updated)
+    showToast(`「${item.keyword}」风险等级已更新`, 'success')
+  } catch (caught) {
+    showToast(caught?.message || '风险等级更新失败', 'error')
+  } finally { savingKeywordRisk.value = null }
+}
+
+async function toggleKeyword(item) {
+  saving.value = `keyword-toggle-${item.id}`
+  const next = !item.enabled
+  try {
+    const updated = await updateSafetyKeyword(item.id, { enabled: next })
+    Object.assign(item, updated)
+    showToast(next ? `「${item.keyword}」已启用` : `「${item.keyword}」已停用（不再拦截）`, 'success')
+  } catch (caught) {
+    showToast(caught?.message || '切换失败', 'error')
+  } finally { saving.value = '' }
+}
+
+async function removeKeyword(item) {
+  if (confirmingDelete.value !== item.id) {
+    confirmingDelete.value = item.id
+    return
+  }
+  confirmingDelete.value = null
+  saving.value = `keyword-del-${item.id}`
+  try {
+    await deleteSafetyKeyword(item.id)
+    showToast(`「${item.keyword}」已删除`, 'success')
+    await loadKeywords()
+  } catch (caught) {
+    showToast(caught?.message || '删除失败', 'error')
+  } finally { saving.value = '' }
+}
+
+onMounted(() => { load(); loadKeywords() })
 </script>
 
 <template>
@@ -251,6 +342,44 @@ onMounted(load)
       </section>
 
       <section class="sfx-panel admin-section">
+        <div class="section-head">
+          <h2 class="sfx-t-title3"><ShieldAlert :size="19" /> 安全屏蔽词</h2>
+          <span class="sfx-t-caption">平台级输入审核词库，增删改即时生效；按课程类型分流：网安课/思政课可答对应类别内容。</span>
+        </div>
+        <div class="keyword-tabs">
+          <SfxButton v-for="tab in CATEGORY_TABS" :key="tab.value" size="sm" :variant="keywordCategory === tab.value ? 'primary' : 'tertiary'" @click="keywordCategory = tab.value; loadKeywords()">{{ tab.label }}<span v-if="tab.value" class="kw-count">{{ keywordCount(tab.value) }}</span></SfxButton>
+        </div>
+        <form class="keyword-add" @submit.prevent="addKeyword">
+          <input v-model="keywordForm.keyword" class="sfx-input" maxlength="100" placeholder="屏蔽词（如：漏洞利用 / 台独）" />
+          <select v-model="keywordForm.category" class="sfx-select">
+            <option v-for="(meta, key) in CATEGORY_META" :key="key" :value="key">{{ meta.label }}</option>
+          </select>
+          <select v-if="keywordForm.category === 'cyber'" v-model="keywordForm.risk_level" class="sfx-select">
+            <option value="medium">中风险（教学语境放行）</option>
+            <option value="high">高风险（教学语境需确认）</option>
+          </select>
+          <input v-model="keywordForm.description" class="sfx-input" maxlength="200" placeholder="说明（可选）" />
+          <SfxButton type="submit" size="sm" :loading="saving === 'keyword-add'"><Plus :size="15" /> 添加</SfxButton>
+        </form>
+        <div class="keyword-captions">
+          <span v-for="(meta, key) in CATEGORY_META" :key="key" class="keyword-caption"><span class="kw-cat-tag" :data-cat="key">{{ meta.label }}</span>{{ meta.caption }}<span v-if="keywordDefaults[key]" class="sfx-t-caption">默认 {{ keywordDefaults[key].length }} 词</span></span>
+        </div>
+        <SfxEmpty v-if="!keywordItems.length" title="当前类别下没有屏蔽词" description="可通过上方表单添加；未配置的类别使用系统默认词库。" />
+        <div v-else class="sfx-table-wrap">
+          <table class="sfx-table"><thead><tr><th>关键词</th><th>类别</th><th>风险</th><th>状态</th><th>说明</th><th>操作</th></tr></thead>
+            <tbody><tr v-for="item in keywordItems" :key="item.id">
+              <td class="kw-keyword">{{ item.keyword }}</td>
+              <td><span class="kw-cat-tag" :data-cat="item.category">{{ CATEGORY_META[item.category]?.label || item.category }}</span></td>
+              <td><select v-if="item.category === 'cyber'" v-model="item.risk_level" class="sfx-select compact" :disabled="savingKeywordRisk === item.id" @change="updateKeywordRisk(item)"><option value="medium">中风险</option><option value="high">高风险</option></select><span v-else class="kw-risk-fixed">高</span></td>
+              <td><label class="state-check"><input v-model="item.enabled" type="checkbox" :disabled="saving === `keyword-toggle-${item.id}`" @change="toggleKeyword(item)" /> {{ item.enabled ? '启用' : '停用' }}</label></td>
+              <td class="sfx-t-caption">{{ item.description || '—' }}</td>
+              <td><SfxButton size="sm" :variant="confirmingDelete === item.id ? 'danger' : 'tertiary'" :loading="saving === `keyword-del-${item.id}`" @click="removeKeyword(item)"><Trash2 :size="14" /> {{ confirmingDelete === item.id ? '确认删除' : '删除' }}</SfxButton></td>
+            </tr></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="sfx-panel admin-section">
         <div class="section-head"><h2 class="sfx-t-title3"><SlidersHorizontal :size="19" /> Provider 配置</h2><span class="sfx-t-caption">密钥仅显示配置状态；留空保存会保留旧密钥。</span></div>
         <div class="provider-grid"><article v-for="item in integrations" :key="item.integration_key" class="provider-card"><header>
             <h3>{{ item.integration_key.toUpperCase() }}<span v-if="['llm', 'tts', 'asr'].includes(item.integration_key)" class="toggle-caption">{{ item.enabled ? '真实接入' : '已关闭' }}</span></h3>
@@ -281,4 +410,9 @@ onMounted(load)
 .concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.concurrency-grid .budget-line { grid-column:1/-1; }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
 .caps-toolbar { display:flex; justify-content:flex-start; margin-bottom:var(--space-4); }
 .caps-table { min-width:760px; }.caps-th { text-align:center; white-space:nowrap; }.caps-td { text-align:center; }.caps-check { display:inline-flex; align-items:center; justify-content:center; cursor:pointer; }.caps-check input { width:16px; height:16px; accent-color:var(--ink-700); }.caps-title { white-space:nowrap; }.caps-status { margin-left:var(--space-2); padding:1px 6px; border-radius:999px; background:var(--surface-cool); }
+.keyword-tabs { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.kw-count { margin-left:var(--space-1); padding:0 6px; border-radius:999px; background:var(--surface-cool); font-size:var(--caption-size); }
+.keyword-add { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.keyword-add .sfx-input { min-width:180px; flex:1 1 160px; }.keyword-add .sfx-select { min-width:150px; }
+.keyword-captions { display:flex; flex-direction:column; gap:var(--space-1); margin-bottom:var(--space-4); }.keyword-caption { display:flex; align-items:center; gap:var(--space-2); font-size:var(--ui-sm-size); color:var(--text-secondary); }
+.kw-cat-tag { display:inline-flex; align-items:center; padding:1px 8px; border-radius:999px; background:var(--surface-cool); font-size:var(--caption-size); white-space:nowrap; }.kw-cat-tag[data-cat="cyber"] { background:var(--blue-100); color:var(--blue-700); }.kw-cat-tag[data-cat="political_high_risk"] { background:var(--red-100); color:var(--red-700); }.kw-cat-tag[data-cat="political_topic"] { background:var(--amber-100); color:var(--amber-700); }
+.kw-keyword { font-weight:500; white-space:nowrap; }.kw-risk-fixed { font-size:var(--caption-size); color:var(--text-secondary); }
 </style>

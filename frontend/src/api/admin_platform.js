@@ -12,3 +12,9 @@ export const updateTaskConcurrency = (data) => request({ url: '/admin/task-concu
 
 export const getAdminCourseCapabilities = () => request({ url: '/admin/courses/capabilities', method: 'get' })
 export const updateAdminCourseCapabilities = (courseId, payload) => request({ url: `/admin/courses/${courseId}/capabilities`, method: 'put', data: payload })
+
+// ---- 平台级安全屏蔽词配置（G6 安全围栏，2026-08-17 新增）----
+export const getSafetyKeywords = (params) => request({ url: '/admin/safety-keywords', method: 'get', params })
+export const createSafetyKeyword = (data) => request({ url: '/admin/safety-keywords', method: 'post', data })
+export const updateSafetyKeyword = (keywordId, data) => request({ url: `/admin/safety-keywords/${keywordId}`, method: 'patch', data })
+export const deleteSafetyKeyword = (keywordId) => request({ url: `/admin/safety-keywords/${keywordId}`, method: 'delete' })

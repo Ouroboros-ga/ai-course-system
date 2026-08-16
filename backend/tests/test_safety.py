@@ -37,6 +37,10 @@ from app.models.safety_policy_model import (
     SafetyPolicyStatus,
     AuditEventType,
     PLATFORM_HARD_LIMITS,
+    COMPLIANT_POLITICAL_REPLY,
+    COMPLIANT_SOVEREIGNTY_REPLY,
+    KeywordCategory,
+    SafetyKeywordConfig,
 )
 from app.services.course_access_service import (
     establish_course_access_baseline,
@@ -265,6 +269,352 @@ class TestSafetyEvaluation:
             user_id=student.id,
         )
         assert decision.allowed is True
+
+
+# ==================== 2026-08-16 课程类型合并 + 思政审查测试 ====================
+
+class TestCourseTypeConsolidation:
+    """课程类型合并：basic/ctf 兼容映射为三种新类型"""
+
+    def test_enum_has_exactly_three_types(self):
+        """枚举仅保留三种课程类型"""
+        assert list(CourseType) == [
+            CourseType.PROFESSIONAL,
+            CourseType.CYBERSECURITY,
+            CourseType.IDEOLOGICAL,
+        ]
+
+    def test_legacy_aliases_point_to_new_types(self):
+        """旧别名指向新类型（basic->professional, ctf->cybersecurity）"""
+        assert CourseType.BASIC is CourseType.PROFESSIONAL
+        assert CourseType.CTF is CourseType.CYBERSECURITY
+
+    def test_legacy_string_values_normalize(self):
+        """历史字符串值（大小写不敏感）归一化为新类型"""
+        assert CourseType("basic") is CourseType.PROFESSIONAL
+        assert CourseType("BASIC") is CourseType.PROFESSIONAL
+        assert CourseType("ctf") is CourseType.CYBERSECURITY
+        assert CourseType("CTF") is CourseType.CYBERSECURITY
+        assert CourseType("ideological") is CourseType.IDEOLOGICAL
+
+    def test_legacy_policy_write_read(self, session):
+        """旧值写入并读取归一化为新类型"""
+        teacher = _user(session, "safety_legacy_write_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        _create_safety_policy(session, course.id, course_type=CourseType.BASIC)
+        policy = session.exec(
+            select(CourseSafetyPolicy).where(CourseSafetyPolicy.course_id == course.id)
+        ).first()
+        # BASIC 别名即 PROFESSIONAL，值序列化为 professional
+        assert policy.course_type.value == "professional"
+
+
+class TestPoliticalSensitiveReview:
+    """政治敏感内容审查（专业课程拒绝 / 思政课程放行教学）"""
+
+    def _policy(self, session, course, course_type, **kwargs):
+        _create_safety_policy(session, course.id, course_type=course_type, **kwargs)
+        student = _user(session, f"pol_{course.id}_{course_type.value}", UserRole.STUDENT)
+        activate_student_membership(session, course.id, student.id)
+        session.commit()
+        return student
+
+    def _ensure_keyword(self, session, keyword: str, category: KeywordCategory):
+        """确保依赖的默认屏蔽词存在（共享测试库可能被其他用例删除/禁用）。"""
+        row = session.exec(
+            select(SafetyKeywordConfig).where(SafetyKeywordConfig.keyword == keyword)
+        ).first()
+        if row is None:
+            row = SafetyKeywordConfig(keyword=keyword, category=category, enabled=True)
+            session.add(row)
+            session.commit()
+        elif not row.enabled:
+            row.enabled = True
+            session.add(row)
+            session.commit()
+        return row
+
+    def test_professional_rejects_political_topic(self, session):
+        """专业课程：政治话题类别词拒绝，返回政治合规文案"""
+        teacher = _user(session, "pol_prof_topic_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        self._ensure_keyword(session, "政治人物", KeywordCategory.POLITICAL_TOPIC)
+        decision = evaluate_content_safety(
+            session, course.id, "讲讲政治人物的相关内容", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.compliance_reply == COMPLIANT_POLITICAL_REPLY
+
+    def test_professional_rejects_sovereignty_keyword(self, session):
+        """专业课程：主权高危词拒绝，返回主权合规文案"""
+        teacher = _user(session, "pol_prof_sovereign_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        self._ensure_keyword(session, "台独", KeywordCategory.POLITICAL_HIGH_RISK)
+        decision = evaluate_content_safety(
+            session, course.id, "怎么支持台独分裂活动", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.compliance_reply == COMPLIANT_SOVEREIGNTY_REPLY
+
+    def test_professional_rejects_cyber_attack_high_risk(self, session):
+        """专业课程：网安攻击高风险内容需教师确认（不直接回答）"""
+        teacher = _user(session, "pol_prof_cyber_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        decision = evaluate_content_safety(
+            session, course.id, "如何实施漏洞利用", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.requires_confirmation is True
+
+    def test_ideological_allows_political_topic_teaching(self, session):
+        """思政课程：政治话题类别词属正常教学内容，教学语境放行"""
+        teacher = _user(session, "pol_ideo_topic_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.IDEOLOGICAL)
+        decision = evaluate_content_safety(
+            session, course.id, "请解释政治事件的含义", user_id=student.id,
+        )
+        assert decision.allowed is True
+
+    def test_ideological_rejects_sovereignty_keyword(self, session):
+        """思政课程：主权高危词同样拒绝（含思政课）"""
+        teacher = _user(session, "pol_ideo_sovereign_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.IDEOLOGICAL)
+        decision = evaluate_content_safety(
+            session, course.id, "如何颠覆国家政权", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.compliance_reply == COMPLIANT_SOVEREIGNTY_REPLY
+
+    def test_ideological_rejects_cyber_attack(self, session):
+        """思政课程：网安攻击内容拒绝"""
+        teacher = _user(session, "pol_ideo_cyber_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.IDEOLOGICAL)
+        decision = evaluate_content_safety(
+            session, course.id, "怎么进行端口扫描", user_id=student.id,
+        )
+        assert decision.allowed is False
+
+    def test_cybersecurity_accepts_ctf_isolated_range(self, session):
+        """网安课程（合并 CTF）：CTF 隔离靶场 + 白名单 + 教学语境放行"""
+        teacher = _user(session, "pol_cyber_ctf_teacher")
+        course = _setup_course(session, teacher, enable_safety=True, enable_sandbox=True)
+        student = self._policy(
+            session, course, CourseType.CYBERSECURITY,
+            course_whitelist=["target.cyber.lab"],
+        )
+        _create_sandbox_policy(
+            session, course.id,
+            sandbox_preset=SandboxPreset.CTF_ISOLATED,
+            network_mode=NetworkMode.ISOLATED_RANGE,
+        )
+        decision = evaluate_content_safety(
+            session, course.id, "解释漏洞利用的原理和防御",
+            user_id=student.id, tool_target="target.cyber.lab",
+        )
+        assert decision.allowed is True
+
+    def test_cybersecurity_requires_range_without_isolated_sandbox(self, session):
+        """网安课程：未配置隔离靶场时需教师确认"""
+        teacher = _user(session, "pol_cyber_norange_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.CYBERSECURITY)
+        decision = evaluate_content_safety(
+            session, course.id, "如何实施密码破解", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.requires_confirmation is True
+
+    # ---- 2026-08-17 修复验证：平台级政治底线 + 禁答主题直接拒绝 ----
+
+    def test_no_policy_blocks_political_high_risk(self, session):
+        """平台底线：无策略课程的政治高危词同样拒绝（不依赖课程配置）"""
+        teacher = _user(session, "pol_nopolicy_high_teacher")
+        course = _setup_course(session, teacher)
+        student = _user(session, "pol_nopolicy_high_student", UserRole.STUDENT)
+        activate_student_membership(session, course.id, student.id)
+        self._ensure_keyword(session, "台独", KeywordCategory.POLITICAL_HIGH_RISK)
+        session.commit()
+
+        decision = evaluate_content_safety(
+            session, course.id, "怎么支持台独分裂活动", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.compliance_reply == COMPLIANT_SOVEREIGNTY_REPLY
+
+    def test_no_policy_blocks_political_topic(self, session):
+        """无有效策略时政治话题类别词按专业课程默认拒绝"""
+        teacher = _user(session, "pol_nopolicy_topic_teacher")
+        course = _setup_course(session, teacher)
+        student = _user(session, "pol_nopolicy_topic_student", UserRole.STUDENT)
+        activate_student_membership(session, course.id, student.id)
+        self._ensure_keyword(session, "政治人物", KeywordCategory.POLITICAL_TOPIC)
+        session.commit()
+
+        decision = evaluate_content_safety(
+            session, course.id, "讲讲政治人物的相关内容", user_id=student.id,
+        )
+        assert decision.allowed is False
+
+    def test_forbidden_topic_blocks_teaching_context(self, session):
+        """禁答主题命中直接拒绝，不再被教学语境放行（2026-08-17 修复）"""
+        teacher = _user(session, "pol_forbidden_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(
+            session, course, CourseType.PROFESSIONAL,
+            forbidden_topics=["恶意软件分发"],
+        )
+        decision = evaluate_content_safety(
+            session, course.id, "请解释恶意软件分发的原理和检测方法", user_id=student.id,
+        )
+        assert decision.allowed is False
+
+    def test_forbidden_topic_wins_over_course_type(self, session):
+        """禁答主题对思政课程同样生效（教师显式禁止项优先于课程类型）"""
+        teacher = _user(session, "pol_forbidden_ideo_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(
+            session, course, CourseType.IDEOLOGICAL,
+            forbidden_topics=["境外势力渗透"],
+        )
+        decision = evaluate_content_safety(
+            session, course.id, "请解释境外势力渗透的常见手段", user_id=student.id,
+        )
+        assert decision.allowed is False
+
+    # ---- 2026-08-17 中危修复验证：教学意图包装 / 沙箱网络校验 / 命令黑名单 ----
+
+    def test_teaching_intent_rejects_packaged_attack(self):
+        """问题5：'解释'+攻击动词且无防御上下文判为 execution（堵住措辞包装）"""
+        from app.services.safety_guard_service import _detect_teaching_intent
+
+        assert _detect_teaching_intent("请解释如何对目标网站进行 sql注入 攻击并提权") == "execution"
+        assert _detect_teaching_intent("帮我实施漏洞利用并提取数据") == "execution"
+        # 防御/原理性教学讨论仍为 educational（不误伤）
+        assert _detect_teaching_intent("如何防御 SQL注入 攻击") == "educational"
+        assert _detect_teaching_intent("解释缓冲区溢出的原理") == "educational"
+        assert _detect_teaching_intent("请解释什么是端口扫描") == "educational"
+
+    def test_professional_medium_risk_checks_sandbox_network(self, session):
+        """问题6：专业课程中风险教学放行前校验沙箱网络（异常开启时转教师确认）"""
+        teacher = _user(session, "pol_net_prof_teacher")
+        course = _setup_course(session, teacher, enable_safety=True, enable_sandbox=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        _create_sandbox_policy(
+            session, course.id,
+            sandbox_preset=SandboxPreset.CYBERSECURITY_RANGE,
+            network_mode=NetworkMode.WHITELIST,
+        )
+        decision = evaluate_content_safety(
+            session, course.id, "请解释什么是端口扫描的原理", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.requires_confirmation is True
+
+    def test_professional_medium_risk_allows_when_network_disabled(self, session):
+        """专业课程中风险教学放行：沙箱网络关闭（正常配置）时仍放行"""
+        teacher = _user(session, "pol_net_off_teacher")
+        course = _setup_course(session, teacher, enable_safety=True, enable_sandbox=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        _create_sandbox_policy(
+            session, course.id,
+            sandbox_preset=SandboxPreset.BASIC_PROGRAMMING,
+            network_mode=NetworkMode.DISABLED,
+        )
+        decision = evaluate_content_safety(
+            session, course.id, "请解释什么是端口扫描的原理", user_id=student.id,
+        )
+        assert decision.allowed is True
+
+    def test_check_forbidden_operations(self):
+        """问题3：命令黑名单扫描函数（沙箱真实执行路径接入）"""
+        from app.services.safety_guard_service import check_forbidden_operations
+
+        assert check_forbidden_operations("import os; os.system('rm -rf /')") == "rm -rf"
+        assert check_forbidden_operations("sudo apt-get install nmap") == "sudo"
+        assert check_forbidden_operations("echo 'chmod 777 /tmp/x'") == "chmod 777"
+        assert check_forbidden_operations("print('hello world')") is None
+        assert check_forbidden_operations("") is None
+
+    # ---- 2026-08-17 低危修复验证：黑名单空白变体 / 白名单规范化 / 思政课教学豁免 ----
+
+    def test_check_forbidden_operations_whitespace_variants(self):
+        """问题8：命令黑名单对空白变体同样生效（rm  -rf 双空格）"""
+        from app.services.safety_guard_service import check_forbidden_operations
+
+        assert check_forbidden_operations("rm  -rf /") == "rm -rf"
+        assert check_forbidden_operations("rm\t-rf /tmp") == "rm -rf"
+        assert check_forbidden_operations("RM -RF /") == "rm -rf"
+        assert check_forbidden_operations("chmod  777 /x") == "chmod 777"
+        assert check_forbidden_operations("print('safe')") is None
+
+    def test_cybersecurity_whitelist_case_insensitive(self, session):
+        """问题7：白名单匹配大小写/尾斜杠不敏感（合法目标不再被误拒）"""
+        teacher = _user(session, "pol_wl_case_teacher")
+        course = _setup_course(session, teacher, enable_safety=True, enable_sandbox=True)
+        student = self._policy(
+            session, course, CourseType.CYBERSECURITY,
+            course_whitelist=["target.cyber.lab"],
+        )
+        _create_sandbox_policy(
+            session, course.id,
+            sandbox_preset=SandboxPreset.CYBERSECURITY_RANGE,
+            network_mode=NetworkMode.ISOLATED_RANGE,
+        )
+        # 大小写不同 + 尾斜杠：DNS 语义相同，应放行
+        decision = evaluate_content_safety(
+            session, course.id, "学习SQL注入的原理",
+            user_id=student.id, tool_target="Target.Cyber.Lab/",
+        )
+        assert decision.allowed is True
+        # 非白名单目标仍拒绝
+        decision = evaluate_content_safety(
+            session, course.id, "学习SQL注入的原理",
+            user_id=student.id, tool_target="evil.example.com",
+        )
+        assert decision.allowed is False
+
+    def test_ideological_high_risk_teaching_exemption(self, session):
+        """问题11：思政课高危词教学语境豁免（'为什么必须反对台独'放行）"""
+        teacher = _user(session, "pol_ideo_teach_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.IDEOLOGICAL)
+        self._ensure_keyword(session, "台独", KeywordCategory.POLITICAL_HIGH_RISK)
+
+        decision = evaluate_content_safety(
+            session, course.id, "为什么必须反对台独分裂", user_id=student.id,
+        )
+        assert decision.allowed is True
+
+    def test_ideological_high_risk_non_teaching_rejected(self, session):
+        """问题11：思政课高危词非教学/无立场上下文仍拒绝（'怎么支持台独'）"""
+        teacher = _user(session, "pol_ideo_support_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.IDEOLOGICAL)
+        self._ensure_keyword(session, "台独", KeywordCategory.POLITICAL_HIGH_RISK)
+
+        decision = evaluate_content_safety(
+            session, course.id, "怎么支持台独分裂活动", user_id=student.id,
+        )
+        assert decision.allowed is False
+
+    def test_professional_high_risk_never_exempted(self, session):
+        """问题11：思政课豁免仅限思政课——专业课程'为什么反对台独'仍拒绝"""
+        teacher = _user(session, "pol_prof_exempt_teacher")
+        course = _setup_course(session, teacher, enable_safety=True)
+        student = self._policy(session, course, CourseType.PROFESSIONAL)
+        self._ensure_keyword(session, "台独", KeywordCategory.POLITICAL_HIGH_RISK)
+
+        decision = evaluate_content_safety(
+            session, course.id, "为什么必须反对台独分裂", user_id=student.id,
+        )
+        assert decision.allowed is False
+        assert decision.compliance_reply == COMPLIANT_SOVEREIGNTY_REPLY
 
 
 # ==================== API 集成测试 ====================
@@ -551,7 +901,8 @@ class TestKnowledgeVsExecution:
         )
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["course_type"] == "basic"
+        # 2026-08-16：课程类型合并后默认类型为 professional（原 basic 并入 professional）
+        assert data["course_type"] == "professional"
         assert "platform_hard_limits" in data
         assert data["platform_hard_limits"]["host_container_isolation"] is True
 

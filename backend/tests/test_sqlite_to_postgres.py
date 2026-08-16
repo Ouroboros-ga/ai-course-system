@@ -185,7 +185,6 @@ def test_postgres_0050_keeps_legacy_lowercase_material_status_values_compatible(
 def test_postgres_0051_adds_uppercase_orm_enum_member_labels():
     """The follow-up normalization can target every ORM member name safely."""
     postgres_url = _postgres_url_or_skip()
-    assert transfer._head_revision() == "0052"
     _reset_postgres_public_schema(postgres_url)
     _run_alembic(postgres_url, "upgrade", "0051")
 
@@ -218,6 +217,50 @@ def test_postgres_0059_adds_safety_audit_enum_labels():
             ).scalars())
         assert {"POLICY_CHANGE", "HIT", "PASS", "BLOCK", "CONFIRM",
                 "SANDBOX_RUN", "SANDBOX_BLOCK"} <= values
+    finally:
+        engine.dispose()
+
+
+def test_postgres_0063_safety_keyword_configs_seed():
+    """PostgreSQL 16: keywordcategory enum labels + seeded default keywords are ORM-readable.
+
+    The model stores SQLModel enum members by name (uppercase), matching the
+    native PG enum created by migration 0063. The seed (36 rows) must be readable
+    back through the ORM so the safety engine uses DB-configured keywords.
+    """
+    postgres_url = _postgres_url_or_skip()
+    _reset_postgres_public_schema(postgres_url)
+    _upgrade_to_head(postgres_url)
+
+    engine = create_engine(postgres_url, pool_pre_ping=True)
+    try:
+        with engine.connect() as connection:
+            labels = set(connection.execute(
+                text("SELECT unnest(enum_range(NULL::keywordcategory))::text")
+            ).scalars())
+            row_count = connection.execute(
+                text("SELECT count(*) FROM safety_keyword_configs")
+            ).scalar()
+        assert labels == {"CYBER", "POLITICAL_HIGH_RISK", "POLITICAL_TOPIC"}
+        assert row_count == 36
+
+        # ORM 读取（枚举按 name 恢复），验证与模型约定一致
+        from sqlmodel import Session, select
+
+        from app.models.safety_policy_model import (
+            KeywordCategory,
+            SafetyKeywordConfig,
+        )
+
+        with Session(engine) as session:
+            rows = session.exec(select(SafetyKeywordConfig)).all()
+            assert len(rows) == 36
+            categories = {row.category for row in rows}
+            assert categories == {
+                KeywordCategory.CYBER,
+                KeywordCategory.POLITICAL_HIGH_RISK,
+                KeywordCategory.POLITICAL_TOPIC,
+            }
     finally:
         engine.dispose()
 
