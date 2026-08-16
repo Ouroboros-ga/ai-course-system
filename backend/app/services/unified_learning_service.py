@@ -4,14 +4,18 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from app.core.time_utils import to_aware, utcnow_aware
 from app.models.course_build_model import CourseRelease, ReleaseStatus
 from app.models.course_outline_model import CourseOutlineNode, OutlineNodeType
 from app.models.access_control_model import CourseMembership, MembershipStatus
-from app.models.cognitive_state_model import CognitiveState, RecommendationRecord
+from app.models.cognitive_state_model import CognitiveState, QuestionDepthRecord, RecommendationRecord
 from app.models.graph_production_model import CourseKnowledgeNode
+from app.models.question_bank_model import QuestionAttempt
+from app.models.agent_run_model import AgentLLMDiagnosticRecord
+from app.models.agent_log import AgentLearningEvent
 from app.models.unified_learning_model import (
     CourseLearningStatsProjection,
     ExposureStatus,
@@ -429,3 +433,137 @@ def refresh_course_stats(session: Session, *, course_id: int, release_id: str) -
         stat.pending_recommendation_count = pending_recommendation_count
         stat.computed_at = utcnow_aware()
         session.add(stat)
+
+
+def _day_buckets(days: int, now: datetime) -> list[tuple[datetime, datetime]]:
+    """Return ``days`` inclusive [start, end] day buckets ending at today."""
+    start = (now - timedelta(days=max(1, days - 1))).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    end = now.replace(hour=23, minute=59, second=59, microsecond=999999)
+    buckets: list[tuple[datetime, datetime]] = []
+    cursor = start
+    while cursor <= end:
+        day_end = cursor.replace(hour=23, minute=59, second=59, microsecond=999999)
+        buckets.append((cursor, day_end))
+        cursor += timedelta(days=1)
+    return buckets
+
+
+def course_trend_and_metrics(
+    session: Session,
+    *,
+    course_id: int,
+    days: int = 7,
+) -> dict[str, Any]:
+    """Aggregate daily trend series and course-lifetime core metrics.
+
+    Trend is near-real-time and windowed: mastery comes from the daily average
+    of ``cognitive_states.mastery_score`` recomputation snapshots; activity is
+    the distinct active students per day in ``learning_events``; questioning is
+    the daily count of scored ``question_attempts``. Core metrics are cumulative
+    over the whole course, not just the window, so they stay stable for teachers.
+    """
+    now = utcnow_aware()
+    buckets = _day_buckets(days, now)
+    date_strs = [b[0].strftime("%Y-%m-%d") for b in buckets]
+    window_start = buckets[0][0]
+    window_end = buckets[-1][1]
+
+    active_per_day: dict[str, set[int]] = {ds: set() for ds in date_strs}
+    events = session.exec(select(LearningEvent).where(
+        LearningEvent.course_id == course_id,
+        LearningEvent.occurred_at >= window_start,
+        LearningEvent.occurred_at <= window_end,
+    )).all()
+    for event in events:
+        ds = event.occurred_at.strftime("%Y-%m-%d")
+        if ds in active_per_day:
+            active_per_day[ds].add(event.student_id)
+
+    mastery_per_day: dict[str, list[float]] = {ds: [] for ds in date_strs}
+    states = session.exec(select(CognitiveState).where(
+        CognitiveState.course_id == course_id,
+        CognitiveState.computed_at >= window_start,
+        CognitiveState.computed_at <= window_end,
+    )).all()
+    for state in states:
+        if state.mastery_score is None:
+            continue
+        ds = state.computed_at.strftime("%Y-%m-%d")
+        if ds in mastery_per_day:
+            mastery_per_day[ds].append(state.mastery_score)
+
+    questioning_per_day: dict[str, int] = {ds: 0 for ds in date_strs}
+    attempts = session.exec(select(QuestionAttempt).where(
+        QuestionAttempt.course_id == course_id,
+        QuestionAttempt.created_at >= window_start,
+        QuestionAttempt.created_at <= window_end,
+    )).all()
+    for attempt in attempts:
+        ds = attempt.created_at.strftime("%Y-%m-%d")
+        if ds in questioning_per_day:
+            questioning_per_day[ds] += 1
+
+    return {
+        "trend": {
+            "dates": date_strs,
+            "activity": [len(active_per_day[ds]) for ds in date_strs],
+            "mastery": [
+                round(sum(mastery_per_day[ds]) / len(mastery_per_day[ds]), 3)
+                if mastery_per_day[ds]
+                else None
+                for ds in date_strs
+            ],
+            "questioning": [questioning_per_day[ds] for ds in date_strs],
+        },
+        "core_metrics": _course_core_metrics(session, course_id=course_id),
+    }
+
+
+def _course_core_metrics(session: Session, *, course_id: int) -> dict[str, Any]:
+    projections = session.exec(select(StudentLearningProjection).where(
+        StudentLearningProjection.course_id == course_id,
+    )).all()
+
+    llm_rows = session.exec(select(AgentLLMDiagnosticRecord).where(
+        AgentLLMDiagnosticRecord.course_id == course_id,
+    )).all()
+    ai_calls = len(llm_rows)
+    ai_success = sum(
+        1 for row in llm_rows
+        if row.finish_reason and row.finish_reason not in ("error", "length", "content_filter")
+    )
+    ai_avg_latency_ms = round(
+        sum(row.latency_ms or 0.0 for row in llm_rows) / ai_calls
+    ) if ai_calls else 0.0
+
+    question_count = session.exec(select(func.count()).select_from(QuestionDepthRecord).where(
+        QuestionDepthRecord.course_id == course_id,
+    )).one()
+
+    interaction_count = session.exec(select(func.count()).select_from(AgentLearningEvent).where(
+        AgentLearningEvent.course_id == course_id,
+    )).one()
+
+    answer_rows = session.exec(select(QuestionAttempt).where(
+        QuestionAttempt.course_id == course_id,
+    )).all()
+    answer_count = len(answer_rows)
+    correct = sum(1 for row in answer_rows if row.is_correct is True)
+    answer_accuracy = round(correct / answer_count, 3) if answer_count else 0.0
+
+    total_study_seconds = sum(row.exposure_seconds or 0 for row in projections)
+    active_students = len({row.student_id for row in projections if (row.exposure_seconds or 0) > 0})
+    return {
+        "ai_calls": ai_calls,
+        "ai_success_rate": round(ai_success / ai_calls, 3) if ai_calls else 0.0,
+        "ai_avg_latency_ms": ai_avg_latency_ms,
+        "question_count": int(question_count),
+        "interaction_count": int(interaction_count),
+        "total_study_seconds": total_study_seconds,
+        "avg_study_seconds": round(total_study_seconds / active_students) if active_students else 0,
+        "answer_count": answer_count,
+        "answer_accuracy": answer_accuracy,
+        "active_students": active_students,
+    }
