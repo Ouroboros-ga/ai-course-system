@@ -78,7 +78,7 @@ onBeforeUnmount(() => {
     <div class="sfx-l1nav-inner">
       <RouterLink to="/app" class="sfx-l1nav-brand" aria-label="返回工作首页">
         <GraduationCap :size="22" :stroke-width="2.2" />
-        <span class="sfx-l1nav-brand-name">超星AI互动智课</span>
+        <span class="sfx-l1nav-brand-name">SmartCarb</span>
       </RouterLink>
 
       <nav class="sfx-l1nav-links" aria-label="一级导航">

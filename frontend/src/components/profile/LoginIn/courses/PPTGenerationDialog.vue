@@ -55,7 +55,7 @@
             <div class="form-row">
               <div class="form-group half">
                 <label class="form-label">PPT作者</label>
-                <input v-model="form.author" type="text" class="form-input" placeholder="AI智课" />
+                <input v-model="form.author" type="text" class="form-input" placeholder="SmartCarb" />
               </div>
               <div class="form-group half">
                 <label class="checkbox-label">
@@ -180,7 +180,7 @@ const form = reactive({
   outline: '',
   knowledgePoints: [''],
   templateId: '',
-  author: 'AI智课',
+  author: 'SmartCarb',
   search: false,
 })
 
@@ -252,7 +252,7 @@ async function handleGenerate() {
       outline: form.outline.trim() || undefined,
       knowledge_points: knowledgePoints.length > 0 ? knowledgePoints : undefined,
       template_id: form.templateId || undefined,
-      author: form.author || 'AI智课',
+      author: form.author || 'SmartCarb',
       search: form.search,
       auto_parse: true,
     })
