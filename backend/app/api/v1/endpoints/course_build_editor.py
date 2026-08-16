@@ -855,7 +855,7 @@ def _validate_mapping_pages(
             400,
             detail={
                 "error_code": "PPT_PAGE_OUT_OF_RANGE",
-                "message": f"This PPT has {page_count} parsed pages; page {normalized[-1]} is out of range.",
+                "message": f"This material has {page_count} parsed pages; page {normalized[-1]} is out of range.",
             },
         )
     return normalized
@@ -2965,21 +2965,21 @@ async def generate_course_ppt(course_id: int, payload: PptGenerateRequest, sessi
 
 @router.post("/course/{course_id}/ppt/upload")
 async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), session: Session = Depends(get_session), current_user: dict = Depends(get_current_user)):
-    """Attach an existing PPT/PPTX to this course and enqueue the unified parser."""
+    """Attach an existing PPT/PPTX/PDF deck to this course and enqueue the unified parser."""
     context = require_course_permission(session, current_user, course_id, "course.mapping.edit")
     filename = (file.filename or "course.pptx").strip()
     suffix = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    if suffix not in {"ppt", "pptx"}:
-        raise HTTPException(400, "教学 PPT 映射只接受 PPT 或 PPTX")
+    if suffix not in {"ppt", "pptx", "pdf"}:
+        raise HTTPException(400, "教学映射材料只接受 PPT、PPTX 或 PDF")
     digest = hashlib.sha256(); total = 0
     with tempfile.SpooledTemporaryFile(max_size=2 * 1024 * 1024, mode="w+b") as staged:
         while True:
             chunk = await file.read(1024 * 1024)
             if not chunk: break
             total += len(chunk)
-            if total > 100 * 1024 * 1024: raise HTTPException(413, "PPT 文件超过 100MB")
+            if total > 100 * 1024 * 1024: raise HTTPException(413, "教学映射材料超过 100MB")
             digest.update(chunk); staged.write(chunk)
-        if total == 0: raise HTTPException(400, "不能上传空 PPT")
+        if total == 0: raise HTTPException(400, "不能上传空文件")
         object_key = f"course-source/course{course_id}/ppt_{digest.hexdigest()[:16]}/source.{suffix}"
         staged.seek(0); get_object_storage().put(object_key, staged, mime_type=file.content_type or "application/octet-stream")
     material, version = source_material_service.create_material(
@@ -2989,7 +2989,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
     )
     task_view = task_service.create_task(session, TaskCreateRequest(
         task_type="document_parse", owner_user_id=context.user_id, course_id=course_id,
-        input_summary=f"解析课程 {course_id} 的教学 PPT {filename}", input_payload={
+        input_summary=f"解析课程 {course_id} 的教学 PPT/PDF {filename}", input_payload={
             "course_id": course_id, "material_id": material.material_id, "material_version_id": version.version_id,
             "pipeline": ParsePipeline.FULL.value,
             "stale_strategy": StaleStrategy.MARK_STALE.value, "initiated_by": context.user_id,
@@ -3003,7 +3003,7 @@ async def upload_existing_ppt(course_id: int, file: UploadFile = File(...), sess
     session.add(version); session.commit()
     if local_task_worker.has_handler("document_parse"):
         document_parse_queue.submit(session_factory, local_task_worker, task_view.task_id)
-    return unified_response(202, "PPT 已上传，正在重新解析并建立映射", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
+    return unified_response(202, "文件已上传，正在重新解析并建立映射", {"material_id": material.material_id, "material_version_id": version.version_id, "task_id": task_view.task_id, "run_id": run.run_id})
 
 
 @router.post("/course/{course_id}/publish")
