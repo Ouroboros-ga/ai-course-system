@@ -1,5 +1,8 @@
 <script setup>
 import { X } from 'lucide-vue-next'
+import { useSettingsStore } from '@/stores/userSettings';
+
+const settings = useSettingsStore();
 
 defineProps({
     anchor: { type: Object, default: null },
@@ -18,7 +21,7 @@ function formatTime(seconds) {
             <div class="sfx-agent-title-row">
                 <!-- TODO:替换图标 -->
                 <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
-                    <span class="sfx-agent-avatar-initials">AI</span>
+                    <img :src="settings.currentAvatarPath" alt="">
                 </span>
                 <div class="sfx-agent-title-col">
                     <span class="sfx-agent-title sfx-t-ui">课程智能体</span>
@@ -107,11 +110,11 @@ function formatTime(seconds) {
     user-select: none;
 }
 
-.sfx-agent-avatar-ai {
+/* .sfx-agent-avatar-ai {
     background: linear-gradient(135deg, var(--ink-700), var(--ink-500));
     color: var(--text-inverse);
     box-shadow: 0 1px 2px rgb(20 33 61 / 18%);
-}
+} */
 
 .sfx-agent-avatar-initials {
     letter-spacing: 0.02em;

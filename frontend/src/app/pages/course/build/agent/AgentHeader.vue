@@ -1,5 +1,8 @@
 <script setup>
 import { Sparkles, X } from 'lucide-vue-next'
+import { useSettingsStore } from '@/stores/userSettings';
+
+const settings = useSettingsStore();
 
 defineEmits(['close'])
 </script>
@@ -9,7 +12,7 @@ defineEmits(['close'])
         <div class="agent-heading">
             <span class="agent-mark">
                 <!-- TODO:更改图标 -->
-                <Sparkles :size="17" />
+                <img :src="settings.currentAvatarPath" alt="">
             </span>
             <div>
                 <h2>助教智能体</h2>
