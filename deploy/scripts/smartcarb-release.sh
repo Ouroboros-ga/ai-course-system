@@ -59,9 +59,23 @@ mv -Tf "$DEPLOY_ROOT/current.new" "$DEPLOY_ROOT/current"
 # 4. 重启后端并健康检查
 echo "==> 重启后端"
 systemctl restart smartcarb-backend
-sleep 8
-curl -fsS -o /dev/null http://127.0.0.1:8000/openapi.json \
-  || { echo "后端健康检查失败" >&2; exit 1; }
+# 后端启动含 2 workers + 重导入，固定 sleep 不足会触发假健康检查失败；
+# 改为轮询重试（默认最多 30 次 × 2 秒，可用环境变量覆盖）。
+HEALTH_RETRIES="${HEALTH_RETRIES:-30}"
+HEALTH_INTERVAL="${HEALTH_INTERVAL:-2}"
+backend_ready=0
+for i in $(seq 1 "$HEALTH_RETRIES"); do
+  if curl -fsS -o /dev/null http://127.0.0.1:8000/openapi.json 2>/dev/null; then
+    backend_ready=1
+    echo "==> 后端就绪（第 ${i} 次探测）"
+    break
+  fi
+  sleep "$HEALTH_INTERVAL"
+done
+if [ "$backend_ready" -ne 1 ]; then
+  echo "后端健康检查失败（${HEALTH_RETRIES} 次探测均未就绪）；注意 current 已切换、服务已重启，请人工排查" >&2
+  exit 1
+fi
 curl -fsS -o /dev/null http://127.0.0.1/ \
   || { echo "前端首页检查失败" >&2; exit 1; }
 echo "==> 发布完成: $RELEASE_DIR"
