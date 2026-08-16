@@ -12,7 +12,7 @@ defineEmits(['close'])
         <div class="agent-heading">
             <span class="agent-mark">
                 <!-- TODO:更改图标 -->
-                <img :src="settings.currentAvatarPath" alt="">
+                <img :src="settings.currentAvatarPath" alt="助教智能体头像">
             </span>
             <div>
                 <h2>助教智能体</h2>
@@ -52,6 +52,14 @@ defineEmits(['close'])
     border-radius: var(--radius-md);
     background: var(--ink-100);
     color: var(--ink-700);
+    overflow: hidden;
+}
+
+.agent-mark img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-md);
 }
 
 .agent-heading h2 {

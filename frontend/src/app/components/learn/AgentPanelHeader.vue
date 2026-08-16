@@ -20,8 +20,8 @@ function formatTime(seconds) {
         <div class="sfx-agent-anchor">
             <div class="sfx-agent-title-row">
                 <!-- TODO:替换图标 -->
-                <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
-                    <img :src="settings.currentAvatarPath" alt="">
+                <span class="sfx-agent-avatar sfx-agent-avatar-ai">
+                    <img :src="settings.currentAvatarPath" alt="课程智能体头像">
                 </span>
                 <div class="sfx-agent-title-col">
                     <span class="sfx-agent-title sfx-t-ui">课程智能体</span>
@@ -108,6 +108,13 @@ function formatTime(seconds) {
     font-size: var(--caption-size);
     line-height: 1;
     user-select: none;
+}
+
+.sfx-agent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-full);
 }
 
 /* .sfx-agent-avatar-ai {
