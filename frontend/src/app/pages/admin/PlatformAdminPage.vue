@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { RefreshCw, ShieldCheck, ShieldAlert, SlidersHorizontal, UsersRound, Cpu, ToggleLeft, Plus, Trash2 } from 'lucide-vue-next'
 import { useSettingsStore } from '@/stores/userSettings'
 import { getAdminCourseCapabilities, getAdminUsers, getIntegrations, getSafetyKeywords, createSafetyKeyword, updateSafetyKeyword, deleteSafetyKeyword, getTaskConcurrency, resetAdminPassword, testIntegration, updateAdminCourseCapabilities, updateAdminUser, updateIntegration, updateTaskConcurrency } from '@/api/admin_platform.js'
@@ -65,21 +65,44 @@ function integrationDraft(item) {
 }
 
 async function loadUsers() {
-    const params = { page: page.value, page_size: 20 }
+    const params = { page: page.value, page_size: pageSize }
     if (filters.user_id) params.user_id = filters.user_id
     if (filters.query) params.query = filters.query
     if (filters.role) params.role = filters.role
     if (filters.is_active !== '') params.is_active = filters.is_active === 'true'
-    const result = await getAdminUsers(params)
-    users.value = result.items || []
-    total.value = result.total || 0
+    usersLoading.value = true
+    try {
+        const result = await getAdminUsers(params)
+        users.value = result.items || []
+        total.value = result.total || 0
+        if (page.value > totalPages.value) page.value = totalPages.value
+        pageInput.value = page.value
+    } finally {
+        usersLoading.value = false
+    }
 }
+
+// ---- 用户列表分页 ----
+const pageSize = 20
+const usersLoading = ref(false)
+const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const pageInput = ref(1)
+function goToPage(target) {
+    const next = Math.min(Math.max(1, Math.floor(Number(target)) || 1), totalPages.value)
+    if (next === page.value) { pageInput.value = next; return }
+    page.value = next
+    pageInput.value = next
+    loadUsers()
+}
+function prevPage() { if (page.value > 1) goToPage(page.value - 1) }
+function nextPage() { if (page.value < totalPages.value) goToPage(page.value + 1) }
+function jumpPage() { goToPage(pageInput.value) }
 
 async function load() {
     loading.value = true
     error.value = ''
     try {
-        const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: 20 }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
+        const [userResult, integrationResult, concurrencyResult, capsResult] = await Promise.all([getAdminUsers({ page: page.value, page_size: pageSize }), getIntegrations(), getTaskConcurrency(), getAdminCourseCapabilities()])
         users.value = userResult.items || []
         total.value = userResult.total || 0
         integrations.value = integrationResult.items || []
@@ -363,6 +386,26 @@ onMounted(() => { load(); loadKeywords() })
                         </tbody>
                     </table>
                 </div>
+                <div v-if="total > 0" class="pagination">
+                    <span class="sfx-t-caption pagination-summary">共 {{ total }} 个账号 · 第 {{ page }} / {{ totalPages }} 页</span>
+                    <span class="pagination-actions">
+                        <SfxButton size="sm" variant="secondary" :disabled="page <= 1 || usersLoading" @click="prevPage">
+                            上一页
+                        </SfxButton>
+                        <label class="pagination-jump">
+                            <span class="sfx-t-caption">跳至</span>
+                            <input v-model.number="pageInput" class="sfx-input pagination-input" type="number" min="1"
+                                :max="totalPages" :disabled="usersLoading" aria-label="页码" />
+                            <span class="sfx-t-caption">页</span>
+                        </label>
+                        <SfxButton size="sm" variant="secondary" :disabled="usersLoading" @click="jumpPage">跳转
+                        </SfxButton>
+                        <SfxButton size="sm" variant="secondary"
+                            :disabled="page >= totalPages || usersLoading" @click="nextPage">
+                            下一页
+                        </SfxButton>
+                    </span>
+                </div>
             </section>
 
             <section class="sfx-panel admin-section">
@@ -504,6 +547,7 @@ onMounted(() => { load(); loadKeywords() })
 .actions, .password-row-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }
+.pagination { display:flex; align-items:center; justify-content:space-between; gap:var(--space-3); margin-top:var(--space-4); flex-wrap:wrap; }.pagination-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }.pagination-jump { display:flex; align-items:center; gap:var(--space-2); }.pagination-input { width:64px; text-align:center; }
 .provider-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:var(--space-4); }.provider-card { display:grid; gap:var(--space-3); padding:var(--space-4); border:1px solid var(--border-default); background:var(--surface-panel); }.provider-card header { justify-content:space-between; }.provider-card h3 { margin:0; display:flex; align-items:center; gap:var(--space-2); }.card-actions { display:flex; align-items:center; gap:var(--space-2); }.toggle-caption { font-size:var(--caption-size); font-weight:400; color:var(--text-secondary); background:var(--surface-cool); padding:1px 8px; border-radius:999px; }.provider-card label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.provider-card footer { justify-content:flex-end; flex-wrap:wrap; }.health { padding:2px 8px; border-radius:999px; background:var(--amber-100); color:var(--amber-700); font-size:var(--caption-size); }.health[data-status="healthy"],.health[data-status="reachable"],.health[data-status="configured"] { background:var(--green-100); color:var(--green-700); }.health[data-status="unavailable"],.health[data-status="not_configured"] { background:var(--red-100); color:var(--red-700); }.health[data-status="disabled"] { background:var(--surface-cool); color:var(--text-secondary); }.json-input { font-family:var(--font-mono,monospace); resize:vertical; }
 .concurrency-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:var(--space-4); align-items:end; }.concurrency-grid label { display:grid; gap:var(--space-1); font-size:var(--ui-sm-size); color:var(--text-secondary); }.concurrency-grid .budget-line { grid-column:1/-1; }.section-actions { display:flex; justify-content:flex-end; margin-top:var(--space-4); }
 .caps-toolbar { display:flex; justify-content:flex-start; margin-bottom:var(--space-4); }
