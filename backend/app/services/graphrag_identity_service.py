@@ -86,6 +86,8 @@ class GraphRagIdentityService:
                     entity_type=str(entity.get("type") or "concept"),
                     anchor_ids=set(anchor_ids),
                 )
+                if method == "ambiguous_deferred":
+                    warnings.append("identity_ambiguous_deferred")
                 if node is None:
                     node = CourseKnowledgeNode(
                         course_id=course_id,
@@ -271,7 +273,9 @@ class GraphRagIdentityService:
         if not candidates:
             return None, "new_identity", 0.0
         if len(candidates) > 1 and candidates[0][0] - candidates[1][0] < 0.05:
-            raise IdentityAmbiguousError("IDENTITY_AMBIGUOUS")
+            # 多个候选分数接近时不再让整个构建失败：降级为不匹配，
+            # 由 reconcile 创建 CANDIDATE 节点并记录 warning，教师可后续审核合并。
+            return None, "ambiguous_deferred", 0.0
         score, method, node = candidates[0]
         return node, method, score
 
