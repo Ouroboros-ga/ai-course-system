@@ -46,6 +46,12 @@ PERFORMANCE_WINDOW_SIZE = 5
 QUIZ_PERFORMANCE_WEIGHT = 1.0
 CODING_EXECUTION_PERFORMANCE_WEIGHT = 1.5
 MIN_EFFECTIVE_SCORED_WEIGHT = 3.0
+# M1 连续化：证据置信度的饱和常量，c = w / (w + k)
+# 设计约束（测试标定，k=3.0）：
+#   w=1 -> 0.25、w=2 -> 0.40、w=3 -> 0.50、w=4 -> 0.571（样本不足，< 0.6 不判弱）
+#   w=5 -> 0.625（越过 0.6 判弱/高置信门槛，与原"5 样本高置信 0.85"语义对齐）
+#   w=14 -> 0.824；上限 MAX_EVIDENCE_CONFIDENCE=0.95
+CONFIDENCE_SATURATION_CONSTANT = 3.0
 # 提问深度：LLM 标定记录的最少条数，不足时保持 unknown（不武断判断）
 MIN_SAMPLE_FOR_INQUIRY = 2
 INQUIRY_WINDOW_SIZE = 10
@@ -53,6 +59,20 @@ INQUIRY_WINDOW_SIZE = 10
 MIN_WATCH_SECONDS_FOR_BOOST = 300  # 5 分钟
 WATCH_TIME_CONFIDENCE_BOOST = 0.05
 MAX_EVIDENCE_CONFIDENCE = 0.95
+
+
+def _continuous_confidence(effective_scored_weight: float) -> float:
+    """证据置信度：样本量（有效权重）的单调饱和映射（M1 连续化）。
+
+    消除原 0.3/0.85 两档阶跃：置信度随有效评分权重平滑上升，低样本仍有
+    区分度（可驱动讲解分流），但保持"样本不足（w<5）不越过 0.6 判弱门槛"。
+    观看时长佐证由调用方叠加（封顶 MAX_EVIDENCE_CONFIDENCE）。
+    """
+    weight = max(0.0, float(effective_scored_weight or 0.0))
+    return min(
+        MAX_EVIDENCE_CONFIDENCE,
+        weight / (weight + CONFIDENCE_SATURATION_CONSTANT),
+    )
 
 
 def _attempt_ref(attempt: QuestionAttempt) -> str:
@@ -246,14 +266,14 @@ def compute_cognitive_state(
     else:
         reason_codes.append("no_attempt_data")
 
-    # 3. 计算 evidence_confidence（基于样本量 + 观看时长佐证）
+    # 3. 计算 evidence_confidence（M1：样本量单调连续饱和映射，消除 0.3/0.85 阶跃）
     evidence_confidence: Optional[float] = None
-    if total_attempts >= MIN_SAMPLE_FOR_CONFIDENCE:
-        evidence_confidence = 0.85
-        reason_codes.append("confidence_from_sample_size")
-    elif total_attempts > 0:
-        evidence_confidence = 0.3
-        reason_codes.append("low_sample_size")
+    if effective_scored_weight > 0:
+        evidence_confidence = _continuous_confidence(effective_scored_weight)
+        if total_attempts >= MIN_SAMPLE_FOR_CONFIDENCE:
+            reason_codes.append("confidence_from_sample_size")
+        else:
+            reason_codes.append("low_sample_size")
     # 观看时长佐证：该节点累计观看秒数达标时小幅提升置信度，不直接进入表现分。
     watch_seconds = _node_watch_seconds(session, student_id, course_id, node_id)
     if (
@@ -332,33 +352,22 @@ def compute_cognitive_state(
     else:
         hint_dependency = None  # 数据不足
 
-    # 7. 计算 explanation_need（解释需求度）
+    # 7. 计算 explanation_need（M4：确定性投影，删除旧 LLM 理解度链路）
+    #    旧实现读取 NodeProgress.understanding_score（由旧播放器客户端自报或
+    #    progress_service UnderstandingAnalyzer 直连 LLM 写入），不可审计且允许
+    #    客户端分数违规进入认知维度。现改为由其他可信维度加权投影：
+    #    困惑风险 * 0.5 + (1 - 表现分) * 0.3 + 提示依赖度 * 0.2，封顶 1.0。
     explanation_need: Optional[float] = None
-    # 从理解度分析中读取
-    low_understanding_count = 0
-    total_analyses = 0
-    # 尝试从 NodeProgress 读取理解度
-    node_progress_stmt = (
-        select(NodeProgress)
-        .join(LearningProgress, NodeProgress.progress_id == LearningProgress.id)
-        .where(
-            LearningProgress.user_id == student_id,
-            LearningProgress.course_id == course_id,
-        )
-    )
-    if node_id:
-        node_progress_stmt = node_progress_stmt.where(NodeProgress.node_id == node_id)
-    node_progresses = list(session.exec(node_progress_stmt).all())
-
-    if node_progresses:
-        total_analyses = len(node_progresses)
-        low_understanding_count = sum(
-            1 for np in node_progresses
-            if np.understanding_score is not None and np.understanding_score < 0.5
-        )
-        if total_analyses >= MIN_SAMPLE_FOR_CONFUSION:
-            explanation_need = low_understanding_count / total_analyses
-            reason_codes.append("explanation_need_from_understanding")
+    projection_factors: list[float] = []
+    if confusion_risk is not None:
+        projection_factors.append(confusion_risk * 0.5)
+    if observed_performance is not None:
+        projection_factors.append((1.0 - observed_performance) * 0.3)
+    if hint_dependency is not None:
+        projection_factors.append(hint_dependency * 0.2)
+    if projection_factors:
+        explanation_need = min(1.0, sum(projection_factors))
+        reason_codes.append("explanation_need_from_deterministic_projection")
 
     # 8. 计算 mastery_level（复用 RuleBasedMasteryProvider 思路）
     mastery_score = observed_performance if observed_performance is not None else None

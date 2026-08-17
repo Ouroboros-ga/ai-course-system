@@ -107,6 +107,19 @@ def resolve_node_context(
     return None
 
 
+def _serialize_six_dimensions(six_dimensions: dict) -> str:
+    """序列化六维诊断块（M6 契约）：None 值 → "unknown"，绝不注入 0.0。
+
+    缺失/未知维度若被序列化为 0.0 或 null，LLM 会误判为"低分/未提供"；
+    统一输出 "unknown" 让模型按"未知"处理，不编造具体数值。
+    """
+    cleaned = {
+        key: ("unknown" if value is None else value)
+        for key, value in (six_dimensions or {}).items()
+    }
+    return json.dumps(cleaned, ensure_ascii=False, indent=2)
+
+
 def build_generation_prompt(
     *,
     purpose: str,
@@ -117,7 +130,11 @@ def build_generation_prompt(
     reason_codes: list,
     question_signals: Optional[list] = None,
 ) -> tuple[str, str]:
-    """Build (system, user) prompts for the LLM question generator."""
+    """Build (system, user) prompts for the LLM question generator.
+
+    M6 契约：``six_dimensions`` 中的 None 值序列化为 ``"unknown"``
+    （``_serialize_six_dimensions``），不得注入 0.0，避免 LLM 把未知当低分。
+    """
     intent = PURPOSE_INTENT.get(purpose, purpose)
 
     system_prompt = (
@@ -159,7 +176,7 @@ def build_generation_prompt(
             f"先修知识点：{', '.join(map(str, node_context['prerequisites'])) or '无'}"
         )
 
-    dims_block = json.dumps(six_dimensions or {}, ensure_ascii=False, indent=2)
+    dims_block = _serialize_six_dimensions(six_dimensions)
     snapshot_block = json.dumps(cognitive_snapshot or {}, ensure_ascii=False, indent=2)
 
     # 学生近期提问反推信号（来自 derive_question_inference_signals，结构化、不含原文）。

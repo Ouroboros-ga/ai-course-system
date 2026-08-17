@@ -117,7 +117,7 @@ async function loadWorkspace({ reset = false } = {}) {
       ? data
       : { ...data, pages: [...(workspace.value?.pages || []), ...(data.pages || [])] }
     if (data.render_warning) {
-      message.value = '教师原始 PPT 页图暂时不可用；可稍后重试，OCR 摘要仍可用于辅助匹配。'
+      message.value = '教师原始页图暂时不可用；可稍后重试，OCR 摘要仍可用于辅助匹配。'
     }
     if (reset) resetSelectedPagesFromMapping()
     if (!currentPage.value && workspace.value.pages?.length) currentPage.value = workspace.value.pages[0].page
@@ -207,7 +207,7 @@ function startAgentMessage(reason) {
 async function runMatch(mode) {
   if (matching.value || prepBatchRunning.value) return
   if (!state.value?.has_ppt || !mappingContractReady.value || !hasCurrentPptVersions.value) {
-    reportUnavailable('PPT 材料尚未形成可编辑版本，请等待解析完成后再匹配。')
+    reportUnavailable('映射材料尚未形成可编辑版本，请等待解析完成后再匹配。')
     return
   }
   if (mode === 'node' && !selectedNode.value) {
@@ -215,7 +215,7 @@ async function runMatch(mode) {
     return
   }
   if (mode === 'selected_pages' && !selectedPages.value.length) {
-    reportUnavailable('请先在 PPT 页图中选择至少一页。')
+    reportUnavailable('请先在页图中选择至少一页。')
     return
   }
   const labels = {
@@ -275,8 +275,8 @@ async function onUpload(event) {
   try {
     const uploaded = await uploadExistingPpt(courseId.value, file)
     message.value = uploaded?.deduplicated
-      ? '相同 PPT 已在本课程中，已保留已有解析结果。'
-      : '上传成功，PPT 解析完成后将显示逐页图片。'
+      ? '相同文件已在本课程中，已保留已有解析结果。'
+      : '上传成功，解析完成后将显示逐页图片。'
     await load({ keepEdits: false })
   } catch (error) {
     message.value = apiErrorMessage(error, '上传失败')
@@ -315,26 +315,26 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 
 <template>
   <section class="stage">
-    <div v-if="loading" class="empty">正在读取 PPT 映射工作区…</div>
+    <div v-if="loading" class="empty">正在读取映射工作区…</div>
 
     <div v-else-if="isFirstPrepInProgress && !state?.has_ppt" class="first-prep-pending" role="status">
       <div class="first-prep-icon" aria-hidden="true"><Sparkles :size="26" /></div>
       <h3>正在自动备课中</h3>
-      <p>课程结构和材料解析完成后，即可将每页 PPT 与知识点对应起来。</p>
+      <p>课程结构和材料解析完成后，即可将每页 PPT/PDF 与知识点对应起来。</p>
     </div>
 
     <div v-else-if="!state?.has_ppt" class="frozen">
-      <h2>当前课程尚无可映射的 PPT 文件</h2>
-      <p>上传后将生成按材料版本区分的 PPT 页图；相同页码不会跨文件混用。</p>
-      <input ref="inputRef" hidden type="file" accept=".ppt,.pptx" @change="onUpload" />
+      <h2>当前课程尚无可映射的 PPT/PDF 文件</h2>
+      <p>上传后将生成按材料版本区分的逐页图；相同页码不会跨文件混用。</p>
+      <input ref="inputRef" hidden type="file" accept=".ppt,.pptx,.pdf" @change="onUpload" />
       <div class="actions">
-        <SfxButton variant="primary" size="sm" @click="inputRef?.click()">上传现有 PPT</SfxButton>
+        <SfxButton variant="primary" size="sm" @click="inputRef?.click()">上传现有 PPT/PDF</SfxButton>
         <SfxButton variant="tertiary" size="sm" :disabled="!state?.actions?.generate_ai" @click="onGenerate">AI 生成 PPT</SfxButton>
       </div>
     </div>
 
     <template v-else>
-      <div class="deck-tabs" role="tablist" aria-label="PPT 文件">
+      <div class="deck-tabs" role="tablist" aria-label="映射材料文件">
         <SfxButton
           v-for="material in state.ppt_materials"
           :key="material.material_version_id"
@@ -391,10 +391,10 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
             </div>
           </div>
 
-          <div v-if="workspaceLoading && !workspacePages.length" class="canvas-empty">正在加载 PPT 页图…</div>
+          <div v-if="workspaceLoading && !workspacePages.length" class="canvas-empty">正在加载逐页图…</div>
           <div v-else-if="!workspacePages.length" class="canvas-empty">
             <FileImage :size="28" />
-            <span>该 PPT 尚无可显示的页图；材料解析完成后会自动出现。</span>
+            <span>该文件尚无可显示的页图；材料解析完成后会自动出现。</span>
           </div>
           <template v-else>
             <section class="page-preview">
@@ -409,7 +409,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
                 <p>正在生成教师上传原课件的真实幻灯片；OCR 只保留为下方摘要。</p>
               </div>
               <span v-if="currentWorkspacePage?.image_source === 'teacher_original_ppt'" class="source-badge">
-                教师原始 PPT 幻灯片
+                教师原始课件页
               </span>
             </section>
 
@@ -418,7 +418,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
               <p>{{ currentWorkspacePage?.ocr_preview || '该页尚无可用 OCR 文本。' }}</p>
             </section>
 
-            <section class="thumbnails" aria-label="PPT 页面选择">
+            <section class="thumbnails" aria-label="页面选择">
               <SfxButton
                 v-for="page in workspacePages"
                 :key="page.page"
@@ -475,7 +475,7 @@ onBeforeUnmount(() => { if (workbench) workbench.stageActions = null })
 .selection-summary{display:flex;align-items:center;gap:var(--space-4);padding:var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);background:var(--surface-panel)}
 .selection-summary>div:not(.selection-actions){display:grid;gap:2px;min-width:0;flex:1}.selection-summary span{font-size:var(--caption-size);color:var(--text-muted)}.selection-summary strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--ui-md-size);color:var(--text-primary)}
 .selection-actions{display:flex;gap:var(--space-2);flex-shrink:0}
-.page-preview{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 clamp(320px,50vh,560px);min-height:320px;max-height:560px;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:#202938}.page-preview img{display:block;max-width:100%;max-height:560px;object-fit:contain;box-shadow:0 8px 24px rgba(16,26,49,.28)}.source-badge{position:absolute;top:var(--space-3);left:var(--space-3);padding:2px var(--space-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-panel);color:var(--text-secondary);font-size:var(--caption-size)}
+.page-preview{position:relative;display:flex;align-items:center;justify-content:center;flex:0 0 clamp(320px,50vh,560px);min-height:320px;max-height:560px;padding:var(--space-3);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:#202938;overflow:hidden}.page-preview img{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;box-shadow:0 8px 24px rgba(16,26,49,.28)}.source-badge{position:absolute;top:var(--space-3);left:var(--space-3);padding:2px var(--space-2);border:1px solid var(--border-default);border-radius:var(--radius-sm);background:var(--surface-panel);color:var(--text-secondary);font-size:var(--caption-size)}
 .render-pending{display:grid;justify-items:center;gap:var(--space-2);max-width:360px;color:var(--text-inverse);text-align:center}.render-pending p{margin:0;color:#d6dde6;font-size:var(--ui-sm-size);line-height:1.5}
 .ocr-panel{display:flex;flex-direction:column;flex:0 0 132px;min-height:132px;max-height:132px;box-sizing:border-box;overflow-y:auto;padding:var(--space-3);border-left:3px solid var(--ink-500);background:var(--surface-cool);color:var(--text-secondary)}.ocr-panel strong{flex:0 0 auto;font-size:var(--ui-sm-size);color:var(--text-primary)}.ocr-panel p{margin:var(--space-1) 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:var(--caption-size);line-height:1.5}
 .thumbnails{display:grid;grid-template-columns:repeat(auto-fill,minmax(116px,1fr));gap:var(--space-2)}.thumbnail{position:relative;display:grid!important;justify-items:start;gap:2px;min-height:54px;text-align:left}.thumbnail small{opacity:.76}.thumbnail svg{position:absolute;right:var(--space-2);top:50%;transform:translateY(-50%)}

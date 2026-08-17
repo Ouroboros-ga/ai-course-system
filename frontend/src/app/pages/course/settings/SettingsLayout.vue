@@ -7,7 +7,7 @@ import SfxLocalRail from '@/app/ui/SfxLocalRail.vue'
 
 /**
  * 课程设置布局（page-design §18.1）。
- * Local Rail 固定六项：基础信息 / 加入与发布 / 智能体 / 安全与合规 / 沙箱权限 / 平台集成。
+ * Local Rail 固定六项：基础信息 / 加入与发布 / 智能体 / 安全围栏 / 沙箱权限 / 平台集成。
  */
 const courseContext = inject('courseContext')
 const courseId = computed(() => courseContext.courseId.value)
@@ -18,7 +18,7 @@ const railItems = computed(() => {
     { key: 'profile', label: '基础信息', to: `${base}/profile`, icon: Info },
     { key: 'access', label: '加入与发布', to: `${base}/access`, icon: UserRoundPlus },
     { key: 'agent', label: '智能体', to: `${base}/agent`, icon: Bot },
-    { key: 'safety', label: '安全与合规', to: `${base}/safety`, icon: ShieldCheck },
+    { key: 'safety', label: '安全围栏', to: `${base}/safety`, icon: ShieldCheck },
     { key: 'sandbox', label: '沙箱权限', to: `${base}/sandbox`, icon: TerminalSquare },
     { key: 'integrations', label: '平台集成', to: `${base}/integrations`, icon: Plug },
   ]

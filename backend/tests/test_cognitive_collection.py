@@ -26,6 +26,7 @@ from app.services.cognitive_service import (
     MIN_SAMPLE_FOR_CONFIDENCE,
     MIN_SAMPLE_FOR_INQUIRY,
     MIN_WATCH_SECONDS_FOR_BOOST,
+    WATCH_TIME_CONFIDENCE_BOOST,
     compute_cognitive_state,
     record_question_depth,
 )
@@ -156,8 +157,8 @@ def test_watch_time_boosts_evidence_confidence(session, student_user, teacher_us
     _add_watch_time(session, course, student_user, node_id=1, seconds=MIN_WATCH_SECONDS_FOR_BOOST + 100)
 
     state = compute_cognitive_state(session, student_user.id, course.id, node_id=1)
-    # 基础置信 0.85 + 观看时长佐证 0.05 = 0.90
-    assert state.evidence_confidence == pytest.approx(0.90)
+    # M1 连续化：5 个评分项（权重 5.0）-> c = 5/8 = 0.625 + 观看时长佐证 0.05 = 0.675
+    assert state.evidence_confidence == pytest.approx(0.625 + WATCH_TIME_CONFIDENCE_BOOST)
     assert "confidence_boosted_by_watch_time" in state.reason_codes
 
 
@@ -167,8 +168,44 @@ def test_watch_time_below_threshold_no_boost(session, student_user, teacher_user
     _add_watch_time(session, course, student_user, node_id=1, seconds=MIN_WATCH_SECONDS_FOR_BOOST - 100)
 
     state = compute_cognitive_state(session, student_user.id, course.id, node_id=1)
-    assert state.evidence_confidence == 0.85
+    assert state.evidence_confidence == pytest.approx(0.625)
     assert "confidence_boosted_by_watch_time" not in state.reason_codes
+
+
+def test_continuous_confidence_monotonic_saturation():
+    """M1：evidence_confidence 连续化的标定约束。
+
+    - 单调不减、封顶 0.95（消除原 0.3/0.85 两档阶跃）；
+    - w<5 不越过 0.6（样本不足不判弱、不高优先）；
+    - w=5 越过 0.6（与原"5 样本高置信"语义对齐）。
+    """
+    from app.services.cognitive_service import _continuous_confidence
+
+    expected = {
+        1: 0.25,
+        2: 0.40,
+        3: 0.50,
+        4: 0.571,
+        5: 0.625,
+        8: 0.727,
+        14: 0.824,
+    }
+    for weight, want in expected.items():
+        assert _continuous_confidence(weight) == pytest.approx(want, abs=0.01), (
+            f"w={weight} 应 ≈ {want}"
+        )
+    # 单调不减
+    previous = 0.0
+    for weight in range(1, 60):
+        value = _continuous_confidence(weight)
+        assert value >= previous
+        previous = value
+    # 样本不足（w<5）不越过 0.6 判弱门槛
+    assert _continuous_confidence(4) < 0.6
+    # 5 个评分项越过 0.6（与原"5 样本高置信"语义对齐）
+    assert _continuous_confidence(5) >= 0.6
+    # 封顶 0.95
+    assert _continuous_confidence(10**9) <= 0.95
 
 
 def test_parse_inquiry_depth_boundaries():

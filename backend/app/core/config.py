@@ -67,6 +67,15 @@ class Settings(BaseSettings):
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
     COURSE_BUILD_TOTAL_TIMEOUT_SECONDS: int = 900
     PREP_SPARSE_STRUCTURE_PLAN: bool = True
+
+    # --------------------------
+    # 认知与学习策略配置（六维认知引擎）
+    # --------------------------
+    # 证据置信度时间衰减半衰期（天）：computed_at 距今超过半衰期后，
+    # 读取投影的 evidence_confidence / mastery_score 按 2^(-elapsed/half_life)
+    # 衰减（M2，只作用于读取投影，不落库）。
+    COGNITIVE_HALF_LIFE_DAYS: float = 14.0
+
     # A full-course structure pass can legitimately touch most titles.  Keep
     # enough completion room for the exceptional full plan while the sparse
     # schema/prompt keeps ordinary calls short.

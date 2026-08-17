@@ -31,8 +31,10 @@ from ..contracts import (
     QuestionBankPort,
     QuestionGenerationPort,
     RecommendationPort,
+    SafetyGuardPort,
     SandboxPort,
     StudentHistoryPort,
+    TrajectoryPort,
     TeacherSafetyValvePort,
     TeachingConstraintPort,
     TeachingLLMPort,
@@ -84,9 +86,11 @@ class TeachingAgentRuntimeRegistry:
         visualization: Optional[VisualizationPort] = None,
         coding_diagnosis: Optional[CodingDiagnosisPort] = None,
         student_history: Optional[StudentHistoryPort] = None,
+        trajectory: Optional[TrajectoryPort] = None,
         teaching_constraints: Optional[TeachingConstraintPort] = None,
         conversation_history: Optional[ConversationHistoryPort] = None,
         learning_adjustment: Optional[LearningAdjustmentPort] = None,
+        safety_guard: Optional[SafetyGuardPort] = None,
     ) -> None:
         self._demo_service = demo_service
         self._llm = llm
@@ -106,9 +110,11 @@ class TeachingAgentRuntimeRegistry:
         self._visualization = visualization
         self._coding_diagnosis = coding_diagnosis
         self._student_history = student_history
+        self._trajectory = trajectory
         self._teaching_constraints = teaching_constraints
         self._conversation_history = conversation_history
         self._learning_adjustment = learning_adjustment
+        self._safety_guard = safety_guard
         # P1-E3: OrderedDict 实现 LRU；值为 (runtime, created_at_monotonic) 元组以支持 TTL 淘汰。
         self._cache: "OrderedDict[tuple[str, str], tuple[TeachingAgentRuntime, float]]" = OrderedDict()
 
@@ -146,8 +152,10 @@ class TeachingAgentRuntimeRegistry:
                         tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                         experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                         coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                        trajectory=self._trajectory,
                         teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                         learning_adjustment=self._learning_adjustment,
+                        safety_guard=self._safety_guard,
                     )
                 except (TypeError, ValueError) as error:
                     # A stale/malformed optional report must not deny normal Q&A.
@@ -162,8 +170,10 @@ class TeachingAgentRuntimeRegistry:
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                    trajectory=self._trajectory,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
+                    safety_guard=self._safety_guard,
                 )
             elif report is None:
                 runtime = build_course_sidecar_runtime(
@@ -174,8 +184,10 @@ class TeachingAgentRuntimeRegistry:
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                    trajectory=self._trajectory,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
+                    safety_guard=self._safety_guard,
                 )
         except Exception as error:  # noqa: BLE001 -- fail-closed: never raise
             logger.warning(

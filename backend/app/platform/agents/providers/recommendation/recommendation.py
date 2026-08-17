@@ -56,6 +56,20 @@ def make_session_scoped_recommendation_port(
 
         node_id_int = _parse_node_id(concept_id)
 
+        def _resolve_node_id(session: Any) -> int | None:
+            # concept_id 来自教学工作流，是知识图谱的稳定 node_key（如 kn_xxx）。
+            # 数字字符串直接使用；其余经身份表解析为课程内数字节点 id。
+            # 否则 generate_recommendation 会退化为课程级（node_id=None），
+            # _find_confirmed_weak_prerequisites 因 state.node_id 为空恒返回空，
+            # prereq_review 推荐无法在问答链路中产生（2026-08-16 修复）。
+            if node_id_int is not None:
+                return node_id_int
+            if not concept_id or concept_id == "":
+                return None
+            from app.services.knowledge_node_identity_service import resolve_node_id
+
+            return resolve_node_id(session, course_id_int, concept_id)
+
         def _generate() -> Mapping[str, Any]:
             from app.services.recommendation_service import generate_recommendation
             with session_factory() as session:
@@ -64,7 +78,7 @@ def make_session_scoped_recommendation_port(
                         session,
                         student_id_int,
                         course_id_int,
-                        node_id=node_id_int,
+                        node_id=_resolve_node_id(session),
                         force_recompute=False,
                     )
                     return _serialize_recommendation(record)

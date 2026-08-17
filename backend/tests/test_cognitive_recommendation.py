@@ -529,11 +529,11 @@ def test_low_performance_high_confidence_recommendation(session):
 
 
 def test_low_performance_low_confidence_recommendation(session):
-    """低表现+低置信度：表现分<0.5且置信度<0.4时，推荐策略为诊断题。
+    """低表现+置信度不足：表现分<0.5且置信度<0.6时，推荐策略为诊断题。
 
     reason_codes 包含 diagnostic_not_weakness，不直接判定薄弱。
     3次答题（1正确2错误）-> perf=1/3≈0.33 < 0.5
-    3次总答题 < 5 -> confidence = 0.3 < 0.4
+    M1 连续化：3 个评分项 -> confidence = 3/6 = 0.5 < CONFIDENCE_HIGH=0.6
     """
     teacher = _user(session, "cr_lowlow_teacher", UserRole.TEACHER)
     student = _user(session, "cr_lowlow_student")
@@ -550,7 +550,8 @@ def test_low_performance_low_confidence_recommendation(session):
     assert state.observed_performance_score == pytest.approx(1 / 3)
     assert state.observed_performance_score < 0.5
     assert state.evidence_confidence is not None
-    assert state.evidence_confidence < 0.4
+    # M1 连续化：3 个评分项 -> 0.5，未达高置信门槛 0.6（不判弱、不高优先）
+    assert state.evidence_confidence < 0.6
 
     # 生成推荐
     rec = generate_recommendation(session, student.id, course.id, force_recompute=True)
@@ -1341,14 +1342,14 @@ def test_prereq_recommendation_cross_course_isolation(session):
     [
         # 数据完全不足：0 次答题 -> confidence=None (unknown)
         ("zero_attempts", 0, 0, None),
-        # 极低样本：1 次答题全错 -> confidence=0.3 < 0.4
-        ("one_attempt_all_wrong", 1, 0, 0.4),
-        # 低样本：2 次答题全错 -> confidence=0.3 < 0.4
-        ("two_attempts_all_wrong", 2, 0, 0.4),
-        # 低样本：3 次答题 1 对 2 错 -> confidence=0.3 < 0.4
-        ("three_attempts_low_perf", 3, 1, 0.4),
-        # 低样本：4 次答题全错 -> confidence=0.3 < 0.4
-        ("four_attempts_all_wrong", 4, 0, 0.4),
+        # M1 连续化：1 次答题（权重 1）-> confidence=0.25 < 0.6
+        ("one_attempt_all_wrong", 1, 0, 0.6),
+        # M1 连续化：2 次答题（权重 2）-> confidence=0.40 < 0.6
+        ("two_attempts_all_wrong", 2, 0, 0.6),
+        # M1 连续化：3 次答题（权重 3）-> confidence=0.50 < 0.6
+        ("three_attempts_low_perf", 3, 1, 0.6),
+        # M1 连续化：4 次答题（权重 4）-> confidence≈0.571 < 0.6
+        ("four_attempts_all_wrong", 4, 0, 0.6),
     ],
 )
 def test_low_confidence_never_produces_high_priority(
@@ -1361,7 +1362,8 @@ def test_low_confidence_never_produces_high_priority(
 
     覆盖五种低置信度场景：
     - 0 次答题（数据完全不足，confidence=None）
-    - 1/2/3/4 次答题（样本不足，confidence=0.3 < CONFIDENCE_LOW=0.4）
+    - 1/2/3/4 次答题（M1 连续化后 confidence 单调上升但均 < 0.6，
+      未达 CONFIDENCE_HIGH 高置信门槛，不判弱、不高优先）
 
     在所有这些场景下：
     - rec.priority != "high"

@@ -204,7 +204,7 @@ def test_stale_question_observation_never_falls_forward_to_newest_media(session:
         session,
         course_id=course.id,
         observation=stale,
-        teaching_action="misconception_repair",
+        teaching_action="prerequisite_review",
         current_concept_id="concept-current",
         prerequisites=[],
         weak_concepts=[],
@@ -222,7 +222,7 @@ def test_question_observation_must_match_frozen_cue_page_and_time(session: Sessi
         session,
         course_id=course.id,
         observation=mismatched,
-        teaching_action="misconception_repair",
+        teaching_action="prerequisite_review",
         current_concept_id="concept-current",
         prerequisites=[],
         weak_concepts=[],
@@ -244,7 +244,7 @@ def test_question_observation_rejects_mismatched_frozen_playlist_clock(
         session,
         course_id=course.id,
         observation=forged,
-        teaching_action="misconception_repair",
+        teaching_action="prerequisite_review",
         current_concept_id="concept-current",
         prerequisites=[],
         weak_concepts=[],
@@ -265,6 +265,32 @@ def test_action_without_redirect_is_a_safe_noop(session: Session) -> None:
         current_concept_id="concept-current",
         prerequisites=[],
         weak_concepts=[],
+    )
+    assert result.review_target is None
+    assert result.reason_code == "ACTION_DOES_NOT_REQUIRE_REVIEW"
+
+
+@pytest.mark.parametrize(
+    "action",
+    ["diagnostic_question", "misconception_repair", "hint_scaffolding"],
+)
+def test_non_prerequisite_actions_never_offer_review(
+    session: Session, action: str
+) -> None:
+    """回归（2026-08-16）：仅 prerequisite_review 可产出回顾提案。
+
+    诊断提问 / 纠错 / 支架等动作的目标是当前知识点，不是"回退到前置知识点"。
+    即使观测有效、薄弱前置存在，也不得弹出"建议回顾第 X 页"。
+    """
+    course, _, ids = _setup_frozen_course(session)
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action=action,
+        current_concept_id="concept-current",
+        prerequisites=[{"concept_id": "concept-prerequisite"}],
+        weak_concepts=[{"concept_id": "concept-prerequisite"}],
     )
     assert result.review_target is None
     assert result.reason_code == "ACTION_DOES_NOT_REQUIRE_REVIEW"

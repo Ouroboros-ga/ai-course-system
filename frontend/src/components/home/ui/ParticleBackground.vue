@@ -47,6 +47,31 @@ let tiltY = 0
 let pointerX = 0
 let pointerY = 0
 
+// ════════════════════════════════════════════════════════════════
+// 外观参数：粒子颜色与粗细 —— 需要调整时只改这里
+// ════════════════════════════════════════════════════════════════
+
+// 颜色是否跟随主题令牌自动取色：
+//   true  → 使用 CSS 变量（TOKEN_*）中的颜色，随亮/暗主题切换
+//   false → 使用下方 FIXED_* 固定颜色，不随主题变化
+const USE_THEME_TOKENS = true
+
+// 主题取色令牌（仅 USE_THEME_TOKENS = true 时生效）
+const TOKEN_DOT = '--ink-500' // 粒子点：优先；找不到时回退 --color-focus → --color-primary
+const TOKEN_LINE = '--ink-700' // 连线：优先；找不到时回退 --color-brand → --color-primary
+
+// 固定颜色（仅 USE_THEME_TOKENS = false 时生效）
+const FIXED_DOT_RGB = { r: 53, g: 92, b: 125 } // 粒子点 RGB（0~255）
+const FIXED_LINE_RGB = { r: 53, g: 92, b: 125 } // 邻近粒子连线 RGB（0~255）
+
+// 透明度（0~1，越大越明显）
+const DOT_ALPHA = 0.25 // 粒子点
+const LINE_ALPHA = 0.2 // 连线
+
+// 粗细（px）
+const PARTICLE_RADIUS = 4 // 粒子点半径；实际绘制圆点半径 = 该值 / 2
+const LINE_WIDTH = 1 // 连线的线宽
+
 // ── 配置（参照 particleground 原文件默认值，密度与速度略调低）──
 // 原文件：density 10000 / maxSpeed 0.7 / proximity 100 / minSpeed 0.1
 const options = {
@@ -57,10 +82,11 @@ const options = {
   directionX: 'center', // 'center' 触边反弹 | 'left' | 'right'
   directionY: 'center',
   density: 16000, // 每 n 像素生成 1 个粒子（值越大越稀疏；原文件 10000）
-  dotColor: 'rgba(53, 92, 125, 0.55)',
-  lineColor: 'rgba(53, 92, 125, 0.45)',
-  particleRadius: 7,
-  lineWidth: 1,
+  // 颜色与粗细见上方「外观参数」；此处为初始兜底，实际由 refreshColors() 覆盖
+  dotColor: `rgba(${FIXED_DOT_RGB.r}, ${FIXED_DOT_RGB.g}, ${FIXED_DOT_RGB.b}, 0.25)`,
+  lineColor: `rgba(${FIXED_LINE_RGB.r}, ${FIXED_LINE_RGB.g}, ${FIXED_LINE_RGB.b}, 0.15)`,
+  particleRadius: PARTICLE_RADIUS,
+  lineWidth: LINE_WIDTH,
   curvedLines: false,
   proximity: 100, // 两点间距小于此值则连线（原文件值）
   parallax: true,
@@ -102,21 +128,28 @@ function parseColor(raw) {
 }
 
 function refreshColors() {
-  // shadow app（.sfx 作用域）优先用 Academic Ink 墨色令牌；
-  // legacy 页面回退到 :root 的 --color-primary / --color-secondary。
-  // 浅底用深色粒子 + 半透明，保证可见又不抢眼。
-  const dot =
-    parseColor(readToken('--ink-500')) ||
-    parseColor(readToken('--color-focus')) ||
-    parseColor(readToken('--color-primary')) ||
-    { r: 53, g: 92, b: 125 }
-  const line =
-    parseColor(readToken('--ink-700')) ||
-    parseColor(readToken('--color-brand')) ||
-    parseColor(readToken('--color-primary')) ||
-    dot
-  options.dotColor = `rgba(${dot.r}, ${dot.g}, ${dot.b}, 0.55)`
-  options.lineColor = `rgba(${line.r}, ${line.g}, ${line.b}, 0.4)`
+  // 颜色来源：默认跟随主题令牌（USE_THEME_TOKENS = true，见上方「外观参数」）；
+  // 关掉后改用 FIXED_* 固定颜色。浅底用深色粒子 + 半透明，保证可见又不抢眼。
+  let dot, line
+  if (USE_THEME_TOKENS) {
+    // shadow app（.sfx 作用域）优先用 Academic Ink 墨色令牌；
+    // legacy 页面回退到 :root 的 --color-primary。
+    dot =
+      parseColor(readToken(TOKEN_DOT)) ||
+      parseColor(readToken('--color-focus')) ||
+      parseColor(readToken('--color-primary')) ||
+      FIXED_DOT_RGB
+    line =
+      parseColor(readToken(TOKEN_LINE)) ||
+      parseColor(readToken('--color-brand')) ||
+      parseColor(readToken('--color-primary')) ||
+      dot
+  } else {
+    dot = FIXED_DOT_RGB
+    line = FIXED_LINE_RGB
+  }
+  options.dotColor = `rgba(${dot.r}, ${dot.g}, ${dot.b}, ${DOT_ALPHA})`
+  options.lineColor = `rgba(${line.r}, ${line.g}, ${line.b}, ${LINE_ALPHA})`
   if (ctx) {
     ctx.fillStyle = options.dotColor
     ctx.strokeStyle = options.lineColor

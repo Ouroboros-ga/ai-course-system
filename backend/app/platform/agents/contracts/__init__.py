@@ -18,13 +18,19 @@ Submodule layout:
     - ``research``:     PaperSearchPort, WebResearchPort, QuestionBankPort
     - ``writing``:      LiteratureReviewPort, PaperStructurePort
     - ``governance``:   ToolGovernancePort, TeacherSafetyValvePort
+    - ``safety``:       SafetyGuardPort (content-safety gate)
     - ``experiment``:   ExperimentPort, VisualizationPort
     - ``tools``:        TeachingTools (assembly container)
 """
 
 from __future__ import annotations
 
-from .cognition import CognitionPort, StudentHistoryPort, StudentModelingPort
+from .cognition import (
+    CognitionPort,
+    StudentHistoryPort,
+    StudentModelingPort,
+    TrajectoryPort,
+)
 from .constraint import ConversationHistoryPort, TeachingConstraintPort
 from .experiment import ExperimentDispatchPort, ExperimentPort, VisualizationPort
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
@@ -39,40 +45,48 @@ from .research import (
     WebResearchPort,
 )
 from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
+from .safety import SafetyGuardPort
 from .sandbox import CodingDiagnosisPort, SandboxPort
-from .teaching import ConversationContextPort, LearningEventPort, RecommendationPort, TeachingLLMPort
+from .teaching import (
+    ConversationContextPort,
+    LearningEventPort,
+    RecommendationPort,
+    TeachingLLMPort,
+)
 from .tools import TeachingTools
 from .writing import LiteratureReviewPort, PaperStructurePort
 
 __all__ = [
-    "ScopePort",
-    "KnowledgeGraphPort",
-    "CourseRetrievalPort",
-    "StudentModelingPort",
-    "RecommendationPort",
-    "SandboxPort",
-    "CodingDiagnosisPort",
-    "StudentHistoryPort",
-    "LearningEventPort",
-    "ConversationContextPort",
-    "TeachingLLMPort",
-    "WebResearchPort",
-    "PaperSearchPort",
-    "ResearchScopePort",
-    "TrendAnalysisPort",
     "CodeReproductionPort",
-    "LiteratureReviewPort",
-    "PaperStructurePort",
+    "CodingDiagnosisPort",
     "CognitionPort",
+    "ConversationContextPort",
+    "ConversationHistoryPort",
+    "CourseRetrievalPort",
+    "ExperimentDispatchPort",
+    "ExperimentPort",
+    "KnowledgeGraphPort",
+    "LearningAdjustmentPort",
+    "LearningEventPort",
+    "LiteratureReviewPort",
+    "PaperSearchPort",
+    "PaperStructurePort",
     "QuestionBankPort",
     "QuestionGenerationPort",
-    "ToolGovernancePort",
+    "RecommendationPort",
+    "ResearchScopePort",
+    "SafetyGuardPort",
+    "SandboxPort",
+    "ScopePort",
+    "StudentHistoryPort",
+    "StudentModelingPort",
     "TeacherSafetyValvePort",
-    "ExperimentPort",
-    "ExperimentDispatchPort",
-    "VisualizationPort",
     "TeachingConstraintPort",
-    "ConversationHistoryPort",
-    "LearningAdjustmentPort",
+    "TeachingLLMPort",
     "TeachingTools",
+    "ToolGovernancePort",
+    "TrajectoryPort",
+    "TrendAnalysisPort",
+    "VisualizationPort",
+    "WebResearchPort",
 ]

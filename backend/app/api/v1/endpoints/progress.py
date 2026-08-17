@@ -41,48 +41,24 @@ async def analyze_understanding(
     """
     分析学生理解度
 
-    核心功能：
-    1. 使用NLP分析学生提问内容
-    2. 判断学生对当前知识点的理解程度
-    3. 定位相关的学习节点
-    4. 提供节奏调整建议
-
-    返回：
-    - 理解度等级和分数
-    - 掌握/薄弱的关键词
-    - 相关节点推荐
-    - 节奏调整建议
+    DEPRECATED（2026-08-17，六维认知 M9 收尾）：旧 LLM 理解度链路已废弃
+    （UnderstandingAnalyzer 停写、客户端分数封堵、explanation_need 改确定性
+    投影）。本端点不再调用 handle_student_question，返回废弃标记；认知判断
+    请使用六维认知接口（/cognition、/recommendation）。
     """
     try:
         access = require_course_permission(session, current_user, courseId, "course.learn")
         if not access.analytics_eligible:
             raise HTTPException(status_code=403, detail="Only learner participation can record progress")
-        print(f"[进度分析] 用户 {username} (ID: {user_id}) 提交分析请求")
-
-        course = session.get(Course, courseId)
-        if not course:
-            return unified_response(code=404, message="课程不存在", data=None)
-
-        chat_messages = []
-        if chatId:
-            messages = session.exec(
-                select(ChatMessage)
-                .where(ChatMessage.chat_id == chatId)
-                .order_by(ChatMessage.created_at.asc())
-            ).all()
-            chat_messages = messages
-
-        result = await progress_service.handle_student_question(
-            session=session,
-            user_id=user_id,
-            course_id=courseId,
-            question=question,
-            current_node_id=nodeId,
-            chat_messages=chat_messages,
-        )
 
         return unified_response(
-            code=200, message="理解度分析完成", data=result
+            code=200,
+            message="旧理解度分析已废弃，请使用六维认知接口",
+            data={
+                "deprecated": True,
+                "understanding": None,
+                "reason": "legacy_understanding_chain_frozen",
+            },
         )
 
     except Exception as e:
@@ -219,8 +195,12 @@ async def sync_learning_progress(
                 node_progress.understanding_level = UnderstandingLevel(understandingLevel)
             except ValueError:
                 pass
-        if understandingScore is not None:
-            node_progress.understanding_score = understandingScore
+        # M4（2026-08-17）：封堵客户端自报分数进入认知维度。
+        # 原实现把请求体 understandingScore 直接写入 NodeProgress.understanding_score，
+        # 而 cognitive_service 第 7 步曾读取该字段计算 explanation_need —— 学生可自报
+        # 分数违规影响认知状态（违反 AGENTS.md §4.3.5）。请求字段保留以兼容旧客户端
+        # 调用（不返回 422），但不再写入任何业务字段；理解度链路已改为确定性投影。
+        # understandingScore 请求参数在此处被显式忽略。
 
         if isCompleted and not node_progress.is_completed:
             node_progress.is_completed = True

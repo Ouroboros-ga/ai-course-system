@@ -186,6 +186,10 @@ class NodeLocator:
     """
     学习节点定位器
     根据学生提问内容，定位最相关的学习节点
+
+    DEPRECATED（2026-08-17，六维认知 M9 收尾）：旧问答链路（chat.py /
+    progress.py /analyze）已不再调用本类（LLM 节点定位废弃）；保留实现仅供
+    历史兼容与审计，不再被任何端点引用。
     """
 
     async def locate_relevant_nodes(
@@ -288,6 +292,9 @@ class PaceAdjuster:
     """
     讲授节奏调节器
     根据学生理解程度，调整后续讲授的节奏
+
+    DEPRECATED（2026-08-17，六维认知 M9 收尾）：旧问答链路已废弃，本类不再
+    被任何端点引用；保留实现仅供历史兼容与审计。
     """
 
     def calculate_pace_adjustment(
@@ -432,29 +439,19 @@ class ProgressService:
             logger.error(f"节点 {current_node_id} 不存在")
             return {"error": "节点不存在"}
 
-        understanding = await self.analyzer.analyze_question(
-            question=question,
-            node_content=current_node.content,
-            node_title=current_node.title,
-            conversation_history=chat_messages,
-        )
+        # M4（2026-08-17）：停写旧 LLM 理解度链路。
+        # 原实现调用 UnderstandingAnalyzer.analyze_question（无版本化 LLM 直连）
+        # 并写入 UnderstandingAnalysis / NodeProgress.understanding_score，
+        # 而后者是 cognitive_service 计算 explanation_need 的读取源，构成
+        # 不可审计的 LLM 生产者链路（AGENTS.md §4.1.1）。现改为确定性默认
+        # 分析，不再调用 LLM、不再新增 UnderstandingAnalysis 行、不再写入
+        # NodeProgress 理解度字段（历史数据保留供审计）。explanation_need
+        # 由 cognitive_service 按确定性投影计算（explanation_need_from_
+        # deterministic_projection）。
+        understanding = self.analyzer._get_default_analysis()
 
-        analysis_record = UnderstandingAnalysis(
-            progress_id=progress.id,
-            node_id=current_node_id,
-            understanding_level=understanding["understanding_level"],
-            understanding_score=understanding["understanding_score"],
-            analysis_reason=understanding["analysis_reason"],
-            suggestions=understanding.get("suggestions"),
-            keywords_mastered=json.dumps(
-                understanding.get("keywords_mastered", []), ensure_ascii=False
-            ),
-            keywords_weak=json.dumps(
-                understanding.get("keywords_weak", []), ensure_ascii=False
-            ),
-        )
-        session.add(analysis_record)
-        session.commit()
+        # M4：停写 UnderstandingAnalysis（旧 LLM 理解度表，历史数据保留供审计）。
+        # analysis_record 写入已移除。
 
         script = session.exec(
             select(CourseScript).where(CourseScript.course_id == course_id)
@@ -479,8 +476,8 @@ class ProgressService:
             session, progress.id, current_node_id, current_node.node_index
         )
         node_progress.question_count += 1
-        node_progress.understanding_level = understanding["understanding_level"]
-        node_progress.understanding_score = understanding["understanding_score"]
+        # M4：不再写入 understanding_level / understanding_score
+        #（旧 LLM 理解度链路停写；认知 explanation_need 已改为确定性投影）。
         session.commit()
 
         pace_adjustment = self.adjuster.calculate_pace_adjustment(
@@ -660,6 +657,10 @@ class ProgressService:
                 "current_node_index": progress.current_node_index,
             },
             "nodes_progress": nodes_data,
+            # M9（2026-08-17）：旧 LLM 理解度链路已冻结（UnderstandingAnalyzer 停写、
+            # UnderstandingAnalysis 不再新增），recent_analyses 仅返回历史数据供审计，
+            # 前端应停止依赖该字段做认知判断。
+            "understanding_deprecated": True,
             "recent_analyses": [
                 {
                     "node_id": a.node_id,
@@ -667,6 +668,7 @@ class ProgressService:
                     "score": a.understanding_score,
                     "reason": a.analysis_reason,
                     "created_at": a.created_at.isoformat(),
+                    "deprecated": True,
                 }
                 for a in analyses
             ],

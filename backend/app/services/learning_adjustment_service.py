@@ -51,12 +51,11 @@ class LearningAdjustmentConflict(ValueError):
 class LearningAdjustmentService:
     """Resolve a target only from an active immutable course/media release pair."""
 
-    _REDIRECT_ACTIONS = {
-        "prerequisite_review",
-        "misconception_repair",
-        "hint_scaffolding",
-        "diagnostic_question",
-    }
+    # 只有"回退学习前置知识点"的教学动作才会产出回顾提案（2026-08-16 收紧）。
+    # diagnostic_question 是"先诊断提问"，misconception_repair / hint_scaffolding
+    # 的目标是当前知识点本身，都不属于"回退到前置知识点"，不再触发回顾提示框，
+    # 避免无回顾必要也弹出"建议回顾第 X 页"。
+    _REDIRECT_ACTIONS = {"prerequisite_review"}
 
     def create_proposal(
         self,
@@ -687,15 +686,14 @@ class LearningAdjustmentService:
             str(node.knowledge_graph_node_id): node.outline_node_id
             for node in nodes if node.knowledge_graph_node_id
         }
-        if teaching_action == "prerequisite_review":
-            weak_ids = {str(item.get("concept_id") or "") for item in weak_concepts}
-            for prerequisite in prerequisites:
-                concept_id = str(prerequisite.get("concept_id") or "")
-                if concept_id in weak_ids and concept_id in by_concept:
-                    return by_concept[concept_id]
-            return None
-        if teaching_action in {"misconception_repair", "hint_scaffolding", "diagnostic_question"}:
-            return by_concept.get(str(current_concept_id or ""))
+        # 仅 prerequisite_review 可触发回顾提案：目标是已确认薄弱的"前置知识点"，
+        # 其余教学动作（diagnostic_question / misconception_repair / hint_scaffolding）
+        # 的目标是当前知识点，不构成回退到前置知识点，故不返回目标。
+        weak_ids = {str(item.get("concept_id") or "") for item in weak_concepts}
+        for prerequisite in prerequisites:
+            concept_id = str(prerequisite.get("concept_id") or "")
+            if concept_id in weak_ids and concept_id in by_concept:
+                return by_concept[concept_id]
         return None
 
     def _resolve_cue_coordinate(

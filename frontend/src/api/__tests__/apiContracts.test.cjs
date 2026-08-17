@@ -625,9 +625,9 @@ test('LearnPage.vue: 从 courseContext 注入 analyticsEligible/capabilities 传
 
 test('request.js: 支持 skipErrorToast 配置（Agent 503 回退时不弹错误提示）', () => {
   const src = read('frontend/src/utils/request.js')
-  // 错误拦截器必须检查 skipErrorToast
+  // 错误拦截器必须检查 skipErrorToast（后续可能叠加 !isUnpublished 等其他条件）
   assert.match(src, /skipErrorToast/)
-  assert.match(src, /if\s*\(!error\.config\?\.skipErrorToast\)/)
+  assert.match(src, /if\s*\(!error\.config\?\.skipErrorToast/)
 })
 
 // ============================================================================
@@ -746,3 +746,45 @@ test('backend: note.py 注册 /summary 且位于 /{note_id} 之前（避免路�
   assert.match(src, /func\.max\(Note\.updated_at\)/)
   assert.match(src, /group_by\(Note\.course_id\)/)
 })
+
+// ============================================================================
+// 平台级安全屏蔽词：admin_platform.js ↔ admin_platform.py 契约（2026-08-17）
+// ============================================================================
+
+test('admin_platform.js: 屏蔽词 CRUD 客户端路径与后端 admin 路由一致', () => {
+  const frontend = read('frontend/src/api/admin_platform.js')
+  const backend = read('backend/app/api/v1/endpoints/admin_platform.py')
+
+  // 前端四个函数与请求方法（update/delete 使用模板字符串反引号）
+  assert.match(frontend, /getSafetyKeywords[\s\S]*?url:\s*['"]\/admin\/safety-keywords['"],\s*method:\s*['"]get['"]/)
+  assert.match(frontend, /createSafetyKeyword[\s\S]*?url:\s*['"]\/admin\/safety-keywords['"],\s*method:\s*['"]post['"]/)
+  assert.match(frontend, /updateSafetyKeyword[\s\S]*?url:\s*[`'"]\/admin\/safety-keywords\/\$\{keywordId\}[`'"],\s*method:\s*['"]patch['"]/)
+  assert.match(frontend, /deleteSafetyKeyword[\s\S]*?url:\s*[`'"]\/admin\/safety-keywords\/\$\{keywordId\}[`'"],\s*method:\s*['"]delete['"]/)
+
+  // 后端四个路由
+  assert.match(backend, /@router\.get\(["']\/safety-keywords["']\)/)
+  assert.match(backend, /@router\.post\(["']\/safety-keywords["']\)/)
+  assert.match(backend, /@router\.patch\(["']\/safety-keywords\/\{keyword_id\}["']\)/)
+  assert.match(backend, /@router\.delete\(["']\/safety-keywords\/\{keyword_id\}["']\)/)
+  // 权限：platform.safety.manage（platform.admin 由 require_platform_permission 兜底）
+  assert.match(backend, /require_safety_keyword_management/)
+  assert.match(backend, /PlatformPermission\.SAFETY_MANAGE/)
+  // 类别白名单与后端一致
+  assert.match(backend, /category:\s*str\s*=\s*Field\(pattern="\^\(cyber\|political_high_risk\|political_topic\)\$"\)/)
+})
+
+test('PlatformAdminPage.vue: 平台管理页集成屏蔽词增删改查 section', () => {
+  const src = read('frontend/src/app/pages/admin/PlatformAdminPage.vue')
+  assert.match(src, /安全屏蔽词/)
+  assert.match(src, /getSafetyKeywords/)
+  assert.match(src, /createSafetyKeyword/)
+  assert.match(src, /updateSafetyKeyword/)
+  assert.match(src, /deleteSafetyKeyword/)
+  // 三类词条说明与后端 category 枚举一致
+  assert.match(src, /political_high_risk/)
+  assert.match(src, /political_topic/)
+  assert.match(src, /cyber/)
+  // 按钮均使用 SfxButton（design.md 硬约束：禁止原生 <button> 标签）
+  assert.doesNotMatch(src, /<button[\s>]/)
+})
+

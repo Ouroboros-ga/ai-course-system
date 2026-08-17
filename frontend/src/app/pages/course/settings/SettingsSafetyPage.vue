@@ -10,7 +10,7 @@ import SfxField from '@/app/ui/SfxField.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 
 /**
- * 设置 · 安全与合规（page-design §18.5）。
+ * 设置 · 安全围栏（page-design §18.5）。
  * 数据源（available）：GET/PUT /safety/course/{id}/safety-policy。
  * 三层边界：平台硬边界只读展示（教师不可关闭）；课程策略可编辑；
  * 运行时围栏在学生实验中展示。保存只提交有变化的字段。
@@ -23,7 +23,7 @@ const forbidden = ref(false)
 const policy = ref(null)
 
 const form = ref({
-  course_type: 'basic',
+  course_type: 'professional',
   forbidden_topics: '',
   required_citation_topics: '',
   high_risk_confirmation_required: true,
@@ -35,11 +35,11 @@ const saving = ref(false)
 const saveNotice = ref('')
 const saveError = ref('')
 
+// 2026-08-17：课程类型与后端枚举同步（basic/ctf 已并入 professional/cybersecurity）
 const courseTypeOptions = [
-  { value: 'basic', label: '基础教学' },
   { value: 'professional', label: '专业课程' },
   { value: 'cybersecurity', label: '网络安全课程' },
-  { value: 'ctf', label: 'CTF 隔离课程' },
+  { value: 'ideological', label: '思政类课程' },
 ]
 
 const statusOptions = [
@@ -75,7 +75,7 @@ async function load() {
     const data = await getSafetyPolicy(courseId)
     policy.value = data
     form.value = {
-      course_type: data.course_type ?? 'basic',
+      course_type: data.course_type ?? 'professional',
       forbidden_topics: (data.forbidden_topics ?? []).join('\n'),
       required_citation_topics: (data.required_citation_topics ?? []).join('\n'),
       high_risk_confirmation_required: Boolean(data.high_risk_confirmation_required),
@@ -131,7 +131,7 @@ onMounted(load)
   <div class="sfx-settings-page sfx-safety">
     <header class="sfx-settings-head">
       <div>
-        <h1 class="sfx-t-title2">安全与合规</h1>
+        <h1 class="sfx-t-title2">安全围栏</h1>
         <p class="sfx-t-ui sfx-t-secondary">课程安全策略与平台安全底线</p>
       </div>
       <SfxBadge v-if="policy" :tone="statusMeta[policy.status]?.tone ?? 'neutral'">

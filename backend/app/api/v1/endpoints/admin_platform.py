@@ -21,6 +21,12 @@ from app.services.platform_admin_service import (
     reset_password,
 )
 from app.services.platform_task_concurrency_service import get_config, update_config
+from app.services.safety_keyword_service import (
+    create_keyword,
+    delete_keyword,
+    list_keywords,
+    update_keyword,
+)
 
 router = APIRouter(tags=["平台管理员"])
 
@@ -34,6 +40,123 @@ async def require_admin_management(
     except HTTPException:
         require_platform_permission(session, current_user, PlatformPermission.ADMIN)
     return current_user
+
+
+async def require_safety_keyword_management(
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """屏蔽词管理依赖：需要 platform.safety.manage 或 platform.admin 权限。"""
+    require_platform_permission(session, current_user, PlatformPermission.SAFETY_MANAGE)
+    return current_user
+
+
+class SafetyKeywordCreate(BaseModel):
+    keyword: str = Field(min_length=1, max_length=100)
+    category: str = Field(pattern="^(cyber|political_high_risk|political_topic)$")
+    risk_level: str = Field(default="medium", pattern="^(high|medium)$")
+    description: str = Field(default="", max_length=200)
+
+
+class SafetyKeywordUpdate(BaseModel):
+    keyword: Optional[str] = Field(default=None, min_length=1, max_length=100)
+    category: Optional[str] = Field(default=None, pattern="^(cyber|political_high_risk|political_topic)$")
+    enabled: Optional[bool] = None
+    risk_level: Optional[str] = Field(default=None, pattern="^(high|medium)$")
+    description: Optional[str] = Field(default=None, max_length=200)
+
+
+@router.get("/safety-keywords")
+async def get_safety_keywords(
+    category: Optional[str] = Query(default=None, description="类别: cyber/political_high_risk/political_topic"),
+    enabled: Optional[bool] = Query(default=None, description="仅启用中的词"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=50, ge=1, le=200),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_safety_keyword_management),
+):
+    """平台级安全屏蔽词列表（含各类别默认词兜底说明）。"""
+    try:
+        data = list_keywords(
+            session, category=category, enabled=enabled, page=page, page_size=page_size,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return unified_response(code=200, message="获取安全屏蔽词成功", data=data)
+
+
+@router.post("/safety-keywords")
+async def post_safety_keyword(
+    payload: SafetyKeywordCreate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_safety_keyword_management),
+):
+    """新增平台级安全屏蔽词。"""
+    actor_id = int(current_user["user_id"])
+    try:
+        row = create_keyword(
+            session, actor_id,
+            keyword=payload.keyword, category=payload.category,
+            risk_level=payload.risk_level,
+            description=payload.description,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return unified_response(code=200, message="新增屏蔽词成功", data=_serialize_keyword(row))
+
+
+@router.patch("/safety-keywords/{keyword_id}")
+async def patch_safety_keyword(
+    keyword_id: int,
+    payload: SafetyKeywordUpdate,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_safety_keyword_management),
+):
+    """更新平台级安全屏蔽词（仅更新传入字段）。"""
+    actor_id = int(current_user["user_id"])
+    try:
+        row = update_keyword(
+            session, actor_id, keyword_id,
+            keyword=payload.keyword,
+            category=payload.category,
+            enabled=payload.enabled,
+            risk_level=payload.risk_level,
+            description=payload.description,
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return unified_response(code=200, message="更新屏蔽词成功", data=_serialize_keyword(row))
+
+
+@router.delete("/safety-keywords/{keyword_id}")
+async def delete_safety_keyword(
+    keyword_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_safety_keyword_management),
+):
+    """删除平台级安全屏蔽词。"""
+    actor_id = int(current_user["user_id"])
+    try:
+        delete_keyword(session, actor_id, keyword_id)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return unified_response(code=200, message="删除屏蔽词成功", data=None)
+
+
+def _serialize_keyword(row) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "keyword": row.keyword,
+        "category": row.category.value if hasattr(row.category, "value") else str(row.category),
+        "enabled": row.enabled,
+        "risk_level": getattr(row, "risk_level", "medium"),
+        "description": row.description,
+        "created_by": row.created_by,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
 
 
 class IntegrationUpdate(BaseModel):

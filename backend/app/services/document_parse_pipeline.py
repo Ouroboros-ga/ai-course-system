@@ -1,4 +1,4 @@
-﻿"""P0-4 真实 DocumentIR/OCR/图谱构建流水线。
+"""P0-4 真实 DocumentIR/OCR/图谱构建流水线。
 
 由 document_parse_handler 调用，串联：
 1. 从 SourceMaterialVersion 读取 object_key
@@ -199,7 +199,7 @@ async def run_parse_pipeline(
     # reuses text facts only; the current material version still needs its own
     # original slide images for mapping and playback.
     source_name = object_key.lower()
-    if source_name.endswith((".pptx", ".ppt")):
+    if source_name.endswith((".pptx", ".ppt", ".pdf")):
         try:
             from app.services.ppt_slide_render_service import ensure_ppt_source_slide_renders
 

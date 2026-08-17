@@ -77,6 +77,42 @@ def ordered_outline_nodes(
     return ordered
 
 
+def ordered_knowledge_keys(
+    session: Session,
+    *,
+    course_id: int,
+    release_id: str | None = None,
+) -> list[str]:
+    """Return the pre-order knowledge_graph_node_id sequence for a course.
+
+    ``knowledge_graph_node_id`` equals the GraphSnapshot ``node_key`` (see
+    ``CourseKnowledgeNode.node_key == CourseOutlineNode.knowledge_graph_node_id``
+    in the learning projection), so this sequence is directly comparable with
+    graph prerequisite keys.  Used by M3 prerequisite order validation and by
+    M8 learning-path planning.  Falls back to ``outline_node_id`` for nodes
+    without a graph mapping; returns [] when no active release exists.
+    """
+    release = None
+    if release_id:
+        release = session.exec(select(CourseRelease).where(
+            CourseRelease.course_id == course_id,
+            CourseRelease.release_id == release_id,
+        )).first()
+    else:
+        release = active_release(session, course_id)
+    if release is None or not release.outline_version_id:
+        return []
+    nodes = ordered_outline_nodes(
+        session,
+        outline_version_id=release.outline_version_id,
+        knowledge_points_only=True,
+    )
+    return [
+        str(node.knowledge_graph_node_id or node.outline_node_id)
+        for node in nodes
+    ]
+
+
 def release_nodes(session: Session, release: CourseRelease) -> list[CourseOutlineNode]:
     return ordered_outline_nodes(
         session,
