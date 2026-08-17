@@ -395,19 +395,38 @@ async def list_evidence(
 # ==================== 辅助函数 ====================
 
 def _serialize_cognitive_state(state: CognitiveState) -> dict[str, Any]:
-    """序列化认知状态"""
+    """序列化认知状态
+
+    六维每个维度返回 {value, confidence, abstain} 结构，而不是裸数值：
+    - value: 维度值（0..1；None 表示数据不足/unknown）
+    - confidence: 该维度证据置信度（复用全局 evidence_confidence；value 为
+      None 时保持 None，避免把「未知」误报为「低置信但有值」）
+    - abstain: value 缺失时为 True，前端据此显示「需要更多证据」而不是编造数值
+
+    顶层字段（mastery_level/evidence_refs/reason_codes/sample_size 等）保持
+    不变，学习轨迹等页面直接读取的 evidence_confidence 仍是裸数值。
+    """
+
+    def _dim(value: Optional[float]) -> dict[str, Any]:
+        missing = value is None
+        return {
+            "value": value,
+            "confidence": None if missing else state.evidence_confidence,
+            "abstain": missing,
+        }
+
     return {
         "id": state.id,
         "student_id": state.student_id,
         "course_id": state.course_id,
         "node_id": state.node_id,
         "dimensions": {
-            "observed_performance_score": state.observed_performance_score,
-            "evidence_confidence": state.evidence_confidence,
-            "confusion_risk": state.confusion_risk,
-            "inquiry_depth": state.inquiry_depth,
-            "hint_dependency": state.hint_dependency,
-            "explanation_need": state.explanation_need,
+            "observed_performance_score": _dim(state.observed_performance_score),
+            "evidence_confidence": _dim(state.evidence_confidence),
+            "confusion_risk": _dim(state.confusion_risk),
+            "inquiry_depth": _dim(state.inquiry_depth),
+            "hint_dependency": _dim(state.hint_dependency),
+            "explanation_need": _dim(state.explanation_need),
         },
         "mastery_level": state.mastery_level,
         "mastery_score": state.mastery_score,

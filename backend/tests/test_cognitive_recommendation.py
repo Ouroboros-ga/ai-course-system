@@ -362,6 +362,58 @@ def test_platform_admin_cross_course_cognitive_access(client, session):
     assert resp.status_code == 403
 
 
+def test_state_api_dimensions_contract(client, session):
+    """API 六维序列化契约：每维度返回 {value, confidence, abstain}。
+
+    前端 CognitiveDashboard 依赖该结构：有数据维度 confidence 复用全局
+    evidence_confidence（避免裸数值被判定为 insufficient 而全部显示"—"）；
+    数据不足维度 value/confidence 为 None 且 abstain=True，显示「需要更多
+    证据」而不编造数值。
+    """
+    teacher = _user(session, "cr_dim_teacher", UserRole.TEACHER)
+    student = _user(session, "cr_dim_student")
+    course = _setup_course(session, teacher, student)
+
+    # 有数据：5 次全对答题 -> observed_performance/evidence_confidence 有值
+    for _ in range(5):
+        q = _create_published_question(session, course.id)
+        _create_attempt(session, student.id, course.id, q.id, is_correct=True)
+
+    resp = client.get(
+        f"{CR}/course/{course.id}/state?student_id={student.id}",
+        headers=_auth(_token(student)),
+    )
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    dims = data["dimensions"]
+
+    # 六维必须齐全且为 {value, confidence, abstain} 结构
+    for key in (
+        "observed_performance_score",
+        "evidence_confidence",
+        "confusion_risk",
+        "inquiry_depth",
+        "hint_dependency",
+        "explanation_need",
+    ):
+        assert key in dims
+        assert isinstance(dims[key], dict)
+        assert set(dims[key]) == {"value", "confidence", "abstain"}
+
+    # 有数据的维度：value 保留原值，confidence 复用全局 evidence_confidence
+    # （全局置信度位于 dimensions.evidence_confidence.value）
+    global_conf = dims["evidence_confidence"]["value"]
+    assert global_conf is not None
+    assert dims["observed_performance_score"]["value"] == pytest.approx(1.0)
+    assert dims["observed_performance_score"]["confidence"] == pytest.approx(global_conf)
+    assert dims["observed_performance_score"]["abstain"] is False
+
+    # 数据不足维度（无提问/错误样本）：value 为 None 时 abstain=True、confidence=None
+    assert dims["inquiry_depth"]["value"] is None
+    assert dims["inquiry_depth"]["confidence"] is None
+    assert dims["inquiry_depth"]["abstain"] is True
+
+
 # ==================== 六维计算逻辑测试 ====================
 
 def test_no_data_outputs_unknown(session):
