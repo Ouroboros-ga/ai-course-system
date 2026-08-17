@@ -4,22 +4,20 @@
 需要用户登录认证
 """
 
-from typing import Optional, Union
 
-from fastapi import APIRouter, Depends, Query, HTTPException, Request, Body
+from fastapi import APIRouter, Body, Depends, Query, Request
 from sqlmodel import Session, select
 
-from app.schemas.common_schema import UnifiedResponse
+from app.core.config import settings
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
-from app.core.config import settings
+from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
 from app.models.database import get_session
 from app.models.user_model import ChatHistory, ChatMessage, MessageRole
-from app.models.course_model import Course, CourseScript, DoclingDocument, DoclingText
-from app.services.qa_service import qa_service
-from app.services.progress_service import progress_service
-from app.services.course_access_service import require_course_permission
+from app.schemas.common_schema import UnifiedResponse
 from app.services.conversation_service import persist_conversation_turn
+from app.services.course_access_service import require_course_permission
+from app.services.qa_service import qa_service
 
 router = APIRouter(tags=["聊天模块"])
 
@@ -88,7 +86,7 @@ async def get_chat_history(
         traceback.print_exc()
         return unified_response(
             code=500,
-            message=f"获取聊天记录失败: {str(e)}",
+            message=f"获取聊天记录失败: {e!s}",
             data=None
         )
 
@@ -156,7 +154,7 @@ async def get_chat_messages(
         traceback.print_exc()
         return unified_response(
             code=500,
-            message=f"获取消息失败: {str(e)}",
+            message=f"获取消息失败: {e!s}",
             data=None
         )
 
@@ -166,12 +164,12 @@ async def ask_question(
     request: Request,
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
-    chatId: Optional[int] = Body(None, description="会话ID，不传则创建新会话"),
-    courseId: Optional[int] = Body(None, description="课程ID，用于基于文档问答"),
+    chatId: int | None = Body(None, description="会话ID，不传则创建新会话"),
+    courseId: int | None = Body(None, description="课程ID，用于基于文档问答"),
     question: str = Body(..., description="用户问题"),
-    currentNodeId: Optional[Union[int, str]] = Body(None, description="当前学习节点ID：兼容旧版数值 ScriptNode ID 与新版 release outline_node_id（如 on_xxx）"),
+    currentNodeId: int | str | None = Body(None, description="当前学习节点ID：兼容旧版数值 ScriptNode ID 与新版 release outline_node_id（如 on_xxx）"),
     strictMode: bool = Body(False, description="是否使用严格知识库模式（带引用标注）"),
-    sessionId: Optional[str] = Body(None, description="学习会话 ID，用于 Conversation Domain 持久化分组（TeachingAgent 回退 V1 时透传，使刷新后可恢复对话）"),
+    sessionId: str | None = Body(None, description="学习会话 ID，用于 Conversation Domain 持久化分组（TeachingAgent 回退 V1 时透传，使刷新后可恢复对话）"),
 ):
     """
     Compatibility boundary: the new learning workspace must fall back here
@@ -248,13 +246,12 @@ async def ask_question(
             for msg in history_messages_orm
         ]
         
-        print(f"[聊天] 调用QA服务生成回答...")
+        print("[聊天] 调用QA服务生成回答...")
         
         current_node_info = None
         # 兼容两类调用方：旧版学习页传 ScriptNode 数值 ID；新版 release 学习
-        # 工作区传 CourseOutlineNode.outline_node_id（如 on_xxx）。只有数值 ID
-        # 才能落到旧版理解度分析；outline ID 仅用于回答上下文，不伪造分析。
-        current_node_analysis_id = None
+        # 工作区传 CourseOutlineNode.outline_node_id（如 on_xxx）。两者都用于
+        # 组装回答上下文（current_node_info），不再做旧版理解度分析。
         if currentNodeId is not None and str(currentNodeId) != "":
             from app.models.course_model import ScriptNode
             if courseId is None:
@@ -275,7 +272,6 @@ async def ask_question(
                         message="学习节点不属于当前课程",
                         data=None,
                     )
-                current_node_analysis_id = int(raw_node_id)
                 current_node_info = {
                     "title": script_node.title,
                     "content": script_node.content,
@@ -364,33 +360,11 @@ async def ask_question(
             except Exception:  # noqa: BLE001 -- 非阻塞：对话持久化失败不得影响回答
                 pass
 
+        # DEPRECATED（2026-08-17，六维认知 M9 收尾）：旧 LLM 理解度链路已废弃
+        # （UnderstandingAnalyzer 停写、客户端分数封堵、explanation_need 改确定性
+        # 投影）。不再调用 progress_service.handle_student_question（含 NodeLocator
+        # LLM 节点定位）；understandingAnalysis 恒为 None，认知判断请使用六维认知接口。
         understanding_analysis = None
-        if (
-            courseId
-            and current_node_analysis_id
-            and course_access is not None
-            and course_access.analytics_eligible
-        ):
-            print(f"[聊天] 进行理解度分析...")
-            try:
-                analysis_result = await progress_service.handle_student_question(
-                    session=session,
-                    user_id=user_id,
-                    course_id=courseId,
-                    question=question,
-                    current_node_id=current_node_analysis_id,
-                    chat_messages=history_messages_orm,
-                )
-                understanding_analysis = {
-                    "level": analysis_result["understanding"]["level"],
-                    "score": analysis_result["understanding"]["score"],
-                    "keywordsWeak": analysis_result["understanding"]["keywords_weak"],
-                    "suggestions": analysis_result["understanding"]["suggestions"],
-                    "paceAdjustment": analysis_result["pace_adjustment"],
-                }
-                print(f"[聊天] 理解度: {understanding_analysis['level']}, 分数: {understanding_analysis['score']}")
-            except Exception as e:
-                print(f"[聊天] 理解度分析失败: {str(e)}")
 
         return unified_response(
             code=200,
@@ -499,7 +473,7 @@ async def create_chat_record(
         traceback.print_exc()
         return unified_response(
             code=500,
-            message=f"创建聊天记录失败: {str(e)}",
+            message=f"创建聊天记录失败: {e!s}",
             data=None
         )
 
@@ -509,10 +483,10 @@ async def generate_quiz(
     request: Request,
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
-    courseId: Optional[int] = Body(None, description="课程ID"),
-    nodeId: Optional[int] = Body(None, description="节点ID"),
-    nodeContent: Optional[str] = Body(None, description="节点内容（若不传nodeId则使用此内容）"),
-    nodeTitle: Optional[str] = Body("", description="节点标题"),
+    courseId: int | None = Body(None, description="课程ID"),
+    nodeId: int | None = Body(None, description="节点ID"),
+    nodeContent: str | None = Body(None, description="节点内容（若不传nodeId则使用此内容）"),
+    nodeTitle: str | None = Body("", description="节点标题"),
 ):
     """
     根据课程节点内容生成选择题
@@ -585,6 +559,6 @@ async def generate_quiz(
         traceback.print_exc()
         return unified_response(
             code=500,
-            message=f"选择题生成失败: {str(e)}",
+            message=f"选择题生成失败: {e!s}",
             data=None,
         )

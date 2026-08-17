@@ -99,10 +99,11 @@ class NodeProgress(SQLModel, table=True):
     last_timestamp: float = Field(default=0.0, description="最后播放进度(秒)")
 
     understanding_level: Optional[UnderstandingLevel] = Field(
-        default=None, description="AI分析的理解程度"
+        default=None, description="AI分析的理解程度（DEPRECATED：旧 LLM 理解度链路已停写，M4 2026-08-17；历史数据保留供审计）"
     )
     understanding_score: Optional[float] = Field(
-        default=None, ge=0.0, le=1.0, description="理解分数(0-1)"
+        default=None, ge=0.0, le=1.0,
+        description="理解分数(0-1)（DEPRECATED：不再由客户端/旧 LLM 链路写入，认知 explanation_need 已改确定性投影，M4 2026-08-17）",
     )
 
     question_count: int = Field(default=0, description="该节点提问次数")

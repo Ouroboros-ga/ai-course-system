@@ -146,21 +146,33 @@ def _resolve_node_id_int(
 
 
 def _serialize_state(state: Any) -> Mapping[str, Any]:
+    # M2：证据时间衰减（读取投影，不落库）。computed_at 距今越久，
+    # 置信度与掌握度按半衰期衰减，reason_codes 追加 evidence_decayed，
+    # 使教学 Agent 看到的是"当前可信度"而非历史快照。
+    from app.services.cognitive_decay_service import (
+        DECAY_MARK_THRESHOLD,
+        project_time_decay,
+    )
+
+    decayed_conf, decayed_mastery, decay_factor = project_time_decay(state)
+    reason_codes = list(state.reason_codes or [])
+    if decay_factor <= DECAY_MARK_THRESHOLD:
+        reason_codes.append("evidence_decayed")
     return {
         "student_id": state.student_id,
         "course_id": state.course_id,
         "node_id": state.node_id,
         "observed_performance_score": state.observed_performance_score,
-        "evidence_confidence": state.evidence_confidence,
+        "evidence_confidence": decayed_conf,
         "confusion_risk": state.confusion_risk,
         "inquiry_depth": state.inquiry_depth,
         "hint_dependency": state.hint_dependency,
         "explanation_need": state.explanation_need,
         "mastery_level": state.mastery_level,
-        "mastery_score": state.mastery_score,
+        "mastery_score": decayed_mastery,
         "policy_version": state.policy_version,
         "sample_size": state.sample_size,
-        "reason_codes": list(state.reason_codes or []),
+        "reason_codes": reason_codes,
         "evidence_refs": list(state.evidence_refs or []),
         "computed_at": state.computed_at.isoformat() if state.computed_at else None,
     }

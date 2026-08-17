@@ -11,7 +11,7 @@
 - /api/v1/practice/course/{course_id}/policies                        评分策略
 
 facade:
-- /api/v1/facade/course/{course_id}/learning-actions/complete         学习动作完成
+- /api/v1/facade/course/{course_id}/learning-actions/sign            学习动作签名（评分链起点）
 
 约束：
 - AI 生成草稿**不可直接面向学生发布**，必须经教师审核升级为 QuestionBankItem
@@ -1002,14 +1002,14 @@ async def create_policy(
 # ---------------------------------------------------------------------------
 
 
-@facade_learning_actions_router.post("/course/{course_id}/learning-actions/complete")
+@facade_learning_actions_router.post("/course/{course_id}/learning-actions/sign")
 async def complete_learning_action(
     course_id: int,
     payload: LearningActionCompleteRequest,
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """记录学习动作完成，返回签名 action_id。
+    """记录学习动作并签发签名 action_id（评分链起点）。
 
     P0-1 安全修复：
     - 学生端不再采信 is_scored/score 写入正式证据
@@ -1017,6 +1017,10 @@ async def complete_learning_action(
     - 正式证据由服务端评分器（Quiz/Judge0/CodingAgent）通过
       /learning-actions/{action_id}/attach-evidence 端点写入
     - action_id 绑定 course_id/student_id/action_type，防止跨课程或跨学生伪造
+
+    注意：本端点与 facade 的 ``/learning-actions/complete``（query 参数版，写
+    统一学习投影）同路径遮蔽问题于 2026-08-17 修复——本端点改名 ``/sign``，
+    学生显式完成知识点走 facade 版，服务端评分链走本端点。
     """
     context = require_course_permission(session, current_user, course_id, "course.question.ask")
     user_id = int(current_user["user_id"])

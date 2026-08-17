@@ -34,6 +34,7 @@ from ..contracts import (
     SafetyGuardPort,
     SandboxPort,
     StudentHistoryPort,
+    TrajectoryPort,
     TeacherSafetyValvePort,
     TeachingConstraintPort,
     TeachingLLMPort,
@@ -85,6 +86,7 @@ class TeachingAgentRuntimeRegistry:
         visualization: Optional[VisualizationPort] = None,
         coding_diagnosis: Optional[CodingDiagnosisPort] = None,
         student_history: Optional[StudentHistoryPort] = None,
+        trajectory: Optional[TrajectoryPort] = None,
         teaching_constraints: Optional[TeachingConstraintPort] = None,
         conversation_history: Optional[ConversationHistoryPort] = None,
         learning_adjustment: Optional[LearningAdjustmentPort] = None,
@@ -108,6 +110,7 @@ class TeachingAgentRuntimeRegistry:
         self._visualization = visualization
         self._coding_diagnosis = coding_diagnosis
         self._student_history = student_history
+        self._trajectory = trajectory
         self._teaching_constraints = teaching_constraints
         self._conversation_history = conversation_history
         self._learning_adjustment = learning_adjustment
@@ -149,6 +152,7 @@ class TeachingAgentRuntimeRegistry:
                         tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                         experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                         coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                        trajectory=self._trajectory,
                         teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                         learning_adjustment=self._learning_adjustment,
                         safety_guard=self._safety_guard,
@@ -166,6 +170,7 @@ class TeachingAgentRuntimeRegistry:
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                    trajectory=self._trajectory,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
                     safety_guard=self._safety_guard,
@@ -179,6 +184,7 @@ class TeachingAgentRuntimeRegistry:
                     tool_governance=self._tool_governance, teacher_safety_valve=self._teacher_safety_valve,
                     experiment=self._experiment, experiment_dispatch=self._experiment_dispatch, visualization=self._visualization,
                     coding_diagnosis=self._coding_diagnosis, student_history=self._student_history,
+                    trajectory=self._trajectory,
                     teaching_constraints=self._teaching_constraints, conversation_history=self._conversation_history,
                     learning_adjustment=self._learning_adjustment,
                     safety_guard=self._safety_guard,

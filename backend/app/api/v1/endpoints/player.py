@@ -52,6 +52,106 @@ def _learner_outline_nodes(
     return [node for node in nodes if node.node_type == OutlineNodeType.KNOWLEDGE_POINT]
 
 
+def _release_node_durations(
+    session: Session,
+    *,
+    course_id: int,
+    release_id: str,
+    script_by_outline: dict,
+) -> dict[str, float]:
+    """Return ``outline_node_id`` -> 期望讲解时长(秒) for a frozen course release.
+
+    时长来源优先级（都来自真实冻结/活跃媒体数据，不估算）：
+    1. ``MediaReleaseItem.duration_ms``（发布版本冻结的节点音频时长）；
+    2. ``MediaReleaseCue`` 按 script node 聚合的最大 ``end_time``；
+    3. 活跃 ``MediaTimelineCue`` 按 script node 聚合的最大 ``end_time``
+       （未冻结媒体版本的兜底）。
+
+    无任何时长数据的节点不进入返回字典，调用方保持 timestamp=0，
+    仅可通过显式完成达成 COMPLETED（与旧行为一致）。
+    """
+    from app.models.course_build_model import CourseRelease
+    from app.models.media_release_model import MediaReleaseCue, MediaReleaseItem
+    from app.models.media_timeline_model import MediaTimelineCue
+
+    durations: dict[str, float] = {}
+
+    def _set(outline_node_id: object, seconds: float) -> None:
+        key = str(outline_node_id)
+        if key and seconds and seconds > 0:
+            durations.setdefault(key, seconds)
+
+    release_row = session.exec(
+        select(CourseRelease).where(
+            CourseRelease.course_id == course_id,
+            CourseRelease.release_id == release_id,
+        )
+    ).first()
+    media_release_id = (
+        (release_row.media_snapshot or {}).get("media_release_id")
+        if release_row is not None
+        else None
+    )
+
+    if media_release_id:
+        items = session.exec(
+            select(MediaReleaseItem).where(
+                MediaReleaseItem.course_id == course_id,
+                MediaReleaseItem.release_id == media_release_id,
+            )
+        ).all()
+        for item in items:
+            _set(item.outline_node_id, (item.duration_ms or 0) / 1000.0)
+        cue_durations: dict[int, float] = {}
+        cues = session.exec(
+            select(MediaReleaseCue).where(
+                MediaReleaseCue.course_id == course_id,
+                MediaReleaseCue.release_id == media_release_id,
+            )
+        ).all()
+        for cue in cues:
+            cue_durations[cue.node_id] = max(
+                cue_durations.get(cue.node_id, 0.0), float(cue.end_time or 0.0)
+            )
+        _apply_script_node_durations(
+            durations, cue_durations, script_by_outline, _set
+        )
+
+    # 活跃时间轴兜底：冻结数据缺失的节点仍可用真实 cue 时长。
+    active_cue_durations: dict[int, float] = {}
+    active_cues = session.exec(
+        select(MediaTimelineCue).where(
+            MediaTimelineCue.course_id == course_id,
+            MediaTimelineCue.is_active == True,  # noqa: E712
+        )
+    ).all()
+    for cue in active_cues:
+        active_cue_durations[cue.node_id] = max(
+            active_cue_durations.get(cue.node_id, 0.0), float(cue.end_time or 0.0)
+        )
+    _apply_script_node_durations(
+        durations, active_cue_durations, script_by_outline, _set
+    )
+    return durations
+
+
+def _apply_script_node_durations(
+    durations: dict[str, float],
+    by_script_node_id: dict[int, float],
+    script_by_outline: dict,
+    setter,
+) -> None:
+    """Merge per-script-node durations into the outline-node-id keyed map."""
+    outline_by_script_node: dict[int, str] = {}
+    for outline_node_id, script_node in script_by_outline.items():
+        if script_node is not None and getattr(script_node, "id", None) is not None:
+            outline_by_script_node[int(script_node.id)] = str(outline_node_id)
+    for script_node_id, seconds in by_script_node_id.items():
+        outline_node_id = outline_by_script_node.get(int(script_node_id))
+        if outline_node_id is not None:
+            setter(outline_node_id, seconds)
+
+
 class PlayerInitData(BaseModel):
     """播放器初始化数据响应模型"""
     course_id: int
@@ -205,6 +305,31 @@ def _versioned_player_data(
             "status": "preview" if content_status == "preview" else "published",
         })
 
+    # Released courses: fill per-node play durations from frozen media data so
+    # the learner page can derive media_progress ratios (80% threshold rule).
+    # Nodes without any media duration stay at 0 and require explicit completion.
+    total_duration = 0.0
+    if release_id:
+        node_durations = _release_node_durations(
+            session,
+            course_id=course.id,
+            release_id=release_id,
+            script_by_outline=script_by_outline,
+        )
+        cursor = 0.0
+        for node_data in nodes_data:
+            duration = node_durations.get(str(node_data["outline_node_id"]), 0.0)
+            if duration > 0:
+                node_data["timestamp_start"] = round(cursor, 2)
+                cursor += duration
+                node_data["timestamp_end"] = round(cursor, 2)
+                node_data["duration"] = round(duration, 2)
+            else:
+                node_data["timestamp_start"] = 0.0
+                node_data["timestamp_end"] = 0.0
+                node_data["duration"] = 0.0
+        total_duration = round(cursor, 2)
+
     # A released learner page restores its anchor only from the canonical
     # release-scoped projection.  The legacy LearningProgress row is kept for
     # the old direct-publication/teacher-preview path, but must not influence a
@@ -268,7 +393,7 @@ def _versioned_player_data(
         release_id=release_id,
         course_title=course.title,
         script_id=script.id if script and script.id else 0,
-        total_duration=0,
+        total_duration=total_duration,
         total_nodes=len(nodes_data),
         nodes=nodes_data,
         video_base_url="/api/v1/video/stream/",
@@ -805,10 +930,32 @@ async def save_player_progress(
         session.commit()
         session.refresh(progress)
 
+        # M8：学习路径规划——当前节点完成后推荐下一学习节点（薄弱优先）。
+        # 路径规划失败不阻塞进度保存（降级为空数组）。
+        next_nodes: list[dict] = []
+        try:
+            current_key: Optional[str] = None
+            if request.current_node_id is not None:
+                script_node = session.get(TeachingScriptNode, request.current_node_id)
+                if script_node is not None and script_node.outline_node_id:
+                    current_key = script_node.outline_node_id
+            from app.services.learning_path_service import plan_next_nodes
+
+            next_nodes = plan_next_nodes(
+                session,
+                student_id=user_id,
+                course_id=request.course_id,
+                current_node_key=current_key,
+                max_next=3,
+            )
+        except Exception:  # noqa: BLE001 -- 路径规划为增强能力，失败不阻塞保存
+            next_nodes = []
+
         return unified_response(200, "进度保存成功", {
             "progress_id": progress.id,
             "saved_timestamp": request.current_timestamp,
             "completion_rate": progress.completion_rate,
+            "next_nodes": next_nodes,
         })
 
     except Exception as e:

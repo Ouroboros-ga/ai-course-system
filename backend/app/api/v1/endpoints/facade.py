@@ -150,6 +150,15 @@ def _attach_cognition(session: Session, *, student_id: int, course_id: int, item
         evidence_count = len(state.evidence_refs or [])
         if evidence_count == 0 and state.sample_size:
             evidence_count = state.sample_size
+        # M2：证据时间衰减（读取投影，不落库）。
+        from app.services.cognitive_decay_service import (
+            DECAY_MARK_THRESHOLD,
+            project_time_decay,
+        )
+        decayed_conf, decayed_mastery, decay_factor = project_time_decay(state)
+        reason_codes = list(state.reason_codes or [])
+        if decay_factor <= DECAY_MARK_THRESHOLD:
+            reason_codes.append("evidence_decayed")
         evidence_rows = []
         evidence_ids = [str(ref) for ref in (state.evidence_refs or []) if ref]
         if evidence_ids:
@@ -183,9 +192,11 @@ def _attach_cognition(session: Session, *, student_id: int, course_id: int, item
             "node_id": knowledge.id,
             "node_key": knowledge.node_key,
             "mastery_level": state.mastery_level,
-            "mastery_score": state.mastery_score,
-            "evidence_confidence": state.evidence_confidence,
-            "reason_codes": state.reason_codes or [],
+            # M2：证据时间衰减（读取投影，不落库）——computed_at 距今越久，
+            # 置信度与掌握度按半衰期衰减，reason_codes 追加 evidence_decayed。
+            "mastery_score": decayed_mastery,
+            "evidence_confidence": decayed_conf,
+            "reason_codes": reason_codes,
             "evidence_count": evidence_count,
             "evidence": evidence_rows,
             "sample_size": state.sample_size,

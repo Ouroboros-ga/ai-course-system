@@ -7,7 +7,8 @@ means the learner subject rather than the caller.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol
 
 
 class StudentModelingPort(Protocol):
@@ -31,4 +32,26 @@ class StudentHistoryPort(Protocol):
     ) -> Mapping[str, Any]: ...
 
 
-__all__ = ["StudentModelingPort", "CognitionPort", "StudentHistoryPort"]
+class TrajectoryPort(Protocol):
+    """学习轨迹端口（M7）：追加 + 读紧凑历史。
+
+    只存数值/枚举/ID 快照，绝不携带问答原文；``append`` 以 ``dedup_key``
+    幂等（如 trace_id），``get_compact_history`` 返回供 LLM 注入的紧凑上下文。
+    """
+
+    async def get_compact_history(
+        self, *, student_id: str, course_id: str, concept_id: str | None = None,
+    ) -> Mapping[str, Any]: ...
+
+    async def append(
+        self, *,
+        student_id: str,
+        course_id: str,
+        event_type: str,
+        concept_id: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+        dedup_key: str | None = None,
+    ) -> None: ...
+
+
+__all__ = ["CognitionPort", "StudentHistoryPort", "StudentModelingPort", "TrajectoryPort"]

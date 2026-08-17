@@ -439,13 +439,11 @@ async def callback_progress(
                 enrollment.overall_progress, request.progress_percent
             )
             if request.understanding_score > 0:
-                total = enrollment.avg_understanding_score * (
-                    enrollment.total_nodes_completed or 1
-                ) + request.understanding_score
+                # FROZEN（M9 2026-08-17）：avg_understanding_score 冻结，不再更新。
+                # 旧链路（泛雅回调理解度）已废弃（M4 停写 UnderstandingAnalyzer、
+                # 封堵客户端分数），该字段保留历史值仅供审计，不再参与任何统计或
+                # 认知计算。total_nodes_completed 仍递增（完成节点数统计与理解度无关）。
                 enrollment.total_nodes_completed += 1
-                enrollment.avg_understanding_score = total / max(
-                    enrollment.total_nodes_completed, 1
-                )
             enrollment.last_study_time = utcnow_aware()
             session.add(enrollment)
             session.commit()

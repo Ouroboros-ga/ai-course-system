@@ -98,15 +98,21 @@ def generate_recommendation(
     prereq_weak = _find_confirmed_weak_prerequisites(session, student_id, course_id, state)
 
     # 3. 决定推荐策略
+    target_node_id: Optional[str] = None
     if prereq_weak:
         rec_type, priority, title, description, reason_codes, target_difficulty = _prereq_review_strategy(
             state, prereq_weak
         )
+        # M3：把补弱练习题锚定到薄弱前置节点
+        target_node_id = str(prereq_weak[0]["node_id"])
     else:
         rec_type, priority, title, description, reason_codes, target_difficulty = _decide_strategy(state)
 
     # 4. 从课程题库筛选题目
-    question = _select_question(session, course_id, state, target_difficulty)
+    question = _select_question(
+        session, course_id, state, target_difficulty,
+        target_node_id=target_node_id,
+    )
 
     # 5. 收集证据引用
     evidence_refs = (state.evidence_refs or []) + [
@@ -245,12 +251,24 @@ def _find_confirmed_weak_prerequisites(
     并检查其认知状态，返回"已确认薄弱"的前置节点集合。
 
     判定薄弱的硬约束（避免低置信度误判）：
+      - 仅当前节点表现不佳（observed_performance_score < PERFORMANCE_HIGH）时触发
       - 前置节点的 observed_performance_score 不是 None
-      - 前置节点的 evidence_confidence 达标（>= PREREQ_WEAK_CONFIDENCE）
+      - 前置节点的 sample_size 达标（>= MIN_SAMPLE_FOR_PERFORMANCE）
+      - 前置节点的 evidence_confidence 衰减后达标（>= PREREQ_WEAK_CONFIDENCE，M2）
       - 前置节点的 observed_performance_score < PREREQ_WEAK_PERF
+    M3 课件顺序双确认：图谱一跳前置必须排在当前节点之前（按 active release 的
+    课件 pre-order 前序，key == outline knowledge_graph_node_id == 图谱 node_key）。
+    无课件顺序数据时回退 fail-open（标记 prereq_order_unverifiable），
+    有课件顺序但顺序不符时不判弱。
     低置信度（样本不足）的前置节点不进入此集合，避免武断判弱。
     只读取已发布快照，不暴露草稿；严格按课程隔离。
     """
+    # M3：当前节点表现良好时不去打扰先修复习。
+    if (
+        state.observed_performance_score is None
+        or state.observed_performance_score >= PERFORMANCE_HIGH
+    ):
+        return []
     if not state.node_id:
         return []
     node_id_str = resolve_node_key(session, course_id, state.node_id) or str(state.node_id)
@@ -268,12 +286,19 @@ def _find_confirmed_weak_prerequisites(
     node_by_key = {
         str(node.get("id")): node for node in graph.nodes
     }
+    # M3：课件顺序双确认（outline knowledge_graph_node_id == 图谱 node_key）
+    order_map = _outline_order_map(session, course_id)
+    order_verifiable = bool(order_map and node_id_str in order_map)
     weak: list[dict] = []
     for prereq_key in prereq_keys:
         node = node_by_key.get(str(prereq_key), {})
         prereq_id = str(prereq_key)
         if not prereq_id:
             continue
+        # M3：顺序校验——图谱一跳前置必须排在课件前序的当前节点之前
+        if order_verifiable and prereq_id in order_map:
+            if order_map[prereq_id] >= order_map[node_id_str]:
+                continue
         prereq_id_int = resolve_node_id(session, course_id, prereq_id)
         # Compatibility for older hand-authored snapshots that predate the
         # CourseKnowledgeNode identity table. New assembled snapshots always
@@ -289,9 +314,23 @@ def _find_confirmed_weak_prerequisites(
             continue
         if prereq_state.observed_performance_score is None:
             continue
-        if prereq_state.evidence_confidence is None:
+        # M3：样本量达标才判弱（与表现分计算门槛一致）
+        from app.services.cognitive_service import MIN_SAMPLE_FOR_PERFORMANCE
+
+        if (prereq_state.sample_size or 0) < MIN_SAMPLE_FOR_PERFORMANCE:
             continue
-        if prereq_state.evidence_confidence < PREREQ_WEAK_CONFIDENCE:
+        # M2：旧证据按时间衰减后的置信度判弱——前置节点很久未产生新证据时，
+        # 衰减后的置信度跌破门槛则不判弱（保守；performance 保持原值，避免
+        # 衰减方向与"证据更不可信"相悖）。
+        from app.services.cognitive_decay_service import decayed_confidence
+
+        decayed_conf = decayed_confidence(
+            prereq_state.evidence_confidence,
+            computed_at=prereq_state.computed_at,
+        )
+        if decayed_conf is None:
+            continue
+        if decayed_conf < PREREQ_WEAK_CONFIDENCE:
             continue
         if prereq_state.observed_performance_score >= PREREQ_WEAK_PERF:
             continue
@@ -299,10 +338,24 @@ def _find_confirmed_weak_prerequisites(
             "node_id": prereq_id,
             "title": node.get("title") or node.get("label") or prereq_id,
             "performance": prereq_state.observed_performance_score,
-            "confidence": prereq_state.evidence_confidence,
+            "confidence": decayed_conf,
             "evidence_refs": prereq_state.evidence_refs or [],
+            "order": "validated" if order_verifiable else "unverifiable",
         })
     return weak
+
+
+def _outline_order_map(session: Session, course_id: int) -> dict[str, int]:
+    """课件 pre-order 位置映射：knowledge_graph_node_id(==图谱 node_key) -> index。
+
+    供 M3 前置顺序双确认与 M8 路径规划使用；无 active release 时返回空。
+    """
+    from app.services.unified_learning_service import ordered_knowledge_keys
+
+    return {
+        key: index
+        for index, key in enumerate(ordered_knowledge_keys(session, course_id=course_id))
+    }
 
 
 def _prereq_review_strategy(
@@ -318,6 +371,13 @@ def _prereq_review_strategy(
     以及每个薄弱前置节点的 ID，便于追溯。
     """
     reason_codes = ["confirmed_weak_prerequisite", "prerequisite_review"]
+    # M3：课件顺序双确认状态（全部 validated 才标 prereq_order_validated；
+    # 存在 unverifiable 时标记兼容回退）
+    order_states = {str(item.get("order") or "") for item in prereq_weak}
+    if order_states == {"validated"}:
+        reason_codes.append("prereq_order_validated")
+    elif "unverifiable" in order_states:
+        reason_codes.append("prereq_order_unverifiable")
     weak_ids = [p["node_id"] for p in prereq_weak]
     reason_codes.extend(f"weak_prerequisite_node={nid}" for nid in weak_ids)
     titles = ", ".join(p["title"] for p in prereq_weak[:3])
@@ -369,32 +429,31 @@ def _decide_strategy(state: CognitiveState) -> tuple[
             None,
         )
 
-    # 低表现 + 高置信度 -> 补弱练习
-    if perf < PERFORMANCE_LOW and conf is not None and conf >= CONFIDENCE_HIGH:
-        reason_codes.append("low_performance_high_confidence")
-        reason_codes.append("remedial_practice")
-        if confusion and confusion >= CONFUSION_HIGH:
-            reason_codes.append("high_confusion_risk")
+    # 低表现：统一入口，按置信度分流（M1 连续化后"有表现分即有置信度"，
+    # 原"低表现+低置信"条件保留为低置信兜底，避免中间带落入普通练习）
+    if perf < PERFORMANCE_LOW:
+        if conf is not None and conf >= CONFIDENCE_HIGH:
+            reason_codes.append("low_performance_high_confidence")
+            reason_codes.append("remedial_practice")
+            if confusion and confusion >= CONFUSION_HIGH:
+                reason_codes.append("high_confusion_risk")
+                return (
+                    RecommendationType.PRACTICE_QUIZ,
+                    RecommendationPriority.HIGH,
+                    "补弱练习：重点突破薄弱知识点",
+                    f"表现分 {perf:.0%}（置信度 {conf:.0%}），困惑风险 {confusion:.2f}。"
+                    f"建议针对薄弱知识点进行专项练习。",
+                    reason_codes,
+                    QuestionDifficulty.EASY,
+                )
             return (
                 RecommendationType.PRACTICE_QUIZ,
                 RecommendationPriority.HIGH,
-                "补弱练习：重点突破薄弱知识点",
-                f"表现分 {perf:.0%}（置信度 {conf:.0%}），困惑风险 {confusion:.2f}。"
-                f"建议针对薄弱知识点进行专项练习。",
+                "补弱练习",
+                f"表现分 {perf:.0%}（置信度 {conf:.0%}）。建议复习后进行基础练习巩固。",
                 reason_codes,
                 QuestionDifficulty.EASY,
             )
-        return (
-            RecommendationType.PRACTICE_QUIZ,
-            RecommendationPriority.HIGH,
-            "补弱练习",
-            f"表现分 {perf:.0%}（置信度 {conf:.0%}）。建议复习后进行基础练习巩固。",
-            reason_codes,
-            QuestionDifficulty.EASY,
-        )
-
-    # 低表现 + 低置信度 -> 诊断题，不直接判定薄弱
-    if perf < PERFORMANCE_LOW and (conf is None or conf < CONFIDENCE_LOW):
         reason_codes.append("low_performance_low_confidence")
         reason_codes.append("diagnostic_not_weakness")
         reason_codes.append("need_more_evidence")
@@ -478,11 +537,15 @@ def _select_question(
     course_id: int,
     state: CognitiveState,
     target_difficulty: Optional[QuestionDifficulty],
+    target_node_id: Optional[str] = None,
 ) -> Optional[QuestionBankItem]:
     """从课程题库筛选推荐题目
 
     先查课程题库(published)；无匹配题时返回 None(由上层决定是否生成草稿)。
     不做全库向量检索。
+
+    M3：``target_node_id`` 用于 PREREQ_REVIEW——把补弱练习题锚定到薄弱
+    前置节点（图谱 node_key），修复"文案说复习前置、题目却在当前节点"。
     """
     stmt = select(QuestionBankItem).where(
         QuestionBankItem.course_id == course_id,
@@ -493,11 +556,19 @@ def _select_question(
     if target_difficulty:
         stmt = stmt.where(QuestionBankItem.difficulty == target_difficulty)
 
-    # 如果有知识点信息，优先匹配
-    if state.node_id:
-        # 尝试匹配包含该知识点的题目
+    # M3：优先按目标节点（薄弱前置）筛题，其次按当前节点
+    filter_node_id: Optional[int] = None
+    if target_node_id:
+        resolved = resolve_node_id(session, course_id, str(target_node_id))
+        if resolved is None and str(target_node_id).isdigit():
+            # 旧式手工快照节点 id 为数字字符串（无 CourseKnowledgeNode identity 行）
+            resolved = int(str(target_node_id))
+        filter_node_id = resolved if resolved is not None else filter_node_id
+    if filter_node_id is None and state.node_id:
+        filter_node_id = state.node_id
+    if filter_node_id:
         stmt = stmt.where(
-            QuestionBankItem.knowledge_node_ids.contains([state.node_id])
+            QuestionBankItem.knowledge_node_ids.contains([filter_node_id])
         )
 
     stmt = stmt.limit(1)

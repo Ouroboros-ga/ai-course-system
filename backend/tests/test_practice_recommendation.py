@@ -995,7 +995,7 @@ def test_complete_learning_action_non_scored_no_evidence(client, session):
     _enroll_student(session, course.id, student.id)
 
     resp = client.post(
-        f"{FACADE}/course/{course.id}/learning-actions/complete",
+        f"{FACADE}/course/{course.id}/learning-actions/sign",
         json={
             "node_id": 40,
             "action_type": "video_watch",
@@ -1040,7 +1040,7 @@ def test_complete_learning_action_scored_does_not_write_evidence_from_client(cli
     session.commit()
 
     resp = client.post(
-        f"{FACADE}/course/{course.id}/learning-actions/complete",
+        f"{FACADE}/course/{course.id}/learning-actions/sign",
         json={
             "node_id": 41,
             "action_type": "quiz",
@@ -1079,7 +1079,7 @@ def test_complete_learning_action_rejects_non_learner(client, session):
     _enable_capabilities(session, course.id)
 
     resp = client.post(
-        f"{FACADE}/course/{course.id}/learning-actions/complete",
+        f"{FACADE}/course/{course.id}/learning-actions/sign",
         json={
             "node_id": 42,
             "action_type": "video_watch",
@@ -1106,7 +1106,7 @@ def _internal_auth() -> dict[str, str]:
 def _complete_action(client, student, course, *, action_type: str = "quiz") -> str:
     """辅助：学生完成学习动作，返回签名 action_id"""
     resp = client.post(
-        f"{FACADE}/course/{course.id}/learning-actions/complete",
+        f"{FACADE}/course/{course.id}/learning-actions/sign",
         json={"action_type": action_type, "duration_seconds": 60},
         headers=_auth(_token(student)),
     )

@@ -190,12 +190,15 @@ async def update_sandbox_policy(
     if payload.network_mode is not None:
         safety_policy = get_or_create_safety_policy(session, course_id)
         if (
-            safety_policy.course_type in (CourseType.BASIC, CourseType.PROFESSIONAL)
+            safety_policy.course_type in (
+                CourseType.PROFESSIONAL,
+                CourseType.IDEOLOGICAL,
+            )
             and payload.network_mode != NetworkMode.DISABLED
         ):
             raise HTTPException(
                 status_code=422,
-                detail="基础或专业课程的沙箱网络必须保持关闭",
+                detail="专业或思政课程的沙箱网络必须保持关闭",
             )
         old_values["network_mode"] = policy.network_mode.value
         policy.network_mode = payload.network_mode
@@ -270,6 +273,7 @@ async def evaluate_content(
             "reason": decision.reason,
             "decision_factors": decision.decision_factors,
             "keyword_matched": decision.keyword_matched,
+            "compliance_reply": getattr(decision, "compliance_reply", None),
             "policy_version": decision.policy_version,
         },
     )

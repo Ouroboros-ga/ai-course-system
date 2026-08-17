@@ -72,6 +72,8 @@ def test_route_contract_locks_known_non_openapi_catch_all(fastapi_app):
         # 因为对象键可含斜杠；端点内部仍做平台管理员权限校验。
         ("POST", "/api/v1/admin/storage/refs/{object_key:path}/reactivate", "reactivate_ref", "app.api.v1.endpoints.storage_admin"),
         ("POST", "/api/v1/admin/storage/refs/{object_key:path}/soft-delete", "mark_soft_deleted", "app.api.v1.endpoints.storage_admin"),
+        # 媒体 PPT manifest 同步：内部门户路由，include_in_schema=False（git 9e070e33 引入后契约未同步）。
+        ("POST", "/api/v1/media/course/{course_id}/releases/{release_id}/ppt-manifest/sync", "build_ppt_manifest", "app.api.v1.endpoints.media_release"),
     })
     assert {(row["method"], row["path"], row["endpoint"], row["module"]) for row in hidden_rows} == expected_hidden
 

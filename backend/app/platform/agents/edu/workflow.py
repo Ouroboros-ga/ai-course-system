@@ -32,6 +32,7 @@ from app.platform.agents.edu.constraints import (
 )
 from app.schemas.teaching_constraint import TeachingConstraintEnvelope
 from app.schemas.learning_adjustment import QuestionObservation
+from app.models.trajectory_model import TrajectoryEventType
 from .policy import decide_teaching_action
 from .state import TeachingState
 
@@ -1009,8 +1010,12 @@ def build_teaching_workflow(tools: TeachingTools):
             return payload
 
     async def load_learning_history(state: TeachingState) -> dict[str, Any]:
-        """Provide bounded assessment/cognition history without chat or source code."""
-        if tools.student_history is None:
+        """Provide bounded assessment/cognition history without chat or source code.
+
+        M7：优先读学习轨迹端口（LearningTrajectoryRecord 紧凑上下文，只含
+        数值/枚举/ID，不含原文）；未注入时回退 student_history 端口。
+        """
+        if tools.trajectory is None and tools.student_history is None:
             return {"trace": _trace(state, "load_learning_history", skipped=True)}
         allowed, gov_meta = await _governance_check(tools, state, "student_history")
         if not allowed:
@@ -1026,10 +1031,16 @@ def build_teaching_workflow(tools: TeachingTools):
                 ),
             }
         try:
-            history = await tools.student_history.get_history(
-                student_id=state["student_id"], course_id=state["course_id"],
-                concept_id=state.get("current_concept_id"),
-            )
+            if tools.trajectory is not None:
+                history = await tools.trajectory.get_compact_history(
+                    student_id=state["student_id"], course_id=state["course_id"],
+                    concept_id=state.get("current_concept_id"),
+                )
+            else:
+                history = await tools.student_history.get_history(
+                    student_id=state["student_id"], course_id=state["course_id"],
+                    concept_id=state.get("current_concept_id"),
+                )
             return {
                 "learning_history": dict(history),
                 "trace": _trace(state, "load_learning_history", status=history.get("status", "unknown")),
@@ -1313,6 +1324,20 @@ def build_teaching_workflow(tools: TeachingTools):
         try:
             await tools.learning_events.record_learning_event(event=event)
             await tools.learning_events.record_agent_trace(trace=replay)
+            # M7：追加学习轨迹（只存数值/枚举/ID 快照，以 trace_id 幂等）
+            if tools.trajectory is not None:
+                await tools.trajectory.append(
+                    student_id=state["student_id"], course_id=state["course_id"],
+                    event_type=TrajectoryEventType.TEACHING_RESPONSE,
+                    concept_id=state.get("current_concept_id"),
+                    payload={
+                        "intent": state.get("intent"),
+                        "teaching_action": state.get("teaching_action"),
+                        "constraint_level": state.get("constraint_level"),
+                        "conversation_turn_count": len(state.get("conversation_turns") or []),
+                    },
+                    dedup_key=state["trace_id"],
+                )
             context_allowed, _ = await _governance_check(
                 tools, state, "conversation_context"
             )
