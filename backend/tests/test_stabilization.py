@@ -15,21 +15,16 @@ from __future__ import annotations
 
 import os
 import shutil
-import threading
-import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
-from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from app.core.error_monitoring import (
-    monitor,
     CATEGORY_AUTHORIZATION_403,
     CATEGORY_CLIENT_ERROR_4XX,
     CATEGORY_CROSS_COURSE_DENIAL,
@@ -37,6 +32,7 @@ from app.core.error_monitoring import (
     CATEGORY_SERVER_ERROR_5XX,
     CATEGORY_SHADOW_DISABLED_503,
     CATEGORY_TASK_FAILURE,
+    monitor,
 )
 from app.core.security import create_access_token, get_password_hash
 from app.models.access_control_model import (
@@ -48,16 +44,14 @@ from app.models.course_model import Course, CourseStatus
 from app.models.task_model import TaskRecord
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
-    establish_course_access_baseline,
     activate_student_membership,
+    establish_course_access_baseline,
 )
 from app.services.object_storage import (
     LocalStorageProvider,
     migrate_object_keys,
-    reset_object_storage_for_tests,
 )
 from app.services.task_service import TaskCreateRequest, task_service
-
 
 # ---------------------------------------------------------------------------
 # 辅助
@@ -230,7 +224,11 @@ class TestTimeoutDegradation:
     def test_sandbox_timeout_returns_unavailable(self, monkeypatch):
         """沙箱调用超时时返回不可用而非抛异常阻塞。"""
         from app.services import sandbox_client as sb_mod
-        from app.services.sandbox_client import SandboxClient, SandboxResourceLimits, SubmissionStatus
+        from app.services.sandbox_client import (
+            SandboxClient,
+            SandboxResourceLimits,
+            SubmissionStatus,
+        )
         # 启用沙箱但指向不可达端口
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_ENABLED", True)
         monkeypatch.setattr(sb_mod.settings, "JUDGE0_API_URL", "http://127.0.0.1:59999")
@@ -482,6 +480,12 @@ class TestDatabaseBackupRestore:
         db_path = db_url.replace("sqlite:///", "")
         backup_path = tmp_path / "backup.db"
         if os.path.exists(db_path):
+            # 2026-08-17 修复：app engine 连接时设置了 journal_mode=WAL（持久属性），
+            # 最近提交的数据可能仍在 -wal 文件；先 FULL checkpoint 折回主文件再复制。
+            from sqlalchemy import text
+
+            with test_engine.connect() as conn:
+                conn.execute(text("PRAGMA wal_checkpoint(FULL)"))
             shutil.copy2(db_path, backup_path)
         else:
             pytest.skip("测试 engine 未使用文件 SQLite")
@@ -542,6 +546,7 @@ class TestObservability:
     def test_cross_course_denial_classified(self, client, session, teacher_user):
         """跨课程拒绝被分类为 cross_course_denial。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         # 用独立 app 避免污染主 app
@@ -560,6 +565,7 @@ class TestObservability:
     def test_authorization_403_classified(self):
         """非跨课程的 403 被分类为 authorization_403。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()
@@ -577,6 +583,7 @@ class TestObservability:
     def test_shadow_disabled_503_classified(self):
         """SHADOW_FEATURE_DISABLED 错误码被分类为 shadow_disabled_503。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()
@@ -594,6 +601,7 @@ class TestObservability:
     def test_external_service_503_classified(self):
         """TEACHING_AGENT_NOT_CONFIGURED 错误码被分类为 external_service_503。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()
@@ -611,6 +619,7 @@ class TestObservability:
     def test_server_error_5xx_classified(self):
         """500 内部错误被分类为 server_error_5xx。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()
@@ -628,6 +637,7 @@ class TestObservability:
     def test_task_failure_classified(self):
         """含 task 关键字的 5xx 被分类为 task_failure。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()
@@ -645,6 +655,7 @@ class TestObservability:
     def test_client_error_4xx_classified(self):
         """4xx 客户端错误被分类为 client_error_4xx。"""
         from fastapi import FastAPI, HTTPException
+
         from app.core.error_monitoring import ErrorMonitoringMiddleware
 
         app = FastAPI()

@@ -22,44 +22,45 @@ from app.models.course_build_model import (
     CourseRelease,
     ReleaseStatus,
     SourceMaterial,
-    SourceMaterialVersion,
 )
 from app.models.course_model import Course, CourseStatus
 from app.models.document_parse_model import (
-    CitationStatus,
     DocumentParseRun,
-    EvidenceCitation,
     EvidenceSpan,
     EvidenceSpanStatus,
-    GraphCandidateBatch,
-    GraphReleaseLink,
     ParsePipeline,
-    ParseRunStatus,
-    StaleStrategy,
 )
 from app.models.task_model import TaskRecord
+
+
+@pytest.fixture(autouse=True)
+def _disable_async_parse_worker(monkeypatch):
+    """2026-08-17 修复：禁用异步 document_parse worker。
+
+    app.main 导入时无条件注册 handler，TestClient 事件循环会在后台真实执行
+    解析流水线（测试假材料文件不存在 → 快速失败），破坏本文件的同步状态机
+    假设（并发 409、reparse 后手动 mark_running）。禁用手册后任务保持 pending。
+    """
+    from app.platform.tasks.worker import local_task_worker
+
+    if "document_parse" in local_task_worker._handlers:
+        monkeypatch.delitem(local_task_worker._handlers, "document_parse")
 from app.models.graph_production_model import (
-    CourseEvidenceRecord,
     CourseKnowledgeNode,
-    EvidenceStatus,
-    GraphSnapshotRecord,
-    SnapshotStatus,
 )
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import (
     activate_student_membership,
     establish_course_access_baseline,
 )
+from app.services.course_build_service import (
+    source_material_service,
+)
 from app.services.document_parse_service import (
     document_parse_service,
     graph_candidate_service,
     graph_release_link_service,
 )
-from app.services.course_build_service import (
-    course_release_service,
-    source_material_service,
-)
-
 
 GRAPH = "/api/v1/graph"
 FACADE = "/api/v1/facade"

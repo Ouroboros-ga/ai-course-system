@@ -1,7 +1,9 @@
 import importlib
 import json
 
+import pytest
 from sqlmodel import select
+from test_m4b_main_flows import _create_user, _fake_document_result
 
 from app.common.llm_client import LLMResponse
 from app.models.course_model import (
@@ -17,7 +19,6 @@ from app.models.progress_model import LearningJumpHistory, LearningProgress
 from app.models.user_model import ChatMessage, UserRole
 from app.models.video_generation_model import GenerationStatus, VideoGenerationTask
 from app.services.document_service import ScriptNode as ServiceScriptNode
-from test_m4b_main_flows import _create_user, _fake_document_result
 
 
 def _m7_document_result(filename: str):
@@ -69,6 +70,11 @@ def _login_headers(client, username: str) -> dict:
     return {"Authorization": f"Bearer {payload['data']['token']}"}
 
 
+@pytest.mark.skip(
+    reason="2026-08-17：旧同步上传链已下线（da7e8e3b 起 /document/upload 转发到统一课程导入链"
+           "DocumentParseRun 异步处理，不再同步解析并写 CourseScript/ScriptNode），该 e2e 流程"
+           "验证的旧链已废弃；新链路覆盖见 course_import/document_parse 相关测试。"
+)
 def test_m7_complete_demo_flow_uses_only_controlled_external_fakes(
     client,
     session,

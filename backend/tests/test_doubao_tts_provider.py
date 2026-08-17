@@ -15,7 +15,10 @@ from app.models.media_release_model import MediaGenerationJobType, MediaGenerati
 from app.platform.tasks.handlers import media_tts_handler
 from app.platform.tasks.worker import TaskHandlerContext
 from app.services.media_release_service import media_generation_job_service
-from app.services.object_storage import get_object_storage, reset_object_storage_for_tests
+from app.services.object_storage import (
+    get_object_storage,
+    reset_object_storage_for_tests,
+)
 from app.services.task_service import task_service
 from app.services.tts_provider import (
     SubtitleSegment,
@@ -42,6 +45,9 @@ def _reset_tts_state():
 
 
 def _configure_doubao(monkeypatch):
+    # 2026-08-17：conftest 中和了 .env 豆包凭据，此处显式注入测试凭据
+    # （含 WS_URL，否则构造/校验报"凭据未配置"）。
+    monkeypatch.setattr("app.core.config.settings.VOLCENGINE_DOUBAO_TTS_WS_URL", "ws://localhost:1/doubao")
     monkeypatch.setattr("app.core.config.settings.VOLCENGINE_DOUBAO_TTS_API_KEY", "test-api-key")
     monkeypatch.setattr("app.core.config.settings.VOLCENGINE_DOUBAO_TTS_RESOURCE_ID", "seed-tts-2.0")
     monkeypatch.setattr("app.core.config.settings.VOLCENGINE_DOUBAO_TTS_SPEAKER", "test-speaker")

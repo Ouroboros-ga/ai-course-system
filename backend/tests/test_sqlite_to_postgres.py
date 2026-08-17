@@ -15,9 +15,7 @@ from argparse import Namespace
 from pathlib import Path
 
 import pytest
-from alembic import command
 from alembic.config import Config
-from app.scripts import sqlite_to_postgres as transfer
 from sqlalchemy import (
     JSON,
     Boolean,
@@ -36,7 +34,11 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy import Enum as SAEnum
-from sqlmodel import Session, select as sqlmodel_select
+from sqlmodel import Session
+from sqlmodel import select as sqlmodel_select
+
+from alembic import command
+from app.scripts import sqlite_to_postgres as transfer
 
 
 def test_snapshot_records_backup_api_attestation(tmp_path, monkeypatch):
@@ -104,7 +106,9 @@ def test_revision_0052_sqlite_downgrade_upgrade_is_reentrant(tmp_path):
     """PostgreSQL-only legacy FK handling remains a SQLite no-op on round trips."""
     database_path = tmp_path / "0052-roundtrip.sqlite"
     database_url = f"sqlite:///{database_path.as_posix()}"
-    _upgrade_to_head(database_url)
+    # 2026-08-17 修复：不再 upgrade 到 head 再降级（0062 数据归一化不可逆，
+    # downgrade 会抛 RuntimeError）；本测试只验证 0052 在 SQLite 上可重入。
+    _run_alembic(database_url, "upgrade", "0052")
     _run_alembic(database_url, "downgrade", "0046")
     _run_alembic(database_url, "upgrade", "0052")
     _run_alembic(database_url, "upgrade", "0052")

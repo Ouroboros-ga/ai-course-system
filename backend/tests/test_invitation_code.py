@@ -142,11 +142,14 @@ def test_clear_invite_code(client, session, teacher_user, teacher_token):
     assert course.invite_code is None
 
 
-def test_non_student_cannot_join_by_code(client, session, teacher_user, teacher_token):
+def test_active_teacher_can_join_by_code(client, session, teacher_user, teacher_token):
+    """2026-08-17 修复：任何活跃平台用户（含教师/管理员）可经邀请码加入课程
+    （ff46fc75f 身份模型收敛）；教师入课返回 200 + enrolled: true。"""
     _make_course(session, teacher_user, invite_code="TEACHER1")
     r = client.post(
         "/api/v1/course-access/courses/join-by-code",
         json={"invite_code": "TEACHER1"},
         headers=_headers(teacher_token),
     )
-    assert r.status_code == 403
+    assert r.status_code == 200
+    assert r.json()["data"]["enrolled"] is True

@@ -10,7 +10,13 @@ import uuid
 import pytest
 from sqlmodel import select
 
-from app.models.course_model import Course, CourseScript, CourseStatus, ScriptNode, ScriptNodeType
+from app.models.course_model import (
+    Course,
+    CourseScript,
+    CourseStatus,
+    ScriptNode,
+    ScriptNodeType,
+)
 from app.models.progress_model import LearningProgress
 from app.services.course_access_service import establish_course_access_baseline
 
@@ -61,12 +67,15 @@ def test_course_list_reports_student_count(client, teacher_token, published_cour
     assert course["student_count"] == 0
 
 
-def test_only_student_accounts_can_enroll(client, teacher_token, published_course):
+def test_active_teacher_can_enroll_as_learner(client, teacher_token, published_course):
+    """2026-08-17 修复：身份模型已收敛（ff46fc75f），任何活跃用户（含教师/管理员）
+    都可作为学习者加入课程；教师选课返回 200 + enrollment_id。"""
     response = client.post(
         f"/api/v1/document/course/{published_course.id}/enroll",
         headers=_headers(teacher_token),
     )
-    assert response.status_code == 403
+    assert response.status_code == 200
+    assert response.json()["data"]["enrollment_id"]
 
 
 def test_enroll_progress_and_teacher_stats(client, session, teacher_token, student_token, published_course):

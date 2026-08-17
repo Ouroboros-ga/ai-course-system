@@ -18,10 +18,12 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 
-from app.platform.agents.tools.integration import Judge0SandboxPort, UnavailableSandboxPort
+from app.platform.agents.tools.integration import (
+    Judge0SandboxPort,
+    UnavailableSandboxPort,
+)
 
 
 def _make_healthy_client() -> MagicMock:
@@ -127,9 +129,7 @@ class TestGetExecutionResultReadsExperimentRun:
         mock_session = MagicMock()
         mock_exec_result = MagicMock()
         mock_exec_result.first.return_value = mock_run
-        mock_artifacts_result = MagicMock()
-        mock_artifacts_result.all.return_value = []
-        mock_session.exec.side_effect = [mock_exec_result, mock_artifacts_result]
+        mock_session.exec.return_value = mock_exec_result
 
         port = Judge0SandboxPort(client=_make_healthy_client(), session_factory=lambda: mock_session)
 
@@ -142,7 +142,9 @@ class TestGetExecutionResultReadsExperimentRun:
         assert result["outcome"] == "accepted"
         assert result["run_id"] == "run_001"
         assert result["attempt_id"] == "att_001"
-        assert result["language"] == "python3"
+        # 2026-08-17 契约（信息最小化）：端口不返回 language/source/artifacts
+        assert "language" not in result
+        assert "stdout" not in result
         diag = result["diagnosis"]
         assert diag["outcome"] == "accepted"
         assert diag["compile_ok"] is True
@@ -208,7 +210,10 @@ class TestGetExecutionResultReadsExperimentRun:
 
     def test_reads_artifacts_stdout_stderr_compile(self) -> None:
         """读取 ExperimentRunArtifact 中的 stdout/stderr/compile"""
-        from app.models.experiment_model import ExperimentRun, RunOutcome, ExperimentRunArtifact
+        from app.models.experiment_model import (
+            ExperimentRun,
+            RunOutcome,
+        )
 
         mock_run = MagicMock(spec=ExperimentRun)
         mock_run.run_id = "run_002"
@@ -232,19 +237,10 @@ class TestGetExecutionResultReadsExperimentRun:
         mock_run.submitted_at = None
         mock_run.finished_at = None
 
-        mock_stdout = MagicMock(spec=ExperimentRunArtifact)
-        mock_stdout.artifact_type = "stdout"
-        mock_stdout.content = "hello\n"
-        mock_stderr = MagicMock(spec=ExperimentRunArtifact)
-        mock_stderr.artifact_type = "stderr"
-        mock_stderr.content = "Traceback (most recent call last):\n  File ..."
-
         mock_session = MagicMock()
         mock_run_result = MagicMock()
         mock_run_result.first.return_value = mock_run
-        mock_artifacts_result = MagicMock()
-        mock_artifacts_result.all.return_value = [mock_stdout, mock_stderr]
-        mock_session.exec.side_effect = [mock_run_result, mock_artifacts_result]
+        mock_session.exec.return_value = mock_run_result
 
         port = Judge0SandboxPort(
             client=_make_healthy_client(),
@@ -257,13 +253,15 @@ class TestGetExecutionResultReadsExperimentRun:
 
         assert result["available"] is True
         assert result["status"] == "runtime_error"
-        assert result["stdout"] == "hello\n"
-        assert "Traceback" in result["stderr"]
+        # 2026-08-17 契约（信息最小化）：不返回 stdout/stderr/compile 文本
+        assert "stdout" not in result
+        assert "stderr" not in result
         assert result["diagnosis"]["error_code"] == "RUNTIME_ERROR"
 
     def test_truncates_large_stdout(self) -> None:
-        """超大 stdout 被截断到 4000 字符 + [truncated]"""
-        from app.models.experiment_model import ExperimentRun, RunOutcome, ExperimentRunArtifact
+        """2026-08-17 契约：端口不再返回 stdout/stderr/compile 文本（信息最小化，
+        避免把 Judge0 细节泄漏给 LLM 上下文）；大输出也不会被透传。"""
+        from app.models.experiment_model import ExperimentRun, RunOutcome
 
         mock_run = MagicMock(spec=ExperimentRun)
         mock_run.run_id = "run_big"
@@ -287,17 +285,10 @@ class TestGetExecutionResultReadsExperimentRun:
         mock_run.submitted_at = None
         mock_run.finished_at = None
 
-        large_stdout = "x" * 10000
-        mock_stdout = MagicMock(spec=ExperimentRunArtifact)
-        mock_stdout.artifact_type = "stdout"
-        mock_stdout.content = large_stdout
-
         mock_session = MagicMock()
         mock_run_result = MagicMock()
         mock_run_result.first.return_value = mock_run
-        mock_artifacts_result = MagicMock()
-        mock_artifacts_result.all.return_value = [mock_stdout]
-        mock_session.exec.side_effect = [mock_run_result, mock_artifacts_result]
+        mock_session.exec.return_value = mock_run_result
 
         port = Judge0SandboxPort(
             client=_make_healthy_client(),
@@ -307,8 +298,10 @@ class TestGetExecutionResultReadsExperimentRun:
         result = asyncio.run(port.get_execution_result(
             student_id="10", course_id="1", code_submission_id="run_big",
         ))
-        assert len(result["stdout"]) <= 4012
-        assert result["stdout"].endswith("[truncated]")
+        assert "stdout" not in result
+        assert "stderr" not in result
+        assert "compile_output" not in result
+        assert result["available"] is True
 
     def test_db_exception_returns_internal_error(self) -> None:
         """DB 查询异常时返回 internal_error，不抛出"""

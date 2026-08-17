@@ -6,7 +6,7 @@ import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel, Session, select
+from sqlmodel import Session, SQLModel, select
 
 from app.models.agent_log import (
     AgentConversationSession,
@@ -14,8 +14,12 @@ from app.models.agent_log import (
     AgentLogMigrationRecord,
     AgentTraceRecord,
 )
-from app.platform.agents.tools.conversation_context import SessionScopedConversationContextPort
-from app.platform.agents.tools.learning_event import make_session_scoped_learning_event_port
+from app.platform.agents.tools.conversation_context import (
+    SessionScopedConversationContextPort,
+)
+from app.platform.agents.tools.learning_event import (
+    make_session_scoped_learning_event_port,
+)
 
 
 def test_agent_log_port_strips_raw_message_answer_and_trace(tmp_path):
@@ -86,8 +90,9 @@ def test_agent_log_migration_redacts_existing_payload_once_and_rolls_back_marker
         session.commit()
     engine.dispose()
 
-    # 3. 执行 alembic upgrade head（0002 -> 0003），应用脱敏。
-    run_alembic(db_path, "upgrade", "head")
+    # 3. 执行 alembic upgrade 0003，应用脱敏（限定 0003：0062 数据归一化不可逆，
+    #    全链 head 降级会跨 0062 失败；本测试只验证 0003 脱敏账本语义）。
+    run_alembic(db_path, "upgrade", "0003")
 
     # 4. 验证脱敏生效 + 账本记录。
     engine = create_engine(f"sqlite:///{path}")
@@ -121,8 +126,8 @@ def test_agent_log_migration_redacts_existing_payload_once_and_rolls_back_marker
         assert "raw" not in trace.trace_data
     engine.dispose()
 
-    # 6. 再次 upgrade head：幂等——已脱敏行不再被处理，账本记录 (0, 0)。
-    run_alembic(db_path, "upgrade", "head")
+    # 6. 再次 upgrade 0003：幂等——已脱敏行不再被处理，账本记录 (0, 0)。
+    run_alembic(db_path, "upgrade", "0003")
 
     engine = create_engine(f"sqlite:///{path}")
     with Session(engine) as session:

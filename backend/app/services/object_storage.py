@@ -15,13 +15,13 @@ import hashlib
 import json
 import os
 import secrets
+import time
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
-from typing import IO, Optional
+from datetime import UTC, datetime, timedelta
+from typing import IO
 from urllib.parse import quote, urlencode
 
 from app.core.config import settings
-
 
 # ``MEDIA_STORAGE_PATH`` is a deployment setting, not a working-directory
 # relative path.  The local development server is commonly started from the
@@ -76,7 +76,7 @@ class ObjectStorageProvider(ABC):
 
     @abstractmethod
     def sign_read_url(
-        self, object_key: str, *, expires_in: int = 3600, scope: Optional[dict] = None,
+        self, object_key: str, *, expires_in: int = 3600, scope: dict | None = None,
     ) -> str:
         """签发受权限保护的读取 URL
 
@@ -129,7 +129,7 @@ class LocalStorageProvider(ObjectStorageProvider):
 
     backend_name = "local"
 
-    def __init__(self, root_dir: str, *, sign_key: Optional[str] = None) -> None:
+    def __init__(self, root_dir: str, *, sign_key: str | None = None) -> None:
         self.root_dir = os.path.abspath(root_dir)
         os.makedirs(self.root_dir, exist_ok=True)
         self._sign_key = sign_key or settings.OBJECT_STORAGE_SIGN_KEY or secrets.token_hex(32)
@@ -182,7 +182,7 @@ class LocalStorageProvider(ObjectStorageProvider):
             "size_bytes": stat.st_size,
             "mime_type": mime_type_for(object_key),
             "content_sha256": "",  # 不主动哈希，按需调用方维护
-            "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc),
+            "last_modified": datetime.fromtimestamp(stat.st_mtime, tz=UTC),
         }
 
     def delete(self, object_key: str) -> bool:
@@ -201,9 +201,9 @@ class LocalStorageProvider(ObjectStorageProvider):
     # ------------------------------------------------------------------
 
     def sign_read_url(
-        self, object_key: str, *, expires_in: int = 3600, scope: Optional[dict] = None,
+        self, object_key: str, *, expires_in: int = 3600, scope: dict | None = None,
     ) -> str:
-        exp = int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())
+        exp = int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp())
         scope_value = _stringify_scope(scope)
         sig = self._sign(object_key, exp, scope)
         quoted = quote(object_key, safe="/")
@@ -220,7 +220,7 @@ class LocalStorageProvider(ObjectStorageProvider):
         self, object_key: str, *, expires_in: int = 900, max_size_bytes: int = 0,
         upload_path: str = "",
     ) -> dict:
-        exp_ts = int((datetime.now(timezone.utc) + timedelta(seconds=expires_in)).timestamp())
+        exp_ts = int((datetime.now(UTC) + timedelta(seconds=expires_in)).timestamp())
         sig = self._sign(object_key, exp_ts, {"upload": True})
         # 本地实现：把 exp 与 sig 作为 query 参数附加到调用方指定的 upload_path；
         # 若未提供 upload_path，回退到通用 /api/v1/media/assets（仅用于向后兼容）。
@@ -242,16 +242,16 @@ class LocalStorageProvider(ObjectStorageProvider):
         self, object_key: str, exp: int, sig: str,
     ) -> bool:
         """验证上传签名是否有效且未过期"""
-        if exp < datetime.now(timezone.utc).timestamp():
+        if exp < datetime.now(UTC).timestamp():
             return False
         expected = self._sign(object_key, exp, {"upload": True})
         return secrets.compare_digest(expected, sig)
 
     def verify_read_signature(
-        self, object_key: str, exp: int, sig: str, scope: Optional[dict] = None,
+        self, object_key: str, exp: int, sig: str, scope: dict | None = None,
     ) -> bool:
         """校验签名是否有效且未过期"""
-        if exp < datetime.now(timezone.utc).timestamp():
+        if exp < datetime.now(UTC).timestamp():
             return False
         expected = self._sign(object_key, exp, scope)
         # 用 compare_digest 防止时序攻击
@@ -269,7 +269,7 @@ class LocalStorageProvider(ObjectStorageProvider):
                 keys.append(relative_path.replace(os.sep, "/"))
         return sorted(keys)
 
-    def _sign(self, object_key: str, exp: int, scope: Optional[dict]) -> str:
+    def _sign(self, object_key: str, exp: int, scope: dict | None) -> str:
         scope_str = _stringify_scope(scope)
         payload = f"{object_key}|{exp}|{scope_str}|{self._sign_key}"
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
@@ -301,7 +301,7 @@ def mime_type_for(object_key: str) -> str:
     return _MIME_MAP.get(ext.lower(), "application/octet-stream")
 
 
-def _stringify_scope(scope: Optional[dict]) -> str:
+def _stringify_scope(scope: dict | None) -> str:
     if not scope:
         return ""
     # 按 key 排序确保稳定
@@ -313,7 +313,7 @@ def _stringify_scope(scope: Optional[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 
-_object_storage: Optional[ObjectStorageProvider] = None
+_object_storage: ObjectStorageProvider | None = None
 
 
 class ObjectStorageConfigurationError(RuntimeError):
@@ -363,7 +363,7 @@ def build_object_storage_provider(backend: str) -> ObjectStorageProvider:
         )
 
 
-def reset_object_storage_for_tests(provider: Optional[ObjectStorageProvider] = None) -> None:
+def reset_object_storage_for_tests(provider: ObjectStorageProvider | None = None) -> None:
     """测试辅助：重置单例"""
     global _object_storage
     _object_storage = provider
@@ -524,7 +524,16 @@ class ObjectMigrationLedger:
         tmp_path = self.ledger_path + ".tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump({"entries": self._entries, "version": 1}, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, self.ledger_path)
+        # Windows: 目标文件可能被索引/杀毒服务短暂占用导致 os.replace 抛
+        # PermissionError；短退避重试（生产加固，避免 flaky 失败）。
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, self.ledger_path)
+                return
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
 
     # ------------------------------------------------------------------
     # 查询
@@ -593,7 +602,7 @@ class ObjectMigrationLedger:
             }
             self._entries[object_key] = entry
         entry["status"] = "in_progress"
-        entry["started_at"] = datetime.now(timezone.utc).isoformat()
+        entry["started_at"] = datetime.now(UTC).isoformat()
         entry["attempts"] = int(entry.get("attempts", 0)) + 1
         entry["last_error"] = ""
         if source_sha256:
@@ -615,7 +624,7 @@ class ObjectMigrationLedger:
         entry["status"] = "migrated"
         entry["target_sha256"] = target_sha256
         entry["bytes_copied"] = bytes_copied
-        entry["finished_at"] = datetime.now(timezone.utc).isoformat()
+        entry["finished_at"] = datetime.now(UTC).isoformat()
         self._save()
 
     def mark_verified(self, object_key: str) -> None:
@@ -623,7 +632,7 @@ class ObjectMigrationLedger:
         if entry is None:
             return
         entry["status"] = "verified"
-        entry["finished_at"] = datetime.now(timezone.utc).isoformat()
+        entry["finished_at"] = datetime.now(UTC).isoformat()
         self._save()
 
     def mark_failed(self, object_key: str, *, error: str) -> None:
@@ -634,7 +643,7 @@ class ObjectMigrationLedger:
         })
         entry["status"] = "failed"
         entry["last_error"] = error[:500]
-        entry["finished_at"] = datetime.now(timezone.utc).isoformat()
+        entry["finished_at"] = datetime.now(UTC).isoformat()
         self._save()
 
     def reset_in_progress_to_pending(self) -> int:

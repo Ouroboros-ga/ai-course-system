@@ -2,10 +2,15 @@ import json
 import uuid
 
 import pytest
+from fakes import BUSINESS_FAILURE_MESSAGE, FakeDigitalHumanClient, FakePPTClient
 from sqlmodel import Session, select
 
 from app.common.llm_client import LLMResponse
 from app.core.security import create_access_token, get_password_hash
+from app.models.access_control_model import (
+    PlatformPermission,
+    PlatformPermissionAssignment,
+)
 from app.models.course_model import (
     Course,
     CourseScript,
@@ -18,20 +23,23 @@ from app.models.course_model import (
     StudentEnrollment,
 )
 from app.models.mapping_model import KnowledgePageMap
-from app.models.progress_model import LearningJumpHistory, LearningProgress, NodeProgress
-from app.models.user_model import ChatHistory, ChatMessage, User, UserRole
-from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
+from app.models.progress_model import (
+    LearningJumpHistory,
+    LearningProgress,
+)
+from app.models.user_model import ChatMessage, User, UserRole
 from app.models.video_generation_model import GenerationStatus, VideoGenerationTask
+from app.services.course_access_service import establish_course_access_baseline
 from app.services.document_service import (
     DocumentProcessResult,
     ParseResult,
     RAGProcessResult,
-    ScriptNode as ServiceScriptNode,
     ScriptResult,
     StructureResult,
 )
-from app.services.course_access_service import establish_course_access_baseline
-from fakes import BUSINESS_FAILURE_MESSAGE, FakeDigitalHumanClient, FakePPTClient
+from app.services.document_service import (
+    ScriptNode as ServiceScriptNode,
+)
 
 
 def _unique(prefix: str) -> str:
@@ -279,6 +287,12 @@ def test_m4b_teacher_upload_document_fake_success_and_failure(client, session, m
     assert session.exec(select(CourseScript).where(CourseScript.course_id == course_id)).first() is None
 
 
+@pytest.mark.skip(
+    reason="2026-08-17：旧直接发布入口已下线（3d191d7db 起返回 COURSE_RELEASE_REQUIRED=410），"
+           "发布/选课生命周期由课程建设发布流程接管（course_build_editor.publish，需 "
+           "CourseOutlineVersion + TeachingScriptVersion + 质量门禁）。该用例验证的旧同步链"
+           "已废弃，新链路覆盖见 course_import/document_parse 相关测试。"
+)
 def test_m4b_teacher_script_mapping_publish_enrollment_and_course_lifecycle(client, session):
     teacher = _create_user(session, UserRole.TEACHER, "m4b_flow_teacher")
     student = _create_user(session, UserRole.STUDENT, "m4b_flow_student")
@@ -573,8 +587,8 @@ def test_m4b_tts_video_and_ppt_fake_external_paths(client, session, monkeypatch,
     session.expire_all()
     assert session.get(ScriptNode, nodes[0].id).audio_url
 
-    import app.services.video_generation_service as video_service_module
     import app.api.v1.endpoints.video_generation as video_endpoint
+    import app.services.video_generation_service as video_service_module
     monkeypatch.setattr(video_service_module, "AUDIO_ROOT", test_artifact_dir / "video_audio")
     monkeypatch.setattr(video_service_module, "GENERATED_ROOT", test_artifact_dir / "video_generated")
 
@@ -644,7 +658,7 @@ def test_m4b_tts_video_and_ppt_fake_external_paths(client, session, monkeypatch,
     assert BUSINESS_FAILURE_MESSAGE in task.error_message
 
     import app.services.ppt_generation_service as ppt_service_module
-    import app.common.slide_converter as slide_converter
+    from app.common import slide_converter
     ppt_dir = test_artifact_dir / "pptx"
     ppt_dir.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(ppt_service_module.ppt_generation_service, "ppt_storage_path", str(ppt_dir))

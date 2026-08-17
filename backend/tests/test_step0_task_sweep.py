@@ -9,18 +9,17 @@ from __future__ import annotations
 
 from datetime import datetime
 
-import pytest
-from sqlmodel import Session as _Session, select
+from sqlmodel import Session as _Session
+from sqlmodel import select
 
-from app.core.security import create_access_token, get_password_hash
+from app.core.security import get_password_hash
 from app.models.course_model import Course, CourseStatus
 from app.models.database import engine
-from app.models.document_parse_model import DocumentParseRun, ParseRunStatus
+from app.models.document_parse_model import DocumentParseRun
 from app.models.task_model import TaskRecord
 from app.models.user_model import User, UserRole
 from app.services.course_access_service import establish_course_access_baseline
 from app.services.task_service import TaskCreateRequest, task_service
-
 
 # ---------------------------------------------------------------------------
 # 辅助
@@ -71,7 +70,7 @@ def test_sweep_marks_running_tasks_interrupted(session):
 
     # 创建一个任务并手动置为 running（模拟上一进程遗留状态）
     view = task_service.create_task(session, TaskCreateRequest(
-        task_type="document_parse",
+        task_type="media.tts",
         owner_user_id=user.id,
         course_id=course.id,
         input_summary="遗留的解析任务",
@@ -103,7 +102,7 @@ def test_interrupted_task_can_retry_to_pending(session):
     course = _course(session, user.id)
 
     view = task_service.create_task(session, TaskCreateRequest(
-        task_type="document_parse",
+        task_type="media.tts",
         owner_user_id=user.id,
         course_id=course.id,
         input_payload={"course_id": course.id},
@@ -122,8 +121,9 @@ def test_interrupted_task_can_retry_to_pending(session):
 # ---------------------------------------------------------------------------
 
 
-def test_sweep_syncs_document_parse_run_to_interrupted(session):
-    """扫尾时，与 task_id 关联的 DocumentParseRun.status 也同步标为 interrupted。"""
+def test_sweep_skips_document_parse_tasks(session):
+    """2026-08-17 修复：sweep 不再扫 document_parse（重启恢复由 owner queue
+    recover 重新排队处理）；任务保持 running，DocumentParseRun 不被标 interrupted。"""
     from app.services.document_parse_service import document_parse_service
 
     user = _user(session, "step0_run_user")
@@ -152,18 +152,24 @@ def test_sweep_syncs_document_parse_run_to_interrupted(session):
     session.commit()
     session.expunge_all()
 
-    task_service.sweep_stale_running(_session_factory(), grace_seconds=0)
+    report = task_service.sweep_stale_running(_session_factory(), grace_seconds=0)
+    assert view.task_id not in report["task_ids"]
 
-    # DocumentParseRun 应被同步标记为 interrupted
+    # 任务保持 running（等待 owner queue recover 恢复重排队）
     sf = _session_factory()
+    with sf as s:
+        task_row = s.exec(
+            select(TaskRecord).where(TaskRecord.task_id == view.task_id)
+        ).first()
+        assert task_row is not None
+        assert task_row.status == "running"
+    # DocumentParseRun 保持 pending（未被标 interrupted）
     with sf as s:
         refreshed = s.exec(
             select(DocumentParseRun).where(DocumentParseRun.run_id == run_id)
         ).first()
         assert refreshed is not None
-        assert refreshed.status == "interrupted"
-        assert refreshed.error_code == "INTERRUPTED"
-        assert refreshed.finished_at is not None
+        assert refreshed.status == "pending"
 
 
 # ---------------------------------------------------------------------------

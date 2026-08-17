@@ -12,14 +12,10 @@
 """
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
-from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlmodel import Session, select
+from sqlmodel import select
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.access_control_model import (
@@ -42,10 +38,8 @@ from app.services.course_access_service import (
     activate_student_membership,
     establish_course_access_baseline,
     resolve_course_access,
-    require_course_permission,
 )
 from app.services.task_service import TaskCreateRequest, task_service
-
 
 # ---------------------------------------------------------------------------
 # 辅助
@@ -277,7 +271,7 @@ class TestAcceptancePermissionMatrix:
         # 不调用 _enroll_student，故意为非成员
 
         r = client.get(
-            f"/api/v1/facade/courses?view=learning",
+            "/api/v1/facade/courses?view=learning",
             headers=_auth(_token(other_student)),
         )
         assert r.status_code == 200
@@ -386,7 +380,16 @@ class TestAcceptanceCrossCourseIsolation:
         _enable_capabilities(session, course_a.id)
         _enable_capabilities(session, course_b.id)
 
-        # 在课程 A 禁用 web_research 工具
+        # web_research 是高风险工具，默认禁用（catalog default_enabled=False）；
+        # 先显式启用课程 B，作为"受影响"基线
+        r_enable = client.put(
+            f"/api/v1/agent-governance/course/{course_b.id}/tools",
+            json={"updates": [{"tool_name": "web_research", "enabled": True}]},
+            headers=_auth(_token(teacher_user)),
+        )
+        assert r_enable.status_code == 200
+
+        # 在课程 A 禁用 web_research
         r = client.put(
             f"/api/v1/agent-governance/course/{course_a.id}/tools",
             json={"updates": [{"tool_name": "web_research", "enabled": False}]},
@@ -394,7 +397,7 @@ class TestAcceptanceCrossCourseIsolation:
         )
         assert r.status_code == 200
 
-        # 课程 B 的 web_research 仍应启用
+        # 课程 B 的 web_research 仍应启用（跨课程隔离）
         r_b = client.get(
             f"/api/v1/agent-governance/course/{course_b.id}/tools",
             headers=_auth(_token(teacher_user)),
@@ -783,7 +786,9 @@ class TestAcceptanceExternalDependencyDegradation:
         """
         # 注入会抛异常的 TeachingAgentRuntime registry，模拟 Agent 完全失败
         try:
-            from app.platform.agents.runtime_registry import TeachingAgentRuntimeRegistry
+            from app.platform.agents.runtime_registry import (
+                TeachingAgentRuntimeRegistry,
+            )
         except ImportError:
             # 模块路径不同时，直接 mock app.state 上的属性
             TeachingAgentRuntimeRegistry = None
@@ -872,19 +877,19 @@ class TestAcceptanceApiContractsE2E:
         assert r.status_code == 401  # 未认证，但路由存在
 
     def test_experiments_routes_registered(self, client):
-        """/api/v1/experiments/* 路由已注册。"""
-        r = client.get("/api/v1/experiments")
-        assert r.status_code != 404
+        """/api/v1/experiments/* 路由已注册（无根路径，用真实子路径验证）。"""
+        r = client.get("/api/v1/experiments/course/1/definitions")
+        assert r.status_code in (401, 403)  # 路由存在，未认证被拒
 
     def test_resources_routes_registered(self, client):
-        """/api/v1/resources/* 路由已注册。"""
-        r = client.get("/api/v1/resources")
-        assert r.status_code != 404
+        """/api/v1/resources/* 路由已注册（无根路径，用真实子路径验证）。"""
+        r = client.get("/api/v1/resources/files")
+        assert r.status_code in (401, 403)  # 路由存在，未认证被拒
 
     def test_labs_routes_registered(self, client):
-        """/api/v1/labs/* 路由已注册。"""
-        r = client.get("/api/v1/labs")
-        assert r.status_code != 404
+        """/api/v1/lab/* 路由已注册（挂载前缀为单数 lab）。"""
+        r = client.get("/api/v1/lab/catalog")
+        assert r.status_code in (200, 401, 403)  # 路由存在（catalog 无认证守卫则 200）
 
     def test_avatar_routes_registered(self, client):
         """/api/v1/avatar-profiles/* 路由已注册。"""
@@ -903,7 +908,7 @@ class TestAcceptanceApiContractsE2E:
         course = _course(session, teacher_user.id, title="Envelope Course")
         _enable_capabilities(session, course.id)
         r = client.get(
-            f"/api/v1/facade/courses?view=building",
+            "/api/v1/facade/courses?view=building",
             headers=_auth(_token(teacher_user)),
         )
         assert r.status_code == 200

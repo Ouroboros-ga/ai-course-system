@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import SQLModel, Session, create_engine
+from sqlmodel import Session, SQLModel, create_engine
 
 # P1-1 修复：兼容从仓库根目录或 backend/ 目录运行测试
 # - 仓库根目录：pytest.ini 已设 pythonpath=backend，app.* 可导入；
@@ -40,18 +40,26 @@ os.environ.setdefault("XFYUN_PPT_APP_ID", "")
 os.environ.setdefault("XFYUN_PPT_API_SECRET", "")
 os.environ.setdefault("VOLCENGINE_TTS_ACCESS_TOKEN", "")
 os.environ.setdefault("VOLCENGINE_VOICE_CLONE_API_KEY", "")
+# 组 A 修复（2026-08-17）：中和豆包 TTS 真实凭据，防止 provider_manager.restore_from_db
+# 在 TestClient 启动时把全局 settings 从演示模式(fake)改写为正式豆包模式(doubao)，
+# 导致测试会话内所有媒体测试失效（202 vs 200、422 Provider 未注册、cache 缺失）。
+os.environ.setdefault("VOLCENGINE_DOUBAO_TTS_WS_URL", "")
+os.environ.setdefault("VOLCENGINE_DOUBAO_TTS_API_KEY", "")
+os.environ.setdefault("VOLCENGINE_DOUBAO_TTS_RESOURCE_ID", "")
+os.environ.setdefault("VOLCENGINE_DOUBAO_TTS_SPEAKER", "")
 # P0-1: 测试用内部服务令牌（供 attach-evidence 等服务间调用测试）
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "test-internal-service-token")
 
-from app.core.security import create_access_token, get_password_hash  # noqa: E402
-from app.models.user_model import User, UserRole  # noqa: E402
-from fakes import (  # noqa: E402
+from fakes import (
     FakeDigitalHumanClient,
     FakeLLMClient,
     FakePPTClient,
     FakeTTSClient,
     FakeVoiceCloneClient,
 )
+
+from app.core.security import create_access_token, get_password_hash
+from app.models.user_model import User, UserRole
 
 
 @pytest.fixture(scope="session")
@@ -351,14 +359,14 @@ def temp_media_dir(test_artifact_dir):
 # P1-10 Product 1 new fake fixtures
 # ---------------------------------------------------------------------------
 
-from fakes import (  # noqa: E402
+from fakes import (
+    FakeCitationValidator,
+    FakeLearningEventStore,
+    FakeMasteryProvider,
+    FakeMemoryStore,
     FakeParserProvider,
     FakeRetrieverProvider,
-    FakeMasteryProvider,
     FakeSafetyProvider,
-    FakeMemoryStore,
-    FakeLearningEventStore,
-    FakeCitationValidator,
 )
 
 

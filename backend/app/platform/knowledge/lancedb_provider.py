@@ -1,17 +1,17 @@
 """Immutable, course-isolated LanceDB indexes for knowledge bundles."""
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import math
 import shutil
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
 
 from app.core.config import settings
 from app.platform.knowledge.embedding import EmbeddingProvider
-
 
 TABLE_TEXT_UNITS = "text_unit_embeddings"
 TABLE_ENTITIES = "entity_embeddings"
@@ -156,6 +156,10 @@ class LanceDbCourseVectorProvider:
         final_database_dir = final_dir / "lancedb"
         if final_database_dir.exists():
             shutil.rmtree(final_database_dir)
+        # Windows: LanceDB 连接持有底层文件句柄，目录 rename 前必须显式释放
+        # （lancedb 0.34 无 close()，依赖引用计数 + gc 关闭 pyarrow/rust 句柄）。
+        del database
+        gc.collect()
         staging_dir.replace(final_dir / "_ready")
         ready_dir = final_dir / "_ready"
         (ready_dir / "lancedb").replace(final_database_dir)
