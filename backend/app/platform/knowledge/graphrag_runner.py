@@ -566,6 +566,10 @@ class GraphRagRunner:
             return None
         if not outputs["documents"] or not outputs["text_units"]:
             return None
+        # 空表产物（提取阶段整体失败/进程被 kill）不得被误判为完整复用，
+        # 否则会进入"缓存命中 → GRAPH_OUTPUT_INVALID → 反复失败"的死循环。
+        if not outputs["entities"] or not outputs["relationships"]:
+            return None
         expected_documents = {document.source_key for document in manifest.documents}
         actual_documents = {str(row.get("id") or "") for row in outputs["documents"]}
         if actual_documents != expected_documents:

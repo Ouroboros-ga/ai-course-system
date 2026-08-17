@@ -97,7 +97,7 @@ class KnowledgeBundleService:
             chunk_ids=scoped_chunk_ids,
         )
         config_hash = self._effective_config_hash()
-        existing = session.exec(select(GraphRagRun).where(
+        runs = session.exec(select(GraphRagRun).where(
             GraphRagRun.course_id == course_id,
             GraphRagRun.input_content_hash == input_hash,
             GraphRagRun.effective_config_hash == config_hash,
@@ -111,7 +111,30 @@ class KnowledgeBundleService:
                 GraphRagRunStatus.RECONCILING,
                 GraphRagRunStatus.AWAITING_REVIEW,
             ]),
-        ).order_by(GraphRagRun.created_at.desc())).first()
+        ).order_by(GraphRagRun.created_at.desc())).all()
+        # 去重键必须包含 relation_profile：仅改关系策略时不应静默复用旧策略产物。
+        existing = next((
+            r for r in runs
+            if list(r.relation_profile or []) == list(relation_profile or [])
+        ), None)
+        # 相同输入+配置但 FAILED 且 GraphRAG 产物完整的 run 直接复用：
+        # 重试时 _load_complete_outputs 命中缓存，零 LLM 调用只重跑 reconcile，
+        # 避免 regenerate 新建 run 完整重跑 build_index 重复烧钱。
+        if existing is None:
+            failed = session.exec(select(GraphRagRun).where(
+                GraphRagRun.course_id == course_id,
+                GraphRagRun.input_content_hash == input_hash,
+                GraphRagRun.effective_config_hash == config_hash,
+                GraphRagRun.regeneration_reason == reason,
+                GraphRagRun.regeneration_instructions == instructions.strip(),
+                GraphRagRun.status == GraphRagRunStatus.FAILED,
+            ).order_by(GraphRagRun.created_at.desc())).first()
+            if (
+                failed is not None
+                and list(failed.relation_profile or []) == list(relation_profile or [])
+                and self._has_complete_graph_artifacts(failed)
+            ):
+                existing = failed
         if existing is not None:
             task = task_service.get_task(session, existing.task_id) if existing.task_id else None
             return existing, task.to_dict() if task else {}
@@ -440,6 +463,27 @@ class KnowledgeBundleService:
             if node.get("id")
         ]
         return len(node_ids) != len(set(node_ids))
+
+    @staticmethod
+    def _has_complete_graph_artifacts(run: GraphRagRun) -> bool:
+        """True when the run's GraphRAG parquet outputs exist and are non-empty."""
+        root = Path(run.artifact_root_uri) if run.artifact_root_uri else None
+        if root is None or not root.is_dir():
+            return False
+        output_dir = root / "output"
+        try:
+            for name in GraphRagRunner.required_outputs:
+                path = output_dir / f"{name}.parquet"
+                if not path.is_file() or path.stat().st_size <= 0:
+                    return False
+            import pandas as pd
+            for name in ("entities", "relationships"):
+                frame = pd.read_parquet(output_dir / f"{name}.parquet")
+                if frame.empty:
+                    return False
+            return True
+        except Exception:
+            return False
 
     # ------------------------------------------------------------------
     # Whole-graph approval and indexing
