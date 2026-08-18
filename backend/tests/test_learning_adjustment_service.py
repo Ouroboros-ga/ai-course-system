@@ -310,6 +310,80 @@ def test_requested_jump_falls_back_to_title_keyword_without_outline_mapping(
     assert result.review_target.page == 3
 
 
+def test_requested_jump_skips_candidates_without_playable_item(session: Session) -> None:
+    """标题回退命中多个同主题 outline 时，跳过无媒体项、取第一个有 ready item 的。
+
+    课程5 场景：图谱节点"传递函数"命中"传递函数与图形表示"（无媒体 item）
+    与"传递函数的定义与性质"（有媒体 item），目标应取后者（2026-08-18）。
+    """
+    from app.models.graph_production_model import CourseKnowledgeNode
+
+    course, _, ids = _setup_frozen_course(session)
+    # 无媒体 item 的同主题 outline（标题也共享"传递函数"关键词）
+    outline_no_item = CourseOutlineNode(
+        outline_node_id=f"on_noitem_{uuid.uuid4().hex[:8]}",
+        outline_version_id=ids["outline_version_id"],
+        course_id=course.id,
+        title="传递函数与图形表示",
+    )
+    session.add(outline_no_item)
+    # 有媒体 item 的同主题 outline + 对应 item/cue
+    outline_with_item = CourseOutlineNode(
+        outline_node_id=f"on_withitem_{uuid.uuid4().hex[:8]}",
+        outline_version_id=ids["outline_version_id"],
+        course_id=course.id,
+        title="传递函数的定义与性质",
+    )
+    session.add(outline_with_item)
+    session.add(CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_transfer_multi",
+        title="传递函数",
+    ))
+    media = session.exec(select(MediaRelease).where(
+        MediaRelease.release_id == ids["media_release_id"]
+    )).one()
+    session.add(MediaReleaseItem(
+        item_id=f"mrit_multi_{uuid.uuid4().hex[:8]}",
+        release_id=media.release_id,
+        course_id=course.id,
+        node_id=1004,
+        outline_node_id=outline_with_item.outline_node_id,
+        duration_ms=120_000,
+        audio_object_key="course/transfer-multi.mp3",
+        status="ready",
+    ))
+    session.add(MediaReleaseCue(
+        release_id=media.release_id,
+        course_id=course.id,
+        node_id=1004,
+        cue_index=0,
+        start_time=9.0,
+        end_time=25.0,
+        ppt_page=2,
+        audio_object_key="course/transfer-multi.mp3",
+        cue_metadata={"time_basis": "item_local_v1", "outline_node_id": outline_with_item.outline_node_id},
+    ))
+    session.commit()
+
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action="requested_jump",
+        current_concept_id="concept-current",
+        prerequisites=[],
+        weak_concepts=[],
+        requested_concept_id="kn_transfer_multi",
+    )
+
+    assert result.reason_code is None
+    assert result.review_target is not None
+    assert result.review_target.outline_node_id == outline_with_item.outline_node_id
+    assert result.review_target.local_time_ms == 9_000
+    assert result.review_target.page == 2
+
+
 def test_stale_question_observation_never_falls_forward_to_newest_media(session: Session) -> None:
     course, _, ids = _setup_frozen_course(session)
     stale = _observation(ids).model_copy(update={"media_release_item_id": "mrit_not_current"})
