@@ -2,6 +2,9 @@
 import { nextTick, ref, watch } from 'vue'
 import { Lightbulb, TriangleAlert } from 'lucide-vue-next'
 import AgentAssistantBubble from './AgentAssistantBubble.vue'
+import { useSettingsStore } from '@/stores/userSettings'
+
+const settings = useSettingsStore()
 
 const props = defineProps({
     ws: { type: Object, required: true },
@@ -28,13 +31,6 @@ watch(
         listRef.value?.scrollTo({ top: listRef.value.scrollHeight })
     }
 )
-
-function hasMessageForActiveAdjustment() {
-    const adjustmentId = props.activeAdjustment?.proposal?.adjustment_id
-    return Boolean(adjustmentId && props.ws.messages.value.some(message => (
-        String(message.learningAdjustment?.adjustment_id || '') === String(adjustmentId)
-    )))
-}
 </script>
 
 <template>
@@ -79,6 +75,9 @@ function hasMessageForActiveAdjustment() {
         </p>
 
         <div v-if="ws.isAsking.value" class="sfx-agent-thinking sfx-t-caption" role="status">
+            <span class="sfx-agent-avatar sfx-agent-avatar-ai sfx-agent-thinking-avatar" aria-hidden="true">
+                <img :src="settings.currentAvatarPath" alt="课程智能体头像">
+            </span>
             <span class="sfx-agent-thinking-dots">
                 <span></span><span></span><span></span>
             </span>
@@ -233,18 +232,42 @@ function hasMessageForActiveAdjustment() {
     color: var(--amber-700);
 }
 
-/* 思考中动画 */
+/* 思考中动画：头像（脉冲）+ 思考点 + 文案（design.md §7.4） */
 .sfx-agent-thinking {
     display: inline-flex;
     align-items: center;
     gap: var(--space-3);
     color: var(--text-muted);
-    padding: var(--space-3) var(--space-4);
+    padding: var(--space-2) var(--space-3);
     background: var(--surface-panel);
     border: 1px dashed var(--border-default);
     border-radius: var(--radius-md);
     align-self: flex-start;
-    margin-left: 48px;
+}
+
+.sfx-agent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-full);
+}
+
+.sfx-agent-thinking-avatar {
+    animation: sfx-thinking-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes sfx-thinking-pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+
+    50% {
+        opacity: 0.75;
+        transform: scale(0.92);
+    }
 }
 
 .sfx-agent-thinking-dots {

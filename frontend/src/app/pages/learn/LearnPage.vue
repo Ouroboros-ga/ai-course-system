@@ -481,6 +481,17 @@ const trackCollapsed = computed(() => {
   return trackManualOverride.value ?? ![LEARN_STATES.LEARN].includes(learnState.value)
 })
 function handleTrackToggle() {
+  // 提问界面打开时目录被强制收起（isAgentOpen → trackCollapsed 恒为 true），
+  // 展开键此时不可用。按需求：提问界面中点目录展开键 = 关闭提问界面并展开目录，
+  // 回到正式课程界面（C1 焦点回工具坞触发区由 exitBranch 处理）。
+  if (isAgentOpen.value) {
+    exitBranch()
+    trackManualOverride.value = false
+    try { localStorage.setItem(TRACK_STORAGE_KEY, '0') } catch {
+      // A blocked storage quota should not disable the learning rail.
+    }
+    return
+  }
   const next = !trackCollapsed.value
   trackManualOverride.value = next
   try { localStorage.setItem(TRACK_STORAGE_KEY, next ? '1' : '0') } catch {

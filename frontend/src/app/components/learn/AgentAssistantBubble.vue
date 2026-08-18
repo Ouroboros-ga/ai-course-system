@@ -1,6 +1,9 @@
 <script setup>
 import { BookMarked, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { useSettingsStore } from '@/stores/userSettings'
+
+const settings = useSettingsStore()
 
 const props = defineProps({
     message: { type: Object, required: true },
@@ -43,7 +46,7 @@ function retry() {
 <template>
     <div class="sfx-agent-msg-row is-assistant">
         <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
-            <span class="sfx-agent-avatar-initials">AI</span>
+            <img :src="settings.currentAvatarPath" alt="课程智能体头像">
         </span>
         <div class="sfx-agent-msg-bubble-wrap is-assistant">
             <div class="sfx-agent-answer" :class="{ 'is-error': message.error }">
@@ -143,6 +146,13 @@ function retry() {
     background: linear-gradient(135deg, var(--ink-700), var(--ink-500));
     color: var(--text-inverse);
     box-shadow: 0 1px 2px rgb(20 33 61 / 18%);
+}
+
+.sfx-agent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-full);
 }
 
 .sfx-agent-avatar-initials {
