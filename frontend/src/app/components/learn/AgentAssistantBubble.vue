@@ -12,6 +12,7 @@ const emit = defineEmits([
     'dismiss-adjustment',
     'return-adjustment',
     'retry-opening-review',
+    'abandon-adjustment',
     'retry',
 ])
 
@@ -104,8 +105,12 @@ function retry() {
                             <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
                         </p>
                         <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
-                        <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy" :disabled="adjustmentBusy"
-                            @click="$emit('retry-opening-review')">重试打开回顾</SfxButton>
+                        <div class="sfx-agent-adjustment-actions">
+                            <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy"
+                                :disabled="adjustmentBusy" @click="$emit('retry-opening-review')">重试打开回顾</SfxButton>
+                            <SfxButton variant="tertiary" size="sm" :disabled="adjustmentBusy"
+                                @click="$emit('abandon-adjustment')">放弃回顾</SfxButton>
+                        </div>
                     </template>
                 </section>
 

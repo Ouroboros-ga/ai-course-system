@@ -186,21 +186,50 @@ function clearActiveLearningAdjustment() {
   persistActiveLearningAdjustment()
 }
 
-function restoreActiveLearningAdjustment() {
+async function restoreActiveLearningAdjustment() {
+  let stored = null
   try {
-    const stored = JSON.parse(sessionStorage.getItem(LEARNING_ADJUSTMENT_STORAGE_KEY) || 'null')
-    if (!isStoredAdjustment(stored)) return
-    // Reloading the page cannot prove the media element remains at its old
-    // target. Require a fresh browser-confirmed seek before showing review.
-    activeLearningAdjustment.value = {
-      proposal: stored.proposal,
-      previousRate: Number(stored.previousRate) || 1,
-      wasPlaying: Boolean(stored.wasPlaying),
-      navigationStatus: 'accepted',
-    }
+    stored = JSON.parse(sessionStorage.getItem(LEARNING_ADJUSTMENT_STORAGE_KEY) || 'null')
   } catch {
     // Corrupt or unavailable session storage must not affect the player.
+    return
   }
+  if (!isStoredAdjustment(stored)) return
+  // 服务器校验（2026-08-18）：修复前遗留的 applied 提案已不在后端（如教学动作收紧后
+  // 不再产出回顾提案），若直接恢复会把页面卡死在"已确认回顾，尚未打开内容"。
+  // 仅在后端明确无此 applied 记录时清除；网络失败保守保留原行为，不误删合法状态。
+  try {
+    const response = await listRecentLearningAdjustments(courseId, { limit: 20 })
+    const payload = response?.data ?? response
+    const items = Array.isArray(payload?.items) ? payload.items : []
+    const stillApplied = items.some(item => (
+      String(item?.adjustment_id || '') === String(stored.proposal.adjustment_id)
+      && item?.status === 'applied'
+    ))
+    if (!stillApplied) {
+      clearActiveLearningAdjustment()
+      return
+    }
+  } catch {
+    // Verification failure: keep the restored state (current behavior).
+  }
+  // Reloading the page cannot prove the media element remains at its old
+  // target. Require a fresh browser-confirmed seek before showing review.
+  activeLearningAdjustment.value = {
+    proposal: stored.proposal,
+    previousRate: Number(stored.previousRate) || 1,
+    wasPlaying: Boolean(stored.wasPlaying),
+    navigationStatus: 'accepted',
+  }
+}
+
+// 放弃回顾：清除激活态与 sessionStorage，解除"已确认回顾，尚未打开内容"卡死状态。
+// 服务端 applied 记录保留为学习者私有历史，仅客户端不再展示/追踪（2026-08-18）。
+function abandonActiveLearningAdjustment() {
+  if (learningAdjustmentBusy.value) return
+  clearActiveLearningAdjustment()
+  learningAdjustmentNotice.value = ''
+  ws.isPlaying.value = false
 }
 
 function updateMessageLearningAdjustment(proposal) {
@@ -637,7 +666,7 @@ async function completeNode() {
 
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
-  restoreActiveLearningAdjustment()
+  await restoreActiveLearningAdjustment()
 })
 
 watch(
@@ -748,6 +777,7 @@ watch(
                 @dismiss-adjustment="dismissLearningAdjustmentProposal"
                 @retry-opening-review="retryOpeningLearningAdjustment"
                 @return-adjustment="returnToLearningAnchor"
+                @abandon-adjustment="abandonActiveLearningAdjustment"
               />
             </template>
             <template v-if="learnState === LEARN_STATES.UNDERSTAND" #footer>

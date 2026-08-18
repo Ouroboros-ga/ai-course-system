@@ -36,6 +36,7 @@ const emit = defineEmits([
     'dismiss-adjustment',
     'retry-opening-review',
     'return-adjustment',
+    'abandon-adjustment',
 ])
 
 const rootRef = ref(null)
@@ -77,7 +78,8 @@ onBeforeUnmount(() => {
             :adjustment-notice="adjustmentNotice" @accept-adjustment="(adj) => emit('accept-adjustment', adj)"
             @dismiss-adjustment="(adj) => emit('dismiss-adjustment', adj)"
             @return-adjustment="() => emit('return-adjustment')"
-            @retry-opening-review="() => emit('retry-opening-review')" @retry="retry" />
+            @retry-opening-review="() => emit('retry-opening-review')"
+            @abandon-adjustment="() => emit('abandon-adjustment')" @retry="retry" />
 
         <!-- 底部：快捷操作 + 输入框 -->
         <AgentPanelFooter ref="footerRef" :ws="ws" :hide-footer-input="hideFooterInput" />

@@ -121,5 +121,32 @@ test('learning adjustment recovery never repeats apply after an ambiguous respon
     assert.match(page, /recoverAcceptedLearningAdjustment/)
     assert.match(page, /restoreActiveLearningAdjustment\(\)/)
     assert.match(messageList, /hasMessageForActiveAdjustment/)
-    assert.match(messageList, /v-if="activeAdjustment && !hasMessageForActiveAdjustment\(\)"/)
+    // 2026-08-18 对账：旧行为"无来源消息也常驻显示已确认回顾框"已被有意移除
+    // （AgentMessageList 注释：仅显示错误/提示，不再把已确认回顾作为无来源的持久化框常驻）。
+    // 全局提示区现在只承载一次性 notice 文本，不渲染持久回顾框。
+    assert.doesNotMatch(messageList, /v-if="activeAdjustment && !hasMessageForActiveAdjustment\(\)"/)
+    assert.match(messageList, /v-if="adjustmentNotice"/)
+})
+
+test('stale accepted adjustment is validated against the server on restore and can be abandoned', () => {
+    const page = read('frontend/src/app/pages/learn/LearnPage.vue')
+    const bubble = read('frontend/src/app/components/learn/AgentAssistantBubble.vue')
+    const panel = read('frontend/src/app/components/learn/CourseAgentPanel.vue')
+    const messageList = read('frontend/src/app/components/learn/AgentMessageList.vue')
+
+    // 恢复时先向后端校验该 applied 提案仍存在；不存在则清除残留状态（2026-08-18）
+    assert.match(page, /async function restoreActiveLearningAdjustment\(\)/)
+    assert.match(page, /await listRecentLearningAdjustments\(courseId, \{ limit: 20 \}\)/)
+    assert.match(page, /item\?\.status === 'applied'/)
+    assert.match(page, /stillApplied/)
+    assert.match(page, /clearActiveLearningAdjustment\(\)/)
+
+    // 激活态卡死时提供"放弃回顾"出口，事件链路 Bubble → MessageList → Panel → LearnPage
+    assert.match(page, /function abandonActiveLearningAdjustment\(\)/)
+    assert.match(page, /clearActiveLearningAdjustment\(\)\n\s*learningAdjustmentNotice\.value = ''/)
+    assert.match(page, /@abandon-adjustment="abandonActiveLearningAdjustment"/)
+    assert.match(bubble, /emit\(['"]abandon-adjustment['"]/)
+    assert.match(bubble, />放弃回顾<\/SfxButton>/)
+    assert.match(panel, /emit\(['"]abandon-adjustment['"]\)/)
+    assert.match(messageList, /@abandon-adjustment="\(\) => emit\('abandon-adjustment'\)"/)
 })

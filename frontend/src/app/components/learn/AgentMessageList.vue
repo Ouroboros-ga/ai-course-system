@@ -14,6 +14,7 @@ const emit = defineEmits([
     'dismiss-adjustment',
     'return-adjustment',
     'retry-opening-review',
+    'abandon-adjustment',
     'retry',
 ])
 
@@ -67,7 +68,9 @@ function hasMessageForActiveAdjustment() {
                 :adjustment-busy="adjustmentBusy" @accept-adjustment="(adj) => emit('accept-adjustment', adj)"
                 @dismiss-adjustment="(adj) => emit('dismiss-adjustment', adj)"
                 @return-adjustment="() => emit('return-adjustment')"
-                @retry-opening-review="() => emit('retry-opening-review')" @retry="(msg) => emit('retry', msg)" />
+                @retry-opening-review="() => emit('retry-opening-review')"
+                @abandon-adjustment="() => emit('abandon-adjustment')"
+                @retry="(msg) => emit('retry', msg)" />
         </div>
 
         <!-- 全局调整通知：仅显示错误/提示，不再把"已确认回顾"作为无来源的持久化框常驻 -->

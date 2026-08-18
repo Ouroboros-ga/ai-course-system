@@ -47,7 +47,9 @@ TeachingAgent 可在一次已验证的回答后提供可选的学习调整提案
 
 `LearningAdjustmentRecord` 的生命周期只有 `proposed → applied → returned`。其中 `applied` 的语义是“学习者已接受/授权回顾”，不是“浏览器已切换媒体或 seek 成功”；浏览器必须先完成本地媒体恢复，才可请求 `returned`。P0 不做 AI 自动判定“已复习”、Cue 结束自动返回或自动写入完成/掌握证据。无有效冻结目标或依赖异常时，普通问答继续可用且不显示空回顾卡片。
 
-**回顾提案的触发条件（2026-08-16 收紧）**：只有 `prerequisite_review`（回退学习前置知识点）教学动作才产出回顾提案。`diagnostic_question`（先诊断提问，非回顾）、`misconception_repair` / `hint_scaffolding`（目标是当前知识点而非前置知识点）以及普通回答均不再触发“建议回顾第 X 页”提示框；此前诊断动作在数据稀疏时几乎每轮都弹框，属于误报。配套修复：问答链路中的 `RecommendationPort` 会把图节点 `node_key`（如 `kn_xxx`）解析为课程内数字节点 id 再生成推荐，使 `_find_confirmed_weak_prerequisites` 在节点作用域内生效，`prereq_review` 推荐与 `prerequisite_review` 教学动作可在提问后随认知刷新稳定复现（此前端口以 `node_id=None` 生成课程级推荐，薄弱前置检测恒为空，链路易饿死）。
+**回顾提案的触发条件（2026-08-16 收紧）**：只有 `prerequisite_review`（回退学习前置知识点）教学动作才产出回顾提案。`diagnostic_question`（先诊断提问，非回顾）、`misconception_repair` / `hint_scaffolding`（目标是当前知识点而非前置知识点）以及普通回答均不再触发"建议回顾第 X 页"提示框；此前诊断动作在数据稀疏时几乎每轮都弹框，属于误报。配套修复：问答链路中的 `RecommendationPort` 会把图节点 `node_key`（如 `kn_xxx`）解析为课程内数字节点 id 再生成推荐，使 `_find_confirmed_weak_prerequisites` 在节点作用域内生效，`prereq_review` 推荐与 `prerequisite_review` 教学动作可在提问后随认知刷新稳定复现（此前端口以 `node_id=None` 生成课程级推荐，薄弱前置检测恒为空，链路易饿死）。
+
+**前端残留回顾态修复（2026-08-18）**：收紧触发条件后，服务器不再产生新提案（`learning_adjustments` 表为空），但此前误报期间学生点过"回顾并补充讲解"且打开失败的浏览器会残留 `sessionStorage` 中的 `applied` 激活态，硬刷新后仍显示"已确认回顾，尚未打开内容"，且该激活态 UI 原本没有放弃出口，形成卡死。修复两处：① `LearnPage.restoreActiveLearningAdjustment` 改为异步，恢复前先经 `GET /learning-adjustments/course/{id}/recent` 校验该 `applied` 提案在后端仍存在，不存在（含修复前遗留）则清除残留；网络失败保守保留，不误删合法状态。② 激活态卡片新增"放弃回顾"按钮（`abandon-adjustment` 事件：Bubble → MessageList → CourseAgentPanel → LearnPage），任何情况下学生都能解除卡死；服务端 `applied` 记录保留为学习者私有历史，仅客户端不再展示/追踪。对应回归测试：`learningAdjustmentApi.test.cjs` 新增"stale accepted adjustment is validated against the server on restore and can be abandoned"。
 
 `/api/v1/compat/progress/adjust` 不是独立理解度算法。它只能凭 `qaRecordId` 查到同一学习者、同一课程、仍有效的调整提案及 Conversation Domain 中同一 trace 的助手回答；任一关联缺失都返回 `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`。外部 `understandingLevel` 不会成为掌握度、推荐或虚构补充内容的来源。
 
