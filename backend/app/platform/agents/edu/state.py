@@ -76,6 +76,8 @@ class TeachingState(TypedDict, total=False):
     # a return anchor does not exist until the learner accepts review.
     question_observation: dict[str, Any] | None
     learning_adjustment: dict[str, Any] | None
+    # LLM recommendation for intelligent review (2026-08-18)
+    intelligent_recommendation: dict[str, Any] | None
     # 2026-08-16：内容安全闸门决策（safety_check 节点产出）。
     # blocked 时 status="blocked" 且 final_answer 为合规回答文案。
     safety_decision: dict[str, Any] | None
