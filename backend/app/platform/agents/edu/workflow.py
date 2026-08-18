@@ -1488,7 +1488,21 @@ def build_teaching_workflow(tools: TeachingTools):
             return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING")}
         
         # 2026-08-18: LLM 智能推荐逻辑
+        # 2026-08-19: 修复根本问题 - 当 LLM 推荐成功时，必须设置 teaching_action 为
+        #             "prerequisite_review"，否则 resolve_review_target 会因为
+        #             teaching_action 不在 _REDIRECT_ACTIONS 中而直接返回 None
         llm_recommended_concept_id = await _intelligent_recommend(tools, state)
+        
+        # 如果 LLM 推荐了知识点，且原 teaching_action 不是重定向动作，
+        # 则覆盖为 prerequisite_review，让推荐生效
+        original_teaching_action = str(state.get("teaching_action") or "normal_answer")
+        effective_teaching_action = original_teaching_action
+        effective_requested_concept_id = state.get("requested_concept_id")
+        
+        if llm_recommended_concept_id:
+            # LLM 推荐成功，覆盖 teaching_action 和 requested_concept_id
+            effective_teaching_action = "prerequisite_review"
+            effective_requested_concept_id = llm_recommended_concept_id
         
         try:
             observation = QuestionObservation.model_validate(raw_observation)
@@ -1496,13 +1510,13 @@ def build_teaching_workflow(tools: TeachingTools):
                 student_id=state["student_id"],
                 course_id=state["course_id"],
                 observation=observation,
-                teaching_action=str(state.get("teaching_action") or "normal_answer"),
+                teaching_action=effective_teaching_action,
                 teaching_action_reason=str(state.get("teaching_action_reason") or ""),
                 current_concept_id=state.get("current_concept_id"),
                 prerequisites=list(state.get("prerequisites") or []),
                 weak_concepts=list(state.get("weak_concepts") or []),
                 source_trace_id=state["trace_id"],
-                requested_concept_id=llm_recommended_concept_id or state.get("requested_concept_id"),
+                requested_concept_id=effective_requested_concept_id,
             )
             if proposal is None:
                 return {"trace": _trace(state, "propose_learning_adjustment", proposed=False)}
