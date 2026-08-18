@@ -242,6 +242,74 @@ def test_requested_jump_unknown_node_is_a_safe_noop(session: Session) -> None:
     assert result.reason_code == "MEDIA_TARGET_UNAVAILABLE"
 
 
+def test_requested_jump_falls_back_to_title_keyword_without_outline_mapping(
+    session: Session,
+) -> None:
+    """outline 无 knowledge_graph_node_id 映射时，图谱标题↔outline 标题共享关键词回退。
+
+    课程5 的 outline 映射为空（数据缺口），学生请求图谱节点"传递函数"时，
+    通过标题关键词定位到 outline"传递函数的定义与性质"及其媒体 item（2026-08-18）。
+    """
+    from app.models.graph_production_model import CourseKnowledgeNode
+
+    course, _, ids = _setup_frozen_course(session)
+    # 无映射的 outline（knowledge_graph_node_id 留空）+ 对应媒体 item/cue
+    outline_no_map = CourseOutlineNode(
+        outline_node_id=f"on_transfer_{uuid.uuid4().hex[:8]}",
+        outline_version_id=ids["outline_version_id"],
+        course_id=course.id,
+        title="传递函数的定义与性质",
+    )
+    session.add(outline_no_map)
+    session.add(CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_transfer_title",
+        title="传递函数",
+    ))
+    media = session.exec(select(MediaRelease).where(
+        MediaRelease.release_id == ids["media_release_id"]
+    )).one()
+    session.add(MediaReleaseItem(
+        item_id=f"mrit_transfer_{uuid.uuid4().hex[:8]}",
+        release_id=media.release_id,
+        course_id=course.id,
+        node_id=1003,
+        outline_node_id=outline_no_map.outline_node_id,
+        duration_ms=120_000,
+        audio_object_key="course/transfer.mp3",
+        status="ready",
+    ))
+    session.add(MediaReleaseCue(
+        release_id=media.release_id,
+        course_id=course.id,
+        node_id=1003,
+        cue_index=0,
+        start_time=12.5,
+        end_time=30.0,
+        ppt_page=3,
+        audio_object_key="course/transfer.mp3",
+        cue_metadata={"time_basis": "item_local_v1", "outline_node_id": outline_no_map.outline_node_id},
+    ))
+    session.commit()
+
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action="requested_jump",
+        current_concept_id="concept-current",
+        prerequisites=[],
+        weak_concepts=[],
+        requested_concept_id="kn_transfer_title",
+    )
+
+    assert result.reason_code is None
+    assert result.review_target is not None
+    assert result.review_target.outline_node_id == outline_no_map.outline_node_id
+    assert result.review_target.local_time_ms == 12_500
+    assert result.review_target.page == 3
+
+
 def test_stale_question_observation_never_falls_forward_to_newest_media(session: Session) -> None:
     course, _, ids = _setup_frozen_course(session)
     stale = _observation(ids).model_copy(update={"media_release_item_id": "mrit_not_current"})

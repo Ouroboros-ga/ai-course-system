@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from app.models.course_build_model import CourseRelease, ReleaseStatus
 from app.models.course_outline_model import CourseOutlineNode
+from app.models.graph_production_model import CourseKnowledgeNode
 from app.models.learning_adjustment_model import LearningAdjustmentRecord
 from app.models.media_release_model import (
     MediaRelease,
@@ -32,6 +33,25 @@ from app.schemas.learning_adjustment import (
 )
 from app.core.time_utils import utcnow_aware
 from app.services.object_storage import ObjectStorageProvider, get_object_storage
+
+
+def _shares_keyword(left: str, right: str, min_span: int = 4) -> bool:
+    """Return True when two titles share a meaningful character span.
+
+    Fallback used when outline→graph node_key mappings are missing (data gap,
+    e.g. course 5): the graph node title ("传递函数") and the outline title
+    ("传递函数的定义与性质") share a long enough span to be considered the
+    same knowledge point. ``min_span=4`` rejects single noise characters.
+    """
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    n = len(shorter)
+    if n < min_span:
+        return False
+    for size in range(min(n, 16), min_span - 1, -1):
+        for i in range(n - size + 1):
+            if shorter[i:i + size] in longer:
+                return True
+    return False
 
 
 @dataclass(frozen=True)
@@ -694,9 +714,22 @@ class LearningAdjustmentService:
         }
         # requested_jump（2026-08-18）：学生主动请求学习的知识点即为跳转目标，
         # 不要求它必须与当前节点存在薄弱前置关系（学生可能想先了解任何前置/后继知识点）。
+        # outline 无 knowledge_graph_node_id 映射（如课程5 数据缺口）时，
+        # 用图谱节点标题与 outline 标题的共享关键词回退定位。
         if teaching_action == "requested_jump":
-            if requested_concept_id and str(requested_concept_id) in by_concept:
-                return by_concept[str(requested_concept_id)]
+            if requested_concept_id:
+                requested = str(requested_concept_id)
+                if requested in by_concept:
+                    return by_concept[requested]
+                graph_node = session.exec(select(CourseKnowledgeNode).where(
+                    CourseKnowledgeNode.course_id == course_release.course_id,
+                    CourseKnowledgeNode.node_key == requested,
+                )).first()
+                graph_title = (graph_node.title or "") if graph_node else ""
+                if graph_title:
+                    for node in nodes:
+                        if node.title and _shares_keyword(graph_title, node.title):
+                            return node.outline_node_id
             return None
         # prerequisite_review：目标是已确认薄弱的"前置知识点"；其余教学动作
         # （diagnostic_question / misconception_repair / hint_scaffolding）的目标是
