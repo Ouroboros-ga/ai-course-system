@@ -41,6 +41,49 @@ def _trace(state: Mapping[str, Any], node: str, **detail: Any) -> list[dict[str,
     return [*state.get("trace", []), {"node": node, **detail}]
 
 
+def _fallback_keyword_recommend(state: Mapping[str, Any]) -> str | None:
+    """快速关键词匹配推荐（LLM 不可用或超时时的后备方案）。
+    
+    当学生提问中包含前置知识点或相关知识点的关键词时，推荐该知识点。
+    2026-08-19: 作为 LLM 推荐的后备，确保基本推荐功能可用。
+    """
+    student_question = str(state.get("user_message") or "").lower()
+    if not student_question or len(student_question) < 3:
+        return None
+    
+    # 优先匹配前置知识点（薄弱的前置知识）
+    prerequisites = list(state.get("prerequisites") or [])
+    weak_concepts = set(str(item.get("concept_id") or "") for item in state.get("weak_concepts") or [])
+    
+    for prereq in prerequisites:
+        concept_id = str(prereq.get("concept_id") or "")
+        concept_name = str(prereq.get("name") or "").lower()
+        # 如果学生提问包含前置知识点名称的关键部分（至少3个字符）
+        if concept_name and len(concept_name) >= 3:
+            # 提取核心关键词（去除"的定义"、"的性质"等后缀）
+            core_keyword = concept_name.split("的")[0].strip()
+            if core_keyword and len(core_keyword) >= 3 and core_keyword in student_question:
+                # 如果是薄弱知识点，优先推荐
+                if concept_id in weak_concepts:
+                    return concept_id
+                # 否则也推荐，因为学生明确提到了这个前置知识点
+                return concept_id
+    
+    # 如果没有匹配到前置知识点，检查相关知识点
+    graph_context = state.get("graph_context") or {}
+    related_concepts = list(graph_context.get("related_concepts") or [])
+    
+    for concept in related_concepts:
+        concept_id = str(concept.get("concept_id") or "")
+        concept_name = str(concept.get("name") or "").lower()
+        if concept_name and len(concept_name) >= 3:
+            core_keyword = concept_name.split("的")[0].strip()
+            if core_keyword and len(core_keyword) >= 3 and core_keyword in student_question:
+                return concept_id
+    
+    return None
+
+
 def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any]:
     return {
         "warnings": [*state.get("warnings", []), code],
@@ -61,10 +104,14 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
     2026-08-18: 最小改动方案，让推荐系统从关键词匹配升级到 LLM 理解意图。
     2026-08-19: 修复推荐逻辑 - 不再依赖 teaching_action 预设，让 LLM 自主判断
                 是否需要推荐，解决"数学模型是怎么建立的"无法触发推荐的问题。
+    2026-08-19: 添加快速关键词匹配作为后备，提升响应速度和推荐成功率。
     """
-    # 如果 LLM 不可用，降级到原有逻辑
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    # 如果 LLM 不可用，降级到关键词匹配
     if tools.llm is None:
-        return None
+        return _fallback_keyword_recommend(state)
     
     # 构建上下文
     student_question = str(state.get("user_message") or "")
@@ -122,27 +169,49 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 """
     
     try:
-        # 调用 LLM
-        response = await tools.llm.generate(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=500,
+        logger.info(f"[Recommend] 调用 LLM 推荐，学生提问：{student_question[:50]}...")
+        
+        # 调用 LLM（设置较短超时，避免阻塞主流程）
+        import asyncio
+        response = await asyncio.wait_for(
+            tools.llm.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500,
+            ),
+            timeout=5.0  # 5秒超时
         )
         
         # 解析响应
         content = response.get("content", "")
+        logger.info(f"[Recommend] LLM 响应：{content[:100]}...")
+        
         # 尝试提取 JSON
         import re
         json_match = re.search(r'\{[^{}]*"should_recommend"[^{}]*\}', content, re.DOTALL)
         if json_match:
             result = json.loads(json_match.group())
             if result.get("should_recommend") and result.get("recommended_concept_id"):
-                return str(result["recommended_concept_id"])
+                recommended_id = str(result["recommended_concept_id"])
+                logger.info(f"[Recommend] LLM 推荐：{recommended_id}，理由：{result.get('reason', 'N/A')}")
+                return recommended_id
+            else:
+                logger.info(f"[Recommend] LLM 判断不推荐")
+        else:
+            logger.warning(f"[Recommend] LLM 响应格式错误，无法解析 JSON")
         
-        return None
+        # LLM 不推荐时，尝试关键词匹配后备
+        fallback_result = _fallback_keyword_recommend(state)
+        if fallback_result:
+            logger.info(f"[Recommend] 关键词匹配后备推荐：{fallback_result}")
+        return fallback_result
         
-    except Exception:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
-        return None
+    except asyncio.TimeoutError:
+        logger.warning("[Recommend] LLM 推荐超时（5秒），使用关键词匹配后备")
+        return _fallback_keyword_recommend(state)
+    except Exception as e:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
+        logger.error(f"[Recommend] LLM 推荐异常：{e}，使用关键词匹配后备")
+        return _fallback_keyword_recommend(state)
 
 
 # 2026-08-16：内容安全闸门阻断 warning 码与兜底文案。
