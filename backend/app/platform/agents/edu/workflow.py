@@ -59,12 +59,9 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
         推荐的 concept_id，若不推荐则返回 None
         
     2026-08-18: 最小改动方案，让推荐系统从关键词匹配升级到 LLM 理解意图。
+    2026-08-19: 修复推荐逻辑 - 不再依赖 teaching_action 预设，让 LLM 自主判断
+                是否需要推荐，解决"数学模型是怎么建立的"无法触发推荐的问题。
     """
-    # 只在 requested_jump 或 prerequisite_review 时调用 LLM
-    teaching_action = state.get("teaching_action")
-    if teaching_action not in {"requested_jump", "prerequisite_review"}:
-        return None
-    
     # 如果 LLM 不可用，降级到原有逻辑
     if tools.llm is None:
         return None
@@ -88,12 +85,6 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 
 **当前知识点**: {current_concept or "未知"}
 
-**教学动作**: {teaching_action}
-- requested_jump: 学生主动请求学习某个知识点（如"我想学传递函数"）
-- prerequisite_review: 系统检测到学生可能需要回顾前置知识
-
-**学生请求的知识点名称**: {requested_name or "无"}
-
 **前置知识点列表**:
 {json.dumps(prerequisites[:5], ensure_ascii=False, indent=2) if prerequisites else "无"}
 
@@ -107,10 +98,12 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 {json.dumps([{{"role": t.get("role"), "content": t.get("content", "")[:100]}} for t in conversation_turns], ensure_ascii=False, indent=2) if conversation_turns else "无"}
 
 **任务**: 
-1. 理解学生提问的真实意图（困惑求助 vs 主动探索）
+1. 理解学生提问的真实意图
+   - 是在询问某个具体知识点的内容吗？（如"数学模型是怎么建立的"、"传递函数是什么"）
+   - 是对当前内容有疑问吗？
+   - 是想跳转学习其他知识点吗？
 2. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
 3. 结合知识图谱结构，判断推荐哪个知识点最合适
-4. 返回推荐的 concept_id
 
 **输出格式** (JSON):
 {{
@@ -120,10 +113,12 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 }}
 
 **判断原则**:
-- 如果学生明确表达想学某个知识点，且该知识点在相关概念中，则推荐
+- 如果学生提问明确询问某个知识点的内容（如"XX是什么"、"XX怎么做"），且该知识点在前置/相关概念中，则推荐
+- 如果学生明确表达想学某个知识点（如"我想学XX"），且该知识点在相关概念中，则推荐
 - 如果学生困惑，且困惑明显源于某个前置知识薄弱，则推荐该前置知识
 - 如果学生只是随口问问，或当前知识点足以解答，则不推荐
 - 避免过度推荐：只有在确实有帮助时才推荐
+- 优先推荐前置知识点和薄弱知识点，而非后续知识点
 """
     
     try:
