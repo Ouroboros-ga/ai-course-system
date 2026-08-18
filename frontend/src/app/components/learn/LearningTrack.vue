@@ -20,9 +20,10 @@ const props = defineProps({
   cognitiveDetails: { type: Object, default: () => ({}) },
   cognitiveLoading: { type: Object, default: () => ({}) },
   collapsed: { type: Boolean, default: false },
+  canComplete: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['select', 'inspect', 'open-knowledge', 'recommendation-action', 'toggle'])
+const emit = defineEmits(['select', 'inspect', 'open-knowledge', 'recommendation-action', 'toggle', 'complete'])
 const itemRefs = ref([])
 
 function setItemRef(element, index) {
@@ -273,6 +274,19 @@ const indentStep = 12
         </section>
       </li>
     </ol>
+
+    <footer v-if="!collapsed && canComplete" class="sfx-track-complete">
+      <SfxButton
+        variant="primary"
+        size="sm"
+        class="sfx-track-complete-btn"
+        aria-label="标记当前知识点为已完成"
+        @click="emit('complete')"
+      >
+        <Check :size="14" />
+        完成本知识点
+      </SfxButton>
+    </footer>
   </aside>
 </template>
 
@@ -645,6 +659,21 @@ const indentStep = 12
 }
 
 .sfx-track-key { color: var(--amber-500); flex-shrink: 0; }
+
+/* ============ 底部"完成本知识点" ============ */
+.sfx-track-complete {
+  flex: 0 0 auto;
+  padding: var(--space-3);
+  border-top: 1px solid var(--border-default);
+  background: var(--surface-soft);
+}
+
+.sfx-track-complete-btn {
+  width: 100%;
+  justify-content: center;
+}
+
+.sfx-track.is-collapsed .sfx-track-complete { display: none; }
 
 /* 收缩态：仅图标列。当前项不再绘制按展开态缩进定位的竖线（图标已居中，竖线会错位
    骑在图标上并露出残影），高亮收成胶囊形贴合图标，hover 同理。 */

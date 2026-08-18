@@ -41,6 +41,49 @@ def _trace(state: Mapping[str, Any], node: str, **detail: Any) -> list[dict[str,
     return [*state.get("trace", []), {"node": node, **detail}]
 
 
+def _fallback_keyword_recommend(state: Mapping[str, Any]) -> str | None:
+    """快速关键词匹配推荐（LLM 不可用或超时时的后备方案）。
+    
+    当学生提问中包含前置知识点或相关知识点的关键词时，推荐该知识点。
+    2026-08-19: 作为 LLM 推荐的后备，确保基本推荐功能可用。
+    """
+    student_question = str(state.get("user_message") or "").lower()
+    if not student_question or len(student_question) < 3:
+        return None
+    
+    # 优先匹配前置知识点（薄弱的前置知识）
+    prerequisites = list(state.get("prerequisites") or [])
+    weak_concepts = set(str(item.get("concept_id") or "") for item in state.get("weak_concepts") or [])
+    
+    for prereq in prerequisites:
+        concept_id = str(prereq.get("concept_id") or "")
+        concept_name = str(prereq.get("name") or "").lower()
+        # 如果学生提问包含前置知识点名称的关键部分（至少3个字符）
+        if concept_name and len(concept_name) >= 3:
+            # 提取核心关键词（去除"的定义"、"的性质"等后缀）
+            core_keyword = concept_name.split("的")[0].strip()
+            if core_keyword and len(core_keyword) >= 3 and core_keyword in student_question:
+                # 如果是薄弱知识点，优先推荐
+                if concept_id in weak_concepts:
+                    return concept_id
+                # 否则也推荐，因为学生明确提到了这个前置知识点
+                return concept_id
+    
+    # 如果没有匹配到前置知识点，检查相关知识点
+    graph_context = state.get("graph_context") or {}
+    related_concepts = list(graph_context.get("related_concepts") or [])
+    
+    for concept in related_concepts:
+        concept_id = str(concept.get("concept_id") or "")
+        concept_name = str(concept.get("name") or "").lower()
+        if concept_name and len(concept_name) >= 3:
+            core_keyword = concept_name.split("的")[0].strip()
+            if core_keyword and len(core_keyword) >= 3 and core_keyword in student_question:
+                return concept_id
+    
+    return None
+
+
 def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any]:
     return {
         "warnings": [*state.get("warnings", []), code],
@@ -59,15 +102,16 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
         推荐的 concept_id，若不推荐则返回 None
         
     2026-08-18: 最小改动方案，让推荐系统从关键词匹配升级到 LLM 理解意图。
+    2026-08-19: 修复推荐逻辑 - 不再依赖 teaching_action 预设，让 LLM 自主判断
+                是否需要推荐，解决"数学模型是怎么建立的"无法触发推荐的问题。
+    2026-08-19: 添加快速关键词匹配作为后备，提升响应速度和推荐成功率。
     """
-    # 只在 requested_jump 或 prerequisite_review 时调用 LLM
-    teaching_action = state.get("teaching_action")
-    if teaching_action not in {"requested_jump", "prerequisite_review"}:
-        return None
+    import logging
+    logger = logging.getLogger(__name__)
     
-    # 如果 LLM 不可用，降级到原有逻辑
+    # 如果 LLM 不可用，降级到关键词匹配
     if tools.llm is None:
-        return None
+        return _fallback_keyword_recommend(state)
     
     # 构建上下文
     student_question = str(state.get("user_message") or "")
@@ -76,6 +120,12 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
     weak_concepts = list(state.get("weak_concepts") or [])
     requested_name = state.get("requested_concept_name")
     conversation_turns = list(state.get("conversation_turns") or [])[-3:]  # 最近3轮
+    # 对话摘要必须在 f-string 外构建：{{...}} 在 Python 3.12（PEP 701）下会被解析为
+    # 「含 dict 的集合字面量」，运行时抛 TypeError: unhashable type: 'dict'（线上 500 根因）
+    conversation_summary = [
+        {"role": t.get("role"), "content": str(t.get("content") or "")[:100]}
+        for t in conversation_turns
+    ]
     
     # 构建知识图谱结构描述
     graph_context = state.get("graph_context") or {}
@@ -88,12 +138,6 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 
 **当前知识点**: {current_concept or "未知"}
 
-**教学动作**: {teaching_action}
-- requested_jump: 学生主动请求学习某个知识点（如"我想学传递函数"）
-- prerequisite_review: 系统检测到学生可能需要回顾前置知识
-
-**学生请求的知识点名称**: {requested_name or "无"}
-
 **前置知识点列表**:
 {json.dumps(prerequisites[:5], ensure_ascii=False, indent=2) if prerequisites else "无"}
 
@@ -104,13 +148,15 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 {json.dumps(related_concepts[:10], ensure_ascii=False, indent=2) if related_concepts else "无"}
 
 **最近对话历史**:
-{json.dumps([{{"role": t.get("role"), "content": t.get("content", "")[:100]}} for t in conversation_turns], ensure_ascii=False, indent=2) if conversation_turns else "无"}
+{json.dumps(conversation_summary, ensure_ascii=False, indent=2) if conversation_summary else "无"}
 
 **任务**: 
-1. 理解学生提问的真实意图（困惑求助 vs 主动探索）
+1. 理解学生提问的真实意图
+   - 是在询问某个具体知识点的内容吗？（如"数学模型是怎么建立的"、"传递函数是什么"）
+   - 是对当前内容有疑问吗？
+   - 是想跳转学习其他知识点吗？
 2. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
 3. 结合知识图谱结构，判断推荐哪个知识点最合适
-4. 返回推荐的 concept_id
 
 **输出格式** (JSON):
 {{
@@ -120,34 +166,58 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 }}
 
 **判断原则**:
-- 如果学生明确表达想学某个知识点，且该知识点在相关概念中，则推荐
+- 如果学生提问明确询问某个知识点的内容（如"XX是什么"、"XX怎么做"），且该知识点在前置/相关概念中，则推荐
+- 如果学生明确表达想学某个知识点（如"我想学XX"），且该知识点在相关概念中，则推荐
 - 如果学生困惑，且困惑明显源于某个前置知识薄弱，则推荐该前置知识
 - 如果学生只是随口问问，或当前知识点足以解答，则不推荐
 - 避免过度推荐：只有在确实有帮助时才推荐
+- 优先推荐前置知识点和薄弱知识点，而非后续知识点
 """
     
     try:
-        # 调用 LLM
-        response = await tools.llm.generate(
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
-            max_tokens=500,
+        logger.info(f"[Recommend] 调用 LLM 推荐，学生提问：{student_question[:50]}...")
+        
+        # 调用 LLM（设置较短超时，避免阻塞主流程）
+        import asyncio
+        response = await asyncio.wait_for(
+            tools.llm.generate(
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=500,
+            ),
+            timeout=5.0  # 5秒超时
         )
         
         # 解析响应
         content = response.get("content", "")
+        logger.info(f"[Recommend] LLM 响应：{content[:100]}...")
+        
         # 尝试提取 JSON
         import re
         json_match = re.search(r'\{[^{}]*"should_recommend"[^{}]*\}', content, re.DOTALL)
         if json_match:
             result = json.loads(json_match.group())
             if result.get("should_recommend") and result.get("recommended_concept_id"):
-                return str(result["recommended_concept_id"])
+                recommended_id = str(result["recommended_concept_id"])
+                logger.info(f"[Recommend] LLM 推荐：{recommended_id}，理由：{result.get('reason', 'N/A')}")
+                return recommended_id
+            else:
+                logger.info(f"[Recommend] LLM 判断不推荐")
+        else:
+            logger.warning(f"[Recommend] LLM 响应格式错误，无法解析 JSON")
         
-        return None
+        # LLM 不推荐时，尝试关键词匹配后备
+        fallback_result = _fallback_keyword_recommend(state)
+        if fallback_result:
+            logger.info(f"[Recommend] 关键词匹配后备推荐：{fallback_result}")
+        return fallback_result
         
-    except Exception:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
-        return None
+    except asyncio.TimeoutError:
+        logger.warning("[Recommend] LLM 推荐超时（5秒），使用关键词匹配后备")
+        return _fallback_keyword_recommend(state)
+    except Exception as e:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
+        logger.error(f"[Recommend] LLM 推荐异常：{e}，使用关键词匹配后备")
+        return _fallback_keyword_recommend(state)
 
 
 # 2026-08-16：内容安全闸门阻断 warning 码与兜底文案。

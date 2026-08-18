@@ -95,7 +95,8 @@ function retry() {
                     </div>
                 </section>
 
-                <section v-if="isActiveAdjustment(message.learningAdjustment)" class="sfx-agent-adjustment is-active"
+                <!-- 2026-08-19 修复：只在当前消息真正有推荐提案时显示绿色框，避免显示上次残留状态 -->
+                <section v-if="message.learningAdjustment && isActiveAdjustment(message.learningAdjustment)" class="sfx-agent-adjustment is-active"
                     aria-label="正在回顾">
                     <template v-if="isReviewingAdjustment(message.learningAdjustment)">
                         <p class="sfx-agent-adjustment-title sfx-t-ui">
