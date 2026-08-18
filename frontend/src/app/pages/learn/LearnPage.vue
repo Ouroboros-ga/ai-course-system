@@ -840,19 +840,21 @@ watch(
         />
       </div>
 
-      <LearningActionDock
-        ref="dockRef"
-        :current-state="learnState"
-        :enabled-states="machine.isEnabled"
-        @action="handleDockAction"
-      />
-      <SfxButton
-        v-if="!previewMode && ws.currentNode.value?.outlineNodeId && !ws.completedNodes.value.includes(ws.currentNode.value.id)"
-        variant="primary"
-        size="sm"
-        class="sfx-learn-complete"
-        @click="completeNode"
-      >完成本知识点</SfxButton>
+      <div class="sfx-learn-bottom">
+        <LearningActionDock
+          ref="dockRef"
+          :current-state="learnState"
+          :enabled-states="machine.isEnabled"
+          @action="handleDockAction"
+        />
+        <SfxButton
+          v-if="!previewMode && ws.currentNode.value?.outlineNodeId && !ws.completedNodes.value.includes(ws.currentNode.value.id)"
+          variant="primary"
+          size="sm"
+          class="sfx-learn-complete"
+          @click="completeNode"
+        >完成本知识点</SfxButton>
+      </div>
     </template>
   </div>
 </template>
@@ -871,7 +873,24 @@ watch(
   display: flex;
   overflow: hidden;
 }
-.sfx-learn-complete { align-self: center; margin: 0 0 16px; padding: 8px 14px; border: var(--border-default); border-radius: 8px; background: var(--color-brand); color: var(--text-inverse); }
+
+.sfx-learn-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 0 0 12px;
+}
+
+.sfx-learn-complete { 
+  align-self: center; 
+  padding: 8px 14px; 
+  border: var(--border-default); 
+  border-radius: 8px; 
+  background: var(--color-brand); 
+  color: var(--text-inverse);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
 .sfx-preview-notice { flex: 0 0 auto; margin: 12px 16px 0; padding: 10px 12px; border: 1px solid var(--amber-300); border-radius: var(--radius-sm); background: var(--amber-100); color: var(--amber-700); font-size: var(--ui-sm-size); }
 
 .sfx-learn-stage {
