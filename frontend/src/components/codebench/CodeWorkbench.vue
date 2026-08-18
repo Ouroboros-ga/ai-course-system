@@ -306,11 +306,14 @@ async function handleCopy() {
 // 底部面板拖拽
 let dragStartY = 0
 let dragStartHeight = 0
+let workbenchContainer = null
 
 function startResize(e) {
   isDragging.value = true
   dragStartY = e.clientY
   dragStartHeight = bottomPanelHeight.value
+  // 保存容器引用,用于计算最大高度
+  workbenchContainer = e.currentTarget.closest('.wb-editor-area')
 
   document.addEventListener('mousemove', onResize)
   document.addEventListener('mouseup', stopResize)
@@ -323,13 +326,17 @@ function onResize(e) {
   const delta = dragStartY - e.clientY
   let newHeight = dragStartHeight + delta
   // 限制高度范围：120 ~ 60%
-  const maxHeight = Math.floor(e.currentTarget.parentElement.offsetHeight * 0.6)
+  // 修复：使用保存的容器引用而非 e.currentTarget.parentElement (document.parentElement 是 null)
+  const maxHeight = workbenchContainer
+    ? Math.floor(workbenchContainer.offsetHeight * 0.6)
+    : 600
   newHeight = Math.max(120, Math.min(newHeight, maxHeight))
   bottomPanelHeight.value = newHeight
 }
 
 function stopResize() {
   isDragging.value = false
+  workbenchContainer = null
   document.removeEventListener('mousemove', onResize)
   document.removeEventListener('mouseup', stopResize)
   document.body.style.cursor = ''

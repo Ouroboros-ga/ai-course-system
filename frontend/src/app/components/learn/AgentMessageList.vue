@@ -1,5 +1,5 @@
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { Lightbulb, TriangleAlert } from 'lucide-vue-next'
 import AgentAssistantBubble from './AgentAssistantBubble.vue'
 import { useSettingsStore } from '@/stores/userSettings'
@@ -22,6 +22,12 @@ const emit = defineEmits([
 ])
 
 const listRef = ref(null)
+
+// 每次面板打开（组件挂载）时直接定位到最新一条对话，避免停留在顶部
+onMounted(async () => {
+    await nextTick()
+    listRef.value?.scrollTo({ top: listRef.value.scrollHeight })
+})
 
 // 消息变化后滚动到底部
 watch(
