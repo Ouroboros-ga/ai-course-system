@@ -384,6 +384,83 @@ def test_requested_jump_skips_candidates_without_playable_item(session: Session)
     assert result.review_target.page == 2
 
 
+def test_requested_jump_never_targets_section_nodes(session: Session) -> None:
+    """章节节点（SECTION）是标题性节点，即使误挂媒体也不得成为跳转目标。
+
+    课程5 结构：1 章 + 2 节 + 7 知识点，媒体只生成在知识点节点（2026-08-18）。
+    """
+    from app.models.course_outline_model import OutlineNodeType
+    from app.models.graph_production_model import CourseKnowledgeNode
+
+    course, _, ids = _setup_frozen_course(session)
+    section = CourseOutlineNode(
+        outline_node_id=f"on_section_{uuid.uuid4().hex[:8]}",
+        outline_version_id=ids["outline_version_id"],
+        course_id=course.id,
+        title="传递函数与图形表示",
+        node_type=OutlineNodeType.SECTION,
+    )
+    session.add(section)
+    kp = CourseOutlineNode(
+        outline_node_id=f"on_kp_{uuid.uuid4().hex[:8]}",
+        outline_version_id=ids["outline_version_id"],
+        course_id=course.id,
+        title="传递函数的定义与性质",
+        node_type=OutlineNodeType.KNOWLEDGE_POINT,
+    )
+    session.add(kp)
+    session.add(CourseKnowledgeNode(
+        course_id=course.id,
+        node_key="kn_section_guard",
+        title="传递函数",
+    ))
+    media = session.exec(select(MediaRelease).where(
+        MediaRelease.release_id == ids["media_release_id"]
+    )).one()
+    # 两个节点都挂 ready item + cue（章节本不该有，但防御性验证优先选知识点）
+    for node_id, outline, suffix in (
+        (1005, section, "sec"),
+        (1006, kp, "kp"),
+    ):
+        session.add(MediaReleaseItem(
+            item_id=f"mrit_{suffix}_{uuid.uuid4().hex[:8]}",
+            release_id=media.release_id,
+            course_id=course.id,
+            node_id=node_id,
+            outline_node_id=outline.outline_node_id,
+            duration_ms=120_000,
+            audio_object_key=f"course/{suffix}.mp3",
+            status="ready",
+        ))
+        session.add(MediaReleaseCue(
+            release_id=media.release_id,
+            course_id=course.id,
+            node_id=node_id,
+            cue_index=0,
+            start_time=5.0,
+            end_time=20.0,
+            ppt_page=1,
+            audio_object_key=f"course/{suffix}.mp3",
+            cue_metadata={"time_basis": "item_local_v1", "outline_node_id": outline.outline_node_id},
+        ))
+    session.commit()
+
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action="requested_jump",
+        current_concept_id="concept-current",
+        prerequisites=[],
+        weak_concepts=[],
+        requested_concept_id="kn_section_guard",
+    )
+
+    assert result.reason_code is None
+    assert result.review_target is not None
+    assert result.review_target.outline_node_id == kp.outline_node_id
+
+
 def test_stale_question_observation_never_falls_forward_to_newest_media(session: Session) -> None:
     course, _, ids = _setup_frozen_course(session)
     stale = _observation(ids).model_copy(update={"media_release_item_id": "mrit_not_current"})

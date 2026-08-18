@@ -741,9 +741,15 @@ class LearningAdjustmentService:
                 )).first()
                 graph_title = (graph_node.title or "") if graph_node else ""
                 if graph_title:
+                    # 章节节点（CHAPTER/SECTION）是标题性节点，不产生媒体，
+                    # 不应成为回顾跳转目标；只匹配知识点节点（2026-08-18）。
+                    # node_type 可能是枚举（str() 会返回"类名.成员名"）或
+                    # 历史字符串存储，统一取 value 并大写比较。
                     matched = [
                         node.outline_node_id for node in nodes
-                        if node.title and _shares_keyword(graph_title, node.title)
+                        if node.title
+                        and str(getattr(node.node_type, "value", node.node_type) or "").upper() == "KNOWLEDGE_POINT"
+                        and _shares_keyword(graph_title, node.title)
                     ]
                     if matched:
                         return matched
