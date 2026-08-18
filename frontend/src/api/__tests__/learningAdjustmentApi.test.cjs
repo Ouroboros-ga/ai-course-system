@@ -121,5 +121,40 @@ test('learning adjustment recovery never repeats apply after an ambiguous respon
     assert.match(page, /recoverAcceptedLearningAdjustment/)
     assert.match(page, /restoreActiveLearningAdjustment\(\)/)
     assert.match(messageList, /hasMessageForActiveAdjustment/)
-    assert.match(messageList, /v-if="activeAdjustment && !hasMessageForActiveAdjustment\(\)"/)
+    // 2026-08-18 对账：旧行为"无来源消息也常驻显示已确认回顾框"已被有意移除
+    // （AgentMessageList 注释：仅显示错误/提示，不再把已确认回顾作为无来源的持久化框常驻）。
+    // 全局提示区现在只承载一次性 notice 文本，不渲染持久回顾框。
+    assert.doesNotMatch(messageList, /v-if="activeAdjustment && !hasMessageForActiveAdjustment\(\)"/)
+    assert.match(messageList, /v-if="adjustmentNotice"/)
+})
+
+test('stale accepted adjustment is validated against the server on restore and can be abandoned', () => {
+    const page = read('frontend/src/app/pages/learn/LearnPage.vue')
+    const bubble = read('frontend/src/app/components/learn/AgentAssistantBubble.vue')
+    const panel = read('frontend/src/app/components/learn/CourseAgentPanel.vue')
+    const messageList = read('frontend/src/app/components/learn/AgentMessageList.vue')
+
+    // 恢复时先向后端校验该 applied 提案仍存在；不存在则清除残留状态（2026-08-18）
+    assert.match(page, /async function restoreActiveLearningAdjustment\(\)/)
+    assert.match(page, /await listRecentLearningAdjustments\(courseId, \{ limit: 20 \}\)/)
+    assert.match(page, /item\?\.status === 'applied'/)
+    assert.match(page, /stillApplied/)
+    assert.match(page, /clearActiveLearningAdjustment\(\)/)
+
+    // 激活态卡死时提供"放弃回顾"无条件出口，事件链路 Bubble → MessageList → Panel → LearnPage
+    assert.match(page, /function abandonActiveLearningAdjustment\(\)/)
+    assert.match(page, /adjustmentAbandoned\.value = true/)
+    assert.match(page, /pendingMediaSeek\.value\?\.fail\(new Error\('ADJUSTMENT_ABANDONED'\)\)/)
+    assert.match(page, /clearActiveLearningAdjustment\(\)/)
+    // 放弃函数体不依赖 busy（busy 卡死时也必须能退出）
+    const abandonStart = page.indexOf('function abandonActiveLearningAdjustment()')
+    const abandonEnd = page.indexOf('\n}', abandonStart)
+    const abandonBody = page.slice(abandonStart, abandonEnd)
+    assert.ok(abandonStart >= 0 && abandonEnd > abandonStart)
+    assert.doesNotMatch(abandonBody, /learningAdjustmentBusy/)
+    // 放弃按钮不受 busy 限制（busy 卡死时也必须可点击）：按钮标签无 disabled 属性
+    assert.match(bubble, /variant="tertiary" size="sm"\s+@click="\$emit\('abandon-adjustment'\)">放弃回顾<\/SfxButton>/)
+    assert.match(bubble, /emit\(['"]abandon-adjustment['"]/)
+    assert.match(panel, /emit\(['"]abandon-adjustment['"]\)/)
+    assert.match(messageList, /@abandon-adjustment="\(\) => emit\('abandon-adjustment'\)"/)
 })

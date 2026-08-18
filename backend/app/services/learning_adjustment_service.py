@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from app.models.course_build_model import CourseRelease, ReleaseStatus
 from app.models.course_outline_model import CourseOutlineNode
+from app.models.graph_production_model import CourseKnowledgeNode
 from app.models.learning_adjustment_model import LearningAdjustmentRecord
 from app.models.media_release_model import (
     MediaRelease,
@@ -32,6 +33,53 @@ from app.schemas.learning_adjustment import (
 )
 from app.core.time_utils import utcnow_aware
 from app.services.object_storage import ObjectStorageProvider, get_object_storage
+
+
+def _shares_keyword(left: str, right: str, min_span: int = 3, min_coverage: float = 0.6) -> bool:
+    """Return True when two titles share a meaningful character span.
+
+    Fallback used when outline→graph node_key mappings are missing (data gap,
+    e.g. course 5): the graph node title ("传递函数") and the outline title
+    ("传递函数的定义与性质") share a long enough span to be considered the
+    same knowledge point.
+    
+    Args:
+        left: First title to compare
+        right: Second title to compare
+        min_span: Minimum character span to match (default 3)
+        min_coverage: Minimum coverage ratio - matched span must cover at least
+                     this fraction of the shorter title (default 0.6, i.e. 60%)
+    
+    Returns:
+        True if titles share a meaningful span that covers sufficient portion
+        of the shorter title.
+    
+    Example:
+        "传递函数" vs "传递函数的定义与性质" → True (100% coverage)
+        "控制" vs "控制系统微分方程的建立" → False (only 2 chars, <60% coverage)
+        "数学模型" vs "数学模型的定义与建模方法" → True (100% coverage)
+    """
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    n = len(shorter)
+    if n < min_span:
+        return False
+    
+    # Find longest matching span
+    max_match_size = 0
+    for size in range(min(n, 16), min_span - 1, -1):
+        for i in range(n - size + 1):
+            if shorter[i:i + size] in longer:
+                max_match_size = size
+                break
+        if max_match_size > 0:
+            break
+    
+    if max_match_size == 0:
+        return False
+    
+    # Check if the match covers sufficient portion of the shorter title
+    coverage = max_match_size / n
+    return coverage >= min_coverage
 
 
 @dataclass(frozen=True)
@@ -51,11 +99,12 @@ class LearningAdjustmentConflict(ValueError):
 class LearningAdjustmentService:
     """Resolve a target only from an active immutable course/media release pair."""
 
-    # 只有"回退学习前置知识点"的教学动作才会产出回顾提案（2026-08-16 收紧）。
+    # 只有"回退学习前置知识点"（prerequisite_review）与"学生主动请求学习某知识点"
+    # （requested_jump，2026-08-18）两个教学动作才会产出回顾提案。
     # diagnostic_question 是"先诊断提问"，misconception_repair / hint_scaffolding
     # 的目标是当前知识点本身，都不属于"回退到前置知识点"，不再触发回顾提示框，
     # 避免无回顾必要也弹出"建议回顾第 X 页"。
-    _REDIRECT_ACTIONS = {"prerequisite_review"}
+    _REDIRECT_ACTIONS = {"prerequisite_review", "requested_jump"}
 
     def create_proposal(
         self,
@@ -71,6 +120,7 @@ class LearningAdjustmentService:
         reason_codes: tuple[str, ...],
         source_trace_id: str | None = None,
         recommended_playback_rate: float = 0.85,
+        requested_concept_id: str | None = None,
     ) -> LearningAdjustmentProposal | None:
         """Persist a review proposal only after resolving a frozen target.
 
@@ -85,6 +135,7 @@ class LearningAdjustmentService:
             current_concept_id=current_concept_id,
             prerequisites=prerequisites,
             weak_concepts=weak_concepts,
+            requested_concept_id=requested_concept_id,
         )
         if resolution.review_target is None:
             return None
@@ -543,6 +594,7 @@ class LearningAdjustmentService:
         prerequisites: Iterable[Mapping[str, Any]],
         weak_concepts: Iterable[Mapping[str, Any]],
         storage: ObjectStorageProvider | None = None,
+        requested_concept_id: str | None = None,
     ) -> ReviewTargetResolution:
         if teaching_action not in self._REDIRECT_ACTIONS:
             return ReviewTargetResolution(None, "ACTION_DOES_NOT_REQUIRE_REVIEW")
@@ -587,23 +639,32 @@ class LearningAdjustmentService:
         if not any(self._cue_covers_coordinate(cue, observation) for cue in observed_cues):
             return ReviewTargetResolution(None, "QUESTION_OBSERVATION_STALE")
 
-        target_outline_node_id = self._target_outline_node(
+        # requested_jump 的标题回退可能命中多个同主题 outline（如课程5 有
+        # "传递函数的定义与性质"/"传递函数与图形表示"等多个传递函数节点），
+        # 依序取第一个在当前激活媒体中有 ready item 的目标（2026-08-18）。
+        candidate_outline_ids = self._candidate_target_outline_nodes(
             session,
             course_release=course_release,
             teaching_action=teaching_action,
             current_concept_id=current_concept_id,
             prerequisites=prerequisites,
             weak_concepts=weak_concepts,
+            requested_concept_id=requested_concept_id,
         )
-        if target_outline_node_id is None:
-            return ReviewTargetResolution(None, "MEDIA_TARGET_UNAVAILABLE")
-        target_item = session.exec(select(MediaReleaseItem).where(
-            MediaReleaseItem.course_id == course_id,
-            MediaReleaseItem.release_id == media_release_id,
-            MediaReleaseItem.outline_node_id == target_outline_node_id,
-            MediaReleaseItem.status == "ready",
-        )).first()
-        if target_item is None or not target_item.audio_object_key:
+        target_item = None
+        target_outline_node_id = None
+        for outline_id in candidate_outline_ids:
+            item = session.exec(select(MediaReleaseItem).where(
+                MediaReleaseItem.course_id == course_id,
+                MediaReleaseItem.release_id == media_release_id,
+                MediaReleaseItem.outline_node_id == outline_id,
+                MediaReleaseItem.status == "ready",
+            )).first()
+            if item is not None and item.audio_object_key:
+                target_item = item
+                target_outline_node_id = outline_id
+                break
+        if target_item is None:
             return ReviewTargetResolution(None, "MEDIA_TARGET_UNAVAILABLE")
 
         cue = session.exec(select(MediaReleaseCue).where(
@@ -668,7 +729,7 @@ class LearningAdjustmentService:
         # optional global clock when it cannot be resolved.
         return expected_global_time is None or coordinate.global_time_ms == expected_global_time
 
-    def _target_outline_node(
+    def _candidate_target_outline_nodes(
         self,
         session: Session,
         *,
@@ -677,7 +738,14 @@ class LearningAdjustmentService:
         current_concept_id: str | None,
         prerequisites: Iterable[Mapping[str, Any]],
         weak_concepts: Iterable[Mapping[str, Any]],
-    ) -> str | None:
+        requested_concept_id: str | None = None,
+    ) -> list[str]:
+        """Return ordered candidate outline node ids for the review target.
+
+        ``requested_jump`` returns every title-matching candidate so the caller
+        can pick the first one with a playable media item; ``prerequisite_review``
+        returns at most one (the confirmed weak prerequisite).
+        """
         nodes = list(session.exec(select(CourseOutlineNode).where(
             CourseOutlineNode.course_id == course_release.course_id,
             CourseOutlineNode.outline_version_id == course_release.outline_version_id,
@@ -686,15 +754,43 @@ class LearningAdjustmentService:
             str(node.knowledge_graph_node_id): node.outline_node_id
             for node in nodes if node.knowledge_graph_node_id
         }
-        # 仅 prerequisite_review 可触发回顾提案：目标是已确认薄弱的"前置知识点"，
-        # 其余教学动作（diagnostic_question / misconception_repair / hint_scaffolding）
-        # 的目标是当前知识点，不构成回退到前置知识点，故不返回目标。
+        # requested_jump（2026-08-18）：学生主动请求学习的知识点即为跳转目标，
+        # 不要求它必须与当前节点存在薄弱前置关系（学生可能想先了解任何前置/后继知识点）。
+        # outline 无 knowledge_graph_node_id 映射（如课程5 数据缺口）时，
+        # 用图谱节点标题与 outline 标题的共享关键词回退定位（可能命中多个同主题节点）。
+        if teaching_action == "requested_jump":
+            if requested_concept_id:
+                requested = str(requested_concept_id)
+                if requested in by_concept:
+                    return [by_concept[requested]]
+                graph_node = session.exec(select(CourseKnowledgeNode).where(
+                    CourseKnowledgeNode.course_id == course_release.course_id,
+                    CourseKnowledgeNode.node_key == requested,
+                )).first()
+                graph_title = (graph_node.title or "") if graph_node else ""
+                if graph_title:
+                    # 章节节点（CHAPTER/SECTION）是标题性节点，不产生媒体，
+                    # 不应成为回顾跳转目标；只匹配知识点节点（2026-08-18）。
+                    # node_type 可能是枚举（str() 会返回"类名.成员名"）或
+                    # 历史字符串存储，统一取 value 并大写比较。
+                    matched = [
+                        node.outline_node_id for node in nodes
+                        if node.title
+                        and str(getattr(node.node_type, "value", node.node_type) or "").upper() == "KNOWLEDGE_POINT"
+                        and _shares_keyword(graph_title, node.title)
+                    ]
+                    if matched:
+                        return matched
+            return []
+        # prerequisite_review：目标是已确认薄弱的"前置知识点"；其余教学动作
+        # （diagnostic_question / misconception_repair / hint_scaffolding）的目标是
+        # 当前知识点，不构成回退到前置知识点，故不返回目标。
         weak_ids = {str(item.get("concept_id") or "") for item in weak_concepts}
         for prerequisite in prerequisites:
             concept_id = str(prerequisite.get("concept_id") or "")
             if concept_id in weak_ids and concept_id in by_concept:
-                return by_concept[concept_id]
-        return None
+                return [by_concept[concept_id]]
+        return []
 
     def _resolve_cue_coordinate(
         self,

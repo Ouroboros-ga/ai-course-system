@@ -48,6 +48,108 @@ def _degrade(state: Mapping[str, Any], service: str, code: str) -> dict[str, Any
     }
 
 
+async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any]) -> str | None:
+    """LLM 智能推荐：基于对话上下文、认知状态、知识图谱判断是否推荐复习/跳转。
+    
+    Args:
+        tools: 教学工具集
+        state: 当前状态
+        
+    Returns:
+        推荐的 concept_id，若不推荐则返回 None
+        
+    2026-08-18: 最小改动方案，让推荐系统从关键词匹配升级到 LLM 理解意图。
+    """
+    # 只在 requested_jump 或 prerequisite_review 时调用 LLM
+    teaching_action = state.get("teaching_action")
+    if teaching_action not in {"requested_jump", "prerequisite_review"}:
+        return None
+    
+    # 如果 LLM 不可用，降级到原有逻辑
+    if tools.llm is None:
+        return None
+    
+    # 构建上下文
+    student_question = str(state.get("user_message") or "")
+    current_concept = state.get("current_concept_id")
+    prerequisites = list(state.get("prerequisites") or [])
+    weak_concepts = list(state.get("weak_concepts") or [])
+    requested_name = state.get("requested_concept_name")
+    conversation_turns = list(state.get("conversation_turns") or [])[-3:]  # 最近3轮
+    
+    # 构建知识图谱结构描述
+    graph_context = state.get("graph_context") or {}
+    related_concepts = graph_context.get("related_concepts") or []
+    
+    # 构建 Prompt
+    prompt = f"""你是课程智能体的推荐模块。根据学生提问、对话历史、认知状态和知识图谱，判断是否需要推荐学生复习前置知识点或跳转到其他知识点。
+
+**学生提问**: {student_question}
+
+**当前知识点**: {current_concept or "未知"}
+
+**教学动作**: {teaching_action}
+- requested_jump: 学生主动请求学习某个知识点（如"我想学传递函数"）
+- prerequisite_review: 系统检测到学生可能需要回顾前置知识
+
+**学生请求的知识点名称**: {requested_name or "无"}
+
+**前置知识点列表**:
+{json.dumps(prerequisites[:5], ensure_ascii=False, indent=2) if prerequisites else "无"}
+
+**薄弱知识点列表**:
+{json.dumps(weak_concepts[:5], ensure_ascii=False, indent=2) if weak_concepts else "无"}
+
+**相关知识点**:
+{json.dumps(related_concepts[:10], ensure_ascii=False, indent=2) if related_concepts else "无"}
+
+**最近对话历史**:
+{json.dumps([{{"role": t.get("role"), "content": t.get("content", "")[:100]}} for t in conversation_turns], ensure_ascii=False, indent=2) if conversation_turns else "无"}
+
+**任务**: 
+1. 理解学生提问的真实意图（困惑求助 vs 主动探索）
+2. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
+3. 结合知识图谱结构，判断推荐哪个知识点最合适
+4. 返回推荐的 concept_id
+
+**输出格式** (JSON):
+{{
+  "should_recommend": true/false,
+  "recommended_concept_id": "概念ID" 或 null,
+  "reason": "推荐理由（1-2句话）"
+}}
+
+**判断原则**:
+- 如果学生明确表达想学某个知识点，且该知识点在相关概念中，则推荐
+- 如果学生困惑，且困惑明显源于某个前置知识薄弱，则推荐该前置知识
+- 如果学生只是随口问问，或当前知识点足以解答，则不推荐
+- 避免过度推荐：只有在确实有帮助时才推荐
+"""
+    
+    try:
+        # 调用 LLM
+        response = await tools.llm.generate(
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.3,
+            max_tokens=500,
+        )
+        
+        # 解析响应
+        content = response.get("content", "")
+        # 尝试提取 JSON
+        import re
+        json_match = re.search(r'\{[^{}]*"should_recommend"[^{}]*\}', content, re.DOTALL)
+        if json_match:
+            result = json.loads(json_match.group())
+            if result.get("should_recommend") and result.get("recommended_concept_id"):
+                return str(result["recommended_concept_id"])
+        
+        return None
+        
+    except Exception:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
+        return None
+
+
 # 2026-08-16：内容安全闸门阻断 warning 码与兜底文案。
 # 合规文案优先来自安全评估的 compliance_reply（两套思政合规文案之一）。
 SAFETY_BLOCKED_WARNING = "SAFETY_CONTENT_BLOCKED"
@@ -456,12 +558,20 @@ def build_teaching_workflow(tools: TeachingTools):
             intent = str(result.get("intent", "course_question"))
             confidence = float(result.get("confidence", 0.0))
             candidates = await tools.llm.extract_concept_candidates(message=state["user_message"], course_id=state["course_id"])
+            # 学生主动请求学习的知识点名称（2026-08-18）：仅当 LLM 明确给出且长度受控时使用。
+            requested_name = result.get("requested_concept")
+            requested_name = (
+                str(requested_name).strip()[:64]
+                if isinstance(requested_name, str) and str(requested_name).strip()
+                else None
+            )
             return {
                 "intent": intent, "intent_confidence": confidence,
                 # LLM 实时标定提问深度（0-1）；缺失/非法时保持 None，不影响流程
                 "inquiry_depth": _parse_inquiry_depth(result.get("inquiry_depth")),
+                "requested_concept_name": requested_name,
                 "concept_candidates": [dict(item) for item in candidates],
-                "trace": _trace(state, "detect_intent", intent=intent),
+                "trace": _trace(state, "detect_intent", intent=intent, requested=requested_name),
             }
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "detect_intent", error=type(error).__name__)}
@@ -477,14 +587,53 @@ def build_teaching_workflow(tools: TeachingTools):
             }
         start = time.monotonic()
         try:
-            matches = await tools.knowledge_graph.resolve_concepts(course_id=state["course_id"], message=state["user_message"], candidates=state.get("concept_candidates", []), resource_id=state.get("current_resource_id"))
+            # 学生主动请求的知识点名称加入候选，让图谱解析有机会命中它
+            # （2026-08-18：学生主动学习跳转）。
+            requested_name = state.get("requested_concept_name")
+            enhanced_candidates = list(state.get("concept_candidates") or [])
+            if requested_name:
+                enhanced_candidates.append({"name": requested_name, "confidence": 1.0})
+            matches = await tools.knowledge_graph.resolve_concepts(course_id=state["course_id"], message=state["user_message"], candidates=enhanced_candidates, resource_id=state.get("current_resource_id"))
             selected = dict(matches[0]) if matches else {}
+            # requested_concept_id：从解析结果中按名称匹配学生请求的知识点。
+            # 图谱标题可能带序号前缀（如"一、 传递函数的定义和主要性质"），
+            # 学生说的是简称（"传递函数"），故用包含匹配而非精确相等（2026-08-18）。
+            # 2026-08-18 修复：要求至少 3 个字符且覆盖率 >= 60%，防止"控制"匹配
+            # 所有包含"控制"的节点（课程 5 有 7 个这样的节点会全部误匹配）。
+            requested_concept_id: str | None = None
+            if requested_name:
+                requested_lower = str(requested_name).casefold()
+                for match in matches:
+                    match_name = str(match.get("name") or "").casefold()
+                    if match_name == requested_lower:
+                        # 完全匹配直接接受
+                        requested_concept_id = str(match.get("concept_id"))
+                        break
+                    # 子串匹配：要求至少 3 字符且覆盖较短标题的 60%
+                    shorter = requested_lower if len(requested_lower) <= len(match_name) else match_name
+                    longer = match_name if len(requested_lower) <= len(match_name) else requested_lower
+                    if len(shorter) >= 3 and shorter in longer:
+                        coverage = len(shorter) / len(shorter)  # 100% for exact substring
+                        # 进一步检查：如果较短的是学生输入且明显短于图谱标题，
+                        # 则要求覆盖图谱标题的一定比例（避免"控制"匹配"控制系统微分方程"）
+                        if shorter == requested_lower and len(match_name) > len(requested_lower):
+                            # 学生输入必须覆盖图谱标题的至少 30%
+                            if len(requested_lower) / len(match_name) < 0.3:
+                                continue
+                        requested_concept_id = str(match.get("concept_id"))
+                        break
             await _record_invocation(tools, state, "graph",
                 input_summary={"message_length": len(str(state.get("user_message", "")))},
-                output_summary={"concept_id": selected.get("concept_id"), "candidate_count": len(matches)},
+                output_summary={"concept_id": selected.get("concept_id"), "requested_concept_id": requested_concept_id, "candidate_count": len(matches)},
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
-            return {"concept_candidates": [dict(item) for item in matches], "current_concept_id": selected.get("concept_id"), "concept_grounding_confidence": float(selected.get("confidence", 0.0)), "trace": _trace(state, "resolve_concept", resolved=bool(selected))}
+            return {
+                "concept_candidates": [dict(item) for item in matches],
+                "current_concept_id": selected.get("concept_id"),
+                "requested_concept_id": requested_concept_id,
+                "concept_grounding_confidence": float(selected.get("confidence", 0.0)),
+                "trace": _trace(state, "resolve_concept", resolved=bool(selected), requested=requested_concept_id),
+            }
         except Exception as error:
             payload = _degrade(state, "knowledge_graph", "KNOWLEDGE_GRAPH_UNAVAILABLE")
             payload.update({"concept_grounding_confidence": 0.0, "trace": _trace(state, "resolve_concept", error=type(error).__name__)})
@@ -1148,6 +1297,7 @@ def build_teaching_workflow(tools: TeachingTools):
                 key: state.get(key)
                 for key in (
                     "course_id", "user_message", "intent", "current_concept_id",
+                    "requested_concept_name", "requested_concept_id",
                     "student_concept_state", "graph_context", "retrieved_evidence",
                     "teaching_action", "teaching_action_reason", "selected_resource_ids",
                     "degraded_services", "cognitive_state", "cognitive_recommendation",
@@ -1243,6 +1393,9 @@ def build_teaching_workflow(tools: TeachingTools):
         This is a deterministic dependency, not an agent Tool.  No question,
         answer, prompt, citation text, target coordinate, or browser command
         is passed to it. A failed proposal must never make Q&A unavailable.
+        
+        2026-08-18: 引入 LLM 智能推荐，基于对话上下文、认知状态、知识图谱结构
+        判断学生是否需要回顾前置知识点或跳转到学生感兴趣的知识点。
         """
         if tools.learning_adjustment is None or not state.get("final_answer"):
             return {"trace": _trace(state, "propose_learning_adjustment", skipped=True)}
@@ -1263,6 +1416,10 @@ def build_teaching_workflow(tools: TeachingTools):
         raw_observation = state.get("question_observation")
         if not raw_observation:
             return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING")}
+        
+        # 2026-08-18: LLM 智能推荐逻辑
+        llm_recommended_concept_id = await _intelligent_recommend(tools, state)
+        
         try:
             observation = QuestionObservation.model_validate(raw_observation)
             proposal = await tools.learning_adjustment.propose(
@@ -1275,6 +1432,7 @@ def build_teaching_workflow(tools: TeachingTools):
                 prerequisites=list(state.get("prerequisites") or []),
                 weak_concepts=list(state.get("weak_concepts") or []),
                 source_trace_id=state["trace_id"],
+                requested_concept_id=llm_recommended_concept_id or state.get("requested_concept_id"),
             )
             if proposal is None:
                 return {"trace": _trace(state, "propose_learning_adjustment", proposed=False)}
@@ -1310,6 +1468,7 @@ def build_teaching_workflow(tools: TeachingTools):
         replay = {
             "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"],
             "intent": state.get("intent"), "concept_id": state.get("current_concept_id"),
+            "requested_concept_id": state.get("requested_concept_id"),
             "retrieved_evidence": state.get("retrieved_evidence", []), "warnings": state.get("warnings", []),
             "errors": state.get("errors", []), "degraded_services": state.get("degraded_services", []), "nodes": state.get("trace", []),
             "constraint_level": state.get("constraint_level"),

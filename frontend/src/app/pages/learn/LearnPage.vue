@@ -138,6 +138,9 @@ const pendingMediaSeek = ref(null)
 const activeLearningAdjustment = ref(null)
 const learningAdjustmentNotice = ref('')
 const learningAdjustmentBusy = ref(false)
+// 放弃标记：accept 的 apply 挂起期间用户点"放弃回顾"后置 true，
+// 使挂起回调不再重新激活激活态（2026-08-18）。
+const adjustmentAbandoned = ref(false)
 const LEARNING_ADJUSTMENT_STORAGE_KEY = `sfx:learning-adjustment:${courseId}:${counter.userData?.id ?? 'unknown'}`
 
 function sameIdentifier(left, right) {
@@ -186,21 +189,53 @@ function clearActiveLearningAdjustment() {
   persistActiveLearningAdjustment()
 }
 
-function restoreActiveLearningAdjustment() {
+async function restoreActiveLearningAdjustment() {
+  let stored = null
   try {
-    const stored = JSON.parse(sessionStorage.getItem(LEARNING_ADJUSTMENT_STORAGE_KEY) || 'null')
-    if (!isStoredAdjustment(stored)) return
-    // Reloading the page cannot prove the media element remains at its old
-    // target. Require a fresh browser-confirmed seek before showing review.
-    activeLearningAdjustment.value = {
-      proposal: stored.proposal,
-      previousRate: Number(stored.previousRate) || 1,
-      wasPlaying: Boolean(stored.wasPlaying),
-      navigationStatus: 'accepted',
-    }
+    stored = JSON.parse(sessionStorage.getItem(LEARNING_ADJUSTMENT_STORAGE_KEY) || 'null')
   } catch {
     // Corrupt or unavailable session storage must not affect the player.
+    return
   }
+  if (!isStoredAdjustment(stored)) return
+  // 服务器校验（2026-08-18）：修复前遗留的 applied 提案已不在后端（如教学动作收紧后
+  // 不再产出回顾提案），若直接恢复会把页面卡死在"已确认回顾，尚未打开内容"。
+  // 仅在后端明确无此 applied 记录时清除；网络失败保守保留原行为，不误删合法状态。
+  try {
+    const response = await listRecentLearningAdjustments(courseId, { limit: 20 })
+    const payload = response?.data ?? response
+    const items = Array.isArray(payload?.items) ? payload.items : []
+    const stillApplied = items.some(item => (
+      String(item?.adjustment_id || '') === String(stored.proposal.adjustment_id)
+      && item?.status === 'applied'
+    ))
+    if (!stillApplied) {
+      clearActiveLearningAdjustment()
+      return
+    }
+  } catch {
+    // Verification failure: keep the restored state (current behavior).
+  }
+  // Reloading the page cannot prove the media element remains at its old
+  // target. Require a fresh browser-confirmed seek before showing review.
+  activeLearningAdjustment.value = {
+    proposal: stored.proposal,
+    previousRate: Number(stored.previousRate) || 1,
+    wasPlaying: Boolean(stored.wasPlaying),
+    navigationStatus: 'accepted',
+  }
+}
+
+// 放弃回顾：无条件解除卡死（2026-08-18）。
+// 不依赖 learningAdjustmentBusy——busy 卡死（如 apply 请求挂起）时也必须能退出，
+// 否则"已确认回顾，尚未打开内容"的绿色框成为死胡同。
+// 同时取消进行中的媒体 seek，避免其后回调继续操作已放弃的状态。
+function abandonActiveLearningAdjustment() {
+  adjustmentAbandoned.value = true
+  pendingMediaSeek.value?.fail(new Error('ADJUSTMENT_ABANDONED'))
+  clearActiveLearningAdjustment()
+  learningAdjustmentNotice.value = ''
+  ws.isPlaying.value = false
 }
 
 function updateMessageLearningAdjustment(proposal) {
@@ -319,6 +354,8 @@ async function restoreAfterFailedReviewOpen(active) {
 
 async function acceptLearningAdjustment(initialProposal) {
   if (!initialProposal?.adjustment_id || learningAdjustmentBusy.value || activeLearningAdjustment.value) return
+  // 每次 accept 开启新的一次"未放弃"状态；abandon 会置 true 以取消挂起中的 apply。
+  adjustmentAbandoned.value = false
   const returnAnchor = coordinateForCurrentPlayback()
   if (!returnAnchor) {
     learningAdjustmentNotice.value = '当前播放位置未能对应到已发布媒体，无法安全开始回顾。'
@@ -340,10 +377,19 @@ async function acceptLearningAdjustment(initialProposal) {
       throw new Error('ADJUSTMENT_ACCEPTANCE_UNAVAILABLE')
     }
     updateMessageLearningAdjustment(proposal)
+    // 用户在 apply 挂起期间已点"放弃回顾"：不再重新激活，避免绿框复现。
+    if (adjustmentAbandoned.value) {
+      throw new Error('ADJUSTMENT_ABANDONED')
+    }
     const active = { proposal, previousRate, wasPlaying, navigationStatus: 'accepted' }
     setActiveLearningAdjustment(active)
     await openAcceptedLearningAdjustment(active)
   } catch {
+    if (adjustmentAbandoned.value) {
+      ws.playbackRate.value = previousRate
+      ws.isPlaying.value = wasPlaying
+      return
+    }
     const active = activeLearningAdjustment.value
       || await recoverAcceptedLearningAdjustment(initialProposal.adjustment_id, previousRate, wasPlaying)
     if (!active) {
@@ -435,6 +481,17 @@ const trackCollapsed = computed(() => {
   return trackManualOverride.value ?? ![LEARN_STATES.LEARN].includes(learnState.value)
 })
 function handleTrackToggle() {
+  // 提问界面打开时目录被强制收起（isAgentOpen → trackCollapsed 恒为 true），
+  // 展开键此时不可用。按需求：提问界面中点目录展开键 = 关闭提问界面并展开目录，
+  // 回到正式课程界面（C1 焦点回工具坞触发区由 exitBranch 处理）。
+  if (isAgentOpen.value) {
+    exitBranch()
+    trackManualOverride.value = false
+    try { localStorage.setItem(TRACK_STORAGE_KEY, '0') } catch {
+      // A blocked storage quota should not disable the learning rail.
+    }
+    return
+  }
   const next = !trackCollapsed.value
   trackManualOverride.value = next
   try { localStorage.setItem(TRACK_STORAGE_KEY, next ? '1' : '0') } catch {
@@ -637,7 +694,7 @@ async function completeNode() {
 
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
-  restoreActiveLearningAdjustment()
+  await restoreActiveLearningAdjustment()
 })
 
 watch(
@@ -748,6 +805,7 @@ watch(
                 @dismiss-adjustment="dismissLearningAdjustmentProposal"
                 @retry-opening-review="retryOpeningLearningAdjustment"
                 @return-adjustment="returnToLearningAnchor"
+                @abandon-adjustment="abandonActiveLearningAdjustment"
               />
             </template>
             <template v-if="learnState === LEARN_STATES.UNDERSTAND" #footer>

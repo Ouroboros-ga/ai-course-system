@@ -33,6 +33,7 @@ class SessionScopedLearningAdjustmentPort:
         prerequisites: Sequence[Mapping[str, Any]],
         weak_concepts: Sequence[Mapping[str, Any]],
         source_trace_id: str,
+        requested_concept_id: str | None = None,
     ) -> LearningAdjustmentProposal | None:
         try:
             student_id_int = int(student_id)
@@ -66,6 +67,7 @@ class SessionScopedLearningAdjustmentPort:
                     weak_concepts=weak_concepts,
                     reason_codes=reason_codes,
                     source_trace_id=source_trace_id,
+                    requested_concept_id=requested_concept_id,
                 )
 
         return await asyncio.to_thread(_write)

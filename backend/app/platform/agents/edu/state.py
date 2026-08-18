@@ -25,6 +25,10 @@ class TeachingState(TypedDict, total=False):
     concept_candidates: list[dict[str, Any]]
     current_concept_id: str | None
     concept_grounding_confidence: float
+    # 学生主动请求学习的知识点（2026-08-18）：detect_intent 由 LLM 提取
+    # requested_concept 名称，resolve_concept 解析为课程内图节点 id。
+    requested_concept_name: str | None
+    requested_concept_id: str | None
     student_concept_state: dict[str, Any]
     weak_concepts: list[dict[str, Any]]
     graph_context: dict[str, Any]
@@ -72,6 +76,8 @@ class TeachingState(TypedDict, total=False):
     # a return anchor does not exist until the learner accepts review.
     question_observation: dict[str, Any] | None
     learning_adjustment: dict[str, Any] | None
+    # LLM recommendation for intelligent review (2026-08-18)
+    intelligent_recommendation: dict[str, Any] | None
     # 2026-08-16：内容安全闸门决策（safety_check 节点产出）。
     # blocked 时 status="blocked" 且 final_answer 为合规回答文案。
     safety_decision: dict[str, Any] | None

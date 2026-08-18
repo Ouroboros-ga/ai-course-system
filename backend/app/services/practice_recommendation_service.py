@@ -24,6 +24,7 @@ from app.core.exceptions import (
     reject_state_conflict,
     reject_validation_failed,
 )
+from app.core.db_json import json_array_contains
 from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
@@ -823,7 +824,7 @@ class PracticeRecommendationService:
             QuestionBankItem.is_latest == True,  # noqa: E712
         )
         if node_id is not None:
-            stmt = stmt.where(QuestionBankItem.knowledge_node_ids.contains([node_id]))
+            stmt = stmt.where(json_array_contains(QuestionBankItem.knowledge_node_ids, node_id))
         stmt = stmt.limit(limit)
         return list(session.exec(stmt).all())
 

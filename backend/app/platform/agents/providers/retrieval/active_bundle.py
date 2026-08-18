@@ -5,12 +5,33 @@ import asyncio
 from typing import Any, Mapping
 
 from fastapi import HTTPException
+from sqlmodel import select
 
+from app.models.course_outline_model import CourseOutlineNode
 from app.models.database import session_factory
+from app.models.graph_production_model import CourseKnowledgeNode
 from app.platform.knowledge.sql_lance_provider import SqlLanceCourseKnowledgeProvider
 from app.services.course_access_service import resolve_course_access
 
 from ...errors import ScopeRejectedError, ServiceUnavailableError
+
+
+def _shares_keyword(left: str, right: str, min_span: int = 4) -> bool:
+    """Return True when two titles share a meaningful character span.
+
+    Outlines whose knowledge_graph_node_id mapping is empty fall back to title
+    matching.  ``min_span=4`` rejects coincidental short overlaps and single
+    noise characters (e.g. the graph node titled "的").
+    """
+    shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
+    n = len(shorter)
+    if n < min_span:
+        return False
+    for size in range(min(n, 16), min_span - 1, -1):
+        for i in range(n - size + 1):
+            if shorter[i:i + size] in longer:
+                return True
+    return False
 
 
 class ActiveBundleScopePort:
@@ -64,19 +85,71 @@ class ActiveBundleKnowledgeGraphPort:
         if graph is None:
             raise ServiceUnavailableError("active course knowledge bundle pending")
         lowered = message.casefold()
-        exact = [
+
+        def _title(node: Mapping[str, Any]) -> str:
+            return str(node.get("title") or node.get("label") or "").casefold()
+
+        # 1) 当前学习位置（resource_id）是强先验：学生的问题通常指"这里/当前知识点"。
+        #    此前实现完全忽略 resource_id，纯文本匹配失败后回退语义检索，
+        #    会把"请问这里涉及到的数学模型是什么？"解析到噪声节点（如名称为"的"），
+        #    导致智能体不知道自己正在讲解的知识点（2026-08-18 修复）。
+        #    outline→图谱映射缺失的课程（knowledge_graph_node_id 为空）用标题关键词回退。
+        resource_nodes: list[Mapping[str, Any]] = []
+        if resource_id:
+            resource_key, outline_title = await asyncio.to_thread(
+                self._resource_id_and_outline_title, course, str(resource_id)
+            )
+            if resource_key:
+                resource_nodes = [
+                    node for node in graph.nodes
+                    if str(node.get("id")) == resource_key
+                ]
+            elif outline_title:
+                resource_nodes = [
+                    node for node in graph.nodes
+                    if _shares_keyword(outline_title, _title(node))
+                ]
+
+        # 2) 消息明确点名：节点标题完整出现在问题中（如"传递函数是什么"）。
+        #    单字标题（如源文本切分产生的"的"）几乎出现在所有中文消息里，
+        #    不构成点名，必须排除，否则会把"这里"误解析到噪声节点。
+        named_nodes = [
             node for node in graph.nodes
-            if str(node.get("title") or node.get("label") or "").casefold() in lowered
+            if len(_title(node)) >= 2 and _title(node) in lowered
         ]
         candidate_names = {
             str(item.get("name") or "").casefold() for item in candidates
         }
-        exact.extend(
+        # 3) 候选名匹配：候选名是图谱节点标题的子串即命中（学生说"传递函数"，
+        #    图谱标题"一、 传递函数的定义和主要性质"应命中），而非仅精确相等。
+        candidate_nodes = [
             node for node in graph.nodes
-            if str(node.get("title") or node.get("label") or "").casefold() in candidate_names
-            and node not in exact
-        )
-        if not exact and message.strip():
+            if len(_title(node)) >= 2
+            and any(name and name in _title(node) for name in candidate_names)
+            and node not in named_nodes
+            and node not in resource_nodes
+        ]
+
+        # 4) 选择顺序：明确点名 > 当前学习位置 > 候选名。
+        #    学生明确点名某知识点时以点名优先（他想去那里）；否则默认停留在
+        #    当前学习位置，避免"这里/这个公式"等指代被误解析到其他节点。
+        if named_nodes:
+            ordered: list[Mapping[str, Any]] = []
+            for node in (*named_nodes, *resource_nodes, *candidate_nodes):
+                if node not in ordered:
+                    ordered.append(node)
+        else:
+            ordered = [*resource_nodes, *candidate_nodes]
+            seen: set[str] = set()
+            deduped: list[Mapping[str, Any]] = []
+            for node in ordered:
+                key = str(node.get("id"))
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(node)
+            ordered = deduped
+
+        if not ordered and message.strip():
             result = await asyncio.to_thread(
                 self._provider.search_evidence,
                 course,
@@ -87,9 +160,11 @@ class ActiveBundleKnowledgeGraphPort:
                 matched_keys = {
                     item.node_key for item in result.items if item.node_key
                 }
-                exact = [
+                # 回退检索同样排除单字噪声标题（如"的"），避免把指代解析到噪声节点。
+                ordered = [
                     node for node in graph.nodes
                     if str(node.get("id")) in matched_keys
+                    and len(_title(node)) >= 2
                 ]
         return [{
             "concept_id": str(node["id"]),
@@ -97,7 +172,42 @@ class ActiveBundleKnowledgeGraphPort:
             "confidence": 0.9,
             "bundle_id": graph.bundle.bundle_id,
             "graph_snapshot_id": graph.bundle.graph_snapshot_id,
-        } for node in exact[:12]]
+        } for node in ordered[:12]]
+
+    @staticmethod
+    def _resource_id_and_outline_title(
+        course: int, resource_id: str
+    ) -> tuple[str | None, str | None]:
+        """Resolve a browser resource id to (graph node key, outline title).
+
+        The learning page sends the current outline node id (``on_*``) as
+        ``resource_id``; graph node keys (``kn_*``) and legacy numeric ids are
+        also accepted.  Outlines whose knowledge_graph_node_id mapping is empty
+        (data gap) return the outline title for keyword fallback.
+        """
+        if resource_id.startswith("kn_"):
+            return resource_id, None
+        with session_factory() as session:
+            if resource_id.isdigit():
+                node = session.exec(
+                    select(CourseKnowledgeNode).where(
+                        CourseKnowledgeNode.course_id == course,
+                        CourseKnowledgeNode.id == int(resource_id),
+                    )
+                ).first()
+                return (node.node_key if node else None), None
+            outline = session.exec(
+                select(CourseOutlineNode).where(
+                    CourseOutlineNode.course_id == course,
+                    CourseOutlineNode.outline_node_id == resource_id,
+                )
+            ).first()
+            if outline is None:
+                return None, None
+            if outline.knowledge_graph_node_id:
+                return outline.knowledge_graph_node_id, None
+            return None, (outline.title or "")[:64] or None
+        return None, None
 
     async def get_context(
         self,

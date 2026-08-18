@@ -148,9 +148,18 @@ export function useMediaBuild() {
         && batchPlan.value.avatar_preset?.preset_id === selectedAvatarPresetId.value
         && batchPlan.value.avatar_preset?.version === selectedAvatarPresetVersion.value
     ))
+    // 当前工作 release 已确认过批量任务时置位，按钮转为"已提交"禁用态，
+    // 防止同一批节点重复确认创建整套重复任务（2026-08-18 修复）。
+    const batchAlreadySubmitted = computed(() => Boolean(
+        batchState.value
+        && workingRelease.value
+        && batchState.value.release_id === workingRelease.value.release_id
+        && ['confirmed', 'running', 'ready', 'failed'].includes(batchState.value.status),
+    ))
     const canConfirmBatch = computed(() => canPlanBatch.value && Boolean(batchPlan.value?.can_confirm)
         && batchPlanMatchesSelections.value
-        && (!providerNeedsConfirmation.value || paidTtsConfirmed.value))
+        && (!providerNeedsConfirmation.value || paidTtsConfirmed.value)
+        && !batchAlreadySubmitted.value)
     // Playlist (batch) releases freeze Cue assets per MediaReleaseItem, not on the
     // release row.  ``hasFrozenCues`` therefore stays false for the whole batch
     // while every item is already ``ready``.  Gate the PPT manifest step on the
@@ -244,6 +253,21 @@ export function useMediaBuild() {
 
     function makeCueIdempotencyKey() {
         return `cue:${workingRelease.value.release_id}:${selectedTtsJob.value.job_id}`
+    }
+
+    // 确定性批量幂等键（2026-08-18 修复）：同一课程、同一批节点、同一
+    // 音色/角色组合重复确认时键值不变，后端幂等查重命中后返回原批次，
+    // 不再像此前使用 Date.now() 那样每次点击都创建整套重复的
+    // TTS + 字幕时间轴任务，导致任务列表堆积。
+    function makeBatchIdempotencyKey() {
+        const nodeKey = [...batchNodeIds.value].sort((a, b) => a - b).join(',')
+        const seed = `${courseId.value}|${nodeKey}|${providerKey.value}|${selectedVoicePresetId.value}|${selectedVoicePresetVersion.value}|${selectedAvatarPresetId.value}|${selectedAvatarPresetVersion.value}`
+        // djb2 稳定短哈希（同步、无依赖），控制幂等键长度
+        let hash = 5381
+        for (let i = 0; i < seed.length; i += 1) {
+            hash = ((hash << 5) + hash + seed.charCodeAt(i)) >>> 0
+        }
+        return `batch:${courseId.value}:${hash.toString(36)}`
     }
 
     function chooseDefaultRelease(nextReleases) {
@@ -352,7 +376,7 @@ export function useMediaBuild() {
         if (!canConfirmBatch.value || acting.value) return
         acting.value = 'batch-confirm'; error.value = ''; notice.value = ''
         try {
-            const response = await confirmMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', voice_preset_id: selectedVoicePresetId.value, voice_preset_version: selectedVoicePresetVersion.value, avatar_preset_id: selectedAvatarPresetId.value, avatar_preset_version: selectedAvatarPresetVersion.value, idempotency_key: `batch-${courseId.value}-${Date.now()}`, label: '批量媒体建设草稿', paid_tts_confirmed: paidTtsConfirmed.value })
+            const response = await confirmMediaBatch(courseId.value, { node_ids: batchNodeIds.value, provider_key: providerKey.value, provider_version: provider.value?.provider_version || '', voice_id: 'default', voice_preset_id: selectedVoicePresetId.value, voice_preset_version: selectedVoicePresetVersion.value, avatar_preset_id: selectedAvatarPresetId.value, avatar_preset_version: selectedAvatarPresetVersion.value, idempotency_key: makeBatchIdempotencyKey(), label: '批量媒体建设草稿', paid_tts_confirmed: paidTtsConfirmed.value })
             batchState.value = response
             selectedReleaseId.value = response.release_id
             await load({ quiet: true })
@@ -665,12 +689,12 @@ export function useMediaBuild() {
         hasFrozenPlaylist, canActivateWorkingRelease, hasPendingJobs, activeBatchId,
         batchItems, canCreateDraft, canSubmitTts, batchSelectedScripts, selectedBatchItem,
         canPlanBatch, batchPlanMatchesSelections, canConfirmBatch, batchReady,
-        releaseCueAssetsReady, canBuildPptManifest,
+        releaseCueAssetsReady, canBuildPptManifest, batchAlreadySubmitted,
         // 方法
         jobTone, releaseTone, releaseStatusLabel, jobStatusLabel, batchStatusLabel,
         batchItemStatusLabel, scriptLabel, sameMediaNode, findBatchItemForScript,
         findScriptForBatchItem, jobLabel, formatDate,
-        makeTtsIdempotencyKey, makeCueIdempotencyKey, chooseDefaultRelease,
+        makeTtsIdempotencyKey, makeCueIdempotencyKey, makeBatchIdempotencyKey, chooseDefaultRelease,
         refreshReleaseDetail, refreshBatchState, load, toggleBatchNode,
         scriptItemAudio, withPreviewAccessToken,
         createBatchPlan, confirmBatch, applyPreview, fetchPreview, previewBatchItem,

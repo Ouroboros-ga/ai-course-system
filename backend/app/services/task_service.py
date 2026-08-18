@@ -570,6 +570,29 @@ class TaskService:
             message=reason or "用户取消",
             created_at=now,
         ))
+        # 媒体生成任务取消时同步 media_generation_jobs 状态（2026-08-18 修复）：
+        # 此前只更新统一任务表，jobs 行停留在 PENDING，前端任务列表永远显示
+        # "等待处理"堆积项。
+        if record.task_type in {"media.tts", "media.timeline_publish", "media.ppt_manifest"}:
+            try:
+                from app.models.media_release_model import (
+                    MediaGenerationJob,
+                    MediaGenerationStatus,
+                )
+
+                job = session.exec(
+                    select(MediaGenerationJob).where(MediaGenerationJob.task_id == task_id)
+                ).first()
+                if job is not None and job.status in {
+                    MediaGenerationStatus.PENDING,
+                    MediaGenerationStatus.RUNNING,
+                }:
+                    job.status = MediaGenerationStatus.CANCELLED
+                    job.finished_at = now
+                    job.updated_at = now
+                    session.add(job)
+            except Exception:  # noqa: BLE001 - cancellation must never fail the task row
+                logger.exception("Unable to sync media job %s to cancelled", task_id)
         session.commit()
         session.refresh(record)
         return TaskViewModel.from_record(record)

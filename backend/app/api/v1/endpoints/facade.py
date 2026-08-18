@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 from app.core.exceptions import unified_response
 from app.core.security import get_current_user
 from app.core.config import settings
+from app.core.db_json import json_array_contains
 from app.models.database import get_session
 from app.models.course_model import (
     Course,
@@ -612,7 +613,7 @@ async def get_quiz_view(
         stmt = stmt.where(QuestionBankItem.status == QuestionStatus.PUBLISHED)
 
     if node_id:
-        stmt = stmt.where(QuestionBankItem.knowledge_node_ids.contains([node_id]))
+        stmt = stmt.where(json_array_contains(QuestionBankItem.knowledge_node_ids, node_id))
 
     stmt = stmt.limit(limit)
     items = session.exec(stmt).all()

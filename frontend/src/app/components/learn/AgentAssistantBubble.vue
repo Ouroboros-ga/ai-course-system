@@ -1,6 +1,9 @@
 <script setup>
 import { BookMarked, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { useSettingsStore } from '@/stores/userSettings'
+
+const settings = useSettingsStore()
 
 const props = defineProps({
     message: { type: Object, required: true },
@@ -12,6 +15,7 @@ const emit = defineEmits([
     'dismiss-adjustment',
     'return-adjustment',
     'retry-opening-review',
+    'abandon-adjustment',
     'retry',
 ])
 
@@ -29,6 +33,7 @@ function isReviewingAdjustment(adjustment) {
 
 function isVisibleProposal(adjustment) {
     return adjustment?.status === 'proposed'
+        && adjustment?.review_target
         && !adjustment?.declined_at
         && !adjustment?.invalidated_at
         && !isActiveAdjustment(adjustment)
@@ -42,7 +47,7 @@ function retry() {
 <template>
     <div class="sfx-agent-msg-row is-assistant">
         <span class="sfx-agent-avatar sfx-agent-avatar-ai" aria-hidden="true">
-            <span class="sfx-agent-avatar-initials">AI</span>
+            <img :src="settings.currentAvatarPath" alt="课程智能体头像">
         </span>
         <div class="sfx-agent-msg-bubble-wrap is-assistant">
             <div class="sfx-agent-answer" :class="{ 'is-error': message.error }">
@@ -104,8 +109,13 @@ function retry() {
                             <TriangleAlert :size="15" /> 已确认回顾，尚未打开内容
                         </p>
                         <p class="sfx-t-caption">原学习位置仍已保留，打开成功后可自行返回。</p>
-                        <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy" :disabled="adjustmentBusy"
-                            @click="$emit('retry-opening-review')">重试打开回顾</SfxButton>
+                        <div class="sfx-agent-adjustment-actions">
+                            <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy"
+                                :disabled="adjustmentBusy" @click="$emit('retry-opening-review')">重试打开回顾</SfxButton>
+                            <!-- 放弃回顾是无条件出口：busy 卡死时也必须可点击，否则无法解除卡死 -->
+                            <SfxButton variant="tertiary" size="sm"
+                                @click="$emit('abandon-adjustment')">放弃回顾</SfxButton>
+                        </div>
                     </template>
                 </section>
 
@@ -137,6 +147,13 @@ function retry() {
     background: linear-gradient(135deg, var(--ink-700), var(--ink-500));
     color: var(--text-inverse);
     box-shadow: 0 1px 2px rgb(20 33 61 / 18%);
+}
+
+.sfx-agent-avatar img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-full);
 }
 
 .sfx-agent-avatar-initials {

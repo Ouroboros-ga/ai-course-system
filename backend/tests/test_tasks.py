@@ -348,6 +348,42 @@ def test_cancel_and_acknowledge(client, session):
     assert ack_resp.json()["data"]["acknowledged"] is True
 
 
+def test_cancel_syncs_media_generation_job_status(session):
+    """取消媒体生成任务时，media_generation_jobs 状态同步为 CANCELLED（2026-08-18）。
+
+    此前只更新统一任务表，jobs 行停留在 PENDING，前端任务列表永远显示
+    "等待处理"堆积项。
+    """
+    from app.models.media_release_model import (
+        MediaGenerationJob,
+        MediaGenerationStatus,
+    )
+
+    user = _user(session, "task_cancel_media", UserRole.TEACHER)
+    req = TaskCreateRequest(
+        task_type="media.timeline_publish",
+        owner_user_id=user.id,
+        input_summary="cue sync test",
+    )
+    view = task_service.create_task(session, req)
+    job = MediaGenerationJob(
+        course_id=1,
+        job_type="TIMELINE_PUBLISH",
+        task_id=view.task_id,
+        status=MediaGenerationStatus.PENDING,
+        provider_key="mock",
+        created_by=user.id,
+    )
+    session.add(job)
+    session.commit()
+
+    task_service.cancel(session, view.task_id, reason="test sync", operator_user_id=user.id)
+
+    session.refresh(job)
+    assert job.status == MediaGenerationStatus.CANCELLED
+    assert job.finished_at is not None
+
+
 def test_cancelled_experiment_run_cannot_be_retried(session):
     """A cancelled formal run must never be requeued into a later grade."""
     from fastapi import HTTPException

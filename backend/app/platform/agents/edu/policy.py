@@ -67,6 +67,11 @@ def _last_action(state: Mapping[str, Any]) -> str | None:
 def decide_teaching_action(state: Mapping[str, Any]) -> tuple[str, str]:
     if state.get("current_code_submission_id"):
         return "code_debugging", "code_submission_context_present"
+    # 学生主动请求学习某个知识点（2026-08-18）："我想学传递函数"、
+    # "感觉前置的微分方程不熟练，想先看看"等明确意图优先于诊断分支。
+    # requested_concept_id 仅在图谱解析阶段确认存在时才会被写入 state。
+    if state.get("requested_concept_id"):
+        return "requested_jump", "learner_requested_jump"
     if _num(state, "concept_grounding_confidence") < 0.55:
         return "diagnostic_question", "concept_grounding_insufficient"
     learner = state.get("student_concept_state") or {}
