@@ -51,11 +51,12 @@ class LearningAdjustmentConflict(ValueError):
 class LearningAdjustmentService:
     """Resolve a target only from an active immutable course/media release pair."""
 
-    # 只有"回退学习前置知识点"的教学动作才会产出回顾提案（2026-08-16 收紧）。
+    # 只有"回退学习前置知识点"（prerequisite_review）与"学生主动请求学习某知识点"
+    # （requested_jump，2026-08-18）两个教学动作才会产出回顾提案。
     # diagnostic_question 是"先诊断提问"，misconception_repair / hint_scaffolding
     # 的目标是当前知识点本身，都不属于"回退到前置知识点"，不再触发回顾提示框，
     # 避免无回顾必要也弹出"建议回顾第 X 页"。
-    _REDIRECT_ACTIONS = {"prerequisite_review"}
+    _REDIRECT_ACTIONS = {"prerequisite_review", "requested_jump"}
 
     def create_proposal(
         self,
@@ -71,6 +72,7 @@ class LearningAdjustmentService:
         reason_codes: tuple[str, ...],
         source_trace_id: str | None = None,
         recommended_playback_rate: float = 0.85,
+        requested_concept_id: str | None = None,
     ) -> LearningAdjustmentProposal | None:
         """Persist a review proposal only after resolving a frozen target.
 
@@ -85,6 +87,7 @@ class LearningAdjustmentService:
             current_concept_id=current_concept_id,
             prerequisites=prerequisites,
             weak_concepts=weak_concepts,
+            requested_concept_id=requested_concept_id,
         )
         if resolution.review_target is None:
             return None
@@ -543,6 +546,7 @@ class LearningAdjustmentService:
         prerequisites: Iterable[Mapping[str, Any]],
         weak_concepts: Iterable[Mapping[str, Any]],
         storage: ObjectStorageProvider | None = None,
+        requested_concept_id: str | None = None,
     ) -> ReviewTargetResolution:
         if teaching_action not in self._REDIRECT_ACTIONS:
             return ReviewTargetResolution(None, "ACTION_DOES_NOT_REQUIRE_REVIEW")
@@ -594,6 +598,7 @@ class LearningAdjustmentService:
             current_concept_id=current_concept_id,
             prerequisites=prerequisites,
             weak_concepts=weak_concepts,
+            requested_concept_id=requested_concept_id,
         )
         if target_outline_node_id is None:
             return ReviewTargetResolution(None, "MEDIA_TARGET_UNAVAILABLE")
@@ -677,6 +682,7 @@ class LearningAdjustmentService:
         current_concept_id: str | None,
         prerequisites: Iterable[Mapping[str, Any]],
         weak_concepts: Iterable[Mapping[str, Any]],
+        requested_concept_id: str | None = None,
     ) -> str | None:
         nodes = list(session.exec(select(CourseOutlineNode).where(
             CourseOutlineNode.course_id == course_release.course_id,
@@ -686,9 +692,15 @@ class LearningAdjustmentService:
             str(node.knowledge_graph_node_id): node.outline_node_id
             for node in nodes if node.knowledge_graph_node_id
         }
-        # 仅 prerequisite_review 可触发回顾提案：目标是已确认薄弱的"前置知识点"，
-        # 其余教学动作（diagnostic_question / misconception_repair / hint_scaffolding）
-        # 的目标是当前知识点，不构成回退到前置知识点，故不返回目标。
+        # requested_jump（2026-08-18）：学生主动请求学习的知识点即为跳转目标，
+        # 不要求它必须与当前节点存在薄弱前置关系（学生可能想先了解任何前置/后继知识点）。
+        if teaching_action == "requested_jump":
+            if requested_concept_id and str(requested_concept_id) in by_concept:
+                return by_concept[str(requested_concept_id)]
+            return None
+        # prerequisite_review：目标是已确认薄弱的"前置知识点"；其余教学动作
+        # （diagnostic_question / misconception_repair / hint_scaffolding）的目标是
+        # 当前知识点，不构成回退到前置知识点，故不返回目标。
         weak_ids = {str(item.get("concept_id") or "") for item in weak_concepts}
         for prerequisite in prerequisites:
             concept_id = str(prerequisite.get("concept_id") or "")

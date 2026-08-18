@@ -263,3 +263,56 @@ def test_hard_signal_prerequisite_review_not_blocked_by_hysteresis():
         "prerequisite_review",
         "confirmed_weak_prerequisite",
     )
+
+
+# ---------------------------------------------------------------------------
+# 学生主动学习跳转（2026-08-18）：requested_jump 优先于诊断/薄弱分支
+# ---------------------------------------------------------------------------
+
+
+def test_requested_jump_beats_weak_concept_grounding():
+    # 学生明确请求学习某知识点（requested_concept_id 已解析）时，
+    # 即使当前概念落地置信度低、认知状态不足，也优先响应用户的跳转请求。
+    learner = {"evidence_confidence": None, "mastery_score": None}
+    state = _state(
+        learner,
+        concept_grounding_confidence=0.0,
+        weak=[],
+        prerequisites=[],
+    )
+    state["requested_concept_id"] = "kn_transfer-function"
+    assert decide_teaching_action(state) == (
+        "requested_jump",
+        "learner_requested_jump",
+    )
+
+
+def test_requested_jump_beats_diagnostic_and_weak_signals():
+    learner = {
+        "evidence_confidence": 0.3,
+        "mastery_score": 0.6,
+        "confusion_risk": 0.9,
+    }
+    state = _state(learner)
+    state["requested_concept_id"] = "kn_linearization"
+    action, reason = decide_teaching_action(state)
+    assert action == "requested_jump"
+    assert reason == "learner_requested_jump"
+
+
+def test_no_requested_concept_keeps_existing_behavior():
+    # 没有 requested_concept_id 时保持原有策略（薄弱前置仍触发 prerequisite_review）
+    learner = {
+        "evidence_confidence": 0.85,
+        "mastery_score": 0.6,
+        "confusion_risk": 0.1,
+    }
+    state = _state(
+        learner,
+        weak=[{"concept_id": "ordered-array"}],
+        prerequisites=[{"concept_id": "ordered-array"}],
+    )
+    assert decide_teaching_action(state) == (
+        "prerequisite_review",
+        "confirmed_weak_prerequisite",
+    )

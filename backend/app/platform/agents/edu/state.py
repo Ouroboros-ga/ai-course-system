@@ -25,6 +25,10 @@ class TeachingState(TypedDict, total=False):
     concept_candidates: list[dict[str, Any]]
     current_concept_id: str | None
     concept_grounding_confidence: float
+    # 学生主动请求学习的知识点（2026-08-18）：detect_intent 由 LLM 提取
+    # requested_concept 名称，resolve_concept 解析为课程内图节点 id。
+    requested_concept_name: str | None
+    requested_concept_id: str | None
     student_concept_state: dict[str, Any]
     weak_concepts: list[dict[str, Any]]
     graph_context: dict[str, Any]

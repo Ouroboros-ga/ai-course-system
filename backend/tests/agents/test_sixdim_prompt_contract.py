@@ -28,8 +28,23 @@ def test_response_system_declares_six_dimension_usage_rules():
     assert "更新" in RESPONSE_SYSTEM and "掌握度" in RESPONSE_SYSTEM
 
 
-def test_prompt_version_bumped_to_1_3():
-    assert PROMPT_VERSION == "teaching-agent-prompts/1.3"
+def test_prompt_version_bumped_to_1_4():
+    # 2026-08-18：意图解析增加 requested_concept（学生主动学习跳转），版本升至 1.4
+    assert PROMPT_VERSION == "teaching-agent-prompts/1.4"
+
+
+def test_intent_system_extracts_requested_concept():
+    from app.platform.agents.edu.prompts import INTENT_SYSTEM
+
+    assert "requested_concept" in INTENT_SYSTEM
+    # 明确禁止把"这里/这个公式"等指代当作 requested_concept
+    assert "这里" in INTENT_SYSTEM and "指代" in INTENT_SYSTEM
+
+
+def test_response_system_guides_requested_jump_answer():
+    assert "requested_jump" in RESPONSE_SYSTEM
+    assert "requested_concept_name" in RESPONSE_SYSTEM
+    assert "跳转" in RESPONSE_SYSTEM
 
 
 def test_generation_prompt_serializes_none_as_unknown():

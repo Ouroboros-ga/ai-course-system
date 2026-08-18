@@ -24,6 +24,7 @@ class LearningAdjustmentPort(Protocol):
         prerequisites: Sequence[Mapping[str, Any]],
         weak_concepts: Sequence[Mapping[str, Any]],
         source_trace_id: str,
+        requested_concept_id: str | None = None,
     ) -> LearningAdjustmentProposal | None: ...
 
 

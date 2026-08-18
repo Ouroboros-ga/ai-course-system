@@ -196,6 +196,52 @@ def test_prerequisite_review_uses_frozen_cue_item_local_coordinate(session: Sess
     assert result.review_target.page == 6
 
 
+def test_requested_jump_targets_the_learner_requested_node(session: Session) -> None:
+    """学生主动请求学习某知识点（requested_jump）时，跳转目标是请求的节点。
+
+    requested_jump 不要求该节点与当前节点存在"已确认薄弱"关系：
+    学生可能想先了解任何前置/后继知识点（2026-08-18）。
+    """
+    course, _, ids = _setup_frozen_course(session)
+
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action="requested_jump",
+        current_concept_id="concept-current",
+        prerequisites=[],
+        weak_concepts=[],
+        requested_concept_id="concept-prerequisite",
+    )
+
+    assert result.reason_code is None
+    assert result.review_target is not None
+    assert result.review_target.media_release_item_id == ids["prerequisite_item_id"]
+    assert result.review_target.outline_node_id == ids["prerequisite_outline_node_id"]
+    assert result.review_target.local_time_ms == 48_200
+    assert result.review_target.page == 6
+
+
+def test_requested_jump_unknown_node_is_a_safe_noop(session: Session) -> None:
+    """学生请求的节点不在当前课程 outline 中时，不产出跳转目标（安全 no-op）。"""
+    course, _, ids = _setup_frozen_course(session)
+
+    result = learning_adjustment_service.resolve_review_target(
+        session,
+        course_id=course.id,
+        observation=_observation(ids),
+        teaching_action="requested_jump",
+        current_concept_id="concept-current",
+        prerequisites=[],
+        weak_concepts=[],
+        requested_concept_id="concept-not-in-course",
+    )
+
+    assert result.review_target is None
+    assert result.reason_code == "MEDIA_TARGET_UNAVAILABLE"
+
+
 def test_stale_question_observation_never_falls_forward_to_newest_media(session: Session) -> None:
     course, _, ids = _setup_frozen_course(session)
     stale = _observation(ids).model_copy(update={"media_release_item_id": "mrit_not_current"})

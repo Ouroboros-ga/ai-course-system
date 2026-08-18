@@ -456,12 +456,20 @@ def build_teaching_workflow(tools: TeachingTools):
             intent = str(result.get("intent", "course_question"))
             confidence = float(result.get("confidence", 0.0))
             candidates = await tools.llm.extract_concept_candidates(message=state["user_message"], course_id=state["course_id"])
+            # 学生主动请求学习的知识点名称（2026-08-18）：仅当 LLM 明确给出且长度受控时使用。
+            requested_name = result.get("requested_concept")
+            requested_name = (
+                str(requested_name).strip()[:64]
+                if isinstance(requested_name, str) and str(requested_name).strip()
+                else None
+            )
             return {
                 "intent": intent, "intent_confidence": confidence,
                 # LLM 实时标定提问深度（0-1）；缺失/非法时保持 None，不影响流程
                 "inquiry_depth": _parse_inquiry_depth(result.get("inquiry_depth")),
+                "requested_concept_name": requested_name,
                 "concept_candidates": [dict(item) for item in candidates],
-                "trace": _trace(state, "detect_intent", intent=intent),
+                "trace": _trace(state, "detect_intent", intent=intent, requested=requested_name),
             }
         except Exception as error:
             return {"errors": [*state.get("errors", []), LLMUnavailableError.code], "status": "llm_unavailable", "trace": _trace(state, "detect_intent", error=type(error).__name__)}
@@ -477,14 +485,40 @@ def build_teaching_workflow(tools: TeachingTools):
             }
         start = time.monotonic()
         try:
-            matches = await tools.knowledge_graph.resolve_concepts(course_id=state["course_id"], message=state["user_message"], candidates=state.get("concept_candidates", []), resource_id=state.get("current_resource_id"))
+            # 学生主动请求的知识点名称加入候选，让图谱解析有机会命中它
+            # （2026-08-18：学生主动学习跳转）。
+            requested_name = state.get("requested_concept_name")
+            enhanced_candidates = list(state.get("concept_candidates") or [])
+            if requested_name:
+                enhanced_candidates.append({"name": requested_name, "confidence": 1.0})
+            matches = await tools.knowledge_graph.resolve_concepts(course_id=state["course_id"], message=state["user_message"], candidates=enhanced_candidates, resource_id=state.get("current_resource_id"))
             selected = dict(matches[0]) if matches else {}
+            # requested_concept_id：从解析结果中按名称匹配学生请求的知识点。
+            # 图谱标题可能带序号前缀（如"一、 传递函数的定义和主要性质"），
+            # 学生说的是简称（"传递函数"），故用包含匹配而非精确相等（2026-08-18）。
+            requested_concept_id: str | None = None
+            if requested_name:
+                requested_lower = str(requested_name).casefold()
+                for match in matches:
+                    match_name = str(match.get("name") or "").casefold()
+                    if match_name == requested_lower or (
+                        len(requested_lower) >= 2
+                        and (requested_lower in match_name or match_name in requested_lower)
+                    ):
+                        requested_concept_id = str(match.get("concept_id"))
+                        break
             await _record_invocation(tools, state, "graph",
                 input_summary={"message_length": len(str(state.get("user_message", "")))},
-                output_summary={"concept_id": selected.get("concept_id"), "candidate_count": len(matches)},
+                output_summary={"concept_id": selected.get("concept_id"), "requested_concept_id": requested_concept_id, "candidate_count": len(matches)},
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
-            return {"concept_candidates": [dict(item) for item in matches], "current_concept_id": selected.get("concept_id"), "concept_grounding_confidence": float(selected.get("confidence", 0.0)), "trace": _trace(state, "resolve_concept", resolved=bool(selected))}
+            return {
+                "concept_candidates": [dict(item) for item in matches],
+                "current_concept_id": selected.get("concept_id"),
+                "requested_concept_id": requested_concept_id,
+                "concept_grounding_confidence": float(selected.get("confidence", 0.0)),
+                "trace": _trace(state, "resolve_concept", resolved=bool(selected), requested=requested_concept_id),
+            }
         except Exception as error:
             payload = _degrade(state, "knowledge_graph", "KNOWLEDGE_GRAPH_UNAVAILABLE")
             payload.update({"concept_grounding_confidence": 0.0, "trace": _trace(state, "resolve_concept", error=type(error).__name__)})
@@ -1148,6 +1182,7 @@ def build_teaching_workflow(tools: TeachingTools):
                 key: state.get(key)
                 for key in (
                     "course_id", "user_message", "intent", "current_concept_id",
+                    "requested_concept_name", "requested_concept_id",
                     "student_concept_state", "graph_context", "retrieved_evidence",
                     "teaching_action", "teaching_action_reason", "selected_resource_ids",
                     "degraded_services", "cognitive_state", "cognitive_recommendation",
@@ -1275,6 +1310,7 @@ def build_teaching_workflow(tools: TeachingTools):
                 prerequisites=list(state.get("prerequisites") or []),
                 weak_concepts=list(state.get("weak_concepts") or []),
                 source_trace_id=state["trace_id"],
+                requested_concept_id=state.get("requested_concept_id"),
             )
             if proposal is None:
                 return {"trace": _trace(state, "propose_learning_adjustment", proposed=False)}
@@ -1310,6 +1346,7 @@ def build_teaching_workflow(tools: TeachingTools):
         replay = {
             "trace_id": state["trace_id"], "student_id": state["student_id"], "course_id": state["course_id"], "session_id": state["session_id"],
             "intent": state.get("intent"), "concept_id": state.get("current_concept_id"),
+            "requested_concept_id": state.get("requested_concept_id"),
             "retrieved_evidence": state.get("retrieved_evidence", []), "warnings": state.get("warnings", []),
             "errors": state.get("errors", []), "degraded_services": state.get("degraded_services", []), "nodes": state.get("trace", []),
             "constraint_level": state.get("constraint_level"),
