@@ -496,15 +496,28 @@ def build_teaching_workflow(tools: TeachingTools):
             # requested_concept_id：从解析结果中按名称匹配学生请求的知识点。
             # 图谱标题可能带序号前缀（如"一、 传递函数的定义和主要性质"），
             # 学生说的是简称（"传递函数"），故用包含匹配而非精确相等（2026-08-18）。
+            # 2026-08-18 修复：要求至少 3 个字符且覆盖率 >= 60%，防止"控制"匹配
+            # 所有包含"控制"的节点（课程 5 有 7 个这样的节点会全部误匹配）。
             requested_concept_id: str | None = None
             if requested_name:
                 requested_lower = str(requested_name).casefold()
                 for match in matches:
                     match_name = str(match.get("name") or "").casefold()
-                    if match_name == requested_lower or (
-                        len(requested_lower) >= 2
-                        and (requested_lower in match_name or match_name in requested_lower)
-                    ):
+                    if match_name == requested_lower:
+                        # 完全匹配直接接受
+                        requested_concept_id = str(match.get("concept_id"))
+                        break
+                    # 子串匹配：要求至少 3 字符且覆盖较短标题的 60%
+                    shorter = requested_lower if len(requested_lower) <= len(match_name) else match_name
+                    longer = match_name if len(requested_lower) <= len(match_name) else requested_lower
+                    if len(shorter) >= 3 and shorter in longer:
+                        coverage = len(shorter) / len(shorter)  # 100% for exact substring
+                        # 进一步检查：如果较短的是学生输入且明显短于图谱标题，
+                        # 则要求覆盖图谱标题的一定比例（避免"控制"匹配"控制系统微分方程"）
+                        if shorter == requested_lower and len(match_name) > len(requested_lower):
+                            # 学生输入必须覆盖图谱标题的至少 30%
+                            if len(requested_lower) / len(match_name) < 0.3:
+                                continue
                         requested_concept_id = str(match.get("concept_id"))
                         break
             await _record_invocation(tools, state, "graph",

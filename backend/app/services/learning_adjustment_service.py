@@ -35,23 +35,51 @@ from app.core.time_utils import utcnow_aware
 from app.services.object_storage import ObjectStorageProvider, get_object_storage
 
 
-def _shares_keyword(left: str, right: str, min_span: int = 4) -> bool:
+def _shares_keyword(left: str, right: str, min_span: int = 3, min_coverage: float = 0.6) -> bool:
     """Return True when two titles share a meaningful character span.
 
     Fallback used when outline→graph node_key mappings are missing (data gap,
     e.g. course 5): the graph node title ("传递函数") and the outline title
     ("传递函数的定义与性质") share a long enough span to be considered the
-    same knowledge point. ``min_span=4`` rejects single noise characters.
+    same knowledge point.
+    
+    Args:
+        left: First title to compare
+        right: Second title to compare
+        min_span: Minimum character span to match (default 3)
+        min_coverage: Minimum coverage ratio - matched span must cover at least
+                     this fraction of the shorter title (default 0.6, i.e. 60%)
+    
+    Returns:
+        True if titles share a meaningful span that covers sufficient portion
+        of the shorter title.
+    
+    Example:
+        "传递函数" vs "传递函数的定义与性质" → True (100% coverage)
+        "控制" vs "控制系统微分方程的建立" → False (only 2 chars, <60% coverage)
+        "数学模型" vs "数学模型的定义与建模方法" → True (100% coverage)
     """
     shorter, longer = (left, right) if len(left) <= len(right) else (right, left)
     n = len(shorter)
     if n < min_span:
         return False
+    
+    # Find longest matching span
+    max_match_size = 0
     for size in range(min(n, 16), min_span - 1, -1):
         for i in range(n - size + 1):
             if shorter[i:i + size] in longer:
-                return True
-    return False
+                max_match_size = size
+                break
+        if max_match_size > 0:
+            break
+    
+    if max_match_size == 0:
+        return False
+    
+    # Check if the match covers sufficient portion of the shorter title
+    coverage = max_match_size / n
+    return coverage >= min_coverage
 
 
 @dataclass(frozen=True)

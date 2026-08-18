@@ -33,6 +33,7 @@ function isReviewingAdjustment(adjustment) {
 
 function isVisibleProposal(adjustment) {
     return adjustment?.status === 'proposed'
+        && adjustment?.review_target
         && !adjustment?.declined_at
         && !adjustment?.invalidated_at
         && !isActiveAdjustment(adjustment)
