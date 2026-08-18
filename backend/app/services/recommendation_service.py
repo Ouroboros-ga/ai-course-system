@@ -22,6 +22,7 @@ from typing import Any, Optional
 
 from sqlmodel import Session, select
 
+from app.core.db_json import json_array_contains
 from app.core.time_utils import utcnow_aware
 from app.models.cognitive_state_model import (
     CognitiveState,
@@ -568,7 +569,7 @@ def _select_question(
         filter_node_id = state.node_id
     if filter_node_id:
         stmt = stmt.where(
-            QuestionBankItem.knowledge_node_ids.contains([filter_node_id])
+            json_array_contains(QuestionBankItem.knowledge_node_ids, filter_node_id)
         )
 
     stmt = stmt.limit(1)

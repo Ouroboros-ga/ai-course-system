@@ -141,12 +141,20 @@ test('stale accepted adjustment is validated against the server on restore and c
     assert.match(page, /stillApplied/)
     assert.match(page, /clearActiveLearningAdjustment\(\)/)
 
-    // 激活态卡死时提供"放弃回顾"出口，事件链路 Bubble → MessageList → Panel → LearnPage
+    // 激活态卡死时提供"放弃回顾"无条件出口，事件链路 Bubble → MessageList → Panel → LearnPage
     assert.match(page, /function abandonActiveLearningAdjustment\(\)/)
-    assert.match(page, /clearActiveLearningAdjustment\(\)\n\s*learningAdjustmentNotice\.value = ''/)
-    assert.match(page, /@abandon-adjustment="abandonActiveLearningAdjustment"/)
+    assert.match(page, /adjustmentAbandoned\.value = true/)
+    assert.match(page, /pendingMediaSeek\.value\?\.fail\(new Error\('ADJUSTMENT_ABANDONED'\)\)/)
+    assert.match(page, /clearActiveLearningAdjustment\(\)/)
+    // 放弃函数体不依赖 busy（busy 卡死时也必须能退出）
+    const abandonStart = page.indexOf('function abandonActiveLearningAdjustment()')
+    const abandonEnd = page.indexOf('\n}', abandonStart)
+    const abandonBody = page.slice(abandonStart, abandonEnd)
+    assert.ok(abandonStart >= 0 && abandonEnd > abandonStart)
+    assert.doesNotMatch(abandonBody, /learningAdjustmentBusy/)
+    // 放弃按钮不受 busy 限制（busy 卡死时也必须可点击）：按钮标签无 disabled 属性
+    assert.match(bubble, /variant="tertiary" size="sm"\s+@click="\$emit\('abandon-adjustment'\)">放弃回顾<\/SfxButton>/)
     assert.match(bubble, /emit\(['"]abandon-adjustment['"]/)
-    assert.match(bubble, />放弃回顾<\/SfxButton>/)
     assert.match(panel, /emit\(['"]abandon-adjustment['"]\)/)
     assert.match(messageList, /@abandon-adjustment="\(\) => emit\('abandon-adjustment'\)"/)
 })

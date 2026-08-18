@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable, Mapping
 
+from app.core.db_json import json_array_contains
+
 from ...contracts import QuestionBankPort
 
 
@@ -72,7 +74,7 @@ def make_session_scoped_question_bank_port(
             )
             if node_id_int is not None:
                 stmt = stmt.where(
-                    QuestionBankItem.knowledge_node_ids.contains([node_id_int])
+                    json_array_contains(QuestionBankItem.knowledge_node_ids, node_id_int)
                 )
             stmt = stmt.limit(max(1, min(int(limit or 10), 50)))
             items = session.exec(stmt).all()

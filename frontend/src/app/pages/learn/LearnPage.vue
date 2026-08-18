@@ -138,6 +138,9 @@ const pendingMediaSeek = ref(null)
 const activeLearningAdjustment = ref(null)
 const learningAdjustmentNotice = ref('')
 const learningAdjustmentBusy = ref(false)
+// 放弃标记：accept 的 apply 挂起期间用户点"放弃回顾"后置 true，
+// 使挂起回调不再重新激活激活态（2026-08-18）。
+const adjustmentAbandoned = ref(false)
 const LEARNING_ADJUSTMENT_STORAGE_KEY = `sfx:learning-adjustment:${courseId}:${counter.userData?.id ?? 'unknown'}`
 
 function sameIdentifier(left, right) {
@@ -223,10 +226,13 @@ async function restoreActiveLearningAdjustment() {
   }
 }
 
-// 放弃回顾：清除激活态与 sessionStorage，解除"已确认回顾，尚未打开内容"卡死状态。
-// 服务端 applied 记录保留为学习者私有历史，仅客户端不再展示/追踪（2026-08-18）。
+// 放弃回顾：无条件解除卡死（2026-08-18）。
+// 不依赖 learningAdjustmentBusy——busy 卡死（如 apply 请求挂起）时也必须能退出，
+// 否则"已确认回顾，尚未打开内容"的绿色框成为死胡同。
+// 同时取消进行中的媒体 seek，避免其后回调继续操作已放弃的状态。
 function abandonActiveLearningAdjustment() {
-  if (learningAdjustmentBusy.value) return
+  adjustmentAbandoned.value = true
+  pendingMediaSeek.value?.fail(new Error('ADJUSTMENT_ABANDONED'))
   clearActiveLearningAdjustment()
   learningAdjustmentNotice.value = ''
   ws.isPlaying.value = false
@@ -348,6 +354,8 @@ async function restoreAfterFailedReviewOpen(active) {
 
 async function acceptLearningAdjustment(initialProposal) {
   if (!initialProposal?.adjustment_id || learningAdjustmentBusy.value || activeLearningAdjustment.value) return
+  // 每次 accept 开启新的一次"未放弃"状态；abandon 会置 true 以取消挂起中的 apply。
+  adjustmentAbandoned.value = false
   const returnAnchor = coordinateForCurrentPlayback()
   if (!returnAnchor) {
     learningAdjustmentNotice.value = '当前播放位置未能对应到已发布媒体，无法安全开始回顾。'
@@ -369,10 +377,19 @@ async function acceptLearningAdjustment(initialProposal) {
       throw new Error('ADJUSTMENT_ACCEPTANCE_UNAVAILABLE')
     }
     updateMessageLearningAdjustment(proposal)
+    // 用户在 apply 挂起期间已点"放弃回顾"：不再重新激活，避免绿框复现。
+    if (adjustmentAbandoned.value) {
+      throw new Error('ADJUSTMENT_ABANDONED')
+    }
     const active = { proposal, previousRate, wasPlaying, navigationStatus: 'accepted' }
     setActiveLearningAdjustment(active)
     await openAcceptedLearningAdjustment(active)
   } catch {
+    if (adjustmentAbandoned.value) {
+      ws.playbackRate.value = previousRate
+      ws.isPlaying.value = wasPlaying
+      return
+    }
     const active = activeLearningAdjustment.value
       || await recoverAcceptedLearningAdjustment(initialProposal.adjustment_id, previousRate, wasPlaying)
     if (!active) {

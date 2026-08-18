@@ -108,7 +108,8 @@ function retry() {
                         <div class="sfx-agent-adjustment-actions">
                             <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy"
                                 :disabled="adjustmentBusy" @click="$emit('retry-opening-review')">重试打开回顾</SfxButton>
-                            <SfxButton variant="tertiary" size="sm" :disabled="adjustmentBusy"
+                            <!-- 放弃回顾是无条件出口：busy 卡死时也必须可点击，否则无法解除卡死 -->
+                            <SfxButton variant="tertiary" size="sm"
                                 @click="$emit('abandon-adjustment')">放弃回顾</SfxButton>
                         </div>
                     </template>

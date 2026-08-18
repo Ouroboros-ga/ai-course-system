@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
+from app.core.db_json import json_array_contains
 from app.core.time_utils import utcnow_aware
 from typing import Optional, Any
 
@@ -489,10 +490,10 @@ async def search_course_questions(
     if payload.difficulty:
         statement = statement.where(QuestionBankItem.difficulty == payload.difficulty)
     if payload.knowledge_node_ids:
-        # JSON 数组查询: 知识点交集
+        # JSON 数组查询: 知识点交集（跨 PostgreSQL json / SQLite text）
         for nid in payload.knowledge_node_ids:
             statement = statement.where(
-                QuestionBankItem.knowledge_node_ids.contains([nid])
+                json_array_contains(QuestionBankItem.knowledge_node_ids, nid)
             )
 
     statement = statement.limit(payload.limit)
