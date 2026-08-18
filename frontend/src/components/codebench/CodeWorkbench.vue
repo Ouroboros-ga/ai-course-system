@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { BookOpen, Terminal, ListChecks, Lightbulb, GripHorizontal, ChevronLeft, ChevronRight } from 'lucide-vue-next'
 import CodeEditor from './CodeEditor.vue'
 import CodeOutput from './CodeOutput.vue'
@@ -274,7 +274,7 @@ async function handleCancelSubmit() {
     pollGeneration += 1
     formalState.value = 'idle'
     formalOutcome.value = 'cancelled'
-  } catch (error) {
+  } catch {
     // ignore
   }
 }
@@ -283,12 +283,6 @@ async function handleCancelSubmit() {
 function handleLanguageChange(lang) {
   selectedLanguage.value = lang
   emit('language-change', lang)
-}
-
-// 代码变化
-function handleCodeChange(code) {
-  sourceCode.value = code
-  emit('code-change', code)
 }
 
 // 重置代码
@@ -587,7 +581,7 @@ defineExpose({
 <style scoped>
 .code-workbench {
   display: grid;
-  grid-template-columns: minmax(320px, 440px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100%;
   min-height: 0;
@@ -613,7 +607,8 @@ defineExpose({
   border-right: 1px solid var(--border-default);
   background: var(--surface-canvas);
   transition: all var(--duration-normal) var(--ease-out);
-  overflow: hidden;
+  /* 不裁剪子元素：切换按钮骑跨面板右边界（right:-13px），overflow:hidden 会裁掉其右半（参考 SfxLocalRail） */
+  overflow: visible;
 }
 
 .wb-problem.is-collapsed {
@@ -769,8 +764,8 @@ defineExpose({
   position: absolute;
   top: 16px;
   right: -13px;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 40px;
   border-radius: var(--radius-full);
   background: var(--surface-panel);
   border: 1px solid var(--border-default);
