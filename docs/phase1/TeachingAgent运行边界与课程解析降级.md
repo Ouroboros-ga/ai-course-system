@@ -57,6 +57,8 @@ TeachingAgent 可在一次已验证的回答后提供可选的学习调整提案
 
 **学生主动学习跳转（requested_jump，2026-08-18）**：学生明确表示想学习/复习某个知识点（如"我想先学前置的传递函数""感觉XX不太熟"）时，智能体识别 `requested_concept`（INTENT_SYSTEM 1.4 新增字段，显式排除"这里/这个公式"等指代）→ 图谱解析出 `requested_concept_id` → 策略产出 `requested_jump` 教学动作（优先于诊断/薄弱分支）→ 经 `LearningAdjustmentService`（`_REDIRECT_ACTIONS` 新增 `requested_jump`）解析冻结回顾目标（目标即学生请求的节点，不要求与当前节点存在薄弱前置关系；目标不在课程 outline 中时安全 no-op）→ 前端照常显示"建议回顾第 X 页"回顾提案。RESPONSE_SYSTEM 增加 requested_jump 回答指导（围绕请求知识点说明并提示跳转入口，不代替系统承诺跳转）。回归测试覆盖 policy 优先级、跳转目标解析、未知节点安全 no-op。
 
+**批量媒体建设重复提交修复（2026-08-18）**：教师端"生成全部所选知识点语音"按钮此前可重复点击，且 `confirmBatch` 幂等键使用 `Date.now()` 每次不同——后端 `confirm_media_batch` 幂等查重永不命中，每次点击都创建整套新的 TTS + 字幕时间轴（timeline_publish）任务，任务列表堆积（课程5 实测 8 个重复批次、112 个任务）。修复：① `makeBatchIdempotencyKey` 改为确定性键（课程 + 排序节点集 + 音色/角色组合的 djb2 短哈希），同一批节点重复确认返回原批次；② `batchAlreadySubmitted` 在批次已确认后禁用按钮并显示"已提交，处理中（本批不会重复生成）"，重新生成需调整节点/音色后重新核算。同时修复任务取消状态不同步：`task_service.cancel` 取消媒体类任务（media.tts / media.timeline_publish / media.ppt_manifest）时同步 `media_generation_jobs` 状态为 CANCELLED（此前 jobs 行停留在 PENDING，前端永远显示"等待处理"堆积项）。回归测试 `test_tasks.py` 新增"cancel syncs media generation job status"。
+
 `/api/v1/compat/progress/adjust` 不是独立理解度算法。它只能凭 `qaRecordId` 查到同一学习者、同一课程、仍有效的调整提案及 Conversation Domain 中同一 trace 的助手回答；任一关联缺失都返回 `503 LEARNING_ADJUSTMENT_CONTEXT_UNAVAILABLE`。外部 `understandingLevel` 不会成为掌握度、推荐或虚构补充内容的来源。
 
 自动化验证覆盖 release/item/Cue 校验、跨学习者隔离、点击时 ReturnAnchor、幂等 transition、无证据/无媒体降级和兼容回合关联。跨媒体项回顾、浏览器 `canplay/seeked` 失败、主动返回和刷新恢复仍需非生产浏览器人工验收；ASR/语音打断不在本 P0 范围，保持 `ASR_UNAVAILABLE`。

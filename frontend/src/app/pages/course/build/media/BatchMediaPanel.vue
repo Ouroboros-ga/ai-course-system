@@ -11,7 +11,7 @@ const {
     batchPlan, batchPlanMatchesSelections, canPlanBatch, createBatchPlan,
     providerNeedsConfirmation, providerIsDemo, paidTtsConfirmed,
     canConfirmBatch, confirmBatch, acting,
-    batchState, batchStatusLabel, batchItems, batchItemStatusLabel,
+    batchState, batchAlreadySubmitted, batchStatusLabel, batchItems, batchItemStatusLabel,
     findScriptForBatchItem, scriptLabel, batchNodeIds,
 } = mediaBuild
 </script>
@@ -63,7 +63,11 @@ const {
             <label v-if="providerNeedsConfirmation" class="confirmation-check"><input v-model="paidTtsConfirmed"
                     type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
             <SfxButton size="sm" :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'"
-                @click="confirmBatch" title="一次提交所选全部知识点的语音合成，并自动冻结字幕与数字人时间轴；无需在下方重复手动提交">生成全部所选知识点语音</SfxButton>
+                @click="confirmBatch" :title="batchAlreadySubmitted
+                    ? '本批任务已提交；同一批节点与音色组合不会重复生成（幂等）。如需重新生成请调整勾选节点或音色/角色后重新核算。'
+                    : '一次提交所选全部知识点的语音合成，并自动冻结字幕与数字人时间轴；无需在下方重复手动提交'">{{
+                    batchAlreadySubmitted ? '已提交，处理中（本批不会重复生成）' : '生成全部所选知识点语音'
+                }}</SfxButton>
         </div>
         <p class="batch-flow-hint">此步包含全部所选知识点的语音合成（字幕与数字人时间轴自动冻结）；完成后按下方步骤依次执行 PPT manifest → 冻结播放清单 → 激活 → 正式发布。</p>
         <div v-if="batchState" class="batch-status" role="status">
