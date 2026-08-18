@@ -120,6 +120,12 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
     weak_concepts = list(state.get("weak_concepts") or [])
     requested_name = state.get("requested_concept_name")
     conversation_turns = list(state.get("conversation_turns") or [])[-3:]  # 最近3轮
+    # 对话摘要必须在 f-string 外构建：{{...}} 在 Python 3.12（PEP 701）下会被解析为
+    # 「含 dict 的集合字面量」，运行时抛 TypeError: unhashable type: 'dict'（线上 500 根因）
+    conversation_summary = [
+        {"role": t.get("role"), "content": str(t.get("content") or "")[:100]}
+        for t in conversation_turns
+    ]
     
     # 构建知识图谱结构描述
     graph_context = state.get("graph_context") or {}
@@ -142,7 +148,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 {json.dumps(related_concepts[:10], ensure_ascii=False, indent=2) if related_concepts else "无"}
 
 **最近对话历史**:
-{json.dumps([{{"role": t.get("role"), "content": t.get("content", "")[:100]}} for t in conversation_turns], ensure_ascii=False, indent=2) if conversation_turns else "无"}
+{json.dumps(conversation_summary, ensure_ascii=False, indent=2) if conversation_summary else "无"}
 
 **任务**: 
 1. 理解学生提问的真实意图

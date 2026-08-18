@@ -44,6 +44,7 @@ export class Sprite2DRenderer {
     this.lastSetFrameMs = 0
     this.manifest = null
     this._lastViewport = { width: 0, height: 0 }
+    this._ready = false
   }
 
   async init(manifest) {
@@ -67,6 +68,10 @@ export class Sprite2DRenderer {
 
     const textures = await this.#loadTextures(manifest)
     this.#createStage(textures)
+    // 舞台构建完成前 setFrame 一律 no-op：init 期间（app 已创建、贴图仍在加载）
+    // currentTime 变化会触发 updateFrame，此时 eyes/mouths 尚未创建，直接访问会抛
+    // "Cannot set properties of undefined"。
+    this._ready = true
     this.#layout()
     this.setFrame({ viseme: 'sil', speaking: false, precision: 'none', timeMs: 0 })
     this.onMetrics({ initMs: Math.round(performance.now() - startedAt), quality: this.quality })
@@ -165,7 +170,7 @@ export class Sprite2DRenderer {
   }
 
   setFrame({ viseme = 'sil', speaking = false, precision = 'none', timeMs = 0 }) {
-    if (!this.app) return
+    if (!this.app || !this._ready) return
     this.#layout()
 
     const nextViseme = MOUTH_KEYS.includes(viseme) ? viseme : (speaking ? 'a' : 'sil')
@@ -316,6 +321,7 @@ export class Sprite2DRenderer {
     if (!this.app) return
     this.app.destroy({ removeView: true }, { children: true })
     this.app = null
+    this._ready = false
     this.root = null
     this.portraitBody = null
     this.head = null
