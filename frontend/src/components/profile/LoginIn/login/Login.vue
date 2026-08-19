@@ -29,6 +29,8 @@ const emit = defineEmits(['loginSend', 'registerSend'])
 const isLoginMode = ref(true)
 const showPassword = ref(false)
 const showConfirmPassword = ref(false)
+// 注册必须勾选同意《隐私政策》与《服务条款》
+const agreed = ref(false)
 const form = reactive({
   username: '',
   password: '',
@@ -38,6 +40,7 @@ const errors = reactive({
   username: '',
   password: '',
   confirmPassword: '',
+  agreed: '',
 })
 
 const title = computed(() => (isLoginMode.value ? '登录工作空间' : '创建工作空间账号'))
@@ -56,6 +59,7 @@ function clearErrors() {
   errors.username = ''
   errors.password = ''
   errors.confirmPassword = ''
+  errors.agreed = ''
 }
 
 function switchMode(loginMode) {
@@ -87,9 +91,12 @@ function validate() {
     } else if (form.password !== form.confirmPassword) {
       errors.confirmPassword = '两次输入的密码不一致。'
     }
+    if (!agreed.value) {
+      errors.agreed = '请先阅读并同意《隐私政策》与《服务条款》。'
+    }
   }
 
-  return !errors.username && !errors.password && !errors.confirmPassword
+  return !errors.username && !errors.password && !errors.confirmPassword && !errors.agreed
 }
 
 function handleSubmit() {
@@ -254,6 +261,26 @@ watch(() => props.serverError, (value) => {
               </button>
             </div>
             <p v-if="errors.confirmPassword" id="confirm-password-error" class="field-error" role="alert">{{ errors.confirmPassword }}</p>
+          </div>
+
+          <div v-if="!isLoginMode" class="field-group agree-group" :class="{ invalid: errors.agreed }">
+            <label class="agree-label">
+              <input
+                v-model="agreed"
+                type="checkbox"
+                class="agree-checkbox"
+                name="agree-terms"
+                :aria-invalid="Boolean(errors.agreed)"
+                @change="errors.agreed = ''"
+              />
+              <span class="agree-text">
+                我已阅读并同意
+                <a href="/docs#privacy" target="_blank" rel="noopener" class="agree-link">《隐私政策》</a>
+                与
+                <a href="/docs#terms" target="_blank" rel="noopener" class="agree-link">《服务条款》</a>
+              </span>
+            </label>
+            <p v-if="errors.agreed" class="field-error" role="alert">{{ errors.agreed }}</p>
           </div>
 
           <button type="submit" class="submit-button" :disabled="loading">
@@ -543,6 +570,39 @@ h1 {
 .field-error { margin: 0; font-size: 13px; line-height: 18px; }
 .field-hint { color: var(--text-muted); }
 .field-error { color: var(--red-700); }
+
+/* 注册：同意隐私政策与服务条款 */
+.agree-group { gap: 8px; }
+.agree-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.agree-checkbox {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  margin-top: 2px;
+  accent-color: var(--ink-900);
+  cursor: pointer;
+}
+
+.agree-text { flex: 1; }
+
+.agree-link {
+  color: var(--ink-500);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.agree-link:hover { color: var(--ink-900); }
 
 .submit-button {
   display: inline-flex;
