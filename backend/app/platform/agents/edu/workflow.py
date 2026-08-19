@@ -46,10 +46,22 @@ def _fallback_keyword_recommend(state: Mapping[str, Any]) -> str | None:
     
     当学生提问中包含前置知识点或相关知识点的关键词时，推荐该知识点。
     2026-08-19: 作为 LLM 推荐的后备，确保基本推荐功能可用。
+    2026-08-19: 添加"回顾"、"复习"等明确意图关键词的兜底检测。
     """
     student_question = str(state.get("user_message") or "").lower()
     if not student_question or len(student_question) < 3:
         return None
+    
+    # 兜底检测：如果学生明确说"回顾"、"复习"，优先推荐第一个前置知识点
+    review_keywords = ["回顾", "复习", "再看", "重新学", "温习"]
+    if any(keyword in student_question for keyword in review_keywords):
+        prerequisites = list(state.get("prerequisites") or [])
+        if prerequisites:
+            # 返回第一个前置知识点（通常是最相关的）
+            first_prereq = prerequisites[0]
+            concept_id = str(first_prereq.get("concept_id") or "")
+            if concept_id:
+                return concept_id
     
     # 优先匹配前置知识点（薄弱的前置知识）
     prerequisites = list(state.get("prerequisites") or [])
@@ -166,6 +178,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 }}
 
 **判断原则**:
+- **如果学生提问中包含"回顾"、"复习"等明确表达想回顾前置知识的词语，优先推荐最相关的前置知识点**
 - 如果学生提问明确询问某个知识点的内容（如"XX是什么"、"XX怎么做"），且该知识点在前置/相关概念中，则推荐
 - 如果学生明确表达想学某个知识点（如"我想学XX"），且该知识点在相关概念中，则推荐
 - 如果学生困惑，且困惑明显源于某个前置知识薄弱，则推荐该前置知识
