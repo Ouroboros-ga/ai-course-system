@@ -2,7 +2,7 @@
 /**
  * Docs Home — 顶层公开文档中心（不挂 AppShell，无需登录）。
  *
- * - 文档文件放在 frontend/public/docs/（构建后进 dist，nginx 直接静态服务）。
+ * - 文档文件放在 frontend/public/static/docs/（构建后进 dist，nginx 直接静态服务）。
  * - 项目文档区为第一份文件（技术手册正式稿置顶），点击走 /docs/view 阅读器。
  * - 手册/资源/关于等尚无正文的条目先以"整理中"占位，不伪造内容。
  */
@@ -15,9 +15,9 @@ const router = useRouter()
 
 const GITHUB_URL = 'https://github.com/Ouroboros-ga/ai-course-system'
 
-// 静态文件位于 /docs/<file>，与 /docs 路由不冲突（带扩展名的真实文件优先命中 nginx）
+// 静态文件位于 /static/docs/<file>（与 /docs 路由分目录，避免 nginx 目录索引冲突）
 function fileHref(file) {
-  return `/docs/${file.split('/').map(encodeURIComponent).join('/')}`
+  return `/static/docs/${file.split('/').map(encodeURIComponent).join('/')}`
 }
 
 function openReader(file, name) {

@@ -193,7 +193,7 @@ const router = createRouter({
     },
     {
       // 顶层公开文档中心：不挂 AppShell、无需登录。
-      // 文档文件在 frontend/public/docs/（构建进 dist 后由 nginx 直接静态服务），
+      // 文档文件在 frontend/public/static/docs/（构建进 dist 后由 nginx 直接静态服务），
       // /docs/view 为 PDF / Word 在线阅读器，file 参数相对 /docs 目录做白名单校验。
       path: '/docs',
       name: 'docs-home',
