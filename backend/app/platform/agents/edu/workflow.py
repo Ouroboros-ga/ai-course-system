@@ -179,24 +179,20 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
         
         # 调用 LLM（设置较短超时，避免阻塞主流程）
         import asyncio
-        response = await asyncio.wait_for(
-            tools.llm.generate(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=500,
+        # 使用 _json_completion 方法直接调用底层 LLM
+        result = await asyncio.wait_for(
+            tools.llm._json_completion(
+                system="你是课程智能体的推荐模块。根据输入判断是否需要推荐知识点。只返回JSON。",
+                user=prompt
             ),
             timeout=5.0  # 5秒超时
         )
         
         # 解析响应
-        content = response.get("content", "")
-        logger.info(f"[Recommend] LLM 响应：{content[:100]}...")
+        logger.info(f"[Recommend] LLM 响应：{str(result)[:100]}...")
         
-        # 尝试提取 JSON
-        import re
-        json_match = re.search(r'\{[^{}]*"should_recommend"[^{}]*\}', content, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
+        # _json_completion 已返回解析好的 JSON dict
+        if isinstance(result, dict):
             if result.get("should_recommend") and result.get("recommended_concept_id"):
                 recommended_id = str(result["recommended_concept_id"])
                 logger.info(f"[Recommend] LLM 推荐：{recommended_id}，理由：{result.get('reason', 'N/A')}")
@@ -204,7 +200,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
             else:
                 logger.info(f"[Recommend] LLM 判断不推荐")
         else:
-            logger.warning(f"[Recommend] LLM 响应格式错误，无法解析 JSON")
+            logger.warning(f"[Recommend] LLM 响应格式错误，返回类型：{type(result)}")
         
         # LLM 不推荐时，尝试关键词匹配后备
         fallback_result = _fallback_keyword_recommend(state)
