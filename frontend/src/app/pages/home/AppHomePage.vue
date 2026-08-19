@@ -33,6 +33,10 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 const router = useRouter()
 const store = useCounterStore()
 
+// 页脚真实链接：开源项目 / GitHub 外链地址（与仓库 remote 一致）
+const GITHUB_URL = 'https://github.com/Ouroboros-ga/ai-course-system'
+const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues`
+
 // ── 进场动画控制 ──────────────────────────────────────
 const isReady = ref(false)
 
@@ -390,24 +394,24 @@ onBeforeUnmount(() => {
             <h4>用户手册</h4>
             <ul>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <FileText :size="14" /> 快速入门指南
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <BookOpen :size="14" /> 学生使用手册
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <GraduationCap :size="14" /> 教师建设手册
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <Sparkles :size="14" /> AI 功能说明
-                </a>
+                </router-link>
               </li>
             </ul>
           </div>
@@ -416,22 +420,22 @@ onBeforeUnmount(() => {
             <h4>资源</h4>
             <ul>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <Layers :size="14" /> 课程模板库
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <Zap :size="14" /> 实验案例集
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/docs">
                   <FileText :size="14" /> 更新日志
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <a :href="GITHUB_URL" target="_blank" rel="noopener">
                   <Github :size="14" /> 开源项目
                 </a>
               </li>
@@ -442,17 +446,17 @@ onBeforeUnmount(() => {
             <h4>社区</h4>
             <ul>
               <li>
-                <a href="#" @click.prevent>
+                <router-link to="/app/courses/hall">
                   <Compass :size="14" /> 课程大厅
-                </a>
+                </router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <a :href="GITHUB_ISSUES_URL" target="_blank" rel="noopener">
                   <Users :size="14" /> 教师社区
                 </a>
               </li>
               <li>
-                <a href="#" @click.prevent>
+                <a :href="GITHUB_URL" target="_blank" rel="noopener">
                   <Github :size="14" /> GitHub
                 </a>
               </li>
@@ -463,16 +467,16 @@ onBeforeUnmount(() => {
             <h4>关于</h4>
             <ul>
               <li>
-                <a href="#" @click.prevent>产品介绍</a>
+                <router-link to="/app">产品介绍</router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>联系我们</a>
+                <router-link to="/docs">联系我们</router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>隐私政策</a>
+                <router-link to="/docs#privacy">隐私政策</router-link>
               </li>
               <li>
-                <a href="#" @click.prevent>服务条款</a>
+                <router-link to="/docs#terms">服务条款</router-link>
               </li>
             </ul>
           </div>
