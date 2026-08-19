@@ -2,7 +2,7 @@
 /**
  * Docs Reader — 顶层公开 PDF / Word 在线阅读器（不挂 AppShell，无需登录）。
  *
- * - 通过 /docs/view?file=<相对路径>&name=<标题> 打开，file 相对 /docs 静态目录。
+ * - 通过 /docs/view?file=<相对路径>&name=<标题> 打开，file 相对 /static/docs 静态目录。
  * - PDF：浏览器原生查看器（iframe），零依赖。
  * - DOCX：动态加载 docx-preview（jsdelivr → unpkg 双 CDN 兜底），客户端渲染；
  *   CDN 不可用时降级为下载链接，不伪造渲染结果。
@@ -33,7 +33,7 @@ const isLegacyDoc = computed(() => valid.value && /\.doc$/i.test(fileParam.value
 
 const fileUrl = computed(() => {
   if (!valid.value) return ''
-  return `/docs/${fileParam.value.split('/').map(encodeURIComponent).join('/')}`
+  return `/static/docs/${fileParam.value.split('/').map(encodeURIComponent).join('/')}`
 })
 
 function downloadCurrent() {
