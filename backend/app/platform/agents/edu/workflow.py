@@ -54,14 +54,24 @@ def _fallback_keyword_recommend(state: Mapping[str, Any]) -> str | None:
     
     # 兜底检测：如果学生明确说"回顾"、"复习"，优先推荐第一个前置知识点
     review_keywords = ["回顾", "复习", "再看", "重新学", "温习"]
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[FallbackRecommend] 检查回顾关键词，提问：{student_question}")
+    
     if any(keyword in student_question for keyword in review_keywords):
+        logger.info(f"[FallbackRecommend] ✓ 检测到回顾关键词")
         prerequisites = list(state.get("prerequisites") or [])
         if prerequisites:
             # 返回第一个前置知识点（通常是最相关的）
             first_prereq = prerequisites[0]
             concept_id = str(first_prereq.get("concept_id") or "")
             if concept_id:
+                logger.info(f"[FallbackRecommend] ✓ 推荐第一个前置知识点：{concept_id}")
                 return concept_id
+        else:
+            logger.info(f"[FallbackRecommend] ✗ 检测到回顾关键词但无前置知识点")
+    else:
+        logger.info(f"[FallbackRecommend] ✗ 未检测到回顾关键词")
     
     # 优先匹配前置知识点（薄弱的前置知识）
     prerequisites = list(state.get("prerequisites") or [])
@@ -163,12 +173,15 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 {json.dumps(conversation_summary, ensure_ascii=False, indent=2) if conversation_summary else "无"}
 
 **任务**: 
-1. 理解学生提问的真实意图
+1. **首先检查学生是否明确表达了回顾/复习意图**
+   - 提问中是否包含"回顾"、"复习"、"再看"、"重新学"、"温习"等词？
+   - 如果包含这些词，说明学生想回顾前置知识，应该推荐！
+2. 理解学生提问的真实意图
    - 是在询问某个具体知识点的内容吗？（如"数学模型是怎么建立的"、"传递函数是什么"）
    - 是对当前内容有疑问吗？
    - 是想跳转学习其他知识点吗？
-2. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
-3. 结合知识图谱结构，判断推荐哪个知识点最合适
+3. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
+4. 结合知识图谱结构，判断推荐哪个知识点最合适
 
 **输出格式** (JSON):
 {{
@@ -189,6 +202,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
     
     try:
         logger.info(f"[Recommend] 调用 LLM 推荐，学生提问：{student_question[:50]}...")
+        logger.info(f"[Recommend] 完整提问：{student_question}")  # 记录完整提问
         
         # 调用 LLM（设置较短超时，避免阻塞主流程）
         import asyncio
