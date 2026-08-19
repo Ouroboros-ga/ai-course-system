@@ -189,23 +189,29 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
         )
         
         # 解析响应
-        logger.info(f"[Recommend] LLM 响应：{str(result)[:100]}...")
+        logger.info(f"[Recommend] LLM 响应类型：{type(result)}，内容：{result}")
         
         # _json_completion 已返回解析好的 JSON dict
         if isinstance(result, dict):
-            if result.get("should_recommend") and result.get("recommended_concept_id"):
-                recommended_id = str(result["recommended_concept_id"])
-                logger.info(f"[Recommend] LLM 推荐：{recommended_id}，理由：{result.get('reason', 'N/A')}")
-                return recommended_id
+            should_recommend = result.get("should_recommend")
+            recommended_id = result.get("recommended_concept_id")
+            logger.info(f"[Recommend] should_recommend={should_recommend}, recommended_concept_id={recommended_id}")
+            
+            if should_recommend and recommended_id:
+                recommended_id_str = str(recommended_id)
+                logger.info(f"[Recommend] ✓ LLM 推荐：{recommended_id_str}，理由：{result.get('reason', 'N/A')}")
+                return recommended_id_str
             else:
-                logger.info(f"[Recommend] LLM 判断不推荐")
+                logger.info(f"[Recommend] ✗ LLM 判断不推荐（should_recommend={should_recommend}）")
         else:
             logger.warning(f"[Recommend] LLM 响应格式错误，返回类型：{type(result)}")
         
         # LLM 不推荐时，尝试关键词匹配后备
         fallback_result = _fallback_keyword_recommend(state)
         if fallback_result:
-            logger.info(f"[Recommend] 关键词匹配后备推荐：{fallback_result}")
+            logger.info(f"[Recommend] ✓ 关键词匹配后备推荐：{fallback_result}")
+        else:
+            logger.info(f"[Recommend] ✗ 关键词匹配也未找到推荐")
         return fallback_result
         
     except asyncio.TimeoutError:
@@ -1487,7 +1493,11 @@ def build_teaching_workflow(tools: TeachingTools):
         # 2026-08-19: 修复根本问题 - 当 LLM 推荐成功时，必须设置 teaching_action 为
         #             "prerequisite_review"，否则 resolve_review_target 会因为
         #             teaching_action 不在 _REDIRECT_ACTIONS 中而直接返回 None
+        import logging
+        logger = logging.getLogger(__name__)
+        
         llm_recommended_concept_id = await _intelligent_recommend(tools, state)
+        logger.info(f"[ProposeAdjustment] LLM 推荐结果：{llm_recommended_concept_id}")
         
         # 如果 LLM 推荐了知识点，且原 teaching_action 不是重定向动作，
         # 则覆盖为 prerequisite_review，让推荐生效
@@ -1499,6 +1509,7 @@ def build_teaching_workflow(tools: TeachingTools):
             # LLM 推荐成功，覆盖 teaching_action 和 requested_concept_id
             effective_teaching_action = "prerequisite_review"
             effective_requested_concept_id = llm_recommended_concept_id
+            logger.info(f"[ProposeAdjustment] 覆盖 teaching_action: {original_teaching_action} -> {effective_teaching_action}, concept_id: {effective_requested_concept_id}")
         
         try:
             observation = QuestionObservation.model_validate(raw_observation)
