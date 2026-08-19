@@ -185,7 +185,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
                 system="你是课程智能体的推荐模块。根据输入判断是否需要推荐知识点。只返回JSON。",
                 user=prompt
             ),
-            timeout=5.0  # 5秒超时
+            timeout=15.0  # 15秒超时（DeepSeek API 较慢）
         )
         
         # 解析响应
@@ -215,7 +215,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
         return fallback_result
         
     except asyncio.TimeoutError:
-        logger.warning("[Recommend] LLM 推荐超时（5秒），使用关键词匹配后备")
+        logger.warning("[Recommend] LLM 推荐超时（15秒），使用关键词匹配后备")
         return _fallback_keyword_recommend(state)
     except Exception as e:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
         logger.error(f"[Recommend] LLM 推荐异常：{e}，使用关键词匹配后备")
