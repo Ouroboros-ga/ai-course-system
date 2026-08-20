@@ -33,15 +33,29 @@ def upgrade() -> None:
                 "ALTER TYPE coursetype ADD VALUE IF NOT EXISTS 'IDEOLOGICAL'"
             )
 
-    # 存量数据归一化：旧值 -> 新值（PostgreSQL 按枚举 label，SQLite 按字符串）。
-    op.execute(
-        "UPDATE course_safety_policies SET course_type = 'PROFESSIONAL' "
-        "WHERE course_type IN ('BASIC', 'basic')"
-    )
-    op.execute(
-        "UPDATE course_safety_policies SET course_type = 'CYBERSECURITY' "
-        "WHERE course_type IN ('CTF', 'ctf')"
-    )
+    # 存量数据归一化：旧值 -> 新值。
+    # PostgreSQL：coursetype 为原生枚举，label 自 0001 起统一为大写成员名
+    # （BASIC/CTF），小写字面量不是合法枚举值，直接匹配会抛
+    # InvalidTextRepresentation，因此只匹配合法 label。
+    # SQLite：无原生枚举，兼容历史小写值。
+    if bind.dialect.name == "postgresql":
+        op.execute(
+            "UPDATE course_safety_policies SET course_type = 'PROFESSIONAL' "
+            "WHERE course_type IN ('BASIC')"
+        )
+        op.execute(
+            "UPDATE course_safety_policies SET course_type = 'CYBERSECURITY' "
+            "WHERE course_type IN ('CTF')"
+        )
+    else:
+        op.execute(
+            "UPDATE course_safety_policies SET course_type = 'PROFESSIONAL' "
+            "WHERE course_type IN ('BASIC', 'basic')"
+        )
+        op.execute(
+            "UPDATE course_safety_policies SET course_type = 'CYBERSECURITY' "
+            "WHERE course_type IN ('CTF', 'ctf')"
+        )
 
 
 def downgrade() -> None:

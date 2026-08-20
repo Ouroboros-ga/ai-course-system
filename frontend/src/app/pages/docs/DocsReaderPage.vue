@@ -1,23 +1,25 @@
 <script setup>
 /**
- * Docs Reader — 顶层公开 PDF / Word 在线阅读器（不挂 AppShell，无需登录）。
+ * Docs Reader — 顶层公开 PDF / Word / Markdown 在线阅读器（不挂 AppShell，无需登录）。
  *
  * - 通过 /docs/view?file=<相对路径>&name=<标题> 打开，file 相对 /static/docs 静态目录。
  * - PDF：浏览器原生查看器（iframe），零依赖。
  * - DOCX：动态加载 docx-preview（jsdelivr → unpkg 双 CDN 兜底），客户端渲染；
  *   CDN 不可用时降级为下载链接，不伪造渲染结果。
- * - file 参数做了白名单校验（仅允许字母数字、下划线、连字符、斜杠、中文与 pdf/docx/doc 扩展名），
+ * - MD：fetch 后经 renderContent（marked + DOMPurify + 代码高亮 + KaTeX）渲染。
+ * - file 参数做了白名单校验（仅允许字母数字、下划线、连字符、斜杠、中文与 pdf/docx/doc/md 扩展名），
  *   并禁止 .. 与绝对路径，避免目录穿越。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { AlertCircle, ArrowLeft, Download, LoaderCircle } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import { renderContent } from '@/utils/markdownRenderer.js'
 
 const route = useRoute()
 const router = useRouter()
 
-const FILE_RE = /^[A-Za-z0-9_\-\/\u4e00-\u9fa5]+\.(pdf|docx|doc)$/
+const FILE_RE = /^[A-Za-z0-9_\-/\u4e00-\u9fa5]+\.(pdf|docx|doc|md)$/
 
 const fileParam = computed(() => (route.query.file || '').toString())
 const nameParam = computed(() => (route.query.name || '').toString().trim() || '文档')
@@ -30,6 +32,7 @@ const valid = computed(() => {
 const isPdf = computed(() => valid.value && /\.pdf$/i.test(fileParam.value))
 const isDocx = computed(() => valid.value && /\.docx$/i.test(fileParam.value))
 const isLegacyDoc = computed(() => valid.value && /\.doc$/i.test(fileParam.value))
+const isMarkdown = computed(() => valid.value && /\.md$/i.test(fileParam.value))
 
 const fileUrl = computed(() => {
   if (!valid.value) return ''
@@ -49,6 +52,7 @@ function downloadCurrent() {
 const status = ref('loading') // loading | ready | error
 const errorMsg = ref('')
 const docxHost = ref(null)
+const mdHost = ref(null)
 const pdfReady = ref(false)
 const pdfKey = ref(0)
 
@@ -63,6 +67,8 @@ function retry() {
     status.value = 'ready'
   } else if (isDocx.value) {
     loadDocx()
+  } else if (isMarkdown.value) {
+    loadMarkdown()
   } else if (isLegacyDoc.value) {
     status.value = 'error'
     errorMsg.value = '暂不支持旧版 .doc 在线阅读，请下载后使用 Word 打开。'
@@ -93,6 +99,7 @@ watch(fileParam, () => {
     return
   }
   if (isDocx.value) loadDocx()
+  if (isMarkdown.value) loadMarkdown()
 })
 
 /* ── docx-preview 动态加载（双 CDN 兜底，不写进 package.json） ── */
@@ -155,6 +162,27 @@ async function loadDocx() {
   }
 }
 
+async function loadMarkdown() {
+  status.value = 'loading'
+  errorMsg.value = ''
+  ctrl?.abort()
+  ctrl = new AbortController()
+  try {
+    const res = await fetch(fileUrl.value, { signal: ctrl.signal })
+    if (!res.ok) throw new Error(`文档加载失败（HTTP ${res.status}）`)
+    const text = await res.text()
+    await nextTick()
+    const host = mdHost.value
+    if (!host) return
+    host.innerHTML = `<div class="md-wrap">${renderContent(text)}</div>`
+    status.value = 'ready'
+  } catch (err) {
+    if (err?.name === 'AbortError') return
+    status.value = 'error'
+    errorMsg.value = err?.message || '文档渲染失败'
+  }
+}
+
 onMounted(() => {
   retry()
 })
@@ -175,8 +203,8 @@ onBeforeUnmount(() => {
         </SfxButton>
         <span class="reader-nav__divider" aria-hidden="true"></span>
         <h1 class="reader-title">{{ nameParam }}</h1>
-        <span v-if="valid" class="reader-badge" :class="isPdf ? 'is-pdf' : 'is-docx'">
-          {{ isPdf ? 'PDF' : isLegacyDoc ? 'DOC' : 'DOCX' }}
+        <span v-if="valid" class="reader-badge" :class="isPdf ? 'is-pdf' : isMarkdown ? 'is-md' : 'is-docx'">
+          {{ isPdf ? 'PDF' : isMarkdown ? 'MD' : isLegacyDoc ? 'DOC' : 'DOCX' }}
         </span>
       </div>
       <div class="reader-nav__right">
@@ -218,6 +246,8 @@ onBeforeUnmount(() => {
       </template>
 
       <div v-else-if="isDocx" ref="docxHost" class="docx-host"></div>
+
+      <div v-else-if="isMarkdown" ref="mdHost" class="md-host"></div>
     </div>
   </div>
 </template>
@@ -291,6 +321,17 @@ onBeforeUnmount(() => {
   color: var(--ink-700);
 }
 
+.reader-badge.is-md {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+/* ── 移动端（design.md §12.5）── */
+@media (max-width: 760px) {
+  .reader-badge {
+    display: none;
+  }
+}
 /* ── 阅读区 ── */
 .reader-body {
   flex: 1;
@@ -322,6 +363,156 @@ onBeforeUnmount(() => {
 .docx-host :deep(.docx-wrapper > section.docx) {
   margin-bottom: var(--space-6);
   box-shadow: var(--shadow-sm);
+}
+
+/* ── Markdown 阅读区 ── */
+.md-host {
+  height: 100%;
+  overflow-y: auto;
+  padding: var(--space-10) var(--space-6);
+  background: var(--surface-panel);
+}
+
+.md-host :deep(.md-wrap) {
+  max-width: 780px;
+  margin: 0 auto;
+  font-size: var(--body-md-size);
+  line-height: var(--body-md-line);
+  color: var(--text-primary);
+}
+
+.md-host :deep(h1) {
+  font-family: var(--font-serif);
+  font-size: var(--title-1-size);
+  line-height: var(--title-1-line);
+  font-weight: var(--title-1-weight);
+  color: var(--ink-900);
+  margin-bottom: var(--space-6);
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.md-host :deep(h2) {
+  font-family: var(--font-serif);
+  font-size: var(--title-2-size);
+  line-height: var(--title-2-line);
+  font-weight: var(--title-2-weight);
+  color: var(--ink-900);
+  margin-top: var(--space-10);
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.md-host :deep(h3) {
+  font-size: var(--title-3-size);
+  line-height: var(--title-3-line);
+  font-weight: var(--title-3-weight);
+  color: var(--text-primary);
+  margin-top: var(--space-8);
+  margin-bottom: var(--space-3);
+}
+
+.md-host :deep(h4) {
+  font-size: var(--ui-md-size);
+  font-weight: var(--ui-md-weight);
+  color: var(--text-primary);
+  margin-top: var(--space-6);
+  margin-bottom: var(--space-2);
+}
+
+.md-host :deep(p) {
+  margin-bottom: var(--space-4);
+}
+
+.md-host :deep(ul),
+.md-host :deep(ol) {
+  margin: 0 0 var(--space-4) var(--space-5);
+  padding: 0;
+}
+
+.md-host :deep(li) {
+  margin-bottom: var(--space-2);
+}
+
+.md-host :deep(a) {
+  color: var(--text-link);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.md-host :deep(a:hover) {
+  color: var(--ink-900);
+}
+
+.md-host :deep(strong) {
+  font-weight: var(--title-3-weight);
+  color: var(--ink-900);
+}
+
+.md-host :deep(blockquote) {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-2) var(--space-4);
+  border-left: 3px solid var(--color-focus);
+  background: var(--surface-cool);
+  color: var(--text-secondary);
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+
+.md-host :deep(code) {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Consolas, monospace);
+  font-size: 0.9em;
+  background: var(--ink-100);
+  padding: 1px var(--space-1);
+  border-radius: var(--radius-sm);
+}
+
+.md-host :deep(pre) {
+  margin: 0 0 var(--space-4);
+  padding: var(--space-4);
+  overflow-x: auto;
+  background: var(--ink-900);
+  color: #f5f5f5;
+  border-radius: var(--radius-md);
+  font-size: var(--ui-sm-size);
+  line-height: 1.6;
+}
+
+.md-host :deep(pre code) {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.md-host :deep(table) {
+  width: 100%;
+  margin: 0 0 var(--space-6);
+  border-collapse: collapse;
+  font-size: var(--ui-md-size);
+}
+
+.md-host :deep(th),
+.md-host :deep(td) {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-default);
+  text-align: left;
+  vertical-align: top;
+}
+
+.md-host :deep(th) {
+  background: var(--surface-cool);
+  font-weight: var(--ui-md-weight);
+  color: var(--ink-900);
+}
+
+.md-host :deep(tr:nth-child(even) td) {
+  background: var(--surface-cool);
+}
+
+.md-host :deep(hr) {
+  margin: var(--space-8) 0;
+  border: 0;
+  border-top: 1px solid var(--border-default);
 }
 
 /* ── 加载 / 错误状态 ── */

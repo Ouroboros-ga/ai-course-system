@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { House, BookOpen, FlaskConical, FolderOpen, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle } from 'lucide-vue-next'
+import { House, BookOpen, FlaskConical, FolderOpen, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -35,6 +35,9 @@ function goTasks() {
 const menuOpen = ref(false)
 const menuRef = ref(null)
 
+// 移动端汉堡抽屉（≤760px）：一级导航收纳为左侧滑出抽屉
+const drawerOpen = ref(false)
+
 function toggleMenu() {
     menuOpen.value = !menuOpen.value
 }
@@ -42,6 +45,9 @@ function toggleMenu() {
 function closeMenu() {
     menuOpen.value = false
 }
+
+// 路由切换自动收起抽屉，避免停留打开状态遮挡新页面
+watch(() => route.path, () => { drawerOpen.value = false })
 
 function handleDocClick(e) {
     if (menuRef.value && !menuRef.value.contains(e.target)) closeMenu()
@@ -76,6 +82,10 @@ onBeforeUnmount(() => {
 <template>
     <header class="sfx-l1nav">
         <div class="sfx-l1nav-inner">
+            <button type="button" class="sfx-l1nav-burger" aria-label="打开导航菜单" :aria-expanded="drawerOpen"
+                @click="drawerOpen = true">
+                <Menu :size="20" />
+            </button>
             <RouterLink to="/app" class="sfx-l1nav-brand" aria-label="返回工作首页">
                 <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-brand-logo" />
                 <span class="sfx-l1nav-brand-name">SmartCarb</span>
@@ -115,6 +125,42 @@ onBeforeUnmount(() => {
                 </div>
             </div>
         </div>
+
+        <!-- 移动端导航抽屉（≤760px 显示，一级导航收纳为左侧滑出面板） -->
+        <Transition name="sfx-drawer">
+            <div v-if="drawerOpen" class="sfx-l1nav-drawer-layer" @click.self="drawerOpen = false">
+                <div class="sfx-l1nav-drawer-mask" @click="drawerOpen = false"></div>
+                <aside class="sfx-l1nav-drawer" role="dialog" aria-modal="true" aria-label="导航菜单">
+                    <div class="sfx-l1nav-drawer-head">
+                        <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-drawer-logo" />
+                        <span class="sfx-l1nav-drawer-title">SmartCarb</span>
+                        <button type="button" class="sfx-l1nav-drawer-close" aria-label="关闭导航菜单" @click="drawerOpen = false">
+                            <X :size="18" />
+                        </button>
+                    </div>
+                    <nav class="sfx-l1nav-drawer-links" aria-label="导航菜单">
+                        <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sfx-l1nav-drawer-link"
+                            :class="{ 'is-active': isActive(item) }" @click="drawerOpen = false">
+                            <component :is="item.icon" :size="18" />
+                            <span>{{ item.label }}</span>
+                        </RouterLink>
+                        <RouterLink v-if="adminItem" :to="adminItem.to" class="sfx-l1nav-drawer-link"
+                            :class="{ 'is-active': isActive(adminItem) }" @click="drawerOpen = false">
+                            <component :is="adminItem.icon" :size="18" />
+                            <span>{{ adminItem.label }}</span>
+                        </RouterLink>
+                    </nav>
+                    <div class="sfx-l1nav-drawer-foot">
+                        <button type="button" class="sfx-l1nav-drawer-foot-item" @click="goProfile">
+                            <UserCircle :size="16" /> 个人资料
+                        </button>
+                        <button type="button" class="sfx-l1nav-drawer-foot-item is-danger" @click="logout">
+                            <LogOut :size="16" /> 退出登录
+                        </button>
+                    </div>
+                </aside>
+            </div>
+        </Transition>
     </header>
 </template>
 
@@ -152,6 +198,22 @@ onBeforeUnmount(() => {
     height: 24px;
     flex-shrink: 0;
     display: block;
+}
+
+/* 汉堡按钮：桌面端隐藏，≤760px 显示 */
+.sfx-l1nav-burger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+}
+
+.sfx-l1nav-burger:hover {
+    background: var(--surface-cool);
+    color: var(--ink-700);
 }
 
 .sfx-l1nav-links {
@@ -311,5 +373,179 @@ onBeforeUnmount(() => {
     .sfx-l1nav-username {
         display: none;
     }
+}
+
+/* ── 移动端导航抽屉（≤760px） ── */
+@media (max-width: 760px) {
+    .sfx-l1nav-burger {
+        display: inline-flex;
+    }
+
+    /* 一级横向链接收纳进抽屉 */
+    .sfx-l1nav-links {
+        display: none;
+    }
+}
+
+/* 抽屉层级：fixed 覆盖全屏，mask + 左侧面板 */
+.sfx-l1nav-drawer-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+}
+
+.sfx-l1nav-drawer-mask {
+    position: absolute;
+    inset: 0;
+    background: var(--surface-overlay);
+}
+
+.sfx-l1nav-drawer {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(var(--rail-width), 84vw);
+    background: var(--surface-panel);
+    box-shadow: var(--shadow-md);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.sfx-l1nav-drawer-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-4) var(--space-5);
+    border-bottom: 1px solid var(--border-default);
+    flex-shrink: 0;
+}
+
+.sfx-l1nav-drawer-logo {
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    display: block;
+}
+
+.sfx-l1nav-drawer-title {
+    flex: 1;
+    font-weight: 650;
+    font-size: var(--body-md-size);
+    color: var(--ink-900);
+}
+
+.sfx-l1nav-drawer-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+}
+
+.sfx-l1nav-drawer-close:hover {
+    background: var(--surface-cool);
+    color: var(--ink-700);
+}
+
+.sfx-l1nav-drawer-links {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3);
+    flex: 1;
+}
+
+.sfx-l1nav-drawer-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--ui-md-size);
+    font-weight: var(--ui-md-weight);
+}
+
+.sfx-l1nav-drawer-link:hover {
+    background: var(--surface-cool);
+    color: var(--ink-700);
+}
+
+/* 当前项：墨蓝文字 + 墨蓝背景，左侧 3px 状态线（design.md 4.6/§12.5） */
+.sfx-l1nav-drawer-link.is-active {
+    background: var(--ink-100);
+    color: var(--ink-900);
+    position: relative;
+}
+
+.sfx-l1nav-drawer-link.is-active::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: var(--space-2);
+    bottom: var(--space-2);
+    width: 3px;
+    border-radius: var(--radius-full);
+    background: var(--ink-900);
+}
+
+.sfx-l1nav-drawer-foot {
+    border-top: 1px solid var(--border-default);
+    padding: var(--space-3);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    flex-shrink: 0;
+}
+
+.sfx-l1nav-drawer-foot-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: 44px;
+    padding: 0 var(--space-3);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-size: var(--ui-md-size);
+    text-align: left;
+}
+
+.sfx-l1nav-drawer-foot-item:hover {
+    background: var(--surface-cool);
+}
+
+.sfx-l1nav-drawer-foot-item.is-danger {
+    color: var(--red-700);
+}
+
+.sfx-l1nav-drawer-foot-item.is-danger:hover {
+    background: var(--red-100);
+}
+
+/* 抽屉过渡：mask 淡入淡出 + 面板左侧滑入 */
+.sfx-drawer-enter-active,
+.sfx-drawer-leave-active {
+    transition: opacity var(--duration-normal) var(--ease-out);
+}
+
+.sfx-drawer-enter-active .sfx-l1nav-drawer,
+.sfx-drawer-leave-active .sfx-l1nav-drawer {
+    transition: transform var(--duration-normal) var(--ease-out);
+}
+
+.sfx-drawer-enter-from,
+.sfx-drawer-leave-to {
+    opacity: 0;
+}
+
+.sfx-drawer-enter-from .sfx-l1nav-drawer,
+.sfx-drawer-leave-to .sfx-l1nav-drawer {
+    transform: translateX(-100%);
 }
 </style>

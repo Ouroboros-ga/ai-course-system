@@ -32,6 +32,7 @@ const { providerReady, providerError, providerDisplayName, provider, notice, err
     align-items: center;
     gap: var(--space-2);
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
 
 .provider-bar-name {

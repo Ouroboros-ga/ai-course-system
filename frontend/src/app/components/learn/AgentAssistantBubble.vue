@@ -1,7 +1,9 @@
 <script setup>
+import { computed } from 'vue'
 import { BookMarked, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { useSettingsStore } from '@/stores/userSettings'
+import { renderContent } from '@/utils/markdownRenderer'
 
 const settings = useSettingsStore()
 
@@ -32,16 +34,34 @@ function isReviewingAdjustment(adjustment) {
 }
 
 function isVisibleProposal(adjustment) {
-    return adjustment?.status === 'proposed'
+    // 完整的 proposal（有播放坐标）
+    if (adjustment?.status === 'proposed'
         && adjustment?.review_target
         && !adjustment?.declined_at
         && !adjustment?.invalidated_at
-        && !isActiveAdjustment(adjustment)
+        && !isActiveAdjustment(adjustment)) {
+        return true
+    }
+    // 简化推荐（无播放坐标，仅文本提示）
+    if (adjustment?.type === 'simple_recommendation'
+        && adjustment?.recommended_concept_name) {
+        return true
+    }
+    return false
+}
+
+function isSimpleRecommendation(adjustment) {
+    return adjustment?.type === 'simple_recommendation'
 }
 
 function retry() {
     if (props.message?.retryQuestion) emit('retry', props.message)
 }
+
+// 渲染 Markdown 内容
+const renderedContent = computed(() => {
+    return renderContent(props.message?.content || '')
+})
 </script>
 
 <template>
@@ -57,8 +77,8 @@ function retry() {
                     <span>结合当前知识点<template v-if="message.page"> · 第 {{ message.page }} 页</template></span>
                 </div>
 
-                <!-- ③ 回答 - 更宽松的正文排版 -->
-                <div class="sfx-agent-answer-text sfx-t-body">{{ message.content }}</div>
+                <!-- ③ 回答 - 更宽松的正文排版，支持 Markdown 渲染 -->
+                <div class="sfx-agent-answer-text sfx-t-body" v-html="renderedContent"></div>
 
                 <div v-if="message.lowConfidence" class="sfx-agent-lowconf sfx-t-caption">
                     <TriangleAlert :size="13" /> 本次回答置信度较低，建议核对下方原文引用。
@@ -81,18 +101,32 @@ function retry() {
                 <!-- 回顾建议：仅在消息内出现，不额外持久化到页面底部 -->
                 <section v-if="isVisibleProposal(message.learningAdjustment)" class="sfx-agent-adjustment"
                     aria-label="学习回顾建议">
-                    <p class="sfx-agent-adjustment-title sfx-t-ui">
-                        <MapPinned :size="15" /> 建议回顾第 {{ reviewPage(message.learningAdjustment) }} 页
-                    </p>
-                    <p class="sfx-t-caption">
-                        回顾后由你自行选择何时返回原学习位置。
-                    </p>
-                    <div class="sfx-agent-adjustment-actions">
-                        <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy" :disabled="adjustmentBusy"
-                            @click="$emit('accept-adjustment', message.learningAdjustment)">回顾并补充讲解</SfxButton>
-                        <SfxButton variant="tertiary" size="sm" :disabled="adjustmentBusy"
-                            @click="$emit('dismiss-adjustment', message.learningAdjustment)">继续当前位置</SfxButton>
-                    </div>
+                    <!-- 简化推荐：只显示文本提示，无播放跳转 -->
+                    <template v-if="isSimpleRecommendation(message.learningAdjustment)">
+                        <p class="sfx-agent-adjustment-title sfx-t-ui">
+                            <MapPinned :size="15" /> 建议回顾：{{ message.learningAdjustment.recommended_concept_name }}
+                        </p>
+                        <p class="sfx-t-caption">{{ message.learningAdjustment.reason || '该知识点是理解当前内容的基础' }}</p>
+                        <p class="sfx-t-caption" style="margin-top: var(--space-2); color: var(--text-tertiary); font-style: italic;">
+                            💡 提示：在播放课程内容时提问，可以直接跳转到相关知识点
+                        </p>
+                    </template>
+                    
+                    <!-- 完整推荐：可以播放跳转 -->
+                    <template v-else>
+                        <p class="sfx-agent-adjustment-title sfx-t-ui">
+                            <MapPinned :size="15" /> 建议回顾第 {{ reviewPage(message.learningAdjustment) }} 页
+                        </p>
+                        <p class="sfx-t-caption">
+                            回顾后由你自行选择何时返回原学习位置。
+                        </p>
+                        <div class="sfx-agent-adjustment-actions">
+                            <SfxButton variant="secondary" size="sm" :loading="adjustmentBusy" :disabled="adjustmentBusy"
+                                @click="$emit('accept-adjustment', message.learningAdjustment)">回顾并补充讲解</SfxButton>
+                            <SfxButton variant="tertiary" size="sm" :disabled="adjustmentBusy"
+                                @click="$emit('dismiss-adjustment', message.learningAdjustment)">继续当前位置</SfxButton>
+                        </div>
+                    </template>
                 </section>
 
                 <!-- 2026-08-19 修复：只在当前消息真正有推荐提案时显示绿色框，避免显示上次残留状态 -->
@@ -209,6 +243,92 @@ function retry() {
     letter-spacing: 0.005em;
     word-break: break-word;
     white-space: pre-wrap;
+}
+
+/* Markdown 渲染样式 */
+.sfx-agent-answer-text :deep(h1),
+.sfx-agent-answer-text :deep(h2),
+.sfx-agent-answer-text :deep(h3) {
+    margin: var(--space-3) 0 var(--space-2) 0;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.sfx-agent-answer-text :deep(h1) { font-size: 1.5em; }
+.sfx-agent-answer-text :deep(h2) { font-size: 1.3em; }
+.sfx-agent-answer-text :deep(h3) { font-size: 1.15em; }
+
+.sfx-agent-answer-text :deep(p) {
+    margin: var(--space-2) 0;
+}
+
+.sfx-agent-answer-text :deep(ul),
+.sfx-agent-answer-text :deep(ol) {
+    margin: var(--space-2) 0;
+    padding-left: var(--space-6);
+}
+
+.sfx-agent-answer-text :deep(li) {
+    margin: var(--space-1) 0;
+}
+
+.sfx-agent-answer-text :deep(code) {
+    padding: 2px 6px;
+    background: var(--surface-cool);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+    font-size: 0.9em;
+}
+
+.sfx-agent-answer-text :deep(pre) {
+    margin: var(--space-3) 0;
+    padding: var(--space-4);
+    background: var(--surface-cool);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    overflow-x: auto;
+}
+
+.sfx-agent-answer-text :deep(pre code) {
+    padding: 0;
+    background: none;
+    border: none;
+    font-size: 0.875em;
+}
+
+.sfx-agent-answer-text :deep(blockquote) {
+    margin: var(--space-3) 0;
+    padding-left: var(--space-4);
+    border-left: 3px solid var(--border-default);
+    color: var(--text-secondary);
+}
+
+.sfx-agent-answer-text :deep(strong) {
+    font-weight: 600;
+}
+
+.sfx-agent-answer-text :deep(em) {
+    font-style: italic;
+}
+
+.sfx-agent-answer-text :deep(a) {
+    color: var(--ink-600);
+    text-decoration: underline;
+}
+
+.sfx-agent-answer-text :deep(a:hover) {
+    color: var(--ink-700);
+}
+
+/* KaTeX 公式样式 */
+.sfx-agent-answer-text :deep(.katex-block) {
+    margin: var(--space-3) 0;
+    overflow-x: auto;
+}
+
+.sfx-agent-answer-text :deep(.katex-inline) {
+    display: inline;
 }
 
 /* 低置信度提示 */

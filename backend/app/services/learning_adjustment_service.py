@@ -596,14 +596,21 @@ class LearningAdjustmentService:
         storage: ObjectStorageProvider | None = None,
         requested_concept_id: str | None = None,
     ) -> ReviewTargetResolution:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[ResolveReviewTarget] teaching_action={teaching_action}, requested_concept_id={requested_concept_id}")
+        
         if teaching_action not in self._REDIRECT_ACTIONS:
+            logger.info(f"[ResolveReviewTarget] ✗ teaching_action '{teaching_action}' not in {self._REDIRECT_ACTIONS}")
             return ReviewTargetResolution(None, "ACTION_DOES_NOT_REQUIRE_REVIEW")
 
         course_release = self._active_course_release(session, course_id)
         if course_release is None or observation.course_release_id != course_release.release_id:
+            logger.info(f"[ResolveReviewTarget] ✗ QUESTION_OBSERVATION_STALE: course_release={course_release is not None}, release_id_match={course_release.release_id == observation.course_release_id if course_release else False}")
             return ReviewTargetResolution(None, "QUESTION_OBSERVATION_STALE")
         media_release_id = str((course_release.media_snapshot or {}).get("media_release_id") or "")
         if not media_release_id or observation.media_release_id != media_release_id:
+            logger.info(f"[ResolveReviewTarget] ✗ QUESTION_OBSERVATION_STALE: media_release_id={media_release_id}, observation.media_release_id={observation.media_release_id}")
             return ReviewTargetResolution(None, "QUESTION_OBSERVATION_STALE")
         media_release = session.exec(select(MediaRelease).where(
             MediaRelease.course_id == course_id,
@@ -611,6 +618,7 @@ class LearningAdjustmentService:
             MediaRelease.status == MediaReleaseStatus.ACTIVE,
         )).first()
         if media_release is None:
+            logger.info(f"[ResolveReviewTarget] ✗ MEDIA_TARGET_UNAVAILABLE: media_release not found")
             return ReviewTargetResolution(None, "MEDIA_TARGET_UNAVAILABLE")
 
         observed_item = session.exec(select(MediaReleaseItem).where(

@@ -53,23 +53,25 @@ src/
 │   ├── profile/         # 个人中心组件
 │   │   ├── LoginIn/     # 登录相关组件
 │   │   └── UserIndex.vue
-│   ├── GradientBackground.vue  # 渐变背景
-│   └── NavigationBar.vue       # 导航栏
+├── app/                  # AppShell 新体系（当前唯一体系，旧版 views/ 页面已删除）
+│   ├── shell/           # 一级导航（含移动端汉堡抽屉）与 AppShell 布局
+│   ├── pages/           # 新体系页面：home/courses/course/resources/tasks/lab/admin/docs
+│   └── router.js        # 新体系路由（shadowAppRoutes）
 ├── data/                 # 数据文件
 │   └── mindMapData.js   # 思维导图数据
 ├── router/               # 路由配置
-│   └── index.js         # 路由定义
+│   └── index.js         # 路由定义（/app 新体系 + 登录跳转）
 ├── stores/               # 状态管理
 │   └── counter.js       # Pinia Store
 ├── utils/                # 工具函数
 │   ├── request.js       # Axios 封装
 │   ├── toast.js         # Toast 提示
 │   └── getCookies.js   # Cookie 工具
-├── views/                # 页面视图
-│   ├── Home.vue         # 首页
-│   ├── Chat.vue         # 聊天页面
-│   ├── About.vue        # 关于页面
-│   └── Profile.vue      # 个人中心
+├── views/                # 仅保留被 app/router.js 引用的页面
+│   ├── Profile.vue      # 登录页/个人中心
+│   ├── SsoCallback.vue  # SSO 回调
+│   ├── EvidenceViewerPage.vue
+│   └── VisualizationView.vue
 ├── App.vue              # 根组件
 ├── main.js              # 入口文件
 └── .env                 # 环境变量
@@ -192,7 +194,7 @@ npm run build
 
 - 使用 CSS Scoped 避免样式污染
 - 统一使用 Flexbox 和 Grid 布局
-- 响应式断点：768px（移动端）
+- 响应式断点：760px（移动端，design.md §12.5）
 - 滚动条美化：自定义滚动条样式
 
 ## 浏览器支持
@@ -218,7 +220,7 @@ A: 修改 `.env` 文件中的 `VITE_APP_BASE_API` 变量。
 
 ### Q: 如何添加新的页面？
 
-A: 在 `views/` 目录创建页面组件，然后在 `router/index.js` 中添加路由配置。
+A: 在 `app/pages/` 目录创建页面组件，然后在 `app/router.js`（或 `router/index.js`）中添加路由配置。
 
 ### Q: 如何添加新的 API 接口？
 

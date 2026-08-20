@@ -46,10 +46,32 @@ def _fallback_keyword_recommend(state: Mapping[str, Any]) -> str | None:
     
     当学生提问中包含前置知识点或相关知识点的关键词时，推荐该知识点。
     2026-08-19: 作为 LLM 推荐的后备，确保基本推荐功能可用。
+    2026-08-19: 添加"回顾"、"复习"等明确意图关键词的兜底检测。
     """
     student_question = str(state.get("user_message") or "").lower()
     if not student_question or len(student_question) < 3:
         return None
+    
+    # 兜底检测：如果学生明确说"回顾"、"复习"，优先推荐第一个前置知识点
+    review_keywords = ["回顾", "复习", "再看", "重新学", "温习"]
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[FallbackRecommend] 检查回顾关键词，提问：{student_question}")
+    
+    if any(keyword in student_question for keyword in review_keywords):
+        logger.info(f"[FallbackRecommend] ✓ 检测到回顾关键词")
+        prerequisites = list(state.get("prerequisites") or [])
+        if prerequisites:
+            # 返回第一个前置知识点（通常是最相关的）
+            first_prereq = prerequisites[0]
+            concept_id = str(first_prereq.get("concept_id") or "")
+            if concept_id:
+                logger.info(f"[FallbackRecommend] ✓ 推荐第一个前置知识点：{concept_id}")
+                return concept_id
+        else:
+            logger.info(f"[FallbackRecommend] ✗ 检测到回顾关键词但无前置知识点")
+    else:
+        logger.info(f"[FallbackRecommend] ✗ 未检测到回顾关键词")
     
     # 优先匹配前置知识点（薄弱的前置知识）
     prerequisites = list(state.get("prerequisites") or [])
@@ -151,12 +173,15 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 {json.dumps(conversation_summary, ensure_ascii=False, indent=2) if conversation_summary else "无"}
 
 **任务**: 
-1. 理解学生提问的真实意图
+1. **首先检查学生是否明确表达了回顾/复习意图**
+   - 提问中是否包含"回顾"、"复习"、"再看"、"重新学"、"温习"等词？
+   - 如果包含这些词，说明学生想回顾前置知识，应该推荐！
+2. 理解学生提问的真实意图
    - 是在询问某个具体知识点的内容吗？（如"数学模型是怎么建立的"、"传递函数是什么"）
    - 是对当前内容有疑问吗？
    - 是想跳转学习其他知识点吗？
-2. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
-3. 结合知识图谱结构，判断推荐哪个知识点最合适
+3. 判断学生当前的学习状态（是否困惑、是否有强烈学习欲望）
+4. 结合知识图谱结构，判断推荐哪个知识点最合适
 
 **输出格式** (JSON):
 {{
@@ -166,6 +191,7 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
 }}
 
 **判断原则**:
+- **如果学生提问中包含"回顾"、"复习"等明确表达想回顾前置知识的词语，优先推荐最相关的前置知识点**
 - 如果学生提问明确询问某个知识点的内容（如"XX是什么"、"XX怎么做"），且该知识点在前置/相关概念中，则推荐
 - 如果学生明确表达想学某个知识点（如"我想学XX"），且该知识点在相关概念中，则推荐
 - 如果学生困惑，且困惑明显源于某个前置知识薄弱，则推荐该前置知识
@@ -176,44 +202,47 @@ async def _intelligent_recommend(tools: TeachingTools, state: Mapping[str, Any])
     
     try:
         logger.info(f"[Recommend] 调用 LLM 推荐，学生提问：{student_question[:50]}...")
+        logger.info(f"[Recommend] 完整提问：{student_question}")  # 记录完整提问
         
         # 调用 LLM（设置较短超时，避免阻塞主流程）
         import asyncio
-        response = await asyncio.wait_for(
-            tools.llm.generate(
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=500,
+        # 使用 _json_completion 方法直接调用底层 LLM
+        result = await asyncio.wait_for(
+            tools.llm._json_completion(
+                system="你是课程智能体的推荐模块。根据输入判断是否需要推荐知识点。只返回JSON。",
+                user=prompt
             ),
-            timeout=5.0  # 5秒超时
+            timeout=15.0  # 15秒超时（DeepSeek API 较慢）
         )
         
         # 解析响应
-        content = response.get("content", "")
-        logger.info(f"[Recommend] LLM 响应：{content[:100]}...")
+        logger.info(f"[Recommend] LLM 响应类型：{type(result)}，内容：{result}")
         
-        # 尝试提取 JSON
-        import re
-        json_match = re.search(r'\{[^{}]*"should_recommend"[^{}]*\}', content, re.DOTALL)
-        if json_match:
-            result = json.loads(json_match.group())
-            if result.get("should_recommend") and result.get("recommended_concept_id"):
-                recommended_id = str(result["recommended_concept_id"])
-                logger.info(f"[Recommend] LLM 推荐：{recommended_id}，理由：{result.get('reason', 'N/A')}")
-                return recommended_id
+        # _json_completion 已返回解析好的 JSON dict
+        if isinstance(result, dict):
+            should_recommend = result.get("should_recommend")
+            recommended_id = result.get("recommended_concept_id")
+            logger.info(f"[Recommend] should_recommend={should_recommend}, recommended_concept_id={recommended_id}")
+            
+            if should_recommend and recommended_id:
+                recommended_id_str = str(recommended_id)
+                logger.info(f"[Recommend] ✓ LLM 推荐：{recommended_id_str}，理由：{result.get('reason', 'N/A')}")
+                return recommended_id_str
             else:
-                logger.info(f"[Recommend] LLM 判断不推荐")
+                logger.info(f"[Recommend] ✗ LLM 判断不推荐（should_recommend={should_recommend}）")
         else:
-            logger.warning(f"[Recommend] LLM 响应格式错误，无法解析 JSON")
+            logger.warning(f"[Recommend] LLM 响应格式错误，返回类型：{type(result)}")
         
         # LLM 不推荐时，尝试关键词匹配后备
         fallback_result = _fallback_keyword_recommend(state)
         if fallback_result:
-            logger.info(f"[Recommend] 关键词匹配后备推荐：{fallback_result}")
+            logger.info(f"[Recommend] ✓ 关键词匹配后备推荐：{fallback_result}")
+        else:
+            logger.info(f"[Recommend] ✗ 关键词匹配也未找到推荐")
         return fallback_result
         
     except asyncio.TimeoutError:
-        logger.warning("[Recommend] LLM 推荐超时（5秒），使用关键词匹配后备")
+        logger.warning("[Recommend] LLM 推荐超时（15秒），使用关键词匹配后备")
         return _fallback_keyword_recommend(state)
     except Exception as e:  # noqa: BLE001 -- LLM 推荐失败不影响主流程
         logger.error(f"[Recommend] LLM 推荐异常：{e}，使用关键词匹配后备")
@@ -1484,14 +1513,24 @@ def build_teaching_workflow(tools: TeachingTools):
                 ),
             }
         raw_observation = state.get("question_observation")
-        if not raw_observation:
-            return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING")}
         
         # 2026-08-18: LLM 智能推荐逻辑
         # 2026-08-19: 修复根本问题 - 当 LLM 推荐成功时，必须设置 teaching_action 为
         #             "prerequisite_review"，否则 resolve_review_target 会因为
         #             teaching_action 不在 _REDIRECT_ACTIONS 中而直接返回 None
+        # 2026-08-20: 修复回顾功能失效 - 即使 question_observation 缺失，也尝试
+        #             基于提问内容做推荐。observation 缺失时推荐系统降级为纯文本分析模式。
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # 先尝试 LLM 推荐（无论 observation 是否存在）
         llm_recommended_concept_id = await _intelligent_recommend(tools, state)
+        logger.info(f"[ProposeAdjustment] LLM 推荐结果：{llm_recommended_concept_id}")
+        
+        # 如果没有 observation 且 LLM 也没有推荐，则跳过
+        if not raw_observation and not llm_recommended_concept_id:
+            logger.info("[ProposeAdjustment] question_observation 缺失且 LLM 未推荐，跳过")
+            return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING_NO_RECOMMENDATION")}
         
         # 如果 LLM 推荐了知识点，且原 teaching_action 不是重定向动作，
         # 则覆盖为 prerequisite_review，让推荐生效
@@ -1503,9 +1542,42 @@ def build_teaching_workflow(tools: TeachingTools):
             # LLM 推荐成功，覆盖 teaching_action 和 requested_concept_id
             effective_teaching_action = "prerequisite_review"
             effective_requested_concept_id = llm_recommended_concept_id
+            logger.info(f"[ProposeAdjustment] 覆盖 teaching_action: {original_teaching_action} -> {effective_teaching_action}, concept_id: {effective_requested_concept_id}")
         
         try:
+            # 如果 observation 缺失但有 LLM 推荐，返回简化的推荐信息
+            # 不创建完整的 LearningAdjustmentProposal（需要完整的播放坐标）
+            # 而是返回推荐的概念信息，让前端显示文本提示
+            if not raw_observation:
+                if llm_recommended_concept_id:
+                    logger.info(f"[ProposeAdjustment] question_observation 缺失但有推荐 {llm_recommended_concept_id}，返回简化推荐信息")
+                    # 查找推荐的知识点信息
+                    recommended_concept = None
+                    for prereq in list(state.get("prerequisites") or []):
+                        if str(prereq.get("concept_id")) == llm_recommended_concept_id:
+                            recommended_concept = prereq
+                            break
+                    
+                    if recommended_concept:
+                        # 返回简化的推荐信息（不是完整的 proposal，只是提示）
+                        return {
+                            "learning_adjustment": {
+                                "type": "simple_recommendation",  # 标记为简化推荐
+                                "recommended_concept_id": llm_recommended_concept_id,
+                                "recommended_concept_name": recommended_concept.get("name", "前置知识点"),
+                                "reason": "建议回顾该知识点以更好理解当前内容",
+                            },
+                            "trace": _trace(state, "propose_learning_adjustment", 
+                                          proposed=True, simple_recommendation=True),
+                        }
+                
+                # 没有推荐或找不到概念信息，跳过
+                logger.info("[ProposeAdjustment] 无法生成推荐（observation 缺失且无有效推荐）")
+                return {"trace": _trace(state, "propose_learning_adjustment", skipped=True)}
+            
+            # 有 observation，使用完整的 propose 流程
             observation = QuestionObservation.model_validate(raw_observation)
+            
             proposal = await tools.learning_adjustment.propose(
                 student_id=state["student_id"],
                 course_id=state["course_id"],

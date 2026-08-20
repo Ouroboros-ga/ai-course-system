@@ -1,6 +1,5 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
-import { featureFlags } from '@/config/featureFlags.js'
 import { shadowAppRoutes } from '@/app/router.js'
 import { getMyInfo } from '@/api/user.js'
 
@@ -22,55 +21,13 @@ const prototypeRoutes = import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'tru
       meta: { requiresAuth: true, role: 'teacher', prototype: true }
     }
   ] : []
-
-const teacherQaRoutes = import.meta.env.VITE_ENABLE_FRONTEND_PROTOTYPES === 'true' &&
-  import.meta.env.VITE_ENABLE_TEACHER_WORKSPACE_QA === 'true' ? [
-    {
-      path: '/prototype/teacher-production/:courseId?',
-      name: 'prototype-teacher-production-workspace',
-      component: loadView('TeacherProductionWorkspace'),
-      meta: { prototype: true }
-    },
-    {
-      path: '/prototype/teacher-mapping/:courseId?',
-      name: 'prototype-teacher-mapping-workspace',
-      component: loadView('KnowledgeMappingWorkspace'),
-      meta: { prototype: true }
-    }
-  ] : []
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
-      // 正式首页为 /app(shadow 前端工作台),根路径统一重定向,不再渲染旧首页。
-      // shadowFrontend 关闭时回退到 /home(旧首页),避免 / 与 /app/** 互相重定向成环。
+      // 新壳工作台（/app/**）是唯一默认入口；旧首页与旧版页面已删除。
       path: '/',
-      redirect: featureFlags.shadowFrontend ? '/app' : '/home',
-    },
-    {
-      // 旧首页(landing)仅作为 shadowFrontend 关闭时的回退挂载,不再是根路径页面。
-      path: '/home',
-      name: 'home',
-      component: loadView('Home'),
-    },
-    {
-      path: '/chat',
-      name: 'chat',
-      component: loadView('Chat')
-    },
-    {
-      path: '/edulib',
-      name: 'Edulib',
-      component: loadView('Edulib')
-    },
-    {
-      path: '/Edulib',
-      redirect: '/edulib'
-    },
-    {
-      path: '/about',
-      name: 'about',
-      component: loadView('About')
+      redirect: '/app',
     },
     {
       path: '/profile',
@@ -82,87 +39,14 @@ const router = createRouter({
       name: 'sso-callback',
       component: loadView('SsoCallback')
     },
-    {
-      path: '/teacher',
-      redirect: '/teacher/history'
-    },
-    {
-      path: '/teacher/history',
-      name: 'teacher-history',
-      component: loadView('TeacherHistory'),
-      meta: { requiresAuth: true, role: 'teacher' }
-    },
-    {
-      path: '/teacher/create',
-      name: 'teacher-create',
-      component: loadView('TeacherDashboard'),
-      meta: { requiresAuth: true, role: 'teacher' }
-    },
-    {
-      path: '/teacher/course/:courseId',
-      name: 'teacher-course',
-      component: loadView('TeacherCourseWorkbench'),
-      meta: { requiresAuth: true, role: 'teacher' }
-    },
-    {
-      path: '/teacher/course/:courseId/production',
-      name: 'teacher-production-workspace',
-      component: featureFlags.teacherProductionWorkspace
-        ? loadView('TeacherProductionWorkspace')
-        : loadView('TeacherDashboard'),
-      meta: { requiresAuth: true, role: 'teacher', feature: 'teacher-production-workspace' }
-    },
-    {
-      path: '/teacher/course/:courseId/mapping',
-      name: 'teacher-knowledge-mapping',
-      component: featureFlags.knowledgeMappingWorkspace
-        ? loadView('KnowledgeMappingWorkspace')
-        : loadView('TeacherDashboard'),
-      meta: { requiresAuth: true, role: 'teacher', feature: 'knowledge-mapping-workspace' }
-    },
-    {
-      path: '/student',
-      name: 'student-dashboard',
-      component: loadView('StudentDashboard'),
-      meta: { requiresAuth: true, role: 'student' }
-    },
-    {
-      path: '/student/course/:courseId',
-      name: 'student-course',
-      component: loadView('StudentDashboard'),
-      meta: { requiresAuth: true, role: 'student' }
-    },
-    {
-      path: '/player/course/:courseId',
-      name: 'student-player',
-      component: featureFlags.studentLearningWorkspace
-        ? loadView('StudentLearningWorkspace')
-        : loadView('StudentPlayer'),
-      meta: {
-        requiresAuth: true,
-        role: 'student',
-        feature: featureFlags.studentLearningWorkspace
-          ? 'student-learning-workspace'
-          : 'legacy-student-player'
-      }
-    },
     ...prototypeRoutes,
-    ...teacherQaRoutes,
-    // Shadow frontend (/app/**). Flag-gated; legacy routes above stay the
-    // default until the cutover phase flips the flag default.
+    // Shadow frontend (/app/**)：新壳工作台，是当前唯一前端体系。
     ...shadowAppRoutes,
-    {
-      path: '/admin',
-      name: 'admin-panel',
-      component: loadView('AdminPanel'),
-      meta: { requiresAuth: true, requiredPlatformPermission: 'platform.admin' }
-    },
     {
       // 证据查看器已迁入新壳 /app/evidence-viewer/:courseId/:runId(见 app/router.js)。
       // 保留旧路径与 name 'evidence-viewer' 作为 redirect,旧外链与
       // KnowledgeReviewsPage / KnowledgeEvidencePage / graph-browser 的
-      // router.push({ name: 'evidence-viewer', ... }) 调用全部自动落入新 UI,
-      // 不再套旧版 NavigationBar 壳。
+      // router.push({ name: 'evidence-viewer', ... }) 调用全部自动落入新 UI。
       path: '/evidence-viewer/:courseId?/:runId?',
       name: 'evidence-viewer',
       redirect: (to) => {
@@ -172,24 +56,11 @@ const router = createRouter({
     },
     {
       // Graph browser (P1-09 follow-up): visualizes ONLY real-endpoint-provable
-      // structure (mapping course→knowledge-point→evidence). Retrieval trace is
-      // not fabricated while the V2 shadow is unwired. Admin-only, flag-gated
-      // (matches the V2 evidence endpoint admin-only discipline).
+      // structure (mapping course→knowledge-point→evidence). Admin-only.
       path: '/graph-browser/:courseId?',
       name: 'graph-browser',
-      component: featureFlags.graphBrowser
-        ? () => import('../features/graph-browser/GraphBrowser.vue')
-        : loadView('KnowledgeMappingWorkspace'),
-      meta: { requiresAuth: true, role: 'admin', feature: 'graph-browser' }
-    },
-    {
-      // Shadow-1 is a standalone local demo route. It is deliberately not
-      // mounted inside Chat/StudentPlayer and always reports its disabled
-      // state when the frontend/backend flags are off.
-      path: '/demo/retrieval',
-      name: 'retrieval-demo',
-      component: loadView('RetrievalDemoPage'),
-      meta: { requiresAuth: true, role: 'admin', feature: 'retrieval-demo' }
+      component: () => import('../features/graph-browser/GraphBrowser.vue'),
+      meta: { requiresAuth: true, role: 'admin' }
     },
     {
       // 顶层公开文档中心：不挂 AppShell、无需登录。
@@ -207,10 +78,16 @@ const router = createRouter({
     {
       path: '/:pathMatch(.*)*',
       name: 'not-found',
-      redirect: featureFlags.shadowFrontend ? '/app' : '/home',
+      redirect: '/app',
     }
   ],
-  scrollBehavior() {
+  scrollBehavior(to, from, savedPosition) {
+    // 携带 hash（如 /docs#privacy、/docs#terms）时定位到对应锚点，
+    // 避免停留页面顶端；top 为 sticky 导航让出的偏移量。
+    if (savedPosition) return savedPosition
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth', top: 72 }
+    }
     return { top: 0 }
   }
 })

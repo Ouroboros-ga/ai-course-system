@@ -50,7 +50,8 @@ class Settings(BaseSettings):
     # development fallback for backwards-compatible local prototypes.
     PLATFORM_CONFIG_ENCRYPTION_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
+    # 登录 token 有效期：48 小时（48 * 60 分钟）
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 2880
 
     # --------------------------
     # 大模型API配置

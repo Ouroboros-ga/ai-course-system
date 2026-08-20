@@ -3,10 +3,11 @@
  * Docs Home — 顶层公开文档中心（不挂 AppShell，无需登录）。
  *
  * - 文档文件放在 frontend/public/static/docs/（构建后进 dist，nginx 直接静态服务）。
- * - 项目文档区为第一份文件（技术手册正式稿置顶），点击走 /docs/view 阅读器。
- * - 手册/资源/关于等尚无正文的条目先以"整理中"占位，不伪造内容。
+ * - 项目文档区卡片点击走 /docs/view 阅读器。
+ * - 用户手册与关于区块的文章为 Markdown 文档（/docs/view 支持 md 渲染）；
+ *   资源等尚无正文的条目先以"整理中"占位，不伪造内容。
  */
-import { BookOpenCheck, Download, ExternalLink, FileText, FileType2, Layers, Zap, Clock3 } from 'lucide-vue-next'
+import { BookOpenCheck, Clock3, Download, ExternalLink, FileText, FileType2, Layers, Microscope, Zap } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import { PRIVACY_SECTIONS, TERMS_SECTIONS } from './legal-content.js'
@@ -22,6 +23,10 @@ function fileHref(file) {
 
 function openReader(file, name) {
   router.push({ path: '/docs/view', query: { file, name } })
+}
+
+function viewHref(file, name) {
+  return `/docs/view?file=${encodeURIComponent(file)}&name=${encodeURIComponent(name)}`
 }
 
 function download(file) {
@@ -46,21 +51,26 @@ const PROJECT_DOCS = [
 ]
 
 const MANUAL_DOCS = [
-  { name: '快速入门指南', desc: '从注册到完成第一门课程的关键路径' },
-  { name: '学生使用手册', desc: '课程学习、提问与实验任务操作说明' },
-  { name: '教师建设手册', desc: '九步建课、智能体备课与发布流程' },
-  { name: 'AI 功能说明', desc: '教学问答、代码诊断与科研工作台能力说明' },
+  { name: '快速入门指南', desc: '从注册到完成第一门课程的关键路径', file: 'manual/快速入门指南.md' },
+  { name: '学生使用手册', desc: '课程学习、提问与实验任务操作说明', file: 'manual/学生使用手册.md' },
+  { name: '教师建设手册', desc: '材料解析、备课审核与课程发布流程', file: 'manual/教师建设手册.md' },
+  { name: 'AI 功能说明', desc: '教学问答、代码诊断与科研工作台能力说明', file: 'manual/AI功能说明.md' },
 ]
 
 const RESOURCE_DOCS = [
   { name: '课程模板库', desc: '可复用的课程结构与材料模板' },
   { name: '实验案例集', desc: '实验任务样例与运行说明' },
-  { name: '更新日志', desc: '版本变更记录与能力演进' },
+  { name: '更新日志', desc: '版本变更记录与能力演进（GitHub 历史变更）', href: `${GITHUB_URL}/commits` },
+  {
+    name: '研究报告',
+    desc: '多源认知证据驱动的细粒度知识追踪方法研究',
+    file: 'research/面向编程教育智能体的多源认知证据驱动细粒度知识追踪方法研究.md',
+  },
 ]
 
 const ABOUT_DOCS = [
-  { name: '产品介绍', desc: 'SmartCarb 产品定位与能力概览' },
-  { name: '联系我们', desc: '问题反馈与联系渠道（GitHub Issues）' },
+  { name: '产品介绍', desc: 'SmartCarb 产品定位与能力概览', file: 'about/产品介绍.md' },
+  { name: '联系我们', desc: '问题反馈与联系渠道（GitHub Issues）', file: 'about/联系我们.md' },
   { name: '隐私政策', desc: '数据收集、使用与保护说明', hash: '#privacy' },
   { name: '服务条款', desc: '平台使用条款与约定', hash: '#terms' },
 ]
@@ -97,7 +107,6 @@ const ABOUT_DOCS = [
         <section class="docs-section" aria-labelledby="docs-section-project">
           <div class="docs-section__head">
             <h2 id="docs-section-project" class="docs-section__title">项目文档</h2>
-            <span class="docs-section__hint">第一份文件：SmartCarb 项目技术文档正式稿</span>
           </div>
           <div class="docs-grid">
             <article
@@ -110,7 +119,6 @@ const ABOUT_DOCS = [
                 <span class="doc-badge" :class="doc.format === 'PDF' ? 'is-pdf' : 'is-docx'">
                   {{ doc.format }}
                 </span>
-                <span v-if="doc.featured" class="doc-badge is-first">第一份</span>
                 <span class="doc-card__meta">{{ doc.size }} · {{ doc.updated }}</span>
               </div>
               <h3 class="doc-card__name">{{ doc.name }}</h3>
@@ -139,7 +147,8 @@ const ABOUT_DOCS = [
                 <div class="docs-row__name">{{ doc.name }}</div>
                 <div class="docs-row__desc">{{ doc.desc }}</div>
               </div>
-              <span class="docs-row__pending">整理中</span>
+              <a v-if="doc.file" class="docs-row__link" :href="viewHref(doc.file, doc.name)">阅读</a>
+              <span v-else class="docs-row__pending">整理中</span>
             </li>
           </ul>
         </section>
@@ -153,13 +162,16 @@ const ABOUT_DOCS = [
               <span class="docs-row__icon" aria-hidden="true">
                 <Layers v-if="i === 0" :size="18" />
                 <FileType2 v-else-if="i === 1" :size="18" />
-                <Clock3 v-else :size="18" />
+                <Clock3 v-else-if="i === 2" :size="18" />
+                <Microscope v-else :size="18" />
               </span>
               <div class="docs-row__main">
                 <div class="docs-row__name">{{ doc.name }}</div>
                 <div class="docs-row__desc">{{ doc.desc }}</div>
               </div>
-              <span class="docs-row__pending">整理中</span>
+              <a v-if="doc.file" class="docs-row__link" :href="viewHref(doc.file, doc.name)">阅读</a>
+              <a v-else-if="doc.href" class="docs-row__link" :href="doc.href" target="_blank" rel="noopener">查看</a>
+              <span v-else class="docs-row__pending">整理中</span>
             </li>
           </ul>
         </section>
@@ -175,7 +187,8 @@ const ABOUT_DOCS = [
                 <div class="docs-row__name">{{ doc.name }}</div>
                 <div class="docs-row__desc">{{ doc.desc }}</div>
               </div>
-              <router-link v-if="doc.hash" class="docs-row__link" :to="{ path: '/docs', hash: doc.hash }">
+              <a v-if="doc.file" class="docs-row__link" :href="viewHref(doc.file, doc.name)">阅读</a>
+              <router-link v-else-if="doc.hash" class="docs-row__link" :to="{ path: '/docs', hash: doc.hash }">
                 查看全文
               </router-link>
               <span v-else class="docs-row__pending">整理中</span>
@@ -356,11 +369,6 @@ const ABOUT_DOCS = [
   color: var(--ink-900);
 }
 
-.docs-section__hint {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-}
-
 /* ── 项目文档卡片 ── */
 .docs-grid {
   display: grid;
@@ -417,11 +425,6 @@ const ABOUT_DOCS = [
 .doc-badge.is-docx {
   background: var(--ink-100);
   color: var(--ink-700);
-}
-
-.doc-badge.is-first {
-  background: var(--green-100);
-  color: var(--green-700);
 }
 
 .doc-card__name {
@@ -572,5 +575,51 @@ const ABOUT_DOCS = [
 
 .docs-footer__link {
   color: var(--text-link);
+}
+
+/* ── 移动端（design.md §12.5）── */
+@media (max-width: 760px) {
+  .docs-container {
+    padding: 0 var(--space-4);
+  }
+
+  .docs-nav__inner {
+    padding: 0 var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .docs-brand__divider,
+  .docs-brand__page {
+    display: none;
+  }
+
+  .docs-nav__actions {
+    gap: var(--space-1);
+  }
+
+  .docs-nav__link {
+    padding: var(--space-2);
+  }
+
+  .docs-hero__title {
+    font-size: var(--title-1-size);
+    line-height: var(--title-1-line);
+  }
+
+  .docs-section__head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  .docs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-footer__inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
 }
 </style>

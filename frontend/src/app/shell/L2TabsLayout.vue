@@ -106,4 +106,34 @@ const activeKey = computed(() => props.tabs.find((t) => route.path.startsWith(t.
   align-items: center;
   gap: var(--space-3);
 }
+
+/* ── 移动端（≤760px）：L2 标签横向滚动，不换行不挤压 ── */
+@media (max-width: 760px) {
+  .sfx-space-l2nav-inner {
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .sfx-space-l2nav-links {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .sfx-space-l2nav-links::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sfx-space-l2nav-link {
+    padding: 0 var(--space-3);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .sfx-space-l2nav-actions {
+    flex-shrink: 0;
+  }
+}
 </style>

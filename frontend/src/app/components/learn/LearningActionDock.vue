@@ -99,4 +99,29 @@ const items = computed(() =>
   color: var(--text-disabled);
   cursor: not-allowed;
 }
+
+/* 移动端（design.md §12.5）：5 个动作等宽压缩，去掉多余留白，icon+短标仍可容纳 */
+@media (max-width: 760px) {
+  .sfx-dock {
+    gap: var(--space-1);
+    padding-inline: var(--space-2);
+    justify-content: stretch;
+  }
+
+  .sfx-dock-item {
+    flex: 1 1 0;
+    min-width: 0;
+    justify-content: center;
+    gap: var(--space-1);
+    height: 36px;
+    padding: 0 var(--space-1);
+    font-size: var(--ui-sm-size);
+    white-space: nowrap;
+  }
+
+  .sfx-dock-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}
 </style>
