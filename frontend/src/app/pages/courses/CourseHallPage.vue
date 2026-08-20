@@ -283,4 +283,19 @@ onMounted(load)
   color: var(--text-primary);
   margin-bottom: var(--space-2);
 }
+
+/* 移动端（design.md §12.5）：网格单列、搜索满宽、卡片底部换行 */
+@media (max-width: 760px) {
+  .sfx-hall-search {
+    min-width: 100%;
+  }
+
+  .sfx-hall-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .sfx-hall-card-foot {
+    flex-wrap: wrap;
+  }
+}
 </style>

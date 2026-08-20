@@ -53,6 +53,12 @@ const railItems = computed(() => {
   display: flex;
   flex-direction: column;
 }
+
+/* 移动端（design.md §12.5）：rail 横向条置顶，内容区纵向滚动 */
+@media (max-width: 760px) {
+  .sfx-settings-layout { flex-direction: column; }
+  .sfx-settings-main { min-height: 0; }
+}
 </style>
 
 <style>
@@ -99,5 +105,17 @@ const railItems = computed(() => {
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+
+/* 移动端（design.md §12.5）：设置页头纵向排列，留白收窄 */
+@media (max-width: 760px) {
+  .sfx-settings-page {
+    padding: var(--space-4) var(--space-3) var(--space-10);
+  }
+
+  .sfx-settings-head {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 </style>

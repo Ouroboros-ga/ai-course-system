@@ -111,6 +111,7 @@ function operationActionLabel(operation) {
 
 .proposal-card>footer {
     justify-content: flex-end;
+    flex-wrap: wrap;
 }
 
 .proposal-reason {

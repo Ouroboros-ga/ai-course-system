@@ -17,7 +17,7 @@ import SfxButton from '@/app/ui/SfxButton.vue'
 const route = useRoute()
 const router = useRouter()
 
-const FILE_RE = /^[A-Za-z0-9_\-\/\u4e00-\u9fa5]+\.(pdf|docx|doc)$/
+const FILE_RE = /^[A-Za-z0-9_\-/\u4e00-\u9fa5]+\.(pdf|docx|doc)$/
 
 const fileParam = computed(() => (route.query.file || '').toString())
 const nameParam = computed(() => (route.query.name || '').toString().trim() || '文档')
@@ -291,6 +291,12 @@ onBeforeUnmount(() => {
   color: var(--ink-700);
 }
 
+/* ── 移动端（design.md §12.5）── */
+@media (max-width: 760px) {
+  .reader-badge {
+    display: none;
+  }
+}
 /* ── 阅读区 ── */
 .reader-body {
   flex: 1;

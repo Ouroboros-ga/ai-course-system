@@ -111,7 +111,7 @@ onBeforeUnmount(() => {
   <div class="fd-workspace fd-teacher-workspace">
     <header class="fd-workspace-topbar">
       <div class="fd-topbar__context">
-        <button class="fd-icon-button" type="button" aria-label="返回课程列表" @click="router.push('/teacher/history')"><ChevronLeft :size="19" /></button>
+        <button class="fd-icon-button" type="button" aria-label="返回课程列表" @click="router.push('/app/courses/building')"><ChevronLeft :size="19" /></button>
         <span class="fd-course-icon"><BookOpen :size="18" /></span>
         <div>
           <strong>{{ course.name }}</strong>

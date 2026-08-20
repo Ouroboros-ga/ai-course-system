@@ -877,4 +877,18 @@ watch(
   position: relative;
   transition: margin var(--duration-normal) var(--ease-out);
 }
+
+/* 移动端（design.md §12.5）：左轨道转横向条后整体纵向堆叠，页面整体滚动 */
+@media (max-width: 760px) {
+  .sfx-learn-body {
+    flex-direction: column;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sfx-learn-stage {
+    flex: 1 0 auto;
+    min-height: 60vh;
+  }
+}
 </style>

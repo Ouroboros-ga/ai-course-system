@@ -243,3 +243,56 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   移动端适配（design.md §12.5 响应式，主断点 760px）
+   全局基础规则：影响所有 .sfx 页面，页面级细节在各组件内补充。
+   ═══════════════════════════════════════════════════════════ */
+@media (max-width: 760px) {
+  /* 页面容器：收窄留白，避免小屏左右余白浪费 */
+  .sfx-page {
+    padding: var(--space-4) var(--space-3) var(--space-10);
+  }
+
+  /* 页头：标题与操作按钮纵向排列，操作区自动换行 */
+  .sfx-page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    margin-bottom: var(--space-4);
+  }
+
+  .sfx-page-header-sub { margin-top: 0; }
+
+  .sfx-page-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  /* 面板：内边距收缩 */
+  .sfx-panel { padding: var(--space-4); }
+
+  /* 工具条：搜索框占满一行，筛选/排序弹性伸展 */
+  .sfx-toolbar .sfx-toolbar-search { min-width: 100%; }
+  .sfx-toolbar .sfx-select { flex: 1; min-width: 0; }
+  .sfx-toolbar-spacer { display: none; }
+
+  .sfx-input--sm { max-width: none; }
+
+  /* 表格：小屏横向滚动而非压缩，表头不换行 */
+  .sfx-table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sfx-table { min-width: max-content; }
+
+  /* 描述列表：改为单列，标签在上、值在下 */
+  .sfx-desc {
+    grid-template-columns: 1fr;
+    row-gap: var(--space-2);
+  }
+
+  /* 全局触控友好：移动端按钮/链接命中区域更大 */
+  .sfx a, .sfx button { touch-action: manipulation; }
+}

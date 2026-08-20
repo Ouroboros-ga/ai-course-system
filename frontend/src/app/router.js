@@ -1,17 +1,12 @@
-import { featureFlags } from '@/config/featureFlags.js'
-
 /**
  * Shadow frontend routes（design.md / page-design.md / PageDesign前端API契约规划）。
  *
  * - All routes live under /app/** and require auth (enforced by the global
  *   beforeEach guard in src/router/index.js).
- * - When the shadowFrontend flag is off, /app/** redirects to the legacy
- *   home so nothing 404s and the old frontend remains the default.
  * - Pages render real-endpoint-provable data; `planned` 契约（当前后端未实现）
  *   只展示冻结契约与可解释空状态，绝不伪造数据（API 契约 §1.1/§4）。
  */
-export const shadowAppRoutes = featureFlags.shadowFrontend
-  ? [
+export const shadowAppRoutes = [
       {
         path: '/app',
         component: () => import('./shell/AppShell.vue'),
@@ -366,12 +361,5 @@ export const shadowAppRoutes = featureFlags.shadowFrontend
       {
         path: '/app/:pathMatch(.*)*',
         redirect: '/app',
-      },
-    ]
-  : [
-      {
-        // shadowFrontend 关闭时,旧前端作为默认:回退到 /home(旧首页)。
-        path: '/app/:pathMatch(.*)*',
-        redirect: '/home',
       },
     ]

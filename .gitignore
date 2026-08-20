@@ -156,4 +156,5 @@ backend/media/
 .pnpm-store/
 backend/.qa/
 
+# Local SQLite database backup files (never commit)
 database/*.db.*

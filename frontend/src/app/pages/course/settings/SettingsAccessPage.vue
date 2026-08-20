@@ -104,4 +104,12 @@ function saveCode() {
   flex: 1;
   min-width: 240px;
 }
+
+/* 移动端（design.md §12.5）：输入区独占一行 */
+@media (max-width: 760px) {
+  .sfx-access-row > :first-child {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+}
 </style>

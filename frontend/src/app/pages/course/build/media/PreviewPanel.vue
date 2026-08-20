@@ -97,4 +97,11 @@ onMounted(() => {
 .preview-empty p {
     margin: 0;
 }
+
+/* 移动端（design.md §12.5）：标题区允许换行，避免挤压状态 */
+@media (max-width: 760px) {
+    .panel-heading {
+        flex-wrap: wrap;
+    }
+}
 </style>

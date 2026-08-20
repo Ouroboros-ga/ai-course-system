@@ -239,4 +239,23 @@ onMounted(load)
   margin-top: var(--space-4);
   text-align: center;
 }
+
+/* 移动端（design.md §12.5）：卡片纵向排列，按钮区可换行，搜索满宽 */
+@media (max-width: 760px) {
+  .sfx-toolbar-search {
+    min-width: 100%;
+  }
+
+  .sfx-build-card {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-3);
+    padding: var(--space-4);
+  }
+
+  .sfx-build-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+}
 </style>
