@@ -216,21 +216,10 @@ onBeforeUnmount(() => {
     </header>
 
     <div class="reader-body">
-      <div v-if="status === 'loading'" class="reader-state" role="status" aria-live="polite">
-        <LoaderCircle :size="26" class="reader-spin" aria-hidden="true" />
-        <p>正在加载文档…</p>
-      </div>
-
-      <div v-else-if="status === 'error'" class="reader-state is-error" role="alert">
-        <AlertCircle :size="26" aria-hidden="true" />
-        <p>{{ errorMsg }}</p>
-        <div class="reader-state__actions">
-          <SfxButton v-if="valid" variant="secondary" size="sm" @click="downloadCurrent">下载文档</SfxButton>
-          <SfxButton variant="tertiary" size="sm" @click="retry">重试</SfxButton>
-        </div>
-      </div>
-
-      <template v-else-if="isPdf">
+      <!-- 内容区：按文档类型渲染。容器不依赖 status 门控，保证 docx/md 的
+           ref 在异步加载期间就已挂载（否则 loadDocx/loadMarkdown 取到 null
+           直接 return，status 会永远停在 loading）。 -->
+      <template v-if="isPdf">
         <iframe
           v-show="pdfReady"
           :key="pdfKey"
@@ -248,6 +237,21 @@ onBeforeUnmount(() => {
       <div v-else-if="isDocx" ref="docxHost" class="docx-host"></div>
 
       <div v-else-if="isMarkdown" ref="mdHost" class="md-host"></div>
+
+      <!-- 加载 / 错误状态覆盖层 -->
+      <div v-if="status === 'loading'" class="reader-state" role="status" aria-live="polite">
+        <LoaderCircle :size="26" class="reader-spin" aria-hidden="true" />
+        <p>正在加载文档…</p>
+      </div>
+
+      <div v-else-if="status === 'error'" class="reader-state is-error" role="alert">
+        <AlertCircle :size="26" aria-hidden="true" />
+        <p>{{ errorMsg }}</p>
+        <div class="reader-state__actions">
+          <SfxButton v-if="valid" variant="secondary" size="sm" @click="downloadCurrent">下载文档</SfxButton>
+          <SfxButton variant="tertiary" size="sm" @click="retry">重试</SfxButton>
+        </div>
+      </div>
     </div>
   </div>
 </template>
