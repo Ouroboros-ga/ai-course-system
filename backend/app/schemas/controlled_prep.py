@@ -44,6 +44,28 @@ class TeachingStyleConfig(StrictModel):
     include_practice_prompt: bool = True
 
 
+class EvidenceReviewWireItem(StrictModel):
+    """Sentence-level review result for one evidence unit.
+
+    The reviewer only deletes near-duplicate, meaningless, or garbled
+    sentences; every kept sentence must be an exact original sentence in
+    original order. An empty list means the whole unit should be dropped.
+    """
+
+    sentences: list[str] = Field(default_factory=list, max_length=200)
+
+
+class EvidenceReviewWireResult(StrictModel):
+    """Model-facing review result; aligned with input evidence by position.
+
+    Evidence identifiers stay server-side: the model returns one item per
+    input unit, and the caller zips them back onto the units.
+    """
+
+    stage: Literal["evidence_review"] = "evidence_review"
+    items: list[EvidenceReviewWireItem] = Field(min_length=1, max_length=8)
+
+
 class EvidenceSegment(StrictModel):
     segment_id: str = Field(min_length=1, max_length=100)
     title: str = Field(min_length=1, max_length=300)
