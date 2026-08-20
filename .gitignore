@@ -48,3 +48,5 @@ backend/.env
 
 # Obsidian vault config
 .obsidian/
+
+database/*.db.*
