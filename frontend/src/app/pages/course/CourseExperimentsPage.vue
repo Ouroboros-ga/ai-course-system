@@ -249,4 +249,16 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
 }
+
+/* 移动端（design.md §12.5）：选择器满宽，页面留白收窄 */
+@media (max-width: 760px) {
+  .experiments-page {
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .selector-select {
+    width: 100%;
+    max-width: 320px;
+  }
+}
 </style>

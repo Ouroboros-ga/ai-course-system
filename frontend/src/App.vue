@@ -1,22 +1,8 @@
 <script setup>
-  import { computed, onMounted } from 'vue'
-  import { useRoute } from 'vue-router'
-  import NavigationBar from "./components/NavigationBar.vue"
-  import GradientBackground from "./components/GradientBackground.vue"
+  import { onMounted } from 'vue'
   import { useCounterStore } from "@/stores/counter.js"
 
   const counter = useCounterStore()
-  const route = useRoute()
-
-  // Shadow frontend (/app/**) renders its own AppShell. The legacy
-  // NavigationBar/GradientBackground shell is bypassed for those routes so
-  // the two visual systems never mix.
-  const isShadowApp = computed(() => route.path === '/app' || route.path.startsWith('/app/'))
-  // The authentication entry owns its complete Academic Ink layout.
-  const isAuthEntry = computed(() => route.path === '/profile' && !counter.isLoggedIn)
-  // 文档中心（/docs 顶层公开页）自带 .docs-nav 顶栏，同样绕过 legacy 壳，
-  // 避免老版一级菜单（首页/关于/个人中心）出现在文档中心顶部。
-  const isDocsEntry = computed(() => route.path === '/docs' || route.path.startsWith('/docs/'))
 
   onMounted(() => {
     counter.checkAuth()
@@ -25,15 +11,9 @@
 
 <template>
   <div id="app">
-    <router-view v-if="isShadowApp" />
-    <router-view v-else-if="isAuthEntry" />
-    <router-view v-else-if="isDocsEntry" />
-    <template v-else>
-      <NavigationBar />
-      <GradientBackground
-        :animated="true"
-      />
-    </template>
+    <!-- 新壳（/app/**）自带 AppShell；/profile、/sso/callback、/docs 与
+         /graph-browser 为独立页面，各自完整布局；旧版 NavigationBar 壳已删除。 -->
+    <router-view />
   </div>
 </template>
 

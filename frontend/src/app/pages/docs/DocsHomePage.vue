@@ -573,4 +573,50 @@ const ABOUT_DOCS = [
 .docs-footer__link {
   color: var(--text-link);
 }
+
+/* ── 移动端（design.md §12.5）── */
+@media (max-width: 760px) {
+  .docs-container {
+    padding: 0 var(--space-4);
+  }
+
+  .docs-nav__inner {
+    padding: 0 var(--space-4);
+    gap: var(--space-3);
+  }
+
+  .docs-brand__divider,
+  .docs-brand__page {
+    display: none;
+  }
+
+  .docs-nav__actions {
+    gap: var(--space-1);
+  }
+
+  .docs-nav__link {
+    padding: var(--space-2);
+  }
+
+  .docs-hero__title {
+    font-size: var(--title-1-size);
+    line-height: var(--title-1-line);
+  }
+
+  .docs-section__head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+  }
+
+  .docs-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .docs-footer__inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+  }
+}
 </style>

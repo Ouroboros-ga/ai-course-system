@@ -544,6 +544,8 @@ onMounted(() => { load(); loadKeywords() })
 <style scoped>
 .admin-page { overflow: auto; }
 .sfx-page-header h1, .section-head, .provider-card header, .provider-card footer { display:flex; align-items:center; gap:var(--space-2); }
+.header-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
+@media(max-width:760px){ .header-actions { width:100%; justify-content:flex-start; } .filters .sfx-input,.filters .sfx-select { min-width:100%; flex:1 1 100%; } .pagination-input { width:56px; } }
 .actions, .password-row-actions { display:flex; align-items:center; gap:var(--space-2); flex-wrap:wrap; }
 .section-head { justify-content:space-between; margin-bottom:var(--space-4); }.admin-section { margin-bottom:var(--space-6); padding:var(--space-6); }.filters { display:flex; flex-wrap:wrap; gap:var(--space-2); margin-bottom:var(--space-4); }.filters .sfx-input,.filters .sfx-select { min-width:150px; }
 .sfx-table-wrap { overflow-x:auto; }.compact { min-width:110px; max-width:160px; }.state-check,.checkbox-line { display:flex; align-items:center; gap:var(--space-2); }.password-row td { white-space:normal; background:var(--surface-cool); }.password-row .sfx-input { max-width:300px; }

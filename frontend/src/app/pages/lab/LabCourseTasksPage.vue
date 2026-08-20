@@ -59,5 +59,4 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.sfx-course-select { display: flex; align-items: center; gap: var(--space-3); }.task-list { display: grid; gap: var(--space-3); margin-top: var(--space-5); }.task-card { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin: 0; }.task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }
-</style>
+.sfx-course-select { display: flex; align-items: center; gap: var(--space-3); }.task-list { display: grid; gap: var(--space-3); margin-top: var(--space-5); }.task-card { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-4); margin: 0; }.task-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); }@media(max-width:760px){.task-card{flex-direction:column;align-items:stretch}.task-actions{justify-content:flex-start}}</style>

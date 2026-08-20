@@ -81,7 +81,7 @@ const selectedId = computed(() => selected.value?.id || null)
 
 function onSelect(node) { selected.value = node }
 function reload() { load(courseId.value) }
-function goProduction() { router.push(`/teacher/course/${courseId.value}/production`) }
+function goProduction() { router.push(`/app/course/${courseId.value}/build`) }
 
 onMounted(() => load(courseId.value))
 </script>

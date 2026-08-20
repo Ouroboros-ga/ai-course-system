@@ -294,4 +294,26 @@ onMounted(load)
   color: var(--text-disabled);
   cursor: not-allowed;
 }
+
+/* 移动端（design.md §12.5）：标题限宽，链接横向滚动不压缩 */
+@media (max-width: 760px) {
+  .sfx-l2nav-inner {
+    padding: 0 var(--space-3);
+    gap: var(--space-2);
+  }
+
+  .sfx-l2nav-title {
+    max-width: 30vw;
+  }
+
+  .sfx-l2nav-links {
+    flex: 1;
+  }
+
+  .sfx-l2nav-link {
+    padding: 0 var(--space-3);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+}
 </style>

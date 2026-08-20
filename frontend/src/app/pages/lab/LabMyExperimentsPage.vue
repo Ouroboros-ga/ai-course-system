@@ -27,4 +27,4 @@ onMounted(async () => { try { await loadCourses(); await load() } catch (caught)
   </div>
 </template>
 
-<style scoped>.sfx-course-select{display:flex;align-items:center;gap:var(--space-3)}.experiment-list{display:grid;gap:var(--space-3);margin-top:var(--space-5)}.experiment-card{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);margin:0}.experiment-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-2)}</style>
+<style scoped>.sfx-course-select{display:flex;align-items:center;gap:var(--space-3)}.experiment-list{display:grid;gap:var(--space-3);margin-top:var(--space-5)}.experiment-card{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-4);margin:0}.experiment-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:var(--space-2)}@media(max-width:760px){.experiment-card{flex-direction:column;align-items:stretch}.experiment-actions{justify-content:flex-start}}</style>

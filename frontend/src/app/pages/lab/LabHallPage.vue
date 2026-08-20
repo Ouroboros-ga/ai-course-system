@@ -114,4 +114,5 @@ onMounted(async () => {
 .lab-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-4); }
 .lab-card { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-3); margin: 0; }
 .lab-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3); width: 100%; }
+@media(max-width:760px){ .lab-grid { grid-template-columns: 1fr; } }
 </style>

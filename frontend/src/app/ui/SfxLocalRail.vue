@@ -243,4 +243,50 @@ const railCls = computed(() => (collapsed.value ? 'is-collapsed' : 'is-expanded'
   bottom: 2px;
   right: 2px;
 }
+
+/* 移动端（design.md §12.5）：rail 变横向滚动条，不收起，隐藏收起按钮 */
+@media (max-width: 760px) {
+  .sfx-rail {
+    width: 100% !important;
+    flex-direction: column;
+    border-right: none;
+    border-bottom: 1px solid var(--border-default);
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .sfx-rail-nav {
+    flex: none;
+    flex-direction: row;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2);
+    overflow: visible;
+    min-width: max-content;
+  }
+
+  .sfx-rail-item {
+    min-height: 36px;
+    padding: 0 var(--space-2);
+  }
+
+  /* 当前项状态线改到顶部（横向条场景） */
+  .sfx-rail-item.is-active::before {
+    left: 8px;
+    right: 8px;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 3px;
+  }
+
+  .sfx-rail-toggle { display: none; }
+
+  /* 收缩态在移动端始终展示完整标签 */
+  .sfx-rail.is-collapsed .sfx-rail-item { justify-content: flex-start; padding: 0 var(--space-2); }
+  .sfx-rail.is-collapsed .sfx-rail-item-label { display: block; }
+  .sfx-rail.is-collapsed .sfx-rail-item-count,
+  .sfx-rail.is-collapsed .sfx-rail-item-status { position: static; }
+}
 </style>

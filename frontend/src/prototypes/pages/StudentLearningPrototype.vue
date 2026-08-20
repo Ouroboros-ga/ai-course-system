@@ -116,7 +116,7 @@ onBeforeUnmount(() => {
   <div class="fd-workspace fd-student-workspace" :class="{ 'is-focus': focusMode }">
     <header class="fd-workspace-topbar">
       <div class="fd-topbar__context">
-        <button class="fd-icon-button" type="button" aria-label="返回我的课程" @click="router.push('/student')">
+        <button class="fd-icon-button" type="button" aria-label="返回我的课程" @click="router.push('/app/courses/learning')">
           <ChevronLeft :size="19" />
         </button>
         <span class="fd-course-icon"><BookOpen :size="18" /></span>

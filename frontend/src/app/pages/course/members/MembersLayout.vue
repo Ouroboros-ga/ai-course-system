@@ -48,4 +48,10 @@ const railItems = computed(() => {
   display: flex;
   flex-direction: column;
 }
+
+/* 移动端（design.md §12.5）：rail 横向条置顶，内容区纵向滚动 */
+@media (max-width: 760px) {
+  .sfx-members-layout { flex-direction: column; }
+  .sfx-members-main { min-height: 0; }
+}
 </style>

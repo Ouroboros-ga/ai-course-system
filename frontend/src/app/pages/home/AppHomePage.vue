@@ -228,9 +228,6 @@ onBeforeUnmount(() => {
 
         <!-- 右侧：品牌大卡 -->
         <button class="sfx-home-brand-card animate-in" style="animation-delay: 0.3s" @click="goHall">
-          <div class="sfx-home-brand-card__logo" aria-hidden="true">
-            <span class="sfx-home-brand-card__crab">🦀</span>
-          </div>
           <div class="sfx-home-brand-card__text">
             <h3>SmartCarb</h3>
             <p>
@@ -848,26 +845,6 @@ onBeforeUnmount(() => {
 @keyframes brandFlow {
   0% { transform: translate(0, 0) rotate(0deg); }
   100% { transform: translate(6%, -5%) rotate(8deg); }
-}
-
-/* Logo 位 */
-.sfx-home-brand-card__logo {
-  position: relative;
-  width: 60px;
-  height: 60px;
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(6px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.sfx-home-brand-card__crab {
-  font-size: 32px;
-  line-height: 1;
-  filter: drop-shadow(0 3px 10px rgba(0, 0, 0, 0.3));
 }
 
 /* 底部文字 */

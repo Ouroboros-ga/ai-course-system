@@ -100,7 +100,7 @@ function openEvidence() {
 }
 function openMapping() {
   if (!props.courseId) return
-  router.push(`/teacher/course/${props.courseId}/mapping`)
+  router.push(`/app/course/${props.courseId}/build/mapping`)
 }
 </script>
 
