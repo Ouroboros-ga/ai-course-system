@@ -52,3 +52,9 @@ database/smart_class.db
 
 # Obsidian vault config
 .obsidian/
+
+# Local SQLite database files and TRAE editor config (never commit)
+.trae/
+database/*.db
+database/*.db.*
+backend/*.db
