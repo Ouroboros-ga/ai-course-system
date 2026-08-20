@@ -37,6 +37,11 @@ const store = useCounterStore()
 const GITHUB_URL = 'https://github.com/Ouroboros-ga/ai-course-system'
 const GITHUB_ISSUES_URL = `${GITHUB_URL}/issues`
 
+// ── 文档中心链接助手 ──────────────────────────────────────
+function docRoute(file, name) {
+  return { path: '/docs/view', query: { file, name } }
+}
+
 // ── 进场动画控制 ──────────────────────────────────────
 const isReady = ref(false)
 
@@ -391,22 +396,22 @@ onBeforeUnmount(() => {
             <h4>用户手册</h4>
             <ul>
               <li>
-                <router-link to="/docs">
+                <router-link :to="docRoute('manual/快速入门指南.md', '快速入门指南')">
                   <FileText :size="14" /> 快速入门指南
                 </router-link>
               </li>
               <li>
-                <router-link to="/docs">
+                <router-link :to="docRoute('manual/学生使用手册.md', '学生使用手册')">
                   <BookOpen :size="14" /> 学生使用手册
                 </router-link>
               </li>
               <li>
-                <router-link to="/docs">
+                <router-link :to="docRoute('manual/教师建设手册.md', '教师建设手册')">
                   <GraduationCap :size="14" /> 教师建设手册
                 </router-link>
               </li>
               <li>
-                <router-link to="/docs">
+                <router-link :to="docRoute('manual/AI功能说明.md', 'AI 功能说明')">
                   <Sparkles :size="14" /> AI 功能说明
                 </router-link>
               </li>
@@ -427,8 +432,13 @@ onBeforeUnmount(() => {
                 </router-link>
               </li>
               <li>
-                <router-link to="/docs">
+                <a :href="`${GITHUB_URL}/commits`" target="_blank" rel="noopener">
                   <FileText :size="14" /> 更新日志
+                </a>
+              </li>
+              <li>
+                <router-link :to="docRoute('research/面向编程教育智能体的多源认知证据驱动细粒度知识追踪方法研究.md', '研究报告')">
+                  <BookOpen :size="14" /> 研究报告
                 </router-link>
               </li>
               <li>
@@ -464,10 +474,10 @@ onBeforeUnmount(() => {
             <h4>关于</h4>
             <ul>
               <li>
-                <router-link to="/app">产品介绍</router-link>
+                <router-link :to="docRoute('about/产品介绍.md', '产品介绍')">产品介绍</router-link>
               </li>
               <li>
-                <router-link to="/docs">联系我们</router-link>
+                <router-link :to="docRoute('about/联系我们.md', '联系我们')">联系我们</router-link>
               </li>
               <li>
                 <router-link to="/docs#privacy">隐私政策</router-link>

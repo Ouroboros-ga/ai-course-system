@@ -81,7 +81,13 @@ const router = createRouter({
       redirect: '/app',
     }
   ],
-  scrollBehavior() {
+  scrollBehavior(to, from, savedPosition) {
+    // 携带 hash（如 /docs#privacy、/docs#terms）时定位到对应锚点，
+    // 避免停留页面顶端；top 为 sticky 导航让出的偏移量。
+    if (savedPosition) return savedPosition
+    if (to.hash) {
+      return { el: to.hash, behavior: 'smooth', top: 72 }
+    }
     return { top: 0 }
   }
 })

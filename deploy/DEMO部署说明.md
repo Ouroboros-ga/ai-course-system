@@ -97,7 +97,7 @@ SIGN_TIMEOUT_MINUTES=5
 
 # JWT身份认证
 JWT_SECRET_KEY=your-jwt-secret-key-very-long-random-string
-ACCESS_TOKEN_EXPIRE_MINUTES=120
+ACCESS_TOKEN_EXPIRE_MINUTES=2880  # 登录 token 有效期：48 小时（分钟）
 
 # 大模型API配置（以豆包为例）
 LLM_PROVIDER=doubao
