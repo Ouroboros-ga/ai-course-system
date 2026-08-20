@@ -1383,6 +1383,27 @@ onBeforeUnmount(() => {
   }
 }
 
+@media (max-width: 760px) {
+  .sfx-home-scroll-hint {
+    display: none;
+  }
+
+  .sfx-home-quick {
+    padding: 40px 16px 56px;
+  }
+
+  .sfx-home-quick__title {
+    font-size: 26px;
+    margin-bottom: var(--space-6);
+  }
+
+  .sfx-home-quick__grid {
+    grid-template-columns: 1fr;
+    gap: var(--space-4);
+    margin-bottom: var(--space-10);
+  }
+}
+
 @media (max-width: 560px) {
   .sfx-home-hero__cards {
     flex-direction: column;
