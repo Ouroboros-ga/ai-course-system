@@ -45,3 +45,6 @@ venv/
 ENV/
 backend/.env
 .venv
+
+# Obsidian vault config
+.obsidian/
