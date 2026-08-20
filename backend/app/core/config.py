@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     PREP_INITIAL_EVIDENCE_MAP_MAX_TOKENS: int = 4096
     PREP_INITIAL_EVIDENCE_MAP_RETRY_MAX_TOKENS: int = 8192
     PREP_INITIAL_EVIDENCE_REDUCE_MAX_TOKENS: int = 16384
+    # Sentence-level LLM review of coalesced evidence units before the
+    # segmenter sees them. The reviewer deletes near-duplicate, meaningless,
+    # and garbled sentences. Bounded per batch; any failure degrades to the
+    # original evidence so the first draft can still be produced.
+    PREP_INITIAL_EVIDENCE_REVIEW_ENABLED: bool = True
+    PREP_INITIAL_EVIDENCE_REVIEW_BATCH_UNITS: int = 6
+    PREP_INITIAL_EVIDENCE_REVIEW_BATCH_CHARS: int = 9000
+    PREP_INITIAL_EVIDENCE_REVIEW_MAX_TOKENS: int = 2048
     # Reduce convergence contract for every non-final Reduce group.  A group
     # of N input segments has an ideal (preferred) target of ceil(N * ratio)
     # and a hard safety ceiling of ceil(N * hard_ratio) (both capped at the

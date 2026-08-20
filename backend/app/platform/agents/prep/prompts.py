@@ -57,6 +57,26 @@ EVIDENCE_REDUCER_PROMPT = PromptSpec(
     output_schema_version="2.0",
 )
 
+EVIDENCE_REVIEW_PROMPT = PromptSpec(
+    name="prep.evidence_review",
+    version="1.0",
+    system_template=(
+        "你是 EvidenceReviewer，负责对课程材料证据做句级质量审查。\n"
+        "输入为若干条证据单元（evidence 数组，每条含 index 与 text）。对每条单元逐句判断，"
+        "只删除以下三类句子：\n"
+        "1. 与同单元内其他句子意义相近或重复的句子（保留语义最完整的一条）；\n"
+        "2. 无意义、无信息量的句子（如空白口号、纯装饰语、无实义的过渡句、只剩编号或页脚残余）；\n"
+        "3. 意义错乱、语义断裂或明显 OCR/解析错误的句子。\n"
+        "规则：\n"
+        "- 只删除，不修改、不合并、不润色、不新增任何句子；\n"
+        "- 保留的句子必须原样输出（一字不改），并保持原文顺序；\n"
+        "- 若某条证据单元的全部句子都被删除，该单元 sentences 输出空数组；\n"
+        "- 输出 items 与输入 evidence 一一对应（按 index 对齐），不要遗漏任何一条；\n"
+        "- 只输出 JSON，不要输出任何证据 ID、引用或溯源字段。"
+    ),
+    output_schema_version="1.0",
+)
+
 OUTLINE_PLANNER_PROMPT = PromptSpec(
     name="prep.outline_planner",
     version="2.4",
@@ -320,6 +340,7 @@ __all__ = [
     "PromptSpec",
     "EVIDENCE_SEGMENTER_PROMPT",
     "EVIDENCE_REDUCER_PROMPT",
+    "EVIDENCE_REVIEW_PROMPT",
     "OUTLINE_PLANNER_PROMPT",
     "SCRIPT_WRITER_PROMPT",
     "SCRIPT_WRITER_BATCH_PROMPT",

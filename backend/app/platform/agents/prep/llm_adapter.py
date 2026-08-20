@@ -51,6 +51,7 @@ from app.services.ppt_mapping_optimization_service import salvage_suggestions
 from .evidence_binding import bind_evidence_refs, bind_outline_evidence_refs
 from .prompts import (
     EVIDENCE_REDUCER_PROMPT,
+    EVIDENCE_REVIEW_PROMPT,
     EVIDENCE_SEGMENTER_PROMPT,
     EVIDENCE_VERIFIER_PROMPT,
     INCREMENTAL_PLANNER_PROMPT,
@@ -418,6 +419,52 @@ class PrepLLMAdapter:
         return model.model_validate_json(response.content)
 
     # -- Initial pipeline ------------------------------------------------
+
+    async def review_evidence(
+        self,
+        evidence: list["EvidenceReference"],
+        *,
+        run_id: str = "",
+        trace_id: str = "",
+    ) -> "EvidenceReviewWireResult":
+        """Stage 0 Review: sentence-level quality review of evidence units.
+
+        Runs before segmentation.  The reviewer deletes near-duplicate,
+        meaningless, and garbled sentences and returns, per input unit, the
+        exact original sentences to keep (in original order).  Units come and
+        go by position: evidence identifiers stay server-side.
+        """
+        from app.schemas.controlled_prep import (
+            EvidenceReviewWireItem as _ReviewItem,
+            EvidenceReviewWireResult as _WireResult,
+        )
+
+        user_payload = {
+            "constraints": {
+                "return_json_only": True,
+                "do_not_output_evidence_ids": True,
+            },
+            "evidence": [
+                {"index": index, "text": item.text}
+                for index, item in enumerate(evidence)
+            ],
+        }
+        response = await self._complete(
+            spec=EVIDENCE_REVIEW_PROMPT,
+            user_prompt=json.dumps(user_payload, ensure_ascii=False),
+            node="review_evidence",
+            purpose="sentence-level evidence review",
+            output_schema=_WireResult,
+            provider_options=self._structured_prep_provider_options("initial"),
+            max_tokens=int(settings.PREP_INITIAL_EVIDENCE_REVIEW_MAX_TOKENS),
+            run_id=run_id,
+            trace_id=trace_id,
+        )
+        wire_result = self._parsed_or_validate(response, _WireResult)
+        return _WireResult(items=[
+            _ReviewItem(sentences=list(item.sentences))
+            for item in wire_result.items
+        ])
 
     async def segment_evidence(
         self,

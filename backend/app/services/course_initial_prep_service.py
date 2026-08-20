@@ -8,9 +8,11 @@ the durable build task fails for retry instead of exposing raw parse fragments.
 """
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 import hashlib
+import logging
 import re
 import uuid
 from typing import Any, Awaitable, Callable
@@ -39,6 +41,9 @@ from app.services.document_parse_service import graph_candidate_service
 
 class InitialCoursePreparationError(ValueError):
     """The first course draft is not safe to make teacher-visible."""
+
+
+logger = logging.getLogger(__name__)
 
 
 ROLE_PRIORITY = {
@@ -96,6 +101,12 @@ async def _run_prep_with_diagnostic_context(
 class InitialCoursePrepService:
     """Build the initial course draft only after the Agent completes all stages."""
 
+    # Optional sentence-level LLM reviewer for coalesced evidence units.  When
+    # omitted, the service reuses the registered ``ControlledPrepWorkflow``
+    # client (the shared ``PrepLLMAdapter``); when neither is available the
+    # review is skipped and the original evidence is kept.
+    evidence_reviewer: Any | None = None
+
     async def build(
         self,
         session: Session,
@@ -134,35 +145,39 @@ class InitialCoursePrepService:
             raise InitialCoursePreparationError("课程材料没有可用于智能备课的有效文本")
 
         course = session.get(Course, course_id)
-        request = ControlledPrepInput(
-            evidence=evidence,
-            course_positioning=(course.description if course and course.description else course.title if course else "课程材料驱动的教学设计"),
-            style=TeachingStyleConfig(level="beginner", tone="conversational", language="zh-CN"),
+        course_positioning = (
+            course.description if course and course.description else course.title if course else "课程材料驱动的教学设计"
         )
-        # ``ControlledPrepWorkflow.run`` can spend minutes waiting for an
-        # external LLM.  Do not keep the SQLite read/write transaction open
-        # during that network wait: otherwise a teacher's next material upload
-        # competes with this task and surfaces as a misleading HTTP 500.
-        # All mutations happen only after the workflow returns and remain in
-        # the caller's normal durable task transaction.
+        # Release the read/write transaction before any LLM wait: the
+        # sentence-level evidence review and the controlled workflow must not
+        # hold the SQLite transaction open while waiting on the network.
         session.commit()
         active_workflow = workflow or controlled_prep_workflow
-        prepared = await _run_prep_with_diagnostic_context(
+
+        async def _review_and_run() -> tuple[Any, list[EvidenceReference], list[str]]:
+            reviewed, review_warnings = await self._review_evidence(evidence)
+            request = ControlledPrepInput(
+                evidence=reviewed,
+                course_positioning=course_positioning,
+                style=TeachingStyleConfig(level="beginner", tone="conversational", language="zh-CN"),
+            )
+            prepared = (
+                await active_workflow.run(request)
+                if on_stage is None
+                else await active_workflow.run(request, on_stage=on_stage)
+            )
+            return prepared, reviewed, review_warnings
+
+        prepared, reviewed_evidence, review_warnings = await _run_prep_with_diagnostic_context(
             course_id=course_id,
             build_task_id=build_task_id,
-            awaitable=(
-                # Preserve the small fake-workflow contract used by existing
-                # service tests and integrations.
-                active_workflow.run(request)
-                if on_stage is None
-                else active_workflow.run(request, on_stage=on_stage)
-            ),
+            awaitable=_review_and_run(),
         )
         if on_stage is not None:
             outcome = on_stage("persisting", 95, None)
             if outcome is not None:
                 await outcome
-        prepared = self._expand_prepared_evidence(prepared, evidence)
+        prepared = self._expand_prepared_evidence(prepared, reviewed_evidence)
         by_block_id = {block.block_id: block for block in blocks}
         prepared["outline"], filled_titles = self._fill_empty_outline_titles(
             prepared["outline"],
@@ -183,6 +198,7 @@ class InitialCoursePrepService:
                 f"{evidence_stats.selected_chars}/{evidence_stats.total_chars} chars selected)"
             )
         result.warnings.extend(list(prepared.get("warnings") or []))
+        result.warnings.extend(list(review_warnings))
         if filled_titles:
             result.warnings.append(
                 f"PREP_EMPTY_TITLE_FALLBACK: {len(filled_titles)} 个节点标题为空或过短，"
@@ -492,6 +508,169 @@ class InitialCoursePrepService:
                 item.evidence_id,
             ),
         )
+
+    async def _review_evidence(
+        self,
+        evidence: list[EvidenceReference],
+    ) -> tuple[list[EvidenceReference], list[str]]:
+        """Stage 0: sentence-level LLM review of coalesced evidence units.
+
+        Before segmentation the reviewer deletes near-duplicate, meaningless,
+        and garbled sentences from each unit and keeps the rest verbatim.
+        Review is best-effort: when it is disabled, no reviewer is available,
+        a batch fails, or the whole result is empty, the original evidence is
+        kept so the evidence-backed first draft still builds (evidence is
+        never silently lost).
+        """
+        warnings: list[str] = []
+        if not int(settings.PREP_INITIAL_EVIDENCE_REVIEW_ENABLED) or not evidence:
+            return evidence, warnings
+        reviewer = self.evidence_reviewer
+        if reviewer is None:
+            candidate = getattr(controlled_prep_workflow, "client", None)
+            if candidate is not None and hasattr(candidate, "review_evidence"):
+                reviewer = candidate
+        if reviewer is None:
+            return evidence, warnings
+
+        per_unit_texts = [self._split_sentences(item.text) for item in evidence]
+        batches = self._chunk_review_batches(evidence, per_unit_texts)
+        reviewed: list[EvidenceReference] = []
+        sentences_before = sum(len(texts) for texts in per_unit_texts)
+        sentences_after = 0
+        dropped_units = 0
+        review_failures = 0
+        for units, texts in batches:
+            kept_batch: list[list[str]] | None = None
+            try:
+                wire = await reviewer.review_evidence(list(units))
+                kept_batch = self._slice_batch(wire, texts)
+            except Exception as exc:  # noqa: BLE001 - review must never break the build
+                logger.warning("evidence review batch failed, keeping original evidence: %s", exc)
+                review_failures += 1
+            for batch_index, (unit, original_sentences) in enumerate(zip(units, texts, strict=True)):
+                if kept_batch is None:
+                    reviewed.append(unit)
+                    sentences_after += len(original_sentences)
+                    continue
+                kept_sentences = kept_batch[batch_index]
+                if not kept_sentences:
+                    dropped_units += 1
+                    continue
+                new_text = " ".join(kept_sentences)
+                if len(new_text) < 2:
+                    dropped_units += 1
+                    continue
+                reviewed.append(unit.model_copy(update={"text": new_text}))
+                sentences_after += len(kept_sentences)
+        if not reviewed:
+            warnings.append("PREP_EVIDENCE_REVIEW_EMPTY: 句级审查结果为空，已回退保留全部原始证据")
+            return evidence, warnings
+        if review_failures:
+            warnings.append(
+                f"PREP_EVIDENCE_REVIEW_PARTIAL: {review_failures} 个证据审查批次失败，已保留该批原始证据"
+            )
+        if sentences_after < sentences_before:
+            warnings.append(
+                f"PREP_EVIDENCE_REVIEWED: 句级审查共删去 {sentences_before - sentences_after} 个句子、"
+                f"{dropped_units} 条整段证据，其余证据按原样保留"
+            )
+        return reviewed, warnings
+
+    @staticmethod
+    def _split_sentences(text: str) -> list[str]:
+        """Split evidence text into clean sentence candidates.
+
+        Splits on CJK/Latin sentence-final punctuation (keeping the
+        punctuation attached), strips OCR ordering prefixes such as ``3.`` or
+        ``(1)``, and drops empty fragments.  The result is the server-side
+        reference used to validate the reviewer's kept sentences.
+        """
+        fragments = re.split(r"(?<=[。！？；.!?;])", (text or "").strip())
+        sentences: list[str] = []
+        for fragment in fragments:
+            cleaned = re.sub(
+                r"^\s*(?:\d{1,3}\s*[.、．)）]|[（(]\s*\d{1,3}\s*[)）]|[①②③④⑤⑥⑦⑧⑨⑩])\s*",
+                "",
+                fragment,
+            ).strip()
+            cleaned = " ".join(cleaned.split())
+            if cleaned:
+                sentences.append(cleaned)
+        return sentences
+
+    @staticmethod
+    def _chunk_review_batches(
+        evidence: list[EvidenceReference],
+        per_unit_texts: list[list[str]],
+    ) -> list[tuple[list[EvidenceReference], list[list[str]]]]:
+        """Split evidence into bounded review batches (unit count and chars)."""
+        max_units = max(1, int(settings.PREP_INITIAL_EVIDENCE_REVIEW_BATCH_UNITS))
+        max_chars = max(1, int(settings.PREP_INITIAL_EVIDENCE_REVIEW_BATCH_CHARS))
+        batches: list[tuple[list[EvidenceReference], list[list[str]]]] = []
+        current_units: list[EvidenceReference] = []
+        current_texts: list[list[str]] = []
+        current_chars = 0
+        for item, sentences in zip(evidence, per_unit_texts, strict=True):
+            if current_units and (
+                len(current_units) >= max_units
+                or current_chars + len(item.text) > max_chars
+            ):
+                batches.append((current_units, current_texts))
+                current_units = []
+                current_texts = []
+                current_chars = 0
+            current_units.append(item)
+            current_texts.append(sentences)
+            current_chars += len(item.text)
+        if current_units:
+            batches.append((current_units, current_texts))
+        return batches
+
+    @staticmethod
+    def _slice_batch(
+        wire: Any,
+        per_unit_texts: list[list[str]],
+    ) -> list[list[str]]:
+        """Align and validate the reviewer's output against the input batch.
+
+        The wire schema is positionally aligned with the input units, but a
+        real model may omit items, add extra items, or rewrite a kept
+        sentence.  Only sentences that appear verbatim in the unit's original
+        text are accepted; a skipped unit keeps every original sentence; an
+        explicitly empty unit is dropped as the reviewer intended.
+        """
+        items = list(getattr(wire, "items", []) or [])
+        aligned: list[list[str]] = []
+        for index, original_sentences in enumerate(per_unit_texts):
+            if index >= len(items):
+                aligned.append(list(original_sentences))
+                continue
+            raw = [
+                " ".join(sentence.split())
+                for sentence in items[index].sentences
+                if " ".join(sentence.split())
+            ]
+            if not raw:
+                # The reviewer deliberately deleted the whole unit.
+                aligned.append([])
+                continue
+            original_text = "".join(original_sentences)
+            normalized = [
+                " ".join(sentence.split())
+                for sentence in original_sentences
+            ]
+            kept: list[str] = []
+            seen: set[str] = set()
+            for sentence in raw:
+                if sentence in seen:
+                    continue
+                if sentence in original_text or sentence in normalized:
+                    kept.append(sentence)
+                    seen.add(sentence)
+            # Nothing validated -> this unit's review failed; keep the source.
+            aligned.append(kept if kept else list(original_sentences))
+        return aligned
 
     @staticmethod
     def _expand_prepared_evidence(
