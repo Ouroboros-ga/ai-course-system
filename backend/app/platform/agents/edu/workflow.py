@@ -1513,18 +1513,24 @@ def build_teaching_workflow(tools: TeachingTools):
                 ),
             }
         raw_observation = state.get("question_observation")
-        if not raw_observation:
-            return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING")}
         
         # 2026-08-18: LLM 智能推荐逻辑
         # 2026-08-19: 修复根本问题 - 当 LLM 推荐成功时，必须设置 teaching_action 为
         #             "prerequisite_review"，否则 resolve_review_target 会因为
         #             teaching_action 不在 _REDIRECT_ACTIONS 中而直接返回 None
+        # 2026-08-20: 修复回顾功能失效 - 即使 question_observation 缺失，也尝试
+        #             基于提问内容做推荐。observation 缺失时推荐系统降级为纯文本分析模式。
         import logging
         logger = logging.getLogger(__name__)
         
+        # 先尝试 LLM 推荐（无论 observation 是否存在）
         llm_recommended_concept_id = await _intelligent_recommend(tools, state)
         logger.info(f"[ProposeAdjustment] LLM 推荐结果：{llm_recommended_concept_id}")
+        
+        # 如果没有 observation 且 LLM 也没有推荐，则跳过
+        if not raw_observation and not llm_recommended_concept_id:
+            logger.info("[ProposeAdjustment] question_observation 缺失且 LLM 未推荐，跳过")
+            return {"trace": _trace(state, "propose_learning_adjustment", skipped=True, reason="OBSERVATION_MISSING_NO_RECOMMENDATION")}
         
         # 如果 LLM 推荐了知识点，且原 teaching_action 不是重定向动作，
         # 则覆盖为 prerequisite_review，让推荐生效
@@ -1539,7 +1545,39 @@ def build_teaching_workflow(tools: TeachingTools):
             logger.info(f"[ProposeAdjustment] 覆盖 teaching_action: {original_teaching_action} -> {effective_teaching_action}, concept_id: {effective_requested_concept_id}")
         
         try:
+            # 如果 observation 缺失但有 LLM 推荐，返回简化的推荐信息
+            # 不创建完整的 LearningAdjustmentProposal（需要完整的播放坐标）
+            # 而是返回推荐的概念信息，让前端显示文本提示
+            if not raw_observation:
+                if llm_recommended_concept_id:
+                    logger.info(f"[ProposeAdjustment] question_observation 缺失但有推荐 {llm_recommended_concept_id}，返回简化推荐信息")
+                    # 查找推荐的知识点信息
+                    recommended_concept = None
+                    for prereq in list(state.get("prerequisites") or []):
+                        if str(prereq.get("concept_id")) == llm_recommended_concept_id:
+                            recommended_concept = prereq
+                            break
+                    
+                    if recommended_concept:
+                        # 返回简化的推荐信息（不是完整的 proposal，只是提示）
+                        return {
+                            "learning_adjustment": {
+                                "type": "simple_recommendation",  # 标记为简化推荐
+                                "recommended_concept_id": llm_recommended_concept_id,
+                                "recommended_concept_name": recommended_concept.get("name", "前置知识点"),
+                                "reason": "建议回顾该知识点以更好理解当前内容",
+                            },
+                            "trace": _trace(state, "propose_learning_adjustment", 
+                                          proposed=True, simple_recommendation=True),
+                        }
+                
+                # 没有推荐或找不到概念信息，跳过
+                logger.info("[ProposeAdjustment] 无法生成推荐（observation 缺失且无有效推荐）")
+                return {"trace": _trace(state, "propose_learning_adjustment", skipped=True)}
+            
+            # 有 observation，使用完整的 propose 流程
             observation = QuestionObservation.model_validate(raw_observation)
+            
             proposal = await tools.learning_adjustment.propose(
                 student_id=state["student_id"],
                 course_id=state["course_id"],
