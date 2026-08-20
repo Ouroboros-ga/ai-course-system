@@ -786,9 +786,13 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 }
 
 @media (max-width: 760px) {
-  .sfx-stage { padding: var(--space-3); }
-  .sfx-stage-controls { align-items: stretch; }
-  .sfx-stage-controls :deep(.sfx-btn.is-sm) { flex: 1 1 auto; }
+  .sfx-stage { padding: var(--space-2); gap: var(--space-2); grid-template-rows: minmax(220px, 1fr) minmax(150px, 0.7fr) auto; }
+  .sfx-stage-controls { align-items: stretch; gap: var(--space-1); }
+  .sfx-stage-controls :deep(.sfx-btn.is-sm) { flex: 1 1 auto; padding-inline: var(--space-2); }
   .sfx-stage-seek { order: 3; flex-basis: 100%; }
+  /* 音量滑条在手机窄屏空间有限，静音按钮已保留 */
+  .sfx-stage-volume { display: none; }
+  .sfx-stage-transcript { max-height: 150px; }
+  .sfx-stage-slide-text { padding: var(--space-3); }
 }
 </style>

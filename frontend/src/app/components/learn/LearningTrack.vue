@@ -687,4 +687,78 @@ const indentStep = 12
 .sfx-track.is-collapsed .sfx-track-item:hover { border-radius: var(--radius-full); }
 .sfx-track.is-collapsed .sfx-track-item.is-current { border-radius: var(--radius-full); }
 .sfx-track.is-collapsed .sfx-track-item.is-current::before { display: none; }
+
+/* 移动端（design.md §12.5）：rail 变横向滚动条，不收起，隐藏收起按钮 */
+@media (max-width: 760px) {
+  .sfx-track,
+  .sfx-track.is-collapsed {
+    width: 100% !important;
+    border-right: none;
+    border-bottom: 1px solid var(--border-default);
+    max-height: 104px;
+  }
+
+  .sfx-track-toggle { display: none; }
+  .sfx-track-summary { display: none; }
+
+  .sfx-track-list {
+    flex: none;
+    flex-direction: row;
+    align-items: stretch;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    padding: var(--space-2);
+    gap: var(--space-1);
+  }
+
+  .sfx-track-list > li {
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .sfx-track-list > li.is-kind-chapter { margin-top: 0; }
+
+  .sfx-track-item {
+    width: auto;
+    align-items: center;
+    padding: var(--space-2) var(--space-3);
+    white-space: nowrap;
+    flex: 0 0 auto;
+  }
+
+  .sfx-track-item.is-chapter,
+  .sfx-track-item.is-section {
+    padding-top: var(--space-2);
+    padding-bottom: var(--space-2);
+  }
+
+  /* 横向条中当前项状态线隐藏（胶囊高亮已足够） */
+  .sfx-track-item.is-current::before { display: none; }
+
+  .sfx-track-item-main { flex: 0 0 auto; }
+
+  .sfx-track-item-title-text {
+    display: block;
+    -webkit-line-clamp: unset;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* 横向条中收起次要元信息，只保留状态标签 */
+  .sfx-track-item-subrow .sfx-track-item-sep,
+  .sfx-track-item-subrow .sfx-track-item-time,
+  .sfx-track-item-subrow .sfx-track-item-progress,
+  .sfx-track-item-subrow .sfx-track-item-detail-btn { display: none; }
+
+  .sfx-track-complete { display: none; }
+
+  /* 详情卡片在横向滚动条内固定宽度，避免把整条拉宽 */
+  .sfx-track-detail {
+    width: min(320px, 80vw);
+    margin-left: var(--space-2);
+  }
+}
 </style>

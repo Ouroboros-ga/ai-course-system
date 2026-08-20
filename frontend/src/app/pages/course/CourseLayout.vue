@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onMounted, provide, reactive, toRefs } from 'vue'
+import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, toRefs, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowLeft } from 'lucide-vue-next'
+import { ArrowLeft, ChevronDown } from 'lucide-vue-next'
 import { getCourseAccess, getCourseDetail } from '@/api/courses.js'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxError from '@/app/ui/SfxError.vue'
@@ -89,6 +89,21 @@ const backTarget = computed(() => {
   return '/app/courses/learning'
 })
 
+// 移动端 L2 导航（≤760px）：横向链接压缩为可点击展开的小菜单
+const l2MenuOpen = ref(false)
+const l2MenuRef = ref(null)
+const activeLabel = computed(
+  () => navItems.value.find(item => activeKey.value === item.key)?.label ?? '课程菜单'
+)
+function closeL2Menu() { l2MenuOpen.value = false }
+function handleL2DocClick(e) {
+  if (l2MenuRef.value && !l2MenuRef.value.contains(e.target)) closeL2Menu()
+}
+// 路由切换自动收起，避免菜单停留在新页面上方
+watch(() => route.path, closeL2Menu)
+onMounted(() => document.addEventListener('click', handleL2DocClick))
+onBeforeUnmount(() => document.removeEventListener('click', handleL2DocClick))
+
 async function load() {
   state.status = 'loading'
   try {
@@ -155,6 +170,40 @@ onMounted(load)
             >{{ item.label }}</span>
           </template>
         </nav>
+
+        <!-- 移动端（≤760px）：横向链接压缩为可点击展开的小菜单 -->
+        <div ref="l2MenuRef" class="sfx-l2nav-mobile">
+          <button
+            type="button"
+            class="sfx-l2nav-mobile-btn"
+            aria-label="课程导航菜单"
+            :aria-expanded="l2MenuOpen"
+            aria-haspopup="menu"
+            @click.stop="l2MenuOpen = !l2MenuOpen"
+          >
+            <span class="sfx-l2nav-mobile-btn-label">{{ activeLabel }}</span>
+            <ChevronDown :size="15" class="sfx-l2nav-mobile-btn-caret" :class="{ 'is-open': l2MenuOpen }" />
+          </button>
+          <div v-if="l2MenuOpen" class="sfx-l2nav-mobile-menu" role="menu">
+            <template v-for="item in navItems" :key="item.key">
+              <RouterLink
+                v-if="item.enabled"
+                :to="item.to"
+                role="menuitem"
+                class="sfx-l2nav-mobile-item"
+                :class="{ 'is-active': activeKey === item.key }"
+                @click="closeL2Menu"
+              >{{ item.label }}</RouterLink>
+              <span
+                v-else
+                role="menuitem"
+                class="sfx-l2nav-mobile-item is-disabled"
+                :title="item.reason"
+                aria-disabled="true"
+              >{{ item.label }}</span>
+            </template>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -295,7 +344,12 @@ onMounted(load)
   cursor: not-allowed;
 }
 
-/* 移动端（design.md §12.5）：标题限宽，链接横向滚动不压缩 */
+/* 移动端下拉菜单（≤760px 显示，桌面隐藏） */
+.sfx-l2nav-mobile {
+  display: none;
+}
+
+/* 移动端（design.md §12.5）：横向链接压缩为可点击展开的小菜单 */
 @media (max-width: 760px) {
   .sfx-l2nav-inner {
     padding: 0 var(--space-3);
@@ -306,14 +360,109 @@ onMounted(load)
     max-width: 30vw;
   }
 
-  .sfx-l2nav-links {
-    flex: 1;
+  /* 徽章占位过大，移动端只保留课程名与菜单按钮 */
+  .sfx-l2nav-course :deep(.sfx-badge) {
+    display: none;
   }
 
-  .sfx-l2nav-link {
+  .sfx-l2nav-left {
+    min-width: 0;
+    flex-shrink: 1;
+  }
+
+  .sfx-l2nav-links {
+    display: none;
+  }
+
+  .sfx-l2nav-mobile {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    position: relative;
+  }
+
+  .sfx-l2nav-mobile-btn {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    width: 180px;
+    height: 32px;
+    max-width: 100%;
+    margin-left: auto;
     padding: 0 var(--space-3);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    background: var(--color-brand);
+    color: var(--text-inverse);
+    font: inherit;
+    font-size: var(--ui-sm-size);
+    font-weight: var(--ui-md-weight);
+    cursor: pointer;
     white-space: nowrap;
+    box-shadow: 0 1px 2px rgba(20, 33, 61, 0.25);
+  }
+
+  .sfx-l2nav-mobile-btn-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .sfx-l2nav-mobile-btn:hover {
+    background: var(--color-brand-hover);
+    color: var(--text-inverse);
+    border-color: transparent;
+  }
+
+  .sfx-l2nav-mobile-btn-caret {
     flex-shrink: 0;
+    transition: transform var(--duration-fast) var(--ease-out);
+  }
+
+  .sfx-l2nav-mobile-btn-caret.is-open {
+    transform: rotate(180deg);
+  }
+
+  .sfx-l2nav-mobile-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 60;
+    min-width: 180px;
+    max-width: 60vw;
+    max-height: 60vh;
+    overflow-y: auto;
+    background: var(--surface-panel);
+    border: 1px solid var(--color-brand);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    padding: var(--space-1);
+  }
+
+  .sfx-l2nav-mobile-item {
+    display: block;
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    font-size: var(--ui-sm-size);
+    white-space: nowrap;
+    text-align: left;
+  }
+
+  .sfx-l2nav-mobile-item:hover {
+    background: var(--color-brand-soft);
+    color: var(--ink-700);
+  }
+
+  .sfx-l2nav-mobile-item.is-active {
+    background: var(--ink-100);
+    color: var(--ink-900);
+    font-weight: 600;
+  }
+
+  .sfx-l2nav-mobile-item.is-disabled {
+    color: var(--text-disabled);
+    cursor: not-allowed;
   }
 }
 </style>

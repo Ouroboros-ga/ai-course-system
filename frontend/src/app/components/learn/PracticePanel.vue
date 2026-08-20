@@ -422,6 +422,13 @@ onMounted(() => {
   padding: 16px;
   overflow-y: auto;
 }
+/* 移动端（design.md §12.5）：练习面板在纵向堆叠中作为独立区块 */
+@media (max-width: 760px) {
+  .sfx-practice {
+    min-height: 60vh;
+    border-top: 1px solid var(--border-default);
+  }
+}
 .sfx-practice-header {
   display: flex;
   align-items: center;
