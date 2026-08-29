@@ -18,7 +18,7 @@ const clamp = (value, min, max) => Math.min(max, Math.max(min, Number(value)))
 
 export function normalizeConstraintProfile(input = {}) {
   const level = Object.hasOwn(PROFILE_DEFAULTS, input.level) ? input.level : 'balanced'
-  const parameters = { ...PROFILE_DEFAULTS[level], ...(input.parameters ?? {}) }
+  const parameters = { ...PROFILE_DEFAULTS[level], ...input.parameters }
   parameters.max_context_chars = clamp(parameters.max_context_chars, 3000, 24000)
   parameters.max_answer_chars = clamp(parameters.max_answer_chars, 300, 4000)
   parameters.max_evidence = clamp(parameters.max_evidence, 1, 20)

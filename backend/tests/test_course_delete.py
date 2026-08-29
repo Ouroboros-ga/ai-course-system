@@ -5,6 +5,7 @@
 
 import pytest
 import sys
+import uuid
 from pathlib import Path
 
 from sqlmodel import select
@@ -455,3 +456,194 @@ class TestFrontendDeleteHandling:
         assert response["code"] == 200
         assert "deleted_course_id" in response["data"]
         assert "affected_students" in response["data"]
+
+
+class TestCourseDeleteLockRetry:
+    """测试课程删除的 SQLite 锁竞争重试与错误响应"""
+
+    def _make_course(self, session, teacher_user):
+        course = Course(
+            fanya_course_id=f"lock-retry-{uuid.uuid4().hex[:8]}",
+            fanya_course_name="lock-retry",
+            title="Lock retry course",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.DRAFT,
+        )
+        session.add(course)
+        session.commit()
+        session.refresh(course)
+        establish_course_access_baseline(session, course.id, teacher_user.id)
+        session.commit()
+        return course
+
+    def test_is_sqlite_lock_error_detection(self):
+        from sqlalchemy.exc import OperationalError
+        from app.api.v1.endpoints.document import _is_sqlite_lock_error
+
+        assert _is_sqlite_lock_error(
+            OperationalError("database is locked", {}, None)
+        ) is True
+        assert _is_sqlite_lock_error(
+            OperationalError("statement aborted at user request", {}, None)
+        ) is False
+        assert _is_sqlite_lock_error(ValueError("database is locked")) is True
+        assert _is_sqlite_lock_error(RuntimeError("boom")) is False
+
+    def test_retry_wrapper_recovers_after_transient_locks(
+        self, session, teacher_user, monkeypatch
+    ):
+        from sqlalchemy.exc import OperationalError
+        from app.api.v1.endpoints.document import _delete_course_with_lock_retry
+
+        course = self._make_course(session, teacher_user)
+        course_id = course.id
+        calls = {"n": 0}
+        real_delete = course_deletion_service.delete
+
+        def flaky_delete(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] <= 2:
+                raise OperationalError("database is locked", {}, None)
+            return real_delete(*args, **kwargs)
+
+        monkeypatch.setattr(course_deletion_service, "delete", flaky_delete)
+
+        report = _delete_course_with_lock_retry(
+            session, course_id=course_id, expected_title="Lock retry course"
+        )
+
+        assert calls["n"] == 3
+        session.expire_all()
+        assert not session.exec(
+            select(Course).where(Course.id == course_id)
+        ).all()
+        assert report.cleanup_complete is True
+
+    def test_retry_exhausted_reraises_lock_error(
+        self, session, teacher_user, monkeypatch
+    ):
+        from sqlalchemy.exc import OperationalError
+        from app.api.v1.endpoints.document import _delete_course_with_lock_retry
+
+        course = self._make_course(session, teacher_user)
+        calls = {"n": 0}
+
+        def always_locked(*args, **kwargs):
+            calls["n"] += 1
+            raise OperationalError("database is locked", {}, None)
+
+        monkeypatch.setattr(course_deletion_service, "delete", always_locked)
+
+        with pytest.raises(OperationalError):
+            _delete_course_with_lock_retry(
+                session, course_id=course.id, expected_title=course.title
+            )
+        assert calls["n"] == 4  # 首次 + 3 次重试
+
+    def test_api_503_busy_has_friendly_message(
+        self, client, session, teacher_user, teacher_token, monkeypatch
+    ):
+        from sqlalchemy.exc import OperationalError
+
+        course = self._make_course(session, teacher_user)
+
+        def busy(*args, **kwargs):
+            raise OperationalError("database is locked", {}, None)
+
+        monkeypatch.setattr(
+            "app.api.v1.endpoints.document._delete_course_with_lock_retry", busy
+        )
+
+        response = client.request(
+            "DELETE",
+            f"/api/v1/document/course/{course.id}",
+            headers={"Authorization": f"Bearer {teacher_token}"},
+            json={"confirmation_title": course.title},
+        )
+        body = response.json()
+        assert response.status_code == 503
+        assert body["code"] == 503
+        assert body["message"] == "课程删除时数据库繁忙，请稍后重试。"
+        assert body["data"]["error_code"] == "COURSE_DELETE_BUSY"
+        assert "请求被拒绝" not in body["message"]
+
+    def test_api_500_failed_has_real_message(
+        self, client, session, teacher_user, teacher_token, monkeypatch
+    ):
+        course = self._make_course(session, teacher_user)
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("unexpected internal failure")
+
+        monkeypatch.setattr(
+            "app.api.v1.endpoints.document._delete_course_with_lock_retry", boom
+        )
+
+        response = client.request(
+            "DELETE",
+            f"/api/v1/document/course/{course.id}",
+            headers={"Authorization": f"Bearer {teacher_token}"},
+            json={"confirmation_title": course.title},
+        )
+        body = response.json()
+        assert response.status_code == 500
+        assert body["code"] == 500
+        assert body["message"] == "课程删除失败，请稍后重试。"
+        assert body["data"]["error_code"] == "COURSE_DELETE_FAILED"
+        assert "请求被拒绝" not in body["message"]
+
+
+class TestDeleteSkipsUnmigratedMetadataTables:
+    """回归：删除服务只处理真实数据库中已存在的表。
+
+    运行时的 SQLModel 注册表可能包含尚未迁移建表的前瞻模型
+    （如 M7 trajectory / safety keyword configs）。若删除服务对这些
+    不存在的表发出 SQL，每次删除都会以 ``no such table`` 失败并误报
+    「数据库繁忙」。本测试在 metadata 中注入一张真实 DB 没有的表，
+    验证删除正常完成。
+    """
+
+    def test_delete_ignores_metadata_only_table(self, session, teacher_user):
+        from sqlalchemy import Column, ForeignKey, Integer, Table
+        from sqlmodel import SQLModel
+
+        from app.services.course_deletion_service import (
+            course_deletion_service,
+        )
+
+        course = Course(
+            fanya_course_id=f"drift-{uuid.uuid4().hex[:8]}",
+            fanya_course_name="drift",
+            title="Drift delete course",
+            teacher_id=teacher_user.id,
+            status=CourseStatus.DRAFT,
+        )
+        session.add(course)
+        session.commit()
+        session.refresh(course)
+        establish_course_access_baseline(session, course.id, teacher_user.id)
+        session.commit()
+        course_id = course.id
+
+        table_name = "_test_unmigrated_course_rows"
+        phantom = Table(
+            table_name,
+            SQLModel.metadata,
+            Column("id", Integer, primary_key=True),
+            Column("course_id", Integer, ForeignKey("courses.id")),
+        )
+        try:
+            report = course_deletion_service.delete(
+                session, course_id=course_id, expected_title=course.title
+            )
+        finally:
+            if table_name in SQLModel.metadata.tables:
+                SQLModel.metadata.remove(SQLModel.metadata.tables[table_name])
+
+        session.expire_all()
+        assert not session.exec(
+            select(Course).where(Course.id == course_id)
+        ).all()
+        assert report.cleanup_complete is True
+        assert "_test_unmigrated_course_rows" not in report.deleted_rows
+

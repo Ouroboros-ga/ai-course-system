@@ -121,7 +121,7 @@ async function setExperimentPlatform(enabled) {
     const updated = await updateCodeSandboxExperimentPlatform(courseId, enabled)
     courseCapabilities.value = {
       ...courseCapabilities.value,
-      ...(updated?.capabilities ?? {}),
+      ...updated?.capabilities,
     }
     await courseContext?.reload?.()
     saveNotice.value = enabled
