@@ -25,7 +25,7 @@ const MOUTH_RELEASE_MS = 68
 const RAPID_TRANSITION_MS = 22
 const MIN_VISEME_HOLD_MS = 40
 
-const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
+export const spriteTextureAsset = url => ({ src: url, parser: 'loadTextures' })
 
 export class Sprite2DRenderer {
   constructor({ container, quality = 'auto', onMetrics = () => {} }) {

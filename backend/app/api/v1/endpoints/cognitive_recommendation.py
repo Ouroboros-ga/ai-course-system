@@ -31,6 +31,7 @@ from app.models.access_control_model import (
     MembershipStatus,
 )
 from app.services.cognitive_service import compute_cognitive_state, get_latest_cognitive_state
+from app.services.diagnosis_service import build_course_diagnosis
 from app.services.recommendation_service import (
     generate_recommendation,
     get_recommendation_history,
@@ -108,6 +109,23 @@ async def get_cognitive_state(
         message="获取六维认知状态成功",
         data=_serialize_cognitive_state(state),
     )
+
+
+@router.get("/course/{course_id}/diagnosis")
+async def get_course_diagnosis(
+    course_id: int,
+    max_weak_nodes: int = Query(default=20, ge=1, le=100),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    """课程学情诊断报告（教师端，analytics.view_course）。
+
+    确定性规则聚合（非模型预测）：按薄弱学生人数汇总薄弱知识节点，
+    附判弱条件与建议动作；只读不写库、不调 LLM，数据最小化。
+    """
+    require_course_permission(session, current_user, course_id, "analytics.view_course")
+    report = build_course_diagnosis(session, course_id=course_id, max_weak_nodes=max_weak_nodes)
+    return unified_response(code=200, message="课程学情诊断报告生成完成", data=report)
 
 
 @router.post("/course/{course_id}/compute")

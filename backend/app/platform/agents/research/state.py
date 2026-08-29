@@ -43,6 +43,9 @@ class ResearchState(TypedDict, total=False):
     tool_result: dict[str, Any] | list[dict[str, Any]] | None
     tool_error_code: str
 
+    writing_result: dict[str, Any] | None
+    trend_result: dict[str, Any] | None
+
     search_result: dict[str, Any] | None
     papers: list[dict[str, Any]]
     final_answer: str | None

@@ -35,6 +35,7 @@ def build_research_profile() -> AgentProfile:
             ),
             "allowed_tool_names": [
                 "paper_search", "todo_manager", "notepad", "memory", "scope_manager",
+                "writing_assist", "trend_analysis",
             ],
             "warnings": [],
             "errors": [],
@@ -55,5 +56,6 @@ def build_research_profile() -> AgentProfile:
         share_runtime_across_actors=True,
         allowed_tool_names=frozenset({
             "paper_search", "todo_manager", "notepad", "memory", "scope_manager",
+            "writing_assist", "trend_analysis",
         }),
     )

@@ -1,0 +1,177 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "计算机操作系统",
+  "description": "计算机学科垂类知识库——操作系统基础概念（挑战杯 XH-202620）。节点 id 全局唯一（os- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "os-001",
+      "name": "进程",
+      "node_type": "concept",
+      "definition": "进程是程序的一次执行过程，是资源分配与调度的基本单位；由程序段、数据段与进程控制块（PCB）组成，具有就绪、运行、阻塞三种基本状态。",
+      "key_points": [
+        "PCB 记录进程标识、状态、上下文与资源信息",
+        "状态转换：就绪→运行（调度）、运行→阻塞（等待事件）、阻塞→就绪（事件完成）",
+        "进程是资源分配单位，线程是调度单位"
+      ],
+      "example": "两个并发运行的浏览器标签页对应两个进程，各自拥有独立地址空间",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 2 章 进程的描述与控制"
+      }
+    },
+    {
+      "id": "os-002",
+      "name": "线程",
+      "node_type": "concept",
+      "definition": "线程是进程内的执行单元，是 CPU 调度的基本单位；同一进程的多个线程共享地址空间与资源，各自拥有独立栈与寄存器上下文。",
+      "key_points": [
+        "线程创建/切换开销小于进程",
+        "共享地址空间带来数据共享便利与同步问题",
+        "多线程模型：用户级、内核级、混合模型"
+      ],
+      "example": "多线程 Web 服务器：每个请求一个线程，共享进程内缓存",
+      "source": {
+        "title": "Operating System Concepts（第 10 版）",
+        "authors": "Abraham Silberschatz 等",
+        "chapter": "第 4 章 Threads & Concurrency"
+      }
+    },
+    {
+      "id": "os-003",
+      "name": "进程调度",
+      "node_type": "concept",
+      "definition": "进程调度决定就绪队列中哪个进程获得 CPU；常见算法有先来先服务（FCFS）、短作业优先（SJF）、时间片轮转（RR）与优先级调度。",
+      "key_points": [
+        "FCFS：实现简单但平均等待时间长（护航效应）",
+        "SJF：平均等待时间最优（抢占式 SJF 即 SRTF），但需预知服务时间",
+        "RR：时间片大小影响响应时间与切换开销；时间片过小上下文切换频繁"
+      ],
+      "example": "三个进程服务时间 24/3/3 按 FCFS 平均等待 17，按 SJF 平均等待 3",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 3 章 处理机调度与死锁"
+      }
+    },
+    {
+      "id": "os-004",
+      "name": "进程同步",
+      "node_type": "concept",
+      "definition": "进程同步协调并发进程对共享资源的访问，解决互斥与协作问题；核心机制包括临界区、信号量（P/V 操作）与管程。",
+      "key_points": [
+        "临界区访问遵循：空闲让进、忙则等待、有限等待、让权等待",
+        "信号量 P（wait）使资源数减一，V（signal）加一；可用于互斥与同步",
+        "经典问题：生产者-消费者、读者-写者、哲学家进餐"
+      ],
+      "example": "生产者-消费者：empty/full/mutex 三个信号量保证缓冲区访问互斥且有界",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 2 章 进程同步"
+      }
+    },
+    {
+      "id": "os-005",
+      "name": "死锁",
+      "node_type": "concept",
+      "definition": "死锁是多个进程因竞争资源而互相等待、都无法推进的状态；必要条件为互斥、占有并等待、不可抢占、循环等待。",
+      "key_points": [
+        "预防：破坏四个必要条件之一（如资源一次性分配）",
+        "避免：银行家算法在分配前判断安全性",
+        "检测与解除：资源分配图 + 抢占/回退/杀死进程"
+      ],
+      "example": "两个进程各持有一把锁并等待对方的锁，即循环等待死锁",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 3 章 处理机调度与死锁"
+      }
+    },
+    {
+      "id": "os-006",
+      "name": "内存管理",
+      "node_type": "concept",
+      "definition": "内存管理负责内存空间的分配与回收、地址转换与保护；基本方案包括连续分配、页式、段式与段页式管理。",
+      "key_points": [
+        "页式管理：内存与逻辑地址按固定大小分页，页表完成逻辑地址到物理地址的映射",
+        "段式管理：按逻辑段（代码/数据/栈）分配，便于共享与保护",
+        "地址转换依赖 MMU 与页表（多级页表降低开销）"
+      ],
+      "example": "逻辑地址（页号 3，页内偏移 100）经页表映射到物理帧",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 4 章 存储器管理"
+      }
+    },
+    {
+      "id": "os-007",
+      "name": "虚拟内存",
+      "node_type": "concept",
+      "definition": "虚拟内存利用局部性原理，只把运行所需的页面装入内存，其余驻留外存，按需调入；支持请求分页与页面置换。",
+      "key_points": [
+        "局部性原理：时间局部性与空间局部性",
+        "页面置换算法：FIFO、LRU、OPT（最佳）、Clock 近似",
+        "缺页率过高导致抖动（thrashing），可通过工作集模型缓解"
+      ],
+      "example": "4GB 物理内存可运行需要 8GB 地址空间的程序（按需换页）",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 4 章 虚拟存储器"
+      }
+    },
+    {
+      "id": "os-008",
+      "name": "文件系统",
+      "node_type": "concept",
+      "definition": "文件系统负责文件与目录的组织、存储与访问控制；核心对象为文件控制块（FCB）与目录项，物理结构包括连续/链接/索引分配。",
+      "key_points": [
+        "文件逻辑结构：顺序、索引、顺序索引",
+        "目录实现：FCB 线性表或索引结构（如 inode）",
+        "空闲空间管理：空闲表、空闲链表、位示图"
+      ],
+      "example": "Linux ext4 使用 inode 索引结构管理文件块",
+      "source": {
+        "title": "计算机操作系统（第 4 版）",
+        "authors": "汤小丹、梁红兵等",
+        "chapter": "第 5 章 文件管理"
+      }
+    },
+    {
+      "id": "os-009",
+      "name": "I/O 管理",
+      "node_type": "concept",
+      "definition": "I/O 管理统一管理外设与 CPU/内存之间的数据传输，涉及设备独立性、中断/轮询/DMA 三种控制方式与缓冲技术。",
+      "key_points": [
+        "中断驱动：设备完成后发中断，CPU 响应处理",
+        "DMA：设备与内存直接传输，完成后中断一次",
+        "缓冲：单缓冲/双缓冲/缓冲池，缓解速度不匹配"
+      ],
+      "example": "磁盘读写经 DMA 批量搬运数据，减少 CPU 介入",
+      "source": {
+        "title": "Operating System Concepts（第 10 版）",
+        "authors": "Abraham Silberschatz 等",
+        "chapter": "第 12 章 Mass-Storage Structure"
+      }
+    },
+    {
+      "id": "os-010",
+      "name": "系统调用与中断",
+      "node_type": "concept",
+      "definition": "系统调用是用户态程序请求内核服务的唯一入口（如 open/read/fork）；中断是硬件或软件触发的事件处理机制，切换 CPU 到内核态执行。",
+      "key_points": [
+        "用户态/内核态隔离保护内核与硬件",
+        "系统调用通过陷阱（trap）指令进入内核，如 Linux int 0x80/syscall",
+        "中断向量表保存中断处理程序入口；上下文切换需保存寄存器与栈"
+      ],
+      "example": "read() 系统调用经陷阱进入内核，驱动完成磁盘读取后返回用户态",
+      "source": {
+        "title": "Computer Systems: A Programmer's Perspective（第 3 版）",
+        "authors": "Randal E. Bryant、David R. O'Hallaron",
+        "chapter": "第 8 章 异常控制流"
+      }
+    }
+  ]
+}

@@ -1,5 +1,60 @@
 # 文档导航与状态
 
+> 2026-08-20 新增：**挑战杯 XH-202620 改造启动**（面向一流学科建设的学科垂类大模型与创新应用开发，
+> 发榜单位科大讯飞）。差距分析与产品定位（计算机学科版，含 9/5 材料截止路线图与决策清单）见
+> [phase1/2026-08-20_XH202620差距分析与产品定位.md](phase1/2026-08-20_XH202620差距分析与产品定位.md)；
+> 基线分支 `feature/xh202620`（自 dev-liu @9c52bd1 切出）。历史《赛题差距分析与重构建议.md》
+> 已废弃，禁止引用其"完全重构"结论。
+>
+> 2026-08-20 更新（XH-202620 R1）：① 讯飞星火 LLM Provider 接入——`LLM_PROVIDER=spark`，
+> OpenAI 兼容 `spark-api-open.xf-yun.com/v1`，fail-closed；单测 `tests/test_llm_spark_provider.py`
+> 6 passed。② CS 学科知识库首批填充——`knowledge_data/`（11 数据结构 + 13 算法节点 + 21 关系），
+> `validate.py` 校验通过，未接线。③ 典型问题测试案例集——[phase1/XH202620_典型问题测试案例集.md](phase1/XH202620_典型问题测试案例集.md)
+> 6 用例（标准答案 + 权威来源 + 评测方法，实际输出 R2 回填）。
+
+> 2026-08-20 更新（XH-202620 R2 部分完成）：① 学科知识库接线为只读检索服务
+> `GET/POST /api/v1/discipline-knowledge/*`（检索含权威来源/节点+邻居/概览/重载），
+> `tests/test_discipline_knowledge.py` 13 passed；② LoRA/SFT 微调管线可复现交付
+> （`backend/finetune/`：指令集生成 ✅ 46+5 条、评测基准 `eval_baseline.json` 6 用例 ✅、
+> 批量评测 `evaluate.py` fail-closed ✅、训练脚本 `train_lora.py` 需 GPU **未执行**）。
+
+> 2026-08-20 更新（XH-202620 R3 部分完成）：① 参赛材料 01–07 骨架建立于根目录 `competition/`
+> （伦理声明已起草、作品方案全文 + PPT 大纲、代码/模型清单、效果验证报告模板、测试报告说明、
+> 报名检查清单）。② 助研"学术写作辅助"（writing_assist）已实现：工具注册 + 意图路由 +
+> 结构化 LLM 草稿生成（AI 生成标识）+ LLM 不可用 fail-closed，`tests/test_research_writing_assist.py`
+> 7 passed。9/5 前需完成：Demo 部署、真实用户试用回填、材料定稿打包。
+
+> 2026-08-20 更新（XH-202620 R4）：学情诊断报告外化已实现——`GET /api/v1/cognitive/course/{id}/diagnosis`
+> （教师端，规则聚合薄弱知识点 + 建议动作，只读不调 LLM），`tests/test_course_diagnosis.py` 6 passed。
+
+> 2026-08-20 更新（XH-202620 R5）：① 助研趋势分析（trend_analysis）实现——论文元数据确定性聚合
+> （关键词/年份/趋势方向/主题分类），`tests/test_research_trends.py` 8 passed；② 学科知识库扩充
+> 操作系统课程（10 节点 + 12 关系），检索升级 CJK 二元组分词，校验 34 节点/32 关系，
+> `tests/test_discipline_knowledge.py` 14 passed。
+
+> 2026-08-20 更新（XH-202620 R6）：学科知识库扩充计算机网络（9 节点）+ 数据库系统（10 节点），
+> 现 53 节点/49 关系（5 门课），校验通过；材料 04 新增 PPT 演讲脚本（10 页答辩词）；
+> 微调数据集 98+10 条；知识库测试 15 passed。
+
+> 2026-08-20 更新（XH-202620 R7）：学科知识库补齐软件工程（9 节点）+ 机器学习（10 节点），
+> 六门核心课计划完成（72 节点/64 关系）；新增参赛打包预检 `competition/preflight.py` +
+> 《打包检查清单.md》；微调数据集 128+14 条；知识库测试 16 passed。
+> 2026-08-20 更新（XH-202620 R8）：前端学科知识检索页上线（`/app/discipline-knowledge`，
+> 遵循 design.md 三层滚动/语义令牌/SfxButton），API 客户端 + 路由 + 一级导航接入；
+> 前端契约测试 +2（75 passed）、单测 57 passed、Vite 构建通过；修复 2 个既有前端测试
+> （Sprite2DRenderer 导出、playerWorkspaceAdapter 期望）。
+
+> 2026-08-20 更新（XH-202620 R9）：典型问题测试案例集扩充至 10 用例（新增 SE 测试用例设计、
+> ML 混淆矩阵 F1、算法 0-1 背包、OS 死锁判定），`eval_baseline.json` 同步并验证；微调指令集
+> 132+14；材料 04 新增《PPT内容稿.md》。
+
+> 2026-08-20 更新（XH-202620 R10）：学科知识库扩充编译原理（9 节点）+ 计算机组成原理（9 节点），
+> 现 90 节点/82 关系/9 门课；微调指令集 164+18；知识库测试 17 passed；全量后端回归复跑
+> 2749 passed / 6 failed / 22 skipped（6 失败为可选环境依赖缺失，非改造引入）。
+
+> 2026-08-20 更新（XH-202620 R11）：冲刺就绪三件套——06《验收操作手册.md》、01《团队信息填写表.md》、
+> 《命名与提交决策单.md》；preflight 复跑全 OK。剩余阻塞为外部输入（星火 Key/部署授权/真实用户/报名命名）。
+
 > 2026-08-13 更新：现行代码沙箱契约和统一学习契约已登记 CodingAgent 的受限源码读取、
 > EduAgent 的无源码结构化摘要、服务端 `coding_execution` 证据、泛化投影 outbox，以及
 > 题库 1.0 / 代码 1.5 的认知融合策略。

@@ -6,6 +6,13 @@
 >
 > 2026 年中国国际大学生服务外包创新创业大赛 · A12 赛题（超星集团）｜团队：蟹不肉｜参赛编号：T2606981
 
+> **2026-08-20 新赛题改造启动（挑战杯 XH-202620）**：在 A12 参赛基线之上，面向挑战杯"揭榜挂帅"
+> XH-202620《面向一流学科建设的学科垂类大模型与创新应用开发》（发榜单位：科大讯飞，材料硬截止
+> 2026-09-05）改造为**计算机学科垂类大模型与智能体应用**：基线分支 `feature/xh202620`
+> （自 dev-liu @9c52bd1 切出，含 dev-main 全部最新代码）。差距分析、产品定位与改造路线图见
+> [docs/phase1/2026-08-20_XH202620差距分析与产品定位.md](docs/phase1/2026-08-20_XH202620差距分析与产品定位.md)。
+> 该文档替代已废弃的《docs/赛题差距分析与重构建议.md》（其"完全重构"结论被后续开发推翻）。
+
 > **2026-08-13 代码作答认知更新**：CodingAgent 只可在本次提交的
 > `student_id + course_id + run_id` 授权范围内短暂读取源码；EduAgent 只接收无源码的
 > 结构化诊断摘要。Judge0 服务端验证的代码结果已与题库作答并列进入认知评判，权重分别
@@ -61,7 +68,7 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 
 **三条可追溯链**：内容追溯链（材料→解析运行→DocumentIR→证据→课程发布）、知识追溯链（证据→知识节点→图谱快照→知识包→Citation→问答回答）、学习追溯链（学习事件/评分→学习证据→认知状态→推荐/分析），以课程身份与发布版本为共同连接键。
 
-**赛题延伸（挑战杯 XH-202620）**：在通用教学闭环之上，面向计算机学科扩展知识库、代码实验、算法可视化与助研（ResearchAgent）能力。其中**模型微调（LoRA/SFT）与 CS 学科知识库内容填充为规划项，尚未实现**。
+**赛题延伸（挑战杯 XH-202620）**：在通用教学闭环之上，面向计算机学科扩展知识库、代码实验、算法可视化与助研（ResearchAgent）能力。其中**模型微调（LoRA/SFT）与 CS 学科知识库内容填充为规划项，尚未实现**——该两项已列为 XH-202620 改造（基线 `feature/xh202620`）的核心补齐目标，进度与口径见 [2026-08-20 XH-202620 差距分析与产品定位](docs/phase1/2026-08-20_XH202620差距分析与产品定位.md)。
 
 ## 2. 三项核心机制
 
@@ -166,9 +173,10 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 |---|---|---|
 | ResearchAgent HarnessEngineer | ✅ | 真实条件路由 LangGraph；动态 Prompt/Tool/Context/压缩；25s 超时与并发 8 |
 | 科研工作台 `/app/course/:courseId/research` | ✅ | 论文、Todo、Notepad、Memory、Scope 五个可操作视图；`course.view` 可见、执行另行授权 |
+| 学科知识库检索页 `/app/discipline-knowledge` | ✅ | XH-202620 CS 垂类只读检索（权威来源/图邻居/概览），R8 上线 |
 | 工作区持久化与向量记忆 | ✅ | Alembic `0053`；已验证 PostgreSQL 16.14 + pgvector 0.7.4，向前兼容 PostgreSQL 18；embedding 或 vector 查询不可用时明确降级关键词 |
 | arXiv 论文元数据检索 + 来源核验 | ✅ | 真实接通（节流 3s + 24h 缓存 + PII 脱敏 + EvidenceGate） |
-| 趋势分析、证据综合、学术写作、代码复现 | 🧪 | 页面按 `research_preview` 展示，未伪装完成 |
+| 趋势分析、证据综合、学术写作、代码复现 | 🧪 | 学术写作（writing_assist）与前沿趋势分析（trend_analysis）后端已实现（测试 7+8 passed）；证据综合/代码复现仍 preview，页面按 `research_preview` 展示，未伪装完成 |
 | Semantic Scholar / OpenAlex / Crossref、全文解析、GitHub 仓库复现 | 📋 | 规划中 |
 | 平台管理员（用户/角色/Provider 配置/任务并发） | ✅ | `/app/admin`（shadow）、`admin_platform.py` |
 | 泛雅·超星 AI 兼容适配层 | ✅ | `external_apis/fanya_chaoxing_ai/`，签名校验/字段转换/权限解析/能力降级 |
@@ -177,9 +185,9 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 
 | 功能 | 说明 |
 |---|---|
-| 学科垂类模型微调（LoRA/SFT） | 无训练代码；星辰 MaaS / 本地 LoRA 均为规划路线 |
-| CS 学科知识库内容填充 | `knowledge_data/` 三个 JSON 为空占位 |
-| 星火 X1 深度推理接入 | 仅 PPT 生成使用星火；LLM 默认豆包 |
+| 学科垂类模型微调（LoRA/SFT） | 可复现管线已交付（`backend/finetune/`：数据集生成 ✅ 132+14、评测基准 10 用例 ✅、训练脚本 ✅）；**训练未执行**（无 GPU，诚实标注，需 GPU 或星火 MaaS） |
+| CS 学科知识库内容填充 | `knowledge_data/` 90 节点/82 关系（数据结构/算法/OS/计网/数据库/软件工程/机器学习/编译原理/计算机组成原理 9 门课）已填充并通过校验；已接线为只读检索服务 `GET /api/v1/discipline-knowledge/*`（CJK 二元组短语检索，服务 + API 测试 17 passed）；图谱/检索白名单深度接线为后续项 |
+| 星火 LLM 深度接入 | 讯飞星火 LLM Provider 已接入（`LLM_PROVIDER=spark`，OpenAI 兼容接口，单测 6 passed）；真实 Key 手工验收待进行；PPT/TTS 仍走原讯飞链路 |
 | 代码项目交流平台（类 CSDN） | 无实现 |
 | RE-KT 证据驱动学生模型 | 研究推进中（Shadow Mode 接入、细粒度 misconception 追踪、选择性诊断） |
 
@@ -197,7 +205,7 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 | 文档解析 | Docling（≥2.81）、LibreOffice、Poppler、PaddleOCR（容器） |
 | 向量/图谱 | LanceDB 0.34、本地 BGE 嵌入、GraphRAG 3.1.1（独立 Worker，默认关闭态） |
 | 代码沙箱 | Judge0（独立实验服务器部署，客户端默认关闭） |
-| 外部服务 | 豆包 LLM（默认）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
+| 外部服务 | 豆包 LLM（默认）、讯飞星火 LLM（`LLM_PROVIDER=spark`，XH-202620 学科垂类基座，可选）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
 | 数据库 | 云端 PostgreSQL 16.14 + pgvector 0.7.4（基线）；本地开发 SQLite；对象存储 Local/S3/OSS 适配 |
 
 ### 5.2 前端
@@ -230,6 +238,7 @@ ai-course-system/
 │   │   ├── models/              # 42 个 ORM 模型
 │   │   └── external_apis/       # 泛雅·超星 AI 兼容适配层
 │   ├── alembic/                 # 45 个迁移版本
+│   ├── finetune/                # XH-202620 微调管线（数据集/评测基准/训练脚本，需 GPU 执行）
 │   └── tests/                   # 105 个测试文件（pytest）
 ├── frontend/                    # Vue 3 前端
 │   ├── src/
@@ -245,9 +254,10 @@ ai-course-system/
 │   ├── phase1/                  # 现行实施基线、审计与契约（37 篇）
 │   ├── refactor/                # 历史重构/Shadow/迁移记录（仅追溯）
 │   └── frontend-design/         # 页面设计与前端契约
+├── competition/                 # XH-202620 参赛材料 01–07（骨架，9/5 截止）
 ├── deploy/                      # Docker Compose、Dockerfile.backend、nginx、judge0、paddleocr
 ├── database/                    # SQLite 生产库 + 备份
-├── knowledge_data/              # CS 学科知识库（当前为空占位）
+├── knowledge_data/              # CS 学科知识库（90 节点/82 关系，9 门课，只读检索服务 /api/v1/discipline-knowledge）
 ├── scripts/                     # dev-stack.sh（PaddleOCR + 后端一键启动）等
 ├── research/                    # 离线研究沙箱（不构成生产结论）
 └── test/ tests/                 # 测试资产与基准

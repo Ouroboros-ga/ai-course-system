@@ -143,6 +143,7 @@ from app.api.v1.endpoints import (
     safety,             # G6 安全围栏与沙箱治理
     web_research,       # G7 WebResearchTool
     research_agent,     # ResearchAgent evidence-first scholarly research
+    discipline_knowledge,  # XH-202620 CS 学科垂类知识库检索（只读）
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
     graphrag,           # GraphRAG + immutable CourseKnowledgeBundle
@@ -351,6 +352,9 @@ app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围�
 # G7: WebResearchTool 受控研究
 app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
 app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=["ResearchAgent"])
+
+# XH-202620: CS 学科垂类知识库（只读检索，数据来自 knowledge_data/）
+app.include_router(discipline_knowledge.router, prefix="/api/v1/discipline-knowledge", tags=["Discipline Knowledge"])
 
 # G8: 媒体时间轴与数字人
 app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒体时间轴"])

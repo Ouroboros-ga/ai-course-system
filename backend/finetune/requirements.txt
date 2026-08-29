@@ -1,0 +1,8 @@
+# GPU 训练依赖（LoRA/SFT 微调用，可选）
+# ⚠️ 安装前需用户明确批准（AGENTS.md §8.5：安装依赖前经用户批准）。
+# 不进入 backend/pyproject.toml 主依赖；无 GPU 环境可跳过，仅用 RAG 增强。
+torch>=2.3
+transformers>=4.44
+peft>=0.12
+datasets>=2.20
+accelerate>=0.33

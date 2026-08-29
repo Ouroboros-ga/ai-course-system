@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { House, BookOpen, FlaskConical, FolderOpen, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
+import { House, BookOpen, FlaskConical, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -13,6 +13,7 @@ const navItems = [
     { label: '我的课程', to: '/app/courses/learning', icon: BookOpen, match: '/app/courses' },
     { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
     { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
+    { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
 ]
 
 // page-design §2.1「智能体」一级空间尚无对应页面与后端能力，

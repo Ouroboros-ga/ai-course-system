@@ -61,6 +61,13 @@ test('SettingsProfilePage.vue: 删除入口由课程 owner 权限共同控制', 
   assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
 })
 
+test('BuildingCoursesPage.vue: 删除入口消费能力视图 course.delete，不按全局角色推断', () => {
+  const src = read('frontend/src/app/pages/courses/BuildingCoursesPage.vue')
+  assert.match(src, /canDelete\s*\(\s*course\s*\)\s*\{[\s\S]*?course\?\.access\?\.allowed\?\.\[['"]course\.delete['"]\]/)
+  assert.match(src, /v-if="canDelete\(course\)"/)
+  assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
+})
+
 test('course_access.js: 教师实验平台开关与后端窄权限路由一致', () => {
   const frontend = read('frontend/src/api/course_access.js')
   const backend = read('backend/app/api/v1/endpoints/course_access.py')
@@ -786,5 +793,35 @@ test('PlatformAdminPage.vue: 平台管理页集成屏蔽词增删改查 section'
   assert.match(src, /cyber/)
   // 按钮均使用 SfxButton（design.md 硬约束：禁止原生 <button> 标签）
   assert.doesNotMatch(src, /<button[\s>]/)
+})
+
+test('disciplineKnowledge.js: 学科知识库客户端路径与后端路由一一对应（XH-202620）', () => {
+  const src = read('frontend/src/api/disciplineKnowledge.js')
+  const backend = read('backend/app/api/v1/endpoints/discipline_knowledge.py')
+  const main = read('backend/app/main.py')
+
+  assert.equal(extractFirstPath(src, 'searchDisciplineKnowledge'), '/discipline-knowledge/search')
+  assert.match(backend, /@router\.get\("\/search"\)/)
+
+  assert.equal(
+    extractFirstPath(src, 'getDisciplineKnowledgeNode'),
+    '/discipline-knowledge/nodes/${encodeURIComponent(nodeId)}',
+  )
+  assert.match(backend, /@router\.get\("\/nodes\/\{node_id\}"\)/)
+
+  assert.equal(extractFirstPath(src, 'getDisciplineKnowledgeOverview'), '/discipline-knowledge/overview')
+  assert.match(backend, /@router\.get\("\/overview"\)/)
+
+  assert.equal(extractFirstPath(src, 'reloadDisciplineKnowledge'), '/discipline-knowledge/reload')
+  assert.match(backend, /@router\.post\("\/reload"\)/)
+
+  assert.match(main, /discipline_knowledge\.router, prefix="\/api\/v1\/discipline-knowledge"/)
+})
+
+test('DisciplineKnowledgePage.vue: 学科知识检索页动作按钮使用 SfxButton（design.md）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  assert.match(src, /SfxButton/)
+  assert.match(src, /<SfxButton type="submit"/)
+  assert.match(src, /<SfxButton variant="tertiary"/)
 })
 

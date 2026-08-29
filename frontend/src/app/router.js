@@ -76,6 +76,13 @@ export const shadowAppRoutes = [
             ],
           },
 
+          // ── 学科知识库（XH-202620 CS 垂类，只读检索） ──
+          {
+            path: 'discipline-knowledge',
+            name: 'app-discipline-knowledge',
+            component: () => import('./pages/discipline/DisciplineKnowledgePage.vue'),
+          },
+
           // ── 资源库（page-design §20） ──
           {
             path: 'resources',

@@ -1,0 +1,160 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "计算机网络",
+  "description": "计算机学科垂类知识库——计算机网络基础概念（挑战杯 XH-202620）。节点 id 全局唯一（net- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "net-001",
+      "name": "计算机网络体系结构",
+      "node_type": "concept",
+      "definition": "计算机网络体系结构将网络功能分层组织；经典模型为 OSI 七层参考模型与 TCP/IP 五层模型（应用层、传输层、网络层、数据链路层、物理层）。",
+      "key_points": [
+        "分层带来的好处：每层职责单一、接口清晰、可独立演进",
+        "OSI 七层：物理/数据链路/网络/传输/会话/表示/应用",
+        "对等层之间通过协议通信，相邻层通过服务访问点交互"
+      ],
+      "example": "一次网页访问：应用层 HTTP → 传输层 TCP → 网络层 IP → 链路层以太网 → 物理层比特流",
+      "source": {
+        "title": "计算机网络（第 8 版）",
+        "authors": "谢希仁",
+        "chapter": "第 1 章 概述"
+      }
+    },
+    {
+      "id": "net-002",
+      "name": "TCP/IP 协议栈",
+      "node_type": "concept",
+      "definition": "TCP/IP 协议栈是互联网实际使用的分层协议族，核心协议包括 IP（网络层）、TCP/UDP（传输层）、HTTP/DNS/SMTP 等（应用层）。",
+      "key_points": [
+        "网络层只提供尽力而为（best-effort）服务",
+        "传输层 TCP 提供可靠字节流，UDP 提供不可靠数据报",
+        "应用层协议运行在 TCP 或 UDP 之上"
+      ],
+      "example": "DNS 查询用 UDP（53 端口），HTTP 页面传输用 TCP（80/443 端口）",
+      "source": {
+        "title": "Computer Networking: A Top-Down Approach（第 8 版）",
+        "authors": "James Kurose、Keith Ross",
+        "chapter": "第 1 章 Computer Networks and the Internet"
+      }
+    },
+    {
+      "id": "net-003",
+      "name": "数据链路层与以太网",
+      "node_type": "concept",
+      "definition": "数据链路层在相邻节点间提供帧的可靠传输；以太网使用 MAC 地址寻址与 CSMA/CD（载波监听多路访问/冲突检测）访问控制。",
+      "key_points": [
+        "帧结构：目的 MAC、源 MAC、类型、数据、FCS 校验",
+        "MAC 地址 48 位，局域网内唯一",
+        "交换机按 MAC 地址表转发，隔离冲突域"
+      ],
+      "example": "网卡发送帧前先监听信道，冲突后退避重发（CSMA/CD）",
+      "source": {
+        "title": "计算机网络（第 8 版）",
+        "authors": "谢希仁",
+        "chapter": "第 3 章 数据链路层"
+      }
+    },
+    {
+      "id": "net-004",
+      "name": "网络层与 IP 协议",
+      "node_type": "concept",
+      "definition": "网络层负责跨网段的路由与转发，核心是 IP 协议：IP 地址标识主机位置，路由器依据路由表逐跳转发数据报。",
+      "key_points": [
+        "IPv4 地址 32 位（点分十进制），IPv6 128 位（十六进制冒号分隔）",
+        "子网掩码划分网络位与主机位；CIDR 无类编址",
+        "路由协议：RIP（距离向量）、OSPF（链路状态）、BGP（域间）"
+      ],
+      "example": "192.168.1.0/24 子网：前 24 位为网络号，主机号 8 位",
+      "source": {
+        "title": "计算机网络（第 8 版）",
+        "authors": "谢希仁",
+        "chapter": "第 4 章 网络层"
+      }
+    },
+    {
+      "id": "net-005",
+      "name": "传输层与 TCP/UDP",
+      "node_type": "concept",
+      "definition": "传输层为应用进程提供端到端通信：UDP 无连接、不可靠但开销小；TCP 面向连接、可靠字节流，提供序号、确认、重传、流量控制与拥塞控制。",
+      "key_points": [
+        "端口号标识进程：HTTP 80、HTTPS 443、DNS 53",
+        "TCP 可靠传输：累计确认 + 超时重传",
+        "流量控制：滑动窗口；拥塞控制：慢启动、拥塞避免、快重传快恢复"
+      ],
+      "example": "大文件下载用 TCP 保证完整性；实时音视频常用 UDP 减少延迟",
+      "source": {
+        "title": "Computer Networking: A Top-Down Approach（第 8 版）",
+        "authors": "James Kurose、Keith Ross",
+        "chapter": "第 3 章 Transport Layer"
+      }
+    },
+    {
+      "id": "net-006",
+      "name": "TCP 三次握手与四次挥手",
+      "node_type": "concept",
+      "definition": "TCP 建立连接通过三次握手（SYN → SYN+ACK → ACK）同步双方初始序号并确认收发能力；释放连接通过四次挥手（FIN → ACK → FIN → ACK）。",
+      "key_points": [
+        "三次握手原因：防止失效的连接请求到达服务端造成错误连接",
+        "状态迁移：CLOSED→SYN_SENT→ESTABLISHED（客户端）；LISTEN→SYN_RCVD→ESTABLISHED（服务端）",
+        "TIME_WAIT：主动关闭方等待 2MSL 以回收旧报文"
+      ],
+      "example": "客户端 SYN(seq=x) → 服务端 SYN+ACK(seq=y, ack=x+1) → 客户端 ACK(ack=y+1)",
+      "source": {
+        "title": "TCP 协议（RFC 793）",
+        "authors": "Jon Postel（IETF）",
+        "chapter": "3.4 建立与关闭连接"
+      }
+    },
+    {
+      "id": "net-007",
+      "name": "应用层与 DNS/HTTP",
+      "node_type": "concept",
+      "definition": "应用层为用户提供网络服务：DNS 将域名解析为 IP 地址，HTTP/HTTPS 承载 Web 内容传输，基于请求-响应模型。",
+      "key_points": [
+        "DNS 层次结构：根/顶级域/权威域名服务器，递归与迭代查询",
+        "HTTP：无状态、明文；HTTPS = HTTP + TLS 加密",
+        "HTTP/1.1 持久连接与管道化；HTTP/2 多路复用；HTTP/3 基于 QUIC"
+      ],
+      "example": "访问 www.example.com：先 DNS 解析得到 IP，再经 HTTP 请求获取页面",
+      "source": {
+        "title": "计算机网络（第 8 版）",
+        "authors": "谢希仁",
+        "chapter": "第 6 章 应用层"
+      }
+    },
+    {
+      "id": "net-008",
+      "name": "网络安全基础",
+      "node_type": "concept",
+      "definition": "网络安全保障信息的机密性、完整性与可用性；核心技术包括对称/非对称加密、数字签名、TLS 协议与防火墙/NAT。",
+      "key_points": [
+        "对称加密（AES）效率高，非对称加密（RSA/ECC）便于密钥交换",
+        "TLS 握手协商密钥：证书验证 + 密钥交换 + 记录加密",
+        "防火墙过滤进出流量；NAT 复用公网地址"
+      ],
+      "example": "HTTPS 站点通过 TLS 证书 + 加密通道保护传输数据",
+      "source": {
+        "title": "Computer Networking: A Top-Down Approach（第 8 版）",
+        "authors": "James Kurose、Keith Ross",
+        "chapter": "第 8 章 Security in Computer Networks"
+      }
+    },
+    {
+      "id": "net-009",
+      "name": "无线网络与移动性",
+      "node_type": "concept",
+      "definition": "无线网络通过电磁波传输，面临信道衰减、干扰与移动切换问题；典型架构为基础设施模式（AP 接入点）与自组网模式。",
+      "key_points": [
+        "802.11 标准：CSMA/CA 避免冲突、隐藏终端问题（RTS/CTS）",
+        "移动 IP：家乡代理与外地代理转发",
+        "蜂窝网络：小区划分、切换与漫游"
+      ],
+      "example": "Wi-Fi 使用 CSMA/CA 在共享信道上竞争发送",
+      "source": {
+        "title": "计算机网络（第 8 版）",
+        "authors": "谢希仁",
+        "chapter": "第 8 章 无线网络"
+      }
+    }
+  ]
+}

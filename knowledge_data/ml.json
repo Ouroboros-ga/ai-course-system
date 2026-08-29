@@ -1,0 +1,177 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "机器学习",
+  "description": "计算机学科垂类知识库——机器学习基础概念（挑战杯 XH-202620）。节点 id 全局唯一（ml- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "ml-001",
+      "name": "机器学习基本概念",
+      "node_type": "concept",
+      "definition": "机器学习是从数据中自动学习规律并用于预测或决策的方法；核心矛盾是泛化能力与过拟合/欠拟合的平衡。",
+      "key_points": [
+        "训练集/验证集/测试集划分，防止数据泄漏",
+        "泛化：在未见数据上的表现；过拟合=拟合噪声，欠拟合=拟合不足",
+        "偏差-方差权衡：高偏差欠拟合，高方差过拟合"
+      ],
+      "example": "用历史房价数据训练模型预测新房价，测试集误差反映泛化能力",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 1 章 绪论"
+      }
+    },
+    {
+      "id": "ml-002",
+      "name": "监督学习",
+      "node_type": "concept",
+      "definition": "监督学习利用带标签样本学习输入到输出的映射：分类（离散标签）与回归（连续数值）是两类基本任务。",
+      "key_points": [
+        "分类：二分类（垃圾邮件）与多分类（手写数字）",
+        "回归：房价、气温预测",
+        "损失函数：分类用交叉熵，回归用均方误差"
+      ],
+      "example": "根据邮件内容特征预测是否垃圾邮件（二分类）",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 1 章 绪论"
+      }
+    },
+    {
+      "id": "ml-003",
+      "name": "无监督学习",
+      "node_type": "concept",
+      "definition": "无监督学习在无标签数据上发现结构：聚类把样本分组，降维把高维数据映射到低维表示。",
+      "key_points": [
+        "聚类：K-means、层次聚类、DBSCAN",
+        "降维：PCA（主成分分析）、t-SNE",
+        "应用：用户分群、异常检测、特征压缩"
+      ],
+      "example": "电商用户行为聚类得到高价值/低活跃群体",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 9 章 聚类"
+      }
+    },
+    {
+      "id": "ml-004",
+      "name": "模型评估",
+      "node_type": "concept",
+      "definition": "模型评估度量模型性能：分类任务用准确率、精确率、召回率、F1 与混淆矩阵，回归用 MAE/RMSE；通过交叉验证获得稳定估计。",
+      "key_points": [
+        "混淆矩阵：TP/FP/TN/FN；精确率=TP/(TP+FP)，召回率=TP/(TP+FN)",
+        "F1 是精确率与召回率的调和平均",
+        "ROC/AUC 刻画阈值无关的分类能力；K 折交叉验证降低评估方差"
+      ],
+      "example": "癌症筛查宁可高召回（不漏诊）即使精确率略降",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 2 章 模型评估与选择"
+      }
+    },
+    {
+      "id": "ml-005",
+      "name": "线性模型",
+      "node_type": "concept",
+      "definition": "线性模型假设输出是特征的线性组合：线性回归最小化均方误差，逻辑回归用 sigmoid 建模概率实现分类。",
+      "key_points": [
+        "线性回归：w·x+b，最小二乘解",
+        "逻辑回归：σ(w·x+b) 输出 (0,1) 概率，交叉熵损失",
+        "正则化：L1（稀疏）/L2（收缩）缓解过拟合"
+      ],
+      "example": "逻辑回归预测广告点击率（CTR），特征为时间/位置/用户画像",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 3 章 线性模型"
+      }
+    },
+    {
+      "id": "ml-006",
+      "name": "决策树与集成学习",
+      "node_type": "concept",
+      "definition": "决策树按特征划分样本；集成学习组合多个基学习器提升性能，代表算法为随机森林（Bagging）与 GBDT/XGBoost（Boosting）。",
+      "key_points": [
+        "划分准则：信息增益（ID3）、增益率（C4.5）、基尼指数（CART）",
+        "Bagging 并行降低方差；Boosting 串行降低偏差",
+        "XGBoost：GBDT 工程化，含正则化与二阶近似"
+      ],
+      "example": "XGBoost 是 Kaggle 结构化数据竞赛的经典基座模型",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 4 章 决策树 / 第 8 章 集成学习"
+      }
+    },
+    {
+      "id": "ml-007",
+      "name": "神经网络与深度学习",
+      "node_type": "concept",
+      "definition": "神经网络由多层神经元堆叠而成，通过反向传播与梯度下降学习；深度学习在感知/语言任务上以 CNN/RNN/Transformer 为代表。",
+      "key_points": [
+        "前向传播 + 反向传播（链式法则）",
+        "激活函数：ReLU 缓解梯度消失；优化器：SGD/Momentum/Adam",
+        "CNN 处理图像、RNN/Transformer 处理序列、注意力机制"
+      ],
+      "example": "Transformer 的自注意力机制是 GPT 等大语言模型的核心",
+      "source": {
+        "title": "Deep Learning",
+        "authors": "Ian Goodfellow 等",
+        "chapter": "第 6 章 Deep Feedforward Networks"
+      }
+    },
+    {
+      "id": "ml-008",
+      "name": "支持向量机",
+      "node_type": "concept",
+      "definition": "SVM 寻找最大化间隔的分类超平面；对线性不可分数据通过核函数映射到高维空间实现非线性分类。",
+      "key_points": [
+        "间隔最大化 → 对偶问题 → 支持向量决定边界",
+        "核函数：线性核、多项式核、RBF 高斯核",
+        "软间隔引入惩罚参数 C 容忍噪声"
+      ],
+      "example": "RBF 核 SVM 在中小规模文本分类上表现稳定",
+      "source": {
+        "title": "机器学习（西瓜书）",
+        "authors": "周志华",
+        "chapter": "第 6 章 支持向量机"
+      }
+    },
+    {
+      "id": "ml-009",
+      "name": "特征工程与数据预处理",
+      "node_type": "concept",
+      "definition": "特征工程把原始数据转化为模型可用的特征：包括缺失值处理、标准化/归一化、类别编码、特征选择与构造。",
+      "key_points": [
+        "数值特征：Min-Max 归一化、Z-score 标准化",
+        "类别特征：独热编码、目标编码",
+        "特征选择：过滤式（卡方/互信息）、包裹式、嵌入式（L1）"
+      ],
+      "example": "把“登录时间”转化为“是否深夜”二值特征提升模型表达",
+      "source": {
+        "title": "Feature Engineering for Machine Learning",
+        "authors": "Alice Zheng、Amanda Casari",
+        "chapter": "第 2 章 Fancy Tricks with Simple Numbers"
+      }
+    },
+    {
+      "id": "ml-010",
+      "name": "强化学习基础",
+      "node_type": "concept",
+      "definition": "强化学习让智能体在与环境交互中通过奖励信号学习最优策略；核心要素为状态、动作、奖励、策略与价值函数。",
+      "key_points": [
+        "马尔可夫决策过程（MDP）建模序贯决策",
+        "值迭代/策略迭代基于动态规划；蒙特卡洛与时序差分（TD）免模型学习",
+        "Q-learning 与 DQN；探索-利用权衡（ε-greedy）"
+      ],
+      "example": "AlphaGo 用深度强化学习在围棋上超越人类冠军",
+      "source": {
+        "title": "Reinforcement Learning: An Introduction（第 2 版）",
+        "authors": "Richard Sutton、Andrew Barto",
+        "chapter": "第 3 章 Finite Markov Decision Processes"
+      }
+    }
+  ]
+}

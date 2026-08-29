@@ -63,6 +63,15 @@ class Settings(BaseSettings):
     LLM_MAX_TOKENS: int = 8192
     LLM_TEMPERATURE: float = 0.7
     LLM_TIMEOUT: int = 180
+    # 讯飞星火 LLM（学科垂类基座；挑战杯 XH-202620 赛题要求"深度结合讯飞星火或其他
+    # 开源大模型"）。星火开放平台 OpenAI 兼容 HTTP API：
+    #   base_url = https://spark-api-open.xf-yun.com/v1
+    #   鉴权     = Authorization: Bearer <APIKey>（XFYUN_SPARK_API_KEY）
+    # 设 LLM_PROVIDER=spark 时启用；未配置 API Key 时相关调用由网关 fail-closed，
+    # 密钥只进 .env，不进前端/日志/仓库。
+    XFYUN_SPARK_API_KEY: str = ""
+    XFYUN_SPARK_BASE_URL: str = "https://spark-api-open.xf-yun.com/v1"
+    XFYUN_SPARK_MODEL: str = "4.0Ultra"
     # Course preparation has a shorter, explicit stage budget than the
     # generic LLM client and a separate end-to-end budget for all stages.
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240

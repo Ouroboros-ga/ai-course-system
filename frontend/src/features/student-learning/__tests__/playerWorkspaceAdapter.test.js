@@ -83,6 +83,7 @@ test('adapts workspace state to the backend snake-case progress contract', () =>
       current_timestamp: 75,
       current_page: 4,
       completed_nodes: [1],
+      time_spent_delta: 0,
     }
   )
 })
