@@ -30,7 +30,7 @@
 ## 第 4 页 学科垂类大模型三层方案
 
 **要点**：
-- 基座：讯飞星火（`LLM_PROVIDER=spark`，OpenAI 兼容接口，fail-closed）+ 开源双轨
+- 基座：DeepSeek（`LLM_PROVIDER=deepseek`，`deepseek-chat`，OpenAI 兼容，2026-08-20 实测 10 用例 9/9）+ 星火/开源双轨
 - 领域增强：CS 学科知识库 90 节点/82 关系（9 门课，权威来源）→ 检索服务（中英双语、可追溯）
   → 课程级 RAG（BM25+BGE+RRF+GraphRAG+Citation 闭包）
 - 领域微调：LoRA/SFT 可复现管线（指令集 164+18、评测基准 10 用例）；训练待 GPU/星火 MaaS

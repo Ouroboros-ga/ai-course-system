@@ -56,7 +56,7 @@ class Settings(BaseSettings):
     # --------------------------
     # 大模型API配置
     # --------------------------
-    LLM_PROVIDER: str = "doubao"
+    LLM_PROVIDER: str = "deepseek"
     LLM_API_KEY: str = ""
     LLM_API_BASE: str = ""
     LLM_MODEL_NAME: str = ""
@@ -72,6 +72,12 @@ class Settings(BaseSettings):
     XFYUN_SPARK_API_KEY: str = ""
     XFYUN_SPARK_BASE_URL: str = "https://spark-api-open.xf-yun.com/v1"
     XFYUN_SPARK_MODEL: str = "4.0Ultra"
+    # DeepSeek LLM（XH-202620 学科垂类基座，2026-08-20 决策改用 DeepSeek）。
+    # OpenAI 兼容 HTTP API：https://api.deepseek.com/v1，模型 deepseek-chat（V3）。
+    # 设 LLM_PROVIDER=deepseek 时启用；未配置 DEEPSEEK_API_KEY 时相关调用 fail-closed。
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
     # Course preparation has a shorter, explicit stage budget than the
     # generic LLM client and a separate end-to-end budget for all stages.
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240

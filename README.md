@@ -205,7 +205,7 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 | 文档解析 | Docling（≥2.81）、LibreOffice、Poppler、PaddleOCR（容器） |
 | 向量/图谱 | LanceDB 0.34、本地 BGE 嵌入、GraphRAG 3.1.1（独立 Worker，默认关闭态） |
 | 代码沙箱 | Judge0（独立实验服务器部署，客户端默认关闭） |
-| 外部服务 | 豆包 LLM（默认）、讯飞星火 LLM（`LLM_PROVIDER=spark`，XH-202620 学科垂类基座，可选）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
+| 外部服务 | DeepSeek LLM（`LLM_PROVIDER=deepseek`，默认，XH-202620 学科垂类基座）、讯飞星火 LLM（可选，`LLM_PROVIDER=spark`）、豆包 TTS（Demo/显式）、讯飞 PPT、arXiv |
 | 数据库 | 云端 PostgreSQL 16.14 + pgvector 0.7.4（基线）；本地开发 SQLite；对象存储 Local/S3/OSS 适配 |
 
 ### 5.2 前端
@@ -301,7 +301,7 @@ cp .env.example .env     # 若有模板；否则按 config.py 默认值 + 生产
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `LLM_PROVIDER` | `doubao` | 外部 LLM；未配置 Key 时相关能力 fail-closed |
+| `LLM_PROVIDER` | `deepseek` | 外部 LLM；可选 `doubao`/`qwen`/`openai`/`spark`；未配置 Key 时相关能力 fail-closed |
 | `MEDIA_DEMO_MODE` | `true` | 媒体建设用 Fake WAV，页面显示 `fake-demo`，不调用付费 TTS |
 | `STAGE8_TTS_PROVIDER` | — | 正式 TTS 需 `MEDIA_DEMO_MODE=false` + `doubao` |
 | `JUDGE0_ENABLED` | `false` | Judge0 沙箱默认关闭 |

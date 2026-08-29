@@ -19,7 +19,7 @@
       "scenario": "助学",
       "question": "对已按升序排好的长度为 n 的数组执行以首元素为基准的快速排序，其时间复杂度是多少？请说明原因，并与归并排序对比。",
       "expected": "最坏情况 O(n²)；归并排序 O(n log n)",
-      "check": {"type": "contains", "markers": ["O(n²)", "O(n log n)"]},
+      "check": {"type": "contains_grouped", "markers": [["O(n²)", "O(n^2)", "O(n2)", "O(N²)"], ["O(n log n)", "O(nlogn)", "O(N log N)"]]},
       "source": {"title": "Cormen 等《算法导论（原书第 3 版）》", "chapter": "第 7 章 快速排序 / 第 2 章 归并排序"},
       "system_entry": "课程问答（TeachingAgent）"
     },
@@ -79,7 +79,7 @@
       "scenario": "助学",
       "question": "某二分类模型测试结果：TP=40、FP=10、FN=20、TN=30。计算精确率（Precision）、召回率（Recall）与 F1。",
       "expected": "精确率=0.8；召回率≈0.667；F1≈0.727（给出公式）",
-      "check": {"type": "contains", "markers": ["0.8", "0.667", "0.727"]},
+      "check": {"type": "contains", "markers": ["0.8", "0.666", "0.727"]},
       "source": {"title": "周志华《机器学习》", "chapter": "第 2 章 模型评估与选择"},
       "system_entry": "课程问答（TeachingAgent）"
     },

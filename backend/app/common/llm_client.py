@@ -420,6 +420,95 @@ class SparkClient(BaseLLMClient):
                             continue
 
 
+class DeepSeekClient(BaseLLMClient):
+    """DeepSeek LLM（XH-202620 学科垂类基座，2026-08-20 决策）。
+
+    DeepSeek 开放平台 OpenAI 兼容 HTTP API（``/v1/chat/completions``），鉴权
+    ``Authorization: Bearer <APIKey>``（配置 ``DEEPSEEK_API_KEY``）。
+    未配置 Key 时仅告警；管理员开关关闭时在客户端层直接 fail-closed。
+    """
+
+    def __init__(self):
+        self.api_key = settings.DEEPSEEK_API_KEY or settings.LLM_API_KEY
+        self.base_url = settings.DEEPSEEK_BASE_URL.rstrip("/")
+        # DeepSeek 端点使用自己的模型标识，不回退到通用 LLM_MODEL_NAME
+        self.model = settings.DEEPSEEK_MODEL or "deepseek-chat"
+        self.timeout = settings.LLM_TIMEOUT
+
+        if not self.api_key:
+            logger.warning("DeepSeek API Key未配置，请在.env中设置DEEPSEEK_API_KEY（LLM_PROVIDER=deepseek）")
+
+    async def chat(
+        self,
+        messages: List[Message],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> LLMResponse:
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [m.to_dict() for m in messages],
+            "temperature": temperature or settings.LLM_TEMPERATURE,
+            "max_tokens": max_tokens or settings.LLM_MAX_TOKENS,
+        }
+        payload.update(kwargs)
+
+        result = await self._make_request(url, headers, payload, self.timeout)
+
+        choice = result.get("choices", [{}])[0]
+        return LLMResponse(
+            content=choice.get("message", {}).get("content", ""),
+            usage=result.get("usage", {}),
+            model=result.get("model", self.model),
+            finish_reason=choice.get("finish_reason", ""),
+            latency_ms=result.get("_latency_ms", 0),
+        )
+
+    async def chat_stream(
+        self,
+        messages: List[Message],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        **kwargs,
+    ) -> AsyncGenerator[str, None]:
+        url = f"{self.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [m.to_dict() for m in messages],
+            "temperature": temperature or settings.LLM_TEMPERATURE,
+            "max_tokens": max_tokens or settings.LLM_MAX_TOKENS,
+            "stream": True,
+        }
+        payload.update(kwargs)
+
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        data = line[6:]
+                        if data == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data)
+                            delta = chunk.get("choices", [{}])[0].get("delta", {})
+                            if "content" in delta:
+                                yield delta["content"]
+                        except Exception:
+                            continue
+
+
 class OpenAIClient(BaseLLMClient):
     def __init__(self):
         self.api_key = settings.LLM_API_KEY
@@ -533,6 +622,7 @@ class LLMClient:
             "qwen": QwenClient,
             "openai": OpenAIClient,
             "spark": SparkClient,
+            "deepseek": DeepSeekClient,
         }
 
         client_class = clients.get(provider)

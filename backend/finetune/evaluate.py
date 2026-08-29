@@ -47,11 +47,21 @@ def _check(case: dict, output: str) -> dict:
     rule = case.get("check", {})
     kind = rule.get("type", "contains")
     markers = rule.get("markers", [])
+    # 归一化：去掉 LaTeX 转义反斜杠（如 O(n \log n) → O(n log n)），其余原样
+    normalized = output.replace("\\", "")
     if kind == "judge0_manual":
         passed = None  # 需沙箱人工/服务端验证，不自动判定
         detail = "需 Judge0 沙箱执行验证（人工/服务端），未自动判定"
+    elif kind == "contains_grouped":
+        # markers 为分组列表：每组内任一命中即可（容忍符号渲染变体，
+        # 如 O(n²) / O(n^2) / O(n2) / O(n \log n)）。大小写不敏感。
+        folded = normalized.casefold()
+        groups = [([str(m).casefold() for m in group] if isinstance(group, list) else [str(group).casefold()])
+                  for group in markers]
+        missing_groups = [group for group in groups if not any(m in folded for m in group)]
+        passed = not missing_groups
+        detail = "全部分组命中" if passed else f"缺失分组: {missing_groups}"
     else:
-        normalized = output
         passed = all(marker in normalized for marker in markers)
         detail = "全部 markers 命中" if passed else f"缺失 markers: {[m for m in markers if m not in normalized]}"
     return {"type": kind, "passed": passed, "detail": detail}

@@ -55,6 +55,12 @@
 > 2026-08-20 更新（XH-202620 R11）：冲刺就绪三件套——06《验收操作手册.md》、01《团队信息填写表.md》、
 > 《命名与提交决策单.md》；preflight 复跑全 OK。剩余阻塞为外部输入（星火 Key/部署授权/真实用户/报名命名）。
 
+> 2026-08-20 更新（XH-202620 R12）：基座决策落地 **DeepSeek**（`LLM_PROVIDER=deepseek`，`deepseek-chat`）——
+> 新增 DeepSeek Provider（单测 6 passed）并设为默认；用团队 Key 完成 10 用例真实评测，自动判定
+> **9/9 通过**（C3 待 Judge0 人工补验），结果 `backend/finetune/results_deepseek.json`；评测引擎新增
+> `contains_grouped` 分组容差 + LaTeX 归一化（单测 6 passed）；案例集回填区与材料 06 已回填；
+> 全材料同步"基座=DeepSeek（双轨可插拔）"。
+
 > 2026-08-13 更新：现行代码沙箱契约和统一学习契约已登记 CodingAgent 的受限源码读取、
 > EduAgent 的无源码结构化摘要、服务端 `coding_execution` 证据、泛化投影 outbox，以及
 > 题库 1.0 / 代码 1.5 的认知融合策略。
