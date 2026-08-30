@@ -1116,74 +1116,81 @@ class MediaPlaybackService:
         # a deterministic cross-deck sequence.
         ppt_timeline.sort(key=lambda item: (item["start_ms"], item["node_id"]))
 
-        # 数字人 manifest（仅在绑定时）
+        # 数字人 manifest（仅在绑定时；XH-202620 决策关闭数字人，保留 TTS + PPT）。
+        from app.core.config import settings
+
         avatar_manifest_url = None
         avatar_asset_urls: dict[str, str] = {}
-        _avatar_preset, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
-            session,
-            course_id=course_id,
-            release_id=release.release_id,
-            preset_id=release.avatar_preset_id,
-            preset_version=release.avatar_preset_version,
-        )
-        digital_human_manifest = None
-        if avatar_manifest_url:
-            digital_human_manifest = {
-                "manifest_url": avatar_manifest_url,
-                "asset_urls": avatar_asset_urls,
-                "render_mode": "browser_realtime",
-                "recommended_quality": release.default_playback_mode.value,
-                "fallback_supported": True,
-                "source": "platform_preset",
-            }
-        elif release.digital_human_manifest_object_key:
-            try:
-                manifest_url = storage.sign_read_url(
-                    release.digital_human_manifest_object_key,
-                    scope={"course_id": course_id, "purpose": "dh_playback"},
-                )
+        avatar_cues = None
+        if not settings.MEDIA_AVATAR_ENABLED:
+            # 兼容模式：不签发数字人 manifest / cue，播放器走音频 + PPT + 字幕。
+            digital_human_manifest = None
+        else:
+            _avatar_preset, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
+                session,
+                course_id=course_id,
+                release_id=release.release_id,
+                preset_id=release.avatar_preset_id,
+                preset_version=release.avatar_preset_version,
+            )
+            digital_human_manifest = None
+            if avatar_manifest_url:
                 digital_human_manifest = {
-                    "manifest_url": manifest_url,
+                    "manifest_url": avatar_manifest_url,
+                    "asset_urls": avatar_asset_urls,
                     "render_mode": "browser_realtime",
                     "recommended_quality": release.default_playback_mode.value,
                     "fallback_supported": True,
+                    "source": "platform_preset",
                 }
-            except Exception as e:
-                logger.warning("签发数字人 manifest 失败，降级为兼容模式: %s", e)
-                digital_human_manifest = None
-        if playlist is not None:
-            for item in playlist["items"]:
-                item.setdefault("avatar_preset_id", release.avatar_preset_id)
-                item.setdefault("avatar_preset_version", release.avatar_preset_version)
-                if avatar_manifest_url:
-                    item.setdefault("avatar_manifest_url", avatar_manifest_url)
-                    item.setdefault("avatar_asset_urls", avatar_asset_urls)
+            elif release.digital_human_manifest_object_key:
+                try:
+                    manifest_url = storage.sign_read_url(
+                        release.digital_human_manifest_object_key,
+                        scope={"course_id": course_id, "purpose": "dh_playback"},
+                    )
+                    digital_human_manifest = {
+                        "manifest_url": manifest_url,
+                        "render_mode": "browser_realtime",
+                        "recommended_quality": release.default_playback_mode.value,
+                        "fallback_supported": True,
+                    }
+                except Exception as e:
+                    logger.warning("签发数字人 manifest 失败，降级为兼容模式: %s", e)
+                    digital_human_manifest = None
+            if playlist is not None:
+                for item in playlist["items"]:
+                    item.setdefault("avatar_preset_id", release.avatar_preset_id)
+                    item.setdefault("avatar_preset_version", release.avatar_preset_version)
+                    if avatar_manifest_url:
+                        item.setdefault("avatar_manifest_url", avatar_manifest_url)
+                        item.setdefault("avatar_asset_urls", avatar_asset_urls)
 
-        # P2 timeline is exposed independently from the avatar package.  P3
-        # may consume it when a renderer is available; all existing learners
-        # safely ignore it and keep audio/PPT/subtitles as the primary path.
-        avatar_cues = None
-        if release.avatar_cues_object_key:
-            try:
-                from app.services.avatar_cue_service import load_avatar_cue_manifest
+            # P2 timeline is exposed independently from the avatar package.  P3
+            # may consume it when a renderer is available; all existing learners
+            # safely ignore it and keep audio/PPT/subtitles as the primary path.
+            avatar_cues = None
+            if release.avatar_cues_object_key:
+                try:
+                    from app.services.avatar_cue_service import load_avatar_cue_manifest
 
-                cue_manifest = load_avatar_cue_manifest(storage, release.avatar_cues_object_key)
-                audio_binding = cue_manifest["audio"]
-                expected_sha = str((release.release_metadata or {}).get("audio_sha256") or "")
-                if audio_binding.get("object_key") != release.audio_object_key or audio_binding.get("sha256") != expected_sha:
-                    raise ValueError("avatar cue audio binding mismatch")
-                avatar_cues = {
-                    "schema": cue_manifest["schema"],
-                    "manifest_url": storage.sign_read_url(
-                        release.avatar_cues_object_key,
-                        scope={"course_id": course_id, "purpose": "avatar_cues", "release_id": release.release_id},
-                    ),
-                    "timing_source": (cue_manifest.get("timing") or {}).get("source", ""),
-                    "precision": (cue_manifest.get("timing") or {}).get("precision", ""),
-                    "content_sha256": cue_manifest.get("content_sha256", ""),
-                }
-            except Exception as e:
-                logger.warning("签发数字人 Cue manifest 失败，播放继续走兼容模式: %s", e)
+                    cue_manifest = load_avatar_cue_manifest(storage, release.avatar_cues_object_key)
+                    audio_binding = cue_manifest["audio"]
+                    expected_sha = str((release.release_metadata or {}).get("audio_sha256") or "")
+                    if audio_binding.get("object_key") != release.audio_object_key or audio_binding.get("sha256") != expected_sha:
+                        raise ValueError("avatar cue audio binding mismatch")
+                    avatar_cues = {
+                        "schema": cue_manifest["schema"],
+                        "manifest_url": storage.sign_read_url(
+                            release.avatar_cues_object_key,
+                            scope={"course_id": course_id, "purpose": "avatar_cues", "release_id": release.release_id},
+                        ),
+                        "timing_source": (cue_manifest.get("timing") or {}).get("source", ""),
+                        "precision": (cue_manifest.get("timing") or {}).get("precision", ""),
+                        "content_sha256": cue_manifest.get("content_sha256", ""),
+                    }
+                except Exception as e:
+                    logger.warning("签发数字人 Cue manifest 失败，播放继续走兼容模式: %s", e)
 
         if playlist_alignment_error is not None:
             return {"available": False, **playlist_alignment_error}

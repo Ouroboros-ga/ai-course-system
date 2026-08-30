@@ -3,7 +3,6 @@ import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
-import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
   buildPreviewPlaylistBridge,
   findLearningNodeIndexForPlaylistItem,
@@ -78,7 +77,6 @@ const ws = useLearningWorkspace(courseId, {
   getQuestionObservation: () => getQuestionObservation(),
 })
 media = useMediaPlayback(courseId)
-const avatar = useAvatarPlayback()
 playlistPlayback = usePlaylistPlayback(media.playlist)
 
 // Teacher draft preview renders draft outline ids while the frozen media
@@ -696,19 +694,6 @@ onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
   await restoreActiveLearningAdjustment()
 })
-
-watch(
-  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => media.avatarManifestUrl.value, () => media.avatarAssetUrls.value, () => playlistPlayback.activeItem.value?.avatarCues, () => playlistPlayback.activeItem.value?.avatarManifestUrl, () => playlistPlayback.activeItem.value?.avatarAssetUrls],
-  ([avatarCues, digitalHumanManifest, avatarManifestUrl, avatarAssetUrls, playlistAvatarCues, playlistAvatarManifestUrl, playlistAvatarAssetUrls]) => {
-    avatar.load({
-      avatarCues: playlistAvatarCues || avatarCues,
-      digitalHumanManifest,
-      avatarManifestUrl: playlistAvatarManifestUrl || avatarManifestUrl,
-      avatarAssetUrls: Object.keys(playlistAvatarAssetUrls || {}).length ? playlistAvatarAssetUrls : avatarAssetUrls,
-    })
-  },
-  { immediate: true },
-)
 </script>
 
 <template>
@@ -773,9 +758,6 @@ watch(
             :subtitle-segments="media.subtitleSegments.value"
             :ppt-timeline="media.pptTimeline.value"
             :ppt-manifest="media.ppt.value"
-            :avatar-cues="avatar.cues.value"
-            :avatar-sprite-manifest="avatar.spriteManifest.value"
-            :avatar-asset-source="avatar.assetSource.value"
             :default-playback-mode="media.manifest.value.defaultPlaybackMode"
             :media-status="media.status.value"
             :media-message="media.manifest.value.message || media.error.value"

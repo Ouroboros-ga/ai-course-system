@@ -184,7 +184,10 @@ class DocumentIRProjector:
     @staticmethod
     def _semantic_role(block: Any) -> str:
         if block.block_type == "heading":
-            return "section_title" if getattr(block, "heading_level", None) else "knowledge_title"
+            # 顶层（第X章/9.4 等）→ section_title；更深小标题（9.4.1 / 1、/ （1））→ knowledge_title，
+            # 使知识点来自真实标题而非每个正文段（修复 textbox 型教学 PPT 映射）。
+            level = getattr(block, "heading_level", None) or 0
+            return "section_title" if level <= 1 else "knowledge_title"
         return "explanation"
 
     @staticmethod

@@ -18,7 +18,6 @@ import {
 } from 'lucide-vue-next'
 
 import SfxButton from '@/app/ui/SfxButton.vue'
-import AvatarViewport from '@/features/student-learning/components/AvatarViewport.vue'
 import { resolvePptCueAtTime } from '@/features/student-learning/adapters/mediaPlaybackAdapter.js'
 
 /**
@@ -44,9 +43,6 @@ const props = defineProps({
   subtitleSegments: { type: Array, default: () => [] },
   pptTimeline: { type: Array, default: () => [] },
   pptManifest: { type: Object, default: null },
-  avatarCues: { type: Object, default: null },
-  avatarSpriteManifest: { type: Object, default: null },
-  avatarAssetSource: { type: String, default: 'platform' },
   defaultPlaybackMode: { type: String, default: 'compatibility' },
   mediaStatus: { type: String, default: 'idle' },
   mediaMessage: { type: String, default: '' },
@@ -86,7 +82,6 @@ const activePlaylistItem = computed(() => props.playlist?.items?.[props.playlist
 const activeAudioUrl = computed(() => activePlaylistItem.value?.audioUrl || props.audioUrl)
 const playlistOffset = computed(() => Number(activePlaylistItem.value?.offsetMs || 0) / 1000)
 const hasPlaylist = computed(() => Boolean(activePlaylistItem.value))
-const avatarPlaybackTime = computed(() => sourceTimeForGlobal(props.currentTime))
 const hasAudio = computed(() => Boolean(activeAudioUrl.value) && !audioError.value)
 const hasLegacyVideo = computed(() => !hasAudio.value && Boolean(props.legacyVideoUrl) && !legacyVideoError.value)
 const mediaElement = computed(() => hasAudio.value ? audioRef.value : legacyVideoRef.value)
@@ -471,17 +466,29 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
           <strong>当前页暂无可显示的课件</strong>
         </div>
       </div>
-      <!-- 默认（非智能体）状态：显示数字人或兼容视频 -->
+      <!-- 默认（非智能体）状态：只展示 PPT 课件 + 音频（数字人已移除，保留 TTS） -->
       <template v-else>
-        <AvatarViewport
-          v-if="hasAudio && avatarCues"
-          :cues="avatarCues"
-          :sprite-manifest="avatarSpriteManifest"
-          :current-time="avatarPlaybackTime"
-          :audio-element="audioRef"
-          :default-playback-mode="defaultPlaybackMode"
-          :asset-source="avatarAssetSource"
-        />
+        <div
+          v-if="effectiveSlide || currentPptPage"
+          class="sfx-stage-slide-frame sfx-stage-lecture-ppt"
+        >
+          <img
+            v-if="effectiveSlide && !slideError"
+            :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
+            :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
+            :alt="`课程课件第 ${displayedPage} 页`"
+            @error="slideError = true"
+          />
+          <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
+            <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
+            <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
+            <p class="sfx-t-body">{{ currentPptPage.content }}</p>
+          </div>
+          <div v-else class="sfx-stage-fallback is-light">
+            <FileQuestion :size="28" :stroke-width="1.6" />
+            <strong>当前页暂无可显示的课件</strong>
+          </div>
+        </div>
         <video
           v-if="!hasAudio && hasLegacyVideo"
           ref="legacyVideoRef"

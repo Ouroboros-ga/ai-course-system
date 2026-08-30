@@ -174,6 +174,10 @@ class Settings(BaseSettings):
     # on a learner request and a failed build never replaces the active bundle.
     KNOWLEDGE_BUNDLE_ENABLED: bool = True
     GRAPHRAG_ENABLED: bool = False
+    # 数字人总开关（XH-202620 决策：展示效果不佳，正式关闭只保留 TTS + PPT）。
+    # 关闭后媒体发布不签发 avatar manifest / cue（走兼容模式：音频 + PPT + 字幕），
+    # 教师端不再产生数字人资产。历史不可变 release 数据与授权记录保留，不做破坏性删除。
+    MEDIA_AVATAR_ENABLED: bool = False
     # XH-202620：图候选提取的"学科知识库名称锚定"对齐。开启后，提取出的候选
     # 若未命中学科知识库（knowledge_data/）标准概念，会被分流为 needs_review
     # 强制人工审查（不再默认 proposed）；命中则保持 proposed。

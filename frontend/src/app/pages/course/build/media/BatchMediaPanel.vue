@@ -7,7 +7,6 @@ const mediaBuild = inject('mediaBuild')
 const {
     presetCatalog,
     selectedVoicePresetId, selectedVoicePresetVersion,
-    selectedAvatarPresetId, selectedAvatarPresetVersion,
     batchPlan, batchPlanMatchesSelections, canPlanBatch, createBatchPlan,
     providerNeedsConfirmation, providerIsDemo, paidTtsConfirmed,
     canConfirmBatch, confirmBatch, acting,
@@ -25,7 +24,7 @@ const {
             </div>
             <SfxBadge tone="ink">{{ batchNodeIds.length }} / 20</SfxBadge>
         </header>
-        <div v-if="presetCatalog.voices.length || presetCatalog.avatars.length" class="preset-selection">
+        <div v-if="presetCatalog.voices.length" class="preset-selection">
             <div class="preset-group">
                 <span class="preset-label">平台音色</span>
                 <label v-for="voice in presetCatalog.voices" :key="`voice-${voice.preset_id}-${voice.version}`"
@@ -35,17 +34,6 @@ const {
                         :value="voice.preset_id" @change="selectedVoicePresetVersion = voice.version" />
                     <span><strong>{{ voice.display_name }}</strong><small>{{ voice.version }} · {{ voice.provider_key
                     }}</small></span>
-                </label>
-            </div>
-            <div class="preset-group">
-                <span class="preset-label">平台 2D 角色</span>
-                <label v-for="avatarPreset in presetCatalog.avatars"
-                    :key="`avatar-${avatarPreset.preset_id}-${avatarPreset.version}`" class="preset-option"
-                    :class="{ selected: selectedAvatarPresetId === avatarPreset.preset_id && selectedAvatarPresetVersion === avatarPreset.version }">
-                    <input v-model="selectedAvatarPresetId" type="radio" name="media-avatar-preset"
-                        :value="avatarPreset.preset_id" @change="selectedAvatarPresetVersion = avatarPreset.version" />
-                    <span><strong>{{ avatarPreset.display_name }}</strong><small>{{ avatarPreset.version }} · {{
-                        avatarPreset.manifest_available ? 'manifest 可用' : 'manifest 缺失' }}</small></span>
                 </label>
             </div>
         </div>

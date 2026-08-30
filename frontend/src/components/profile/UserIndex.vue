@@ -6,10 +6,9 @@ import UserInfoCard from "./LoginIn/userinfo/UserInfoCard.vue"
 import StatsCard from "./LoginIn/stats/StatsCard.vue"
 import PreferenceSettings from "./LoginIn/preference/PreferenceSettings.vue"
 import MyCourses from "./LoginIn/courses/MyCourses.vue"
-import TeacherAvatarSetting from './LoginIn/menu/TeacherAvatarSetting.vue'
 import api from '@/api/index.js'
 import { showToast } from '@/utils/toast'
-import { Settings, Palette, BookOpen, LogOut, Bot } from 'lucide-vue-next'
+import { Settings, Palette, BookOpen, LogOut } from 'lucide-vue-next'
 
 import { useCounterStore } from '@/stores/counter.js'
 const counter = useCounterStore()
@@ -20,7 +19,6 @@ const router = useRouter()
 const showSettingsPanel = ref(false)
 const showPreferencePanel = ref(false)
 const showMyCoursesPanel = ref(false)
-const avatarModalVisible = ref(false)
 const authLoading = ref(false)
 const authError = ref('')
 
@@ -152,11 +150,6 @@ const handleMyCourses = () => {
   showMyCoursesPanel.value = true
 }
 
-// 6. 打开教师数字人设置
-const handleOpenAvatarSetting = () => {
-  avatarModalVisible.value = true
-}
-
 // 7. 关闭偏好设置
 const handleClosePreference = () => {
   showPreferencePanel.value = false
@@ -209,7 +202,6 @@ const handleLogout = () => {
   showSettingsPanel.value = false
   showPreferencePanel.value = false
   showMyCoursesPanel.value = false
-  avatarModalVisible.value = false
   courseCount.value = 0
   chatCount.value = 0
   studyMinutes.value = 0
@@ -269,12 +261,6 @@ const handleLogout = () => {
           </div>
           <div>退出登录</div>
         </div>
-        <div class="menu-item" @click="handleOpenAvatarSetting">
-          <div class="menu-icon menu-icon--warning">
-            <Bot :size="28" />
-          </div>
-          <div>教师数字人设置</div>
-        </div>
       </div>
     </div>
 
@@ -303,10 +289,6 @@ const handleLogout = () => {
         <MyCourses @close="handleCloseMyCourses" />
       </div>
     </Transition>
-
-    <TeacherAvatarSetting
-      v-model:visible="avatarModalVisible"
-    />
   </div>
 </template>
 
