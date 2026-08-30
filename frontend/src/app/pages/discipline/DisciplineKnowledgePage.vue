@@ -38,8 +38,9 @@ const nodeTypeLabel = (type) => ({
 
 async function loadOverview() {
   try {
+    // request.js 拦截器已剥离 code/message 层，返回的即 data（overview dict）
     const body = await getDisciplineKnowledgeOverview()
-    overview.value = body?.data ?? null
+    overview.value = body ?? null
   } catch {
     overview.value = null
   }
@@ -55,7 +56,7 @@ async function runSearch() {
   nodeDetail.value = null
   try {
     const body = await searchDisciplineKnowledge(q, topK.value)
-    results.value = body?.data?.results ?? []
+    results.value = body?.results ?? []
   } catch (err) {
     error.value = err?.response?.data?.detail || '检索失败，请稍后重试。'
     results.value = []
@@ -74,7 +75,7 @@ async function toggleDetail(node) {
   nodeDetail.value = null
   try {
     const body = await getDisciplineKnowledgeNode(node.id)
-    nodeDetail.value = body?.data ?? null
+    nodeDetail.value = body ?? null
   } catch {
     nodeDetail.value = null
   }

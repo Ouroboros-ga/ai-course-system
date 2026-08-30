@@ -825,3 +825,11 @@ test('DisciplineKnowledgePage.vue: 学科知识检索页动作按钮使用 SfxBu
   assert.match(src, /<SfxButton variant="tertiary"/)
 })
 
+test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截器已剥离 code/message 层）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  // request.js 响应拦截器 return res.data，故组件取数不得再写 body?.data
+  assert.doesNotMatch(src, /body\?\.data/)
+  assert.match(src, /overview\.value = body \?\? null/)
+  assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
+})
+
