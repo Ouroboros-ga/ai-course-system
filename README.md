@@ -141,7 +141,7 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 |---|---|---|
 | 课程级批量媒体（MediaBuildBatch → MediaReleaseItem） | ✅ | 只读计划 → 教师一次确认 → 批量构建 |
 | 不可变播放清单（`audio-playlist/v1`、`ppt-manifest/v1`、字幕） | ✅ | 发布快照固定 `release_id + playlist_content_hash`；PPT manifest 使用后台 `media.ppt_manifest`，复用映射页图并仅补渲染缺页 |
-| 数字人（PixiJS 2D 角色） | 🚫 已关闭 | XH-202620 决策：`MEDIA_AVATAR_ENABLED=false`（默认关闭），媒体发布走兼容模式（音频 + PPT + 字幕），不再签发 avatar manifest/cue。教师端不再创建/选择数字人。历史不可变 release 数据与授权记录保留。 |
+| 数字人（PixiJS 2D 角色） | 🚫 已移除 | XH-202620 决策：完全移除数字人，只保留 TTS + PPT + 字幕。前端已移除 avatar 渲染/选择入口，后端移除 avatar 服务/端点/worker，媒体发布始终走兼容模式。历史不可变 release 数据与授权记录保留（DB 表未删）。 |
 | 真实 TTS（豆包） | 🧪 | `MEDIA_DEMO_MODE=false` + `STAGE8_TTS_PROVIDER=doubao` 显式配置；已通过一次受控 POC |
 | OSS/S3 对象存储、上传 confirm 校验 | ✅ | Local PUT / S3-OSS presigned POST 双链路 |
 | 旧 `/video-gen` 数字人视频链 | 🚫 | 仅历史兼容，带弃用响应与 Sunset |

@@ -21,15 +21,6 @@ const ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const FRONTEND_API = path.join(ROOT, 'frontend', 'src', 'api')
 const BACKEND_EP = path.join(ROOT, 'backend', 'app', 'api', 'v1', 'endpoints')
 
-test('avatar.js: uploadAvatarSourceMedia 分支支持 PUT 与 presigned POST fields', () => {
-  const src = read('frontend/src/api/avatar.js')
-  assert.match(src, /const method = String\(options\.method \|\| ['"]PUT['"]\)\.toUpperCase\(\)/)
-  assert.match(src, /if \(method === ['"]POST['"]\)/)
-  assert.match(src, /Object\.entries\(options\.fields \|\| \{\}\)/)
-  assert.match(src, /form\.append\(['"]file['"], file\)/)
-  assert.match(src, /request\.put\(relativeUrl, file/)
-})
-
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8')
 }
@@ -646,11 +637,13 @@ test('media_release.js: getPlatformMediaPresets 使用课程级 platform-presets
   assert.match(src, /export const getPlatformMediaPresets\s*=\s*\(courseId\)\s*=>\s*request\.get\(`\$\{base\(courseId\)\}\/platform-presets`\)/)
 })
 
-test('media_release.py: 注册表路由与 media.generate 权限一致', () => {
+test('media_release.py: 注册表路由与 media.generate 权限一致（数字人已关闭，返回空目录）', () => {
   const src = read('backend/app/api/v1/endpoints/media_release.py')
   assert.match(src, /@media_release_router\.get\("\/course\/\{course_id\}\/platform-presets"\)/)
   assert.match(src, /get_platform_media_presets[\s\S]*?course\.media\.generate/)
-  assert.match(src, /list_public_presets\(session[\s\S]*?effective_provider/)
+  // 数字人功能已关闭：不再调用 list_public_presets，返回空 voices/avatars。
+  assert.doesNotMatch(src, /list_public_presets\(session/)
+  assert.match(src, /"voices": \[\][\s\S]*?"avatars": \[\]/)
 })
 
 // ============================================================================

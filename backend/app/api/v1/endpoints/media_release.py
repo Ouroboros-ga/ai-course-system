@@ -59,7 +59,6 @@ from app.services.media_release_service import (
 from app.models.course_outline_model import TeachingScriptNode
 from app.services.tts_provider import TtsProviderConfigurationError
 from app.services.stage8_provider_runtime import get_stage8_tts_provider, resolve_stage8_tts_runtime
-from app.services.platform_media_preset_service import list_public_presets, sign_avatar_package_for_release
 from app.services.media_batch_service import (
     build_media_plan,
     confirm_media_batch,
@@ -167,13 +166,17 @@ async def get_platform_media_presets(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return safe platform preset choices for the course media builder."""
+    """Return safe platform preset choices for the course media builder.
+
+    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），平台预设注册表
+    服务已下线：不再读取任何预设，向构建页返回空音色/角色目录。前端只依赖
+    ``voices``/``avatars`` 字段，空列表即可保持页面可加载。
+    """
     require_course_permission(session, current_user, course_id, "course.media.generate")
     runtime = resolve_stage8_tts_runtime()
-    data = list_public_presets(session, active_tts_provider_key=runtime.provider_key)
-    session.commit()
     return unified_response(code=200, message="平台音色与数字人角色已加载", data={
-        **data,
+        "voices": [],
+        "avatars": [],
         "effective_provider": runtime.effective_provider,
     })
 
@@ -459,13 +462,8 @@ async def preview_draft_release_item_playback(
                 "material_version_id": mapping.get("material_version_id"),
                 "start_ms": int(item.duration_ms * index / max(len(refs), 1)),
             })
-    _, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
-        session,
-        course_id=course_id,
-        release_id=release_id,
-        preset_id=release.avatar_preset_id,
-        preset_version=release.avatar_preset_version,
-    )
+    # 数字人（avatar）功能已关闭：不再签发角色包，返回空清单。
+    avatar_manifest_url, avatar_asset_urls = None, {}
     return unified_response(code=200, message="草稿统一播放器预览数据已签发", data={
         "schema": "draft-media-preview/v1",
         "release_id": release_id,
@@ -1436,26 +1434,23 @@ async def get_providers_health(
 ):
     """查询所有 Provider 健康状态（M3/M5）
 
-    返回 TTS 和数字人 Provider 的健康检查结果与当前配置。
+    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），不再实例化
+    DH Provider；``digital_human`` 返回静态的禁用状态，TTS 仍实时探测。
     不需要课程权限，仅限已登录用户。
     """
-    from app.services.digital_human_provider import get_digital_human_provider
     from app.core.config import settings
 
     tts_runtime = resolve_stage8_tts_runtime()
-    dh_provider = get_digital_human_provider()
-
-    dh_health = dh_provider.health_check()
 
     return unified_response(
         code=200, message="Provider 健康状态查询成功",
         data={
             "tts": tts_runtime.as_public_dict(),
             "digital_human": {
-                "provider_key": dh_provider.provider_key,
-                "provider_version": dh_provider.provider_version,
-                "healthy": dh_health.healthy,
-                "status_message": dh_health.message,
+                "provider_key": "",
+                "provider_version": "",
+                "healthy": False,
+                "status_message": "数字人功能已关闭",
                 "configured_provider": getattr(settings, "STAGE8_DH_PROVIDER", "fake"),
                 "fallback_on_failure": getattr(settings, "DH_PROVIDER_FALLBACK_ON_FAILURE", True),
             },
@@ -1490,7 +1485,8 @@ async def switch_playback_mode(
         data={
             "course_id": course_id,
             "playback_mode": mode.value,
-            "digital_human_enabled": mode != PlaybackMode.COMPATIBILITY,
+            # 数字人（avatar）功能已关闭：任何模式都不启用数字人渲染
+            "digital_human_enabled": False,
             "fallback_supported": True,
             "message": (
                 "已切换到兼容模式（音频+字幕+PPT+讲稿）" if mode == PlaybackMode.COMPATIBILITY

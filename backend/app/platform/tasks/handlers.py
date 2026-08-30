@@ -1145,126 +1145,6 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def media_avatar_preprocess_handler(ctx: TaskHandlerContext) -> None:
-    """数字人资产预处理 handler。
-
-    input_payload 期望字段：
-    - avatar_id: str
-    - portrait_object_key: str
-    - voice_object_key: str | None
-    - provider_key: str
-
-    P0-3 安全约束：
-    - 入口必须校验 AvatarSourceMedia.upload_status == VALIDATED，
-      拒绝 pending/uploaded/quarantined/withdrawn 状态的素材进入预处理。
-    - 调用 preparation_service.execute_preparation_job 执行真实预处理。
-    """
-    payload = ctx.input_payload or {}
-    avatar_id = payload.get("avatar_id")
-    if not avatar_id:
-        raise TaskExecutionError(
-            "VALIDATION_FAILED",
-            "media.avatar_preprocess handler 缺少 avatar_id",
-            retryable=False,
-        )
-
-    from app.services.avatar_service import preparation_service
-    from sqlmodel import select
-    from app.models.avatar_model import (
-        AvatarPreparationJob,
-        AvatarSourceMedia,
-        AvatarSourceMediaType,
-        AvatarSourceMediaStatus,
-    )
-
-    # 1. 查找对应的 AvatarPreparationJob
-    with ctx.session_factory() as session:
-        job = session.exec(
-            select(AvatarPreparationJob).where(
-                AvatarPreparationJob.task_id == ctx.task_id
-            )
-        ).first()
-        if job is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"未找到 task_id={ctx.task_id} 对应的 AvatarPreparationJob",
-                retryable=False,
-            )
-        job_id = job.job_id
-        owner_user_id = job.owner_user_id
-
-        # P0-3.6 安全校验：所有依赖素材必须处于 VALIDATED 状态
-        sources = list(session.exec(
-            select(AvatarSourceMedia).where(
-                AvatarSourceMedia.avatar_id == avatar_id,
-                AvatarSourceMedia.owner_user_id == owner_user_id,
-            )
-        ).all())
-        if not sources:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"avatar_id={avatar_id} 没有任何原始素材，无法预处理",
-                retryable=False,
-            )
-        # 必须存在 portrait_video
-        portrait = next(
-            (s for s in sources if s.media_type == AvatarSourceMediaType.PORTRAIT_VIDEO),
-            None,
-        )
-        if portrait is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"avatar_id={avatar_id} 缺少 portrait_video 素材",
-                retryable=False,
-            )
-        # 所有登记的素材都必须 VERIFIED；存在未校验/隔离/撤回的素材直接拒绝
-        unverified = [
-            s for s in sources
-            if s.upload_status != AvatarSourceMediaStatus.VERIFIED
-        ]
-        if unverified:
-            bad = [
-                {
-                    "source_media_id": s.source_media_id,
-                    "media_type": s.media_type.value,
-                    "upload_status": s.upload_status.value,
-                }
-                for s in unverified
-            ]
-            raise TaskExecutionError(
-                "DEPENDENCY_UNVALIDATED",
-                f"avatar_id={avatar_id} 存在未通过服务端校验的素材: {bad}",
-                retryable=False,
-            )
-
-    # 2. 调用 execute_preparation_job（同步执行，Fake Provider 在 P0-3 替换）
-    with ctx.session_factory() as session:
-        try:
-            preparation_service.execute_preparation_job(
-                session,
-                avatar_id=avatar_id,
-                job_id=job_id,
-                owner_user_id=owner_user_id,
-            )
-            session.commit()
-        except Exception as exc:
-            raise TaskExecutionError(
-                "AVATAR_PREPROCESS_FAILED",
-                f"数字人预处理失败: {exc}",
-                retryable=True,
-            )
-
-    # 3. 标记 succeeded（execute_preparation_job 内部已更新 job 状态，
-    #    但 task 状态需在此显式标记）
-    with ctx.session_factory() as session:
-        ctx.service.mark_succeeded(
-            session,
-            ctx.task_id,
-            result_ref=f"avatar_preparation_job://{job_id}",
-            result_data={"avatar_id": avatar_id, "job_id": job_id},
-        )
-
-
 async def media_generic_handler(ctx: TaskHandlerContext) -> None:
     """媒体生成通用 handler（tts/subtitle/dh_render/video_package/timeline_publish）。
 
@@ -2053,7 +1933,6 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("document_parse", document_parse_handler)
     worker.register("course_draft_build", course_draft_build_handler)
     worker.register("experiment_run", experiment_run_handler)
-    worker.register("media.avatar_preprocess", media_avatar_preprocess_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
     worker.register("question_bank.import", question_bank_import_handler)
     from app.platform.tasks.knowledge_handlers import (
@@ -2068,7 +1947,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("media.tts", media_tts_handler)
     worker.register("media.timeline_publish", media_timeline_publish_handler)
     worker.register("media.ppt_manifest", media_ppt_manifest_handler)
-    for job_type in ("subtitle", "avatar_preprocess", "dh_render", "video_package"):
+    for job_type in ("subtitle", "video_package"):
         task_type = f"media.{job_type}"
         if not worker.has_handler(task_type):
             worker.register(task_type, media_generic_handler)

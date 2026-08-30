@@ -118,7 +118,6 @@ from app.api.v1.endpoints import (
     mapping,            # F2/F5 知识点↔PPT映射引擎
     player,             # F6 分屏视频播放器
     ppt_generation,     # F3 AI生成PPT课件
-    video_generation,   # F4/F5 数字人视频生成管线
     video,              # 视频相关功能
     platform,           # 平台管理功能
     prerequisite,       # 前置知识智能跳转
@@ -315,7 +314,6 @@ app.include_router(asset.router, prefix="/api/v1/asset", tags=["F1-素材管理"
 app.include_router(mapping.router, prefix="/api/v1/mapping", tags=["F2/F5-映射引擎"])
 app.include_router(player.router, prefix="/api/v1/player", tags=["F6-分屏播放器"])
 app.include_router(ppt_generation.router, prefix="/api/v1/ppt", tags=["F3-PPT生成"])
-app.include_router(video_generation.router, prefix="/api/v1/video-gen", tags=["F4/F5-视频生成"])
 app.include_router(video.router, prefix="/api/v1/video", tags=["视频功能"])
 app.include_router(platform.router, prefix="/api/v1/platform", tags=["平台管理"])
 
@@ -503,19 +501,6 @@ app.include_router(
     media_release_endpoints.media_release_router,
     prefix="/api/v1/media",
     tags=["阶段8 媒体生成与发布"],
-)
-
-# 阶段8：教师数字人资产中心
-from app.api.v1.endpoints import avatar as avatar_endpoints  # noqa: E402
-app.include_router(
-    avatar_endpoints.avatar_router,
-    prefix="/api/v1",
-    tags=["阶段8 教师数字人资产中心"],
-)
-app.include_router(
-    avatar_endpoints.course_avatar_router,
-    prefix="/api/v1",
-    tags=["阶段8 课程数字人绑定"],
 )
 
 # 阶段9：Agent 工具治理与教师安全阀

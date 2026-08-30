@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import types
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -21,12 +22,36 @@ from app.models.media_release_model import (
     MediaReleaseStatus,
 )
 from app.services.object_storage import get_object_storage
-from app.services.platform_media_preset_service import (
-    resolve_avatar_preset,
-    resolve_voice_preset,
-)
 from app.services.tts_provider import TtsSynthesisRequest
 from app.services.stage8_provider_runtime import get_stage8_tts_provider
+
+
+def _resolve_voice_preset(session: Session, *, preset_id: str = "", version: str = "",
+                          active_tts_provider_key: str = "") -> types.SimpleNamespace:
+    """Resolve the voice preset identity for a media batch.
+
+    平台预设注册表服务（platform_media_preset_service）已随数字人功能下线；
+    音色不再按预设表解析，统一回落到服务器配置的 TTS Provider 的默认音色，
+    保留一个稳定的默认身份用于版本记录。传入的 preset_id/version 仅作透传。
+    """
+    return types.SimpleNamespace(
+        preset_id=preset_id or "platform-default",
+        version=version or "1.0.0",
+        display_name="平台讲解音色",
+        provider_key=active_tts_provider_key or "",
+        content_hash="",
+    )
+
+
+def _resolve_avatar_preset(session: Session, *, preset_id: str = "", version: str = "") -> types.SimpleNamespace:
+    """数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false）：返回空角色预设。"""
+    return types.SimpleNamespace(
+        preset_id=preset_id or "",
+        version=version or "",
+        display_name="",
+        provider_key="",
+        content_hash="",
+    )
 
 
 def _script_hash(node: TeachingScriptNode) -> str:
@@ -325,13 +350,13 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
     provider = _server_provider(requested_key=provider_key, requested_version=provider_version)
     provider_key = provider.provider_key
     provider_version = provider.provider_version
-    voice_preset = resolve_voice_preset(
+    voice_preset = _resolve_voice_preset(
         session,
         preset_id=voice_preset_id,
         version=voice_preset_version,
         active_tts_provider_key=provider_key,
     )
-    avatar_preset = resolve_avatar_preset(
+    avatar_preset = _resolve_avatar_preset(
         session,
         preset_id=avatar_preset_id,
         version=avatar_preset_version,
@@ -457,8 +482,9 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
     max_version = session.exec(select(func.max(MediaRelease.version_number)).where(MediaRelease.course_id == course_id)).one() or 0
     voice_preset = dict(plan.get("voice_preset") or {})
     avatar_preset = dict(plan.get("avatar_preset") or {})
-    if not voice_preset.get("preset_id") or not avatar_preset.get("preset_id"):
-        reject_validation_failed("批量媒体计划缺少已解析的平台音色或数字人角色")
+    # 数字人（avatar）功能已关闭，avatar 预设允许为空；音色预设仍是必需。
+    if not voice_preset.get("preset_id"):
+        reject_validation_failed("批量媒体计划缺少已解析的平台音色")
     release = MediaRelease(course_id=course_id, version_number=int(max_version) + 1,
                             label=label or "批量媒体草稿", status=MediaReleaseStatus.DRAFT,
                             notes="批量媒体建设草稿",
