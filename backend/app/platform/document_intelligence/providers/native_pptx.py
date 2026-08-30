@@ -592,6 +592,9 @@ def map_pptx_output_to_ir(
 
             # Determine block type
             text = shape.get("text", "")
+            # 跳过噪声块（页码/页脚/纯书名横幅）——不应成为知识点/证据/检索源。
+            if _is_noise_text(text):
+                continue
             block_type = "paragraph"
             heading_level = None
             if shape.get("is_title") or _is_numbered_section_heading(text):
