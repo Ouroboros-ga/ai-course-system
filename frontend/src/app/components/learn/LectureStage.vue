@@ -47,7 +47,7 @@ const props = defineProps({
   mediaStatus: { type: String, default: 'idle' },
   mediaMessage: { type: String, default: '' },
   legacyVideoUrl: { type: String, default: '' },
-  // 智能体面板是否打开：打开时左侧数字人区域切换为 PPT 缩略图
+  // 智能体面板是否打开：右栏切换为对话面板并收窄讲解栏
   agentPanelOpen: { type: Boolean, default: false },
 })
 
@@ -444,81 +444,36 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         @error="handleAudioError"
       />
 
-      <!-- 智能体面板打开时：优先显示 PPT 缩略图，而非数字人 -->
-      <div
-        v-if="agentPanelOpen && (effectiveSlide || currentPptPage)"
-        class="sfx-stage-slide-frame sfx-stage-lecture-ppt"
+      <!-- 讲解媒体：音频为唯一 P0 时钟；原数字人位不再展示 PPT，讲解原文占满本栏。
+           仅无音频的旧课程回退到兼容视频。 -->
+      <video
+        v-if="!hasAudio && hasLegacyVideo"
+        ref="legacyVideoRef"
+        class="sfx-stage-video"
+        :key="legacyVideoUrl"
+        :src="legacyVideoUrl"
+        playsinline
+        preload="metadata"
+        @loadedmetadata="handleLoadedMetadata"
+        @timeupdate="handleTimeUpdate"
+        @seeked="handleSeeked"
+        @play="emitPlayback(true, $event.currentTarget)"
+        @pause="handlePause"
+        @ended="handleEnded"
+        @error="handleLegacyVideoError"
+      />
+
+      <div v-if="!hasAudio && !hasLegacyVideo" class="sfx-stage-fallback is-compact">
+        <VideoOff :size="28" :stroke-width="1.6" />
+        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
+        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
+      </div>
+
+      <section
+        class="sfx-stage-transcript"
+        :class="{ 'is-video-mode': hasLegacyVideo && !hasAudio }"
+        aria-label="讲解原文"
       >
-        <img
-          v-if="effectiveSlide && !slideError"
-          :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
-          :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
-          :alt="`课程课件第 ${displayedPage} 页`"
-          @error="slideError = true"
-        />
-        <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
-          <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
-          <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
-          <p class="sfx-t-body">{{ currentPptPage.content }}</p>
-        </div>
-        <div v-else class="sfx-stage-fallback is-light">
-          <FileQuestion :size="28" :stroke-width="1.6" />
-          <strong>当前页暂无可显示的课件</strong>
-        </div>
-      </div>
-      <!-- 默认（非智能体）状态：只展示 PPT 课件 + 音频（数字人已移除，保留 TTS） -->
-      <template v-else>
-        <div
-          v-if="effectiveSlide || currentPptPage"
-          class="sfx-stage-slide-frame sfx-stage-lecture-ppt"
-        >
-          <img
-            v-if="effectiveSlide && !slideError"
-            :key="effectiveSlide.imageUrl ?? effectiveSlide.url"
-            :src="effectiveSlide.imageUrl ?? effectiveSlide.url"
-            :alt="`课程课件第 ${displayedPage} 页`"
-            @error="slideError = true"
-          />
-          <div v-else-if="currentPptPage?.content || currentPptPage?.title" class="sfx-stage-slide-text">
-            <span class="sfx-t-caption">第 {{ displayedPage }} 页</span>
-            <h2 class="sfx-t-title2">{{ currentPptPage.title || currentNode?.title }}</h2>
-            <p class="sfx-t-body">{{ currentPptPage.content }}</p>
-          </div>
-          <div v-else class="sfx-stage-fallback is-light">
-            <FileQuestion :size="28" :stroke-width="1.6" />
-            <strong>当前页暂无可显示的课件</strong>
-          </div>
-        </div>
-        <video
-          v-if="!hasAudio && hasLegacyVideo"
-          ref="legacyVideoRef"
-          class="sfx-stage-video"
-          :key="legacyVideoUrl"
-          :src="legacyVideoUrl"
-          playsinline
-          preload="metadata"
-          @loadedmetadata="handleLoadedMetadata"
-          @timeupdate="handleTimeUpdate"
-          @seeked="handleSeeked"
-          @play="emitPlayback(true, $event.currentTarget)"
-          @pause="handlePause"
-          @ended="handleEnded"
-          @error="handleLegacyVideoError"
-        />
-      </template>
-
-      <div v-if="!agentPanelOpen && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback">
-        <VideoOff :size="32" :stroke-width="1.6" />
-        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
-        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
-      </div>
-      <div v-else-if="agentPanelOpen && !effectiveSlide && !currentPptPage?.content && !currentPptPage?.title && !hasAudio && !hasLegacyVideo" class="sfx-stage-fallback is-light">
-        <VideoOff :size="32" :stroke-width="1.6" />
-        <strong>{{ audioError || legacyVideoError || '当前课程尚未发布讲解媒体' }}</strong>
-        <p class="sfx-t-caption">{{ mediaMessage || '课件与讲解原文仍可正常阅读。' }}</p>
-      </div>
-
-      <section class="sfx-stage-transcript" aria-label="讲解原文">
         <header>
           <div class="sfx-stage-transcript-tools">
             <span class="sfx-t-caption">讲解原文</span>
@@ -651,10 +606,8 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   flex: 1;
   min-height: 0;
   display: grid;
-  /* The teacher's original slide is the primary learning surface.  Audio,
-     transcript and the avatar remain supporting layers rather than competing
-     content panes. */
-  grid-template-columns: minmax(220px, 1fr) minmax(0, 3fr);
+  /* 讲解原文是左栏唯一内容（原数字人位不再放 PPT），右侧同步课件为主视觉面。 */
+  grid-template-columns: minmax(300px, 1.4fr) minmax(0, 2.6fr);
   grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--space-4);
   padding: var(--space-4);
@@ -662,25 +615,11 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   overflow: hidden;
   transition: grid-template-columns var(--duration-normal) var(--ease-out);
 }
-/* 智能体面板打开时：左侧压缩给 PPT 缩略图，右侧对话获得更多阅读空间 */
+/* 智能体面板打开时：讲解栏收窄，右侧对话获得更多阅读空间 */
 .sfx-stage.is-agent-open {
-  grid-template-columns: minmax(240px, 0.75fr) minmax(0, 3.25fr);
+  grid-template-columns: minmax(280px, 1.1fr) minmax(0, 2.9fr);
   gap: var(--space-3);
   padding: var(--space-3);
-}
-
-/* 智能体模式下的 PPT 缩略图区域样式 */
-.sfx-stage-lecture-ppt {
-  min-height: 160px;
-  background: var(--surface-panel);
-  border-bottom: 1px solid var(--border-subtle);
-  flex: 1;
-  min-height: 0;
-}
-.sfx-stage-lecture-ppt img {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
 }
 
 .sfx-stage-pane {
@@ -714,19 +653,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 
 .sfx-stage-clock { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); opacity: 0; pointer-events: none; }
 
-.sfx-stage-lecture :deep(.avatar-viewport) {
-  position: relative;
-  right: auto;
-  bottom: auto;
-  width: 100%;
-  min-width: 0;
-  aspect-ratio: auto;
-  flex: 1;
-  min-height: 180px;
-  border-radius: 0;
-  border: 0;
-}
-
 .sfx-stage-video { flex: 1; min-height: 0; width: 100%; height: 100%; object-fit: contain; background: var(--code-bg); }
 
 .sfx-stage-fallback {
@@ -744,13 +670,15 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
 }
 
 .sfx-stage-fallback.is-light { color: var(--text-muted); }
+.sfx-stage-fallback.is-compact { flex: none; min-height: 0; padding: var(--space-6); }
 .sfx-stage-fallback strong { font-size: var(--ui-md-size); }
 
-.sfx-stage-transcript { min-height: 128px; max-height: 178px; display: flex; flex-direction: column; }
+.sfx-stage-transcript { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sfx-stage-transcript.is-video-mode { flex: 0 0 auto; min-height: 128px; max-height: 178px; }
 .sfx-stage-transcript-tools { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
 .sfx-stage-transcript header { padding-block: var(--space-2); }
 .sfx-stage-transcript-list { min-height: 0; overflow-y: auto; margin: 0; padding: var(--space-2) var(--space-4); list-style: none; }
-.sfx-stage-transcript-list li { padding: var(--space-2) var(--space-3); border-left: 2px solid transparent; color: var(--text-secondary); font-size: var(--ui-sm-size); line-height: 1.65; }
+.sfx-stage-transcript-list li { padding: var(--space-2) var(--space-3); border-left: 2px solid transparent; color: var(--text-secondary); font-size: var(--ui-md-size); line-height: 1.75; }
 .sfx-stage-transcript-list li.is-active { border-left-color: var(--amber-500); background: var(--amber-100); color: var(--text-primary); }
 .sfx-stage-transcript > .sfx-t-caption { padding: var(--space-4); }
 
@@ -799,7 +727,6 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   .sfx-stage-seek { order: 3; flex-basis: 100%; }
   /* 音量滑条在手机窄屏空间有限，静音按钮已保留 */
   .sfx-stage-volume { display: none; }
-  .sfx-stage-transcript { max-height: 150px; }
   .sfx-stage-slide-text { padding: var(--space-3); }
 }
 </style>
