@@ -1104,6 +1104,10 @@ class InitialCoursePrepService:
                     "confidence": 0.8,
                     "anchor_ids": [],
                 })
+        # XH-202620：用学科知识库语义关系增强 LLM 生成的顺序链（纯确定性、无 LLM）。
+        from app.platform.knowledge.kb_alignment import enrich_relations_from_kb
+
+        relations = enrich_relations_from_kb(nodes, relations)
         batch = graph_candidate_service.create_batch(
             session, course_id=course_id, parse_run_id=None, initiated_by=created_by,
         )

@@ -174,6 +174,11 @@ class Settings(BaseSettings):
     # on a learner request and a failed build never replaces the active bundle.
     KNOWLEDGE_BUNDLE_ENABLED: bool = True
     GRAPHRAG_ENABLED: bool = False
+    # XH-202620：图候选提取的"学科知识库名称锚定"对齐。开启后，提取出的候选
+    # 若未命中学科知识库（knowledge_data/）标准概念，会被分流为 needs_review
+    # 强制人工审查（不再默认 proposed）；命中则保持 proposed。
+    # 关闭或知识库为空时回退为原有的 proposed 语义（不强制人工、不误标）。
+    KNOWLEDGE_KB_ALIGNMENT_ENABLED: bool = True
     GRAPHRAG_WORKER_PYTHON: str = ""
     GRAPHRAG_STORAGE_ROOT: str = "./media/knowledge_indexes"
     GRAPHRAG_COMPLETION_PROVIDER: str = ""

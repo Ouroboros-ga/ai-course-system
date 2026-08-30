@@ -234,6 +234,11 @@ export const shadowAppRoutes = [
                     component: () => import('./pages/course/knowledge/KnowledgeReviewsPage.vue'),
                   },
                   {
+                    path: 'candidates',
+                    name: 'app-course-knowledge-candidates',
+                    component: () => import('./pages/course/knowledge/KnowledgeCandidateReviewPage.vue'),
+                  },
+                  {
                     path: 'snapshots',
                     name: 'app-course-knowledge-snapshots',
                     component: () => import('./pages/course/knowledge/KnowledgeSnapshotsPage.vue'),

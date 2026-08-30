@@ -1,6 +1,6 @@
 <script setup>
 import { computed, inject } from 'vue'
-import { Network, Quote, ListChecks, History } from 'lucide-vue-next'
+import { Network, Quote, ListChecks, History, ScanSearch } from 'lucide-vue-next'
 import SfxLocalRail from '@/app/ui/SfxLocalRail.vue'
 
 /**
@@ -20,7 +20,8 @@ const railItems = computed(() => {
   ]
   if (canEdit.value) {
     items.push(
-      { key: 'reviews', label: '候选审核', to: `${base}/reviews`, icon: ListChecks },
+      { key: 'reviews', label: '知识包审批', to: `${base}/reviews`, icon: ListChecks },
+      { key: 'candidates', label: '节点审核', to: `${base}/candidates`, icon: ScanSearch },
       { key: 'snapshots', label: '版本记录', to: `${base}/snapshots`, icon: History },
     )
   }

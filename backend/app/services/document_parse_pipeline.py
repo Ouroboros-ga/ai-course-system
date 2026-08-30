@@ -668,6 +668,10 @@ def _build_graph_candidates(
         "confidence": min(left["confidence"], right["confidence"]),
         "anchor_ids": list(dict.fromkeys(left["anchor_ids"] + right["anchor_ids"])),
     } for left, right in zip(candidates, candidates[1:])]
+    # XH-202620：用学科知识库语义关系增强解析侧的 next_topic 顺序链（纯确定性、无 LLM）。
+    from app.platform.knowledge.kb_alignment import enrich_relations_from_kb
+
+    relations = enrich_relations_from_kb(candidates, relations)
     return candidates, relations
 
 

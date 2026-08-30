@@ -218,6 +218,11 @@ def build_course_graph_candidate_draft(
             "confidence": min(left["confidence"], right["confidence"]),
             "anchor_ids": list(dict.fromkeys(left["anchor_ids"] + right["anchor_ids"])),
         })
+    # XH-202620：用学科知识库语义关系（prerequisite_of/uses/defines/…）增强顺序链，
+    # 使图谱不止是 next_topic 顺序，而是带有真实先修/从属/对比语义。纯确定性、无 LLM。
+    from app.platform.knowledge.kb_alignment import enrich_relations_from_kb
+
+    relations = enrich_relations_from_kb(ordered_nodes, relations)
     batch = graph_candidate_service.create_batch(
         session, course_id=course_id, parse_run_id=None, initiated_by=created_by,
     )
