@@ -1603,6 +1603,16 @@ async def get_prep_agent_node_evidence(
         DocumentBlock.course_id == course_id,
         DocumentBlock.block_id.in_(refs),
     ).order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index)).all() if refs else []
+    # Old parse runs stored boilerplate (running deck headers, cover
+    # signatures) as node sources; hide them at read time so existing courses
+    # get a clean evidence pane without a reparse.  Repetition rules need the
+    # whole-deck context, so noise ids are computed over all course blocks.
+    from app.platform.document_intelligence.canonical.block_noise import detect_noise_block_ids
+    if blocks:
+        course_noise = detect_noise_block_ids(
+            session.exec(select(DocumentBlock).where(DocumentBlock.course_id == course_id)).all()
+        )
+        blocks = [b for b in blocks if b.block_id not in course_noise]
     return unified_response(200, "获取原文证据成功", {
         "outline_node_id": node_id,
         "items": [{

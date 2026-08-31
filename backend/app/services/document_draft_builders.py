@@ -659,6 +659,17 @@ def build_draft_assets(
         result.warnings.append("no DocumentBlock found; skipping draft asset build")
         return result
 
+    # Boilerplate blocks (running headers/footers, cover signatures) must not
+    # become node sources, script content or graph candidates; otherwise the
+    # build pages show nonsense evidence like a repeated deck header.
+    from app.platform.document_intelligence.canonical.block_noise import filter_noise_blocks
+    noise_before = len(blocks)
+    blocks = filter_noise_blocks(list(blocks))
+    if noise_before != len(blocks):
+        result.warnings.append(
+            f"filtered {noise_before - len(blocks)} boilerplate blocks (headers/cover lines)"
+        )
+
     def _stage(name: str) -> None:
         if progress_cb is not None:
             try:

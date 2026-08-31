@@ -15,6 +15,7 @@ from app.models.document_parse_model import (
     RetrievalIndexSnapshot,
     RetrievalChunk,
 )
+from app.platform.document_intelligence.canonical.block_noise import detect_noise_block_ids
 from app.platform.document_intelligence.document_ir.models import block_to_dict
 from app.platform.document_intelligence.document_ir.serialization import serialize_document_ir
 from app.services.object_storage import get_object_storage
@@ -87,6 +88,8 @@ class DocumentIRProjector:
 
         block_count = 0
         anchor_count = 0
+        noise_ids = detect_noise_block_ids(document_ir.blocks)
+        noise_filtered = 0
         unit_by_block = {
             block_id: unit.unit_id
             for unit in document_ir.units
@@ -125,6 +128,13 @@ class DocumentIRProjector:
             session.add(db_block)
             session.flush()
             block_count += 1
+            # Boilerplate (running headers/footers, cover signatures) stays in
+            # the canonical block store but must not become query-facing
+            # evidence or retrieval input; otherwise it leaks into node
+            # sources and the prep-agent evidence pane.
+            if block.block_id in noise_ids:
+                noise_filtered += 1
+                continue
             if text.strip():
                 anchor = EvidenceAnchor(
                     course_id=course_id,
@@ -158,6 +168,9 @@ class DocumentIRProjector:
                 ))
                 self._chunk(session, course_id, version, document_ir.document_id, unit_by_block.get(block.block_id), block.block_id, anchor.anchor_id, text, db_block.content_hash)
                 anchor_count += 1
+        if noise_filtered:
+            version.quality = {**(version.quality or {}), "noise_filtered_blocks": noise_filtered}
+            session.add(version)
         self._create_index_snapshot(
             session,
             course_id=course_id,
