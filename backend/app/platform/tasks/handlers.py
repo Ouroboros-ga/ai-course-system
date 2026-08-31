@@ -453,14 +453,22 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
             # has completed, create one frozen corpus and queue one separate
             # course-wide build task instead of rebuilding after each upload.
             from app.services.course_corpus_service import course_corpus_service
+            # ``created_by`` 是 users.id 外键：重解析任务的 input_payload 不携带
+            # initiated_by 时回退到 parse run 记录的教师 id，避免 owner 0 违反
+            # 外键约束导致语料快照静默丢失。
+            actor_user_id = int(
+                payload.get("initiated_by")
+                or getattr(parse_run, "initiated_by", 0)
+                or 0
+            )
             corpus = course_corpus_service.create_ready_snapshot(
-                session, course_id=int(course_id), owner_user_id=int(payload.get("initiated_by") or 0),
+                session, course_id=int(course_id), owner_user_id=actor_user_id,
             )
             if corpus is not None:
                 build, build_task_id = course_corpus_service.create_build_task(
-                    session, corpus=corpus, owner_user_id=int(payload.get("initiated_by") or 0),
+                    session, corpus=corpus, owner_user_id=actor_user_id,
                 )
-                owner_user_id = int(build.owner_user_id or payload.get("initiated_by") or 0)
+                owner_user_id = int(build.owner_user_id or actor_user_id or 0)
                 session.commit()
                 _draft_progress = {
                     "corpus_snapshot_id": corpus.corpus_snapshot_id,

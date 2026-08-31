@@ -551,6 +551,7 @@ async def reparse_material(
             "run_id": run.run_id,
             "material_id": payload.material_id,
             "material_version_id": version_id,
+            "initiated_by": user_id,
             "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
             "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
         },
