@@ -139,6 +139,38 @@ def test_enabled_with_report_and_llm_injects_and_endpoint_is_live(tmp_path):
     assert resp.status_code == 401
 
 
+def test_enabled_with_deepseek_specific_vars_injects_llm(tmp_path):
+    """LLM_PROVIDER=deepseek 时 bootstrap 应按 DEEPSEEK_* 专属变量注入 Agent LLM。
+
+    DeepSeekClient 只认 DEEPSEEK_*（见 llm_client.py）；bootstrap 在导入期构造
+    Agent LLM 早于 startup 的 restore_from_db 回填 settings，若只读 LLM_* 会把
+    DEEPSEEK_API_KEY 已配置误判为未配置（线上 TEACHING_LLM_UNAVAILABLE 根因）。
+    """
+    app = _app()
+    with patch("app.platform.agents.bootstrap.settings") as mock_settings, \
+         patch("app.platform.agents.bootstrap.KGMestShadowReportStore") as mock_store_cls, \
+         patch("app.platform.agents.bootstrap.OpenAICompatibleTeachingLLM") as mock_llm_cls:
+        mock_settings.TEACHING_AGENT_MODE = "enabled"
+        mock_settings.DEMO_RETRIEVAL_MODE = "demo_compare"
+        mock_settings.DEMO_RETRIEVAL_ENVIRONMENT = "test"
+        mock_settings.LLM_PROVIDER = "deepseek"
+        mock_settings.LLM_API_BASE = ""
+        mock_settings.LLM_API_KEY = ""
+        mock_settings.LLM_MODEL_NAME = ""
+        mock_settings.DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1"
+        mock_settings.DEEPSEEK_API_KEY = "sk-env-only"
+        mock_settings.DEEPSEEK_MODEL = "deepseek-chat"
+        mock_store_cls.return_value = KGMestShadowReportStore(tmp_path / "reports")
+        injected = bootstrap_teaching_agent(app, demo_service=_demo_service(tmp_path))
+    assert injected is True
+    assert app.state.teaching_agent_runtime_registry is not None
+    mock_llm_cls.assert_called_once_with(
+        base_url="https://api.deepseek.com/v1",
+        api_key="sk-env-only",
+        model="deepseek-chat",
+    )
+
+
 def test_bootstrap_never_blocks_startup_on_error(tmp_path):
     app = _app()
     with patch("app.platform.agents.bootstrap.settings") as mock_settings, \

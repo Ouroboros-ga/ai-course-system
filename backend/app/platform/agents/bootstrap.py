@@ -77,6 +77,35 @@ from app.platform.retrieval_demo.service import DemoService
 logger = logging.getLogger(__name__)
 
 
+def _effective_llm_settings() -> tuple[str, str, str]:
+    """Resolve the effective (base_url, api_key, model) for agent LLM injection.
+
+    垂类 provider（deepseek/spark）的运行时 client 只认各自的专属变量
+    （DEEPSEEK_* / XFYUN_SPARK_*，见 llm_client.py）。bootstrap 在模块导入期
+    构造 Agent LLM，早于 startup 的 restore_from_db 回填 settings，必须按与
+    运行时 client 相同的优先级取值；否则 DEEPSEEK_API_KEY 已配置时仍会把
+    LLM_API_KEY 中的旧值冻结进 Agent（线上 401 → TEACHING_LLM_UNAVAILABLE）。
+    """
+    provider = (getattr(settings, "LLM_PROVIDER", "") or "").strip().lower()
+    if provider == "deepseek":
+        return (
+            (getattr(settings, "DEEPSEEK_BASE_URL", "") or getattr(settings, "LLM_API_BASE", "") or "").strip(),
+            (getattr(settings, "DEEPSEEK_API_KEY", "") or getattr(settings, "LLM_API_KEY", "") or "").strip(),
+            (getattr(settings, "DEEPSEEK_MODEL", "") or getattr(settings, "LLM_MODEL_NAME", "") or "").strip(),
+        )
+    if provider == "spark":
+        return (
+            (getattr(settings, "XFYUN_SPARK_BASE_URL", "") or getattr(settings, "LLM_API_BASE", "") or "").strip(),
+            (getattr(settings, "XFYUN_SPARK_API_KEY", "") or getattr(settings, "LLM_API_KEY", "") or "").strip(),
+            (getattr(settings, "XFYUN_SPARK_MODEL", "") or getattr(settings, "LLM_MODEL_NAME", "") or "").strip(),
+        )
+    return (
+        (getattr(settings, "LLM_API_BASE", "") or "").strip(),
+        (getattr(settings, "LLM_API_KEY", "") or "").strip(),
+        (getattr(settings, "LLM_MODEL_NAME", "") or "").strip(),
+    )
+
+
 def bootstrap_coding_agent(app: Any) -> bool:
     """Register CodingAgent independently of TeachingAgent and its LLM gate.
 
@@ -103,9 +132,7 @@ def bootstrap_coding_agent(app: Any) -> bool:
         app.state.coding_agent_code_submission_port = code_submission
 
         llm = None
-        base_url = (getattr(settings, "LLM_API_BASE", "") or "").strip()
-        api_key = (getattr(settings, "LLM_API_KEY", "") or "").strip()
-        model = (getattr(settings, "LLM_MODEL_NAME", "") or "").strip()
+        base_url, api_key, model = _effective_llm_settings()
         if base_url and api_key and model:
             llm = OpenAICompatibleTeachingLLM(
                 base_url=base_url,
@@ -193,11 +220,8 @@ def bootstrap_research_agent(app: Any) -> bool:
             embedding_provider=embedding_provider,
         )
         structured_llm = None
-        if (
-            settings.LLM_API_BASE.strip()
-            and settings.LLM_API_KEY.strip()
-            and settings.LLM_MODEL_NAME.strip()
-        ):
+        _base_url, _api_key, _model = _effective_llm_settings()
+        if _base_url and _api_key and _model:
             structured_llm = SharedLLMStructuredProvider(
                 diagnostic_sink=SqlAgentLLMDiagnosticStore(session_factory),
             )
@@ -232,9 +256,7 @@ def bootstrap_prep_agent(app: Any) -> bool:
     student-facing TeachingAgent feature flag is disabled.
     """
     try:
-        base_url = (settings.LLM_API_BASE or "").strip()
-        api_key = (settings.LLM_API_KEY or "").strip()
-        model = (settings.LLM_MODEL_NAME or "").strip()
+        base_url, api_key, model = _effective_llm_settings()
         if not base_url or not api_key or not model:
             logger.info("PrepAgent LLM is not configured; batch/agent endpoints remain unavailable.")
             return False
@@ -320,9 +342,7 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             logger.info("TeachingAgent disabled (TEACHING_AGENT_MODE=%r); endpoint stays 503.", mode)
             return False
 
-        base_url = (settings.LLM_API_BASE or "").strip()
-        api_key = (settings.LLM_API_KEY or "").strip()
-        model = (settings.LLM_MODEL_NAME or "").strip()
+        base_url, api_key, model = _effective_llm_settings()
         if not base_url or not api_key or not model:
             logger.info("TeachingAgent enabled but LLM is not configured; endpoint stays 503.")
             return False
@@ -415,9 +435,7 @@ def bootstrap_coding_agent(app: Any) -> bool:
         coding_diagnosis, _student_history = make_session_scoped_coding_ports(session_factory)
         sandbox_port = Judge0SandboxPort(session_factory=session_factory)
         llm = None
-        base_url = (settings.LLM_API_BASE or "").strip()
-        api_key = (settings.LLM_API_KEY or "").strip()
-        model = (settings.LLM_MODEL_NAME or "").strip()
+        base_url, api_key, model = _effective_llm_settings()
         if base_url and api_key and model:
             llm = OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model)
 
