@@ -3,7 +3,7 @@
     <div class="sso-container">
       <div class="sso-logo">
         <GraduationCap class="logo-icon" :size="48" />
-        <h1>SmartCarb</h1>
+        <h1>CodeNexus智码交响</h1>
       </div>
 
       <div v-if="status === 'loading'" class="sso-status loading">
@@ -23,7 +23,7 @@
           <span v-if="userInfo?.isNewUser" class="new-user-badge">新用户</span>
         </p>
         <p v-if="userInfo?.fanyaId" class="fanya-info">泛雅ID: {{ userInfo.fanyaId }}</p>
-        <button class="btn-enter" @click="enterSystem">进入 SmartCarb <ArrowRight :size="16" /></button>
+        <button class="btn-enter" @click="enterSystem">进入 CodeNexus智码交响 <ArrowRight :size="16" /></button>
       </div>
 
       <div v-else-if="status === 'error'" class="sso-status error">

@@ -105,7 +105,7 @@ onMounted(() => {
           <span class="gradient-text">AI 实时答疑</span>
         </h2>
         <p class="chat-desc">
-          基于 RAG 精准检索泛雅平台知识库，回答可靠无幻觉。
+          基于 RAG 精准检索课程知识库，回答可靠无幻觉。
           支持知识点讲解、作业辅导、课堂即时答疑。
         </p>
         <button class="cta-btn" @click="$emit('go-chat')">

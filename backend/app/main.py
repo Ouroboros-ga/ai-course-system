@@ -195,8 +195,8 @@ def _generate_unique_operation_id(route: APIRoute) -> str:
 
 # 创建FastAPI实例
 app = FastAPI(
-    title="超星AI互动智课系统",
-    description="符合超星开放API设计规范的后端服务",
+    title="CodeNexus智码交响",
+    description="证据驱动的智慧教学系统后端服务",
     version="v1",
     generate_unique_id_function=_generate_unique_operation_id,
 )

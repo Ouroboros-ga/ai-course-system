@@ -199,7 +199,7 @@ onBeforeUnmount(() => {
           <a class="sfx-home-announce animate-in" style="animation-delay: 0.1s" href="#" @click.prevent>
             <Sparkles class="sfx-home-announce__sparkle" :size="14" aria-hidden="true" />
             <span class="sfx-home-announce__text">
-              SmartCarb 全新上线，AI 辅助课程建设与学情分析能力全面升级
+              CodeNexus智码交响全新上线，AI 辅助课程建设与学情分析能力全面升级
             </span>
             <ArrowRight class="sfx-home-announce__arrow" :size="13" aria-hidden="true" />
           </a>
@@ -234,7 +234,7 @@ onBeforeUnmount(() => {
         <!-- 右侧：品牌大卡 -->
         <button class="sfx-home-brand-card animate-in" style="animation-delay: 0.3s" @click="goHall">
           <div class="sfx-home-brand-card__text">
-            <h3>SmartCarb</h3>
+            <h3>CodeNexus智码交响</h3>
             <p>
               探索课程大厅
               <span class="sfx-home-brand-card__arrow" aria-hidden="true">→</span>
@@ -386,7 +386,7 @@ onBeforeUnmount(() => {
             <div class="sfx-home-brand__mark" aria-hidden="true">
               <BookOpenCheck :size="22" />
             </div>
-            <span class="sfx-home-brand__name">SmartCarb</span>
+            <span class="sfx-home-brand__name">CodeNexus智码交响</span>
           </div>
           <p class="sfx-home-footer__tagline">让课程回应学习</p>
         </div>
@@ -491,7 +491,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="sfx-home-footer__bottom">
-        <p>© {{ new Date().getFullYear() }} SmartCarb · 保留所有权利</p>
+        <p>© {{ new Date().getFullYear() }} CodeNexus智码交响 · 保留所有权利</p>
         <div class="sfx-home-footer__bottom-right">
           <button type="button" class="sfx-home-footer__top-btn" @click="scrollToTop">
             回到顶部 ↑

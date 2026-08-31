@@ -89,7 +89,7 @@ onBeforeUnmount(() => {
             </button>
             <RouterLink to="/app" class="sfx-l1nav-brand" aria-label="返回工作首页">
                 <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-brand-logo" />
-                <span class="sfx-l1nav-brand-name">SmartCarb</span>
+                <span class="sfx-l1nav-brand-name">CodeNexus智码交响</span>
             </RouterLink>
 
             <nav class="sfx-l1nav-links" aria-label="一级导航">
@@ -134,7 +134,7 @@ onBeforeUnmount(() => {
                 <aside class="sfx-l1nav-drawer" role="dialog" aria-modal="true" aria-label="导航菜单">
                     <div class="sfx-l1nav-drawer-head">
                         <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-drawer-logo" />
-                        <span class="sfx-l1nav-drawer-title">SmartCarb</span>
+                        <span class="sfx-l1nav-drawer-title">CodeNexus智码交响</span>
                         <button type="button" class="sfx-l1nav-drawer-close" aria-label="关闭导航菜单" @click="drawerOpen = false">
                             <X :size="18" />
                         </button>

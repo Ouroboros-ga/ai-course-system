@@ -1,14 +1,14 @@
 /**
  * 隐私政策与服务条款全文（按通用网站模板编写）。
  *
- * - 主体：SmartCarb 团队（本平台开发与运营方）。
+ * - 主体：CodeNexus智码交响团队（本平台开发与运营方）。
  * - 开源仓库：https://github.com/Ouroboros-ga/ai-course-system
  * - 生效日期：2026-08-20
  * - 文档中心页 DocsHomePage.vue 引用；登录/注册页链接到 /docs#privacy、/docs#terms。
  */
 
 const CONTACT = {
-  email: 'smartcarb@example.com', // 占位：发布前替换为真实联系邮箱
+  email: 'codenexus@example.com', // 占位：发布前替换为真实联系邮箱
   issues: 'https://github.com/Ouroboros-ga/ai-course-system/issues',
   repo: 'https://github.com/Ouroboros-ga/ai-course-system',
 }
@@ -17,7 +17,7 @@ export const PRIVACY_SECTIONS = [
   {
     title: '一、引言',
     paragraphs: [
-      'SmartCarb（以下简称"本平台"）由 SmartCarb 团队（以下简称"我们"）开发与运营。我们深知个人信息对您的重要性，并将按照法律法规要求，采取相应的安全保护措施保护您的个人信息。',
+      'CodeNexus智码交响（以下简称"本平台"）由 CodeNexus智码交响团队（以下简称"我们"）开发与运营。我们深知个人信息对您的重要性，并将按照法律法规要求，采取相应的安全保护措施保护您的个人信息。',
       '本政策适用于您注册、登录、使用本平台及访问文档中心（/docs）的全部服务。请您在使用前仔细阅读并理解本政策；您注册或继续使用本服务，即表示您同意我们按照本政策收集、使用、存储和保护您的信息。',
     ],
   },
@@ -94,7 +94,7 @@ export const TERMS_SECTIONS = [
   {
     title: '一、总则',
     paragraphs: [
-      '欢迎使用 SmartCarb（以下简称"本平台"）。本平台由 SmartCarb 团队开发与运营，为教师与学生提供 AI 辅助课程建设、课程学习与教学分析服务。',
+      '欢迎使用 CodeNexus智码交响（以下简称"本平台"）。本平台由 CodeNexus智码交响团队开发与运营，为教师与学生提供 AI 辅助课程建设、课程学习与教学分析服务。',
       '本服务条款（以下简称"本条款"）是您与本平台之间就注册、登录与使用本服务所达成的协议。您注册、登录或使用本服务，即视为已阅读并同意本条款的全部内容。',
     ],
   },

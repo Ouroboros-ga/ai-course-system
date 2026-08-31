@@ -38,7 +38,7 @@ const linkGroups = [
     <div class="cta-area">
       <h2 class="cta-title">
         立即开启你的
-        <span class="gradient-text">SmartCarb</span>
+        <span class="gradient-text">CodeNexus智码交响</span>
         之旅
       </h2>
       <p class="cta-desc">免费试用，无需注册，即刻体验智能教学新方式</p>
@@ -55,10 +55,10 @@ const linkGroups = [
         <div class="footer-brand">
           <div class="brand-logo">
             <GraduationCap :size="28" class="logo-icon" />
-            <span class="logo-text">SmartCarb</span>
+            <span class="logo-text">CodeNexus智码交响</span>
           </div>
           <p class="brand-desc">
-            基于泛雅平台的 AI 智能教学系统，让每一次学习都更高效。
+            计算机学科垂类大模型驱动的智能教学系统，让每一次学习都更高效。
           </p>
         </div>
 
@@ -84,7 +84,7 @@ const linkGroups = [
 
       <!-- 版权栏 -->
       <div class="footer-bottom">
-        <p>© 2026 SmartCarb · 基于泛雅平台的智能教学系统</p>
+        <p>© 2026 CodeNexus智码交响 · 知识图谱驱动的智能教学系统</p>
       </div>
     </footer>
   </section>

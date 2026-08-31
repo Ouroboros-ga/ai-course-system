@@ -115,7 +115,7 @@ watch(() => props.serverError, (value) => {
     <section class="auth-introduction" aria-labelledby="auth-brand-title">
       <div class="brand-lockup">
         <div class="brand-mark" aria-hidden="true"><BookOpenCheck :size="24" /></div>
-        <span>SmartCarb</span>
+        <span>CodeNexus智码交响</span>
       </div>
 
       <div class="introduction-copy">
