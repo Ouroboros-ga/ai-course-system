@@ -16,7 +16,9 @@
 | `ml.json` | 机器学习概念节点（基本概念/监督/无监督/评估/线性/集成/深度学习/SVM/特征工程/强化） | ✅ 已填充（10 节点，R7） |
 | `compiler.json` | 编译原理概念节点（编译过程/词法/语法/语法树/语义/中间代码/优化/目标代码/符号表） | ✅ 已填充（9 节点，R10） |
 | `arch.json` | 计算机组成原理概念节点（层次/数据表示/指令系统/CPU/存储层次/流水线/中断/I-O/并行） | ✅ 已填充（9 节点，R10） |
-| `relations.json` | 概念间关系（prerequisite_of / uses / defines / contrasts_with / related_to / supported_by） | ✅ 已填充（82 条） |
+| `discrete.json` | 离散数学概念节点（命题逻辑/谓词逻辑/证明方法/集合/关系/函数/图论/欧拉哈密顿/树/计数/代数结构/数论） | ✅ 已填充（12 节点，R11） |
+| `graphics.json` | 计算机图形学概念节点（渲染管线/几何变换/投影/裁剪/光栅化/消隐/光照/纹理/曲线曲面/光线追踪） | ✅ 已填充（10 节点，R11） |
+| `relations.json` | 概念间关系（prerequisite_of / uses / defines / contrasts_with / related_to / derives_from 等） | ✅ 已填充（106 条） |
 | `validate.py` | schema + 引用完整性校验脚本（纯标准库） | ✅ 可用 |
 | `import_to_neo4j.py` | 导入计划预览（**不连接 Neo4j**，诚实标注未接线） | ✅ 可用 |
 
@@ -44,9 +46,10 @@ python knowledge_data/import_to_neo4j.py   # 校验 + 打印导入计划（不�
    经教师审核门后进入正式图谱快照；
 3. ⏳ 待接线：接入 `ActiveBundleCourseRetrievalPort` 检索白名单，使学科知识库与课件证据
    一并参与 RAG（BM25 + BGE + RRF + Citation 闭包）；
-4. ✅ **已扩充（R5–R10）**：操作系统（`os.json`）、计算机网络（`net.json`）、数据库系统（`db.json`）、
-   软件工程（`se.json`）、机器学习（`ml.json`）、编译原理（`compiler.json`）、计算机组成原理（`arch.json`）
-   ——**九门课全部完成**（90 节点/82 关系）；后续按需扩充（如离散数学、计算机图形学）。
+4. ✅ **已扩充（R5–R11）**：操作系统（`os.json`）、计算机网络（`net.json`）、数据库系统（`db.json`）、
+   软件工程（`se.json`）、机器学习（`ml.json`）、编译原理（`compiler.json`）、计算机组成原理（`arch.json`）、
+   离散数学（`discrete.json`）、计算机图形学（`graphics.json`）
+   ——**十一门课（112 节点/106 关系，2026-08-30）**；后续按需扩充（如信息安全、分布式系统）。
 
 ## 诚实边界
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ..providers.fakes import (
+    FakeDisciplineKnowledge,
     FakeEvents,
     FakeGraph,
     FakeLLM,

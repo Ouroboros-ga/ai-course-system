@@ -13,10 +13,17 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import json
+
 from validate import validate
 
 NODE_LABEL = "CSKnowledgeNode"
 REL_LABEL = "CSKnowledgeRelation"
+
+NODE_FILES = (
+    "data_structures.json", "algorithms.json", "os.json", "net.json", "db.json",
+    "se.json", "ml.json", "compiler.json", "arch.json", "discrete.json", "graphics.json",
+)
 
 
 def _main() -> int:
@@ -27,9 +34,7 @@ def _main() -> int:
 
     here = Path(__file__).resolve().parent
     nodes = []
-    for filename in ("data_structures.json", "algorithms.json"):
-        import json
-
+    for filename in NODE_FILES:
         with (here / filename).open("r", encoding="utf-8") as fh:
             nodes.extend(json.load(fh).get("nodes", []))
 

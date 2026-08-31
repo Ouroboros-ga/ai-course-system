@@ -21,7 +21,7 @@ from typing import Any
 
 SCHEMA_VERSION = "cs-knowledge/1.0"
 
-NODE_FILES = ("data_structures.json", "algorithms.json", "os.json", "net.json", "db.json", "se.json", "ml.json", "compiler.json", "arch.json")
+NODE_FILES = ("data_structures.json", "algorithms.json", "os.json", "net.json", "db.json", "se.json", "ml.json", "compiler.json", "arch.json", "discrete.json", "graphics.json")
 RELATION_FILE = "relations.json"
 
 _TOKEN_RE = re.compile(r"[a-z0-9_+.-]+")

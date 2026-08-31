@@ -24,7 +24,7 @@ from .experiment import ExperimentDispatchPort, ExperimentPort, VisualizationPor
 from .governance import TeacherSafetyValvePort, ToolGovernancePort
 from .learning_adjustment import LearningAdjustmentPort
 from .research import QuestionBankPort, QuestionGenerationPort, WebResearchPort
-from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
+from .retrieval import CourseRetrievalPort, DisciplineKnowledgePort, KnowledgeGraphPort, ScopePort
 from .safety import SafetyGuardPort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import (
@@ -72,6 +72,9 @@ class TeachingTools:
     # 2026-08-17：学习轨迹端口（M7）。load_learning_history 优先读该端口；
     # record_event 以 trace_id 幂等追加轨迹事件。未注入时回退 student_history。
     trajectory: TrajectoryPort | None = None
+    # 2026-08-30：学科垂类知识库参考端口（R14）。产出标记 is_supplementary，
+    # 只进入回答上下文，不进入课程证据引用闭包、掌握度或图谱。
+    discipline_knowledge: DisciplineKnowledgePort | None = None
 
 
 __all__ = ["TeachingTools"]

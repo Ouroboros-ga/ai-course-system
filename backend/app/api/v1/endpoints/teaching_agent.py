@@ -169,10 +169,28 @@ async def _respond_for_subject(
         }
 
     concept = next((item for item in state.get("concept_candidates", []) if item.get("concept_id") == state.get("current_concept_id")), None)
+    # R14：学科参考（is_supplementary）随回答透出，供前端展示"学科参考"区块；
+    # 与 citations（课程证据闭包）严格分离。
+    discipline_references = [
+        {
+            "node_id": ref.get("node_id"),
+            "name": ref.get("name"),
+            "course": ref.get("course"),
+            "definition": ref.get("definition"),
+            "key_points": ref.get("key_points", []),
+            "source_title": ref.get("source_title"),
+            "source_authors": ref.get("source_authors"),
+            "source_chapter": ref.get("source_chapter"),
+            "is_supplementary": True,
+        }
+        for ref in state.get("discipline_kb_results", [])
+        if ref.get("name")
+    ]
     response = {
         "trace_id": state["trace_id"], "status": "ok", "intent": state.get("intent"), "concept": concept,
         "teaching_action": state.get("teaching_action"), "answer": state.get("final_answer"),
         "citations": state.get("citations", []),
+        "discipline_references": discipline_references,
         "recommended_resources": [{"resource_id": resource_id} for resource_id in state.get("selected_resource_ids", [])],
         "warnings": state.get("warnings", []), "degraded_services": state.get("degraded_services", []),
         "learning_adjustment": state.get("learning_adjustment"),

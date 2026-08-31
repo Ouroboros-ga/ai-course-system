@@ -44,7 +44,7 @@ from .research import (
     TrendAnalysisPort,
     WebResearchPort,
 )
-from .retrieval import CourseRetrievalPort, KnowledgeGraphPort, ScopePort
+from .retrieval import CourseRetrievalPort, DisciplineKnowledgePort, KnowledgeGraphPort, ScopePort
 from .safety import SafetyGuardPort
 from .sandbox import CodingDiagnosisPort, SandboxPort
 from .teaching import (
@@ -63,6 +63,7 @@ __all__ = [
     "ConversationContextPort",
     "ConversationHistoryPort",
     "CourseRetrievalPort",
+    "DisciplineKnowledgePort",
     "ExperimentDispatchPort",
     "ExperimentPort",
     "KnowledgeGraphPort",

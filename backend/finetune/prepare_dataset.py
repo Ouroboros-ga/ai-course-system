@@ -5,7 +5,7 @@
 ChatML 格式指令数据集，用于 LoRA/SFT 微调：
 - 知识节点讲解指令（含权威来源，训练模型养成"引用来源"习惯）
 - 概念关系判断指令（对齐 education_graph 关系类型）
-- 评测基准问答指令（标准答案）
+- 评测基准问答指令（标准答案；只进 eval 集，保证基线对比不受训练集污染）
 
 纯标准库实现、确定性输出（固定随机种子），不安装任何 GPU 依赖：
 
@@ -64,15 +64,16 @@ def _baseline_instruction(case: dict) -> dict:
     )
 
 
+def _node_files(knowledge_dir: Path) -> list[Path]:
+    """自动发现节点文件（排除 relations.json）：知识库扩充后指令集无需再手工同步。"""
+    return sorted(p for p in knowledge_dir.glob("*.json") if p.name != "relations.json")
+
+
 def build_dataset(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list[dict]]:
     samples: list[dict] = []
     node_names: dict[str, str] = {}
 
-    for filename in ("data_structures.json", "algorithms.json", "os.json", "net.json", "db.json", "se.json", "ml.json", "compiler.json", "arch.json"):
-        path = knowledge_dir / filename
-        if not path.exists():
-            print(f"[warn] 跳过缺失文件: {path}", file=sys.stderr)
-            continue
+    for path in _node_files(knowledge_dir):
         data = json.loads(path.read_text(encoding="utf-8"))
         for node in data.get("nodes", []):
             if node.get("id"):
@@ -85,15 +86,19 @@ def build_dataset(knowledge_dir: Path, baseline: Path) -> tuple[list[dict], list
         for rel in rel_data.get("relations", []):
             samples.append(_relation_instruction(rel, node_names))
 
+    # 评测基准问答只进 eval 集，绝不进训练集：evaluate.py 用这 10 个问题对比
+    # "基座 vs 微调后"，若标准答案进训练集，微调收益就是记忆而非泛化，
+    # 对比证据失真（AGENTS.md §4.3：不伪造准确率/效果）。
+    benchmark_samples: list[dict] = []
     if baseline.exists():
         base_data = json.loads(baseline.read_text(encoding="utf-8"))
         for case in base_data.get("cases", []):
-            samples.append(_baseline_instruction(case))
+            benchmark_samples.append(_baseline_instruction(case))
 
     rng = random.Random(SEED)
     rng.shuffle(samples)
     split = max(1, int(len(samples) * EVAL_SPLIT_RATIO))
-    eval_samples = samples[:split]
+    eval_samples = samples[:split] + benchmark_samples
     train_samples = samples[split:]
     return train_samples, eval_samples
 

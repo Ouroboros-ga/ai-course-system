@@ -1118,6 +1118,52 @@ def build_teaching_workflow(tools: TeachingTools):
             )
             return payload
 
+    async def retrieve_discipline_knowledge(state: TeachingState) -> dict[str, Any]:
+        """R14：学科垂类知识库补充参考（权威教材摘要）。
+
+        与课程证据检索分离：结果标记 is_supplementary、无 evidence_id，
+        只进入回答上下文；失败/未注入时静默降级，绝不阻断问答主链路。
+        """
+        if tools.discipline_knowledge is None:
+            return {"trace": _trace(state, "retrieve_discipline_knowledge", skipped=True)}
+        allowed, gov_meta = await _governance_check(tools, state, "discipline_knowledge")
+        if not allowed:
+            return {
+                "discipline_kb_results": [],
+                "governance_skipped_tools": gov_meta.get("skipped", []),
+                "warnings": [
+                    *state.get("warnings", []),
+                    *([gov_meta.get("reason_code")] if gov_meta.get("reason_code") else []),
+                ],
+                "trace": _trace(state, "retrieve_discipline_knowledge", governance="disabled"),
+            }
+        start = time.monotonic()
+        try:
+            message = str(state.get("user_message", "")).strip()
+            refs = await tools.discipline_knowledge.search_discipline_knowledge(
+                course_id=state["course_id"],
+                message=message,
+                concept_id=state.get("current_concept_id"),
+                top_k=3,
+            )
+            refs = list(refs)
+            await _record_invocation(tools, state, "discipline_knowledge",
+                input_summary={"message_length": len(message)},
+                output_summary={"reference_count": len(refs), "node_ids": [str(r.get("node_id")) for r in refs][:10]},
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+            return {"discipline_kb_results": [dict(item) for item in refs], "trace": _trace(state, "retrieve_discipline_knowledge", count=len(refs))}
+        except Exception as error:  # noqa: BLE001 - 补充参考失败不降级主链路
+            await _record_invocation(tools, state, "discipline_knowledge",
+                input_summary={}, output_summary={}, degraded=True,
+                degraded_reason="DISCIPLINE_KB_UNAVAILABLE",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+            return {
+                "discipline_kb_results": [],
+                "trace": _trace(state, "retrieve_discipline_knowledge", error=type(error).__name__),
+            }
+
     async def research_web(state: TeachingState) -> dict[str, Any]:
         # 批次4可选节点：未注入 WebResearchPort 时直接跳过。
         # WebResearch 结果始终标记 is_supplementary=true，不修改掌握度/推荐/图谱。
@@ -1398,6 +1444,7 @@ def build_teaching_workflow(tools: TeachingTools):
                     "course_id", "user_message", "intent", "current_concept_id",
                     "requested_concept_name", "requested_concept_id",
                     "student_concept_state", "graph_context", "retrieved_evidence",
+                    "discipline_kb_results",
                     "teaching_action", "teaching_action_reason", "selected_resource_ids",
                     "degraded_services", "cognitive_state", "cognitive_recommendation",
                     "question_bank_items", "web_research_results", "session_context",
@@ -1735,6 +1782,7 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_node("load_question_bank", load_question_bank)
     graph.add_node("load_question_generation", load_question_generation)
     graph.add_node("retrieve_evidence", retrieve_evidence)
+    graph.add_node("retrieve_discipline_knowledge", retrieve_discipline_knowledge)
     graph.add_node("research_web", research_web)
     graph.add_node("load_sandbox_context", load_sandbox_context)
     graph.add_node("load_coding_diagnosis", load_coding_diagnosis)
@@ -1761,7 +1809,8 @@ def build_teaching_workflow(tools: TeachingTools):
     graph.add_edge("load_graph_context", "load_question_bank")
     graph.add_edge("load_question_bank", "load_question_generation")
     graph.add_edge("load_question_generation", "retrieve_evidence")
-    graph.add_edge("retrieve_evidence", "research_web")
+    graph.add_edge("retrieve_evidence", "retrieve_discipline_knowledge")
+    graph.add_edge("retrieve_discipline_knowledge", "research_web")
     graph.add_edge("research_web", "load_sandbox_context")
     # 阶段9：在 sandbox 之后插入 experiment/visualization 节点
     graph.add_edge("load_sandbox_context", "load_coding_diagnosis")

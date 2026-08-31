@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     # Agent composition may opt into the production read-only bundle adapter
     # without changing the workflow graph under active refactoring.
     TEACHING_AGENT_KNOWLEDGE_PROVIDER: str = "demo"
+    # R14：学科垂类知识库参考（本地只读 JSON，无外部成本）。默认开启；
+    # 运行期仍可被教师工具治理按 discipline_knowledge 工具名禁用。
+    TEACHING_AGENT_DISCIPLINE_KB_ENABLED: bool = True
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

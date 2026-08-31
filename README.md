@@ -186,7 +186,7 @@ SmartCarb 是一套面向泛雅平台的智能体协作型全场景智慧教学�
 | 功能 | 说明 |
 |---|---|
 | 学科垂类模型微调（LoRA/SFT） | 可复现管线已交付（`backend/finetune/`：数据集生成 ✅ 132+14、评测基准 10 用例 ✅、训练脚本 ✅）；**训练未执行**（无 GPU，诚实标注，需 GPU 或星火 MaaS） |
-| CS 学科知识库内容填充 | `knowledge_data/` 90 节点/82 关系（数据结构/算法/OS/计网/数据库/软件工程/机器学习/编译原理/计算机组成原理 9 门课）已填充并通过校验；已接线为只读检索服务 `GET /api/v1/discipline-knowledge/*`（CJK 二元组短语检索，服务 + API 测试 17 passed）；图谱/检索白名单深度接线为后续项 |
+| CS 学科知识库内容填充 | `knowledge_data/` 112 节点/106 关系（数据结构/算法/OS/计网/数据库/软件工程/机器学习/编译原理/计算机组成原理/离散数学/计算机图形学 11 门课）已填充并通过校验；已接线为只读检索服务 `GET /api/v1/discipline-knowledge/*`（CJK 二元组短语检索，服务 + API 测试 20 passed）；图谱/检索白名单深度接线为后续项 |
 | 星火 LLM 深度接入 | 讯飞星火 LLM Provider 已接入（`LLM_PROVIDER=spark`，OpenAI 兼容接口，单测 6 passed）；真实 Key 手工验收待进行；PPT/TTS 仍走原讯飞链路 |
 | 代码项目交流平台（类 CSDN） | 无实现 |
 | RE-KT 证据驱动学生模型 | 研究推进中（Shadow Mode 接入、细粒度 misconception 追踪、选择性诊断） |
@@ -257,7 +257,7 @@ ai-course-system/
 ├── competition/                 # XH-202620 参赛材料 01–07（骨架，9/5 截止）
 ├── deploy/                      # Docker Compose、Dockerfile.backend、nginx、judge0、paddleocr
 ├── database/                    # SQLite 生产库 + 备份
-├── knowledge_data/              # CS 学科知识库（90 节点/82 关系，9 门课，只读检索服务 /api/v1/discipline-knowledge）
+├── knowledge_data/              # CS 学科知识库（112 节点/106 关系，11 门课，只读检索服务 /api/v1/discipline-knowledge）
 ├── scripts/                     # dev-stack.sh（PaddleOCR + 后端一键启动）等
 ├── research/                    # 离线研究沙箱（不构成生产结论）
 └── test/ tests/                 # 测试资产与基准

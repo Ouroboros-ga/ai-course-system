@@ -1,0 +1,187 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "计算机图形学",
+  "description": "计算机学科垂类知识库——计算机图形学基础概念（挑战杯 XH-202620，R11）。节点 id 全局唯一（cg- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "cg-001",
+      "name": "图形系统与渲染管线",
+      "node_type": "concept",
+      "definition": "实时渲染把三维场景转换为屏幕像素的固定流程：应用/几何阶段（顶点变换、投影、裁剪）→ 光栅化阶段（三角形覆盖生成片元）→ 片元着色与深度/模板测试 → 输出合并。管线各阶段在 GPU 上以大规模并行执行。",
+      "key_points": [
+        "顶点/片元两类可编程着色器（顶点着色器、片元着色器）",
+        "裁剪坐标 → NDC（透视除法）→ 窗口坐标的空间变换序列",
+        "早期 Z 测试、双缓冲与垂直同步"
+      ],
+      "example": "OpenGL/Vulkan 一次 draw call 沿管线把 3D 三角形映射到 framebuffer。",
+      "source": {
+        "title": "Real-Time Rendering（第 4 版）",
+        "authors": "Tomas Akenine-Möller、Eric Haines 等",
+        "chapter": "Chapter 2: The Graphics Pipeline"
+      },
+      "aliases": ["graphics pipeline", "rendering pipeline", "shader"]
+    },
+    {
+      "id": "cg-002",
+      "name": "几何变换与齐次坐标",
+      "node_type": "concept",
+      "definition": "用 4×4 齐次矩阵统一表示三维空间中的平移、旋转、缩放与投影变换，把复合变换转化为矩阵乘法级联。齐次坐标 (x,y,z,w) 使仿射变换成为线性变换，透视除法后回到笛卡尔空间。",
+      "key_points": [
+        "齐次坐标与仿射变换；刚体变换（旋转+平移）保持长度与角度",
+        "变换复合不可交换；矩阵级联顺序（先缩放→旋转→平移）",
+        "法线变换需用模型矩阵的逆转置矩阵"
+      ],
+      "example": "模型-视图-投影（MVP）矩阵一次级联完成从物体坐标到裁剪坐标的变换。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 5 章 几何变换"
+      },
+      "aliases": ["homogeneous coordinates", "affine transform", "model view projection"]
+    },
+    {
+      "id": "cg-003",
+      "name": "三维观察与投影变换",
+      "node_type": "concept",
+      "definition": "三维观察指定相机位置、朝向与视野：观察变换把世界坐标转到相机坐标，再用平行投影或透视投影把视体压缩为标准裁剪空间。透视投影的透视除法产生近大远小，投影矩阵直接决定屏幕成像几何。",
+      "key_points": [
+        "相机模型：eye、look-at（forward/up）；观察变换矩阵的构造",
+        "透视投影（fov、纵横比、近远平面）与正交投影矩阵",
+        "视锥剔除：视体外的几何无需进入光栅化"
+      ],
+      "example": "gluPerspective 把可视金字塔压缩为单位立方体（NDC），屏幕纵深由 w 分母产生。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 8 章 三维观察"
+      },
+      "aliases": ["projection matrix", "view frustum", "culling"]
+    },
+    {
+      "id": "cg-004",
+      "name": "图形裁剪",
+      "node_type": "method",
+      "definition": "裁剪把图元限制在窗口/视体之内。经典算法：Cohen–Sutherland 用区域编码快速拒绝或接受线段，Liang–Barsky 用参数化求解；多边形裁剪用 Sutherland–Hodgman 逐边界求交并保持多边形封闭。",
+      "key_points": [
+        "编码裁剪：外接码按位与快速判完全在外/可能相交",
+        "Liang–Barsky 参数化线段裁剪（求解参数区间）",
+        "Sutherland–Hodgman 多边形逐边裁剪；视锥裁剪发生在投影之前"
+      ],
+      "example": "屏幕外移动的模型先被视锥剔除整体跳过，部分可见的三角形再逐边裁剪。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 6 章 二维观察"
+      },
+      "aliases": ["clipping", "cohen sutherland", "liang barsky"]
+    },
+    {
+      "id": "cg-005",
+      "name": "光栅化与扫描转换",
+      "node_type": "method",
+      "definition": "光栅化把裁剪后的图元转换为覆盖像素的片元集合：直线用 DDA 或 Bresenham 整数增量算法生成像素序列；三角形用扫描转换覆盖内部像素，颜色、深度、纹理坐标经重心坐标插值。点采样走样用多重采样（MSAA）与滤波缓解。",
+      "key_points": [
+        "Bresenham 直线算法：整数运算增量，无浮点除法",
+        "三角形覆盖测试与重心坐标插值（透视校正插值）",
+        "走样与反走样：MSAA、屏幕空间后处理 AA"
+      ],
+      "example": "GPU 每秒光栅化数十亿三角形生成片元，逐片元调用片元着色器。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 3 章 输出图元"
+      },
+      "aliases": ["rasterization", "bresenham", "scan conversion", "aliasing"]
+    },
+    {
+      "id": "cg-006",
+      "name": "消隐与可见面判定",
+      "node_type": "method",
+      "definition": "消隐解决同一像素上多个表面谁可见的问题。Z-buffer（深度缓冲）逐片元比较深度保留最近者，是硬件标准方案；画家算法按深度从远到近绘制，BSP 树预排序，扫描线算法利用连贯性减少比较次数。",
+      "key_points": [
+        "Z-buffer：深度测试 + 深度写入；深度精度与近远平面设置",
+        "画家算法与 BSP 树的排序思想及其局限（循环遮挡）",
+        "深度冲突（z-fighting）与多边形偏移缓解"
+      ],
+      "example": "关闭深度测试时后画的三角形覆盖先画的；开启后由片元深度值决定可见性。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 9 章 可见面判定"
+      },
+      "aliases": ["z buffer", "depth testing", "hidden surface removal"]
+    },
+    {
+      "id": "cg-007",
+      "name": "光照模型（Phong）",
+      "node_type": "concept",
+      "definition": "局部光照模型按环境光、漫反射与镜面反射三项合成表面亮度：Phong 模型用点积计算漫反射、用反射向量与视线夹角的幂次计算高光；Blinn-Phong 用半程向量近似降低开销。阴影与相互反射等全局效果需全局光照方法。",
+      "key_points": [
+        "环境光 + 漫反射 max(0, n·l) + 镜面反射 三项合成",
+        "Blinn-Phong 半程向量近似；材质参数 ka/kd/ks 与 shininess",
+        "局部光照与全局光照（阴影、间接光）的边界"
+      ],
+      "example": "移动端实时渲染的低成本标准光照即 Blinn-Phong 逐片元计算。",
+      "source": {
+        "title": "计算机图形学（OpenGL 版，第 3 版）",
+        "authors": "Donald Hearn、M. Pauline Baker",
+        "chapter": "第 10 章 光照模型"
+      },
+      "aliases": ["phong model", "blinn phong", "local illumination"]
+    },
+    {
+      "id": "cg-008",
+      "name": "纹理映射",
+      "node_type": "concept",
+      "definition": "纹理映射把二维图像参数化地贴到三维表面：顶点携带 UV 坐标，光栅化插值到片元后采样纹素。屏幕空间与纹理空间采样频率不匹配引起走样，用 mipmap 多级金字塔、双线性/三线性与各向异性滤波解决。",
+      "key_points": [
+        "UV 参数化与纹理采样；纹理环绕方式（repeat/clamp）",
+        "mipmap 层级选择与三线性滤波；各向异性滤波处理斜视角",
+        "纹理不只承载颜色：法线贴图、凹凸贴图、阴影贴图"
+      ],
+      "example": "一张 2048×2048 的砖墙纹理经 UV 映射覆盖整面建筑外墙。",
+      "source": {
+        "title": "Real-Time Rendering（第 4 版）",
+        "authors": "Tomas Akenine-Möller、Eric Haines 等",
+        "chapter": "Chapter 6: Texturing"
+      },
+      "aliases": ["texture mapping", "mipmap", "normal mapping"]
+    },
+    {
+      "id": "cg-009",
+      "name": "参数曲线与曲面",
+      "node_type": "concept",
+      "definition": "参数曲线由控制点与基函数生成：Bezier 曲线用 Bernstein 基，B 样条引入节点向量获得局部控制与更高阶连续性，NURBS 统一表示圆锥曲线与自由曲面。曲面由双向曲线张量积构成，细分曲面从控制网格生成光滑极限面。",
+      "key_points": [
+        "Bernstein 基与 de Casteljau 算法；曲线的凸包性质",
+        "B 样条节点向量与局部支撑；NURBS 的有理表示",
+        "张量积曲面与细分（Catmull-Clark）曲面"
+      ],
+      "example": "工业 CAD（汽车、飞机外形设计）普遍用 NURBS 表达自由曲面。",
+      "source": {
+        "title": "Real-Time Rendering（第 4 版）",
+        "authors": "Tomas Akenine-Möller、Eric Haines 等",
+        "chapter": "Chapter 17: Curves and Curved Surfaces"
+      },
+      "aliases": ["bezier curve", "b spline", "nurbs", "subdivision surface"]
+    },
+    {
+      "id": "cg-010",
+      "name": "光线追踪与真实感渲染",
+      "node_type": "method",
+      "definition": "光线追踪从视点逐像素发射光线，与场景求交后沿反射/折射路径递归追踪，自然产生阴影、镜面反射与折射等全局光照效果；路径追踪以蒙特卡洛采样积分渲染方程，收敛于物理真实结果，代价是噪声与计算量。",
+      "key_points": [
+        "光线求交（球面、三角形 Möller–Trumbore）与最近交点",
+        "递归追踪深度与俄罗斯轮盘终止；Whitted 风格追踪",
+        "路径追踪 + 蒙特卡洛积分渲染方程；与光栅化的范式差异"
+      ],
+      "example": "离线电影渲染普遍采用路径追踪获得照片级真实感。",
+      "source": {
+        "title": "Fundamentals of Computer Graphics（第 4 版）",
+        "authors": "Steve Marschner、Peter Shirley",
+        "chapter": "Chapter 4: Ray Tracing"
+      },
+      "aliases": ["ray tracing", "path tracing", "global illumination"]
+    }
+  ]
+}

@@ -14,6 +14,7 @@ from ..contracts import (
     ConversationHistoryPort,
     ConversationContextPort,
     CourseRetrievalPort,
+    DisciplineKnowledgePort,
     ExperimentDispatchPort,
     ExperimentPort,
     KnowledgeGraphPort,
@@ -42,9 +43,21 @@ from ..providers.retrieval.active_bundle import (
     ActiveBundleKnowledgeGraphPort,
     ActiveBundleScopePort,
 )
+from ..providers.retrieval.discipline_kb import DisciplineKnowledgePortImpl
 from app.core.config import settings
 from ..tools.kg_mest_shadow import KGMetShadowReportStudentModelingPort
 from .runtime import TeachingAgentRuntime
+
+
+def _discipline_knowledge_port() -> DisciplineKnowledgePort | None:
+    """R14：学科垂类知识库参考端口。
+
+    本地只读 JSON 资源（无外部服务/密钥/成本），默认注入；教师策略
+    仍可在运行时通过工具治理禁用（discipline_knowledge 工具名）。
+    """
+    if not getattr(settings, "TEACHING_AGENT_DISCIPLINE_KB_ENABLED", True):
+        return None
+    return DisciplineKnowledgePortImpl()
 
 
 def build_teaching_runtime(
@@ -74,6 +87,7 @@ def build_teaching_runtime(
     conversation_history: Optional[ConversationHistoryPort] = None,
     learning_adjustment: Optional[LearningAdjustmentPort] = None,
     safety_guard: Optional[SafetyGuardPort] = None,
+    discipline_knowledge: Optional[DisciplineKnowledgePort] = None,
 ) -> TeachingAgentRuntime:
     """Build an enabled runtime only after the composition root supplies every Port."""
     return TeachingAgentRuntime(TeachingTools(
@@ -89,6 +103,7 @@ def build_teaching_runtime(
         teaching_constraints=teaching_constraints, conversation_history=conversation_history,
         learning_adjustment=learning_adjustment,
         safety_guard=safety_guard,
+        discipline_knowledge=discipline_knowledge,
     ))
 
 
@@ -152,6 +167,7 @@ def build_course_sidecar_runtime(
         teaching_constraints=teaching_constraints, conversation_history=conversation_history,
         learning_adjustment=learning_adjustment,
         safety_guard=safety_guard,
+        discipline_knowledge=_discipline_knowledge_port(),
     )
 
 

@@ -38,4 +38,6 @@ class TeachingAgentRuntime:
             ),
             "learning_adjustment": None,
         }
-        return await self._graph.ainvoke(initial)
+        # R14 新增 retrieve_discipline_knowledge 节点后串行链路为 27 步；
+        # 显式给足余量，避免 LangGraph 默认 25 步递归上限误伤长链路。
+        return await self._graph.ainvoke(initial, config={"recursion_limit": 64})

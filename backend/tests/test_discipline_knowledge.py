@@ -15,8 +15,8 @@ from app.platform.knowledge.discipline_kb import (
     search_nodes,
 )
 
-EXPECTED_NODE_COUNT = 90
-EXPECTED_RELATION_COUNT = 82
+EXPECTED_NODE_COUNT = 112
+EXPECTED_RELATION_COUNT = 106
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +85,38 @@ def test_search_compiler_and_arch_concepts():
 
     results3 = search_nodes("流水线", top_k=3)
     assert results3[0]["name"] == "流水线"
+
+
+def test_search_discrete_math_concepts():
+    results = search_nodes("欧拉图", top_k=3)
+    assert results[0]["name"] == "欧拉图与哈密顿图"
+
+    results2 = search_nodes("等价关系", top_k=3)
+    assert results2[0]["name"] == "二元关系与等价/偏序"
+
+    results3 = search_nodes("数学归纳", top_k=3)
+    assert results3[0]["name"] == "证明方法与数学归纳法"
+
+
+def test_search_graphics_concepts():
+    results = search_nodes("光线追踪", top_k=3)
+    assert results[0]["name"] == "光线追踪与真实感渲染"
+
+    results2 = search_nodes("齐次坐标", top_k=3)
+    assert results2[0]["name"] == "几何变换与齐次坐标"
+
+    results3 = search_nodes("z buffer", top_k=3)
+    assert results3[0]["name"] == "消隐与可见面判定"
+
+
+def test_new_courses_in_overview_and_neighbors():
+    stats = overview()
+    assert stats["courses"].get("离散数学") == 12
+    assert stats["courses"].get("计算机图形学") == 10
+
+    node = get_node("dm-009")
+    outgoing = {nb["other_id"] for nb in node["neighbors"] if nb["direction"] == "outgoing"}
+    assert {"ds-007", "algo-012"}.issubset(outgoing)
 
 
 def test_search_ranked_by_relevance():

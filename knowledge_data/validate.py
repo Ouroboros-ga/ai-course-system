@@ -59,7 +59,7 @@ ALLOWED_NODE_TYPES = {
     "source_block",
 }
 
-NODE_FILES = ["data_structures.json", "algorithms.json", "os.json", "net.json", "db.json", "se.json", "ml.json", "compiler.json", "arch.json"]
+NODE_FILES = ["data_structures.json", "algorithms.json", "os.json", "net.json", "db.json", "se.json", "ml.json", "compiler.json", "arch.json", "discrete.json", "graphics.json"]
 RELATION_FILES = ["relations.json"]
 
 

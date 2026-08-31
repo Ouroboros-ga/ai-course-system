@@ -687,6 +687,7 @@ export function useLearningWorkspace(courseId, options = {}) {
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
       citations: Array.isArray(result?.citations) ? result.citations : [],
+      disciplineReferences: Array.isArray(result?.discipline_references) ? result.discipline_references : [],
       fallbackRequired: result?.status === 'fallback_required',
       fallbackNotice,
       // 透传 warnings 数组，供未来面板展示（本次面板已有 fallbackNotice 展示位）。
@@ -775,6 +776,7 @@ export function useLearningWorkspace(courseId, options = {}) {
           role: 'assistant',
           content: result.answer,
           citations: result.citations,
+          disciplineReferences: Array.isArray(result.disciplineReferences) ? result.disciplineReferences : [],
           lowConfidence: result.lowConfidence,
           fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,

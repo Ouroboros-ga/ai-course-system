@@ -1,6 +1,6 @@
 {
   "schema_version": "cs-knowledge/1.0",
-  "description": "计算机学科垂类知识库——概念关系（挑战杯 XH-202620）。relation_type 取值对齐 backend/app/domain/education_graph/enums.py 的 RelationType 语义子集：prerequisite_of / uses / defines / contrasts_with / related_to / supported_by。端点 id 引用 data_structures.json 与 algorithms.json 中的节点（全局唯一）。",
+  "description": "计算机学科垂类知识库——概念关系（挑战杯 XH-202620）。relation_type 取值对齐 backend/app/domain/education_graph/enums.py 的 RelationType 语义子集：prerequisite_of / uses / defines / contrasts_with / related_to / supported_by 等。端点 id 引用各课程文件中的节点（全局唯一）。",
   "relations": [
     { "from": "ds-001", "to": "ds-005", "relation_type": "uses", "note": "哈希表以数组为底层存储" },
     { "from": "ds-001", "to": "ds-009", "relation_type": "uses", "note": "二叉堆以数组实现，利用下标关系访问父子节点" },
@@ -83,6 +83,30 @@
     { "from": "arch-007", "to": "os-010", "relation_type": "related_to", "note": "中断机制被操作系统用于系统调用与驱动" },
     { "from": "arch-008", "to": "os-009", "relation_type": "related_to", "note": "I/O 控制方式（中断/DMA）是操作系统 I/O 管理的硬件基础" },
     { "from": "arch-009", "to": "arch-006", "relation_type": "related_to", "note": "多核并行与指令级并行同属并行加速手段" },
-    { "from": "compiler-008", "to": "arch-004", "relation_type": "related_to", "note": "寄存器分配面向 CPU 寄存器堆" }
+    { "from": "compiler-008", "to": "arch-004", "relation_type": "related_to", "note": "寄存器分配面向 CPU 寄存器堆" },
+    { "from": "dm-002", "to": "dm-001", "relation_type": "derives_from", "note": "谓词逻辑在命题逻辑基础上引入个体域、谓词与量词" },
+    { "from": "dm-003", "to": "dm-001", "relation_type": "uses", "note": "证明方法使用命题逻辑的推理定律（假言推理、归谬式）" },
+    { "from": "dm-005", "to": "dm-004", "relation_type": "derives_from", "note": "二元关系定义为笛卡尔积的子集" },
+    { "from": "dm-006", "to": "dm-005", "relation_type": "derives_from", "note": "函数是单值且处处有定义的特殊二元关系" },
+    { "from": "dm-007", "to": "dm-004", "relation_type": "uses", "note": "图由顶点集合与边集合定义" },
+    { "from": "dm-008", "to": "dm-007", "relation_type": "derives_from", "note": "欧拉图/哈密顿图是图中通路问题的特例" },
+    { "from": "dm-009", "to": "dm-007", "relation_type": "derives_from", "note": "树是连通无回路的无向图" },
+    { "from": "dm-011", "to": "dm-004", "relation_type": "uses", "note": "代数系统建立在集合及其上运算之上" },
+    { "from": "dm-007", "to": "ds-010", "relation_type": "prerequisite_of", "note": "图数据结构与遍历算法以图论（度、连通性）为数学先修" },
+    { "from": "dm-009", "to": "ds-007", "relation_type": "prerequisite_of", "note": "二叉树等树形数据结构以树的数学性质为先修" },
+    { "from": "dm-009", "to": "algo-012", "relation_type": "prerequisite_of", "note": "最小生成树算法（Prim/Kruskal）依赖树与生成树的性质" },
+    { "from": "dm-010", "to": "algo-001", "relation_type": "prerequisite_of", "note": "组合计数是复杂度阶估计与算法计数分析的先修" },
+    { "from": "dm-002", "to": "compiler-005", "relation_type": "prerequisite_of", "note": "语义分析与程序验证用谓词逻辑形式化语义" },
+    { "from": "net-008", "to": "dm-012", "relation_type": "uses", "note": "RSA 等公钥密码基于同余、欧拉定理等初等数论" },
+    { "from": "ml-003", "to": "dm-005", "relation_type": "uses", "note": "聚类与社区发现依赖等价关系与集合划分理论" },
+    { "from": "cg-001", "to": "cg-002", "relation_type": "uses", "note": "渲染管线的几何阶段由变换矩阵级联完成" },
+    { "from": "cg-003", "to": "cg-002", "relation_type": "uses", "note": "投影变换建立在观察坐标系几何变换之上" },
+    { "from": "cg-005", "to": "cg-001", "relation_type": "part_of", "note": "光栅化是渲染管线中三角形→片元的核心阶段" },
+    { "from": "cg-006", "to": "cg-005", "relation_type": "uses", "note": "深度测试作用于光栅化产生的片元流" },
+    { "from": "cg-007", "to": "cg-002", "relation_type": "uses", "note": "光照计算需把法线经变换矩阵变换到观察空间" },
+    { "from": "cg-008", "to": "cg-005", "relation_type": "uses", "note": "纹理坐标由光栅化插值到片元后采样" },
+    { "from": "cg-009", "to": "cg-002", "relation_type": "uses", "note": "曲线/曲面通过对控制点施加变换矩阵实现几何变换" },
+    { "from": "cg-010", "to": "cg-001", "relation_type": "contrasts_with", "note": "光线追踪与光栅化管线是两类主流渲染范式" },
+    { "from": "cg-001", "to": "arch-009", "relation_type": "related_to", "note": "GPU 以大规模并行（SIMD/多核）执行渲染管线" }
   ]
 }
