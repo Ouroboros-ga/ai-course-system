@@ -615,12 +615,13 @@ def _build_graph_candidates(
     relabel or reject before a graph snapshot is published.
     """
     from app.models.document_parse_model import DocumentBlock, EvidenceAnchor
+    from app.platform.document_intelligence.canonical.block_noise import filter_noise_blocks
 
-    blocks = list(session.exec(select(DocumentBlock).where(
+    blocks = filter_noise_blocks(list(session.exec(select(DocumentBlock).where(
         DocumentBlock.course_id == course_id,
         DocumentBlock.run_id == run_id,
         DocumentBlock.document_ir_version_id == ir_version_id,
-    ).order_by(DocumentBlock.order_index)).all())
+    ).order_by(DocumentBlock.order_index)).all()))
     anchors = list(session.exec(select(EvidenceAnchor).where(
         EvidenceAnchor.course_id == course_id,
         EvidenceAnchor.run_id == run_id,

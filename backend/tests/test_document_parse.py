@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
 
 import pytest
 from sqlmodel import select
@@ -25,10 +26,13 @@ from app.models.course_build_model import (
 )
 from app.models.course_model import Course, CourseStatus
 from app.models.document_parse_model import (
+    DocumentBlock,
+    DocumentIRVersion,
     DocumentParseRun,
     EvidenceSpan,
     EvidenceSpanStatus,
     ParsePipeline,
+    RetrievalIndexSnapshot,
 )
 from app.models.task_model import TaskRecord
 
@@ -591,6 +595,74 @@ def test_confirm_evidence_span_idempotent_rejects(client, session):
     assert err["error_code"] == "STATE_CONFLICT"
 
 
+def test_confirm_evidence_span_rejects_stale_candidate(client, session):
+    """重解析退役的证据不能被再次确认为正式课程事实。"""
+    teacher = _user(session, "s4_stale_confirm_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    material = _create_material(session, course.id, teacher.id)
+    run = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+    block = _create_block(session, course_id=course.id, run_id=run.run_id)
+    span = _create_candidate_span(
+        session, course_id=course.id, run_id=run.run_id, block_id=block.block_id,
+    )
+    span.status = EvidenceSpanStatus.STALE
+    span.stale_reason = "courseware_reparse"
+    session.add(span)
+    session.commit()
+
+    response = client.post(
+        f"{GRAPH}/course/{course.id}/evidence-spans/{span.span_id}/confirm",
+        json={},
+        headers=_auth(_token(teacher)),
+    )
+
+    assert response.status_code == 409
+    assert response.json()["data"]["details"]["current_status"] == "stale"
+
+
+def test_confirm_evidence_span_rejects_non_educational_fragment(client, session):
+    """即使历史投影中残留碎片，最终确认门也不能将其升级为正式证据。"""
+    teacher = _user(session, "s4_fragment_confirm_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    material = _create_material(session, course.id, teacher.id)
+    run = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+    block = _create_block(
+        session, course_id=course.id, run_id=run.run_id, page=6, text="VI",
+    )
+    span = _create_candidate_span(
+        session,
+        course_id=course.id,
+        run_id=run.run_id,
+        block_id=block.block_id,
+        page_number=6,
+        text_snippet="VI",
+    )
+
+    response = client.post(
+        f"{GRAPH}/course/{course.id}/evidence-spans/{span.span_id}/confirm",
+        json={},
+        headers=_auth(_token(teacher)),
+    )
+
+    assert response.status_code == 422
+    details = response.json()["data"]["details"]
+    assert details["exclusion_reason"] == "roman_page_marker"
+
+
 def test_reject_evidence_span_changes_status(client, session):
     """教师拒绝候选证据后状态变为 rejected，且不可再确认。"""
     teacher = _user(session, "s4_reject_teacher")
@@ -672,6 +744,116 @@ def test_list_evidence_spans_filters_by_status(client, session):
     assert resp2.status_code == 200
     assert resp2.json()["data"]["total"] == 1
     assert resp2.json()["data"]["items"][0]["status"] == "confirmed"
+
+
+def test_list_evidence_spans_defaults_to_active_ir_and_filters_fragments(client, session):
+    """标准审核列表只展示已采用 IR；显式历史视图仍不暴露确定性噪声。"""
+    teacher = _user(session, "s4_active_ir_list_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    material = _create_material(session, course.id, teacher.id)
+    run1 = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+    run2 = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+
+    ir1_id = f"dirv_{uuid.uuid4().hex}"
+    ir2_id = f"dirv_{uuid.uuid4().hex}"
+    for run, ir_id, suffix in ((run1, ir1_id, "old"), (run2, ir2_id, "preview")):
+        session.add(DocumentIRVersion(
+            ir_version_id=ir_id,
+            course_id=course.id,
+            material_version_id=material.current_version_id,
+            run_id=run.run_id,
+            document_id=f"doc_{suffix}",
+            artifact_id=f"art_{suffix}_{uuid.uuid4().hex}",
+            object_key=f"document-ir/{ir_id}.json",
+        ))
+        run.document_ir_version_id = ir_id
+        session.add(run)
+    session.flush()
+
+    def add_ir_span(run, ir_id: str, text: str) -> EvidenceSpan:
+        block_id = f"blk_{uuid.uuid4().hex}"
+        block = DocumentBlock(
+            block_id=block_id,
+            course_id=course.id,
+            run_id=run.run_id,
+            document_id=f"doc_{ir_id}",
+            document_ir_version_id=ir_id,
+            page_number=1,
+            page_or_slide=1,
+            block_type="text",
+            text=text,
+            char_end=len(text),
+        )
+        session.add(block)
+        session.flush()
+        span = EvidenceSpan(
+            course_id=course.id,
+            run_id=run.run_id,
+            ir_version_id=ir_id,
+            block_id=block_id,
+            document_id=block.document_id,
+            page_number=1,
+            text_snippet=text,
+            char_end=len(text),
+        )
+        session.add(span)
+        return span
+
+    active_span = add_ir_span(run1, ir1_id, "二分查找要求待查序列有序。")
+    add_ir_span(run1, ir1_id, "VI")
+    preview_span = add_ir_span(run2, ir2_id, "这是尚未采用的重解析候选。")
+    session.add(RetrievalIndexSnapshot(
+        course_id=course.id,
+        ir_version_id=ir1_id,
+        document_id="doc_old",
+        status="active",
+    ))
+    session.add(RetrievalIndexSnapshot(
+        course_id=course.id,
+        ir_version_id=ir2_id,
+        document_id="doc_preview",
+        status="candidate",
+    ))
+    session.commit()
+
+    current = client.get(
+        f"{GRAPH}/course/{course.id}/evidence-spans",
+        headers=_auth(_token(teacher)),
+    )
+    assert current.status_code == 200
+    assert [item["span_id"] for item in current.json()["data"]["items"]] == [active_span.span_id]
+
+    history = client.get(
+        f"{GRAPH}/course/{course.id}/evidence-spans?include_history=true",
+        headers=_auth(_token(teacher)),
+    )
+    assert history.status_code == 200
+    assert {item["span_id"] for item in history.json()["data"]["items"]} == {
+        active_span.span_id,
+        preview_span.span_id,
+    }
+
+    explicit_preview = client.get(
+        f"{GRAPH}/course/{course.id}/evidence-spans?run_id={run2.run_id}",
+        headers=_auth(_token(teacher)),
+    )
+    assert explicit_preview.status_code == 200
+    assert [item["span_id"] for item in explicit_preview.json()["data"]["items"]] == [
+        preview_span.span_id,
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -879,6 +1061,88 @@ def test_candidate_batch_exposes_reviewable_payload(client, session):
     item = response.json()["data"]["items"][0]
     assert item["node_candidates"][0]["label"] == "制冷循环"
     assert item["relation_candidates"][0]["relation_type"] == "next_topic"
+
+
+def test_candidate_batch_review_view_filters_legacy_fragment_payload(client, session):
+    """旧批次保留审计原值，但教师读取时不能再看到碎片节点和相关关系。"""
+    teacher = _user(session, "s4_batch_fragment_teacher")
+    course = _course(session, teacher.id)
+    _enable_capabilities(session, course.id)
+    material = _create_material(session, course.id, teacher.id)
+    run = _create_succeeded_run(
+        session,
+        course_id=course.id,
+        material_id=material.material_id,
+        material_version_id=material.current_version_id,
+        initiated_by=teacher.id,
+    )
+    fragment = _create_block(
+        session, course_id=course.id, run_id=run.run_id, page=6, text="VI",
+    )
+    teaching = _create_block(
+        session,
+        course_id=course.id,
+        run_id=run.run_id,
+        page=7,
+        text="二分查找",
+    )
+    batch = graph_candidate_service.create_batch(
+        session,
+        course_id=course.id,
+        parse_run_id=run.run_id,
+        initiated_by=teacher.id,
+    )
+    graph_candidate_service.mark_succeeded(
+        session,
+        course_id=course.id,
+        batch_id=batch.batch_id,
+        node_candidate_count=2,
+        relation_candidate_count=1,
+        node_candidates=[
+            {
+                "candidate_id": "node-fragment",
+                "label": "VI",
+                "kind": "concept",
+                "status": "proposed",
+                "confidence": 1.0,
+                "source_block_ids": [fragment.block_id],
+                "anchor_ids": [],
+            },
+            {
+                "candidate_id": "node-teaching",
+                "label": "二分查找",
+                "kind": "concept",
+                "status": "proposed",
+                "confidence": 1.0,
+                "source_block_ids": [teaching.block_id],
+                "anchor_ids": [],
+            },
+        ],
+        relation_candidates=[{
+            "candidate_id": "relation-fragment",
+            "source_candidate_id": "node-fragment",
+            "target_candidate_id": "node-teaching",
+            "relation_type": "next_topic",
+            "status": "proposed",
+            "confidence": 1.0,
+            "anchor_ids": [],
+        }],
+    )
+    session.commit()
+
+    response = client.get(
+        f"{GRAPH}/course/{course.id}/candidate-batches",
+        headers=_auth(_token(teacher)),
+    )
+
+    assert response.status_code == 200
+    item = response.json()["data"]["items"][0]
+    assert [node["candidate_id"] for node in item["node_candidates"]] == [
+        "node-teaching",
+    ]
+    assert item["relation_candidates"] == []
+    assert item["node_candidate_count"] == 1
+    assert item["relation_candidate_count"] == 0
 
 
 def test_new_candidate_batch_supersedes_previous(client, session):

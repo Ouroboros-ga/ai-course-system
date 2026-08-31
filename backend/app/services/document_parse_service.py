@@ -52,6 +52,7 @@ from app.models.graph_production_model import (
     GraphSnapshotRecord,
     SnapshotStatus,
 )
+from app.platform.document_intelligence.canonical.block_noise import classify_noise_blocks
 
 
 # ---------------------------------------------------------------------------
@@ -586,10 +587,34 @@ class DocumentParseService:
         span = self._require_span(session, span_id=span_id, course_id=course_id)
         if span.status == EvidenceSpanStatus.CONFIRMED:
             reject_state_conflict("证据片段已确认，无需重复确认")
-        if span.status in (EvidenceSpanStatus.REJECTED, EvidenceSpanStatus.ORPHANED):
+        if span.status != EvidenceSpanStatus.CANDIDATE:
             reject_state_conflict(
                 f"证据片段状态 {span.status.value} 不可确认",
                 details={"current_status": span.status.value},
+            )
+
+        source_blocks = list(session.exec(select(DocumentBlock).where(
+            DocumentBlock.course_id == course_id,
+            DocumentBlock.run_id == span.run_id,
+        )).all())
+        backing_block = next(
+            (block for block in source_blocks if block.block_id == span.block_id),
+            None,
+        )
+        if backing_block is None:
+            reject_validation_failed(
+                "证据片段缺少可核验的 Canonical 原文块",
+                details={"span_id": span.span_id, "exclusion_reason": "missing_source_block"},
+            )
+        exclusion_reason = classify_noise_blocks(source_blocks).get(span.block_id)
+        if exclusion_reason:
+            reject_validation_failed(
+                "该片段不具备独立教育意义，不能升级为正式证据",
+                details={
+                    "span_id": span.span_id,
+                    "block_id": span.block_id,
+                    "exclusion_reason": exclusion_reason,
+                },
             )
 
         now = utcnow_aware()
@@ -787,16 +812,41 @@ class DocumentParseService:
         run_id: Optional[str] = None,
         status: Optional[EvidenceSpanStatus] = None,
         node_id: Optional[int] = None,
+        include_history: bool = False,
     ) -> list[EvidenceSpan]:
         stmt = select(EvidenceSpan).where(EvidenceSpan.course_id == course_id)
         if run_id is not None:
             stmt = stmt.where(EvidenceSpan.run_id == run_id)
+        elif not include_history:
+            active_snapshot = session.exec(select(RetrievalIndexSnapshot).where(
+                RetrievalIndexSnapshot.course_id == course_id,
+                RetrievalIndexSnapshot.status == "active",
+            ).order_by(RetrievalIndexSnapshot.activated_at.desc())).first()
+            if active_snapshot is not None:
+                stmt = stmt.where(EvidenceSpan.ir_version_id == active_snapshot.ir_version_id)
         if status is not None:
             stmt = stmt.where(EvidenceSpan.status == status)
         if node_id is not None:
             stmt = stmt.where(EvidenceSpan.linked_node_ids.contains([node_id]))
         stmt = stmt.order_by(EvidenceSpan.created_at.desc())
-        return list(session.exec(stmt).all())
+        spans = list(session.exec(stmt).all())
+
+        # Historical projections may predate the projector gate.  Reclassify
+        # each run at read time so the teacher list and facade cannot surface
+        # known fragments even before a deterministic projection replay.
+        excluded_by_run: dict[str, set[str]] = {}
+        for span in spans:
+            if span.run_id in excluded_by_run:
+                continue
+            blocks = list(session.exec(select(DocumentBlock).where(
+                DocumentBlock.course_id == course_id,
+                DocumentBlock.run_id == span.run_id,
+            )).all())
+            excluded_by_run[span.run_id] = set(classify_noise_blocks(blocks))
+        return [
+            span for span in spans
+            if span.block_id not in excluded_by_run.get(span.run_id, set())
+        ]
 
     # --- 学生可读 Citation --------------------------------------------
 
@@ -963,6 +1013,80 @@ class GraphCandidateService:
         if status is not None:
             stmt = stmt.where(GraphCandidateBatch.status == status)
         return list(session.exec(stmt).all())
+
+    @staticmethod
+    def review_payload(
+        session: Session,
+        *,
+        batch: GraphCandidateBatch,
+    ) -> Optional[dict[str, Any]]:
+        """Return a read-only, noise-safe view of a persisted batch payload.
+
+        Older batches predate the shared evidence gate and must remain stored
+        unchanged for audit.  The teacher-facing projection removes a concept
+        when its title/source block is now deterministically excluded, removes
+        excluded supporting blocks/anchors from retained concepts, and drops
+        relations that reference a removed concept.
+        """
+        if not batch.parse_run_id:
+            return None
+        blocks = list(session.exec(select(DocumentBlock).where(
+            DocumentBlock.course_id == batch.course_id,
+            DocumentBlock.run_id == batch.parse_run_id,
+        )).all())
+        if not blocks:
+            return None
+        excluded_block_ids = set(classify_noise_blocks(blocks))
+        if not excluded_block_ids:
+            return None
+        excluded_anchor_ids = {
+            anchor.anchor_id
+            for anchor in session.exec(select(EvidenceAnchor).where(
+                EvidenceAnchor.course_id == batch.course_id,
+                EvidenceAnchor.run_id == batch.parse_run_id,
+                EvidenceAnchor.block_id.in_(excluded_block_ids),
+            )).all()
+        }
+
+        nodes: list[dict[str, Any]] = []
+        removed_candidate_ids: set[str] = set()
+        for raw_node in batch.node_candidates or []:
+            node = dict(raw_node)
+            source_block_ids = list(node.get("source_block_ids") or [])
+            if source_block_ids and source_block_ids[0] in excluded_block_ids:
+                candidate_id = str(node.get("candidate_id") or "")
+                if candidate_id:
+                    removed_candidate_ids.add(candidate_id)
+                continue
+            node["source_block_ids"] = [
+                block_id for block_id in source_block_ids
+                if block_id not in excluded_block_ids
+            ]
+            node["anchor_ids"] = [
+                anchor_id for anchor_id in (node.get("anchor_ids") or [])
+                if anchor_id not in excluded_anchor_ids
+            ]
+            nodes.append(node)
+
+        relations = []
+        for raw_relation in batch.relation_candidates or []:
+            relation = dict(raw_relation)
+            if (
+                str(relation.get("source_candidate_id") or "") in removed_candidate_ids
+                or str(relation.get("target_candidate_id") or "") in removed_candidate_ids
+            ):
+                continue
+            relation["anchor_ids"] = [
+                anchor_id for anchor_id in (relation.get("anchor_ids") or [])
+                if anchor_id not in excluded_anchor_ids
+            ]
+            relations.append(relation)
+        return {
+            "node_candidates": nodes,
+            "relation_candidates": relations,
+            "node_candidate_count": len(nodes),
+            "relation_candidate_count": len(relations),
+        }
 
 
 # ---------------------------------------------------------------------------
