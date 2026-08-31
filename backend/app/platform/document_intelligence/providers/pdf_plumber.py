@@ -179,58 +179,15 @@ class PdfPlumberProvider:
             return None
 
     def _extract_page(self, page: Any, page_no: int) -> Dict[str, Any]:
-        """Extract text and tables from a single pdfplumber page."""
+        """Extract box-aware text blocks and tables from a single pdfplumber page."""
         width = float(page.width) if page.width else 1.0
         height = float(page.height) if page.height else 1.0
 
-        text_blocks: List[Dict[str, Any]] = []
+        from .pdf_layout import extract_page_blocks
+
+        text_blocks = extract_page_blocks(page)
+
         tables: List[Dict[str, Any]] = []
-
-        # Extract visual words, then resolve reading order separately.  The
-        # PDF text stream is often wrong for multi-column course material.
-        try:
-            words = page.extract_words(
-                use_text_flow=False,
-                keep_blank_chars=False,
-                extra_attrs=["size", "fontname"],
-            )
-        except Exception:
-            words = []
-
-        if words:
-            for line_words in self._resolve_lines(words, width=width, height=height):
-                text = " ".join(str(w.get("text", "")) for w in line_words).strip()
-                if not text:
-                    continue
-
-                # Compute bbox from word positions (normalized)
-                x0 = min(float(w.get("x0", 0)) for w in line_words) / max(width, 1)
-                y0 = min(float(w.get("top", 0)) for w in line_words) / max(height, 1)
-                x1 = max(float(w.get("x1", 0)) for w in line_words) / max(width, 1)
-                y1 = max(float(w.get("bottom", 0)) for w in line_words) / max(height, 1)
-
-                # Clamp to [0, 1] to satisfy BoundingBox NORMALIZED constraint
-                x0 = max(0.0, min(1.0, x0))
-                y0 = max(0.0, min(1.0, y0))
-                x1 = max(0.0, min(1.0, x1))
-                y1 = max(0.0, min(1.0, y1))
-                if x1 < x0:
-                    x1 = x0
-                if y1 < y0:
-                    y1 = y0
-
-                # Detect heading by font size
-                avg_size = sum(float(w.get("size", 12)) for w in line_words) / len(line_words)
-                is_heading = avg_size >= 16
-
-                text_blocks.append({
-                    "bbox": [round(x0, 6), round(y0, 6), round(x1, 6), round(y1, 6)],
-                    "text": text,
-                    "confidence": 1.0,  # pdfplumber extracts real text
-                "is_heading": is_heading,
-                    "heading_level": 1 if is_heading else None,
-                    "font_size": avg_size,
-                })
 
         # Extract tables with their detected geometry. ``extract_tables`` only
         # returns strings, so prefer the Table objects when this pdfplumber
@@ -303,63 +260,6 @@ class PdfPlumberProvider:
             "formulas": [],
         }
 
-    @staticmethod
-    def _resolve_lines(words: List[Dict[str, Any]], *, width: float, height: float) -> List[List[Dict[str, Any]]]:
-        """Group visually aligned words and read columns left-to-right.
-
-        This deliberately avoids fixed pixel buckets.  It uses each word's
-        vertical overlap and font-size-derived tolerance, then detects a
-        durable horizontal whitespace gap as a column separator.
-        """
-        ordered = sorted(words, key=lambda word: (float(word.get("top", 0)), float(word.get("x0", 0))))
-        lines: List[List[Dict[str, Any]]] = []
-        for word in ordered:
-            top, bottom = float(word.get("top", 0)), float(word.get("bottom", 0))
-            size = max(float(word.get("size", 10) or 10), 1.0)
-            target = None
-            for line in reversed(lines):
-                first = line[0]
-                line_top, line_bottom = float(first.get("top", 0)), float(first.get("bottom", 0))
-                overlap = max(0.0, min(bottom, line_bottom) - max(top, line_top))
-                minimum_height = max(min(bottom - top, line_bottom - line_top), 1.0)
-                baseline_gap = abs(top - line_top)
-                if overlap / minimum_height >= 0.60 or baseline_gap <= max(size * 0.45, 1.5):
-                    target = line
-                    break
-            if target is None:
-                lines.append([word])
-            else:
-                target.append(word)
-        for line in lines:
-            line.sort(key=lambda word: float(word.get("x0", 0)))
-
-        line_boxes = [
-            (min(float(word.get("x0", 0)) for word in line), max(float(word.get("x1", 0)) for word in line), line)
-            for line in lines
-        ]
-        # A gap spanning most lines indicates a column boundary.  The resolver
-        # intentionally handles the common two-column case conservatively.
-        candidates: List[float] = []
-        for left, right, _line in line_boxes:
-            candidates.extend((left, right))
-        split = None
-        if candidates:
-            midpoint = width / 2.0
-            near_mid = sorted(candidates, key=lambda value: abs(value - midpoint))[:4]
-            for boundary in near_mid:
-                left_lines = sum(1 for left, right, _ in line_boxes if right <= boundary)
-                right_lines = sum(1 for left, right, _ in line_boxes if left >= boundary)
-                if left_lines >= 2 and right_lines >= 2:
-                    split = boundary
-                    break
-        if split is None:
-            return [line for _, _, line in sorted(line_boxes, key=lambda item: (float(item[2][0].get("top", 0)), item[0]))]
-        left_column = [item for item in line_boxes if item[1] <= split]
-        right_column = [item for item in line_boxes if item[0] >= split]
-        spanning = [item for item in line_boxes if item not in left_column and item not in right_column]
-        key = lambda item: float(item[2][0].get("top", 0))
-        return [line for _, _, line in sorted(spanning, key=key) + sorted(left_column, key=key) + sorted(right_column, key=key)]
-
 
 # ---------------------------------------------------------------------------
 # IR mapper
@@ -411,8 +311,12 @@ def map_pdf_plumber_output_to_ir(
                     bbox = None
 
             text = blk.get("text", "")
-            is_heading = blk.get("is_heading", False)
-            block_type = "heading" if is_heading else "paragraph"
+            declared = blk.get("block_type")
+            if declared in ("heading", "paragraph", "code"):
+                block_type = declared
+            else:
+                block_type = "heading" if blk.get("is_heading") else "paragraph"
+            heading_level = blk.get("heading_level") if block_type == "heading" else None
 
             provenance = Provenance(
                 artifact_id=source.artifact_id,
@@ -434,6 +338,7 @@ def map_pdf_plumber_output_to_ir(
                 "char_start": 0,
                 "char_end": len(text),
                 "order_index": idx,
+                "heading_level": heading_level,
                 "provenance": provenance,
             })
 

@@ -1241,30 +1241,6 @@ def _ocr_rendered_pages(
     return blocks
 
 
-def _map_block_type(ir_block_type: str) -> str:
-    """把 DocumentIR block_type 映射到 DocumentBlock.block_type。"""
-    mapping = {
-        "paragraph": "text",
-        "heading": "title",
-        "image": "figure_caption",
-        "table": "table_cell",
-        "unknown": "text",
-    }
-    return mapping.get(ir_block_type, "text")
-
-
-def _infer_semantic_role(*, text: str, block_type: str, heading_level: Optional[int], style_hints: dict) -> str:
-    """Infer a conservative role; this is a hint, never a publish decision."""
-    compact = (text or "").strip().replace(" ", "")
-    if any(token in compact for token in ("练习", "习题", "思考题", "试一试", "课后题")):
-        return "practice_suggestion"
-    if any(token in compact for token in ("示例", "例题", "案例", "例如", "代码演示")):
-        return "example"
-    if block_type == "title" or heading_level is not None or style_hints.get("is_heading"):
-        return "section_title" if any(token in compact for token in ("章", "节", "单元", "模块", "部分")) else "knowledge_title"
-    return "explanation"
-
-
 class ParsePipelineError(Exception):
     """解析流水线错误，携带 error_code 与 message。"""
 

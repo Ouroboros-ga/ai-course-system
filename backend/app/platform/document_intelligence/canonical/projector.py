@@ -187,7 +187,10 @@ class DocumentIRProjector:
 
     @staticmethod
     def _block_type(value: str) -> str:
-        return {"paragraph": "text", "heading": "title", "table": "table_cell", "image": "figure_caption"}.get(value, "text")
+        return {
+            "paragraph": "text", "heading": "title", "code": "code",
+            "table": "table_cell", "image": "figure_caption",
+        }.get(value, "text")
 
     @staticmethod
     def _source_kind(payload: dict) -> str:
@@ -196,6 +199,9 @@ class DocumentIRProjector:
 
     @staticmethod
     def _semantic_role(block: Any) -> str:
+        if block.block_type == "code":
+            # 代码区是完整教学示例，不是被截断的正文片段。
+            return "code_example"
         if block.block_type == "heading":
             # 顶层（第X章/9.4 等）→ section_title；更深小标题（9.4.1 / 1、/ （1））→ knowledge_title，
             # 使知识点来自真实标题而非每个正文段（修复 textbox 型教学 PPT 映射）。
