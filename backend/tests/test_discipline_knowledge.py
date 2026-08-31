@@ -125,6 +125,46 @@ def test_search_ranked_by_relevance():
     assert results[0]["score"] >= results[-1]["score"]
 
 
+def test_search_comparison_query_exact_concepts_first():
+    """对比类查询：被明确提及的概念必须置顶（修复"堆和栈的区别"中栈排第三）。"""
+    results = search_nodes("堆和栈的区别", top_k=3)
+    names = [r["name"] for r in results]
+    assert "堆" in names[:2]
+    assert "栈" in names[:2]
+    # 同字前缀节点不得挤掉精确命中概念
+    assert names[0] in ("堆", "栈")
+
+
+def test_search_comparison_query_no_noise_dominance():
+    """对比类查询中无关概念（堆排序）不得进入前二。"""
+    results = search_nodes("堆和栈的区别", top_k=3)
+    names = [r["name"] for r in results]
+    assert "堆排序" not in names[:2]
+
+
+def test_search_teaching_intent_query_strips_noise():
+    """教学口语化查询剥离引导词后仍精准命中目标概念。"""
+    results = search_nodes("如何给学生们讲清楚动态规划", top_k=3)
+    assert results[0]["name"] == "动态规划"
+    names = [r["name"] for r in results]
+    # "学习"引导词噪声节点（强化学习基础）不再挤到第二
+    assert names[1] != "强化学习基础"
+
+
+def test_search_specific_concept_name_preferred():
+    """精确命中多个概念时，更具体的名字（更长）优先。"""
+    results = search_nodes("二叉查找树和树的区别", top_k=3)
+    # "二叉查找树"经别名命中 BST 节点，比泛概念"树"更具体，必须置顶
+    assert results[0]["name"] == "二叉搜索树"
+    assert "二叉查找树" in results[0]["aliases"]
+    assert "树" in [r["name"] for r in results[:3]]
+
+
+def test_search_still_returns_empty_for_garbage():
+    """噪声剥离后无有效词元且无精确命中时返回空。"""
+    assert search_nodes("如何理解") == []
+
+
 def test_search_empty_or_no_match_returns_empty():
     assert search_nodes("") == []
     # 纯未知拉丁词元（不含中文通用单字），确保真正无匹配时返回空

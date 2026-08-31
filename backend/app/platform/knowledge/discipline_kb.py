@@ -33,6 +33,21 @@ _DEFINITION_WEIGHT = 2.0
 _KEYPOINT_WEIGHT = 1.0
 _EXAMPLE_WEIGHT = 0.5
 
+# 教学口语化查询中的无信息量引导词（出现即剥离，避免其参与二元组匹配）。
+_QUERY_NOISE_WORDS = (
+    "如何", "怎么", "怎样", "什么", "为什么", "请问", "解释", "讲解",
+    "讲清楚", "说明", "介绍一下", "介绍", "学生", "学生们", "同学",
+    "老师", "给我", "帮我", "理解", "区分",
+)
+
+# 精确命中 name/alias 的概念置顶加成（对比类查询"堆和栈的区别"依赖此规则）。
+_EXACT_CONCEPT_BONUS = 1e6
+
+# 查询精确命中某概念时，与该概念同课程的节点得分加成：
+# 同课程节点更可能是教学相关的姊妹概念（如"动态规划"→"贪心算法"），
+# 压制其他课程仅靠偶然单字命中（"动作"/"状态"中的"动"/"态"）的节点。
+_SAME_COURSE_BOOST = 1.5
+
 
 @dataclass(frozen=True)
 class KnowledgeNode:
@@ -184,12 +199,86 @@ def _inverse_doc_frequency(nodes: dict[str, KnowledgeNode]) -> dict[str, float]:
     return {token: math.log(1.0 + n / (1 + freq)) for token, freq in doc_freq.items()}
 
 
+def _strip_query_noise(query: str) -> str:
+    """剥离教学口语化查询中的无信息量引导词，保留概念性内容。
+
+    剥离后为空（如"如何理解"）时返回空串，由调用方判定为无效查询。
+    长引导词先于短引导词剥离，避免"学生们"被"学生"截断残留"们"。
+    """
+    cleaned = query
+    for word in sorted(_QUERY_NOISE_WORDS, key=len, reverse=True):
+        cleaned = cleaned.replace(word, " ")
+    return cleaned.strip()
+
+
+def _has_standalone_occurrence(
+    query: str, pattern: str, all_patterns: list[str],
+) -> bool:
+    """判断 pattern 在 query 中是否至少出现一次"独立"出现。
+
+    独立 = 出现位置左右各 2 字的窗口不是任何其他概念名/别名的子串。
+    用于避免单字泛概念误命中："B+ 树索引"中的"树"右侧窗口"索引"
+    属于"索引与查询优化"，"欧拉图"中的"图"左侧窗口"欧拉"属于
+    "欧拉图与哈密顿图"——这些是复合词内部成分，不算精确命中；
+    而"堆和栈的区别"中的"堆""栈"窗口不属于任何概念，算精确命中。
+    """
+    start = query.find(pattern)
+    while start != -1:
+        end = start + len(pattern)
+        left = query[max(0, start - 2):start]
+        right = query[end:end + 2]
+        embedded = any(
+            (left and left in other) or (right and right in other)
+            for other in all_patterns
+            if other != pattern
+        )
+        if not embedded:
+            return True
+        start = query.find(pattern, start + 1)
+    return False
+
+
+def _match_concepts(kb: KnowledgeBase, query: str) -> list[str]:
+    """返回查询中精确命中的概念节点 id（name/alias 独立出现在查询中）。
+
+    用于对比类查询（如"堆和栈的区别"）：把被明确提及的概念置顶，
+    修复纯关键词打分下"堆排序"这类同字前缀节点挤掉次概念的问题；
+    同时通过独立出现检查，避免"B+ 树索引"误命中"树"这类单字泛概念。
+    """
+    patterns: dict[str, list[str]] = {
+        node.id: [p for p in (node.name, *node.aliases) if p]
+        for node in kb.nodes.values()
+    }
+    all_patterns = [p for ps in patterns.values() for p in ps]
+    matched: list[str] = []
+    for node in kb.nodes.values():
+        if any(
+            _has_standalone_occurrence(query, p, all_patterns)
+            for p in patterns[node.id]
+        ):
+            matched.append(node.id)
+    return matched
+
+
 def search_nodes(query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    """BM25 风格关键词检索（CJK 单字 + 英文词元），返回带来源与相关性分数的结果。"""
+    """BM25 风格关键词检索（CJK 单字 + 英文词元），返回带来源与相关性分数的结果。
+
+    排序规则：
+    1. 查询中独立出现的概念（name/alias 精确命中）置顶，按 name 长度降序
+       （更具体的匹配优先）；
+    2. 精确命中某概念时，同课程节点（教学上的姊妹概念）得分乘以加成；
+    3. 其余按关键词相关性分数排序。
+    """
     kb = get_knowledge_base()
-    query_tokens = _tokenize(query)
-    if not query_tokens:
+    query = str(query or "").strip()
+    if not query:
         return []
+    exact_ids = set(_match_concepts(kb, query))
+    cleaned = _strip_query_noise(query)
+    query_tokens = _tokenize(cleaned)
+    if not query_tokens and not exact_ids:
+        return []
+    exact_courses = {kb.nodes[nid].course for nid in exact_ids}
     idf = _inverse_doc_frequency(kb.nodes)
     scored: list[tuple[float, KnowledgeNode]] = []
     for node in kb.nodes.values():
@@ -198,9 +287,20 @@ def search_nodes(query: str, top_k: int = 5) -> list[dict[str, Any]]:
         for token in set(query_tokens):
             if token in terms:
                 score += terms[token] * idf.get(token, 1.0)
+        if node.id in exact_ids:
+            score += _EXACT_CONCEPT_BONUS
         if score > 0:
+            if node.course in exact_courses:
+                score *= _SAME_COURSE_BOOST
             scored.append((score, node))
-    scored.sort(key=lambda pair: (-pair[0], pair[1].id))
+
+    def _sort_key(pair: tuple[float, KnowledgeNode]):
+        score, node = pair
+        # 精确命中者按 name 长度降序（"二叉查找树"优先于"树"），其余按分数排。
+        exact_rank = -len(node.name) if node.id in exact_ids else 0
+        return (-score, exact_rank, node.id)
+
+    scored.sort(key=_sort_key)
     return [
         {
             "id": node.id,

@@ -109,6 +109,7 @@ def build_default_catalog() -> ToolCatalog:
         "graph", "retrieval", "cognition", "question_bank",
         "experiment", "visualization", "sandbox", "coding_diagnosis",
         "student_history", "student_modeling", "recommendation",
+        "discipline_knowledge",
     ):
         catalog.register(ToolDescriptor(
             name=name, risk=ToolRisk.LOW,
