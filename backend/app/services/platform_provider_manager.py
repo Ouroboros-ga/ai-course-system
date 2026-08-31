@@ -151,8 +151,10 @@ class PlatformProviderManager:
             if not getattr(llm_client, "_enabled", True):
                 return "disabled", "真实接入已关闭；未调用外部服务"
             try:
-                from app.core.config import settings
-                if not settings.LLM_API_KEY or not settings.LLM_API_BASE or not settings.LLM_MODEL_NAME:
+                # 以进程内实际 client 的有效配置为准（DeepSeek 等垂类 provider
+                # 的 Key/base_url 来自 DEEPSEEK_* 专属变量，不在 LLM_* 中）。
+                client = getattr(llm_client, "_client", None)
+                if client is None or not getattr(client, "api_key", "") or not getattr(client, "base_url", ""):
                     return "not_configured", "PROVIDER_NOT_CONFIGURED"
                 return "healthy", "ENV_RESTORED"
             except Exception:
@@ -202,6 +204,13 @@ class PlatformProviderManager:
             api_key = settings.LLM_API_KEY or ""
             base_url = settings.LLM_API_BASE or ""
             model_name = settings.LLM_MODEL_NAME or ""
+            if provider == "deepseek":
+                # DeepSeekClient 只认 DEEPSEEK_* 专属配置（见 llm_client.py），
+                # env 检测需按相同优先级取值，否则 DEEPSEEK_API_KEY 已配置但
+                # LLM_API_KEY 为空时，DB 同步与启动补全会误判为未配置。
+                api_key = settings.DEEPSEEK_API_KEY or api_key
+                base_url = settings.DEEPSEEK_BASE_URL or base_url
+                model_name = settings.DEEPSEEK_MODEL or model_name
             if provider and api_key and base_url and model_name:
                 return {
                     "provider": provider,

@@ -120,6 +120,41 @@ def test_disable_tts_returns_to_demo(session):
     assert settings.STAGE8_TTS_PROVIDER == "fake"
 
 
+def test_read_env_config_llm_prefers_deepseek_specific_vars():
+    """LLM_PROVIDER=deepseek 时，env 检测应读取 DEEPSEEK_* 专属变量。
+
+    DeepSeekClient 只认 DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL/DEEPSEEK_MODEL；
+    若 read_env_config 仅读 LLM_*，则 DEEPSEEK_API_KEY 已配置但 LLM_API_KEY
+    为空时，启动同步/DB 补全会把可用配置误判为未配置（线上 401 排查结论）。
+    """
+    from app.core.config import settings
+    from app.services.platform_provider_manager import provider_manager
+
+    saved = {name: getattr(settings, name) for name in (
+        "LLM_PROVIDER", "LLM_API_KEY", "LLM_API_BASE", "LLM_MODEL_NAME",
+        "DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "DEEPSEEK_MODEL",
+    )}
+    try:
+        settings.LLM_PROVIDER = "deepseek"
+        settings.LLM_API_KEY = ""
+        settings.LLM_API_BASE = ""
+        settings.LLM_MODEL_NAME = ""
+        settings.DEEPSEEK_API_KEY = "sk-env-test-deepseek"
+        settings.DEEPSEEK_BASE_URL = "https://api.deepseek.com"
+        settings.DEEPSEEK_MODEL = "deepseek-chat"
+
+        cfg = provider_manager.read_env_config("llm")
+        assert cfg is not None
+        assert cfg["provider"] == "deepseek"
+        assert cfg["api_key"] == "sk-env-test-deepseek"
+        assert cfg["base_url"] == "https://api.deepseek.com"
+        assert cfg["model_name"] == "deepseek-chat"
+        assert cfg["enabled"] is True
+    finally:
+        for name, value in saved.items():
+            setattr(settings, name, value)
+
+
 def test_restore_from_db_applies_enabled_and_disabled(session):
     from app.services.platform_admin_service import update_integration
     from app.services.platform_provider_manager import provider_manager
