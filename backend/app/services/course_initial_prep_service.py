@@ -139,6 +139,11 @@ class InitialCoursePrepService:
             DocumentBlock.course_id == course_id,
             DocumentBlock.run_id.in_(list(role_by_run)),
         )).all())
+        # Boilerplate (running deck headers, cover signatures) must not enter
+        # the LLM evidence review, structure planning or script generation;
+        # otherwise the initial draft is built on repeated slide-master text.
+        from app.platform.document_intelligence.canonical.block_noise import filter_noise_blocks
+        blocks = filter_noise_blocks(blocks)
         blocks = self._ordered_blocks(blocks, role_by_run)
         evidence, evidence_stats = self._build_agent_input(blocks, role_by_run, material_by_run)
         if not evidence:

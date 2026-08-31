@@ -1337,6 +1337,12 @@ class CoursePrepAgentService:
             blocks = list(session.exec(
                 stmt.order_by(DocumentBlock.page_or_slide, DocumentBlock.order_index).limit(64)
             ).all())
+        # Deck-header/cover boilerplate matches lexical queries on course-name
+        # terms (e.g. "C++ 程序"); drop it so retrieval returns teaching content.
+        from app.platform.document_intelligence.canonical.block_noise import detect_noise_block_ids
+        if blocks:
+            noise_ids = detect_noise_block_ids(blocks)
+            blocks = [block for block in blocks if block.block_id not in noise_ids]
         # This is lexical overlap ranking, not BM25, BERT reranking, or vector
         # retrieval. Keep that distinction explicit in code and audit docs.
         ranked = sorted(
