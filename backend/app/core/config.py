@@ -199,6 +199,9 @@ class Settings(BaseSettings):
     GRAPHRAG_EMBEDDING_MAX_LENGTH: int = 512
     GRAPHRAG_EMBEDDING_QUERY_INSTRUCTION: str = ""
     GRAPHRAG_PROMPT_POLICY: str = "edu-graph-graphrag/2.0-zh"
+    # 重点节点筛选目标数（identity reconcile 后对草稿做确定性归并/降噪/截断）。
+    # 0 = 关闭（保持原始草稿规模，fail-closed 默认）。
+    GRAPHRAG_GRAPH_TARGET_NODES: int = 0
     GRAPHRAG_MAX_GLEANINGS: int = 0
     GRAPHRAG_MAX_RETRIES: int = 2
     GRAPHRAG_RUN_TIMEOUT_SECONDS: int = 1800

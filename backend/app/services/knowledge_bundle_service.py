@@ -44,6 +44,7 @@ from app.models.knowledge_bundle_model import (
 from app.platform.knowledge.document_ir_exporter import CanonicalDocumentIRExporter
 from app.platform.knowledge.document_ir_exporter import load_graph_rag_input_manifest
 from app.platform.knowledge.embedding import embedding_provider_from_settings
+from app.platform.knowledge.graph_focus_selection import apply_focus_selection
 from app.platform.knowledge.graphrag_runner import GraphRagRunError, GraphRagRunner
 from app.platform.knowledge.lancedb_provider import (
     LanceDbCourseVectorProvider,
@@ -261,6 +262,10 @@ class KnowledgeBundleService:
             manifest=manifest,
             artifacts=artifacts,
         )
+        graph = apply_focus_selection(
+            graph,
+            target=max(0, int(settings.GRAPHRAG_GRAPH_TARGET_NODES or 0)),
+        )
         run.draft_nodes = list(graph.nodes)
         run.draft_relations = list(graph.relations)
         run.entity_count = len(graph.nodes)
@@ -397,6 +402,10 @@ class KnowledgeBundleService:
                 graphrag_run_id=run.run_id,
                 manifest=manifest,
                 artifacts=artifacts,
+            )
+            graph = apply_focus_selection(
+                graph,
+                target=max(0, int(settings.GRAPHRAG_GRAPH_TARGET_NODES or 0)),
             )
         except Exception as exc:
             session.rollback()
