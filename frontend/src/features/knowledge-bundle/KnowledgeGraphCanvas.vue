@@ -17,6 +17,9 @@ const expandedClusterLabel = ref('')
 // 松手后整图带阻尼回弹，而不是一次性动画结束后僵硬静止。
 let simulationAlpha = 0
 let simulationFrame = 0
+// 绘制合并：指针事件频率可能高于帧率，直接 draw 会造成一帧多次重绘卡顿，
+// 统一调度到每帧最多一次。
+let drawFrame = 0
 const CLUSTER_THRESHOLD = 120        // design.md §5 大图阈值：超过120节点即聚类
 const SUBCLUSTER_LIMIT = 60          // 单聚类展开后内部仍超过60则二次分桶
 // design.md §1.1 Academic Ink 体系；不再使用 teal/紫色装饰色
@@ -166,7 +169,7 @@ function rebuild() {
     const id = String(source.id)
     const old = previous.get(id)
     const angle = ((hash(id) % 360) / 180) * Math.PI
-    const radius = 80 + (hash(`${id}:radius`) % 220)
+    const radius = 110 + (hash(`${id}:radius`) % 280)
     const item = {
       id,
       source,
@@ -225,7 +228,7 @@ function rebuild() {
 
 function resetExplodedNode(node) {
   const angle = ((hash(node.id) % 360) / 180) * Math.PI
-  const radius = 80 + (hash(`${node.id}:radius`) % 220)
+  const radius = 110 + (hash(`${node.id}:radius`) % 280)
   node.x = Math.cos(angle) * radius
   node.y = Math.sin(angle) * radius
   node.vx = 0
@@ -260,7 +263,7 @@ function simulate(alpha) {
         squared = 1
       }
       const distance = Math.sqrt(squared)
-      const force = (3000 / squared) * alpha
+      const force = (5200 / squared) * alpha
       const ax = (dx / distance) * force
       const ay = (dy / distance) * force
       a.vx = clampVelocity(a.vx + ax)
@@ -273,7 +276,7 @@ function simulate(alpha) {
     const dx = edge.target.x - edge.source.x
     const dy = edge.target.y - edge.source.y
     const distance = Math.max(1, Math.hypot(dx, dy))
-    const desired = edge.type === 'PREREQUISITE_OF' ? 125 : 100
+    const desired = edge.type === 'PREREQUISITE_OF' ? 165 : 135
     const force = (distance - desired) * .018 * alpha
     edge.source.vx = clampVelocity(edge.source.vx + (dx / distance) * force)
     edge.source.vy = clampVelocity(edge.source.vy + (dy / distance) * force)
@@ -326,6 +329,14 @@ function reheat(value) {
   if (reducedMotion || graph.nodes.length > 200) return
   simulationAlpha = Math.max(simulationAlpha, value)
   if (!simulationFrame) startSimulation(false)
+}
+
+function scheduleDraw() {
+  if (drawFrame) return
+  drawFrame = requestAnimationFrame(() => {
+    drawFrame = 0
+    draw()
+  })
 }
 
 function resize() {
@@ -383,8 +394,8 @@ function fit() {
   const maxX = Math.max(...xs)
   const minY = Math.min(...ys)
   const maxY = Math.max(...ys)
-  const rangeX = Math.max(240, maxX - minX + 180)
-  const rangeY = Math.max(180, maxY - minY + 180)
+  const rangeX = Math.max(240, maxX - minX + 200)
+  const rangeY = Math.max(180, maxY - minY + 200)
   const availableWidth = Math.max(320, host.value.clientWidth - effectiveRightInset())
   view.scale = Math.max(.28, Math.min(1.5, Math.min(
     availableWidth / rangeX,
@@ -396,9 +407,12 @@ function fit() {
 }
 
 function drawArrow(context, edge, highlighted) {
-  const [startX, startY] = worldToScreen(edge.source.x, edge.source.y)
+  const [centerX, centerY] = worldToScreen(edge.source.x, edge.source.y)
   const [endX, endY] = worldToScreen(edge.target.x, edge.target.y)
-  const angle = Math.atan2(endY - startY, endX - startX)
+  const angle = Math.atan2(endY - centerY, endX - centerX)
+  // 连线从源节点边缘出发、止于目标节点边缘，避免穿过节点圆心与文字
+  const startX = centerX + Math.cos(angle) * (15 * view.scale + 2)
+  const startY = centerY + Math.sin(angle) * (15 * view.scale + 2)
   const x = endX - Math.cos(angle) * (17 * view.scale + 4)
   const y = endY - Math.sin(angle) * (17 * view.scale + 4)
   context.beginPath()
@@ -441,7 +455,7 @@ function draw() {
     const [x, y] = worldToScreen(node.x, node.y)
     const active = node.id === selected
     const cluster = Boolean(node.source?._clusterType)
-    const radius = (cluster ? 21 : active ? 17 : 13) * Math.max(.72, Math.min(1.2, view.scale))
+    const radius = (cluster ? 24 : active ? 19 : 15) * Math.max(.72, Math.min(1.2, view.scale))
     context.globalAlpha = selected && !connected.has(node.id) ? .2 : 1
     context.beginPath()
     context.arc(x, y, radius, 0, Math.PI * 2)
@@ -464,7 +478,12 @@ function draw() {
     context.font = `${active ? 700 : 550} ${active ? 13 : 12}px Inter, "HarmonyOS Sans SC", "PingFang SC", system-ui, sans-serif`
     context.textAlign = 'center'
     const label = node.label.length > 16 ? `${node.label.slice(0, 15)}…` : node.label
-    context.fillText(label, x, y + radius + 16)
+    // 文字白色描边光晕：连线从文字下方穿过时保持可读，不再互相压盖
+    context.lineJoin = 'round'
+    context.lineWidth = 3
+    context.strokeStyle = 'rgba(255, 255, 255, .92)'
+    context.strokeText(label, x, y + radius + 17)
+    context.fillText(label, x, y + radius + 17)
     context.globalAlpha = 1
   }
 }
@@ -496,9 +515,14 @@ function onPointerDown(event) {
 function onPointerMove(event) {
   const [x, y] = eventPoint(event)
   if (!pointer) {
-    hoverId = pick(x, y)?.id || ''
-    canvas.value.style.cursor = hoverId ? 'pointer' : 'grab'
-    draw()
+    const id = pick(x, y)?.id || ''
+    if (id !== hoverId) {
+      hoverId = id
+      const cursor = hoverId ? 'pointer' : 'grab'
+      // 仅变化时写 style，避免每次 move 触发样式重算
+      if (canvas.value.style.cursor !== cursor) canvas.value.style.cursor = cursor
+      scheduleDraw()
+    }
     return
   }
   pointer.moved = true
@@ -506,11 +530,13 @@ function onPointerMove(event) {
     ;[pointer.node.x, pointer.node.y] = screenToWorld(x, y)
     // 拖拽中保持余温：相连节点弹性跟随，而不是只有被拖节点孤零零移动
     reheat(.12)
+    // 力学循环运行时由它负责每帧绘制；未运行（降级/大图）才调度补充绘制
+    if (!simulationFrame) scheduleDraw()
   } else {
     view.x = pointer.viewX + (x - pointer.x) / view.scale
     view.y = pointer.viewY + (y - pointer.y) / view.scale
+    scheduleDraw()
   }
-  draw()
 }
 
 function onPointerUp() {
@@ -560,6 +586,7 @@ onMounted(() => {
 })
 onBeforeUnmount(() => {
   cancelAnimationFrame(simulationFrame)
+  cancelAnimationFrame(drawFrame)
   resizeObserver?.disconnect()
 })
 watch(() => [props.nodes, props.relations], rebuild)
