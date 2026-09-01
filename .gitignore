@@ -158,3 +158,5 @@ backend/.qa/
 
 # Local SQLite database backup files (never commit)
 database/*.db.*
+
+.corpus_cache/

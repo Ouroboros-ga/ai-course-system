@@ -71,6 +71,49 @@ python knowledge_data/import_to_neo4j.py   # 校验 + 打印导入计划（不�
    离散数学（`discrete.json`）、计算机图形学（`graphics.json`）
    ——**十一门课（112 节点/106 关系，2026-08-30）**；后续按需扩充（如信息安全、分布式系统）。
 
+## 语料层（corpus/，2026-09-01 扩容至 3.26GB）
+
+精编概念层（上表 JSON）之上新增**语料层**：计算机学科方向的开放许可大规模语料，
+存放于 `.corpus_cache/`（本地，不入库），由 `corpus/` 下脚本构建，
+统计汇总见 `corpus/manifest.json`。
+
+| 语料文件                     | 来源                                            | 规模                    | 许可                     |
+| ------------------------ | --------------------------------------------- | --------------------- | ---------------------- |
+| `corpus_zhwiki_cs.jsonl` | 中文维基百科 CS 分类子集（PetScan 20 分类）                 | 22,770 篇 / 38.1M 字符   | CC BY-SA 4.0           |
+| `corpus_enwiki_cs.jsonl` | 英文维基百科 CS 分类子集（PetScan 38 分类两轮）               | 117,779 篇 / 675.3M 字符 | CC BY-SA 4.0           |
+| `corpus_rfc.jsonl`       | RFC 全集（rfc-editor.org，编号 1–10038）             | 9,824 篇 / 537.4M 字符   | 自由分发（IETF）             |
+| `corpus_arxiv_cs.jsonl`  | arXiv cs.\* 论文全文（Common Pile CC 授权子集，6/23 分片） | 33,990 篇 / 2.07G 字符   | 论文自带 CC 许可             |
+| `corpus_textbooks.jsonl` | 权威开放教材：OSTEP（67 章）、SICP 2e（5 章）               | 72 篇 / 3.07M 字符       | CC BY-NC-ND / CC BY-SA |
+
+构建脚本（`corpus/`）：
+
+* `fetch_petscan_en_robust.py` / `fetch_petscan_cs.py`：PetScan 分类清单（弱网降深度重试）；
+
+* `fetch_hf_wiki.py`：HF wikimedia/wikipedia parquet 分片下载（断点续传）；
+
+* `extract_hf_wiki_cs.py` / `extract_zhwiki_cs.py`：按清单过滤出 CS 语料；
+
+* `fetch_rfc_texts.py` / `build_rfc_corpus.py`：RFC 逐篇抓取与 JSONL 清洗；
+
+* `extract_arxiv_cs.py`：arXiv 元数据快照（librarian-bots）建 cs.\* ID 集，
+  过滤 Common Pile 论文分片；
+
+* `fetch_textbooks.py`：OSTEP 逐章 PDF 文本提取 + SICP HTML 章节抓取；
+
+* `build_manifest.py`：汇总生成 `manifest.json`。
+
+诚实边界：
+
+* 语料层**尚未接入任何检索链路**（概念层检索 `discipline_kb.py` 仍只消费精编
+  JSON）；接入需走 RAG 检索白名单（见"集成路径"第 5 条）并评估嵌入成本。
+
+* 全部来源为开放许可内容；受版权保护的市售教材**未**纳入（用户持有的纸质书
+  无法授权数字化复制）。OSTEP/SICP 为作者自行发布的自由授权版本。
+
+* Think Python（Green Tea Press）抓取被站点限流（404），暂缺，可后续补。
+
+* `archive.org`（Stack Exchange dump）在当前网络 DNS 不可达，未纳入。
+
 ## 诚实边界
 
 * 本目录是**数据与校验脚本**，不是已接线的生产知识库；"学科知识库已填充"
