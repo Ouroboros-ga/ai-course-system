@@ -62,9 +62,6 @@ async function load() {
     ])
     draft.value = draftResult
     bundleStatus.value = statusResult
-    if (!selectedId.value && nodes.value.length) {
-      selectedId.value = String(nodes.value[0].id)
-    }
     error.value = ''
   } catch (requestError) {
     error.value = requestError?.message || '知识包状态加载失败。'
@@ -135,7 +132,8 @@ async function approve() {
 }
 
 function selectGraphItem(item) {
-  if (item?.id) selectedId.value = String(item.id)
+  // 点击画布空白处时 item 为 null，取消选择
+  selectedId.value = item?.id ? String(item.id) : ''
 }
 
 function openEvidence(item) {

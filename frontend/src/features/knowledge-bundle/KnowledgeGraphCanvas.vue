@@ -505,7 +505,7 @@ function onPointerMove(event) {
   if (pointer.kind === 'node') {
     ;[pointer.node.x, pointer.node.y] = screenToWorld(x, y)
     // 拖拽中保持余温：相连节点弹性跟随，而不是只有被拖节点孤零零移动
-    reheat(.3)
+    reheat(.12)
   } else {
     view.x = pointer.viewX + (x - pointer.x) / view.scale
     view.y = pointer.viewY + (y - pointer.y) / view.scale
@@ -517,8 +517,8 @@ function onPointerUp() {
   if (!pointer) return
   if (pointer.kind === 'node') {
     pointer.node.fixed = false
-    // 松手后重新加热：整图按力学关系阻尼回弹到新平衡
-    reheat(.45)
+    // 松手后重新加热：整图按力学关系阻尼回弹到新平衡（小幅度，仅恢复局部平衡）
+    reheat(.22)
     if (!pointer.moved) {
       if (pointer.node.source?._clusterType) {
         expandedCluster = pointer.node.source._clusterType
@@ -528,6 +528,9 @@ function onPointerUp() {
         emit('select', pointer.node.source)
       }
     }
+  } else if (pointer.kind === 'pan' && !pointer.moved) {
+    // 点击空白处（未拖动平移）：取消选择
+    emit('select', null)
   }
   pointer = null
 }
