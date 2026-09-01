@@ -169,7 +169,7 @@ function rebuild() {
     const id = String(source.id)
     const old = previous.get(id)
     const angle = ((hash(id) % 360) / 180) * Math.PI
-    const radius = 110 + (hash(`${id}:radius`) % 280)
+    const radius = 150 + (hash(`${id}:radius`) % 360)
     const item = {
       id,
       source,
@@ -228,7 +228,7 @@ function rebuild() {
 
 function resetExplodedNode(node) {
   const angle = ((hash(node.id) % 360) / 180) * Math.PI
-  const radius = 110 + (hash(`${node.id}:radius`) % 280)
+  const radius = 150 + (hash(`${node.id}:radius`) % 360)
   node.x = Math.cos(angle) * radius
   node.y = Math.sin(angle) * radius
   node.vx = 0
@@ -263,7 +263,7 @@ function simulate(alpha) {
         squared = 1
       }
       const distance = Math.sqrt(squared)
-      const force = (5200 / squared) * alpha
+      const force = (11000 / squared) * alpha
       const ax = (dx / distance) * force
       const ay = (dy / distance) * force
       a.vx = clampVelocity(a.vx + ax)
@@ -276,7 +276,7 @@ function simulate(alpha) {
     const dx = edge.target.x - edge.source.x
     const dy = edge.target.y - edge.source.y
     const distance = Math.max(1, Math.hypot(dx, dy))
-    const desired = edge.type === 'PREREQUISITE_OF' ? 165 : 135
+    const desired = edge.type === 'PREREQUISITE_OF' ? 230 : 185
     const force = (distance - desired) * .018 * alpha
     edge.source.vx = clampVelocity(edge.source.vx + (dx / distance) * force)
     edge.source.vy = clampVelocity(edge.source.vy + (dy / distance) * force)
@@ -289,8 +289,8 @@ function simulate(alpha) {
       resetExplodedNode(node)
       continue
     }
-    // 增强中心引力，避免大图节点过度散开导致部分节点跑出可视区
-    const centerForce = .018 * alpha
+    // 适度中心引力防止跑出可视区；取值偏小让斥力主导，节点分布更舒展
+    const centerForce = .011 * alpha
     const damping = .82
     node.vx = clampVelocity((node.vx - node.x * centerForce) * damping)
     node.vy = clampVelocity((node.vy - node.y * centerForce) * damping)
