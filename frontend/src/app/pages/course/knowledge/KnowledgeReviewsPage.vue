@@ -5,16 +5,20 @@ import {
   CheckCircle2,
   FileSearch,
   LoaderCircle,
+  Pencil,
   RefreshCw,
   ShieldAlert,
   Sparkles,
+  Trash2,
   X,
 } from 'lucide-vue-next'
 import {
   approveKnowledgeBundle,
+  deleteKnowledgeBundleDraftNode,
   getKnowledgeBundleDraft,
   getKnowledgeBundleStatus,
   regenerateKnowledgeBundle,
+  updateKnowledgeBundleDraftNode,
 } from '@/api/graph.js'
 import KnowledgeGraphCanvas from '@/features/knowledge-bundle/KnowledgeGraphCanvas.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
@@ -32,6 +36,9 @@ const reason = ref('')
 const instructions = ref('')
 const submitting = ref(false)
 const actionMessage = ref('')
+const editing = ref(false)
+const editTitle = ref('')
+const editDescription = ref('')
 let timer = 0
 
 const nodes = computed(() => draft.value?.nodes || [])
@@ -42,6 +49,8 @@ const selected = computed(() =>
   || null,
 )
 const selectedEvidence = computed(() => selected.value?.evidence_previews || [])
+// 关系条目带 source/target；节点没有，以此区分选中项类型
+const selectedIsNode = computed(() => Boolean(selected.value && !selected.source))
 const canApprove = computed(() =>
   draft.value?.status === 'awaiting_review' && !submitting.value,
 )
@@ -52,6 +61,10 @@ const isBuilding = computed(() => {
     || ['queued', 'building', 'validating'].includes(vector)
     || ['approved_pending_index', 'indexing'].includes(bundleStatus.value?.latest_bundle?.status)
 })
+// 教师手动删改只对 AWAITING_REVIEW 的最新草稿开放（与后端闸门一致）
+const canEditDraft = computed(() =>
+  draft.value?.status === 'awaiting_review' && !submitting.value && !isBuilding.value,
+)
 const runtimeReady = computed(() => bundleStatus.value?.runtime?.ready !== false)
 
 async function load() {
@@ -134,6 +147,69 @@ async function approve() {
 function selectGraphItem(item) {
   // 点击画布空白处时 item 为 null，取消选择
   selectedId.value = item?.id ? String(item.id) : ''
+  editing.value = false
+}
+
+function startEdit() {
+  if (!selected.value || !canEditDraft.value) return
+  editTitle.value = selected.value.title || selected.value.label || ''
+  editDescription.value = selected.value.description || ''
+  editing.value = true
+}
+
+function cancelEdit() {
+  editing.value = false
+}
+
+async function saveEdit() {
+  if (!selected.value || submitting.value) return
+  const title = editTitle.value.trim()
+  if (!title) return
+  submitting.value = true
+  actionMessage.value = ''
+  try {
+    const updated = await updateKnowledgeBundleDraftNode(courseId, selected.value.id, {
+      run_id: draft.value.run_id,
+      title,
+      description: editDescription.value,
+    })
+    draft.value = updated
+    editing.value = false
+    actionMessage.value = `节点已更新为「${title}」。`
+  } catch (requestError) {
+    actionMessage.value = requestError?.message || '节点更新失败。'
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function deleteSelectedNode() {
+  const node = selected.value
+  if (!node || !canEditDraft.value) return
+  const linked = relations.value.filter(
+    (relation) => String(relation.source) === String(node.id)
+      || String(relation.target) === String(node.id),
+  ).length
+  const accepted = window.confirm(
+    `删除节点「${node.title || node.label || node.id}」？\n`
+    + `将同时删除 ${linked} 条关联关系。此操作只影响当前待审批草稿，不影响线上图谱。`,
+  )
+  if (!accepted) return
+  submitting.value = true
+  actionMessage.value = ''
+  try {
+    const updated = await deleteKnowledgeBundleDraftNode(
+      courseId, node.id, draft.value.run_id,
+    )
+    draft.value = updated
+    selectedId.value = ''
+    editing.value = false
+    actionMessage.value = `节点「${node.title || node.label || node.id}」已从草稿删除。`
+  } catch (requestError) {
+    actionMessage.value = requestError?.message || '节点删除失败。'
+  } finally {
+    submitting.value = false
+  }
 }
 
 // warnings 里可能是字符串，也可能是整份质量报告对象（code=QUALITY_REFINEMENT_REPORT）；
@@ -141,6 +217,13 @@ function selectGraphItem(item) {
 function warningText(warning) {
   if (typeof warning === 'string') return warning
   if (!warning || typeof warning !== 'object') return String(warning ?? '')
+  if (warning.code === 'TEACHER_MANUAL_EDIT') {
+    const title = warning.title || warning.node_id
+    if (warning.action === 'node.delete') {
+      return `教师手动删除节点「${title}」及其 ${warning.removed_relation_count ?? 0} 条关系`
+    }
+    return `教师手动重命名节点「${warning.previous_title || '—'}」→「${warning.title || '—'}」`
+  }
   if (warning.code !== 'QUALITY_REFINEMENT_REPORT') {
     return warning.message || warning.code || JSON.stringify(warning)
   }
@@ -185,7 +268,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <p class="eyebrow">知识图谱审批</p>
         <h1>知识图谱整图审批</h1>
         <p>
-          知识图谱根据课程材料自动生成。教师可核对来源、通过审核，或附上反馈后重新生成。
+          知识图谱根据课程材料自动生成。教师可核对来源、手动删改节点、通过审核，或附上反馈后重新生成。
         </p>
       </div>
       <div class="actions">
@@ -250,12 +333,54 @@ onBeforeUnmount(() => window.clearInterval(timer))
           />
         </div>
         <aside class="detail">
-          <template v-if="selected">
+          <template v-if="selected && editing && selectedIsNode">
+            <form class="edit-form" @submit.prevent="saveEdit">
+              <p class="eyebrow">编辑节点</p>
+              <label>
+                节点标题
+                <input v-model="editTitle" required maxlength="120" placeholder="例如：最小生成树" />
+              </label>
+              <label>
+                补充描述
+                <textarea
+                  v-model="editDescription"
+                  rows="4"
+                  maxlength="2000"
+                  placeholder="可选；用于说明该知识点的含义或教学定位。"
+                />
+              </label>
+              <div class="edit-actions">
+                <SfxButton
+                  type="submit"
+                  variant="primary"
+                  size="sm"
+                  :disabled="!editTitle.trim() || submitting"
+                  :loading="submitting"
+                >
+                  保存修改
+                </SfxButton>
+                <SfxButton variant="tertiary" size="sm" :disabled="submitting" @click="cancelEdit">
+                  取消
+                </SfxButton>
+              </div>
+            </form>
+          </template>
+          <template v-else-if="selected">
             <p class="eyebrow">
               {{ selected.source && selected.target ? selected.type : (selected.type || 'CONCEPT') }}
             </p>
             <h2>{{ selected.title || selected.label || selected.id }}</h2>
             <p>{{ selected.description || selected.reason || '暂无补充说明。' }}</p>
+            <div v-if="selectedIsNode && canEditDraft" class="detail-actions">
+              <SfxButton variant="secondary" size="sm" @click="startEdit">
+                <template #icon><Pencil :size="14" /></template>
+                重命名
+              </SfxButton>
+              <SfxButton variant="secondary" size="sm" @click="deleteSelectedNode">
+                <template #icon><Trash2 :size="14" /></template>
+                删除节点
+              </SfxButton>
+            </div>
             <dl>
               <dt>稳定身份</dt><dd>{{ selected.id }}</dd>
               <dt v-if="selected.identity_id">数字身份</dt><dd v-if="selected.identity_id">{{ selected.identity_id }}</dd>
@@ -354,6 +479,16 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .canvas { min-width: 0; }
 .detail { max-height: 560px; overflow: auto; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); padding: var(--space-4); }
 .detail h2 { margin: var(--space-1) 0 var(--space-2); }
+.detail-actions { display: flex; gap: var(--space-2); margin: var(--space-2) 0; }
+.edit-form { display: grid; gap: var(--space-3); }
+.edit-form label { display: grid; gap: var(--space-1); font-weight: 600; }
+.edit-form input, .edit-form textarea {
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  font: inherit;
+}
+.edit-actions { display: flex; gap: var(--space-2); }
 .detail > p { color: var(--text-secondary); line-height: 1.65; }
 .detail dl { display: grid; grid-template-columns: 92px 1fr; gap: var(--space-2); font-size: var(--ui-sm-size); }
 .detail dt { color: var(--text-muted); }

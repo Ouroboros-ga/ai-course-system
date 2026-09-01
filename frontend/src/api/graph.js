@@ -195,6 +195,28 @@ export function regenerateKnowledgeBundle(courseId, payload) {
   return request.post(`/graph/course/${courseId}/knowledge-bundle/regenerate`, payload)
 }
 
+/** Teacher manual edit: rename a draft node / update its description.
+ * PATCH /graph/course/{courseId}/knowledge-bundle/draft/nodes/{nodeId}
+ * Only allowed while the latest run is awaiting_review.
+ */
+export function updateKnowledgeBundleDraftNode(courseId, nodeId, payload) {
+  return request.patch(
+    `/graph/course/${courseId}/knowledge-bundle/draft/nodes/${encodeURIComponent(nodeId)}`,
+    payload,
+  )
+}
+
+/** Teacher manual edit: delete a draft node and its relations.
+ * DELETE /graph/course/{courseId}/knowledge-bundle/draft/nodes/{nodeId}?run_id=...
+ * Only allowed while the latest run is awaiting_review.
+ */
+export function deleteKnowledgeBundleDraftNode(courseId, nodeId, runId) {
+  return request.delete(
+    `/graph/course/${courseId}/knowledge-bundle/draft/nodes/${encodeURIComponent(nodeId)}`,
+    { params: { run_id: runId } },
+  )
+}
+
 export function approveKnowledgeBundle(courseId, payload) {
   return request.post(`/graph/course/${courseId}/knowledge-bundle/approve`, payload)
 }
