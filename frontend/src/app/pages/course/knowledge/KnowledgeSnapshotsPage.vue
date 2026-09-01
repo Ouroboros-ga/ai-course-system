@@ -260,7 +260,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-.page { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); }
+.page { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); height: 100%; overflow-y: auto; }
 .head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); }
 .head h1 { margin: 0; }
 .head p { margin: var(--space-1) 0 0; }

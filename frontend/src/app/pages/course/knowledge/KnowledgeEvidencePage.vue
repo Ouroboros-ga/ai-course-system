@@ -217,7 +217,7 @@ onMounted(load)
 </template>
 
 <style scoped>
-.sfx-evidence { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); }
+.sfx-evidence { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); height: 100%; overflow-y: auto; }
 .sfx-evidence-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--space-4); flex-wrap: wrap; }
 .sfx-evidence-summary { display: flex; gap: var(--space-2); flex-wrap: wrap; }
 .sfx-evidence-filters { display: flex; gap: var(--space-1); padding: 3px; background: var(--surface-soft); border-radius: var(--radius-md); overflow-x: auto; }

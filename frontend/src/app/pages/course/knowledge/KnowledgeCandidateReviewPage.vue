@@ -312,6 +312,10 @@ onBeforeUnmount(() => window.clearInterval(timer))
   flex-direction: column;
   padding: var(--space-6);
   gap: var(--space-5);
+  /* 建设布局 .stage-body 为 overflow:hidden 块容器：根容器需要明确
+     height:100% 让 body 的 flex:1+min-height:0 与内部列表滚动生效 */
+  height: 100%;
+  overflow-y: auto;
 }
 .review__header {
   display: flex;

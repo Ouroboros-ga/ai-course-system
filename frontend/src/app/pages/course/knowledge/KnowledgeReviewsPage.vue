@@ -456,7 +456,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
 </template>
 
 <style scoped>
-.review { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); color: var(--text-primary); }
+.review { display: flex; flex-direction: column; gap: var(--space-4); padding: var(--space-6); color: var(--text-primary); height: 100%; overflow-y: auto; }
 .review__header { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--space-4); }
 .review__header h1 { margin: var(--space-1) 0 var(--space-2); }
 .review__header > div > p:last-child { max-width: 780px; margin: 0; color: var(--text-muted); }
