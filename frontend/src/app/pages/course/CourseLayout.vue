@@ -46,21 +46,22 @@ const navItems = computed(() => {
       to: `/app/course/${courseId.value}/experiments`,
       enabled: isCodeSandboxExperimentPlatformEnabled(capabilities.value),
     },
-    {
-      key: 'research',
-      label: '科研',
-      to: `/app/course/${courseId.value}/research`,
-      // Keep the Research workspace discoverable for every active course
-      // member. The backend still gates the actual paper search capability.
-      enabled: allowed.value['course.view'],
-      reason: '当前课程角色无研究检索权限',
-    },
+    // 「科研」入口暂时隐藏（2026-08-20 按需求下线，非删除）：
+    // 路由、页面与后端全部保留，后续需要时恢复此 nav 项即可重新可见。
+    // {
+    //   key: 'research',
+    //   label: '科研',
+    //   to: `/app/course/${courseId.value}/research`,
+    //   enabled: allowed.value['course.view'],
+    //   reason: '当前课程角色无研究检索权限',
+    // },
   ]
   if (!allowed.value['course.edit']) {
     base.splice(3, 0, {
       key: 'knowledge',
       label: '知识',
-      to: `/app/course/${courseId.value}/knowledge`,
+      // 知识工作区已并入建设布局；学生入口直达结构视图
+      to: `/app/course/${courseId.value}/build/knowledge/graph`,
       enabled: true,
     })
   }
@@ -80,8 +81,8 @@ const navItems = computed(() => {
 const activeKey = computed(() => {
   if (route.path.endsWith('/learn')) return 'learn'
   if (route.path.includes('/analytics')) return 'analytics'
-  if (route.path.includes('/knowledge')) return allowed.value['course.edit'] ? 'build' : 'knowledge'
   if (route.path.includes('/visualize')) return 'learn'
+  if (route.path.includes('/build/knowledge')) return allowed.value['course.edit'] ? 'build' : 'knowledge'
   if (route.path.includes('/build')) return 'build'
   if (route.path.includes('/experiments')) return 'experiments'
   if (route.path.includes('/research')) return 'research'
@@ -90,10 +91,11 @@ const activeKey = computed(() => {
   return 'overview'
 })
 
-// 返回按钮目标：建设子树及建设者的知识空间回到「我建设的」；
-// 学生知识空间和其他子页面回到「我学习的」。
+// 返回按钮目标：建设子树（含知识工作区）按角色回到对应列表。
 const backTarget = computed(() => {
-  if (route.path.includes('/build') || (route.path.includes('/knowledge') && allowed.value['course.edit'])) return '/app/courses/building'
+  if (route.path.includes('/build')) {
+    return allowed.value['course.edit'] ? '/app/courses/building' : '/app/courses/learning'
+  }
   return '/app/courses/learning'
 })
 

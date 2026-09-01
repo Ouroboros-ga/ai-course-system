@@ -74,8 +74,8 @@ python knowledge_data/import_to_neo4j.py   # 校验 + 打印导入计划（不�
    `discipline_corpus_embedding`（HNSW 余弦索引，约 260MB）。查询侧 FTS 与
    向量两路召回做 RRF 融合（k=60），经 `DisciplineKnowledgePortImpl` 与
    概念层结果合并为补充参考，随 `/teaching-agent/respond` 的
-   `discipline_references` 透出（含 doc_id/chunk_no/snippet/matched_by/
-   source_license）。启用配置：`DISCIPLINE_CORPUS_INDEX_PATH`（FTS 索引）、
+   `discipline_references` 透出（含 doc\_id/chunk\_no/snippet/matched\_by/
+   source\_license）。启用配置：`DISCIPLINE_CORPUS_INDEX_PATH`（FTS 索引）、
    `DISCIPLINE_CORPUS_VECTOR_ENABLED` + `DISCIPLINE_CORPUS_VECTOR_MODEL_PATH`
    （向量路，默认关闭 fail-closed）。注意：这是 TeachingAgent 学科参考链路
    的白名单接入，与 `ActiveBundleCourseRetrievalPort` 的课件证据 RAG

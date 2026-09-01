@@ -720,7 +720,7 @@ function handleTrackSelect(index, options = {}) {
 
 function handleOpenKnowledge(nodeId) {
   if (nodeId == null || nodeId === '') return
-  router.push(`/app/course/${courseId}/knowledge/graph/${encodeURIComponent(nodeId)}`)
+  router.push(`/app/course/${courseId}/build/knowledge/graph/${encodeURIComponent(nodeId)}`)
 }
 function handlePlaylistNext() {
   const nextIndex = playlistPlayback.activeIndex.value + 1

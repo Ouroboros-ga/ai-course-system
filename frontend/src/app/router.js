@@ -212,41 +212,16 @@ export const shadowAppRoutes = [
                 meta: { requiredPermission: 'course.view' },
               },
 
-              // 知识空间（§15）：Local Rail 结构视图｜原文引用｜候选审核｜版本记录
+              // 知识空间（§15）：已并入建设布局 /build/knowledge/*；旧地址重定向兼容。
               {
-                path: 'knowledge',
-                component: () => import('./pages/course/knowledge/KnowledgeLayout.vue'),
-                children: [
-                  { path: '', redirect: (to) => `/app/course/${to.params.courseId}/knowledge/graph` },
-                  {
-                    path: 'graph/:nodeId?',
-                    name: 'app-course-knowledge',
-                    component: () => import('./pages/course/knowledge/KnowledgeGraphPage.vue'),
-                  },
-                  {
-                    path: 'evidence',
-                    name: 'app-course-knowledge-evidence',
-                    component: () => import('./pages/course/knowledge/KnowledgeEvidencePage.vue'),
-                  },
-                  {
-                    path: 'reviews',
-                    name: 'app-course-knowledge-reviews',
-                    component: () => import('./pages/course/knowledge/KnowledgeReviewsPage.vue'),
-                  },
-                  {
-                    path: 'candidates',
-                    name: 'app-course-knowledge-candidates',
-                    component: () => import('./pages/course/knowledge/KnowledgeCandidateReviewPage.vue'),
-                  },
-                  {
-                    path: 'snapshots',
-                    name: 'app-course-knowledge-snapshots',
-                    component: () => import('./pages/course/knowledge/KnowledgeSnapshotsPage.vue'),
-                  },
-                ],
+                path: 'knowledge/:rest(.*)?',
+                redirect: (to) => {
+                  const rest = String(to.params.rest ?? '').replace(/^\/+/, '')
+                  return `/app/course/${to.params.courseId}/build/knowledge/${rest || 'graph'}`
+                },
               },
 
-              // 教师课程建设（§14）：七个 build 子路由 + 一个跨布局知识步骤
+              // 教师课程建设（§14）：七个 build 子路由 + 知识工作区子路由
               {
                 path: 'build',
                 component: () => import('./pages/course/build/BuildLayout.vue'),
@@ -287,10 +262,44 @@ export const shadowAppRoutes = [
                     name: 'app-course-build-releases',
                     component: () => import('./pages/course/build/BuildReleasesPage.vue'),
                   },
+                  // 知识工作区（原 /knowledge/*，已整体并入建设布局）：五个子页面
+                  {
+                    path: 'knowledge',
+                    children: [
+                      { path: '', redirect: (to) => `/app/course/${to.params.courseId}/build/knowledge/graph` },
+                      {
+                        // 命名与 build step key 对齐：BuildLayout.activeStep 依赖
+                        // `app-course-build-${step.key}` 判定知识步骤激活态
+                        path: 'graph/:nodeId?',
+                        name: 'app-course-build-knowledge',
+                        component: () => import('./pages/course/knowledge/KnowledgeGraphPage.vue'),
+                      },
+                      {
+                        path: 'evidence',
+                        name: 'app-course-build-knowledge-evidence',
+                        component: () => import('./pages/course/knowledge/KnowledgeEvidencePage.vue'),
+                      },
+                      {
+                        path: 'reviews',
+                        name: 'app-course-build-knowledge-reviews',
+                        component: () => import('./pages/course/knowledge/KnowledgeReviewsPage.vue'),
+                      },
+                      {
+                        path: 'candidates',
+                        name: 'app-course-build-knowledge-candidates',
+                        component: () => import('./pages/course/knowledge/KnowledgeCandidateReviewPage.vue'),
+                      },
+                      {
+                        path: 'snapshots',
+                        name: 'app-course-build-knowledge-snapshots',
+                        component: () => import('./pages/course/knowledge/KnowledgeSnapshotsPage.vue'),
+                      },
+                    ],
+                  },
                   {
                     path: 'drafts',
                     name: 'app-course-build-drafts',
-                    redirect: (to) => `/app/course/${to.params.courseId}/knowledge/`,
+                    redirect: (to) => `/app/course/${to.params.courseId}/build/knowledge/graph`,
                   },
                 ],
               },

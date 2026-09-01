@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { House, BookOpen, FlaskConical, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
+import { House, BookOpen, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -11,7 +11,9 @@ const counter = useCounterStore()
 const navItems = [
     { label: '首页', to: '/app', icon: House, exact: true },
     { label: '我的课程', to: '/app/courses/learning', icon: BookOpen, match: '/app/courses' },
-    { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
+    // 「实验室」一级入口暂时隐藏（2026-08-20 按需求下线，非删除）：
+    // 路由 /app/lab/* 与 LabLayout 页面全部保留，后续需要时恢复此项即可。
+    // { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
     { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
     { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
 ]

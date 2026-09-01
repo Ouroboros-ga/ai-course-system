@@ -445,29 +445,33 @@ test('backend: graph_production_service.py serialize_snapshot 返回 relations �
 // P1-3: 课程知识空间入口契约（路由 + 页面 + 导航）
 // ============================================================================
 
-test('router.js: 注册 /app/course/:courseId/knowledge/graph/:nodeId? 路由', () => {
+test('router.js: 注册 /app/course/:courseId/build/knowledge/graph/:nodeId? 路由', () => {
   const src = read('frontend/src/app/router.js')
-  // 必须注册 knowledge 结构视图路由（含可选 nodeId）
+  // 知识工作区已并入建设布局：build 下的 knowledge 子路由（含可选 nodeId）
   assert.match(src, /path:\s*['"]graph\/:nodeId\?['"]/)
-  assert.match(src, /name:\s*['"]app-course-knowledge['"]/)
-  // 必须指向 KnowledgeGraphPage（知识空间 Local Rail 下的结构视图）
+  assert.match(src, /name:\s*['"]app-course-build-knowledge['"]/)
+  // 必须指向 KnowledgeGraphPage（建设布局知识工作区的结构视图）
   assert.match(src, /knowledge\/KnowledgeGraphPage\.vue/)
-  // 知识空间必须具备治理子路由：原文引用 / 候选审核 / 版本记录
+  // 知识工作区必须具备治理子路由：原文引用 / 候选审核 / 版本记录
   assert.match(src, /knowledge\/KnowledgeEvidencePage\.vue/)
   assert.match(src, /knowledge\/KnowledgeReviewsPage\.vue/)
   assert.match(src, /knowledge\/KnowledgeSnapshotsPage\.vue/)
+  // 旧 /knowledge/* 地址必须重定向到 /build/knowledge/*（兼容入口不 404）
+  assert.match(src, /path:\s*['"]knowledge\/:rest\(\.\*\)\?['"]/)
+  assert.match(src, /build\/knowledge\/\$\{rest \|\| ['"]graph['"]\}/)
 })
 
 test('CourseLayout.vue: builders enter knowledge through construction while learners retain the knowledge tab', () => {
   const src = read('frontend/src/app/pages/course/CourseLayout.vue')
   assert.match(src, /if\s*\(!allowed\.value\[['"]course\.edit['"]\]\)[\s\S]*?key:\s*['"]knowledge['"]/)
-  assert.match(src, /if\s*\(route\.path\.includes\(['"]\/knowledge['"]\)\)[\s\S]*?return allowed\.value\[['"]course\.edit['"]\]\s*\?\s*['"]build['"]\s*:\s*['"]knowledge['"]/)
-  assert.match(src, /route\.path\.includes\(['"]\/knowledge['"]\)\s*&&\s*allowed\.value\[['"]course\.edit['"]\]/)
+  // 学生知识入口指向并入建设布局后的新地址
+  assert.match(src, /to:\s*`\/app\/course\/\$\{courseId\.value\}\/build\/knowledge\/graph`/)
+  assert.match(src, /if\s*\(route\.path\.includes\(['"]\/build\/knowledge['"]\)\)[\s\S]*?return allowed\.value\[['"]course\.edit['"]\]\s*\?\s*['"]build['"]\s*:\s*['"]knowledge['"]/)
 })
 
 test('router.js: the retired build drafts address redirects to the knowledge workspace', () => {
   const src = read('frontend/src/app/router.js')
-  assert.match(src, /path:\s*['"]drafts['"][\s\S]*?name:\s*['"]app-course-build-drafts['"][\s\S]*?redirect:[\s\S]*?\/knowledge\//)
+  assert.match(src, /path:\s*['"]drafts['"][\s\S]*?name:\s*['"]app-course-build-drafts['"][\s\S]*?redirect:[\s\S]*?\/build\/knowledge\/graph/)
   assert.doesNotMatch(src, /path:\s*['"]drafts['"][\s\S]*?QuestionDraftReviewPage\.vue/)
 })
 

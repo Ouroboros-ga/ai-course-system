@@ -7,7 +7,7 @@
  * - CognitiveDashboard：六维认知状态（保留 null 语义，不武断判弱）；
  * - RecommendationCard 列表：基于策略版本的推荐，支持消费/锁定状态。
  *
- * 路由：/app/course/:courseId/knowledge/graph/:nodeId?
+ * 路由：/app/course/:courseId/build/knowledge/graph/:nodeId?
  * - courseId 必填；
  * - nodeId 可选，存在时聚焦到该知识点并拉取相邻关系。
  *
@@ -116,7 +116,7 @@ async function handleConsume(recommendation) {
 function handleJumpNode(node) {
   // 跳转到先修/后继节点：更新路由 nodeId，触发 StudentGraphPanel 重新加载相邻
   if (node?.id == null) return
-  router.push(`/app/course/${courseId.value}/knowledge/graph/${node.id}`)
+  router.push(`/app/course/${courseId.value}/build/knowledge/graph/${node.id}`)
 }
 
 function handleReturnAnchor() {
