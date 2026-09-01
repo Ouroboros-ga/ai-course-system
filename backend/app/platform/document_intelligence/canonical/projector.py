@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,7 +16,7 @@ from app.models.document_parse_model import (
     RetrievalIndexSnapshot,
     RetrievalChunk,
 )
-from app.platform.document_intelligence.canonical.block_noise import detect_noise_block_ids
+from app.platform.document_intelligence.canonical.block_noise import classify_noise_blocks
 from app.platform.document_intelligence.document_ir.models import block_to_dict
 from app.platform.document_intelligence.document_ir.serialization import serialize_document_ir
 from app.services.object_storage import get_object_storage
@@ -88,7 +89,8 @@ class DocumentIRProjector:
 
         block_count = 0
         anchor_count = 0
-        noise_ids = detect_noise_block_ids(document_ir.blocks)
+        noise_reasons = classify_noise_blocks(document_ir.blocks)
+        noise_ids = set(noise_reasons)
         noise_filtered = 0
         unit_by_block = {
             block_id: unit.unit_id
@@ -169,7 +171,11 @@ class DocumentIRProjector:
                 self._chunk(session, course_id, version, document_ir.document_id, unit_by_block.get(block.block_id), block.block_id, anchor.anchor_id, text, db_block.content_hash)
                 anchor_count += 1
         if noise_filtered:
-            version.quality = {**(version.quality or {}), "noise_filtered_blocks": noise_filtered}
+            version.quality = {
+                **(version.quality or {}),
+                "noise_filtered_blocks": noise_filtered,
+                "noise_exclusion_reasons": dict(sorted(Counter(noise_reasons.values()).items())),
+            }
             session.add(version)
         self._create_index_snapshot(
             session,

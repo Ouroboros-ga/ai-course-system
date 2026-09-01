@@ -30,6 +30,7 @@ from app.models.course_build_model import SourceMaterial, SourceMaterialVersion
 from app.models.course_model import Course, CourseStatus
 from app.models.document_parse_model import (
     DocumentBlock,
+    DocumentIRVersion,
     DocumentParseRun,
     EvidenceSpan,
     EvidenceSpanStatus,
@@ -116,6 +117,12 @@ def _make_minimal_pptx() -> bytes:
     slide2.shapes.title.text = "P04 第二页"
     body2 = slide2.shapes.placeholders[1]
     body2.text = "第二张幻灯片的内容，验证多页解析。"
+
+    # 第三张只包含罗马数字页码。Canonical 层应保留该块用于审计，
+    # 但不得将它投影为证据、检索块或图谱概念。
+    slide3 = prs.slides.add_slide(prs.slide_layouts[1])
+    slide3.shapes.title.text = "VI"
+    slide3.shapes.placeholders[1].text = "作用域决定标识符在程序中的有效范围。"
 
     buffer = io.BytesIO()
     prs.save(buffer)
@@ -253,6 +260,17 @@ def test_document_parse_handler_writes_blocks_and_evidence(session, temp_storage
     for span in spans:
         assert span.status == EvidenceSpanStatus.CANDIDATE
 
+    roman_blocks = [block for block in blocks if block.text.strip() == "VI"]
+    assert len(roman_blocks) == 1
+    assert roman_blocks[0].block_id not in {span.block_id for span in spans}
+
+    ir_version = session.exec(select(DocumentIRVersion).where(
+        DocumentIRVersion.run_id == run.run_id,
+    )).one()
+    assert ir_version.quality["noise_exclusion_reasons"] == {
+        "roman_page_marker": 1,
+    }
+
     # 验证 GraphCandidateBatch 已创建
     batches = session.exec(
         select(GraphCandidateBatch).where(GraphCandidateBatch.parse_run_id == run.run_id)
@@ -263,6 +281,7 @@ def test_document_parse_handler_writes_blocks_and_evidence(session, temp_storage
     assert batch.relation_candidate_count >= 0
     assert batch.node_candidates
     assert all(item["label"] and item["source_block_ids"] for item in batch.node_candidates)
+    assert all(item["label"] != "VI" for item in batch.node_candidates)
     assert all(item["relation_type"] and item["anchor_ids"] for item in batch.relation_candidates)
 
 
