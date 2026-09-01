@@ -124,6 +124,8 @@ def main() -> None:
         "SELECT rowid, doc_id, body_raw FROM corpus_paragraph "
         f"WHERE {like_clause} ORDER BY rowid"
     )
+    # LIKE 模式需要显式 % 通配符（裸前缀是精确匹配，恒为 0 行）。
+    patterns = tuple(f"{p}%" for p in prefixes)
 
     pg = create_engine(db_url, pool_pre_ping=True)
     started = time.monotonic()
@@ -160,7 +162,7 @@ def main() -> None:
             print(f"[embed] {state['done']} 段落 / {time.monotonic() - started:.0f}s", file=sys.stderr)
 
     with sqlite3.connect(f"file:{args.index.as_posix()}?mode=ro", uri=True) as src:
-        cur = src.execute(fetch_sql, prefixes)
+        cur = src.execute(fetch_sql, patterns)
         batch: list[tuple] = []
         for row in cur:
             if args.limit is not None and state["done"] + len(batch) >= args.limit:
@@ -182,10 +184,13 @@ def main() -> None:
             conn.execute(text("ANALYZE discipline_corpus_embedding"))
         print("[hnsw] 余弦索引构建完成", file=sys.stderr)
 
-    with pg.connect() as conn:
-        total, models = conn.execute(
-            text("SELECT COUNT(*), COUNT(DISTINCT model) FROM discipline_corpus_embedding")
-        ).fetchone()
+    if state["table_ready"]:
+        with pg.connect() as conn:
+            total, models = conn.execute(
+                text("SELECT COUNT(*), COUNT(DISTINCT model) FROM discipline_corpus_embedding")
+            ).fetchone()
+    else:
+        total, models = 0, 0
     print(
         f"[done] 本次嵌入 {state['done']} 段落 / 表内共 {total} 行（{models} 个模型）"
         f" / {time.monotonic() - started:.0f}s",
