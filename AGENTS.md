@@ -13,9 +13,9 @@
 ## 1. 当前阶段
 
 项目处于**云服务器 Demo 与能力持续打磨阶段**(部署服务器
-`root@120.26.104.247`)。Agent 架构迁移已完成并已推送,四个智能体
-(TeachingAgent / Prep Agent / Coding Agent / ResearchAgent)已按
-`backend/app/platform/agents/` 下的目录结构物理分离,共享 Runtime/Contracts/
+`root@120.26.104.247`)。Agent 架构迁移已完成并已推送。学生产品面只呈现
+TeachingAgent,代码教学收敛到 `edu/coding`;Prep Agent 与 ResearchAgent 保持独立。
+旧 CodingAgent runtime/API 暂作兼容层,不再作为独立学生产品入口。共享 Runtime/Contracts/
 Providers/Tools 层已落地。bootstrap 已注入真实 Judge0 沙箱、真实 LLM 与各
 session-scoped Port,不再使用 fake provider 占位实现。数据库基线已切换到
 PostgreSQL 16 + pgvector,SQLite 仅用于本地 Demo/测试。
@@ -61,13 +61,13 @@ PostgreSQL 16 + pgvector,SQLite 仅用于本地 Demo/测试。
 
 ### 2.2 智能体平台层(`backend/app/platform/agents/`)
 
-四 Agent 已物理分离,各自拥有独立的 state/workflow/profile/composition:
+三类产品 Agent 与一个代码兼容层使用以下目录:
 
 | 子目录 | 职责 |
 |---|---|
-| `edu/` | TeachingAgent:教学问答与教学动作。工作流固定为 ScopeValidator → StudentState → Cognition → Optional Tools → TeacherPolicy → Response。详见 `edu/DESIGN.md`(若存在)。 |
+| `edu/` | TeachingAgent:教学问答、教学动作和内部代码教学能力。`edu/coding/` 负责挑战时机、诊断白名单与安全反馈;学生界面不出现独立 CodingAgent。 |
 | `prep/` | Prep Agent:备课 PatchProposal 生成。`evidence_refs` 校验是硬门;只能修改 draft 内非锁定节点的标题与脚本内容/风格,不能增删移节点、不能改已发布/锁定内容。详见 `prep/DESIGN.md`。 |
-| `coding/` | CodingEduAgent:代码诊断与教学。连接真实 Judge0 沙箱。 |
+| `coding/` | 旧 CodingEduAgent 兼容 runtime:为仍在使用的 `/experiments` 解释/提示接口提供委托兼容;不在此新增学生产品逻辑。 |
 | `research/` | ResearchAgent:课程内、用户私有的科研工作台(挑战杯 XH-202620 助研方向)。复用 AgentPlatform、BaseAgentRuntime、Course Access v1 与 LangGraph,不与其他 Agent 共享可变状态,外部研究结果不写入掌握度/推荐/正式 Evidence/课程图谱。详见 `research/README.md`。 |
 | `contracts/` | Port 定义(cognition/experiment/governance/llm/research/research_workspace/retrieval/sandbox/teaching/tools)。Agent 间不共享可变状态,只通过 Port 协作。 |
 | `providers/` | Provider 实现,包装现有 Service。`container.py` 是装配入口;`providers/research/` 为 ResearchAgent 的 workspace/memory/embedding Provider。 |
@@ -209,7 +209,7 @@ Agent 在以下场景**应**先读 `design.md` 再动手:
    "已上线能力"。
 5. 不伪造功能状态、准确率、性能数据和测试结果。Agent 审计
    (`agent_tool_invocations`)与正式 `LearningEvidence` 严格分离,符合数据
-   最小化策略;只有服务端评分结果(Quiz/Judge0)或 CodingAgent 可写入
+   最小化策略;只有服务端评分结果(Quiz/Judge0)及其服务器聚合服务可写入
    `LearningEvidenceRecord`,学生提交的分数必须拒绝。
 6. 高风险教学动作经教师确认;经教师批准后由 handler 执行并标记
    `dispatched: true`,失败时保留原 `error_code`,不伪装成功。
@@ -252,16 +252,19 @@ Agent 在以下场景**应**先读 `design.md` 再动手:
 
 ### 5.2 各 Agent 职责概要
 
-- **TeachingAgent(edu/)**:教学问答与教学动作,工作流固定。出题产物为草稿,
+- **TeachingAgent(edu/)**:教学问答、教学动作与对话式代码挑战。持久题库出题产物为草稿,
   经教师 approve 才进题库;低置信度推荐进入"需要更多证据"状态而非直接断言薄弱;
+  临时代码挑战不逐题审批,但受课程能力、工具策略、发布身份、频率和沙箱健康门约束;
+  每个 guided session 的多次运行只聚合一个证据 episode,单个 episode 不足以判定掌握。
   WebResearch 默认禁用,启用时 fail-closed。详细工作流与 Tool 清单见
   `edu/DESIGN.md`(若存在)或 `docs/phase1/` 对应文档。
 - **Prep Agent(prep/)**:备课 PatchProposal 生成。工作范围由前端选定的
   `outline_node_id`、draft 状态与锁定节点排除共同决定;`evidence_refs` 校验是
   硬门;LLM 返回不符合 `AgentPlan` schema 时按结构化重试策略处理。详见
   `prep/DESIGN.md`。
-- **CodingEduAgent(coding/)**:代码诊断与教学,连接真实 Judge0 沙箱;沙箱不可用
-  时返回 `SANDBOX_UNAVAILABLE` 而非 `ACCEPTED`,不假造执行。
+- **代码兼容层(coding/)**:保留旧类型和接口,真实学生入口迁移到 TeachingAgent 的
+  `edu/coding/`;两条路径都只能消费服务端 Judge0 结果,沙箱不可用时返回
+  `SANDBOX_UNAVAILABLE` 而非 `ACCEPTED`,不假造执行。
 - **ResearchAgent(research/)**:课程内、用户私有的科研工作台。复用
   AgentPlatform、BaseAgentRuntime、Course Access v1 与 LangGraph;外部研究结果
   标记为"补充参考",不写入掌握度、推荐、正式 Evidence 或课程图谱;API 只返回

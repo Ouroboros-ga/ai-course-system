@@ -1,5 +1,11 @@
 # CodingEduAgent 与 EduAgent 集成说明
 
+> **已被部分替代，仅作兼容链路追溯。** 2026-09-01 起，学生学习页不再呈现独立
+> CodingAgent；对话式挑战、会话恢复、内部代码反馈和 episode 证据以
+> [对话式代码挑战实施说明](2026-09-01_对话式代码挑战实施说明.md) 为现行依据。
+> 本文后续 `setCodeSubmissionId/run_id` 桥接与“尚未嵌入编辑器”的描述已经过时；
+> 独立 `/experiments` 和 `platform/agents/coding` 仅作为旧客户端兼容层保留。
+
 ## 2026-08-13 现行实现补充：分层源码授权与认知融合
 
 本节覆盖本文后续任何“CodingAgent 不得读取源码”的旧表述。边界改为按用途

@@ -22,6 +22,13 @@
 > [证据生成链路审计与改进方案](docs/phase1/2026-08-31_证据生成链路审计与改进方案.md)，
 > 解析基线见 [统一课程建设与解析基线](docs/phase1/统一课程建设与解析基线.md) §4.2。
 
+> **2026-09-01 对话式代码挑战（本地实现，未部署）**：学生学习页只呈现
+> TeachingAgent；回答完成后可异步出现代码挑战卡，并在嵌入式 CodeMirror 工作区用唯一操作
+> “运行并获得反馈”反复调用 Judge0。每次运行保留服务器原始记录，同一 guided session 只聚合
+> 一个 episode 和每节点至多一条正式证据；单个 episode 的 1.5 权重不足以单独判定掌握。
+> AI 补题需通过结构校验、参考解全测和 starter 反向校验，无逐题教师审批；课程级工具策略仍可关闭。
+> 详见 [对话式代码挑战实施说明](docs/phase1/2026-09-01_对话式代码挑战实施说明.md)。
+
 > **2026-08-13 代码作答认知更新**：CodingAgent 只可在本次提交的
 > `student_id + course_id + run_id` 授权范围内短暂读取源码；EduAgent 只接收无源码的
 > 结构化诊断摘要。Judge0 服务端验证的代码结果已与题库作答并列进入认知评判，权重分别
@@ -111,19 +118,19 @@ CodeNexus智码交响是一套智能体协作型全场景智慧教学系统，�
 | ---------- | ------------------------ | --------------------------------------- |
 | 平台接入与应用交互层 | 泛雅兼容接口、教师端与学生端页面         | Vue 3 前端、`/api/v1/compat` 适配            |
 | 课程业务与发布层   | 课程草稿、材料版本、质量门、发布与回滚      | `CourseBuildDraft`、`CourseRelease`      |
-| 智能体协作层     | 四类智能体、Port/Provider、工具治理 | edu/prep/coding/research + runtime      |
+| 智能体协作层     | 三类产品智能体、内部代码能力与兼容层、工具治理 | edu（含 coding）/prep/research + legacy coding runtime |
 | 课程知识与证据层   | DocumentIR、证据、图谱、知识包、索引  | `GraphSnapshot`、`CourseKnowledgeBundle` |
 | 基础设施与外部能力层 | LLM、OCR、数据库、对象存储、沙箱      | PostgreSQL、LanceDB、Judge0               |
 
 ### 3.2 多智能体协作
 
-备课、教学、代码教学与科研四类智能体**物理分离、状态独立**，通过受控 Port 与统一治理层协作，不共享跨课程可变状态。协作媒介不是自然语言消息，而是课程发布、知识包、提案、证据记录与受控 Port。五种统一约束：课程权限、证据、版本、工具治理、数据域。
+备课、教学与科研三类产品智能体状态独立，通过受控 Port 与统一治理层协作，不共享跨课程可变状态。代码教学已收敛为 TeachingAgent 的内部 `edu/coding` 能力；旧 `coding` runtime 只服务兼容 API。协作媒介不是自然语言消息，而是课程发布、知识包、提案、证据记录与受控 Port。五种统一约束：课程权限、证据、版本、工具治理、数据域。
 
 | 智能体            | 核心职责            | 正式写入边界               |
 | -------------- | --------------- | -------------------- |
 | Prep Agent     | 备课提案生成（初始 + 增量） | 经教师审核后写入课程草稿         |
-| TeachingAgent  | 教学问答与受控教学动作     | 回答后非阻塞写对话域；高风险动作需确认  |
-| CodingEduAgent | 代码诊断与教学         | 只读沙箱结果，评分由服务端写入证据    |
+| TeachingAgent  | 教学问答、对话式代码挑战与受控教学动作 | 回答后非阻塞写对话域；代码运行由服务端聚合证据 |
+| 代码兼容层        | 旧实验解释与分层提示 API      | 委托 TeachingAgent 内部代码能力；不再是学生产品入口 |
 | ResearchAgent  | 科研检索与补充证据       | 外部结果仅补充参考，进正式课程需教师审核 |
 
 关键机制：LangGraph 显式工作流（节点边界即权限边界，TeachingAgent 22 节点）、per-tool policy check（`_governance_check` 在每个工具节点前执行，HIGH\_RISK\_TOOLS 治理异常时 fail-closed 默认禁用）、`ScopeValidator` 强制课程/学生/成员/能力校验。
@@ -169,6 +176,7 @@ CodeNexus智码交响是一套智能体协作型全场景智慧教学系统，�
 | 认知推荐                          | ✅  | `cognitive_recommendation.py` + `recommendation_consumed` 事件                            |
 | 课程内问答（TeachingAgent 受控问答）     | ✅  | 上下文锚定 `course_id+release_id+outline_node_id`，Citation 验证，Conversation 域独立持久化（默认 90 天保留） |
 | TeachingAgent 受控回顾与进度续接       | 🧪 | 已实现本地 P0：提问位置、冻结回顾目标（由服务端确定性解析，不接收模型跳转位置）与点击时返回锚点三者分离；回顾须由学习者确认，且不会写入掌握度                |
+| TeachingAgent 对话式代码挑战           | 🧪 | 本地端到端代码与组件级浏览器验收完成：异步准备卡、单按钮多次运行、刷新恢复、episode 低噪声证据；真实课程 + 真实 Judge0 完整冒烟与部署未执行 |
 | 练习/测验、前置知识跳转补学                | ✅  | `question_bank.py`、`prerequisite.py`                                                    |
 
 ### 4.4 代码实验（CS 垂类）
@@ -178,7 +186,7 @@ CodeNexus智码交响是一套智能体协作型全场景智慧教学系统，�
 | 代码沙箱执行（Judge0，独立实验服务器）        | 🧪 | 客户端完整（多语言/状态映射/降级），`JUDGE0_ENABLED=False` **默认禁用**（共用主机权限受限）；云端 Demo 环境已接入独立 Judge0 服务器 |
 | 平台实验室（Labs）、算法实验（Experiments） | ✅  | 当前仅支持代码沙箱；教师可按课程启用，关闭时师生不显示"实验任务"，未启用沙箱时执行返回 `CODING_SANDBOX_DISABLED`                  |
 | 算法可视化（JSAV，11 种白名单算法）         | ✅  | legacy `VisualizationView` + JSAVPlayer；学生可播 published 计划，教师可创建/发布计划                    |
-| CodingEduAgent 代码诊断           | ✅  | 三节点工作流（沙箱结果→诊断→响应）；只在本次提交授权范围内短暂读取源码，不猜测运行结果                                            |
+| TeachingAgent 内部代码反馈         | ✅  | `edu/coding` 只在本次 run 授权范围内短暂读取源码并返回白名单反馈；旧 CodingAgent API/runtimes 暂作兼容，不再作为学生可见入口 |
 
 ### 4.5 助研（ResearchAgent）与平台管理
 
@@ -431,6 +439,7 @@ npm run smoke:app
 | [docs/DOCUMENTATION\_INDEX.md](docs/DOCUMENTATION_INDEX.md)                  | 文档导航与状态（唯一入口）                 |
 | [AGENTS.md](AGENTS.md)                                                       | 开发与安全规则（最高优先级）                |
 | [docs/phase1/功能现状审计表.md](docs/phase1/功能现状审计表.md)                             | 当前代码审计结论与已知缺口                 |
+| [docs/phase1/2026-09-01_对话式代码挑战实施说明.md](docs/phase1/2026-09-01_对话式代码挑战实施说明.md) | TeachingAgent 代码挑战、episode 证据与前端体验 |
 | [docs/phase1/服务器环境一致性与外部链路审计.md](docs/phase1/2026-08-09_服务器环境一致性与外部链路审计.md)  | 2026-08-09 Ubuntu 实际环境与外部链路基线 |
 | [docs/phase1/统一课程建设与解析基线.md](docs/phase1/统一课程建设与解析基线.md)                     | 统一上传、解析、RAG、讲稿与 PPT 映射目标      |
 | [docs/phase1/阶段8\_媒体TTS数字人PPT\_实施规划.md](docs/phase1/阶段8_媒体TTS数字人PPT_实施规划.md) | 媒体与数字人现行基线                    |
