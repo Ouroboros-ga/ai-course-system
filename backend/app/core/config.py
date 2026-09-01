@@ -219,6 +219,12 @@ class Settings(BaseSettings):
     # R14：学科垂类知识库参考（本地只读 JSON，无外部成本）。默认开启；
     # 运行期仍可被教师工具治理按 discipline_knowledge 工具名禁用。
     TEACHING_AGENT_DISCIPLINE_KB_ENABLED: bool = True
+    # 学科语料层 FTS 索引（RAG 检索白名单接入，2026-09-01）：由
+    # knowledge_data/corpus/build_corpus_index.py 离线构建，运行期只读。
+    # 空路径 = 未接入（fail-closed，学科参考只走精编概念层）。
+    DISCIPLINE_CORPUS_INDEX_PATH: str = ""
+    # 每次问答合并进学科参考的语料段落数上限。
+    DISCIPLINE_CORPUS_TOP_K: int = 2
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

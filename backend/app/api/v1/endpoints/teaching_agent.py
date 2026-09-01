@@ -170,17 +170,23 @@ async def _respond_for_subject(
 
     concept = next((item for item in state.get("concept_candidates", []) if item.get("concept_id") == state.get("current_concept_id")), None)
     # R14：学科参考（is_supplementary）随回答透出，供前端展示"学科参考"区块；
-    # 与 citations（课程证据闭包）严格分离。
+    # 与 citations（课程证据闭包）严格分离。2026-09-01 起兼容两级来源：
+    # discipline_kb（概念层）与 discipline_corpus（语料段落层，RAG 白名单）。
     discipline_references = [
         {
             "node_id": ref.get("node_id"),
             "name": ref.get("name"),
             "course": ref.get("course"),
+            "node_type": ref.get("node_type", "concept"),
             "definition": ref.get("definition"),
             "key_points": ref.get("key_points", []),
+            "doc_id": ref.get("doc_id"),
+            "chunk_no": ref.get("chunk_no"),
             "source_title": ref.get("source_title"),
             "source_authors": ref.get("source_authors"),
             "source_chapter": ref.get("source_chapter"),
+            "source_license": ref.get("source_license"),
+            "retrieval_source": ref.get("retrieval_source", "discipline_kb"),
             "is_supplementary": True,
         }
         for ref in state.get("discipline_kb_results", [])
