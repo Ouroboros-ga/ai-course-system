@@ -311,13 +311,20 @@ function startSimulation(initial) {
   const step = () => {
     simulationAlpha = Math.max(0, simulationAlpha - .005)
     simulate(Math.max(.02, simulationAlpha))
+    if (initial) {
+      // 动画期间视图逐帧缓动逼近适配目标，避免结束时 fit() 瞬间跳变缩放
+      const target = fitTarget()
+      if (target) {
+        view.scale += (target.scale - view.scale) * .08
+        view.x += (target.x - view.x) * .08
+        view.y += (target.y - view.y) * .08
+      }
+    }
     draw()
     if (simulationAlpha > 0) {
       simulationFrame = requestAnimationFrame(step)
     } else {
       simulationFrame = 0
-      // 初次布局收敛后重新适配视图，防止节点在动画中漂出可视区
-      if (initial) fit()
     }
   }
   simulationFrame = requestAnimationFrame(step)
@@ -384,12 +391,12 @@ function screenToWorld(x, y) {
   ]
 }
 
-function fit() {
-  if (!graph.nodes.length || !host.value) return
+function fitTarget() {
+  if (!graph.nodes.length || !host.value) return null
   // 再次过滤异常坐标，避免 Math.min/max 产生 Infinity/NaN 导致视图消失
   const xs = graph.nodes.map((node) => node.x).filter(Number.isFinite)
   const ys = graph.nodes.map((node) => node.y).filter(Number.isFinite)
-  if (!xs.length || !ys.length) return
+  if (!xs.length || !ys.length) return null
   const minX = Math.min(...xs)
   const maxX = Math.max(...xs)
   const minY = Math.min(...ys)
@@ -398,12 +405,22 @@ function fit() {
   const rangeY = Math.max(180, maxY - minY + 200)
   const availableWidth = Math.max(320, host.value.clientWidth - effectiveRightInset())
   // 初始视图放大 1.25 倍：节点与文字更大更易读，超出部分可平移查看
-  view.scale = Math.max(.25, Math.min(1.8, Math.min(
-    availableWidth / rangeX,
-    host.value.clientHeight / rangeY,
-  ) * 1.25))
-  view.x = -(minX + maxX) / 2
-  view.y = -(minY + maxY) / 2
+  return {
+    scale: Math.max(.25, Math.min(1.8, Math.min(
+      availableWidth / rangeX,
+      host.value.clientHeight / rangeY,
+    ) * 1.25)),
+    x: -(minX + maxX) / 2,
+    y: -(minY + maxY) / 2,
+  }
+}
+
+function fit() {
+  const target = fitTarget()
+  if (!target) return
+  view.scale = target.scale
+  view.x = target.x
+  view.y = target.y
   draw()
 }
 
