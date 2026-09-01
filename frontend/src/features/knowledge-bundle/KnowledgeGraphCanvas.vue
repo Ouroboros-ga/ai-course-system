@@ -397,11 +397,11 @@ function fit() {
   const rangeX = Math.max(240, maxX - minX + 200)
   const rangeY = Math.max(180, maxY - minY + 200)
   const availableWidth = Math.max(320, host.value.clientWidth - effectiveRightInset())
-  // 初始视图乘 0.8：留出呼吸边距，节点/文字以更小倍率整体呈现
-  view.scale = Math.max(.2, Math.min(1.5, Math.min(
+  // 初始视图放大 1.25 倍：节点与文字更大更易读，超出部分可平移查看
+  view.scale = Math.max(.25, Math.min(1.8, Math.min(
     availableWidth / rangeX,
     host.value.clientHeight / rangeY,
-  ) * .8))
+  ) * 1.25))
   view.x = -(minX + maxX) / 2
   view.y = -(minY + maxY) / 2
   draw()
