@@ -291,13 +291,23 @@ function simulate(alpha) {
     }
     // 适度中心引力防止跑出可视区；取值偏小让斥力主导，节点分布更舒展
     const centerForce = .008 * alpha
-    const damping = .82
+    // 阻尼 .82 → .88：配合更长的 alpha 余温（4~6 秒），松手后整图的
+    // 弹性回弹能持续肉眼可见地运动，而不是提前僵住
+    const damping = .88
     node.vx = clampVelocity((node.vx - node.x * centerForce) * damping)
     node.vy = clampVelocity((node.vy - node.y * centerForce) * damping)
     node.x += node.vx
     node.y += node.vy
   }
 }
+
+// alpha 余温衰减（按秒计，帧率无关）：
+// - 初始布局从 1 衰减到 0 约 4.5 秒；
+// - 交互（拖拽松手 reheat(.22)、点击）后余温约 4.9 秒，满足"持续运动 4~6 秒"。
+//   旧实现每帧线性衰减 .005，从 .22 起仅 ~0.7 秒整图就静止了。
+const ALPHA_DECAY_INITIAL_PER_SEC = 0.22
+const ALPHA_DECAY_INTERACT_PER_SEC = 0.045
+let lastFrameTs = 0
 
 function startSimulation(initial) {
   cancelAnimationFrame(simulationFrame)
@@ -308,8 +318,14 @@ function startSimulation(initial) {
     return
   }
   if (initial) simulationAlpha = 1
-  const step = () => {
-    simulationAlpha = Math.max(0, simulationAlpha - .005)
+  lastFrameTs = 0
+  const step = (now) => {
+    const ts = now || performance.now()
+    // 首帧无基准时按 60fps 估算；上限 50ms 防止后台标签页切回时瞬间清空 alpha
+    const dt = lastFrameTs ? Math.min(0.05, (ts - lastFrameTs) / 1000) : 1 / 60
+    lastFrameTs = ts
+    const decayPerSec = initial ? ALPHA_DECAY_INITIAL_PER_SEC : ALPHA_DECAY_INTERACT_PER_SEC
+    simulationAlpha = Math.max(0, simulationAlpha - decayPerSec * dt)
     simulate(Math.max(.02, simulationAlpha))
     if (initial) {
       // 动画期间视图逐帧缓动逼近适配目标，避免结束时 fit() 瞬间跳变缩放
@@ -325,6 +341,7 @@ function startSimulation(initial) {
       simulationFrame = requestAnimationFrame(step)
     } else {
       simulationFrame = 0
+      lastFrameTs = 0
     }
   }
   simulationFrame = requestAnimationFrame(step)
