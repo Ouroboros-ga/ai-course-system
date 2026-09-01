@@ -158,9 +158,10 @@ function goHall() {
   router.push('/app/courses/hall')
 }
 
-function goLab() {
-  router.push('/app/lab')
-}
+// 「实验室」入口暂时隐藏（2026-08-20）；恢复快捷卡片时取消注释即可
+// function goLab() {
+//   router.push('/app/lab')
+// }
 
 function goResources() {
   router.push('/app/resources')
@@ -290,7 +291,9 @@ onBeforeUnmount(() => {
             <ArrowRight :size="20" class="sfx-home-nav-card__arrow" />
           </button>
 
-          <button class="sfx-home-nav-card" @click="goLab">
+          <!-- 「实验室」快捷卡片暂时隐藏（2026-08-20 按需求下线，非删除）：
+               与一级导航「实验室」入口同步隐藏；/app/lab/* 路由保留可用 -->
+          <!-- <button class="sfx-home-nav-card" @click="goLab">
             <div class="sfx-home-nav-card__icon" style="background: linear-gradient(135deg, #B85C5C, #8B3A3A)">
               <Zap :size="28" />
             </div>
@@ -299,7 +302,7 @@ onBeforeUnmount(() => {
               <p>访问实验任务与研究工作台</p>
             </div>
             <ArrowRight :size="20" class="sfx-home-nav-card__arrow" />
-          </button>
+          </button> -->
 
           <button class="sfx-home-nav-card" @click="goResources">
             <div class="sfx-home-nav-card__icon" style="background: linear-gradient(135deg, #8EA7BE, #355C7D)">
