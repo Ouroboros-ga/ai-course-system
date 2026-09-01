@@ -37,6 +37,7 @@ import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
 import NoteStage from '@/app/components/learn/NoteStage.vue'
 import CodingChallengeStage from '@/app/components/learn/CodingChallengeStage.vue'
+import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
 import { consumeRecommendation } from '@/api/cognitive.js'
@@ -44,9 +45,16 @@ import { consumeRecommendation } from '@/api/cognitive.js'
 const route = useRoute()
 const router = useRouter()
 const counter = useCounterStore()
-const { detail, analyticsEligible, capabilities } = inject('courseContext')
+const { detail, analyticsEligible, capabilities, course } = inject('courseContext')
 
 const courseId = Number(route.params.courseId)
+// 课程未发布（DRAFT 等非 published 状态）时，学习页与学习分析页保持一致的
+// 空态：不再渲染草稿预览或「内容未就绪」错误卡片，统一展示「课程尚未发布」。
+// 教师仍可在建设页查看草稿；发布后学习页恢复讲解与进度体验。
+const courseUnpublished = computed(() => {
+  const status = course?.value?.status
+  return Boolean(status) && status !== 'published'
+})
 // Course Access is the source of truth: only an analytics-eligible learner
 // may read or write their private learning/cognition state.  Staff and
 // observers all use the content-only preview branch.
@@ -789,7 +797,15 @@ onMounted(async () => {
 
 <template>
   <div class="sfx-learn">
-    <SfxSkeleton v-if="ws.status.value === 'loading'" :lines="4" block />
+    <!-- 未发布课程：与学习分析页相同的空态（CourseAnalyticsPage unpublished 分支）。
+         CourseLayout 加载完成后才渲染本页，此处 course 状态已就绪，可直接判定。 -->
+    <SfxEmpty
+      v-if="courseUnpublished"
+      title="课程尚未发布"
+      description="学习页面按当前发布版本提供讲解内容；课程正式发布后，即可开始学习。"
+    />
+
+    <SfxSkeleton v-else-if="ws.status.value === 'loading'" :lines="4" block />
 
     <SfxError
       v-else-if="ws.status.value === 'error'"
