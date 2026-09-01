@@ -13,6 +13,10 @@ const host = ref(null)
 const canvas = ref(null)
 const clusterMode = ref(false)
 const expandedClusterLabel = ref('')
+// 力导向"余温"模型：alpha>0 时 rAF 循环持续模拟，交互可 reheat 重新加热，
+// 松手后整图带阻尼回弹，而不是一次性动画结束后僵硬静止。
+let simulationAlpha = 0
+let simulationFrame = 0
 const CLUSTER_THRESHOLD = 120        // design.md §5 大图阈值：超过120节点即聚类
 const SUBCLUSTER_LIMIT = 60          // 单聚类展开后内部仍超过60则二次分桶
 // design.md §1.1 Academic Ink 体系；不再使用 teal/紫色装饰色
@@ -70,7 +74,6 @@ let graph = { nodes: [], relations: [], endpoint: new Map() }
 let view = { x: 0, y: 0, scale: 1 }
 let pointer = null
 let hoverId = ''
-let frame = 0
 let resizeObserver = null
 let dpr = 1
 let expandedCluster = ''
@@ -153,7 +156,8 @@ function visibleGraphSources() {
 }
 
 function rebuild() {
-  cancelAnimationFrame(frame)
+  cancelAnimationFrame(simulationFrame)
+  simulationFrame = 0
   const previous = new Map(graph.nodes.map((node) => [node.id, node]))
   const { sources, endpoint } = visibleGraphSources()
   const sourceGraphIsLarge = props.nodes.length > CLUSTER_THRESHOLD
@@ -215,7 +219,7 @@ function rebuild() {
   if (isLargeGraph) {
     draw()
   } else {
-    animate()
+    startSimulation(true)
   }
 }
 
@@ -292,26 +296,36 @@ function simulate(alpha) {
   }
 }
 
-function animate() {
-  cancelAnimationFrame(frame)
+function startSimulation(initial) {
+  cancelAnimationFrame(simulationFrame)
+  simulationFrame = 0
   if (reducedMotion) {
-    fit()
+    if (initial) fit()
     draw()
     return
   }
-  let tick = 0
+  if (initial) simulationAlpha = 1
   const step = () => {
-    simulate(Math.max(.08, 1 - tick / 220))
+    simulationAlpha = Math.max(0, simulationAlpha - .005)
+    simulate(Math.max(.02, simulationAlpha))
     draw()
-    tick += 1
-    if (tick < 220) {
-      frame = requestAnimationFrame(step)
+    if (simulationAlpha > 0) {
+      simulationFrame = requestAnimationFrame(step)
     } else {
-      // 动画结束后重新适配视图，防止节点在动画中漂出可视区
-      fit()
+      simulationFrame = 0
+      // 初次布局收敛后重新适配视图，防止节点在动画中漂出可视区
+      if (initial) fit()
     }
   }
-  frame = requestAnimationFrame(step)
+  simulationFrame = requestAnimationFrame(step)
+}
+
+// 交互中/松手后"加热"力学模拟，让邻居弹性跟随、整图阻尼回弹。
+// 大图（>200 可见节点）刻意保持静态布局，避免性能抖动（见 rebuild 注释）。
+function reheat(value) {
+  if (reducedMotion || graph.nodes.length > 200) return
+  simulationAlpha = Math.max(simulationAlpha, value)
+  if (!simulationFrame) startSimulation(false)
 }
 
 function resize() {
@@ -490,6 +504,8 @@ function onPointerMove(event) {
   pointer.moved = true
   if (pointer.kind === 'node') {
     ;[pointer.node.x, pointer.node.y] = screenToWorld(x, y)
+    // 拖拽中保持余温：相连节点弹性跟随，而不是只有被拖节点孤零零移动
+    reheat(.3)
   } else {
     view.x = pointer.viewX + (x - pointer.x) / view.scale
     view.y = pointer.viewY + (y - pointer.y) / view.scale
@@ -501,6 +517,8 @@ function onPointerUp() {
   if (!pointer) return
   if (pointer.kind === 'node') {
     pointer.node.fixed = false
+    // 松手后重新加热：整图按力学关系阻尼回弹到新平衡
+    reheat(.45)
     if (!pointer.moved) {
       if (pointer.node.source?._clusterType) {
         expandedCluster = pointer.node.source._clusterType
@@ -538,7 +556,7 @@ onMounted(() => {
   resize()
 })
 onBeforeUnmount(() => {
-  cancelAnimationFrame(frame)
+  cancelAnimationFrame(simulationFrame)
   resizeObserver?.disconnect()
 })
 watch(() => [props.nodes, props.relations], rebuild)
