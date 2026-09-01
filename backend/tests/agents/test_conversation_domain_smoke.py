@@ -58,7 +58,7 @@ def test_conversation_messages_table_structure(session):
     assert cols == {
         "id", "student_id", "course_id", "session_id", "trace_id", "role", "content",
         "concept_id", "resource_id", "citations", "data_policy_version",
-        "retention_until", "created_at",
+        "message_kind", "retention_until", "created_at",
     }
 
     idx = {i["name"] for i in insp.get_indexes("conversation_messages")}
@@ -67,6 +67,7 @@ def test_conversation_messages_table_structure(session):
         "ix_conversation_messages_course_id",
         "ix_conversation_messages_session_id",
         "ix_conversation_messages_concept_id",
+        "ix_conversation_messages_message_kind",
         "ix_conversation_messages_retention_until",
         "ix_conversation_messages_created_at",
         "ix_conversation_messages_student_course_created",

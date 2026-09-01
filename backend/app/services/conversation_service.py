@@ -104,6 +104,59 @@ def persist_conversation_turn(
         logger.warning("persist_conversation_turn failed (non-blocking): %s: %s", type(err).__name__, err)
 
 
+def persist_coding_feedback(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    session_id: str,
+    run_id: str,
+    concept_id: str | None,
+    feedback: dict[str, Any],
+) -> ConversationMessage:
+    """Persist one source-free TeachingAgent feedback message per run.
+
+    Only the fixed teaching text and a run reference enter the Conversation
+    Domain. Source, Judge0 logs and hidden tests are structurally absent from
+    this contract.
+    """
+    existing = session.exec(select(ConversationMessage).where(
+        ConversationMessage.student_id == student_id,
+        ConversationMessage.course_id == course_id,
+        ConversationMessage.session_id == session_id,
+        ConversationMessage.trace_id == run_id,
+        ConversationMessage.message_kind == "coding_feedback",
+    )).first()
+    if existing is not None:
+        return existing
+    sections = [
+        ("结果概览", feedback.get("result_overview")),
+        ("已做对的部分", feedback.get("done_well")),
+        ("当前问题", feedback.get("current_issue")),
+        ("下一步建议", feedback.get("next_step")),
+        ("可选提示", feedback.get("optional_hint")),
+    ]
+    content = "\n\n".join(
+        f"{title}：{text}" for title, text in sections if text
+    )
+    row = ConversationMessage(
+        student_id=student_id,
+        course_id=course_id,
+        session_id=session_id,
+        trace_id=run_id,
+        role=ROLE_ASSISTANT,
+        content=content,
+        message_kind="coding_feedback",
+        concept_id=concept_id,
+        citations=[{"kind": "experiment_run", "run_id": run_id}],
+        retention_until=_retention_until(),
+        data_policy_version=CONVERSATION_DATA_POLICY_VERSION,
+    )
+    session.add(row)
+    session.flush()
+    return row
+
+
 def list_conversation_messages(
     session: Session,
     *,

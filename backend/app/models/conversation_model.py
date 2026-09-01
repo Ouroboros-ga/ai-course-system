@@ -48,6 +48,7 @@ class ConversationMessage(SQLModel, table=True):
     trace_id: str = Field(default="", index=True, max_length=128)
     role: str = Field(max_length=16)  # "user" | "assistant"
     content: str  # raw message text (user question or agent answer)
+    message_kind: str = Field(default="qa", index=True, max_length=32)
     concept_id: str | None = Field(default=None, max_length=128, index=True)
     resource_id: str | None = Field(default=None, max_length=128)
     citations: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON))

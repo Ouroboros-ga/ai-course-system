@@ -944,7 +944,15 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             retryable=False,
         )
 
-    from app.models.experiment_model import ExperimentRun, RunOutcome
+    from app.models.experiment_model import (
+        AttemptStatus,
+        CodingChallengeOffer,
+        CodingEvidenceEpisode,
+        ExperimentAttempt,
+        ExperimentRun,
+        RunOutcome,
+    )
+    from app.services.coding_challenge_service import coding_challenge_service
     from app.services.experiment_service import (
         attempt_service,
         finalize_service,
@@ -1003,6 +1011,28 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                 session, course_id=int(course_id), attempt_id=attempt_id,
                 student_id=run.student_id,
             )
+            if attempt.interaction_mode == "guided_practice":
+                open_episode = session.exec(select(CodingEvidenceEpisode).where(
+                    CodingEvidenceEpisode.attempt_id == attempt.attempt_id,
+                    CodingEvidenceEpisode.course_id == int(course_id),
+                    CodingEvidenceEpisode.student_id == run.student_id,
+                    CodingEvidenceEpisode.status == "open",
+                )).first()
+                if attempt.status != AttemptStatus.IN_PROGRESS or open_episode is None:
+                    from app.core.time_utils import utcnow_aware
+
+                    run.outcome = RunOutcome.INTERNAL_ERROR
+                    run.error_code = "GUIDED_SESSION_CLOSED"
+                    run.error_message = "The guided-practice session closed before execution."
+                    run.finished_at = utcnow_aware()
+                    run_service.record_terminal_evidence_quality(session, run)
+                    session.add(run)
+                    session.commit()
+                    raise TaskExecutionError(
+                        "GUIDED_SESSION_CLOSED",
+                        "Guided-practice session is no longer open.",
+                        retryable=False,
+                    )
             version = version_service.get_version(
                 session, course_id=int(course_id), version_id=attempt.version_id,
             )
@@ -1030,6 +1060,7 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                     version=version,
                     before_case=renew_lease_before_case,
                 )
+                run_service.record_terminal_evidence_quality(session, run)
                 # Make the server-owned run durable before the separate
                 # cancellation/finalization transaction below.
                 session.commit()
@@ -1064,24 +1095,91 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                 )
             if completed_run.cancel_requested_at is None:
                 run_service._ensure_coding_diagnosis(completion_session, completed_run)
-                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
-                    finalized_attempt = finalize_service.finalize_attempt(
-                        completion_session,
-                        course_id=int(course_id),
-                        attempt_id=attempt_id,
-                        student_id=completed_run.student_id,
+                feedback_attempt = completion_session.exec(
+                    select(ExperimentAttempt).where(
+                        ExperimentAttempt.attempt_id == attempt_id,
+                        ExperimentAttempt.course_id == int(course_id),
+                        ExperimentAttempt.student_id == completed_run.student_id,
                     )
-                    for node_id in finalize_service.get_cognitive_evidence_node_ids(
-                        completion_session,
-                        attempt=finalized_attempt,
-                    ):
+                ).first()
+                if feedback_attempt is not None and feedback_attempt.interaction_mode == "guided_practice":
+                    from app.models.coding_diagnosis_model import CodingDiagnosisRecord
+                    from app.platform.agents.edu.coding import build_teaching_feedback
+                    from app.services.conversation_service import persist_coding_feedback
+
+                    diagnosis = completion_session.exec(select(CodingDiagnosisRecord).where(
+                        CodingDiagnosisRecord.run_id == completed_run.run_id,
+                        CodingDiagnosisRecord.course_id == int(course_id),
+                        CodingDiagnosisRecord.student_id == completed_run.student_id,
+                    )).first()
+                    offer = completion_session.exec(select(CodingChallengeOffer).where(
+                        CodingChallengeOffer.attempt_id == attempt_id,
+                        CodingChallengeOffer.course_id == int(course_id),
+                        CodingChallengeOffer.student_id == completed_run.student_id,
+                    )).first()
+                    if diagnosis is not None and offer is not None:
+                        feedback = build_teaching_feedback(diagnosis)
+                        # Optional hints are revealed through a separate
+                        # server-owned action.  Persisting the text now would
+                        # make an unseen hint look used in later audits.
+                        feedback = {**feedback, "optional_hint": None}
+                        persist_coding_feedback(
+                            completion_session,
+                            student_id=completed_run.student_id,
+                            course_id=int(course_id),
+                            session_id=offer.conversation_session_id,
+                            run_id=completed_run.run_id,
+                            concept_id=offer.concept_id,
+                            feedback=feedback,
+                        )
+                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
+                    completion_attempt = completion_session.exec(
+                        select(ExperimentAttempt).where(
+                            ExperimentAttempt.attempt_id == attempt_id,
+                            ExperimentAttempt.course_id == int(course_id),
+                            ExperimentAttempt.student_id == completed_run.student_id,
+                        )
+                    ).first()
+                    if completion_attempt is None:
+                        raise TaskExecutionError(
+                            "VALIDATION_FAILED",
+                            "Experiment attempt disappeared before completion.",
+                            retryable=False,
+                        )
+                    if completion_attempt.interaction_mode == "guided_practice":
+                        if completed_run.outcome == RunOutcome.ACCEPTED:
+                            coding_challenge_service.close_session(
+                                completion_session,
+                                attempt_id=attempt_id,
+                                course_id=int(course_id),
+                                student_id=completed_run.student_id,
+                                reason="accepted",
+                            )
+                        evidence_node_ids = coding_challenge_service.get_evidence_node_ids(
+                            completion_session,
+                            attempt_id=attempt_id,
+                            course_id=int(course_id),
+                            student_id=completed_run.student_id,
+                        )
+                    else:
+                        finalized_attempt = finalize_service.finalize_attempt(
+                            completion_session,
+                            course_id=int(course_id),
+                            attempt_id=attempt_id,
+                            student_id=completed_run.student_id,
+                        )
+                        evidence_node_ids = finalize_service.get_cognitive_evidence_node_ids(
+                            completion_session,
+                            attempt=finalized_attempt,
+                        )
+                    for node_id in evidence_node_ids:
                         event = enqueue_learning_projection(
                             completion_session,
                             attempt_id=None,
                             source_type="experiment_attempt",
-                            source_ref=finalized_attempt.attempt_id,
-                            student_id=finalized_attempt.student_id,
-                            course_id=finalized_attempt.course_id,
+                            source_ref=completion_attempt.attempt_id,
+                            student_id=completion_attempt.student_id,
+                            course_id=completion_attempt.course_id,
                             knowledge_node_id=node_id,
                         )
                         if event is not None:
@@ -1145,6 +1243,49 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                     "total_count": run.total_count if run else 0,
                     "score": run.score if run else 0.0,
                 },
+            )
+
+
+async def coding_challenge_prepare_handler(ctx: TaskHandlerContext) -> None:
+    """Prepare a private AI challenge; task payload never carries prompt/code."""
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    student_id = int(payload.get("student_id") or 0)
+    offer_id = str(payload.get("offer_id") or "")
+    if not course_id or not student_id or not offer_id:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "coding_challenge_prepare requires course_id/student_id/offer_id",
+            retryable=False,
+        )
+    from app.services.coding_challenge_generation_service import (
+        coding_challenge_generation_service,
+    )
+
+    with ctx.session_factory() as session:
+        ctx.service.mark_running(session, ctx.task_id, stage="challenge_generation")
+    with ctx.session_factory() as session:
+        offer = await coding_challenge_generation_service.prepare_offer(
+            session,
+            offer_id=offer_id,
+            course_id=course_id,
+            student_id=student_id,
+        )
+    with ctx.session_factory() as session:
+        if offer.status == "ready":
+            ctx.service.mark_succeeded(
+                session,
+                ctx.task_id,
+                result_ref=f"coding_challenge_offer://{offer_id}",
+                result_data={"offer_id": offer_id, "status": "ready"},
+            )
+        else:
+            ctx.service.mark_failed(
+                session,
+                ctx.task_id,
+                error_code=offer.reason_code or "CHALLENGE_GENERATION_FAILED",
+                error_message="代码挑战准备失败，请稍后重试或换题。",
+                retryable=offer.reason_code in {"SANDBOX_UNAVAILABLE", "CHALLENGE_LLM_UNAVAILABLE"},
             )
 
 
@@ -1941,6 +2082,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("document_parse", document_parse_handler)
     worker.register("course_draft_build", course_draft_build_handler)
     worker.register("experiment_run", experiment_run_handler)
+    worker.register("coding_challenge_prepare", coding_challenge_prepare_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
     worker.register("question_bank.import", question_bank_import_handler)
     from app.platform.tasks.knowledge_handlers import (

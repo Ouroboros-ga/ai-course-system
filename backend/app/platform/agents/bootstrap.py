@@ -363,6 +363,7 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
         sandbox_port = getattr(app.state, "coding_agent_sandbox_port", None)
         if sandbox_port is None:
             sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+            app.state.coding_agent_sandbox_port = sandbox_port
         registry = TeachingAgentRuntimeRegistry(
             demo_service=service,
             llm=OpenAICompatibleTeachingLLM(base_url=base_url, api_key=api_key, model=model),
@@ -397,6 +398,23 @@ def bootstrap_teaching_agent(app: Any, *, demo_service: DemoService | None = Non
             safety_guard=make_session_scoped_safety_guard_port(session_factory),
         )
         app.state.teaching_agent_runtime_registry = registry
+
+        # Coding challenges share the structured provider's schema/repair and
+        # metadata-only diagnostics.  Raw debug capture remains Prep-only.
+        from .providers.llm.structured import SharedLLMStructuredProvider
+        from .providers.persistence import SqlAgentLLMDiagnosticStore
+        from app.services.coding_challenge_generation_service import (
+            coding_challenge_generation_service,
+        )
+        from app.platform.agents.edu.coding import coding_challenge_decision_policy
+
+        challenge_structured_llm = SharedLLMStructuredProvider(
+            diagnostic_sink=SqlAgentLLMDiagnosticStore(session_factory),
+        )
+        coding_challenge_generation_service.configure(
+            structured_llm=challenge_structured_llm,
+        )
+        coding_challenge_decision_policy.configure(challenge_structured_llm)
 
         # Commit 5: register EDU agent with the unified AgentPlatform.
         # The platform wraps the legacy registry; existing endpoints are unaffected.
@@ -433,7 +451,10 @@ def bootstrap_coding_agent(app: Any) -> bool:
 
         session_factory = lambda: Session(engine)
         coding_diagnosis, _student_history = make_session_scoped_coding_ports(session_factory)
-        sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+        sandbox_port = getattr(app.state, "coding_agent_sandbox_port", None)
+        if sandbox_port is None:
+            sandbox_port = Judge0SandboxPort(session_factory=session_factory)
+            app.state.coding_agent_sandbox_port = sandbox_port
         llm = None
         base_url, api_key, model = _effective_llm_settings()
         if base_url and api_key and model:

@@ -219,6 +219,9 @@ class AgentGovernanceService:
 
             enabled = bool(upd.get("enabled", True))
             require_confirmation = bool(upd.get("require_confirmation", False))
+            descriptor = DEFAULT_TOOL_CATALOG.get(tool_name)
+            if descriptor is not None and not descriptor.supports_confirmation and require_confirmation:
+                reject_validation_failed(f"工具不支持逐次确认: {tool_name}")
             confirmation_threshold = str(upd.get("confirmation_threshold", "never"))
             if confirmation_threshold not in ("always", "high_risk_only", "never"):
                 reject_validation_failed(f"无效 confirmation_threshold: {confirmation_threshold}")

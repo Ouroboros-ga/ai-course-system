@@ -197,6 +197,59 @@ def test_experiment_sandbox_migration_downgrade_blocked_by_irreversible_0062(tmp
         _run_alembic(db_url, "downgrade", "0054")
 
 
+def test_conversational_coding_challenge_0067_round_trip(tmp_path):
+    """0066 -> 0067 -> 0066 keeps the migration boundary reversible on SQLite."""
+    db_path = tmp_path / "coding_challenge_0067.db"
+    db_url = f"sqlite:///{db_path}"
+
+    _run_alembic(db_url, "upgrade", "0066")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        before = inspect(engine)
+        assert "coding_challenge_offers" not in before.get_table_names()
+        assert "interaction_mode" not in {
+            column["name"] for column in before.get_columns("experiment_attempts")
+        }
+    finally:
+        engine.dispose()
+
+    _run_alembic(db_url, "upgrade", "0067")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        upgraded = inspect(engine)
+        assert {
+            "coding_challenge_offers", "coding_evidence_episodes",
+        }.issubset(upgraded.get_table_names())
+        assert {
+            "interaction_mode", "source_release_id", "outline_node_id", "last_activity_at",
+        }.issubset({
+            column["name"] for column in upgraded.get_columns("experiment_attempts")
+        })
+        offer_indexes = {item["name"] for item in upgraded.get_indexes("coding_challenge_offers")}
+        assert {
+            "ix_coding_challenge_offers_concept_id",
+            "ix_coding_challenge_offers_source_release_id",
+            "ix_coding_challenge_offers_created_at",
+        }.issubset(offer_indexes)
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0067"
+    finally:
+        engine.dispose()
+
+    _run_alembic(db_url, "downgrade", "0066")
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    try:
+        downgraded = inspect(engine)
+        assert "coding_challenge_offers" not in downgraded.get_table_names()
+        assert "message_kind" not in {
+            column["name"] for column in downgraded.get_columns("conversation_messages")
+        }
+        with engine.connect() as conn:
+            assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0066"
+    finally:
+        engine.dispose()
+
+
 # ==================== 场景2：旧 SQLite fixture stamp + upgrade 演练 ====================
 
 
@@ -574,6 +627,58 @@ def test_postgres_empty_upgrade_head():
             assert version == _head_revision()
     finally:
         engine.dispose()
+
+
+@pytest.mark.skipif(
+    not _postgres_available(),
+    reason="AI_COURSE_TEST_POSTGRES_URL is required",
+)
+def test_postgres_conversational_coding_challenge_0067_round_trip():
+    """0067 remains reversible on the PostgreSQL test database."""
+    pg_url = os.environ["AI_COURSE_TEST_POSTGRES_URL"]
+    engine = create_engine(pg_url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE"))
+            conn.execute(text("CREATE SCHEMA public"))
+            conn.execute(text("GRANT ALL ON SCHEMA public TO PUBLIC"))
+    finally:
+        engine.dispose()
+
+    _run_alembic(pg_url, "upgrade", "0066")
+    _run_alembic(pg_url, "upgrade", "0067")
+    engine = create_engine(pg_url)
+    try:
+        upgraded = inspect(engine)
+        assert {
+            "coding_challenge_offers", "coding_evidence_episodes",
+        }.issubset(upgraded.get_table_names())
+        assert {
+            "origin", "visibility", "owner_student_id", "expires_at",
+        }.issubset({
+            column["name"] for column in upgraded.get_columns("experiment_definitions")
+        })
+        assert {
+            "interaction_mode", "source_release_id", "outline_node_id", "last_activity_at",
+        }.issubset({
+            column["name"] for column in upgraded.get_columns("experiment_attempts")
+        })
+    finally:
+        engine.dispose()
+
+    _run_alembic(pg_url, "downgrade", "0066")
+    engine = create_engine(pg_url)
+    try:
+        downgraded = inspect(engine)
+        assert "coding_challenge_offers" not in downgraded.get_table_names()
+        assert "message_kind" not in {
+            column["name"] for column in downgraded.get_columns("conversation_messages")
+        }
+    finally:
+        engine.dispose()
+
+    # Restore the shared migration-test database for tests that expect head.
+    _run_alembic(pg_url, "upgrade", "head")
 
 
 # ==================== 迁移链完整性测试 ====================

@@ -154,7 +154,7 @@ from app.api.v1.endpoints import (
     course_outline,
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
-    experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
+    experiments,        # 阶段6 课程实验与 TeachingAgent 代码能力兼容接口
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
@@ -246,6 +246,16 @@ async def recover_durable_task_queues() -> None:
         await recover_experiment_run_tasks(session_factory, local_task_worker)
     except Exception:
         logger.exception("Formal experiment run recovery failed")
+    try:
+        from app.models.database import session_factory
+        from app.services.coding_challenge_service import coding_challenge_service
+
+        with session_factory() as session:
+            recovered = coding_challenge_service.recover_inactive_sessions(session)
+        if recovered:
+            logger.info("Closed %d inactive coding challenge session(s)", recovered)
+    except Exception:
+        logger.exception("Coding challenge session recovery failed")
     try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
@@ -474,11 +484,11 @@ app.include_router(
     tags=["阶段5 学习动作门面"],
 )
 
-# 阶段6：课程实验、Judge0 与 CodingAgent
+# 阶段6：课程实验、Judge0 与 TeachingAgent 代码能力兼容接口
 app.include_router(
     experiments.experiment_router,
     prefix="/api/v1/experiments",
-    tags=["阶段6 课程实验与 CodingAgent"],
+    tags=["阶段6 课程实验与代码能力（兼容接口）"],
 )
 
 # 阶段7：资源库

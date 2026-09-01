@@ -76,6 +76,11 @@ class LocalPrepLLMDebugCaptureStore:
         response_format_fallback: bool,
     ) -> Path | None:
         """Persist one complete request/response only when this course opted in."""
+        # Raw request/response capture is a Prep-only local diagnostic.  A
+        # course opt-in must never widen it to student-facing EDU/coding or
+        # research calls, which may carry private learner material.
+        if str(agent_type).strip().lower() != "prep":
+            return None
         normalized = _course_id(course_id)
         if normalized is None or not self.is_enabled(normalized):
             return None

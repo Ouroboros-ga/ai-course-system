@@ -79,6 +79,10 @@ class ExperimentDefinition(SQLModel, table=True):
     )
     max_attempts: int = Field(default=3, description="最大尝试次数")
     cooldown_minutes: int = Field(default=30, description="尝试冷却（分钟）")
+    origin: str = Field(default="teacher", index=True, max_length=32)
+    visibility: str = Field(default="course_catalog", index=True, max_length=32)
+    owner_student_id: Optional[int] = Field(default=None, foreign_key="users.id", index=True)
+    expires_at: Optional[datetime] = Field(default=None, index=True)
 
     created_by: int = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow_aware)
@@ -133,6 +137,12 @@ class ExperimentVersion(SQLModel, table=True):
     writes_formal_evidence: bool = Field(
         default=True,
         description="是否在 finalize 时写入正式 LearningEvidence",
+    )
+    starter_code: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    generation_metadata: dict = Field(
+        default_factory=dict,
+        sa_column=Column(JSON),
+        description="Prompt/version/hash and validation metadata; never reference source",
     )
 
     is_locked: bool = Field(default=False, description="教师锁定，AI 不可覆盖")
@@ -220,6 +230,10 @@ class ExperimentAttempt(SQLModel, table=True):
         default_factory=dict, sa_column=Column(JSON),
         description="学习位置回锚（course_id/node_id/page 等）",
     )
+    interaction_mode: str = Field(default="assessment", index=True, max_length=32)
+    source_release_id: Optional[str] = Field(default=None, index=True, max_length=100)
+    outline_node_id: Optional[str] = Field(default=None, index=True, max_length=100)
+    last_activity_at: datetime = Field(default_factory=utcnow_aware, index=True)
 
     created_at: datetime = Field(default_factory=utcnow_aware)
     updated_at: datetime = Field(default_factory=utcnow_aware)
@@ -274,6 +288,8 @@ class ExperimentRun(SQLModel, table=True):
 
     language: str = Field(default="", description="编程语言（必须在白名单）")
     source_code: str = Field(default="", description="学生提交代码（受限于最大长度）")
+    normalized_source_hash: str = Field(default="", index=True, max_length=64)
+    evidence_quality: dict = Field(default_factory=dict, sa_column=Column(JSON))
 
     outcome: RunOutcome = Field(default=RunOutcome.PENDING, index=True)
     passed_count: int = Field(default=0, description="通过测试用例数")
@@ -300,6 +316,71 @@ class ExperimentRun(SQLModel, table=True):
     submitted_at: datetime = Field(default_factory=utcnow_aware)
     finished_at: Optional[datetime] = Field(default=None)
     cancel_requested_at: Optional[datetime] = Field(default=None)
+
+
+class CodingChallengeOffer(SQLModel, table=True):
+    """Conversation-scoped invitation to start one verified code challenge."""
+
+    __tablename__ = "coding_challenge_offers"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    offer_id: str = Field(
+        default_factory=lambda: "offer_" + uuid.uuid4().hex,
+        unique=True,
+        index=True,
+        max_length=64,
+    )
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    conversation_session_id: str = Field(index=True, max_length=128)
+    trace_id: str = Field(default="", index=True, max_length=128)
+    concept_id: Optional[str] = Field(default=None, index=True, max_length=128)
+    status: str = Field(default="preparing", index=True, max_length=32)
+    source: str = Field(default="ai", index=True, max_length=32)
+    title: str = Field(default="", max_length=200)
+    why_now: str = Field(default="", max_length=500)
+    difficulty: str = Field(default="medium", max_length=16)
+    estimated_minutes: int = Field(default=10, ge=1, le=120)
+    languages: list = Field(default_factory=list, sa_column=Column(JSON))
+    reason_codes: list = Field(default_factory=list, sa_column=Column(JSON))
+    reason_code: str = Field(default="", max_length=64)
+    experiment_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    version_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    attempt_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    task_id: Optional[str] = Field(default=None, index=True, max_length=64)
+    source_release_id: Optional[str] = Field(default=None, index=True, max_length=100)
+    outline_node_id: Optional[str] = Field(default=None, index=True, max_length=100)
+    replacement_count: int = Field(default=0, ge=0)
+    expires_at: datetime = Field(index=True)
+    created_at: datetime = Field(default_factory=utcnow_aware, index=True)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+
+
+class CodingEvidenceEpisode(SQLModel, table=True):
+    """Low-noise aggregate: many server-owned runs become one cognition input."""
+
+    __tablename__ = "coding_evidence_episodes"
+    __table_args__ = (
+        UniqueConstraint("attempt_id", name="uq_coding_evidence_episode_attempt"),
+    )
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    episode_id: str = Field(
+        default_factory=lambda: "episode_" + uuid.uuid4().hex,
+        unique=True,
+        index=True,
+        max_length=72,
+    )
+    attempt_id: str = Field(index=True, max_length=64)
+    course_id: int = Field(foreign_key="courses.id", index=True)
+    student_id: int = Field(foreign_key="users.id", index=True)
+    status: str = Field(default="open", index=True, max_length=32)
+    close_reason: str = Field(default="", max_length=32)
+    summary: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    evidence_id: Optional[str] = Field(default=None, index=True, max_length=150)
+    created_at: datetime = Field(default_factory=utcnow_aware, index=True)
+    updated_at: datetime = Field(default_factory=utcnow_aware)
+    closed_at: Optional[datetime] = Field(default=None, index=True)
 
 
 class SandboxExecutionLease(SQLModel, table=True):

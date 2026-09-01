@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlmodel import Session
 
@@ -20,9 +21,119 @@ from app.services.conversation_service import (
     persist_conversation_turn,
 )
 from app.services.course_access_service import require_course_permission, resolve_course_access
+from app.services.coding_challenge_service import coding_challenge_service
 from app.schemas.learning_adjustment import QuestionObservation
+from app.core.exceptions import unified_response
 
 router = APIRouter()
+
+
+@router.get(
+    "/coding-challenges/active",
+    summary="Restore the learner's active conversational coding challenge",
+)
+async def get_active_coding_challenge(
+    course_id: int,
+    session_id: str = Query(min_length=1, max_length=128),
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    """Restore only the authenticated learner's offer for this conversation."""
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+    state = coding_challenge_service.get_active_state(
+        session,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+        conversation_session_id=session_id,
+    )
+    return unified_response(code=200, message="Coding challenge state", data=state)
+
+
+def _require_coding_challenge_access(
+    session: Session,
+    current_user: dict[str, Any],
+    course_id: int,
+) -> None:
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+
+
+@router.get("/coding-challenges/offers/{offer_id}")
+async def get_coding_challenge_offer(
+    offer_id: str,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_coding_challenge_access(session, current_user, course_id)
+    offer = coding_challenge_service.get_offer_view(
+        session,
+        offer_id=offer_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(code=200, message="Coding challenge offer", data=offer)
+
+
+@router.post("/coding-challenges/offers/{offer_id}/dismiss")
+async def dismiss_coding_challenge_offer(
+    offer_id: str,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_coding_challenge_access(session, current_user, course_id)
+    offer = coding_challenge_service.dismiss_offer(
+        session,
+        offer_id=offer_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(code=200, message="Coding challenge dismissed", data=offer)
+
+
+@router.post("/coding-challenges/offers/{offer_id}/replace")
+async def replace_coding_challenge_offer(
+    offer_id: str,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_coding_challenge_access(session, current_user, course_id)
+    offer = coding_challenge_service.replace_offer(
+        session,
+        offer_id=offer_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(code=200, message="Coding challenge replaced", data=offer)
 
 
 def _course_agent_enabled(session: Session, course_id: int) -> bool:
@@ -62,6 +173,278 @@ class TeachingAgentRequest(BaseModel):
     exercise_id: str | None = Field(default=None, max_length=128)
     code_submission_id: str | None = Field(default=None, max_length=128)
     question_observation: QuestionObservation | None = None
+
+
+class CodingChallengeStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    return_anchor: dict[str, Any] = Field(default_factory=dict)
+
+
+class CodingChallengeRunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    language: str = Field(min_length=1, max_length=50)
+    source_code: str = Field(min_length=1, max_length=100_000)
+
+
+class CodingChallengeCloseRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(default="returned_to_course", pattern="^(accepted|returned_to_course|student_exit|inactive_timeout)$")
+
+
+@router.post(
+    "/coding-challenges/offers/{offer_id}/start",
+    summary="Start one verified guided-practice coding challenge",
+)
+async def start_coding_challenge(
+    offer_id: str,
+    payload: CodingChallengeStartRequest,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+    state = coding_challenge_service.start_offer(
+        session,
+        offer_id=offer_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+        return_anchor=payload.return_anchor,
+    )
+    return unified_response(code=200, message="Coding challenge started", data=state)
+
+
+@router.post(
+    "/coding-challenges/sessions/{challenge_session_id}/runs",
+    status_code=202,
+    summary="Run code and request TeachingAgent feedback",
+)
+async def create_coding_challenge_run(
+    challenge_session_id: str,
+    payload: CodingChallengeRunRequest,
+    course_id: int,
+    idempotency_key: str | None = Header(
+        default=None, alias="Idempotency-Key", max_length=128,
+    ),
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> JSONResponse:
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+    if not idempotency_key:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "IDEMPOTENCY_KEY_REQUIRED",
+                "message": "Idempotency-Key is required for code runs.",
+            },
+        )
+
+    user_id = int(current_user["user_id"])
+    coding_challenge_service.require_open_guided_session(
+        session,
+        attempt_id=challenge_session_id,
+        course_id=course_id,
+        student_id=user_id,
+    )
+    from app.services.experiment_service import run_service
+    from app.services.task_service import TaskCreateRequest, task_service
+
+    run = await run_service.create_run(
+        session,
+        course_id=course_id,
+        attempt_id=challenge_session_id,
+        language=payload.language,
+        source_code=payload.source_code,
+        student_id=user_id,
+        idempotency_key=idempotency_key,
+    )
+    if not run.task_id:
+        task_view = task_service.create_task(session, TaskCreateRequest(
+            task_type="experiment_run",
+            owner_user_id=user_id,
+            course_id=course_id,
+            input_summary=f"课程 {course_id} 引导练习 {challenge_session_id} 代码运行",
+            # Source is already stored in the access-controlled run record;
+            # duplicating it into a task payload would contaminate task audit.
+            input_payload={
+                "course_id": course_id,
+                "run_id": run.run_id,
+                "attempt_id": challenge_session_id,
+                "language": payload.language,
+                "student_id": user_id,
+                "interaction_mode": "guided_practice",
+            },
+            idempotency_key=(
+                f"guided-experiment-run:{course_id}:{challenge_session_id}:{idempotency_key}"
+            ),
+            resource_links=[
+                {"resource_kind": "course", "resource_id": str(course_id), "relation": "input"},
+                {
+                    "resource_kind": "experiment_attempt",
+                    "resource_id": challenge_session_id,
+                    "relation": "input",
+                },
+                {"resource_kind": "experiment_run", "resource_id": run.run_id, "relation": "output"},
+            ],
+        ), commit=False)
+        run.task_id = task_view.task_id
+        session.add(run)
+        coding_challenge_service.touch_session(
+            session,
+            attempt_id=challenge_session_id,
+            course_id=course_id,
+            student_id=user_id,
+        )
+        session.commit()
+        session.refresh(run)
+        try:
+            from app.models.database import session_factory as _session_factory
+            from app.platform.tasks.worker import local_task_worker
+
+            if local_task_worker.has_handler("experiment_run"):
+                local_task_worker.submit(
+                    _session_factory,
+                    task_view.task_id,
+                    {
+                        "course_id": course_id,
+                        "run_id": run.run_id,
+                        "attempt_id": challenge_session_id,
+                        "student_id": user_id,
+                    },
+                )
+        except Exception:
+            # The durable task remains pending and can be recovered by the
+            # normal startup task scan.
+            pass
+
+    return JSONResponse(
+        status_code=202,
+        content=unified_response(
+            code=202,
+            message="Code run queued",
+            data={"run_id": run.run_id, "task_id": run.task_id, "status": run.outcome.value},
+        ),
+    )
+
+
+@router.post(
+    "/coding-challenges/sessions/{challenge_session_id}/close",
+    summary="Close and aggregate one guided-practice evidence episode",
+)
+async def close_coding_challenge(
+    challenge_session_id: str,
+    payload: CodingChallengeCloseRequest,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+    result = coding_challenge_service.close_session(
+        session,
+        attempt_id=challenge_session_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+        reason=payload.reason,
+    )
+    return unified_response(code=200, message="Coding challenge closed", data=result)
+
+
+@router.get(
+    "/coding-challenges/runs/{run_id}",
+    summary="Read a bounded run result and TeachingAgent feedback",
+)
+async def get_coding_challenge_run(
+    run_id: str,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    context = require_course_permission(
+        session, current_user, course_id, "experiment.run",
+    )
+    if not (
+        context.analytics_eligible
+        and context.capabilities.get("experiment", False)
+        and context.capabilities.get("coding_sandbox", False)
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "CODING_CHALLENGE_UNAVAILABLE",
+                "message": "The course has not enabled conversational coding challenges.",
+            },
+        )
+    data = coding_challenge_service.get_run_view(
+        session,
+        run_id=run_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(code=200, message="Coding challenge run", data=data)
+
+
+@router.post(
+    "/coding-challenges/runs/{run_id}/hint",
+    summary="Reveal and record use of the optional TeachingAgent hint",
+)
+async def reveal_coding_challenge_hint(
+    run_id: str,
+    course_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict[str, Any] = Depends(get_current_user),
+) -> dict[str, Any]:
+    _require_coding_challenge_access(session, current_user, course_id)
+    data = coding_challenge_service.reveal_run_hint(
+        session,
+        run_id=run_id,
+        course_id=course_id,
+        student_id=int(current_user["user_id"]),
+    )
+    return unified_response(code=200, message="Optional hint revealed", data=data)
 
 
 def get_runtime(request: Request) -> Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform]:
@@ -121,6 +504,7 @@ async def _respond_for_subject(
     persist_learner_turn: bool,
     runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry, AgentPlatform],
     session: Session,
+    sandbox_available: bool | None = None,
 ) -> dict[str, Any]:
     runtime = _resolve_runtime(runtime_source, str(subject_user_id), str(course_id))
     state = await runtime.respond(
@@ -203,6 +587,30 @@ async def _respond_for_subject(
         "learning_adjustment": state.get("learning_adjustment"),
     }
 
+    # Challenge preparation never delays or replaces the teaching answer.
+    # The decision receives only this turn plus structured runtime fields; all
+    # authorization, release identity, frequency and sandbox gates are applied
+    # again by the server-owned service before an offer can be returned.
+    if persist_learner_turn:
+        try:
+            offer = await coding_challenge_service.maybe_create_offer(
+                session,
+                course_id=course_id,
+                student_id=subject_user_id,
+                conversation_session_id=session_id,
+                trace_id=str(state.get("trace_id", "")),
+                message=message,
+                concept_id=state.get("current_concept_id"),
+                teaching_action=state.get("teaching_action"),
+                sandbox_available=sandbox_available,
+            )
+            if offer is not None:
+                response["coding_challenge_offer"] = offer
+        except Exception:
+            # An unavailable generator or stale release identity is a local
+            # offer failure, never a reason to suppress the completed answer.
+            pass
+
     # Conversation Domain (AGENTS.md §5.1): persist the question/answer turn so
     # the learner can resume the conversation. This is the product-experience
     # domain, independent from the data-minimized Agent Runtime Context / Audit
@@ -227,6 +635,7 @@ async def _respond_for_subject(
 
 @router.post("/respond", summary="Controlled LangGraph self-service teaching response")
 async def respond(
+    request: Request,
     body: TeachingAgentRequest,
     runtime_source: Union[TeachingAgentRuntime, TeachingAgentRuntimeRegistry] = Depends(get_runtime),
     session: Session = Depends(get_session),
@@ -252,6 +661,11 @@ async def respond(
         question_observation=body.question_observation,
         persist_learner_turn=True,
         session=session,
+        sandbox_available=(
+            bool(getattr(request.app.state.coding_agent_sandbox_port, "is_healthy", False))
+            if getattr(request.app.state, "coding_agent_sandbox_port", None) is not None
+            else None
+        ),
     )
 
 
