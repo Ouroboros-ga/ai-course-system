@@ -798,12 +798,14 @@ onMounted(async () => {
 <template>
   <div class="sfx-learn">
     <!-- 未发布课程：与学习分析页相同的空态（CourseAnalyticsPage unpublished 分支）。
+         包一层 .sfx-page 与分析页同构，保证空态图标/文案的垂直位置与水平限宽一致。
          CourseLayout 加载完成后才渲染本页，此处 course 状态已就绪，可直接判定。 -->
-    <SfxEmpty
-      v-if="courseUnpublished"
-      title="课程尚未发布"
-      description="学习页面按当前发布版本提供讲解内容；课程正式发布后，即可开始学习。"
-    />
+    <div v-if="courseUnpublished" class="sfx-page sfx-learn-unpublished">
+      <SfxEmpty
+        title="课程尚未发布"
+        description="学习页面按当前发布版本提供讲解内容；课程正式发布后，即可开始学习。"
+      />
+    </div>
 
     <SfxSkeleton v-else-if="ws.status.value === 'loading'" :lines="4" block />
 
@@ -969,6 +971,11 @@ onMounted(async () => {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 未发布空态：与分析页同构的 .sfx-page 包裹层，撑满学习区域 */
+.sfx-learn-unpublished {
+  flex: 1;
 }
 
 .sfx-learn-body {
