@@ -64,17 +64,22 @@ python knowledge_data/import_to_neo4j.py   # 校验 + 打印导入计划（不�
    `discipline_references`，prompt 版本 1.5，前端展示来源引用）。
 4. ⏳ 待接线：作为**课程知识图谱的种子候选**导入 `CourseKnowledgeNode` / `GraphRelation`，
    经教师审核门后进入正式图谱快照；
-5. ✅ **已落地（2026-09-01，语料层接入检索白名单）**：`corpus/build_corpus_index.py`
-   离线构建 FTS5 索引（contentless，635 万段落 / 7.05GB，CJK 二元组 + ASCII 词分词），
-   运行期由 `backend/app/platform/knowledge/discipline_corpus.py` 只读检索
-   （AND 优先/OR 回退、bm25 排序、fail-closed），经 `DisciplineKnowledgePortImpl`
-   与概念层结果合并为两级补充参考（`retrieval_source: discipline_kb |
-   discipline_corpus`），随 `/teaching-agent/respond` 的 `discipline_references`
-   透出（含 doc\_id/chunk\_no/snippet/source\_license）。启用需在部署侧配置
-   `DISCIPLINE_CORPUS_INDEX_PATH`（默认空 = 未接入，检索只走概念层），
-   段落数上限 `DISCIPLINE_CORPUS_TOP_K`（默认 2）。注意：这是 TeachingAgent
-   学科参考链路的白名单接入，与 `ActiveBundleCourseRetrievalPort` 的课件证据
-   RAG（BM25 + BGE + RRF + Citation 闭包）仍是两条独立链路；
+5. ✅ **已落地（2026-09-01，语料层接入检索白名单 + 向量混合检索）**：
+   `corpus/build_corpus_index.py` 离线构建 FTS5 索引（contentless，635 万段落 /
+   7.05GB，CJK 二元组 + ASCII 词分词），运行期由
+   `backend/app/platform/knowledge/discipline_corpus.py` 只读检索；
+   `corpus/build_corpus_embeddings.py` 另将**中文高权威子集**（中文维基 CS
+   125,474 段 + 教材 4,877 段，共 130,351 段）用本地
+   `bge-small-zh-v1.5`（复用 GraphRAG 模型设施）离线嵌入写入 pgvector 表
+   `discipline_corpus_embedding`（HNSW 余弦索引，约 260MB）。查询侧 FTS 与
+   向量两路召回做 RRF 融合（k=60），经 `DisciplineKnowledgePortImpl` 与
+   概念层结果合并为补充参考，随 `/teaching-agent/respond` 的
+   `discipline_references` 透出（含 doc_id/chunk_no/snippet/matched_by/
+   source_license）。启用配置：`DISCIPLINE_CORPUS_INDEX_PATH`（FTS 索引）、
+   `DISCIPLINE_CORPUS_VECTOR_ENABLED` + `DISCIPLINE_CORPUS_VECTOR_MODEL_PATH`
+   （向量路，默认关闭 fail-closed）。注意：这是 TeachingAgent 学科参考链路
+   的白名单接入，与 `ActiveBundleCourseRetrievalPort` 的课件证据 RAG
+   （BM25 + BGE + RRF + Citation 闭包）仍是两条独立链路；
 6. ✅ **已扩充（R5–R11）**：操作系统（`os.json`）、计算机网络（`net.json`）、数据库系统（`db.json`）、
    软件工程（`se.json`）、机器学习（`ml.json`）、编译原理（`compiler.json`）、计算机组成原理（`arch.json`）、
    离散数学（`discrete.json`）、计算机图形学（`graphics.json`）
@@ -111,19 +116,26 @@ python knowledge_data/import_to_neo4j.py   # 校验 + 打印导入计划（不�
 
 * `fetch_textbooks.py`：OSTEP 逐章 PDF 文本提取 + SICP HTML 章节抓取；
 
-* `build_manifest.py`：汇总生成 `manifest.json`；
+* `build_manifest.py`：汇总生成 `manifest.json`。
 
 * `build_corpus_index.py`：切块（约 1000 字符/段）+ CJK 二元组分词，构建
   contentless FTS5 索引 `corpus_index.sqlite3`（635 万段落 / 7.05GB，
   本地构建约 5 分钟），已上传服务器
   `/opt/smartcarb/shared/knowledge_corpus/corpus_index.sqlite3`。
 
+* `build_corpus_embeddings.py`：中文高权威子集（zhwiki-/ostep-/sicp- 前缀，
+  130,351 段）本地 BGE 离线嵌入 → pgvector 表 `discipline_corpus_embedding`
+  （服务器端构建约 3.1 小时，nice 降优先级不阻断线上服务）。该表是可重建的
+  派生数据，不属于 alembic 业务 schema。
+
 诚实边界：
 
 * 语料层检索**已接入 TeachingAgent 学科参考白名单**（见"集成路径"第 5 条），
-  但仅在部署侧配置 `DISCIPLINE_CORPUS_INDEX_PATH` 后生效；未配置时
-  fail-closed，学科参考只走精编概念层。嵌入（向量检索）成本尚未评估，
-  当前为纯 FTS 关键词检索。
+  FTS 路仅要求 `DISCIPLINE_CORPUS_INDEX_PATH`；向量路另需
+  `DISCIPLINE_CORPUS_VECTOR_ENABLED=true` 与已构建的向量表，默认关闭
+  fail-closed。当前向量表只覆盖中文高权威子集（教材 + 中文维基 CS），
+  英文维基/RFC/arXiv 仅走 FTS；查询侧模型懒加载，每 worker 进程首次
+  向量查询约 15s（torch 加载）并常驻约 1.4GB 内存。
 
 * 全部来源为开放许可内容；受版权保护的市售教材**未**纳入（用户持有的纸质书
   无法授权数字化复制）。OSTEP/SICP 为作者自行发布的自由授权版本。
