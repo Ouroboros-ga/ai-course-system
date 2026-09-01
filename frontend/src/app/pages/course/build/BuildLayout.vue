@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BookOpenCheck, ChevronLeft, ChevronRight, ClipboardList, FileText, ListTree, MonitorPlay, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
+import { BookOpenCheck, ChevronLeft, ChevronRight, FileText, ListTree, MonitorPlay, Network, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
 import { getDraftBuildStatus } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
@@ -77,17 +77,19 @@ watch(courseId, () => {
   startDraftBuildPolling()
 })
 
-const steps = [
-  { key: 'materials', label: '课程资料', description: '上传并解析教学材料', icon: FileText },
-  { key: 'structure', label: '课程结构', description: '组织目录与知识点', icon: ListTree },
-  { key: 'scripts', label: '讲授脚本', description: '完善教学表达', icon: BookOpenCheck },
-  { key: 'mapping', label: '教学 PPT 映射', description: '关联教学演示页', icon: MonitorPlay },
-  { key: 'media', label: '媒体与数字人', description: '准备课堂媒体', icon: Video },
-  { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck },
-  { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints },
-  { key: 'drafts', label: '题库草稿审核', description: '审核 AI 生成的题目', icon: ClipboardList },
-]
-const activeStep = computed(() => steps.find((step) => route.name === `app-course-build-${step.key}`) ?? steps[0])
+const steps = computed(() => [
+  { key: 'materials', label: '课程资料', description: '上传并解析教学材料', icon: FileText, to: `/app/course/${courseId.value}/build/materials` },
+  { key: 'structure', label: '课程结构', description: '组织目录与教学顺序', icon: ListTree, to: `/app/course/${courseId.value}/build/structure` },
+  { key: 'knowledge', label: '知识', description: '审核知识结构与原文依据', icon: Network, to: `/app/course/${courseId.value}/knowledge/` },
+  { key: 'scripts', label: '讲授脚本', description: '完善教学表达', icon: BookOpenCheck, to: `/app/course/${courseId.value}/build/scripts` },
+  { key: 'mapping', label: '教学 PPT 映射', description: '关联教学演示页', icon: MonitorPlay, to: `/app/course/${courseId.value}/build/mapping` },
+  { key: 'media', label: '媒体与数字人', description: '准备课堂媒体', icon: Video, to: `/app/course/${courseId.value}/build/media` },
+  { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck, to: `/app/course/${courseId.value}/build/validate` },
+  { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints, to: `/app/course/${courseId.value}/build/releases` },
+])
+const activeStep = computed(() => {
+  return steps.value.find((step) => route.name === `app-course-build-${step.key}`) ?? steps.value[0]
+})
 </script>
 
 <template>
@@ -103,7 +105,7 @@ const activeStep = computed(() => steps.find((step) => route.name === `app-cours
         <RouterLink
           v-for="(step, index) in steps"
           :key="step.key"
-          :to="`/app/course/${courseId}/build/${step.key}`"
+          :to="step.to"
           class="build-link"
           :class="{ active: activeStep.key === step.key }"
           :title="railCollapsed ? step.label : ''"

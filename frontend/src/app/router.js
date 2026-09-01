@@ -246,7 +246,7 @@ export const shadowAppRoutes = [
                 ],
               },
 
-              // 教师课程建设（§14）：Local Rail 七步
+              // 教师课程建设（§14）：七个 build 子路由 + 一个跨布局知识步骤
               {
                 path: 'build',
                 component: () => import('./pages/course/build/BuildLayout.vue'),
@@ -290,7 +290,7 @@ export const shadowAppRoutes = [
                   {
                     path: 'drafts',
                     name: 'app-course-build-drafts',
-                    component: () => import('./pages/course/build/QuestionDraftReviewPage.vue'),
+                    redirect: (to) => `/app/course/${to.params.courseId}/knowledge/`,
                   },
                 ],
               },

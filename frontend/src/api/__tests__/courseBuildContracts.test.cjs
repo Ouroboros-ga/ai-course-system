@@ -115,6 +115,18 @@ test('course builder agent uses the natural-language proposal and evidence APIs,
     assert.match(backend, /"display": _operation_display/)
 })
 
+test('course builder places knowledge governance after structure and removes the question-draft rail entry', () => {
+    const layout = read('frontend/src/app/pages/course/build/BuildLayout.vue')
+    const structureAt = layout.indexOf("key: 'structure'")
+    const knowledgeAt = layout.indexOf("key: 'knowledge'")
+    const scriptsAt = layout.indexOf("key: 'scripts'")
+
+    assert.ok(structureAt >= 0 && knowledgeAt > structureAt && scriptsAt > knowledgeAt)
+    assert.match(layout, /key:\s*['"]knowledge['"][\s\S]*?to:\s*`\/app\/course\/\$\{courseId\.value\}\/knowledge\//)
+    assert.match(layout, /:to="step\.to"/)
+    assert.doesNotMatch(layout, /key:\s*['"]drafts['"]|题库草稿审核/)
+})
+
 test('PPT mapping client requires the multi-deck mapping contract', () => {
     const editor = read('frontend/src/api/course_editor.js')
     const backend = read('backend/app/api/v1/endpoints/course_build_editor.py')

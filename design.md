@@ -1087,11 +1087,14 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 - 访问根路径 `/` 必须自动重定向到 `/app`，由 [router/index.js](./frontend/src/router/index.js) 配置。
 - `/app` 是登录后应用主入口，对应 [AppShell.vue](./frontend/src/app/shell/AppShell.vue)。
 - 课程相关路由前缀：`/app/course/:courseId/`，二级菜单由 [CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) 承载。
-- 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | scripts | mapping | media | validate | releases`。
+- 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | scripts | mapping | media | validate | releases`；建设 Local Rail 另含一个跨布局“知识”步骤，目标为 `/app/course/:courseId/knowledge/`。
 - CourseLayout 二级导航返回按钮（`.sfx-l2nav > div > div > button`）的目标必须按当前路由路径判断：
   - 当前在 `/build/*` 下 → 回到 `/app/courses/building`（"我建设的"）
+  - 教师在 `/knowledge/*` 下 → 回到 `/app/courses/building`（"我建设的"）
   - 其他子页面（overview/learn/knowledge/experiments/members/settings）→ 回到 `/app/courses/learning`（"我学习的"）
   - 不允许硬编码任一固定目标，否则教师在建设页点返回会被错误带去学习列表。
+
+教师不再显示课程顶部独立“知识”入口；学生仍显示。旧 `/app/course/:courseId/build/drafts` 仅作为兼容地址重定向到知识空间，不是可见建设步骤。
 
 ---
 

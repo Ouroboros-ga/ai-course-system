@@ -153,7 +153,7 @@ CodeNexus智码交响是一套智能体协作型全场景智慧教学系统，�
 | PPT 页面 ↔ 知识点映射                                       | ✅  | `mapping.py` + LLM 语义匹配                                                                                                  |
 | 课程知识图谱（GraphRAG，8 种教育关系）                             | 🧪 | Worker 已部署、LanceDB/BGE 已接通；真实课程构图因**数据外发授权未获批**默认关闭（`GRAPHRAG_ENABLED=false`）                                            |
 | AI 出题双门控审核                                           | ✅  | `question_generation_drafts` → 教师批准 → `QuestionBankItem`                                                                 |
-| 教师 8 步生产工作台、脚本快照/版本/回滚                               | ✅  | shadow 前端 `/app/course/:courseId/build`                                                                                  |
+| 教师 8 步生产工作台（含独立知识治理步骤）、脚本快照/版本/回滚          | ✅  | shadow 前端 `/app/course/:courseId/build`；“知识”从建设流程跨布局进入 `/app/course/:courseId/knowledge/`，题库审核入口不再作为建设步骤 |
 
 ### 4.2 媒体与数字人讲授
 

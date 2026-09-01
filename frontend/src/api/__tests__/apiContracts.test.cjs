@@ -458,16 +458,17 @@ test('router.js: 注册 /app/course/:courseId/knowledge/graph/:nodeId? 路由', 
   assert.match(src, /knowledge\/KnowledgeSnapshotsPage\.vue/)
 })
 
-test('CourseLayout.vue: 启用"知识"导航项（不再 disabled）', () => {
+test('CourseLayout.vue: builders enter knowledge through construction while learners retain the knowledge tab', () => {
   const src = read('frontend/src/app/pages/course/CourseLayout.vue')
-  // knowledge 导航项必须 enabled: true（不再 disabled）
-  // 同时必须提供 to（指向 /knowledge）
-  assert.match(
-    src,
-    /key:\s*['"]knowledge['"][^}]*label:\s*['"]知识['"][^}]*to:\s*`\/app\/course\/\$\{courseId\.value\}\/knowledge`[^}]*enabled:\s*true/,
-  )
-  // activeKey 必须识别 knowledge 路径
-  assert.match(src, /route\.path\.includes\(['"]\/knowledge['"]\)/)
+  assert.match(src, /if\s*\(!allowed\.value\[['"]course\.edit['"]\]\)[\s\S]*?key:\s*['"]knowledge['"]/)
+  assert.match(src, /if\s*\(route\.path\.includes\(['"]\/knowledge['"]\)\)[\s\S]*?return allowed\.value\[['"]course\.edit['"]\]\s*\?\s*['"]build['"]\s*:\s*['"]knowledge['"]/)
+  assert.match(src, /route\.path\.includes\(['"]\/knowledge['"]\)\s*&&\s*allowed\.value\[['"]course\.edit['"]\]/)
+})
+
+test('router.js: the retired build drafts address redirects to the knowledge workspace', () => {
+  const src = read('frontend/src/app/router.js')
+  assert.match(src, /path:\s*['"]drafts['"][\s\S]*?name:\s*['"]app-course-build-drafts['"][\s\S]*?redirect:[\s\S]*?\/knowledge\//)
+  assert.doesNotMatch(src, /path:\s*['"]drafts['"][\s\S]*?QuestionDraftReviewPage\.vue/)
 })
 
 test('KnowledgeGraphPage.vue: 集成 StudentGraphPanel + CognitiveDashboard + RecommendationCard', () => {
