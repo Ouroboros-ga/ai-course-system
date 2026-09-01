@@ -136,6 +136,30 @@ function selectGraphItem(item) {
   selectedId.value = item?.id ? String(item.id) : ''
 }
 
+// warnings 里可能是字符串，也可能是整份质量报告对象（code=QUALITY_REFINEMENT_REPORT）；
+// 对象转为精简自然语言摘要，避免页面上出现大段原始 JSON。
+function warningText(warning) {
+  if (typeof warning === 'string') return warning
+  if (!warning || typeof warning !== 'object') return String(warning ?? '')
+  if (warning.code !== 'QUALITY_REFINEMENT_REPORT') {
+    return warning.message || warning.code || JSON.stringify(warning)
+  }
+  const focus = warning.focus_selection
+  const parts = []
+  parts.push(`质量精炼完成：${warning.source_entity_count ?? '—'} 个实体对齐，快照 ${warning.snapshot_node_count ?? '—'} 节点 / ${warning.snapshot_relationship_count ?? '—'} 关系`)
+  if (focus) {
+    parts.push(`重点筛选 ${focus.source_node_count} → ${focus.selected_node_count} 节点（归并至 ${focus.merged_node_count}，剔除噪声 ${focus.noise_filtered_count} 个），关系 ${focus.source_relation_count} → ${focus.selected_relation_count}`)
+  } else {
+    const cleaned = (warning.rejected_placeholder_count || 0)
+      + (warning.removed_placeholder_relationship_count || 0)
+      + (warning.removed_self_loop_count || 0)
+      + (warning.deduplicated_relationship_count || 0)
+    parts.push(`清理占位/自环/重复 ${cleaned} 项`)
+  }
+  parts.push(`零模型调用，来源运行 ${String(warning.artifact_source_run_id || '').slice(0, 12)}…`)
+  return parts.join('；')
+}
+
 function openEvidence(item) {
   if (!item?.run_id) return
   router.push({
@@ -267,7 +291,7 @@ onBeforeUnmount(() => window.clearInterval(timer))
         </div>
         <p v-if="isBuilding">后台任务运行中；旧 Active Bundle 会持续服务到新索引校验成功。</p>
         <ul v-if="draft?.warnings?.length">
-          <li v-for="(warning, index) in draft.warnings" :key="index">{{ warning }}</li>
+          <li v-for="(warning, index) in draft.warnings" :key="index">{{ warningText(warning) }}</li>
         </ul>
       </section>
     </template>
