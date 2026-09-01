@@ -552,6 +552,29 @@ test('teaching_agent.js: respondTeachingAgent 调用 POST /teaching-agent/respon
   assert.match(src, /skipErrorToast:\s*payload\.skipErrorToast\s*\?\?\s*true/)
 })
 
+test('coding_challenges.js: 学生挑战门面完整覆盖 offer/session/run 契约', () => {
+  const src = read('frontend/src/api/coding_challenges.js')
+  assert.match(src, /const base = ['"]\/teaching-agent\/coding-challenges['"]/)
+  assert.match(src, /`\$\{base\}\/active`/)
+  assert.match(src, /`\$\{base\}\/offers\/\$\{encodeURIComponent\(offerId\)\}/)
+  assert.match(src, /\/start`/)
+  assert.match(src, /\/dismiss`/)
+  assert.match(src, /\/replace`/)
+  assert.match(src, /\/sessions\/\$\{encodeURIComponent\(sessionId\)\}\/runs/)
+  assert.match(src, /['"]Idempotency-Key['"]:\s*idempotencyKey/)
+  assert.match(src, /\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /\/runs\/\$\{encodeURIComponent\(runId\)\}\/hint/)
+  assert.match(src, /\/sessions\/\$\{encodeURIComponent\(sessionId\)\}\/close/)
+})
+
+test('useLearningWorkspace.js: 对话响应透传挑战卡且不再持久化最后 run_id', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  assert.match(src, /codingChallengeOffer:\s*result\?\.coding_challenge_offer\s*\?\?\s*null/)
+  assert.match(src, /codingChallengeOffer:\s*result\?\.codingChallengeOffer\s*\?\?\s*null/)
+  assert.doesNotMatch(src, /teaching-agent-code-run:/)
+  assert.doesNotMatch(src, /setCodeSubmissionId/)
+})
+
 test('teaching_agent.js: 教师代查使用独立 learner-target 契约', () => {
   const src = read('frontend/src/api/teaching_agent.js')
   assert.match(src, /export function respondTeachingAgentForLearner/)
@@ -825,4 +848,3 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.match(src, /overview\.value = body \?\? null/)
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
 })
-

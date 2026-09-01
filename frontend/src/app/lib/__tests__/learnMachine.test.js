@@ -26,6 +26,25 @@ test('初始状态为 LEARN，且切片默认只启用 LEARN/UNDERSTAND/CITATION
   assert.equal(machine.isEnabled(LEARN_STATES.PRACTICE), false)
   assert.equal(machine.isEnabled(LEARN_STATES.NOTE), false)
   assert.equal(machine.isEnabled(LEARN_STATES.VERIFY), false)
+  assert.equal(machine.isEnabled(LEARN_STATES.CODING), false)
+})
+
+test('CODING 是可显式启用的独立分支，并保留课程返回锚点', () => {
+  const machine = createLearnMachine({
+    enabledStates: [LEARN_STATES.LEARN, LEARN_STATES.CODING],
+  })
+
+  const entered = machine.enter(LEARN_STATES.CODING, {
+    ...validContext,
+    triggerAction: 'coding_challenge',
+  })
+  assert.equal(entered.ok, true)
+  assert.equal(machine.state, LEARN_STATES.CODING)
+  assert.deepEqual(machine.branchContext.returnTarget, validContext.returnTarget)
+
+  const exited = machine.exit()
+  assert.equal(exited.state, LEARN_STATES.LEARN)
+  assert.deepEqual(exited.restored.returnTarget, validContext.returnTarget)
 })
 
 test('从 LEARN 进入分支必须携带合法分支上下文（§12.11）', () => {

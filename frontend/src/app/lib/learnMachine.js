@@ -1,7 +1,7 @@
 /**
  * 学习状态机（page-design §12.3）— 纯 JS、无框架依赖，可单测。
  *
- * 状态：LEARN / UNDERSTAND / PRACTICE / VISUALIZE / NOTE / CITATION / VERIFY
+ * 状态：LEARN / UNDERSTAND / PRACTICE / CODING / VISUALIZE / NOTE / CITATION / VERIFY
  * 规则：
  *  - 每次只能有一个主状态；
  *  - 切片 0.1 只启用 LEARN / UNDERSTAND / CITATION，其余注册但禁用
@@ -15,6 +15,7 @@ export const LEARN_STATES = Object.freeze({
   LEARN: 'LEARN',
   UNDERSTAND: 'UNDERSTAND',
   PRACTICE: 'PRACTICE',
+  CODING: 'CODING',
   VISUALIZE: 'VISUALIZE',
   NOTE: 'NOTE',
   CITATION: 'CITATION',

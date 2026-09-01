@@ -1,9 +1,15 @@
 <script setup>
-import { onBeforeUnmount, onMounted, ref, watch, computed } from 'vue'
-import { EditorState } from '@codemirror/state'
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter } from '@codemirror/view'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { EditorState, StateEffect } from '@codemirror/state'
+import {
+  EditorView,
+  keymap,
+  lineNumbers as lineNumbersExtension,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+} from '@codemirror/view'
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands'
-import { bracketMatching, indentOnInput, foldGutter, foldKeymap, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
+import { bracketMatching, indentOnInput, foldGutter, foldKeymap } from '@codemirror/language'
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search'
 import { autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete'
 import { javascript } from '@codemirror/lang-javascript'
@@ -28,6 +34,7 @@ let view = null
 // 语言映射
 const languageMap = {
   python: () => python(),
+  python3: () => python(),
   javascript: () => javascript(),
   js: () => javascript(),
   typescript: () => javascript({ typescript: true }),
@@ -209,7 +216,7 @@ function buildExtensions(lang) {
   ]
 
   if (props.lineNumbers) {
-    extensions.push(lineNumbers())
+    extensions.push(lineNumbersExtension())
   }
 
   const langExt = getLanguageExtension(lang)
@@ -246,7 +253,7 @@ function changeLanguage(newLang) {
 
   // 重新配置语言扩展
   view.dispatch({
-    effects: EditorState.reconfigure.of(buildExtensions(newLang)),
+    effects: StateEffect.reconfigure.of(buildExtensions(newLang)),
   })
 }
 
@@ -267,10 +274,10 @@ watch(() => props.language, (newLang) => {
 })
 
 // 只读变化
-watch(() => props.readonly, (newVal) => {
+watch(() => props.readonly, () => {
   if (!view) return
   view.dispatch({
-    effects: EditorState.reconfigure.of(buildExtensions(props.language)),
+    effects: StateEffect.reconfigure.of(buildExtensions(props.language)),
   })
 })
 

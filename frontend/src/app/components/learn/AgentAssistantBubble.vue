@@ -2,6 +2,7 @@
 import { computed } from 'vue'
 import { BookMarked, BookOpen, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import CodingChallengeCard from './CodingChallengeCard.vue'
 import { useSettingsStore } from '@/stores/userSettings'
 import { renderContent } from '@/utils/markdownRenderer'
 
@@ -11,6 +12,7 @@ const props = defineProps({
     message: { type: Object, required: true },
     activeAdjustment: { type: Object, default: null },
     adjustmentBusy: { type: Boolean, default: false },
+    challengeBusy: { type: Boolean, default: false },
 })
 const emit = defineEmits([
     'accept-adjustment',
@@ -19,6 +21,9 @@ const emit = defineEmits([
     'retry-opening-review',
     'abandon-adjustment',
     'retry',
+    'challenge-start',
+    'challenge-dismiss',
+    'challenge-replace',
 ])
 
 function reviewPage(adjustment) {
@@ -86,6 +91,15 @@ const renderedContent = computed(() => {
                 <div v-if="message.fallbackNotice" class="sfx-agent-lowconf sfx-t-caption">
                     <TriangleAlert :size="13" /> {{ message.fallbackNotice }}
                 </div>
+
+                <CodingChallengeCard
+                    v-if="message.codingChallengeOffer"
+                    :offer="message.codingChallengeOffer"
+                    :busy="challengeBusy"
+                    @start="$emit('challenge-start', $event)"
+                    @dismiss="$emit('challenge-dismiss', $event)"
+                    @replace="$emit('challenge-replace', $event)"
+                />
 
                 <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
                 <ul v-if="message.citations?.length" class="sfx-agent-citations">
@@ -170,9 +184,10 @@ const renderedContent = computed(() => {
                     </template>
                 </section>
 
-                <button v-if="message.error" type="button" class="sfx-agent-retry sfx-t-ui" @click="retry">
-                    <RefreshCw :size="13" /> 重试
-                </button>
+                <SfxButton v-if="message.error" variant="secondary" size="sm" @click="retry">
+                    <template #icon><RefreshCw :size="13" /></template>
+                    重试
+                </SfxButton>
             </div>
         </div>
     </div>

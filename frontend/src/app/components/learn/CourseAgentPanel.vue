@@ -27,6 +27,7 @@ const props = defineProps({
     adjustmentBusy: { type: Boolean, default: false },
     adjustmentNotice: { type: String, default: '' },
     hideFooterInput: { type: Boolean, default: false },
+    challengeBusy: { type: Boolean, default: false },
 })
 
 const emit = defineEmits([
@@ -37,6 +38,9 @@ const emit = defineEmits([
     'retry-opening-review',
     'return-adjustment',
     'abandon-adjustment',
+    'challenge-start',
+    'challenge-dismiss',
+    'challenge-replace',
 ])
 
 const rootRef = ref(null)
@@ -75,11 +79,16 @@ onBeforeUnmount(() => {
 
         <!-- 消息列表 + 单条智能体气泡（AgentAssistantBubble） -->
         <AgentMessageList :ws="ws" :active-adjustment="activeAdjustment" :adjustment-busy="adjustmentBusy"
+            :challenge-busy="challengeBusy"
             :adjustment-notice="adjustmentNotice" @accept-adjustment="(adj) => emit('accept-adjustment', adj)"
             @dismiss-adjustment="(adj) => emit('dismiss-adjustment', adj)"
             @return-adjustment="() => emit('return-adjustment')"
             @retry-opening-review="() => emit('retry-opening-review')"
-            @abandon-adjustment="() => emit('abandon-adjustment')" @retry="retry" />
+            @abandon-adjustment="() => emit('abandon-adjustment')"
+            @challenge-start="(offer) => emit('challenge-start', offer)"
+            @challenge-dismiss="(offer) => emit('challenge-dismiss', offer)"
+            @challenge-replace="(offer) => emit('challenge-replace', offer)"
+            @retry="retry" />
 
         <!-- 底部：快捷操作 + 输入框 -->
         <AgentPanelFooter ref="footerRef" :ws="ws" :hide-footer-input="hideFooterInput" />
