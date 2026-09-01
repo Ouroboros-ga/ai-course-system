@@ -4,6 +4,7 @@
 - 分词器（CJK 二元组 + ASCII 词）；
 - fixture 索引上的段落检索（is_supplementary 契约、无 evidence_id、噪声词剥离）；
 - fail-closed：未配置路径 / 文件缺失 / 非法索引文件均返回空列表；
+- 向量召回与 FTS 的 RRF 融合（monkeypatch 向量路）、向量路降级；
 - Port 两级合并（概念层 discipline_kb + 语料层 discipline_corpus）；
 - respond 端点把段落字段（doc_id/chunk_no/source_license/retrieval_source）透出。
 """
@@ -16,6 +17,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 from app.platform.knowledge import discipline_corpus
 from app.platform.knowledge.discipline_corpus import tokenize_for_fts
@@ -229,6 +231,109 @@ class RespondEndpointCorpusProjectionTest(unittest.TestCase):
         self.assertEqual(refs[0]["source_license"], "CC BY-SA 4.0")
         self.assertEqual(refs[0]["node_type"], "corpus_paragraph")
         self.assertTrue(refs[0]["is_supplementary"])
+
+
+class RRFFuseTest(unittest.TestCase):
+    def test_both_channel_hit_ranks_first(self):
+        from app.platform.knowledge.discipline_corpus import _rrf_fuse
+
+        # rowid 2 两路都命中应排第一；1/3 各只命中一路。
+        fused = _rrf_fuse([2, 1], [3, 2])
+        self.assertEqual(fused[0], 2)
+        self.assertEqual(sorted(fused[1:]), [1, 3])
+
+    def test_single_channel(self):
+        from app.platform.knowledge.discipline_corpus import _rrf_fuse
+
+        self.assertEqual(_rrf_fuse([5, 6], []), [5, 6])
+        self.assertEqual(_rrf_fuse([], [7]), [7])
+
+
+class VectorFusionTest(_FixtureIndexMixin, unittest.TestCase):
+    """向量召回与 FTS 的 RRF 融合（monkeypatch 向量路，不依赖 pgvector）。"""
+
+    def setUp(self):
+        super().setUp()
+        discipline_corpus._reset_vector_state()
+
+    def tearDown(self):
+        discipline_corpus._reset_vector_state()
+        super().tearDown()
+
+    def test_vector_and_fts_hits_are_fused(self):
+        # FTS 命中 rowid 2（TCP）；向量路返回 rowid 1、2。
+        # RRF 后 rowid 2（两路命中）第一，rowid 1（仅向量）第二。
+        with mock.patch.object(
+            discipline_corpus, "_vector_search", return_value=[(1, 0.92), (2, 0.81)]
+        ):
+            results = discipline_corpus.search_corpus("TCP三次握手")
+        self.assertEqual([r["rowid"] for r in results], [2, 1])
+        self.assertEqual(results[0]["doc_id"], "fixture-tcp")
+        self.assertEqual(results[0]["matched_by"], ["fts", "vector"])
+        # 仅向量命中的段落从 corpus_paragraph 回取原文。
+        self.assertEqual(results[1]["doc_id"], "fixture-virtual-memory")
+        self.assertEqual(results[1]["matched_by"], ["vector"])
+        self.assertIn("虚拟内存", results[1]["snippet"])
+
+    def test_vector_only_hit_when_fts_misses(self):
+        # FTS 完全无命中时，向量命中仍应产出结果（纯向量补充路径）。
+        with mock.patch.object(discipline_corpus, "_fts_search", return_value=[]), mock.patch.object(
+            discipline_corpus, "_vector_search", return_value=[(2, 0.95)]
+        ):
+            results = discipline_corpus.search_corpus("建立连接的握手过程")
+        self.assertTrue(results)
+        self.assertEqual(results[0]["doc_id"], "fixture-tcp")
+        self.assertEqual(results[0]["matched_by"], ["vector"])
+
+
+class VectorFailClosedTest(_FixtureIndexMixin, unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        discipline_corpus._reset_vector_state()
+
+    def tearDown(self):
+        discipline_corpus._reset_vector_state()
+        super().tearDown()
+
+    def test_enabled_but_model_missing_falls_back_to_fts(self):
+        from app.core.config import settings
+
+        settings.DISCIPLINE_CORPUS_VECTOR_ENABLED = True
+        settings.DISCIPLINE_CORPUS_VECTOR_MODEL_PATH = ""
+        original_graphrag = getattr(settings, "GRAPHRAG_EMBEDDING_LOCAL_PATH", "")
+        settings.GRAPHRAG_EMBEDDING_LOCAL_PATH = ""
+        try:
+            results = discipline_corpus.search_corpus("TCP三次握手")
+            # 模型路径缺失 → 向量路禁用，纯 FTS 行为不变。
+            self.assertTrue(results)
+            self.assertEqual(results[0]["doc_id"], "fixture-tcp")
+            self.assertEqual(results[0]["matched_by"], ["fts"])
+        finally:
+            settings.GRAPHRAG_EMBEDDING_LOCAL_PATH = original_graphrag
+
+    def test_provider_failure_disables_vector_for_process(self):
+        from app.core.config import settings
+
+        original_enabled = getattr(settings, "DISCIPLINE_CORPUS_VECTOR_ENABLED", False)
+        settings.DISCIPLINE_CORPUS_VECTOR_ENABLED = True
+
+        class BrokenProvider:
+            def embed(self, texts):
+                raise RuntimeError("model exploded")
+
+        try:
+            with mock.patch.object(
+                discipline_corpus, "_get_vector_provider", return_value=BrokenProvider()
+            ):
+                first = discipline_corpus.search_corpus("TCP三次握手")
+            self.assertTrue(first)
+            self.assertEqual(first[0]["matched_by"], ["fts"])
+            # 进程内禁用：真实 _get_vector_provider 此后直接返回 None，
+            # 向量路不再尝试（直到服务重启）。
+            self.assertIsNone(discipline_corpus._get_vector_provider())
+            self.assertEqual(discipline_corpus._vector_search("TCP三次握手", 8), [])
+        finally:
+            settings.DISCIPLINE_CORPUS_VECTOR_ENABLED = original_enabled
 
 
 if __name__ == "__main__":

@@ -88,6 +88,7 @@ class DisciplineKnowledgePortImpl:
                 "example": "",
                 "doc_id": str(item.get("doc_id") or ""),
                 "chunk_no": int(item.get("chunk_no") or 0),
+                "matched_by": [str(m) for m in (item.get("matched_by") or [])],
                 "source_title": str(item.get("book") or item.get("source") or ""),
                 "source_authors": "",
                 "source_chapter": "",

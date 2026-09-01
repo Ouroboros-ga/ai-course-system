@@ -225,6 +225,15 @@ class Settings(BaseSettings):
     DISCIPLINE_CORPUS_INDEX_PATH: str = ""
     # 每次问答合并进学科参考的语料段落数上限。
     DISCIPLINE_CORPUS_TOP_K: int = 2
+    # 学科语料层向量检索（方案 C 第一步，2026-09-01）：查询经本地 BGE 嵌入后
+    # 从 pgvector 表 discipline_corpus_embedding 召回，与 FTS 结果 RRF 融合。
+    # 默认关闭（fail-closed）；启用需部署侧已运行
+    # knowledge_data/corpus/build_corpus_embeddings.py 构建向量表。
+    DISCIPLINE_CORPUS_VECTOR_ENABLED: bool = False
+    # 本地 BGE 模型路径；空则回退 GRAPHRAG_EMBEDDING_LOCAL_PATH。
+    DISCIPLINE_CORPUS_VECTOR_MODEL_PATH: str = ""
+    # 向量召回深度（RRF 融合前的 top-n）。
+    DISCIPLINE_CORPUS_VECTOR_TOP_K: int = 8
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

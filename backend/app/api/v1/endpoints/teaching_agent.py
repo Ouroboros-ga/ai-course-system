@@ -182,6 +182,7 @@ async def _respond_for_subject(
             "key_points": ref.get("key_points", []),
             "doc_id": ref.get("doc_id"),
             "chunk_no": ref.get("chunk_no"),
+            "matched_by": ref.get("matched_by", []),
             "source_title": ref.get("source_title"),
             "source_authors": ref.get("source_authors"),
             "source_chapter": ref.get("source_chapter"),
