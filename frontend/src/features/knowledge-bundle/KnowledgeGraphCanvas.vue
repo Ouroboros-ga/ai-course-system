@@ -85,7 +85,9 @@ const reducedMotion = typeof window !== 'undefined'
   : true
 // 坐标安全边界：超过此值视为坐标爆炸，重置该节点
 const COORD_LIMIT = 1e6
-const VELOCITY_LIMIT = 1e4
+// 速度上限收紧为每帧 24px（约 1440px/s）：1e4 的旧上限形同虚设，
+// 节点松手后可一帧飞出整个视口（穿模观感的来源之一）
+const VELOCITY_LIMIT = 24
 
 function hash(value) {
   let result = 2166136261
@@ -263,7 +265,9 @@ function simulate(alpha) {
         squared = 1
       }
       const distance = Math.sqrt(squared)
-      const force = (20000 / squared) * alpha
+      // 斥力限幅：节点重叠时 20000/squared 会产生巨力（拖拽穿模回弹的主因之一），
+      // 每对每帧最多 6px 速度增量，近距离也只平滑推开
+      const force = Math.min((20000 / squared) * alpha, 6)
       const ax = (dx / distance) * force
       const ay = (dy / distance) * force
       a.vx = clampVelocity(a.vx + ax)
@@ -277,14 +281,23 @@ function simulate(alpha) {
     const dy = edge.target.y - edge.source.y
     const distance = Math.max(1, Math.hypot(dx, dy))
     const desired = edge.type === 'PREREQUISITE_OF' ? 300 : 240
-    const force = (distance - desired) * .018 * alpha
+    // 弹簧力限幅：节点被拖远后松手，回复力会瞬间达到极大值导致"穿模加速"回弹，
+    // 限幅到每帧最多 5px 速度增量，回弹过程平滑可见
+    const force = Math.max(-5, Math.min(5, (distance - desired) * .018 * alpha))
     edge.source.vx = clampVelocity(edge.source.vx + (dx / distance) * force)
     edge.source.vy = clampVelocity(edge.source.vy + (dy / distance) * force)
     edge.target.vx = clampVelocity(edge.target.vx - (dx / distance) * force)
     edge.target.vy = clampVelocity(edge.target.vy - (dy / distance) * force)
   }
   for (const node of graph.nodes) {
-    if (node.fixed) continue
+    if (node.fixed) {
+      // 拖拽中的节点位置由鼠标逐帧驱动，速度必须每帧清零：
+      // 否则弹簧/斥力在拖拽期间持续累积到 vx/vy，松手瞬间一次性
+      // 释放（速度冲到上限），节点像弹弓一样穿模加速飞出。
+      node.vx = 0
+      node.vy = 0
+      continue
+    }
     if (!Number.isFinite(node.x) || !Number.isFinite(node.y) || Math.abs(node.x) > COORD_LIMIT || Math.abs(node.y) > COORD_LIMIT) {
       resetExplodedNode(node)
       continue
