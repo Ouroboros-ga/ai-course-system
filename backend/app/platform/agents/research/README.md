@@ -1,5 +1,16 @@
 # ResearchAgent HarnessEngineer
 
+> **⚠ 已废弃(2026-09-03,仅历史追溯)**
+> 本 README 描述的"科研工作台"方案已被 **CodeNexus / Nexus AI** 方向替代:
+> Nexus 是从课程外进入的全局入口,负责复杂问题拆解与持续执行,运行于独立
+> Nexus Runtime(独立 Python 环境/进程,基于 Deep Agents + LangGraph)。
+> 旧科研工作台前端四面板入口将随 Nexus 上线下线;本目录的
+> workspace/memory/embedding Provider 与部分工具可被 Nexus 复用,
+> `is_supplementary` / `cannot_modify_*` 等数据边界在 Nexus 侧继续有效。
+> 现行方案见 [docs/phase1/2026-09-03_CodeNexus转型实施决策.md](../../../../../docs/phase1/2026-09-03_CodeNexus转型实施决策.md)
+> 与《CodeNexus 转型设计与实施方案 v1.2》。本 README 以下内容仅描述
+> 替换前的真实实现状态,不再作为新开发的实现依据。
+
 > 状态：Harness v1 已接通（2026-08-12）
 > 数据边界：`research-workspace/1`  
 > 真实部署兼容基线：PostgreSQL 16.14 + pgvector 0.7.4；PostgreSQL 18 保持前向兼容，SQLite 仅用于本地 Demo/测试。

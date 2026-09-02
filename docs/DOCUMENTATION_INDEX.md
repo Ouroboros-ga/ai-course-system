@@ -1,5 +1,19 @@
 # 文档导航与状态
 
+> 2026-09-03 新增：**CodeNexus 转型实施决策（现行）**——
+> [phase1/2026-09-03_CodeNexus转型实施决策.md](phase1/2026-09-03_CodeNexus转型实施决策.md)。
+> `feature/xh202620` 已合并回 `dev-liu`（merge `67f94026`）；产品收敛为
+> TeachingAgent（课程内问答）+ Nexus AI（课程外全局入口，仓内独立目录 `nexus/`）双入口；
+> 旧 ResearchAgent 科研工作台转 Legacy（下线时间表四阶段设计定稿，见该文档 §6）；
+> SmartCarb 时代文档已删除（`deploy/` 运维脚本因属部署基础设施保留）；
+> 服务部署地址 `http://47.99.97.154/`（AGENTS.md 已同步只读授权）。
+> 同日落地：**SearXNG 搜索主通道已部署验收**（47.99.97.154 容器 `nexus-searxng`，
+> 引擎 360search+yandex，中英文 20+ 结果/0.8–2s，见 [deploy/searxng/README.md](../deploy/searxng/README.md)）；
+> **Demo 论文候选清单已定**（主选 nanoGPT、备选 CLIP，见
+> [phase1/2026-09-03_Demo论文候选清单.md](phase1/2026-09-03_Demo论文候选清单.md)）。
+> 相关核查背景见
+> [phase1/CodeNexus_技术决策补丁v1.1_核查结论.md](phase1/CodeNexus_技术决策补丁v1.1_核查结论.md)。
+
 > 2026-09-01 新增：**TeachingAgent 对话式代码挑战本地实现**——
 > [phase1/2026-09-01_对话式代码挑战实施说明.md](phase1/2026-09-01_对话式代码挑战实施说明.md)。
 > 现有课程题优先、AI 异步补位；一次 guided session 的多次 Judge0 run 聚合为一个低噪声
