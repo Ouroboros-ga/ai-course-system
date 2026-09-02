@@ -76,8 +76,44 @@ const selected = computed(() =>
 const selectedContent = computed(() => selected.value?.target_content ?? {})
 const canPublish = computed(() => pendingCount.value === 0 && all.value.length > 0)
 
+/** 节点候选 node_key → 标题 映射：关系候选的 source/target 存的是 node_key，
+ *  借同一响应里的节点候选把它翻译回人类可读的两端节点名。
+ *  同时注册 node_key / target_id / source_candidate_id 三种键，兼容跨批次数据。 */
+const nodeLabelByKey = computed(() => {
+  const map = new Map()
+  for (const item of all.value) {
+    if (item?.target_type !== 'node') continue
+    const content = item.target_content || {}
+    const label = content.label || content.title || content.id
+    for (const key of [content.node_key, content.id, item.target_id, content.source_candidate_id]) {
+      if (key) map.set(String(key), label)
+    }
+  }
+  return map
+})
+
+function endpointLabel(...keys) {
+  for (const key of keys) {
+    if (!key) continue
+    const label = nodeLabelByKey.value.get(String(key))
+    if (label) return label
+  }
+  const first = keys.find(Boolean)
+  return first ? String(first) : '未知节点'
+}
+
 function labelOf(item) {
+  if (item?.target_type === 'relation') {
+    // 关系候选没有 label，直接展示两端节点：源 → 目标
+    const content = item.target_content || {}
+    return `${endpointLabel(content.source, content.source_candidate_id)} → ${endpointLabel(content.target, content.target_candidate_id)}`
+  }
   return item?.target_content?.label ?? item?.target_id ?? '未命名'
+}
+
+function relationTypeOf(item) {
+  const content = item?.target_content || {}
+  return String(content.relation_type || content.type || 'related')
 }
 
 function sourceMeta(item) {
@@ -91,9 +127,11 @@ function sourceMeta(item) {
   }
 }
 
-async function load() {
-  status.value = 'loading'
-  error.value = ''
+async function load(silent = false) {
+  // silent：轮询后台刷新。不重置 status，避免整个列表/详情被 loading
+  // 状态替换导致屏闪（v-if 分支切换会整体 unmount 再重挂载）。
+  if (!silent) status.value = 'loading'
+  if (!silent) error.value = ''
   try {
     const [candRes, evidRes] = await Promise.all([
       listCandidates(courseId),
@@ -106,8 +144,11 @@ async function load() {
     }
     status.value = 'ready'
   } catch (requestError) {
-    error.value = requestError?.message || '候选加载失败。'
-    status.value = 'error'
+    // 静默刷新失败时保留旧数据，不打断当前审核视图
+    if (!silent) {
+      error.value = requestError?.message || '候选加载失败。'
+      status.value = 'error'
+    }
   }
 }
 
@@ -162,7 +203,7 @@ function openEvidence(item) {
 onMounted(() => {
   load()
   timer = window.setInterval(() => {
-    if (status.value === 'ready' && pendingCount.value > 0) load()
+    if (status.value === 'ready' && pendingCount.value > 0) load(true)
   }, 8000)
 })
 onBeforeUnmount(() => window.clearInterval(timer))
@@ -249,6 +290,18 @@ onBeforeUnmount(() => window.clearInterval(timer))
         <dl class="detail__grid">
           <dt>类型</dt>
           <dd>{{ selected.target_type === 'node' ? '知识节点' : '语义关系' }}</dd>
+          <template v-if="selected.target_type === 'relation'">
+            <dt>关系类型</dt>
+            <dd>{{ relationTypeOf(selected) }}</dd>
+            <dt>源节点</dt>
+            <dd>{{ endpointLabel(selectedContent.source, selectedContent.source_candidate_id) }}</dd>
+            <dt>目标节点</dt>
+            <dd>{{ endpointLabel(selectedContent.target, selectedContent.target_candidate_id) }}</dd>
+            <dt v-if="selectedContent.unresolved_endpoint">端点状态</dt>
+            <dd v-if="selectedContent.unresolved_endpoint">
+              <span class="detail__muted">存在未解析端点，发布前需人工确认</span>
+            </dd>
+          </template>
           <dt>知识库对齐</dt>
           <dd>
             <SfxBadge :tone="sourceMeta(selected).tone">{{ sourceMeta(selected).label }}</SfxBadge>

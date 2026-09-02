@@ -291,9 +291,8 @@ function simulate(alpha) {
     }
     // 适度中心引力防止跑出可视区；取值偏小让斥力主导，节点分布更舒展
     const centerForce = .008 * alpha
-    // 阻尼 .82 → .88：配合更长的 alpha 余温（4~6 秒），松手后整图的
-    // 弹性回弹能持续肉眼可见地运动，而不是提前僵住
-    const damping = .88
+    // 阻尼 .84：略高于原始 .82，配合收紧的余温时长，松手后有短暂回弹但不漂移
+    const damping = .84
     node.vx = clampVelocity((node.vx - node.x * centerForce) * damping)
     node.vy = clampVelocity((node.vy - node.y * centerForce) * damping)
     node.x += node.vx
@@ -303,10 +302,10 @@ function simulate(alpha) {
 
 // alpha 余温衰减（按秒计，帧率无关）：
 // - 初始布局从 1 衰减到 0 约 4.5 秒；
-// - 交互（拖拽松手 reheat(.22)、点击）后余温约 4.9 秒，满足"持续运动 4~6 秒"。
-//   旧实现每帧线性衰减 .005，从 .22 起仅 ~0.7 秒整图就静止了。
+// - 交互（拖拽松手 reheat(.22)、点击）后余温约 1.8 秒：既有可见的弹性
+//   回弹，又不会拖着整图漂移太久（2026-09-02 收紧惯性）。
 const ALPHA_DECAY_INITIAL_PER_SEC = 0.22
-const ALPHA_DECAY_INTERACT_PER_SEC = 0.045
+const ALPHA_DECAY_INTERACT_PER_SEC = 0.12
 let lastFrameTs = 0
 
 function startSimulation(initial) {
