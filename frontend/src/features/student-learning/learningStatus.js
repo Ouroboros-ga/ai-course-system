@@ -43,18 +43,14 @@ export function getNodeDisplayState(item = {}) {
   const cognition = item.cognition || {}
   const learningState = getLearningDisplayState(learning)
   if (learning.status !== 'completed') return learningState
-  // 有正式认知结论时优先展示认知状态；没有结论时继续展示学习事实。
-  if (cognition.status === 'degraded' || cognition.status === 'not_available') {
-    return getCognitionDisplayState(cognition)
+  // 有正式认知结论（已掌握/待掌握）时优先展示认知结论；
+  // 其余情况（暂不可分析/认知暂不可用/无证据/待验证）主状态保持“已完成”，
+  // 把认知状态挂到 cognitionHint 上，避免灰色认知状态把“已学完”的事实吞掉。
+  const cognitionState = getCognitionDisplayState(cognition)
+  if (cognitionState.key === 'mastered' || cognitionState.key === 'needs-mastery') {
+    return cognitionState
   }
-  if (cognition.mastery_level === 'advanced' || cognition.mastery_level === 'proficient'
-    || cognition.mastery_level === 'developing' || cognition.mastery_level === 'beginner') {
-    return getCognitionDisplayState(cognition)
-  }
-  if (cognition.status === 'unknown' || cognition.mastery_level === 'unknown' || !cognition.mastery_level) {
-    return { key: 'completed-pending', label: '已完成，待验证', tone: 'amber', iconName: 'completed-pending' }
-  }
-  return getCognitionDisplayState(cognition)
+  return { ...learningState, cognitionHint: cognitionState }
 }
 
 export function summarizeLearningItems(items = []) {
