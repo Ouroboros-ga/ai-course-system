@@ -1,5 +1,5 @@
 <script setup>
-import { inject } from 'vue'
+import { computed, inject } from 'vue'
 import { Captions, Check, CircleAlert, FileImage, Send, Volume2 } from 'lucide-vue-next'
 import SfxBadge from '@/app/ui/SfxBadge.vue'
 import SfxButton from '@/app/ui/SfxButton.vue'
@@ -11,10 +11,22 @@ const {
     selectedTtsJob, jobStatusLabel, isPlaylistRelease, jobTone,
     providerNeedsConfirmation, providerIsDemo, canSubmitTts, retryTts, submitTts, providerReady,
     releaseCueAssetsReady, cueJob, hasFrozenCues, freezeCues, batchReady, paidTtsConfirmed,
-    hasPptManifest, pptManifestInFlight, pptManifestProgress, pptManifestJob,
+    hasPptManifest, courseHasPptSource, pptManifestInFlight, pptManifestProgress, pptManifestJob,
     canBuildPptManifest, createPptManifest, hasFrozenPlaylist, freezeBatchPlaylist,
     canActivateWorkingRelease, activateRelease, canPublish, goToRelease, canGenerate, acting,
 } = mediaBuild
+
+// 纯音频课程（无 PPT/PDF 源文件）且非播放清单模式时，PPT manifest 不是
+// 激活前置条件；第 03 步显示为"无需此项"，避免把用户卡在无法完成的分支。
+const noPptSource = computed(() => !courseHasPptSource.value && !isPlaylistRelease.value)
+// 第 03 步成为"下一步操作"的条件：课程含源文件（或播放清单模式）、Cue 已
+// 就绪、manifest 尚未生成且没有任务在途。无源文件课程不会一直高亮等待。
+const pptStepActive = computed(() => Boolean(
+    !hasPptManifest.value
+        && !noPptSource.value
+        && !pptManifestInFlight.value
+        && canBuildPptManifest.value,
+))
 
 // 长文案提取为常量，避免模板内插值字符串被自动格式化断行
 const TTS_FALLBACK = '不再调用 TTS Provider'
@@ -22,6 +34,41 @@ const PPT_FAILED_FALLBACK = 'PPT manifest 后台任务失败，请检查任务�
 function workingReleaseTitle() {
     const r = workingRelease.value
     return r ? (r.label || `媒体版本 ${r.version_number}`) : '尚未创建媒体草稿'
+}
+
+// 第 02 步徽标：TTS 成功后等待教师点击冻结时，显示"待冻结"而不是误导性的
+// "等待 TTS"（语音其实已经就绪，只是还没被用户冻结成字幕快照）。
+function cueStepBadge() {
+    if (releaseCueAssetsReady.value) return { tone: 'green', label: '已冻结' }
+    if (cueJob.value) return { tone: jobTone(cueJob.value), label: jobStatusLabel(cueJob.value) }
+    if (selectedTtsJob.value?.status === 'succeeded') return { tone: 'amber', label: '待冻结' }
+    return { tone: 'neutral', label: '需先完成语音合成' }
+}
+
+// 第 03 步徽标：与"激活是否必须先生成 manifest"的现实保持一致。含源文件
+// 课程尚未生成时显示"激活前需完成"，纯音频课程显示"无需此项"。
+function pptStepBadge() {
+    if (hasPptManifest.value) return { tone: 'green', label: '已冻结' }
+    if (pptManifestJob.value) return { tone: jobTone(pptManifestJob.value), label: jobStatusLabel(pptManifestJob.value) }
+    if (pptManifestInFlight.value) return { tone: 'amber', label: '生成中' }
+    if (noPptSource.value) return { tone: 'neutral', label: '纯音频课程无需此项' }
+    return { tone: 'amber', label: '激活前需完成' }
+}
+
+// 激活按钮禁用原因：在按钮下方给出可操作的说明，而不是让教师猜缺了什么。
+function activationDisabledReason() {
+    const release = workingRelease.value
+    if (!release || release.status !== 'draft') return ''
+    if (!canPublish.value) return '激活需要课程「正式发布」权限（course.publish），当前账号不可用。'
+    if (canActivateWorkingRelease.value) return ''
+    const reasons = []
+    if (courseHasPptSource.value && !hasPptManifest.value) reasons.push('本课程含 PPT/PDF 源文件，需先完成第 03 步「PPT manifest」')
+    if (isPlaylistRelease.value) {
+        if (!hasFrozenPlaylist.value) reasons.push('需先完成「冻结课程播放清单」')
+    } else if (!hasFrozenCues.value) {
+        reasons.push('需先完成第 02 步「冻结字幕与时间轴」')
+    }
+    return reasons.length ? `激活前需满足：${reasons.join('；')}。` : ''
 }
 </script>
 
@@ -110,8 +157,7 @@ function workingReleaseTitle() {
                         </p>
                         <p v-else>需要成功 TTS；缺少音素时仅生成字级/字幕驱动的通用说话状态，不宣称精确口型。</p>
                     </div>
-                    <SfxBadge :tone="releaseCueAssetsReady ? 'green' : cueJob ? jobTone(cueJob) : 'neutral'">{{
-                        releaseCueAssetsReady ? '已冻结' : cueJob ? jobStatusLabel(cueJob) : '等待 TTS' }}</SfxBadge>
+                    <SfxBadge :tone="cueStepBadge().tone">{{ cueStepBadge().label }}</SfxBadge>
                 </article>
                 <div v-if="!isPlaylistRelease && selectedTtsJob?.status === 'succeeded' && !hasFrozenCues && (!cueJob || cueJob.status === 'failed')"
                     class="workflow-action">
@@ -120,7 +166,7 @@ function workingReleaseTitle() {
                 </div>
 
                 <article class="workflow-row"
-                    :class="{ complete: hasPptManifest, active: canBuildPptManifest && !hasPptManifest }">
+                    :class="{ complete: hasPptManifest, active: pptStepActive }">
                     <div class="workflow-icon">
                         <FileImage :size="18" />
                     </div>
@@ -134,14 +180,15 @@ function workingReleaseTitle() {
                         </template>
                         <p v-else-if="pptManifestJob?.status === 'failed'">{{ pptManifestJob.error_message_safe ||
                             PPT_FAILED_FALLBACK }}</p>
+                        <p v-else-if="noPptSource">本课程未配置 PPT/PDF 源文件（纯音频课程），激活不要求 PPT
+                            manifest；完成第 02 步后即可直接激活。</p>
                         <p v-else-if="isPlaylistRelease">批量模式：需全部知识点音频与 Cue 就绪后生成；缺少 PPT 源文件时服务端会返回明确阻塞原因。</p>
-                        <p v-else>如果第 04 步尚无可渲染 PPT/PDF 源文件，本步骤会明确返回阻塞原因；可先回到映射页处理。</p>
+                        <p v-else>本课程已声明 PPT/PDF 源文件：激活前必须先生成 manifest。若映射阶段尚无可渲染
+                            源文件，请回到课程建设的「PPT 映射」页确认后再生成。</p>
                     </div>
-                    <SfxBadge :tone="hasPptManifest ? 'green' : pptManifestJob ? jobTone(pptManifestJob) : 'amber'">{{
-                        hasPptManifest ?
-                            '已冻结' : pptManifestJob ? jobStatusLabel(pptManifestJob) : '可选但建议完成' }}</SfxBadge>
+                    <SfxBadge :tone="pptStepBadge().tone">{{ pptStepBadge().label }}</SfxBadge>
                 </article>
-                <div v-if="canBuildPptManifest && !hasPptManifest" class="workflow-action">
+                <div v-if="!noPptSource && canBuildPptManifest && !hasPptManifest" class="workflow-action">
                     <SfxButton v-if="!pptManifestInFlight" variant="secondary" size="sm"
                         :disabled="!canGenerate || acting === 'ppt-manifest'" @click="createPptManifest">{{
                             pptManifestJob?.status ===
@@ -162,7 +209,7 @@ function workingReleaseTitle() {
                     </div>
                     <div class="workflow-copy"><span>04 · 激活并固化到课程发布</span><strong>激活媒体版本，再重新正式发布课程</strong>
                         <p v-if="workingRelease.status === 'active'">媒体已激活；课程正式发布时会把它写入不可变媒体快照。</p>
-                        <p v-else>激活不会自动改写学生当前课程版本。完成激活后仍需到第 07 步重新正式发布。</p>
+                        <p v-else>激活不会自动改写学生当前课程版本。完成激活后，请回到课程建设流程重新「正式发布」课程。</p>
                     </div>
                     <SfxBadge :tone="workingRelease.status === 'active' ? 'green' : 'amber'">{{ workingRelease.status
                         === 'active' ?
@@ -171,6 +218,8 @@ function workingReleaseTitle() {
                 <div v-if="workingRelease.status === 'draft'" class="workflow-action">
                     <SfxButton size="sm" :disabled="!canPublish || !canActivateWorkingRelease"
                         :loading="acting === 'activate'" @click="activateRelease">激活媒体版本</SfxButton>
+                    <small v-if="activationDisabledReason()" class="activation-hint">{{
+                        activationDisabledReason() }}</small>
                 </div>
                 <div v-else-if="workingRelease.status === 'active'" class="workflow-action">
                     <SfxButton variant="secondary" size="sm" @click="goToRelease">前往正式发布</SfxButton>
@@ -373,6 +422,14 @@ function workingReleaseTitle() {
 .tts-actions small {
     color: var(--text-muted);
     font-size: var(--caption-size);
+}
+
+.activation-hint {
+    max-width: 34em;
+    color: var(--text-muted);
+    font-size: var(--caption-size);
+    line-height: 1.5;
+    text-align: left;
 }
 
 .workflow-action {
