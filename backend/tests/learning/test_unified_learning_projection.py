@@ -154,6 +154,85 @@ def test_outline_order_is_tree_preorder_not_flat_sibling_order(session, teacher_
     assert [node.title for node in ordered if node.node_type == OutlineNodeType.KNOWLEDGE_POINT] == ["知识点 1", "知识点 2"]
 
 
+def test_completion_is_sticky_after_explicit_complete(session, teacher_user, student_user):
+    """A later low-ratio event (page refresh heartbeat / reopen) must not roll
+    an explicitly completed projection back to IN_PROGRESS."""
+    course, release, nodes = _release_with_knowledge_points(session, teacher_user.id, count=1)
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.EXPLICIT_COMPLETE,
+        idempotency_key="sticky-explicit",
+    )
+    assert projection.exposure_status.value == "completed"
+    assert projection.completion_reason == "explicit"
+    assert projection.completion_ratio == 1.0
+
+    # Reopen the node (NODE_OPENED carries no progress ratio) ...
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.NODE_OPENED,
+        idempotency_key="sticky-reopen",
+    )
+    assert projection.exposure_status.value == "completed"
+    # ... and a restart heartbeat at position 0 after a refresh.
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.MEDIA_PROGRESS,
+        idempotency_key="sticky-restart-tick",
+        payload={"progress_ratio": 0, "current_timestamp": 0},
+    )
+    assert projection.exposure_status.value == "completed"
+    assert projection.completion_reason == "explicit"
+    assert projection.completion_ratio == 1.0
+
+    context = student_context(session, student_id=student_user.id, course_id=course.id)
+    assert context["completed"] == 1
+    assert context["items"][0]["learning"]["status"] == "completed"
+
+
+def test_completion_is_sticky_after_threshold_complete(session, teacher_user, student_user):
+    """Once MEDIA_PROGRESS crosses the completion threshold, later zero-ratio
+    ticks keep the projection completed."""
+    course, release, nodes = _release_with_knowledge_points(session, teacher_user.id, count=1)
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.MEDIA_PROGRESS,
+        idempotency_key="sticky-threshold",
+        payload={"progress_ratio": 0.9},
+    )
+    assert projection.exposure_status.value == "completed"
+    assert projection.completion_reason == "threshold"
+
+    _, projection = record_event(
+        session,
+        student_id=student_user.id,
+        course_id=course.id,
+        release_id=release.release_id,
+        outline_node_id=nodes[0].outline_node_id,
+        event_type=LearningEventType.MEDIA_PROGRESS,
+        idempotency_key="sticky-threshold-tick",
+        payload={"progress_ratio": 0, "current_timestamp": 0},
+    )
+    assert projection.exposure_status.value == "completed"
+    assert projection.completion_reason == "threshold"
+
+
 def test_record_event_accepts_naive_utc_and_clamps_malformed_progress(session, teacher_user, student_user):
     course, release, nodes = _release_with_knowledge_points(session, teacher_user.id, count=1)
     _, projection = record_event(
