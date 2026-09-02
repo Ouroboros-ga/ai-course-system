@@ -10,16 +10,16 @@ const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
 const selectedNode = ref(null)
 // 助教智能体默认展开（2026-08-20 需求）：进入建设布局即以挤压式面板呈现；
-// 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求），
-// 从建设其他页面切入知识区时收起一次，区内五个小页面间切换不打断手动展开。
+// 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求）：
+// 直接以 URL 进入知识区时收起；点击侧栏「知识」步骤按钮则自动展开（见 onStepClick）。
 const isKnowledgeRoute = () => route.path.includes('/build/knowledge')
 const agentOpen = ref(!isKnowledgeRoute())
-let lastInKnowledge = isKnowledgeRoute()
-watch(() => route.path, () => {
-  const inKnowledge = isKnowledgeRoute()
-  if (inKnowledge && !lastInKnowledge) agentOpen.value = false
-  lastInKnowledge = inKnowledge
-})
+
+// 点击建设步骤按钮：进入知识区时自动展开助教智能体（知识审核常需对照
+// 图谱/原文依据，免去再点一次工具栏）；其余步骤保持用户当前展开状态。
+function onStepClick(step) {
+  if (step.key === 'knowledge') agentOpen.value = true
+}
 
 // 建设导航栏收起状态（与学习页 LearningTrack 行为一致：用户手动选择后按设备记忆）
 const RAIL_STORAGE_KEY = 'sfx:rail:build'
@@ -148,6 +148,7 @@ const knowledgeOpen = ref(String(route.name || '').startsWith('app-course-build-
             class="build-link"
             :class="{ active: activeStep.key === step.key }"
             :title="railCollapsed ? step.label : ''"
+            @click="onStepClick(step)"
           >
             <span class="step-index">{{ String(index + 1).padStart(2, '0') }}</span>
             <component :is="step.icon" :size="17" aria-hidden="true" />
