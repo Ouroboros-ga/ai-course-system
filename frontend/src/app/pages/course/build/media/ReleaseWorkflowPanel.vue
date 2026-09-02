@@ -70,6 +70,20 @@ function activationDisabledReason() {
     }
     return reasons.length ? `激活前需满足：${reasons.join('；')}。` : ''
 }
+
+// 冻结课程播放清单按钮的禁用原因：随真实缺口变化，并指出可行的下一步，
+// 不再使用"需先完成 PPT 页面映射"这种覆盖不了批量未就绪/权限缺失的静态文案。
+function playlistDisabledReason() {
+    if (hasFrozenPlaylist.value) return ''
+    if (!canGenerate.value) return '冻结播放清单需要课程媒体生成权限（course.media.generate），当前账号不可用。'
+    if (hasPptManifest.value) return ''
+    if (pptManifestInFlight.value) return 'PPT manifest 正在后台生成，完成后即可冻结课程播放清单。'
+    if (pptManifestJob.value?.status === 'failed') {
+        return `PPT manifest 生成失败（${pptManifestJob.value.error_message_safe || '请查看任务记录'}），请重试后再冻结课程播放清单。`
+    }
+    if (!canBuildPptManifest.value) return '需全部知识点音频与字幕（Cue）就绪后，才能生成 PPT manifest 并冻结课程播放清单。'
+    return '需先完成第 03 步「生成 PPT manifest」，之后才能冻结课程播放清单。'
+}
 </script>
 
 <template>
@@ -189,17 +203,23 @@ function activationDisabledReason() {
                     <SfxBadge :tone="pptStepBadge().tone">{{ pptStepBadge().label }}</SfxBadge>
                 </article>
                 <div v-if="!noPptSource && canBuildPptManifest && !hasPptManifest" class="workflow-action">
-                    <SfxButton v-if="!pptManifestInFlight" variant="secondary" size="sm"
-                        :disabled="!canGenerate || acting === 'ppt-manifest'" @click="createPptManifest">{{
-                            pptManifestJob?.status ===
-                                'failed' ? '重试 PPT manifest' : '生成 PPT manifest' }}</SfxButton><small v-else>后台任务执行中；本页面每 5
-                        秒刷新一次进度，无需保持本次请求。</small>
+                    <template v-if="pptManifestInFlight">
+                        <small>后台任务执行中；本页面每 5 秒刷新一次进度，无需保持本次请求。</small>
+                    </template>
+                    <template v-else>
+                        <SfxButton variant="secondary" size="sm" :disabled="!canGenerate || acting === 'ppt-manifest'"
+                            @click="createPptManifest">{{ pptManifestJob?.status ===
+                                'failed' ? '重试 PPT manifest' : '生成 PPT manifest' }}</SfxButton>
+                        <small v-if="!canGenerate" class="activation-hint">生成 PPT manifest 需要课程媒体生成权限
+                            （course.media.generate），当前账号不可用。</small>
+                    </template>
                 </div>
                 <div v-if="isPlaylistRelease" class="workflow-action">
                     <p v-if="hasFrozenPlaylist" class="task-output">课程播放清单已固定到此版本，后续不会自动更改。</p>
                     <SfxButton v-else variant="secondary" size="sm" :disabled="!canGenerate || !hasPptManifest"
                         :loading="acting === 'batch-freeze'" @click="freezeBatchPlaylist">冻结课程播放清单</SfxButton>
-                    <small v-if="!hasPptManifest">需先完成 PPT 页面映射；有知识点未生成或映射缺失时，无法最终发布。</small>
+                    <small v-if="playlistDisabledReason()" class="activation-hint">{{
+                        playlistDisabledReason() }}</small>
                 </div>
 
                 <article class="workflow-row"
