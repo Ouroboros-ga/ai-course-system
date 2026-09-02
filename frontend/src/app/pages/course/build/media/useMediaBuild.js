@@ -141,13 +141,23 @@ export function useMediaBuild() {
     // 左侧 rail 当前选中的知识点在批量媒体结果里对应的 item；有 audio_object_key 才能自动试听。
     const selectedBatchItem = computed(() => findBatchItemForScript(selectedScript.value))
     const canPlanBatch = computed(() => canGenerate.value && batchSelectedScripts.value.length > 0 && batchSelectedScripts.value.length <= 20)
-    const batchPlanMatchesSelections = computed(() => Boolean(
-        batchPlan.value
-        && batchPlan.value.voice_preset?.preset_id === selectedVoicePresetId.value
-        && batchPlan.value.voice_preset?.version === selectedVoicePresetVersion.value
-        && batchPlan.value.avatar_preset?.preset_id === selectedAvatarPresetId.value
-        && batchPlan.value.avatar_preset?.version === selectedAvatarPresetVersion.value
-    ))
+    // 核算快照与"当前选择"的一致性门禁。音色/角色目录为空时（数字人下线后
+    // 无任何可选项）身份完全由服务器决定，不存在"变更"，跳过该维度比较；
+    // 否则一旦核算参数被改动就必须重新核算，防止用旧估算冻结新版本。
+    const batchPlanMatchesSelections = computed(() => {
+        if (!batchPlan.value) return false
+        if (presetCatalog.value.voices.length > 0) {
+            const voice = batchPlan.value.voice_preset
+            if (!voice || voice.preset_id !== selectedVoicePresetId.value
+                || voice.version !== selectedVoicePresetVersion.value) return false
+        }
+        if (presetCatalog.value.avatars.length > 0) {
+            const avatar = batchPlan.value.avatar_preset
+            if (!avatar || avatar.preset_id !== selectedAvatarPresetId.value
+                || avatar.version !== selectedAvatarPresetVersion.value) return false
+        }
+        return true
+    })
     // 当前工作 release 已确认过批量任务时置位，按钮转为"已提交"禁用态，
     // 防止同一批节点重复确认创建整套重复任务（2026-08-18 修复）。
     const batchAlreadySubmitted = computed(() => Boolean(
@@ -347,6 +357,9 @@ export function useMediaBuild() {
         batchNodeIds.value = batchNodeIds.value.includes(id)
             ? batchNodeIds.value.filter(item => item !== id)
             : [...batchNodeIds.value, id].slice(0, 20)
+        // 勾选集合变化后旧估算不再对应当前选择，立即作废，避免页面继续展示
+        // 过期费用并放行"用旧估算冻结新版本"的确认。
+        batchPlan.value = null
     }
 
     // 返回某知识点在批量结果中可试听的 item（无音频时为 null）。试听入口统一在左侧列表。

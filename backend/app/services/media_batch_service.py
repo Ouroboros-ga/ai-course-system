@@ -345,8 +345,9 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         if missing:
             reject_validation_failed(f"讲稿节点不存在或不属于课程: {missing}")
     from app.core.config import settings
-    max_nodes = max(1, int(getattr(settings, "MEDIA_BATCH_MAX_NODES", 20) or 20))
-    max_chars = max(1, int(getattr(settings, "MEDIA_BATCH_MAX_BILLABLE_CHARS", 10_000) or 10_000))
+    max_nodes = max(1, int(settings.MEDIA_BATCH_MAX_NODES))
+    max_chars = max(1, int(settings.MEDIA_BATCH_MAX_BILLABLE_CHARS))
+    max_script_bytes = max(1, int(settings.TTS_MAX_SCRIPT_BYTES))
     provider = _server_provider(requested_key=provider_key, requested_version=provider_version)
     provider_key = provider.provider_key
     provider_version = provider.provider_version
@@ -379,6 +380,15 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         text = node.content or ""
         char_count = len(text)
         total_chars += char_count
+        # 单节点预检：与 media.tts Worker 的 TTS_SCRIPT_TOO_LONG 同一口径
+        # （UTF-8 字节数）。核算阶段直接拦截，避免核算通过但确认后 Worker
+        # 必然失败，把"能不能生成"的失败留到付费用时才发现。
+        if len(text.encode("utf-8")) > max_script_bytes:
+            reject_validation_failed(
+                f"知识点「{node.outline_node_id or node.id}」讲稿超过单节点上限 "
+                f"{max_script_bytes} 字节（当前 {len(text.encode('utf-8'))} 字节），"
+                "请拆分或精简讲稿后重新核算"
+            )
         req = TtsSynthesisRequest(script_text=text, voice_id="default", course_id=course_id,
                                   resource_version=voice_resource_version, idempotency_key=f"plan:{node.id}")
         cache_key = provider.cache_key(req)
@@ -453,7 +463,7 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
             "provider_key": avatar_preset.provider_key,
             "content_hash": avatar_preset.content_hash,
         },
-        "max_nodes": max_nodes, "max_chars": max_chars,
+        "max_nodes": max_nodes, "max_chars": max_chars, "max_script_bytes": max_script_bytes,
         "node_count": len(items), "total_chars": total_chars,
         "cache_hit_count": cache_hits, "billable_chars": billable_chars,
         "items": items, "can_confirm": bool(items),

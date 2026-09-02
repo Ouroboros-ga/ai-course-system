@@ -43,6 +43,8 @@ const {
             <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new
                 Set(batchPlan.blocking_reasons)].join('；') }}；试听可随时进行，但最终发布前需完成全部映射。</p>
             <p v-if="!batchPlanMatchesSelections" class="task-error">音色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
+            <p class="estimate-cap">单批核算上限 {{ batchPlan.max_chars }} 个计费字符 · 单个讲稿超 {{
+                batchPlan.max_script_bytes }} 字节无法生成</p>
         </div>
         <div class="tts-actions">
             <span v-if="providerIsDemo" class="provider-demo-note">演示模式：使用本地合成，不产生费用。</span>
@@ -275,6 +277,11 @@ const {
 
 .task-error {
     color: var(--red-700);
+}
+
+.estimate-cap {
+    color: var(--text-muted);
+    font-size: var(--caption-size);
 }
 
 .provider-demo-note {
