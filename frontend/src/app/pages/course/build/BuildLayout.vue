@@ -9,8 +9,17 @@ import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
 const selectedNode = ref(null)
-// 助教智能体默认展开（2026-08-20 需求）：进入建设布局即以挤压式面板呈现
-const agentOpen = ref(true)
+// 助教智能体默认展开（2026-08-20 需求）：进入建设布局即以挤压式面板呈现；
+// 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求），
+// 从建设其他页面切入知识区时收起一次，区内五个小页面间切换不打断手动展开。
+const isKnowledgeRoute = () => route.path.includes('/build/knowledge')
+const agentOpen = ref(!isKnowledgeRoute())
+let lastInKnowledge = isKnowledgeRoute()
+watch(() => route.path, () => {
+  const inKnowledge = isKnowledgeRoute()
+  if (inKnowledge && !lastInKnowledge) agentOpen.value = false
+  lastInKnowledge = inKnowledge
+})
 
 // 建设导航栏收起状态（与学习页 LearningTrack 行为一致：用户手动选择后按设备记忆）
 const RAIL_STORAGE_KEY = 'sfx:rail:build'
