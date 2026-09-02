@@ -242,6 +242,11 @@ def bridge_candidate_batch(
             "id": relation_id,
             "source": source_node.node_key if source_node else None,
             "target": target_node.node_key if target_node else None,
+            # 两端节点标题直接随候选落库：审核列表默认只返回 pending 记录，
+            # 端点节点候选若已定论不在列表中，前端无法从同响应映射标题，
+            # 会把 node_key（kn_…）当标题展示。序列化时教师侧优先读这两个字段。
+            "source_label": source_node.title if source_node else None,
+            "target_label": target_node.title if target_node else None,
             "type": str(relation.get("relation_type") or relation.get("type") or "related"),
             "relation_type": str(relation.get("relation_type") or relation.get("type") or "related"),
             "source_candidate_id": source_candidate_id,

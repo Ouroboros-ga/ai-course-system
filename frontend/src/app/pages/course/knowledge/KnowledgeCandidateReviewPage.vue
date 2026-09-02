@@ -104,9 +104,13 @@ function endpointLabel(...keys) {
 
 function labelOf(item) {
   if (item?.target_type === 'relation') {
-    // 关系候选没有 label，直接展示两端节点：源 → 目标
+    // 关系候选没有 label，直接展示两端节点：源 → 目标。
+    // 优先用后端随候选落库的 source_label/target_label（端点节点候选
+    // 可能已定论、不在本列表中，前端映射不到）；缺失再走 node_key 映射。
     const content = item.target_content || {}
-    return `${endpointLabel(content.source, content.source_candidate_id)} → ${endpointLabel(content.target, content.target_candidate_id)}`
+    const source = content.source_label || endpointLabel(content.source, content.source_candidate_id)
+    const target = content.target_label || endpointLabel(content.target, content.target_candidate_id)
+    return `${source} → ${target}`
   }
   return item?.target_content?.label ?? item?.target_id ?? '未命名'
 }
@@ -294,9 +298,9 @@ onBeforeUnmount(() => window.clearInterval(timer))
             <dt>关系类型</dt>
             <dd>{{ relationTypeOf(selected) }}</dd>
             <dt>源节点</dt>
-            <dd>{{ endpointLabel(selectedContent.source, selectedContent.source_candidate_id) }}</dd>
+            <dd>{{ selectedContent.source_label || endpointLabel(selectedContent.source, selectedContent.source_candidate_id) }}</dd>
             <dt>目标节点</dt>
-            <dd>{{ endpointLabel(selectedContent.target, selectedContent.target_candidate_id) }}</dd>
+            <dd>{{ selectedContent.target_label || endpointLabel(selectedContent.target, selectedContent.target_candidate_id) }}</dd>
             <dt v-if="selectedContent.unresolved_endpoint">端点状态</dt>
             <dd v-if="selectedContent.unresolved_endpoint">
               <span class="detail__muted">存在未解析端点，发布前需人工确认</span>
