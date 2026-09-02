@@ -101,10 +101,9 @@ function workingReleaseTitle() {
                     <div class="workflow-icon">
                         <Captions :size="18" />
                     </div>
-                    <div class="workflow-copy"><span>02 · 字幕与数字人时间轴</span><strong>冻结字幕、说话区间和 PPT 映射快照</strong>
-                        <p v-if="isPlaylistRelease && batchReady">本批全部知识点均已生成 release-scoped subtitle-manifest/v1 与
-                            avatar-cues/v1。</p>
-                        <p v-else-if="hasFrozenCues">已生成 release-scoped subtitle-manifest/v1 与 avatar-cues/v1。</p>
+                    <div class="workflow-copy"><span>02 · 字幕与时间轴</span><strong>冻结字幕、说话区间和 PPT 映射快照</strong>
+                        <p v-if="isPlaylistRelease && batchReady">本批全部知识点均已生成字幕清单（subtitle-manifest/v1）。</p>
+                        <p v-else-if="hasFrozenCues">已生成字幕清单（subtitle-manifest/v1）。</p>
                         <p v-else-if="cueJob">
                             {{ jobStatusLabel(cueJob) }} ·
                             {{ cueJob.error_message_safe || TTS_FALLBACK }}
@@ -117,7 +116,7 @@ function workingReleaseTitle() {
                 <div v-if="!isPlaylistRelease && selectedTtsJob?.status === 'succeeded' && !hasFrozenCues && (!cueJob || cueJob.status === 'failed')"
                     class="workflow-action">
                     <SfxButton size="sm" :disabled="!canGenerate" :loading="acting === 'freeze-cues'"
-                        @click="freezeCues">冻结字幕与数字人时间轴</SfxButton>
+                        @click="freezeCues">冻结字幕与时间轴</SfxButton>
                 </div>
 
                 <article class="workflow-row"

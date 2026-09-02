@@ -233,7 +233,7 @@ export function useMediaBuild() {
 
     function jobLabel(job) {
         if (job?.job_type === 'tts') return '讲稿语音合成'
-        if (job?.job_type === 'timeline_publish') return '字幕与数字人时间轴'
+        if (job?.job_type === 'timeline_publish') return '字幕与时间轴'
         if (job?.job_type === 'ppt_manifest') return 'PPT 页面清单'
         return job?.job_type || '媒体任务'
     }
@@ -548,7 +548,7 @@ export function useMediaBuild() {
             const job = await executeMediaTtsJob(courseId.value, created.job_id, ttsPayload())
             jobs.value = [job, ...jobs.value.filter((item) => item.job_id !== job.job_id)]
             notice.value = job.status === 'succeeded'
-                ? '语音已生成。现在可冻结字幕与数字人时间轴。'
+                ? '语音已生成。现在可冻结字幕与时间轴。'
                 : '语音任务已提交至 Media Worker；页面会自动刷新状态。'
             await refreshReleaseDetail()
         } catch (caught) {
@@ -586,9 +586,9 @@ export function useMediaBuild() {
                 idempotency_key: makeCueIdempotencyKey(),
             })
             jobs.value = [job, ...jobs.value.filter((item) => item.job_id !== job.job_id)]
-            notice.value = '字幕与数字人时间轴正在冻结；此步骤不会再次调用语音服务。'
+            notice.value = '字幕与时间轴正在冻结；此步骤不会再次调用语音服务。'
         } catch (caught) {
-            error.value = apiErrorMessage(caught, '字幕与数字人时间轴冻结失败。')
+            error.value = apiErrorMessage(caught, '字幕与时间轴冻结失败。')
         } finally {
             acting.value = ''
         }

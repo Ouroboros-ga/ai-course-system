@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
-import { BookOpenCheck, ChevronDown, ChevronLeft, ChevronRight, FileText, ListTree, MonitorPlay, Network, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Video, Wand2, Waypoints } from 'lucide-vue-next'
+import { BookOpenCheck, ChevronDown, ChevronLeft, ChevronRight, FileText, ListTree, MonitorPlay, Network, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Volume2, Wand2, Waypoints } from 'lucide-vue-next'
 import { getDraftBuildStatus } from '@/api/course_build.js'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
@@ -108,7 +108,8 @@ const steps = computed(() => [
   },
   { key: 'scripts', label: '讲授脚本', description: '完善教学表达', icon: BookOpenCheck, to: `/app/course/${courseId.value}/build/scripts` },
   { key: 'mapping', label: '教学 PPT 映射', description: '关联教学演示页', icon: MonitorPlay, to: `/app/course/${courseId.value}/build/mapping` },
-  { key: 'media', label: '媒体与数字人', description: '准备课堂媒体', icon: Video, to: `/app/course/${courseId.value}/build/media` },
+  // 项目已无数字人（后端 MEDIA_AVATAR_ENABLED=false），该步骤收敛为"语音生成"（2026-09-02）
+  { key: 'media', label: '语音生成', description: '把讲稿合成为讲解语音', icon: Volume2, to: `/app/course/${courseId.value}/build/media` },
   { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck, to: `/app/course/${courseId.value}/build/validate` },
   { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints, to: `/app/course/${courseId.value}/build/releases` },
 ])

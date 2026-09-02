@@ -42,7 +42,7 @@ const {
                 batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
             <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new
                 Set(batchPlan.blocking_reasons)].join('；') }}；试听可随时进行，但最终发布前需完成全部映射。</p>
-            <p v-if="!batchPlanMatchesSelections" class="task-error">音色或角色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
+            <p v-if="!batchPlanMatchesSelections" class="task-error">音色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
         </div>
         <div class="tts-actions">
             <span v-if="providerIsDemo" class="provider-demo-note">演示模式：使用本地合成，不产生费用。</span>
@@ -52,12 +52,12 @@ const {
                     type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
             <SfxButton size="sm" :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'"
                 @click="confirmBatch" :title="batchAlreadySubmitted
-                    ? '本批任务已提交；同一批节点与音色组合不会重复生成（幂等）。如需重新生成请调整勾选节点或音色/角色后重新核算。'
-                    : '一次提交所选全部知识点的语音合成，并自动冻结字幕与数字人时间轴；无需在下方重复手动提交'">{{
+                    ? '本批任务已提交；同一批节点与音色组合不会重复生成（幂等）。如需重新生成请调整勾选节点或音色后重新核算。'
+                    : '一次提交所选全部知识点的语音合成，并自动冻结字幕与时间轴；无需在下方重复手动提交'">{{
                     batchAlreadySubmitted ? '已提交，处理中（本批不会重复生成）' : '生成全部所选知识点语音'
                 }}</SfxButton>
         </div>
-        <p class="batch-flow-hint">此步包含全部所选知识点的语音合成（字幕与数字人时间轴自动冻结）；完成后按下方步骤依次执行 PPT manifest → 冻结播放清单 → 激活 → 正式发布。</p>
+        <p class="batch-flow-hint">此步包含全部所选知识点的语音合成（字幕与时间轴自动冻结）；完成后按下方步骤依次执行 PPT manifest → 冻结播放清单 → 激活 → 正式发布。</p>
         <div v-if="batchState" class="batch-status" role="status">
             <span>批次状态：{{ batchStatusLabel(batchState.status) }}</span>
             <span>已完成 {{batchItems.filter(item => item.status === 'ready').length}} / {{ batchItems.length }}</span>
