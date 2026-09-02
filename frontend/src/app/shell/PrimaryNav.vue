@@ -14,7 +14,11 @@ const navItems = [
     // 「实验室」一级入口暂时隐藏（2026-08-20 按需求下线，非删除）：
     // 路由 /app/lab/* 与 LabLayout 页面全部保留，后续需要时恢复此项即可。
     // { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
-    { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
+    // 「资源库」一级入口暂时隐藏（2026-09-02 按需求下线，非删除）：
+    // 通用文件管理壳与赛题核心叙事无关（我的文件无创建入口恒为空表，
+    // 课程资料是解析内部产物，笔记聚合视图学习页已闭环）。
+    // 路由 /app/resources/* 与 ResourcesLayout 页面全部保留，恢复此项即可。
+    // { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
     { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
 ]
 
