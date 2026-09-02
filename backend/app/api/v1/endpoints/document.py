@@ -18,6 +18,7 @@ from app.core.time_utils import utcnow_aware
 from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, Request, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import OperationalError
 from sqlmodel import Session, select, text, func
 
 from app.schemas.document_schema import (
@@ -62,6 +63,7 @@ from app.services.course_build_service import source_material_service
 from app.services.course_creation_service import course_creation_service
 from app.services.course_deletion_service import (
     CourseDeletionError,
+    CourseDeletionReport,
     course_deletion_service,
 )
 from app.services.course_material_upload_service import (
@@ -1376,6 +1378,53 @@ async def unpublish_course(
         return unified_response(code=500, message=f"取消发布失败: {str(e)}", data=None)
 
 
+def _is_sqlite_lock_error(exc: Exception) -> bool:
+    """True for transient SQLite ``database is locked`` failures."""
+    message = str(exc).casefold()
+    original = getattr(exc, "orig", None)
+    return "database is locked" in message or (
+        original is not None and "database is locked" in str(original).casefold()
+    )
+
+
+def _delete_course_with_lock_retry(
+    session: Session,
+    course_id: int,
+    expected_title: str,
+) -> CourseDeletionReport:
+    """Run course deletion, retrying transient SQLite write-lock failures.
+
+    The local engine runs against a WAL SQLite file shared with durable task
+    workers.  ``PRAGMA busy_timeout`` covers plain writer contention, but a read
+    snapshot taken before a background commit turns stale and surfaces
+    immediately as ``database is locked`` (SQLITE_BUSY_SNAPSHOT) without waiting
+    for the busy handler.  Retrying the whole operation is the only reliable
+    recovery: all SQL (including the internal commit) runs before any object
+    storage cleanup, so a lock error persists nothing.
+    """
+    delays = (0.3, 0.8, 2.0)
+    for attempt in range(len(delays) + 1):
+        try:
+            return course_deletion_service.delete(
+                session,
+                course_id=course_id,
+                expected_title=expected_title,
+            )
+        except OperationalError as exc:
+            logger.warning(
+                "DELETE_RETRY attempt=%s lock=%s exc=%r orig=%r",
+                attempt,
+                _is_sqlite_lock_error(exc),
+                exc,
+                getattr(exc, "orig", None),
+            )
+            if not _is_sqlite_lock_error(exc) or attempt >= len(delays):
+                raise
+            session.rollback()
+            time.sleep(delays[attempt])
+    raise RuntimeError("unreachable")  # pragma: no cover
+
+
 @router.delete("/course/{course_id}")
 async def delete_course(
     course_id: int,
@@ -1385,7 +1434,7 @@ async def delete_course(
 ):
     """Permanently delete one owner-controlled course and its private assets."""
     try:
-        report = course_deletion_service.delete(
+        report = _delete_course_with_lock_retry(
             session,
             course_id=course_id,
             expected_title=payload.confirmation_title,
@@ -1404,6 +1453,21 @@ async def delete_course(
             message=f"课程《{report.title}》已永久删除",
             data=report.to_dict(),
         )
+    except OperationalError as exc:
+        session.rollback()
+        logger.warning(
+            "course deletion busy actor=%s course=%s exc=%r",
+            _access.user_id,
+            course_id,
+            exc,
+        )
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "error_code": "COURSE_DELETE_BUSY",
+                "message": "课程删除时数据库繁忙，请稍后重试。",
+            },
+        ) from exc
     except CourseDeletionError as exc:
         session.rollback()
         status_code = 404 if exc.code == "COURSE_NOT_FOUND" else 409
@@ -1428,7 +1492,10 @@ async def delete_course(
         logger.exception("course deletion failed actor=%s course=%s", _access.user_id, course_id)
         raise HTTPException(
             status_code=500,
-            detail={"error_code": "COURSE_DELETE_FAILED"},
+            detail={
+                "error_code": "COURSE_DELETE_FAILED",
+                "message": "课程删除失败，请稍后重试。",
+            },
         ) from exc
 
 

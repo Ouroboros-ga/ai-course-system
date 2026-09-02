@@ -66,7 +66,6 @@ from app.services.course_access_service import (  # noqa: E402
 )
 from app.services.course_build_service import course_release_service  # noqa: E402
 from app.services.object_storage import get_object_storage  # noqa: E402
-from app.services.platform_media_preset_service import ensure_platform_presets  # noqa: E402
 from app.services.unified_learning_service import ordered_outline_nodes  # noqa: E402
 
 
@@ -425,7 +424,7 @@ def prepare(course_id: int, teacher_username: str, student_username: str) -> dic
                 total_nodes_count=len(LESSON_ITEMS),
                 is_active=True,
             ))
-        ensure_platform_presets(session)
+        # 数字人（avatar）功能已关闭：不再写入平台预设注册表
         session.commit()
         return {
             "mode": "prepared",

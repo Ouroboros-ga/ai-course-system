@@ -1,4 +1,4 @@
-﻿"""G9 Evidence 与知识图谱生产化服务
+"""G9 Evidence 与知识图谱生产化服务
 
 核心能力：
   1. 发布不可变 GraphSnapshot（教师可治理）
@@ -50,14 +50,44 @@ def _node_key(course_id: int, candidate_id: str) -> str:
 
 
 def _review_decision(candidate: dict[str, Any]) -> str:
+    """Decide a candidate's initial review status.
+
+    A candidate may carry an explicit ``status`` (proposed/accepted/rejected/
+    needs_review).  When it does not, we apply the XH-202620 学科知识库对齐：
+    a node candidate whose label is not a known knowledge-base concept is
+    forced to ``needs_review`` so a teacher must confirm it before it can be
+    published (the reviewed-snapshot assembly already fails closed on any
+    proposed/needs_review candidate).  Alignment is deterministic (name-anchor,
+    no LLM); when it is disabled or the KB is empty it falls back to
+    ``proposed`` so existing behavior is preserved.
+    """
     decision = str(candidate.get("status") or "proposed")
-    return decision if decision in {"proposed", "accepted", "rejected", "needs_review"} else "proposed"
+    if decision in {"accepted", "rejected"}:
+        return decision
+    if decision == "needs_review":
+        return "needs_review"
+    # Only node concepts are KB-aligned.  Relations are identified by their
+    # endpoint IDs (source_candidate_id + target_candidate_id) and are never
+    # pushed to needs_review by alignment; a non-concept-kind node candidate
+    # likewise stays proposed unless the caller explicitly forced needs_review.
+    is_relation = bool(candidate.get("source_candidate_id")) and bool(candidate.get("target_candidate_id"))
+    if is_relation or candidate.get("kind") not in {None, "concept"}:
+        return "proposed"
+    from app.platform.knowledge.kb_alignment import align_candidate
+
+    label = str(candidate.get("label") or candidate.get("title") or "").strip()
+    result = align_candidate(label)
+    if result.status == "out_of_kb":
+        return "needs_review"
+    # kb_aligned or unknown(disabled/empty KB) -> keep proposed (auto-trust the
+    # known concept; a teacher can still reject it explicitly).
+    return "proposed"
 
 
 def _node_content(node: CourseKnowledgeNode, candidate: dict[str, Any]) -> dict[str, Any]:
     """Normalize a parser node candidate into the graph review/publish shape."""
     label = str(candidate.get("label") or candidate.get("title") or node.title or "").strip()
-    return {
+    content: dict[str, Any] = {
         "id": node.node_key,
         "node_key": node.node_key,
         "identity_id": node.id,
@@ -70,6 +100,18 @@ def _node_content(node: CourseKnowledgeNode, candidate: dict[str, Any]) -> dict[
         "anchor_ids": list(candidate.get("anchor_ids") or []),
         "page_or_slide": candidate.get("page_or_slide"),
     }
+    # XH-202620：附加学科知识库对齐来源，让审核/发布能追溯"超库需人工"依据。
+    # 确定性、无 LLM；关闭或知识库为空时 status='unknown'。
+    from app.platform.knowledge.kb_alignment import align_candidate
+
+    align = align_candidate(label)
+    content["kbsource_type"] = align.status
+    content["kb_node_key"] = align.kb_node_key
+    content["kb_matched_name"] = align.matched_name
+    content["kb_match_kind"] = align.match_kind
+    content["kb_course"] = align.course
+    content["kb_source"] = align.source
+    return content
 
 
 def bridge_candidate_batch(
@@ -200,6 +242,11 @@ def bridge_candidate_batch(
             "id": relation_id,
             "source": source_node.node_key if source_node else None,
             "target": target_node.node_key if target_node else None,
+            # 两端节点标题直接随候选落库：审核列表默认只返回 pending 记录，
+            # 端点节点候选若已定论不在列表中，前端无法从同响应映射标题，
+            # 会把 node_key（kn_…）当标题展示。序列化时教师侧优先读这两个字段。
+            "source_label": source_node.title if source_node else None,
+            "target_label": target_node.title if target_node else None,
             "type": str(relation.get("relation_type") or relation.get("type") or "related"),
             "relation_type": str(relation.get("relation_type") or relation.get("type") or "related"),
             "source_candidate_id": source_candidate_id,
@@ -1271,4 +1318,9 @@ def serialize_review(review: GraphNodeReview) -> dict[str, Any]:
         "review_comment": review.review_comment,
         "evidence_ids": review.evidence_ids or [],
         "created_at": review.created_at.isoformat() if review.created_at else None,
+        # XH-202620：学科知识库对齐来源（kb_aligned/out_of_kb/unknown）
+        "kbsource_type": (review.target_content or {}).get("kbsource_type"),
+        "kb_node_key": (review.target_content or {}).get("kb_node_key"),
+        "kb_matched_name": (review.target_content or {}).get("kb_matched_name"),
+        "kb_match_kind": (review.target_content or {}).get("kb_match_kind"),
     }

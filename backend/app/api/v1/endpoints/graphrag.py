@@ -86,6 +86,22 @@ class RefineRequest(BaseModel):
     )
 
 
+class DraftNodeUpdateRequest(BaseModel):
+    model_config = ConfigDict(json_schema_extra={"example": {
+        "run_id": "grr_example",
+        "title": "最小生成树",
+        "description": "带权连通图中权值总和最小的生成树",
+    }})
+
+    run_id: str = Field(min_length=5, max_length=100, description="待修改的草稿运行 ID")
+    title: str = Field(min_length=1, max_length=120, description="新的节点标题")
+    description: str | None = Field(
+        default=None,
+        max_length=2000,
+        description="可选的节点描述；传空字符串清空",
+    )
+
+
 class ApproveRequest(BaseModel):
     model_config = ConfigDict(json_schema_extra={"example": {
         "run_id": "grr_example",
@@ -108,6 +124,7 @@ def _error(exc: KnowledgeBundleError) -> HTTPException:
     not_found = {
         "GRAPHRAG_RUN_NOT_FOUND", "KNOWLEDGE_BUNDLE_NOT_FOUND",
         "GRAPH_SNAPSHOT_NOT_FOUND", "VECTOR_INDEX_NOT_FOUND",
+        "GRAPH_NODE_NOT_FOUND",
     }
     validation = {
         "REGENERATION_REASON_REQUIRED", "GRAPH_INPUT_EMPTY",
@@ -115,6 +132,7 @@ def _error(exc: KnowledgeBundleError) -> HTTPException:
         "REFINEMENT_REASON_REQUIRED", "IDENTITY_POLICY_UNSUPPORTED",
         "PLACEHOLDER_FILTER_REQUIRED", "GRAPH_INPUT_MANIFEST_MISMATCH",
         "GRAPH_QUALITY_GATE_FAILED", "IDENTITY_AMBIGUOUS",
+        "DUPLICATE_NODE_TITLE",
     }
     unavailable = {"GRAPH_ARTIFACTS_NOT_FOUND", "TYPED_RELATIONSHIPS_NOT_FOUND"}
     code = (
@@ -264,6 +282,74 @@ async def refine(
         },
         code=201,
         message="严格精炼草稿已生成，未调用模型，等待教师整图审批",
+    )
+
+
+@router.patch(
+    "/course/{course_id}/knowledge-bundle/draft/nodes/{node_id}",
+    summary="教师手动修改待审批草稿节点",
+    description=(
+        "仅当最新运行处于 AWAITING_REVIEW 时可用：重命名节点或更新描述。"
+        "修改只写入草稿与审计记录，不调用模型，不影响当前 Active Bundle。"
+    ),
+)
+async def update_draft_node(
+    course_id: int,
+    node_id: str,
+    payload: DraftNodeUpdateRequest,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "knowledge.review")
+    require_course_permission(session, current_user, course_id, "knowledge.edit")
+    try:
+        run = knowledge_bundle_service.update_draft_node(
+            session,
+            course_id=course_id,
+            run_id=payload.run_id,
+            node_id=node_id,
+            title=payload.title,
+            description=payload.description,
+            actor_user_id=_actor(current_user),
+        )
+    except KnowledgeBundleError as exc:
+        raise _error(exc) from exc
+    return _success(
+        knowledge_bundle_service.serialize_run(run),
+        message="草稿节点已更新",
+    )
+
+
+@router.delete(
+    "/course/{course_id}/knowledge-bundle/draft/nodes/{node_id}",
+    summary="教师手动删除待审批草稿节点",
+    description=(
+        "仅当最新运行处于 AWAITING_REVIEW 时可用：删除节点并级联删除其全部关系。"
+        "删除只作用于草稿，不影响当前 Active Bundle；操作写入审计记录。"
+    ),
+)
+async def delete_draft_node(
+    course_id: int,
+    node_id: str,
+    run_id: str = Query(..., min_length=5, max_length=100),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+):
+    require_course_permission(session, current_user, course_id, "knowledge.review")
+    require_course_permission(session, current_user, course_id, "knowledge.edit")
+    try:
+        run = knowledge_bundle_service.delete_draft_node(
+            session,
+            course_id=course_id,
+            run_id=run_id,
+            node_id=node_id,
+            actor_user_id=_actor(current_user),
+        )
+    except KnowledgeBundleError as exc:
+        raise _error(exc) from exc
+    return _success(
+        knowledge_bundle_service.serialize_run(run),
+        message="草稿节点已删除",
     )
 
 

@@ -75,8 +75,9 @@ defineEmits(['close'])
     font-size: var(--caption-size);
 }
 
+/* 关闭/收回按钮：任何断点都显示（桌面端收回为工具球） */
 .close-agent {
-    display: none;
+    display: grid;
     place-items: center;
     width: 36px;
     height: 36px;
@@ -89,12 +90,5 @@ defineEmits(['close'])
 
 .close-agent:hover {
     background: var(--surface-cool);
-}
-
-/* ── 响应式：窄屏时显示关闭按钮 ── */
-@media (max-width: 1250px) {
-    .close-agent {
-        display: grid;
-    }
 }
 </style>

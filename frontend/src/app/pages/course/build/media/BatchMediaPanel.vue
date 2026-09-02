@@ -7,7 +7,6 @@ const mediaBuild = inject('mediaBuild')
 const {
     presetCatalog,
     selectedVoicePresetId, selectedVoicePresetVersion,
-    selectedAvatarPresetId, selectedAvatarPresetVersion,
     batchPlan, batchPlanMatchesSelections, canPlanBatch, createBatchPlan,
     providerNeedsConfirmation, providerIsDemo, paidTtsConfirmed,
     canConfirmBatch, confirmBatch, acting,
@@ -25,7 +24,7 @@ const {
             </div>
             <SfxBadge tone="ink">{{ batchNodeIds.length }} / 20</SfxBadge>
         </header>
-        <div v-if="presetCatalog.voices.length || presetCatalog.avatars.length" class="preset-selection">
+        <div v-if="presetCatalog.voices.length" class="preset-selection">
             <div class="preset-group">
                 <span class="preset-label">平台音色</span>
                 <label v-for="voice in presetCatalog.voices" :key="`voice-${voice.preset_id}-${voice.version}`"
@@ -37,24 +36,15 @@ const {
                     }}</small></span>
                 </label>
             </div>
-            <div class="preset-group">
-                <span class="preset-label">平台 2D 角色</span>
-                <label v-for="avatarPreset in presetCatalog.avatars"
-                    :key="`avatar-${avatarPreset.preset_id}-${avatarPreset.version}`" class="preset-option"
-                    :class="{ selected: selectedAvatarPresetId === avatarPreset.preset_id && selectedAvatarPresetVersion === avatarPreset.version }">
-                    <input v-model="selectedAvatarPresetId" type="radio" name="media-avatar-preset"
-                        :value="avatarPreset.preset_id" @change="selectedAvatarPresetVersion = avatarPreset.version" />
-                    <span><strong>{{ avatarPreset.display_name }}</strong><small>{{ avatarPreset.version }} · {{
-                        avatarPreset.manifest_available ? 'manifest 可用' : 'manifest 缺失' }}</small></span>
-                </label>
-            </div>
         </div>
         <div v-if="batchPlan" class="batch-estimate">
             <span>节点 {{ batchPlan.node_count }}</span><span>总字符 {{ batchPlan.total_chars }}</span><span>待计费 {{
                 batchPlan.billable_chars }}</span><span>缓存命中 {{ batchPlan.cache_hit_count }}</span>
             <p v-if="batchPlan.blocking_reasons?.length" class="task-error">{{ [...new
                 Set(batchPlan.blocking_reasons)].join('；') }}；试听可随时进行，但最终发布前需完成全部映射。</p>
-            <p v-if="!batchPlanMatchesSelections" class="task-error">音色或角色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
+            <p v-if="!batchPlanMatchesSelections" class="task-error">音色已变更，请重新核算后再确认；不能用旧估算冻结新版本。</p>
+            <p class="estimate-cap">单批核算上限 {{ batchPlan.max_chars }} 个计费字符 · 单个讲稿超 {{
+                batchPlan.max_script_bytes }} 字节无法生成</p>
         </div>
         <div class="tts-actions">
             <span v-if="providerIsDemo" class="provider-demo-note">演示模式：使用本地合成，不产生费用。</span>
@@ -64,12 +54,12 @@ const {
                     type="checkbox" :disabled="!batchPlan" /> 我确认本批可能产生 TTS Provider 费用</label>
             <SfxButton size="sm" :disabled="!canConfirmBatch" :loading="acting === 'batch-confirm'"
                 @click="confirmBatch" :title="batchAlreadySubmitted
-                    ? '本批任务已提交；同一批节点与音色组合不会重复生成（幂等）。如需重新生成请调整勾选节点或音色/角色后重新核算。'
-                    : '一次提交所选全部知识点的语音合成，并自动冻结字幕与数字人时间轴；无需在下方重复手动提交'">{{
+                    ? '本批任务已提交；同一批节点与音色组合不会重复生成（幂等）。如需重新生成请调整勾选节点或音色后重新核算。'
+                    : '一次提交所选全部知识点的语音合成，并自动冻结字幕与时间轴；无需在下方重复手动提交'">{{
                     batchAlreadySubmitted ? '已提交，处理中（本批不会重复生成）' : '生成全部所选知识点语音'
                 }}</SfxButton>
         </div>
-        <p class="batch-flow-hint">此步包含全部所选知识点的语音合成（字幕与数字人时间轴自动冻结）；完成后按下方步骤依次执行 PPT manifest → 冻结播放清单 → 激活 → 正式发布。</p>
+        <p class="batch-flow-hint">此步包含全部所选知识点的语音合成（字幕与时间轴自动冻结）；完成后按下方步骤依次执行 PPT manifest → 冻结播放清单 → 激活 → 正式发布。</p>
         <div v-if="batchState" class="batch-status" role="status">
             <span>批次状态：{{ batchStatusLabel(batchState.status) }}</span>
             <span>已完成 {{batchItems.filter(item => item.status === 'ready').length}} / {{ batchItems.length }}</span>
@@ -287,6 +277,11 @@ const {
 
 .task-error {
     color: var(--red-700);
+}
+
+.estimate-cap {
+    color: var(--text-muted);
+    font-size: var(--caption-size);
 }
 
 .provider-demo-note {

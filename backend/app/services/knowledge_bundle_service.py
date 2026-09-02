@@ -44,6 +44,7 @@ from app.models.knowledge_bundle_model import (
 from app.platform.knowledge.document_ir_exporter import CanonicalDocumentIRExporter
 from app.platform.knowledge.document_ir_exporter import load_graph_rag_input_manifest
 from app.platform.knowledge.embedding import embedding_provider_from_settings
+from app.platform.knowledge.graph_focus_selection import apply_focus_selection
 from app.platform.knowledge.graphrag_runner import GraphRagRunError, GraphRagRunner
 from app.platform.knowledge.lancedb_provider import (
     LanceDbCourseVectorProvider,
@@ -261,6 +262,10 @@ class KnowledgeBundleService:
             manifest=manifest,
             artifacts=artifacts,
         )
+        graph = apply_focus_selection(
+            graph,
+            target=max(0, int(settings.GRAPHRAG_GRAPH_TARGET_NODES or 0)),
+        )
         run.draft_nodes = list(graph.nodes)
         run.draft_relations = list(graph.relations)
         run.entity_count = len(graph.nodes)
@@ -398,6 +403,10 @@ class KnowledgeBundleService:
                 manifest=manifest,
                 artifacts=artifacts,
             )
+            graph = apply_focus_selection(
+                graph,
+                target=max(0, int(settings.GRAPHRAG_GRAPH_TARGET_NODES or 0)),
+            )
         except Exception as exc:
             session.rollback()
             code = (
@@ -450,6 +459,141 @@ class KnowledgeBundleService:
             if scope.get("artifact_source_run_id") == artifact_source_run_id:
                 previous.status = GraphRagRunStatus.SUPERSEDED
                 session.add(previous)
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+
+    # ------------------------------------------------------------------
+    # Teacher manual draft edits (pre-approval)
+    # ------------------------------------------------------------------
+
+    def _require_latest_reviewable_run(
+        self, session: Session, *, course_id: int, run_id: str | None = None
+    ) -> GraphRagRun:
+        run = session.exec(select(GraphRagRun).where(
+            GraphRagRun.course_id == course_id,
+        ).order_by(GraphRagRun.created_at.desc())).first()
+        if run is None or (run_id is not None and run.run_id != run_id):
+            raise KnowledgeBundleError("GRAPHRAG_RUN_NOT_FOUND")
+        if run.status != GraphRagRunStatus.AWAITING_REVIEW:
+            raise KnowledgeBundleError("GRAPH_RUN_NOT_REVIEWABLE")
+        return run
+
+    @staticmethod
+    def _append_manual_edit(
+        run: GraphRagRun,
+        *,
+        action: str,
+        node_id: str,
+        actor_user_id: int,
+        **fields: Any,
+    ) -> None:
+        warnings = [
+            item if isinstance(item, dict) else {"code": "WARNING", "message": str(item)}
+            for item in (run.warnings or [])
+        ]
+        warnings.append({
+            "code": "TEACHER_MANUAL_EDIT",
+            "action": action,
+            "node_id": node_id,
+            "actor_user_id": actor_user_id,
+            "at": utcnow_aware().isoformat(),
+            **fields,
+        })
+        run.warnings = warnings
+        run.warning_count = len(warnings)
+
+    def update_draft_node(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        node_id: str,
+        title: str,
+        description: str | None,
+        actor_user_id: int,
+    ) -> GraphRagRun:
+        """Rename a draft node / update its description before whole-graph approval."""
+        run = self._require_latest_reviewable_run(session, course_id=course_id, run_id=run_id)
+        nodes = [dict(node) for node in run.draft_nodes or []]
+        target = next(
+            (node for node in nodes if str(node.get("id") or "") == str(node_id)), None
+        )
+        if target is None:
+            raise KnowledgeBundleError("GRAPH_NODE_NOT_FOUND")
+        new_title = title.strip()
+        if not new_title:
+            raise KnowledgeBundleError("GRAPH_OUTPUT_INVALID")
+        duplicate = any(
+            str(other.get("id") or "") != str(node_id)
+            and str(other.get("title") or "").strip() == new_title
+            for other in nodes
+        )
+        if duplicate:
+            raise KnowledgeBundleError(
+                "DUPLICATE_NODE_TITLE",
+                f"草稿中已存在同名节点「{new_title}」",
+            )
+        previous_title = str(target.get("title") or "")
+        target["title"] = new_title
+        if description is not None:
+            target["description"] = description.strip()
+        run.draft_nodes = nodes
+        self._append_manual_edit(
+            run,
+            action="node.rename",
+            node_id=str(node_id),
+            actor_user_id=actor_user_id,
+            previous_title=previous_title,
+            title=new_title,
+        )
+        session.add(run)
+        session.commit()
+        session.refresh(run)
+        return run
+
+    def delete_draft_node(
+        self,
+        session: Session,
+        *,
+        course_id: int,
+        run_id: str,
+        node_id: str,
+        actor_user_id: int,
+    ) -> GraphRagRun:
+        """Remove a draft node and cascade-delete its relations before approval."""
+        run = self._require_latest_reviewable_run(session, course_id=course_id, run_id=run_id)
+        node_id = str(node_id)
+        nodes = [dict(node) for node in run.draft_nodes or []]
+        target = next(
+            (node for node in nodes if str(node.get("id") or "") == node_id), None
+        )
+        if target is None:
+            raise KnowledgeBundleError("GRAPH_NODE_NOT_FOUND")
+        remaining_nodes = [
+            node for node in nodes if str(node.get("id") or "") != node_id
+        ]
+        relations = [dict(relation) for relation in run.draft_relations or []]
+        remaining_relations = [
+            relation for relation in relations
+            if str(relation.get("source") or "") != node_id
+            and str(relation.get("target") or "") != node_id
+        ]
+        removed_relations = len(relations) - len(remaining_relations)
+        run.draft_nodes = remaining_nodes
+        run.draft_relations = remaining_relations
+        run.entity_count = len(remaining_nodes)
+        run.relationship_count = len(remaining_relations)
+        self._append_manual_edit(
+            run,
+            action="node.delete",
+            node_id=node_id,
+            actor_user_id=actor_user_id,
+            title=str(target.get("title") or ""),
+            removed_relation_count=removed_relations,
+        )
         session.add(run)
         session.commit()
         session.refresh(run)

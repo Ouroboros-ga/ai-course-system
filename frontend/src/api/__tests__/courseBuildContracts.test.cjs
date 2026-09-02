@@ -115,6 +115,18 @@ test('course builder agent uses the natural-language proposal and evidence APIs,
     assert.match(backend, /"display": _operation_display/)
 })
 
+test('course builder places knowledge governance after structure and removes the question-draft rail entry', () => {
+    const layout = read('frontend/src/app/pages/course/build/BuildLayout.vue')
+    const structureAt = layout.indexOf("key: 'structure'")
+    const knowledgeAt = layout.indexOf("key: 'knowledge'")
+    const scriptsAt = layout.indexOf("key: 'scripts'")
+
+    assert.ok(structureAt >= 0 && knowledgeAt > structureAt && scriptsAt > knowledgeAt)
+    assert.match(layout, /key:\s*['"]knowledge['"][\s\S]*?to:\s*`\/app\/course\/\$\{courseId\.value\}\/knowledge\//)
+    assert.match(layout, /:to="step\.to"/)
+    assert.doesNotMatch(layout, /key:\s*['"]drafts['"]|题库草稿审核/)
+})
+
 test('PPT mapping client requires the multi-deck mapping contract', () => {
     const editor = read('frontend/src/api/course_editor.js')
     const backend = read('backend/app/api/v1/endpoints/course_build_editor.py')
@@ -138,6 +150,9 @@ test('PPT mapping client requires the multi-deck mapping contract', () => {
 test('media creation center uses the P4 batch plan, guarded confirmation, draft preview and playlist contracts', () => {
     const media = read('frontend/src/api/media_release.js')
     const page = read('frontend/src/app/pages/course/build/BuildMediaPage.vue')
+    // 媒体页逻辑已收敛到 useMediaBuild composable（页面只做装配）；
+    // API 消费断言跟随迁移到 composable，页面侧等价验证为 useMediaBuild 接线。
+    const composable = read('frontend/src/app/pages/course/build/media/useMediaBuild.js')
     const backend = read('backend/app/api/v1/endpoints/media_release.py')
     const batch = read('backend/app/services/media_batch_service.py')
     const release = read('backend/app/services/media_release_service.py')
@@ -149,17 +164,18 @@ test('media creation center uses the P4 batch plan, guarded confirmation, draft 
     assert.match(media, /items\/\$\{encodeURIComponent\(itemId\)\}\/preview/)
     assert.match(media, /preview-playback/)
     assert.match(media, /audio-playlist/)
-    assert.match(page, /planMediaBatch/)
-    assert.match(page, /confirmMediaBatch/)
-    assert.match(page, /getMediaBatch/)
-    assert.match(page, /previewMediaReleaseItem/)
-    assert.match(page, /previewMediaReleaseItemPlayback/)
-    assert.match(page, /withPreviewAccessToken/)
-    assert.match(page, /withAccessToken/)
-    assert.match(page, /audio_url: withPreviewAccessToken\(audioPreview\?\.audio_url\)/)
-    assert.match(page, /freezeAudioPlaylist/)
-    assert.match(page, /paidTtsConfirmed/)
-    assert.match(page, /script_node_db_id/)
+    assert.match(page, /useMediaBuild/)
+    assert.match(composable, /planMediaBatch/)
+    assert.match(composable, /confirmMediaBatch/)
+    assert.match(composable, /getMediaBatch/)
+    assert.match(composable, /previewMediaReleaseItem/)
+    assert.match(composable, /previewMediaReleaseItemPlayback/)
+    assert.match(composable, /withPreviewAccessToken/)
+    assert.match(composable, /withAccessToken/)
+    assert.match(composable, /audio_url: withPreviewAccessToken\(audioPreview\?\.audio_url\)/)
+    assert.match(composable, /freezeAudioPlaylist/)
+    assert.match(composable, /paidTtsConfirmed/)
+    assert.match(composable, /script_node_db_id/)
     assert.match(backend, /@media_release_router\.post\("\/course\/\{course_id\}\/batch\/plan"\)/)
     assert.match(backend, /@media_release_router\.post\("\/course\/\{course_id\}\/batch\/confirm"\)/)
     assert.match(backend, /@media_release_router\.get\("\/course\/\{course_id\}\/batch\/\{batch_id\}"\)/)

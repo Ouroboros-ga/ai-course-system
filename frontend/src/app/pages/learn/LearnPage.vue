@@ -2,8 +2,8 @@
 import { computed, inject, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useLearningWorkspace } from '@/features/student-learning/composables/useLearningWorkspace.js'
+import { useCodingChallenge } from '@/features/student-learning/composables/useCodingChallenge.js'
 import { useMediaPlayback } from '@/features/student-learning/composables/useMediaPlayback.js'
-import { useAvatarPlayback } from '@/features/student-learning/composables/useAvatarPlayback.js'
 import {
   buildPreviewPlaylistBridge,
   findLearningNodeIndexForPlaylistItem,
@@ -36,17 +36,25 @@ import CitationStage from '@/app/components/learn/CitationStage.vue'
 import PracticePanel from '@/app/components/learn/PracticePanel.vue'
 import VisualizationStage from '@/app/components/learn/VisualizationStage.vue'
 import NoteStage from '@/app/components/learn/NoteStage.vue'
+import CodingChallengeStage from '@/app/components/learn/CodingChallengeStage.vue'
+import SfxEmpty from '@/app/ui/SfxEmpty.vue'
 import SfxError from '@/app/ui/SfxError.vue'
 import SfxSkeleton from '@/app/ui/SfxSkeleton.vue'
-import SfxButton from '@/app/ui/SfxButton.vue'
 import { consumeRecommendation } from '@/api/cognitive.js'
 
 const route = useRoute()
 const router = useRouter()
 const counter = useCounterStore()
-const { detail, analyticsEligible, capabilities } = inject('courseContext')
+const { detail, analyticsEligible, capabilities, course } = inject('courseContext')
 
 const courseId = Number(route.params.courseId)
+// 课程未发布（DRAFT 等非 published 状态）时，学习页与学习分析页保持一致的
+// 空态：不再渲染草稿预览或「内容未就绪」错误卡片，统一展示「课程尚未发布」。
+// 教师仍可在建设页查看草稿；发布后学习页恢复讲解与进度体验。
+const courseUnpublished = computed(() => {
+  const status = course?.value?.status
+  return Boolean(status) && status !== 'published'
+})
 // Course Access is the source of truth: only an analytics-eligible learner
 // may read or write their private learning/cognition state.  Staff and
 // observers all use the content-only preview branch.
@@ -78,7 +86,6 @@ const ws = useLearningWorkspace(courseId, {
   getQuestionObservation: () => getQuestionObservation(),
 })
 media = useMediaPlayback(courseId)
-const avatar = useAvatarPlayback()
 playlistPlayback = usePlaylistPlayback(media.playlist)
 
 // Teacher draft preview renders draft outline ids while the frozen media
@@ -127,7 +134,7 @@ const mediaTotalPages = computed(() => {
 
 // 批次1：启用 PRACTICE（试一试）切片；批次4：启用 VISUALIZE（看可视化）切片
 const machine = createLearnMachine({
-  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
+  enabledStates: [...SLICE_ENABLED_STATES, LEARN_STATES.PRACTICE, LEARN_STATES.CODING, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE, LEARN_STATES.VERIFY],
   // 初始为 LEARN（听讲），不自动激活任何 dock 动作；提问模块需用户主动点击。
   initialState: LEARN_STATES.LEARN,
 })
@@ -142,6 +149,29 @@ const learningAdjustmentBusy = ref(false)
 // 使挂起回调不再重新激活激活态（2026-08-18）。
 const adjustmentAbandoned = ref(false)
 const LEARNING_ADJUSTMENT_STORAGE_KEY = `sfx:learning-adjustment:${courseId}:${counter.userData?.id ?? 'unknown'}`
+
+function updateMessageCodingOffer(nextOffer, previousOfferId = null) {
+  if (!nextOffer?.offer_id) return
+  ws.messages.value = ws.messages.value.map(message => (
+    [nextOffer.offer_id, previousOfferId]
+      .filter(Boolean)
+      .some(offerId => String(message.codingChallengeOffer?.offer_id || '') === String(offerId))
+      ? { ...message, codingChallengeOffer: { ...nextOffer } }
+      : message
+  ))
+}
+
+const codingChallenge = useCodingChallenge(courseId, ws.teachingSessionId, {
+  onOfferUpdate: updateMessageCodingOffer,
+})
+
+watch(
+  () => ws.messages.value.at(-1)?.codingChallengeOffer,
+  nextOffer => {
+    if (nextOffer?.offer_id) codingChallenge.adoptOffer(nextOffer)
+  },
+  { deep: true },
+)
 
 function sameIdentifier(left, right) {
   return left != null && right != null && String(left) === String(right)
@@ -554,10 +584,77 @@ async function exitBranch() {
   const result = machine.exit()
   learnState.value = result.state
   branchContext.value = null
-  ws.restoreReturnAnchor()
+  const restoredByWorkspace = ws.restoreReturnAnchor()
+  if (!restoredByWorkspace && result.restored?.returnTarget) {
+    const anchor = result.restored.returnTarget
+    ws.selectNode(anchor.nodeIndex, { play: false, preserveTime: true, page: anchor.page })
+    ws.seekTo(anchor.time, { nodeIndex: anchor.nodeIndex })
+  }
   if (wasUnderstand) {
     await nextTick()
     dockRef.value?.focus()
+  }
+}
+
+async function handleCodingStart(selectedOffer) {
+  codingChallenge.adoptOffer(selectedOffer)
+  const anchor = branchContext.value || buildBranchContext('coding_challenge')
+  const active = await codingChallenge.start(anchor)
+  if (!active) return
+  ws.isPlaying.value = false
+  const result = learnState.value === LEARN_STATES.LEARN
+    ? machine.enter(LEARN_STATES.CODING, anchor)
+    : machine.enter(LEARN_STATES.CODING)
+  if (result.ok) {
+    learnState.value = result.state
+    branchContext.value = result.branchContext
+  }
+}
+
+async function handleCodingDismiss(selectedOffer) {
+  codingChallenge.adoptOffer(selectedOffer)
+  await codingChallenge.dismiss()
+}
+
+async function handleCodingReplace(selectedOffer) {
+  codingChallenge.adoptOffer(selectedOffer)
+  await codingChallenge.replace()
+}
+
+async function handleCodingExit() {
+  await codingChallenge.close('returned_to_course').catch(() => null)
+  await exitBranch()
+  await ws.refreshLearningContext().catch(() => {})
+}
+
+async function restoreCodingChallenge() {
+  if (previewMode.value) return
+  const active = await codingChallenge.restore()
+  const restoredSession = active?.session
+  const restoredOffer = active?.offer
+  if (
+    restoredOffer?.offer_id
+    && !ws.messages.value.some(message => (
+      String(message.codingChallengeOffer?.offer_id || '') === String(restoredOffer.offer_id)
+    ))
+  ) {
+    ws.messages.value.push({
+      id: `coding-challenge-restored-${restoredOffer.offer_id}`,
+      role: 'assistant',
+      content: restoredOffer.status === 'preparing'
+        ? '代码挑战仍在准备中，不影响你继续学习。'
+        : '上次的代码挑战还可以继续。',
+      codingChallengeOffer: { ...restoredOffer },
+      restored: true,
+    })
+  }
+  if (!restoredSession || restoredSession.status !== 'in_progress') return
+  const anchor = restoredSession.return_anchor
+  const entered = machine.enter(LEARN_STATES.CODING, anchor)
+  if (entered.ok) {
+    ws.isPlaying.value = false
+    learnState.value = entered.state
+    branchContext.value = entered.branchContext
   }
 }
 
@@ -623,7 +720,7 @@ function handleTrackSelect(index, options = {}) {
 
 function handleOpenKnowledge(nodeId) {
   if (nodeId == null || nodeId === '') return
-  router.push(`/app/course/${courseId}/knowledge/graph/${encodeURIComponent(nodeId)}`)
+  router.push(`/app/course/${courseId}/build/knowledge/graph/${encodeURIComponent(nodeId)}`)
 }
 function handlePlaylistNext() {
   const nextIndex = playlistPlayback.activeIndex.value + 1
@@ -694,26 +791,23 @@ async function completeNode() {
 
 onMounted(async () => {
   await Promise.all([ws.load(), media.load()])
-  await restoreActiveLearningAdjustment()
+  await Promise.all([restoreActiveLearningAdjustment(), restoreCodingChallenge()])
 })
-
-watch(
-  [() => media.avatarCues.value, () => media.digitalHumanManifest.value, () => media.avatarManifestUrl.value, () => media.avatarAssetUrls.value, () => playlistPlayback.activeItem.value?.avatarCues, () => playlistPlayback.activeItem.value?.avatarManifestUrl, () => playlistPlayback.activeItem.value?.avatarAssetUrls],
-  ([avatarCues, digitalHumanManifest, avatarManifestUrl, avatarAssetUrls, playlistAvatarCues, playlistAvatarManifestUrl, playlistAvatarAssetUrls]) => {
-    avatar.load({
-      avatarCues: playlistAvatarCues || avatarCues,
-      digitalHumanManifest,
-      avatarManifestUrl: playlistAvatarManifestUrl || avatarManifestUrl,
-      avatarAssetUrls: Object.keys(playlistAvatarAssetUrls || {}).length ? playlistAvatarAssetUrls : avatarAssetUrls,
-    })
-  },
-  { immediate: true },
-)
 </script>
 
 <template>
   <div class="sfx-learn">
-    <SfxSkeleton v-if="ws.status.value === 'loading'" :lines="4" block />
+    <!-- 未发布课程：与学习分析页相同的空态（CourseAnalyticsPage unpublished 分支）。
+         包一层 .sfx-page 与分析页同构，保证空态图标/文案的垂直位置与水平限宽一致。
+         CourseLayout 加载完成后才渲染本页，此处 course 状态已就绪，可直接判定。 -->
+    <div v-if="courseUnpublished" class="sfx-page sfx-learn-unpublished">
+      <SfxEmpty
+        title="课程尚未发布"
+        description="学习页面按当前发布版本提供讲解内容；课程正式发布后，即可开始学习。"
+      />
+    </div>
+
+    <SfxSkeleton v-else-if="ws.status.value === 'loading'" :lines="4" block />
 
     <SfxError
       v-else-if="ws.status.value === 'error'"
@@ -753,8 +847,25 @@ watch(
         />
 
         <main class="sfx-learn-stage">
+          <CodingChallengeStage
+            v-if="learnState === LEARN_STATES.CODING && codingChallenge.offer.value && codingChallenge.session.value"
+            :offer="codingChallenge.offer.value"
+            :session="codingChallenge.session.value"
+            :source-code="codingChallenge.sourceCode.value"
+            :language="codingChallenge.language.value"
+            :run-view="codingChallenge.runView.value"
+            :busy="codingChallenge.busy.value"
+            :hint-busy="codingChallenge.hintBusy.value"
+            :error="codingChallenge.error.value"
+            @update:source-code="codingChallenge.sourceCode.value = $event"
+            @update:language="codingChallenge.language.value = $event"
+            @run="codingChallenge.run"
+            @reveal-hint="codingChallenge.revealHint"
+            @exit="handleCodingExit"
+          />
+
           <LectureStage
-            v-if="![LEARN_STATES.CITATION, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE].includes(learnState)"
+            v-else-if="![LEARN_STATES.CITATION, LEARN_STATES.VISUALIZE, LEARN_STATES.NOTE].includes(learnState)"
             :current-node="ws.currentNode.value"
             :current-time="ws.currentTime.value"
             :current-slide="ws.currentSlide.value"
@@ -773,9 +884,6 @@ watch(
             :subtitle-segments="media.subtitleSegments.value"
             :ppt-timeline="media.pptTimeline.value"
             :ppt-manifest="media.ppt.value"
-            :avatar-cues="avatar.cues.value"
-            :avatar-sprite-manifest="avatar.spriteManifest.value"
-            :avatar-asset-source="avatar.assetSource.value"
             :default-playback-mode="media.manifest.value.defaultPlaybackMode"
             :media-status="media.status.value"
             :media-message="media.manifest.value.message || media.error.value"
@@ -800,6 +908,7 @@ watch(
                 :active-adjustment="activeLearningAdjustment"
                 :adjustment-busy="learningAdjustmentBusy"
                 :adjustment-notice="learningAdjustmentNotice"
+                :challenge-busy="codingChallenge.busy.value"
                 :hide-footer-input="true"
                 @exit="exitBranch"
                 @action="handleAgentAction"
@@ -808,6 +917,9 @@ watch(
                 @retry-opening-review="retryOpeningLearningAdjustment"
                 @return-adjustment="returnToLearningAnchor"
                 @abandon-adjustment="abandonActiveLearningAdjustment"
+                @challenge-start="handleCodingStart"
+                @challenge-dismiss="handleCodingDismiss"
+                @challenge-replace="handleCodingReplace"
               />
             </template>
             <template v-if="learnState === LEARN_STATES.UNDERSTAND" #footer>
@@ -843,6 +955,7 @@ watch(
       </div>
 
       <LearningActionDock
+        v-if="learnState !== LEARN_STATES.CODING"
         ref="dockRef"
         :current-state="learnState"
         :enabled-states="machine.isEnabled"
@@ -858,6 +971,11 @@ watch(
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* 未发布空态：与分析页同构的 .sfx-page 包裹层，撑满学习区域 */
+.sfx-learn-unpublished {
+  flex: 1;
 }
 
 .sfx-learn-body {

@@ -38,6 +38,8 @@ _ACTIONS = Literal[
     "scope_interrupt",
     "scope_resume",
     "scope_complete",
+    "writing_assist",
+    "trend_analysis",
 ]
 
 
@@ -47,6 +49,18 @@ class HarnessIntentPlan(BaseModel):
     action: _ACTIONS = "auto"
     tool_hints: list[str] = Field(default_factory=list, max_length=3)
     reason_code: str = Field(default="MODEL_PLAN", max_length=64)
+
+
+class WritingAssistResult(BaseModel):
+    """Structured output for the writing_assist tool.
+
+    Kept bounded so the research API only exposes a draft preview plus
+    counts in ``tool_result``; the full draft travels in ``writing_result``
+    and is labelled AI-generated.
+    """
+
+    draft: str = Field(..., min_length=1, max_length=12_000)
+    headings: list[str] = Field(default_factory=list, max_length=24)
 
 
 @dataclass(frozen=True)
@@ -314,12 +328,7 @@ def build_research_workflow(tools: ResearchTools):
             bundle = tools.prompt_assembler.assemble(
                 role="evidence_researcher",
                 task=task,
-                variables={
-                    "scope_title": scope_title,
-                    "research_question": state.get("query", ""),
-                    "context": state.get("context_text", "无已保存上下文。"),
-                    "tool_manifest": manifest,
-                },
+                variables=_prompt_variables(state, scope_title, manifest, task),
             )
         except PromptTemplateError as error:
             return _node_update(
@@ -364,12 +373,12 @@ def build_research_workflow(tools: ResearchTools):
         bundle = tools.prompt_assembler.assemble(
             role=state.get("prompt_role", "evidence_researcher"),
             task=state.get("prompt_task", "research_request"),
-            variables={
-                "scope_title": _active_scope_title(state.get("workspace_snapshot") or {}),
-                "research_question": state.get("query", ""),
-                "context": state.get("context_text", "无已保存上下文。"),
-                "tool_manifest": manifest,
-            },
+            variables=_prompt_variables(
+                state,
+                _active_scope_title(state.get("workspace_snapshot") or {}),
+                manifest,
+                state.get("prompt_task", "research_request"),
+            ),
         )
         try:
             response = await tools.structured_llm.complete(
@@ -461,6 +470,10 @@ def build_research_workflow(tools: ResearchTools):
             route = "memory"
         elif action.startswith("scope_"):
             route = "scope"
+        elif action == "writing_assist":
+            route = "writing"
+        elif action == "trend_analysis":
+            route = "trend"
         else:
             route = "clarify"
         return _node_update(
@@ -643,6 +656,91 @@ def build_research_workflow(tools: ResearchTools):
             context_summary=payload.get("context_summary"),
         )
 
+    async def writing_action(state: ResearchState) -> dict[str, Any]:
+        """学术写作辅助：基于工作区上下文与论文结果生成草稿（LLM 不可用时 fail-closed）。"""
+        started = time.monotonic()
+        if not await reauthorize_tool(state):
+            return _tool_denied(state, "writing_action", started)
+        if tools.structured_llm is None:
+            return _node_update(
+                state,
+                "writing_action",
+                started,
+                status="degraded",
+                writing_result=None,
+                tool_error_code="RESEARCH_WRITING_LLM_UNAVAILABLE",
+                warnings=[*state.get("warnings", []), "RESEARCH_WRITING_LLM_UNAVAILABLE"],
+                degraded_services=[*state.get("degraded_services", []), "research_writing_llm"],
+                trace_detail={"reason": "llm_unavailable"},
+            )
+        payload = dict(state.get("action_payload") or {})
+        task_kind = str(payload.get("task") or "draft")
+        if task_kind not in {"draft", "outline", "polish", "review"}:
+            task_kind = "draft"
+        try:
+            bundle = tools.prompt_assembler.assemble(
+                role="evidence_researcher",
+                task="writing_assist",
+                variables=_prompt_variables(
+                    state,
+                    _active_scope_title(state.get("workspace_snapshot") or {}),
+                    "writing_assist",
+                    "writing_assist",
+                ),
+            )
+            response = await tools.structured_llm.complete(
+                messages=[{"role": "system", "content": bundle.prompt}],
+                output_schema=WritingAssistResult,
+                options=LLMOptions(
+                    temperature=0.4,
+                    max_tokens=2048,
+                    timeout_seconds=25.0,
+                    response_format={"type": "json_object"},
+                    prompt_version=bundle.version,
+                ),
+                trace_context=LLMTraceContext(
+                    run_id=state.get("run_id", ""),
+                    trace_id=state.get("trace_id", ""),
+                    course_id=state.get("course_id", ""),
+                    agent_type="research",
+                    node="writing_action",
+                    purpose="generate_research_writing",
+                ),
+            )
+            result = response.parsed
+            if not isinstance(result, WritingAssistResult):
+                raise TypeError("writing result missing")
+            return _node_update(
+                state,
+                "writing_action",
+                started,
+                writing_result={
+                    "task": task_kind,
+                    "draft": result.draft,
+                    "headings": list(result.headings),
+                    "ai_generated": True,
+                    "prompt_version": bundle.version,
+                    "prompt_hash": bundle.prompt_hash,
+                },
+                tool_result={
+                    "task": task_kind,
+                    "draft_preview": result.draft[:200],
+                    "heading_count": len(result.headings),
+                },
+                trace_detail={"task": task_kind, "draft_chars": len(result.draft)},
+            )
+        except Exception as error:  # noqa: BLE001 - graph must fail closed
+            return _node_update(
+                state,
+                "writing_action",
+                started,
+                status="failed",
+                writing_result=None,
+                tool_error_code=_safe_error_code(error, "RESEARCH_WRITING_FAILED"),
+                warnings=[*state.get("warnings", []), "RESEARCH_WRITING_FAILED"],
+                trace_detail={"error_type": type(error).__name__},
+            )
+
     async def _workspace_tool_action(state, node, tool_name, operation):
         started = time.monotonic()
         if not await reauthorize_tool(state):
@@ -665,6 +763,74 @@ def build_research_workflow(tools: ResearchTools):
             started,
             tool_result=execution.value,
             trace_detail={"attempts": execution.attempts},
+        )
+
+    async def trend_analysis(state: ResearchState) -> dict[str, Any]:
+        """前沿趋势分析：对论文元数据做确定性聚合（无 LLM）。
+
+        优先分析本次请求已检索的 papers；无现成结果时先执行一次论文检索。
+        样本不足时返回 trend_reliability=insufficient，不伪造趋势结论。
+        """
+        from .trends import analyze_paper_trends
+
+        started = time.monotonic()
+        if not await reauthorize_tool(state):
+            return _tool_denied(state, "trend_analysis", started)
+
+        papers = [dict(item) for item in state.get("papers", []) if isinstance(item, Mapping)]
+        search_execution = None
+        if not papers:
+            search_execution = await executor.execute(
+                "paper_search",
+                lambda: tools.paper_search.search(
+                    query=state.get("query", ""),
+                    limit=state.get("max_results", 8),
+                    cursor=state.get("cursor"),
+                ),
+            )
+            if search_execution.status != "success" or not search_execution.value:
+                return _node_update(
+                    state,
+                    "trend_analysis",
+                    started,
+                    status="degraded",
+                    trend_result=None,
+                    tool_error_code=search_execution.error_code or "RESEARCH_TREND_NO_PAPERS",
+                    warnings=[*state.get("warnings", []), search_execution.error_code or "RESEARCH_TREND_NO_PAPERS"],
+                    degraded_services=[*state.get("degraded_services", []), "arxiv"],
+                    trace_detail={"attempts": search_execution.attempts},
+                )
+            papers = [
+                dict(item) for item in (search_execution.value or {}).get("items", [])
+                if isinstance(item, Mapping)
+            ]
+
+        trend = analyze_paper_trends(papers)
+        if trend["papers_analyzed"] == 0:
+            return _node_update(
+                state,
+                "trend_analysis",
+                started,
+                status="no_results",
+                trend_result=trend,
+                papers=[],
+                trace_detail={"papers_analyzed": 0},
+            )
+        return _node_update(
+            state,
+            "trend_analysis",
+            started,
+            trend_result=trend,
+            papers=[dict(item) for item in papers],
+            tool_result={
+                "papers_analyzed": trend["papers_analyzed"],
+                "top_keyword_count": len(trend["top_keywords"]),
+                "reliability": trend["trend_reliability"],
+            },
+            trace_detail={
+                "papers_analyzed": trend["papers_analyzed"],
+                "reliability": trend["trend_reliability"],
+            },
         )
 
     async def refresh_workspace(state: ResearchState) -> dict[str, Any]:
@@ -696,6 +862,38 @@ def build_research_workflow(tools: ResearchTools):
         if state.get("errors"):
             status = "invalid_request"
             answer = "研究范围、工作区或请求内容无效，请检查后重试。"
+        elif route == "writing":
+            if state.get("tool_error_code"):
+                status = "degraded"
+                answer = "学术写作工具未完成执行；未生成或伪造任何草稿。"
+            elif state.get("writing_result"):
+                status = "success"
+                draft = state["writing_result"].get("draft", "")
+                preview = draft[:120] + ("…" if len(draft) > 120 else "")
+                answer = (
+                    f"已生成{state['writing_result'].get('task', 'draft')}草稿"
+                    "（【AI 生成内容】请人工核验来源）：\n" + preview
+                )
+            else:
+                status = "failed"
+                answer = "未生成写作草稿。"
+        elif route == "trend":
+            if state.get("tool_error_code"):
+                status = "degraded"
+                answer = "趋势分析未完成执行；未生成或伪造任何趋势结论。"
+            elif state.get("trend_result") and state["trend_result"].get("papers_analyzed"):
+                status = "success"
+                trend = state["trend_result"]
+                top = trend["top_keywords"][0] if trend.get("top_keywords") else None
+                top_text = f"热点关键词 {top['term']}（{top['count']} 次）" if top else "无足够关键词"
+                answer = (
+                    f"已基于 {trend['papers_analyzed']} 篇论文元数据生成趋势分析（补充参考）："
+                    f"{top_text}；年份分布 {trend.get('year_distribution')}；"
+                    f"可靠性 {trend.get('trend_reliability')}。"
+                )
+            else:
+                status = "no_results"
+                answer = "论文元数据不足，无法生成可信趋势分析。"
         elif state.get("tool_error_code"):
             status = "degraded" if route == "literature" else "failed"
             answer = "研究工具未完成执行；系统已保留现有工作区状态。"
@@ -739,6 +937,8 @@ def build_research_workflow(tools: ResearchTools):
     graph.add_node("notepad_action", notepad_action)
     graph.add_node("memory_action", memory_action)
     graph.add_node("scope_action", scope_action)
+    graph.add_node("writing_action", writing_action)
+    graph.add_node("trend_analysis", trend_analysis)
     graph.add_node("workspace_refresh", refresh_workspace)
     graph.add_node("response", build_response)
 
@@ -768,6 +968,8 @@ def build_research_workflow(tools: ResearchTools):
             "notepad": "notepad_action",
             "memory": "memory_action",
             "scope": "scope_action",
+            "writing": "writing_action",
+            "trend": "trend_analysis",
             "clarify": "response",
             "invalid": "response",
         },
@@ -778,6 +980,8 @@ def build_research_workflow(tools: ResearchTools):
     graph.add_edge("notepad_action", "workspace_refresh")
     graph.add_edge("memory_action", "workspace_refresh")
     graph.add_edge("scope_action", "workspace_refresh")
+    graph.add_edge("writing_action", "workspace_refresh")
+    graph.add_edge("trend_analysis", "workspace_refresh")
     graph.add_edge("workspace_refresh", "response")
     graph.add_edge("response", END)
     return graph.compile()
@@ -813,7 +1017,40 @@ def _prompt_task(action: str) -> str:
         return "scope_management"
     if action == "literature_search":
         return "literature_search"
+    if action == "writing_assist":
+        return "writing_assist"
+    if action == "trend_analysis":
+        return "research_request"
     return "research_request"
+
+
+def _prompt_variables(state: Mapping[str, Any], scope_title: str, manifest: str, task: str) -> dict[str, str]:
+    """装配 prompt 变量；模板校验要求变量精确匹配（writing_assist 模板不含 tool_manifest）。"""
+    if task == "writing_assist":
+        return {
+            "scope_title": scope_title,
+            "research_question": state.get("query", ""),
+            "context": state.get("context_text", "无已保存上下文。"),
+            "papers_summary": _papers_summary(state.get("papers") or []),
+        }
+    return {
+        "scope_title": scope_title,
+        "research_question": state.get("query", ""),
+        "context": state.get("context_text", "无已保存上下文。"),
+        "tool_manifest": manifest,
+    }
+
+
+def _papers_summary(papers: list[Mapping[str, Any]]) -> str:
+    if not papers:
+        return "（无已核验论文结果）"
+    lines = []
+    for paper in papers[:6]:
+        title = str(paper.get("title") or "（无标题）")[:160]
+        paper_id = str(paper.get("paper_id") or "")
+        url = str(paper.get("source_url") or "")
+        lines.append(f"- {title}（{paper_id}）{url}")
+    return "\n".join(lines) or "（无已核验论文结果）"
 
 
 def _active_scope_title(snapshot: Mapping[str, Any]) -> str:

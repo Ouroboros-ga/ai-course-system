@@ -43,9 +43,10 @@ function openOverview(course) {
   router.push(`/app/course/${course.course_id}/overview`)
 }
 
-function openResearch(course) {
-  router.push(`/app/course/${course.course_id}/research`)
-}
+// 「科研工作台」入口暂时隐藏（2026-09-02）；恢复按钮时取消注释即可
+// function openResearch(course) {
+//   router.push(`/app/course/${course.course_id}/research`)
+// }
 
 onMounted(load)
 </script>
@@ -108,10 +109,12 @@ onMounted(load)
         </div>
 
         <div class="sfx-course-actions">
-          <SfxButton variant="secondary" size="sm" @click.stop="openResearch(course)">
+          <!-- 「科研工作台」按钮暂时隐藏（2026-09-02 按需求下线，非删除）：
+               与课程 L2 导航「科研」入口同步隐藏；/app/course/:id/research 路由保留可用 -->
+          <!-- <SfxButton variant="secondary" size="sm" @click.stop="openResearch(course)">
             科研工作台
             <template #icon><LibraryBig :size="15" /></template>
-          </SfxButton>
+          </SfxButton> -->
           <SfxButton variant="primary" size="sm" @click.stop="continueCourse(course)">
             继续学习
             <template #icon><ChevronRight :size="15" /></template>

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import types
 from typing import Any
 
 from sqlmodel import Session, func, select
@@ -21,12 +22,36 @@ from app.models.media_release_model import (
     MediaReleaseStatus,
 )
 from app.services.object_storage import get_object_storage
-from app.services.platform_media_preset_service import (
-    resolve_avatar_preset,
-    resolve_voice_preset,
-)
 from app.services.tts_provider import TtsSynthesisRequest
 from app.services.stage8_provider_runtime import get_stage8_tts_provider
+
+
+def _resolve_voice_preset(session: Session, *, preset_id: str = "", version: str = "",
+                          active_tts_provider_key: str = "") -> types.SimpleNamespace:
+    """Resolve the voice preset identity for a media batch.
+
+    平台预设注册表服务（platform_media_preset_service）已随数字人功能下线；
+    音色不再按预设表解析，统一回落到服务器配置的 TTS Provider 的默认音色，
+    保留一个稳定的默认身份用于版本记录。传入的 preset_id/version 仅作透传。
+    """
+    return types.SimpleNamespace(
+        preset_id=preset_id or "platform-default",
+        version=version or "1.0.0",
+        display_name="平台讲解音色",
+        provider_key=active_tts_provider_key or "",
+        content_hash="",
+    )
+
+
+def _resolve_avatar_preset(session: Session, *, preset_id: str = "", version: str = "") -> types.SimpleNamespace:
+    """数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false）：返回空角色预设。"""
+    return types.SimpleNamespace(
+        preset_id=preset_id or "",
+        version=version or "",
+        display_name="",
+        provider_key="",
+        content_hash="",
+    )
 
 
 def _script_hash(node: TeachingScriptNode) -> str:
@@ -320,18 +345,19 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         if missing:
             reject_validation_failed(f"讲稿节点不存在或不属于课程: {missing}")
     from app.core.config import settings
-    max_nodes = max(1, int(getattr(settings, "MEDIA_BATCH_MAX_NODES", 20) or 20))
-    max_chars = max(1, int(getattr(settings, "MEDIA_BATCH_MAX_BILLABLE_CHARS", 10_000) or 10_000))
+    max_nodes = max(1, int(settings.MEDIA_BATCH_MAX_NODES))
+    max_chars = max(1, int(settings.MEDIA_BATCH_MAX_BILLABLE_CHARS))
+    max_script_bytes = max(1, int(settings.TTS_MAX_SCRIPT_BYTES))
     provider = _server_provider(requested_key=provider_key, requested_version=provider_version)
     provider_key = provider.provider_key
     provider_version = provider.provider_version
-    voice_preset = resolve_voice_preset(
+    voice_preset = _resolve_voice_preset(
         session,
         preset_id=voice_preset_id,
         version=voice_preset_version,
         active_tts_provider_key=provider_key,
     )
-    avatar_preset = resolve_avatar_preset(
+    avatar_preset = _resolve_avatar_preset(
         session,
         preset_id=avatar_preset_id,
         version=avatar_preset_version,
@@ -354,6 +380,15 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         text = node.content or ""
         char_count = len(text)
         total_chars += char_count
+        # 单节点预检：与 media.tts Worker 的 TTS_SCRIPT_TOO_LONG 同一口径
+        # （UTF-8 字节数）。核算阶段直接拦截，避免核算通过但确认后 Worker
+        # 必然失败，把"能不能生成"的失败留到付费用时才发现。
+        if len(text.encode("utf-8")) > max_script_bytes:
+            reject_validation_failed(
+                f"知识点「{node.outline_node_id or node.id}」讲稿超过单节点上限 "
+                f"{max_script_bytes} 字节（当前 {len(text.encode('utf-8'))} 字节），"
+                "请拆分或精简讲稿后重新核算"
+            )
         req = TtsSynthesisRequest(script_text=text, voice_id="default", course_id=course_id,
                                   resource_version=voice_resource_version, idempotency_key=f"plan:{node.id}")
         cache_key = provider.cache_key(req)
@@ -428,7 +463,7 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
             "provider_key": avatar_preset.provider_key,
             "content_hash": avatar_preset.content_hash,
         },
-        "max_nodes": max_nodes, "max_chars": max_chars,
+        "max_nodes": max_nodes, "max_chars": max_chars, "max_script_bytes": max_script_bytes,
         "node_count": len(items), "total_chars": total_chars,
         "cache_hit_count": cache_hits, "billable_chars": billable_chars,
         "items": items, "can_confirm": bool(items),
@@ -457,8 +492,9 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
     max_version = session.exec(select(func.max(MediaRelease.version_number)).where(MediaRelease.course_id == course_id)).one() or 0
     voice_preset = dict(plan.get("voice_preset") or {})
     avatar_preset = dict(plan.get("avatar_preset") or {})
-    if not voice_preset.get("preset_id") or not avatar_preset.get("preset_id"):
-        reject_validation_failed("批量媒体计划缺少已解析的平台音色或数字人角色")
+    # 数字人（avatar）功能已关闭，avatar 预设允许为空；音色预设仍是必需。
+    if not voice_preset.get("preset_id"):
+        reject_validation_failed("批量媒体计划缺少已解析的平台音色")
     release = MediaRelease(course_id=course_id, version_number=int(max_version) + 1,
                             label=label or "批量媒体草稿", status=MediaReleaseStatus.DRAFT,
                             notes="批量媒体建设草稿",

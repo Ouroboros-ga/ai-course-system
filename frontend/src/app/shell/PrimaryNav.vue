@@ -1,7 +1,7 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { House, BookOpen, FlaskConical, FolderOpen, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
+import { House, BookOpen, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -11,8 +11,15 @@ const counter = useCounterStore()
 const navItems = [
     { label: '首页', to: '/app', icon: House, exact: true },
     { label: '我的课程', to: '/app/courses/learning', icon: BookOpen, match: '/app/courses' },
-    { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
-    { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
+    // 「实验室」一级入口暂时隐藏（2026-08-20 按需求下线，非删除）：
+    // 路由 /app/lab/* 与 LabLayout 页面全部保留，后续需要时恢复此项即可。
+    // { label: '实验室', to: '/app/lab/hall', icon: FlaskConical, match: '/app/lab' },
+    // 「资源库」一级入口暂时隐藏（2026-09-02 按需求下线，非删除）：
+    // 通用文件管理壳与赛题核心叙事无关（我的文件无创建入口恒为空表，
+    // 课程资料是解析内部产物，笔记聚合视图学习页已闭环）。
+    // 路由 /app/resources/* 与 ResourcesLayout 页面全部保留，恢复此项即可。
+    // { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
+    { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
 ]
 
 // page-design §2.1「智能体」一级空间尚无对应页面与后端能力，
@@ -37,6 +44,34 @@ const menuRef = ref(null)
 
 // 移动端汉堡抽屉（≤760px）：一级导航收纳为左侧滑出抽屉
 const drawerOpen = ref(false)
+
+// 自适应收缩：导航文字横向放不下时，一级导航整体收缩为工具栏（汉堡抽屉）。
+// 由 JS 测量“展开态”内容宽度驱动，宽度足够时自动恢复横向展开；≤760px 由媒体查询兜底。
+const isCollapsed = ref(false)
+const headerRef = ref(null)
+const innerRef = ref(null)
+const linksRef = ref(null)
+const mqSmall = window.matchMedia('(max-width: 760px)')
+
+function measureNav() {
+    const headerEl = headerRef.value
+    const el = innerRef.value
+    const linksEl = linksRef.value
+    if (!headerEl || !el || !linksEl) return
+    if (mqSmall.matches) {
+        // ≤760px 抽屉媒体查询已接管，恒为工具栏态
+        isCollapsed.value = true
+        return
+    }
+    // 临时移除收缩类（is-collapsed 挂在 header 上），同步测量“展开态”是否放得下
+    const collapsedNow = headerEl.classList.contains('is-collapsed')
+    if (collapsedNow) headerEl.classList.remove('is-collapsed')
+    // 双保险：整条导航栏溢出 或 链接行自身溢出（nowrap 下文字不会换行，溢出可测）
+    const innerOverflow = el.scrollWidth - el.clientWidth
+    const linksOverflow = linksEl.scrollWidth - linksEl.clientWidth
+    if (collapsedNow) headerEl.classList.add('is-collapsed')
+    isCollapsed.value = innerOverflow > 2 || linksOverflow > 2
+}
 
 function toggleMenu() {
     menuOpen.value = !menuOpen.value
@@ -71,27 +106,35 @@ function logout() {
 onMounted(() => {
     document.addEventListener('click', handleDocClick)
     document.addEventListener('keydown', handleEsc)
+    window.addEventListener('resize', measureNav)
+    measureNav()
+    // 中文字体加载完成后宽度可能变化，重新测量一次
+    if (document.fonts?.ready) document.fonts.ready.then(measureNav)
 })
 
 onBeforeUnmount(() => {
     document.removeEventListener('click', handleDocClick)
     document.removeEventListener('keydown', handleEsc)
+    window.removeEventListener('resize', measureNav)
 })
+
+// 平台管理入口随权限出现/消失会改变导航宽度，DOM 更新后再测量
+watch(adminItem, () => nextTick(measureNav))
 </script>
 
 <template>
-    <header class="sfx-l1nav">
-        <div class="sfx-l1nav-inner">
+    <header ref="headerRef" class="sfx-l1nav" :class="{ 'is-collapsed': isCollapsed }">
+        <div ref="innerRef" class="sfx-l1nav-inner">
             <button type="button" class="sfx-l1nav-burger" aria-label="打开导航菜单" :aria-expanded="drawerOpen"
                 @click="drawerOpen = true">
                 <Menu :size="20" />
             </button>
             <RouterLink to="/app" class="sfx-l1nav-brand" aria-label="返回工作首页">
                 <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-brand-logo" />
-                <span class="sfx-l1nav-brand-name">SmartCarb</span>
+                <span class="sfx-l1nav-brand-name">CodeNexus智码交响</span>
             </RouterLink>
 
-            <nav class="sfx-l1nav-links" aria-label="一级导航">
+            <nav ref="linksRef" class="sfx-l1nav-links" aria-label="一级导航">
                 <RouterLink v-for="item in navItems" :key="item.to" :to="item.to" class="sfx-l1nav-link"
                     :class="{ 'is-active': isActive(item) }">
                     <component :is="item.icon" :size="17" />
@@ -133,7 +176,7 @@ onBeforeUnmount(() => {
                 <aside class="sfx-l1nav-drawer" role="dialog" aria-modal="true" aria-label="导航菜单">
                     <div class="sfx-l1nav-drawer-head">
                         <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-drawer-logo" />
-                        <span class="sfx-l1nav-drawer-title">SmartCarb</span>
+                        <span class="sfx-l1nav-drawer-title">CodeNexus智码交响</span>
                         <button type="button" class="sfx-l1nav-drawer-close" aria-label="关闭导航菜单" @click="drawerOpen = false">
                             <X :size="18" />
                         </button>
@@ -191,6 +234,11 @@ onBeforeUnmount(() => {
     color: var(--ink-900);
     font-weight: 650;
     font-size: var(--body-md-size);
+    flex-shrink: 0;
+}
+
+.sfx-l1nav-brand-name {
+    white-space: nowrap;
 }
 
 .sfx-l1nav-brand-logo {
@@ -235,6 +283,9 @@ onBeforeUnmount(() => {
     font-size: var(--ui-md-size);
     font-weight: var(--ui-md-weight);
     transition: color var(--duration-fast) var(--ease-out);
+    /* 导航项禁止换行与收缩：放不下时表现为横向溢出，供测量驱动收缩 */
+    flex-shrink: 0;
+    white-space: nowrap;
 }
 
 .sfx-l1nav-link:hover {
@@ -261,6 +312,7 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: var(--space-3);
     position: relative;
+    flex-shrink: 0;
 }
 
 .sfx-l1nav-icon-btn {
@@ -351,28 +403,27 @@ onBeforeUnmount(() => {
     background: var(--red-100);
 }
 
-/* B4 修复：窄屏适配（§24.2）—— L1 文字隐藏只留图标，账号菜单保留 */
-@media (max-width: 768px) {
-    .sfx-l1nav-inner {
-        gap: var(--space-3);
-        padding: 0 var(--space-3);
-    }
+/* 自适应收缩：导航文字横向放不下时整体收缩为工具栏（汉堡抽屉）。
+   由 JS 测量内容宽度驱动（is-collapsed 类），替代原 ≤768px 的“图标化中间态”：
+   文字放得下则完整展开，放不下则直接收缩，不出现只留图标的折中状态。 */
+.sfx-l1nav.is-collapsed .sfx-l1nav-burger {
+    display: inline-flex;
+}
 
-    .sfx-l1nav-brand-name {
-        display: none;
-    }
+.sfx-l1nav.is-collapsed .sfx-l1nav-links {
+    display: none;
+}
 
-    .sfx-l1nav-link span {
-        display: none;
-    }
+.sfx-l1nav.is-collapsed .sfx-l1nav-brand-name {
+    display: none;
+}
 
-    .sfx-l1nav-link {
-        padding: 0 var(--space-2);
-    }
+.sfx-l1nav.is-collapsed .sfx-l1nav-username {
+    display: none;
+}
 
-    .sfx-l1nav-username {
-        display: none;
-    }
+.sfx-l1nav.is-collapsed .sfx-l1nav-right {
+    margin-left: auto;
 }
 
 /* ── 移动端导航抽屉（≤760px） ── */

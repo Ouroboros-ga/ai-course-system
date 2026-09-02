@@ -27,7 +27,7 @@ onMounted(() => {
             <p v-else>PPT 映射尚未完成；试听可正常进行，但最终发布需要先完成映射。</p>
             <p v-if="previewPlayback.subtitle_segments?.length">字幕：{{previewPlayback.subtitle_segments.map(item =>
                 item.text).join('')}}</p>
-            <p v-else>字幕与数字人时间轴尚未生成；试听可正常进行，但最终发布需要先生成。</p>
+            <p v-else>字幕与时间轴尚未生成；试听可正常进行，但最终发布需要先生成。</p>
         </div>
         <div v-else class="preview-empty">
             <Volume2 :size="20" />

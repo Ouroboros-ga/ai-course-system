@@ -36,6 +36,9 @@ class TeachingState(TypedDict, total=False):
     successors: list[dict[str, Any]]
     retrieved_evidence: list[dict[str, Any]]
     citations: list[dict[str, Any]]
+    # 2026-08-30（R14）：学科垂类知识库补充参考。is_supplementary=True，
+    # 只进入回答上下文；无 evidence_id，不进入引用闭包/掌握度/图谱。
+    discipline_kb_results: list[dict[str, Any]]
     sandbox_result: dict[str, Any] | None
     code_diagnosis: dict[str, Any] | None
     coding_diagnosis: dict[str, Any] | None

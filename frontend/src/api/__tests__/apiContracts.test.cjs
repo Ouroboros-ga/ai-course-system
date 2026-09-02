@@ -21,15 +21,6 @@ const ROOT = path.resolve(__dirname, '..', '..', '..', '..')
 const FRONTEND_API = path.join(ROOT, 'frontend', 'src', 'api')
 const BACKEND_EP = path.join(ROOT, 'backend', 'app', 'api', 'v1', 'endpoints')
 
-test('avatar.js: uploadAvatarSourceMedia 分支支持 PUT 与 presigned POST fields', () => {
-  const src = read('frontend/src/api/avatar.js')
-  assert.match(src, /const method = String\(options\.method \|\| ['"]PUT['"]\)\.toUpperCase\(\)/)
-  assert.match(src, /if \(method === ['"]POST['"]\)/)
-  assert.match(src, /Object\.entries\(options\.fields \|\| \{\}\)/)
-  assert.match(src, /form\.append\(['"]file['"], file\)/)
-  assert.match(src, /request\.put\(relativeUrl, file/)
-})
-
 function read(rel) {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8')
 }
@@ -58,6 +49,13 @@ test('SettingsProfilePage.vue: 删除入口由课程 owner 权限共同控制', 
   assert.match(src, /courseContext\.courseRole\.value\s*===\s*['"]owner['"]/)
   assert.match(src, /courseContext\.allowed\.value\?\.\[['"]course\.delete['"]\]/)
   assert.match(src, /v-if="canDelete"/)
+  assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
+})
+
+test('BuildingCoursesPage.vue: 删除入口消费能力视图 course.delete，不按全局角色推断', () => {
+  const src = read('frontend/src/app/pages/courses/BuildingCoursesPage.vue')
+  assert.match(src, /canDelete\s*\(\s*course\s*\)\s*\{[\s\S]*?course\?\.access\?\.allowed\?\.\[['"]course\.delete['"]\]/)
+  assert.match(src, /v-if="canDelete\(course\)"/)
   assert.doesNotMatch(src, /localStorage\.getItem\(['"]userRole['"]\)/)
 })
 
@@ -447,29 +445,34 @@ test('backend: graph_production_service.py serialize_snapshot 返回 relations �
 // P1-3: 课程知识空间入口契约（路由 + 页面 + 导航）
 // ============================================================================
 
-test('router.js: 注册 /app/course/:courseId/knowledge/graph/:nodeId? 路由', () => {
+test('router.js: 注册 /app/course/:courseId/build/knowledge/graph/:nodeId? 路由', () => {
   const src = read('frontend/src/app/router.js')
-  // 必须注册 knowledge 结构视图路由（含可选 nodeId）
+  // 知识工作区已并入建设布局：build 下的 knowledge 子路由（含可选 nodeId）
   assert.match(src, /path:\s*['"]graph\/:nodeId\?['"]/)
-  assert.match(src, /name:\s*['"]app-course-knowledge['"]/)
-  // 必须指向 KnowledgeGraphPage（知识空间 Local Rail 下的结构视图）
+  assert.match(src, /name:\s*['"]app-course-build-knowledge['"]/)
+  // 必须指向 KnowledgeGraphPage（建设布局知识工作区的结构视图）
   assert.match(src, /knowledge\/KnowledgeGraphPage\.vue/)
-  // 知识空间必须具备治理子路由：原文引用 / 候选审核 / 版本记录
+  // 知识工作区必须具备治理子路由：原文引用 / 候选审核 / 版本记录
   assert.match(src, /knowledge\/KnowledgeEvidencePage\.vue/)
   assert.match(src, /knowledge\/KnowledgeReviewsPage\.vue/)
   assert.match(src, /knowledge\/KnowledgeSnapshotsPage\.vue/)
+  // 旧 /knowledge/* 地址必须重定向到 /build/knowledge/*（兼容入口不 404）
+  assert.match(src, /path:\s*['"]knowledge\/:rest\(\.\*\)\?['"]/)
+  assert.match(src, /build\/knowledge\/\$\{rest \|\| ['"]graph['"]\}/)
 })
 
-test('CourseLayout.vue: 启用"知识"导航项（不再 disabled）', () => {
+test('CourseLayout.vue: builders enter knowledge through construction while learners retain the knowledge tab', () => {
   const src = read('frontend/src/app/pages/course/CourseLayout.vue')
-  // knowledge 导航项必须 enabled: true（不再 disabled）
-  // 同时必须提供 to（指向 /knowledge）
-  assert.match(
-    src,
-    /key:\s*['"]knowledge['"][^}]*label:\s*['"]知识['"][^}]*to:\s*`\/app\/course\/\$\{courseId\.value\}\/knowledge`[^}]*enabled:\s*true/,
-  )
-  // activeKey 必须识别 knowledge 路径
-  assert.match(src, /route\.path\.includes\(['"]\/knowledge['"]\)/)
+  assert.match(src, /if\s*\(!allowed\.value\[['"]course\.edit['"]\]\)[\s\S]*?key:\s*['"]knowledge['"]/)
+  // 学生知识入口指向并入建设布局后的新地址
+  assert.match(src, /to:\s*`\/app\/course\/\$\{courseId\.value\}\/build\/knowledge\/graph`/)
+  assert.match(src, /if\s*\(route\.path\.includes\(['"]\/build\/knowledge['"]\)\)[\s\S]*?return allowed\.value\[['"]course\.edit['"]\]\s*\?\s*['"]build['"]\s*:\s*['"]knowledge['"]/)
+})
+
+test('router.js: the retired build drafts address redirects to the knowledge workspace', () => {
+  const src = read('frontend/src/app/router.js')
+  assert.match(src, /path:\s*['"]drafts['"][\s\S]*?name:\s*['"]app-course-build-drafts['"][\s\S]*?redirect:[\s\S]*?\/build\/knowledge\/graph/)
+  assert.doesNotMatch(src, /path:\s*['"]drafts['"][\s\S]*?QuestionDraftReviewPage\.vue/)
 })
 
 test('KnowledgeGraphPage.vue: 集成 StudentGraphPanel + CognitiveDashboard + RecommendationCard', () => {
@@ -552,6 +555,29 @@ test('teaching_agent.js: respondTeachingAgent 调用 POST /teaching-agent/respon
   assert.match(src, /allowFlatResponse:\s*true/)
   // 必须默认 skipErrorToast（503 回退 V1 时不弹错误提示）
   assert.match(src, /skipErrorToast:\s*payload\.skipErrorToast\s*\?\?\s*true/)
+})
+
+test('coding_challenges.js: 学生挑战门面完整覆盖 offer/session/run 契约', () => {
+  const src = read('frontend/src/api/coding_challenges.js')
+  assert.match(src, /const base = ['"]\/teaching-agent\/coding-challenges['"]/)
+  assert.match(src, /`\$\{base\}\/active`/)
+  assert.match(src, /`\$\{base\}\/offers\/\$\{encodeURIComponent\(offerId\)\}/)
+  assert.match(src, /\/start`/)
+  assert.match(src, /\/dismiss`/)
+  assert.match(src, /\/replace`/)
+  assert.match(src, /\/sessions\/\$\{encodeURIComponent\(sessionId\)\}\/runs/)
+  assert.match(src, /['"]Idempotency-Key['"]:\s*idempotencyKey/)
+  assert.match(src, /\/runs\/\$\{encodeURIComponent\(runId\)\}/)
+  assert.match(src, /\/runs\/\$\{encodeURIComponent\(runId\)\}\/hint/)
+  assert.match(src, /\/sessions\/\$\{encodeURIComponent\(sessionId\)\}\/close/)
+})
+
+test('useLearningWorkspace.js: 对话响应透传挑战卡且不再持久化最后 run_id', () => {
+  const src = read('frontend/src/features/student-learning/composables/useLearningWorkspace.js')
+  assert.match(src, /codingChallengeOffer:\s*result\?\.coding_challenge_offer\s*\?\?\s*null/)
+  assert.match(src, /codingChallengeOffer:\s*result\?\.codingChallengeOffer\s*\?\?\s*null/)
+  assert.doesNotMatch(src, /teaching-agent-code-run:/)
+  assert.doesNotMatch(src, /setCodeSubmissionId/)
 })
 
 test('teaching_agent.js: 教师代查使用独立 learner-target 契约', () => {
@@ -639,11 +665,13 @@ test('media_release.js: getPlatformMediaPresets 使用课程级 platform-presets
   assert.match(src, /export const getPlatformMediaPresets\s*=\s*\(courseId\)\s*=>\s*request\.get\(`\$\{base\(courseId\)\}\/platform-presets`\)/)
 })
 
-test('media_release.py: 注册表路由与 media.generate 权限一致', () => {
+test('media_release.py: 注册表路由与 media.generate 权限一致（数字人已关闭，返回空目录）', () => {
   const src = read('backend/app/api/v1/endpoints/media_release.py')
   assert.match(src, /@media_release_router\.get\("\/course\/\{course_id\}\/platform-presets"\)/)
   assert.match(src, /get_platform_media_presets[\s\S]*?course\.media\.generate/)
-  assert.match(src, /list_public_presets\(session[\s\S]*?effective_provider/)
+  // 数字人功能已关闭：不再调用 list_public_presets，返回空 voices/avatars。
+  assert.doesNotMatch(src, /list_public_presets\(session/)
+  assert.match(src, /"voices": \[\][\s\S]*?"avatars": \[\]/)
 })
 
 // ============================================================================
@@ -788,3 +816,40 @@ test('PlatformAdminPage.vue: 平台管理页集成屏蔽词增删改查 section'
   assert.doesNotMatch(src, /<button[\s>]/)
 })
 
+test('disciplineKnowledge.js: 学科知识库客户端路径与后端路由一一对应（XH-202620）', () => {
+  const src = read('frontend/src/api/disciplineKnowledge.js')
+  const backend = read('backend/app/api/v1/endpoints/discipline_knowledge.py')
+  const main = read('backend/app/main.py')
+
+  assert.equal(extractFirstPath(src, 'searchDisciplineKnowledge'), '/discipline-knowledge/search')
+  assert.match(backend, /@router\.get\("\/search"\)/)
+
+  assert.equal(
+    extractFirstPath(src, 'getDisciplineKnowledgeNode'),
+    '/discipline-knowledge/nodes/${encodeURIComponent(nodeId)}',
+  )
+  assert.match(backend, /@router\.get\("\/nodes\/\{node_id\}"\)/)
+
+  assert.equal(extractFirstPath(src, 'getDisciplineKnowledgeOverview'), '/discipline-knowledge/overview')
+  assert.match(backend, /@router\.get\("\/overview"\)/)
+
+  assert.equal(extractFirstPath(src, 'reloadDisciplineKnowledge'), '/discipline-knowledge/reload')
+  assert.match(backend, /@router\.post\("\/reload"\)/)
+
+  assert.match(main, /discipline_knowledge\.router, prefix="\/api\/v1\/discipline-knowledge"/)
+})
+
+test('DisciplineKnowledgePage.vue: 学科知识检索页动作按钮使用 SfxButton（design.md）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  assert.match(src, /SfxButton/)
+  assert.match(src, /<SfxButton type="submit"/)
+  assert.match(src, /<SfxButton variant="tertiary"/)
+})
+
+test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截器已剥离 code/message 层）', () => {
+  const src = read('frontend/src/app/pages/discipline/DisciplineKnowledgePage.vue')
+  // request.js 响应拦截器 return res.data，故组件取数不得再写 body?.data
+  assert.doesNotMatch(src, /body\?\.data/)
+  assert.match(src, /overview\.value = body \?\? null/)
+  assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
+})

@@ -1,0 +1,160 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "编译原理",
+  "description": "计算机学科垂类知识库——编译原理基础概念（挑战杯 XH-202620）。节点 id 全局唯一（compiler- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "compiler-001",
+      "name": "编译过程总体结构",
+      "node_type": "concept",
+      "definition": "编译程序把高级语言源程序翻译为等价的目标程序，典型阶段为：词法分析→语法分析→语义分析与中间代码生成→代码优化→目标代码生成。",
+      "key_points": [
+        "前端（词法/语法/语义）与后端（优化/目标代码）分离",
+        "符号表贯穿各阶段，记录标识符信息",
+        "错误处理：语法错误恢复、语义错误报告"
+      ],
+      "example": "gcc 将 C 源码经预处理/编译/汇编/链接生成可执行文件",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 1 章 引论"
+      }
+    },
+    {
+      "id": "compiler-002",
+      "name": "词法分析",
+      "node_type": "concept",
+      "definition": "词法分析把源程序字符流切分为记号（token）序列；正则表达式描述记号模式，有限自动机（NFA→DFA）实现识别。",
+      "key_points": [
+        "记号（token）：关键字、标识符、常量、运算符、界符",
+        "正则表达式→NFA（Thompson 构造）→DFA（子集构造）→最小化",
+        "最长匹配原则与回退"
+      ],
+      "example": "输入 'int x = 42;' 输出 [int][x][=][42][;]",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 3 章 词法分析"
+      }
+    },
+    {
+      "id": "compiler-003",
+      "name": "语法分析",
+      "node_type": "concept",
+      "definition": "语法分析依据文法（上下文无关文法 CFG）判断记号序列是否符合语法并构造分析树；主流方法为自顶向下（LL、递归下降）与自底向上（LR 族）。",
+      "key_points": [
+        "文法四元组 (N, T, P, S)；产生式与推导",
+        "递归下降：每个非终结符对应一个函数，易实现 LL(1)",
+        "LR 分析：移进-归约，能力最强（SLR/LALR/LR(1)），Yacc/Bison 使用"
+      ],
+      "example": "表达式 2+3*4 经 LR 分析按优先级归约为正确语法树",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 4 章 语法分析"
+      }
+    },
+    {
+      "id": "compiler-004",
+      "name": "语法树与抽象语法树",
+      "node_type": "concept",
+      "definition": "语法分析树完整反映推导过程；抽象语法树（AST）去掉括号、分隔符等冗余信息，只保留语义结构，是后续阶段的主要输入。",
+      "key_points": [
+        "AST 节点：二元运算、函数调用、声明、赋值",
+        "AST 遍历：先序遍历求值、符号表填充",
+        "AST 是代码生成与静态分析（lint）的基础"
+      ],
+      "example": "a = b + c * 2 的 AST 以赋值节点为根，右侧为加法节点",
+      "source": {
+        "title": "Engineering a Compiler（第 2 版）",
+        "authors": "Keith Cooper、Linda Torczon",
+        "chapter": "第 4 章 Parsing"
+      }
+    },
+    {
+      "id": "compiler-005",
+      "name": "语义分析与类型检查",
+      "node_type": "concept",
+      "definition": "语义分析基于 AST 进行静态检查与信息收集：类型检查（声明与使用一致）、作用域解析、控制流检查（break 必须位于循环内）。",
+      "key_points": [
+        "类型系统：强/弱类型、静态/动态类型",
+        "类型检查规则：赋值相容、运算符操作数类型、函数实参匹配",
+        "属性格文法（S-属性/继承属性）形式化语义动作"
+      ],
+      "example": "把 string 赋给 int 变量触发类型错误",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 6 章 中间代码生成（语义分析）"
+      }
+    },
+    {
+      "id": "compiler-006",
+      "name": "中间代码表示",
+      "node_type": "concept",
+      "definition": "中间代码介于 AST 与目标代码之间，常见形式为三地址码（每个指令至多一个运算符、三个地址）；便于机器无关优化与多目标移植。",
+      "key_points": [
+        "三地址码指令：x = y op z、goto、if x relop y goto L",
+        "四元式（op, arg1, arg2, result）表示",
+        "静态单赋值（SSA）形式利于数据流优化"
+      ],
+      "example": "a = b + c * 2 生成 t1 = c * 2; a = b + t1",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 6 章 中间代码生成"
+      }
+    },
+    {
+      "id": "compiler-007",
+      "name": "代码优化",
+      "node_type": "concept",
+      "definition": "代码优化在不改变程序语义的前提下改善时间/空间效率；分机器无关优化（基本块与数据流分析）与机器相关优化（寄存器分配、指令调度）。",
+      "key_points": [
+        "基本块内：常量折叠、代数化简、公共子表达式删除",
+        "数据流分析：到达定值、活跃变量、可用表达式",
+        "循环优化：强度削减、循环不变量外提、循环展开"
+      ],
+      "example": "x = 3.14 * r * r 中 3.14 与循环不变量外提到循环外",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 8 章 代码生成 / 第 9 章 机器无关优化"
+      }
+    },
+    {
+      "id": "compiler-008",
+      "name": "目标代码生成与寄存器分配",
+      "node_type": "concept",
+      "definition": "目标代码生成把中间代码翻译为目标机指令序列；寄存器分配（如图着色）决定变量驻留寄存器还是内存，直接影响性能。",
+      "key_points": [
+        "指令选择：树覆盖/模式匹配（tiling）",
+        "寄存器分配：冲突图着色、线性扫描",
+        "指令调度：重排指令减少流水线停顿"
+      ],
+      "example": "把 t = a + b 生成为 ADD R1, R2（若 a、b 已在寄存器）",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 8 章 代码生成"
+      }
+    },
+    {
+      "id": "compiler-009",
+      "name": "符号表与作用域",
+      "node_type": "concept",
+      "definition": "符号表记录标识符的类型、作用域与存储信息；作用域规则（词法作用域/块结构）决定名字解析，支持嵌套与遮蔽。",
+      "key_points": [
+        "符号表结构：哈希表（链地址法）或有序树",
+        "作用域栈：进入块压入新作用域，退出弹出",
+        "名字解析：由内向外查找最近声明"
+      ],
+      "example": "C 语言块内局部变量遮蔽外层同名变量",
+      "source": {
+        "title": "编译原理（龙书，第 2 版）",
+        "authors": "Alfred Aho 等",
+        "chapter": "第 1.6 节 符号表管理"
+      }
+    }
+  ]
+}

@@ -56,13 +56,28 @@ class Settings(BaseSettings):
     # --------------------------
     # 大模型API配置
     # --------------------------
-    LLM_PROVIDER: str = "doubao"
+    LLM_PROVIDER: str = "deepseek"
     LLM_API_KEY: str = ""
     LLM_API_BASE: str = ""
     LLM_MODEL_NAME: str = ""
     LLM_MAX_TOKENS: int = 8192
     LLM_TEMPERATURE: float = 0.7
     LLM_TIMEOUT: int = 180
+    # 讯飞星火 LLM（学科垂类基座；挑战杯 XH-202620 赛题要求"深度结合讯飞星火或其他
+    # 开源大模型"）。星火开放平台 OpenAI 兼容 HTTP API：
+    #   base_url = https://spark-api-open.xf-yun.com/v1
+    #   鉴权     = Authorization: Bearer <APIKey>（XFYUN_SPARK_API_KEY）
+    # 设 LLM_PROVIDER=spark 时启用；未配置 API Key 时相关调用由网关 fail-closed，
+    # 密钥只进 .env，不进前端/日志/仓库。
+    XFYUN_SPARK_API_KEY: str = ""
+    XFYUN_SPARK_BASE_URL: str = "https://spark-api-open.xf-yun.com/v1"
+    XFYUN_SPARK_MODEL: str = "4.0Ultra"
+    # DeepSeek LLM（XH-202620 学科垂类基座，2026-08-20 决策改用 DeepSeek）。
+    # OpenAI 兼容 HTTP API：https://api.deepseek.com/v1，模型 deepseek-chat（V3）。
+    # 设 LLM_PROVIDER=deepseek 时启用；未配置 DEEPSEEK_API_KEY 时相关调用 fail-closed。
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
+    DEEPSEEK_MODEL: str = "deepseek-chat"
     # Course preparation has a shorter, explicit stage budget than the
     # generic LLM client and a separate end-to-end budget for all stages.
     COURSE_BUILD_STAGE_TIMEOUT_SECONDS: int = 240
@@ -159,6 +174,15 @@ class Settings(BaseSettings):
     # on a learner request and a failed build never replaces the active bundle.
     KNOWLEDGE_BUNDLE_ENABLED: bool = True
     GRAPHRAG_ENABLED: bool = False
+    # 数字人总开关（XH-202620 决策：展示效果不佳，正式关闭只保留 TTS + PPT）。
+    # 关闭后媒体发布不签发 avatar manifest / cue（走兼容模式：音频 + PPT + 字幕），
+    # 教师端不再产生数字人资产。历史不可变 release 数据与授权记录保留，不做破坏性删除。
+    MEDIA_AVATAR_ENABLED: bool = False
+    # XH-202620：图候选提取的"学科知识库名称锚定"对齐。开启后，提取出的候选
+    # 若未命中学科知识库（knowledge_data/）标准概念，会被分流为 needs_review
+    # 强制人工审查（不再默认 proposed）；命中则保持 proposed。
+    # 关闭或知识库为空时回退为原有的 proposed 语义（不强制人工、不误标）。
+    KNOWLEDGE_KB_ALIGNMENT_ENABLED: bool = True
     GRAPHRAG_WORKER_PYTHON: str = ""
     GRAPHRAG_STORAGE_ROOT: str = "./media/knowledge_indexes"
     GRAPHRAG_COMPLETION_PROVIDER: str = ""
@@ -175,6 +199,9 @@ class Settings(BaseSettings):
     GRAPHRAG_EMBEDDING_MAX_LENGTH: int = 512
     GRAPHRAG_EMBEDDING_QUERY_INSTRUCTION: str = ""
     GRAPHRAG_PROMPT_POLICY: str = "edu-graph-graphrag/2.0-zh"
+    # 重点节点筛选目标数（identity reconcile 后对草稿做确定性归并/降噪/截断）。
+    # 0 = 关闭（保持原始草稿规模，fail-closed 默认）。
+    GRAPHRAG_GRAPH_TARGET_NODES: int = 0
     GRAPHRAG_MAX_GLEANINGS: int = 0
     GRAPHRAG_MAX_RETRIES: int = 2
     GRAPHRAG_RUN_TIMEOUT_SECONDS: int = 1800
@@ -192,6 +219,24 @@ class Settings(BaseSettings):
     # Agent composition may opt into the production read-only bundle adapter
     # without changing the workflow graph under active refactoring.
     TEACHING_AGENT_KNOWLEDGE_PROVIDER: str = "demo"
+    # R14：学科垂类知识库参考（本地只读 JSON，无外部成本）。默认开启；
+    # 运行期仍可被教师工具治理按 discipline_knowledge 工具名禁用。
+    TEACHING_AGENT_DISCIPLINE_KB_ENABLED: bool = True
+    # 学科语料层 FTS 索引（RAG 检索白名单接入，2026-09-01）：由
+    # knowledge_data/corpus/build_corpus_index.py 离线构建，运行期只读。
+    # 空路径 = 未接入（fail-closed，学科参考只走精编概念层）。
+    DISCIPLINE_CORPUS_INDEX_PATH: str = ""
+    # 每次问答合并进学科参考的语料段落数上限。
+    DISCIPLINE_CORPUS_TOP_K: int = 2
+    # 学科语料层向量检索（方案 C 第一步，2026-09-01）：查询经本地 BGE 嵌入后
+    # 从 pgvector 表 discipline_corpus_embedding 召回，与 FTS 结果 RRF 融合。
+    # 默认关闭（fail-closed）；启用需部署侧已运行
+    # knowledge_data/corpus/build_corpus_embeddings.py 构建向量表。
+    DISCIPLINE_CORPUS_VECTOR_ENABLED: bool = False
+    # 本地 BGE 模型路径；空则回退 GRAPHRAG_EMBEDDING_LOCAL_PATH。
+    DISCIPLINE_CORPUS_VECTOR_MODEL_PATH: str = ""
+    # 向量召回深度（RRF 融合前的 top-n）。
+    DISCIPLINE_CORPUS_VECTOR_TOP_K: int = 8
 
     # 豆包配置
     DOUBAO_API_KEY: str = ""

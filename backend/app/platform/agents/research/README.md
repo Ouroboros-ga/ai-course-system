@@ -21,6 +21,8 @@ Teaching/Prep/Coding Agent 共享可变状态，也不把外部研究结果写�
 | 压缩 | 可插拔摘要器；当前默认确定性提取式摘要 | 摘要器异常仍保留关键近期片段并标记 degraded |
 | Scope | 子任务独立摘要，创建/切换/中断/恢复/完成状态机 | 这是持久化业务状态，不虚报为 LangGraph checkpointer |
 | Memory | 短期摘要 + 长期记忆；embedding Port + pgvector 检索 | 未配置/失败时明确返回 keyword degraded |
+| 学术写作辅助（writing_assist） | 基于工作区上下文 + 论文元数据，经结构化 LLM 生成草稿（综述段落/框架/润色），标注【AI 生成内容】；只使用已核验来源事实 | LLM 不可用 fail-closed（`RESEARCH_WRITING_LLM_UNAVAILABLE`）；越权拒绝；真实 LLM 调用待手工验收 |
+| 前沿趋势分析（trend_analysis） | 对论文元数据做确定性聚合：热点关键词、年份分布、趋势方向（rising/falling/stable）、arXiv 主题分类；无 LLM 依赖 | 样本不足标记 `trend_reliability=insufficient`；检索失败 fail-closed 不伪造 |
 
 Semantic Scholar/OpenAlex/Crossref、多源证据综合、学术成文和完整 GitHub 仓库
 复现仍未接通，不得按已上线能力展示。主应用没有 shell 工具；未来完整仓库复现必须
@@ -49,6 +51,8 @@ flowchart TD
     J -->|notepad| M["notepad_action"]
     J -->|memory| N["memory_action"]
     J -->|scope| O["scope_action"]
+    J -->|writing| W["writing_action"]
+    J -->|trend| T["trend_analysis"]
     J -->|clarify| R
     K --> P["evidence_gate"]
     P --> Q["workspace_refresh"]
@@ -56,6 +60,8 @@ flowchart TD
     M --> Q
     N --> Q
     O --> Q
+    W --> Q
+    T --> Q
     Q --> R
     R --> Z["END"]
 ```

@@ -1,0 +1,223 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "离散数学",
+  "description": "计算机学科垂类知识库——离散数学基础概念（挑战杯 XH-202620，R11）。节点 id 全局唯一（dm- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "dm-001",
+      "name": "命题逻辑与推理",
+      "node_type": "concept",
+      "definition": "命题逻辑研究可判定真假的陈述句（命题）及其推理规律。命题经 ¬、∧、∨、→、↔ 五种联结词复合为命题公式；用真值表与等值演算判定公式类型（重言式、矛盾式、可满足式），推理依据假言推理、拒取式等推理定律进行。",
+      "key_points": [
+        "命题与真值；五种联结词及运算优先级",
+        "真值表、主析取/主合取范式与公式等价判定",
+        "推理定律：假言推理、拒取式、假言三段论、归谬式"
+      ],
+      "example": "由 (p→q)∧¬q 推出 ¬p（拒取式），是反证法在命题层的推理基础。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 1 章 命题逻辑"
+      },
+      "aliases": ["propositional logic", "truth table", "inference rule"]
+    },
+    {
+      "id": "dm-002",
+      "name": "谓词逻辑与量词",
+      "node_type": "concept",
+      "definition": "谓词逻辑在一阶层面刻画命题的内部结构：引入个体域、谓词与函数符号，用全称量词 ∀ 与存在量词 ∃ 对个体性质量化。公式的真值依赖个体域的解释，推理规则含全称/存在实例化与推广。",
+      "key_points": [
+        "个体词、谓词与辖域；约束变元与自由变元换名规则",
+        "量词否定等值式 ¬∀xP(x) ⇔ ∃x¬P(x) 及量词分配律",
+        "前束范式与 UI、UG、EI、EG 四条量词推理规则"
+      ],
+      "example": "\"所有人都会死\"形式化为 ∀x(H(x)→M(x))；苏格拉底三段论是一阶推理实例。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 2 章 一阶逻辑"
+      },
+      "aliases": ["predicate logic", "first order logic", "quantifier"]
+    },
+    {
+      "id": "dm-003",
+      "name": "证明方法与数学归纳法",
+      "node_type": "method",
+      "definition": "直接证明从前提经推理规则推出结论；反证法假设结论为假并导出矛盾；数学归纳法以基础步与归纳步覆盖全体自然数。方法选择取决于命题形式：全称命题常用归纳与穷举，蕴含命题可用逆否与反证。",
+      "key_points": [
+        "直接证明、反证法、穷举法与分情况证明的适用条件",
+        "数学归纳法：基础步 + 归纳步；强归纳（第二归纳法）与良基性",
+        "反证法与命题逻辑归谬式的对应；构造性与存在性证明"
+      ],
+      "example": "√2 无理数用反证法；1+2+…+n=n(n+1)/2 用数学归纳法。",
+      "source": {
+        "title": "离散数学及其应用（第 8 版）",
+        "authors": "Kenneth H. Rosen",
+        "chapter": "第 1 章 证明方法与第 5 章 数学归纳法"
+      },
+      "aliases": ["proof by contradiction", "mathematical induction"]
+    },
+    {
+      "id": "dm-004",
+      "name": "集合与运算",
+      "node_type": "concept",
+      "definition": "集合是确定的、互异对象的整体。子集、空集、幂集构成基本层级；并、交、相对补、对称差与笛卡尔积满足交换、结合、分配与德摩根律；包含排斥原理把并集基数计数转化为容斥计算。",
+      "key_points": [
+        "幂集 |P(A)|=2^|A|；笛卡尔积是二元关系与函数的定义基础",
+        "运算律与德摩根对偶律（集合恒等式的证明依据）",
+        "包含排斥原理 |A∪B|=|A|+|B|−|A∩B| 及多集合推广"
+      ],
+      "example": "统计某班三门课至少选修一门的人数，用容斥原理去重求并集基数。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 3 章 集合代数"
+      },
+      "aliases": ["set theory", "inclusion exclusion", "power set"]
+    },
+    {
+      "id": "dm-005",
+      "name": "二元关系与等价/偏序",
+      "node_type": "concept",
+      "definition": "二元关系是笛卡尔积的子集，用关系矩阵与关系图表示。性质含自反、对称、反对称与传递；等价关系与集合划分一一对应（诱导商集），偏序关系用哈斯图表示并支撑极大元、上确界等次序分析。",
+      "key_points": [
+        "自反/对称/反对称/传递的判定；逆关系与复合运算",
+        "等价关系诱导划分：模 n 同余把整数分为 n 个剩余类",
+        "偏序、全序与良序；哈斯图、最大元与极大元的区别"
+      ],
+      "example": "模 3 同余是等价关系，把整数划分为 [0]、[1]、[2] 三个剩余类。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 4 章 二元关系"
+      },
+      "aliases": ["equivalence relation", "partial order", "hasse diagram"]
+    },
+    {
+      "id": "dm-006",
+      "name": "函数与基数",
+      "node_type": "concept",
+      "definition": "函数是从定义域到值域的单值关系，按对应情况分为单射、满射与双射；复合与逆（反函数）在双射上封闭。基数刻画集合大小：可数集与自然数等势，实数不可数由康托尔对角线法证明。",
+      "key_points": [
+        "单射/满射/双射的判定；反函数存在当且仅当双射",
+        "鸽巢原理的函数表述：n+1 个元素映入 n 个值必碰撞",
+        "可数集与不可数集；康托尔对角线法证明 ℝ 不可数"
+      ],
+      "example": "证明 (0,1) 与 ℝ 等势：f(x)=tan(πx−π/2) 是双射。",
+      "source": {
+        "title": "离散数学及其应用（第 8 版）",
+        "authors": "Kenneth H. Rosen",
+        "chapter": "第 2 章 基本结构（2.5 节 基数）"
+      },
+      "aliases": ["bijection", "cardinality", "countable set"]
+    },
+    {
+      "id": "dm-007",
+      "name": "图论基础",
+      "node_type": "concept",
+      "definition": "图 G=(V,E) 由顶点集合与边集合构成，分无向图与有向图。顶点的度满足握手定理（度数之和为边数的两倍）；连通性（连通分支、强连通）刻画顶点间可达性，是图算法的数学基础。",
+      "key_points": [
+        "握手定理 Σdeg(v)=2|E|；奇度顶点必为偶数个",
+        "通路与回路；连通图、连通分支、强连通分量",
+        "完全图、正则图、二部图；二部图判定（无奇圈）与匹配"
+      ],
+      "example": "n 顶点完全图的边数为 n(n−1)/2，由握手定理直接推得。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 6 章 图"
+      },
+      "aliases": ["graph theory", "handshake theorem", "bipartite graph"]
+    },
+    {
+      "id": "dm-008",
+      "name": "欧拉图与哈密顿图",
+      "node_type": "concept",
+      "definition": "欧拉图存在经过每条边恰一次的回路，判定条件为连通且每个顶点度数为偶；哈密顿图存在经过每个顶点恰一次的回路，其判定是 NP 完全问题，仅有充分条件（如 Dirac 定理：最小度 ≥ n/2）。",
+      "key_points": [
+        "欧拉回路/通路判定：连通且奇度顶点个数为 0（回路）或 2（通路）",
+        "哈密顿回路充分条件：Dirac 定理、Ore 定理",
+        "中国邮递员问题（边覆盖）与旅行商问题 TSP（点覆盖）的建模差异"
+      ],
+      "example": "哥尼斯堡七桥问题是否定实例（4 个顶点均为奇度）；一笔画等价于求欧拉通路。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 6 章 图（欧拉图与哈密顿图）"
+      },
+      "aliases": ["euler circuit", "hamiltonian path", "traveling salesman"]
+    },
+    {
+      "id": "dm-009",
+      "name": "树与生成树",
+      "node_type": "concept",
+      "definition": "树是连通无回路的无向图，等价性质包括：n 个顶点恰有 n−1 条边、任意两顶点间通路唯一、添加任一条边产生圈。带权连通图的最小生成树可用 Prim 或 Kruskal 算法求出；根树支撑前缀码与 Huffman 编码。",
+      "key_points": [
+        "树的多种等价定义（连通无圈、n−1 条边、删任一边则不连通）",
+        "生成树与最小生成树；Prim/Kruskal 的正确性都依赖树的切割性质",
+        "根树、前缀码、最优树与 Huffman 算法"
+      ],
+      "example": "Huffman 树按字符频率构造最优前缀码，是数据压缩的理论基础。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 7 章 树及其应用"
+      },
+      "aliases": ["spanning tree", "minimum spanning tree", "huffman coding"]
+    },
+    {
+      "id": "dm-010",
+      "name": "组合计数与鸽巢原理",
+      "node_type": "method",
+      "definition": "组合计数研究排列（有序）、组合（无序）与重复选取的计数公式；鸽巢原理断言 n+1 个对象放入 n 个盒子必有盒子至少含 2 个对象，是存在性证明的基本工具；二项式定理与递推方程扩展计数能力。",
+      "key_points": [
+        "加法/乘法原理；排列 P(n,r) 与组合 C(n,r)",
+        "鸽巢原理及推广形式（平均原理：至少一个盒子不少于平均值）",
+        "二项式定理；递推关系与生成函数初步"
+      ],
+      "example": "任意 13 人中必有 2 人出生在同一个月（鸽巢原理）。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 8 章 组合计数基础"
+      },
+      "aliases": ["combinatorics", "pigeonhole principle", "binomial theorem"]
+    },
+    {
+      "id": "dm-011",
+      "name": "代数结构（群、环、域）",
+      "node_type": "concept",
+      "definition": "代数结构是集合连同其上满足封闭性的运算构成的系统。半群、群、环、域逐层加强公理；群论研究子群、陪集与拉格朗日定理，同态与同构刻画保持运算的映射。",
+      "key_points": [
+        "群公理（结合律、单位元、逆元）；交换群与循环群",
+        "子群、陪集分解与拉格朗日定理（|H| 整除 |G|）",
+        "环与域（整环、多项式环）；同态与同构在密码学中的应用"
+      ],
+      "example": "RSA 使用模 n 乘法群 ℤₙ*：密钥生成依赖群阶（欧拉函数）。",
+      "source": {
+        "title": "离散数学（第 2 版）",
+        "authors": "屈婉玲、耿素云、张立昂",
+        "chapter": "第 9 章 代数系统"
+      },
+      "aliases": ["group theory", "ring", "field", "lagrange theorem"]
+    },
+    {
+      "id": "dm-012",
+      "name": "初等数论与模运算",
+      "node_type": "concept",
+      "definition": "初等数论研究整除性、最大公约数（辗转相除法）与同余。模 n 剩余系构成环，可逆元构成乘法群；欧拉定理与费马小定理给出幂运算的周期性质，是 RSA 与哈希取模的理论基础。",
+      "key_points": [
+        "整除与 gcd；扩展欧几里得算法求模逆元",
+        "同余式与剩余类；中国剩余定理（CRT）",
+        "欧拉函数 φ(n)；费马小定理 a^(p−1) ≡ 1 (mod p)"
+      ],
+      "example": "RSA 解密的正确性依赖 ed ≡ 1 (mod φ(n)) 与欧拉定理。",
+      "source": {
+        "title": "离散数学及其应用（第 8 版）",
+        "authors": "Kenneth H. Rosen",
+        "chapter": "第 4 章 数论"
+      },
+      "aliases": ["number theory", "modular arithmetic", "chinese remainder theorem"]
+    }
+  ]
+}

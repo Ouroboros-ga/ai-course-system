@@ -51,14 +51,6 @@ export function useLearningWorkspace(courseId, options = {}) {
   const getAnalyticsEligible = options?.getAnalyticsEligible ?? (() => false)
   const getCapabilities = options?.getCapabilities ?? (() => ({}))
   const getQuestionObservation = options?.getQuestionObservation ?? (() => null)
-  // CodingEduAgent receives only a server-issued ExperimentRun id. The
-  // coding runner can update this value after a verified submission; no
-  // source code or Judge0 token is ever placed in the TeachingAgent payload.
-  const codeRunStorageKey = `teaching-agent-code-run:${courseId}:${getStudentId() ?? 'anonymous'}`
-  const codeSubmissionId = ref(
-    options?.codeSubmissionId ?? window.localStorage.getItem(codeRunStorageKey) ?? null,
-  )
-  const getCodeSubmissionId = options?.getCodeSubmissionId ?? (() => codeSubmissionId.value)
   // 学习会话 ID：贯穿一次学习会话，TeachingAgent 用作 session_id 关联事件与 trace。
   // Reuse a per-learner/course ID. The Audit-domain session context is still
   // bounded and expires after 30 minutes; full chat messages are now persisted
@@ -664,13 +656,11 @@ export function useLearningWorkspace(courseId, options = {}) {
   // 仅在 sendQuestion 中被调用，且仅当 cognitive_analysis 能力开关开启 +
   // analyticsEligible + studentId 三者齐备时触发。失败由调用方回退 V1。
   async function askTeachingAgent(question, questionObservation = null) {
-    const verifiedRunId = getCodeSubmissionId()
     const result = await respondTeachingAgent({
       course_id: String(course.value.courseId),
       session_id: teachingSessionId,
       message: question,
       resource_id: currentNodeId.value != null ? String(currentNodeId.value) : null,
-      code_submission_id: verifiedRunId ? String(verifiedRunId) : null,
       questionObservation: questionObservation ?? null,
     })
     const warnings = Array.isArray(result?.warnings) ? result.warnings : []
@@ -687,6 +677,7 @@ export function useLearningWorkspace(courseId, options = {}) {
     return {
       answer: String(result?.answer || '暂时没有可用回答。'),
       citations: Array.isArray(result?.citations) ? result.citations : [],
+      disciplineReferences: Array.isArray(result?.discipline_references) ? result.discipline_references : [],
       fallbackRequired: result?.status === 'fallback_required',
       fallbackNotice,
       // 透传 warnings 数组，供未来面板展示（本次面板已有 fallbackNotice 展示位）。
@@ -695,19 +686,11 @@ export function useLearningWorkspace(courseId, options = {}) {
       lowConfidence:
         Boolean(warnings.length) || Boolean(result?.degraded_services?.length),
       learningAdjustment: result?.learning_adjustment ?? null,
+      codingChallengeOffer: result?.coding_challenge_offer ?? null,
     }
   }
 
   // V1 问答（/chat/ask）：始终可用的回退路径，不受 Agent 能力开关影响。
-  function setCodeSubmissionId(runId) {
-    codeSubmissionId.value = runId == null || runId === '' ? null : String(runId)
-    if (codeSubmissionId.value) {
-      window.localStorage.setItem(codeRunStorageKey, codeSubmissionId.value)
-    } else {
-      window.localStorage.removeItem(codeRunStorageKey)
-    }
-  }
-
   async function askV1(question) {
     const result = await askQuestion({
       question,
@@ -775,11 +758,13 @@ export function useLearningWorkspace(courseId, options = {}) {
           role: 'assistant',
           content: result.answer,
           citations: result.citations,
+          disciplineReferences: Array.isArray(result.disciplineReferences) ? result.disciplineReferences : [],
           lowConfidence: result.lowConfidence,
           fallbackNotice: result.fallbackNotice || '',
           nodeId: currentNodeId.value,
           page: currentPage.value,
           learningAdjustment: result?.learningAdjustment ?? null,
+          codingChallengeOffer: result?.codingChallengeOffer ?? null,
         },
       ]
     } catch {
@@ -1001,7 +986,7 @@ export function useLearningWorkspace(courseId, options = {}) {
     captureReturnAnchor,
     restoreReturnAnchor,
     sendQuestion,
-    setCodeSubmissionId,
+    teachingSessionId,
     saveProgress,
   }
 }

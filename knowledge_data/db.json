@@ -1,0 +1,177 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "数据库系统",
+  "description": "计算机学科垂类知识库——数据库系统基础概念（挑战杯 XH-202620）。节点 id 全局唯一（db- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "db-001",
+      "name": "关系模型与关系代数",
+      "node_type": "concept",
+      "definition": "关系模型用二维表（关系）组织数据：行（元组）表示记录，列（属性）表示字段；关系代数提供选择、投影、连接、并交差等运算。",
+      "key_points": [
+        "关系性质：属性不可再分、元组有序性、元组唯一性",
+        "主键唯一标识元组，外键建立表间引用",
+        "关系代数与 SQL 的对应：SELECT≈选择+投影，JOIN≈连接"
+      ],
+      "example": "σ score>90(学生成绩表) 选出成绩大于 90 的行",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 2 章 关系数据库"
+      }
+    },
+    {
+      "id": "db-002",
+      "name": "SQL 语言",
+      "node_type": "concept",
+      "definition": "SQL 是关系数据库的标准查询语言，分为 DDL（建表/改结构）、DML（增删改）、DQL（查询）与 DCL（授权）四类。",
+      "key_points": [
+        "SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY 执行顺序",
+        "聚合函数：COUNT/SUM/AVG/MAX/MIN",
+        "窗口函数：ROW_NUMBER/RANK/PARTITION BY 解决分组 TopN 等查询"
+      ],
+      "example": "SELECT course_id, ROW_NUMBER() OVER (PARTITION BY course_id ORDER BY score DESC) FROM score",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 3 章 关系数据库标准语言 SQL"
+      }
+    },
+    {
+      "id": "db-003",
+      "name": "数据库设计（E-R 模型与范式）",
+      "node_type": "concept",
+      "definition": "数据库设计从需求出发，经概念设计（E-R 模型）、逻辑设计（关系模式）与物理设计；范式理论（1NF~BCNF）用于消除数据冗余与更新异常。",
+      "key_points": [
+        "E-R 图：实体、属性、联系（1:1、1:n、m:n）",
+        "1NF 属性不可再分；2NF 消除部分依赖；3NF 消除传递依赖；BCNF 消除主属性对码的部分/传递依赖",
+        "规范化的代价：查询连接增多，需与反规范化权衡"
+      ],
+      "example": "选课表（学号,课程号,课程名,成绩）存在部分依赖，分解为课程表 + 选课表",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 6 章 关系数据理论"
+      }
+    },
+    {
+      "id": "db-004",
+      "name": "事务与 ACID",
+      "node_type": "concept",
+      "definition": "事务是数据库操作的逻辑执行单元，具有原子性（Atomicity）、一致性（Consistency）、隔离性（Isolation）与持久性（Durability）四个性质。",
+      "key_points": [
+        "原子性由日志（undo）保证，持久性由日志（redo）保证",
+        "一致性是应用与数据库共同维护的不变量",
+        "隔离性由并发控制机制（锁/MVCC）实现"
+      ],
+      "example": "转账事务：扣款 + 入账必须同时成功或同时回滚",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 11 章 并发控制"
+      }
+    },
+    {
+      "id": "db-005",
+      "name": "并发控制与隔离级别",
+      "node_type": "concept",
+      "definition": "并发控制保证多个事务交错执行时不破坏一致性；手段包括锁（共享/排他、两阶段封锁 2PL）与多版本并发控制（MVCC），隔离级别定义并发异常的可容忍程度。",
+      "key_points": [
+        "并发异常：脏读、不可重复读、幻读",
+        "SQL 标准四级隔离：读未提交、读已提交、可重复读、串行化",
+        "PostgreSQL 默认读已提交；可重复读基于快照隔离，不产生不可重复读"
+      ],
+      "example": "读已提交下同一事务两次查询可能读到不同已提交数据（不可重复读）",
+      "source": {
+        "title": "PostgreSQL 文档",
+        "authors": "PostgreSQL Global Development Group",
+        "chapter": "Chapter 13. Concurrency Control"
+      }
+    },
+    {
+      "id": "db-006",
+      "name": "索引与查询优化",
+      "node_type": "concept",
+      "definition": "索引是加速查询的数据结构，常用 B+ 树与哈希索引；查询优化器选择执行计划（扫描方式、连接顺序、代价估算）。",
+      "key_points": [
+        "B+ 树：有序、多路、叶子节点链表，适合范围查询",
+        "聚簇索引决定物理存储顺序，非聚簇索引存指针",
+        "覆盖索引避免回表；最左前缀原则影响复合索引使用"
+      ],
+      "example": "对 course_id 建 B+ 树索引后，按课程查询由全表扫描 O(n) 降至 O(log n)",
+      "source": {
+        "title": "Database System Concepts（第 7 版）",
+        "authors": "Abraham Silberschatz 等",
+        "chapter": "第 14 章 Indexing"
+      }
+    },
+    {
+      "id": "db-007",
+      "name": "存储与物理结构",
+      "node_type": "concept",
+      "definition": "数据库将数据最终存储在磁盘（或闪存）上，通过缓冲池管理页的读写；日志先行（WAL）保证崩溃恢复时数据不丢失。",
+      "key_points": [
+        "页是 I/O 基本单位，缓冲池减少磁盘访问",
+        "WAL：先写日志再写数据，崩溃后按日志重放/回滚",
+        "表空间、数据文件与段/区/页的组织"
+      ],
+      "example": "PostgreSQL 每个表对应若干 8KB 页面，共享缓冲池缓存热页",
+      "source": {
+        "title": "PostgreSQL 文档",
+        "authors": "PostgreSQL Global Development Group",
+        "chapter": "Chapter 68. Database Physical Storage"
+      }
+    },
+    {
+      "id": "db-008",
+      "name": "数据库恢复",
+      "node_type": "concept",
+      "definition": "数据库恢复在系统崩溃后利用日志与备份把数据恢复到一致状态：未完成事务回滚（undo），已提交未落盘事务重做（redo）。",
+      "key_points": [
+        "日志类型：undo 日志、redo 日志、undo+redo 混合",
+        "检查点（checkpoint）缩短恢复时间",
+        "恢复策略：延迟更新（先记日志）与即时更新（先更新后记日志）"
+      ],
+      "example": "事务 T 已提交但数据页未落盘即崩溃，重启后依 redo 日志重做",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 12 章 数据库恢复技术"
+      }
+    },
+    {
+      "id": "db-009",
+      "name": "数据库安全与授权",
+      "node_type": "concept",
+      "definition": "数据库安全通过身份认证、授权（权限粒度：表/列/行）与审计保障数据访问合规；典型机制为 GRANT/REVOKE 与视图/角色封装。",
+      "key_points": [
+        "GRANT SELECT ON table TO user 授权；REVOKE 回收",
+        "角色（role）聚合权限便于批量管理",
+        "视图可隐藏敏感列；行级安全（RLS）按用户过滤数据"
+      ],
+      "example": "GRANT SELECT ON score TO teacher_role; 学生角色仅可见本人成绩视图",
+      "source": {
+        "title": "数据库系统概论（第 6 版）",
+        "authors": "王珊、萨师煊",
+        "chapter": "第 13 章 数据库安全性"
+      }
+    },
+    {
+      "id": "db-010",
+      "name": "分布式数据库基础",
+      "node_type": "concept",
+      "definition": "分布式数据库把数据分布到多节点，提供高可用与扩展性；涉及分片、复制、分布式事务（两阶段提交）与一致性模型。",
+      "key_points": [
+        "分片（sharding）：水平/垂直切分，一致性哈希路由",
+        "复制：主从复制与多主复制；读写分离",
+        "CAP 定理：一致性、可用性、分区容忍性三者不可兼得"
+      ],
+      "example": "电商订单表按 user_id 哈希分片到多个节点",
+      "source": {
+        "title": "Designing Data-Intensive Applications",
+        "authors": "Martin Kleppmann",
+        "chapter": "第 5 章 Replication / 第 6 章 Partitioning"
+      }
+    }
+  ]
+}

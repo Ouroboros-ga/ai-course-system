@@ -285,7 +285,12 @@ def _serialize_citation(
     return data
 
 
-def _serialize_batch(batch: GraphCandidateBatch) -> dict[str, Any]:
+def _serialize_batch(
+    batch: GraphCandidateBatch,
+    *,
+    review_payload: Optional[dict[str, Any]] = None,
+) -> dict[str, Any]:
+    payload = review_payload or {}
     return {
         "batch_id": batch.batch_id,
         "course_id": batch.course_id,
@@ -293,10 +298,10 @@ def _serialize_batch(batch: GraphCandidateBatch) -> dict[str, Any]:
         "task_id": batch.task_id,
         "prev_batch_id": batch.prev_batch_id,
         "status": batch.status.value,
-        "node_candidate_count": batch.node_candidate_count,
-        "relation_candidate_count": batch.relation_candidate_count,
-        "node_candidates": batch.node_candidates,
-        "relation_candidates": batch.relation_candidates,
+        "node_candidate_count": payload.get("node_candidate_count", batch.node_candidate_count),
+        "relation_candidate_count": payload.get("relation_candidate_count", batch.relation_candidate_count),
+        "node_candidates": payload.get("node_candidates", batch.node_candidates),
+        "relation_candidates": payload.get("relation_candidates", batch.relation_candidates),
         "accepted_count": batch.accepted_count,
         "rejected_count": batch.rejected_count,
         "needs_review_count": batch.needs_review_count,
@@ -551,6 +556,7 @@ async def reparse_material(
             "run_id": run.run_id,
             "material_id": payload.material_id,
             "material_version_id": version_id,
+            "initiated_by": user_id,
             "pipeline": payload.pipeline.value if hasattr(payload.pipeline, "value") else str(payload.pipeline),
             "stale_strategy": payload.stale_strategy.value if hasattr(payload.stale_strategy, "value") else str(payload.stale_strategy),
         },
@@ -908,6 +914,7 @@ async def list_evidence_spans(
     run_id: Optional[str] = Query(None, description="按解析运行过滤"),
     status: Optional[EvidenceSpanStatus] = Query(None, description="按状态过滤"),
     node_id: Optional[int] = Query(None, description="按知识点过滤"),
+    include_history: bool = Query(False, description="包含未采用或已退役的历史 IR"),
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
@@ -919,6 +926,7 @@ async def list_evidence_spans(
         run_id=run_id,
         status=status,
         node_id=node_id,
+        include_history=include_history,
     )
     return unified_response(
         code=200,
@@ -1108,7 +1116,13 @@ async def list_candidate_batches(
         message="获取图谱候选批次列表成功",
         data={
             "course_id": course_id,
-            "items": [_serialize_batch(b) for b in batches],
+            "items": [
+                _serialize_batch(
+                    batch,
+                    review_payload=graph_candidate_service.review_payload(session, batch=batch),
+                )
+                for batch in batches
+            ],
             "total": len(batches),
         },
     )
@@ -1223,7 +1237,13 @@ async def get_knowledge_view(
                 for c in citations
             ],
             "candidate_spans": [_serialize_span(s) for s in candidate_spans] if is_teacher else [],
-            "candidate_batches": [_serialize_batch(b) for b in candidate_batches] if is_teacher else [],
+            "candidate_batches": [
+                _serialize_batch(
+                    batch,
+                    review_payload=graph_candidate_service.review_payload(session, batch=batch),
+                )
+                for batch in candidate_batches
+            ] if is_teacher else [],
             "viewer_role": context.role.value if context.role else None,
             "can_review": is_teacher,
             "can_confirm_evidence": context.allows("evidence.confirm"),

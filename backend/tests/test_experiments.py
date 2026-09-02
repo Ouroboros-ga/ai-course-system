@@ -1878,7 +1878,7 @@ class TestCodingAgentRunExplanation:
 
         assert response.status_code == 200, response.text
         data = response.json()["data"]
-        assert data["source"] == "coding-agent"
+        assert data["source"] == "teaching-agent-coding-compat"
         assert data["summary"] == "先检查循环终止条件，再用最小输入复现。"
         assert "VERY_SECRET_STUDENT_SOURCE" not in str(data)
 

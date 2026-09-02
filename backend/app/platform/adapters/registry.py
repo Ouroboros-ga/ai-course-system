@@ -1,28 +1,8 @@
-import os
-
-from app.core.config import settings
 from app.platform.adapters.digital_human import DigitalHumanAdapter
 from app.platform.adapters.llm import LLMAdapter
 from app.platform.adapters.ppt import PPTAdapter
 from app.platform.adapters.tts import TTSAdapter
 from app.platform.adapters.voice_clone import VoiceCloneAdapter
-
-
-def get_digital_human_provider_name(provider: str | None = None) -> str:
-    return (
-        provider
-        or os.getenv("DIGITAL_HUMAN_PROVIDER")
-        or getattr(settings, "DIGITAL_HUMAN_PROVIDER", "digital_human")
-        or "digital_human"
-    ).lower()
-
-
-def _is_legacy_digital_human_client(client) -> bool:
-    return (
-        client is not None
-        and client.__class__.__module__ == "app.common.digital_human_client"
-        and client.__class__.__name__ == "DigitalHumanClient"
-    )
 
 
 def get_llm_adapter(client=None) -> LLMAdapter:
@@ -54,12 +34,11 @@ def get_ppt_adapter(client=None) -> PPTAdapter:
 
 
 def get_digital_human_adapter(client=None, provider: str | None = None) -> DigitalHumanAdapter:
-    provider_name = get_digital_human_provider_name(provider)
-    if provider_name in {"duix", "duix_avatar"}:
-        if client is None or _is_legacy_digital_human_client(client):
-            from app.platform.adapters.duix_avatar import DuixAvatarProvider
-            client = DuixAvatarProvider()
-        return DigitalHumanAdapter(client, provider="duix")
+    """Return the legacy digital-human adapter.
+
+    数字人（avatar）功能已关闭：不再注册 Duix 等云端 Provider，仅保留通用
+    适配器以便历史调用方（当前无 app 内调用方）继续使用本地 client。
+    """
     if client is None:
         from app.common.digital_human_client import digital_human_client
         client = digital_human_client

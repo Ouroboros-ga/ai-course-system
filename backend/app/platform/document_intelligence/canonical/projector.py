@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.models.document_parse_model import (
     RetrievalIndexSnapshot,
     RetrievalChunk,
 )
+from app.platform.document_intelligence.canonical.block_noise import classify_noise_blocks
 from app.platform.document_intelligence.document_ir.models import block_to_dict
 from app.platform.document_intelligence.document_ir.serialization import serialize_document_ir
 from app.services.object_storage import get_object_storage
@@ -87,6 +89,9 @@ class DocumentIRProjector:
 
         block_count = 0
         anchor_count = 0
+        noise_reasons = classify_noise_blocks(document_ir.blocks)
+        noise_ids = set(noise_reasons)
+        noise_filtered = 0
         unit_by_block = {
             block_id: unit.unit_id
             for unit in document_ir.units
@@ -125,6 +130,13 @@ class DocumentIRProjector:
             session.add(db_block)
             session.flush()
             block_count += 1
+            # Boilerplate (running headers/footers, cover signatures) stays in
+            # the canonical block store but must not become query-facing
+            # evidence or retrieval input; otherwise it leaks into node
+            # sources and the prep-agent evidence pane.
+            if block.block_id in noise_ids:
+                noise_filtered += 1
+                continue
             if text.strip():
                 anchor = EvidenceAnchor(
                     course_id=course_id,
@@ -158,6 +170,13 @@ class DocumentIRProjector:
                 ))
                 self._chunk(session, course_id, version, document_ir.document_id, unit_by_block.get(block.block_id), block.block_id, anchor.anchor_id, text, db_block.content_hash)
                 anchor_count += 1
+        if noise_filtered:
+            version.quality = {
+                **(version.quality or {}),
+                "noise_filtered_blocks": noise_filtered,
+                "noise_exclusion_reasons": dict(sorted(Counter(noise_reasons.values()).items())),
+            }
+            session.add(version)
         self._create_index_snapshot(
             session,
             course_id=course_id,
@@ -174,7 +193,10 @@ class DocumentIRProjector:
 
     @staticmethod
     def _block_type(value: str) -> str:
-        return {"paragraph": "text", "heading": "title", "table": "table_cell", "image": "figure_caption"}.get(value, "text")
+        return {
+            "paragraph": "text", "heading": "title", "code": "code",
+            "table": "table_cell", "image": "figure_caption",
+        }.get(value, "text")
 
     @staticmethod
     def _source_kind(payload: dict) -> str:
@@ -183,8 +205,14 @@ class DocumentIRProjector:
 
     @staticmethod
     def _semantic_role(block: Any) -> str:
+        if block.block_type == "code":
+            # 代码区是完整教学示例，不是被截断的正文片段。
+            return "code_example"
         if block.block_type == "heading":
-            return "section_title" if getattr(block, "heading_level", None) else "knowledge_title"
+            # 顶层（第X章/9.4 等）→ section_title；更深小标题（9.4.1 / 1、/ （1））→ knowledge_title，
+            # 使知识点来自真实标题而非每个正文段（修复 textbox 型教学 PPT 映射）。
+            level = getattr(block, "heading_level", None) or 0
+            return "section_title" if level <= 1 else "knowledge_title"
         return "explanation"
 
     @staticmethod

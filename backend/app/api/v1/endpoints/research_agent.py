@@ -46,6 +46,8 @@ ResearchAction = Literal[
     "scope_interrupt",
     "scope_resume",
     "scope_complete",
+    "writing_assist",
+    "trend_analysis",
 ]
 
 
@@ -256,6 +258,8 @@ async def run_research_harness(
         "workspace": result.get("workspace_snapshot"),
         "papers": result.get("papers", []),
         "search": _safe_search_result(result.get("search_result")),
+        "writing": result.get("writing_result"),
+        "trend": result.get("trend_result"),
         "warnings": result.get("warnings", []),
         "errors": result.get("errors", []),
         "degraded_services": result.get("degraded_services", []),

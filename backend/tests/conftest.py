@@ -208,11 +208,9 @@ def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_cli
     progress_service = importlib.import_module("app.services.progress_service")
     qa_service = importlib.import_module("app.services.qa_service")
     smart_course_service = importlib.import_module("app.services.smart_course_service")
-    video_service = importlib.import_module("app.services.video_generation_service")
     asset_endpoint = importlib.import_module("app.api.v1.endpoints.asset")
     document_endpoint = importlib.import_module("app.api.v1.endpoints.document")
     progress_endpoint = importlib.import_module("app.api.v1.endpoints.progress")
-    video_generation_endpoint = importlib.import_module("app.api.v1.endpoints.video_generation")
 
     for module in [
         llm_module,
@@ -228,7 +226,7 @@ def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_cli
         if hasattr(module, "llm_client"):
             monkeypatch.setattr(module, "llm_client", fake_llm)
 
-    for module in [tts_module, document_endpoint, video_service]:
+    for module in [tts_module, document_endpoint]:
         if hasattr(module, "tts_client"):
             monkeypatch.setattr(module, "tts_client", fake_tts)
 
@@ -236,8 +234,6 @@ def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_cli
     monkeypatch.setattr(asset_endpoint, "voice_clone_client", fake_voice_clone_client, raising=False)
 
     monkeypatch.setattr(digital_module, "digital_human_client", fake_digital_human_client)
-    monkeypatch.setattr(video_service, "digital_human_client", fake_digital_human_client)
-    monkeypatch.setattr(video_generation_endpoint, "digital_human_client", fake_digital_human_client)
 
     monkeypatch.setattr(ppt_service.ppt_generation_service, "xfyun_client", fake_ppt_client)
 

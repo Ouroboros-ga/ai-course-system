@@ -11,6 +11,7 @@ const props = defineProps({
     activeAdjustment: { type: Object, default: null },
     adjustmentBusy: { type: Boolean, default: false },
     adjustmentNotice: { type: String, default: '' },
+    challengeBusy: { type: Boolean, default: false },
 })
 const emit = defineEmits([
     'accept-adjustment',
@@ -19,6 +20,9 @@ const emit = defineEmits([
     'retry-opening-review',
     'abandon-adjustment',
     'retry',
+    'challenge-start',
+    'challenge-dismiss',
+    'challenge-replace',
 ])
 
 const listRef = ref(null)
@@ -67,11 +71,15 @@ watch(
 
             <!-- 智能体消息：左侧头像 + 气泡 -->
             <AgentAssistantBubble v-else :message="message" :active-adjustment="activeAdjustment"
-                :adjustment-busy="adjustmentBusy" @accept-adjustment="(adj) => emit('accept-adjustment', adj)"
+                :adjustment-busy="adjustmentBusy" :challenge-busy="challengeBusy"
+                @accept-adjustment="(adj) => emit('accept-adjustment', adj)"
                 @dismiss-adjustment="(adj) => emit('dismiss-adjustment', adj)"
                 @return-adjustment="() => emit('return-adjustment')"
                 @retry-opening-review="() => emit('retry-opening-review')"
                 @abandon-adjustment="() => emit('abandon-adjustment')"
+                @challenge-start="(offer) => emit('challenge-start', offer)"
+                @challenge-dismiss="(offer) => emit('challenge-dismiss', offer)"
+                @challenge-replace="(offer) => emit('challenge-replace', offer)"
                 @retry="(msg) => emit('retry', msg)" />
         </div>
 

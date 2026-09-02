@@ -250,6 +250,23 @@ def _serialize_hint(h) -> dict[str, Any]:
     }
 
 
+def _require_catalog_definition(
+    session: Session,
+    *,
+    course_id: int,
+    experiment_id: str,
+):
+    """Keep student-private generated challenges behind the TeachingAgent facade."""
+    definition = definition_service.get_definition(
+        session, course_id=course_id, experiment_id=experiment_id,
+    )
+    if definition.visibility != "course_catalog":
+        from app.core.exceptions import reject_resource_not_found
+
+        reject_resource_not_found(f"实验 {experiment_id} 不存在")
+    return definition
+
+
 # ---------------------------------------------------------------------------
 # 实验定义
 # ---------------------------------------------------------------------------
@@ -320,7 +337,7 @@ async def get_definition(
 ):
     """获取实验定义详情（学生视图不返回 draft/archived）。"""
     context = require_course_permission(session, current_user, course_id, "experiment.view")
-    definition = definition_service.get_definition(
+    definition = _require_catalog_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
     if context.role is None or context.role.value == "student":
@@ -344,6 +361,7 @@ async def update_definition(
 ):
     """教师更新实验定义。"""
     require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_catalog_definition(session, course_id=course_id, experiment_id=experiment_id)
     definition = definition_service.update_definition(
         session,
         course_id=course_id,
@@ -377,6 +395,7 @@ async def publish_definition(
             status_code=403,
             detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
         )
+    _require_catalog_definition(session, course_id=course_id, experiment_id=experiment_id)
     definition = definition_service.publish_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -398,6 +417,7 @@ async def archive_definition(
 ):
     """教师归档实验。"""
     require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_catalog_definition(session, course_id=course_id, experiment_id=experiment_id)
     definition = definition_service.archive_definition(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -424,6 +444,7 @@ async def list_versions(
 ):
     """列出实验版本。"""
     context = require_course_permission(session, current_user, course_id, "experiment.view")
+    _require_catalog_definition(session, course_id=course_id, experiment_id=experiment_id)
     versions = version_service.list_versions(
         session, course_id=course_id, experiment_id=experiment_id,
     )
@@ -452,6 +473,7 @@ async def create_version(
 ):
     """教师创建实验版本。"""
     require_course_permission(session, current_user, course_id, "experiment.configure")
+    _require_catalog_definition(session, course_id=course_id, experiment_id=experiment_id)
     user_id = int(current_user["user_id"])
     version = version_service.create_version(
         session,
@@ -490,6 +512,9 @@ async def get_version(
     version = version_service.get_version(
         session, course_id=course_id, version_id=version_id,
     )
+    _require_catalog_definition(
+        session, course_id=course_id, experiment_id=version.experiment_id,
+    )
     # 学生视图：返回隐藏测试条目但不暴露 stdin/expected_stdout；教师视图完整暴露
     reveal_hidden = context.role is not None and context.role.value != "student"
     test_cases = version_service.list_test_cases(
@@ -513,6 +538,9 @@ async def update_version(
     require_course_permission(session, current_user, course_id, "experiment.configure")
     version = version_service.get_version(
         session, course_id=course_id, version_id=version_id,
+    )
+    _require_catalog_definition(
+        session, course_id=course_id, experiment_id=version.experiment_id,
     )
     if version.is_locked:
         from app.core.exceptions import reject_state_conflict
@@ -540,6 +568,12 @@ async def activate_version(
 ):
     """教师激活实验版本。"""
     require_course_permission(session, current_user, course_id, "experiment.configure")
+    candidate = version_service.get_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    _require_catalog_definition(
+        session, course_id=course_id, experiment_id=candidate.experiment_id,
+    )
     version = version_service.activate_version(
         session, course_id=course_id, version_id=version_id,
     )
@@ -562,6 +596,12 @@ async def lock_version(
 ):
     """教师锁定/解锁实验版本。"""
     require_course_permission(session, current_user, course_id, "experiment.configure")
+    candidate = version_service.get_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    _require_catalog_definition(
+        session, course_id=course_id, experiment_id=candidate.experiment_id,
+    )
     version = version_service.lock_version(
         session, course_id=course_id, version_id=version_id, locked=locked,
     )
@@ -670,6 +710,16 @@ async def create_run(
 
     # Formal assessment always goes through the durable task queue.
     from app.services.task_service import TaskCreateRequest, task_service
+
+    attempt = attempt_service.get_attempt(
+        session, course_id=course_id, attempt_id=attempt_id, student_id=user_id,
+    )
+    if attempt.interaction_mode == "guided_practice":
+        from app.core.exceptions import reject_state_conflict
+
+        reject_state_conflict(
+            "Guided-practice runs must use the TeachingAgent coding-challenge facade"
+        )
 
     # 创建 ExperimentRun（不执行沙箱；校验仍在 create_run 内完成）
     run = await run_service.create_run(
@@ -780,6 +830,12 @@ async def preview_reference_solution(
             status_code=403,
             detail={"error_code": "CODING_SANDBOX_DISABLED", "message": "Code sandbox is disabled for this course."},
         )
+    candidate = version_service.get_version(
+        session, course_id=course_id, version_id=version_id,
+    )
+    _require_catalog_definition(
+        session, course_id=course_id, experiment_id=candidate.experiment_id,
+    )
     result = version_service.preview_reference_solution(
         session,
         course_id=course_id,
@@ -1049,7 +1105,7 @@ async def explain_run(
                 "no_sandbox_result", "unavailable", "timeout", "runtime_error",
             } and not result.get("errors"):
                 explanation["summary"] = str(answer)
-                explanation["source"] = "coding-agent"
+                explanation["source"] = "teaching-agent-coding-compat"
                 explanation["agent_status"] = result.get("status", "ok")
     return unified_response(
         code=200,

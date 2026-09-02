@@ -16,6 +16,7 @@ from app.platform.agents.composition import build_teaching_runtime
 from app.platform.agents.runtime import TeachingAgentRuntime
 from app.platform.agents.tools.kg_mest_shadow import KGMetShadowReportStudentModelingPort
 from app.platform.agents.tools.fakes import (
+    FakeDisciplineKnowledge,
     FakeEvents,
     FakeGraph,
     FakeLLM,
@@ -35,12 +36,13 @@ _SPEC.loader.exec_module(_MODULE)
 router = _MODULE.router
 
 
-def build_runtime(*, learner=None, weak=None, retrieval=None, scope=None, llm=None):
+def build_runtime(*, learner=None, weak=None, retrieval=None, scope=None, llm=None, discipline=None):
     events = FakeEvents()
     tools = TeachingTools(
         scope=scope or FakeScope(), knowledge_graph=FakeGraph(), retrieval=retrieval or FakeRetrieval(),
         student_modeling=learner or FakeStudentModeling(), recommendation=FakeRecommendation(),
         sandbox=FakeSandbox(), learning_events=events, llm=llm or FakeLLM(),
+        discipline_knowledge=discipline,
     )
     return TeachingAgentRuntime(tools), events
 
@@ -107,6 +109,51 @@ def test_retrieval_failure_degrades_without_unsupported_citation():
     assert "retrieval" in state["degraded_services"]
     assert state["citations"] == []
     assert "NO_COURSE_EVIDENCE_AVAILABLE" in state["warnings"]
+
+
+def test_discipline_references_fill_state_without_polluting_citation_closure():
+    runtime, _ = build_runtime(discipline=FakeDisciplineKnowledge())
+    state = run(runtime)
+    refs = state["discipline_kb_results"]
+    assert len(refs) == 1
+    assert refs[0]["node_id"] == "ds-007"
+    assert refs[0]["is_supplementary"] is True
+    assert refs[0]["retrieval_source"] == "discipline_kb"
+    # 引用闭包不受学科参考影响：citations 仍只含课程证据，无 evidence_id 泄漏。
+    assert state["citations"] == [{"evidence_id": "ev-1", "resource_id": "ppt-1", "page_start": 12, "page_end": 13}]
+    assert "evidence_id" not in refs[0]
+    assert any(step.get("tool") == "retrieve_discipline_knowledge" or step.get("node") == "retrieve_discipline_knowledge" for step in state.get("trace", []))
+
+
+def test_discipline_knowledge_failure_never_degrades_teaching_flow():
+    class BrokenDiscipline:
+        async def search_discipline_knowledge(self, **_): raise RuntimeError("kb offline")
+
+    runtime, _ = build_runtime(discipline=BrokenDiscipline())
+    state = run(runtime)
+    # 补充参考通道失败：静默降级为空，问答与引用完全不受影响。
+    assert state["discipline_kb_results"] == []
+    assert state["citations"] == [{"evidence_id": "ev-1", "resource_id": "ppt-1", "page_start": 12, "page_end": 13}]
+    assert state.get("final_answer")
+    assert "discipline_knowledge" not in state.get("degraded_services", [])
+
+
+def test_discipline_knowledge_governance_disabled_skips_tool():
+    from app.platform.agents.edu.workflow import build_teaching_workflow
+    tools = TeachingTools(
+        scope=FakeScope(), knowledge_graph=FakeGraph(), retrieval=FakeRetrieval(),
+        student_modeling=FakeStudentModeling(), recommendation=FakeRecommendation(),
+        sandbox=FakeSandbox(), learning_events=FakeEvents(), llm=FakeLLM(),
+        discipline_knowledge=FakeDisciplineKnowledge(),
+    )
+    import asyncio
+    state = {"trace_id": "t-1", "student_id": "s-1", "course_id": "c-1", "user_message": "二叉树",
+             "constraint_envelope": {"parameters": {}, "scopes": [], "disabled_tools": ["discipline_knowledge"]},
+             "warnings": [], "trace": [], "governance_skipped_tools": []}
+    graph = build_teaching_workflow(tools)
+    result = asyncio.run(graph.nodes["retrieve_discipline_knowledge"].ainvoke(state))
+    assert result["discipline_kb_results"] == []
+    assert "discipline_knowledge" in result["governance_skipped_tools"]
 
 
 def test_scope_rejection_is_whole_workflow_rejection():

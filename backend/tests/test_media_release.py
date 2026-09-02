@@ -501,6 +501,69 @@ class TestMediaReleaseLifecycle:
         )
         assert resp.json()["data"]["release_id"] == r2["release_id"]
 
+    def test_audio_only_release_can_activate_without_ppt_manifest(
+        self, client, session, teacher_user,
+    ):
+        """纯音频课程：无 PPT/PDF 源文件时激活不要求 PPT manifest（P2）。
+
+        前端必须据此在无源文件课程上放行激活，不再被"可选但建议完成"的
+        PPT manifest 步骤卡死。
+        """
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        token = _token(teacher_user)
+        release = _create_release_via_api(
+            client, token, course.id,
+            label="纯音频", audio_object_key="tts/course_1/full.mp3",
+        )
+        # 列表与详情都要向建设页暴露 ppt_source_available=False
+        listed = client.get(
+            f"{MEDIA}/course/{course.id}/releases", headers=_auth(token),
+        ).json()["data"]
+        assert listed["items"][0]["ppt_source_available"] is False
+        detail = client.get(
+            f"{MEDIA}/course/{course.id}/releases/{release['release_id']}",
+            headers=_auth(token),
+        ).json()["data"]
+        assert detail["ppt_source_available"] is False
+        # 未绑定 PPT manifest 也能激活（服务端对纯音频放行）
+        resp = client.post(
+            f"{MEDIA}/course/{course.id}/releases/{release['release_id']}/activate",
+            headers=_auth(token),
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["data"]["status"] == "active"
+        assert resp.json()["data"]["ppt_source_available"] is False
+
+    def test_ppt_source_course_activation_requires_manifest(
+        self, client, session, teacher_user,
+    ):
+        """含 PPT/PDF 源文件的课程：未绑定 manifest 时激活必须被拒绝（P2 契约）。"""
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        # 仅声明源文件元数据即可让 has_ppt_manifest_source 判定存在源文件
+        course.source_file_path = "teacher-decks/lesson.pptx"
+        course.source_file_name = "lesson.pptx"
+        session.add(course)
+        session.commit()
+        token = _token(teacher_user)
+        release = _create_release_via_api(
+            client, token, course.id,
+            label="含PPT", audio_object_key="tts/course_1/full.mp3",
+        )
+        detail = client.get(
+            f"{MEDIA}/course/{course.id}/releases/{release['release_id']}",
+            headers=_auth(token),
+        ).json()["data"]
+        assert detail["ppt_source_available"] is True
+        resp = client.post(
+            f"{MEDIA}/course/{course.id}/releases/{release['release_id']}/activate",
+            headers=_auth(token),
+        )
+        assert resp.status_code == 409, resp.text
+        data = resp.json()["data"] or {}
+        assert (data.get("details") or {}).get("error_code") == "PPT_MANIFEST_PENDING"
+
     def test_rollback_to_superseded_release(self, client, session, teacher_user):
         course = _course(session, teacher_user.id)
         _enable_media_capabilities(session, course.id)
@@ -617,6 +680,77 @@ class TestMediaReleaseLifecycle:
         second = client.post(endpoint, json={"tts_job_id": source["job_id"]}, headers=_auth(token))
         assert second.json()["data"]["job_id"] == body["data"]["job_id"]
         assert len(submitted) == 1
+
+    def test_failed_cue_worker_can_be_resubmitted_with_same_key(
+        self, client, session, teacher_user, monkeypatch,
+    ):
+        """Cue Worker 失败后，同键重提应原地 requeue，而不是 409 死结（P1）。"""
+        from app.core.time_utils import utcnow_aware
+        from app.models.task_model import TaskRecord
+        from app.platform.tasks.worker import local_task_worker
+
+        course = _course(session, teacher_user.id)
+        _enable_media_capabilities(session, course.id)
+        token = _token(teacher_user)
+        source = client.post(
+            f"{MEDIA}/course/{course.id}/generation-jobs",
+            json={
+                "job_type": "tts",
+                "node_id": 1,
+                "input_payload": {"script_text": "cue retry fixture"},
+                "idempotency_key": "cue-retry-source",
+            },
+            headers=_auth(token),
+        ).json()["data"]
+        _execute_tts_job_via_api(
+            client, token, course.id, source["job_id"], script_text="Cue retry 讲解。",
+        )
+        release = _create_release_via_api(client, token, course.id, label="Cue Retry")
+
+        submitted: list[str] = []
+
+        def capture_submit(_session_factory, task_id, _payload):
+            submitted.append(task_id)
+            return None
+
+        monkeypatch.setattr(local_task_worker, "submit", capture_submit)
+        endpoint = f"{MEDIA}/course/{course.id}/releases/{release['release_id']}/avatar-cues"
+        first = client.post(endpoint, json={"tts_job_id": source["job_id"]}, headers=_auth(token)).json()
+        assert first["code"] == 202
+        job_id = first["data"]["job_id"]
+        job = session.exec(
+            select(MediaGenerationJob).where(MediaGenerationJob.job_id == job_id)
+        ).first()
+        assert job is not None and job.task_id
+        task_id = job.task_id
+
+        # 模拟 Cue Worker 确定性失败（非 retryable）
+        now = utcnow_aware()
+        job.status = MediaGenerationStatus.FAILED
+        job.error_code = "TTS_AUDIO_UNAVAILABLE"
+        job.error_message_safe = "TTS 音频对象不存在，无法冻结时间轴"
+        job.finished_at = now
+        job.updated_at = now
+        session.add(job)
+        record = session.exec(select(TaskRecord).where(TaskRecord.task_id == task_id)).first()
+        if record is not None:
+            record.status = "failed"
+            record.error_code = "TTS_AUDIO_UNAVAILABLE"
+            record.error_message = "TTS 音频对象不存在，无法冻结时间轴"
+            record.retryable = False
+            record.finished_at = now
+            session.add(record)
+        session.commit()
+
+        # 同键重提应允许 requeue 同一任务记录（首提 + 重提各一次）
+        retry = client.post(endpoint, json={"tts_job_id": source["job_id"]}, headers=_auth(token))
+        assert retry.status_code == 200, retry.text
+        body = retry.json()
+        assert body["code"] == 202
+        assert body["data"]["job_id"] == job_id
+        assert body["data"]["status"] == "pending"
+        assert body["data"]["async"] is True
+        assert submitted == [task_id, task_id]
 
     def test_student_can_read_releases_but_not_create(self, client, session, teacher_user, student_user):
         course = _course(session, teacher_user.id)

@@ -26,6 +26,19 @@ class FakeRetrieval:
 
 
 @dataclass
+class FakeDisciplineKnowledge:
+    """R14 fake：学科参考端口。产出与真实 Port 相同的 is_supplementary 契约。"""
+    references: list[dict[str, Any]] = field(default_factory=lambda: [{
+        "node_id": "ds-007", "name": "二叉树", "course": "数据结构与算法",
+        "node_type": "concept", "definition": "二叉树是每个节点至多有两个子树的有序树。",
+        "key_points": ["前序/中序/后序/层序遍历"], "example": "",
+        "source_title": "数据结构（C语言版）", "source_authors": "严蔚敏、吴伟民",
+        "source_chapter": "第 5 章", "retrieval_source": "discipline_kb", "is_supplementary": True,
+    }])
+    async def search_discipline_knowledge(self, **_: Any) -> list[Mapping[str, Any]]: return self.references
+
+
+@dataclass
 class FakeStudentModeling:
     state: dict[str, Any] = field(default_factory=lambda: {"mastery_score": 0.6, "confidence": 0.8, "repeated_error_risk": 0.1, "hint_dependency": 0.1, "transfer_score": 0.6})
     weak: list[dict[str, Any]] = field(default_factory=list)

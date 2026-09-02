@@ -24,4 +24,15 @@ class CourseRetrievalPort(Protocol):
     async def retrieve_course_evidence(self, *, course_id: str, message: str, concept_id: str | None, resource_id: str | None) -> list[Mapping[str, Any]]: ...
 
 
-__all__ = ["ScopePort", "KnowledgeGraphPort", "CourseRetrievalPort"]
+class DisciplineKnowledgePort(Protocol):
+    """Supplementary CS discipline references (authoritative textbook summaries).
+
+    Results are marked ``is_supplementary`` and carry no ``evidence_id``: they
+    ground the teaching answer but never become formal course citations,
+    mastery input, or graph edges (AGENTS.md §4.1.5).
+    """
+
+    async def search_discipline_knowledge(self, *, course_id: str, message: str, concept_id: str | None, top_k: int = 3) -> list[Mapping[str, Any]]: ...
+
+
+__all__ = ["ScopePort", "KnowledgeGraphPort", "CourseRetrievalPort", "DisciplineKnowledgePort"]

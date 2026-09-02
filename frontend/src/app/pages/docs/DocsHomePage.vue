@@ -3,52 +3,17 @@
  * Docs Home — 顶层公开文档中心（不挂 AppShell，无需登录）。
  *
  * - 文档文件放在 frontend/public/static/docs/（构建后进 dist，nginx 直接静态服务）。
- * - 项目文档区卡片点击走 /docs/view 阅读器。
  * - 用户手册与关于区块的文章为 Markdown 文档（/docs/view 支持 md 渲染）；
  *   资源等尚无正文的条目先以"整理中"占位，不伪造内容。
  */
-import { BookOpenCheck, Clock3, Download, ExternalLink, FileText, FileType2, Layers, Microscope, Zap } from 'lucide-vue-next'
-import { useRouter } from 'vue-router'
-import SfxButton from '@/app/ui/SfxButton.vue'
+import { BookOpenCheck, Clock3, ExternalLink, FileText, FileType2, Layers, Microscope, Zap } from 'lucide-vue-next'
 import { PRIVACY_SECTIONS, TERMS_SECTIONS } from './legal-content.js'
 
-const router = useRouter()
-
 const GITHUB_URL = 'https://github.com/Ouroboros-ga/ai-course-system'
-
-// 静态文件位于 /static/docs/<file>（与 /docs 路由分目录，避免 nginx 目录索引冲突）
-function fileHref(file) {
-  return `/static/docs/${file.split('/').map(encodeURIComponent).join('/')}`
-}
-
-function openReader(file, name) {
-  router.push({ path: '/docs/view', query: { file, name } })
-}
 
 function viewHref(file, name) {
   return `/docs/view?file=${encodeURIComponent(file)}&name=${encodeURIComponent(name)}`
 }
-
-function download(file) {
-  const a = document.createElement('a')
-  a.href = fileHref(file)
-  a.download = ''
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-}
-
-const PROJECT_DOCS = [
-  {
-    name: 'T2606981 项目详细方案',
-    file: 'project/T2606981-项目详细方案.pdf',
-    format: 'PDF',
-    size: '5.2 MB',
-    updated: '2026-08',
-    desc: 'SmartCarb 项目详细方案：产品设计、技术架构、实施计划与评审材料。',
-    featured: true,
-  },
-]
 
 const MANUAL_DOCS = [
   { name: '快速入门指南', desc: '从注册到完成第一门课程的关键路径', file: 'manual/快速入门指南.md' },
@@ -69,7 +34,7 @@ const RESOURCE_DOCS = [
 ]
 
 const ABOUT_DOCS = [
-  { name: '产品介绍', desc: 'SmartCarb 产品定位与能力概览', file: 'about/产品介绍.md' },
+  { name: '产品介绍', desc: 'CodeNexus智码交响 产品定位与能力概览', file: 'about/产品介绍.md' },
   { name: '联系我们', desc: '问题反馈与联系渠道（GitHub Issues）', file: 'about/联系我们.md' },
   { name: '隐私政策', desc: '数据收集、使用与保护说明', hash: '#privacy' },
   { name: '服务条款', desc: '平台使用条款与约定', hash: '#terms' },
@@ -84,7 +49,7 @@ const ABOUT_DOCS = [
           <span class="docs-brand__mark" aria-hidden="true">
             <BookOpenCheck :size="20" />
           </span>
-          <span class="docs-brand__name">SmartCarb</span>
+          <span class="docs-brand__name">CodeNexus智码交响</span>
           <span class="docs-brand__divider" aria-hidden="true">/</span>
           <span class="docs-brand__page">文档中心</span>
         </router-link>
@@ -101,39 +66,7 @@ const ABOUT_DOCS = [
       <div class="docs-container">
         <section class="docs-hero">
           <h1 class="docs-hero__title">文档中心</h1>
-          <p class="docs-hero__sub">产品手册 · 项目文档 · 更新日志，一站式可查</p>
-        </section>
-
-        <section class="docs-section" aria-labelledby="docs-section-project">
-          <div class="docs-section__head">
-            <h2 id="docs-section-project" class="docs-section__title">项目文档</h2>
-          </div>
-          <div class="docs-grid">
-            <article
-              v-for="doc in PROJECT_DOCS"
-              :key="doc.file"
-              class="doc-card"
-              :class="{ 'is-featured': doc.featured }"
-            >
-              <div class="doc-card__head">
-                <span class="doc-badge" :class="doc.format === 'PDF' ? 'is-pdf' : 'is-docx'">
-                  {{ doc.format }}
-                </span>
-                <span class="doc-card__meta">{{ doc.size }} · {{ doc.updated }}</span>
-              </div>
-              <h3 class="doc-card__name">{{ doc.name }}</h3>
-              <p class="doc-card__desc">{{ doc.desc }}</p>
-              <div class="doc-card__actions">
-                <SfxButton variant="primary" size="sm" @click="openReader(doc.file, doc.name)">
-                  在线阅读
-                </SfxButton>
-                <SfxButton variant="secondary" size="sm" @click="download(doc.file)">
-                  <template #icon><Download :size="14" /></template>
-                  下载
-                </SfxButton>
-              </div>
-            </article>
-          </div>
+          <p class="docs-hero__sub">产品手册 · 研究报告 · 更新日志，一站式可查</p>
         </section>
 
         <section class="docs-section" aria-labelledby="docs-section-manual">
@@ -199,7 +132,7 @@ const ABOUT_DOCS = [
         <!-- ── 隐私政策 / 服务条款全文（登录注册页与本页锚点跳转目标） ── -->
         <section id="privacy" class="legal-section" aria-labelledby="legal-privacy-title">
           <h2 id="legal-privacy-title" class="legal-title">隐私政策</h2>
-          <p class="legal-meta">生效日期：2026 年 8 月 20 日 · 主体：SmartCarb 团队</p>
+          <p class="legal-meta">生效日期：2026 年 8 月 20 日 · 主体：CodeNexus智码交响团队</p>
           <div v-for="sec in PRIVACY_SECTIONS" :key="sec.title" class="legal-block">
             <h3 class="legal-block__title">{{ sec.title }}</h3>
             <p v-for="(para, i) in sec.paragraphs" :key="i" class="legal-block__para">{{ para }}</p>
@@ -208,7 +141,7 @@ const ABOUT_DOCS = [
 
         <section id="terms" class="legal-section" aria-labelledby="legal-terms-title">
           <h2 id="legal-terms-title" class="legal-title">服务条款</h2>
-          <p class="legal-meta">生效日期：2026 年 8 月 20 日 · 主体：SmartCarb 团队</p>
+          <p class="legal-meta">生效日期：2026 年 8 月 20 日 · 主体：CodeNexus智码交响团队</p>
           <div v-for="sec in TERMS_SECTIONS" :key="sec.title" class="legal-block">
             <h3 class="legal-block__title">{{ sec.title }}</h3>
             <p v-for="(para, i) in sec.paragraphs" :key="i" class="legal-block__para">{{ para }}</p>
@@ -219,7 +152,7 @@ const ABOUT_DOCS = [
 
     <footer class="docs-footer">
       <div class="docs-container docs-footer__inner">
-        <span>© {{ new Date().getFullYear() }} SmartCarb · 让课程回应学习</span>
+        <span>© {{ new Date().getFullYear() }} CodeNexus智码交响 · 让课程回应学习</span>
         <a class="docs-footer__link" :href="GITHUB_URL" target="_blank" rel="noopener">
           GitHub 开源项目
         </a>
@@ -367,84 +300,6 @@ const ABOUT_DOCS = [
   line-height: var(--title-2-line);
   font-weight: var(--title-2-weight);
   color: var(--ink-900);
-}
-
-/* ── 项目文档卡片 ── */
-.docs-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: var(--space-4);
-}
-
-.doc-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-6);
-  background: var(--surface-panel);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-lg);
-  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
-}
-
-.doc-card:hover {
-  border-color: var(--border-strong);
-  box-shadow: var(--shadow-xs);
-}
-
-.doc-card.is-featured {
-  border-color: var(--color-focus);
-}
-
-.doc-card__head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-}
-
-.doc-card__meta {
-  margin-left: auto;
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-}
-
-.doc-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 2px var(--space-2);
-  border-radius: var(--radius-sm);
-  font-size: var(--caption-size);
-  font-weight: var(--caption-weight);
-}
-
-.doc-badge.is-pdf {
-  background: var(--red-100);
-  color: var(--red-700);
-}
-
-.doc-badge.is-docx {
-  background: var(--ink-100);
-  color: var(--ink-700);
-}
-
-.doc-card__name {
-  font-size: var(--title-3-size);
-  line-height: var(--title-3-line);
-  font-weight: var(--title-3-weight);
-  color: var(--text-primary);
-}
-
-.doc-card__desc {
-  font-size: var(--ui-md-size);
-  line-height: var(--ui-md-line);
-  color: var(--text-secondary);
-}
-
-.doc-card__actions {
-  margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
 }
 
 /* ── 普通文档行（整理中占位） ── */
@@ -610,10 +465,6 @@ const ABOUT_DOCS = [
     flex-direction: column;
     align-items: flex-start;
     gap: var(--space-1);
-  }
-
-  .docs-grid {
-    grid-template-columns: 1fr;
   }
 
   .docs-footer__inner {

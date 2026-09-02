@@ -1,0 +1,160 @@
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "软件工程",
+  "description": "计算机学科垂类知识库——软件工程基础概念（挑战杯 XH-202620）。节点 id 全局唯一（se- 前缀），relations.json 通过 id 跨文件引用。",
+  "nodes": [
+    {
+      "id": "se-001",
+      "name": "软件生命周期与过程模型",
+      "node_type": "concept",
+      "definition": "软件生命周期指软件从概念提出到退役的全过程；常见过程模型有瀑布模型、迭代模型、螺旋模型与敏捷模型。",
+      "key_points": [
+        "瀑布模型：需求→设计→编码→测试→维护，阶段顺序、文档驱动",
+        "迭代/增量：分批交付，风险早暴露",
+        "敏捷：以人为核心、可工作软件优先、响应变化（Scrum/Kanban）"
+      ],
+      "example": "大型航天系统用瀑布/螺旋模型保证严谨；互联网产品普遍采用敏捷迭代",
+      "source": {
+        "title": "软件工程导论（第 6 版）",
+        "authors": "张海藩、牟永敏",
+        "chapter": "第 2 章 软件过程"
+      }
+    },
+    {
+      "id": "se-002",
+      "name": "需求工程",
+      "node_type": "concept",
+      "definition": "需求工程通过获取、分析、规格说明与验证把用户期望转化为明确的软件需求；需求分为功能需求与非功能需求。",
+      "key_points": [
+        "获取技术：访谈、问卷、原型、用例分析",
+        "需求规格：用例图、用户故事、SRS 文档",
+        "需求可验证性与优先级（MoSCoW）"
+      ],
+      "example": "用户故事：作为学生，我希望查看成绩，以便了解掌握程度",
+      "source": {
+        "title": "Software Engineering（第 10 版）",
+        "authors": "Ian Sommerville",
+        "chapter": "第 4 章 Requirements Engineering"
+      }
+    },
+    {
+      "id": "se-003",
+      "name": "软件设计",
+      "node_type": "concept",
+      "definition": "软件设计把需求转化为可实现的架构与详细设计，核心原则为高内聚低耦合、模块化与关注点分离；设计模式是常见问题的可复用方案。",
+      "key_points": [
+        "架构模式：分层、微服务、事件驱动",
+        "SOLID 原则：单一职责、开闭、里氏替换、接口隔离、依赖倒置",
+        "设计模式：创建型（工厂/单例）、结构型（适配器/装饰器）、行为型（策略/观察者）"
+      ],
+      "example": "策略模式让排序算法可替换：客户端依赖策略接口而非具体算法",
+      "source": {
+        "title": "Design Patterns: Elements of Reusable Object-Oriented Software",
+        "authors": "Erich Gamma 等",
+        "chapter": "第 1 章 Introduction"
+      }
+    },
+    {
+      "id": "se-004",
+      "name": "软件测试",
+      "node_type": "concept",
+      "definition": "软件测试通过执行程序发现缺陷，验证其满足需求；按阶段分单元/集成/系统/验收测试，按方法分黑盒与白盒测试。",
+      "key_points": [
+        "黑盒：等价类划分、边界值分析、判定表",
+        "白盒：语句/分支/路径覆盖",
+        "测试金字塔：大量单元测试、适量集成测试、少量端到端测试"
+      ],
+      "example": "边界值：对输入 0..100 的分数校验，测试 -1、0、100、101",
+      "source": {
+        "title": "软件工程导论（第 6 版）",
+        "authors": "张海藩、牟永敏",
+        "chapter": "第 6 章 软件测试"
+      }
+    },
+    {
+      "id": "se-005",
+      "name": "软件维护与演化",
+      "node_type": "concept",
+      "definition": "软件维护分为纠错性、适应性、完善性与预防性维护；维护成本常占生命周期总成本的大部分，可维护性由可读性、模块化与文档决定。",
+      "key_points": [
+        "重构：在不改变外部行为的前提下改善内部结构",
+        "技术债：为快速交付引入的短期代价需有计划偿还",
+        "反向工程与再工程支撑遗留系统演化"
+      ],
+      "example": "对 3000 行单一函数做“提取方法”重构，降低圈复杂度",
+      "source": {
+        "title": "Refactoring: Improving the Design of Existing Code（第 2 版）",
+        "authors": "Martin Fowler",
+        "chapter": "第 1 章 Refactoring, a First Example"
+      }
+    },
+    {
+      "id": "se-006",
+      "name": "软件项目管理",
+      "node_type": "concept",
+      "definition": "软件项目管理覆盖范围、时间、成本、质量与风险五大约束；关键活动包括估算、计划、进度跟踪与风险管理。",
+      "key_points": [
+        "规模估算：代码行、功能点、故事点",
+        "进度工具：甘特图、关键路径法、燃尽图",
+        "风险应对：规避、转移、减轻、接受"
+      ],
+      "example": "Scrum 燃尽图跟踪每个 Sprint 的剩余工作量",
+      "source": {
+        "title": "软件工程导论（第 6 版）",
+        "authors": "张海藩、牟永敏",
+        "chapter": "第 7 章 软件项目管理"
+      }
+    },
+    {
+      "id": "se-007",
+      "name": "敏捷开发与 DevOps",
+      "node_type": "concept",
+      "definition": "敏捷开发以短迭代与持续反馈为核心；DevOps 通过持续集成/持续交付（CI/CD）与自动化把开发、测试与运维衔接起来。",
+      "key_points": [
+        "Scrum 角色与仪式：Product Owner、Sprint、评审/回顾",
+        "CI：频繁集成并自动构建测试；CD：自动化部署",
+        "基础设施即代码、监控与可观测性"
+      ],
+      "example": "代码合并触发流水线：静态检查→单元测试→构建→部署到预发环境",
+      "source": {
+        "title": "Continuous Delivery",
+        "authors": "Jez Humble、David Farley",
+        "chapter": "第 1 章 The Problem of Delivering Software"
+      }
+    },
+    {
+      "id": "se-008",
+      "name": "软件质量与度量",
+      "node_type": "concept",
+      "definition": "软件质量指软件满足需求与隐含期望的程度，通过质量模型（ISO/IEC 25010）与度量指标（缺陷密度、圈复杂度、覆盖率）量化。",
+      "key_points": [
+        "质量属性：功能、性能、可用性、安全性、可维护性、可移植性",
+        "圈复杂度衡量控制流复杂程度，指导测试设计",
+        "代码审查与静态分析前置质量门"
+      ],
+      "example": "圈复杂度 > 10 的函数建议拆分并补充分支覆盖测试",
+      "source": {
+        "title": "Software Engineering（第 10 版）",
+        "authors": "Ian Sommerville",
+        "chapter": "第 24 章 Quality Management"
+      }
+    },
+    {
+      "id": "se-009",
+      "name": "软件配置管理",
+      "node_type": "concept",
+      "definition": "配置管理（SCM）标识并控制软件制品（代码、文档、配置）的版本与变更，保证可追溯与可复现；核心工具为 Git 等版本控制系统。",
+      "key_points": [
+        "基线（baseline）冻结发布版本，变更经评审",
+        "分支策略：主干开发 / Git Flow / 特性分支",
+        "制品仓库与构建号、版本语义化（SemVer）"
+      ],
+      "example": "发布 v1.2.0 基线后，线上缺陷在 release 分支修复并打补丁版本",
+      "source": {
+        "title": "Pro Git（第 2 版）",
+        "authors": "Scott Chacon、Ben Straub",
+        "chapter": "第 3 章 Git Branching"
+      }
+    }
+  ]
+}

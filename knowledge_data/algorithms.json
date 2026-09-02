@@ -1,1 +1,280 @@
-[]
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "数据结构与算法",
+  "description": "计算机学科垂类知识库——算法基础概念（挑战杯 XH-202620）。节点 id 全局唯一，relations.json 通过 id 引用。",
+  "nodes": [
+    {
+      "id": "algo-001",
+      "name": "时间复杂度分析",
+      "node_type": "method",
+      "definition": "时间复杂度以输入规模 n 为变量，描述算法运行时间的渐近增长阶，常用记号 O/Ω/Θ 表达，忽略常数因子与低阶项。",
+      "key_points": [
+        "常见阶：O(1) < O(log n) < O(n) < O(n log n) < O(n²) < O(2ⁿ)",
+        "只保留最高阶项、忽略常数系数",
+        "平均/最坏/最好情况要分别说明（如快排最坏 O(n²)、平均 O(n log n)）"
+      ],
+      "example": "双重循环遍历 n×n 矩阵 → O(n²)",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 3 章 函数的增长"
+      },
+      "aliases": [
+        "time complexity",
+        "big O"
+      ]
+    },
+    {
+      "id": "algo-002",
+      "name": "分治策略",
+      "node_type": "method",
+      "definition": "分治法将原问题分解为若干规模更小、结构相同的子问题，递归求解后合并子问题的解得到原问题解。",
+      "key_points": [
+        "三个步骤：分解、解决、合并",
+        "主定理（Master Theorem）求解形如 T(n)=aT(n/b)+f(n) 的递推式",
+        "典型应用：归并排序、快速排序、最大子数组"
+      ],
+      "example": "归并排序 T(n)=2T(n/2)+O(n) → O(n log n)",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 4 章 分治策略"
+      },
+      "aliases": [
+        "divide and conquer"
+      ]
+    },
+    {
+      "id": "algo-003",
+      "name": "动态规划",
+      "node_type": "method",
+      "definition": "动态规划通过把问题分解为重叠子问题并保存子问题解（记忆化或自底向上填表），避免重复计算，适用于具有最优子结构与重叠子问题性质的问题。",
+      "key_points": [
+        "两大性质：最优子结构、重叠子问题",
+        "状态定义 + 状态转移方程 + 边界条件是解题核心",
+        "典型问题：0-1 背包、最长公共子序列（LCS）、最长递增子序列（LIS）"
+      ],
+      "example": "0-1 背包：dp[i][w]=max(dp[i-1][w], dp[i-1][w-wi]+vi)",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 15 章 动态规划"
+      },
+      "aliases": [
+        "dynamic programming",
+        "DP"
+      ]
+    },
+    {
+      "id": "algo-004",
+      "name": "贪心算法",
+      "node_type": "method",
+      "definition": "贪心算法在每一步都做出当前看起来最优的选择，期望得到全局最优；仅在问题满足贪心选择性质与最优子结构时成立。",
+      "key_points": [
+        "需证明贪心选择性质与最优子结构，不能盲目套用",
+        "典型问题：活动选择、哈夫曼编码、Dijkstra 最短路径",
+        "与动态规划的区别：贪心不回溯、不做全局枚举"
+      ],
+      "example": "活动选择：按结束时间排序，每次选最早结束且兼容的活动",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 16 章 贪心算法"
+      },
+      "aliases": [
+        "greedy algorithm"
+      ]
+    },
+    {
+      "id": "algo-005",
+      "name": "回溯法",
+      "node_type": "method",
+      "definition": "回溯法通过深度优先搜索解空间树，在路径不可能到达合法解时剪枝回退（backtrack），用于求解约束满足与组合优化问题。",
+      "key_points": [
+        "解空间树：子集树、排列树",
+        "剪枝函数（约束 + 限界）决定效率",
+        "典型问题：八皇后、0-1 背包（分支限界）、全排列、数独"
+      ],
+      "example": "八皇后：逐行放置皇后，冲突则回溯上一行换列",
+      "source": {
+        "title": "计算机算法设计与分析（第 5 版）",
+        "authors": "王晓东",
+        "chapter": "第 5 章 回溯法"
+      },
+      "aliases": [
+        "backtracking"
+      ]
+    },
+    {
+      "id": "algo-006",
+      "name": "二分查找",
+      "node_type": "method",
+      "definition": "二分查找在有序序列中每次比较中间元素，将搜索区间缩小一半，时间复杂度 O(log n)。",
+      "key_points": [
+        "前提：序列有序（升序/降序）",
+        "循环不变量保证边界正确；注意 mid 取值防溢出：mid = left + (right-left)//2",
+        "可扩展到查找第一个/最后一个满足条件的元素（lower_bound/upper_bound）"
+      ],
+      "example": "在 [1,3,5,7,9] 中查找 7：三次比较即命中",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 2 章 算法基础（2.3-5 节）"
+      },
+      "aliases": [
+        "binary search"
+      ]
+    },
+    {
+      "id": "algo-007",
+      "name": "快速排序",
+      "node_type": "method",
+      "definition": "快速排序选取基准（pivot），将序列划分为小于基准与大于基准两部分后递归排序，平均 O(n log n)、最坏 O(n²)。",
+      "key_points": [
+        "分区（partition）是核心：Lomuto / Hoare 两种划分",
+        "最坏情况：输入已有序且基准选首元素 → O(n²)",
+        "不稳定排序；实际中常用三数取中、随机基准优化"
+      ],
+      "example": "对 [3,1,4,1,5] 以 3 为基准一次分区 → [1,1] 3 [4,5]",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 7 章 快速排序"
+      },
+      "aliases": [
+        "quick sort",
+        "quicksort"
+      ]
+    },
+    {
+      "id": "algo-008",
+      "name": "归并排序",
+      "node_type": "method",
+      "definition": "归并排序采用分治策略：把序列对半分割、递归排序、再线性合并两个有序子序列，时间稳定 O(n log n)、空间 O(n)。",
+      "key_points": [
+        "稳定排序",
+        "合并过程需要 O(n) 辅助空间",
+        "适合链表排序（无需随机访问）"
+      ],
+      "example": "[3,1,4,2] → 分割 [3,1]|[4,2] → 合并 [1,3]|[2,4] → [1,2,3,4]",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 2 章 算法基础（2.3 节）"
+      },
+      "aliases": [
+        "merge sort"
+      ]
+    },
+    {
+      "id": "algo-009",
+      "name": "堆排序",
+      "node_type": "method",
+      "definition": "堆排序利用最大堆性质反复取出堆顶最大值并与末尾交换，时间 O(n log n)、原地空间 O(1)。",
+      "key_points": [
+        "建堆 O(n)，每次提取堆顶 O(log n)，共 n 次",
+        "不稳定排序",
+        "父节点与孩子节点下标关系决定数组实现"
+      ],
+      "example": "对 [4,10,3,5,1] 建最大堆后逐次取出堆顶",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 6 章 堆排序"
+      },
+      "aliases": [
+        "heap sort"
+      ]
+    },
+    {
+      "id": "algo-010",
+      "name": "图遍历（BFS/DFS）",
+      "node_type": "method",
+      "definition": "广度优先搜索（BFS）借助队列逐层访问顶点，可求无权图最短路径；深度优先搜索（DFS）借助栈/递归深入访问，可判断连通性与拓扑序。",
+      "key_points": [
+        "两者时间复杂度均为 O(V+E)（邻接表存储）",
+        "BFS 用队列、按层展开；DFS 用栈/递归、回溯",
+        "DFS 时间戳（发现/完成）用于拓扑排序与强连通分量（Tarjan）"
+      ],
+      "example": "BFS 求无权图从 s 到 t 的最短路径",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 22 章 基本的图算法"
+      },
+      "aliases": [
+        "BFS",
+        "DFS",
+        "breadth first search",
+        "depth first search"
+      ]
+    },
+    {
+      "id": "algo-011",
+      "name": "最短路径（Dijkstra/Bellman-Ford）",
+      "node_type": "method",
+      "definition": "Dijkstra 算法在非负权图中贪心求单源最短路径，O((V+E)log V)（二叉堆）；Bellman-Ford 算法可处理负权边并检测负权回路，O(VE)。",
+      "key_points": [
+        "Dijkstra 要求边权非负，用优先队列（最小堆）取当前最近顶点",
+        "Bellman-Ford 松弛 V-1 轮，第 V 轮仍可松弛则存在负权回路",
+        "Floyd-Warshall 求所有点对最短路径 O(V³)"
+      ],
+      "example": "城市路网（非负权）求两城最短驾车距离 → Dijkstra",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 24 章 单源最短路径"
+      },
+      "aliases": [
+        "shortest path",
+        "Dijkstra",
+        "Bellman-Ford"
+      ]
+    },
+    {
+      "id": "algo-012",
+      "name": "最小生成树（Prim/Kruskal）",
+      "node_type": "method",
+      "definition": "最小生成树（MST）是连通无向图权值之和最小的生成树；Kruskal 按边权升序加边（并查集判环），Prim 从顶点出发贪心扩展。",
+      "key_points": [
+        "Kruskal：O(E log E)，依赖排序与并查集",
+        "Prim：O((V+E)log V)（二叉堆），适合稠密图",
+        "割性质（cut property）是 MST 贪心正确性基础"
+      ],
+      "example": "布线/管网建设求总成本最小的连通方案 → MST",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 23 章 最小生成树"
+      },
+      "aliases": [
+        "minimum spanning tree",
+        "MST",
+        "Prim",
+        "Kruskal"
+      ]
+    },
+    {
+      "id": "algo-013",
+      "name": "字符串匹配（KMP）",
+      "node_type": "method",
+      "definition": "KMP 算法利用模式串的前缀函数（失配时回退到已匹配的公共前后缀），在 O(n+m) 时间内完成文本串与模式串匹配。",
+      "key_points": [
+        "核心是 next/前缀数组：失配时 j 回退到 next[j-1]",
+        "时间复杂度 O(n+m)，文本串指针不回退",
+        "应用：文本检索、病毒特征匹配、编辑器查找"
+      ],
+      "example": "文本 'ababcabab' 中匹配模式 'abab'：KMP 一次扫描定位",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 32 章 字符串匹配（32.4 节 Knuth-Morris-Pratt）"
+      },
+      "aliases": [
+        "string matching",
+        "KMP",
+        "Knuth-Morris-Pratt"
+      ]
+    }
+  ]
+}

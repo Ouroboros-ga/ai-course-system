@@ -7,7 +7,7 @@
  * - CognitiveDashboard：六维认知状态（保留 null 语义，不武断判弱）；
  * - RecommendationCard 列表：基于策略版本的推荐，支持消费/锁定状态。
  *
- * 路由：/app/course/:courseId/knowledge/graph/:nodeId?
+ * 路由：/app/course/:courseId/build/knowledge/graph/:nodeId?
  * - courseId 必填；
  * - nodeId 可选，存在时聚焦到该知识点并拉取相邻关系。
  *
@@ -116,7 +116,7 @@ async function handleConsume(recommendation) {
 function handleJumpNode(node) {
   // 跳转到先修/后继节点：更新路由 nodeId，触发 StudentGraphPanel 重新加载相邻
   if (node?.id == null) return
-  router.push(`/app/course/${courseId.value}/knowledge/graph/${node.id}`)
+  router.push(`/app/course/${courseId.value}/build/knowledge/graph/${node.id}`)
 }
 
 function handleReturnAnchor() {
@@ -339,7 +339,9 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* design.md §5.1 三层滚动模型：页面根容器 flex+min-height:0；L2 由 .sfx-shell-main 滚动 */
+/* design.md §5.1 三层滚动模型：页面根容器 flex+min-height:0；
+   知识工作区并入建设布局后（.stage-body 为 overflow:hidden 的块容器），
+   根容器需要明确 height:100% 让内部 grid/fr 与 aside 滚动正常工作 */
 .sfx-knowledge {
   display: flex;
   flex-direction: column;
@@ -347,6 +349,8 @@ onMounted(() => {
   padding: var(--space-4, 16px);
   min-height: 0;
   flex: 1;
+  height: 100%;
+  overflow-y: auto;
 }
 
 /* design.md §5.2：grid 行高用 minmax(0,1fr) 限制，避免内容撑爆 */

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import os
 import uuid
@@ -161,6 +162,7 @@ class ExperimentDefinitionService:
     ) -> list[ExperimentDefinition]:
         stmt = select(ExperimentDefinition).where(
             ExperimentDefinition.course_id == course_id,
+            ExperimentDefinition.visibility == "course_catalog",
         )
         if publish_status is not None:
             stmt = stmt.where(ExperimentDefinition.publish_status == publish_status)
@@ -517,6 +519,8 @@ class ExperimentAttemptService:
             session, course_id=course_id, experiment_id=experiment_id,
         )
         _require_formal_experiment_capabilities(session, course_id=course_id)
+        if definition.visibility != "course_catalog":
+            reject_resource_not_found(f"实验 {experiment_id} 不存在")
         if definition.publish_status != ExperimentPublishStatus.PUBLISHED:
             reject_state_conflict("实验未发布，无法创建尝试")
         if not definition.default_version_id:
@@ -754,18 +758,111 @@ class ExperimentRunService:
         The assessed-execution endpoint always enqueues this record for the
         durable worker; it has no synchronous Judge0 mode.
         """
+        normalized_source = self._normalize_source(source_code)
+        source_hash = hashlib.sha256(normalized_source.encode("utf-8")).hexdigest()
+        duplicate = session.exec(
+            select(ExperimentRun.id).where(
+                ExperimentRun.attempt_id == attempt_id,
+                ExperimentRun.course_id == course_id,
+                ExperimentRun.student_id == student_id,
+                ExperimentRun.normalized_source_hash == source_hash,
+            )
+        ).first() is not None
         run = ExperimentRun(
             attempt_id=attempt_id,
             course_id=course_id,
             student_id=student_id,
             language=language,
             source_code=source_code,
+            normalized_source_hash=source_hash,
+            evidence_quality={
+                "is_effective_revision": not duplicate,
+                "duplicate_source": duplicate,
+            },
             idempotency_key=idempotency_key,
             outcome=RunOutcome.PENDING,
         )
         session.add(run)
         session.flush()
         return run
+
+    @staticmethod
+    def _normalize_source(source_code: str) -> str:
+        """Remove display-only formatting noise before revision counting.
+
+        The original source remains the immutable Judge0 input.  This derived
+        representation is used only for a server-owned SHA-256 identity and is
+        never returned as a substitute for the student's code.
+        """
+        normalized = source_code.replace("\r\n", "\n").replace("\r", "\n")
+        lines = [line.rstrip() for line in normalized.split("\n")]
+        while lines and not lines[-1]:
+            lines.pop()
+        return "\n".join(lines)
+
+    @staticmethod
+    def _terminal_error_signature(run: ExperimentRun) -> str:
+        cases = []
+        for item in list((run.test_summary or {}).get("cases", [])):
+            if not isinstance(item, dict):
+                continue
+            cases.append({
+                "passed": bool(item.get("passed")),
+                "reason": str(item.get("reason") or ""),
+                "hidden": bool(item.get("hidden")),
+            })
+        payload = {
+            "outcome": run.outcome.value,
+            "error_code": run.error_code,
+            "compile_ok": bool(run.compile_ok),
+            "passed_count": int(run.passed_count),
+            "total_count": int(run.total_count),
+            "cases": cases,
+        }
+        canonical = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def record_terminal_evidence_quality(
+        self,
+        session: Session,
+        run: ExperimentRun,
+    ) -> None:
+        """Classify one server-owned terminal run without storing raw errors."""
+        if run.outcome == RunOutcome.PENDING:
+            return
+        infrastructure_failure = run.outcome in {
+            RunOutcome.SANDBOX_UNAVAILABLE,
+            RunOutcome.INTERNAL_ERROR,
+        }
+        signature = self._terminal_error_signature(run)
+        duplicate_error_signature = False
+        if run.outcome != RunOutcome.ACCEPTED and not infrastructure_failure:
+            previous = session.exec(
+                select(ExperimentRun).where(
+                    ExperimentRun.attempt_id == run.attempt_id,
+                    ExperimentRun.course_id == run.course_id,
+                    ExperimentRun.student_id == run.student_id,
+                    ExperimentRun.run_id != run.run_id,
+                    ExperimentRun.outcome == run.outcome,
+                )
+            ).all()
+            duplicate_error_signature = any(
+                self._terminal_error_signature(item) == signature
+                for item in previous
+            )
+        quality = dict(run.evidence_quality or {})
+        quality.update({
+            "error_signature": signature,
+            "duplicate_error_signature": duplicate_error_signature,
+            "infrastructure_failure": infrastructure_failure,
+            "is_effective_revision": bool(
+                quality.get("is_effective_revision", True)
+                and not duplicate_error_signature
+                and not infrastructure_failure
+            ),
+        })
+        run.evidence_quality = quality
+        session.add(run)
 
     async def _execute_run(
         self,
@@ -1458,6 +1555,7 @@ class ExperimentLabReadService:
     ) -> dict[str, Any]:
         stmt = select(ExperimentDefinition).where(
             ExperimentDefinition.publish_status == ExperimentPublishStatus.PUBLISHED,
+            ExperimentDefinition.visibility == "course_catalog",
         )
         if course_id is not None:
             stmt = stmt.where(ExperimentDefinition.course_id == course_id)

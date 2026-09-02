@@ -1,0 +1,45 @@
+{
+  "sources": [
+    {
+      "file": "corpus_zhwiki_cs.jsonl",
+      "docs": 22770,
+      "chars": 38129018,
+      "bytes": 92112196,
+      "label": "中文维基百科·计算机学科子集"
+    },
+    {
+      "file": "corpus_enwiki_cs.jsonl",
+      "docs": 117779,
+      "chars": 675286023,
+      "bytes": 698850706,
+      "label": "英文维基百科·计算机学科子集"
+    },
+    {
+      "file": "corpus_rfc.jsonl",
+      "docs": 9824,
+      "chars": 537380084,
+      "bytes": 554446502,
+      "label": "RFC 全集"
+    },
+    {
+      "file": "corpus_arxiv_cs.jsonl",
+      "docs": 33990,
+      "chars": 2067849683,
+      "bytes": 2153023432,
+      "label": "arXiv·计算机学科论文全文（CC 授权子集）"
+    },
+    {
+      "file": "corpus_textbooks.jsonl",
+      "docs": 72,
+      "chars": 3066821,
+      "bytes": 3191446,
+      "label": "权威开放教材（OSTEP/SICP）"
+    }
+  ],
+  "total": {
+    "docs": 184435,
+    "chars": 3321711629,
+    "bytes": 3501624282
+  },
+  "notes": "语料层为开放许可来源：维基百科 CC BY-SA 4.0 署名、RFC 自由分发、arXiv CC 授权论文子集（Common Pile）、OSTEP/SICP 作者自由授权版本；作为学科知识库的补充参考层，与 knowledge_data/ 精编概念层分层使用；未包含任何未经授权的版权书籍全文。"
+}

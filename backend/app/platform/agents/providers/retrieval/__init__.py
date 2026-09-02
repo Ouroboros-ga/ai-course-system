@@ -15,6 +15,7 @@ from .active_bundle import (
     ActiveBundleKnowledgeGraphPort,
     ActiveBundleScopePort,
 )
+from .discipline_kb import DisciplineKnowledgePortImpl
 
 __all__ = [
     "CallableLearningEventPort",
@@ -28,4 +29,5 @@ __all__ = [
     "ActiveBundleCourseRetrievalPort",
     "ActiveBundleKnowledgeGraphPort",
     "ActiveBundleScopePort",
+    "DisciplineKnowledgePortImpl",
 ]

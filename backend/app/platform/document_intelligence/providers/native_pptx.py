@@ -592,11 +592,14 @@ def map_pptx_output_to_ir(
 
             # Determine block type
             text = shape.get("text", "")
+            # 跳过噪声块（页码/页脚/纯书名横幅）——不应成为知识点/证据/检索源。
+            if _is_noise_text(text):
+                continue
             block_type = "paragraph"
             heading_level = None
             if shape.get("is_title") or _is_numbered_section_heading(text):
                 block_type = "heading"
-                heading_level = 1
+                heading_level = _heading_level(text)
             elif not text:
                 block_type = "image" if shape.get("is_picture") else "unknown"
 
@@ -762,16 +765,90 @@ def map_pptx_output_to_ir(
     return blocks, units, assets
 
 
+_SECTION_HEADING_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # 顶层中文序号：第一 / 一、 / 二、
+    re.compile(r"^第[一二三四五六七八九十]+[ ]*[、．.]?\s*"),
+    # 顶层章节/讲：第10章 / 第9章 / 第3讲
+    re.compile(r"^第\d+[章讲节]\s*"),
+    # 章节/小节数字编号：9.4 / 10.1.2 / 9.4.1
+    re.compile(r"^\d{1,2}(?:\.\d{1,2}){1,3}\s*"),
+    # 普通数字序号：1、 2． 3.
+    re.compile(r"^\d{1,2}[、．.]\s*"),
+    # 括号序号：（1） (2)
+    re.compile(r"^[（(]\d{1,2}[)）]\s*"),
+    # 圈号序号：①②③…
+    re.compile(r"^[①②③④⑤⑥⑦⑧⑨⑩]\s*"),
+    # 例/解/注意框：【例9-9】 【解】 (注意)
+    re.compile(r"^【[^】]{1,16}】"),
+    # 常见结构词：思考题 / 小结 / 本节要点 / 知识要点 / 概述 / 重点
+    re.compile(r"^(思考题|小结|本节要点|知识要点|本节小结|内容回顾|本章小结|概述|重点|注意|说明)\s*[:：]?\s*"),
+)
+
+
+def _heading_level(text: str) -> int:
+    """Infer a heading depth so sections vs knowledge points can be separated.
+
+    Level 1 = top-level chapter/section (``第10章`` / ``9.4`` / a bare structural
+    label like ``思考题``/``小结``).  Level 2 = sub-knowledge point (``9.4.1`` /
+    ``1、`` / ``（1）`` / ``①``/``【例】``).  The projector maps heading_level>=1
+    to ``section_title`` and >=2 to ``knowledge_title``, so knowledge points can
+    be built from real headings instead of every body paragraph.
+    """
+    normalized = " ".join((text or "").split())
+    # 章节编号：9.4（2段）→ 1；9.4.1（3段）→ 2；10.1.2（3段）→ 2
+    m = re.match(r"^(\d{1,2})?(?:\.(\d{1,2}))(?:\.(\d{1,2}))?(?:\.(\d{1,2}))?\s*", normalized)
+    if m:
+        groups = [g for g in m.groups() if g]
+        return 1 if len(groups) <= 2 else 2
+    # 第X章/讲 / 中文序号 / 顶层结构词 → 1；括号/圈号/注解词 → 2
+    if re.match(r"^第[\u4e00-\u9fa5\d]+[章讲节课]", normalized) or re.match(r"^[一二三四五六七八九十]+[、．.]", normalized) or re.match(r"^(思考题|小结|本节要点|知识要点|本节小结|内容回顾|本章小结|概述|重点)\s*[:：]?\s*", normalized):
+        return 1
+    if re.match(r"^(注意|说明|例|解)\s*[:：]?", normalized):
+        return 2
+    if re.match(r"^[（(]\d+[)）]|^[①②③④⑤⑥⑦⑧⑨⑩]|^【", normalized):
+        return 2
+    # 普通 1、 序号：若语义上更像小节，视为 2（正文中的小标题）
+    return 2
+
+
+def _is_noise_text(text: str) -> bool:
+    """Identify slide noise that should never become a knowledge point.
+
+    Covers page numbers, footer/header banners, and pure decoration such as the
+    course-name bars and slide counters common in imported teaching decks.
+    """
+    normalized = " ".join((text or "").split())
+    if not normalized:
+        return False
+    # 纯页码 / 页码进度：5/35、12、第 5 页
+    if re.fullmatch(r"\d{1,3}(/\d{1,3})?\s*", normalized):
+        return True
+    if re.fullmatch(r"第\s*\d{1,3}\s*[页张幅slide]*\s*", normalized):
+        return True
+    # 纯课程名横幅（如"《数据结构》"）
+    if len(normalized) <= 10 and re.fullmatch(r"[《〈[【\[（(].{1,10}[》〉】\]) ）]", normalized):
+        return True
+    return False
+
+
 def _is_numbered_section_heading(text: str) -> bool:
     """Recover common PPT section headings when the layout has no title placeholder.
 
-    Some imported decks use plain text boxes for slide titles.  Restrict the
-    fallback to short Chinese top-level numbered headings so body text and
-    captions do not become graph concepts merely because of their position.
+    Imported teaching decks usually type slide titles as plain text boxes, not
+    layout title placeholders, so ``is_title`` is almost always False.  This
+    recognises the numbering schemes actually seen in those decks (chapter/
+    section digits like ``10.1``, ``9.4.1``; ``1、``/``（1）``/``①``; ``【例9-9】``;
+    and structural labels such as ``思考题``/``小结``) while keeping body text
+    and captions from becoming graph concepts.
+
+    Noise (page numbers, footer/header banners) is explicitly excluded so it
+    never becomes a knowledge point.
     """
     normalized = " ".join((text or "").split())
-    return bool(
-        normalized
-        and len(normalized) <= 80
-        and re.match(r"^[一二三四五六七八九十]+[、．.]", normalized)
-    )
+    if not normalized:
+        return False
+    if len(normalized) > 80:
+        return False
+    if _is_noise_text(normalized):
+        return False
+    return any(pattern.match(normalized) for pattern in _SECTION_HEADING_PATTERNS)

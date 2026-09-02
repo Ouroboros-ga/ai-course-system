@@ -118,7 +118,6 @@ from app.api.v1.endpoints import (
     mapping,            # F2/F5 知识点↔PPT映射引擎
     player,             # F6 分屏视频播放器
     ppt_generation,     # F3 AI生成PPT课件
-    video_generation,   # F4/F5 数字人视频生成管线
     video,              # 视频相关功能
     platform,           # 平台管理功能
     prerequisite,       # 前置知识智能跳转
@@ -143,6 +142,7 @@ from app.api.v1.endpoints import (
     safety,             # G6 安全围栏与沙箱治理
     web_research,       # G7 WebResearchTool
     research_agent,     # ResearchAgent evidence-first scholarly research
+    discipline_knowledge,  # XH-202620 CS 学科垂类知识库检索（只读）
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
     graphrag,           # GraphRAG + immutable CourseKnowledgeBundle
@@ -154,7 +154,7 @@ from app.api.v1.endpoints import (
     course_outline,
     document_parse,     # 阶段4 课程材料解析、Evidence、Citation与图谱治理
     practice_recommendation,  # 阶段5 题库、练习推荐、正式学习证据
-    experiments,        # 阶段6 课程实验、Judge0 与 CodingAgent
+    experiments,        # 阶段6 课程实验与 TeachingAgent 代码能力兼容接口
     resources,          # 阶段7 资源库
     labs,               # 阶段7 平台实验室目录
     agent_governance,   # 阶段9 Agent 工具治理与教师安全阀
@@ -195,8 +195,8 @@ def _generate_unique_operation_id(route: APIRoute) -> str:
 
 # 创建FastAPI实例
 app = FastAPI(
-    title="超星AI互动智课系统",
-    description="符合超星开放API设计规范的后端服务",
+    title="CodeNexus智码交响",
+    description="证据驱动的智慧教学系统后端服务",
     version="v1",
     generate_unique_id_function=_generate_unique_operation_id,
 )
@@ -246,6 +246,16 @@ async def recover_durable_task_queues() -> None:
         await recover_experiment_run_tasks(session_factory, local_task_worker)
     except Exception:
         logger.exception("Formal experiment run recovery failed")
+    try:
+        from app.models.database import session_factory
+        from app.services.coding_challenge_service import coding_challenge_service
+
+        with session_factory() as session:
+            recovered = coding_challenge_service.recover_inactive_sessions(session)
+        if recovered:
+            logger.info("Closed %d inactive coding challenge session(s)", recovered)
+    except Exception:
+        logger.exception("Coding challenge session recovery failed")
     try:
         from app.services.learning_projection_outbox_service import (
             recover_learning_projection_outbox,
@@ -314,7 +324,6 @@ app.include_router(asset.router, prefix="/api/v1/asset", tags=["F1-素材管理"
 app.include_router(mapping.router, prefix="/api/v1/mapping", tags=["F2/F5-映射引擎"])
 app.include_router(player.router, prefix="/api/v1/player", tags=["F6-分屏播放器"])
 app.include_router(ppt_generation.router, prefix="/api/v1/ppt", tags=["F3-PPT生成"])
-app.include_router(video_generation.router, prefix="/api/v1/video-gen", tags=["F4/F5-视频生成"])
 app.include_router(video.router, prefix="/api/v1/video", tags=["视频功能"])
 app.include_router(platform.router, prefix="/api/v1/platform", tags=["平台管理"])
 
@@ -351,6 +360,9 @@ app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围�
 # G7: WebResearchTool 受控研究
 app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
 app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=["ResearchAgent"])
+
+# XH-202620: CS 学科垂类知识库（只读检索，数据来自 knowledge_data/）
+app.include_router(discipline_knowledge.router, prefix="/api/v1/discipline-knowledge", tags=["Discipline Knowledge"])
 
 # G8: 媒体时间轴与数字人
 app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒体时间轴"])
@@ -472,11 +484,11 @@ app.include_router(
     tags=["阶段5 学习动作门面"],
 )
 
-# 阶段6：课程实验、Judge0 与 CodingAgent
+# 阶段6：课程实验、Judge0 与 TeachingAgent 代码能力兼容接口
 app.include_router(
     experiments.experiment_router,
     prefix="/api/v1/experiments",
-    tags=["阶段6 课程实验与 CodingAgent"],
+    tags=["阶段6 课程实验与代码能力（兼容接口）"],
 )
 
 # 阶段7：资源库
@@ -499,19 +511,6 @@ app.include_router(
     media_release_endpoints.media_release_router,
     prefix="/api/v1/media",
     tags=["阶段8 媒体生成与发布"],
-)
-
-# 阶段8：教师数字人资产中心
-from app.api.v1.endpoints import avatar as avatar_endpoints  # noqa: E402
-app.include_router(
-    avatar_endpoints.avatar_router,
-    prefix="/api/v1",
-    tags=["阶段8 教师数字人资产中心"],
-)
-app.include_router(
-    avatar_endpoints.course_avatar_router,
-    prefix="/api/v1",
-    tags=["阶段8 课程数字人绑定"],
 )
 
 # 阶段9：Agent 工具治理与教师安全阀

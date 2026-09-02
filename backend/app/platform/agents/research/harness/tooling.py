@@ -93,6 +93,24 @@ class ResearchToolRegistry:
                 timeout_seconds=5.0,
                 max_retries=0,
             ),
+            ResearchToolSpec(
+                name="writing_assist",
+                description="基于工作区上下文与论文结果生成学术写作草稿（综述段落/论文框架/润色）",
+                intents=frozenset({"writing_assist"}),
+                keywords=frozenset({"写作", "综述", "润色", "起草", "大纲", "论文", "草稿", "draft", "writing", "polish", "outline"}),
+                required_permission=permission,
+                timeout_seconds=30.0,
+                max_retries=0,
+            ),
+            ResearchToolSpec(
+                name="trend_analysis",
+                description="对论文元数据做前沿趋势分析（热点关键词/年份分布/趋势方向/主题分类）",
+                intents=frozenset({"trend_analysis"}),
+                keywords=frozenset({"趋势", "热点", "前沿", "方向", "追踪", "trend", "hot", "frontier", "direction"}),
+                required_permission=permission,
+                timeout_seconds=10.0,
+                max_retries=0,
+            ),
         ])
 
     def get(self, name: str) -> ResearchToolSpec | None:

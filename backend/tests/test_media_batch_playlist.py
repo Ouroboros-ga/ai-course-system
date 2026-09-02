@@ -173,6 +173,29 @@ def test_batch_plan_is_read_only_and_rejects_client_provider_or_voice(session, t
     assert voice_error.value.status_code == 422
 
 
+def test_batch_plan_rejects_single_node_over_script_byte_cap(session, teacher_user):
+    """核算阶段就拦截超长讲稿，而不是让核算通过后由 media.tts Worker 必然失败。"""
+    course = _course(session, teacher_user.id)
+    oversized = _script(session, course.id, suffix="too-long", content="超" * 4000)  # 12000 字节 > 8000
+    session.commit()
+    with pytest.raises(HTTPException) as too_long:
+        build_media_plan(session, course_id=course.id, node_ids=[oversized.id])
+    assert too_long.value.status_code == 422
+    assert "8000" in str(too_long.value.detail)
+
+
+def test_batch_plan_exposes_server_owned_caps(session, teacher_user):
+    """计划回传服务端权威上限，供 UI 展示，避免前端硬编码与后端不一致。"""
+    from app.core.config import settings
+    course = _course(session, teacher_user.id)
+    node = _script(session, course.id, suffix="caps", content="核算上限展示。")
+    session.commit()
+    plan = build_media_plan(session, course_id=course.id, node_ids=[node.id])
+    assert plan["max_chars"] == settings.MEDIA_BATCH_MAX_BILLABLE_CHARS
+    assert plan["max_script_bytes"] == settings.TTS_MAX_SCRIPT_BYTES
+    assert plan["billable_chars"] == len(node.content)
+
+
 def test_batch_confirmation_reuses_cached_audio_without_new_synthesis(session, teacher_user):
     course = _course(session, teacher_user.id)
     node = _script(session, course.id, suffix="cache", content="缓存命中不再次调用 TTS。")

@@ -30,6 +30,7 @@ from app.models.cognitive_state_model import (
     QuestionDepthRecord,
     COGNITIVE_POLICY_VERSION,
 )
+from app.models.experiment_model import CodingEvidenceEpisode
 from app.models.question_bank_model import QuestionAttempt, QuestionBankItem
 from app.models.progress_model import LearningProgress, NodeProgress
 from app.domain.learning.evidence import LearningEvidence, EvidenceType
@@ -108,8 +109,8 @@ def _scored_observations(
 ) -> list[_ScoredObservation]:
     """Combine quiz and finalized-code scores without exposing source code.
 
-    Only code evidence written by ``ExperimentFinalizeService`` is eligible;
-    a CodingAgent diagnosis or a client-supplied score can never enter this
+    Only code evidence written by a server-owned experiment/episode finalizer
+    is eligible; a diagnosis or a client-supplied score can never enter this
     path.  A shared recent window preserves existing quiz-only behavior.
     """
     observations = [
@@ -127,7 +128,10 @@ def _scored_observations(
         LearningEvidenceRecord.student_id == student_id,
         LearningEvidenceRecord.course_id == course_id,
         LearningEvidenceRecord.evidence_type == EvidenceType.CODING_EXECUTION.value,
-        LearningEvidenceRecord.source == "experiment_finalize_service",
+        LearningEvidenceRecord.source.in_((
+            "experiment_finalize_service",
+            "coding_episode_finalize_service",
+        )),
         LearningEvidenceRecord.value.is_not(None),
     )
     if node_id is not None:
@@ -148,6 +152,44 @@ def _scored_observations(
         reverse=True,
     )
     return observations[:PERFORMANCE_WINDOW_SIZE]
+
+
+def _coding_episode_hint_usage(
+    session: Session,
+    *,
+    student_id: int,
+    course_id: int,
+    node_id: Optional[int],
+) -> list[bool]:
+    """Read server-owned hint reveals for node-bound coding evidence only."""
+    evidence_stmt = select(LearningEvidenceRecord).where(
+        LearningEvidenceRecord.student_id == student_id,
+        LearningEvidenceRecord.course_id == course_id,
+        LearningEvidenceRecord.source == "coding_episode_finalize_service",
+    )
+    if node_id is not None:
+        evidence_stmt = evidence_stmt.where(LearningEvidenceRecord.node_id == node_id)
+    records = list(session.exec(evidence_stmt).all())
+    episode_ids = list(dict.fromkeys(
+        str(ref)
+        for record in records
+        for ref in (record.event_refs or [])
+        if isinstance(ref, str) and ref.startswith("episode_")
+    ))
+    if not episode_ids:
+        return []
+    episodes = session.exec(select(CodingEvidenceEpisode).where(
+        CodingEvidenceEpisode.course_id == course_id,
+        CodingEvidenceEpisode.student_id == student_id,
+        CodingEvidenceEpisode.status == "closed",
+        CodingEvidenceEpisode.episode_id.in_(episode_ids),
+    )).all()
+    by_id = {episode.episode_id: episode for episode in episodes}
+    return [
+        bool((by_id[episode_id].summary or {}).get("hint_used"))
+        for episode_id in episode_ids
+        if episode_id in by_id
+    ]
 
 
 def compute_cognitive_state(
@@ -344,10 +386,19 @@ def compute_cognitive_state(
         reason_codes.append("inquiry_unknown_without_semantic_evidence")
 
     # 6. 计算 hint_dependency（提示依赖度）
-    # 从 cognitive_context 中读取 hint 使用情况
+    # 题库作答从 cognitive_context 读取；代码挑战只消费已经形成正式节点证据的
+    # episode 摘要。前端不能直接提交代码提示使用状态。
     hint_attempts = [a for a in attempts if a.cognitive_context.get("hint_used")]
-    if len(attempts) >= MIN_SAMPLE_FOR_HINT and hint_attempts:
-        hint_dependency = len(hint_attempts) / len(attempts)
+    coding_hint_usage = _coding_episode_hint_usage(
+        session,
+        student_id=student_id,
+        course_id=course_id,
+        node_id=node_id,
+    )
+    hint_observation_count = len(attempts) + len(coding_hint_usage)
+    hinted_count = len(hint_attempts) + sum(coding_hint_usage)
+    if hint_observation_count >= MIN_SAMPLE_FOR_HINT and hinted_count:
+        hint_dependency = hinted_count / hint_observation_count
         reason_codes.append("hint_dependency_from_attempt_context")
     else:
         hint_dependency = None  # 数据不足

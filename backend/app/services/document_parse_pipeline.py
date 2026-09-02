@@ -615,12 +615,13 @@ def _build_graph_candidates(
     relabel or reject before a graph snapshot is published.
     """
     from app.models.document_parse_model import DocumentBlock, EvidenceAnchor
+    from app.platform.document_intelligence.canonical.block_noise import filter_noise_blocks
 
-    blocks = list(session.exec(select(DocumentBlock).where(
+    blocks = filter_noise_blocks(list(session.exec(select(DocumentBlock).where(
         DocumentBlock.course_id == course_id,
         DocumentBlock.run_id == run_id,
         DocumentBlock.document_ir_version_id == ir_version_id,
-    ).order_by(DocumentBlock.order_index)).all())
+    ).order_by(DocumentBlock.order_index)).all()))
     anchors = list(session.exec(select(EvidenceAnchor).where(
         EvidenceAnchor.course_id == course_id,
         EvidenceAnchor.run_id == run_id,
@@ -668,6 +669,10 @@ def _build_graph_candidates(
         "confidence": min(left["confidence"], right["confidence"]),
         "anchor_ids": list(dict.fromkeys(left["anchor_ids"] + right["anchor_ids"])),
     } for left, right in zip(candidates, candidates[1:])]
+    # XH-202620：用学科知识库语义关系增强解析侧的 next_topic 顺序链（纯确定性、无 LLM）。
+    from app.platform.knowledge.kb_alignment import enrich_relations_from_kb
+
+    relations = enrich_relations_from_kb(candidates, relations)
     return candidates, relations
 
 
@@ -1235,30 +1240,6 @@ def _ocr_rendered_pages(
                 ),
             })
     return blocks
-
-
-def _map_block_type(ir_block_type: str) -> str:
-    """把 DocumentIR block_type 映射到 DocumentBlock.block_type。"""
-    mapping = {
-        "paragraph": "text",
-        "heading": "title",
-        "image": "figure_caption",
-        "table": "table_cell",
-        "unknown": "text",
-    }
-    return mapping.get(ir_block_type, "text")
-
-
-def _infer_semantic_role(*, text: str, block_type: str, heading_level: Optional[int], style_hints: dict) -> str:
-    """Infer a conservative role; this is a hint, never a publish decision."""
-    compact = (text or "").strip().replace(" ", "")
-    if any(token in compact for token in ("练习", "习题", "思考题", "试一试", "课后题")):
-        return "practice_suggestion"
-    if any(token in compact for token in ("示例", "例题", "案例", "例如", "代码演示")):
-        return "example"
-    if block_type == "title" or heading_level is not None or style_hints.get("is_heading"):
-        return "section_title" if any(token in compact for token in ("章", "节", "单元", "模块", "部分")) else "knowledge_title"
-    return "explanation"
 
 
 class ParsePipelineError(Exception):

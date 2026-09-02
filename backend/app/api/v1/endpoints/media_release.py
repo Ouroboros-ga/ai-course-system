@@ -59,7 +59,6 @@ from app.services.media_release_service import (
 from app.models.course_outline_model import TeachingScriptNode
 from app.services.tts_provider import TtsProviderConfigurationError
 from app.services.stage8_provider_runtime import get_stage8_tts_provider, resolve_stage8_tts_runtime
-from app.services.platform_media_preset_service import list_public_presets, sign_avatar_package_for_release
 from app.services.media_batch_service import (
     build_media_plan,
     confirm_media_batch,
@@ -167,13 +166,17 @@ async def get_platform_media_presets(
     session: Session = Depends(get_session),
     current_user: dict = Depends(get_current_user),
 ):
-    """Return safe platform preset choices for the course media builder."""
+    """Return safe platform preset choices for the course media builder.
+
+    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），平台预设注册表
+    服务已下线：不再读取任何预设，向构建页返回空音色/角色目录。前端只依赖
+    ``voices``/``avatars`` 字段，空列表即可保持页面可加载。
+    """
     require_course_permission(session, current_user, course_id, "course.media.generate")
     runtime = resolve_stage8_tts_runtime()
-    data = list_public_presets(session, active_tts_provider_key=runtime.provider_key)
-    session.commit()
     return unified_response(code=200, message="平台音色与数字人角色已加载", data={
-        **data,
+        "voices": [],
+        "avatars": [],
         "effective_provider": runtime.effective_provider,
     })
 
@@ -459,13 +462,8 @@ async def preview_draft_release_item_playback(
                 "material_version_id": mapping.get("material_version_id"),
                 "start_ms": int(item.duration_ms * index / max(len(refs), 1)),
             })
-    _, avatar_manifest_url, avatar_asset_urls = sign_avatar_package_for_release(
-        session,
-        course_id=course_id,
-        release_id=release_id,
-        preset_id=release.avatar_preset_id,
-        preset_version=release.avatar_preset_version,
-    )
+    # 数字人（avatar）功能已关闭：不再签发角色包，返回空清单。
+    avatar_manifest_url, avatar_asset_urls = None, {}
     return unified_response(code=200, message="草稿统一播放器预览数据已签发", data={
         "schema": "draft-media-preview/v1",
         "release_id": release_id,
@@ -819,7 +817,9 @@ async def create_release(
     session.commit()
     return unified_response(
         code=201, message="媒体发布版本已创建",
-        data=_serialize_release(release),
+        data=_serialize_release(
+            release, ppt_source_available=_course_has_ppt_source(session, course_id),
+        ),
     )
 
 
@@ -841,9 +841,15 @@ async def list_releases(
     releases = media_release_service.list_releases(
         session, course_id=course_id, status=st,
     )
+    ppt_source_available = _course_has_ppt_source(session, course_id)
     return unified_response(
         code=200, message="获取媒体版本列表成功",
-        data={"items": [_serialize_release(r) for r in releases], "total": len(releases)},
+        data={
+            "items": [
+                _serialize_release(r, ppt_source_available=ppt_source_available) for r in releases
+            ],
+            "total": len(releases),
+        },
     )
 
 
@@ -863,7 +869,9 @@ async def get_current_release(
         )
     return unified_response(
         code=200, message="获取当前媒体版本成功",
-        data=_serialize_release(release),
+        data=_serialize_release(
+            release, ppt_source_available=_course_has_ppt_source(session, course_id),
+        ),
     )
 
 
@@ -886,7 +894,9 @@ async def get_release(
         MediaReleaseItem.course_id == course_id,
         MediaReleaseItem.release_id == release_id,
     ).order_by(MediaReleaseItem.order_index)).all())
-    data = _serialize_release(release)
+    data = _serialize_release(
+        release, ppt_source_available=_course_has_ppt_source(session, course_id),
+    )
     data["cues"] = [_serialize_release_cue(c) for c in cues]
     data["items"] = [_serialize_release_item(item) for item in items]
     return unified_response(
@@ -986,11 +996,58 @@ async def build_avatar_cues(
         MediaGenerationJob.idempotency_key == idempotency_key,
     )).first()
     if existing is not None:
-        if existing.status == MediaGenerationStatus.FAILED:
-            from app.core.exceptions import reject_state_conflict
-            reject_state_conflict(
-                "此前的 Cue Worker 已失败；请使用新的幂等键重新提交",
-                details={"cue_job_id": existing.job_id, "error_code": existing.error_code},
+        if existing.status in (MediaGenerationStatus.FAILED, MediaGenerationStatus.CANCELLED):
+            # 失败/取消后允许同键原地重提（镜像 PPT manifest 的重试语义）。
+            # 页面使用恒定幂等键（release_id + source tts job），若一律 409，
+            # 一次 Cue Worker 失败就会让"冻结字幕与时间轴"永久无法重试。
+            from app.core.exceptions import reject_dependency_unavailable, reject_state_conflict
+            if not existing.task_id:
+                reject_state_conflict(
+                    "冻结字幕任务失败且无统一任务记录，无法重试",
+                    details={"cue_job_id": existing.job_id, "error_code": existing.error_code},
+                )
+            from app.core.time_utils import utcnow_aware
+            from app.models.task_model import TaskEventRecord, TaskRecord
+            now = utcnow_aware()
+            task_record = session.exec(
+                select(TaskRecord).where(TaskRecord.task_id == existing.task_id)
+            ).first()
+            if task_record is not None:
+                # TaskRecord 可能带 retryable=False；直接回 pending（failed->pending
+                # 在 ALLOWED_TRANSITIONS 内），由 worker 重新执行并在终态回写。
+                task_record.status = "pending"
+                task_record.error_code = ""
+                task_record.error_message = ""
+                task_record.progress = 0
+                task_record.started_at = None
+                task_record.finished_at = None
+                task_record.updated_at = now
+                session.add(task_record)
+            existing.status = MediaGenerationStatus.PENDING
+            existing.error_code = ""
+            existing.error_message_safe = ""
+            existing.finished_at = None
+            existing.output_metadata = {}
+            existing.updated_at = now
+            existing.input_payload = {**worker_payload, "job_id": existing.job_id}
+            session.add(existing)
+            session.add(TaskEventRecord(
+                task_id=existing.task_id,
+                event_type="retried",
+                message="Cue Worker 失败/取消后由教师操作原地重提",
+                created_at=now,
+            ))
+            session.commit()
+            from app.models.database import session_factory
+            from app.platform.tasks.worker import local_task_worker
+            if not local_task_worker.has_handler("media.timeline_publish"):
+                reject_dependency_unavailable("Cue Worker 未注册，未修改发布版本")
+            retry_payload = {**worker_payload, "job_id": existing.job_id}
+            local_task_worker.submit(session_factory, existing.task_id, retry_payload)
+            return unified_response(
+                code=202,
+                message="Cue Worker 已重新提交",
+                data={**_serialize_job(existing), "async": True},
             )
         return unified_response(
             code=202,
@@ -1262,7 +1319,9 @@ async def activate_release(
     session.commit()
     return unified_response(
         code=200, message="媒体版本已激活",
-        data=_serialize_release(release),
+        data=_serialize_release(
+            release, ppt_source_available=_course_has_ppt_source(session, course_id),
+        ),
     )
 
 
@@ -1283,7 +1342,9 @@ async def withdraw_release(
     session.commit()
     return unified_response(
         code=200, message="媒体版本已撤回",
-        data=_serialize_release(release),
+        data=_serialize_release(
+            release, ppt_source_available=_course_has_ppt_source(session, course_id),
+        ),
     )
 
 
@@ -1304,7 +1365,9 @@ async def rollback_release(
     session.commit()
     return unified_response(
         code=200, message="已回滚到指定媒体版本",
-        data=_serialize_release(release),
+        data=_serialize_release(
+            release, ppt_source_available=_course_has_ppt_source(session, course_id),
+        ),
     )
 
 
@@ -1361,10 +1424,21 @@ def _serialize_job(job) -> dict[str, Any]:
     }
 
 
-def _serialize_release(release) -> dict[str, Any]:
+def _course_has_ppt_source(session: Session, course_id: int) -> bool:
+    """Whether the course declares a PPT/PDF source（激活契约的一部分）。
+
+    与激活接口内部的 ``has_ppt_manifest_source`` 判断保持一致，让前端建设
+    页可以区分"必须先生成 PPT manifest"与"纯音频课程可直接激活"两种形态。
+    """
+    from app.services.ppt_manifest_service import has_ppt_manifest_source
+    return bool(has_ppt_manifest_source(session, course_id=course_id))
+
+
+def _serialize_release(release, ppt_source_available: bool = False) -> dict[str, Any]:
     return {
         "release_id": release.release_id,
         "course_id": release.course_id,
+        "ppt_source_available": ppt_source_available,
         "version_number": release.version_number,
         "label": release.label,
         "status": release.status.value,
@@ -1436,26 +1510,23 @@ async def get_providers_health(
 ):
     """查询所有 Provider 健康状态（M3/M5）
 
-    返回 TTS 和数字人 Provider 的健康检查结果与当前配置。
+    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），不再实例化
+    DH Provider；``digital_human`` 返回静态的禁用状态，TTS 仍实时探测。
     不需要课程权限，仅限已登录用户。
     """
-    from app.services.digital_human_provider import get_digital_human_provider
     from app.core.config import settings
 
     tts_runtime = resolve_stage8_tts_runtime()
-    dh_provider = get_digital_human_provider()
-
-    dh_health = dh_provider.health_check()
 
     return unified_response(
         code=200, message="Provider 健康状态查询成功",
         data={
             "tts": tts_runtime.as_public_dict(),
             "digital_human": {
-                "provider_key": dh_provider.provider_key,
-                "provider_version": dh_provider.provider_version,
-                "healthy": dh_health.healthy,
-                "status_message": dh_health.message,
+                "provider_key": "",
+                "provider_version": "",
+                "healthy": False,
+                "status_message": "数字人功能已关闭",
                 "configured_provider": getattr(settings, "STAGE8_DH_PROVIDER", "fake"),
                 "fallback_on_failure": getattr(settings, "DH_PROVIDER_FALLBACK_ON_FAILURE", True),
             },
@@ -1490,7 +1561,8 @@ async def switch_playback_mode(
         data={
             "course_id": course_id,
             "playback_mode": mode.value,
-            "digital_human_enabled": mode != PlaybackMode.COMPATIBILITY,
+            # 数字人（avatar）功能已关闭：任何模式都不启用数字人渲染
+            "digital_human_enabled": False,
             "fallback_supported": True,
             "message": (
                 "已切换到兼容模式（音频+字幕+PPT+讲稿）" if mode == PlaybackMode.COMPATIBILITY

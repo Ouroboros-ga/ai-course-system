@@ -67,6 +67,11 @@ function openOverview(course) {
   router.push(`/app/course/${course.course_id}/overview`)
 }
 
+// 删除入口由后端能力视图（course.delete）控制，仅 owner 可见。
+function canDelete(course) {
+  return Boolean(course?.access?.allowed?.['course.delete'])
+}
+
 // ---- 删除课程（二次确认） ----
 const deleteTarget = ref(null)
 const deleteDialogOpen = ref(false)
@@ -181,7 +186,7 @@ onMounted(load)
           <div class="sfx-build-actions">
             <SfxButton variant="primary" size="sm" @click="continueBuild(course)">继续建设</SfxButton>
             <SfxButton variant="tertiary" size="sm" @click="openOverview(course)">课程概览</SfxButton>
-            <SfxButton variant="danger" size="sm" @click="openDeleteDialog(course)">
+            <SfxButton variant="danger" size="sm" v-if="canDelete(course)" @click="openDeleteDialog(course)">
               <template #icon><Trash2 :size="15" /></template>
               删除课程
             </SfxButton>

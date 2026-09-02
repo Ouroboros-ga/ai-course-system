@@ -1,1 +1,231 @@
-[]
+{
+  "schema_version": "cs-knowledge/1.0",
+  "course": "数据结构与算法",
+  "description": "计算机学科垂类知识库——数据结构基础概念（挑战杯 XH-202620）。节点 id 全局唯一，relations.json 通过 id 引用。",
+  "nodes": [
+    {
+      "id": "ds-001",
+      "name": "数组",
+      "node_type": "concept",
+      "definition": "数组是由相同类型元素组成的、在内存中连续存储的线性表，可通过下标在 O(1) 时间内随机访问任意元素。",
+      "key_points": [
+        "随机访问（按下标读取）时间复杂度 O(1)",
+        "插入/删除（需移动元素）平均时间复杂度 O(n)",
+        "内存连续，适合缓存友好访问"
+      ],
+      "example": "int a[10]; a[3] = 5; 直接定位第 4 个元素",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 2 章 线性表"
+      },
+      "aliases": [
+        "array"
+      ]
+    },
+    {
+      "id": "ds-002",
+      "name": "链表",
+      "node_type": "concept",
+      "definition": "链表是由若干节点组成的线性表，每个节点包含数据域与指向后继（及前驱）的指针，节点在内存中不必连续。",
+      "key_points": [
+        "在已知节点位置处插入/删除时间复杂度 O(1)",
+        "按下标访问平均 O(n)，不支持 O(1) 随机访问",
+        "按是否带头结点、单/双/循环分为多种变体"
+      ],
+      "example": "单链表逆置：迭代三指针法 O(n)",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 2 章 线性表"
+      },
+      "aliases": [
+        "linked list"
+      ]
+    },
+    {
+      "id": "ds-003",
+      "name": "栈",
+      "node_type": "concept",
+      "definition": "栈是只允许在一端（栈顶）进行插入与删除操作的线性表，遵循后进先出（LIFO）原则。",
+      "key_points": [
+        "压栈 push / 弹栈 pop / 取栈顶 top 均为 O(1)",
+        "可由数组或链表实现",
+        "典型应用：函数调用栈、表达式求值、括号匹配"
+      ],
+      "example": "括号匹配：遇到左括号入栈，右括号弹栈比对",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 3 章 栈和队列"
+      },
+      "aliases": [
+        "stack"
+      ]
+    },
+    {
+      "id": "ds-004",
+      "name": "队列",
+      "node_type": "concept",
+      "definition": "队列是只允许在队尾插入、队头删除的线性表，遵循先进先出（FIFO）原则。",
+      "key_points": [
+        "入队 enqueue / 出队 dequeue 均为 O(1)",
+        "循环队列用取模运算复用数组空间",
+        "典型应用：BFS 遍历、任务调度、消息缓冲"
+      ],
+      "example": "循环队列判满：(rear+1) % capacity == front",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 3 章 栈和队列"
+      },
+      "aliases": [
+        "queue"
+      ]
+    },
+    {
+      "id": "ds-005",
+      "name": "哈希表",
+      "node_type": "concept",
+      "definition": "哈希表通过哈希函数将关键字映射到数组槽位，实现平均 O(1) 的查找、插入与删除。",
+      "key_points": [
+        "平均时间复杂度 O(1)，最坏 O(n)（大量冲突时）",
+        "冲突处理：链地址法、开放定址法（线性探测/二次探测/双重散列）",
+        "负载因子过高时需扩容 rehash"
+      ],
+      "example": "Java HashMap 使用链地址法 + 树化；Python dict 使用开放定址法",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 11 章 散列表"
+      },
+      "aliases": [
+        "hash table",
+        "hashtable",
+        "hash map"
+      ]
+    },
+    {
+      "id": "ds-006",
+      "name": "树",
+      "node_type": "concept",
+      "definition": "树是由 n（n≥0）个节点组成的层次结构，有且仅有一个根节点，其余节点分为若干互不相交的子树。",
+      "key_points": [
+        "度、深度（高度）、叶子节点等基本术语",
+        "n 个节点的树有 n-1 条边",
+        "树的表示：孩子表示法、孩子兄弟表示法"
+      ],
+      "example": "文件系统的目录结构即是一棵树",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 5 章 树和二叉树"
+      },
+      "aliases": [
+        "tree"
+      ]
+    },
+    {
+      "id": "ds-007",
+      "name": "二叉树",
+      "node_type": "concept",
+      "definition": "二叉树是每个节点至多有两个子树（左子树、右子树）的有序树；第 i 层至多有 2^(i-1) 个节点，高度为 h 的二叉树至多有 2^h - 1 个节点。",
+      "key_points": [
+        "前序/中序/后序/层序四种遍历",
+        "由前序+中序（或后序+中序）可唯一重建二叉树",
+        "完全二叉树可用数组顺序存储（父节点 i，左孩子 2i，右孩子 2i+1）"
+      ],
+      "example": "前序 ABDCE + 中序 DBACE 可唯一确定一棵二叉树",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 5 章 树和二叉树"
+      },
+      "aliases": [
+        "binary tree"
+      ]
+    },
+    {
+      "id": "ds-008",
+      "name": "二叉搜索树",
+      "node_type": "concept",
+      "definition": "二叉搜索树（BST）满足：左子树所有节点关键字小于根节点，右子树所有节点关键字大于根节点，且左右子树也分别是二叉搜索树。",
+      "key_points": [
+        "查找/插入/删除平均 O(log n)，最坏 O(n)（退化为链）",
+        "中序遍历得到升序序列",
+        "平衡化手段：AVL 树、红黑树、B 树等"
+      ],
+      "example": "对 BST 中序遍历即得有序序列",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 12 章 二叉搜索树"
+      },
+      "aliases": [
+        "binary search tree",
+        "BST",
+        "二叉查找树"
+      ]
+    },
+    {
+      "id": "ds-009",
+      "name": "堆",
+      "node_type": "concept",
+      "definition": "堆是一棵满足堆序性质的完全二叉树：最大堆中父节点关键字不小于孩子节点，最小堆则相反；常以数组实现。",
+      "key_points": [
+        "插入与删除堆顶均为 O(log n)，建堆 O(n)",
+        "用于优先队列与堆排序",
+        "数组下标关系：父 i/2，左孩子 2i，右孩子 2i+1（1 起始下标）"
+      ],
+      "example": "建最小堆后堆顶即全局最小元素",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 6 章 堆排序"
+      },
+      "aliases": [
+        "heap"
+      ]
+    },
+    {
+      "id": "ds-010",
+      "name": "图",
+      "node_type": "concept",
+      "definition": "图 G=(V,E) 由顶点集合 V 与边集合 E 构成，边可有方向（有向图）与权值（带权图）；是建模网络、关系与依赖的通用结构。",
+      "key_points": [
+        "存储：邻接矩阵（O(V^2) 空间）与邻接表（O(V+E) 空间）",
+        "遍历：BFS（最短路径）与 DFS（连通性/拓扑序）",
+        "连通分量、强连通分量、拓扑排序等概念"
+      ],
+      "example": "社交网络的好友关系可用无向图建模",
+      "source": {
+        "title": "数据结构（C语言版）",
+        "authors": "严蔚敏、吴伟民",
+        "chapter": "第 6 章 图"
+      },
+      "aliases": [
+        "graph"
+      ]
+    },
+    {
+      "id": "ds-011",
+      "name": "并查集",
+      "node_type": "concept",
+      "definition": "并查集（Union-Find）维护不相交集合的合并与查询（元素所属集合），支持 find 与 union 操作。",
+      "key_points": [
+        "路径压缩 + 按秩合并后单次操作近似 O(α(n))，α 为反阿克曼函数",
+        "用于连通性判断、Kruskal 最小生成树、动态连通性"
+      ],
+      "example": "判断两个节点是否属于同一连通分量",
+      "source": {
+        "title": "算法导论（原书第 3 版）",
+        "authors": "Thomas H. Cormen 等",
+        "chapter": "第 21 章 用于不相交集合的数据结构"
+      },
+      "aliases": [
+        "union-find",
+        "disjoint set"
+      ]
+    }
+  ]
+}

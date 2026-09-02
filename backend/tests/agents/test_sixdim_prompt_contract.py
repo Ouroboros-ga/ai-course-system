@@ -28,9 +28,17 @@ def test_response_system_declares_six_dimension_usage_rules():
     assert "更新" in RESPONSE_SYSTEM and "掌握度" in RESPONSE_SYSTEM
 
 
-def test_prompt_version_bumped_to_1_4():
-    # 2026-08-18：意图解析增加 requested_concept（学生主动学习跳转），版本升至 1.4
-    assert PROMPT_VERSION == "teaching-agent-prompts/1.4"
+def test_prompt_version_bumped_to_1_5():
+    # 2026-08-30：RESPONSE_SYSTEM 新增学科参考（discipline_kb_results）使用规则，
+    # 版本升至 1.5；此前 1.4 为意图解析 requested_concept。
+    assert PROMPT_VERSION == "teaching-agent-prompts/1.5"
+
+
+def test_response_system_declares_discipline_reference_rules():
+    # R14 学科知识库接入后，回答表达器必须知道"补充参考 vs 课程证据"的边界
+    assert "discipline_kb_results" in RESPONSE_SYSTEM
+    assert "学科参考不是本课程的正式证据" in RESPONSE_SYSTEM
+    assert "以课程证据为准" in RESPONSE_SYSTEM
 
 
 def test_intent_system_extracts_requested_concept():

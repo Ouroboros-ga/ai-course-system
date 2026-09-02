@@ -158,13 +158,15 @@ function goHall() {
   router.push('/app/courses/hall')
 }
 
-function goLab() {
-  router.push('/app/lab')
-}
+// 「实验室」入口暂时隐藏（2026-08-20）；恢复快捷卡片时取消注释即可
+// function goLab() {
+//   router.push('/app/lab')
+// }
 
-function goResources() {
-  router.push('/app/resources')
-}
+// 「资源库」入口暂时隐藏（2026-09-02）；恢复快捷卡片时取消注释即可
+// function goResources() {
+//   router.push('/app/resources')
+// }
 
 onMounted(() => {
   scrollEl = findScrollParent(rootRef.value)
@@ -199,7 +201,7 @@ onBeforeUnmount(() => {
           <a class="sfx-home-announce animate-in" style="animation-delay: 0.1s" href="#" @click.prevent>
             <Sparkles class="sfx-home-announce__sparkle" :size="14" aria-hidden="true" />
             <span class="sfx-home-announce__text">
-              SmartCarb 全新上线，AI 辅助课程建设与学情分析能力全面升级
+              CodeNexus智码交响全新上线，AI 辅助课程建设与学情分析能力全面升级
             </span>
             <ArrowRight class="sfx-home-announce__arrow" :size="13" aria-hidden="true" />
           </a>
@@ -234,7 +236,7 @@ onBeforeUnmount(() => {
         <!-- 右侧：品牌大卡 -->
         <button class="sfx-home-brand-card animate-in" style="animation-delay: 0.3s" @click="goHall">
           <div class="sfx-home-brand-card__text">
-            <h3>SmartCarb</h3>
+            <h3>CodeNexus智码交响</h3>
             <p>
               探索课程大厅
               <span class="sfx-home-brand-card__arrow" aria-hidden="true">→</span>
@@ -290,7 +292,9 @@ onBeforeUnmount(() => {
             <ArrowRight :size="20" class="sfx-home-nav-card__arrow" />
           </button>
 
-          <button class="sfx-home-nav-card" @click="goLab">
+          <!-- 「实验室」快捷卡片暂时隐藏（2026-08-20 按需求下线，非删除）：
+               与一级导航「实验室」入口同步隐藏；/app/lab/* 路由保留可用 -->
+          <!-- <button class="sfx-home-nav-card" @click="goLab">
             <div class="sfx-home-nav-card__icon" style="background: linear-gradient(135deg, #B85C5C, #8B3A3A)">
               <Zap :size="28" />
             </div>
@@ -299,9 +303,11 @@ onBeforeUnmount(() => {
               <p>访问实验任务与研究工作台</p>
             </div>
             <ArrowRight :size="20" class="sfx-home-nav-card__arrow" />
-          </button>
+          </button> -->
 
-          <button class="sfx-home-nav-card" @click="goResources">
+          <!-- 「资源库」快捷卡片暂时隐藏（2026-09-02 按需求下线，非删除）：
+               与一级导航「资源库」入口同步隐藏；/app/resources/* 路由保留可用 -->
+          <!-- <button class="sfx-home-nav-card" @click="goResources">
             <div class="sfx-home-nav-card__icon" style="background: linear-gradient(135deg, #8EA7BE, #355C7D)">
               <FileText :size="28" />
             </div>
@@ -310,7 +316,7 @@ onBeforeUnmount(() => {
               <p>管理课程材料、笔记和文件</p>
             </div>
             <ArrowRight :size="20" class="sfx-home-nav-card__arrow" />
-          </button>
+          </button> -->
 
           <button class="sfx-home-nav-card" @click="router.push('/app/courses/create')">
             <div class="sfx-home-nav-card__icon" style="background: linear-gradient(135deg, #78AAFF, #3A65C2)">
@@ -386,7 +392,7 @@ onBeforeUnmount(() => {
             <div class="sfx-home-brand__mark" aria-hidden="true">
               <BookOpenCheck :size="22" />
             </div>
-            <span class="sfx-home-brand__name">SmartCarb</span>
+            <span class="sfx-home-brand__name">CodeNexus智码交响</span>
           </div>
           <p class="sfx-home-footer__tagline">让课程回应学习</p>
         </div>
@@ -491,7 +497,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="sfx-home-footer__bottom">
-        <p>© {{ new Date().getFullYear() }} SmartCarb · 保留所有权利</p>
+        <p>© {{ new Date().getFullYear() }} CodeNexus智码交响 · 保留所有权利</p>
         <div class="sfx-home-footer__bottom-right">
           <button type="button" class="sfx-home-footer__top-btn" @click="scrollToTop">
             回到顶部 ↑

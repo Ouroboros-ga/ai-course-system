@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
 
-from sqlalchemy import Table, and_, delete, or_, select, tuple_
+from sqlalchemy import Table, and_, delete, inspect, or_, select, tuple_
 from sqlmodel import SQLModel, Session
 
 from app.core.config import settings
@@ -42,6 +42,23 @@ VIRTUAL_REFERENCES = (
     ("resource_tags", "resource_id", "resource_items", "resource_id"),
     ("agent_action_decisions", "proposal_id", "agent_action_proposals", "proposal_id"),
 )
+
+
+def _existing_metadata_tables(session: Session) -> dict[str, Table]:
+    """Metadata tables that actually exist in the connected database.
+
+    The runtime SQLModel registry can contain forward-looking models whose
+    tables were never migrated into the live schema (e.g. M7 trajectory
+    records or safety keyword configs).  Course deletion must only emit SQL
+    against tables that exist, otherwise every delete aborts with a generic
+    ``no such table`` failure.
+    """
+    db_table_names = set(inspect(session.connection()).get_table_names())
+    return {
+        name: table
+        for name, table in SQLModel.metadata.tables.items()
+        if name in db_table_names
+    }
 
 
 class CourseDeletionError(RuntimeError):
@@ -102,7 +119,7 @@ class CourseDeletionService:
                 StudentEnrollment.is_active == True,  # noqa: E712
             )
         ).all())
-        conditions = self._course_conditions(course_id)
+        conditions = self._course_conditions(session, course_id)
         candidate_keys = self._collect_object_keys(session, conditions)
         deleted_rows = self._delete_scoped_rows(session, conditions)
         remaining_keys = self._find_remaining_object_references(session, candidate_keys)
@@ -144,8 +161,8 @@ class CourseDeletionService:
             )
 
     @staticmethod
-    def _course_conditions(course_id: int) -> dict[str, object]:
-        tables = SQLModel.metadata.tables
+    def _course_conditions(session: Session, course_id: int) -> dict[str, object]:
+        tables = _existing_metadata_tables(session)
         conditions: dict[str, object] = {}
         if "courses" not in tables:
             raise CourseDeletionError("COURSE_DELETE_SCHEMA_INCOMPLETE")
@@ -219,7 +236,7 @@ class CourseDeletionService:
             return set()
         referenced: set[str] = set()
         values = sorted(candidates)
-        for table in SQLModel.metadata.tables.values():
+        for table in _existing_metadata_tables(session).values():
             if table.name == StorageObjectRef.__tablename__:
                 continue
             for column in _object_columns(table):
@@ -232,7 +249,12 @@ class CourseDeletionService:
     @staticmethod
     def _delete_scoped_rows(session: Session, conditions: dict[str, object]) -> dict[str, int]:
         counts: dict[str, int] = {}
-        ordered = list(reversed(SQLModel.metadata.sorted_tables))
+        existing = _existing_metadata_tables(session)
+        ordered = [
+            table
+            for table in reversed(SQLModel.metadata.sorted_tables)
+            if table.name in existing
+        ]
         for table in ordered:
             condition = conditions.get(table.name)
             if condition is None:

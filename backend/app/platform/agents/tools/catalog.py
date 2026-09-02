@@ -50,11 +50,12 @@ class ToolDescriptor:
     description: str = ""
     configurable: bool = True
     status: str = "active"
+    supports_confirmation: bool = True
 
     @property
     def requires_teacher_confirmation(self) -> bool:
         """Whether the tool triggers the teacher safety valve by default."""
-        return self.risk is ToolRisk.HIGH
+        return self.supports_confirmation and self.risk is ToolRisk.HIGH
 
 
 class ToolCatalog:
@@ -109,6 +110,7 @@ def build_default_catalog() -> ToolCatalog:
         "graph", "retrieval", "cognition", "question_bank",
         "experiment", "visualization", "sandbox", "coding_diagnosis",
         "student_history", "student_modeling", "recommendation",
+        "discipline_knowledge",
     ):
         catalog.register(ToolDescriptor(
             name=name, risk=ToolRisk.LOW,
@@ -134,6 +136,16 @@ def build_default_catalog() -> ToolCatalog:
         name="question_generation", risk=ToolRisk.MEDIUM,
         default_enabled=True,
         description="AI 出题工具：依据知识点/认知/提问信号生成草稿，教师审核后进题库",
+    ))
+    catalog.register(ToolDescriptor(
+        name="coding_challenge",
+        risk=ToolRisk.MEDIUM,
+        default_enabled=True,
+        supports_confirmation=False,
+        description=(
+            "TeachingAgent conversational coding challenge; course-level switch only, "
+            "never per-offer confirmation"
+        ),
     ))
     # High-risk tools that trigger the teacher safety valve
     for name in ("web_research", "trigger_experiment", "change_topic"):

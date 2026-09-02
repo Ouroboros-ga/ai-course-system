@@ -218,6 +218,11 @@ def build_course_graph_candidate_draft(
             "confidence": min(left["confidence"], right["confidence"]),
             "anchor_ids": list(dict.fromkeys(left["anchor_ids"] + right["anchor_ids"])),
         })
+    # XH-202620：用学科知识库语义关系（prerequisite_of/uses/defines/…）增强顺序链，
+    # 使图谱不止是 next_topic 顺序，而是带有真实先修/从属/对比语义。纯确定性、无 LLM。
+    from app.platform.knowledge.kb_alignment import enrich_relations_from_kb
+
+    relations = enrich_relations_from_kb(ordered_nodes, relations)
     batch = graph_candidate_service.create_batch(
         session, course_id=course_id, parse_run_id=None, initiated_by=created_by,
     )
@@ -339,10 +344,35 @@ def build_outline_draft(
         nonlocal current_kp, kp_refs, kp_order, child_order
         if current_kp is not None:
             current_kp.source_block_refs = list(dict.fromkeys(kp_refs))
+            # 用全部知识引用块（含正文）计算显示页范围；仅作目录展示。
             pages = [int((b.page_or_slide or b.page_number or 1)) for b in ordered if b.block_id in kp_refs]
             if pages:
                 current_kp.page_range = str(min(pages)) if min(pages) == max(pages) else f"{min(pages)}-{max(pages)}"
             session.add(current_kp)
+            # 修复映射不理想：把本知识点的 CoursePptMapping 行更新为"主讲课件"的真实页范围。
+            # 原实现只在 KP 建立时用标题块单页建行（或非主课件兜底 (1,1)），正文跨页不更新。
+            if material_version_id and supports_page_mapping:
+                mapping_blocks = [
+                    block for block in ordered
+                    if block.block_id in kp_refs
+                    and (not primary_ppt_run_id or block.run_id == primary_ppt_run_id)
+                ]
+                mapping_pages = [int((b.page_or_slide or b.page_number or 1)) for b in mapping_blocks]
+                if mapping_pages:
+                    m_start, m_end = min(mapping_pages), max(mapping_pages)
+                    current_kp.page_range = str(m_start) if m_start == m_end else f"{m_start}-{m_end}"
+                    mapping = session.exec(
+                        select(CoursePptMapping).where(
+                            CoursePptMapping.course_id == course_id,
+                            CoursePptMapping.outline_node_id == current_kp.outline_node_id,
+                        )
+                    ).first()
+                    if mapping is not None and mapping.status not in {"published", "stale"}:
+                        mapping.page_start = m_start
+                        mapping.page_end = m_end
+                        mapping.page_refs = list(range(m_start, m_end + 1))
+                        mapping.confidence = max(mapping.confidence or 0.0, current_kp.confidence)
+                        session.add(mapping)
         current_kp, kp_refs = None, []
         kp_order += 1
         child_order = 0
@@ -628,6 +658,17 @@ def build_draft_assets(
     if not blocks:
         result.warnings.append("no DocumentBlock found; skipping draft asset build")
         return result
+
+    # Boilerplate blocks (running headers/footers, cover signatures) must not
+    # become node sources, script content or graph candidates; otherwise the
+    # build pages show nonsense evidence like a repeated deck header.
+    from app.platform.document_intelligence.canonical.block_noise import filter_noise_blocks
+    noise_before = len(blocks)
+    blocks = filter_noise_blocks(list(blocks))
+    if noise_before != len(blocks):
+        result.warnings.append(
+            f"filtered {noise_before - len(blocks)} boilerplate blocks (headers/cover lines)"
+        )
 
     def _stage(name: str) -> None:
         if progress_cb is not None:

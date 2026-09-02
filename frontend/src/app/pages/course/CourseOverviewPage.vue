@@ -10,7 +10,8 @@ const router = useRouter()
 const { course, courseRole, courseId, allowed } = inject('courseContext')
 
 const detail = computed(() => course.value ?? {})
-const researchVisible = computed(() => Boolean(allowed.value?.['course.view']))
+// 「科研工作台」入口暂时隐藏（2026-09-02）；恢复按钮时取消注释即可
+// const researchVisible = computed(() => Boolean(allowed.value?.['course.view']))
 
 // 批次1：课程概览真实待办
 const dashboard = ref(null)
@@ -77,10 +78,12 @@ function formatPercent(rate) {
         </p>
       </div>
       <div class="sfx-overview-hero-actions">
-        <SfxButton v-if="researchVisible" variant="secondary" @click="router.push(`/app/course/${courseId}/research`)">
+        <!-- 「科研工作台」按钮暂时隐藏（2026-09-02 按需求下线，非删除）：
+             与课程 L2 导航「科研」入口同步隐藏；/app/course/:id/research 路由保留可用 -->
+        <!-- <SfxButton v-if="researchVisible" variant="secondary" @click="router.push(`/app/course/${courseId}/research`)">
           科研工作台
           <template #icon><LibraryBig :size="16" /></template>
-        </SfxButton>
+        </SfxButton> -->
         <SfxButton variant="primary" @click="router.push(`/app/course/${courseId}/learn`)">
           {{ courseRole === 'teacher' ? '学生视角预览' : '继续学习' }}
           <template #icon><ArrowRight :size="16" /></template>

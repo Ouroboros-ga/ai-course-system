@@ -453,14 +453,22 @@ async def document_parse_handler(ctx: TaskHandlerContext) -> None:
             # has completed, create one frozen corpus and queue one separate
             # course-wide build task instead of rebuilding after each upload.
             from app.services.course_corpus_service import course_corpus_service
+            # ``created_by`` 是 users.id 外键：重解析任务的 input_payload 不携带
+            # initiated_by 时回退到 parse run 记录的教师 id，避免 owner 0 违反
+            # 外键约束导致语料快照静默丢失。
+            actor_user_id = int(
+                payload.get("initiated_by")
+                or getattr(parse_run, "initiated_by", 0)
+                or 0
+            )
             corpus = course_corpus_service.create_ready_snapshot(
-                session, course_id=int(course_id), owner_user_id=int(payload.get("initiated_by") or 0),
+                session, course_id=int(course_id), owner_user_id=actor_user_id,
             )
             if corpus is not None:
                 build, build_task_id = course_corpus_service.create_build_task(
-                    session, corpus=corpus, owner_user_id=int(payload.get("initiated_by") or 0),
+                    session, corpus=corpus, owner_user_id=actor_user_id,
                 )
-                owner_user_id = int(build.owner_user_id or payload.get("initiated_by") or 0)
+                owner_user_id = int(build.owner_user_id or actor_user_id or 0)
                 session.commit()
                 _draft_progress = {
                     "corpus_snapshot_id": corpus.corpus_snapshot_id,
@@ -936,7 +944,15 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             retryable=False,
         )
 
-    from app.models.experiment_model import ExperimentRun, RunOutcome
+    from app.models.experiment_model import (
+        AttemptStatus,
+        CodingChallengeOffer,
+        CodingEvidenceEpisode,
+        ExperimentAttempt,
+        ExperimentRun,
+        RunOutcome,
+    )
+    from app.services.coding_challenge_service import coding_challenge_service
     from app.services.experiment_service import (
         attempt_service,
         finalize_service,
@@ -995,6 +1011,28 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                 session, course_id=int(course_id), attempt_id=attempt_id,
                 student_id=run.student_id,
             )
+            if attempt.interaction_mode == "guided_practice":
+                open_episode = session.exec(select(CodingEvidenceEpisode).where(
+                    CodingEvidenceEpisode.attempt_id == attempt.attempt_id,
+                    CodingEvidenceEpisode.course_id == int(course_id),
+                    CodingEvidenceEpisode.student_id == run.student_id,
+                    CodingEvidenceEpisode.status == "open",
+                )).first()
+                if attempt.status != AttemptStatus.IN_PROGRESS or open_episode is None:
+                    from app.core.time_utils import utcnow_aware
+
+                    run.outcome = RunOutcome.INTERNAL_ERROR
+                    run.error_code = "GUIDED_SESSION_CLOSED"
+                    run.error_message = "The guided-practice session closed before execution."
+                    run.finished_at = utcnow_aware()
+                    run_service.record_terminal_evidence_quality(session, run)
+                    session.add(run)
+                    session.commit()
+                    raise TaskExecutionError(
+                        "GUIDED_SESSION_CLOSED",
+                        "Guided-practice session is no longer open.",
+                        retryable=False,
+                    )
             version = version_service.get_version(
                 session, course_id=int(course_id), version_id=attempt.version_id,
             )
@@ -1022,6 +1060,7 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                     version=version,
                     before_case=renew_lease_before_case,
                 )
+                run_service.record_terminal_evidence_quality(session, run)
                 # Make the server-owned run durable before the separate
                 # cancellation/finalization transaction below.
                 session.commit()
@@ -1056,24 +1095,91 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
                 )
             if completed_run.cancel_requested_at is None:
                 run_service._ensure_coding_diagnosis(completion_session, completed_run)
-                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
-                    finalized_attempt = finalize_service.finalize_attempt(
-                        completion_session,
-                        course_id=int(course_id),
-                        attempt_id=attempt_id,
-                        student_id=completed_run.student_id,
+                feedback_attempt = completion_session.exec(
+                    select(ExperimentAttempt).where(
+                        ExperimentAttempt.attempt_id == attempt_id,
+                        ExperimentAttempt.course_id == int(course_id),
+                        ExperimentAttempt.student_id == completed_run.student_id,
                     )
-                    for node_id in finalize_service.get_cognitive_evidence_node_ids(
-                        completion_session,
-                        attempt=finalized_attempt,
-                    ):
+                ).first()
+                if feedback_attempt is not None and feedback_attempt.interaction_mode == "guided_practice":
+                    from app.models.coding_diagnosis_model import CodingDiagnosisRecord
+                    from app.platform.agents.edu.coding import build_teaching_feedback
+                    from app.services.conversation_service import persist_coding_feedback
+
+                    diagnosis = completion_session.exec(select(CodingDiagnosisRecord).where(
+                        CodingDiagnosisRecord.run_id == completed_run.run_id,
+                        CodingDiagnosisRecord.course_id == int(course_id),
+                        CodingDiagnosisRecord.student_id == completed_run.student_id,
+                    )).first()
+                    offer = completion_session.exec(select(CodingChallengeOffer).where(
+                        CodingChallengeOffer.attempt_id == attempt_id,
+                        CodingChallengeOffer.course_id == int(course_id),
+                        CodingChallengeOffer.student_id == completed_run.student_id,
+                    )).first()
+                    if diagnosis is not None and offer is not None:
+                        feedback = build_teaching_feedback(diagnosis)
+                        # Optional hints are revealed through a separate
+                        # server-owned action.  Persisting the text now would
+                        # make an unseen hint look used in later audits.
+                        feedback = {**feedback, "optional_hint": None}
+                        persist_coding_feedback(
+                            completion_session,
+                            student_id=completed_run.student_id,
+                            course_id=int(course_id),
+                            session_id=offer.conversation_session_id,
+                            run_id=completed_run.run_id,
+                            concept_id=offer.concept_id,
+                            feedback=feedback,
+                        )
+                if completed_run.outcome not in (RunOutcome.PENDING, RunOutcome.SANDBOX_UNAVAILABLE):
+                    completion_attempt = completion_session.exec(
+                        select(ExperimentAttempt).where(
+                            ExperimentAttempt.attempt_id == attempt_id,
+                            ExperimentAttempt.course_id == int(course_id),
+                            ExperimentAttempt.student_id == completed_run.student_id,
+                        )
+                    ).first()
+                    if completion_attempt is None:
+                        raise TaskExecutionError(
+                            "VALIDATION_FAILED",
+                            "Experiment attempt disappeared before completion.",
+                            retryable=False,
+                        )
+                    if completion_attempt.interaction_mode == "guided_practice":
+                        if completed_run.outcome == RunOutcome.ACCEPTED:
+                            coding_challenge_service.close_session(
+                                completion_session,
+                                attempt_id=attempt_id,
+                                course_id=int(course_id),
+                                student_id=completed_run.student_id,
+                                reason="accepted",
+                            )
+                        evidence_node_ids = coding_challenge_service.get_evidence_node_ids(
+                            completion_session,
+                            attempt_id=attempt_id,
+                            course_id=int(course_id),
+                            student_id=completed_run.student_id,
+                        )
+                    else:
+                        finalized_attempt = finalize_service.finalize_attempt(
+                            completion_session,
+                            course_id=int(course_id),
+                            attempt_id=attempt_id,
+                            student_id=completed_run.student_id,
+                        )
+                        evidence_node_ids = finalize_service.get_cognitive_evidence_node_ids(
+                            completion_session,
+                            attempt=finalized_attempt,
+                        )
+                    for node_id in evidence_node_ids:
                         event = enqueue_learning_projection(
                             completion_session,
                             attempt_id=None,
                             source_type="experiment_attempt",
-                            source_ref=finalized_attempt.attempt_id,
-                            student_id=finalized_attempt.student_id,
-                            course_id=finalized_attempt.course_id,
+                            source_ref=completion_attempt.attempt_id,
+                            student_id=completion_attempt.student_id,
+                            course_id=completion_attempt.course_id,
                             knowledge_node_id=node_id,
                         )
                         if event is not None:
@@ -1140,129 +1246,52 @@ async def experiment_run_handler(ctx: TaskHandlerContext) -> None:
             )
 
 
+async def coding_challenge_prepare_handler(ctx: TaskHandlerContext) -> None:
+    """Prepare a private AI challenge; task payload never carries prompt/code."""
+    payload = ctx.input_payload or {}
+    course_id = int(payload.get("course_id") or 0)
+    student_id = int(payload.get("student_id") or 0)
+    offer_id = str(payload.get("offer_id") or "")
+    if not course_id or not student_id or not offer_id:
+        raise TaskExecutionError(
+            "VALIDATION_FAILED",
+            "coding_challenge_prepare requires course_id/student_id/offer_id",
+            retryable=False,
+        )
+    from app.services.coding_challenge_generation_service import (
+        coding_challenge_generation_service,
+    )
+
+    with ctx.session_factory() as session:
+        ctx.service.mark_running(session, ctx.task_id, stage="challenge_generation")
+    with ctx.session_factory() as session:
+        offer = await coding_challenge_generation_service.prepare_offer(
+            session,
+            offer_id=offer_id,
+            course_id=course_id,
+            student_id=student_id,
+        )
+    with ctx.session_factory() as session:
+        if offer.status == "ready":
+            ctx.service.mark_succeeded(
+                session,
+                ctx.task_id,
+                result_ref=f"coding_challenge_offer://{offer_id}",
+                result_data={"offer_id": offer_id, "status": "ready"},
+            )
+        else:
+            ctx.service.mark_failed(
+                session,
+                ctx.task_id,
+                error_code=offer.reason_code or "CHALLENGE_GENERATION_FAILED",
+                error_message="代码挑战准备失败，请稍后重试或换题。",
+                retryable=offer.reason_code in {"SANDBOX_UNAVAILABLE", "CHALLENGE_LLM_UNAVAILABLE"},
+            )
+
+
 # ---------------------------------------------------------------------------
 # media handlers
 # ---------------------------------------------------------------------------
-
-
-async def media_avatar_preprocess_handler(ctx: TaskHandlerContext) -> None:
-    """数字人资产预处理 handler。
-
-    input_payload 期望字段：
-    - avatar_id: str
-    - portrait_object_key: str
-    - voice_object_key: str | None
-    - provider_key: str
-
-    P0-3 安全约束：
-    - 入口必须校验 AvatarSourceMedia.upload_status == VALIDATED，
-      拒绝 pending/uploaded/quarantined/withdrawn 状态的素材进入预处理。
-    - 调用 preparation_service.execute_preparation_job 执行真实预处理。
-    """
-    payload = ctx.input_payload or {}
-    avatar_id = payload.get("avatar_id")
-    if not avatar_id:
-        raise TaskExecutionError(
-            "VALIDATION_FAILED",
-            "media.avatar_preprocess handler 缺少 avatar_id",
-            retryable=False,
-        )
-
-    from app.services.avatar_service import preparation_service
-    from sqlmodel import select
-    from app.models.avatar_model import (
-        AvatarPreparationJob,
-        AvatarSourceMedia,
-        AvatarSourceMediaType,
-        AvatarSourceMediaStatus,
-    )
-
-    # 1. 查找对应的 AvatarPreparationJob
-    with ctx.session_factory() as session:
-        job = session.exec(
-            select(AvatarPreparationJob).where(
-                AvatarPreparationJob.task_id == ctx.task_id
-            )
-        ).first()
-        if job is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"未找到 task_id={ctx.task_id} 对应的 AvatarPreparationJob",
-                retryable=False,
-            )
-        job_id = job.job_id
-        owner_user_id = job.owner_user_id
-
-        # P0-3.6 安全校验：所有依赖素材必须处于 VALIDATED 状态
-        sources = list(session.exec(
-            select(AvatarSourceMedia).where(
-                AvatarSourceMedia.avatar_id == avatar_id,
-                AvatarSourceMedia.owner_user_id == owner_user_id,
-            )
-        ).all())
-        if not sources:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"avatar_id={avatar_id} 没有任何原始素材，无法预处理",
-                retryable=False,
-            )
-        # 必须存在 portrait_video
-        portrait = next(
-            (s for s in sources if s.media_type == AvatarSourceMediaType.PORTRAIT_VIDEO),
-            None,
-        )
-        if portrait is None:
-            raise TaskExecutionError(
-                "VALIDATION_FAILED",
-                f"avatar_id={avatar_id} 缺少 portrait_video 素材",
-                retryable=False,
-            )
-        # 所有登记的素材都必须 VERIFIED；存在未校验/隔离/撤回的素材直接拒绝
-        unverified = [
-            s for s in sources
-            if s.upload_status != AvatarSourceMediaStatus.VERIFIED
-        ]
-        if unverified:
-            bad = [
-                {
-                    "source_media_id": s.source_media_id,
-                    "media_type": s.media_type.value,
-                    "upload_status": s.upload_status.value,
-                }
-                for s in unverified
-            ]
-            raise TaskExecutionError(
-                "DEPENDENCY_UNVALIDATED",
-                f"avatar_id={avatar_id} 存在未通过服务端校验的素材: {bad}",
-                retryable=False,
-            )
-
-    # 2. 调用 execute_preparation_job（同步执行，Fake Provider 在 P0-3 替换）
-    with ctx.session_factory() as session:
-        try:
-            preparation_service.execute_preparation_job(
-                session,
-                avatar_id=avatar_id,
-                job_id=job_id,
-                owner_user_id=owner_user_id,
-            )
-            session.commit()
-        except Exception as exc:
-            raise TaskExecutionError(
-                "AVATAR_PREPROCESS_FAILED",
-                f"数字人预处理失败: {exc}",
-                retryable=True,
-            )
-
-    # 3. 标记 succeeded（execute_preparation_job 内部已更新 job 状态，
-    #    但 task 状态需在此显式标记）
-    with ctx.session_factory() as session:
-        ctx.service.mark_succeeded(
-            session,
-            ctx.task_id,
-            result_ref=f"avatar_preparation_job://{job_id}",
-            result_data={"avatar_id": avatar_id, "job_id": job_id},
-        )
 
 
 async def media_generic_handler(ctx: TaskHandlerContext) -> None:
@@ -2053,7 +2082,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("document_parse", document_parse_handler)
     worker.register("course_draft_build", course_draft_build_handler)
     worker.register("experiment_run", experiment_run_handler)
-    worker.register("media.avatar_preprocess", media_avatar_preprocess_handler)
+    worker.register("coding_challenge_prepare", coding_challenge_prepare_handler)
     worker.register("agent_action_execute", agent_action_execute_handler)
     worker.register("question_bank.import", question_bank_import_handler)
     from app.platform.tasks.knowledge_handlers import (
@@ -2068,7 +2097,7 @@ def register_business_handlers(worker: LocalTaskWorker = local_task_worker) -> N
     worker.register("media.tts", media_tts_handler)
     worker.register("media.timeline_publish", media_timeline_publish_handler)
     worker.register("media.ppt_manifest", media_ppt_manifest_handler)
-    for job_type in ("subtitle", "avatar_preprocess", "dh_render", "video_package"):
+    for job_type in ("subtitle", "video_package"):
         task_type = f"media.{job_type}"
         if not worker.has_handler(task_type):
             worker.register(task_type, media_generic_handler)

@@ -32,31 +32,39 @@ const analyticsEligible = computed(() => Boolean(state.access?.analytics_eligibl
 
 const course = computed(() => state.detail?.course ?? null)
 
-// L2 导航（§10.2/§10.3）：学生 = 概览｜学习｜知识｜实验任务；
-// 教师追加 = 建设｜成员｜设置。建设/成员/设置仅对有 course.edit 的角色显示
-// （§1.5：完全无权访问的入口直接隐藏）。
+// L2 导航（§10.2/§10.3）：学生保留“知识”；建设者从建设 Local Rail
+// 跨布局进入知识空间，不再重复显示顶部“知识”。建设/成员/设置仅对
+// 有 course.edit 的角色显示（§1.5：完全无权访问的入口直接隐藏）。
 const navItems = computed(() => {
   const base = [
     { key: 'overview', label: '概览', to: `/app/course/${courseId.value}/overview`, enabled: true },
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
     { key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: allowed.value['analytics.view_course'] },
-    { key: 'knowledge', label: '知识', to: `/app/course/${courseId.value}/knowledge`, enabled: true },
     {
       key: 'experiments',
       label: '实验任务',
       to: `/app/course/${courseId.value}/experiments`,
       enabled: isCodeSandboxExperimentPlatformEnabled(capabilities.value),
     },
-    {
-      key: 'research',
-      label: '科研',
-      to: `/app/course/${courseId.value}/research`,
-      // Keep the Research workspace discoverable for every active course
-      // member. The backend still gates the actual paper search capability.
-      enabled: allowed.value['course.view'],
-      reason: '当前课程角色无研究检索权限',
-    },
+    // 「科研」入口暂时隐藏（2026-08-20 按需求下线，非删除）：
+    // 路由、页面与后端全部保留，后续需要时恢复此 nav 项即可重新可见。
+    // {
+    //   key: 'research',
+    //   label: '科研',
+    //   to: `/app/course/${courseId.value}/research`,
+    //   enabled: allowed.value['course.view'],
+    //   reason: '当前课程角色无研究检索权限',
+    // },
   ]
+  if (!allowed.value['course.edit']) {
+    base.splice(3, 0, {
+      key: 'knowledge',
+      label: '知识',
+      // 知识工作区已并入建设布局；学生入口直达结构视图
+      to: `/app/course/${courseId.value}/build/knowledge/graph`,
+      enabled: true,
+    })
+  }
   if (allowed.value['course.edit']) {
     base.push(
       { key: 'build', label: '建设', to: `/app/course/${courseId.value}/build`, enabled: true },
@@ -73,8 +81,8 @@ const navItems = computed(() => {
 const activeKey = computed(() => {
   if (route.path.endsWith('/learn')) return 'learn'
   if (route.path.includes('/analytics')) return 'analytics'
-  if (route.path.includes('/knowledge')) return 'knowledge'
   if (route.path.includes('/visualize')) return 'learn'
+  if (route.path.includes('/build/knowledge')) return allowed.value['course.edit'] ? 'build' : 'knowledge'
   if (route.path.includes('/build')) return 'build'
   if (route.path.includes('/experiments')) return 'experiments'
   if (route.path.includes('/research')) return 'research'
@@ -83,9 +91,11 @@ const activeKey = computed(() => {
   return 'overview'
 })
 
-// 返回按钮目标：建设子树回到「我建设的」，其余子页面回到「我学习的」。
+// 返回按钮目标：建设子树（含知识工作区）按角色回到对应列表。
 const backTarget = computed(() => {
-  if (route.path.includes('/build')) return '/app/courses/building'
+  if (route.path.includes('/build')) {
+    return allowed.value['course.edit'] ? '/app/courses/building' : '/app/courses/learning'
+  }
   return '/app/courses/learning'
 })
 

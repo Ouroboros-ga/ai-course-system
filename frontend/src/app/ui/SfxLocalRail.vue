@@ -109,6 +109,10 @@ const railCls = computed(() => (collapsed.value ? 'is-collapsed' : 'is-expanded'
       <ChevronLeft v-if="!collapsed" :size="16" />
       <ChevronRight v-else :size="16" />
     </button>
+    <!-- 可选底部区域：放置"返回上级工作区"等跨布局入口 -->
+    <div v-if="$slots.footer" class="sfx-rail-footer">
+      <slot name="footer" />
+    </div>
   </aside>
 </template>
 
@@ -226,9 +230,32 @@ const railCls = computed(() => (collapsed.value ? 'is-collapsed' : 'is-expanded'
 
 .sfx-rail-toggle:hover { color: var(--ink-700); border-color: var(--border-strong); }
 
+/* 底部区域：与导航列表用分隔线隔开（收缩态隐藏文字类入口由调用方控制） */
+.sfx-rail-footer {
+  flex-shrink: 0;
+  padding: var(--space-2);
+  border-top: 1px solid var(--border-default);
+}
+.sfx-rail-footer :deep(a) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 34px;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--ui-sm-size);
+  font-weight: var(--ui-md-weight);
+  white-space: nowrap;
+  text-decoration: none;
+}
+.sfx-rail-footer :deep(a):hover { background: var(--ink-100); color: var(--ink-900); }
+
 /* 收缩态：只显示图标与状态点，Hover 由 title 展示名称（design.md 4.6） */
 .sfx-rail.is-collapsed .sfx-rail-item { justify-content: center; padding: 0; }
 .sfx-rail.is-collapsed .sfx-rail-item-label { display: none; }
+/* 收缩态空间不足，底部文字入口隐藏（可用 L2 导航替代返回） */
+.sfx-rail.is-collapsed .sfx-rail-footer { display: none; }
 .sfx-rail.is-collapsed .sfx-rail-item-count {
   position: absolute;
   top: 2px;
@@ -282,6 +309,8 @@ const railCls = computed(() => (collapsed.value ? 'is-collapsed' : 'is-expanded'
   }
 
   .sfx-rail-toggle { display: none; }
+  /* 横向条场景底部入口无独立空间，隐藏（移动端用 L2 导航返回） */
+  .sfx-rail-footer { display: none; }
 
   /* 收缩态在移动端始终展示完整标签 */
   .sfx-rail.is-collapsed .sfx-rail-item { justify-content: flex-start; padding: 0 var(--space-2); }

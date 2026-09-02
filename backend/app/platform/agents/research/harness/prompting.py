@@ -116,6 +116,13 @@ class ResearchPromptAssembler:
                     "可按意图选择的白名单工具：\n{tool_manifest}\n"
                     "先判断任务类型，再选择完成该任务所需的最小工具集合。"
                 ),
+                "writing_assist": (
+                    "\n写作请求：{research_question}\n"
+                    "筛选后的工作区上下文：\n{context}\n"
+                    "已核验的论文元数据摘要：\n{papers_summary}\n"
+                    "只使用上述来源中的事实撰写草稿（综述段落/框架/润色），"
+                    "不得编造文献、数据或结论；输出末尾注明【AI 生成内容】标识。"
+                ),
             },
         )
 

@@ -1,7 +1,8 @@
 <script setup>
 import { computed } from 'vue'
-import { BookMarked, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
+import { BookMarked, BookOpen, CornerUpLeft, MapPinned, RefreshCw, TriangleAlert } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
+import CodingChallengeCard from './CodingChallengeCard.vue'
 import { useSettingsStore } from '@/stores/userSettings'
 import { renderContent } from '@/utils/markdownRenderer'
 
@@ -11,6 +12,7 @@ const props = defineProps({
     message: { type: Object, required: true },
     activeAdjustment: { type: Object, default: null },
     adjustmentBusy: { type: Boolean, default: false },
+    challengeBusy: { type: Boolean, default: false },
 })
 const emit = defineEmits([
     'accept-adjustment',
@@ -19,6 +21,9 @@ const emit = defineEmits([
     'retry-opening-review',
     'abandon-adjustment',
     'retry',
+    'challenge-start',
+    'challenge-dismiss',
+    'challenge-replace',
 ])
 
 function reviewPage(adjustment) {
@@ -87,6 +92,15 @@ const renderedContent = computed(() => {
                     <TriangleAlert :size="13" /> {{ message.fallbackNotice }}
                 </div>
 
+                <CodingChallengeCard
+                    v-if="message.codingChallengeOffer"
+                    :offer="message.codingChallengeOffer"
+                    :busy="challengeBusy"
+                    @start="$emit('challenge-start', $event)"
+                    @dismiss="$emit('challenge-dismiss', $event)"
+                    @replace="$emit('challenge-replace', $event)"
+                />
+
                 <!-- ② 依据：原文引用（design.md 4.5 左 3px 墨蓝边） -->
                 <ul v-if="message.citations?.length" class="sfx-agent-citations">
                     <li class="sfx-agent-seg-label sfx-agent-citations-title">依据</li>
@@ -97,6 +111,22 @@ const renderedContent = computed(() => {
                         <span v-if="citation.page != null" class="sfx-t-caption">p.{{ citation.page }}</span>
                     </li>
                 </ul>
+
+                <!-- 学科参考（R14）：权威教材补充参考，非课程正式证据 -->
+                <ul v-if="message.disciplineReferences?.length" class="sfx-agent-discipline">
+                    <li class="sfx-agent-seg-label sfx-agent-citations-title">学科参考</li>
+                    <li v-for="(ref, index) in message.disciplineReferences" :key="ref.node_id || index"
+                        class="sfx-agent-citation is-discipline">
+                        <BookOpen :size="13" />
+                        <span>{{ ref.name }}<template v-if="ref.course">（{{ ref.course }}）</template></span>
+                        <span v-if="ref.source_title" class="sfx-t-caption">{{ ref.source_title }}</span>
+                    </li>
+                </ul>
+
+                <!-- AI 生成内容标识（伦理声明 §三：明显标识 AI 输出） -->
+                <p class="sfx-agent-ai-badge sfx-t-caption">
+                    <BookOpen :size="12" /> 本回答由 AI 生成，供学习参考；课程依据以教师发布内容为准。
+                </p>
 
                 <!-- 回顾建议：仅在消息内出现，不额外持久化到页面底部 -->
                 <section v-if="isVisibleProposal(message.learningAdjustment)" class="sfx-agent-adjustment"
@@ -154,9 +184,10 @@ const renderedContent = computed(() => {
                     </template>
                 </section>
 
-                <button v-if="message.error" type="button" class="sfx-agent-retry sfx-t-ui" @click="retry">
-                    <RefreshCw :size="13" /> 重试
-                </button>
+                <SfxButton v-if="message.error" variant="secondary" size="sm" @click="retry">
+                    <template #icon><RefreshCw :size="13" /></template>
+                    重试
+                </SfxButton>
             </div>
         </div>
     </div>
@@ -368,6 +399,41 @@ const renderedContent = computed(() => {
     font-size: var(--ui-sm-size);
     color: var(--text-secondary);
     line-height: 1.6;
+}
+
+/* 学科参考（R14）：琥珀左边线区别于墨蓝"依据"，明示补充参考身份 */
+.sfx-agent-discipline {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    list-style: none;
+    border-left: 3px solid var(--amber-300);
+    background: var(--amber-100);
+    border-radius: var(--radius-sm);
+}
+
+.sfx-agent-citation.is-discipline {
+    color: var(--text-secondary);
+}
+
+.sfx-agent-citation.is-discipline span:first-of-type {
+    color: var(--text-primary);
+}
+
+/* AI 生成内容标识（伦理声明 §三） */
+.sfx-agent-ai-badge {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    margin: 0;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface-soft);
+    color: var(--text-muted);
+    font-size: var(--caption-size);
+    line-height: 1.5;
 }
 
 /* 学习回顾建议/正在回顾卡片 */
