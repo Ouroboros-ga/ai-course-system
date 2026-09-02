@@ -10,16 +10,16 @@ const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
 const selectedNode = ref(null)
 // 助教智能体默认展开（2026-08-20 需求）：进入建设布局即以挤压式面板呈现；
-// 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求）：
-// 直接以 URL 进入知识区时收起；点击侧栏「知识」步骤按钮则自动展开（见 onStepClick）。
+// 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求），
+// 从建设其他页面切入知识区时收起一次，区内五个小页面间切换不打断手动展开。
 const isKnowledgeRoute = () => route.path.includes('/build/knowledge')
 const agentOpen = ref(!isKnowledgeRoute())
-
-// 点击建设步骤按钮：进入知识区时自动展开助教智能体（知识审核常需对照
-// 图谱/原文依据，免去再点一次工具栏）；其余步骤保持用户当前展开状态。
-function onStepClick(step) {
-  if (step.key === 'knowledge') agentOpen.value = true
-}
+let lastInKnowledge = isKnowledgeRoute()
+watch(() => route.path, () => {
+  const inKnowledge = isKnowledgeRoute()
+  if (inKnowledge && !lastInKnowledge) agentOpen.value = false
+  lastInKnowledge = inKnowledge
+})
 
 // 建设导航栏收起状态（与学习页 LearningTrack 行为一致：用户手动选择后按设备记忆）
 const RAIL_STORAGE_KEY = 'sfx:rail:build'
@@ -124,6 +124,12 @@ const activeStep = computed(() => {
 // 知识步骤子菜单（知识工作区页面直达）展开状态；
 // 初始值：已处于知识工作区子页面时默认展开，保证选中标识可见
 const knowledgeOpen = ref(String(route.name || '').startsWith('app-course-build-knowledge'))
+
+// 点击「知识」步骤按钮时自动展开知识工作区子菜单（build-sub），
+// 让教师一眼看到可直达的五个子页面；其他步骤无子菜单不受影响。
+function onStepClick(step) {
+  if (step.key === 'knowledge' && step.children) knowledgeOpen.value = true
+}
 </script>
 
 <template>
