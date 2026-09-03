@@ -35,6 +35,9 @@ export const useCounterStore = defineStore('counter', () => {
   const hasPlatformPermission = (permission) =>
     platformPermissions.value.includes(permission) || platformPermissions.value.includes('platform.admin')
   const canManageUsers = computed(() => hasPlatformPermission('platform.admin') || hasPlatformPermission('platform.user.manage'))
+  // 「Nexus AI」使用权（转型决策 D10）：由平台权限 platform.nexus.use 显式授予，
+  // platform.admin 作为超集自然可用；无权限时导航不出现入口，页面显示无权限态。
+  const canUseNexus = computed(() => hasPlatformPermission('platform.nexus.use'))
   // 目标模型：任何登录用户都可以创建课程；课程内教学身份由 Course Access 决定。
   const canCreateCourses = computed(() => isLoggedIn.value)
   const isTeacher = computed(() => false)
@@ -125,6 +128,7 @@ export const useCounterStore = defineStore('counter', () => {
     platformPermissions,
     hasPlatformPermission,
     canManageUsers,
+    canUseNexus,
     canCreateCourses,
     displayName: computed(() => userData.value.username || ''),
     setPlatformPermissions,

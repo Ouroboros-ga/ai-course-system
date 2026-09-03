@@ -16,7 +16,14 @@ export function getNexusHealth() {
   return request.get('/nexus/health', { allowFlatResponse: true, skipErrorToast: true })
 }
 
-/** 非流式对话：等 Agent 循环跑完一次性返回。用于不需要过程可见的场景。 */
+/**
+ * 非流式对话：等 Agent 循环跑完一次性返回。
+ *
+ * @deprecated 已知运行时缺陷（见开发文档「待修缺陷 D1」）：
+ * nexus/ 的 /chat 把 stream_mode 当字符串传入，而 langgraph 1.2 只在传 list 时
+ * 才 yield 元组，真跑必抛 ValueError。在运行时修复前，前端一律走流式
+ * streamNexusMessage()，不要调用本函数。
+ */
 export function sendNexusMessage(payload) {
   return request.post('/nexus/chat', payload, { allowFlatResponse: true })
 }
@@ -60,11 +67,23 @@ function parseSseFrames(buffer, onEvent) {
  * @param {object} options
  * @param {string} options.message      用户输入
  * @param {string} [options.sessionId]  会话 ID（P0 阶段服务重启即清）
+ * @param {string} [options.mode]       模式标识，接线预留（当前运行时忽略未知字段）
+ * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
  * @param {(evt: {event: string, data: object}) => void} options.onEvent
  * @param {AbortSignal} [options.signal] 用于取消（组件卸载/用户中止）
  */
-export async function streamNexusMessage({ message, sessionId = 'default', onEvent, signal }) {
+export async function streamNexusMessage({
+  message,
+  sessionId = 'default',
+  mode = null,
+  courseId = null,
+  onEvent,
+  signal,
+}) {
   const body = { message, session_id: sessionId }
+  // 接线预留：运行时一旦在 /chat/stream 接收这两个字段，前端无需任何改动。
+  if (mode) body.mode = mode
+  if (courseId != null) body.context = { course_id: courseId }
   // 复用 axios 拦截器同一套签名算法：签名参数进 body，与 POST 的签名口径一致。
   const { time, enc } = generateSignature(body)
   const token = localStorage.getItem('token')

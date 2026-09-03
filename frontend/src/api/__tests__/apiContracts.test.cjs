@@ -924,6 +924,27 @@ test('router.js + PrimaryNav.vue: Nexus AI 是课程外全局一级入口', () =
   assert.match(nav, /label: 'Nexus AI', to: '\/app\/nexus'/)
 })
 
+test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', () => {
+  const store = read('frontend/src/stores/counter.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const model = read('backend/app/models/access_control_model.py')
+
+  // store：platform.admin 超集语义与既有 hasPlatformPermission 一致
+  assert.match(store, /canUseNexus = computed\(\(\) => hasPlatformPermission\('platform\.nexus\.use'\)\)/)
+  // 导航：无权限不渲染入口
+  assert.match(nav, /counter\.canUseNexus \? \[\.\.\.baseNavItems, nexusNavItem\] : baseNavItems/)
+  // 页面：无权限整页拦截并说明开通路径
+  assert.match(page, /v-if="counter\.canUseNexus"/)
+  assert.match(page, /暂无 Nexus AI 使用权限/)
+  // 后端是真正的强制点：三个端点（health/chat/chat-stream）全部走 require_nexus_use
+  assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 3)
+  // 权限值唯一权威来源是 PlatformPermission 枚举
+  assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
+})
+
 test('S1 双轨期：旧科研工作台不在导航中，但路由与页面仍保留可回退', () => {
   const router = read('frontend/src/app/router.js')
   const nav = read('frontend/src/app/shell/PrimaryNav.vue')

@@ -18,13 +18,16 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.core.exceptions import unified_response
+from app.core.exceptions import reject, unified_response
 from app.core.security import get_current_user
+from app.models.access_control_model import PlatformPermission
+from app.models.database import get_session
+from app.services.course_access_service import require_platform_permission
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,26 @@ router = APIRouter()
 ERROR_NOT_CONFIGURED = "NEXUS_RUNTIME_NOT_CONFIGURED"
 ERROR_UNAVAILABLE = "NEXUS_RUNTIME_UNAVAILABLE"
 ERROR_TIMEOUT = "NEXUS_RUNTIME_TIMEOUT"
+ERROR_FORBIDDEN = "NEXUS_PERMISSION_DENIED"
+
+
+async def require_nexus_use(
+    session=Depends(get_session),
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """Nexus AI 使用权门控：``platform.nexus.use``（或 ``platform.admin``）。
+
+    Nexus 是课程外全局入口，不绑定课程上下文，因此不走 course-scoped 的
+    ``course_permission`` 链，而走平台权限解析（仅读
+    ``platform_permission_assignments`` 显式授权，不依赖 ``User.role`` 推断）。
+    """
+    try:
+        require_platform_permission(session, current_user, PlatformPermission.NEXUS_USE)
+    except HTTPException as error:
+        if error.status_code != status.HTTP_403_FORBIDDEN:
+            raise
+        reject(403, ERROR_FORBIDDEN, "尚未获得 Nexus AI 使用权限，请联系平台管理员开通")
+    return current_user
 
 # 上游响应中不可透传的逐跳头（由本后端的 ASGI 服务器重新决定）。
 _HOP_BY_HOP_HEADERS = {
@@ -138,7 +161,7 @@ def _passthrough(response: httpx.Response) -> JSONResponse:
 @router.get("/health")
 async def nexus_health(
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_nexus_use),
 ):
     """透传 Nexus Runtime 的 ``/health``（含 llm/searxng/repro_worker 配置状态）。"""
     base = _runtime_base_url()
@@ -167,7 +190,7 @@ async def nexus_health(
 async def nexus_chat(
     payload: NexusChatRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_nexus_use),
 ):
     """非流式对话：等待 Agent 循环结束后一次性返回最终答复与工具事件。"""
     base = _runtime_base_url()
@@ -198,7 +221,7 @@ async def nexus_chat(
 async def nexus_chat_stream(
     payload: NexusChatRequest,
     request: Request,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_nexus_use),
 ):
     """流式对话：逐块转发上游 SSE（token / tool_call / tool_result / done）。
 

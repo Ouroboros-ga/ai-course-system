@@ -1,0 +1,25 @@
+# Nexus AI Runtime（CodeNexus 转型 S1-B1）
+# - 独立 Python 环境：/opt/smartcarb/nexus-runtime/.venv（uv sync，deepagents/langgraph 1.x
+#   只进本环境，不与 backend-py312 共享依赖树，AGENTS.md §4.1.9）
+# - 代码目录：/opt/smartcarb/nexus-runtime（独立于 releases/，避免 release 裁剪影响运行中
+#   服务；每次部署从仓库 nexus/ 同步后按需 `uv sync --frozen`）
+# - 配置来源：/opt/smartcarb/shared/env/nexus.env（root:600，DeepSeek Key 不进仓库/日志）
+# - 与旧 Backend 只经 HTTP/SSE 通信（127.0.0.1:8300），由 smartcarb-backend 反代 /api/v1/nexus/*
+[Unit]
+Description=Nexus AI Runtime (CodeNexus)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/smartcarb/nexus-runtime
+Environment=PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+EnvironmentFile=/opt/smartcarb/shared/env/nexus.env
+ExecStart=/opt/smartcarb/nexus-runtime/.venv/bin/python -m uvicorn nexus.main:app --app-dir /opt/smartcarb/nexus-runtime/src --host 127.0.0.1 --port 8300
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

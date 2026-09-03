@@ -8,7 +8,7 @@ const route = useRoute()
 const router = useRouter()
 const counter = useCounterStore()
 
-const navItems = [
+const baseNavItems = [
     { label: '首页', to: '/app', icon: House, exact: true },
     { label: '我的课程', to: '/app/courses/learning', icon: BookOpen, match: '/app/courses' },
     // 「实验室」一级入口暂时隐藏（2026-08-20 按需求下线，非删除）：
@@ -20,13 +20,20 @@ const navItems = [
     // 路由 /app/resources/* 与 ResourcesLayout 页面全部保留，恢复此项即可。
     // { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
     { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
-    // 「Nexus AI」是 CodeNexus 转型后的课程外全局智能体入口（决策文档 D2）：
-    // 课程内的便捷问答由 TeachingAgent 承担，此处只放能拆解复杂问题的 Nexus。
-    { label: 'Nexus AI', to: '/app/nexus', icon: BrainCircuit, match: '/app/nexus' },
     // 旧「科研工作台」（/app/course/:id/research）已于 2026-08-20 从课程内 L2 隐藏，
-    // 转型后由上面的 Nexus AI 取代；路由与页面保留至 S2 再删除，期间深链仍可访问
+    // 转型后由下面的 Nexus AI 取代；路由与页面保留至 S2 再删除，期间深链仍可访问
     // 以便回退演示（docs/phase1/CodeNexus转型落地计划.md §二）。
 ]
+
+// 「Nexus AI」是 CodeNexus 转型后的课程外全局智能体入口（决策文档 D2）：
+// 课程内的便捷问答由 TeachingAgent 承担，此处只放能拆解复杂问题的 Nexus。
+// 使用权由 platform.nexus.use 显式授予（决策 D10，2026-09-03）：无权限用户
+// 不展示入口；platform.admin 为超集自然可用（store.canUseNexus）。
+const nexusNavItem = { label: 'Nexus AI', to: '/app/nexus', icon: BrainCircuit, match: '/app/nexus' }
+
+const navItems = computed(() =>
+    counter.canUseNexus ? [...baseNavItems, nexusNavItem] : baseNavItems
+)
 
 const adminItem = computed(() =>
     counter.canManageUsers ? { label: '平台管理', to: '/app/admin', icon: ShieldCheck } : null
@@ -122,8 +129,8 @@ onBeforeUnmount(() => {
     window.removeEventListener('resize', measureNav)
 })
 
-// 平台管理入口随权限出现/消失会改变导航宽度，DOM 更新后再测量
-watch(adminItem, () => nextTick(measureNav))
+// 平台管理入口与 Nexus 入口随权限出现/消失会改变导航宽度，DOM 更新后再测量
+watch([adminItem, navItems], () => nextTick(measureNav))
 </script>
 
 <template>
@@ -134,7 +141,7 @@ watch(adminItem, () => nextTick(measureNav))
                 <Menu :size="20" />
             </button>
             <RouterLink to="/app" class="sfx-l1nav-brand" aria-label="返回工作首页">
-                <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-brand-logo" />
+                <img src="@/assets/logo/logo-mark.svg" alt="" class="sfx-l1nav-brand-logo" />
                 <span class="sfx-l1nav-brand-name">CodeNexus智码交响</span>
             </RouterLink>
 
@@ -179,7 +186,7 @@ watch(adminItem, () => nextTick(measureNav))
                 <div class="sfx-l1nav-drawer-mask" @click="drawerOpen = false"></div>
                 <aside class="sfx-l1nav-drawer" role="dialog" aria-modal="true" aria-label="导航菜单">
                     <div class="sfx-l1nav-drawer-head">
-                        <img src="@/assets/logo/logo-彩色.svg" alt="" class="sfx-l1nav-drawer-logo" />
+                        <img src="@/assets/logo/logo-mark.svg" alt="" class="sfx-l1nav-drawer-logo" />
                         <span class="sfx-l1nav-drawer-title">CodeNexus智码交响</span>
                         <button type="button" class="sfx-l1nav-drawer-close" aria-label="关闭导航菜单" @click="drawerOpen = false">
                             <X :size="18" />

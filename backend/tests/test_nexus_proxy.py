@@ -12,6 +12,7 @@ provider 测试同一手法。
 """
 from __future__ import annotations
 
+import uuid
 from contextlib import contextmanager
 from unittest.mock import patch
 
@@ -19,6 +20,8 @@ import httpx
 import pytest
 
 from app.api.v1.endpoints import nexus_proxy
+from app.core.security import create_access_token
+from app.models.access_control_model import PlatformPermission, PlatformPermissionAssignment
 
 RUNTIME_URL = "http://127.0.0.1:8300"
 SERVICE_TOKEN = "test-nexus-service-token"
@@ -63,6 +66,26 @@ def runtime_configured(monkeypatch):
     monkeypatch.setattr(nexus_proxy.settings, "NEXUS_RUNTIME_API_KEY", SERVICE_TOKEN)
 
 
+def _token_for(user) -> str:
+    return create_access_token({
+        "sub": str(user.id),
+        "username": user.username,
+        "role": user.role.value,
+        "school_id": user.school_id or "test-school",
+    })
+
+
+@pytest.fixture
+def nexus_student_token(session, student_user):
+    """持有 ``platform.nexus.use`` 的普通学生：Nexus 路由的合法调用者。"""
+    session.add(PlatformPermissionAssignment(
+        user_id=student_user.id,
+        permission=PlatformPermission.NEXUS_USE,
+    ))
+    session.commit()
+    return _token_for(student_user)
+
+
 def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
@@ -73,7 +96,7 @@ def _auth(token: str) -> dict[str, str]:
 
 
 def test_health_proxies_runtime_payload_and_identity_without_leaking_user_jwt(
-    client, student_token, student_user, runtime_configured
+    client, nexus_student_token, student_user, runtime_configured
 ):
     seen: dict[str, httpx.Request] = {}
 
@@ -82,7 +105,7 @@ def test_health_proxies_runtime_payload_and_identity_without_leaking_user_jwt(
         return httpx.Response(200, json=RUNTIME_HEALTH)
 
     with mock_runtime(handler):
-        response = client.get("/api/v1/nexus/health", headers=_auth(student_token))
+        response = client.get("/api/v1/nexus/health", headers=_auth(nexus_student_token))
 
     assert response.status_code == 200
     assert response.json() == RUNTIME_HEALTH
@@ -91,14 +114,14 @@ def test_health_proxies_runtime_payload_and_identity_without_leaking_user_jwt(
     assert upstream.url.path == "/health"
     # 后端到 Runtime 用内部服务令牌，用户 JWT 不外泄。
     assert upstream.headers["Authorization"] == f"Bearer {SERVICE_TOKEN}"
-    assert student_token not in upstream.headers["Authorization"]
+    assert nexus_student_token not in upstream.headers["Authorization"]
     # 用户身份以专用头透传，供 Runtime 侧审计与后续权限位使用。
     assert upstream.headers["X-Nexus-User-Id"] == str(student_user.id)
     assert upstream.headers["X-Nexus-User-Role"] == student_user.role.value
 
 
 def test_chat_proxies_request_body_to_runtime_chat_route(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     seen: dict[str, httpx.Request] = {}
 
@@ -113,7 +136,7 @@ def test_chat_proxies_request_body_to_runtime_chat_route(
         response = client.post(
             "/api/v1/nexus/chat",
             json={"message": "搜索 Transformer 最新进展", "session_id": "s1"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 200
@@ -121,7 +144,7 @@ def test_chat_proxies_request_body_to_runtime_chat_route(
     assert seen["request"].url.path == "/api/v1/nexus/chat"
 
 
-def test_chat_stream_relays_upstream_sse_events(client, student_token, runtime_configured):
+def test_chat_stream_relays_upstream_sse_events(client, nexus_student_token, runtime_configured):
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/nexus/chat/stream"
         assert request.headers["Accept"] == "text/event-stream"
@@ -143,7 +166,7 @@ def test_chat_stream_relays_upstream_sse_events(client, student_token, runtime_c
         response = client.post(
             "/api/v1/nexus/chat/stream",
             json={"message": "搜索 Transformer 最新进展", "session_id": "s1"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 200
@@ -163,18 +186,18 @@ def test_chat_stream_relays_upstream_sse_events(client, student_token, runtime_c
 
 
 def test_health_fails_closed_when_runtime_url_not_configured(
-    client, student_token, monkeypatch
+    client, nexus_student_token, monkeypatch
 ):
     monkeypatch.setattr(nexus_proxy.settings, "NEXUS_RUNTIME_URL", "")
 
-    response = client.get("/api/v1/nexus/health", headers=_auth(student_token))
+    response = client.get("/api/v1/nexus/health", headers=_auth(nexus_student_token))
 
     assert response.status_code == 503
     assert response.json()["data"]["error_code"] == nexus_proxy.ERROR_NOT_CONFIGURED
 
 
 def test_chat_fails_closed_when_runtime_unreachable(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("connection refused", request=request)
@@ -183,7 +206,7 @@ def test_chat_fails_closed_when_runtime_unreachable(
         response = client.post(
             "/api/v1/nexus/chat",
             json={"message": "帮我规划 nanoGPT 复现"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 503
@@ -194,7 +217,7 @@ def test_chat_fails_closed_when_runtime_unreachable(
 
 
 def test_chat_reports_timeout_instead_of_fabricating_answer(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     async def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("read timeout", request=request)
@@ -203,7 +226,7 @@ def test_chat_reports_timeout_instead_of_fabricating_answer(
         response = client.post(
             "/api/v1/nexus/chat",
             json={"message": "执行 nanoGPT 复现"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 504
@@ -211,7 +234,7 @@ def test_chat_reports_timeout_instead_of_fabricating_answer(
 
 
 def test_chat_passes_through_runtime_own_error_code(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     """Runtime 自己 fail-closed（如 LLM 未配置）时，错误码必须原样到达前端。"""
 
@@ -222,7 +245,7 @@ def test_chat_passes_through_runtime_own_error_code(
         response = client.post(
             "/api/v1/nexus/chat",
             json={"message": "你好"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 503
@@ -230,7 +253,7 @@ def test_chat_passes_through_runtime_own_error_code(
 
 
 def test_chat_stream_surfaces_upstream_failure_as_json_not_empty_stream(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     """建流阶段上游就失败时，返回可判读的 JSON 错误，而不是一个空 SSE 流。"""
 
@@ -241,7 +264,7 @@ def test_chat_stream_surfaces_upstream_failure_as_json_not_empty_stream(
         response = client.post(
             "/api/v1/nexus/chat/stream",
             json={"message": "你好"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 503
@@ -250,7 +273,7 @@ def test_chat_stream_surfaces_upstream_failure_as_json_not_empty_stream(
 
 
 def test_chat_reports_non_json_upstream_response(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, text="<html>502 Bad Gateway</html>")
@@ -259,7 +282,7 @@ def test_chat_reports_non_json_upstream_response(
         response = client.post(
             "/api/v1/nexus/chat",
             json={"message": "你好"},
-            headers=_auth(student_token),
+            headers=_auth(nexus_student_token),
         )
 
     assert response.status_code == 502
@@ -287,7 +310,7 @@ def test_nexus_endpoints_require_authentication(client, runtime_configured, meth
 
 
 def test_chat_rejects_empty_message_before_reaching_runtime(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     called = {"upstream": False}
 
@@ -297,11 +320,79 @@ def test_chat_rejects_empty_message_before_reaching_runtime(
 
     with mock_runtime(handler):
         response = client.post(
-            "/api/v1/nexus/chat", json={"message": ""}, headers=_auth(student_token)
+            "/api/v1/nexus/chat", json={"message": ""}, headers=_auth(nexus_student_token)
         )
 
     assert response.status_code == 422
     assert called["upstream"] is False
+
+
+# ---------------------------------------------------------------------------
+# platform.nexus.use 门控（转型决策 D10）
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("get", "/api/v1/nexus/health"),
+        ("post", "/api/v1/nexus/chat"),
+    ],
+)
+def test_nexus_endpoints_forbid_users_without_nexus_use(
+    client, student_token, runtime_configured, method, path
+):
+    """已登录但未获 ``platform.nexus.use``：403 + 明确错误码，且不触达 Runtime。"""
+    called = {"upstream": False}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        called["upstream"] = True
+        return httpx.Response(200, json=RUNTIME_HEALTH)
+
+    with mock_runtime(handler):
+        call = getattr(client, method)
+        response = (
+            call(path, json={"message": "你好"}, headers=_auth(student_token))
+            if method == "post"
+            else call(path, headers=_auth(student_token))
+        )
+
+    assert response.status_code == 403
+    payload = response.json()
+    assert payload["data"]["error_code"] == nexus_proxy.ERROR_FORBIDDEN
+    assert called["upstream"] is False
+
+
+def test_platform_admin_passes_nexus_gate_without_explicit_grant(
+    session, client, runtime_configured
+):
+    """``platform.admin`` 是平台权限解析中的超集，无需逐项授予即可使用 Nexus。"""
+    from app.models.user_model import User, UserRole
+
+    admin = User(
+        username=f"m4a_nexus_admin_{uuid.uuid4().hex[:8]}",
+        real_name="Nexus Admin",
+        hashed_password="x",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session.add(admin)
+    session.commit()
+    session.refresh(admin)
+    session.add(PlatformPermissionAssignment(
+        user_id=admin.id,
+        permission=PlatformPermission.ADMIN,
+    ))
+    session.commit()
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=RUNTIME_HEALTH)
+
+    with mock_runtime(handler):
+        response = client.get("/api/v1/nexus/health", headers=_auth(_token_for(admin)))
+
+    assert response.status_code == 200
+    assert response.json() == RUNTIME_HEALTH
 
 
 # ---------------------------------------------------------------------------
@@ -327,13 +418,13 @@ def test_legacy_research_responses_carry_deprecation_headers(client, student_tok
 
 
 def test_deprecation_marking_does_not_leak_to_nexus_routes(
-    client, student_token, runtime_configured
+    client, nexus_student_token, runtime_configured
 ):
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json=RUNTIME_HEALTH)
 
     with mock_runtime(handler):
-        response = client.get("/api/v1/nexus/health", headers=_auth(student_token))
+        response = client.get("/api/v1/nexus/health", headers=_auth(nexus_student_token))
 
     assert "Deprecation" not in response.headers
 

@@ -2,7 +2,7 @@ import request from '@/utils/request.js'
 
 const base = '/teaching-agent/coding-challenges'
 const scoped = (courseId, options = {}) => ({
-  params: { course_id: courseId, ...(options.params || {}) },
+  params: { course_id: courseId, ...options.params },
   skipErrorToast: options.skipErrorToast ?? true,
 })
 

@@ -56,6 +56,15 @@
   --border-strong: #C9CFD8;
   --border-subtle: #EDF0F3;
 
+  /* ── 1.6b Nexus accent（仅 /app/nexus 使用，取自 logo v1.2 品牌蓝） ──
+     design.md §1.1 禁止在产品面里叠加蓝色渐变造「AI 感」，这条依然成立：
+     下列令牌只允许出现在 Nexus 工作区，用来把这个新一级空间和品牌标对齐，
+     不得渗透到课程、建设、知识库等既有页面（那些仍是 Academic Ink 墨蓝）。*/
+  --nexus-accent: #007AF4;
+  --nexus-accent-strong: #0563C4;
+  --nexus-accent-soft: #E8F2FE;
+  --nexus-accent-line: #A1D0FF;
+
   /* ── 1.6 代码工作区（深色孤岛） ── */
   --code-bg: #101820;
   --code-panel: #161F2B;
@@ -114,6 +123,12 @@
   --rail-width-collapsed: 56px;
   --agent-panel-width: 460px;
   --dock-height: 56px;
+
+  /* Nexus 工作区三栏（page-design §4.1：Local Rail | 主工作区 | 右侧回应区） */
+  --nexus-rail-width: 264px;
+  --nexus-rail-collapsed: 56px;
+  --nexus-detail-width: 340px;
+
   --control-height: 40px;
   --content-max-width: 1440px;
 

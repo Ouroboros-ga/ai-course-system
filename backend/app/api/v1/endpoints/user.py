@@ -29,6 +29,7 @@ from sqlmodel import Session, select
 from app.models.database import get_session
 from app.models.user_model import User, UserRole, normalize_username
 from app.models.access_control_model import PlatformPermissionAssignment
+from app.services.platform_admin_service import ensure_default_nexus_grant
 
 router = APIRouter()
 
@@ -75,6 +76,11 @@ async def user_login(request: LoginRequest, session: Session = Depends(get_sessi
     if not user.is_active:
         return LoginResponse(code=403, message="账户已禁用", data=None)
 
+    # 默认授权（决策 D10 修订）：存量用户登录时补授 platform.nexus.use；
+    # 已被管理员显式撤销的用户不会被复活（见 ensure_default_nexus_grant）。
+    ensure_default_nexus_grant(session, user.id)
+    session.commit()
+
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={
@@ -117,6 +123,10 @@ async def user_register(
     session.add(new_user)
     session.commit()
     session.refresh(new_user)
+
+    # 默认授权（决策 D10 修订）：所有用户默认持有 platform.nexus.use。
+    ensure_default_nexus_grant(session, new_user.id)
+    session.commit()
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(

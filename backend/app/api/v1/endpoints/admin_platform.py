@@ -19,6 +19,9 @@ from app.services.platform_admin_service import (
     list_users,
     update_user,
     reset_password,
+    grant_platform_permission,
+    list_user_platform_permissions,
+    revoke_platform_permission,
 )
 from app.services.platform_task_concurrency_service import get_config, update_config
 from app.services.safety_keyword_service import (
@@ -266,6 +269,49 @@ async def patch_user(user_id: int, payload: UserUpdate, session: Session = Depen
 async def post_reset_password(user_id: int, payload: PasswordReset, session: Session = Depends(get_session), current_user: dict = Depends(require_admin_management)):
     reset_password(session, int(current_user["user_id"]), user_id, payload.password)
     return unified_response(200, "密码已重置", {"user_id": user_id})
+
+
+class PlatformPermissionGrant(BaseModel):
+    permission: str = Field(min_length=1, max_length=64)
+
+
+@router.get("/users/{user_id}/platform-permissions")
+async def get_user_platform_permissions(
+    user_id: int,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_admin_management),
+):
+    """列出用户生效的平台权限与可授予目录（Nexus AI 开通入口等）。"""
+    data = list_user_platform_permissions(session, user_id)
+    return unified_response(200, "获取平台权限成功", data)
+
+
+@router.post("/users/{user_id}/platform-permissions")
+async def post_user_platform_permission(
+    user_id: int,
+    payload: PlatformPermissionGrant,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_admin_management),
+):
+    """显式授予一条平台权限（如 platform.nexus.use）。"""
+    data = grant_platform_permission(
+        session, int(current_user["user_id"]), user_id, payload.permission
+    )
+    return unified_response(200, "平台权限已授予", data)
+
+
+@router.delete("/users/{user_id}/platform-permissions/{permission}")
+async def delete_user_platform_permission(
+    user_id: int,
+    permission: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_admin_management),
+):
+    """撤销一条平台权限（软撤销，保留审计历史）。"""
+    data = revoke_platform_permission(
+        session, int(current_user["user_id"]), user_id, permission
+    )
+    return unified_response(200, "平台权限已撤销", data)
 
 
 @router.get("/courses/capabilities")
