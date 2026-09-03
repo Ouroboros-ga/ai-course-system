@@ -396,7 +396,7 @@ def test_platform_admin_passes_nexus_gate_without_explicit_grant(
 
 
 # ---------------------------------------------------------------------------
-# S1 双轨期：旧接口只被标注，行为不变
+# S2 切换期：旧接口 410 Gone（Nexus 是唯一后继入口）
 # ---------------------------------------------------------------------------
 
 
@@ -407,14 +407,18 @@ def test_platform_admin_passes_nexus_gate_without_explicit_grant(
         "/api/v1/web-research/policy",
     ],
 )
-def test_legacy_research_responses_carry_deprecation_headers(client, student_token, path):
-    response = client.get(path, headers=_auth(student_token))
+def test_legacy_research_apis_return_410_gone(client, path):
+    """S2：旧前缀被中间件短路为 410 + 迁移说明，未鉴权请求同样如此。"""
+    response = client.get(path)
 
-    assert response.headers["Deprecation"] == "true"
+    assert response.status_code == 410
+    body = response.json()
+    assert body["error"] == "RESEARCH_API_RETIRED"
+    assert body["migration"] == "Use /api/v1/nexus/* instead"
     assert response.headers["Link"] == '</api/v1/nexus/chat>; rel="successor-version"'
-    assert response.headers["X-Deprecation-Phase"] == "S1-dual-track"
-    # S1 只标注不改行为：不得是 410（那是 S2 的动作）。
-    assert response.status_code != 410
+    assert response.headers["X-Deprecation-Phase"] == "S2-research-retired"
+    # 410 已是"不存在"，不再携带 RFC8594 的"仍可用"标注头。
+    assert "Deprecation" not in response.headers
 
 
 def test_deprecation_marking_does_not_leak_to_nexus_routes(
@@ -429,11 +433,9 @@ def test_deprecation_marking_does_not_leak_to_nexus_routes(
     assert "Deprecation" not in response.headers
 
 
-def test_sunset_header_is_absent_until_a_date_is_configured(client, student_token):
+def test_sunset_header_is_absent_until_a_date_is_configured(client):
     """转型按里程碑推进；未配置日期时不得编造 Sunset。"""
-    response = client.get(
-        "/api/v1/research-agent/courses/1/capabilities", headers=_auth(student_token)
-    )
+    response = client.get("/api/v1/research-agent/courses/1/capabilities")
 
-    assert response.headers["Deprecation"] == "true"
+    assert response.status_code == 410
     assert "Sunset" not in response.headers

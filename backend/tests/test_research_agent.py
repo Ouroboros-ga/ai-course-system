@@ -6,6 +6,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 
 from app.core.security import create_access_token, get_password_hash
 from app.models.course_model import Course, CourseStatus
@@ -152,62 +153,31 @@ def test_research_workflow_rechecks_course_access_before_search():
     provider.search.assert_not_called()
 
 
-def test_research_api_requires_course_membership(client, session):
-    owner = _user(session, "research_owner", UserRole.TEACHER)
-    outsider = _user(session, "research_outsider", UserRole.STUDENT)
-    course = _course(session, owner)
+@pytest.mark.parametrize(
+    ("method", "path", "json_body"),
+    [
+        ("post", "/api/v1/research-agent/courses/1/search", {"query": "retrieval augmented generation"}),
+        ("get", "/api/v1/research-agent/courses/1/capabilities", None),
+        ("get", "/api/v1/research-agent/courses/1/references", None),
+    ],
+)
+def test_research_agent_api_returns_410_gone(client, method, path, json_body):
+    """S2 切换期：旧 ResearchAgent 接口已退役（410 Gone + 迁移说明）。
 
-    response = client.post(
-        f"/api/v1/research-agent/courses/{course.id}/search",
-        json={"query": "retrieval augmented generation"},
-        headers={"Authorization": f"Bearer {_token(outsider)}"},
-    )
-    assert response.status_code == 403
+    中间件在路由之前短路，因此**无需鉴权**也应得到 410——这同时验证了
+    "不再触达 service/数据层"。路由注册保留至 S3 删除（revert 即恢复双轨）。
+    """
+    call = getattr(client, method)
+    response = call(path, json=json_body) if json_body is not None else call(path)
 
-
-def test_research_api_returns_auditable_supplementary_results(client, session):
-    owner = _user(session, "research_owner_ok", UserRole.TEACHER)
-    student = _user(session, "research_student_ok", UserRole.STUDENT)
-    course = _course(session, owner, student)
-    provider_result = {
-        "status": "success",
-        "provider": "arxiv",
-        "query": "retrieval augmented generation",
-        "retrieved_at": "2026-08-07T12:00:00+08:00",
-        "items": [{
-            "provider": "arxiv",
-            "paper_id": "2005.11401v4",
-            "title": "Retrieval-Augmented Generation",
-            "abstract": "Abstract",
-            "authors": ["Patrick Lewis"],
-            "published_at": "2020-05-22T17:10:46Z",
-            "year": 2020,
-            "source_url": "https://arxiv.org/abs/2005.11401",
-            "pdf_url": "https://arxiv.org/pdf/2005.11401",
-        }],
-        "total": 1,
-        "next_cursor": None,
-        "cache_hit": False,
-        "is_supplementary": True,
-    }
-
-    with patch.object(
-        ArxivPaperSearchProvider,
-        "search",
-        new=AsyncMock(return_value=provider_result),
-    ):
-        response = client.post(
-            f"/api/v1/research-agent/courses/{course.id}/search",
-            json={"query": "retrieval augmented generation", "max_results": 5},
-            headers={"Authorization": f"Bearer {_token(student)}"},
-        )
-
-    assert response.status_code == 200
-    data = response.json()["data"]
-    assert data["status"] == "success"
-    assert data["items"][0]["evidence_status"] == "metadata_only"
-    assert data["source_policy"]["cannot_modify_mastery"] is True
-    assert data["source_policy"]["cannot_modify_graph"] is True
+    assert response.status_code == 410
+    body = response.json()
+    assert body["error"] == "RESEARCH_API_RETIRED"
+    assert body["migration"] == "Use /api/v1/nexus/* instead"
+    assert response.headers["Link"] == '</api/v1/nexus/chat>; rel="successor-version"'
+    assert response.headers["X-Deprecation-Phase"] == "S2-research-retired"
+    # RFC 8594 的 Deprecation 表示"仍可用"；410 已是"不存在"，不再携带。
+    assert "Deprecation" not in response.headers
 
 
 def test_arxiv_provider_cache_is_bounded_and_prunes_expired_entries():

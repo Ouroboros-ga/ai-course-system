@@ -199,103 +199,30 @@ class TestWebResearchService:
         assert result.failure_reason
 
 
-class TestWebResearchAPI:
-    """WebResearch API 集成测试"""
+class TestWebResearchAPIRetired:
+    """S2 切换期：旧 web-research 接口已退役（410 Gone + 迁移说明）。
 
-    def test_config_requires_membership(self, client, session):
-        """获取配置需要权限"""
-        teacher = _user(session, "wr_api_nm")
-        course = _course(session, teacher.id)
-        token = _token(teacher)
+    中间件在路由之前短路，无需鉴权也应得到 410；路由注册保留至 S3 删除。
+    """
 
-        response = client.get(
-            f"/api/v1/web-research/course/{course.id}/config",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 403
+    @pytest.mark.parametrize(
+        ("method", "path", "json_body"),
+        [
+            ("get", "/api/v1/web-research/policy", None),
+            ("get", "/api/v1/web-research/course/1/config", None),
+            ("put", "/api/v1/web-research/course/1/config", {"enabled": True}),
+            ("post", "/api/v1/web-research/course/1/search", {"query": "二分查找原理"}),
+            ("get", "/api/v1/web-research/course/1/references", None),
+        ],
+    )
+    def test_returns_410_gone(self, client, method, path, json_body):
+        call = getattr(client, method)
+        response = call(path, json=json_body) if json_body is not None else call(path)
 
-    def test_get_config_returns_defaults(self, client, session):
-        """获取默认配置"""
-        teacher = _user(session, "wr_api_get")
-        course = _setup(session, teacher)
-        token = _token(teacher)
-
-        response = client.get(
-            f"/api/v1/web-research/course/{course.id}/config",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["enabled"] is False
-        assert "wikipedia.org" in data["allowed_domains"]
-
-    def test_update_config(self, client, session):
-        """更新配置"""
-        teacher = _user(session, "wr_api_upd")
-        course = _setup(session, teacher)
-        token = _token(teacher)
-
-        response = client.put(
-            f"/api/v1/web-research/course/{course.id}/config",
-            json={"enabled": True, "allowed_domains": ["wikipedia.org", "example.edu"]},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["enabled"] is True
-        assert "example.edu" in data["allowed_domains"]
-
-    def test_search_when_disabled(self, client, session):
-        """WebResearch 关闭时搜索返回 DISABLED"""
-        teacher = _user(session, "wr_api_dis")
-        student = _user(session, "wr_api_dis_s", UserRole.STUDENT)
-        course = _setup(session, teacher, student)
-        token = _token(student)
-
-        response = client.post(
-            f"/api/v1/web-research/course/{course.id}/search",
-            json={"query": "二分查找原理"},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert data["status"] == "disabled"
-
-    def test_references_list(self, client, session):
-        """列出外部参考"""
-        teacher = _user(session, "wr_api_ref")
-        course = _setup(session, teacher)
-        token = _token(teacher)
-
-        # 手动插入参考
-        ref = ExternalReference(
-            course_id=course.id, source_domain="wikipedia.org",
-            source_url="https://wikipedia.org/test", title="Test",
-            snippet="Test snippet",
-        )
-        session.add(ref); session.commit()
-
-        response = client.get(
-            f"/api/v1/web-research/course/{course.id}/references",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 200
-        data = response.json()["data"]
-        assert len(data["items"]) > 0
-        assert data["items"][0]["is_supplementary"] is True
-        assert data["items"][0]["source_domain"] == "wikipedia.org"
-
-    def test_cross_course_isolation(self, client, session):
-        """跨课程隔离"""
-        t1 = _user(session, "wr_iso_t1")
-        t2 = _user(session, "wr_iso_t2")
-        s1 = _user(session, "wr_iso_s1", UserRole.STUDENT)
-        c1 = _setup(session, t1, s1)
-        c2 = _setup(session, t2)
-
-        token = _token(s1)
-        response = client.get(
-            f"/api/v1/web-research/course/{c2.id}/config",
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        assert response.status_code == 403
+        assert response.status_code == 410
+        body = response.json()
+        assert body["error"] == "RESEARCH_API_RETIRED"
+        assert body["migration"] == "Use /api/v1/nexus/* instead"
+        assert response.headers["Link"] == '</api/v1/nexus/chat>; rel="successor-version"'
+        assert response.headers["X-Deprecation-Phase"] == "S2-research-retired"
+        assert "Deprecation" not in response.headers
