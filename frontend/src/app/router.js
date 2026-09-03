@@ -209,15 +209,10 @@ export const shadowAppRoutes = [
                 component: () => import('./pages/course/CourseAnalyticsPage.vue'),
                 meta: { requiredPermission: 'analytics.view_course' },
               },
-              {
-                path: 'research',
-                name: 'app-course-research',
-                component: () => import('./pages/course/research/ResearchWorkspacePage.vue'),
-                // Discoverability and execution are separate: any course member
-                // with course.view can open the workspace, while every mutating
-                // Harness API/tool still rechecks course.question.ask.
-                meta: { requiredPermission: 'course.view' },
-              },
+
+              // 旧「科研工作台」路由（app-course-research）已在 S2 切换期删除
+              // （2026-09-03）：四面板页面与 API client 一并移除，Nexus AI 是
+              // 唯一入口；后端 /research-agent、/web-research 返回 410 Gone。
 
               // 知识空间（§15）：已并入建设布局 /build/knowledge/*；旧地址重定向兼容。
               {

@@ -945,26 +945,44 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })
 
-test('S1 双轨期：旧科研工作台不在导航中，但路由与页面仍保留可回退', () => {
+test('S2 切换期：旧科研工作台页面、路由与 API client 已删除，Nexus 是唯一入口', () => {
   const router = read('frontend/src/app/router.js')
   const nav = read('frontend/src/app/shell/PrimaryNav.vue')
   const courseLayout = read('frontend/src/app/pages/course/CourseLayout.vue')
 
-  // 深链保留（S2 才删除）
-  assert.match(router, /name: 'app-course-research'/)
+  // 路由与页面文件删除（S1 保留的回退深链在 S2 移除）
+  assert.doesNotMatch(router, /name: 'app-course-research'/)
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/app/pages/course/research/ResearchWorkspacePage.vue')), false)
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/api/research_agent.js')), false)
   // 一级与课程内 L2 均无入口（只查生效的导航项定义，注释里提及不算）
   assert.doesNotMatch(nav, /label: '科研/)
   assert.doesNotMatch(courseLayout, /^\s*\{ key: 'research'/m)
 })
 
-test('S1 双轨期：旧 research 接口只被标注废弃，未改成 410', () => {
+test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', () => {
   const middleware = read('backend/app/core/deprecation_middleware.py')
   const main = read('backend/app/main.py')
-  const legacy = read('backend/app/api/v1/endpoints/research_agent.py')
 
-  assert.match(middleware, /"\/api\/v1\/research-agent": "\/api\/v1\/nexus\/chat"/)
-  assert.match(middleware, /"\/api\/v1\/web-research": "\/api\/v1\/nexus\/chat"/)
+  assert.match(middleware, /RESEARCH_API_RETIRED/)
+  assert.match(middleware, /status_code=410/)
+  assert.match(middleware, /Use \/api\/v1\/nexus\/\* instead/)
+  assert.match(middleware, /"\/api\/v1\/research-agent"/)
+  assert.match(middleware, /"\/api\/v1\/web-research"/)
   assert.match(main, /DeprecationHeaderMiddleware/)
-  // S2 才允许出现 410；现在出现即说明双轨期回退能力已被破坏。
-  assert.doesNotMatch(legacy, /410/)
+  // 路由注册与 bootstrap 保留（S3 才删），保证 revert 一个提交即可恢复双轨。
+  assert.match(main, /include_router\(research_agent\.router/)
+  assert.match(main, /include_router\(web_research\.router/)
+})
+
+test('NexusPage.vue: 流式输出节流（防"突进式"输出）', () => {
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // Markdown 全量重解析（marked + highlight + KaTeX + DOMPurify）跑在整个答案上，
+  // 每 token 跑一次必然"冻住—突进"。模板禁止直接逐 token 调 renderContent，
+  // 一律走带 200ms 节流 + WeakMap 缓存的 renderedAnswer（引用不变时 v-html 不写 DOM）。
+  assert.doesNotMatch(page, /v-html="renderContent\(/)
+  assert.match(page, /v-html="renderedAnswer\(turn\)"/)
+  assert.match(page, /renderCache = new WeakMap\(\)/)
+  // 滚动必须 rAF 节流且尊重用户位置：handleEvent 里禁止逐 token 强行置底。
+  assert.match(page, /requestAnimationFrame/)
+  assert.match(page, /nearBottom/)
 })
