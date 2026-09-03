@@ -95,11 +95,17 @@ uv run pytest tests -q   # 18 passed（全 mock，不调真实 LLM/付费服务�
 
 ## 已验证 / 未验证
 
-- ✅ 单测 18 passed（工具降级链、fail-closed、API 契约、鉴权）；
+- ✅ 单测 19 passed（工具降级链、fail-closed、API 契约、鉴权、非流式/流式端点真实图回归）；
 - ✅ `build_agent()` 真实构建 deepagents CompiledStateGraph；
 - ✅ `web_search` 经 SSH 隧道真实调用服务器 SearXNG（返回 arXiv:1706.03762 等 5 条）；
 - ✅ 无 LLM Key 时 chat 返回 503 fail-closed；
-- ❌ 未验证真实 DeepSeek 端到端对话（需真实 Key 手工冒烟，未自动化）；
+- ✅ **已部署服务器**（2026-09-03：`/opt/smartcarb/nexus-runtime` + systemd
+  `nexus-runtime.service`，127.0.0.1:8300，由 Backend 反代 `/api/v1/nexus/*`）；
+- ✅ **真实 DeepSeek 端到端冒烟 6/6 通过**（S1-V1，含 SearXNG 主通道检索、
+  nanoGPT 复现规划、复现执行 fail-closed、会话续聊；记录见
+  `docs/phase1/验收记录/S1_Nexus真实链路_2026-09-03.md`）；
+- ⚠️ arXiv 直连 API 在境内服务器不可达（网络现实，工具 fail-closed 正确）；
+  Agent 经 SearXNG 通道完成论文检索；建议后续为 `paper_search` 增加
+  SearXNG `site:arxiv.org` 降级通道；
 - ❌ Repro Worker 未实现（接口已预留，`run_reproduction` 当前必返
-  `REPRO_WORKER_UNAVAILABLE`）；
-- ❌ 未部署到服务器（本地运行态；部署需另行授权）。
+  `REPRO_WORKER_UNAVAILABLE`）。

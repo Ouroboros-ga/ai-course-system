@@ -210,6 +210,22 @@ arXiv 结果）：
   直接消费上述两条路径即可，§5 Gate 应按此事实执行；注意学科 KB 结果定位为
   `is_supplementary`（补充参考），不进入课程证据闭包与掌握度。
 
+### 4.5 S1 部署与真实链路验收（2026-09-03 第五批，经用户授权）
+
+- **部署**：Nexus Runtime 上线 47.99.97.154（`/opt/smartcarb/nexus-runtime` 独立
+  venv + systemd `nexus-runtime.service`，127.0.0.1:8300）；Backend 发布
+  release `623f64c7`（含 S1-B5 门控与 D10 默认授权）；迁移 `0068` 在 PG 16
+  执行成功（AUTOCOMMIT 加枚举值 + 全量回填，**186/186 用户获得
+  `platform.nexus.use`**；期间将 `platformpermission` 类型 owner 移交
+  `ai_course_app` 以解除迁移权限阻塞）。
+
+- **S1-V1 冒烟 6/6 通过**：SearXNG 主通道真实检索、arXiv 降级诚实呈现、
+  nanoGPT 复现规划、复现执行 fail-closed、会话续聊记忆、SSE 流式全链路。
+  详情与证据见 [验收记录/S1\_Nexus真实链路\_2026-09-03.md](验收记录/S1_Nexus真实链路_2026-09-03.md)。
+
+- **冒烟发现并修复**：非流式 `/chat` 的 `stream_mode` 单字符串/列表语义错配
+  （提交 `93415f18`，补真实图回归测试，nexus 单测 19/19）。
+
 ## 5. 决议状态（2026-09-03 全部处置完毕）
 
 原 5 项遗留已全部经用户答复处置：

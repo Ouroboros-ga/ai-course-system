@@ -53,13 +53,13 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 ### 3.1 后端任务（Backend 路由与反代）
 
-| 任务 ID   | 任务内容                              | 输入                                           | 输出                                                                                                                                                                                                                                                                                     | 验收标准                                                                                              | 阻塞依赖                       |
-| ------- | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------- |
-| S1-B1   | Nexus Runtime 服务器部署               | `nexus/` 完整代码 + `.env`（含 `DEEPSEEK_API_KEY`） | systemd 服务 `nexus-runtime.service` 运行于 47.99.97.154:8300                                                                                                                                                                                                                               | `curl http://127.0.0.1:8300/health` 返回 200；`systemctl status nexus-runtime` 显示 `active (running)` | **需用户授权部署** + DeepSeek Key |
-| S1-B2 ✅ | Backend 反代 `/api/v1/nexus/*`      | —                                            | `backend/app/api/v1/endpoints/nexus_proxy.py`：`/health`、`/chat`、`/chat/stream`（SSE 逐块中继）；`X-Forwarded-*` + `X-Nexus-User-*` 身份头；到 Runtime 用内部服务令牌而非用户 JWT；非流式 60s、流式读超时 300s                                                                                                           | 三路由已注册；假 Runtime 真实 HTTP/SSE 链路实测通过                                                               | 无（代码不依赖部署）                 |
-| S1-B3 ✅ | 旧接口加 Deprecation 头                | —                                            | `backend/app/core/deprecation_middleware.py`：`/api/v1/research-agent/*` 与 `/api/v1/web-research/*` 响应加 `Deprecation: true` + `Link: rel="successor-version"` + `X-Deprecation-Phase/Plan`。用中间件而非路由依赖，使 `HTTPException`/422 等框架生成的响应也带头                                                 | 实测含 `Deprecation: true`；旧链路状态码与响应体零变更                                                             | 无                          |
-| S1-B4 ✅ | Backend 单测                        | S1-B2/B3 代码                                  | `backend/tests/test_nexus_proxy.py` 17 个测试：透传、身份不外泄、SSE 中继、未配置/不可达/超时/上游错误码/非 JSON 上游、鉴权、入参校验、Deprecation 标注不污染 Nexus 路由                                                                                                                                                               | 17/17 通过；`test_research_agent.py`+`test_web_research.py` 22/22 行为不变                               | S1-B2/B3                   |
-| S1-B5 ✅ | Nexus 使用权限门控（决策 D10，2026-09-03 补） | 新增 `platform.nexus.use` + 迁移 0068（含全量默认授权回填） | `nexus_proxy.py` 三端点改走 `require_nexus_use`（403 `NEXUS_PERMISSION_DENIED`，不触达 Runtime）；**默认授予所有用户**（注册/登录/泛雅同步经 `ensure_default_nexus_grant` 自动授予，显式撤销优先、不被复活）；授权入口 `GET/POST/DELETE /api/v1/admin/users/{id}/platform-permissions`（软撤销+审计+防 ADMIN 自我提权）；前端 `canUseNexus` 导航门控 + 页面无权限态 | `test_nexus_proxy.py` 20/20、`test_platform_permissions.py` 10/10、关联回归 29 通过、前端契约 88/88、build 通过   | S1-B2                      |
+| 任务 ID   | 任务内容                              | 输入                                           | 输出                                                                                                                                                                                                                                                                                     | 验收标准                                                                                              | 阻塞依赖                           |
+| ------- | --------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------ |
+| S1-B1 ✅ | Nexus Runtime 服务器部署               | `nexus/` 完整代码 + `.env`（含 `DEEPSEEK_API_KEY`） | systemd 服务 `nexus-runtime.service` 运行于 47.99.97.154:8300                                                                                                                                                                                                                               | `curl http://127.0.0.1:8300/health` 返回 200；`systemctl status nexus-runtime` 显示 `active (running)` | ~~需用户授权部署~~ 已授权并完成（2026-09-03） |
+| S1-B2 ✅ | Backend 反代 `/api/v1/nexus/*`      | —                                            | `backend/app/api/v1/endpoints/nexus_proxy.py`：`/health`、`/chat`、`/chat/stream`（SSE 逐块中继）；`X-Forwarded-*` + `X-Nexus-User-*` 身份头；到 Runtime 用内部服务令牌而非用户 JWT；非流式 60s、流式读超时 300s                                                                                                           | 三路由已注册；假 Runtime 真实 HTTP/SSE 链路实测通过                                                               | 无（代码不依赖部署）                     |
+| S1-B3 ✅ | 旧接口加 Deprecation 头                | —                                            | `backend/app/core/deprecation_middleware.py`：`/api/v1/research-agent/*` 与 `/api/v1/web-research/*` 响应加 `Deprecation: true` + `Link: rel="successor-version"` + `X-Deprecation-Phase/Plan`。用中间件而非路由依赖，使 `HTTPException`/422 等框架生成的响应也带头                                                 | 实测含 `Deprecation: true`；旧链路状态码与响应体零变更                                                             | 无                              |
+| S1-B4 ✅ | Backend 单测                        | S1-B2/B3 代码                                  | `backend/tests/test_nexus_proxy.py` 17 个测试：透传、身份不外泄、SSE 中继、未配置/不可达/超时/上游错误码/非 JSON 上游、鉴权、入参校验、Deprecation 标注不污染 Nexus 路由                                                                                                                                                               | 17/17 通过；`test_research_agent.py`+`test_web_research.py` 22/22 行为不变                               | S1-B2/B3                       |
+| S1-B5 ✅ | Nexus 使用权限门控（决策 D10，2026-09-03 补） | 新增 `platform.nexus.use` + 迁移 0068（含全量默认授权回填） | `nexus_proxy.py` 三端点改走 `require_nexus_use`（403 `NEXUS_PERMISSION_DENIED`，不触达 Runtime）；**默认授予所有用户**（注册/登录/泛雅同步经 `ensure_default_nexus_grant` 自动授予，显式撤销优先、不被复活）；授权入口 `GET/POST/DELETE /api/v1/admin/users/{id}/platform-permissions`（软撤销+审计+防 ADMIN 自我提权）；前端 `canUseNexus` 导航门控 + 页面无权限态 | `test_nexus_proxy.py` 20/20、`test_platform_permissions.py` 10/10、关联回归 29 通过、前端契约 88/88、build 通过   | S1-B2                          |
 
 **`Sunset`** **头的处理**：计划初稿写"日期 TBD"。转型按里程碑而非日历推进，编造到期日
 会误导调用方，因此实现为配置项 `DEPRECATION_SUNSET_DATE`，**默认留空即不发送该头**；
@@ -146,7 +146,7 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 ### 3.5 S1 交付检查清单
 
-- [ ] Nexus Runtime systemd 服务运行中（`systemctl status nexus-runtime` active）— **待部署授权**
+- [x] Nexus Runtime systemd 服务运行中（`systemctl status nexus-runtime` active）— ✅ 2026-09-03 完成部署
 
 - [x] Backend 反代路由注册（`/api/v1/nexus/{health,chat,chat/stream}`，假 Runtime 实测 200）
 
@@ -156,7 +156,8 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 - [x] 前端 Nexus 页面可输入消息并消费 SSE 流（假 Runtime 实测逐帧到达）
 
-- [ ] 演示脚本 6 用例至少 4 个成功（含验收记录归档）— **待 DeepSeek Key**
+- [x] 演示脚本 6 用例至少 4 个成功 — ✅ **6/6 通过**（2026-09-03，验收记录归档：
+  [验收记录/S1\_Nexus真实链路\_2026-09-03.md](验收记录/S1_Nexus真实链路_2026-09-03.md)）
 
 - [x] Backend 单测（17/17）+ 前端契约测试（87/87）全绿
 
@@ -312,19 +313,19 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 ### 8.1 需用户明确授权的事项
 
-1. **部署授权**（S1-B1、P1-W4）：在 47.99.97.154 部署 Nexus Runtime 与 Repro Worker
-2. **DeepSeek API Key**（S1-B1）：配置真实 Key 用于手工验收
+1. **部署授权**（S1-B1）：✅ 已授权并完成（2026-09-03）；P1-W4（Repro Worker 部署）仍待授权
+2. **DeepSeek API Key**（S1-B1）：✅ 已提供并配置（仅存服务器 `nexus.env`，600 权限）
 3. **服务器资源调整授权**（若实测资源不足）：临时调低 paddleocr 内存限制或重启部分容器
 
 ### 8.2 技术依赖清单
 
-| 依赖                            | 当前状态    | 用途                                  | 缺失时影响                  |
-| ----------------------------- | ------- | ----------------------------------- | ---------------------- |
-| DeepSeek API Key              | **待提供** | Nexus LLM 推理                        | S1-V1 验收无法进行           |
-| SearXNG 容器（47.99.97.154:8888） | ✅ 已部署   | Web Search 主通道                      | 降级到 DuckDuckGo，体验下降    |
-| PostgreSQL 16                 | ✅ 已部署   | Backend 数据库 + Nexus checkpoints（P1） | P0 用 InMemorySaver 可跳过 |
-| systemd（服务器）                  | ✅ 可用    | Nexus/Repro Worker 进程管理             | 无法持久化运行                |
-| Docker（服务器）                   | ✅ 可用    | Repro Worker 容器隔离                   | P1-W 系列任务无法进行          |
+| 依赖                            | 当前状态  | 用途                                  | 缺失时影响                  |
+| ----------------------------- | ----- | ----------------------------------- | ---------------------- |
+| DeepSeek API Key              | ✅ 已配置 | Nexus LLM 推理                        | —（S1-V1 已验收）           |
+| SearXNG 容器（47.99.97.154:8888） | ✅ 已部署 | Web Search 主通道                      | 降级到 DuckDuckGo，体验下降    |
+| PostgreSQL 16                 | ✅ 已部署 | Backend 数据库 + Nexus checkpoints（P1） | P0 用 InMemorySaver 可跳过 |
+| systemd（服务器）                  | ✅ 可用  | Nexus/Repro Worker 进程管理             | 无法持久化运行                |
+| Docker（服务器）                   | ✅ 可用  | Repro Worker 容器隔离                   | P1-W 系列任务无法进行          |
 
 ***
 
@@ -334,10 +335,13 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 - **S0 兼容冻结**：✅ 已完成（2026-09-03）
 
-- **S1 双轨期**：🔄 代码侧已完成（2026-09-03，S1-B2/B3/B4 + S1-F1\~F4）；
-  剩 S1-B1 部署与 S1-V1 真实链路验收，需用户授权部署 + 提供 DeepSeek Key
+- **S1 双轨期**：✅ **全部完成（2026-09-03）**——S1-B1 服务器部署 + A2 迁移 0068
+  （186/186 用户回填默认授权）+ S1-V1 真实链路冒烟 **6/6 通过**（验收记录：
+  [验收记录/S1\_Nexus真实链路\_2026-09-03.md](验收记录/S1_Nexus真实链路_2026-09-03.md)）；
+  冒烟中发现并修复非流式 /chat stream\_mode 缺陷（`93415f18`，附真实图回归测试）
 
-- **S2 切换期**：⏸️ 待 S1-V1 验收通过后启动
+- **S2 切换期**：⏸️ **触发条件已满足**（S1-V1 通过），待启动：删除前端四面板、
+  旧 research 接口返回 410 Gone
 
 - **S3 下线**：⏸️ 待 S2 稳定后启动
 
