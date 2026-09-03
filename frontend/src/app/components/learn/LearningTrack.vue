@@ -47,10 +47,24 @@ function formatDuration(seconds) {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-function nodeState(node, index, props) {
+function isNodeCompleted(node) {
+  return itemFor(node)?.learning?.status === 'completed' || props.completedIds.includes(node.id)
+}
+
+function nodeState(node, index) {
   if (index === props.currentIndex) return 'current'
-  if (props.completedIds.includes(node.id)) return 'done'
-  return 'todo'
+  return isNodeCompleted(node) ? 'done' : 'todo'
+}
+
+function nodeItemClasses(node, index) {
+  const kind = hierarchyOf(node).kind
+  return [
+    `is-${nodeState(node, index)}`,
+    kind === 'chapter' ? 'is-chapter' : '',
+    kind === 'section' ? 'is-section' : '',
+    // 已完成标识独立于 current/done，供“当前选中项已完成”的绿色选中态区分。
+    isNodeCompleted(node) ? 'is-complete' : '',
+  ]
 }
 
 function itemFor(node) {
@@ -109,7 +123,6 @@ const iconMap = {
   'needs-mastery': CircleAlert,
   'not-started': TriangleAlert,
   'in-progress': Clock3,
-  'completed-pending': HelpCircle,
   degraded: TriangleAlert,
   'not-available': Info,
   unknown: HelpCircle,
@@ -173,11 +186,7 @@ const indentStep = 12
           type="button"
           class="sfx-track-item"
           :ref="element => setItemRef(element, index)"
-          :class="[
-            `is-${nodeState(node, index, { currentIndex, completedIds })}`,
-            hierarchyOf(node).kind === 'chapter' ? 'is-chapter' : '',
-            hierarchyOf(node).kind === 'section' ? 'is-section' : ''
-          ]"
+          :class="nodeItemClasses(node, index)"
           :aria-current="index === currentIndex ? 'true' : undefined"
           :aria-label="`知识点 ${index + 1}：${node.title}（${displayState(node).label}）${index === currentIndex ? '（当前）' : ''}`"
           :title="collapsed ? node.title : undefined"
@@ -467,6 +476,28 @@ const indentStep = 12
 }
 
 .sfx-track-item.is-done .sfx-track-item-title { color: var(--green-700); }
+.sfx-track-item.is-done .sfx-track-item-progress { color: var(--green-700); }
+
+/* 已完成且为当前选中项：绿色选中态，与“学习中/未完成”的深色当前项区分。
+   说明：is-complete 独立于 is-done（current 会盖掉 done），用于识别“已学完的当前项”。 */
+.sfx-track-item.is-current.is-complete {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+.sfx-track-item.is-current.is-complete::before {
+  background: var(--green-700);
+}
+.sfx-track-item.is-current.is-complete .sfx-track-item-title { color: var(--green-700); }
+.sfx-track-item.is-current.is-complete .sfx-track-item-progress { color: var(--green-700); }
+/* 主状态药丸：绿色结论（已完成/已掌握）用绿底白勾；待掌握仍保留琥珀强调色 */
+.sfx-track-item.is-current.is-complete .sfx-track-item-status.is-status-green {
+  background: var(--green-700);
+  color: var(--surface-panel);
+}
+.sfx-track-item.is-current.is-complete .sfx-track-item-status.is-status-amber {
+  background: var(--amber-500);
+  color: var(--surface-panel);
+}
 
 /* 状态徽章 */
 .sfx-track-item-status {

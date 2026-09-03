@@ -119,8 +119,15 @@ export function useMediaBuild() {
     const pptManifestProgress = computed(() => pptManifestJob.value?.output_metadata?.page_progress ?? null)
     const isPlaylistRelease = computed(() => Boolean(workingRelease.value?.release_metadata?.audio_playlist_mode))
     const hasFrozenPlaylist = computed(() => Boolean(workingRelease.value?.audio_playlist_object_key && workingRelease.value?.audio_playlist_sha256))
+    // 与后端 /releases 契约字段 ppt_source_available 对齐：课程是否声明
+    // PPT/PDF 源文件。用于决定 PPT manifest 步骤是否"激活前必做"。
+    const courseHasPptSource = computed(() => Boolean(workingRelease.value?.ppt_source_available))
     const canActivateWorkingRelease = computed(() => {
-        if (!workingRelease.value || workingRelease.value.status !== 'draft' || !hasPptManifest.value) return false
+        if (!workingRelease.value || workingRelease.value.status !== 'draft') return false
+        // 后端按"课程是否声明 PPT/PDF 源文件"决定激活是否要求 manifest：
+        // 纯音频课程（无源文件）在音频/字幕就绪后即可激活，不再被 PPT
+        // manifest 步骤卡死；含源文件课程仍需先生成 manifest。
+        if (courseHasPptSource.value && !hasPptManifest.value) return false
         return isPlaylistRelease.value
             ? hasFrozenPlaylist.value
             : hasFrozenCues.value
@@ -622,7 +629,7 @@ export function useMediaBuild() {
                 await refreshReleaseDetail()
             }
         } catch (caught) {
-            error.value = apiErrorMessage(caught, 'PPT manifest 未提交。请先回到第 04 步确认 PPT 源文件和映射。')
+            error.value = apiErrorMessage(caught, 'PPT manifest 未提交。请先回到课程建设的「PPT 映射」阶段确认源文件与映射。')
         } finally {
             acting.value = ''
         }
@@ -637,7 +644,7 @@ export function useMediaBuild() {
             const release = await activateMediaRelease(courseId.value, workingRelease.value.release_id)
             releases.value = releases.value.map((item) => item.release_id === release.release_id ? release : item)
             releaseDetail.value = { ...releaseDetail.value, ...release }
-            notice.value = '媒体版本已激活。仍需在第 07 步重新正式发布课程，学生端才会读取本次媒体快照。'
+            notice.value = '媒体版本已激活。仍需回到课程建设流程重新「正式发布」课程，学生端才会读取本次媒体快照。'
         } catch (caught) {
             error.value = apiErrorMessage(caught, '媒体版本未激活。')
         } finally {
@@ -698,6 +705,7 @@ export function useMediaBuild() {
         selectedCharCount, selectedByteCount,
         releaseTtsJobs, releaseTtsJob, selectedTtsJob, releaseBoundNodeId,
         releaseMatchesSelection, boundScript, cueJob, hasFrozenCues, hasPptManifest,
+        courseHasPptSource,
         pptManifestJob, pptManifestInFlight, pptManifestProgress, isPlaylistRelease,
         hasFrozenPlaylist, canActivateWorkingRelease, hasPendingJobs, activeBatchId,
         batchItems, canCreateDraft, canSubmitTts, batchSelectedScripts, selectedBatchItem,
