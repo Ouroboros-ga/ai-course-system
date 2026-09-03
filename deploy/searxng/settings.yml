@@ -1,0 +1,43 @@
+use_default_settings: true
+server:
+  secret_key: "REPLACE_WITH_RANDOM_SECRET"
+  limiter: false
+  image_proxy: false
+search:
+  formats:
+    - html
+    - json
+# 境内部署(阿里云)引擎可用性说明(2026-09-03 实测):
+#   可用: 360search(中文, ~0.4s), yandex(中英文, ~1.4s);
+#   被墙(默认启用,需显式禁用以免拖慢 3s 连接超时): brave/duckduckgo/google cse/startpage/wikipedia/wikidata;
+#   可达但本环境实测无结果, 保留观察: bing, mojeek;
+#   baidu/sogou 返回 CAPTCHA, fastbot 拒绝访问, 不启用。
+engines:
+  - name: 360search
+    disabled: false
+  - name: yandex
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: mojeek
+    disabled: false
+  - name: brave
+    disabled: true
+  - name: duckduckgo
+    disabled: true
+  - name: duckduckgo web
+    disabled: true
+  - name: google
+    disabled: true
+  - name: google cse
+    disabled: true
+  - name: startpage
+    disabled: true
+  - name: wikipedia
+    disabled: true
+  - name: wikidata
+    disabled: true
+  - name: qwant
+    disabled: true
+  - name: yahoo
+    disabled: true

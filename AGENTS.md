@@ -12,13 +12,26 @@
 
 ## 1. 当前阶段
 
-项目处于**云服务器 Demo 与能力持续打磨阶段**(部署服务器
-`root@120.26.104.247`)。Agent 架构迁移已完成并已推送。学生产品面只呈现
-TeachingAgent,代码教学收敛到 `edu/coding`;Prep Agent 与 ResearchAgent 保持独立。
-旧 CodingAgent runtime/API 暂作兼容层,不再作为独立学生产品入口。共享 Runtime/Contracts/
-Providers/Tools 层已落地。bootstrap 已注入真实 Judge0 沙箱、真实 LLM 与各
-session-scoped Port,不再使用 fake provider 占位实现。数据库基线已切换到
-PostgreSQL 16 + pgvector,SQLite 仅用于本地 Demo/测试。
+项目处于**挑战杯 XH-202620 决赛冲刺与 CodeNexus 转型阶段**。服务实际部署于
+`http://47.99.97.154/`;Agent 在不确定服务真实行为时,允许对其做**只读**
+访问(HTTP GET、健康检查、页面查看),不做写入或压测。开发基线分支为
+`dev-liu`(`feature/xh202620` 已于 2026-09-03 合并进来,merge `67f94026`)。
+
+产品面收敛为两个智能体入口:
+
+- **TeachingAgent**:课程内的便捷问答智能,负责教学问答、教学动作与对话式
+  代码挑战,工作流固定,本质是"能检索到精确知识的问答机器人"。
+- **Nexus AI**(建设中):从课程外进入的**全局入口**,负责复杂问题的拆解与
+  持续执行(论文研究、快速复现等),基于 Deep Agents/LangGraph 构建,运行于
+  **独立 Nexus Runtime**(独立 Python 环境、pyproject、lockfile 与进程),
+  通过 HTTP/SSE 与旧 Backend 通信。旧 ResearchAgent 科研工作台将被 Nexus
+  替代并下线,前端新功能收敛为单一 Nexus 入口。
+
+Agent 架构迁移已完成。共享 Runtime/Contracts/Providers/Tools 层已落地。bootstrap
+已注入真实 Judge0 沙箱、真实 LLM 与各 session-scoped Port,不再使用 fake provider
+占位实现。数据库基线已切换到 PostgreSQL 16 + pgvector,SQLite 仅用于本地
+Demo/测试。Nexus 转型的完整决策、数据策略与安全红线见
+`docs/phase1/2026-09-03_CodeNexus转型实施决策.md`。
 
 本阶段的工作原则:
 
@@ -68,7 +81,7 @@ PostgreSQL 16 + pgvector,SQLite 仅用于本地 Demo/测试。
 | `edu/` | TeachingAgent:教学问答、教学动作和内部代码教学能力。`edu/coding/` 负责挑战时机、诊断白名单与安全反馈;学生界面不出现独立 CodingAgent。 |
 | `prep/` | Prep Agent:备课 PatchProposal 生成。`evidence_refs` 校验是硬门;只能修改 draft 内非锁定节点的标题与脚本内容/风格,不能增删移节点、不能改已发布/锁定内容。详见 `prep/DESIGN.md`。 |
 | `coding/` | 旧 CodingEduAgent 兼容 runtime:为仍在使用的 `/experiments` 解释/提示接口提供委托兼容;不在此新增学生产品逻辑。 |
-| `research/` | ResearchAgent:课程内、用户私有的科研工作台(挑战杯 XH-202620 助研方向)。复用 AgentPlatform、BaseAgentRuntime、Course Access v1 与 LangGraph,不与其他 Agent 共享可变状态,外部研究结果不写入掌握度/推荐/正式 Evidence/课程图谱。详见 `research/README.md`。 |
+| `research/` | **Legacy** ResearchAgent:科研工作台的"大脑"将由 Nexus AI 替代,前端四面板入口随 Nexus 上线下线;其 workspace/memory/embedding Provider 与部分工具可被 Nexus 复用,外部研究结果"补充参考"边界不变。详见 `research/README.md` 顶部废弃说明。 |
 | `contracts/` | Port 定义(cognition/experiment/governance/llm/research/research_workspace/retrieval/sandbox/teaching/tools)。Agent 间不共享可变状态,只通过 Port 协作。 |
 | `providers/` | Provider 实现,包装现有 Service。`container.py` 是装配入口;`providers/research/` 为 ResearchAgent 的 workspace/memory/embedding Provider。 |
 | `runtime/` | 共享 Runtime(base/checkpoint/concurrency/dispatcher/events/registry/teaching_runtime/validation)。Runtime 按 course/student 创建,不全局共享。 |
@@ -144,6 +157,11 @@ Agent 在以下场景**应**先读 `design.md` 再动手:
 诊断,包括服务身份与版本、Git 状态与差异、进程/端口/磁盘状态、`systemctl status`、
 脱敏后的 `journalctl`/容器日志、只读健康检查和不修改数据的数据库状态查询。
 
+已部署服务地址为 `http://47.99.97.154/`。编码智能体在不确定服务真实行为
+(路由是否注册、页面是否可用、契约是否匹配)时,可直接对该地址做**只读**
+访问(GET 请求、健康检查、查看页面);这属于只读诊断,不构成部署或变更授权,
+不得对该地址做写入、压测或批量抓取。
+
 远程日志只用于定位当前故障。输出前排除或脱敏密钥、令牌、Cookie、密码、
 个人信息、完整用户内容和源码提交内容;不读取或输出 `.env`、密钥文件或生产
 数据库中的敏感业务数据。日志中意外出现此类数据时停止输出并仅报告其存在。
@@ -183,6 +201,16 @@ Agent 在以下场景**应**先读 `design.md` 再动手:
    修改脚本或形象新建版本,旧版本标记为 stale 而非静默指向新文件。
 8. 数字人形象有授权与撤销记录;教师可撤销授权,后续课程发布不再选被撤销的形象;
    被禁用的形象档案阻止新的预处理任务。
+9. Nexus Runtime 与旧 Backend **不共享 Python 环境**。Deep Agents 等新依赖
+   只进入 Nexus 独立 pyproject/lockfile;禁止为兼容 Nexus 而升级或降级旧
+   Backend 的 langgraph/langchain 依赖版本。
+10. Quick Reproduction 中未知 GitHub Repo 视为不可信代码:不在 Backend 或
+    Judge0 容器内运行,只进入专用 Repro Worker(部署于 47.99.97.154 服务环境)
+    受资源与网络限制执行;复现代码 License 必须允许演示/复现用途,输出标注
+    来源仓库与 License,License 越线的仓库拒绝执行并说明原因。
+11. Nexus 数据分域:用户/课程/权限等业务数据只进业务数据库;Nexus 运行时
+    状态(checkpoint/todo/artifact 元数据)进 Nexus 自己的存储,不混入业务库;
+    Artifact 优先复用现有媒体/文档域,不新建平行存储。
 
 ### 4.2 兼容、迁移与重构
 
@@ -265,11 +293,11 @@ Agent 在以下场景**应**先读 `design.md` 再动手:
 - **代码兼容层(coding/)**:保留旧类型和接口,真实学生入口迁移到 TeachingAgent 的
   `edu/coding/`;两条路径都只能消费服务端 Judge0 结果,沙箱不可用时返回
   `SANDBOX_UNAVAILABLE` 而非 `ACCEPTED`,不假造执行。
-- **ResearchAgent(research/)**:课程内、用户私有的科研工作台。复用
-  AgentPlatform、BaseAgentRuntime、Course Access v1 与 LangGraph;外部研究结果
-  标记为"补充参考",不写入掌握度、推荐、正式 Evidence 或课程图谱;API 只返回
-  route、所选工具、Prompt 版本/hash、上下文安全摘要与工具结果,不返回 assembled
-  Prompt、内部完整 trace、密钥或模型原始输出。详见 `research/README.md`。
+- **ResearchAgent(research/,Legacy)**:科研工作台四面板入口将随 Nexus 上线而
+  下线;替换期间保持 API 兼容,workspace/memory/embedding Provider 与部分工具
+  按需迁移进 Nexus,外部研究结果"补充参考"边界(`is_supplementary`、
+  `cannot_modify_*`)在 Nexus 侧继续有效。详见 `research/README.md` 顶部废弃说明
+  与 `docs/phase1/2026-09-03_CodeNexus转型实施决策.md`。
 
 ### 5.3 Prep 双链路统一
 
