@@ -83,6 +83,13 @@ export const shadowAppRoutes = [
             component: () => import('./pages/discipline/DisciplineKnowledgePage.vue'),
           },
 
+          // ── Nexus AI（CodeNexus 转型：课程外全局入口，复杂问题拆解与执行） ──
+          {
+            path: 'nexus',
+            name: 'app-nexus',
+            component: () => import('./pages/nexus/NexusPage.vue'),
+          },
+
           // ── 资源库（page-design §20） ──
           {
             path: 'resources',

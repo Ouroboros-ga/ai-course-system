@@ -200,7 +200,9 @@ function canonicalSignatureValue(value) {
   return String(value)
 }
 
-function generateSignature(params) {
+// 导出供非 axios 链路复用：Nexus 的 SSE 流式对话必须用 fetch（axios 不暴露
+// ReadableStream），但仍要满足后端签名中间件，因此需要同一套签名算法。
+export function generateSignature(params) {
   // 1. 获取当前时间
   const now = new Date()
   const timeStr = now.getFullYear() + '-' +

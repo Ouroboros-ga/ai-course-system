@@ -1,7 +1,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { House, BookOpen, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
+import { House, BookOpen, BrainCircuit, FolderOpen, Library, Bell, ShieldCheck, UserRound, ChevronDown, LogOut, UserCircle, Menu, X } from 'lucide-vue-next'
 import { useCounterStore } from '@/stores/counter.js'
 
 const route = useRoute()
@@ -20,10 +20,14 @@ const navItems = [
     // 路由 /app/resources/* 与 ResourcesLayout 页面全部保留，恢复此项即可。
     // { label: '资源库', to: '/app/resources/files', icon: FolderOpen, match: '/app/resources' },
     { label: '学科知识库', to: '/app/discipline-knowledge', icon: Library, match: '/app/discipline-knowledge' },
+    // 「Nexus AI」是 CodeNexus 转型后的课程外全局智能体入口（决策文档 D2）：
+    // 课程内的便捷问答由 TeachingAgent 承担，此处只放能拆解复杂问题的 Nexus。
+    { label: 'Nexus AI', to: '/app/nexus', icon: BrainCircuit, match: '/app/nexus' },
+    // 旧「科研工作台」（/app/course/:id/research）已于 2026-08-20 从课程内 L2 隐藏，
+    // 转型后由上面的 Nexus AI 取代；路由与页面保留至 S2 再删除，期间深链仍可访问
+    // 以便回退演示（docs/phase1/CodeNexus转型落地计划.md §二）。
 ]
 
-// page-design §2.1「智能体」一级空间尚无对应页面与后端能力，
-// 按 §1.5「未具备能力的入口直接隐藏」不在本切片渲染。
 const adminItem = computed(() =>
     counter.canManageUsers ? { label: '平台管理', to: '/app/admin', icon: ShieldCheck } : null
 )

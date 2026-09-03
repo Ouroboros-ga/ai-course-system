@@ -497,6 +497,25 @@ class Settings(BaseSettings):
     JUDGE0_QUEUE_TIMEOUT: int = 30
 
     # --------------------------
+    # Nexus AI Runtime 反代配置（S1 双轨期）
+    # Nexus Runtime 是独立 Python 环境的独立进程（nexus/），与本后端只经
+    # HTTP/SSE 通信（AGENTS.md §4.1.9）。本后端只做透传，不复制其业务逻辑。
+    # NEXUS_RUNTIME_URL 为空时反代 fail-closed，返回 NEXUS_RUNTIME_NOT_CONFIGURED，
+    # 不伪造回答。NEXUS_RUNTIME_API_KEY 是后端到 Runtime 的内部服务令牌，
+    # 与用户 JWT 无关（用户身份另以 X-Nexus-User-* 头透传）。
+    # --------------------------
+    NEXUS_RUNTIME_URL: str = "http://127.0.0.1:8300"
+    NEXUS_RUNTIME_API_KEY: str = ""
+    NEXUS_RUNTIME_TIMEOUT_S: int = 60
+    NEXUS_RUNTIME_CONNECT_TIMEOUT_S: int = 5
+    # SSE 流式对话的单次读超时（Agent 多轮工具循环可能长时间无 token 输出）
+    NEXUS_RUNTIME_STREAM_READ_TIMEOUT_S: int = 300
+
+    # 废弃接口 Sunset 日期（RFC 8594，HTTP-date 格式）。转型按里程碑推进，
+    # 默认留空即不发送该头——不编造一个到期日误导调用方。
+    DEPRECATION_SUNSET_DATE: str = ""
+
+    # --------------------------
     # Step 2: 独立 PaddleOCR 服务配置
     # PaddleOCR 运行在独立容器（deploy/paddleocr/），主后端通过 DocumentOcrPort
     # (PaddleOcrHttpAdapter) 调用，不在主后端安装 paddle。

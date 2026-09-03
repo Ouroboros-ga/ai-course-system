@@ -7,6 +7,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
+from app.core.deprecation_middleware import DeprecationHeaderMiddleware
 from app.core.signature_middleware import SignatureMiddleware
 from app.core.error_monitoring import ErrorMonitoringMiddleware, monitor as error_monitor
 from app.core.exceptions import global_exception_handler, unified_response
@@ -141,7 +143,8 @@ from app.api.v1.endpoints import (
     facade,             # Phase A 门面层
     safety,             # G6 安全围栏与沙箱治理
     web_research,       # G7 WebResearchTool
-    research_agent,     # ResearchAgent evidence-first scholarly research
+    research_agent,     # Legacy: ResearchAgent（大脑已由 Nexus 替代，S1 双轨期保留）
+    nexus_proxy,        # Nexus AI Runtime 反代（独立进程，纯透传）
     discipline_knowledge,  # XH-202620 CS 学科垂类知识库检索（只读）
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
@@ -301,6 +304,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 废弃接口标注（S1 双轨期：只加标注头，不改行为；S2 才转 410）
+app.add_middleware(
+    DeprecationHeaderMiddleware,
+    sunset_date=settings.DEPRECATION_SUNSET_DATE,
+)
+
 # 错误监控中间件（最外层，观测所有 >= 400 响应；批次0上线底座）
 app.add_middleware(ErrorMonitoringMiddleware)
 # 暴露错误计数快照供运维读取
@@ -360,6 +369,11 @@ app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围�
 # G7: WebResearchTool 受控研究
 app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
 app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=["ResearchAgent"])
+
+# CodeNexus 转型 S1：Nexus AI Runtime 反代（纯透传到独立进程 nexus/，见
+# docs/phase1/2026-09-03_CodeNexus转型实施决策.md）。旧 research-agent 与
+# web-research 已由 DeprecationHeaderMiddleware 标注为废弃，S2 转 410。
+app.include_router(nexus_proxy.router, prefix="/api/v1/nexus", tags=["Nexus AI Runtime"])
 
 # XH-202620: CS 学科垂类知识库（只读检索，数据来自 knowledge_data/）
 app.include_router(discipline_knowledge.router, prefix="/api/v1/discipline-knowledge", tags=["Discipline Knowledge"])

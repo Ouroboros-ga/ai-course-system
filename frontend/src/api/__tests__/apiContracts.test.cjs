@@ -853,3 +853,97 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.match(src, /overview\.value = body \?\? null/)
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
 })
+
+// ── CodeNexus 转型 S1：Nexus AI 全局入口 ────────────────────────────────────
+// 后端是纯透传反代（nexus_proxy.py → 独立进程 Nexus Runtime），因此这里锁定
+// 三件事：前端路径与反代路由一一对应、反代已在 main.py 注册、旧 research 链路
+// 被标注为废弃但**未**被改成 410（S1 必须可回退到旧链路演示）。
+
+test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
+  const src = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const main = read('backend/app/main.py')
+
+  assert.equal(extractFirstPath(src, 'getNexusHealth'), '/nexus/health')
+  assert.match(backend, /@router\.get\("\/health"\)/)
+
+  assert.equal(extractFirstPath(src, 'sendNexusMessage'), '/nexus/chat')
+  assert.match(backend, /@router\.post\("\/chat"\)/)
+
+  assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
+
+  assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
+})
+
+test('nexus.js: 透传响应无 code/message 信封，故必须声明 allowFlatResponse', () => {
+  const src = read('frontend/src/api/nexus.js')
+  // 反代把 Runtime 的裸 JSON 原样返回；不声明该标志会被响应拦截器当成业务错误。
+  assert.match(src, /getNexusHealth[\s\S]*?allowFlatResponse: true/)
+  assert.match(src, /sendNexusMessage[\s\S]*?allowFlatResponse: true/)
+})
+
+test('nexus.js: 流式对话走 fetch + ReadableStream，并复用 request.js 的签名算法', () => {
+  const src = read('frontend/src/api/nexus.js')
+  const request = read('frontend/src/utils/request.js')
+
+  // axios 拿不到 ReadableStream，流式链路必须用 fetch。
+  assert.match(src, /streamNexusMessage[\s\S]*?fetch\(/)
+  assert.match(src, /getReader\(\)/)
+  assert.match(src, /'text\/event-stream'/)
+  // 签名器必须是 request.js 导出的同一个，不得在此另写一份。
+  assert.match(src, /import request, \{ generateSignature \} from '@\/utils\/request\.js'/)
+  assert.match(request, /export function generateSignature\(/)
+})
+
+test('nexus.js: 失败时上抛真实错误码，不伪造空回答', () => {
+  const src = read('frontend/src/api/nexus.js')
+  assert.match(src, /error\.errorCode = errorCode/)
+  assert.match(src, /payload\?\.data\?\.error_code/)
+})
+
+test('NexusPage.vue: 全局入口页遵循 SfxButton 规范且无原生 button（design.md §621）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(src, /SfxButton/)
+  assert.doesNotMatch(src, /<button[\s>]/)
+})
+
+test('NexusPage.vue: 工具调用过程可见，且失败以真实错误码呈现', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // Nexus 与 TeachingAgent 的差别就在过程可见：tool_call/tool_result 必须渲染。
+  assert.match(src, /tool_call/)
+  assert.match(src, /tool_result/)
+  assert.match(src, /err\?\.errorCode/)
+})
+
+test('router.js + PrimaryNav.vue: Nexus AI 是课程外全局一级入口', () => {
+  const router = read('frontend/src/app/router.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+
+  assert.match(router, /path: 'nexus'[\s\S]*?name: 'app-nexus'/)
+  assert.match(router, /pages\/nexus\/NexusPage\.vue/)
+  assert.match(nav, /label: 'Nexus AI', to: '\/app\/nexus'/)
+})
+
+test('S1 双轨期：旧科研工作台不在导航中，但路由与页面仍保留可回退', () => {
+  const router = read('frontend/src/app/router.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+  const courseLayout = read('frontend/src/app/pages/course/CourseLayout.vue')
+
+  // 深链保留（S2 才删除）
+  assert.match(router, /name: 'app-course-research'/)
+  // 一级与课程内 L2 均无入口（只查生效的导航项定义，注释里提及不算）
+  assert.doesNotMatch(nav, /label: '科研/)
+  assert.doesNotMatch(courseLayout, /^\s*\{ key: 'research'/m)
+})
+
+test('S1 双轨期：旧 research 接口只被标注废弃，未改成 410', () => {
+  const middleware = read('backend/app/core/deprecation_middleware.py')
+  const main = read('backend/app/main.py')
+  const legacy = read('backend/app/api/v1/endpoints/research_agent.py')
+
+  assert.match(middleware, /"\/api\/v1\/research-agent": "\/api\/v1\/nexus\/chat"/)
+  assert.match(middleware, /"\/api\/v1\/web-research": "\/api\/v1\/nexus\/chat"/)
+  assert.match(main, /DeprecationHeaderMiddleware/)
+  // S2 才允许出现 410；现在出现即说明双轨期回退能力已被破坏。
+  assert.doesNotMatch(legacy, /410/)
+})
