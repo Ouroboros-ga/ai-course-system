@@ -1,7 +1,7 @@
 """G8 媒体时间轴服务
 
-将数字人视频、PPT、讲稿和字幕精确同步到同一全局时间轴。
-首版优先按课程节点预生成，不把 CPU 推理塞入实时问答请求。
+将 TTS 音频、PPT、讲稿和字幕精确同步到同一全局时间轴。
+首版优先按课程节点预生成，不把长耗时推理塞入实时问答请求。
 使用抽象 object_key 存储，未来可平滑迁移 OSS。
 """
 from __future__ import annotations
@@ -18,7 +18,6 @@ from app.models.media_timeline_model import (
     MediaTimelineCue,
     CueType,
     StorageBackend,
-    DigitalHumanPreset,
 )
 from app.models.course_model import ScriptNode, CourseScript
 from app.models.video_generation_model import VideoGenerationTask, GenerationStatus

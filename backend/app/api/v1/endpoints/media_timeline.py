@@ -1,4 +1,4 @@
-"""G8 媒体时间轴与数字人 API
+"""G8 媒体时间轴 API
 
 外部完整课程视频可按时间轴驱动 PPT。
 讲稿可作为真实字幕/讲解内容展示。
@@ -20,9 +20,7 @@ from app.models.media_timeline_model import (
     MediaAsset,
     MediaTimelineCue,
     CueType,
-    DigitalHumanPreset,
 )
-from app.models.platform_media_preset_model import PlatformAvatarPreset
 from app.services.course_access_service import require_course_permission
 from app.services.object_storage import LocalStorageProvider, get_object_storage, mime_type_for
 from app.services.media_timeline_service import (
@@ -250,51 +248,6 @@ async def get_asset_content(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Platform avatar manifests and textures are immutable shared registry
-    # assets, not course-owned MediaAsset rows.  Their signed URLs still bind
-    # the exact course/release/preset and this branch repeats Course Access
-    # before any file is returned.  The manifest key is matched against the
-    # registry row; textures remain confined to that version's asset prefix.
-    # No other platform object can use this exception.
-    platform_avatar_purpose = signed_scope.get("purpose")
-    if platform_avatar_purpose in {
-        "platform_avatar_manifest",
-        "platform_avatar_texture",
-    }:
-        preset_id = signed_scope.get("preset_id", "")
-        preset_version = signed_scope.get("preset_version", "")
-        if not preset_id or not preset_version:
-            raise HTTPException(status_code=403, detail="平台数字人签名范围无效")
-        preset = session.exec(
-            select(PlatformAvatarPreset).where(
-                PlatformAvatarPreset.preset_id == preset_id,
-                PlatformAvatarPreset.version == preset_version,
-            )
-        ).first()
-        if preset is None:
-            raise HTTPException(status_code=404, detail="平台数字人预设不存在")
-        if platform_avatar_purpose == "platform_avatar_manifest":
-            object_in_scope = object_key == preset.manifest_object_key
-        else:
-            expected_prefix = (
-                f"platform/avatar-presets/{preset_id}/{preset_version}/assets/"
-            )
-            object_in_scope = object_key.startswith(expected_prefix)
-        if not object_in_scope:
-            raise HTTPException(status_code=403, detail="平台数字人资产签名范围无效")
-        try:
-            course_id = int(signed_scope["course_id"])
-        except (KeyError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=403, detail="平台数字人课程范围无效") from exc
-        require_course_permission(session, current_user, course_id, "course.content.read")
-        try:
-            file_path = storage._safe_full_path(object_key)
-            if not Path(file_path).is_file():
-                raise FileNotFoundError(object_key)
-            return FileResponse(path=file_path, media_type=mime_type_for(object_key), filename=None)
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=404, detail="平台数字人资产不存在") from exc
-
     asset = session.exec(
         select(MediaAsset).where(MediaAsset.object_key == object_key)
     ).first()
@@ -357,39 +310,4 @@ async def get_asset(
             "duration_seconds": asset.duration_seconds,
             "content_hash": asset.content_hash,
         },
-    )
-
-
-@router.get("/digital-human/presets")
-async def list_dh_presets(
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """列出可用的数字人预设（CPU 路线）"""
-    presets = [
-        {
-            "preset": DigitalHumanPreset.DH_LIVE_MINI.value,
-            "name": "DH_live_mini / MiniMates",
-            "description": "首选：开源、纯 CPU 实时推理数字人",
-            "cpu_only": True,
-            "status": "candidate",
-        },
-        {
-            "preset": DigitalHumanPreset.LITE_AVATAR.value,
-            "name": "LiteAvatar",
-            "description": "对照：CPU 30fps、MIT 许可证",
-            "cpu_only": True,
-            "status": "candidate",
-        },
-        {
-            "preset": DigitalHumanPreset.DUIL_AVATAR.value,
-            "name": "Duix.Avatar (现有)",
-            "description": "现有 GPU 路线，成本高压力大",
-            "cpu_only": False,
-            "status": "legacy",
-        },
-    ]
-    return unified_response(
-        code=200, message="获取数字人预设成功",
-        data={"presets": presets},
     )

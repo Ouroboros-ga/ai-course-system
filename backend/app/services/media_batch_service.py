@@ -44,7 +44,7 @@ def _resolve_voice_preset(session: Session, *, preset_id: str = "", version: str
 
 
 def _resolve_avatar_preset(session: Session, *, preset_id: str = "", version: str = "") -> types.SimpleNamespace:
-    """数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false）：返回空角色预设。"""
+    """数字人（avatar）预设已下线：返回空角色预设（历史列保留为空）。"""
     return types.SimpleNamespace(
         preset_id=preset_id or "",
         version=version or "",
@@ -145,7 +145,7 @@ def enqueue_batch_cue(
     this helper more than once.
     """
     if source_tts_job.node_id is None:
-        reject_validation_failed("批量媒体 TTS 任务缺少讲稿节点，无法冻结字幕与数字人时间轴")
+        reject_validation_failed("批量媒体 TTS 任务缺少讲稿节点，无法冻结字幕与时间轴")
     item = session.exec(select(MediaReleaseItem).where(
         MediaReleaseItem.release_id == release_id,
         MediaReleaseItem.course_id == course_id,
@@ -162,7 +162,7 @@ def enqueue_batch_cue(
         provider_key="avatar-cues",
         provider_version="v1",
         node_id=source_tts_job.node_id,
-        input_summary="批量媒体字幕与数字人时间轴冻结",
+        input_summary="批量媒体字幕与时间轴冻结",
         input_payload={
             "course_id": course_id,
             "release_id": release_id,
@@ -237,7 +237,7 @@ def project_cue_result_to_batch_item(
     if result is None:
         item.status = "failed"
         item.error_code = error_code or "CUE_BUILD_FAILED"
-        item.error_message_safe = error_message_safe or "字幕与数字人时间轴冻结失败"
+        item.error_message_safe = error_message_safe or "字幕与时间轴冻结失败"
     else:
         item.status = "ready"
         item.audio_object_key = result.audio_object_key
@@ -419,7 +419,7 @@ def build_media_plan(session: Session, *, course_id: int, node_ids: list[int] | 
         if not cache_hit:
             change_reasons.append("讲稿或平台音色参数已变更" if prior_success else "尚未生成音频")
         if cache_hit and not ready_same_script:
-            change_reasons.append("字幕与数字人时间轴尚未冻结")
+            change_reasons.append("字幕与时间轴尚未冻结")
         if not mappings:
             change_reasons.append("PPT 映射缺失")
         items.append({
@@ -492,7 +492,7 @@ def confirm_media_batch(session: Session, *, course_id: int, created_by: int, pl
     max_version = session.exec(select(func.max(MediaRelease.version_number)).where(MediaRelease.course_id == course_id)).one() or 0
     voice_preset = dict(plan.get("voice_preset") or {})
     avatar_preset = dict(plan.get("avatar_preset") or {})
-    # 数字人（avatar）功能已关闭，avatar 预设允许为空；音色预设仍是必需。
+    # 数字人（avatar）预设已下线：avatar 预设允许为空（历史列保留）；音色预设仍是必需。
     if not voice_preset.get("preset_id"):
         reject_validation_failed("批量媒体计划缺少已解析的平台音色")
     release = MediaRelease(course_id=course_id, version_number=int(max_version) + 1,

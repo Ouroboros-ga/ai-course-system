@@ -1,4 +1,4 @@
-"""G8 媒体时间轴与数字人测试
+"""G8 媒体时间轴测试
 
 验证：
 - 时间轴提示包含视频起止、PPT页、字幕片段、讲稿引用
@@ -24,7 +24,7 @@ from app.models.access_control_model import (
 from app.models.course_model import Course, CourseStatus, ScriptNode, CourseScript, ScriptNodeType
 from app.models.user_model import User, UserRole
 from app.models.media_timeline_model import (
-    MediaAsset, MediaTimelineCue, CueType, StorageBackend, DigitalHumanPreset,
+    MediaAsset, MediaTimelineCue, CueType, StorageBackend,
 )
 from app.services.course_access_service import (
     establish_course_access_baseline, activate_student_membership,

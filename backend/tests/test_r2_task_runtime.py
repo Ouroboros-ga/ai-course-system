@@ -14,7 +14,6 @@ def test_r2_task_status_and_type_values():
     assert TaskStatus.TIMEOUT.value == "timeout"
     assert TaskStatus.PARTIAL_SUCCESS.value == "partial_success"
     assert TaskType.PPT_GENERATION.value == "ppt_generation"
-    assert TaskType.DIGITAL_HUMAN_VIDEO.value == "digital_human_video"
 
 
 def test_r2_task_result_success_failure_and_adapter_mapping():
@@ -48,7 +47,7 @@ def test_r2_task_result_success_failure_and_adapter_mapping():
 def test_r2_task_runner_success_and_adapter_failures():
     async def run_checks():
         runner = TaskRunner()
-        context = TaskContext(task_id=1, task_type=TaskType.DIGITAL_HUMAN_VIDEO, provider="fake")
+        context = TaskContext(task_id=1, task_type=TaskType.TTS_BATCH, provider="fake")
 
         success = await runner.run(
             context,

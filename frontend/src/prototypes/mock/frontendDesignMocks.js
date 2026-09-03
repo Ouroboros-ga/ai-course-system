@@ -103,7 +103,6 @@ export const teacherCourseMock = {
     { key: 'script', title: '教学脚本', status: 'review_required', meta: '待确认 3' },
     { key: 'mapping', title: 'PPT 映射', status: 'warning', meta: '缺失 1' },
     { key: 'audio', title: '音频生成', status: 'failed', meta: '失败 1' },
-    { key: 'avatar', title: '数字人生成', status: 'not_started', meta: '未开始' },
     { key: 'preview', title: '课程预览', status: 'not_started', meta: '未开始' },
     { key: 'publish', title: '发布检查', status: 'not_started', meta: '阻断 2' }
   ],

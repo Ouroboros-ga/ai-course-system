@@ -52,13 +52,6 @@ def main() -> int:
         settings.VOLCENGINE_DOUBAO_TTS_SPEAKER,
     )
 
-    dh_provider = settings.STAGE8_DH_PROVIDER.strip().lower()
-    dh_configured = dh_provider not in {"", "fake"} and (
-        Path(settings.DHLIVE_ENGINE_BINARY).is_file()
-        or settings.DHLIVE_WORKER_PORT > 0
-        or dh_provider == "duix"
-    )
-
     payload = {
         "llm": {
             "provider": settings.LLM_PROVIDER,
@@ -119,8 +112,6 @@ def main() -> int:
             "media_demo_mode": settings.MEDIA_DEMO_MODE,
             "tts_provider": tts_provider or "unset",
             "tts_formal_configured": tts_configured,
-            "digital_human_provider": dh_provider or "unset",
-            "digital_human_formal_configured": dh_configured,
             "ppt_formal_configured": _configured(
                 settings.XFYUN_PPT_APP_ID,
                 settings.XFYUN_PPT_API_SECRET,

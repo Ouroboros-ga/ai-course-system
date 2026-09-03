@@ -57,7 +57,7 @@ onMounted(() => {
 
 <template>
   <div class="sfx-page sfx-page--narrow">
-    <header class="sfx-page-header"><div><h1 class="sfx-t-title1"><UserRound :size="25" /> 个人中心</h1><p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">管理账户信息（数字人预设已下线，仅保留账户资料与 TTS 讲解）。</p></div></header>
+    <header class="sfx-page-header"><div><h1 class="sfx-t-title1"><UserRound :size="25" /> 个人中心</h1><p class="sfx-t-ui sfx-t-secondary sfx-page-header-sub">管理账户资料与讲解语音偏好。</p></div></header>
     <section class="sfx-panel account-summary"><span class="sfx-t-ui">账户</span><strong>{{ counter.displayName || '—' }}</strong><span class="sfx-t-caption sfx-t-secondary">ID {{ counter.userData.id || '—' }}</span><SfxBadge tone="ink">{{ counter.userData.role || 'member' }}</SfxBadge></section>
     <section class="sfx-panel profile-settings"><h2 class="sfx-panel-title"><UserRound :size="18" /> 账户资料</h2><p class="sfx-t-ui sfx-t-secondary">账号 ID 始终不变；用户名同时用于登录、右上角显示和平台管理。</p><SfxField label="用户名"><input v-model="profileForm.username" class="sfx-input" maxlength="50" autocomplete="username" /></SfxField><div class="password-fields"><SfxField label="原密码（修改密码时必填）"><input v-model="profileForm.current_password" class="sfx-input" type="password" autocomplete="current-password" /></SfxField><SfxField label="新密码"><input v-model="profileForm.new_password" class="sfx-input" type="password" autocomplete="new-password" minlength="8" /></SfxField><SfxField label="确认新密码"><input v-model="profileForm.confirm_password" class="sfx-input" type="password" autocomplete="new-password" minlength="8" /></SfxField></div><SfxButton variant="primary" :loading="profileSaving" @click="saveProfile">保存资料</SfxButton><p v-if="profileError" class="account-error" role="alert">{{ profileError }}</p></section>
   </div>

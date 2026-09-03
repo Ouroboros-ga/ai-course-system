@@ -3,12 +3,12 @@
 实现「讲稿 → TTS → 字幕/PPT 时间轴 → MediaRelease → 学生端播放」闭环的核心持久化模型。
 
 设计要点：
-- `MediaGenerationJob`：TTS/字幕/头像预处理/视频渲染等异步任务登记。
+- `MediaGenerationJob`：TTS/字幕/时间轴发布等异步任务登记。
   与统一任务中心 `TaskRecord` 通过 `task_id` 一一对应，不重复实现任务状态机；
   每个任务携带 `provider_key/provider_version`、`input_hash`、`idempotency_key`。
 - `MediaGenerationAttempt`：每次重试/降级的明细记录，便于审计与质量分析。
   失败原因保留 `error_code/error_message_safe`，禁止把 503/超时伪装成成功。
-- `MediaRelease`：某课程对学生可见的不可变媒体版本，包含 PPT/字幕/音频/数字人 manifest
+- `MediaRelease`：某课程对学生可见的不可变媒体版本，包含 PPT/字幕/音频产物
   的内容哈希与时间轴版本；支持回滚，旧版本标记 `stale` 而非静默删除。
 - `MediaReleaseCue`：发布版本冻结的时间轴 Cue 快照（独立于编辑中的 `MediaTimelineCue`）。
 - `PlaybackCapabilityProfile`：自动/低资源/兼容三档播放模式配置与实测结果。
@@ -42,8 +42,6 @@ class MediaGenerationJobType(str, Enum):
     """
     TTS = "tts"                              # 讲稿 TTS 合成
     SUBTITLE = "subtitle"                     # 字幕分段
-    AVATAR_PREPROCESS = "avatar_preprocess"   # 数字人资产预处理（教师资产中心）
-    DH_RENDER = "dh_render"                   # 数字人渲染
     VIDEO_PACKAGE = "video_package"           # 封装视频合成
     TIMELINE_PUBLISH = "timeline_publish"     # 时间轴发布
     PPT_MANIFEST = "ppt_manifest"             # PPT 页面清单绑定与缺页补渲染
@@ -80,7 +78,7 @@ class MediaBuildBatchStatus(str, Enum):
 
 class PlaybackMode(str, Enum):
     """播放模式三档"""
-    AUTO = "auto"                 # 自动模式：默认，能力探测后启用数字人
+    AUTO = "auto"                 # 自动模式：默认（数字人已下线，实际走兼容模式）
     LOW_RESOURCE = "low_resource"  # 低资源模式：降画质/降帧率
     COMPATIBILITY = "compatibility"  # 兼容模式：仅音频+字幕+PPT+讲稿
 
@@ -122,7 +120,7 @@ class MediaGenerationJob(SQLModel, table=True):
     )
 
     # Provider 信息（可替换引擎的关键）
-    provider_key: str = Field(default="", index=True, description="如 xfyun_tts/dh_live_mini/fake")
+    provider_key: str = Field(default="", index=True, description="如 xfyun_tts/fake")
     provider_version: str = Field(default="", description="Provider 自报版本")
 
     # 输入指纹与幂等
@@ -140,7 +138,7 @@ class MediaGenerationJob(SQLModel, table=True):
     error_message_safe: str = Field(default="", description="可向前端展示的安全错误消息")
 
     # 关联资产
-    avatar_id: Optional[str] = Field(default=None, index=True, description="若涉及数字人，关联 AvatarProfile")
+    avatar_id: Optional[str] = Field(default=None, index=True, description="历史列：旧数字人档案关联（已下线，保持为空）")
     media_release_id: Optional[str] = Field(default=None, index=True, description="触发该任务的发布版本")
 
     created_by: int = Field(foreign_key="users.id")
@@ -192,7 +190,7 @@ class MediaGenerationAttempt(SQLModel, table=True):
 class MediaRelease(SQLModel, table=True):
     """媒体发布版本（不可变）
 
-    - 每次发布形成不可变版本，修改讲稿或头像必须新建版本
+    - 每次发布形成不可变版本，修改讲稿或媒体配置必须新建版本
     - 学生端通过 `GET /api/v1/media/course/{id}/releases/current` 获取当前激活版本
     - 旧版本被替换时标记 `superseded`，不能静默指向新文件
     - 依赖资产失效时标记 `stale`，并触发教师重新发布提示
@@ -228,14 +226,14 @@ class MediaRelease(SQLModel, table=True):
     avatar_preset_id: Optional[str] = Field(default=None, max_length=100)
     avatar_preset_version: Optional[str] = Field(default=None, max_length=40)
 
-    # P2: 与音频 SHA 绑定的厂商无关数字人时间轴。它不同于形象资产包 manifest：
-    # 前者描述本次讲解何时说话/可用何种 viseme，后者描述浏览器可加载的形象资源。
+    # P2: 与音频 SHA 绑定的字幕时间轴（cues）快照，学生端字幕/PPT 逐页播放依赖；
+    # 字段名保留 avatar_cues_* 以兼容既有契约与历史数据。
     avatar_cues_object_key: Optional[str] = Field(default=None)
 
-    # 数字人 manifest（可选，未绑定时为空，学生端走兼容模式）
+    # 历史兼容列（数字人下线后不再写入，保持为空以兼容既有表结构）
     avatar_binding_id: Optional[str] = Field(
         default=None, index=True,
-        description="关联 CourseAvatarBinding.binding_id",
+        description="历史列：旧 CourseAvatarBinding 绑定（已下线）",
     )
     digital_human_manifest_object_key: Optional[str] = Field(default=None)
 

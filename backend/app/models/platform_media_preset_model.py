@@ -51,29 +51,3 @@ class PlatformVoicePreset(SQLModel, table=True):
         default_factory=utcnow_aware,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
-
-
-class PlatformAvatarPreset(SQLModel, table=True):
-    """A versioned, platform-owned browser Sprite2D character preset."""
-
-    __tablename__ = "platform_avatar_presets"
-    __table_args__ = (
-        UniqueConstraint("preset_id", "version", name="uq_platform_avatar_preset_version"),
-    )
-
-    id: Optional[int] = Field(default=None, primary_key=True)
-    preset_id: str = Field(sa_column=Column(String(100), nullable=False, index=True))
-    version: str = Field(default="1.0.0", max_length=40)
-    display_name: str = Field(default="平台 2D 讲师", max_length=160)
-    provider_key: str = Field(default="platform_sprite2d", max_length=100, index=True)
-    manifest_object_key: str = Field(default="", max_length=500)
-    status: PlatformPresetStatus = Field(default=PlatformPresetStatus.ACTIVE, index=True)
-    content_hash: str = Field(default="", max_length=128, index=True)
-    created_at: datetime = Field(
-        default_factory=utcnow_aware,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )
-    updated_at: datetime = Field(
-        default_factory=utcnow_aware,
-        sa_column=Column(DateTime(timezone=True), nullable=False),
-    )

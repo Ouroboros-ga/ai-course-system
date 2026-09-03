@@ -1975,7 +1975,7 @@ class CoursePrepAgentService:
             after = script.content + "\n\n【待教师确认的备课建议】请根据本节原文证据补充一个贴近教学对象的说明。"
             operations.append(AgentOperation(
                 target_kind="script", target_id=script.script_node_id, field="content", after=after,
-                reason="根据教师自然语言指令生成讲稿调整建议", downstream_impact="可能影响本节的音频与数字人媒体，需要在接受后重新生成。",
+                reason="根据教师自然语言指令生成讲稿调整建议", downstream_impact="可能影响本节的音频与讲解媒体，需要在接受后重新生成。",
             ))
 
         if not operations:

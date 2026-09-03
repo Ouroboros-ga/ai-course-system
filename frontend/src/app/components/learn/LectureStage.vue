@@ -444,7 +444,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
         @error="handleAudioError"
       />
 
-      <!-- 讲解媒体：音频为唯一 P0 时钟；原数字人位不再展示 PPT，讲解原文占满本栏。
+      <!-- 讲解媒体：音频为唯一 P0 时钟；本栏以讲解原文为主。
            仅无音频的旧课程回退到兼容视频。 -->
       <video
         v-if="!hasAudio && hasLegacyVideo"
@@ -606,7 +606,7 @@ watch([() => props.playbackRate, () => props.volume, () => props.isMuted], syncM
   flex: 1;
   min-height: 0;
   display: grid;
-  /* 讲解原文是左栏唯一内容（原数字人位不再放 PPT），右侧同步课件为主视觉面。 */
+  /* 讲解原文是左栏唯一内容，右侧同步课件为主视觉面。 */
   grid-template-columns: minmax(300px, 1.4fr) minmax(0, 2.6fr);
   grid-template-rows: minmax(0, 1fr) auto;
   gap: var(--space-4);

@@ -26,7 +26,7 @@ let toastTimer
 const activeStep = computed(() => course.value.steps.find((step) => step.key === activeKey.value))
 const publishBlocked = computed(() => {
   const hasBlockingCheck = course.value.checks.some((check) => check.severity === 'blocker' && !check.resolved)
-  const requiredSteps = ['script', 'mapping', 'audio', 'avatar', 'preview']
+  const requiredSteps = ['script', 'mapping', 'audio', 'preview']
   const hasIncompleteStep = course.value.steps.some((step) => requiredSteps.includes(step.key) && step.status !== 'confirmed')
   return hasBlockingCheck || hasIncompleteStep
 })

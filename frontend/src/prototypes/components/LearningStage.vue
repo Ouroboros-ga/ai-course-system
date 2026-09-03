@@ -82,9 +82,9 @@ const setModeFromKey = (event) => {
     >
       <div class="fd-video">
         <div class="fd-video__ambient" aria-hidden="true"></div>
-        <div class="fd-presenter" aria-label="数字人课程讲解画面">
+        <div class="fd-presenter" aria-label="AI 课程讲解演示画面">
           <span class="fd-presenter__avatar"><UserRound :size="64" /></span>
-          <strong>课程讲师数字人</strong>
+          <strong>AI 课程讲解</strong>
           <span>演示画面 · Mock 数据</span>
         </div>
         <div class="fd-video__context">

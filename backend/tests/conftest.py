@@ -51,7 +51,6 @@ os.environ.setdefault("VOLCENGINE_DOUBAO_TTS_SPEAKER", "")
 os.environ.setdefault("INTERNAL_SERVICE_TOKEN", "test-internal-service-token")
 
 from fakes import (
-    FakeDigitalHumanClient,
     FakeLLMClient,
     FakePPTClient,
     FakeTTSClient,
@@ -191,16 +190,10 @@ def fake_ppt_client():
     return FakePPTClient()
 
 
-@pytest.fixture
-def fake_digital_human_client():
-    return FakeDigitalHumanClient()
-
-
 @pytest.fixture(autouse=True)
-def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_client, fake_ppt_client, fake_digital_human_client):
+def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_client, fake_ppt_client):
     llm_module = importlib.import_module("app.common.llm_client")
     tts_module = importlib.import_module("app.common.tts_client")
-    digital_module = importlib.import_module("app.common.digital_human_client")
     document_service = importlib.import_module("app.services.document_service")
     mapping_service = importlib.import_module("app.services.mapping_service")
     ppt_service = importlib.import_module("app.services.ppt_generation_service")
@@ -232,8 +225,6 @@ def install_external_fakes(monkeypatch, fake_llm, fake_tts, fake_voice_clone_cli
 
     monkeypatch.setattr(tts_module, "voice_clone_client", fake_voice_clone_client)
     monkeypatch.setattr(asset_endpoint, "voice_clone_client", fake_voice_clone_client, raising=False)
-
-    monkeypatch.setattr(digital_module, "digital_human_client", fake_digital_human_client)
 
     monkeypatch.setattr(ppt_service.ppt_generation_service, "xfyun_client", fake_ppt_client)
 

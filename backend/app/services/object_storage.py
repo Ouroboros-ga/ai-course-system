@@ -48,7 +48,7 @@ def resolve_local_storage_root(root_dir: str) -> str:
 class ObjectStorageProvider(ABC):
     """对象存储抽象
 
-    所有媒体产物（音频、字幕、PPT、数字人资产）只通过 `object_key` 引用。
+    所有媒体产物（音频、字幕、PPT 等）只通过 `object_key` 引用。
     前端不直接访问本地路径，统一通过签名 URL 经后端鉴权后下载。
     """
 
@@ -93,8 +93,7 @@ class ObjectStorageProvider(ABC):
 
         返回 {object_key, upload_url, method, headers, expires_at, max_size_bytes,
         signature, exp}。
-        - upload_path: 调用方指定的本地接收路由路径（如
-          /api/v1/avatar-profiles/{avatar_id}/source-media/{source_media_id}/upload）；
+        - upload_path: 调用方指定的本地接收路由路径（媒体上传路由）；
           本地实现会把 exp 与 sig 作为 query 参数附加到该路径。
         - 远程 S3/MinIO 实现可忽略 upload_path，直接返回 presigned S3 PUT URL。
         """

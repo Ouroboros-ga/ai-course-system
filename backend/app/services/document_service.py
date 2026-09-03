@@ -1299,7 +1299,7 @@ class ScriptGenerator:
         else:
             truncated_content = markdown_content
         
-        system_prompt = """你是一位专业的课程设计师和讲解稿撰写专家。请根据用户提供的文档内容，生成一份**高质量的智课脚本**，内容将用于TTS语音合成和数字人视频播报。
+        system_prompt = """你是一位专业的课程设计师和讲解稿撰写专家。请根据用户提供的文档内容，生成一份**高质量的智课脚本**，内容将用于 TTS 语音合成与课件讲解播报。
 
 ## 核心要求
 

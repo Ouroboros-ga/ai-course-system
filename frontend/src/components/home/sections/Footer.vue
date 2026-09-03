@@ -8,7 +8,6 @@ const linkGroups = [
       { label: 'AI 课件', href: '#' },
       { label: '实时答疑', href: '#' },
       { label: '知识图谱', href: '#' },
-      { label: '数字人', href: '#' },
     ],
   },
   {

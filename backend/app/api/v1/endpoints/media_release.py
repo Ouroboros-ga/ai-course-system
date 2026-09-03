@@ -79,7 +79,7 @@ media_release_router = APIRouter(tags=["阶段8 媒体生成与发布"])
 
 class GenerationJobCreateRequest(BaseModel):
     """媒体生成任务创建请求"""
-    job_type: str = Field(description="tts|subtitle|avatar_preprocess|dh_render|video_package|timeline_publish")
+    job_type: str = Field(description="tts|subtitle|video_package|timeline_publish|ppt_manifest")
     node_id: Optional[int] = Field(None, ge=1)
     provider_key: str = Field(default="")
     provider_version: str = Field(default="")
@@ -133,11 +133,6 @@ class ReleaseCreateRequest(BaseModel):
     capability_profile_id: Optional[str] = Field(None, max_length=100)
 
 
-class FreezeCuesRequest(BaseModel):
-    """冻结时间轴 Cue 到发布版本"""
-    cue_ids: list[int] = Field(default_factory=list, description="MediaTimelineCue.id 列表；为空则冻结全部")
-
-
 class AvatarCuesBuildRequest(BaseModel):
     """Freeze one successful TTS job into release-scoped P2 cue assets."""
     tts_job_id: str = Field(min_length=1, max_length=100)
@@ -148,11 +143,6 @@ class AvatarCuesBuildRequest(BaseModel):
 class PptManifestBuildRequest(BaseModel):
     """Build the release-scoped PPT image manifest from the course source deck."""
     force: bool = Field(default=False, description="仅允许对当前草稿重新生成")
-
-
-class SwitchPlaybackModeRequest(BaseModel):
-    """播放模式切换请求（M3/M5）"""
-    playback_mode: str = Field(pattern="^(auto|low_resource|compatibility)$")
 
 
 # ---------------------------------------------------------------------------
@@ -168,13 +158,12 @@ async def get_platform_media_presets(
 ):
     """Return safe platform preset choices for the course media builder.
 
-    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），平台预设注册表
-    服务已下线：不再读取任何预设，向构建页返回空音色/角色目录。前端只依赖
-    ``voices``/``avatars`` 字段，空列表即可保持页面可加载。
+    数字人（角色）预设已下线：向构建页返回空音色/角色目录，保持既有契约兼容。
+    前端只依赖 ``voices``/``avatars`` 字段，空列表即可保持页面可加载。
     """
     require_course_permission(session, current_user, course_id, "course.media.generate")
     runtime = resolve_stage8_tts_runtime()
-    return unified_response(code=200, message="平台音色与数字人角色已加载", data={
+    return unified_response(code=200, message="平台音色目录已加载", data={
         "voices": [],
         "avatars": [],
         "effective_provider": runtime.effective_provider,
@@ -266,7 +255,7 @@ async def confirm_media_batch_endpoint(course_id: int, payload: MediaBatchConfir
                 release_id=release.release_id,
                 source_tts_job=source_job,
                 error_code="DEPENDENCY_UNAVAILABLE",
-                error_message_safe="Cue Worker 未注册，未冻结字幕与数字人时间轴",
+                error_message_safe="Cue Worker 未注册，未冻结字幕与时间轴",
             )
             return
         pending_dispatches.append((cue_task_id, {
@@ -582,7 +571,7 @@ async def create_generation_job(
             "job_id": job.job_id,
             "task_id": task_id,
             "status": job.status.value,
-            "job_type": job.job_type.value,
+            "job_type": getattr(job.job_type, "value", job.job_type),
             "idempotency_key": job.idempotency_key,
         },
     )
@@ -893,51 +882,6 @@ async def get_release(
     )
 
 
-@media_release_router.post("/course/{course_id}/releases/{release_id}/freeze-cues")
-async def freeze_cues(
-    course_id: int,
-    release_id: str,
-    payload: FreezeCuesRequest,
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """将编辑中的 MediaTimelineCue 冻结为发布版本快照"""
-    require_course_permission(
-        session, current_user, course_id, "course.media.generate",
-    )
-    from app.models.media_timeline_model import MediaTimelineCue
-    if payload.cue_ids:
-        cues = list(session.exec(
-            select(MediaTimelineCue).where(
-                MediaTimelineCue.course_id == course_id,
-                MediaTimelineCue.id.in_(payload.cue_ids),
-                MediaTimelineCue.is_active == True,  # noqa: E712
-            ).order_by(MediaTimelineCue.node_id, MediaTimelineCue.cue_index)
-        ).all())
-    else:
-        cues = list(session.exec(
-            select(MediaTimelineCue).where(
-                MediaTimelineCue.course_id == course_id,
-                MediaTimelineCue.is_active == True,  # noqa: E712
-            ).order_by(MediaTimelineCue.node_id, MediaTimelineCue.cue_index)
-        ).all())
-
-    frozen = media_release_service.freeze_cues_from_timeline(
-        session, course_id=course_id, release_id=release_id, cues=cues,
-    )
-    session.commit()
-    return unified_response(
-        code=200, message=f"已冻结 {len(frozen)} 条 Cue",
-        data={
-            "release_id": release_id,
-            "frozen_count": len(frozen),
-            "timeline_content_hash": media_release_service.get_release(
-                session, course_id=course_id, release_id=release_id,
-            ).timeline_content_hash,
-        },
-    )
-
-
 @media_release_router.post("/course/{course_id}/releases/{release_id}/avatar-cues")
 async def build_avatar_cues(
     course_id: int,
@@ -958,13 +902,13 @@ async def build_avatar_cues(
     )
     if release.status != MediaReleaseStatus.DRAFT:
         from app.core.exceptions import reject_state_conflict
-        reject_state_conflict("仅从未激活的媒体草稿可生成数字人时间轴")
+        reject_state_conflict("仅从未激活的媒体草稿可生成字幕时间轴")
     source_job = media_generation_job_service.get_job(
         session, course_id=course_id, job_id=payload.tts_job_id,
     )
     if source_job.job_type != MediaGenerationJobType.TTS or source_job.status != MediaGenerationStatus.SUCCEEDED:
         from app.core.exceptions import reject_state_conflict
-        reject_state_conflict("请先完成指定 TTS 任务，再生成数字人时间轴")
+        reject_state_conflict("请先完成指定 TTS 任务，再生成字幕时间轴")
     if source_job.node_id is None:
         from app.core.exceptions import reject_validation_failed
         reject_validation_failed("TTS 任务未绑定讲稿节点，无法形成可导航的播放 Cue")
@@ -1003,7 +947,7 @@ async def build_avatar_cues(
         provider_key="avatar-cues",
         provider_version="v1",
         node_id=source_job.node_id,
-        input_summary="冻结 TTS 字幕与数字人时间轴",
+        input_summary="冻结 TTS 字幕与时间轴",
         input_payload=worker_payload,
         input_hash=input_hash,
         idempotency_key=idempotency_key,
@@ -1319,8 +1263,8 @@ async def get_playback(
 ):
     """获取学生端统一播放清单
 
-    返回音频 + 字幕 + PPT 时间轴 + 数字人 manifest + 三档模式配置。
-    数字人未绑定时返回兼容模式（音频+字幕+PPT+讲稿）。
+    返回音频 + 字幕 + PPT 时间轴 + 三档模式配置；
+    数字人相关字段保留为空（历史兼容），实际按兼容模式播放。
     """
     require_course_permission(session, current_user, course_id, "course.content.read")
     playback = media_playback_service.get_current_playback(session, course_id=course_id)
@@ -1341,7 +1285,7 @@ def _serialize_job(job) -> dict[str, Any]:
         "task_id": job.task_id,
         "course_id": job.course_id,
         "node_id": job.node_id,
-        "job_type": job.job_type.value,
+        "job_type": getattr(job.job_type, "value", job.job_type),
         "status": job.status.value,
         "provider_key": job.provider_key,
         "provider_version": job.provider_version,
@@ -1434,64 +1378,15 @@ async def get_providers_health(
 ):
     """查询所有 Provider 健康状态（M3/M5）
 
-    数字人（avatar）功能已关闭（MEDIA_AVATAR_ENABLED=false），不再实例化
-    DH Provider；``digital_human`` 返回静态的禁用状态，TTS 仍实时探测。
+    数字人功能已下线：不再实例化 DH Provider，仅返回 TTS 实时探测结果。
     不需要课程权限，仅限已登录用户。
     """
-    from app.core.config import settings
-
     tts_runtime = resolve_stage8_tts_runtime()
 
     return unified_response(
         code=200, message="Provider 健康状态查询成功",
         data={
             "tts": tts_runtime.as_public_dict(),
-            "digital_human": {
-                "provider_key": "",
-                "provider_version": "",
-                "healthy": False,
-                "status_message": "数字人功能已关闭",
-                "configured_provider": getattr(settings, "STAGE8_DH_PROVIDER", "fake"),
-                "fallback_on_failure": getattr(settings, "DH_PROVIDER_FALLBACK_ON_FAILURE", True),
-            },
-        },
-    )
-
-
-@media_release_router.post("/course/{course_id}/playback/switch-mode")
-async def switch_playback_mode(
-    course_id: int,
-    payload: "SwitchPlaybackModeRequest",
-    session: Session = Depends(get_session),
-    current_user: dict = Depends(get_current_user),
-):
-    """学生端手动切换播放模式（M3/M5）
-
-    - 学生可手动切换 auto/low_resource/compatibility
-    - 仅影响当前学生的播放会话，不修改 MediaRelease.default_playback_mode
-    - 数字人 Provider 故障时系统自动降级到 compatibility
-    """
-    require_course_permission(session, current_user, course_id, "course.content.read")
-
-    try:
-        mode = PlaybackMode(payload.playback_mode)
-    except ValueError:
-        from app.core.exceptions import reject_validation_failed
-        reject_validation_failed(f"不支持的播放模式: {payload.playback_mode}")
-
-    # 返回切换确认与兼容模式信息
-    return unified_response(
-        code=200, message="播放模式已切换",
-        data={
-            "course_id": course_id,
-            "playback_mode": mode.value,
-            # 数字人（avatar）功能已关闭：任何模式都不启用数字人渲染
-            "digital_human_enabled": False,
-            "fallback_supported": True,
-            "message": (
-                "已切换到兼容模式（音频+字幕+PPT+讲稿）" if mode == PlaybackMode.COMPATIBILITY
-                else f"已切换到 {mode.value} 模式"
-            ),
         },
     )
 

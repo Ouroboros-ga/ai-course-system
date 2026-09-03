@@ -1,13 +1,11 @@
 import asyncio
 
 from app.platform.adapters.base import AdapterResult
-from app.platform.adapters.digital_human import DigitalHumanAdapter
 from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.adapters.external_http import ExternalHTTPAdapter
 from app.platform.adapters.llm import LLMAdapter
 from app.platform.adapters.ppt import PPTAdapter
 from app.platform.adapters.registry import (
-    get_digital_human_adapter,
     get_llm_adapter,
     get_ppt_adapter,
     get_tts_adapter,
@@ -17,7 +15,6 @@ from app.platform.adapters.tts import TTSAdapter
 from app.platform.adapters.voice_clone import VoiceCloneAdapter
 from fakes import (
     BUSINESS_FAILURE_MESSAGE,
-    FakeDigitalHumanClient,
     FakeHTTPXClient,
     FakeLLMClient,
     FakePPTClient,
@@ -51,9 +48,6 @@ def test_registry_accepts_injected_clients_without_network():
     assert isinstance(get_tts_adapter(FakeTTSClient()), TTSAdapter)
     assert isinstance(get_voice_clone_adapter(FakeVoiceCloneClient()), VoiceCloneAdapter)
     assert isinstance(get_ppt_adapter(FakePPTClient()), PPTAdapter)
-    assert isinstance(get_digital_human_adapter(FakeDigitalHumanClient()), DigitalHumanAdapter)
-
-
 
 
 def test_registry_default_construction_does_not_call_network():
@@ -61,7 +55,6 @@ def test_registry_default_construction_does_not_call_network():
     assert isinstance(get_tts_adapter(), TTSAdapter)
     assert isinstance(get_voice_clone_adapter(), VoiceCloneAdapter)
     assert isinstance(get_ppt_adapter(), PPTAdapter)
-    assert isinstance(get_digital_human_adapter(), DigitalHumanAdapter)
 
 def test_llm_adapter_fake_modes_are_classified():
     async def run_checks():
@@ -137,37 +130,6 @@ def test_ppt_adapter_fake_modes_are_classified(test_artifact_dir):
         assert failure.error_code == "business_failure"
         assert failure.error_message == BUSINESS_FAILURE_MESSAGE
         assert failure.raw.status == "failed"
-
-    asyncio.run(run_checks())
-
-
-def test_digital_human_adapter_fake_modes_are_classified():
-    async def run_checks():
-        health = await DigitalHumanAdapter(FakeDigitalHumanClient("success")).check_health()
-        assert health.success is True
-
-        success = await DigitalHumanAdapter(FakeDigitalHumanClient("success")).generate_video(
-            audio_path="audio.wav",
-            video_path="face.mp4",
-        )
-        assert success.success is True
-        assert success.data.video_path.endswith(".mp4")
-
-        timeout = await DigitalHumanAdapter(FakeDigitalHumanClient("timeout")).check_health()
-        assert timeout.error_code == "timeout"
-
-        unavailable = await DigitalHumanAdapter(FakeDigitalHumanClient("service_unavailable")).check_health()
-        assert unavailable.error_code == "service_unavailable"
-
-        malformed = await DigitalHumanAdapter(FakeDigitalHumanClient("malformed_response")).check_health()
-        assert malformed.error_code == "malformed_response"
-
-        failure = await DigitalHumanAdapter(FakeDigitalHumanClient("business_failure")).generate_video(
-            audio_path="audio.wav",
-            video_path="face.mp4",
-        )
-        assert failure.error_code == "business_failure"
-        assert failure.error_message == BUSINESS_FAILURE_MESSAGE
 
     asyncio.run(run_checks())
 

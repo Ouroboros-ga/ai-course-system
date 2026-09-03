@@ -1,7 +1,6 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.common.digital_human_client import DigitalHumanResponse
 from app.common.llm_client import LLMResponse
 from app.common.tts_client import TTSResponse
 from app.services.ppt_generation_service import PPTTaskResult
@@ -203,40 +202,6 @@ class FakePPTClient:
                 },
             }
         return {"code": 0, "data": {"pptStatus": "done", "sid": sid}}
-
-
-class FakeDigitalHumanClient:
-    def __init__(self, mode: str = "success"):
-        self.mode = mode
-        self.calls = []
-        self.api_url = "http://fake-digital-human.local"
-
-    async def check_health(self):
-        self.calls.append({"method": "check_health"})
-        malformed = _handle_mode(self.mode)
-        if malformed is not None:
-            return malformed
-        return True
-
-    async def generate_video(self, audio_path: str, video_path: str, **kwargs):
-        self.calls.append({"method": "generate_video", "audio_path": audio_path, "video_path": video_path, "kwargs": kwargs})
-        malformed = _handle_mode(self.mode)
-        if malformed is not None:
-            return malformed
-        if _is_business_failure(self.mode):
-            response = DigitalHumanResponse(
-                video_path="",
-                generation_time="0.1s",
-                download_path="",
-            )
-            response.status = "failed"
-            response.error = BUSINESS_FAILURE_MESSAGE
-            return response
-        return DigitalHumanResponse(
-            video_path="/tmp/fake-digital-human.mp4",
-            generation_time="0.1s",
-            download_path="/tmp/fake-digital-human.mp4",
-        )
 
 
 @dataclass

@@ -71,14 +71,14 @@ def load_avatar_cue_manifest(
     try:
         payload = json.loads(storage.get(object_key).decode("utf-8"))
     except (OSError, ValueError, UnicodeDecodeError) as exc:
-        raise AvatarCueBuildError("AVATAR_CUES_UNAVAILABLE", "数字人时间轴资产不可读取") from exc
+        raise AvatarCueBuildError("AVATAR_CUES_UNAVAILABLE", "字幕时间轴资产不可读取") from exc
     if payload.get("schema") != AVATAR_CUES_SCHEMA:
-        raise AvatarCueBuildError("AVATAR_CUES_SCHEMA_INVALID", "数字人时间轴版本不受支持")
+        raise AvatarCueBuildError("AVATAR_CUES_SCHEMA_INVALID", "字幕时间轴版本不受支持")
     audio = payload.get("audio")
     if not isinstance(audio, dict) or not audio.get("object_key") or not audio.get("sha256"):
-        raise AvatarCueBuildError("AVATAR_CUES_AUDIO_BINDING_INVALID", "数字人时间轴缺少音频绑定")
+        raise AvatarCueBuildError("AVATAR_CUES_AUDIO_BINDING_INVALID", "字幕时间轴缺少音频绑定")
     if not isinstance(payload.get("mouth_activity"), list) or not isinstance(payload.get("visemes"), list):
-        raise AvatarCueBuildError("AVATAR_CUES_SCHEMA_INVALID", "数字人时间轴内容不完整")
+        raise AvatarCueBuildError("AVATAR_CUES_SCHEMA_INVALID", "字幕时间轴内容不完整")
     return payload
 
 
@@ -116,7 +116,7 @@ def build_avatar_cues_from_tts_job(
     if job is None:
         raise AvatarCueBuildError("TTS_JOB_NOT_FOUND", "TTS 任务不存在")
     if job.job_type != MediaGenerationJobType.TTS or job.status != MediaGenerationStatus.SUCCEEDED:
-        raise AvatarCueBuildError("TTS_JOB_NOT_READY", "仅成功的 TTS 任务可生成数字人时间轴")
+        raise AvatarCueBuildError("TTS_JOB_NOT_READY", "仅成功的 TTS 任务可生成字幕时间轴")
     if job.node_id is None:
         raise AvatarCueBuildError("TTS_JOB_NODE_REQUIRED", "TTS 任务必须绑定讲稿节点后才能冻结播放时间轴")
     if job.media_release_id and job.media_release_id != release_id:
