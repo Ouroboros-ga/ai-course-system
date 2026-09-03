@@ -10,7 +10,10 @@
 > 同日落地：**SearXNG 搜索主通道已部署验收**（47.99.97.154 容器 `nexus-searxng`，
 > 引擎 360search+yandex，中英文 20+ 结果/0.8–2s，见 [deploy/searxng/README.md](../deploy/searxng/README.md)）；
 > **Demo 论文候选清单已定**（主选 nanoGPT、备选 CLIP，见
-> [phase1/2026-09-03_Demo论文候选清单.md](phase1/2026-09-03_Demo论文候选清单.md)）。
+> [phase1/2026-09-03_Demo论文候选清单.md](phase1/2026-09-03_Demo论文候选清单.md)）；
+> **Nexus Runtime P0 已实现**（deepagents 0.7.12 独立环境 + Web Search/arXiv/复现工具 +
+> FastAPI/SSE，单测 18/18、本地启动验证通过；Repro Worker 与服务器部署待后续，见
+> [nexus/README.md](../nexus/README.md) 与决策文档 §4.2）。
 > 相关核查背景见
 > [phase1/CodeNexus_技术决策补丁v1.1_核查结论.md](phase1/CodeNexus_技术决策补丁v1.1_核查结论.md)。
 

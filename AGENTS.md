@@ -72,7 +72,16 @@ Demo/测试。Nexus 转型的完整决策、数据策略与安全红线见
   `feature_flags/`、`learning/`、`product1/contracts/`、`safety/`、`shadow/`、
   `student_memory/`、`research/` 等子目录组织。
 
-### 2.2 智能体平台层(`backend/app/platform/agents/`)
+### 2.2 Nexus Runtime(`nexus/`)
+
+独立 uv 项目(独立 `pyproject.toml`、`uv.lock`、venv),与 `backend/` **不共享
+Python 环境与依赖树**。职责为课程外全局入口智能体:复杂问题拆解、论文研究、
+快速复现。基于 deepagents + LangGraph(新版本树,与旧 Backend 的 langgraph 0.6
+隔离);LLM 走 DeepSeek OpenAI 兼容端点;Web Search 主通道为服务器自部署
+SearXNG,降级本机 DuckDuckGo;复现执行只经 Repro Worker,未配置时 fail-closed。
+对旧 Backend 只通过 HTTP/SSE 通信。工具与 API 契约见 `nexus/README.md`。
+
+### 2.3 智能体平台层(`backend/app/platform/agents/`)
 
 三类产品 Agent 与一个代码兼容层使用以下目录:
 

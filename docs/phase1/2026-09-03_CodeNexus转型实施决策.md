@@ -26,7 +26,7 @@
 | D2 | 产品双入口 | **TeachingAgent**：课程内便捷问答智能（教学问答、教学动作、对话式代码挑战），工作流固定，本质是"能检索到精确知识的问答机器人"。**Nexus AI**：从课程外进入的全局入口，负责复杂问题拆解与持续执行（论文研究、快速复现等），是"真正的 Agent"；基于 Deep Agents + LangGraph，运行于独立 Nexus Runtime。CodeNexus 方向与既有文档冲突时以新方向为准，AGENTS.md 已同步。 |
 | D3 | Web Search | 用由服务器 IP 直接发起的免费搜索能力，配置**双通道**：主通道为服务端 Web Search（部署在 `47.99.97.154` 服务环境），下位替代为本机（agent 侧）Web Search 能力。**已落地（2026-09-03）**：SearXNG 容器 `nexus-searxng` 部署于 47.99.97.154 并验收通过（中英文 20+ 结果、延迟 0.8–2.0s），产物见 [deploy/searxng/](../../deploy/searxng/)。 |
 | D4 | Demo 论文候选 | 选人工智能 / 机器学习 / CS 方向。候选清单已建立（2026-09-03，License 经 GitHub API 核实）：[2026-09-03_Demo论文候选清单.md](2026-09-03_Demo论文候选清单.md)。**主选 nanoGPT**（GPT-2 最小复现，MIT，官方 CPU 命令约 3 分钟训练闭环），备选 CLIP；其余 4 项为候选池。 |
-| D5 | Repro Worker | 部署于 `47.99.97.154` 服务环境，与 Backend、Judge0 物理隔离；未知 GitHub Repo 视为不可信代码，只进 Repro Worker 受限执行。 |
+| D5 | Repro Worker | 部署于 `47.99.97.154` 服务环境，与 Backend、Judge0 **同宿主机、容器级隔离**（独立容器与独立网络，非物理隔离——该机为 4C8G 单机，主栈与 Judge0 栈均运行其上；原表述"物理隔离"不准确，2026-09-03 经开发者澄清修正）；未知 GitHub Repo 视为不可信代码，只进 Repro Worker 受限执行。 |
 | D6 | Nexus 数据策略 | 语义分域，见 §3。 |
 | D7 | 旧科研工作台 | 前端四面板科研工作台下线；新能力收敛为单一 Nexus 入口（前端设计后续做，当前优先实现后端功能）。 |
 | D8 | Teaching Agent 戏份 | 继续承担验收链中的"教学"场景（课程内问答、学情、代码挑战）；Nexus 承担"科研助研"场景（拆解赛题、论文研究、快速复现）。两者共享业务基础设施但职责分离。 |
@@ -105,6 +105,29 @@
   独立进程/systemd 服务，不进 `backend/` 依赖树；与旧 Backend 通过 HTTP/SSE 通信。
 - **/research API 下线时间表设计定稿**：见 §6。
 - 变更一次性提交并推送（用户授权）。
+
+### 4.2 Nexus Runtime P0 实施（2026-09-03 第三批）
+
+P0 已在 `nexus/` 独立环境实现并本地验证通过（证据：单测 18/18 passed、
+`uvicorn` 本地启动后 `/health` 返回 200、无 LLM Key 时 chat 端点 503
+fail-closed、`web_search` 经 SSH 隧道真实调用 47.99.97.154 SearXNG 返回
+arXiv 结果）：
+
+- **独立环境**：`nexus/pyproject.toml` + `uv.lock` + 独立 venv，
+  deepagents 0.7.12 / langgraph 1.x 只进本环境，未触碰 backend 依赖树。
+- **工具链**：`web_search`（SearXNG 主通道 + DDG 降级，双失败返回
+  `WEB_SEARCH_UNAVAILABLE` 不编造）、`search_arxiv_papers`（3s 限速 +
+  1 天缓存，fail-closed）、`plan_reproduction`（nanoGPT MIT 预设，
+  官方 CPU 命令）、`run_reproduction`（Repro Worker 未配置时必返
+  `REPRO_WORKER_UNAVAILABLE`，绝不假造执行）。
+- **服务**：FastAPI `/health`、`POST /api/v1/nexus/chat`（非流式）、
+  `POST /api/v1/nexus/chat/stream`（SSE：token → tool_call/tool_result →
+  done）；`NEXUS_API_KEY` 可选 Bearer 鉴权；会话经 InMemorySaver +
+  thread_id 续聊（重启即清，P0 预期内）。
+- **测试**：`nexus/tests/` 18 个用例全 mock HTTP，未调用真实付费 LLM。
+- **未完成（下一批）**：Repro Worker 容器与 `run_reproduction` 真实对接、
+  真实 DeepSeek 端到端手工冒烟（需真实 Key）、服务器部署（需另行授权）。
+  运行指南与已验证/未验证清单见 [nexus/README.md](../../nexus/README.md)。
 
 ## 5. 决议状态（2026-09-03 全部处置完毕）
 

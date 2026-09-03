@@ -1,0 +1,33 @@
+[project]
+name = "nexus-runtime"
+version = "0.1.0"
+description = "Nexus AI runtime: 课程外全局入口智能体（Deep Agents + LangGraph，独立于旧 Backend 环境）"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "deepagents>=0.7.12",
+    "langchain-openai>=0.3.0",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.34.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.8.0",
+    "duckduckgo-search>=8.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.26.0",
+    "respx>=0.22.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

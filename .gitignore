@@ -49,6 +49,8 @@ __pycache__/
 *$py.class
 *.so
 .Python
+# setuptools/uv 可编辑安装的构建产物（backend/、nexus/ 各自会生成一份）
+*.egg-info/
 env/
 venv/
 ENV/
