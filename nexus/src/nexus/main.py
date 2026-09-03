@@ -125,7 +125,9 @@ async def chat(request: ChatRequest) -> dict[str, Any]:
     inputs = {"messages": [{"role": "user", "content": request.message}]}
     config = _config_for(request.session_id)
     tool_events: list[dict[str, Any]] = []
-    async for mode, payload in agent.astream(inputs, config, stream_mode="updates"):
+    # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
+    # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
+    async for mode, payload in agent.astream(inputs, config, stream_mode=["updates"]):
         for _node, delta in (payload or {}).items():
             messages = delta.get("messages") if isinstance(delta, dict) else None
             if not messages:

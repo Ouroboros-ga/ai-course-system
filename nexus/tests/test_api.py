@@ -68,3 +68,68 @@ async def test_chat_request_validation():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post("/api/v1/nexus/chat", json={"message": ""})
     assert response.status_code == 422
+
+
+async def test_chat_endpoints_against_real_graph(monkeypatch: pytest.MonkeyPatch):
+    """回归（2026-09-03 冒烟发现）：非流式 /chat 的 stream_mode 必须是列表形式。
+
+    LangGraph 的 astream 在单字符串 stream_mode 下产出单值，代码按
+    ``(mode, payload)`` 二元解包会抛 ValueError（线上 502）。本测试用真实
+    deepagents 图 + 假模型（单轮直答、无工具调用）同时走通两个端点，且全程
+    不调用真实 LLM。
+    """
+    from deepagents import create_deep_agent
+    from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
+    from langchain_core.messages import AIMessage
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    import nexus.main as main_module
+
+    monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+    def _fake_responses():
+        """无限供给同一回复：deepagents 图可能多次调用模型，迭代器耗尽会以
+        StopIteration（PEP 479 下为 RuntimeError）炸掉端点。"""
+        while True:
+            yield AIMessage(content="你好，我是 Nexus。")
+
+    class _NoToolsFakeChatModel(GenericFakeChatModel):
+        """deepagents 会对模型调用 bind_tools；假模型不支持原生工具，直接自返。"""
+
+        def bind_tools(self, tools, **kwargs):  # noqa: ANN001, ANN003
+            return self
+
+    fake_model = _NoToolsFakeChatModel(
+        messages=_fake_responses()
+    )
+    agent = create_deep_agent(
+        model=fake_model,
+        tools=[],
+        system_prompt="test-only prompt",
+        checkpointer=InMemorySaver(),
+    )
+    original_agent = main_module._agent
+    main_module._agent = agent
+    get_settings.cache_clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.post(
+                "/api/v1/nexus/chat",
+                json={"message": "hi", "session_id": "regress-chat"},
+            )
+            assert response.status_code == 200
+            body = response.json()
+            assert body["session_id"] == "regress-chat"
+            assert body["message"] == "你好，我是 Nexus。"
+            assert body["tool_events"] == []
+
+            stream = await client.post(
+                "/api/v1/nexus/chat/stream",
+                json={"message": "hi", "session_id": "regress-stream"},
+            )
+            assert stream.status_code == 200
+            assert "event: token" in stream.text
+            assert "event: done" in stream.text
+    finally:
+        main_module._agent = original_agent
+        get_settings.cache_clear()
