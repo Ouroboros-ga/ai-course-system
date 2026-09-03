@@ -253,13 +253,13 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 ### 6.1 Repro Worker 容器实现
 
-| 任务 ID | 任务内容                    | 输入                                               | 输出                                                                                                                                      | 验收标准                                       | 预计工作量       |
-| ----- | ----------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | ----------- |
-| P1-W1 | Repro Worker Dockerfile | `nexus/README.md` Repro Worker 契约                | `deploy/repro-worker/Dockerfile`：基于 Python 3.12 镜像，安装 git/curl/基础编译工具，资源限制 1C2G                                                         | 本地构建通过                                     | 1 天         |
-| P1-W2 | Repro Worker 服务         | Worker 契约                                        | `deploy/repro-worker/worker.py`：FastAPI `/jobs` 端点，接收 preset\_id/repo\_url/steps，fork 子进程执行（timeout 15min、磁盘配额 2GB），返回 job\_id + status | 本地 mock 提交返回 200                           | 2 天         |
-| P1-W3 | License 校验              | GitHub API                                       | Worker 执行前调用 GitHub API 获取 repo license，越线仓库拒绝执行并返回 `LICENSE_VIOLATION`                                                                 | 提交 GPL 仓库返回拒绝                              | 0.5 天       |
-| P1-W4 | 服务器部署                   | P1-W1/W2/W3                                      | systemd 服务 `repro-worker.service` 运行于 47.99.97.154:8400，独立容器 1C2G                                                                       | `curl http://127.0.0.1:8400/health` 返回 200 | **需用户授权部署** |
-| P1-W5 | Nexus 对接                | P1-W4 + `nexus/.env` 配置 `NEXUS_REPRO_WORKER_URL` | `run_reproduction` 工具真实提交作业到 Worker                                                                                                     | 演示脚本用例 5 返回 `queued` 而非 `UNAVAILABLE`      | 0.5 天       |
+| 任务 ID   | 任务内容                    | 输入                                                                               | 输出                                                                                                                                      | 验收标准                                       | 预计工作量          |
+| ------- | ----------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | -------------- |
+| P1-W1 ✅ | Repro Worker Dockerfile | `deploy/repro-worker/README.md` 契约                                               | `deploy/repro-worker/Dockerfile`：Python 3.12-slim + git/编译工具，**非 root** 运行，限额在 compose 施加                                               | 代码就绪（构建在 W4 部署时执行）                         | —              |
+| P1-W2 ✅ | Repro Worker 服务         | Worker 契约                                                                        | `deploy/repro-worker/worker.py`：`POST /jobs` + `GET /jobs/{id}`，bash 逐步执行（单步超时 SIGKILL、总预算 15min、磁盘 2GB、串行、工作目录 ephemeral、artifact 白名单） | 测试 7/7（`test_worker.py`）                   | 完成（2026-09-03） |
+| P1-W3 ✅ | License 校验              | GitHub API + 本地 LICENSE 双重校验                                                     | 三源判定（请求声明/GitHub spdx/本地文件）fail-closed，越线返回 `LICENSE_VIOLATION`                                                                         | 测试覆盖 GPL 拒绝 / 无 License 拒绝 / MIT 放行        | 完成（2026-09-03） |
+| P1-W4   | 服务器部署                   | P1-W1/W2/W3                                                                      | 独立容器（compose：独立网络 `repro_net`、1C2G/512 pids、仅绑 127.0.0.1:8400）+ iptables 出站白名单；部署清单见 `deploy/repro-worker/README.md`                    | `curl http://127.0.0.1:8400/health` 返回 200 | **需用户授权部署**    |
+| P1-W5 ✅ | Nexus 对接                | P1-W4 + `nexus.env` 配置 `NEXUS_REPRO_WORKER_URL`（+ 可选 `NEXUS_REPRO_WORKER_TOKEN`） | `run_reproduction` 真实提交作业到 Worker（Bearer 认证已实现）；代码已同步服务器，URL 未配置前维持 fail-closed                                                         | 演示脚本用例 5 返回 `queued` 而非 `UNAVAILABLE`      | 待 W4           |
 
 **安全约束**（AGENTS.md §4.1.10）：
 
@@ -349,7 +349,9 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 - **S3 下线**：⏸️ 待 S2 稳定 ≥ 1 迭代后启动（删路由注册与 service、清理
   `research/` 与 `providers/research/`、`research_*` 表保留不 drop）
 
-- **P1-W Repro Worker**：⏸️ 可与 S1 并行，S2 前完成
+- **P1-W Repro Worker**：🔄 **W1/W2/W3/W5 完成（2026-09-03，提交** **`ec56ada1`；
+  worker 测试 7/7、nexus 29/29），仅剩 W4 服务器部署需授权**——部署清单见
+  `deploy/repro-worker/README.md`
 
 - **P1-C 会话持久化**：⏸️ 可选，P1 阶段
 
