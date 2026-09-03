@@ -173,32 +173,34 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 
 ### 4.1 前端任务（四面板删除）
 
-| 任务 ID | 任务内容                      | 输出                                                                                          | 验收标准                                      |
-| ----- | ------------------------- | ------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| S2-F1 | 删除科研工作台四面板页面              | 删除 `frontend/src/views/research/*`（WorkspacesPage/QuestionsPage/PapersPage/ExperimentsPage） | 构建通过；访问 `/app/research/workspaces` 返回 404 |
-| S2-F2 | 删除 `/research` API client | 删除 `frontend/src/api/research.js` 与所有调用方                                                    | 前端测试通过；无 import 残留                        |
-| S2-F3 | 前端契约测试更新                  | 移除 research 路由契约测试                                                                          | `npm run test:contracts` 全绿               |
+| 任务 ID   | 任务内容                      | 输出                                                                                                                 | 验收标准                                         |
+| ------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| S2-F1 ✅ | 删除科研工作台四面板页面              | 删除 `frontend/src/app/pages/course/research/*`（ResearchWorkspacePage + Memory/Notepad/Scope/Todo 四面板，§3.0 修正后的真实路径） | 构建通过；`app-course-research` 路由从 bundle 移除     |
+| S2-F2 ✅ | 删除 `/research` API client | 删除 `frontend/src/api/research_agent.js` 与所有调用方（无独立 webResearch client）                                             | 前端测试通过；无 import 残留                           |
+| S2-F3 ✅ | 前端契约测试更新                  | "S1 保留深链"断言翻转为"S2 已删除"（含文件不存在检查）                                                                                   | `node --test apiContracts.test.cjs` 89/89 全绿 |
 
 ### 4.2 后端任务（410 Gone 响应）
 
-| 任务 ID | 任务内容                      | 输出                                                                                                                             | 验收标准                                           |
-| ----- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| S2-B1 | `/research/*` 返回 410 Gone | 所有 `/api/v1/research/*` 端点返回 `410 Gone` + JSON `{"error": "RESEARCH_API_RETIRED", "migration": "Use /api/v1/nexus/* instead"}` | `curl /api/v1/research/workspaces` 返回 410      |
-| S2-B2 | Backend 测试更新              | 旧 research 集成测试改为验证 410 响应                                                                                                     | `pytest backend/tests/research/ -v` 全绿（验证 410） |
+| 任务 ID   | 任务内容                                                             | 输出                                                                                                                                                                                  | 验收标准                                                                           |
+| ------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| S2-B1 ✅ | `/research-agent/*`、`/web-research/*` 返回 410 Gone（§3.0 修正后的两个前缀） | `deprecation_middleware.py` 短路返回 `410 Gone` + JSON `{"error": "RESEARCH_API_RETIRED", "migration": "Use /api/v1/nexus/* instead"}` + `Link: successor`；**路由注册保留至 S3**（revert 即恢复双轨） | 线上 curl 两前缀均 410（见验收记录）                                                        |
+| S2-B2 ✅ | Backend 测试更新                                                     | API 级测试翻转为 410 契约（service 层单测保留至 S3）                                                                                                                                                | `pytest test_nexus_proxy.py test_research_agent.py test_web_research.py` 42/42 |
 
-### 4.3 S2 交付检查清单
+### 4.3 S2 交付检查清单（✅ 全部通过，2026-09-03；实测路径见 §3.0 修正与
 
-- [ ] 前端四面板代码已删除（`frontend/src/views/research/` 目录不存在）
+[验收记录/S2\_切换期\_2026-09-03.md](验收记录/S2_切换期_2026-09-03.md)）
 
-- [ ] 前端 `research.js` API client 已删除
+- [x] 前端四面板代码已删除（`frontend/src/app/pages/course/research/` 目录已删除）
 
-- [ ] Backend `/research/*` 全部返回 410 + 迁移说明
+- [x] 前端 `research_agent.js` API client 已删除（无 import 残留，构建通过）
 
-- [ ] 前后端测试全绿
+- [x] Backend `/research-agent/*` 与 `/web-research/*` 全部返回 410 + `RESEARCH_API_RETIRED` 迁移说明（中间件短路，线上实测）
 
-- [ ] 旧 research 深链访问显示 404（前端）或 410（直接 API 调用）
+- [x] 前后端测试全绿（backend 42/42、前端契约 89/89、build 通过）
 
-**回退方式**：前后端各 `git revert` 一个提交（S2-F1/F2/F3 合并为一个提交，S2-B1/B2 合并为一个提交）。
+- [x] 旧 research 深链路由已从 bundle 移除（前端）；直接 API 调用 410（线上实测）
+
+**回退方式**：前后端各 `git revert` 一个提交（S2-F = `8255a4c7`，S2-B = `6635f106`）。
 
 ***
 
@@ -340,10 +342,12 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
   [验收记录/S1\_Nexus真实链路\_2026-09-03.md](验收记录/S1_Nexus真实链路_2026-09-03.md)）；
   冒烟中发现并修复非流式 /chat stream\_mode 缺陷（`93415f18`，附真实图回归测试）
 
-- **S2 切换期**：⏸️ **触发条件已满足**（S1-V1 通过），待启动：删除前端四面板、
-  旧 research 接口返回 410 Gone
+- **S2 切换期**：✅ **完成（2026-09-03）**——旧接口 410 Gone（`6635f106`）、前端
+  四面板/路由/client 删除（`8255a4c7`），release `8255a4c7` 线上验收通过
+  （[验收记录/S2\_切换期\_2026-09-03.md](验收记录/S2_切换期_2026-09-03.md)）
 
-- **S3 下线**：⏸️ 待 S2 稳定后启动
+- **S3 下线**：⏸️ 待 S2 稳定 ≥ 1 迭代后启动（删路由注册与 service、清理
+  `research/` 与 `providers/research/`、`research_*` 表保留不 drop）
 
 - **P1-W Repro Worker**：⏸️ 可与 S1 并行，S2 前完成
 
