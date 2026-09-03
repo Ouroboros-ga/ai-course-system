@@ -17,6 +17,21 @@ class Settings(BaseSettings):
 
     # Quick Reproduction Worker（未配置时 fail-closed）
     repro_worker_url: str = ""
+    # Worker 的 Bearer 令牌（REPRO_WORKER_TOKEN 对应项；双方都配置才启用认证）
+    repro_worker_token: str = ""
+
+    # 会话持久化（P1-C）：PostgresSaver，独立 schema，不混入业务表。
+    # 留空则回退 InMemorySaver（本地开发/测试，无需本地启动 PG）。
+    postgres_dsn: str = ""
+    postgres_schema: str = "nexus_checkpoints"
+    # Retention：未活跃会话 TTL（天），由服务器 cron 清理，本地不执行。
+    retention_days: int = 30
+
+    # Compact（P1-C）：DeepAgents 原生 SummarizationMiddleware。
+    # DeepSeek 无 max_input_tokens profile，fraction 触发不可靠，故用显式
+    # token/message 阈值（默认 ~64k 窗口的 78% 触发，保留近期 20 条）。
+    summary_trigger_tokens: int = 50000
+    summary_keep_messages: int = 20
 
     # 服务
     host: str = "127.0.0.1"

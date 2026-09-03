@@ -101,10 +101,15 @@ async def _submit_to_worker(preset: dict[str, Any]) -> dict[str, Any]:
         "repo_license": preset["repo_license"],
         "steps": preset["steps"],
     }
+    headers = {
+        **({"Authorization": f"Bearer {settings.repro_worker_token}"}
+           if settings.repro_worker_token else {}),
+    }
     async with httpx.AsyncClient(timeout=15.0) as client:
         response = await client.post(
             f"{settings.repro_worker_url.rstrip('/')}/jobs",
             json=payload,
+            headers=headers,
         )
         response.raise_for_status()
         return {

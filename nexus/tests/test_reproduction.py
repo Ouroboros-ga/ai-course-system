@@ -56,3 +56,26 @@ async def test_run_reproduction_submits_to_worker(monkeypatch):
         assert result["job"]["job_id"] == "job-1"
     finally:
         get_settings.cache_clear()
+
+
+async def test_run_reproduction_sends_bearer_token_when_configured(monkeypatch):
+    """Worker 侧开启认证时，Nexus 必须携带 REPRO_WORKER_TOKEN 对应的 Bearer 头。"""
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_URL", "http://127.0.0.1:9100")
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_TOKEN", "worker-secret")
+    from nexus.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        with respx.mock:
+            seen = {}
+
+            def _capture(request: httpx.Request) -> httpx.Response:
+                seen["authorization"] = request.headers.get("Authorization")
+                return httpx.Response(200, json={"job_id": "job-2", "status": "queued"})
+
+            respx.post("http://127.0.0.1:9100/jobs").mock(side_effect=_capture)
+            result = await run_reproduction.ainvoke({"preset_id": "nanogpt"})
+        assert result["status"] == "submitted"
+        assert seen["authorization"] == "Bearer worker-secret"
+    finally:
+        get_settings.cache_clear()

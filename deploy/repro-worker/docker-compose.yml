@@ -1,0 +1,49 @@
+# CodeNexus Repro Worker（P1-W4 部署单元，需用户授权后执行）
+#
+# 安全约束（AGENTS.md §4.1.10 / 技术决策补丁 §14、§29）：
+# - 与 Backend/Judge0/SearXNG **不同 Docker 网络**（独立 bridge，不加入 app_net）
+# - 资源限额：1 CPU / 2GB 内存 / 512 pids（compose 硬限制）
+# - 磁盘配额：Worker 代码内另强制 2GB 工作目录配额（storage-opt 需 overlay2+
+#   direct-lvm，宿主机未配置时以代码级配额兜底）
+# - 出站白名单（GitHub/PyPI）在宿主机 iptables 实施，见 README「部署清单」
+# - REPRO_WORKER_TOKEN 从环境注入，不写入本文件
+services:
+  repro-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: repro-worker:latest
+    container_name: repro-worker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8400:8400"   # 仅本机回环；Nexus Runtime 同宿主机直连
+    environment:
+      REPRO_WORKER_TOKEN: "${REPRO_WORKER_TOKEN:?REPRO_WORKER_TOKEN is required}"
+      REPRO_WORKER_GITHUB_TOKEN: "${REPRO_WORKER_GITHUB_TOKEN:-}"
+      REPRO_WORKER_TOTAL_TIMEOUT_S: "900"
+      REPRO_WORKER_STEP_TIMEOUT_S: "300"
+      REPRO_WORKER_DISK_QUOTA_MB: "2048"
+      REPRO_WORKER_MAX_CONCURRENT: "1"
+    volumes:
+      - repro_jobs:/jobs
+    networks:
+      - repro_net
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 2g
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  repro_net:
+    driver: bridge
+    internal: false   # 需要出站 git clone/pip install；出站白名单由 iptables 收口
+
+volumes:
+  repro_jobs:
