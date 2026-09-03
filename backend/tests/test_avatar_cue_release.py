@@ -218,9 +218,11 @@ def test_cue_worker_freezes_audio_bound_manifests_and_blocks_active_mutation(ses
     )
     assert active.status.value == "active"
     playback = media_playback_service.get_current_playback(session, course_id=course.id)
-    assert playback["avatar_cues"]["schema"] == AVATAR_CUES_SCHEMA
-    assert playback["avatar_cues"]["precision"] == "word"
-    assert playback["avatar_cues"]["manifest_url"]
+    # XH-202620: 数字人已下线,播放契约不再签发 avatar cues/manifest。
+    # 该字段固定为 null(空值即兼容模式:音频 + PPT + 字幕)。
+    assert playback["available"] is True
+    assert playback["avatar_cues"] is None
+    assert playback["fallback_mode"] == "compatibility"
     with pytest.raises(HTTPException) as exc_info:
         media_release_service.freeze_cue_snapshot(
             session,

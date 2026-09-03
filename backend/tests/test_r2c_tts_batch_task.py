@@ -1,14 +1,159 @@
 import asyncio
 import importlib
+import json
+import uuid
 
 import pytest
+from fakes import BUSINESS_FAILURE_MESSAGE, FakeTTSClient
+from sqlmodel import Session
 
-from app.models.course_model import CourseStatus
-from app.models.user_model import UserRole
+from app.core.security import create_access_token, get_password_hash
+from app.models.access_control_model import (
+    PlatformPermission,
+    PlatformPermissionAssignment,
+)
+from app.models.course_model import (
+    Course,
+    CourseScript,
+    CourseStatus,
+    DoclingDocument,
+    DoclingText,
+    ParseStatus,
+    ScriptNode,
+    ScriptNodeType,
+)
+from app.models.user_model import User, UserRole
 from app.platform.adapters.errors import AdapterErrorCode
 from app.platform.tasks import TaskContext, TaskResult, TaskRunner, TaskStatus, TaskType
-from fakes import BUSINESS_FAILURE_MESSAGE, FakeTTSClient
-from test_m4b_main_flows import _create_course_graph, _create_user, _headers
+from app.services.course_access_service import establish_course_access_baseline
+
+# 说明:以下 helpers 原位于 test_m4b_main_flows.py(b433bae 数字人下线时整体删除)。
+# 本文件(TTS 批处理任务回归)仍引用它们,删除提交遗漏了本文件的引用修复,
+# 导致 pytest 收集阶段 ModuleNotFoundError。TTS 功能保留,故在此内联移植 helpers,
+# 保持原 fixture 语义不变,不修改任何断言。
+
+
+def _unique(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:10]}"
+
+
+def _create_user(session: Session, role: UserRole, prefix: str) -> User:
+    user = User(
+        username=_unique(prefix),
+        real_name=prefix.replace("_", " ").title(),
+        hashed_password=get_password_hash("test-password"),
+        role=role,
+        is_active=True,
+        school_id="m4b-school",
+    )
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    if role == UserRole.TEACHER:
+        session.add(PlatformPermissionAssignment(
+            user_id=user.id,
+            permission=PlatformPermission.COURSE_CREATE,
+            granted_by_user_id=user.id,
+        ))
+        session.commit()
+    return user
+
+
+def _headers(user: User) -> dict:
+    token = create_access_token({
+        "sub": str(user.id),
+        "username": user.username,
+        "role": user.role.value,
+        "school_id": user.school_id or "m4b-school",
+    })
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _create_course_graph(session: Session, teacher: User, status: CourseStatus = CourseStatus.PUBLISHED):
+    suffix = uuid.uuid4().hex[:8]
+    course = Course(
+        fanya_course_id=f"m4b_{suffix}",
+        fanya_course_name=f"M4B Course {suffix}",
+        title=f"M4B Regression Course {suffix}",
+        description="M4B offline regression fixture",
+        teacher_id=teacher.id,
+        status=status,
+        is_ai_generated=True,
+        total_duration=120,
+        total_nodes=2,
+        source_file_name="m4b_fixture.md",
+        source_file_path=f"/tmp/m4b_fixture_{suffix}.md",
+        source_mimetype="text/markdown",
+        total_pages=4,
+    )
+    session.add(course)
+    session.commit()
+    session.refresh(course)
+    establish_course_access_baseline(session, course.id, teacher.id)
+    session.commit()
+
+    doc = DoclingDocument(
+        course_id=course.id,
+        doc_name="m4b_fixture.md",
+        origin_filename="m4b_fixture.md",
+        origin_mimetype="text/markdown",
+        source_file_path=course.source_file_path,
+        status=ParseStatus.COMPLETED,
+        total_texts=2,
+        raw_json={"raw_content": "binary search and recursion lecture notes"},
+    )
+    session.add(doc)
+    session.commit()
+    session.refresh(doc)
+
+    for index, text in enumerate(["Binary search splits sorted data.", "Recursion calls itself with a smaller case."]):
+        session.add(DoclingText(
+            doc_id=doc.id,
+            self_ref=f"#/texts/{index}",
+            label="text",
+            text=text,
+            page_no=index + 1,
+            sort_order=index,
+        ))
+    session.commit()
+
+    script = CourseScript(
+        course_id=course.id,
+        version=1,
+        version_name="v1.0",
+        script_content={"title": course.title, "nodes": []},
+        summary_text="Offline regression script",
+        keywords=json.dumps(["binary search", "recursion"]),
+        is_active=True,
+        created_by=teacher.id,
+    )
+    session.add(script)
+    session.commit()
+    session.refresh(script)
+
+    nodes = []
+    for index, title in enumerate(["Binary Search", "Recursion"]):
+        node = ScriptNode(
+            script_id=script.id,
+            chapter_id=f"kp_{index + 1}",
+            node_index=index,
+            node_type=ScriptNodeType.LECTURE,
+            title=title,
+            content=f"{title} content for regression testing with enough text for TTS synthesis.",
+            page_start=index + 1,
+            page_end=index + 1,
+            duration=60,
+            is_key_point=True,
+            timestamp_start=index * 60.0,
+            timestamp_end=(index + 1) * 60.0,
+        )
+        session.add(node)
+        nodes.append(node)
+    session.commit()
+    for node in nodes:
+        session.refresh(node)
+
+    return course, script, nodes, doc
 
 
 class SelectiveTTSClient:
