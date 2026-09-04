@@ -362,9 +362,11 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
   过程修复：input.txt 注入种子规避 raw.githubusercontent.com 境内 TLS 阻断、
   OMP_NUM_THREADS=1 + step 720s 解决 cgroup 线程争抢超时）。
 
-- **P1-C 会话持久化**：🔄 C1 完成（2026-09-03，提交 `cbd89410`：PostgresSaver
-  + 独立 schema `nexus_checkpoints`，新机实测存在，TTL 清理脚本就位）；
-  C2/C3（会话列表 API + 前端切换）⏸️ 未启动
+- **P1-C 会话持久化**：✅ **全部完成**——C1（2026-09-03，`cbd89410`：
+  PostgresSaver + `nexus_checkpoints` 独立 schema）；C2/C3（2026-09-05，
+  `5eeab092`：会话列表/历史 API + 反代透传 + 前端 real 模式侧栏接线）。
+  线上验收：重启恢复实证、跨用户隔离实证、title 首插语义正确；全项记录见
+  [验收记录/P1_验收_2026-09-05.md](验收记录/P1_验收_2026-09-05.md)。
 
 **验收归档规则**：
 
