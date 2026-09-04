@@ -870,6 +870,15 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.equal(extractFirstPath(src, 'sendNexusMessage'), '/nexus/chat')
   assert.match(backend, /@router\.post\("\/chat"\)/)
 
+  // P1-C2/C3：会话列表与历史消息（前端 → 反代 → Runtime）
+  assert.equal(extractFirstPath(src, 'listNexusSessions'), '/nexus/sessions')
+  assert.match(backend, /@router\.get\("\/sessions"\)/)
+  assert.equal(
+    extractFirstPath(src, 'getNexusSessionMessages'),
+    "/nexus/sessions/${encodeURIComponent(sessionId)}/messages",
+  )
+  assert.match(backend, /@router\.get\("\/sessions\/\{session_id\}\/messages"\)/)
+
   assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
@@ -938,9 +947,9 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // 页面：无权限整页拦截并说明开通路径
   assert.match(page, /v-if="counter\.canUseNexus"/)
   assert.match(page, /暂无 Nexus AI 使用权限/)
-  // 后端是真正的强制点：三个端点（health/chat/chat-stream）全部走 require_nexus_use
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 3)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 5)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

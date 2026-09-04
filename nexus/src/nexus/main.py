@@ -9,7 +9,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from nexus import __version__
@@ -100,7 +100,9 @@ def _config_for(session_id: str, user_id: str | None = None) -> dict[str, Any]:
     return {"configurable": {"thread_id": thread_for(session_id, user_id)}}
 
 
-async def _touch_thread(thread_id: str, user_id: str | None, session_id: str) -> None:
+async def _touch_thread(
+    thread_id: str, user_id: str | None, session_id: str, title: str | None = None
+) -> None:
     """upsert 线程活跃时间（仅 PG 启用时，best-effort）。"""
     settings = get_settings()
     dsn = settings.postgres_dsn.strip()
@@ -110,10 +112,16 @@ async def _touch_thread(thread_id: str, user_id: str | None, session_id: str) ->
         from nexus.persistence import touch_thread_sync
 
         await asyncio.to_thread(
-            touch_thread_sync, dsn, settings.postgres_schema, thread_id, user_id, session_id
+            touch_thread_sync, dsn, settings.postgres_schema, thread_id, user_id, session_id, title
         )
     except Exception as error:  # noqa: BLE001
         logger.warning("touch_thread async failed: %s", error)
+
+
+def _title_from_message(message: str) -> str:
+    """会话标题：首条用户消息压平截断（60 字符）。"""
+    flattened = " ".join((message or "").split())
+    return flattened[:60]
 
 
 def _sse(event: str, data: dict[str, Any]) -> str:
@@ -165,10 +173,30 @@ async def _agent_stream(message: str, session_id: str, user_id: str | None = Non
     yield _sse("done", {"session_id": session_id, "token_count": token_count})
 
 
+def _tool_surface() -> list[str] | None:
+    """已构建 agent 的执行器工具注册表（M0-B1 巡检口径）。
+
+    预期恰为 read_file + 四个产品工具；出现 write_file/execute/task 等即
+    表示工具面收敛失效（回归信号）。未构建 agent 时返回 null。
+    """
+    if _agent is None:
+        return None
+    try:
+        return sorted(_agent.nodes["tools"].bound.tools_by_name.keys())
+    except AttributeError:
+        return None
+
+
 @app.get("/health")
 async def health() -> dict[str, Any]:
     settings = get_settings()
     dsn = settings.postgres_dsn.strip()
+    if _agent is None and settings.deepseek_api_key:
+        # 部署后无需先发起对话即可核对工具面；构建失败不阻断健康检查。
+        try:
+            get_agent()
+        except Exception:  # noqa: BLE001
+            pass
     return {
         "status": "ok",
         "version": __version__,
@@ -179,6 +207,7 @@ async def health() -> dict[str, Any]:
         "persistence": "postgres" if (dsn and _pg_saver is not None) else "memory",
         "postgres_configured": bool(dsn),
         "compact": "summarization-middleware",
+        "tool_surface": _tool_surface(),
     }
 
 
@@ -191,7 +220,7 @@ async def chat_stream(
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     thread_id = thread_for(session_id, user_id)
-    await _touch_thread(thread_id, user_id, session_id)
+    await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
         _agent_stream(request.message, session_id, user_id),
         media_type="text/event-stream",
@@ -231,9 +260,83 @@ async def chat(
         if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
             final_message = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
-    await _touch_thread(thread_for(session_id, user_id), user_id, session_id)
+    await _touch_thread(
+        thread_for(session_id, user_id), user_id, session_id, _title_from_message(request.message)
+    )
     return {
         "session_id": session_id,
         "message": final_message,
         "tool_events": tool_events,
+    }
+
+
+def _persisted() -> bool:
+    return get_settings().postgres_dsn.strip() != "" and _pg_saver is not None
+
+
+def _serialize_history(messages: list[Any]) -> list[dict[str, str]]:
+    """checkpoint 消息 → 前端历史投影：只保留 user / 最终 assistant 文本。
+
+    ToolMessage 与带 tool_calls 的中间 AI 消息不进历史（工具过程在对话时
+    已以 tool_call/tool_result 呈现，历史聚焦对话内容本身）。
+    """
+    out: list[dict[str, str]] = []
+    for msg in messages[-200:]:
+        if isinstance(msg, HumanMessage):
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            out.append({"role": "user", "content": content[:4000]})
+        elif isinstance(msg, AIMessage) and not msg.tool_calls:
+            content = msg.content if isinstance(msg.content, str) else str(msg.content)
+            if content.strip():
+                out.append({"role": "assistant", "content": content[:4000]})
+    return out
+
+
+@app.get("/api/v1/nexus/sessions", dependencies=[Depends(require_api_key)])
+async def list_sessions(
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """当前用户的会话列表（C2）：session_id + 标题 + 最近活跃时间。
+
+    会话归属由 Backend 反代注入的 ``X-Nexus-User-Id`` 决定；未启用持久化时
+    如实返回空列表（memory 模式重启即清，无历史可列）。
+    """
+    settings = get_settings()
+    if not _persisted():
+        return {"persistence": "memory", "sessions": []}
+    from nexus.persistence import list_user_threads_sync
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        sessions = await asyncio.to_thread(
+            list_user_threads_sync, settings.postgres_dsn.strip(), settings.postgres_schema, user_id
+        )
+    except Exception as error:  # noqa: BLE001 - 列表失败不阻断对话主链路
+        logger.warning("list_sessions failed: %s", error)
+        sessions = []
+    return {"persistence": "postgres", "sessions": sessions}
+
+
+@app.get(
+    "/api/v1/nexus/sessions/{session_id}/messages",
+    dependencies=[Depends(require_api_key)],
+)
+async def session_messages(
+    session_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """单会话历史消息（C2/C3）：从 checkpoint 投影 user/assistant 文本。"""
+    agent = get_agent()
+    user_id = sanitize_user_id(x_nexus_user_id)
+    session_id = sanitize_session_id(session_id)
+    config = _config_for(session_id, user_id)
+    try:
+        state = await agent.aget_state(config)
+    except Exception as error:  # noqa: BLE001 - 无 checkpoint/读取失败都视为空历史
+        logger.warning("session_messages aget_state failed: %s", error)
+        state = None
+    values = (state.values if state is not None else None) or {}
+    return {
+        "session_id": session_id,
+        "messages": _serialize_history(list(values.get("messages") or [])),
     }

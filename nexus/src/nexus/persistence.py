@@ -62,8 +62,10 @@ CREATE TABLE IF NOT EXISTS {schema}.nexus_threads (
     thread_id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL DEFAULT '',
     session_id TEXT NOT NULL DEFAULT '',
+    title TEXT NOT NULL DEFAULT '',
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE {schema}.nexus_threads ADD COLUMN IF NOT EXISTS title TEXT NOT NULL DEFAULT '';
 """
 
 
@@ -90,21 +92,60 @@ async def ensure_threads_table_async(conn_string: str, schema: str) -> None:
             await cur.execute(ddl)
 
 
-def touch_thread_sync(conn_string: str, schema: str, thread_id: str, user_id: str | None, session_id: str) -> None:
-    """upsert 线程活跃时间（best-effort，失败只记日志不抛）。"""
+def touch_thread_sync(
+    conn_string: str,
+    schema: str,
+    thread_id: str,
+    user_id: str | None,
+    session_id: str,
+    title: str | None = None,
+) -> None:
+    """upsert 线程活跃时间（best-effort，失败只记日志不抛）。
+
+    ``title`` 只在首次插入时落库（会话标题 = 首条用户消息截断），后续续聊
+    不覆盖——保持会话在列表中的稳定标识。
+    """
     import psycopg
 
     try:
         with psycopg.connect(conn_string, autocommit=True) as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"INSERT INTO {schema}.nexus_threads (thread_id, user_id, session_id, updated_at) "
-                    "VALUES (%s, %s, %s, now()) "
+                    f"INSERT INTO {schema}.nexus_threads (thread_id, user_id, session_id, title, updated_at) "
+                    "VALUES (%s, %s, %s, %s, now()) "
                     "ON CONFLICT (thread_id) DO UPDATE SET updated_at = now()",
-                    (thread_id, user_id or "", session_id),
+                    (thread_id, user_id or "", session_id, title or ""),
                 )
     except Exception as error:  # noqa: BLE001 - 审计失败绝不阻断对话
         logger.warning("touch_thread failed: %s", error)
+
+
+def list_user_threads_sync(
+    conn_string: str, schema: str, user_id: str | None, limit: int = 50
+) -> list[dict[str, str]]:
+    """按活跃时间倒序列出用户的会话（C2 会话列表数据源）。
+
+    返回 ``[{"session_id", "title", "updated_at"}]``；``updated_at`` 为 ISO 字符串。
+    """
+    import psycopg
+
+    rows: list[dict[str, str]] = []
+    with psycopg.connect(conn_string, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT session_id, title, updated_at FROM {schema}.nexus_threads "
+                "WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
+                (user_id or "", max(1, min(int(limit), 200))),
+            )
+            for session_id, title, updated_at in cur.fetchall():
+                rows.append(
+                    {
+                        "session_id": session_id,
+                        "title": title or "",
+                        "updated_at": updated_at.isoformat(),
+                    }
+                )
+    return rows
 
 
 def cleanup_inactive_threads(conn_string: str, schema: str, retention_days: int) -> dict[str, int]:

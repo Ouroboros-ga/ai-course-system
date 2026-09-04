@@ -58,7 +58,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, listNexusSessions } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -132,6 +132,116 @@ function initSessions() {
   } else {
     createNewSession()
   }
+  // P1-C2/C3：real 模式下拉取服务端持久化会话（best-effort，失败保持本地列表）。
+  refreshRemoteSessions()
+}
+
+/**
+ * real 模式：把 Runtime 持久化的会话并入侧栏。
+ *
+ * 合并规则（本地 id 即发给 Runtime 的 session_id，天然可对齐）：
+ * - 服务端有、本地无 → 建 remoteOnly 壳会话，选中时再拉历史；
+ * - 两边都有 → 保留本地 turns（含工具轨迹），仅采纳服务端标题兜底；
+ * - demo 种子会话（id 以 demo- 开头）在 real 模式下隐藏，避免演示数据混入真实列表。
+ * 接口失败时静默保持本地列表——列表缺失不能伪装成"没有历史"。
+ */
+async function refreshRemoteSessions() {
+  if (nexusDataSourceMode.value !== 'real') return
+  let remote
+  try {
+    remote = await listNexusSessions()
+  } catch {
+    return
+  }
+  const remoteSessions = Array.isArray(remote?.sessions) ? remote.sessions : []
+  const byId = new Map(sessions.value.map((s) => [s.id, s]))
+  for (const rs of remoteSessions) {
+    const sid = String(rs.session_id || '')
+    if (!sid) continue
+    const existing = byId.get(sid)
+    const updatedAt = Date.parse(rs.updated_at) || Date.now()
+    if (existing) {
+      if (!existing.turns?.length && rs.title && existing.title.startsWith('新建')) {
+        existing.title = rs.title
+      }
+      existing.updatedAt = Math.max(existing.updatedAt || 0, updatedAt)
+    } else {
+      const shell = {
+        id: sid,
+        title: rs.title || sid,
+        mode: NEXUS_MODES.GENERAL,
+        pinned: false,
+        createdAt: updatedAt,
+        updatedAt,
+        courseId: null,
+        courseName: null,
+        remoteOnly: true,
+        historyLoaded: false,
+        turns: []
+      }
+      sessions.value.push(shell)
+      byId.set(sid, shell)
+    }
+  }
+  if (nexusDataSourceMode.value === 'real') {
+    persistSessions()
+  }
+}
+
+/** 拉取 remoteOnly 会话的服务端历史，投影成 turns（工具过程未持久化，如实留空）。 */
+async function loadRemoteHistory(session) {
+  if (!session || session.historyLoaded || nexusDataSourceMode.value !== 'real') return
+  session.historyLoaded = true
+  let res
+  try {
+    res = await getNexusSessionMessages(session.id)
+  } catch (err) {
+    session.historyLoaded = false
+    showToast(err?.message || '历史消息加载失败', 'error')
+    return
+  }
+  const messages = Array.isArray(res?.messages) ? res.messages : []
+  const turns = []
+  let current = null
+  for (const m of messages) {
+    if (m.role === 'user') {
+      current = {
+        question: m.content,
+        answer: '',
+        toolEvents: [],
+        papers: [],
+        artifacts: [],
+        reproductionPreset: null,
+        tokenCount: null,
+        durationMs: null,
+        failure: '',
+        remoteHistory: true,
+        createdAt: null
+      }
+      turns.push(current)
+    } else if (m.role === 'assistant') {
+      if (!current) {
+        current = {
+          question: '',
+          answer: '',
+          toolEvents: [],
+          papers: [],
+          artifacts: [],
+          reproductionPreset: null,
+          tokenCount: null,
+          durationMs: null,
+          failure: '',
+          remoteHistory: true,
+          createdAt: null
+        }
+        turns.push(current)
+      }
+      current.answer = current.answer ? `${current.answer}\n\n${m.content}` : m.content
+    }
+  }
+  session.turns = turns
+  persistSessions()
+  scrollToBottom()
 }
 
 function createNewSession(initialMode = NEXUS_MODES.GENERAL) {
@@ -160,6 +270,10 @@ function createNewSession(initialMode = NEXUS_MODES.GENERAL) {
 
 function switchSession(id) {
   activeSessionId.value = id
+  const target = sessions.value.find((s) => s.id === id)
+  if (target?.remoteOnly) {
+    loadRemoteHistory(target)
+  }
 }
 
 function togglePinSession(s) {
@@ -239,9 +353,14 @@ function exportSession(s) {
 
 // 会话搜索与分组（置顶 / 今天 / 最近 7 天 / 更早）
 const filteredSessions = computed(() => {
+  // real 模式下隐藏 demo 种子会话（仅展示层过滤，不落盘删除——切回演示模式要还在）。
+  const pool =
+    nexusDataSourceMode.value === 'real'
+      ? sessions.value.filter((s) => !s.id.startsWith('demo-'))
+      : sessions.value
   const q = searchQuery.value.trim().toLowerCase()
-  if (!q) return sessions.value
-  return sessions.value.filter((s) => s.title.toLowerCase().includes(q))
+  if (!q) return pool
+  return pool.filter((s) => s.title.toLowerCase().includes(q))
 })
 
 const groupedSessions = computed(() => {
@@ -560,8 +679,17 @@ async function checkHealth() {
   }
 }
 
-watch(nexusDataSourceMode, () => {
+watch(nexusDataSourceMode, (mode) => {
   checkHealth()
+  if (mode === 'real') {
+    refreshRemoteSessions()
+    // 当前激活的是 demo 种子会话时，切到 real 列表的第一个会话，避免演示内容
+    // 在"真实"徽标下继续展示。
+    if (activeSessionId.value.startsWith('demo-')) {
+      const first = sessions.value.find((s) => !s.id.startsWith('demo-'))
+      if (first) switchSession(first.id)
+    }
+  }
 })
 
 async function scrollToBottom() {

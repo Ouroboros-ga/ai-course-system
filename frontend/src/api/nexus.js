@@ -17,6 +17,24 @@ export function getNexusHealth() {
 }
 
 /**
+ * 会话列表（P1-C2）：当前登录用户的持久化会话（session_id + 标题 + 活跃时间）。
+ * Runtime 未启用持久化时返回 { persistence: 'memory', sessions: [] }。
+ */
+export function listNexusSessions() {
+  return request.get('/nexus/sessions', { allowFlatResponse: true, skipErrorToast: true })
+}
+
+/**
+ * 单会话历史消息（P1-C2/C3）：[{ role: 'user' | 'assistant', content }]。
+ */
+export function getNexusSessionMessages(sessionId) {
+  return request.get(`/nexus/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
  * 非流式对话：等 Agent 循环跑完一次性返回。
  *
  * @deprecated 已知运行时缺陷（见开发文档「待修缺陷 D1」）：

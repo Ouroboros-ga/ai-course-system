@@ -439,3 +439,61 @@ def test_sunset_header_is_absent_until_a_date_is_configured(client):
 
     assert response.status_code == 410
     assert "Sunset" not in response.headers
+
+
+# ---------------------------------------------------------------------------
+# P1-C2 会话列表与历史透传
+# ---------------------------------------------------------------------------
+
+
+def test_sessions_proxies_with_identity_headers(
+    client, nexus_student_token, student_user, runtime_configured
+):
+    seen: dict[str, httpx.Request] = {}
+    runtime_sessions = {
+        "persistence": "postgres",
+        "sessions": [
+            {"session_id": "s1", "title": "调研 nanoGPT", "updated_at": "2026-09-04T20:00:00+08:00"}
+        ],
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(200, json=runtime_sessions)
+
+    with mock_runtime(handler):
+        response = client.get("/api/v1/nexus/sessions", headers=_auth(nexus_student_token))
+
+    assert response.status_code == 200
+    assert response.json() == runtime_sessions
+    upstream = seen["request"]
+    assert upstream.url.path == "/api/v1/nexus/sessions"
+    assert upstream.headers["X-Nexus-User-Id"] == str(student_user.id)
+
+
+def test_session_messages_proxies_namespaced_path(
+    client, nexus_student_token, student_user, runtime_configured
+):
+    seen: dict[str, httpx.Request] = {}
+    runtime_history = {
+        "session_id": "hist-1",
+        "messages": [
+            {"role": "user", "content": "你好"},
+            {"role": "assistant", "content": "这是回答"},
+        ],
+    }
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(200, json=runtime_history)
+
+    with mock_runtime(handler):
+        response = client.get(
+            "/api/v1/nexus/sessions/hist-1/messages", headers=_auth(nexus_student_token)
+        )
+
+    assert response.status_code == 200
+    assert response.json() == runtime_history
+    upstream = seen["request"]
+    assert upstream.url.path == "/api/v1/nexus/sessions/hist-1/messages"
+    assert upstream.headers["X-Nexus-User-Id"] == str(student_user.id)

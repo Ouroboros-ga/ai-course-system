@@ -217,6 +217,65 @@ async def nexus_chat(
     return _passthrough(response)
 
 
+@router.get("/sessions")
+async def nexus_sessions(
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """会话列表透传（P1-C2）：归属由 X-Nexus-User-Id 决定，本层只做门控与转发。"""
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+
+    timeout = httpx.Timeout(
+        settings.NEXUS_RUNTIME_TIMEOUT_S,
+        connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base}/api/v1/nexus/sessions",
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("Nexus runtime sessions timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("Nexus runtime sessions unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
+@router.get("/sessions/{session_id}/messages")
+async def nexus_session_messages(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """单会话历史透传（P1-C2/C3）：Runtime 侧按用户命名空间隔离。"""
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+
+    timeout = httpx.Timeout(
+        settings.NEXUS_RUNTIME_TIMEOUT_S,
+        connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base}/api/v1/nexus/sessions/{session_id}/messages",
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("Nexus runtime session messages timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("Nexus runtime session messages unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
 @router.post("/chat/stream")
 async def nexus_chat_stream(
     payload: NexusChatRequest,
