@@ -22,7 +22,13 @@ services:
       REPRO_WORKER_GITHUB_TOKEN: "${REPRO_WORKER_GITHUB_TOKEN:-}"
       REPRO_SEEDS_DIR: "/seeds"
       REPRO_WORKER_TOTAL_TIMEOUT_S: "900"
-      REPRO_WORKER_STEP_TIMEOUT_S: "300"
+      # 单步上限需容纳一次完整 CPU 训练步（nanoGPT 2000 iters 实测 ~171s，
+      # 预留波动）；总预算 900s 硬安全线不变，超时逐条 SIGKILL 仍然生效。
+      REPRO_WORKER_STEP_TIMEOUT_S: "720"
+      # torch 默认按可见核数开线程，cgroup 1CPU 配额下线程争抢使训练慢 3 倍+
+      # （实测 300s 内跑不完 2000 iters）；强制单线程后 ~77ms/iter。
+      OMP_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "1"
       REPRO_WORKER_DISK_QUOTA_MB: "2048"
       REPRO_WORKER_MAX_CONCURRENT: "1"
     volumes:

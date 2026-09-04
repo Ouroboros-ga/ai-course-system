@@ -3,6 +3,9 @@
 > **基线**：2026-09-03，Nexus Runtime P0 本地实现完成（18 测试通过、本地启动验证通过）
 > **决策依据**：[2026-09-03\_CodeNexus转型实施决策.md](2026-09-03_CodeNexus转型实施决策.md)
 > **状态**：本计划随实施进度持续更新；已完成项标记 ✅，进行中标记 🔄，待启动标记 ⏸️
+> **当前进度（2026-09-04）**：S0 ✅ / S1 ✅ / S2 ✅ 均已完成并验收；当前处于 **S3 下线**（待启动）
+> 与 **P1-C2/C3**（会话列表 API + 前端切换）、**nanoGPT 真实执行复测** 的待办区间（上述收尾项已并入
+> [CodeNexus_P2开发计划.md](CodeNexus_P2开发计划.md) 的 M0 里程碑）。详见 §九 进度追踪。
 
 ***
 
@@ -349,11 +352,19 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 - **S3 下线**：⏸️ 待 S2 稳定 ≥ 1 迭代后启动（删路由注册与 service、清理
   `research/` 与 `providers/research/`、`research_*` 表保留不 drop）
 
-- **P1-W Repro Worker**：🔄 **W1/W2/W3/W5 完成（2026-09-03，提交** **`ec56ada1`；
-  worker 测试 7/7、nexus 29/29），仅剩 W4 服务器部署需授权**——部署清单见
-  `deploy/repro-worker/README.md`
+- **P1-W Repro Worker**：✅ **全部完成**——W1/W2/W3/W5（2026-09-03，提交
+  `ec56ada1`；worker 测试 7/7、nexus 29/29）；W4 服务器部署完成（2026-09-04：
+  torch 2.14.0+cu130 镜像构建、容器重建 healthy、`/health` ok、iptables 出站
+  白名单重刷；随服务器迁移落新机 103.36.223.177，见
+  [验收记录/服务器迁移_2026-09-04.md](验收记录/服务器迁移_2026-09-04.md)）。
+  **nanoGPT 真实执行复测 ✅**（2026-09-04：作业 `b3002f061502` 5/5 步
+  succeeded，train 2000 iters val loss 1.8857 ≈ 预设预期，sample 真实输出；
+  过程修复：input.txt 注入种子规避 raw.githubusercontent.com 境内 TLS 阻断、
+  OMP_NUM_THREADS=1 + step 720s 解决 cgroup 线程争抢超时）。
 
-- **P1-C 会话持久化**：⏸️ 可选，P1 阶段
+- **P1-C 会话持久化**：🔄 C1 完成（2026-09-03，提交 `cbd89410`：PostgresSaver
+  + 独立 schema `nexus_checkpoints`，新机实测存在，TTL 清理脚本就位）；
+  C2/C3（会话列表 API + 前端切换）⏸️ 未启动
 
 **验收归档规则**：
 
@@ -366,6 +377,10 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
 ***
 
 ## 十、后续优化方向（P2 及以后，不阻塞转型上线）
+
+> 2026-09-04 更新：本节方向已立项为正式开发计划
+> [CodeNexus_P2开发计划.md](CodeNexus_P2开发计划.md)（M0-M5 里程碑 + P2+ 候选池），
+> 后续以该计划为准；本节保留作为原始方向记录。
 
 1. **Nexus 前端富文本渲染**：Markdown、代码高亮、LaTeX 公式
 2. **Nexus 多模态输入**：上传 PDF/图片作为对话上下文

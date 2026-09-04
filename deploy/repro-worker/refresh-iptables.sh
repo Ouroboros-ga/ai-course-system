@@ -19,7 +19,7 @@ iptables -I DOCKER-USER 1 -i "$BR" -m conntrack --ctstate ESTABLISHED,RELATED -j
   -m comment --comment repro-worker-whitelist
 
 # 2) 允许白名单域名（部署时解析；取 ahostsv4，CloudFront/CDN 多 IP 全量放行）
-HOSTS="github.com codeload.github.com objects.githubusercontent.com api.github.com download.pytorch.org download-r2.pytorch.org pypi.tuna.tsinghua.edu.cn"
+HOSTS="github.com codeload.github.com objects.githubusercontent.com raw.githubusercontent.com api.github.com download.pytorch.org download-r2.pytorch.org pypi.tuna.tsinghua.edu.cn"
 IPS=$(for h in $HOSTS; do getent ahostsv4 "$h" | awk '{print $1}'; done | sort -u)
 COUNT=0
 for ip in $IPS; do

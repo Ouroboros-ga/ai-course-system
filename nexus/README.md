@@ -125,8 +125,9 @@ Worker 侧职责（已实现，`deploy/repro-worker/worker.py`）：
   docker run -d --name repro-worker --restart unless-stopped \
     -p 127.0.0.1:8400:8400 -v repro_jobs:/jobs -v /opt/seeds:/seeds:ro \
     -e REPRO_WORKER_TOKEN="$TOKEN" -e REPRO_SEEDS_DIR=/seeds \
-    -e REPRO_WORKER_TOTAL_TIMEOUT_S=900 -e REPRO_WORKER_STEP_TIMEOUT_S=300 \
+    -e REPRO_WORKER_TOTAL_TIMEOUT_S=900 -e REPRO_WORKER_STEP_TIMEOUT_S=720 \
     -e REPRO_WORKER_DISK_QUOTA_MB=2048 -e REPRO_WORKER_MAX_CONCURRENT=1 \
+    -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
     --cpus 1.0 --memory 2g --pids-limit 512 --network repro_net \
     repro-worker:latest
   bash /opt/smartcarb/repro-worker/refresh-iptables.sh   # 出站白名单（网桥重建后必跑）
@@ -135,6 +136,9 @@ Worker 侧职责（已实现，`deploy/repro-worker/worker.py`）：
 
   > 网桥 ID 在网络重建后会变化，**每次重建 `repro_net` 后必须重跑
   > `refresh-iptables.sh`**；CDN 换 IP 后同样重跑即可（脚本幂等）。
+  > 种子前提：`/opt/seeds/nanogpt.tar.gz` 内含注入的
+  > `data/shakespeare_char/input.txt`——`raw.githubusercontent.com` 境内
+  > TLS 被阻断，种子离线化是 nanoGPT 复现的必要前提（2026-09-04 注入）。
 
 ## 测试
 
@@ -160,5 +164,8 @@ uv run pytest tests -q   # 28 passed（全 mock，不调真实 LLM/付费服务�
 - ⚠️ arXiv 直连 API 在境内服务器不可达（网络现实，工具 fail-closed 正确）；
   Agent 经 SearXNG 通道完成论文检索；建议后续为 `paper_search` 增加
   SearXNG `site:arxiv.org` 降级通道；
-- ⚠️ nanoGPT 真实执行复测（演示用例 5）待在新机跑通——worker 就绪但该
-  端到端用例尚未在迁移后重放。
+- ✅ **nanoGPT 端到端复现通过**（2026-09-04，新机：作业 `b3002f061502` 5/5 步
+  succeeded，val loss 1.8857 ≈ 预设预期 1.88，sample 真实输出；容器注入
+  `OMP_NUM_THREADS=1`、单步上限 720s（总 900s 不变）；tinyshakespeare
+  input.txt 注入种子以规避 raw.githubusercontent.com 境内 TLS 阻断。记录见
+  `docs/phase1/验收记录/服务器迁移_2026-09-04.md` §6）。
