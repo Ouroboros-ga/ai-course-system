@@ -31,6 +31,9 @@ export default defineConfig(async ({ mode }) => {
           // committed source again.
           target: env.VITE_API_PROXY_TARGET || 'http://localhost:8000',
           changeOrigin: true,
+          // 本地连云端 https 后端时，后端或 nginx 常为自签/内网证书，
+          // 关闭证书校验避免代理层 502/500；仅用于本地开发。
+          secure: false,
         },
       },
     },

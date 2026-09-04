@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 
@@ -166,6 +167,94 @@ async def test_successful_run_with_local_license_check(tmp_path: Path):
     assert any(item.endswith("sub/step2.txt") for item in artifact_paths), artifact_paths
     # 工作目录 ephemeral：结束后不保留仓库内容
     assert not (worker.WORKSPACE_ROOT / record["job_id"]).exists()
+
+
+async def test_seed_hit_skips_clone_and_runs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """种子命中：不做运行时 git clone，直接用本地快照执行；首条 clone 步被
+    替换为保留 cd 语义的空操作。"""
+    seeds = tmp_path / "seeds"
+    seeds.mkdir()
+    repo = tmp_path / "seedrepo"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("MIT License")
+    (repo / "train.py").write_text("print('training on cpu')\n")
+    subprocess_tar = seeds / "nanogpt.tar.gz"
+    import tarfile
+    with tarfile.open(subprocess_tar, "w:gz") as tar:
+        tar.add(repo, arcname="nanoGPT")
+
+    monkeypatch.setattr(worker, "SEEDS_DIR", seeds)
+
+    clone_calls = {"n": 0}
+    original = worker._run_step
+
+    async def spy_run_step(command: str, cwd: Path) -> dict:
+        if command.startswith("git clone"):
+            clone_calls["n"] += 1
+        return await original(command, cwd)
+
+    worker._run_step = spy_run_step
+    try:
+        with respx.mock:
+            respx.get("https://api.github.com/repos/karpathy/nanoGPT/license").mock(
+                return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+            )
+            async with _client() as client:
+                response = await client.post("/jobs", json={
+                    "preset_id": "nanogpt", "repo_url": "https://github.com/karpathy/nanoGPT",
+                    "repo_license": "MIT",
+                "steps": [
+                    "git clone https://github.com/karpathy/nanoGPT && cd nanoGPT",
+                    "cat train.py",
+                ],
+                })
+                assert response.status_code == 200
+                record = await _wait_done(response.json()["job_id"])
+    finally:
+        worker._run_step = original
+
+    assert record["status"] == "succeeded", record
+    assert record["seed_used"] is True
+    assert clone_calls["n"] == 0, "seed 命中时不得发生运行时 git clone"
+    assert record["steps_result"][0]["log_tail"] == ""  # true && cd nanoGPT
+    assert "training on cpu" in record["steps_result"][1]["log_tail"]
+
+async def test_rejects_repo_hiding_gpl_in_root_copying(tmp_path: Path):
+    """红线回归（2026-09-03）：git/git 式仓库——根 COPYING 为 GPL-2.0、子目录
+    有 vendored 的宽松 LICENSE.txt。递归先命中子目录会绕过 GPL 判定，必须
+    根目录优先 + GPL 一票否决。"""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "COPYING").write_text(
+        "Note that the only valid version of the GPL as far as this project\n"
+        "is concerned is _this_ particular version of the license (ie v2).\n\n"
+        "This program is free software; you can redistribute it and/or modify\n"
+        "it under the terms of the GNU General Public License as published by\n"
+        "the Free Software Foundation."
+    )
+    vendored = seed / "vendor"
+    vendored.mkdir()
+    (vendored / "LICENSE.txt").write_text("MIT License\n\nCopyright (c) somebody")
+
+    original = worker._run_step
+    worker._run_step = _stub_clone(seed)
+    try:
+        with respx.mock:
+            respx.get("https://api.github.com/repos/a/gplroot").mock(
+                return_value=httpx.Response(200, json={"license": None})
+            )
+            async with _client() as client:
+                response = await client.post("/jobs", json={
+                    "preset_id": "x", "repo_url": "https://github.com/a/gplroot",
+                    "repo_license": "MIT", "steps": ["echo hi"],
+                })
+                record = await _wait_done(response.json()["job_id"])
+    finally:
+        worker._run_step = original
+
+    assert record["status"] == "rejected"
+    assert record["code"] == "LICENSE_VIOLATION"
+    assert "GPL" in json.dumps(record["license_checks"])
 
 
 async def test_step_failure_fails_job_with_log_tail(tmp_path: Path):

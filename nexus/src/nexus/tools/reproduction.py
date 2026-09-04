@@ -30,7 +30,11 @@ REPRO_PRESETS: dict[str, dict[str, Any]] = {
         "language": "python",
         "steps": [
             "git clone https://github.com/karpathy/nanoGPT && cd nanoGPT",
-            "pip install torch numpy transformers datasets tiktoken tqdm",
+            # torch 由 Worker 镜像预装（阿里云 pytorch-wheels/cpu 轮子 ~190MB，
+            # 官方 PyPI Linux 轮子捆绑 CUDA ~3GB 会击穿磁盘配额）；此处只装
+            # 轻量依赖（清华 PyPI 镜像）。材料引用时如实标注"Worker 预置环境配置"。
+            "pip install numpy transformers datasets tiktoken tqdm "
+            "--index-url https://pypi.tuna.tsinghua.edu.cn/simple",
             "python data/shakespeare_char/prepare.py",
             "python train.py config/train_shakespeare_char.py --device=cpu --compile=False "
             "--eval_iters=20 --log_interval=1 --block_size=64 --batch_size=12 "

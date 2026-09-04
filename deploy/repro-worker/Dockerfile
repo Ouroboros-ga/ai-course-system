@@ -9,12 +9,21 @@ FROM python:3.12-slim
 
 ARG PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends git curl ca-certificates build-essential \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list ; \
+    apt-get update \
+    && apt-get install -y --no-install-recommends git curl ca-certificates build-essential libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install --no-cache-dir --index-url "${PIP_INDEX_URL}" \
     "fastapi>=0.115.0" "uvicorn>=0.34.0" "httpx>=0.28.0" "pydantic>=2.10.0"
+
+# 预装 torch（tuna 镜像，全量 ~3GB：torch 2.14 在 import 时即硬性要求 CUDA
+# 库，无法裁剪）。镜像体积换确定性——任务步骤只装轻量依赖。宿主机需预留
+# ~6GB 磁盘；/jobs 任务配额（2GB）与镜像互不影响。
+RUN pip install --no-cache-dir torch==2.14.0 --index-url "${PIP_INDEX_URL}" \
+ && python -c "import torch; print('torch', torch.__version__)" \
+ && python -c "import torch; print('cpu-matmul:', (torch.ones(2,2) @ torch.ones(2,2)).sum().item())"
 
 # 非 root 运行；工作目录独立挂载（代码内另强制 2GB 配额）
 RUN useradd --create-home --shell /usr/sbin/nologin worker \

@@ -20,12 +20,14 @@ services:
     environment:
       REPRO_WORKER_TOKEN: "${REPRO_WORKER_TOKEN:?REPRO_WORKER_TOKEN is required}"
       REPRO_WORKER_GITHUB_TOKEN: "${REPRO_WORKER_GITHUB_TOKEN:-}"
+      REPRO_SEEDS_DIR: "/seeds"
       REPRO_WORKER_TOTAL_TIMEOUT_S: "900"
       REPRO_WORKER_STEP_TIMEOUT_S: "300"
       REPRO_WORKER_DISK_QUOTA_MB: "2048"
       REPRO_WORKER_MAX_CONCURRENT: "1"
     volumes:
       - repro_jobs:/jobs
+      - /opt/seeds:/seeds:ro
     networks:
       - repro_net
     deploy:
@@ -33,7 +35,7 @@ services:
         limits:
           cpus: "1.0"
           memory: 2g
-    pids_limit: 512
+          pids: 512
     logging:
       driver: json-file
       options:

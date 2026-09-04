@@ -4,6 +4,8 @@ from __future__ import annotations
 from typing import Any
 
 from deepagents import create_deep_agent
+from deepagents.backends.state import StateBackend
+from deepagents.middleware.summarization import SummarizationMiddleware
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -41,14 +43,35 @@ def build_llm() -> ChatOpenAI | None:
     )
 
 
-def build_agent() -> Any:
-    """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。"""
+def build_summarization_middleware(llm: Any) -> SummarizationMiddleware:
+    """DeepAgents 原生 Compact：旧历史 offload 到 StateBackend（随 checkpoint 持久化）。
+
+    触发阈值来自配置（默认 50000 tokens / 保留近期 20 条），对应 deepseek-chat
+    64k 窗口约 78% 触发。摘要仍走同一 DeepSeek 模型（额外 token 成本）。
+    """
+    settings = get_settings()
+    return SummarizationMiddleware(
+        model=llm,
+        backend=StateBackend(),
+        trigger={"tokens": settings.summary_trigger_tokens},
+        keep=("messages", settings.summary_keep_messages),
+    )
+
+
+def build_agent(checkpointer: Any | None = None) -> Any:
+    """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。
+
+    checkpointer 为空时用 InMemorySaver（本地/测试）；服务器 lifespan 传入
+    AsyncPostgresSaver 实现重启可续聊。Compact 始终经原生 middleware 启用。
+    """
     llm = build_llm()
     if llm is None:
         raise RuntimeError("LLM_NOT_CONFIGURED: NEXUS_DEEPSEEK_API_KEY is empty")
+    saver = checkpointer if checkpointer is not None else InMemorySaver()
     return create_deep_agent(
         model=llm,
         tools=NEXUS_TOOLS,
         system_prompt=SYSTEM_PROMPT,
-        checkpointer=InMemorySaver(),
+        middleware=[build_summarization_middleware(llm)],
+        checkpointer=saver,
     )

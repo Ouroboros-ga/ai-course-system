@@ -127,6 +127,8 @@
   /* Nexus 工作区三栏（page-design §4.1：Local Rail | 主工作区 | 右侧回应区） */
   --nexus-rail-width: 264px;
   --nexus-rail-collapsed: 56px;
+  /* 回应区：48px 图标轨常驻，340px 抽屉按需覆盖（UX 评审 P0-1） */
+  --nexus-detail-rail: 48px;
   --nexus-detail-width: 340px;
 
   --control-height: 40px;

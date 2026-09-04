@@ -360,6 +360,10 @@ export async function streamDemoMessage({ message, onEvent, signal }) {
   await sleep(300)
 
   // 2. Token 流式输出
+  // 发射节拍：约 5 字/35ms。逐字发射会让前端每 token 全量重排 Markdown
+  //（marked + highlight + KaTeX + DOMPurify 跑在整个答案上），主线程
+  // 在"解析—冻结—突进"之间抖动；过粗则像整段蹦出。前端侧另有
+  // renderedAnswer（200ms 节流）把事件节拍磨平成视觉连续输出。
   const answerParagraphs = isReproQuery
     ? [
         '根据你的复现需求，已匹配到 **nanoGPT** 官方预设验证脚本。',
@@ -374,10 +378,10 @@ export async function streamDemoMessage({ message, onEvent, signal }) {
 
   for (const p of answerParagraphs) {
     const chars = p.split('')
-    for (let i = 0; i < chars.length; i += 3) {
-      const chunk = chars.slice(i, i + 3).join('')
+    for (let i = 0; i < chars.length; i += 5) {
+      const chunk = chars.slice(i, i + 5).join('')
       onEvent({ event: 'token', data: { content: chunk } })
-      await sleep(25)
+      await sleep(35)
     }
   }
 

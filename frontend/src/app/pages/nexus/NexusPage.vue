@@ -17,12 +17,14 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
+  Activity,
   AlertCircle,
   BookMarked,
   BookOpen,
   Bot,
   Check,
   ChevronDown,
+  Copy,
   Database,
   Download,
   ExternalLink,
@@ -30,6 +32,7 @@ import {
   FlaskConical,
   Globe,
   Layers,
+  Link2,
   Microscope,
   MoreHorizontal,
   PanelLeftClose,
@@ -39,6 +42,7 @@ import {
   Pin,
   PinOff,
   Plus,
+  RotateCw,
   Search,
   Send,
   Sparkles,
@@ -46,10 +50,12 @@ import {
   Trash2,
   TriangleAlert,
   User,
-  Wrench
+  Wrench,
+  X
 } from 'lucide-vue-next'
 import SfxButton from '@/app/ui/SfxButton.vue'
 import SfxDrawer from '@/app/ui/SfxDrawer.vue'
+import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
 import { getNexusHealth } from '@/api/nexus.js'
@@ -304,9 +310,29 @@ const localResources = computed(() => {
   return { artifacts, repro }
 })
 
-const showLocalResources = computed(
+const hasLocalResources = computed(
   () => localResources.value.artifacts > 0 || localResources.value.repro > 0
 )
+
+/* 本机资料行默认收起：没有数据时这一层不该占地方，有数据时也由用户决定展开。 */
+const localPanelOpen = ref(false)
+
+const localResourcesSummary = computed(() => {
+  const { artifacts, repro } = localResources.value
+  if (!artifacts && !repro) return '仅聊天记录'
+  const parts = ['聊天记录']
+  if (repro) parts.push(`复现 ${repro}`)
+  if (artifacts) parts.push(`产物 ${artifacts}`)
+  return parts.join(' · ')
+})
+
+function toggleLocalPanel() {
+  if (!hasLocalResources.value) {
+    showToast('这台设备还没有产物或复现记录')
+    return
+  }
+  localPanelOpen.value = !localPanelOpen.value
+}
 
 function jumpToLocalResource(kind) {
   const matcher =
@@ -370,14 +396,22 @@ function capHint(id) {
   return ''
 }
 
+/* 状态文案全局统一为三种（UX 评审 P2-8）：
+ *   已生效        = ready，工具真的在回答链路上
+ *   已连接·未生效 = wired，数据源已接通但还没注入回答
+ *   未建立        = unwired，能力根本不存在
+ * 此前出现过「已接通 / 数据就绪 · 未注入回答 / 数据就绪」四种变体，
+ * 同一状态两套说法，用户无法判断差别。改文案只动展示层，
+ * nexusCapabilities.js 的数据结构不变。 */
 function capStateText(cap) {
-  if (cap.state === CAPABILITY_STATE.READY) return '已接通'
-  if (cap.state === CAPABILITY_STATE.WIRED) return '数据就绪 · 未注入回答'
+  if (cap.state === CAPABILITY_STATE.READY) return '已生效'
+  if (cap.state === CAPABILITY_STATE.WIRED) return '已连接 · 未生效'
   return '未建立'
 }
 
 function capStateTagText(cap) {
-  if (cap.state === CAPABILITY_STATE.WIRED) return '数据就绪'
+  if (cap.state === CAPABILITY_STATE.READY) return '已生效'
+  if (cap.state === CAPABILITY_STATE.WIRED) return '已连接 · 未生效'
   return '未建立'
 }
 
@@ -456,6 +490,51 @@ const expandedTools = ref(new Set())
 const activeDetailTab = ref('context') // 'context' | 'activity' | 'sources'
 let abortController = null
 
+/* ── 右栏：48px 图标轨 + 320px overlay 抽屉（UX 评审 P0-1）──
+ * 抽屉开合按设备持久化（page-design.md §3.4），默认收起以还回主工作区 272px。
+ * 收起时新到达的执行记录用「未读」计数在图标轨上提示，过程信息不丢失可见性。 */
+const detailDrawerOpen = ref(localStorage.getItem('nexus_detail_open') === 'true')
+const unseenActivity = ref(0)
+
+const detailTabs = computed(() => [
+  { id: 'context', label: '上下文', hint: '当前会话引用了什么', icon: Layers, badge: 0, unseen: 0 },
+  {
+    id: 'activity',
+    label: '执行轨迹',
+    hint: '工具调用与返回',
+    icon: Activity,
+    badge: 0,
+    unseen: unseenActivity.value
+  },
+  { id: 'sources', label: '信息源', hint: '命中的论文与网页', icon: Link2, badge: sourcesTotal.value, unseen: 0 }
+])
+
+const activeDetailMeta = computed(
+  () => detailTabs.value.find((t) => t.id === activeDetailTab.value) || detailTabs.value[0]
+)
+
+function selectDetailTab(id) {
+  if (activeDetailTab.value === id && detailDrawerOpen.value) {
+    closeDetailDrawer()
+    return
+  }
+  activeDetailTab.value = id
+  if (id === 'activity') unseenActivity.value = 0
+  detailDrawerOpen.value = true
+  localStorage.setItem('nexus_detail_open', 'true')
+}
+
+function closeDetailDrawer() {
+  detailDrawerOpen.value = false
+  localStorage.setItem('nexus_detail_open', 'false')
+}
+
+function noteActivityArrived() {
+  if (!detailDrawerOpen.value || activeDetailTab.value !== 'activity') {
+    unseenActivity.value += 1
+  }
+}
+
 // 健康状态
 const health = ref(null)
 const healthError = ref('')
@@ -490,6 +569,21 @@ async function scrollToBottom() {
   if (scrollArea.value) {
     scrollArea.value.scrollTop = scrollArea.value.scrollHeight
   }
+}
+
+/* 流式节流滚动：token 到达只排队一个 rAF，且仅用户停留在底部附近时跟随；
+ * 用户上滑阅读历史时不再被拽回底部。替代 handleEvent 里逐 token 的 nextTick 强置滚动。 */
+let scrollRafQueued = false
+function queueScroll() {
+  if (scrollRafQueued) return
+  scrollRafQueued = true
+  requestAnimationFrame(() => {
+    scrollRafQueued = false
+    const el = scrollArea.value
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 140
+    if (nearBottom) el.scrollTop = el.scrollHeight
+  })
 }
 
 function toolKey(turnIdx, evtIdx) {
@@ -554,10 +648,41 @@ function formatElapsed(ms) {
   return `${mm}:${ss}`
 }
 
+function failedToolCount(turn) {
+  return (turn.toolEvents || []).filter((e) => e.kind === 'result' && e.status === 'error').length
+}
+
 function processSummaryLabel(turn) {
   const calls = (turn.toolEvents || []).filter((e) => e.kind === 'call').length
   const dur = turn.durationMs ? ` · ${(turn.durationMs / 1000).toFixed(1)}s` : ''
-  return `执行过程 · ${calls} 次工具调用${dur}`
+  const failed = failedToolCount(turn)
+  const failedText = failed ? ` · ${failed} 次失败` : ''
+  return `执行过程 · ${calls} 次工具调用${failedText}${dur}`
+}
+
+/* Markdown 节流渲染（防"突进式"输出的核心）：
+ * renderContent（marked + highlight.js + KaTeX + DOMPurify）跑在全量答案上，
+ * 每 token 全量跑一次必然"冻住—突进"。流式 turn 最多 200ms 重解析一次，
+ * 其余重渲染命中缓存；缓存引用不变时 v-html 不写 DOM，从根本上消掉逐 token
+ * 的 DOM 替换。WeakMap 避免缓存污染 localStorage 持久化。 */
+const renderCache = new WeakMap()
+function renderedAnswer(turn) {
+  const answer = turn.answer || ''
+  const cached = renderCache.get(turn)
+  if (cached && cached.len === answer.length) return cached.html
+  const isLive = streaming.value && turn === streamingTurn.value
+  const now =
+    typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now()
+  if (!isLive || now - (cached?.at || 0) >= 200) {
+    try {
+      const html = renderContent(answer)
+      renderCache.set(turn, { html, len: answer.length, at: now })
+      return html
+    } catch {
+      return cached?.html || ''
+    }
+  }
+  return cached?.html || ''
 }
 
 function handleEvent(turn, { event, data }) {
@@ -570,6 +695,7 @@ function handleEvent(turn, { event, data }) {
       args: data?.args,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     })
+    noteActivityArrived()
   } else if (event === 'tool_result') {
     turn.toolEvents.push({
       kind: 'result',
@@ -605,15 +731,30 @@ function handleEvent(turn, { event, data }) {
   } else if (event === 'done') {
     turn.tokenCount = data?.token_count ?? null
   }
-  scrollToBottom()
+  queueScroll()
 }
 
 async function send() {
   const msg = draft.value.trim()
   if (!msg || streaming.value || !currentSession.value) return
+  draft.value = ''
+  await runTurn(msg)
+}
+
+/** 重新生成：同一问题追加一个新 turn（保留历史证据链，不覆盖原回答）。 */
+function retryTurn(tIdx) {
+  if (streaming.value || !currentSession.value) return
+  const q = currentSession.value.turns?.[tIdx]?.question
+  if (!q || !q.trim()) return
+  runTurn(q)
+}
+
+/** runTurn 是 send / retry 的共享执行体：建 turn → 流式 → 落盘。 */
+async function runTurn(message) {
+  if (!currentSession.value) return
 
   const turn = {
-    question: msg,
+    question: message,
     answer: '',
     toolEvents: [],
     papers: [],
@@ -628,11 +769,10 @@ async function send() {
   currentSession.value.turns.push(turn)
   currentSession.value.updatedAt = Date.now()
   if (currentSession.value.turns?.length === 1 && currentSession.value.title.startsWith('新建')) {
-    currentSession.value.title = msg.slice(0, 20) + (msg.length > 20 ? '...' : '')
+    currentSession.value.title = message.slice(0, 20) + (message.length > 20 ? '...' : '')
   }
   persistSessions()
 
-  draft.value = ''
   streaming.value = true
   streamingTurn.value = turn
   streamStartedAt = Date.now()
@@ -642,8 +782,10 @@ async function send() {
     streamElapsed.value = formatElapsed(Date.now() - streamStartedAt)
   }, 1000)
   abortController = new AbortController()
-  // 流式开始自动切到「执行轨迹」，来源到达后信息源 tab 会出现计数角标
+  /* 流式开始自动切到「执行轨迹」，来源到达后信息源图标会出现计数角标。
+   * 抽屉不强制展开——尊重用户上一次的开合选择；收起时用未读计数提示。 */
   activeDetailTab.value = 'activity'
+  unseenActivity.value = 0
   scrollToBottom()
 
   try {
@@ -677,6 +819,37 @@ async function send() {
 
 function stop() {
   if (abortController) abortController.abort()
+}
+
+/* 回答操作条：复制（剪贴板）与重试（追加新 turn）真实可用；
+ * 点赞/点踩暂无评价服务，点击只给轻提示，不伪造"已反馈"。 */
+async function copyAnswer(turn) {
+  const text = turn.answer || ''
+  if (!text) return
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text)
+    } else {
+      fallbackCopyText(text)
+    }
+    showToast('已复制回答', 'success')
+  } catch {
+    showToast('复制失败', 'error')
+  }
+}
+
+function fallbackCopyText(text) {
+  const ta = document.createElement('textarea')
+  ta.value = text
+  ta.style.position = 'fixed'
+  ta.style.opacity = '0'
+  document.body.appendChild(ta)
+  ta.select()
+  try {
+    document.execCommand('copy')
+  } finally {
+    document.body.removeChild(ta)
+  }
 }
 
 // 快捷操作填入输入框
@@ -937,80 +1110,108 @@ const emptySuggestions = computed(() =>
         </div>
       </div>
 
-      <!-- 本机资料：产物 / 复现记录（有数据才渲染） -->
-      <div v-if="showLocalResources && isRailExpanded" class="nx-rail-resources">
-        <div class="nx-group-title">本机资料</div>
-        <div
-          v-if="localResources.repro"
-          class="nx-session-item"
-          role="button"
-          tabindex="0"
-          @click="jumpToLocalResource('repro')"
-          @keydown.enter.prevent="jumpToLocalResource('repro')"
-        >
-          <FlaskConical :size="15" class="nx-session-icon" />
-          <div class="nx-session-meta">
-            <span class="nx-session-title">复现记录</span>
-            <span class="nx-session-sub">{{ localResources.repro }} 个会话</span>
-          </div>
-        </div>
-        <div
-          v-if="localResources.artifacts"
-          class="nx-session-item"
-          role="button"
-          tabindex="0"
-          @click="jumpToLocalResource('artifacts')"
-          @keydown.enter.prevent="jumpToLocalResource('artifacts')"
-        >
-          <FileText :size="15" class="nx-session-icon" />
-          <div class="nx-session-meta">
-            <span class="nx-session-title">产物</span>
-            <span class="nx-session-sub">{{ localResources.artifacts }} 个会话</span>
-          </div>
-        </div>
-      </div>
-
+      <!-- 侧栏底部：单一「本机状态」区（UX 评审 P0-2）
+           原先「本机资料列表 / 数据源切换 / 收起侧栏」三层语义被平铺在同一视觉层级，
+           且「N 个会话」是孤立数字。现收敛为一个带分组标题的状态区，两行各自有标签。 -->
       <div class="nx-rail-foot">
-        <!-- 数据源：全站唯一切换入口（dev 控件不再占据一级 header） -->
-        <div v-if="isRailExpanded" class="nx-ds-wrap nx-flyout">
+        <div v-if="isRailExpanded" class="nx-device-status">
+          <div class="nx-dv-title">本机状态</div>
+
+          <!-- 行 1：数据源（全站唯一切换入口，dev 控件不占据一级 header） -->
+          <div class="nx-ds-wrap nx-flyout">
+            <div
+              class="nx-dv-row"
+              role="button"
+              tabindex="0"
+              :aria-expanded="dsOpen"
+              title="切换数据源"
+              @click.stop="dsOpen = !dsOpen"
+              @keydown.enter.stop.prevent="dsOpen = !dsOpen"
+              @keydown.space.stop.prevent="dsOpen = !dsOpen"
+            >
+              <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
+              <span class="nx-dv-label">数据源</span>
+              <span class="nx-dv-value">
+                {{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
+              </span>
+              <ChevronDown :size="11" class="nx-ds-caret" :class="{ 'is-open': dsOpen }" />
+            </div>
+            <div v-if="dsOpen" class="nx-menu nx-ds-menu">
+              <div class="nx-menu-head">数据源</div>
+              <SfxButton
+                variant="tertiary"
+                size="sm"
+                class="nx-menu-item"
+                :class="{ 'is-current': nexusDataSourceMode === 'demo' }"
+                @click="setNexusDataSourceMode('demo'); dsOpen = false"
+              >
+                演示数据 · 本地模拟
+              </SfxButton>
+              <SfxButton
+                variant="tertiary"
+                size="sm"
+                class="nx-menu-item"
+                :class="{ 'is-current': nexusDataSourceMode === 'real' }"
+                @click="setNexusDataSourceMode('real'); dsOpen = false"
+              >
+                真实数据源 · 连接 Runtime
+              </SfxButton>
+            </div>
+          </div>
+
+          <!-- 行 2：本机资料（无数据也如实显示「仅聊天记录」，不隐藏这一层） -->
           <div
-            class="nx-ds-status"
+            class="nx-dv-row"
+            :class="{ 'is-static': !hasLocalResources }"
             role="button"
             tabindex="0"
-            :aria-expanded="dsOpen"
-            title="切换数据源"
-            @click.stop="dsOpen = !dsOpen"
-            @keydown.enter.stop.prevent="dsOpen = !dsOpen"
-            @keydown.space.stop.prevent="dsOpen = !dsOpen"
+            :aria-expanded="localPanelOpen"
+            :title="hasLocalResources ? '展开本机资料' : '当前设备还没有产物或复现记录'"
+            @click="toggleLocalPanel"
+            @keydown.enter.stop.prevent="toggleLocalPanel"
+            @keydown.space.stop.prevent="toggleLocalPanel"
           >
-            <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
-            <span class="nx-ds-text">
-              {{ nexusDataSourceMode === 'demo' ? '演示数据 · 仅存本机' : '真实数据源' }}
-            </span>
-            <ChevronDown :size="11" class="nx-ds-caret" :class="{ 'is-open': dsOpen }" />
+            <span class="nx-dv-label">本机资料</span>
+            <span class="nx-dv-value">{{ localResourcesSummary }}</span>
+            <ChevronDown
+              v-if="hasLocalResources"
+              :size="11"
+              class="nx-ds-caret"
+              :class="{ 'is-open': localPanelOpen }"
+            />
           </div>
-          <div v-if="dsOpen" class="nx-menu nx-ds-menu">
-            <div class="nx-menu-head">数据源</div>
-            <SfxButton
-              variant="tertiary"
-              size="sm"
-              class="nx-menu-item"
-              :class="{ 'is-current': nexusDataSourceMode === 'demo' }"
-              @click="setNexusDataSourceMode('demo'); dsOpen = false"
+
+          <div v-if="localPanelOpen && hasLocalResources" class="nx-dv-sublist">
+            <div
+              v-if="localResources.repro"
+              class="nx-dv-subrow"
+              role="button"
+              tabindex="0"
+              title="跳到最近一个有复现记录的会话"
+              @click="jumpToLocalResource('repro')"
+              @keydown.enter.prevent="jumpToLocalResource('repro')"
             >
-              演示数据 · 本地模拟
-            </SfxButton>
-            <SfxButton
-              variant="tertiary"
-              size="sm"
-              class="nx-menu-item"
-              :class="{ 'is-current': nexusDataSourceMode === 'real' }"
-              @click="setNexusDataSourceMode('real'); dsOpen = false"
+              <FlaskConical :size="13" />
+              <span class="nx-dv-subname">复现记录</span>
+              <span class="nx-dv-subcount">{{ localResources.repro }}</span>
+            </div>
+            <div
+              v-if="localResources.artifacts"
+              class="nx-dv-subrow"
+              role="button"
+              tabindex="0"
+              title="跳到最近一个有产物的会话"
+              @click="jumpToLocalResource('artifacts')"
+              @keydown.enter.prevent="jumpToLocalResource('artifacts')"
             >
-              真实数据源 · 连接 Runtime
-            </SfxButton>
+              <FileText :size="13" />
+              <span class="nx-dv-subname">产物</span>
+              <span class="nx-dv-subcount">{{ localResources.artifacts }}</span>
+            </div>
+            <p class="nx-dv-note">只存在这台设备的浏览器里，换设备看不到。</p>
           </div>
         </div>
+
         <SfxButton
           variant="tertiary"
           size="sm"
@@ -1078,19 +1279,11 @@ const emptySuggestions = computed(() =>
       </header>
 
       <!-- Context Chips：首屏只保留 ready 能力 + 课程；其余收进「待接入」popover -->
+      <!-- Context Chips：只放「本轮回答真正会用到的能力」。
+           课程绑定入口已下沉——首屏在启动页引导条，对话中在右栏「上下文」面板
+           （UX 评审 P1-4）。它属于低频设置，不该在每轮对话的顶部占一个 chip。 -->
       <div class="nx-context-bar">
         <div class="nx-chips-scroll">
-          <SfxButton
-            variant="secondary"
-            size="sm"
-            class="nx-chip-btn"
-            :title="currentSession?.courseId ? '更换绑定课程' : '绑定课程'"
-            @click="coursePickerOpen = true"
-          >
-            <template #icon><BookOpen :size="13" /></template>
-            {{ currentSession?.courseName ? `课程：${currentSession.courseName}` : '选择课程' }}
-          </SfxButton>
-
           <span
             v-for="cap in readyCapabilities"
             :key="cap.id"
@@ -1157,6 +1350,59 @@ const emptySuggestions = computed(() =>
               : 'Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。' }}
           </p>
 
+          <!-- 模式预设卡（UX 评审 P1-5）：Mode 切换即工具白名单，
+               这个决定必须在打字之前就看得见，而不是藏在顶部的下拉里。 -->
+          <div class="nx-mode-cards">
+            <div
+              v-for="(cfg, key) in NEXUS_MODE_CONFIG"
+              :key="key"
+              class="nx-mode-card"
+              :class="{ 'is-active': activeMode === key }"
+              role="button"
+              tabindex="0"
+              :aria-pressed="activeMode === key"
+              @click="switchMode(key)"
+              @keydown.enter.prevent="switchMode(key)"
+              @keydown.space.prevent="switchMode(key)"
+            >
+              <div class="nx-mc-head">
+                <component
+                  :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles"
+                  :size="16"
+                  class="nx-mc-icon"
+                />
+                <span class="nx-mc-title">{{ cfg.label }}</span>
+                <Check v-if="activeMode === key" :size="14" class="nx-mc-check" />
+              </div>
+              <p class="nx-mc-desc">{{ cfg.desc }}</p>
+              <div class="nx-mc-tools">
+                <span v-for="t in cfg.tools" :key="t" class="nx-tool-pill">
+                  {{ formatToolDisplayName(t) }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 课程绑定引导条（UX 评审 P1-4）：课程入口从顶部 chips 收敛到这里 -->
+          <div class="nx-start-course">
+            <BookOpen :size="14" class="nx-sc-icon" />
+            <span class="nx-sc-text">
+              {{
+                currentSession?.courseName
+                  ? `已绑定课程：${currentSession.courseName}`
+                  : '未绑定课程 · 回答只会用到 Web 与通用知识'
+              }}
+            </span>
+            <SfxButton
+              variant="secondary"
+              size="sm"
+              class="nx-sc-btn"
+              @click="coursePickerOpen = true"
+            >
+              {{ currentSession?.courseId ? '更换' : '绑定课程' }}
+            </SfxButton>
+          </div>
+
           <div
             class="nx-quick-cards"
             :class="{ 'is-research': activeMode === NEXUS_MODES.RESEARCH }"
@@ -1204,7 +1450,11 @@ const emptySuggestions = computed(() =>
 
             <div class="nx-agent-body">
               <!-- 过程折叠摘要（实验记录轨：一行摘要 + 展开时间线） -->
-              <div v-if="turn.toolEvents?.length" class="nx-process-summary-card">
+              <div
+                v-if="turn.toolEvents?.length"
+                class="nx-process-summary-card"
+                :class="{ 'is-failed': turn.failure || failedToolCount(turn) > 0 }"
+              >
                 <div
                   class="nx-process-header"
                   role="button"
@@ -1214,7 +1464,8 @@ const emptySuggestions = computed(() =>
                   @keydown.space.prevent="toggleTool(tIdx, 'all')"
                 >
                   <div class="nx-process-badge">
-                    <Wrench :size="12" />
+                    <TriangleAlert v-if="turn.failure || failedToolCount(turn) > 0" :size="12" />
+                    <Wrench v-else :size="12" />
                     <span>{{ processSummaryLabel(turn) }}</span>
                   </div>
                   <ChevronDown
@@ -1318,17 +1569,50 @@ const emptySuggestions = computed(() =>
                 </div>
               </div>
 
-              <!-- Markdown 核心答复正文 -->
+              <!-- Markdown 核心答复正文（节流渲染，禁止直接逐 token 调 renderContent） -->
               <div
                 v-if="turn.answer"
                 class="nx-markdown-body"
-                v-html="renderContent(turn.answer)"
+                v-html="renderedAnswer(turn)"
               />
 
               <!-- 失败状态卡片 -->
               <div v-if="turn.failure" class="nx-turn-failure">
                 <AlertCircle :size="15" />
                 <span>{{ turn.failure }}</span>
+              </div>
+
+              <!-- 回答操作条：只保留真实可用的动作。
+                   点赞/点踩已移除（UX 评审 P1-3）：评价服务未接入，占位按钮
+                   只制造「能反馈」的错觉，等有真实落点再放回来。 -->
+              <div
+                v-if="(turn.answer || turn.failure) && !(streaming && turn === streamingTurn)"
+                class="nx-answer-actions"
+              >
+                <div class="nx-answer-actions-left">
+                  <SfxButton
+                    variant="tertiary"
+                    size="sm"
+                    class="nx-act-btn"
+                    title="复制回答"
+                    aria-label="复制回答"
+                    @click="copyAnswer(turn)"
+                  >
+                    <template #icon><Copy :size="13" /></template>
+                  </SfxButton>
+                  <SfxButton
+                    variant="tertiary"
+                    size="sm"
+                    class="nx-act-btn"
+                    title="重新生成"
+                    aria-label="重新生成"
+                    :disabled="streaming"
+                    @click="retryTurn(tIdx)"
+                  >
+                    <template #icon><RotateCw :size="13" /></template>
+                  </SfxButton>
+                </div>
+                <span class="nx-answer-actions-right">由 AI 生成</span>
               </div>
             </div>
           </div>
@@ -1378,151 +1662,171 @@ const emptySuggestions = computed(() =>
       </footer>
     </main>
 
-    <!-- ── 3. 右侧 Detail Panel 回应区（桌面常驻，窄屏按断点隐藏） ── -->
-    <aside v-if="!isTablet && !isMobileOrSmall" class="nx-detail-panel">
-      <div class="nx-detail-tabs">
-        <SfxButton
-          variant="tertiary"
-          size="sm"
-          class="nx-dtab-sfx"
-          :class="{ 'is-active': activeDetailTab === 'context' }"
-          @click="activeDetailTab = 'context'"
-        >
-          上下文
-        </SfxButton>
-        <SfxButton
-          variant="tertiary"
-          size="sm"
-          class="nx-dtab-sfx"
-          :class="{ 'is-active': activeDetailTab === 'activity' }"
-          @click="activeDetailTab = 'activity'"
-        >
-          执行轨迹
-        </SfxButton>
-        <SfxButton
-          variant="tertiary"
-          size="sm"
-          class="nx-dtab-sfx"
-          :class="{ 'is-active': activeDetailTab === 'sources' }"
-          @click="activeDetailTab = 'sources'"
-        >
-          信息源
-          <span v-if="sourcesTotal" class="nx-dtab-badge">{{ sourcesTotal }}</span>
-        </SfxButton>
-      </div>
-
-      <div class="nx-detail-content">
-        <!-- 上下文面板：课程卡 + 能力状态列表（取代大数字统计块） -->
-        <div v-if="activeDetailTab === 'context'" class="nx-tab-pane">
-          <div class="nx-pane-section">
-            <h4 class="nx-section-eyebrow">当前上下文</h4>
-            <div class="nx-context-card">
-              <BookOpen :size="15" class="nx-cc-icon" />
-              <div class="nx-cc-meta">
-                <div class="nx-cc-title">{{ currentSession?.courseName || '未绑定课程' }}</div>
-                <div class="nx-cc-desc">
-                  {{ currentSession?.courseId ? '回答会参考这门课的资料与知识图谱' : '绑定课程后，回答可以参考该课的资料' }}
-                </div>
-              </div>
-            </div>
-            <SfxButton variant="secondary" size="sm" class="nx-cc-change" @click="coursePickerOpen = true">
-              更换课程
-            </SfxButton>
+    <!-- ── 3. 右侧回应区：48px 图标轨（常驻）+ 320px overlay 抽屉（按需展开） ──
+         图标轨保证「过程与来源始终一键可达」，抽屉默认收起，把 272px 还回主工作区；
+         开合状态按设备持久化（page-design.md §3.4）。 -->
+    <div v-if="!isTablet && !isMobileOrSmall" class="nx-detail-zone">
+      <!-- 3.1 overlay 抽屉：覆盖主工作区右侧，不挤压主内容宽度 -->
+      <section v-if="detailDrawerOpen" class="nx-detail-drawer">
+        <header class="nx-dd-head">
+          <div class="nx-dd-title">
+            <component :is="activeDetailMeta.icon" :size="15" class="nx-dd-icon" />
+            <span>{{ activeDetailMeta.label }}</span>
           </div>
-
-          <div class="nx-pane-section">
-            <h4 class="nx-section-eyebrow">能力状态</h4>
-            <div class="nx-cap-list">
-              <div
-                v-for="cap in capabilitiesForMode(activeMode)"
-                :key="cap.id"
-                class="nx-cap-row"
-                :class="cap.state"
-                :title="capHint(cap.id)"
-              >
-                <span class="nx-cap-dot" aria-hidden="true" />
-                <span class="nx-cap-name">{{ cap.label }}</span>
-                <span class="nx-cap-state">{{ capStateText(cap) }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 执行轨迹面板（实验记录轨） -->
-        <div v-if="activeDetailTab === 'activity'" class="nx-tab-pane">
-          <div v-if="!currentSession?.turns?.length" class="nx-pane-empty">
-            还没有执行记录。提问后，工具调用会按时间排列在这里。
-          </div>
-          <div v-else class="nx-log-stream">
-            <div v-for="(turn, tIdx) in currentSession?.turns" :key="tIdx" class="nx-log-turn">
-              <div class="nx-log-turn-label">提问 #{{ tIdx + 1 }}</div>
-              <div v-if="!turn.toolEvents?.length" class="nx-log-empty">本次回答未调用工具</div>
-              <div
-                v-for="(evt, eIdx) in turn.toolEvents"
-                :key="eIdx"
-                class="nx-log-item"
-                :class="evt.kind"
-              >
-                <span class="nx-log-dot" aria-hidden="true" />
-                <div class="nx-log-body">
-                  <div class="nx-log-title">
-                    {{ evt.kind === 'call' ? '发起' : '返回' }} · {{ formatToolDisplayName(evt.name) }}
-                  </div>
-                  <div class="nx-log-time">{{ evt.time }}</div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- 信息源面板：只展示本会话真实检索到的结果 -->
-        <div v-if="activeDetailTab === 'sources'" class="nx-tab-pane">
-          <div
-            v-if="!sessionSources.papers.length && !sessionSources.web.length"
-            class="nx-pane-empty"
+          <span class="nx-dd-hint">{{ activeDetailMeta.hint }}</span>
+          <SfxButton
+            variant="tertiary"
+            size="sm"
+            class="nx-dd-close"
+            title="收起面板"
+            aria-label="收起面板"
+            @click="closeDetailDrawer"
           >
-            本会话还没有检索结果。提问后，命中的论文与网页会汇总到这里。
-          </div>
+            <template #icon><X :size="15" /></template>
+          </SfxButton>
+        </header>
 
-          <div v-else class="nx-src-groups">
-            <div v-if="sessionSources.papers.length" class="nx-src-group">
-              <div class="nx-src-head">论文 · {{ sessionSources.papers.length }}</div>
-              <a
-                v-for="p in sessionSources.papers"
-                :key="p.paper_id"
-                class="nx-src-row"
-                :href="p.source_url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span class="nx-src-title">{{ p.title }}</span>
-                <span class="nx-src-meta">arXiv:{{ p.paper_id }} · {{ p.year }}</span>
-              </a>
+        <div class="nx-detail-content">
+          <!-- 上下文面板：课程卡 + 能力状态列表（取代大数字统计块） -->
+          <div v-if="activeDetailTab === 'context'" class="nx-tab-pane">
+            <div class="nx-pane-section">
+              <h4 class="nx-section-eyebrow">当前上下文</h4>
+              <div class="nx-context-card">
+                <BookOpen :size="15" class="nx-cc-icon" />
+                <div class="nx-cc-meta">
+                  <div class="nx-cc-title">{{ currentSession?.courseName || '未绑定课程' }}</div>
+                  <div class="nx-cc-desc">
+                    {{ currentSession?.courseId ? '回答会参考这门课的资料与知识图谱' : '绑定课程后，回答可以参考该课的资料' }}
+                  </div>
+                </div>
+              </div>
+              <SfxButton variant="secondary" size="sm" class="nx-cc-change" @click="coursePickerOpen = true">
+                更换课程
+              </SfxButton>
             </div>
 
-            <div v-if="sessionSources.web.length" class="nx-src-group">
-              <div class="nx-src-head">网页 · {{ sessionSources.web.length }}</div>
-              <a
-                v-for="(s, i) in sessionSources.web"
-                :key="i"
-                class="nx-src-row"
-                :href="s.url"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <span class="nx-src-title">{{ s.title }}</span>
-                <span class="nx-src-meta">{{ s.snippet }}</span>
-              </a>
+            <div class="nx-pane-section">
+              <h4 class="nx-section-eyebrow">能力状态</h4>
+              <div class="nx-cap-list">
+                <div
+                  v-for="cap in capabilitiesForMode(activeMode)"
+                  :key="cap.id"
+                  class="nx-cap-row"
+                  :class="cap.state"
+                  :title="capHint(cap.id)"
+                >
+                  <span class="nx-cap-dot" aria-hidden="true" />
+                  <span class="nx-cap-name">{{ cap.label }}</span>
+                  <span class="nx-cap-state">{{ capStateText(cap) }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 执行轨迹面板（实验记录轨） -->
+          <div v-if="activeDetailTab === 'activity'" class="nx-tab-pane">
+            <div v-if="!currentSession?.turns?.length" class="nx-pane-empty">
+              还没有执行记录。提问后，工具调用会按时间排列在这里。
+            </div>
+            <div v-else class="nx-log-stream">
+              <div v-for="(turn, tIdx) in currentSession?.turns" :key="tIdx" class="nx-log-turn">
+                <div class="nx-log-turn-label">提问 #{{ tIdx + 1 }}</div>
+                <div v-if="!turn.toolEvents?.length" class="nx-log-empty">本次回答未调用工具</div>
+                <div
+                  v-for="(evt, eIdx) in turn.toolEvents"
+                  :key="eIdx"
+                  class="nx-log-item"
+                  :class="evt.kind"
+                >
+                  <span class="nx-log-dot" aria-hidden="true" />
+                  <div class="nx-log-body">
+                    <div class="nx-log-title">
+                      {{ evt.kind === 'call' ? '发起' : '返回' }} · {{ formatToolDisplayName(evt.name) }}
+                    </div>
+                    <div class="nx-log-time">{{ evt.time }}</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 信息源面板：只展示本会话真实检索到的结果 -->
+          <div v-if="activeDetailTab === 'sources'" class="nx-tab-pane">
+            <div
+              v-if="!sessionSources.papers.length && !sessionSources.web.length"
+              class="nx-pane-empty"
+            >
+              本会话还没有检索结果。提问后，命中的论文与网页会汇总到这里。
             </div>
 
-            <p v-if="sessionSources.unparsable" class="nx-src-note">
-              另有 {{ sessionSources.unparsable }} 条检索结果无法解析：运行时把
-              tool_result.content 截断到 600 字符（待修缺陷 D2），接入后本面板才会完整。
-            </p>
-          </div>
+            <div v-else class="nx-src-groups">
+              <div v-if="sessionSources.papers.length" class="nx-src-group">
+                <div class="nx-src-head">论文 · {{ sessionSources.papers.length }}</div>
+                <a
+                  v-for="p in sessionSources.papers"
+                  :key="p.paper_id"
+                  class="nx-src-row"
+                  :href="p.source_url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="nx-src-title">{{ p.title }}</span>
+                  <span class="nx-src-meta">arXiv:{{ p.paper_id }} · {{ p.year }}</span>
+                </a>
+              </div>
+
+              <div v-if="sessionSources.web.length" class="nx-src-group">
+                <div class="nx-src-head">网页 · {{ sessionSources.web.length }}</div>
+                <a
+                  v-for="(s, i) in sessionSources.web"
+                  :key="i"
+                  class="nx-src-row"
+                  :href="s.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <span class="nx-src-title">{{ s.title }}</span>
+                  <span class="nx-src-meta">{{ s.snippet }}</span>
+                </a>
+              </div>
+
+              <p v-if="sessionSources.unparsable" class="nx-src-note">
+                另有 {{ sessionSources.unparsable }} 条检索结果无法解析：运行时把
+                tool_result.content 截断到 600 字符（待修缺陷 D2），接入后本面板才会完整。
+              </p>
+            </div>
         </div>
-      </div>
-    </aside>
+        </div>
+      </section>
+
+      <!-- 3.2 48px 图标轨：常驻，点击切换面板 / 再点收起 -->
+      <aside class="nx-detail-rail" aria-label="回应区面板">
+        <SfxButton
+          v-for="tab in detailTabs"
+          :key="tab.id"
+          variant="tertiary"
+          size="sm"
+          class="nx-dr-item"
+          :class="{ 'is-active': detailDrawerOpen && activeDetailTab === tab.id }"
+          :title="`${tab.label} · ${tab.hint}`"
+          :aria-label="`${tab.label} · ${tab.hint}`"
+          :aria-pressed="detailDrawerOpen && activeDetailTab === tab.id"
+          @click="selectDetailTab(tab.id)"
+        >
+          <template #icon>
+            <span class="nx-dr-icon-wrap">
+              <component :is="tab.icon" :size="18" />
+              <span v-if="tab.badge" class="nx-dr-badge">{{ tab.badge }}</span>
+              <span v-else-if="tab.unseen" class="nx-dr-dot" aria-hidden="true" />
+            </span>
+          </template>
+        </SfxButton>
+
+        <div class="nx-dr-foot">
+          <span class="nx-dr-foot-line" aria-hidden="true" />
+        </div>
+      </aside>
+    </div>
 
     <!-- ── 4. 课程选择 ── -->
     <SfxDrawer
@@ -1652,11 +1956,15 @@ const emptySuggestions = computed(() =>
 /* 键盘可达性：所有自绘可点元素统一焦点环 */
 .nx-quick-card:focus-visible,
 .nx-chip:focus-visible,
-.nx-ds-status:focus-visible,
+.nx-dv-row:focus-visible,
+.nx-dv-subrow:focus-visible,
 .nx-process-header:focus-visible,
 .nx-dropdown-item:focus-visible,
 .nx-session-item:focus-visible,
-.nx-course-picker-item:focus-visible {
+.nx-course-picker-item:focus-visible,
+.nx-dr-item:focus-visible,
+.nx-dd-close:focus-visible,
+.nx-mode-card:focus-visible {
   outline: 2px solid var(--color-focus);
   outline-offset: 2px;
 }
@@ -1824,7 +2132,9 @@ const emptySuggestions = computed(() =>
   flex-shrink: 0;
 }
 
-.nx-session-item:hover .nx-session-more {
+/* focus-within 补齐键盘可达性：只靠 :hover 时，Tab 进不去这个按钮 */
+.nx-session-item:hover .nx-session-more,
+.nx-session-item:focus-within .nx-session-more {
   display: block;
 }
 
@@ -1886,22 +2196,35 @@ const emptySuggestions = computed(() =>
   min-width: 208px;
 }
 
-/* ── 本机资料区 / 侧栏底部 ── */
-.nx-rail-resources {
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
+/* ── 侧栏底部：单一「本机状态」区（UX 评审 P0-2） ── */
 .nx-rail-foot {
   padding: var(--space-2) var(--space-3) var(--space-3);
   border-top: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  flex-shrink: 0;
 }
 
-.nx-ds-status {
+.nx-device-status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.nx-dv-title {
+  padding: 0 6px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.nx-dv-row {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1912,9 +2235,82 @@ const emptySuggestions = computed(() =>
   color: var(--text-secondary);
 }
 
-.nx-ds-status:hover {
-  background: var(--surface-soft);
+.nx-dv-row:hover {
+  background: var(--surface-page);
   color: var(--text-primary);
+}
+
+/* 无数据时不给「可展开」的错觉：光标与配色都降级 */
+.nx-dv-row.is-static {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.nx-dv-row.is-static:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.nx-dv-label {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.nx-dv-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+  color: inherit;
+}
+
+.nx-dv-sublist {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border-default);
+}
+
+.nx-dv-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+}
+
+.nx-dv-subrow:hover {
+  background: var(--surface-page);
+  color: var(--text-primary);
+}
+
+.nx-dv-subname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-dv-subcount {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.nx-dv-note {
+  margin: 2px 6px 0;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--text-muted);
 }
 
 .nx-ds-dot {
@@ -1930,14 +2326,6 @@ const emptySuggestions = computed(() =>
 
 .nx-ds-dot.real {
   background: var(--green-500);
-}
-
-.nx-ds-text {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .nx-ds-caret {
@@ -1966,7 +2354,7 @@ const emptySuggestions = computed(() =>
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--surface-panel);
+  background: transparent;
 }
 
 /* 工作区 Header + 双细线（厚墨蓝 + 细灰，arXiv 论文头版式惯例） */
@@ -2115,15 +2503,6 @@ const emptySuggestions = computed(() =>
   align-items: center;
   gap: var(--space-2);
   overflow-x: auto;
-}
-
-.nx-chip-btn {
-  height: 26px;
-  min-height: 26px;
-  padding: 0 10px;
-  font-size: var(--caption-size);
-  border-radius: var(--radius-full);
-  flex-shrink: 0;
 }
 
 .nx-chip {
@@ -2326,6 +2705,106 @@ const emptySuggestions = computed(() =>
   max-width: 460px;
 }
 
+/* 启动页：模式预设卡（UX 评审 P1-5） */
+.nx-mode-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  text-align: left;
+}
+
+.nx-mode-card {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-default);
+  background: var(--surface-panel);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition:
+    border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
+}
+
+.nx-mode-card:hover {
+  border-color: var(--nexus-accent-line);
+}
+
+.nx-mode-card.is-active {
+  border-color: var(--nexus-accent);
+  box-shadow: inset 0 0 0 1px var(--nexus-accent);
+  background: var(--nexus-accent-soft);
+}
+
+.nx-mc-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nx-mc-icon {
+  color: var(--nexus-accent-strong);
+  flex-shrink: 0;
+}
+
+.nx-mc-title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ui-sm-size);
+  font-weight: 600;
+  color: var(--ink-900);
+}
+
+.nx-mc-check {
+  color: var(--nexus-accent-strong);
+  flex-shrink: 0;
+}
+
+.nx-mc-desc {
+  margin: 0;
+  font-size: var(--caption-size);
+  line-height: var(--caption-line);
+  color: var(--text-secondary);
+}
+
+.nx-mc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+/* 启动页：课程绑定引导条（UX 评审 P1-4） */
+.nx-start-course {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-cool);
+  text-align: left;
+}
+
+.nx-sc-icon {
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.nx-sc-text {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+}
+
+.nx-sc-btn {
+  flex-shrink: 0;
+}
+
 .nx-quick-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -2457,6 +2936,18 @@ const emptySuggestions = computed(() =>
   border-radius: var(--radius-sm);
   background: var(--surface-cool);
   overflow: hidden;
+}
+
+/* 失败 turn 的过程折叠行进告警态（UX 评审 P2-9）：
+   收起时也必须能看出这一轮出了问题，否则用户只看到一张灰色过程卡。 */
+.nx-process-summary-card.is-failed {
+  border-left-color: var(--amber-500);
+  background: var(--amber-100);
+}
+
+.nx-process-summary-card.is-failed .nx-process-badge {
+  color: var(--amber-700);
+  font-weight: 500;
 }
 
 .nx-process-header {
@@ -2852,17 +3343,50 @@ const emptySuggestions = computed(() =>
   font-size: var(--ui-sm-size);
 }
 
+/* 回答操作条：左侧图标组 + 右侧"由 AI 生成" */
+.nx-answer-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-top: 2px;
+}
+
+.nx-answer-actions-left {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.nx-answer-actions .nx-act-btn {
+  min-height: 28px;
+  padding: 0 7px;
+  color: var(--text-muted);
+}
+
+.nx-answer-actions .nx-act-btn:hover:not(:disabled) {
+  color: var(--ink-900);
+  background: var(--surface-soft);
+}
+
+.nx-answer-actions-right {
+  font-size: var(--caption-size);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
 /* ── 底部 Composer：外层透明，仅保留一张带阴影的白色卡片悬浮在消息区下缘 ── */
 .nx-composer-box {
-  padding: var(--space-4) var(--space-6) var(--space-5);
+  padding: 0 var(--space-6) var(--space-5);
   background: transparent;
   flex-shrink: 0;
+
 }
 
 .nx-composer-inner {
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
-  background: var(--surface-panel);
+  background: transparent;
   box-shadow: var(--shadow-sm);
   overflow: hidden;
   transition: border-color var(--duration-fast) var(--ease-out),
@@ -2900,7 +3424,7 @@ const emptySuggestions = computed(() =>
   justify-content: space-between;
   gap: var(--space-3);
   border-top: 1px solid var(--border-subtle);
-  background: var(--surface-canvas);
+  background: transparent;
 }
 
 .nx-engine-badge {
@@ -2922,51 +3446,182 @@ const emptySuggestions = computed(() =>
   flex-shrink: 0;
 }
 
-/* ── 3. 右侧 Detail Panel ── */
-.nx-detail-panel {
+/* ── 3. 右侧回应区：图标轨 + overlay 抽屉（UX 评审 P0-1） ── */
+.nx-detail-zone {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex-shrink: 0;
+}
+
+/* 3.1 overlay 抽屉：绝对定位在图标轨左侧，覆盖主工作区，不改变主内容宽度 */
+.nx-detail-drawer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: var(--nexus-detail-rail);
   width: var(--nexus-detail-width);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-page);
+  border-left: 1px solid var(--border-default);
+  border-right: 1px solid var(--border-default);
+  box-shadow: -12px 0 28px rgba(20, 33, 61, 0.07);
+  animation: nx-drawer-in var(--duration-normal) var(--ease-out);
+}
+
+@keyframes nx-drawer-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.nx-dd-head {
+  height: 44px;
+  min-height: 44px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.nx-dd-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--ui-sm-size);
+  font-weight: 600;
+  color: var(--ink-900);
+  flex-shrink: 0;
+}
+
+.nx-dd-icon {
+  color: var(--text-secondary);
+}
+
+.nx-dd-hint {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--caption-size);
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nx-dd-close {
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+/* 3.2 图标轨 */
+.nx-detail-rail {
+  width: var(--nexus-detail-rail);
   height: 100%;
   border-left: 1px solid var(--border-default);
   background: var(--surface-page);
   display: flex;
   flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding-top: var(--space-3);
   flex-shrink: 0;
 }
 
-.nx-detail-tabs {
-  height: 44px;
-  border-bottom: 1px solid var(--border-subtle);
-  display: flex;
-  padding: 0 var(--space-2);
-  flex-shrink: 0;
-}
-
-.nx-dtab-sfx {
-  flex: 1;
-  height: 44px;
-  min-height: 44px;
-  border-radius: 0;
-  padding: 0 var(--space-2);
-  font-size: var(--ui-sm-size);
+.nx-dr-item {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border-radius: var(--radius-md);
   color: var(--text-secondary);
-  border-bottom: 2px solid transparent;
+  position: relative;
 }
 
-.nx-dtab-sfx.is-active {
-  color: var(--ink-900);
-  font-weight: 600;
-  border-bottom-color: var(--ink-900);
-}
-
-.nx-dtab-badge {
-  margin-left: 4px;
-  padding: 0 5px;
+.nx-dr-item:hover {
   background: var(--ink-100);
   color: var(--ink-900);
+}
+
+.nx-dr-item.is-active {
+  background: var(--nexus-accent-soft);
+  color: var(--nexus-accent-strong);
+}
+
+.nx-dr-item .sfx-btn-label {
+  display: none;
+}
+
+.nx-dr-icon-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-dr-badge {
+  position: absolute;
+  top: -5px;
+  right: -8px;
+  min-width: 15px;
+  padding: 0 3px;
+  background: var(--nexus-accent);
+  color: #fff;
+  border: 1.5px solid var(--surface-page);
   border-radius: var(--radius-full);
-  font-size: var(--caption-size);
-  line-height: 16px;
-  font-weight: 500;
+  font-size: 10px;
+  line-height: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* 抽屉收起时，新到达的执行记录用琥珀点提示，过程信息不丢失可见性 */
+.nx-dr-dot {
+  position: absolute;
+  top: -3px;
+  right: -5px;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--amber-500);
+  border: 1.5px solid var(--surface-page);
+  animation: nx-dot-pulse 1.6s var(--ease-out) infinite;
+}
+
+@keyframes nx-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.nx-dr-foot {
+  margin-top: auto;
+  padding-bottom: var(--space-3);
+}
+
+.nx-dr-foot-line {
+  display: block;
+  width: 18px;
+  height: 1px;
+  background: var(--border-default);
 }
 
 .nx-detail-content {

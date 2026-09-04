@@ -1,6 +1,6 @@
 # CodeNexus Nexus AI 前端开发规格与 UX 落地说明
 
-> **版本**：v2.0 (2026-09-03)
+> **版本**：v2.2 (2026-09-04)
 > **阶段**：S1 双轨期 · **纯前端先行**——UI/交互/数据结构已就绪，能力全部以演示数据驱动，**未接入真实后端推理**
 > **原则**：`AGENTS.md` §4.3 结果诚实性。未接通的能力在界面上必须显式标注为「未接入」，绝不用静态装饰冒充已实现。
 > **依据**：`CodeNexus_Nexus_AI_前端_UX_UI_详细设计规格_视觉风格开放版.md`（参考，非规范）、`design.md`（视觉权威）、`page-design.md` §4.1（三栏布局权威）、`AGENTS.md`
@@ -24,7 +24,7 @@
 
 | 文件 | 行数 | 职责 |
 |---|---:|---|
-| `frontend/src/app/pages/nexus/NexusPage.vue` | 2573 | Nexus 三栏工作区主页面 |
+| `frontend/src/app/pages/nexus/NexusPage.vue` | 3967 | Nexus 三栏工作区主页面（v2.2 后含图标轨/抽屉/启动页预设卡，见 §13.4） |
 | `frontend/src/api/nexusAdapter.js` | 421 | 演示/真实双数据源适配层（唯一的取数入口） |
 | `frontend/src/api/nexus.js` | 140 | 真实模式 HTTP/SSE 客户端 |
 | `frontend/src/api/nexusCapabilities.js` | 114 | **能力接线状态单一数据源**（后端接线的唯一开关） |
@@ -395,6 +395,96 @@ cd nexus && .venv/Scripts/python.exe -m pytest -q
 ### 12.5 第三轮微调（2026-09-03，同日）
 
 - Mode 切换按钮去掉左侧 logo-mark（与全局主导航品牌标重复）。
-- **右栏回应区改为桌面常驻**，移除收起/展开开关（产品决定：过程与来源必须始终可见）；窄屏仍按断点隐藏。
+- ~~**右栏回应区改为桌面常驻**，移除收起/展开开关（产品决定：过程与来源必须始终可见）；窄屏仍按断点隐藏。~~
+  **已被 §13 推翻（2026-09-04 家良拍板）**：改为 48px 图标轨（常驻入口 + 计数徽标）+ 320px overlay 抽屉（按需全景，开合按设备持久化）。理由见 §13.2-1。
 - Composer 悬浮化：外层 `.nx-composer-box` 背景透明、去分隔线，白色卡片（`radius-lg` + `shadow-sm`）浮于消息区下缘。
 - 澄清记录：模型选择器为**有意砍掉**（运行时单模型 `NEXUS_LLM_MODEL`，无请求级 model 参数，切换不生效；"Nexus 4.0" 命名有自研误导风险），现为 Composer 左下只读引擎标识；恢复真选择器的前提是 Runtime 提供 `/models` + 请求级 model 字段。权限控制**未删**：按 §18.4 共识不做每工具权限模式，复现执行的 Approval Gate（License/沙箱确认弹窗 → `REPRO_WORKER_UNAVAILABLE` 如实落卡）仍为强制门。
+
+### 12.6 回答操作条与流式平滑（2026-09-03，同日）
+
+- 每个回答底部操作条：复制 / 重试 + 右侧「由 AI 生成」。
+  - 复制：`navigator.clipboard`（降级 textarea 方案）复制 Markdown 原文，toast 反馈。
+  - 重试：`send()` 拆出共享执行体 `runTurn(message)`，重试为同一问题追加新 turn（保留历史证据链，不覆盖原回答）；流式中禁用。
+  - ~~点赞/点踩：评价服务未接入，点击只弹轻提示，不伪造"已反馈"。~~
+    **已于 §13（P1-3）移除**：占位按钮制造"能反馈"的错觉。恢复前提是后端提供评价落点，届时在 `nexusCapabilities.js` 增 `feedback` 条目，UI 自动出现。
+- 「突进式」输出修复：模板禁止逐 token 直接调 `renderContent`，一律走 `renderedAnswer`（WeakMap 缓存 + 200ms 节流，引用不变时 `v-html` 不写 DOM）；滚动改为 rAF 合并且仅底部附近跟随（上滑阅读不再被拽回）；demo 发射器 3 字/25ms → 5 字/35ms。契约测试 89/89（含新增节流回归断言）。
+
+---
+
+## 13. UX 评审与布局改版（2026-09-03 第三轮 · 设计板驱动）
+
+> **配套视觉稿**：`docs/phase1/2026-09-03_Nexus_UX评审与布局改版设计板.html`（Board A 改版全景 / Board B 右栏两态与文案规范 / Board C 新会话启动页，含改动映射表与代码落点）。
+> **改版约束**：不改变页面功能组件类型——三栏模型内的既有组件全部保留，只做布局重排、入口收敛、状态文案统一。
+
+### 13.1 评审结论（便捷性 × 功能相关性，均有截图/源码双证据）
+
+| 编号 | 级别 | 问题 | 根因 | 修法 | 状态 |
+|---|---|---|---|---|---|
+| P0-1 | P0 | 右栏桌面常驻 340px 不可收起（原 :1527 `v-if="!isTablet && !isMobileOrSmall"`），纯问答轮次主区被压到 ~590px | §12.5 产品决定「过程与来源始终可见」的直接代价 | 改 48px 图标轨（三个 tab + 真实计数徽标）+ 320px overlay 抽屉。**本条推翻 §12.5 决定** | ✅ 已实施（§13.4-1） |
+| P0-2 | P0 | 左栏底部系统状态（数据源）/内容库（本机资料）/视图控制（收起）三类信息混排；「产物」无真实数据源仍显示裸计数 | 设备区无信息分层规范 | 底部收敛为「本机状态」卡两行：`数据源 / 演示数据｜切换`、`本机资料 / 聊天记录 · 复现 N · 产物 M｜展开`（去裸计数，无数据时行降级为不可点） | ✅ 已实施（§13.4-2） |
+| P1-3 | P1 | 赞/踩按钮无数据通道仍渲染（原 :1455-1474 `feedbackSoon` 占位） | 操作条按"完整回答 UI"一次画全，未按能力状态裁剪 | 直接砍掉（不留「更多」折叠——折叠还是占位）；恢复前提：后端提供评价落点，届时 `nexusCapabilities.js` 增 `feedback` 条目，UI 自动出现 | ✅ 已实施（§13.4-3） |
+| P1-4 | P1 | 课程绑定双入口（chips 行 + 右栏大卡），低频设置常驻首屏 | 上下文卡承担了"引导"职责，但引导属于启动页 | 顶部 chips 行移除课程 chip；引导条移至启动页（`.nx-start-course`）；对话中的入口收敛到右栏「上下文」面板的「更换课程」 | ✅ 已实施（§13.4-4） |
+| P1-5 | P1 | 空态有示例问题、无模式感知；工具白名单差异藏在 Mode 下拉里 | 启动动线未前置模式选择 | 空态升级启动页：模式预设卡 ×2（含工具 pills，与 `NEXUS_MODE_CONFIG.tools` 同源，点击即 `switchMode`）+ 示例问题 + 课程引导条 | ✅ 已实施（§13.4-5） |
+| ~~P1-6~~ | — | ~~会话重命名/置顶/删除入口不可见~~ | — | — | ❌ **原判断错误，撤回**（§13.5） |
+| ~~P2-7~~ | — | ~~Composer 下方两个无标注浮动圆钮~~ | — | — | ❌ **原判断错误，撤回**（§13.5） |
+| P2-8 | P2 | 状态文案四套词混用（已接通 / 数据就绪·未注入回答 / 数据就绪 / 未建立） | 展示层无统一映射 | 统一三态：**已生效 / 已连接·未生效 / 未建立**；只改 `capStateText()` / `capStateTagText()` 展示映射，nexusCapabilities 数据结构不动 | ✅ 已实施（§13.4-6） |
+| P2-9 | P2 | 失败轮次的过程折叠行仍呈中性"完成"观感（如 ARXIV_UNAVAILABLE） | 折叠行无失败状态类 | `is-failed` 类（turn.failure 或存在 status=error 的 tool_result）→ amber 底 + amber 左边框 + `TriangleAlert` 图标，摘要补「· N 次失败」 | ✅ 已实施（§13.4-7） |
+
+**值得保住（改版红线）**：能力三态单一真相源（nexusCapabilities.js 数据结构零改动）、「N 项待接入」popover、Mode 即工具白名单、过程折叠摘要 + 详情面板分工、fail-closed 演示状态条、只读引擎标识。
+
+### 13.2 两个悬置问题的结论（2026-09-04 拍板 / 排查完成）
+
+1. **右栏：选图标轨**（家良 2026-09-04 拍板）。取舍：图标轨把「全程全景可见」降级为「全程可入口 + 按需全景」，换来主区 +292px。为守住 §12.5 原本要保护的可见性，图标轨上补了两件事：
+   - 信息源图标挂**真实计数徽标**（`sourcesTotal`，不是占位数字）；
+   - 执行轨迹图标在抽屉收起时挂**琥珀未读点**（`unseenActivity` 计数，`tool_call`/`tool_result` 到达时 +1，打开该面板即清零）。
+   因此"有没有新过程"始终可见，只是不再强制占用横向空间。抽屉开合状态按设备持久化（localStorage `nexus_detail_open`，与 `nexus_rail_collapsed` 同一机制，符合 page-design §3.4）。
+2. **P2-7 浮动圆钮：不存在，撤回**。全仓排查结论见 §13.5。
+
+### 13.3 本轮不动的部分
+
+- 全局导航、品牌标识、Academic Ink + `--nexus-accent` 令牌体系；
+- 三栏模型本身（page-design §4.1）；
+- 所有与后端接线的契约（第 7 节）与能力三态数据结构（第 5 节）；
+- 组件类型不变（改版约束）：新增的图标轨/抽屉/预设卡都是既有 `SfxButton` + 原生 div 组合，未引入新组件依赖。
+
+---
+
+### 13.4 实施结果（2026-09-04，全部落地并验证）
+
+验证基线：契约测试 **89/89 通过**；`npx vite build --emptyOutDir=false` **通过**（13.75s）。
+
+**1. 右栏图标轨 + overlay 抽屉（P0-1）**
+- 结构：`.nx-detail-zone`（`position: relative` 的 48px 容器）内，`.nx-detail-drawer` 绝对定位 `right: var(--nexus-detail-rail)`、`width: var(--nexus-detail-width)`、`z-index: 30`、左侧投影；`.nx-detail-rail` 为常驻 48px 图标轨。抽屉覆盖主工作区右侧，不改变主内容宽度。
+- 新增令牌（`frontend/src/app/styles/tokens.css`）：`--nexus-detail-rail: 48px`（`--nexus-detail-width: 340px` 复用为抽屉宽度）。
+- 交互：`selectDetailTab(id)` —— 点不同 tab 切换并展开；点当前已展开的 tab 收起。抽屉头显示当前面板名 + 语义提示 + 收起按钮。
+- 兜底：流式开始仍自动把 `activeDetailTab` 切到 `activity` 并清零未读，**但不强制展开抽屉**——尊重用户上一次的开合选择；此时新到达的事件通过琥珀未读点提示。
+
+**2. 左栏「本机状态」区（P0-2）**
+- 三层平铺 → 一个带标题的状态卡：行 1 `数据源 / 演示数据｜切换`（原有 popover 逻辑不变），行 2 `本机资料 / <摘要>｜展开`。
+- `localResourcesSummary` 计算摘要：无数据显示「仅聊天记录」，有数据显示「聊天记录 · 复现 N · 产物 M」——不再出现孤立的「N 个会话」。
+- 无数据时行 2 加 `.is-static`（光标/配色降级），点击给 toast「这台设备还没有产物或复现记录」而不是静默无响应。
+- 删除 `.nx-rail-resources` / `.nx-ds-status` / `.nx-ds-text` 旧样式与对应模板块。
+
+**3. 移除赞/踩（P1-3）** 删除两个 `SfxButton`、`feedbackSoon()` 函数与 `ThumbsUp/ThumbsDown` 图标导入；操作条只保留复制 / 重试 + 「由 AI 生成」。
+
+**4. 课程入口收敛（P1-4）** 顶部 chips 行移除课程 chip（含 `.nx-chip-btn` 样式）；启动页新增 `.nx-start-course` 引导条（已绑定显示课程名 + 「更换」，未绑定显示「未绑定课程 · 回答只会用到 Web 与通用知识」+「绑定课程」）；对话中的入口为右栏「上下文」面板的「更换课程」。
+
+**5. 启动页升级（P1-5）** `.nx-mode-cards` 两张预设卡，与 `NEXUS_MODE_CONFIG` 同源渲染 label / desc / tools pills，点击即 `switchMode(key)`，当前模式加 `.is-active`（accent 描边 + soft 底）+ `Check`。
+
+**6. 状态文案统一（P2-8）** `capStateText()` / `capStateTagText()` 统一为 `已生效` / `已连接 · 未生效` / `未建立`。原四套词（已接通 / 数据就绪·未注入回答 / 数据就绪 / 未建立）全部替换；`capStateTagText` 此前对 ready 态返回空串导致标签缺失，现补齐。
+
+**7. 失败过程折叠行（P2-9）** `.nx-process-summary-card.is-failed`（amber 底 + amber 左边框，badge 转 `amber-700` + `TriangleAlert`）；`failedToolCount(turn)` 统计 `status === 'error'` 的 tool_result，`processSummaryLabel` 追加「· N 次失败」。
+
+**8. 顺带修的键盘可达性缺陷**：`.nx-session-more` 此前只靠 `:hover` 显示，Tab 用户无法触达。补 `:focus-within` 选择器。
+
+---
+
+### 13.5 撤回的两条（记录错误判断，避免重犯）
+
+> 这两条都是**没量就下判断**的产物，和 §8 里那条已作废的 `stream_mode` 判断是同一类错误。留档提醒。
+
+- **~~P1-6~~ 会话行操作组不可见 —— 判断错误，实际已实现。**
+  代码事实：`NexusPage.vue` `.nx-session-more { display: none }` + `.nx-session-item:hover .nx-session-more { display: block }`，操作组（置顶 / ⋯ → 重命名·删除）本来就是 hover 显示。真正的问题只有一个：`:hover` 之外键盘用户进不去，已用 `:focus-within` 补上（§13.4-8）。
+- **~~P2-7~~ Composer 下方两个浮动圆钮 —— 不存在。**
+  排查范围与结论：`main.js` 只挂载 `App`；`App.vue` 仅 `<router-view />`；`NexusPage.vue` 内无任何 `position: fixed/absolute` 的浮动圆钮；全仓唯一全局 `position: fixed` 是 `PrimaryNav.vue:454` 的移动端导航抽屉。**代码中不存在这两个按钮。**
+  错误成因：这条来自对截图的推断——本会话的图片输入被过滤，我实际看不到图，却按"图里有两个圆钮"写了结论。以后凡是"我在截图里看到 X"的判断，先确认能不能真的看到图再说。

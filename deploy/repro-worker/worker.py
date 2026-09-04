@@ -18,6 +18,7 @@ import asyncio
 import os
 import re
 import shutil
+import tarfile
 import time
 import uuid
 from pathlib import Path
@@ -39,6 +40,9 @@ def _env(name: str, default: str = "") -> str:
 
 
 WORKSPACE_ROOT = Path(_env("REPRO_WORKER_WORKSPACE_ROOT", "/tmp/repro-jobs"))
+# 已核验预设的仓库种子（tar.gz，顶层目录 = 仓库名）。命中时跳过运行时 git
+# clone——确定性 + 免境内网络干扰；内容冻结快照，本地 LICENSE 校验仍然执行。
+SEEDS_DIR = Path(_env("REPRO_SEEDS_DIR", "/seeds"))
 TOTAL_TIMEOUT_S = int(_env("REPRO_WORKER_TOTAL_TIMEOUT_S", "900"))      # 15 分钟硬截止
 STEP_TIMEOUT_S = int(_env("REPRO_WORKER_STEP_TIMEOUT_S", "300"))
 DISK_QUOTA_BYTES = int(_env("REPRO_WORKER_DISK_QUOTA_MB", "2048")) * 1024 * 1024
@@ -130,20 +134,41 @@ async def _github_license_spdx(repo_url: str) -> str | None:
 
 
 def _local_license_spdx(workspace: Path) -> tuple[str | None, str]:
-    """扫描工作目录中的 LICENSE/COPYING 文件，返回 (spdx, 依据文件名)。"""
-    for pattern in _LICENSE_FILE_GLOBS:
-        for candidate in workspace.rglob(pattern):
-            if not candidate.is_file() or candidate.stat().st_size > 200_000:
-                continue
-            try:
-                head = candidate.read_text(errors="replace")[:20_000]
-            except OSError:
-                continue
-            if _GPL_PATTERN.search(head):
-                return "GPL", candidate.name
-            for spdx, pattern_re in _LOCAL_LICENSE_HINTS.items():
-                if pattern_re.search(head):
-                    return spdx, candidate.name
+    """扫描 LICENSE/COPYING 文件判定 License，返回 (spdx, 依据文件名)。
+
+    **根目录优先**：仓库的整体 License 由根目录声明（如 git/git 的 COPYING）；
+    递归兜底仅用于根目录无声明的情况——否则子目录 vendored 的宽松许可
+    （如 git/git/sha1dc/LICENSE.txt）会掩盖根目录的 GPL，造成红线绕过。
+    GPL 声明在任何层级都具有一票否决权。
+    """
+    candidates: list[tuple[Path, str]] = []
+    for scope in (workspace.glob("*"), workspace.rglob("*")):
+        for candidate in scope:
+            if candidate.is_file() and candidate.stat().st_size <= 200_000 and \
+                    any(candidate.match(pat) for pat in _LICENSE_FILE_GLOBS):
+                candidates.append((candidate, candidate.name))
+        if candidates:
+            break  # 根目录已有命中，不再递归
+    if not candidates:
+        return None, ""
+
+    # GPL 一票否决：任何候选文件含 GPL 声明即判 GPL。
+    for candidate, name in candidates:
+        try:
+            head = candidate.read_text(errors="replace")[:20_000]
+        except OSError:
+            continue
+        if _GPL_PATTERN.search(head):
+            return "GPL", name
+    # 根目录的非 GPL 命中按序识别。
+    for candidate, name in candidates:
+        try:
+            head = candidate.read_text(errors="replace")[:20_000]
+        except OSError:
+            continue
+        for spdx, pattern_re in _LOCAL_LICENSE_HINTS.items():
+            if pattern_re.search(head):
+                return spdx, name
     return None, ""
 
 
@@ -196,6 +221,15 @@ def _tail(text: str, limit: int = LOG_TAIL_CHARS) -> str:
 
 
 _CD_PATTERN = re.compile(r"(?:^|&&)\s*cd\s+(\S+)\s*$")
+
+
+def _replace_own_clone_step(step: str, repo_url: str) -> str:
+    """种子命中时把首条 git clone 步替换为空操作，保留 cd 语义。"""
+    stripped = step.strip()
+    if not stripped.startswith(f"git clone {repo_url}"):
+        return step
+    match = _CD_PATTERN.search(stripped)
+    return f"true && cd {match.group(1)}" if match else "true"
 
 
 async def _run_step(command: str, cwd: Path) -> dict[str, Any]:
@@ -270,13 +304,26 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
         workspace.mkdir(parents=True, exist_ok=True)
 
-        # 1) 预 clone 到 .license-check/ 做本地 License 第二道校验。
-        clone = await _run_step(
-            f"git clone --depth 1 {request.repo_url} .license-check", workspace
-        )
-        if clone["exit_code"] != 0:
-            raise RuntimeError(f"git clone failed: {clone['log_tail'][:300]}")
-        local_spdx, license_file = _local_license_spdx(workspace / ".license-check")
+        # 1) 取仓库到工作区：优先命中已核验预设的本地种子（确定性快照，
+        #    直接解包到工作区根，tar 顶层目录 = 仓库名），否则运行时 git clone
+        #    到 .license-check/ 仅做 License 校验（执行步会自行 clone）。
+        #    种子是受信任的本地基础设施产物（打包时已核验），用 Python tarfile
+        #    解包——GNU tar 会把 Windows 盘符冒号误判为远程主机语法。
+        seed = SEEDS_DIR / f"{request.preset_id}.tar.gz"
+        if seed.exists():
+            record["seed_used"] = True
+            with tarfile.open(seed, "r:gz") as tar:
+                tar.extractall(workspace)
+            check_root = workspace
+        else:
+            record["seed_used"] = False
+            fetch = await _run_step(
+                f"git clone --depth 1 {request.repo_url} .license-check", workspace
+            )
+            check_root = workspace / ".license-check"
+            if fetch["exit_code"] != 0:
+                raise RuntimeError(f"repo fetch failed: {fetch['log_tail'][:300]}")
+        local_spdx, license_file = _local_license_spdx(check_root)
         github_spdx = record["license_checks"]["github_spdx"]
         allowed, effective, reason = _license_decision(
             request.repo_license, github_spdx, local_spdx
@@ -299,8 +346,15 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             return
 
         # 2) 逐步执行（bash -lc；维护跨步 cd 语义）。
+        #    种子命中时，首条"git clone <本仓库>"步已由种子替代——替换为
+        #    保留其 cd 语义的空操作（seed tar 顶层目录 = 仓库名）。
+        steps = list(request.steps)
+        if record.get("seed_used"):
+            steps = [
+                _replace_own_clone_step(step, request.repo_url) for step in steps
+            ]
         current_rel = ""
-        for index, command in enumerate(request.steps):
+        for index, command in enumerate(steps):
             if time.monotonic() > deadline:
                 step_results.append({
                     "command": command, "exit_code": None, "timed_out": True,

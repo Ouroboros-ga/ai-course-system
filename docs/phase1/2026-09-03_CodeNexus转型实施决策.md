@@ -20,18 +20,17 @@
 
 ## 1. 决策清单
 
-| #   | 主题                | 最终口径                                                                                                                                                                                                                                                                                                                                        |
-| --- | ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | 开发基线              | `feature/xh202620` 合并进 `dev-liu`（merge `67f94026`），此后只在 `dev-liu` 单一主线开发；`feature/xh202620` 仅作历史参考。                                                                                                                                                                                                                                         |
-| D2  | 产品双入口             | **TeachingAgent**：课程内便捷问答智能（教学问答、教学动作、对话式代码挑战），工作流固定，本质是"能检索到精确知识的问答机器人"。**Nexus AI**：从课程外进入的全局入口，负责复杂问题拆解与持续执行（论文研究、快速复现等），是"真正的 Agent"；基于 Deep Agents + LangGraph，运行于独立 Nexus Runtime。CodeNexus 方向与既有文档冲突时以新方向为准，AGENTS.md 已同步。                                                                                                           |
-| D3  | Web Search        | 用由服务器 IP 直接发起的免费搜索能力，配置**双通道**：主通道为服务端 Web Search（部署在 `47.99.97.154` 服务环境），下位替代为本机（agent 侧）Web Search 能力。**已落地（2026-09-03）**：SearXNG 容器 `nexus-searxng` 部署于 47.99.97.154 并验收通过（中英文 20+ 结果、延迟 0.8–2.0s），产物见 [deploy/searxng/](../../deploy/searxng/)。                                                                                        |
-| D4  | Demo 论文候选         | 选人工智能 / 机器学习 / CS 方向。候选清单已建立（2026-09-03，License 经 GitHub API 核实）：[2026-09-03\_Demo论文候选清单.md](2026-09-03_Demo论文候选清单.md)。**主选 nanoGPT**（GPT-2 最小复现，MIT，官方 CPU 命令约 3 分钟训练闭环），备选 CLIP；其余 4 项为候选池。                                                                                                                                               |
-| D5  | Repro Worker      | 部署于 `47.99.97.154` 服务环境，与 Backend、Judge0 **同宿主机、容器级隔离**（独立容器与独立网络，非物理隔离——该机为 4C8G 单机，主栈与 Judge0 栈均运行其上；原表述"物理隔离"不准确，2026-09-03 经开发者澄清修正）；未知 GitHub Repo 视为不可信代码，只进 Repro Worker 受限执行。                                                                                                                                                       |
-| D6  | Nexus 数据策略        | 语义分域，见 §3。                                                                                                                                                                                                                                                                                                                                  |
-| D7  | 旧科研工作台            | 前端四面板科研工作台下线；新能力收敛为单一 Nexus 入口（前端设计后续做，当前优先实现后端功能）。                                                                                                                                                                                                                                                                                         |
-| D8  | Teaching Agent 戏份 | 继续承担验收链中的"教学"场景（课程内问答、学情、代码挑战）；Nexus 承担"科研助研"场景（拆解赛题、论文研究、快速复现）。两者共享业务基础设施但职责分离。                                                                                                                                                                                                                                                            |
-| D9  | 文档清理              | SmartCarb 时代文档删除；XH-202620 差距分析文档标注为现行赛题工作文档；`research/README.md` 标注 Legacy，见 §4。                                                                                                                                                                                                                                                           |
-| D10 | Nexus 使用权与课程绑定    | **新增平台权限** **`platform.nexus.use`** 作为 Nexus AI（课程外全局入口）的使用门槛，**默认授予所有用户**（注册/登录/泛雅同步自动授予 + 迁移 0068 回填存量用户），**不强制绑定课程**——`active_course_id = null` 时 Nexus 仍可用，Course RAG 仅在有课程上下文且拥有对应课程权限时开放。`platform.admin` 为超集自然可用。管理员可经 `GET/POST/DELETE /api/v1/admin/users/{id}/platform-permissions` 按用户**撤销**；显式撤销优先于默认授权，不被登录/同步流程复活。落地证据见 §4.3。 |
+| #  | 主题                | 最终口径                                                                                                                                                                                                                                                 |
+| -- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1 | 开发基线              | `feature/xh202620` 合并进 `dev-liu`（merge `67f94026`），此后只在 `dev-liu` 单一主线开发；`feature/xh202620` 仅作历史参考。                                                                                                                                                  |
+| D2 | 产品双入口             | **TeachingAgent**：课程内便捷问答智能（教学问答、教学动作、对话式代码挑战），工作流固定，本质是"能检索到精确知识的问答机器人"。**Nexus AI**：从课程外进入的全局入口，负责复杂问题拆解与持续执行（论文研究、快速复现等），是"真正的 Agent"；基于 Deep Agents + LangGraph，运行于独立 Nexus Runtime。CodeNexus 方向与既有文档冲突时以新方向为准，AGENTS.md 已同步。                    |
+| D3 | Web Search        | 用由服务器 IP 直接发起的免费搜索能力，配置**双通道**：主通道为服务端 Web Search（部署在 `47.99.97.154` 服务环境），下位替代为本机（agent 侧）Web Search 能力。**已落地（2026-09-03）**：SearXNG 容器 `nexus-searxng` 部署于 47.99.97.154 并验收通过（中英文 20+ 结果、延迟 0.8–2.0s），产物见 [deploy/searxng/](../../deploy/searxng/)。 |
+| D4 | Demo 论文候选         | 选人工智能 / 机器学习 / CS 方向。候选清单已建立（2026-09-03，License 经 GitHub API 核实）：[2026-09-03\_Demo论文候选清单.md](2026-09-03_Demo论文候选清单.md)。**主选 nanoGPT**（GPT-2 最小复现，MIT，官方 CPU 命令约 3 分钟训练闭环），备选 CLIP；其余 4 项为候选池。                                                        |
+| D5 | Repro Worker      | 部署于 `47.99.97.154` 服务环境，与 Backend、Judge0 **同宿主机、容器级隔离**（独立容器与独立网络，非物理隔离——该机为 4C8G 单机，主栈与 Judge0 栈均运行其上；原表述"物理隔离"不准确，2026-09-03 经开发者澄清修正）；未知 GitHub Repo 视为不可信代码，只进 Repro Worker 受限执行。                                                                |
+| D6 | Nexus 数据策略        | 语义分域，见 §3。                                                                                                                                                                                                                                           |
+| D7 | 旧科研工作台            | 前端四面板科研工作台下线；新能力收敛为单一 Nexus 入口（前端设计后续做，当前优先实现后端功能）。                                                                                                                                                                                                  |
+| D8 | Teaching Agent 戏份 | 继续承担验收链中的"教学"场景（课程内问答、学情、代码挑战）；Nexus 承担"科研助研"场景（拆解赛题、论文研究、快速复现）。两者共享业务基础设施但职责分离。                                                                                                                                                                     |
+| D9 | 文档清理              | SmartCarb 时代文档删除；XH-202620 差距分析文档标注为现行赛题工作文档；`research/README.md` 标注 Legacy，见 §4。                                                                                                                                                                    |
 
 ## 2. Web Search 免费方案调研与落地（2026-09-03）
 
@@ -146,86 +145,6 @@ arXiv 结果）：
   真实 DeepSeek 端到端手工冒烟（需真实 Key）、服务器部署（需另行授权）。
   运行指南与已验证/未验证清单见 [nexus/README.md](../../nexus/README.md)。
 
-### 4.3 权限门控落地（2026-09-03 第四批，D10 实施）
-
-技术决策补丁 v1.1 核查结论的 P0 遗留 X1（全局 Nexus Session 在权限层无处安放）按
-开发者决策落地为 D10，同批更正了 X2 的错误结论（见该文档头部修订记录）：
-
-- **权限值**：`PlatformPermission.NEXUS_USE = "platform.nexus.use"`
-  （`backend/app/models/access_control_model.py`）；迁移
-  `20260903_1400_0068_nexus_use_platform_permission.py` 在 PostgreSQL 上
-  `ALTER TYPE platformpermission ADD VALUE 'NEXUS_USE'`（经独立 AUTOCOMMIT
-  连接执行——PG 12+ 中 ADD VALUE 的新值不能在加值的同一事务中使用，而同
-  迁移的回填 INSERT 立即用到它；SQLite 无需 DDL），并**回填为所有存量用户
-  插入默认授权行**（`migration_batch_id = '0068_nexus_use_default_grant'`）。
-
-- **默认授权（同日修订）**：所有用户默认持有 `platform.nexus.use`——注册
-  （`user.py user_register`）、登录（`user.py user_login` 补授存量用户）、
-  泛雅同步（`platform.py _sync_platform_permissions`）经
-  `ensure_default_nexus_grant` 自动授予。**显式撤销优先于默认授权**：该函数
-  与 0068 回填均跳过已有行（含软撤销行），管理员撤销持久有效、不被任何流程
-  复活。
-
-- **强制点**：`nexus_proxy.py` 三个反代端点（`/health`、`/chat`、`/chat/stream`）
-  全部改走 `require_nexus_use` 依赖（`require_platform_permission` 链，
-  fail-closed，403 返回 `NEXUS_PERMISSION_DENIED`）；未触达 Runtime 前即拒绝。
-
-- **授权入口**：`platform_admin_service.list/grant/revoke_user_platform_permissions`
-
-  - `admin_platform.py` 三端点（软撤销保留审计行、re-grant 复用旧行满足唯一约束、
-    `platform.admin` 不可经端点授予以防 USER\_MANAGE 持有者自我提权），写
-    `PlatformAdminAuditEvent` 审计。
-
-- **前端**：`counter.js` 新增 `canUseNexus`；`PrimaryNav.vue` 按权限渲染 Nexus
-  入口；`NexusPage.vue` 深链直入时整页"暂无权限"态（仅被撤销/未回填用户可见）。
-
-- **验证**：`backend/tests/test_nexus_proxy.py`（新增无权限 403 不触达上游、
-  platform.admin 放行等，20/20 通过）、`backend/tests/test_platform_permissions.py`
-  （授予/撤销/复授/审计/403/422/404 + 注册默认授予/存量登录补授/撤销不被登录
-  复活/迁移 0068 回填尊重撤销，10/10 通过）、关联回归（platform\_admin\_service /
-  access\_control / course\_access）29 通过、前端契约测试 88/88、`npm run build`
-  通过。本地为 SQLite + 随机测试密钥环境；PostgreSQL `ALTER TYPE` + 回填分支
-  待服务器部署时实测（`alembic upgrade head` 属部署动作，需另行授权）。
-
-### 4.4 X2 口径更正（2026-09-03）：CS 知识库存在真实生产检索路径
-
-经逐一核对代码（`DisciplineKnowledgePortImpl` 装配链、`/api/v1/discipline-knowledge/*`
-路由、`discipline_corpus` FTS+pgvector 实现、审计表部署记录），补丁核查结论 §二 X2
-中"所有已落地的向量检索实现都是 course-scoped""根本不存在 CS-scoped 的生产检索路径"
-**不成立**，正确口径为：
-
-- **概念层**：`backend/app/platform/knowledge/discipline_kb.py`
-  （`cs-knowledge/1.0`，112 节点 / 106 关系，进程内 BM25），经
-  `/api/v1/discipline-knowledge/search` 暴露（仅登录鉴权、无课程校验），
-  前端一级入口「学科知识库」；TeachingAgent 经 `DisciplineKnowledgePortImpl`
-  默认消费（`TEACHING_AGENT_DISCIPLINE_KB_ENABLED=True`）。
-
-- **语料层**：`backend/app/platform/knowledge/discipline_corpus.py`——SQLite
-  FTS5（635 万段落索引）+ pgvector HNSW 向量召回（130,351 段已嵌入，
-  bge-small-zh-v1.5 / 512 维，表 `discipline_corpus_embedding` 无 course\_id），
-  RRF 融合；2026-09-01 起在服务器启用（见功能现状审计表）。
-
-- 仍然成立的只有：课程课件证据链（`course-lancedb/1.0` +
-  `ActiveBundleCourseRetrievalPort`）是 course-scoped。Nexus 集成 CS KB 时
-  直接消费上述两条路径即可，§5 Gate 应按此事实执行；注意学科 KB 结果定位为
-  `is_supplementary`（补充参考），不进入课程证据闭包与掌握度。
-
-### 4.5 S1 部署与真实链路验收（2026-09-03 第五批，经用户授权）
-
-- **部署**：Nexus Runtime 上线 47.99.97.154（`/opt/smartcarb/nexus-runtime` 独立
-  venv + systemd `nexus-runtime.service`，127.0.0.1:8300）；Backend 发布
-  release `623f64c7`（含 S1-B5 门控与 D10 默认授权）；迁移 `0068` 在 PG 16
-  执行成功（AUTOCOMMIT 加枚举值 + 全量回填，**186/186 用户获得
-  `platform.nexus.use`**；期间将 `platformpermission` 类型 owner 移交
-  `ai_course_app` 以解除迁移权限阻塞）。
-
-- **S1-V1 冒烟 6/6 通过**：SearXNG 主通道真实检索、arXiv 降级诚实呈现、
-  nanoGPT 复现规划、复现执行 fail-closed、会话续聊记忆、SSE 流式全链路。
-  详情与证据见 [验收记录/S1\_Nexus真实链路\_2026-09-03.md](验收记录/S1_Nexus真实链路_2026-09-03.md)。
-
-- **冒烟发现并修复**：非流式 `/chat` 的 `stream_mode` 单字符串/列表语义错配
-  （提交 `93415f18`，补真实图回归测试，nexus 单测 19/19）。
-
 ## 5. 决议状态（2026-09-03 全部处置完毕）
 
 原 5 项遗留已全部经用户答复处置：
@@ -258,3 +177,4 @@ arXiv 结果）：
 
 - `research_*` 表不 drop 是硬约束（AGENTS.md §4.2.3：不静默删除仍有消费者的数据）。
 
+<br />
