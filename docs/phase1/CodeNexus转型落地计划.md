@@ -349,8 +349,16 @@ S1-B1（服务器部署）与 S1-V1（真实链路验收）仍待授权与 DeepS
   四面板/路由/client 删除（`8255a4c7`），release `8255a4c7` 线上验收通过
   （[验收记录/S2\_切换期\_2026-09-03.md](验收记录/S2_切换期_2026-09-03.md)）
 
-- **S3 下线**：⏸️ 待 S2 稳定 ≥ 1 迭代后启动（删路由注册与 service、清理
-  `research/` 与 `providers/research/`、`research_*` 表保留不 drop）
+- **S3 下线**：✅ **完成（2026-09-05，P2 计划 M5）**——删除
+  `endpoints/research_agent.py`、`platform/agents/research/` 全目录、
+  providers `{paper_search,workspace,access}`、路由注册与
+  `bootstrap_research_agent`、旧 research 测试；410 由 deprecated 中间件
+  继续短路（线上实证 `RESEARCH_API_RETIRED`）；`research_*` 表模型 +
+  Alembic 保留、未新增 down 迁移（S3-B3）。事实修正：
+  `services/research_service.py` 幽灵文件（从未存在）、paper_search 无需迁移
+  （nexus 独立降级链实现）、question_bank/question_generation/web_research
+  与 web_research 端点+service 保留（TeachingAgent/tasks 活消费）。
+  验收记录：[验收记录/M5\_验收\_2026-09-05.md](验收记录/M5_验收_2026-09-05.md)
 
 - **P1-W Repro Worker**：✅ **全部完成**——W1/W2/W3/W5（2026-09-03，提交
   `ec56ada1`；worker 测试 7/7、nexus 29/29）；W4 服务器部署完成（2026-09-04：
