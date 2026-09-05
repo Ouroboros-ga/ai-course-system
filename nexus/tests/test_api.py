@@ -23,6 +23,36 @@ async def test_health_reports_configuration(monkeypatch: pytest.MonkeyPatch):
         get_settings.cache_clear()
 
 
+async def test_health_checks_shape_and_probe_semantics(monkeypatch: pytest.MonkeyPatch):
+    """NX-G3：checks 为带检查时间+有效期的快照；未配置→unconfigured，
+    配了但连不上→degraded；绝不回传密钥与原始日志。"""
+    import nexus.main as main_module
+
+    monkeypatch.setenv("NEXUS_REPRO_WORKER_URL", "http://127.0.0.1:9")
+    get_settings.cache_clear()
+    main_module._probe_cache.clear()
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            response = await client.get("/health")
+        assert response.status_code == 200
+        checks = response.json()["checks"]
+        assert set(checks) == {"llm", "searxng", "repro_worker", "backend_internal"}
+        for name, check in checks.items():
+            assert set(check) == {"status", "checked_at", "ttl_s"}, name
+            assert check["status"] in {"ok", "unconfigured", "degraded", "unknown"}, name
+            assert check["checked_at"] > 0 and check["ttl_s"] >= 5
+        # 本测试环境三依赖均未配置/不可达：
+        assert checks["llm"]["status"] == "unconfigured"
+        assert checks["searxng"]["status"] == "unconfigured"
+        assert checks["backend_internal"]["status"] == "unconfigured"
+        # Worker 配了 URL 但端口 9 必然拒绝连接 → degraded（不是 ok，更不是异常）。
+        assert checks["repro_worker"]["status"] == "degraded"
+        assert "127.0.0.1:9" not in response.text
+    finally:
+        get_settings.cache_clear()
+        main_module._probe_cache.clear()
+
+
 async def test_chat_fails_closed_without_llm_key():
     get_settings.cache_clear()
     import nexus.main as main_module
@@ -109,7 +139,7 @@ async def test_chat_endpoints_against_real_graph(monkeypatch: pytest.MonkeyPatch
         checkpointer=InMemorySaver(),
     )
     original_agents = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     get_settings.cache_clear()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

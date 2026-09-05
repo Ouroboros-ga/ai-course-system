@@ -165,6 +165,19 @@ class NexusReproJobRecordRequest(BaseModel):
     repo_url: str = Field(default="", max_length=300)
 
 
+class NexusRunRecordRequest(BaseModel):
+    """NX-E1：Runtime 执行成功后登记 run linkage（恢复查询依据）。"""
+
+    run_id: str = Field(min_length=4, max_length=64)
+    session_id: str = Field(default="default", max_length=128)
+    tool: str = Field(default="run_reproduction", max_length=64)
+    preset_id: str = Field(default="", max_length=64)
+    plan_hash: str = Field(default="", max_length=64)
+    approval_id: str = Field(default="", max_length=64)
+    job_id: str = Field(min_length=4, max_length=64)
+    status: str = Field(default="submitted", max_length=32)
+
+
 @router.post("/repro-jobs")
 async def nexus_internal_record_repro_job(
     payload: NexusReproJobRecordRequest,
@@ -185,6 +198,36 @@ async def nexus_internal_record_repro_job(
         repo_url=payload.repo_url,
     )
     return unified_response(code=200, message="作业归属已登记", data={"job_id": payload.job_id})
+
+
+@router.post("/repro-runs")
+async def nexus_internal_record_repro_run(
+    payload: NexusRunRecordRequest,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-E1 run linkage 登记：执行成功后由 Runtime/代理登记，供恢复查询。"""
+    from app.services import nexus_run_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    run = nexus_run_service.record_run(
+        session,
+        run_id=payload.run_id,
+        user_id=user_id,
+        session_id=payload.session_id,
+        tool=payload.tool,
+        preset_id=payload.preset_id,
+        plan_hash=payload.plan_hash,
+        approval_id=payload.approval_id,
+        job_id=payload.job_id,
+        status=payload.status,
+    )
+    if run is None:
+        # run_id 冲突且属他人：拒绝覆盖（正常 run_id=approval_id 全局唯一）。
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="RUN_ID_CONFLICT")
+    return unified_response(code=200, message="run 已登记", data={"run_id": run["run_id"]})
 
 
 @router.post("/artifacts")
@@ -214,3 +257,48 @@ async def nexus_internal_write_artifact(
         message="产物已写入",
         data=artifact,
     )
+
+
+@router.get("/attachments/{attachment_id}/content")
+async def nexus_internal_attachment_content(
+    attachment_id: str,
+    locator: str = Query(default="", max_length=64),
+    max_chars: int = Query(default=24000, ge=1000, le=60000),
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    x_nexus_session_id: str | None = Header(default=None, alias="X-Nexus-Session-Id"),
+    session: Session = Depends(get_session),
+):
+    """NX-A1 Runtime 工具消费入口：owner + 会话绑定双重校验后返回解析 blocks。
+
+    附件必须已绑定到请求会话（绑定发生在 chat 发送时）；未绑定/他会话一律
+    拒绝——模型传参不能越权读他人文件。只返回文本 blocks，不含原图字节。
+    """
+    from app.services import nexus_attachment_service
+    from app.services.nexus_attachment_parse import AttachmentParseError
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    session_id = (x_nexus_session_id or "").strip()[:128]
+    try:
+        row = nexus_attachment_service.get_owned_attachment(
+            session, user_id=user_id, attachment_id=attachment_id.strip()[:16]
+        )
+        if row is None:
+            raise AttachmentParseError("ATTACHMENT_NOT_FOUND", "附件不存在")
+        if not session_id or row["session_id"] != session_id:
+            raise AttachmentParseError("ATTACHMENT_SESSION_MISMATCH", "附件未绑定到当前会话")
+        content = nexus_attachment_service.load_parsed_blocks(
+            session, user_id=user_id, attachment_id=row["attachment_id"],
+            max_chars=max_chars, locator=locator.strip(),
+        )
+    except AttachmentParseError as error:
+        code_to_status = {
+            "ATTACHMENT_NOT_FOUND": 404,
+            "ATTACHMENT_SESSION_MISMATCH": 403,
+            "ATTACHMENT_LOCATOR_NOT_FOUND": 422,
+        }
+        raise HTTPException(
+            status_code=code_to_status.get(error.code, 422), detail=error.code
+        ) from error
+    return unified_response(code=200, message="附件内容", data=content)

@@ -26,14 +26,19 @@ export const NEXUS_MODE_CONFIG = {
     badge: 'General',
     desc: '通用复杂任务、资料整理、知识问答与文档生成',
     icon: 'Sparkles',
-    tools: ['web_search'],
+    // NX-G1：与 Runtime _tools_for_mode("general") 同源（4 产品工具 + 内部
+    // read_file 不向用户展示）。此前只写 web_search 一个，已过时。
+    // NX-A1：read_attachment 为双模式共用入口，随 NEXUS_TOOLS 进入两模式。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'read_attachment'],
   },
   [NEXUS_MODES.RESEARCH]: {
     label: 'Nexus Research',
     badge: 'Research',
     desc: '论文研究、学术检索、研究比较与 NexusLab 复现',
     icon: 'Microscope',
-    tools: ['web_search', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction'],
+    // NX-G1：Research = 全部 7 产品工具（含 research-only 三工具）。
+    // NX-A1：+ read_attachment（附件共用入口），共 8 产品工具。
+    tools: ['web_search', 'search_course_materials', 'search_cs_knowledge', 'write_artifact', 'search_arxiv_papers', 'plan_reproduction', 'run_reproduction', 'read_attachment'],
   },
 }
 
@@ -393,21 +398,18 @@ export async function streamDemoMessage({ message, onEvent, signal }) {
 }
 
 /**
- * 统一发送入口：按当前 nexusDataSourceMode 自动分发
- */
-/**
  * 统一发送入口。
  *
- * 契约说明：`mode` 与 `context` 两个字段当前运行时会忽略（未知字段），
- * 但前端始终发送，以便运行时接线后前端零改动。
- * 运行时接线时应在 /chat/stream 请求体接收：
- *   { message, session_id, mode, context: { course_id } }
+ * real 模式透传 { message, session_id, mode, context: { course_id }, model,
+ * attachment_ids } 到运行时；demo 模式本地回放（附件/模型选择不生效）。
  */
 export async function dispatchNexusMessage({
   message,
   sessionId,
   mode,
   courseId = null,
+  model = null,
+  attachmentIds = [],
   onEvent,
   signal,
 }) {
@@ -417,6 +419,8 @@ export async function dispatchNexusMessage({
       sessionId,
       mode,
       courseId,
+      model,
+      attachmentIds,
       onEvent,
       signal,
     })

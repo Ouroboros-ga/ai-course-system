@@ -176,6 +176,68 @@ def test_chat_proxies_mode_and_context_to_runtime(
     assert upstream_body["context"] == {"course_id": 7}
 
 
+def test_chat_proxies_model_field_to_runtime(
+    client, nexus_student_token, runtime_configured
+):
+    """模型网关 P0：model 只透传不校验（清单归 Runtime）；上游 400 原样返回。"""
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        body = json.loads(request.content)
+        if body.get("model") == "gpt-4":
+            return httpx.Response(400, json={"detail": "INVALID_NEXUS_MODEL:'gpt-4'"})
+        return httpx.Response(
+            200,
+            json={"session_id": "s1", "message": "ok", "tool_events": []},
+        )
+
+    with mock_runtime(handler):
+        ok_response = client.post(
+            "/api/v1/nexus/chat",
+            json={"message": "hi", "session_id": "s1", "model": "deepseek-chat"},
+            headers=_auth(nexus_student_token),
+        )
+        assert ok_response.status_code == 200
+        assert json.loads(seen["request"].content)["model"] == "deepseek-chat"
+
+        bad_response = client.post(
+            "/api/v1/nexus/chat",
+            json={"message": "hi", "session_id": "s1", "model": "gpt-4"},
+            headers=_auth(nexus_student_token),
+        )
+        assert bad_response.status_code == 400
+        assert "INVALID_NEXUS_MODEL" in bad_response.json()["detail"]
+
+
+def test_chat_rejects_unknown_mode_before_runtime(
+    client, nexus_student_token, runtime_configured
+):
+    """NX-G1（v1.3 A1）：未知/空串 mode 在触达 Runtime 前以 400 拒绝。
+
+    handler 必炸证明"未出站"：若校验漏掉，测试会收到上游 200 而非 400。
+    """
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise AssertionError("非法 mode 不应触达 Runtime")
+
+    with mock_runtime(handler):
+        for bad in ("bogus", "", "   "):
+            response = client.post(
+                "/api/v1/nexus/chat",
+                json={"message": "hi", "session_id": "s1", "mode": bad},
+                headers=_auth(nexus_student_token),
+            )
+            assert response.status_code == 400, bad
+            assert response.json()["data"]["error_code"] == "INVALID_NEXUS_MODE"
+        stream_response = client.post(
+            "/api/v1/nexus/chat/stream",
+            json={"message": "hi", "session_id": "s1", "mode": "bogus"},
+            headers=_auth(nexus_student_token),
+        )
+        assert stream_response.status_code == 400
+
+
 def test_chat_stream_relays_upstream_sse_events(client, nexus_student_token, runtime_configured):
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/v1/nexus/chat/stream"
@@ -529,3 +591,64 @@ def test_session_messages_proxies_namespaced_path(
     upstream = seen["request"]
     assert upstream.url.path == "/api/v1/nexus/sessions/hist-1/messages"
     assert upstream.headers["X-Nexus-User-Id"] == str(student_user.id)
+
+
+# ---------------------------------------------------------------------------
+# NX-G2 执行审批代理：门控 + 身份透传 + 上游语义原样返回
+# ---------------------------------------------------------------------------
+
+
+def test_approval_decide_proxies_with_identity(
+    client, nexus_student_token, student_user, runtime_configured
+):
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"approval": {"approval_id": "apv_1", "status": "approved"}},
+        )
+
+    with mock_runtime(handler):
+        response = client.post(
+            "/api/v1/nexus/approvals/apv_1/decide",
+            json={"decision": "approved"},
+            headers=_auth(nexus_student_token),
+        )
+
+    assert response.status_code == 200
+    assert response.json()["approval"]["status"] == "approved"
+    upstream = seen["request"]
+    assert upstream.url.path == "/api/v1/nexus/approvals/apv_1/decide"
+    assert upstream.headers["X-Nexus-User-Id"] == str(student_user.id)
+    assert upstream.headers["Authorization"] == f"Bearer {SERVICE_TOKEN}"
+
+
+def test_approval_status_and_execute_proxy_paths(
+    client, nexus_student_token, runtime_configured
+):
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen[request.url.path] = request
+        return httpx.Response(200, json={"ok": True})
+
+    with mock_runtime(handler):
+        status_response = client.get(
+            "/api/v1/nexus/approvals/apv_1", headers=_auth(nexus_student_token)
+        )
+        execute_response = client.post(
+            "/api/v1/nexus/repro/execute",
+            json={"approval_id": "apv_1", "session_id": "s1"},
+            headers=_auth(nexus_student_token),
+        )
+
+    assert status_response.status_code == 200
+    assert execute_response.status_code == 200
+    assert "/api/v1/nexus/approvals/apv_1" in seen
+    execute_upstream = seen["/api/v1/nexus/repro/execute"]
+    assert json.loads(execute_upstream.content) == {
+        "approval_id": "apv_1",
+        "session_id": "s1",
+    }

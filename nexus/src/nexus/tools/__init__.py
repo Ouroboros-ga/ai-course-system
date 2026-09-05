@@ -1,4 +1,5 @@
 from nexus.tools.artifact import write_artifact
+from nexus.tools.attachments import read_attachment
 from nexus.tools.course_retrieval import search_course_materials, search_cs_knowledge
 from nexus.tools.paper_search import search_arxiv_papers
 from nexus.tools.reproduction import plan_reproduction, run_reproduction
@@ -12,6 +13,7 @@ NEXUS_TOOLS = [
     write_artifact,
     plan_reproduction,
     run_reproduction,
+    read_attachment,
 ]
 
 __all__ = [
@@ -23,4 +25,5 @@ __all__ = [
     "write_artifact",
     "plan_reproduction",
     "run_reproduction",
+    "read_attachment",
 ]

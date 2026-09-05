@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -72,8 +72,9 @@ import {
 } from '@/api/nexusAdapter.js'
 import {
   CAPABILITY_STATE,
-  capabilitiesForMode,
-  isReproductionExecutable
+  EFFECTIVE_STATE,
+  isReproductionExecutable,
+  resolveEffectiveCapabilities
 } from '@/api/nexusCapabilities.js'
 
 // ── 0. 使用权限（转型决策 D10：platform.nexus.use 显式授予）──
@@ -135,6 +136,9 @@ function initSessions() {
   }
   // P1-C2/C3：real 模式下拉取服务端持久化会话（best-effort，失败保持本地列表）。
   refreshRemoteSessions()
+  // NX-E1：初次加载即恢复当前会话的 runs（刷新后找回原实验，不重新提交）。
+  const initial = sessions.value.find((s) => s.id === activeSessionId.value)
+  if (initial) void restoreSessionRuns(initial)
 }
 
 /**
@@ -282,6 +286,158 @@ function switchSession(id) {
   if (target?.remoteOnly) {
     loadRemoteHistory(target)
   }
+  // NX-E1：切会话即恢复该会话的 runs（只读恢复轮询，绝不重新提交）。
+  if (target) void restoreSessionRuns(target)
+}
+
+// ── NX-A1 附件：会话级引用（服务端验主＋绑定，会话隔离）──
+const ATTACHMENT_ACCEPT_EXTS = ['pdf', 'docx', 'jpg', 'jpeg', 'png', 'xlsx', 'pptx', 'ppt', 'doc']
+const ATTACHMENT_MAX_BYTES = 20 * 1024 * 1024
+const attachmentInput = ref(null)
+
+function sessionAttachmentIds(s) {
+  if (!s) return []
+  if (!Array.isArray(s.attachmentIds)) s.attachmentIds = []
+  return s.attachmentIds
+}
+
+function attachmentStateLabel(a) {
+  if (a.status === 'uploading') return '上传中'
+  if (a.status === 'ready') return '就绪'
+  if (a.status === 'partial') return '部分解析'
+  if (a.status === 'failed') return `失败·${a.error_code || a.error || '未知'}`
+  if (a.status === 'expired') return '已过期'
+  return a.status || '未知'
+}
+
+function triggerAttachmentPicker() {
+  if (nexusDataSourceMode.value !== 'real') {
+    showToast('演示模式不支持上传真实资料，请切换真实数据', 'error')
+    return
+  }
+  attachmentInput.value?.click()
+}
+
+async function onAttachmentFileChange(event) {
+  const files = Array.from(event?.target?.files || [])
+  if (event?.target) event.target.value = ''
+  if (!files.length || !currentSession.value) return
+  const list = sessionAttachmentIds(currentSession.value)
+  for (const file of files.slice(0, 5)) {
+    const ext = (file.name.split('.').pop() || '').toLowerCase()
+    if (!ATTACHMENT_ACCEPT_EXTS.includes(ext)) {
+      showToast(`不支持的格式：${file.name}`, 'error')
+      continue
+    }
+    if (file.size > ATTACHMENT_MAX_BYTES) {
+      showToast(`文件过大（20MiB 上限）：${file.name}`, 'error')
+      continue
+    }
+    const entry = {
+      attachment_id: '', filename: file.name, ext,
+      status: 'uploading', error_code: '', error_detail: '',
+      size_bytes: file.size,
+    }
+    list.push(entry)
+    persistSessions()
+    try {
+      const res = await uploadNexusAttachment(file, currentSession.value.id)
+      Object.assign(entry, {
+        attachment_id: res?.attachment_id || '',
+        status: res?.status || 'unknown',
+        error_code: res?.error_code || '',
+        error_detail: res?.error_detail || '',
+        size_bytes: res?.size_bytes ?? file.size,
+      })
+    } catch (err) {
+      entry.status = 'failed'
+      entry.error_code = err?.errorCode || ''
+      entry.error_detail = err?.message || '上传失败'
+    }
+    persistSessions()
+  }
+}
+
+async function removeSessionAttachment(entry) {
+  const list = sessionAttachmentIds(currentSession.value)
+  if (entry?.attachment_id) {
+    try {
+      await deleteNexusAttachment(entry.attachment_id)
+    } catch {
+      /* best-effort：服务端删失败也先清本地引用，避免卡死 */
+    }
+  }
+  const i = list.indexOf(entry)
+  if (i >= 0) list.splice(i, 1)
+  persistSessions()
+}
+
+function readyAttachmentIds(session) {
+  return sessionAttachmentIds(session)
+    .filter((a) => a.attachment_id && (a.status === 'ready' || a.status === 'partial'))
+    .map((a) => a.attachment_id)
+}
+
+// ── NX-E1 恢复：刷新/换设备找回原实验，只恢复轮询，不重新提交 ──
+async function restoreSessionRuns(session) {
+  if (!session || session._runsRestored || nexusDataSourceMode.value !== 'real') return
+  session._runsRestored = true
+  let runs = []
+  try {
+    const res = await listNexusRuns(session.id)
+    runs = Array.isArray(res?.items) ? res.items : []
+  } catch {
+    return
+  }
+  if (!Array.isArray(session.turns)) session.turns = []
+  for (const run of runs) {
+    if (!run?.job_id) continue
+    const liveStatus = run.live?.status || run.status || 'unknown'
+    const terminal = ['succeeded', 'failed', 'rejected'].includes(liveStatus)
+    const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
+    if (existing) {
+      // 本地已有轮询中的 turn 且远端仍在跑 → 续上轮询（startReproPolling 幂等）。
+      if (!['succeeded', 'failed', 'rejected'].includes(existing.reproRun.status)
+        && ['queued', 'running'].includes(liveStatus)) {
+        startReproPolling(existing, run.job_id)
+      }
+      continue
+    }
+    // 孤儿 run（换设备/刷新丢本地 turn）：建恢复 turn 展示，不重新提交；
+    // reportRequested=true 抑制自动补报告（避免重复产物），用户可手动补领。
+    const turn = {
+      question: `（已恢复）${run.preset_id || '实验'}复现`,
+      answer: '',
+      toolEvents: [],
+      papers: [],
+      artifacts: [],
+      reproductionPreset: null,
+      tokenCount: null,
+      durationMs: null,
+      failure: '',
+      restoredRun: true,
+      createdAt: null,
+      reproRun: {
+        job_id: run.job_id,
+        status: ['queued', 'running', 'succeeded', 'failed', 'rejected'].includes(liveStatus)
+          ? liveStatus : 'unknown',
+        stages: [],
+        verdict: null,
+        comparison: [],
+        reportRequested: true,
+        pollExhausted: false,
+        code: run.live?.code || null,
+        detail: run.live?.note || run.live?.detail || null,
+        seedUsed: false,
+        reportError: null,
+      },
+    }
+    session.turns.push(turn)
+    if (['queued', 'running'].includes(liveStatus)) {
+      startReproPolling(turn, run.job_id)
+    }
+  }
+  persistSessions()
 }
 
 function togglePinSession(s) {
@@ -513,10 +669,24 @@ const REPRO_STATUS_LABELS = {
   succeeded: '已完成',
   failed: '失败',
   rejected: '已拒绝',
+  unknown: '状态未知',
 }
 
 function reproStatusLabel(run) {
   return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
+}
+
+// NX-G2：审批状态文案（pending/approved/consumed/rejected/expired）。
+const APPROVAL_STATUS_LABELS = {
+  pending: '待批准',
+  approved: '已批准',
+  consumed: '已执行',
+  rejected: '已拒绝',
+  expired: '已过期',
+}
+
+function approvalStatusLabel(ap) {
+  return APPROVAL_STATUS_LABELS[ap?.status] || ap?.status || '未知'
 }
 
 function stopReproPolling(jobId) {
@@ -570,6 +740,80 @@ function startReproPolling(turn, jobId) {
   void tick()
 }
 
+// ── NX-G2 执行审批：决定 + 手工执行（UI 只提交决定，放行由服务端核销）──
+async function decideApprovalFor(turn, decision) {
+  const ap = turn?.approval
+  if (!ap?.approval_id || ap.deciding || ap.executing) return
+  // 已批准后重复点击"批准"：直接走执行（服务端 decide 幂等，但 consumed 票据
+  // 会 409；前端短路更符合"批准一次、执行一次"的直觉）。
+  if (decision === 'approved' && ap.status === 'approved') {
+    await executeApprovalFor(turn)
+    return
+  }
+  if (ap.status !== 'pending') return
+  ap.deciding = true
+  ap.error = null
+  try {
+    const res = await decideNexusApproval(ap.approval_id, decision)
+    const next = res?.approval || {}
+    if (next?.status) ap.status = next.status
+    if (decision === 'rejected' && ap.status === 'pending') ap.status = 'rejected'
+    persistSessions()
+    if (decision === 'approved' && ap.status === 'approved') {
+      await executeApprovalFor(turn)
+    }
+  } catch (err) {
+    ap.error = err?.errorCode
+      ? `${err.errorCode}：${err?.message || '审批失败，未执行任何操作'}`
+      : (err?.message || '审批失败，未执行任何操作')
+  } finally {
+    ap.deciding = false
+  }
+}
+
+async function executeApprovalFor(turn) {
+  const ap = turn?.approval
+  if (!ap?.approval_id || ap.executing) return
+  ap.executing = true
+  ap.error = null
+  try {
+    const res = await executeApprovedRepro(ap.approval_id, activeSessionId.value || 'default')
+    const job = res?.job
+    if (job?.job_id && !turn.reproRun) {
+      turn.reproRun = {
+        job_id: job.job_id,
+        status: job.status || 'queued',
+        stages: [],
+        verdict: null,
+        comparison: [],
+        reportRequested: false,
+        pollExhausted: false,
+        code: null,
+        detail: null,
+        seedUsed: false,
+        reportError: null
+      }
+      persistSessions()
+      startReproPolling(turn, job.job_id)
+    } else if (!job?.job_id) {
+      ap.error = res?.detail || res?.code || '执行未返回作业，未启动实验'
+    }
+  } catch (err) {
+    ap.error = err?.errorCode
+      ? `${err.errorCode}：${err?.message || '执行失败'}`
+      : (err?.message || '执行失败')
+  } finally {
+    ap.executing = false
+  }
+}
+
+// NX-E1：恢复 turn 手动补领报告（自动补会重复产物；手动一次由用户控制）。
+async function claimRestoredReport(turn) {
+  if (!turn?.reproRun) return
+  turn.reproRun.reportRequested = false
+  await requestReproReportFor(turn, turn.reproRun.job_id)
+}
+
 async function requestReproReportFor(turn, jobId) {
   if (!turn?.reproRun || turn.reproRun.reportRequested) return
   turn.reproRun.reportRequested = true
@@ -618,15 +862,22 @@ function switchMode(key) {
 
 /**
  * 能力三态渲染：一律从 nexusCapabilities.js 读取，禁止模板硬编码。
- * ready 能力常驻首屏 Chips；wired / unwired 收进「待接入」popover，
- * 诚实性不丢（状态单一真相源不变），但首屏不再被负面标签刷屏。
+ * NX-G3：首屏 Chips 消费 effective（manifest ∩ mode ∩ 依赖健康），不再只看
+ * 静态 ready；演示数据源无真实 health 时退回清单原文。
  */
+const effectiveCapabilities = computed(() =>
+  resolveEffectiveCapabilities({
+    mode: activeMode.value,
+    health: health.value,
+    trustManifest: nexusDataSourceMode.value === 'demo',
+  })
+)
 const readyCapabilities = computed(() =>
-  capabilitiesForMode(activeMode.value).filter((c) => c.state === CAPABILITY_STATE.READY)
+  effectiveCapabilities.value.filter((c) => c.effective === EFFECTIVE_STATE.READY)
 )
 
 const pendingCapabilities = computed(() =>
-  capabilitiesForMode(activeMode.value).filter((c) => c.state !== CAPABILITY_STATE.READY)
+  effectiveCapabilities.value.filter((c) => c.effective !== EFFECTIVE_STATE.READY)
 )
 
 function chipLabel(cap) {
@@ -634,8 +885,10 @@ function chipLabel(cap) {
 }
 
 function capHint(id) {
-  const cap = capabilitiesForMode(activeMode.value).find((c) => c.id === id)
+  const cap = effectiveCapabilities.value.find((c) => c.id === id)
   if (!cap) return ''
+  // NX-G3：effective 原因优先（如"依赖不可达"），回退到清单原文。
+  if (cap.effectiveNote) return cap.effectiveNote
   if (cap.state === CAPABILITY_STATE.WIRED) return cap.wiredHint || ''
   if (cap.state === CAPABILITY_STATE.UNWIRED) return cap.unwiredHint || ''
   return ''
@@ -649,12 +902,17 @@ function capHint(id) {
  * 同一状态两套说法，用户无法判断差别。改文案只动展示层，
  * nexusCapabilities.js 的数据结构不变。 */
 function capStateText(cap) {
+  // NX-G3：effective 优先——依赖不可达/状态未知时不沿用永久 Ready 文案。
+  if (cap.effective === EFFECTIVE_STATE.DEGRADED) return '部分可用'
+  if (cap.effective === EFFECTIVE_STATE.UNKNOWN) return '状态未知'
   if (cap.state === CAPABILITY_STATE.READY) return '已生效'
   if (cap.state === CAPABILITY_STATE.WIRED) return '已连接 · 未生效'
   return '未建立'
 }
 
 function capStateTagText(cap) {
+  if (cap.effective === EFFECTIVE_STATE.DEGRADED) return '部分可用'
+  if (cap.effective === EFFECTIVE_STATE.UNKNOWN) return '状态未知'
   if (cap.state === CAPABILITY_STATE.READY) return '已生效'
   if (cap.state === CAPABILITY_STATE.WIRED) return '已连接 · 未生效'
   return '未建立'
@@ -818,6 +1076,23 @@ function noteActivityArrived() {
   if (!detailDrawerOpen.value || activeDetailTab.value !== 'activity') {
     unseenActivity.value += 1
   }
+}
+
+// ── 模型选择（模型网关 P0）：选项唯一来源 = /health models 清单
+// （服务端 allowlist 投影）；选择随请求透传，服务端强制校验。
+// localStorage 只记偏好，不做授权；清单外 id 发出去会被 400 打回。
+const selectedModel = ref(localStorage.getItem('nexus_model') || '')
+const availableModels = computed(() => health.value?.models?.available || [])
+const effectiveModel = computed(() => {
+  const list = availableModels.value
+  if (!list.length) return ''
+  if (list.some((m) => m.id === selectedModel.value)) return selectedModel.value
+  return health.value?.models?.default || list[0].id
+})
+function selectModel(id) {
+  selectedModel.value = id || ''
+  if (id) localStorage.setItem('nexus_model', id)
+  else localStorage.removeItem('nexus_model')
 }
 
 // 健康状态
@@ -1025,15 +1300,34 @@ function handleEvent(turn, { event, data }) {
     }
 
     // 解析复现执行提交（M4-B2）：job 提交成功 → 受控轮询状态
+    // NX-G2：approval_required → 审批卡（暂停，不执行）；approval_denied → 如实失败。
     if (data?.name === 'run_reproduction' && data?.status !== 'error') {
-      let job = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
-      if (!job && data?.content) {
+      let payload = null
+      if (data?.content) {
         try {
-          job = JSON.parse(data.content)?.job
+          payload = JSON.parse(data.content)
         } catch (e) {
-          job = null
+          payload = null
         }
       }
+      if (payload?.status === 'approval_required' && payload?.approval?.approval_id) {
+        const incoming = payload.approval.approval_id
+        if (!turn.approval || turn.approval.approval_id !== incoming) {
+          turn.approval = {
+            ...payload.approval,
+            deciding: false,
+            executing: false,
+            error: null,
+          }
+          persistSessions()
+        }
+      } else if (payload?.status === 'approval_denied') {
+        turn.failure = payload?.code
+          ? `${payload.code}：${payload?.detail || '复现未获批准，未执行'}`
+          : '复现未获批准，未执行'
+      } else {
+        let job = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
+        if (!job && payload?.job) job = payload.job
       if (job?.job_id && job.status !== 'rejected' && !turn.reproRun) {
         turn.reproRun = {
           job_id: job.job_id,
@@ -1050,6 +1344,7 @@ function handleEvent(turn, { event, data }) {
         }
         persistSessions()
         startReproPolling(turn, job.job_id)
+      }
       }
     }
 
@@ -1082,6 +1377,11 @@ function handleEvent(turn, { event, data }) {
 async function send() {
   const msg = draft.value.trim()
   if (!msg || streaming.value || !currentSession.value) return
+  // NX-A1：有附件仍在上传时拦截发送（避免引用不完整），提示等完成。
+  if (sessionAttachmentIds(currentSession.value).some((a) => a.status === 'uploading')) {
+    showToast('附件上传中，请稍候再发送', 'error')
+    return
+  }
   draft.value = ''
   await runTurn(msg)
 }
@@ -1135,10 +1435,15 @@ async function runTurn(message) {
 
   try {
     await dispatchNexusMessage({
-      message: msg,
+      // 修复：原先误写 message: msg（msg 不在作用域，真实链路必抛
+      // ReferenceError）；与模型透传同批修正。
+      message,
       sessionId: currentSession.value.id,
       mode: activeMode.value,
       courseId: currentSession.value.courseId ?? null,
+      model: effectiveModel.value || null,
+      // NX-A1：仅发送就绪附件 id；绑定与验主在服务端完成。
+      attachmentIds: readyAttachmentIds(currentSession.value),
       signal: abortController.signal,
       onEvent: (evt) => handleEvent(turn, evt),
     })
@@ -1222,6 +1527,12 @@ function openReproductionModal(preset) {
  */
 function confirmStartReproduction() {
   reproModalOpen.value = false
+  // NX-G1：General 模式结构性不绑定 run_reproduction，确认消息发出去也只会
+  // 被模型拒绝——在此直接拦截，给出确定恢复动作（切 Research）。
+  if (activeMode.value !== NEXUS_MODES.RESEARCH) {
+    showToast('复现执行仅在 Nexus Research 模式可用', 'error')
+    return
+  }
   const preset = selectedReproPreset.value
   const name = preset?.preset_id || 'nanoGPT'
 
@@ -1926,12 +2237,56 @@ const emptySuggestions = computed(() =>
                     </li>
                   </ol>
                 </div>
-                <div class="nx-rc-footer">
+                <!-- NX-G1：执行入口仅 Research。规划卡可从历史残留（切模式后），
+                     但 General 下不得出现可点的复现执行按钮。 -->
+                <div v-if="activeMode === NEXUS_MODES.RESEARCH" class="nx-rc-footer">
                   <SfxButton variant="secondary" size="sm" @click="openReproductionModal(turn.reproductionPreset)">
                     <template #icon><FlaskConical :size="13" /></template>
                     尝试复现
                   </SfxButton>
                 </div>
+                <div v-else class="nx-rc-footer">
+                  <span class="nx-rl-note">复现执行仅在 Nexus Research 模式可用，请切换模式后继续。</span>
+                </div>
+              </div>
+
+              <!-- NX-G2 执行审批卡：提案展示 + 本人批准/拒绝。批准前零执行；
+                   放行由服务端票据核销决定，本卡只提交决定。 -->
+              <div v-if="turn.approval" class="nx-repro-live">
+                <div class="nx-rl-head">
+                  <FlaskConical :size="15" class="nx-rl-icon" />
+                  <span class="nx-rl-title">复现执行审批 · {{ turn.approval.preset_id }}</span>
+                  <span class="nx-rl-status" :class="turn.approval.status">{{ approvalStatusLabel(turn.approval) }}</span>
+                </div>
+                <div class="nx-rs-meta">
+                  <span>{{ turn.approval.repo_url }}</span>
+                  <span>许可 {{ turn.approval.repo_license }}</span>
+                </div>
+                <p class="nx-rl-note">
+                  计划指纹 {{ String(turn.approval.plan_hash || '').slice(0, 12) }}…
+                  · 预算约 {{ turn.approval.budget?.estimated_minutes ?? '—' }} 分钟 /
+                  {{ turn.approval.budget?.max_steps ?? '—' }} 步
+                  · 批准后才提交执行，未批准不会运行任何代码
+                </p>
+                <div v-if="turn.approval.status === 'pending'" class="nx-answer-actions">
+                  <SfxButton
+                    variant="primary"
+                    size="sm"
+                    :loading="turn.approval.deciding || turn.approval.executing"
+                    @click="decideApprovalFor(turn, 'approved')"
+                  >
+                    批准并执行
+                  </SfxButton>
+                  <SfxButton
+                    variant="secondary"
+                    size="sm"
+                    :disabled="turn.approval.deciding || turn.approval.executing"
+                    @click="decideApprovalFor(turn, 'rejected')"
+                  >
+                    拒绝
+                  </SfxButton>
+                </div>
+                <p v-if="turn.approval.error" class="nx-turn-failure">{{ turn.approval.error }}</p>
               </div>
 
               <!-- 复现执行状态卡：确认不等于执行，未接入时必须如实报出错误码 -->
@@ -1976,6 +2331,17 @@ const emptySuggestions = computed(() =>
                   失败语义：{{ turn.reproRun.code }}{{ turn.reproRun.detail ? ' — ' + turn.reproRun.detail : '' }}
                 </p>
                 <p v-if="turn.reproRun.pollExhausted" class="nx-rl-note">轮询已达上限，可刷新查看最新状态。</p>
+                <!-- NX-E1：恢复 turn（换设备/刷新）成功态无本地报告时，手动补领。
+                     自动补会重复产物；手动一次幂等由用户控制。 -->
+                <div
+                  v-if="turn.restoredRun && turn.reproRun.status === 'succeeded' && !turn.reproRun.verdict"
+                  class="nx-answer-actions"
+                >
+                  <SfxButton variant="secondary" size="sm" @click="claimRestoredReport(turn)">
+                    补领复现报告
+                  </SfxButton>
+                  <span class="nx-rl-note">该作业在别处完成，报告可能已在产物面板</span>
+                </div>
                 <div
                   v-if="turn.reproRun.verdict"
                   class="nx-rl-verdict"
@@ -2073,6 +2439,24 @@ const emptySuggestions = computed(() =>
       <!-- 底部 Composer -->
       <footer class="nx-composer-box">
         <div class="nx-composer-inner">
+          <!-- NX-A1 附件 chips：就绪/部分解析随消息引用；失败可删重传 -->
+          <div
+            v-if="sessionAttachmentIds(currentSession).length"
+            class="nx-attach-chips"
+          >
+            <span
+              v-for="a in sessionAttachmentIds(currentSession)"
+              :key="a.attachment_id || a.filename"
+              class="nx-attach-chip"
+              :class="a.status"
+              :title="a.error_detail || a.filename"
+            >
+              <Paperclip :size="11" />
+              <span class="nx-attach-name">{{ a.filename }}</span>
+              <span class="nx-attach-state">{{ attachmentStateLabel(a) }}</span>
+              <X :size="11" class="nx-attach-remove" @click="removeSessionAttachment(a)" />
+            </span>
+          </div>
           <textarea
             v-model="draft"
             class="nx-composer-textarea"
@@ -2083,7 +2467,43 @@ const emptySuggestions = computed(() =>
           />
 
           <div class="nx-composer-toolbar">
+            <div class="nx-toolbar-left">
+              <!-- NX-A1 真实上传入口（此前为无行为死控件，已移除；现接通后恢复） -->
+              <SfxButton
+                variant="tertiary"
+                size="sm"
+                title="上传资料（pdf/docx/图片/xlsx/pptx/ppt/doc）"
+                :disabled="streaming"
+                @click="triggerAttachmentPicker"
+              >
+                <template #icon><Paperclip :size="13" /></template>
+                附件
+              </SfxButton>
+              <input
+                ref="attachmentInput"
+                type="file"
+                multiple
+                accept=".pdf,.docx,.jpg,.jpeg,.png,.xlsx,.pptx,.ppt,.doc"
+                class="nx-file-hidden"
+                @change="onAttachmentFileChange"
+              />
+            </div>
+            <!-- 模型网关 P0：下拉选项 = /health models 清单投影；单模型时如实只显示一个。
+                 演示数据源无真实清单，退回静态徽标（不伪造可选项）。 -->
+            <select
+              v-if="nexusDataSourceMode === 'real' && availableModels.length"
+              :value="effectiveModel"
+              class="nx-model-select"
+              title="选择本次对话的模型（服务端 allowlist 校验）"
+              :disabled="streaming"
+              @change="selectModel($event.target.value)"
+            >
+              <option v-for="m in availableModels" :key="m.id" :value="m.id">
+                {{ m.label }}{{ m.default ? '（默认）' : '' }}
+              </option>
+            </select>
             <span
+              v-else
               class="nx-engine-badge"
               title="引擎由 Nexus Runtime 配置（NEXUS_LLM_MODEL）；编排层为 Nexus Agent 工作流"
             >
@@ -2176,8 +2596,9 @@ const emptySuggestions = computed(() =>
             <div class="nx-pane-section">
               <h4 class="nx-section-eyebrow">能力状态</h4>
             <div class="nx-cap-list">
+              <!-- NX-G3：能力状态列表同样消费 effective，与首屏 Chips 同一真相源。 -->
               <div
-                v-for="cap in capabilitiesForMode(activeMode)"
+                v-for="cap in effectiveCapabilities"
                 :key="cap.id"
                 class="nx-cap-row"
                 :class="cap.state"
@@ -4173,6 +4594,64 @@ const emptySuggestions = computed(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 模型网关 P0：原生 select，只做最小外观收敛（令牌纪律，不引入新色板）。 */
+.nx-model-select {
+  max-width: 220px;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  background: transparent;
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+/* NX-A1 附件 chips：状态即文本，不引入新色板；失败态用现有 danger 文案色。 */
+.nx-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.nx-file-hidden {
+  display: none;
+}
+
+.nx-attach-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 6px 2px 0;
+}
+
+.nx-attach-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  padding: 2px 6px;
+}
+
+.nx-attach-chip .nx-attach-name {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-attach-chip.failed .nx-attach-state {
+  color: var(--text-danger, #c0392b);
+}
+
+.nx-attach-remove {
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 .nx-toolbar-right {

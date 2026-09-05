@@ -898,14 +898,75 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
 
   assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
 
-  // M1-F3：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
-  // Runtime：general 结构性排除 research-only 三工具；前端 NEXUS_MODE_CONFIG
-  // 的 tools 列表不得声明超出对应模式工具面的能力。
+  // NX-G2：执行审批 client 与后端路由一一对应（批准/查询/手工执行）。
+  assert.equal(extractFirstPath(src, 'getNexusApproval'), '/nexus/approvals/${encodeURIComponent(approvalId)}')
+  assert.match(backend, /@router\.get\("\/approvals\/\{approval_id\}"\)/)
+  assert.match(src, /decideNexusApproval[\s\S]*?\/nexus\/approvals\/\$\{encodeURIComponent\(approvalId\)\}\/decide/)
+  assert.match(backend, /@router\.post\("\/approvals\/\{approval_id\}\/decide"\)/)
+  assert.match(src, /executeApprovedRepro[\s\S]*?\/nexus\/repro\/execute/)
+  assert.match(backend, /@router\.post\("\/repro\/execute"\)/)
+
+  // NX-G3：effective capability 计算与服务端健康快照同源。
+  const caps = read('frontend/src/api/nexusCapabilities.js')
+  assert.match(caps, /export function resolveEffectiveCapabilities\(\{ mode, health/)
+  assert.match(caps, /General 永无 NexusLab/)
+  assert.match(caps, /EFFECTIVE_STATE/)
+  const runtime = read('nexus/src/nexus/main.py')
+  assert.match(runtime, /"checks": await _dependency_checks\(\)/)
+  assert.match(runtime, /async def _dependency_checks/)
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(page, /resolveEffectiveCapabilities\(\{/)
+  assert.match(page, /effectiveCapabilities\.value\.filter/)
+
+  // 模型网关 P0：服务端 allowlist 是唯一真相源，前端只做清单投影＋透传。
+  const cfg = read('nexus/src/nexus/config.py')
+  assert.match(cfg, /llm_models_manifest/)
+  const proxy = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  assert.match(proxy, /model: str \| None = Field\(default=None, max_length=64\)/)
+  assert.match(src, /if \(model\) body\.model = model/)
+  assert.match(page, /nx-model-select/)
+  assert.match(page, /effectiveModel\.value \|\| null/)
+
+  // NX-A1：附件 client 与后端路由一一对应（上传/列表/详情/下载/删除/绑定）。
+  assert.match(src, /uploadNexusAttachment[\s\S]*?\/nexus\/attachments/)
+  assert.match(backend, /@router\.post\("\/attachments"\)/)
+  assert.match(src, /listNexusAttachments[\s\S]*?\/nexus\/attachments/)
+  assert.match(backend, /@router\.get\("\/attachments"\)/)
+  assert.match(src, /deleteNexusAttachment[\s\S]*?\/nexus\/attachments\/\$\{encodeURIComponent\(attachmentId\)\}/)
+  assert.match(backend, /@router\.delete\("\/attachments\/\{attachment_id\}"\)/)
+  assert.match(backend, /@router\.get\("\/attachments\/\{attachment_id\}\/download"\)/)
+  assert.match(backend, /@router\.post\("\/attachments\/\{attachment_id\}\/bind"\)/)
+  assert.match(src, /attachment_ids/)
+  assert.match(backend, /attachment_ids: list\[str\]/)
+  assert.match(page, /triggerAttachmentPicker/)
+  assert.match(page, /restoreSessionRuns/)
+  assert.match(page, /nx-attach-chips/)
+
+  // NX-E1：run 恢复查询 client/代理/内部登记一一对应；Runtime 登记 linkage。
+  assert.match(src, /listNexusRuns[\s\S]*?\/nexus\/runs/)
+  assert.match(backend, /@router\.get\("\/runs"\)/)
+  assert.match(backend, /@router\.get\("\/runs\/\{run_id\}"\)/)
+  const internal = read('backend/app/api/v1/endpoints/nexus_internal.py')
+  assert.match(internal, /@router\.post\("\/repro-runs"\)/)
+  assert.match(internal, /@router\.get\("\/attachments\/\{attachment_id\}\/content"\)/)
+  const reproTool = read('nexus/src/nexus/tools/reproduction.py')
+  assert.match(reproTool, /_record_run_linkage/)
+
+  // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
+  // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。
+  // 前端 NEXUS_MODE_CONFIG 的 tools 列表必须等于对应模式的真实产品工具面
+  // （General 5 项 / Research 8 项）。
   const agentSrc = read('nexus/src/nexus/agent.py')
+  assert.match(agentSrc, /normalize_model_name/)
+  assert.match(agentSrc, /InvalidNexusModel/)
+  assert.match(runtime, /_require_model\(request\.model\)/)
+  assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
   assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",?\s*\}\s*\)/)
   const cfgSrc = read('frontend/src/api/nexusAdapter.js')
-  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search'\]/)
-  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction'\]/)
+  assert.match(cfgSrc, /model = null,/)
+  assert.match(cfgSrc, /model,/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment'\]/)
 
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
@@ -973,9 +1034,9 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // 页面：无权限整页拦截并说明开通路径
   assert.match(page, /v-if="counter\.canUseNexus"/)
   assert.match(page, /暂无 Nexus AI 使用权限/)
-  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×2）都走 require_nexus_use
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×2/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 9)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 20)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

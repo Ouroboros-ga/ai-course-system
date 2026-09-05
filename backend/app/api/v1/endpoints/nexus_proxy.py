@@ -18,9 +18,10 @@ import logging
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
+from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.exceptions import reject, unified_response
@@ -78,12 +79,81 @@ class NexusChatRequest(BaseModel):
 
     M1-B1（D2）：mode 与 context 不再被本层 pydantic 静默丢弃——
     ``model_dump()`` 全量透传到 Runtime，由 Runtime 白名单归一 mode。
+    NX-G1（v1.3 A1）：本层先做同样的严格校验（别名表镜像
+    ``nexus.agent``，两进程不共享 Python 环境故不能 import），未知 mode
+    在触达 Runtime（启动模型/SSE）前以 400 INVALID_NEXUS_MODE 拒绝。
+    模型网关 P0：model 只透传不校验——可选模型清单是动态服务端配置，
+    唯一真相源在 Runtime（/health models）；本层硬编码只会漂移。
+    未知模型由 Runtime 以 400 INVALID_NEXUS_MODEL 拒绝并原样透传。
     """
 
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default="default", max_length=128)
     mode: str | None = Field(default=None, max_length=32)
     context: dict[str, Any] | None = Field(default=None)
+    model: str | None = Field(default=None, max_length=64)
+    # NX-A1：本次对话引用的附件 id（≤5）。本层逐个验 owner 并原子绑定到
+    # session 后才透传；Runtime 侧只读执行上下文，不再信任模型传参。
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+
+
+# NX-G1：mode 别名表镜像（见 NexusChatRequest 注释；与 nexus.agent 保持同构，
+# 改动时两边同步）。None 缺字段→general；未知（含空串/空白）→ 400。
+_NEXUS_GENERAL_ALIASES = frozenset({"general", "nexus_general"})
+_NEXUS_RESEARCH_ALIASES = frozenset({"research", "nexus_research"})
+
+
+def _require_valid_mode(raw: str | None) -> str:
+    """校验请求 mode；非法值 reject 400 INVALID_NEXUS_MODE。"""
+    if raw is None:
+        return "general"
+    cleaned = raw.strip().lower() if isinstance(raw, str) else ""
+    if cleaned in _NEXUS_GENERAL_ALIASES:
+        return "general"
+    if cleaned in _NEXUS_RESEARCH_ALIASES:
+        return "research"
+    reject(400, "INVALID_NEXUS_MODE", f"未知的 Nexus 模式：{raw!r}（仅支持 general/research）")
+
+
+def _require_attachments(
+    session, current_user: dict, session_id: str, attachment_ids: list[str]
+) -> list[str]:
+    """NX-A1：对话引用附件的验主 + 原子绑定（执行前完成，不依赖 Runtime）。
+
+    - 每个 id 验 owner（非 owner/不存在 → 404，不区分）；
+    - 未绑定 → 绑定到本 session；已绑他会话 → 403；
+    - 不可用状态（failed/expired/deleted）→ 422。
+    返回清洗后的 id 列表（去重保序），由调用方透传给 Runtime。
+    """
+    from app.services import nexus_attachment_service
+    from app.services.nexus_attachment_parse import AttachmentParseError
+
+    user_id = _artifact_user_id(current_user)
+    session_id = (session_id or "").strip()[:128] or "default"
+    clean: list[str] = []
+    for raw in attachment_ids or []:
+        aid = (raw or "").strip()[:16]
+        if not aid or aid in clean:
+            continue
+        row = nexus_attachment_service.get_owned_attachment(
+            session, user_id=user_id, attachment_id=aid
+        )
+        if row is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在")
+        try:
+            nexus_attachment_service.bind_session(
+                session, user_id=user_id, attachment_id=aid, session_id=session_id
+            )
+        except AttachmentParseError as error:
+            if error.code == "ATTACHMENT_SESSION_MISMATCH":
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN, detail=error.code
+                ) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error.code
+            ) from error
+        clean.append(aid)
+    return clean
 
 
 def _runtime_base_url() -> str:
@@ -196,9 +266,14 @@ async def nexus_health(
 async def nexus_chat(
     payload: NexusChatRequest,
     request: Request,
+    session: Session = Depends(get_session),
     current_user: dict = Depends(require_nexus_use),
 ):
     """非流式对话：等待 Agent 循环结束后一次性返回最终答复与工具事件。"""
+    _require_valid_mode(payload.mode)
+    payload.attachment_ids = _require_attachments(
+        session, current_user, payload.session_id, payload.attachment_ids
+    )
     base = _runtime_base_url()
     if not base:
         return _not_configured()
@@ -462,10 +537,398 @@ async def nexus_repro_job_report(
     return _passthrough(response)
 
 
+# ---------------------------------------------------------------------------
+# NX-G2：执行审批代理——批准/查询走 Runtime 审批存储，身份由本层门控注入。
+# 本层不解析票据语义：批准是否有效由 Runtime 原子核销裁决，此处只做
+# require_nexus_use 门控与用户身份透传（跨用户/过期/篡改由上游按码拒绝）。
+# ---------------------------------------------------------------------------
+
+
+class NexusApprovalDecision(BaseModel):
+    decision: str = Field(default="approved", max_length=16)
+
+
+class NexusApprovalExecute(BaseModel):
+    approval_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(default="default", max_length=128)
+
+
+async def _proxy_json(
+    request: Request,
+    current_user: dict,
+    method: str,
+    upstream_path: str,
+    body: dict | None = None,
+):
+    """通用 JSON 透传（审批端点族）：fail-closed + 上游语义原样返回。"""
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+    timeout = httpx.Timeout(
+        settings.NEXUS_RUNTIME_TIMEOUT_S, connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.request(
+                method,
+                f"{base}{upstream_path}",
+                json=body,
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("Nexus approval proxy timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("Nexus approval proxy unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
+@router.get("/approvals/{approval_id}")
+async def nexus_approval_status(
+    approval_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """审批状态查询代理（NX-G2）：本人查询，跨用户上游 404。"""
+    return await _proxy_json(
+        request, current_user, "GET", f"/api/v1/nexus/approvals/{approval_id}"
+    )
+
+
+@router.post("/approvals/{approval_id}/decide")
+async def nexus_approval_decide(
+    approval_id: str,
+    payload: NexusApprovalDecision,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """批准/拒绝代理（NX-G2）：决定动作本人发起，上游原子转换。"""
+    return await _proxy_json(
+        request,
+        current_user,
+        "POST",
+        f"/api/v1/nexus/approvals/{approval_id}/decide",
+        body=payload.model_dump(),
+    )
+
+
+@router.post("/repro/execute")
+async def nexus_repro_execute(
+    payload: NexusApprovalExecute,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """手工执行代理（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用
+    Runtime 侧同一核销核心；幂等语义由上游保证（重试返回原 job）。"""
+    return await _proxy_json(
+        request,
+        current_user,
+        "POST",
+        "/api/v1/nexus/repro/execute",
+        body=payload.model_dump(),
+    )
+
+
+# ---------------------------------------------------------------------------
+# NX-A1：附件入口（Backend 原生路由，非透传）——上传/状态/删除/鉴权下载。
+# 元数据进 nexus_checkpoints.nexus_attachments，字节进对象存储；
+# 内容永不进入课程知识域，只进会话上下文（经 chat attachment_ids 绑定）。
+# ---------------------------------------------------------------------------
+
+
+def _attachment_public(row: dict[str, Any]) -> dict[str, Any]:
+    """公开投影：不含 object_key/parsed_key 等内部定位（防越权拼装）。"""
+    return {
+        "attachment_id": row["attachment_id"],
+        "filename": row["filename"],
+        "ext": row["ext"],
+        "mime": row["mime"],
+        "size_bytes": row["size_bytes"],
+        "sha256": row["sha256"],
+        "session_id": row["session_id"],
+        "status": row["status"],
+        "error_code": row["error_code"],
+        "error_detail": row["error_detail"],
+        "stats": row["stats"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "expires_at": row["expires_at"],
+        "download_path": f"/api/v1/nexus/attachments/{row['attachment_id']}/download",
+    }
+
+
+@router.post("/attachments")
+async def nexus_attachment_upload(
+    file: UploadFile = File(...),
+    session_id: str = Form(default=""),
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """上传附件（multipart）：校验→配额→解析→ready/partial/failed 同步返回。
+
+    八格式：pdf/docx/jpg/jpeg/png/xlsx/pptx/ppt/doc。DOC/PPT 无 LibreOffice
+    时如实 failed（CONVERT_UNAVAILABLE），目标保留。解析失败同样落库 failed
+    行（错误码明确），不抛 500——调用方可凭错误码决定重试/删除/换格式。
+    """
+    import asyncio
+
+    from app.services import nexus_attachment_service
+    from app.services.nexus_attachment_parse import AttachmentParseError
+
+    try:
+        content = await file.read()
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="ATTACHMENT_READ_FAILED"
+        ) from error
+    if len(content) == 0:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="ATTACHMENT_EMPTY")
+    try:
+        # 解析预算内为秒级；仍放线程池，避免阻塞事件循环。
+        row = await asyncio.to_thread(
+            nexus_attachment_service.submit_attachment,
+            session,
+            user_id=_artifact_user_id(current_user),
+            filename=file.filename or "attachment",
+            data=content,
+            session_id=(session_id or "").strip()[:128],
+        )
+    except AttachmentParseError as error:
+        code_to_status = {
+            "ATTACHMENT_TYPE_UNSUPPORTED": 422,
+            "ATTACHMENT_EMPTY": 422,
+            "ATTACHMENT_TOO_LARGE": 413,
+            "ATTACHMENT_QUOTA_FILES": 429,
+            "ATTACHMENT_QUOTA_BYTES": 429,
+        }
+        raise HTTPException(
+            status_code=code_to_status.get(error.code, 422), detail=error.code
+        ) from error
+    return JSONResponse(status_code=200, content=_attachment_public(row))
+
+
+@router.get("/attachments")
+async def nexus_attachment_list(
+    session_id: str = "",
+    limit: int = 50,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """我的附件列表（更新时间倒序；可按会话过滤未绑定+本会话）。"""
+    from app.services import nexus_attachment_service
+
+    items = nexus_attachment_service.list_attachments(
+        session, user_id=_artifact_user_id(current_user),
+        session_id=session_id.strip()[:128] or None, limit=limit,
+    )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"items": [_attachment_public(r) for r in items]},
+    )
+
+
+@router.get("/attachments/{attachment_id}")
+async def nexus_attachment_detail(
+    attachment_id: str,
+    include_blocks: bool = False,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """附件元数据；include_blocks=1 附带预算内解析 blocks（文本预览用）。"""
+    from app.services import nexus_attachment_service
+    from app.services.nexus_attachment_parse import AttachmentParseError
+
+    row = nexus_attachment_service.get_owned_attachment(
+        session, user_id=_artifact_user_id(current_user), attachment_id=attachment_id
+    )
+    if row is None or row["status"] == "deleted":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在")
+    public = _attachment_public(row)
+    if include_blocks:
+        try:
+            public["content"] = nexus_attachment_service.load_parsed_blocks(
+                session, user_id=_artifact_user_id(current_user),
+                attachment_id=attachment_id,
+            )
+        except AttachmentParseError as error:
+            public["content"] = {"error_code": error.code, "blocks": []}
+    return JSONResponse(status_code=status.HTTP_200_OK, content=public)
+
+
+@router.get("/attachments/{attachment_id}/download")
+async def nexus_attachment_download(
+    attachment_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """原文件下载（owner 校验；非 owner/不存在/已删/过期一律 404）。"""
+    from app.services import nexus_attachment_service
+    from app.services.object_storage import get_object_storage
+    from fastapi.responses import FileResponse
+
+    row = nexus_attachment_service.get_owned_attachment(
+        session, user_id=_artifact_user_id(current_user), attachment_id=attachment_id
+    )
+    if row is None or row["status"] in ("deleted", "expired"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在")
+    storage = get_object_storage()
+    try:
+        path = storage._safe_full_path(row["object_key"])
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            detail="object_key 不安全") from exc
+    return FileResponse(path=path, media_type=row["mime"], filename=row["filename"])
+
+
+@router.delete("/attachments/{attachment_id}")
+async def nexus_attachment_delete(
+    attachment_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """删除附件：立即撤销读取并尽力清对象；幂等（重复删返回 deleted=true）。"""
+    from app.services import nexus_attachment_service
+
+    deleted = nexus_attachment_service.delete_attachment(
+        session, user_id=_artifact_user_id(current_user), attachment_id=attachment_id
+    )
+    if not deleted:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="附件不存在")
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"deleted": True})
+
+
+class NexusAttachmentBind(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+@router.post("/attachments/{attachment_id}/bind")
+async def nexus_attachment_bind(
+    attachment_id: str,
+    payload: NexusAttachmentBind,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """绑定会话（未绑定→绑定；同会话→幂等；他会话→403）。"""
+    from app.services import nexus_attachment_service
+    from app.services.nexus_attachment_parse import AttachmentParseError
+
+    try:
+        row = nexus_attachment_service.bind_session(
+            session, user_id=_artifact_user_id(current_user),
+            attachment_id=attachment_id, session_id=payload.session_id.strip(),
+        )
+    except AttachmentParseError as error:
+        status_map = {
+            "ATTACHMENT_NOT_FOUND": 404,
+            "ATTACHMENT_SESSION_MISMATCH": 403,
+            "ATTACHMENT_UNAVAILABLE": 422,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 422), detail=error.code
+        ) from error
+    return JSONResponse(status_code=status.HTTP_200_OK, content=_attachment_public(row))
+
+
+# ---------------------------------------------------------------------------
+# NX-E1：run 恢复查询——owner/session/run/job 关联 + Worker 实时态合并。
+# 前端刷新/换设备后凭此恢复轮询，绝不重新提交。Worker 无此 job（重启丢内存）
+# 或不可达时回落快照并标 stale/unknown，不伪造终态。
+# ---------------------------------------------------------------------------
+
+
+async def _live_job_status(job_id: str) -> dict[str, Any] | None:
+    """直问 Worker 取实时态；任何失败返回 None（调用方回落快照）。"""
+    base = _worker_base()
+    if not base:
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(8.0, connect=3.0)) as client:
+            response = await client.get(
+                f"{base}/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {settings.REPRO_WORKER_TOKEN}"}
+                if settings.REPRO_WORKER_TOKEN
+                else {},
+            )
+    except httpx.HTTPError as error:
+        logger.warning("repro worker live status unreachable: %s", error)
+        return None
+    if response.status_code == 404:
+        return {"status": "unknown", "missing": True}
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def _merge_run_live(run: dict[str, Any], live: dict[str, Any] | None) -> dict[str, Any]:
+    """run 快照 + 实时态合并：live 缺失 → stale 快照 + honest note。"""
+    merged = dict(run)
+    if live is None:
+        merged["live"] = {"status": "stale", "note": "执行器不可达，显示登记快照"}
+        return merged
+    if live.get("missing"):
+        merged["live"] = {
+            "status": "unknown",
+            "note": "执行器无此作业（可能已重启），不可恢复执行，只能查看登记快照",
+        }
+        return merged
+    merged["live"] = {
+        "status": live.get("status", "unknown"),
+        "preset_id": live.get("preset_id", run["preset_id"]),
+        "started_at": live.get("started_at"),
+        "finished_at": live.get("finished_at"),
+        "code": live.get("code"),
+        "detail": live.get("detail"),
+    }
+    return merged
+
+
+@router.get("/runs")
+async def nexus_runs_list(
+    session_id: str = "",
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """某会话我的 runs（含实时态合并）：恢复查询入口，不触发任何执行。"""
+    from app.services import nexus_run_service
+
+    runs = nexus_run_service.list_session_runs(
+        session, user_id=_artifact_user_id(current_user), session_id=session_id.strip()[:128]
+    )
+    items = []
+    for run in runs:
+        live = await _live_job_status(run["job_id"]) if run["job_id"] else None
+        items.append(_merge_run_live(run, live))
+    return JSONResponse(status_code=status.HTTP_200_OK, content={"items": items})
+
+
+@router.get("/runs/{run_id}")
+async def nexus_run_detail(
+    run_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """单个 run 详情（含实时态合并）；非 owner/不存在 → 404。"""
+    from app.services import nexus_run_service
+
+    run = nexus_run_service.get_owned_run(
+        session, user_id=_artifact_user_id(current_user), run_id=run_id.strip()[:64]
+    )
+    if run is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run 不存在")
+    live = await _live_job_status(run["job_id"]) if run["job_id"] else None
+    return JSONResponse(
+        status_code=status.HTTP_200_OK, content=_merge_run_live(run, live)
+    )
+
+
 @router.post("/chat/stream")
 async def nexus_chat_stream(
     payload: NexusChatRequest,
     request: Request,
+    session: Session = Depends(get_session),
     current_user: dict = Depends(require_nexus_use),
 ):
     """流式对话：逐块转发上游 SSE（token / tool_call / tool_result / done）。
@@ -473,6 +936,10 @@ async def nexus_chat_stream(
     读超时单独放宽到 ``NEXUS_RUNTIME_STREAM_READ_TIMEOUT_S``：Agent 在多轮工具
     循环中可能长时间不产出 token，用非流式的 60s 会误杀正常长任务。
     """
+    _require_valid_mode(payload.mode)
+    payload.attachment_ids = _require_attachments(
+        session, current_user, payload.session_id, payload.attachment_ids
+    )
     base = _runtime_base_url()
     if not base:
         return _not_configured()

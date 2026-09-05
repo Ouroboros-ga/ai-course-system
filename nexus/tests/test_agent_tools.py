@@ -73,7 +73,7 @@ def test_excluded_set_covers_default_dangerous_tools():
 
 
 async def test_executor_registry_converged(monkeypatch: pytest.MonkeyPatch):
-    """执行器注册表恰为 read_file + 四个产品工具（结构性移除 + GP 禁用）。"""
+    """执行器注册表恰为 read_file + 产品工具（结构性移除 + GP 禁用）。"""
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-registry")
     # 全工具面收敛测 research profile：默认已是 general，显式指定。
     agent = build_agent(mode="research")
@@ -86,7 +86,7 @@ async def test_model_visible_tools_converged(monkeypatch: pytest.MonkeyPatch):
     """模型请求侧可见工具面同执行器注册表（profile 过滤生效）。"""
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-surface")
     spy = _SpyChatOpenAI(responses=[AIMessage(content="你好，我是 Nexus。")])
-    monkeypatch.setattr(nexus.agent, "build_llm", lambda: spy)
+    monkeypatch.setattr(nexus.agent, "build_llm", lambda model=None: spy)
     agent = build_agent(mode="research")
     await agent.ainvoke(
         {"messages": [{"role": "user", "content": "hi"}]},
@@ -108,7 +108,7 @@ async def test_hostile_tool_calls_rejected(monkeypatch: pytest.MonkeyPatch):
         ],
     )
     spy = _SpyChatOpenAI(responses=[hostile, AIMessage(content="done")])
-    monkeypatch.setattr(nexus.agent, "build_llm", lambda: spy)
+    monkeypatch.setattr(nexus.agent, "build_llm", lambda model=None: spy)
     agent = build_agent(mode="research")
     result = await agent.ainvoke(
         {"messages": [{"role": "user", "content": "hi"}]},

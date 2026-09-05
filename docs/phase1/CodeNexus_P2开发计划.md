@@ -23,21 +23,24 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 | 层次               | 工具                                                                          |
 | ---------------- | --------------------------------------------------------------------------- |
-| General 产品工具（4）  | web\_search、search\_course\_materials、search\_cs\_knowledge、write\_artifact |
-| Research 产品工具（7） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction     |
+| General 产品工具（5）  | web\_search、search\_course\_materials、search\_cs\_knowledge、write\_artifact、read\_attachment |
+| Research 产品工具（8） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction     |
 | 两模式内部 Harness    | read\_file（StateBackend 历史读回，不是宿主通用文件）                                      |
 
-代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`，前端四工具映射已过时。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。当前聚合与强审批未完成。
+代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批的本地实现见 §3（2026-09-05，未部署）；附件与恢复见 §4 NX-A1/E1（2026-09-05，未部署）。
 
 ## 3. 首批 P0：NX-G1–G3
 
+> **状态（2026-09-05）**：三项本地实现＋测试验证完成，未提交未部署；
+> 证据见[验收记录](验收记录/NX-G1G2G3_验收_2026-09-05.md)。线上验收待部署后补记。
+
 | 任务                          | 当前差距                                                                                          | 改动入口                                                                                         | 验收                                                                                                                                   |
 | --------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| NX-G1 Mode/身份/模式工具面         | HEAD 缺失/未知→Research；工作区已回落 General、Base 中性、NexusLab Research-only，但 unknown 未 400，前端 tools 仍旧 | agent.py/main.py、nexus\_proxy.py、nexusAdapter.js/nexusCapabilities.js/NexusPage.vue、相关模式契约测试 | missing/null→General；别名正确；unknown/空串→400 INVALID\_NEXUS\_MODE，模型/SSE 前拒绝；非法类型拒绝；General 不显示/不能调用 Paper/NexusLab；4/7 工具映射一致；保留中性 Base |
-| NX-G2 Runtime Hard Approval | UI 确认不阻断模型；只有 preset/Worker 校验，提交后 best-effort 归属                                             | tools/reproduction.py、request\_scope.py、Nexus 持久化；Backend Nexus 代理/内部端点/服务；前端审批状态            | 提案→ApprovalRequired→暂停→本人批准→服务端验证→恢复；绑定 user/session/run/tool/plan hash/预算/有效期；无批准 Worker 零提交；归属先于执行；一次性、幂等、防重复 job                  |
-| NX-G3 Effective capability  | 静态 ready 为主；Worker URL 存在不等于健康                                                                | Runtime health/代理、nexusCapabilities/nexusAdapter/NexusPage                                   | manifest+mode+注册面+依赖 TTL/health+权限计算；掉线/过期 unknown/degraded；General 永远无 NexusLab；执行端另验证策略和审批                                         |
+| NX-G1 Mode/身份/模式工具面         | ✅ 本地完成（2026-09-05）：unknown/空串双层 400，前端 4/7 映射＋Research 门；中性 Base 沿用 HEAD | agent.py/main.py、nexus\_proxy.py、nexusAdapter.js/nexusCapabilities.js/NexusPage.vue、相关模式契约测试 | missing/null→General；别名正确；unknown/空串→400 INVALID\_NEXUS\_MODE，模型/SSE 前拒绝；非法类型拒绝；General 不显示/不能调用 Paper/NexusLab；4/7 工具映射一致；保留中性 Base |
+| NX-G2 Runtime Hard Approval | ✅ 本地完成（2026-09-05）：一次性票据＋统一核销核心＋审批卡；归属提案时落库                                             | tools/reproduction.py、request\_scope.py、Nexus 持久化；Backend Nexus 代理/内部端点/服务；前端审批状态            | 提案→ApprovalRequired→暂停→本人批准→服务端验证→恢复；绑定 user/session/run/tool/plan hash/预算/有效期；无批准 Worker 零提交；归属先于执行；一次性、幂等、防重复 job                  |
+| NX-G3 Effective capability  | ✅ 本地完成（2026-09-05）：health checks＋resolver＋页面 effective 渲染                                                                | Runtime health/代理、nexusCapabilities/nexusAdapter/NexusPage                                   | manifest+mode+注册面+依赖 TTL/health+权限计算；掉线/过期 unknown/degraded；General 永远无 NexusLab；执行端另验证策略和审批                                         |
 
-强审批优先评估可持久化 interrupt/permission 或等价一次性票据；不能只增加模型可填的 approved=true。服务端批准取登录身份，票据不交模型自由生成；绑定计划/预算变化即失效，任何聊天/手工/内部/恢复入口共用检查。依赖 NX-E1 的最小 owner/run/job 切片，可先交付此基础，不等完整 Session。
+强审批采用"服务端一次性票据＋统一核销核心"（等价票据方案，已本地实现，不引入可持久化 interrupt 中间件）；不能只增加模型可填的 approved=true。服务端批准取登录身份，票据不交模型自由生成；绑定计划/预算变化即失效，任何聊天/手工/内部/恢复入口共用检查。NX-E1 的最小 owner/run/job 切片已随本批交付（审批记录即执行前归属），不等完整 Session。
 
 批准/提交/返回网络超时需幂等键与对账，重试返回原 job；拒绝/过期/跨用户/篡改/重复消耗不得执行。硬门完成前不扩大执行面，强审批对外承诺保持未完成；需要此承诺的入口先关闭提交或先完成 NX-G2。
 
@@ -45,7 +48,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 | 任务                       | 状态     | 交付与依赖                                                                                            | 验收门                                                                           |
 | ------------------------ | ------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| NX-A1 附件/视觉              | NEXT   | General/Research 八格式共用入口；复用对象存储/ParserProvider/OCR/LibreOffice，补 XLSX；先生命周期/PDF链再其他格式与论文 Profile | 八格式各一合成样例；图片直传不强制 OCR、无视觉诚实降级；页/slide/cell/段落引用；scope/限额/删除/过期/错误明确；不进课程知识域   |
+| NX-A1 附件/视觉              | ✅ 本地完成（2026-09-05）：八格式入口＋解析＋配额＋生命周期；DOC/PPT 无 LibreOffice 如实 failed；图片直传＋OCR 按需 | General/Research 八格式共用入口；复用对象存储/ParserProvider/OCR/LibreOffice，补 XLSX；先生命周期/PDF链再其他格式与论文 Profile | 八格式各一合成样例；图片直传不强制 OCR、无视觉诚实降级；页/slide/cell/段落引用；scope/限额/删除/过期/错误明确；不进课程知识域   |
 | NX-H1 Plan/Todo          | NEXT   | 显式 Todo middleware；简单 General 不强制，复杂 General 按需，Research 长任务启用；消费产品事件                            | 计划修改、实际工具状态分开；checkpoint/事件/UI 取消恢复一致，无静态假进度                                  |
 | NX-R1 Paper Research     | NEXT   | NX-A1 论文全文与 NX-H1；PaperQA/同类薄 Adapter 或隔离 sidecar                                                | 问题→候选→全文→证据→比较→综合→Citation；全文不可得诚实降级，no-go 换组件不删目标                            |
 | NX-S1 SandboxProvider    | NEXT   | 现有 Worker 后续适配；SWE-ReX/同类执行层、repo2docker 构建层；统一创建/执行/状态/取消/清理语义                                  | 隔离、网络、凭据、挂载、预算、取消和清理；同 preset 对比；不因安装组件自动获得任意仓库/A-B 安全声明                      |
@@ -59,7 +62,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 | 任务    | 状态   | 改动入口与交付                                                                                                    | 验收                                                                                                |
 | ----- | ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| NX-E1 | NEXT | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
+| NX-E1 | ✅ 本地完成（2026-09-05）：nexus_runs 注册＋恢复查询＋前端只读恢复；run_id 冲突属他人 409 | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
 | NX-E2 | NEXT | worker.py 增量 Stage/有界日志、代理脱敏、前端只读 Console                                                                  | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell |
 | NX-E3 | NEXT | Worker cancel、代理鉴权、前端 cancelling/cancelled                                                                 | 排队/运行幂等取消，进程组/容器回收确认才 cancelled；完成竞争正确；不影响其他 job，聊天 Stop 不充当 Cancel                               |
 | NX-E4 | NEXT | 服务端 mode/course/pin/version、最小事件/游标、Worker 快照与重启对账                                                         | 跨设备偏好/过程恢复；去重；无原始完整 Trace/思维；checkpoint 与产品历史分开；删除/保留覆盖关联资源                                       |

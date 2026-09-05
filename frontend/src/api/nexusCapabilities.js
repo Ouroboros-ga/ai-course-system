@@ -121,6 +121,90 @@ export function isCapabilityReady(id) {
 }
 
 /**
+ * NX-G3 Effective capability（v1.3 A4）：
+ * effective = manifest ∩ current mode ∩ dependency health/config。
+ * 注意：这只是"能力是否该亮绿灯"的展示输入——执行端（工具面白名单、
+ * 服务端审批）另行强制，不把 UI 按钮禁用当边界。
+ *
+ * effective 取值：
+ *   ready    —— 清单就绪、模式允许、依赖健康；
+ *   degraded —— 能力存在但依赖缺失/不可达（可能降级工作，如实说明原因）；
+ *   unknown  —— 无健康数据或快照过期，不沿用永久 Ready；
+ *   unwired  —— 产品层面不存在（manifest unwired）或模式禁入。
+ *
+ * @param {object} args
+ * @param {string} args.mode   'nexus_general' | 'nexus_research'
+ * @param {object|null} args.health  /nexus/health 透传体（含 checks），null 表未获取
+ * @param {boolean} args.trustManifest 演示数据源：无真实 health，退回清单原文
+ */
+export const EFFECTIVE_STATE = {
+  READY: 'ready',
+  DEGRADED: 'degraded',
+  UNKNOWN: 'unknown',
+  UNWIRED: 'unwired',
+}
+
+function checkOf(health, name) {
+  return health?.checks?.[name] || null
+}
+
+function isFresh(check) {
+  if (!check || typeof check.checked_at !== 'number' || typeof check.ttl_s !== 'number') return false
+  return Date.now() / 1000 - check.checked_at < check.ttl_s
+}
+
+export function resolveEffectiveCapabilities({ mode, health, trustManifest = false }) {
+  return Object.values(NEXUS_CAPABILITIES).map((cap) => {
+    // 产品层面不存在 → unwired（与运行时状态无关）。
+    if (cap.state === CAPABILITY_STATE.UNWIRED) {
+      return { ...cap, effective: EFFECTIVE_STATE.UNWIRED, effectiveNote: cap.unwiredHint || '' }
+    }
+    // General 永无 NexusLab：模式禁入与 manifest 双重保证（NX-G1/G3）。
+    if (!cap.modes || !cap.modes.includes(mode)) {
+      return { ...cap, effective: EFFECTIVE_STATE.UNWIRED, effectiveNote: '当前模式不可用' }
+    }
+    if (trustManifest) {
+      return { ...cap, effective: EFFECTIVE_STATE.READY, effectiveNote: '' }
+    }
+    if (!health) {
+      return { ...cap, effective: EFFECTIVE_STATE.UNKNOWN, effectiveNote: '未获取运行时状态' }
+    }
+    // 模型未配置：对话主链路 fail-closed，检索/产物展示一并降级（执行端会明确报错）。
+    if (health.llm_configured === false) {
+      return { ...cap, effective: EFFECTIVE_STATE.DEGRADED, effectiveNote: '模型未配置，对话不可用' }
+    }
+    const depFor = {
+      web_search: 'searxng',
+      course_materials: 'backend_internal',
+      cs_knowledge: 'backend_internal',
+      arxiv_papers: null,
+      nexuslab_repro: 'repro_worker',
+    }[cap.id] || null
+    if (!depFor) {
+      return { ...cap, effective: EFFECTIVE_STATE.READY, effectiveNote: '' }
+    }
+    const check = checkOf(health, depFor)
+    if (!check || !isFresh(check)) {
+      return { ...cap, effective: EFFECTIVE_STATE.UNKNOWN, effectiveNote: '依赖状态未知或已过期' }
+    }
+    if (check.status === 'ok') {
+      return {
+        ...cap,
+        effective: EFFECTIVE_STATE.READY,
+        effectiveNote: cap.id === 'nexuslab_repro' ? '执行需本次人工批准' : '',
+      }
+    }
+    if (check.status === 'unconfigured') {
+      if (cap.id === 'web_search' && health.ddgs_enabled) {
+        return { ...cap, effective: EFFECTIVE_STATE.DEGRADED, effectiveNote: '主通道未配置，走降级检索' }
+      }
+      return { ...cap, effective: EFFECTIVE_STATE.DEGRADED, effectiveNote: '依赖未配置，可能不可用' }
+    }
+    return { ...cap, effective: EFFECTIVE_STATE.DEGRADED, effectiveNote: '依赖不可达，可能降级工作' }
+  })
+}
+
+/**
  * 复现执行入口是否可用。
  * 当前恒为 false —— Repro Worker 不存在。
  * 这是"点了会不会真的执行"的唯一判据，UI 与 Approval Gate 都必须消费它。

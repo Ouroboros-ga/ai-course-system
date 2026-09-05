@@ -94,12 +94,19 @@ def _register_tool_surface_profile() -> None:
     )
 
 
-def build_llm() -> ChatOpenAI | None:
+def build_llm(model_name: str | None = None) -> ChatOpenAI | None:
+    """按指定模型 id 构建 LLM（None → 配置默认模型）。
+
+    调用方必须先经 normalize_model_name 校验：本函数不做 allowlist 检查，
+    只负责实例化（测试桩替换点保持不变）。
+    """
+    from nexus.config import llm_default_model
+
     settings = get_settings()
     if not settings.deepseek_api_key:
         return None
     return ChatOpenAI(
-        model=settings.llm_model,
+        model=model_name or llm_default_model(settings),
         api_key=settings.deepseek_api_key,
         base_url=settings.llm_base_url,
         temperature=0.2,
@@ -129,17 +136,76 @@ def _tools_for_mode(mode: str) -> list[Any]:
     return list(NEXUS_TOOLS)
 
 
-def normalize_mode(mode: str | None) -> str:
-    """请求 mode 白名单归一：仅 research 词形进 Research，其余一律 General。
+class InvalidNexusModel(ValueError):
+    """未知模型 id：调用方必须转 HTTP 400 INVALID_NEXUS_MODEL。
 
-    None/缺省/未知值默认 General（最小权限原则）：Research 是用户显式打开的
-    能力提升，API 忘传字段不得自动多出 Paper 与 Reproduction 工具。
+    模型 id 大小写敏感（即 API 侧的真实 id，原样比对，不做归一化），
+    防止"近似命中"把请求送到错误的计费模型。
     """
-    cleaned = (mode or "").strip().lower()
-    return "research" if cleaned in {"research", "nexus_research"} else "general"
+
+    def __init__(self, raw: Any) -> None:
+        super().__init__(f"INVALID_NEXUS_MODEL:{raw!r}")
+        self.raw = raw
 
 
-def build_agent(mode: str = "general", checkpointer: Any | None = None) -> Any:
+def normalize_model_name(raw: str | None, available: list[str], default: str) -> str:
+    """模型选择归一（模型网关 P0）：None 缺字段→默认模型；清单命中→原样；
+    其他（含空串/空白/未知 id/非 str）→ InvalidNexusModel。"""
+    if raw is None:
+        return default
+    if not isinstance(raw, str):
+        raise InvalidNexusModel(raw)
+    cleaned = raw.strip()
+    if not cleaned:
+        raise InvalidNexusModel(raw)
+    if cleaned in available:
+        return cleaned
+    raise InvalidNexusModel(raw)
+
+
+class InvalidNexusMode(ValueError):
+    """未知 mode 词形：调用方必须转 HTTP 400 INVALID_NEXUS_MODE。
+
+    v1.3 A1 冻结语义：缺字段/None → general（安全默认）；已知别名
+    trim/lowercase 后匹配；其他字符串（含空串/纯空白）一律拒绝，不再
+    静默回落——回落会把调用方拼写错误伪装成"正常 General 回答"。
+    """
+
+    def __init__(self, raw: Any) -> None:
+        super().__init__(f"INVALID_NEXUS_MODE:{raw!r}")
+        self.raw = raw
+
+
+_GENERAL_ALIASES = frozenset({"general", "nexus_general"})
+_RESEARCH_ALIASES = frozenset({"research", "nexus_research"})
+
+
+def normalize_mode(mode: str | None) -> str:
+    """请求 mode 严格归一（v1.3 A1，NX-G1）。
+
+    - None（字段缺失）→ "general"；
+    - 已知别名（去空白/小写后）→ 对应模式；
+    - 其他（含 ""/空白/未知词）→ InvalidNexusMode；
+    - 非 str 类型 → InvalidNexusMode（HTTP 层的 pydantic 会先以 422 拒绝，
+      本分支是纵深防御，防内部调用方绕过 schema）。
+    """
+    if mode is None:
+        return "general"
+    if not isinstance(mode, str):
+        raise InvalidNexusMode(mode)
+    cleaned = mode.strip().lower()
+    if cleaned in _GENERAL_ALIASES:
+        return "general"
+    if cleaned in _RESEARCH_ALIASES:
+        return "research"
+    raise InvalidNexusMode(mode)
+
+
+def build_agent(
+    mode: str = "general",
+    checkpointer: Any | None = None,
+    model: str | None = None,
+) -> Any:
     """构建 Nexus 主智能体。LLM 未配置时抛出 RuntimeError（调用方 fail-closed）。
 
     M1-B2：mode ∈ {general, research} 决定工具面与 prompt 附录。两个模式共享
@@ -147,9 +213,13 @@ def build_agent(mode: str = "general", checkpointer: Any | None = None) -> Any:
     切模式上下文连续。checkpointer 为空时用 InMemorySaver（本地/测试）；服务器
     lifespan 传入 AsyncPostgresSaver 实现重启可续聊。Compact 始终经原生
     middleware 启用；工具面经三层收敛（见 NEXUS_EXCLUDED_TOOLS 注释）。
+
+    模型网关 P0：model 为服务端 allowlist 内的模型 id（调用方 main._require_model
+    已校验）；同 (mode, model) 复用实例，不同模型各持独立 LLM。切模型不断会话
+    上下文（同一 thread），只换后续生成的模型。
     """
     mode = normalize_mode(mode)
-    llm = build_llm()
+    llm = build_llm(model)
     if llm is None:
         raise RuntimeError("LLM_NOT_CONFIGURED: NEXUS_DEEPSEEK_API_KEY is empty")
     _register_tool_surface_profile()

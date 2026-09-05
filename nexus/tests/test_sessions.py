@@ -94,7 +94,7 @@ async def test_session_messages_from_real_checkpoint():
         checkpointer=InMemorySaver(),
     )
     original = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     main_module._pg_saver = None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -143,7 +143,7 @@ async def test_session_messages_isolated_between_users():
         checkpointer=InMemorySaver(),
     )
     original = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     main_module._pg_saver = None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

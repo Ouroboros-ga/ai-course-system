@@ -93,7 +93,7 @@ async def test_chat_threads_isolated_by_user_header(monkeypatch: pytest.MonkeyPa
         checkpointer=InMemorySaver(),
     )
     original = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     main_module._pg_saver = None
     get_settings.cache_clear()
     try:

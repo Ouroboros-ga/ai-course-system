@@ -58,7 +58,7 @@ async def test_stress_1_multi_tool_long_task_complete_events():
 
     agent = _MultiToolAgent()
     original = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     try:
         frames = []
         async for frame in main_module._agent_stream("长任务", "stress-1", None, "research"):
@@ -87,7 +87,7 @@ async def test_stress_2_tool_exception_becomes_error_event(monkeypatch: pytest.M
             raise RuntimeError("tool node exploded (simulated 500)")
 
     original = main_module._agents
-    main_module._agents = {"research": _ExplodingToolAgent(), "general": _ExplodingToolAgent()}
+    main_module._agents = {("research", "deepseek-chat"): _ExplodingToolAgent(), ("general", "deepseek-chat"): _ExplodingToolAgent()}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -243,7 +243,13 @@ async def test_stress_6_malformed_tool_call_honest_failure(monkeypatch: pytest.M
 
 
 async def test_stress_7_worker_timeout_fails_closed(monkeypatch: pytest.MonkeyPatch):
+    """NX-G2：已批准票据遇上游超时 → REPRO_WORKER_UNAVAILABLE（复现未执行）。
+
+    审批只放行"允许执行"，不掩盖 Worker 故障；超时语义保持 fail-closed。
+    """
     import nexus.tools.reproduction as repro_module
+    from nexus import approvals
+    from nexus import request_scope
 
     monkeypatch.setenv("NEXUS_REPRO_WORKER_URL", "http://127.0.0.1:8400")
     monkeypatch.setenv("NEXUS_REPRO_WORKER_TOKEN", "tok")
@@ -262,7 +268,16 @@ async def test_stress_7_worker_timeout_fails_closed(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(repro_module.httpx, "AsyncClient", factory)
     try:
-        result = await repro_module.run_reproduction.ainvoke({"preset_id": "nanogpt"})
+        approvals.clear_memory_store()
+        proposal = await repro_module.run_reproduction.ainvoke({"preset_id": "nanogpt"})
+        approval_id = proposal["approval"]["approval_id"]
+        approvals.decide_approval(approval_id, "", "approved")
+        tokens = request_scope.set_execution_scope("", approval_id)
+        try:
+            result = await repro_module.run_reproduction.ainvoke({"preset_id": "nanogpt"})
+        finally:
+            request_scope.reset_execution_scope(tokens)
+            approvals.clear_memory_store()
     finally:
         get_settings.cache_clear()
     assert result["status"] == "unavailable"

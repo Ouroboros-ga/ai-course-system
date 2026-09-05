@@ -56,6 +56,99 @@ export function requestReproReport(jobId) {
 }
 
 /**
+ * 审批状态查询（NX-G2）：本人查询，跨用户后端 404。
+ */
+export function getNexusApproval(approvalId) {
+  return request.get(`/nexus/approvals/${encodeURIComponent(approvalId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 批准/拒绝（NX-G2 Hard Workflow）：决定动作本人发起，服务端原子转换。
+ * UI 只负责展示提案与提交决定，不代替服务端做任何放行判断。
+ */
+export function decideNexusApproval(approvalId, decision = 'approved') {
+  return request.post(`/nexus/approvals/${encodeURIComponent(approvalId)}/decide`, { decision }, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 手工执行（NX-G2）：凭已批准票据提交 Worker，与聊天工具共用服务端同一
+ * 核销核心；同一票据重试返回原 job，不重复启动实验。
+ */
+export function executeApprovedRepro(approvalId, sessionId = 'default') {
+  return request.post('/nexus/repro/execute', { approval_id: approvalId, session_id: sessionId }, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 上传附件（NX-A1，multipart）：校验→配额→解析→ready/partial/failed 同步返回。
+ * 八格式：pdf/docx/jpg/jpeg/png/xlsx/pptx/ppt/doc。DOC/PPT 无 LibreOffice
+ * 时如实 failed，不抛错；调用方凭 status 决定展示/删除/换格式。
+ */
+export function uploadNexusAttachment(file, sessionId = '', onProgress = null) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('session_id', sessionId || '')
+  return request.post('/nexus/attachments', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000,
+    onUploadProgress: onProgress || null,
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 我的附件列表（NX-A1）：更新时间倒序；可按会话过滤（未绑定＋本会话）。
+ */
+export function listNexusAttachments(sessionId = '', limit = 50) {
+  return request.get('/nexus/attachments', {
+    params: { session_id: sessionId || '', limit },
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 附件元数据（NX-A1）；includeBlocks=1 附带预算内解析 blocks（文本预览）。
+ */
+export function getNexusAttachment(attachmentId, includeBlocks = false) {
+  return request.get(`/nexus/attachments/${encodeURIComponent(attachmentId)}`, {
+    params: includeBlocks ? { include_blocks: true } : {},
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 删除附件（NX-A1）：立即撤销读取；幂等。
+ */
+export function deleteNexusAttachment(attachmentId) {
+  return request.delete(`/nexus/attachments/${encodeURIComponent(attachmentId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 会话 runs 恢复查询（NX-E1）：含 Worker 实时态合并；只读，不触发任何执行。
+ */
+export function listNexusRuns(sessionId) {
+  return request.get('/nexus/runs', {
+    params: { session_id: sessionId },
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
  * 产物列表（M3）：当前用户的 Nexus Artifact（owner 过滤在 Backend）。
  */
 export function listNexusArtifacts(limit = 50) {
@@ -145,6 +238,8 @@ function parseSseFrames(buffer, onEvent) {
  * @param {string} [options.sessionId]  会话 ID（P0 阶段服务重启即清）
  * @param {string} [options.mode]       模式标识，接线预留（当前运行时忽略未知字段）
  * @param {number} [options.courseId]   绑定的课程 ID，接线预留（同上）
+ * @param {string} [options.model]      模型 id（服务端 allowlist 内；缺省用默认模型）
+ * @param {string[]} [options.attachmentIds] 本次对话引用的附件 id（≤5，服务端验主+绑定）
  * @param {(evt: {event: string, data: object}) => void} options.onEvent
  * @param {AbortSignal} [options.signal] 用于取消（组件卸载/用户中止）
  */
@@ -153,6 +248,8 @@ export async function streamNexusMessage({
   sessionId = 'default',
   mode = null,
   courseId = null,
+  model = null,
+  attachmentIds = [],
   onEvent,
   signal,
 }) {
@@ -160,6 +257,12 @@ export async function streamNexusMessage({
   // 接线预留：运行时一旦在 /chat/stream 接收这两个字段，前端无需任何改动。
   if (mode) body.mode = mode
   if (courseId != null) body.context = { course_id: courseId }
+  // 模型网关 P0：服务端 allowlist 校验，清单外直接 400（见 NexusPage 模型下拉）。
+  if (model) body.model = model
+  // NX-A1：附件引用（服务端验主＋绑定会话后才透传给 Runtime）。
+  if (Array.isArray(attachmentIds) && attachmentIds.length) {
+    body.attachment_ids = attachmentIds.slice(0, 5)
+  }
   // 复用 axios 拦截器同一套签名算法：签名参数进 body，与 POST 的签名口径一致。
   const { time, enc } = generateSignature(body)
   const token = localStorage.getItem('token')

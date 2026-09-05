@@ -20,7 +20,7 @@ from pydantic import PrivateAttr
 import nexus.agent
 from deepagents import create_deep_agent
 from langchain_core.language_models.fake_chat_models import GenericFakeChatModel
-from nexus.agent import RESEARCH_ONLY_TOOLS, build_agent, normalize_mode
+from nexus.agent import InvalidNexusMode, RESEARCH_ONLY_TOOLS, build_agent, normalize_mode
 from nexus.main import app
 from nexus.tools import NEXUS_TOOLS
 
@@ -29,17 +29,21 @@ from nexus.tools import NEXUS_TOOLS
 # ---------------------------------------------------------------------------
 
 
-def test_normalize_mode_whitelist():
-    # 安全默认：None/缺省/未知一律 General；仅显式 research 词形进 Research。
+def test_normalize_mode_strict():
+    # NX-G1（v1.3 A1）：缺字段→General；已知别名映射；未知（含空串/空白）→抛。
     assert normalize_mode(None) == "general"
-    assert normalize_mode("") == "general"
     assert normalize_mode("research") == "research"
     assert normalize_mode("nexus_research") == "research"
     assert normalize_mode("NEXUS_RESEARCH") == "research"
+    assert normalize_mode(" research ") == "research"
     assert normalize_mode("general") == "general"
     assert normalize_mode("nexus_general") == "general"
-    # 未知值不 fail，归 General（最小权限：忘传字段不得多出研究工具）。
-    assert normalize_mode("bogus") == "general"
+    assert normalize_mode(" General ") == "general"
+    for bad in ("", "   ", "bogus", "researcher", "general2"):
+        with pytest.raises(InvalidNexusMode):
+            normalize_mode(bad)
+    with pytest.raises(InvalidNexusMode):
+        normalize_mode(123)  # type: ignore[arg-type]
 
 
 def test_research_only_tools_subset_of_product_tools():
@@ -77,19 +81,20 @@ def _registry(agent) -> list[str]:
 
 
 async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
-    """General = read_file + web_search；Research = read_file + 四产品工具。"""
+    """General = read_file + 5 产品工具；Research = read_file + 8 产品工具。"""
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-modes")
     # 先 patch 再 build：两个实例都必须持 spy（不联网），否则 ainvoke 会真连 LLM。
     spy = _SpyChatOpenAI(responses=[AIMessage(content="ok")])
-    monkeypatch.setattr(nexus.agent, "build_llm", lambda: spy)
+    monkeypatch.setattr(nexus.agent, "build_llm", lambda model=None: spy)
     research = build_agent(mode="research")
     general = build_agent(mode="general")
     product = {t.name for t in NEXUS_TOOLS}
     assert set(_registry(research)) == {"read_file"} | product
-    # General 含课程/CS 检索与产物写入（Phase 12 演示链：普通模式 → CS/Course
-    # RAG + Web → 生成 Artifact），仅排除 research-only 三工具。
+    # General 含课程/CS 检索、产物写入与附件读取（普通模式 → 检索 + 资料 +
+    # Artifact），仅排除 research-only 三工具。
     assert set(_registry(general)) == {
         "read_file", "web_search", "search_course_materials", "search_cs_knowledge", "write_artifact",
+        "read_attachment",
     }
     # 模型可见面同执行器注册表（research-only 工具结构性不绑定）。
     await general.ainvoke(
@@ -109,7 +114,7 @@ async def test_general_mode_rejects_research_tool_call(monkeypatch: pytest.Monke
         ],
     )
     spy = _SpyChatOpenAI(responses=[hostile, AIMessage(content="done")])
-    monkeypatch.setattr(nexus.agent, "build_llm", lambda: spy)
+    monkeypatch.setattr(nexus.agent, "build_llm", lambda model=None: spy)
     agent = build_agent(mode="general")
     try:
         result = await agent.ainvoke(
@@ -190,7 +195,7 @@ async def test_chat_request_routes_by_mode(monkeypatch: pytest.MonkeyPatch):
         checkpointer=InMemorySaver(),
     )
     original = main_module._agents
-    main_module._agents = {"general": general_agent, "research": research_agent}
+    main_module._agents = {("general", "deepseek-chat"): general_agent, ("research", "deepseek-chat"): research_agent}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             r1 = await client.post(
@@ -219,6 +224,47 @@ async def test_chat_request_routes_by_mode(monkeypatch: pytest.MonkeyPatch):
         main_module._agents = original
 
 
+async def test_chat_rejects_unknown_mode_before_model(monkeypatch: pytest.MonkeyPatch):
+    """NX-G1：未知/空串 mode 在启动模型前以 400 INVALID_NEXUS_MODE 拒绝。
+
+    拒绝必须发生在任何 agent 调用之前（用必炸的 agent 证明：若走到模型，
+    测试会收到 500/异常而非干净的 400）。
+    """
+    import nexus.main as main_module
+
+    monkeypatch.delenv("NEXUS_API_KEY", raising=False)
+
+    class _MustNotRun:
+        async def astream(self, inputs, config, stream_mode=None):  # noqa: ANN001, ANN003
+            raise AssertionError("模型不应被启动")
+            yield  # pragma: no cover - 使其成为异步生成器，与真实 agent 同构
+
+        async def aget_state(self, config):  # noqa: ANN001
+            raise AssertionError("模型不应被启动")
+
+    original = main_module._agents
+    main_module._agents = {("research", "deepseek-chat"): _MustNotRun(), ("general", "deepseek-chat"): _MustNotRun()}
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            for bad in ("bogus", "", "   ", "researcher"):
+                r = await client.post(
+                    "/api/v1/nexus/chat",
+                    json={"message": "hi", "session_id": "bad-mode", "mode": bad},
+                )
+                assert r.status_code == 400, bad
+                assert "INVALID_NEXUS_MODE" in r.json()["detail"]
+            rs = await client.post(
+                "/api/v1/nexus/chat/stream",
+                json={"message": "hi", "session_id": "bad-mode-s", "mode": "bogus"},
+            )
+            assert rs.status_code == 400
+            assert "INVALID_NEXUS_MODE" in rs.json()["detail"]
+            # 缺字段→General 的合法路由由 test_chat_request_routes_by_mode 覆盖；
+            # 此处桩 agent 必炸，故不再发起缺字段请求。
+    finally:
+        main_module._agents = original
+
+
 # ---------------------------------------------------------------------------
 # M1-B3：SSE error 事件（done/error 互斥）
 # ---------------------------------------------------------------------------
@@ -237,7 +283,7 @@ async def test_stream_error_event_on_agent_failure(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.delenv("NEXUS_API_KEY", raising=False)
     original = main_module._agents
-    main_module._agents = {"research": _ExplodingAgent(), "general": _ExplodingAgent()}
+    main_module._agents = {("research", "deepseek-chat"): _ExplodingAgent(), ("general", "deepseek-chat"): _ExplodingAgent()}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -264,7 +310,7 @@ async def test_stream_success_has_done_and_no_error(monkeypatch: pytest.MonkeyPa
             yield "updates", {}
             yield "updates", {}
 
-    main_module._agents = {"research": _OkAgent(), "general": _OkAgent()}
+    main_module._agents = {("research", "deepseek-chat"): _OkAgent(), ("general", "deepseek-chat"): _OkAgent()}
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post(
@@ -334,7 +380,7 @@ async def _stream_events(agent: Any) -> list[tuple[str, dict]]:
     import nexus.main as main_module
 
     original = main_module._agents
-    main_module._agents = {"research": agent, "general": agent}
+    main_module._agents = {("research", "deepseek-chat"): agent, ("general", "deepseek-chat"): agent}
     try:
         events = []
         async for frame in main_module._agent_stream("hi", "items-1", None, "research"):
@@ -384,7 +430,7 @@ async def test_stream_cancel_does_not_emit_done(monkeypatch: pytest.MonkeyPatch)
             await asyncio.sleep(3600)
             yield "updates", {}
 
-    main_module._agents = {"research": _SlowAgent(), "general": _SlowAgent()}
+    main_module._agents = {("research", "deepseek-chat"): _SlowAgent(), ("general", "deepseek-chat"): _SlowAgent()}
     try:
         seen: list[str] = []
         gen = main_module._agent_stream("hi", "cancel-1", None, "research")

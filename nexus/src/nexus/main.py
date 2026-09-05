@@ -15,15 +15,27 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
 
 from nexus import __version__
-from nexus.agent import build_agent, normalize_mode
-from nexus.config import get_settings
+from nexus.agent import (
+    InvalidNexusMode,
+    InvalidNexusModel,
+    build_agent,
+    normalize_mode,
+    normalize_model_name,
+)
+from nexus.config import (
+    get_settings,
+    llm_available_models,
+    llm_default_model,
+    llm_models_manifest,
+)
 from nexus.persistence import sanitize_session_id, sanitize_user_id, thread_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("nexus")
 
-# M1-B2：按模式索引的 agent 实例（general/research 共享同一 checkpointer）。
-_agents: dict[str, Any] = {}
+# M1-B2：按（模式, 模型）索引的 agent 实例（同对共享同一 checkpointer）。
+# 模型网关 P0：同一 thread 命名空间跨模型共享，切模型不断上下文。
+_agents: dict[tuple[str, str], Any] = {}
 # 两个模式共享的本地降级 saver：保证 memory 模式下同 session 切模式上下文连续
 # （服务器上由 lifespan 注入 AsyncPostgresSaver，两者天然共享）。
 _fallback_saver = InMemorySaver()
@@ -52,14 +64,21 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             schema = settings.postgres_schema
             step = "ensure_schema_threads_table"
             await ensure_threads_table_async(dsn, schema)
+            step = "ensure_approvals_table"
+            from nexus.approvals import ensure_approvals_table
+
+            await asyncio.to_thread(ensure_approvals_table, dsn, schema)
             step = "saver_setup"
             cm = AsyncPostgresSaver.from_conn_string(dsn_with_schema(dsn, schema))
             saver = await cm.__aenter__()
             await saver.setup()
             _pg_ctx = cm
             _pg_saver = saver
+            default_model = llm_default_model(settings)
             for mode in ("research", "general"):
-                _agents[mode] = build_agent(mode=mode, checkpointer=saver)
+                _agents[(mode, default_model)] = build_agent(
+                    mode=mode, checkpointer=saver, model=default_model
+                )
             logger.info("nexus persistence: postgres enabled (schema=%s)", schema)
         except Exception as error:  # noqa: BLE001 - PG 故障不阻断服务启动
             # 只记步骤与错误类/文本，不记 DSN（见 2026-09-03 CREATE 权排查教训：
@@ -82,18 +101,27 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
 app = FastAPI(title="Nexus AI Runtime", version=__version__, lifespan=lifespan)
 
 
-def get_agent(mode: str = "general") -> Any:
+def get_agent(mode: str = "general", model: str | None = None) -> Any:
+    """取（模式, 模型）agent 实例；model 为 None 即默认模型。
+
+    model 入参应已由 _require_model 校验；此处再做一次归一是纵深防御
+    （normalize_model_name 对清单外 id 抛 InvalidNexusModel，绝不静默建实例）。
+    """
     mode = normalize_mode(mode)
-    agent = _agents.get(mode)
+    settings = get_settings()
+    model = normalize_model_name(model, llm_available_models(settings), llm_default_model(settings))
+    key = (mode, model)
+    agent = _agents.get(key)
     if agent is None:
         try:
             agent = build_agent(
                 mode=mode,
                 checkpointer=_pg_saver if _pg_saver is not None else _fallback_saver,
+                model=model,
             )
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
-        _agents[mode] = agent
+        _agents[key] = agent
     return agent
 
 
@@ -107,9 +135,46 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
     session_id: str = Field(default="default", max_length=128)
     # M1-B1（D2）：mode 与 context 不再被 pydantic 静默丢弃。
-    # mode 白名单归一（agent.normalize_mode）；context 形状 M2 才消费（course_id）。
+    # NX-G1（v1.3 A1）：mode 严格归一在 _require_mode；None 缺字段→general，
+    # 未知词（含空串/空白）→ 400 INVALID_NEXUS_MODE；非 str 类型由本 schema
+    # 以 422 拒绝。context 形状 M2 才消费（course_id）。
+    # NX-G2：approval_id 是服务端签发的执行票据（批准后前端回传），经请求
+    # 上下文注入工具——模型不可通过工具参数伪造，工具侧只做服务端核销。
+    # 模型网关 P0：model 为服务端 allowlist 内的模型 id；缺字段→默认模型，
+    # 未知 id 由 _require_model 以 400 拒绝（不在此静默回落）。
+    # NX-A1：attachment_ids 为本次对话引用的附件（Backend 已验主+绑定会话，
+    # Runtime 只读执行上下文；模型不可通过工具参数越权）。
     mode: str | None = Field(default=None, max_length=32)
     context: dict[str, Any] | None = Field(default=None)
+    approval_id: str | None = Field(default=None, max_length=64)
+    model: str | None = Field(default=None, max_length=64)
+    attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+
+
+def _require_mode(raw: str | None) -> str:
+    """NX-G1：在启动模型/SSE 前拒绝非法 mode（v1.3 A1 冻结语义）。
+
+    静默回落会把调用方拼写错误伪装成正常回答；未知值必须以机器可读码
+    失败，让前端给出"模式无效"的确定恢复提示。
+    """
+    try:
+        return normalize_mode(raw)
+    except InvalidNexusMode as error:
+        raise HTTPException(status_code=400, detail=f"INVALID_NEXUS_MODE:{error.raw!r}") from error
+
+
+def _require_model(raw: str | None) -> str:
+    """模型网关 P0：在启动模型前拒绝清单外模型 id。
+
+    None 缺字段→默认模型；未知 id（含空串/空白）→ 400 INVALID_NEXUS_MODEL。
+    清单唯一来源是服务端配置（config.llm_available_models），前端下拉只是
+    该清单的投影，不得作为授权依据。
+    """
+    settings = get_settings()
+    try:
+        return normalize_model_name(raw, llm_available_models(settings), llm_default_model(settings))
+    except InvalidNexusModel as error:
+        raise HTTPException(status_code=400, detail=f"INVALID_NEXUS_MODEL:{error.raw!r}") from error
 
 
 def _config_for(session_id: str, user_id: str | None = None) -> dict[str, Any]:
@@ -215,14 +280,26 @@ async def _agent_stream(
     user_id: str | None = None,
     mode: str = "general",
     course_id: int | None = None,
+    approval_id: str | None = None,
+    model: str | None = None,
+    attachment_ids: list[str] | None = None,
 ):
-    agent = get_agent(mode)
+    agent = get_agent(mode, model)
     inputs = {"messages": [{"role": "user", "content": message}]}
     config = _config_for(session_id, user_id)
     token_count = 0
-    from nexus.request_scope import reset_scope, set_scope
+    from nexus.request_scope import (
+        reset_attachments,
+        reset_execution_scope,
+        reset_scope,
+        set_attachments,
+        set_execution_scope,
+        set_scope,
+    )
 
     scope_tokens = set_scope(user_id, course_id)
+    exec_tokens = set_execution_scope(session_id, approval_id)
+    attach_token = set_attachments(attachment_ids)
     try:
         # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
         # 列表模式才产出 (mode, payload) 元组。
@@ -259,22 +336,23 @@ async def _agent_stream(
         return
     finally:
         reset_scope(scope_tokens)
+        reset_execution_scope(exec_tokens)
+        reset_attachments(attach_token)
     yield _sse("done", {"session_id": session_id, "token_count": token_count})
 
 
 def _tool_surface() -> dict[str, list[str]] | None:
     """已构建 agent 的执行器工具注册表（M0-B1 巡检口径，M1 起按模式上报）。
 
-    General 应为 read_file + web_search；Research 为 read_file + 六产品工具
-    （四检索/复现工具 + 课程/CS 检索）。出现 write_file/execute/task 等即
-    表示工具面收敛失效（回归信号）。未构建任何 agent 时返回 null。
+    模型网关 P0：键为 "mode@model"，只含已实际构建的实例。不同模型同模式
+    的工具面应一致；出现分歧即回归信号（某模型实例构建走了不同分支）。
     """
     if not _agents:
         return None
     surfaces: dict[str, list[str]] = {}
-    for mode, agent in _agents.items():
+    for (mode, model), agent in _agents.items():
         try:
-            surfaces[mode] = sorted(agent.nodes["tools"].bound.tools_by_name.keys())
+            surfaces[f"{mode}@{model}"] = sorted(agent.nodes["tools"].bound.tools_by_name.keys())
         except AttributeError:
             continue
     return surfaces or None
@@ -302,7 +380,103 @@ async def health() -> dict[str, Any]:
         "postgres_configured": bool(dsn),
         "compact": "summarization-middleware",
         "tool_surface": _tool_surface(),
+        # 模型网关 P0：前端模型下拉的唯一数据源。available 为服务端 allowlist
+        # 投影；新增模型改配置即出现在下拉，前端零改动。
+        "models": llm_models_manifest(settings),
+        # NX-G3：依赖健康快照（配置事实 ≠ 健康）。每项 {status, checked_at,
+        # ttl_s}；status ∈ ok/unconfigured/degraded/unknown。只存状态与时间，
+        # 不回传密钥与原始日志（v1.3 A4）。
+        "checks": await _dependency_checks(),
     }
+
+
+_PROBE_TIMEOUT_S = 2.0
+# (status, checked_at_epoch)
+_probe_cache: dict[str, tuple[str, float]] = {}
+
+
+async def _probe_http(name: str, url: str, ttl_s: int) -> dict[str, Any]:
+    """单依赖探测（含 TTL 缓存）：任何 HTTP 响应 = 可达(ok)；连接失败 =
+    degraded；调用方保证 url 非空。探测只做轻量 GET，不带任何凭据。"""
+    import time as _time
+
+    now = _time.time()
+    cached = _probe_cache.get(name)
+    if cached is not None and now - cached[1] < ttl_s:
+        return {"status": cached[0], "checked_at": cached[1], "ttl_s": ttl_s}
+    status = "degraded"
+    try:
+        async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_S) as client:
+            await client.get(url)
+        status = "ok"
+    except Exception:  # noqa: BLE001 - 探针失败只记状态，不抛
+        status = "degraded"
+    _probe_cache[name] = (status, now)
+    return {"status": status, "checked_at": now, "ttl_s": ttl_s}
+
+
+async def _dependency_checks() -> dict[str, Any]:
+    """NX-G3 effective capability 的服务端输入：manifest ∩ mode 之外的
+    "依赖 health/config" 一半。另一半（mode/权限/审批）在消费侧计算。"""
+    import time as _time
+
+    settings = get_settings()
+    try:
+        ttl_s = max(5, int(settings.health_probe_ttl_s))
+    except Exception:  # noqa: BLE001
+        ttl_s = 60
+    now = _time.time()
+    checks: dict[str, Any] = {
+        "llm": {
+            "status": "ok" if settings.deepseek_api_key else "unconfigured",
+            "checked_at": now,
+            "ttl_s": ttl_s,
+        },
+    }
+    if settings.searxng_url:
+        checks["searxng"] = await _probe_http(
+            "searxng", f"{settings.searxng_url.rstrip('/')}/", ttl_s
+        )
+    else:
+        checks["searxng"] = {"status": "unconfigured", "checked_at": now, "ttl_s": ttl_s}
+    if settings.repro_worker_url:
+        checks["repro_worker"] = await _probe_http(
+            "repro_worker", f"{settings.repro_worker_url.rstrip('/')}/health", ttl_s
+        )
+    else:
+        checks["repro_worker"] = {"status": "unconfigured", "checked_at": now, "ttl_s": ttl_s}
+    internal_url = (settings.backend_internal_url or "").rstrip("/")
+    if internal_url and settings.backend_internal_token:
+        # 无凭据探测内部端点：任何 HTTP 响应（401/422 亦可）即证明可达；
+        # 连不上才记 degraded。不发任何业务参数。
+        checks["backend_internal"] = await _probe_http(
+            "backend_internal",
+            f"{internal_url}/api/v1/nexus-internal/cs-knowledge",
+            ttl_s,
+        )
+    else:
+        checks["backend_internal"] = {
+            "status": "unconfigured", "checked_at": now, "ttl_s": ttl_s,
+        }
+    return checks
+
+
+def _sanitize_approval_id(request: ChatRequest) -> str | None:
+    """NX-G2：票据只取请求顶层字段（模型工具参数不可注入），限长截断。"""
+    raw = (request.approval_id or "").strip()
+    if not raw:
+        return None
+    return raw[:64]
+
+
+def _sanitize_attachment_ids(request: ChatRequest) -> list[str]:
+    """NX-A1：附件引用只取请求顶层字段（Backend 已验主+绑定，去重保序）。"""
+    clean: list[str] = []
+    for raw in request.attachment_ids or []:
+        aid = (raw or "").strip()[:16]
+        if aid and aid not in clean:
+            clean.append(aid)
+    return clean[:5]
 
 
 @app.post("/api/v1/nexus/chat/stream", dependencies=[Depends(require_api_key)])
@@ -310,14 +484,24 @@ async def chat_stream(
     request: ChatRequest,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> StreamingResponse:
-    mode = normalize_mode(request.mode)
-    get_agent(mode)
+    mode = _require_mode(request.mode)
+    model = _require_model(request.model)
+    get_agent(mode, model)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     thread_id = thread_for(session_id, user_id)
     await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
-        _agent_stream(request.message, session_id, user_id, mode, _context_course_id(request)),
+        _agent_stream(
+            request.message,
+            session_id,
+            user_id,
+            mode,
+            _context_course_id(request),
+            _sanitize_approval_id(request),
+            model,
+            _sanitize_attachment_ids(request),
+        ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -338,16 +522,26 @@ async def chat(
     request: ChatRequest,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
-    mode = normalize_mode(request.mode)
-    agent = get_agent(mode)
+    mode = _require_mode(request.mode)
+    model = _require_model(request.model)
+    agent = get_agent(mode, model)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     inputs = {"messages": [{"role": "user", "content": request.message}]}
     config = _config_for(session_id, user_id)
     tool_events: list[dict[str, Any]] = []
-    from nexus.request_scope import reset_scope, set_scope
+    from nexus.request_scope import (
+        reset_attachments,
+        reset_execution_scope,
+        reset_scope,
+        set_attachments,
+        set_execution_scope,
+        set_scope,
+    )
 
     scope_tokens = set_scope(user_id, _context_course_id(request))
+    exec_tokens = set_execution_scope(session_id, _sanitize_approval_id(request))
+    attach_token = set_attachments(_sanitize_attachment_ids(request))
     # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
     # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
     try:
@@ -366,6 +560,8 @@ async def chat(
                         )
     finally:
         reset_scope(scope_tokens)
+        reset_execution_scope(exec_tokens)
+        reset_attachments(attach_token)
     state = await agent.aget_state(config)
     final_message = ""
     for msg in reversed(state.values.get("messages", [])):
@@ -543,3 +739,135 @@ async def repro_job_report(
         "comparison": report["comparison"],
         "artifacts": artifacts,
     }
+
+
+# ---------------------------------------------------------------------------
+# NX-G2：服务端执行审批端点族（v1.3 A3 Hard Workflow）
+#
+# 提案由 run_reproduction 工具在对话内创建；批准/查询/手工执行走以下端点，
+# 身份一律取反代注入的 X-Nexus-User-Id（服务端登录态），不接受模型伪造。
+# 产品事件最小化：只返回审批公开投影（状态/计划摘要/预算/有效期/job 引用），
+# 无 Prompt、思维与原始工具参数。
+# ---------------------------------------------------------------------------
+
+
+class ApprovalDecision(BaseModel):
+    decision: str = Field(default="approved", max_length=16)
+
+
+class ApprovalExecute(BaseModel):
+    approval_id: str = Field(min_length=1, max_length=64)
+    session_id: str = Field(default="default", max_length=128)
+
+
+def _public_approval_view(
+    row: dict[str, Any] | None, preset: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    from nexus.tools.reproduction import _public_approval
+
+    return _public_approval(row, preset)
+
+
+def _preset_for_approval(row: dict[str, Any]) -> dict[str, Any] | None:
+    from nexus.tools.reproduction import REPRO_PRESETS
+
+    return REPRO_PRESETS.get(str(row.get("preset_id", "")).lower())
+
+
+@app.get(
+    "/api/v1/nexus/approvals/{approval_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def approval_status(
+    approval_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """查询审批状态（本人；跨用户 404，不泄露归属）。
+
+    404 语义合并"不存在/他人的/重启后内存丢失"——调用方一律视为不可恢复，
+    需重新提案，不凭回答编造状态。
+    """
+    from nexus import approvals
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    row = approvals.get_approval(sanitize_session_id(approval_id))
+    if row is None or row["user_id"] != user_id:
+        raise HTTPException(status_code=404, detail="APPROVAL_NOT_FOUND")
+    return {"approval": _public_approval_view(row, _preset_for_approval(row))}
+
+
+@app.post(
+    "/api/v1/nexus/approvals/{approval_id}/decide",
+    dependencies=[Depends(require_api_key)],
+)
+async def approval_decide(
+    approval_id: str,
+    body: ApprovalDecision,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """本人批准/拒绝（幂等；过期/终态/跨用户按码拒绝，不执行任何操作）。"""
+    from nexus import approvals
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    try:
+        row = approvals.decide_approval(
+            sanitize_session_id(approval_id), user_id, body.decision.strip().lower()
+        )
+    except approvals.ApprovalError as error:
+        status_map = {
+            "APPROVAL_NOT_FOUND": 404,
+            "APPROVAL_FORBIDDEN": 403,
+            "APPROVAL_EXPIRED": 409,
+            "APPROVAL_STATE_CONFLICT": 409,
+            "APPROVAL_BAD_DECISION": 422,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error
+    return {"approval": _public_approval_view(row, _preset_for_approval(row))}
+
+
+@app.post(
+    "/api/v1/nexus/repro/execute",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_execute_approved(
+    body: ApprovalExecute,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """手工执行入口：凭已批准票据提交 Worker（与聊天工具共用同一核销核心）。
+
+    前端审批卡"批准并执行"调此端点——不经 LLM，避免模型是否重调工具的
+    不确定性。幂等：同一票据重试返回原 job。
+    """
+    from nexus import approvals
+    from nexus.tools.reproduction import execute_approved_reproduction
+
+    user_id = sanitize_user_id(x_nexus_user_id) or ""
+    session_id = sanitize_session_id(body.session_id)
+    approval_id = sanitize_session_id(body.approval_id)
+    row = approvals.get_approval(approval_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="APPROVAL_NOT_FOUND")
+    preset_id = str(row.get("preset_id", ""))
+    try:
+        return await execute_approved_reproduction(
+            approval_id=approval_id,
+            user_id=user_id,
+            session_id=session_id,
+            preset_id=preset_id,
+        )
+    except approvals.ApprovalError as error:
+        status_map = {
+            "APPROVAL_NOT_FOUND": 404,
+            "APPROVAL_FORBIDDEN": 403,
+            "APPROVAL_SESSION_MISMATCH": 403,
+            "APPROVAL_NOT_APPROVED": 409,
+            "APPROVAL_EXPIRED": 409,
+            "APPROVAL_PLAN_CHANGED": 409,
+        }
+        raise HTTPException(
+            status_code=status_map.get(error.code, 409), detail=error.code
+        ) from error

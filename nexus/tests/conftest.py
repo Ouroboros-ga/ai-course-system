@@ -15,6 +15,10 @@ def reset_settings(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("NEXUS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("NEXUS_SUMMARY_TRIGGER_TOKENS", raising=False)
     monkeypatch.delenv("NEXUS_SUMMARY_KEEP_MESSAGES", raising=False)
+    monkeypatch.delenv("NEXUS_LLM_MODEL", raising=False)
+    monkeypatch.delenv("NEXUS_LLM_MODELS", raising=False)
+    monkeypatch.delenv("NEXUS_APPROVAL_TTL_S", raising=False)
+    monkeypatch.delenv("NEXUS_HEALTH_PROBE_TTL_S", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
