@@ -246,7 +246,7 @@ search_arxiv_papers, task, web_search, write_file
 
 **测试**：构造 `build_agent()` 后断言 `tools_by_name` 不含 `execute` / `delete`；或断言 `execute` 调用被拦截并返回明确错误码。
 
-### D2 · [P1] `mode` 与 `context.course_id` 在两层模型被静默丢弃
+### D2 · [P1] `mode` 与 `context.course_id` 在两层模型被静默丢弃 —— ✅ 已修复（2026-09-05，M1-B1；提交 `f10cb569`）
 
 **位置**：`backend/app/api/v1/endpoints/nexus_proxy.py:53-57` 与 `nexus/src/nexus/main.py:41-43`
 
@@ -269,7 +269,9 @@ context: dict | None = None
 
 **测试**：`POST /api/v1/nexus/chat` 带 `mode`/`context`，断言 Runtime 侧收到的 body 含这两个字段。
 
-### D3 · [P1] `.env.example` 变量名与 `env_prefix` 不一致
+> **2026-09-05 实证**：两层 ChatRequest 各加 `mode`/`context` 字段，反代 `model_dump()` 自动透传（`test_nexus_proxy.py` 透传契约）；Runtime 白名单归一（`normalize_mode`）并按模式选 DeepAgent 实例（`test_modes.py` 路由用例）。线上验收见 `docs/phase1/验收记录/M1_验收_2026-09-05.md`（同 session 跨模式上下文连续）。
+
+### D3 · [P1] `.env.example` 变量名与 `env_prefix` 不一致 —— ✅ 已修复（2026-09-05，M0-B2；提交 `f10cb569`）
 
 **位置**：`nexus/.env.example:3` 写 `DEEPSEEK_API_KEY=`，`nexus/src/nexus/config.py:7` 是 `env_prefix="NEXUS_"`
 
@@ -279,7 +281,9 @@ context: dict | None = None
 
 **测试**：断言 `.env.example` 中每个非空变量名都能被 `Settings` 识别。
 
-### D4 · [P1] `tool_result` 600 字符硬截断导致 JSON 残缺
+> **2026-09-05 实证**：补 `NEXUS_` 前缀 + 缺失的 `NEXUS_REPRO_WORKER_TOKEN`/`NEXUS_API_KEY` 占位（`nexus/tests/test_env_example.py` 3 条契约测试锁定）。
+
+### D4 · [P1] `tool_result` 600 字符硬截断导致 JSON 残缺 —— ✅ 已修复（2026-09-05，M1-B4；提交 `f10cb569`）
 
 **位置**：`nexus/src/nexus/main.py:54-60`
 
@@ -289,7 +293,9 @@ context: dict | None = None
 
 **修法**：优先发结构化字段（`data.items`）而非序列化后截断；或至少截断完整 item 边界。
 
-### D5 · [P1] 无 SSE `error` 事件，流中断时前端收不到终止信号
+> **2026-09-05 实证**：`_structured_tool_items` 按工具抽 items（条目 300 字符截断/上限 20 条），可解析 JSON 的 content 保留完整合法；M2 起 course/cs/artifact 同样结构化（`nexus/tests/test_modes.py`）。前端哨兵计数上线后预计归零（线上实测 8 条 items 的 web_search 流 `unparsable` 未触发）。
+
+### D5 · [P1] 无 SSE `error` 事件，流中断时前端收不到终止信号 —— ✅ 已修复（2026-09-05，M1-B3；提交 `f10cb569`）
 
 **位置**：`nexus/src/nexus/main.py:63-96`
 
@@ -297,7 +303,9 @@ context: dict | None = None
 
 **修法**：包一层 `try/except`，异常时产出 `event: error` + 稳定错误码，前端据此渲染失败态。前端需同步增加 `error` 分支（当前仅处理流异常终止）。
 
-### D6 · [P1] SYSTEM_PROMPT 要求 todo，但运行时没有 todo 工具
+> **2026-09-05 实证**：`_agent_stream` try/except 包裹全循环，done/error 互斥；前端 `handleEvent` 增 `error` 事件 → `turn.failure = code：message`（M1-F1）；取消路径 `CancelledError` re-raise 不补发假 done（M1-B6）。单测注入失败 agent 断言。
+
+### D6 · [P1] SYSTEM_PROMPT 要求 todo，但运行时没有 todo 工具 —— ✅ 已处理（2026-09-05，M1-B5；提交 `f10cb569`）
 
 **位置**：`nexus/src/nexus/agent.py:27`（规则 4「多步骤任务先建立 todo，逐步执行并勾选进度」）
 
@@ -307,19 +315,23 @@ context: dict | None = None
 
 **修法**：注册 `TodoListMiddleware`（若版本支持）或删除规则 4；前端「执行过程」不展示任何未经事件确认的进度。
 
+> **2026-09-05 实证**：核实 deepagents 0.7.12 全包**无** todo/planning 中间件（仅 docstring 提及）→ 按诚实性优先删除 SYSTEM_PROMPT 规则 4 并附缘由注释，不虚构进度。
+
 ### D7 · [P2] `done.token_count` 统计的是字符数不是 token 数
 
 **位置**：`nexus/src/nexus/main.py:74, 96`（`token_count += len(content)`）
 
 若后续做计费/限额 UI，这个数会严重偏大。当前前端**不展示**该字段，暂不阻塞。
 
-### D8 · [P2] 会话不持久化
+### D8 · [P2] 会话不持久化 —— ✅ 已解（2026-09-03/04，P1-C1/C2；提交 `cbd89410`+`5eeab092`）
 
 **位置**：`nexus/src/nexus/agent.py:53`（`InMemorySaver`）
 
 运行时重启会话全丢，与前端 localStorage 持久化不一致 → 切到真实模式后用户会看到"历史消失"。
 
 **修法**：`PostgresSaver` + 会话列表接口；或明确接受"真实模式不保留历史"并在界面标注。
+
+> **2026-09-05 实证**：PostgresSaver（`nexus_checkpoints` 独立 schema）+ `GET /sessions`（用户过滤）+ 前端 real 模式会话侧栏接线；真实 `systemctl restart` 后会话 6 条/历史 2 轮恢复（`docs/phase1/验收记录/P1_验收_2026-09-05.md`）。
 
 ---
 
@@ -351,14 +363,14 @@ context: dict | None = None
 ## 11. 回归命令
 
 ```bash
-# 前端契约测试（87 项）
+# 前端契约测试（89 项）
 cd frontend && node --test src/api/__tests__/apiContracts.test.cjs
 
 # 前端构建
-cd frontend && npx vite build --emptyOutDir=false
+cd frontend && npm run build
 
-# Nexus Runtime 单测（18 项）
-cd nexus && .venv/Scripts/python.exe -m pytest -q
+# Nexus Runtime 单测（82 项，含 M5-B2 压力套件）
+cd nexus && uv run pytest tests -q
 ```
 
 改动 `nexusCapabilities.js` 的 `state` 字段后，必须重跑契约测试与构建。

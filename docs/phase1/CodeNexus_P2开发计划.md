@@ -233,11 +233,11 @@
 
 ## 九、M5：S3 下线与可靠性
 
-| 任务       | 内容                         | 验收                                                                                                                                                                | 依赖                      | <br />     |
-| -------- | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | :--------- |
-| <br />   | S3-B1/B2/B3 ⏸️             | 按落地计划 §五原文执行：删 `/research` 路由注册与 service、`paper_search.py` 迁入 `nexus/src/nexus/providers/`、`research_*` 表保留不 drop                                                 | 落地计划 §5.3 清单全勾          | S2 稳定（已满足） |
-| M5-B2 ⏸️ | Harness 压力套件（设计文档 Phase 9） | 覆盖：多 Tool 长任务、Tool 500、Context overflow（Compact 触发实测）、Runtime restart 后 resume、Cancel、Malformed Tool、Worker timeout —— 全部产生明确状态，**禁静默成功 / LLM 编造结果 / 未执行却写 PASS** | 全绿且失败语义可断言              | M0-M4      |
-| M5-D ⏸️  | 文档同步                       | 落地计划状态栏、前端规格 §8 缺陷清单翻转为已修（逐条标注修复提交）、`DOCUMENTATION_INDEX.md`、本文档进度列；**AGENTS.md 部署地址（47.99.97.154 → zsitai.xyz / 103.36.223.177）属权威规则文件，改动前向用户确认**                | 文档与代码一致（AGENTS.md §7.2） | M5-B2      |
+| 任务            | 内容                         | 验收                                                                                                                                                                                             | 依赖                                                   | <br /> |
+| ------------- | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | :----- |
+| S3-B1/B2/B3 ✅ | 按落地计划 §五执行（事实修正见 §14.9）    | 落地计划 §5.3 清单全勾（修正后）                                                                                                                                                                            | S2 稳定（已满足）                                           | <br /> |
+| M5-B2 ✅       | Harness 压力套件（设计文档 Phase 9） | 覆盖：多 Tool 长任务、Tool 500、Context overflow（Compact 触发语义+生产接线分层锁定，全图触发留已知边界）、Runtime restart 后 resume、Cancel（M1-B6 引用）、Malformed Tool、Worker timeout —— 全部产生明确状态，**禁静默成功 / LLM 编造结果 / 未执行却写 PASS** | 全绿且失败语义可断言（`nexus/tests/test_harness_stress.py` 7/7） | M0-M4  |
+| M5-D ✅        | 文档同步                       | 落地计划状态栏、前端规格 §8 缺陷清单逐条翻转（D1/D2/D3/D4/D5/D6/D8 标注修复提交）、`DOCUMENTATION_INDEX.md`、本文档进度列；AGENTS.md 部署地址变更按 §十二确认后独立处理                                                                             | 文档与代码一致（AGENTS.md §7.2）                              | M5-B2  |
 
 ***
 
@@ -404,6 +404,49 @@ Reproduction Report ────────── M4（报告 artifact 化）
   指标判定（**val\_loss 1.8857 ∈ 1.88±0.06 → PASS**，LLM 零参与）→ 报告
   双 Artifact 落库并下载（md 2576B + json 3397B）。验收记录：
   `docs/phase1/验收记录/M4_验收_2026-09-05.md`。
+
+- 语义覆盖：409 未完成（单测）、404 防枚举（线上双向）、轮询上限、归属
+  登记失败诚实标注（单测）。`nexuslab_repro` 翻 `ready`（Clean Verification
+  仍为 P2+）。M0-F2 同步完成。
+
+### 14.9 2026-09-05 M5 代码完成记录（待部署验收）
+
+- **S3-B1/B2/B3**：代码完成。删除 `endpoints/research_agent.py`、
+  `platform/agents/research/` 全目录、`providers/research/` 的
+  `paper_search.py`/`workspace.py`/`access.py`、main.py 路由注册与
+  `bootstrap_research_agent`、旧 research 测试 10 文件；
+  **保留**（活消费者，AGENTS.md §4.2.3）：
+  `providers/research/{question_bank,question_generation,web_research}.py`
+  （TeachingAgent 工具链）、`endpoints/web_research.py` +
+  `web_research_service.py`（tasks 任务链）；
+  deprecated 中间件保留（410 短路继续）。
+
+- **事实修正**（相对转型落地计划 §五）：
+  ① `services/research_service.py` 不存在（幽灵文件，未删任何东西）；
+  ② Backend `providers/research/paper_search.py` **无需迁移**——nexus 已有
+  独立降级链实现（packages 无交叉 import），直接删除；
+  ③ 计划"删 `platform/agents/research/` 除 paper\_search 外"中的路径假设错误
+  （paper\_search 不在该目录）——按现实全删该目录。
+
+- **S3-B3**：`research_models.py` 表模型 + Alembic 迁移保留，未新增 down 迁移。
+
+- **M5-B2**：`nexus/tests/test_harness_stress.py` 7 场景全绿（多 Tool 长任务 /
+  Tool 500 → error 事件 / Compact 触发语义+生产接线分层锁定 / restart resume /
+  Cancel 引用 M1-B6 / 缺参 tool\_call 诚实 error / Worker 超时 fail-closed）。
+  已知边界：Compact **全图触发实测**未命中（deepagents before\_model 与
+  profile 联动，fake 模型注 profile 后仍不触发），留 P2+ 与上游核实。
+
+- **既有遗留（非 S3 造成，worktree** **`aa77ba41`** **对照实证）**：
+  ① b433bae3 avatar 移除遗留的死测试（404 接口不存在）——已删除
+  `test_avatar.py`/`test_p0_3_avatar_upload_security.py`/
+  `test_avatar_cue_release.py`/`test_r2c_tts_batch_task.py`，
+  翻转两条路由契约断言为"已下线"；
+  ② 仍失败 2 项待单独跟进：`test_alembic_migration`（course\_access 修复脚本
+  权限集断言）、`test_p0_2_async_tasks`（handlers 注册断言）——course-access
+  与任务域，超出 M5 范围，不删不改，如实记录。
+
+- **M5-D**：前端规格 §8 缺陷逐条翻转（D1/D2/D3/D4/D5/D6/D8 标注修复提交 +
+  验收记录链接）、§11 基数刷新；落地计划 §九随部署后更新。
 
 - 语义覆盖：409 未完成（单测）、404 防枚举（线上双向）、轮询上限、归属
   登记失败诚实标注（单测）。`nexuslab_repro` 翻 `ready`（Clean Verification

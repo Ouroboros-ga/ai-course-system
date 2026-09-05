@@ -105,11 +105,12 @@ def test_route_contract_locks_document_router_double_mount(fastapi_app):
 
 
 def test_route_contract_locks_video_gen_and_known_absent_old_routes(fastapi_app):
+    """b433bae3 移除数字人/video-gen 域后，本契约更新为断言该域路由已不存在。"""
     rows = _route_rows(fastapi_app)
     paths = {row["path"] for row in rows}
 
-    assert "/api/v1/video-gen/health" in paths
-    assert "/api/v1/video-gen/course/{course_id}/generate" in paths
+    assert "/api/v1/video-gen/health" not in paths
+    assert "/api/v1/video-gen/course/{course_id}/generate" not in paths
     assert "/api/v1/video-generation/health" not in paths
     assert "/api/v1/video-generation/course/{course_id}/generate" not in paths
 

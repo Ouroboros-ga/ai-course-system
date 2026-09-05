@@ -1,4 +1,4 @@
-# app/main.py
+﻿# app/main.py
 import logging
 import os
 from importlib.util import find_spec
@@ -142,8 +142,7 @@ from app.api.v1.endpoints import (
     visualization,      # G4 算法可视化
     facade,             # Phase A 门面层
     safety,             # G6 安全围栏与沙箱治理
-    web_research,       # G7 WebResearchTool
-    research_agent,     # Legacy: ResearchAgent（大脑已由 Nexus 替代，S1 双轨期保留）
+    web_research,       # G7 WebResearchTool（HTTP 层已 410；内部任务链仍用其 service）
     nexus_proxy,        # Nexus AI Runtime 反代（独立进程，纯透传）
     nexus_internal,     # M2: Nexus Runtime → Backend 内部只读检索（service token）
     discipline_knowledge,  # XH-202620 CS 学科垂类知识库检索（只读）
@@ -285,11 +284,9 @@ async def recover_durable_task_queues() -> None:
 from app.platform.agents.bootstrap import (
     bootstrap_coding_agent,
     bootstrap_prep_agent,
-    bootstrap_research_agent,
     bootstrap_teaching_agent,
 )
 bootstrap_prep_agent(app)
-bootstrap_research_agent(app)
 bootstrap_coding_agent(app)
 bootstrap_teaching_agent(app)
 
@@ -369,7 +366,6 @@ app.include_router(safety.router, prefix="/api/v1/safety", tags=["G6 安全围�
 
 # G7: WebResearchTool 受控研究
 app.include_router(web_research.router, prefix="/api/v1/web-research", tags=["G7 WebResearchTool"])
-app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=["ResearchAgent"])
 
 # CodeNexus 转型 S1：Nexus AI Runtime 反代（纯透传到独立进程 nexus/，见
 # docs/phase1/2026-09-03_CodeNexus转型实施决策.md）。旧 research-agent 与
