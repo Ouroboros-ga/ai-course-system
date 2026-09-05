@@ -49,6 +49,7 @@ _TABLE_DDL_BODY = """
 _table_ready = False
 # PG-only（nexus_checkpoints 为 Nexus 独立 schema，生产即 PostgreSQL 16；
 # 涉表行为由部署后线上验收覆盖，不为本仓库 SQLite 测试引擎做方言分支）。
+_TABLE = f"{_SCHEMA}.nexus_artifacts"
 
 
 def ensure_table(session: Session) -> None:
