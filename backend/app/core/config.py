@@ -510,6 +510,9 @@ class Settings(BaseSettings):
     NEXUS_RUNTIME_CONNECT_TIMEOUT_S: int = 5
     # SSE 流式对话的单次读超时（Agent 多轮工具循环可能长时间无 token 输出）
     NEXUS_RUNTIME_STREAM_READ_TIMEOUT_S: int = 300
+    # Runtime → Backend 方向的内部服务令牌（M2 知识接入）。nexus-internal 端点
+    # fail-closed：令牌未配置时端点一律 503，绝不开放无鉴权检索。
+    NEXUS_INTERNAL_TOKEN: str = ""
 
     # 废弃接口 Sunset 日期（RFC 8594，HTTP-date 格式）。转型按里程碑推进，
     # 默认留空即不发送该头——不编造一个到期日误导调用方。

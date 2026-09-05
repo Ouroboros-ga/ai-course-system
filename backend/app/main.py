@@ -145,6 +145,7 @@ from app.api.v1.endpoints import (
     web_research,       # G7 WebResearchTool
     research_agent,     # Legacy: ResearchAgent（大脑已由 Nexus 替代，S1 双轨期保留）
     nexus_proxy,        # Nexus AI Runtime 反代（独立进程，纯透传）
+    nexus_internal,     # M2: Nexus Runtime → Backend 内部只读检索（service token）
     discipline_knowledge,  # XH-202620 CS 学科垂类知识库检索（只读）
     media_timeline,     # G8 媒体时间轴
     graph_production,   # G9 Evidence与图谱
@@ -374,6 +375,8 @@ app.include_router(research_agent.router, prefix="/api/v1/research-agent", tags=
 # docs/phase1/2026-09-03_CodeNexus转型实施决策.md）。旧 research-agent 与
 # web-research 已由 DeprecationHeaderMiddleware 标注为废弃，S2 转 410。
 app.include_router(nexus_proxy.router, prefix="/api/v1/nexus", tags=["Nexus AI Runtime"])
+# M2 知识接入：Runtime → Backend 方向的内部只读检索端点（service token 门控）
+app.include_router(nexus_internal.router, prefix="/api/v1/nexus-internal", tags=["Nexus 内部检索"])
 
 # XH-202620: CS 学科垂类知识库（只读检索，数据来自 knowledge_data/）
 app.include_router(discipline_knowledge.router, prefix="/api/v1/discipline-knowledge", tags=["Discipline Knowledge"])

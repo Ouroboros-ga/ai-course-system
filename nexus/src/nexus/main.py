@@ -210,12 +210,19 @@ def _tool_result_payload(msg: ToolMessage) -> dict[str, Any]:
 
 
 async def _agent_stream(
-    message: str, session_id: str, user_id: str | None = None, mode: str = "research"
+    message: str,
+    session_id: str,
+    user_id: str | None = None,
+    mode: str = "research",
+    course_id: int | None = None,
 ):
     agent = get_agent(mode)
     inputs = {"messages": [{"role": "user", "content": message}]}
     config = _config_for(session_id, user_id)
     token_count = 0
+    from nexus.request_scope import reset_scope, set_scope
+
+    scope_tokens = set_scope(user_id, course_id)
     try:
         # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
         # 列表模式才产出 (mode, payload) 元组。
@@ -250,15 +257,17 @@ async def _agent_stream(
         code = str(getattr(error, "code", "") or type(error).__name__)[:64]
         yield _sse("error", {"code": code, "message": str(error)[:300]})
         return
+    finally:
+        reset_scope(scope_tokens)
     yield _sse("done", {"session_id": session_id, "token_count": token_count})
 
 
 def _tool_surface() -> dict[str, list[str]] | None:
     """已构建 agent 的执行器工具注册表（M0-B1 巡检口径，M1 起按模式上报）。
 
-    General 应为 read_file + web_search；Research 为 read_file + 四产品工具。
-    出现 write_file/execute/task 等即表示工具面收敛失效（回归信号）。
-    未构建任何 agent 时返回 null。
+    General 应为 read_file + web_search；Research 为 read_file + 六产品工具
+    （四检索/复现工具 + 课程/CS 检索）。出现 write_file/execute/task 等即
+    表示工具面收敛失效（回归信号）。未构建任何 agent 时返回 null。
     """
     if not _agents:
         return None
@@ -308,10 +317,20 @@ async def chat_stream(
     thread_id = thread_for(session_id, user_id)
     await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
-        _agent_stream(request.message, session_id, user_id, mode),
+        _agent_stream(request.message, session_id, user_id, mode, _context_course_id(request)),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+def _context_course_id(request: ChatRequest) -> int | None:
+    """从请求 context 提取课程 ID（M2：course_id 只信代理层转发的请求上下文）。"""
+    raw = (request.context or {}).get("course_id")
+    try:
+        course_id = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return course_id if course_id > 0 else None
 
 
 @app.post("/api/v1/nexus/chat", dependencies=[Depends(require_api_key)])
@@ -326,21 +345,27 @@ async def chat(
     inputs = {"messages": [{"role": "user", "content": request.message}]}
     config = _config_for(session_id, user_id)
     tool_events: list[dict[str, Any]] = []
+    from nexus.request_scope import reset_scope, set_scope
+
+    scope_tokens = set_scope(user_id, _context_course_id(request))
     # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
     # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
-    async for mode, payload in agent.astream(inputs, config, stream_mode=["updates"]):
-        for _node, delta in (payload or {}).items():
-            messages = delta.get("messages") if isinstance(delta, dict) else None
-            if not messages:
-                continue
-            for msg in messages:
-                if isinstance(msg, AIMessage):
-                    for call in msg.tool_calls or []:
-                        tool_events.append({"name": call.get("name"), "args": call.get("args")})
-                elif isinstance(msg, ToolMessage):
-                    tool_events.append(
-                        {"name": msg.name or "", "status": msg.status or "success"}
-                    )
+    try:
+        async for stream_mode, payload in agent.astream(inputs, config, stream_mode=["updates"]):
+            for _node, delta in (payload or {}).items():
+                messages = delta.get("messages") if isinstance(delta, dict) else None
+                if not messages:
+                    continue
+                for msg in messages:
+                    if isinstance(msg, AIMessage):
+                        for call in msg.tool_calls or []:
+                            tool_events.append({"name": call.get("name"), "args": call.get("args")})
+                    elif isinstance(msg, ToolMessage):
+                        tool_events.append(
+                            {"name": msg.name or "", "status": msg.status or "success"}
+                        )
+    finally:
+        reset_scope(scope_tokens)
     state = await agent.aget_state(config)
     final_message = ""
     for msg in reversed(state.values.get("messages", [])):

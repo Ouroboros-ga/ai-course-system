@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # Worker 的 Bearer 令牌（REPRO_WORKER_TOKEN 对应项；双方都配置才启用认证）
     repro_worker_token: str = ""
 
+    # M2 知识接入：Runtime → Backend 内部检索端点（课程资料 / CS 知识库）。
+    # 未配置时两工具 fail-closed 返回 UNAVAILABLE，不假造检索结果。
+    backend_internal_url: str = ""
+    backend_internal_token: str = ""
+
     # 会话持久化（P1-C）：PostgresSaver，独立 schema，不混入业务表。
     # 留空则回退 InMemorySaver（本地开发/测试，无需本地启动 PG）。
     postgres_dsn: str = ""

@@ -550,36 +550,69 @@ const reproExecutable = computed(() => isReproductionExecutable())
 
 /**
  * 信息源面板的真实数据：从本会话的 tool_result 事件里现提取，不写死任何来源描述。
- * 这里同时是运行时缺陷 D2 的哨兵：tool_result.content 被截断到 600 字符，
- * 真实搜索结果的 JSON 会被切在半截上，JSON.parse 必然失败。
+ * M1-B4 起 tool_result 携带结构化 items（条目边界截断），优先消费 items；
+ * 旧会话（仅有 content JSON）回退到解析 content，仍解析失败计入 unparsable 哨兵。
  */
 const sessionSources = computed(() => {
   const turns = currentSession.value?.turns || []
   const web = []
   const papers = []
+  const course = []
+  const csKb = []
   let unparsable = 0
+
+  const itemsOf = (evt) => {
+    if (Array.isArray(evt?.items)) return evt.items
+    try {
+      const payload = JSON.parse(evt?.content)
+      return Array.isArray(payload?.items) ? payload.items : null
+    } catch {
+      return null
+    }
+  }
 
   for (const t of turns) {
     for (const p of t.papers || []) {
       if (p?.title) papers.push(p)
     }
     for (const evt of t.toolEvents || []) {
-      if (evt?.kind !== 'result' || evt?.name !== 'web_search') continue
-      try {
-        const payload = JSON.parse(evt.content)
-        for (const item of payload.items || []) {
+      if (evt?.kind !== 'result') continue
+      if (evt?.name === 'web_search') {
+        const items = itemsOf(evt)
+        if (items === null) {
+          unparsable += 1
+          continue
+        }
+        for (const item of items) {
           if (item?.title && item?.url) web.push(item)
         }
-      } catch {
-        unparsable += 1
+      } else if (evt?.name === 'search_course_materials') {
+        for (const item of itemsOf(evt) || []) {
+          if (!item?.text) continue
+          course.push({
+            text: item.text,
+            resource: item.resource_id || '',
+            page: item.page ?? null,
+            node: item.node_key || ''
+          })
+        }
+      } else if (evt?.name === 'search_cs_knowledge') {
+        for (const item of itemsOf(evt) || []) {
+          if (!item?.name) continue
+          csKb.push({ name: item.name, source: item.source || '', course: item.course || '' })
+        }
       }
     }
   }
-  return { web, papers, unparsable }
+  return { web, papers, course, csKb, unparsable }
 })
 
 const sourcesTotal = computed(
-  () => sessionSources.value.web.length + sessionSources.value.papers.length
+  () =>
+    sessionSources.value.web.length +
+    sessionSources.value.papers.length +
+    sessionSources.value.course.length +
+    sessionSources.value.csKb.length
 )
 
 function selectCourse(course) {
@@ -926,6 +959,7 @@ async function runTurn(message) {
       message: msg,
       sessionId: currentSession.value.id,
       mode: activeMode.value,
+      courseId: currentSession.value.courseId ?? null,
       signal: abortController.signal,
       onEvent: (evt) => handleEvent(turn, evt),
     })
@@ -1886,13 +1920,39 @@ const emptySuggestions = computed(() =>
           <!-- 信息源面板：只展示本会话真实检索到的结果 -->
           <div v-if="activeDetailTab === 'sources'" class="nx-tab-pane">
             <div
-              v-if="!sessionSources.papers.length && !sessionSources.web.length"
+              v-if="sourcesTotal === 0"
               class="nx-pane-empty"
             >
-              本会话还没有检索结果。提问后，命中的论文与网页会汇总到这里。
+              本会话还没有检索结果。提问后，命中的论文、网页、课程资料与知识库条目会汇总到这里。
             </div>
 
             <div v-else class="nx-src-groups">
+              <div v-if="sessionSources.course.length" class="nx-src-group">
+                <div class="nx-src-head">课程资料 · {{ sessionSources.course.length }}（经核实）</div>
+                <div
+                  v-for="(c, i) in sessionSources.course"
+                  :key="`c${i}`"
+                  class="nx-src-row"
+                >
+                  <span class="nx-src-title">{{ c.text }}</span>
+                  <span class="nx-src-meta">
+                    {{ c.resource }}{{ c.page != null ? ` · 第 ${c.page} 页` : '' }}{{ c.node ? ` · ${c.node}` : '' }}
+                  </span>
+                </div>
+              </div>
+
+              <div v-if="sessionSources.csKb.length" class="nx-src-group">
+                <div class="nx-src-head">CS 知识库 · {{ sessionSources.csKb.length }}（权威来源）</div>
+                <div
+                  v-for="(k, i) in sessionSources.csKb"
+                  :key="`k${i}`"
+                  class="nx-src-row"
+                >
+                  <span class="nx-src-title">{{ k.name }}</span>
+                  <span class="nx-src-meta">{{ [k.source, k.course].filter(Boolean).join(' · ') }}</span>
+                </div>
+              </div>
+
               <div v-if="sessionSources.papers.length" class="nx-src-group">
                 <div class="nx-src-head">论文 · {{ sessionSources.papers.length }}</div>
                 <a
@@ -1924,8 +1984,8 @@ const emptySuggestions = computed(() =>
               </div>
 
               <p v-if="sessionSources.unparsable" class="nx-src-note">
-                另有 {{ sessionSources.unparsable }} 条检索结果无法解析：运行时把
-                tool_result.content 截断到 600 字符（待修缺陷 D2），接入后本面板才会完整。
+                另有 {{ sessionSources.unparsable }} 条检索结果无法解析（旧会话的截断结果）；
+                新会话使用结构化 items，不再出现该问题。
               </p>
             </div>
         </div>

@@ -33,27 +33,26 @@ export const NEXUS_CAPABILITIES = {
     id: 'course_materials',
     label: '课程资料',
     icon: 'FileText',
-    state: CAPABILITY_STATE.WIRED,
+    state: CAPABILITY_STATE.READY,
     modes: ['nexus_general', 'nexus_research'],
-    // 数据侧接口今天就在：GET /api/v1/course-build/course/{id}/materials
-    // 缺的是把选中结果喂给 Agent 的那一段。
+    // 已接通（M2-B1/B2）：Runtime search_course_materials 工具 → Backend
+    // /api/v1/nexus-internal/course-evidence（Course Access v1 门控）→
+    // ActiveBundle 证据检索（bundle/graph/citation 可追溯）。
+    // course_id 由代理层从请求 context 注入，会话绑定课程后生效。
     integration:
-      'Nexus Runtime 需在 /chat/stream 请求体接收 context.course_id，并在 system/工具侧消费课程资料检索结果。',
-    wiredHint: '数据源已就绪，尚未注入回答链路',
+      '已接通：search_course_materials（course_id 来自会话绑定的 context，模型传参不改变范围）。',
   },
 
   cs_knowledge: {
     id: 'cs_knowledge',
     label: 'CS 知识库',
     icon: 'Database',
-    state: CAPABILITY_STATE.UNWIRED,
+    state: CAPABILITY_STATE.READY,
     modes: ['nexus_general', 'nexus_research'],
-    // 硬事实：providers/retrieval/ 下只有 Course 域端口（ActiveBundleCourseRetrievalPort）
-    // 与 RetrievalDemo*；lancedb_provider.py schema_version = "course-lancedb/1.0"。
-    // 不存在 CS-scoped 的生产检索路径，因此这里不得显示任何词条数。
-    integration:
-      '需先提供 CS-scoped 的生产检索路径（当前全部向量检索均为 course-scoped），再由 Runtime 注入上下文。在此之前前端不展示词条数量。',
-    unwiredHint: 'CS 域检索路径尚未建立',
+    // 已接通（M2-B1/B2）：Runtime search_cs_knowledge 工具 → Backend
+    // /api/v1/nexus-internal/cs-knowledge → discipline_kb BM25 检索。
+    // 集成口径（M2-F1）：当前为关键词（BM25）检索、非向量；词条规模见概览接口。
+    integration: '已接通：search_cs_knowledge（关键词检索，权威来源随条目返回）。',
   },
 
   web_search: {
