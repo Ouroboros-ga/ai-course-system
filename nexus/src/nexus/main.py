@@ -160,6 +160,7 @@ _ITEM_FIELD_BY_TOOL = {
     "search_arxiv_papers": "items",
     "plan_reproduction": "plan",
     "run_reproduction": "job",
+    "write_artifact": "artifact",
 }
 _ITEM_MAX_COUNT = 20
 _ITEM_STR_MAX = 300
@@ -175,9 +176,7 @@ def _structured_tool_items(name: str, content: str) -> list[Any] | None:
         return None
     field = _ITEM_FIELD_BY_TOOL.get(name or "", "items")
     raw = data.get(field)
-    if field == "plan" and isinstance(raw, dict):
-        raw = [raw]
-    if field == "job" and isinstance(raw, dict):
+    if field in ("plan", "job", "artifact") and isinstance(raw, dict):
         raw = [raw]
     if not isinstance(raw, list):
         return None

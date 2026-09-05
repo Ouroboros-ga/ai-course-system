@@ -85,9 +85,11 @@ async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
     general = build_agent(mode="general")
     product = {t.name for t in NEXUS_TOOLS}
     assert set(_registry(research)) == {"read_file"} | product
-    # General 含课程/CS 检索（Phase 12 演示链：普通模式 → CS/Course RAG + Web），
-    # 仅排除 research-only 三工具（arXiv/复现规划/复现执行）。
-    assert set(_registry(general)) == {"read_file", "web_search", "search_course_materials", "search_cs_knowledge"}
+    # General 含课程/CS 检索与产物写入（Phase 12 演示链：普通模式 → CS/Course
+    # RAG + Web → 生成 Artifact），仅排除 research-only 三工具。
+    assert set(_registry(general)) == {
+        "read_file", "web_search", "search_course_materials", "search_cs_knowledge", "write_artifact",
+    }
     # 模型可见面同执行器注册表（research-only 工具结构性不绑定）。
     await general.ainvoke(
         {"messages": [{"role": "user", "content": "hi"}]},

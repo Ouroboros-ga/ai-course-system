@@ -879,6 +879,17 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   )
   assert.match(backend, /@router\.get\("\/sessions\/\{session_id\}\/messages"\)/)
 
+  // M3：Artifact 列表与下载（Backend 原生路由，owner 校验；列表裸 JSON）
+  assert.equal(extractFirstPath(src, 'listNexusArtifacts'), '/nexus/artifacts')
+  assert.match(backend, /@router\.get\("\/artifacts"\)/)
+  assert.match(
+    src,
+    /downloadNexusArtifact[\s\S]*?\/nexus\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/download/,
+  )
+  assert.match(backend, /@router\.get\("\/artifacts\/\{artifact_id\}\/download"\)/)
+  // 下载必须带用户 JWT（"链接含 token"硬约束的实现口径）
+  assert.match(src, /downloadNexusArtifact[\s\S]*?Authorization: `Bearer \$\{token\}`/)
+
   assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
 
   // M1-F3：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
@@ -956,9 +967,9 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // 页面：无权限整页拦截并说明开通路径
   assert.match(page, /v-if="counter\.canUseNexus"/)
   assert.match(page, /暂无 Nexus AI 使用权限/)
-  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages）都走 require_nexus_use
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 5)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 7)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

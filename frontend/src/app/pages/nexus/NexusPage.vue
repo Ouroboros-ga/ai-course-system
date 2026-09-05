@@ -28,6 +28,7 @@ import {
   Database,
   Download,
   ExternalLink,
+  FileCode,
   FileText,
   FlaskConical,
   Globe,
@@ -58,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, listNexusSessions } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -147,6 +148,13 @@ function initSessions() {
  */
 async function refreshRemoteSessions() {
   if (nexusDataSourceMode.value !== 'real') return
+  // M3：服务器产物列表（best-effort，失败保留旧值）
+  try {
+    const res = await listNexusArtifacts()
+    remoteArtifacts.value = Array.isArray(res?.items) ? res.items : []
+  } catch {
+    /* 保留旧列表 */
+  }
   let remote
   try {
     remote = await listNexusSessions()
@@ -419,7 +427,13 @@ function formatSessionTime(ts) {
  * 「本机资料」区：只统计真实存在于本地会话中的产物与复现记录，
  * 没有数据时整区不渲染（与右栏「有数据才出」同一原则）。
  */
+/* 本机资料：real 模式以服务器产物列表为准（M3）；demo 模式统计本地会话。 */
+const remoteArtifacts = ref([])
+
 const localResources = computed(() => {
+  if (nexusDataSourceMode.value === 'real') {
+    return { artifacts: remoteArtifacts.value.length, repro: 0 }
+  }
   let artifacts = 0
   let repro = 0
   for (const s of sessions.value) {
@@ -462,6 +476,30 @@ function jumpToLocalResource(kind) {
     .filter((s) => (s.turns || []).some(matcher))
     .sort((a, b) => b.updatedAt - a.updatedAt)[0]
   if (target) switchSession(target.id)
+}
+
+function formatBytes(n) {
+  const size = Number(n) || 0
+  if (size >= 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`
+  if (size >= 1024) return `${(size / 1024).toFixed(1)} KB`
+  return `${size} B`
+}
+
+async function downloadArtifact(artifact) {
+  if (!artifact?.artifact_id) return
+  try {
+    const blob = await downloadNexusArtifact(artifact.artifact_id)
+    const ext = artifact.artifact_type === 'latex' ? 'tex' : 'md'
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `${(artifact.title || 'artifact').replace(/[\\/:*?"<>|]/g, '_').slice(0, 40) || 'artifact'}.${ext}`
+    link.click()
+    URL.revokeObjectURL(url)
+    showToast('已开始下载', 'success')
+  } catch (err) {
+    showToast(err?.message || '产物下载失败', 'error')
+  }
 }
 
 // ── 3. Mode 切换与上下文 ──
@@ -888,6 +926,23 @@ function handleEvent(turn, { event, data }) {
         }
       } catch (e) {
         // pass
+      }
+    }
+
+    // M3：write_artifact 成功 → turn.artifacts（消息流产物卡 + 本机资料计数）
+    if (data?.name === 'write_artifact' && data?.status !== 'error') {
+      let artifact = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
+      if (!artifact && data?.content) {
+        try {
+          const parsed = JSON.parse(data.content)
+          if (parsed?.artifact) artifact = parsed.artifact
+        } catch (e) {
+          // 结构化 items 兜底解析失败：产物卡暂缺，但结果本身如实留存在轨迹里
+        }
+      }
+      if (artifact?.artifact_id && !(turn.artifacts || []).some((a) => a.artifact_id === artifact.artifact_id)) {
+        turn.artifacts = [...(turn.artifacts || []), artifact]
+        persistSessions()
       }
     }
   } else if (event === 'error') {
@@ -1362,8 +1417,9 @@ const emptySuggestions = computed(() =>
               <span class="nx-dv-subname">复现记录</span>
               <span class="nx-dv-subcount">{{ localResources.repro }}</span>
             </div>
+            <!-- demo 模式：产物行跳本地会话 -->
             <div
-              v-if="localResources.artifacts"
+              v-if="nexusDataSourceMode !== 'real' && localResources.artifacts"
               class="nx-dv-subrow"
               role="button"
               tabindex="0"
@@ -1375,7 +1431,25 @@ const emptySuggestions = computed(() =>
               <span class="nx-dv-subname">产物</span>
               <span class="nx-dv-subcount">{{ localResources.artifacts }}</span>
             </div>
-            <p class="nx-dv-note">只存在这台设备的浏览器里，换设备看不到。</p>
+            <!-- real 模式：服务器产物列表（M3），逐项可下载 -->
+            <template v-if="nexusDataSourceMode === 'real'">
+              <div
+                v-for="a in remoteArtifacts"
+                :key="a.artifact_id"
+                class="nx-dv-subrow"
+                role="button"
+                tabindex="0"
+                :title="`下载 ${a.title}`"
+                @click="downloadArtifact(a)"
+                @keydown.enter.prevent="downloadArtifact(a)"
+              >
+                <FileText :size="13" />
+                <span class="nx-dv-subname nx-dv-artifact-title">{{ a.title }}</span>
+                <span class="nx-dv-subcount">{{ formatBytes(a.size_bytes) }}</span>
+              </div>
+              <p class="nx-dv-note">产物保存在服务器，登录同一账号即可下载。</p>
+            </template>
+            <p v-else class="nx-dv-note">只存在这台设备的浏览器里，换设备看不到。</p>
           </div>
         </div>
 
@@ -1742,6 +1816,31 @@ const emptySuggestions = computed(() =>
                 class="nx-markdown-body"
                 v-html="renderedAnswer(turn)"
               />
+
+              <!-- M3 产物卡：write_artifact 真实写入后的可下载文件 -->
+              <div v-if="turn.artifacts?.length" class="nx-artifact-list">
+                <div
+                  v-for="a in turn.artifacts"
+                  :key="a.artifact_id"
+                  class="nx-artifact-card"
+                >
+                  <component
+                    :is="a.artifact_type === 'latex' ? FileCode : FileText"
+                    :size="15"
+                    class="nx-art-icon"
+                  />
+                  <div class="nx-art-meta">
+                    <div class="nx-art-title">{{ a.title }}</div>
+                    <div class="nx-art-sub">
+                      {{ a.artifact_type === 'latex' ? 'LaTeX' : 'Markdown' }} · {{ formatBytes(a.size_bytes) }}
+                    </div>
+                  </div>
+                  <SfxButton variant="secondary" size="sm" @click="downloadArtifact(a)">
+                    <template #icon><ExternalLink :size="12" /></template>
+                    下载
+                  </SfxButton>
+                </div>
+              </div>
 
               <!-- 失败状态卡片 -->
               <div v-if="turn.failure" class="nx-turn-failure">
@@ -3327,6 +3426,55 @@ const emptySuggestions = computed(() =>
   background: var(--nexus-accent-soft);
   border-radius: var(--radius-md);
   padding: var(--space-4);
+}
+
+/* M3 产物卡：write_artifact 真实文件的下载入口（沿用回应区卡片体系） */
+.nx-artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.nx-artifact-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  border: 1px solid var(--border-secondary);
+  background: var(--surface-2);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+}
+
+.nx-art-icon {
+  color: var(--nexus-accent-strong);
+  flex-shrink: 0;
+}
+
+.nx-art-meta {
+  flex: 1;
+  min-width: 0;
+}
+
+.nx-art-title {
+  font-size: var(--ui-md-size);
+  font-weight: 600;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-art-sub {
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+}
+
+.nx-dv-artifact-title {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .nx-rc-header {

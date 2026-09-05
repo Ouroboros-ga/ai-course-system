@@ -282,6 +282,65 @@ async def nexus_session_messages(
     return _passthrough(response)
 
 
+# ---------------------------------------------------------------------------
+# M3 Artifact：Backend 原生路由（非透传）——元数据在 nexus_checkpoints
+# schema（P1 验收后 ai_course_app 可读写），文件字节经对象存储直出，
+# 不穿过 Runtime 进程（偏离计划 M3-B2 原文，理由见计划文档偏离记录）。
+# ---------------------------------------------------------------------------
+
+
+def _artifact_user_id(current_user: dict) -> str:
+    return str(current_user.get("user_id"))
+
+
+@router.get("/artifacts")
+async def nexus_artifacts_list(
+    limit: int = 50,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """当前用户产物列表（M3-B2，owner 过滤）。
+
+    与其余 /api/v1/nexus/* 路由一致返回裸 JSON（无 code/message 信封），
+    前端 allowFlatResponse 消费。
+    """
+    from app.services import nexus_artifact_service
+
+    items = nexus_artifact_service.list_artifacts(
+        session, user_id=_artifact_user_id(current_user), limit=limit
+    )
+    return JSONResponse(
+        status_code=status.HTTP_200_OK,
+        content={"items": items},
+    )
+
+
+@router.get("/artifacts/{artifact_id}/download")
+async def nexus_artifact_download(
+    artifact_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """产物下载（M3-B2）：owner 校验后经对象存储直出文件。非 owner 返回 404
+    （列表不可见即不存在，防枚举探测）。"""
+    from app.services import nexus_artifact_service
+    from fastapi.responses import FileResponse
+    from app.services.object_storage import get_object_storage
+
+    artifact = nexus_artifact_service.get_owned_artifact(
+        session, user_id=_artifact_user_id(current_user), artifact_id=artifact_id
+    )
+    if artifact is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="产物不存在")
+    storage = get_object_storage()
+    try:
+        path = storage._safe_full_path(artifact["object_key"])
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="object_key 不安全") from exc
+    mime, filename = nexus_artifact_service.mime_and_filename(artifact)
+    return FileResponse(path=path, media_type=mime, filename=filename)
+
+
 @router.post("/chat/stream")
 async def nexus_chat_stream(
     payload: NexusChatRequest,

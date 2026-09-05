@@ -35,6 +35,43 @@ export function getNexusSessionMessages(sessionId) {
 }
 
 /**
+ * 产物列表（M3）：当前用户的 Nexus Artifact（owner 过滤在 Backend）。
+ */
+export function listNexusArtifacts(limit = 50) {
+  return request.get('/nexus/artifacts', {
+    params: { limit },
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 产物下载（M3）：JWT 鉴权 + owner 校验，返回 Blob 由调用方触发保存。
+ */
+export async function downloadNexusArtifact(artifactId) {
+  const token = localStorage.getItem('token')
+  const response = await fetch(
+    `${NEXUS_BASE}/nexus/artifacts/${encodeURIComponent(artifactId)}/download`,
+    {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    }
+  )
+  if (!response.ok) {
+    let detail = ''
+    try {
+      const payload = await response.json()
+      detail = payload?.message || payload?.detail || ''
+    } catch {
+      detail = await response.text().catch(() => '')
+    }
+    const error = new Error(detail || `产物下载失败（HTTP ${response.status}）`)
+    error.status = response.status
+    throw error
+  }
+  return response.blob()
+}
+
+/**
  * 非流式对话：等 Agent 循环跑完一次性返回。
  *
  * @deprecated 已知运行时缺陷（见开发文档「待修缺陷 D1」）：

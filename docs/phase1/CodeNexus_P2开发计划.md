@@ -33,21 +33,21 @@
 
 **对照设计文档 Phase 12 比赛演示链的缺口**（本计划的全部内容来源）：
 
-| 演示链环节                        | 现状                                                     | 缺口                                                                        |
-| ---------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------- |
-| 进入 Nexus AI → 普通模式           | 前端 Mode UI 完备                                          | `mode` 字段被两层 pydantic 静默丢弃（D2）；General 模式可调 Research 工具与 `execute`（Q7/D1） |
-| CS / Course RAG + Web        | `course_materials=wired`、`cs_knowledge=unwired`        | 无课程检索工具、无 CS 检索工具、`context.course_id` 不入链路                                |
-| 生成 Artifact                  | 前端仅演示数据                                                | Runtime 无 artifact 工具、无存储、无下载                                             |
-| 切换 Research → Paper Research | arXiv 元数据检索已通                                          | 全文/证据级 paper research 未评估（paper-qa，见 §十一）                                 |
-| Quick Reproduction           | Worker 已部署；nanoGPT 后端端到端 succeeded 5/5，val loss 1.8857 | 前端仍未展示 job 阶段、指标和报告；需补结果查询与 artifact 展示                                   |
-| Reproduction Report          | —                                                      | 报告非 artifact、无下载链路、前端无展示                                                  |
+| 演示链环节                        | 现状                                                     | 缺口                                        |
+| ---------------------------- | ------------------------------------------------------ | ----------------------------------------- |
+| 进入 Nexus AI → 普通模式           | 前端 Mode UI 完备；M1 双 Profile 已上线                         | `mode` 已成为服务端硬约束；剩余是持续观察工具面与异常路径          |
+| CS / Course RAG + Web        | `course_materials=ready`、`cs_knowledge=ready`          | 课程与 CS 检索已接通；剩余是持续检索质量与冷启动延迟优化            |
+| 生成 Artifact                  | 前端仅演示数据                                                | Runtime 无 artifact 工具、无存储、无下载             |
+| 切换 Research → Paper Research | arXiv 元数据检索已通                                          | 全文/证据级 paper research 未评估（paper-qa，见 §十一） |
+| Quick Reproduction           | Worker 已部署；nanoGPT 后端端到端 succeeded 5/5，val loss 1.8857 | 前端仍未展示 job 阶段、指标和报告；需补结果查询与 artifact 展示   |
+| Reproduction Report          | —                                                      | 报告非 artifact、无下载链路、前端无展示                  |
 
 **运行时已知缺陷对账**（前端规格 §8，2026-09-04 复核）：
 
 | 编号 | 缺陷                                                                                             | 状态                                                                                                         | 归属             |
 | -- | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | -------------- |
 | D1 | 默认 Deep Agent 挂载 `execute`/文件工具，无沙箱无审批，且 Runtime 已公网可达（经 zsitai.xyz 反代，web\_search 结果可被用于提示注入） | ✅ 已修（2026-09-04，M0-B1；severity 勘误见前端规格 §8：StateBackend 落 LangGraph state 非宿主 cwd，`execute` 调用即错，但暴露面修复仍必要） | **M0（安全 P0）**  |
-| D2 | `mode` 与 `context.course_id` 在 proxy 与 runtime 两层被丢弃                                           | 未修                                                                                                         | M1             |
+| D2 | `mode` 与 `context.course_id` 在 proxy 与 runtime 两层被丢弃                                           | ✅ 已修（M1）                                                                                                   | —              |
 | D3 | `.env.example` 变量名与 `env_prefix="NEXUS_"` 不一致                                                  | 未修                                                                                                         | M0             |
 | D4 | `tool_result` 600 字符硬截断导致 JSON 残缺                                                              | 未修                                                                                                         | M1             |
 | D5 | 无 SSE `error` 事件，流中断前端停在"进行中"                                                                  | 未修                                                                                                         | M1             |
@@ -146,18 +146,18 @@
 
 ### 6.1 后端
 
-| 任务       | 内容             | 输出                                                                                                                                                                                                                                                          | 验收                                                                          | 依赖    |
-| -------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----- |
-| M2-B1 ⏸️ | Backend 内部检索端点 | 新增服务令牌保护的内部端点：课程资料检索（复用现有 course 检索/材料能力——具体复用 `course_build` 材料接口与 Course Retrieval 端口中的哪一个，实施时按代码核定，不预虚构路径，设计文档 §18）+ CS 知识库检索（复用 `discipline-knowledge` 只读服务）。身份：请求头携带 `X-Nexus-User-Id`，端点内以该用户身份走 `course_access_service` 校验课程权限，**不绕过 Course Access** | 单测：无权限课程 403；service token 错误 401；有权限返回结构化 items（source/title/section/权威来源） | 无     |
-| M2-B2 ⏸️ | Nexus 检索工具     | `search_course_materials(query)`（course\_id 由代理层从请求 `context` 固定注入，**工具内不信任模型传参**）与 `search_cs_knowledge(query)`；两工具均先做课程/角色自校验（AGENTS.md §5.1.2）；返回结构化 items，标注"课程资料（经核实）"或"CS 知识库（权威来源）"与"补充参考"的边界                                                        | 模拟 HTTP 单测；研究模式一个提问可同时触发课程 + CS + Web 三源                                    | M2-B1 |
-| M2-B3 ⏸️ | 合流策略（红线）       | prompt 指引模型按相关性取舍证据，**不硬编码** **`course_score *= N`**；课程材料不相关时不得强行进入最终 context（设计文档 §5 红线）                                                                                                                                                                   | 评审：非相关课程材料不出现在回答引用中                                                         | M2-B2 |
+| 任务      | 内容             | 输出                                                                                                                                                                                                                                                          | 验收                                                                          | 依赖    |
+| ------- | -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ----- |
+| M2-B1 ✅ | Backend 内部检索端点 | 新增服务令牌保护的内部端点：课程资料检索（复用现有 course 检索/材料能力——具体复用 `course_build` 材料接口与 Course Retrieval 端口中的哪一个，实施时按代码核定，不预虚构路径，设计文档 §18）+ CS 知识库检索（复用 `discipline-knowledge` 只读服务）。身份：请求头携带 `X-Nexus-User-Id`，端点内以该用户身份走 `course_access_service` 校验课程权限，**不绕过 Course Access** | 单测：无权限课程 403；service token 错误 401；有权限返回结构化 items（source/title/section/权威来源） | 无     |
+| M2-B2 ✅ | Nexus 检索工具     | `search_course_materials(query)`（course\_id 由代理层从请求 `context` 固定注入，**工具内不信任模型传参**）与 `search_cs_knowledge(query)`；两工具均先做课程/角色自校验（AGENTS.md §5.1.2）；返回结构化 items，标注"课程资料（经核实）"或"CS 知识库（权威来源）"与"补充参考"的边界                                                        | 模拟 HTTP 单测；研究模式一个提问可同时触发课程 + CS + Web 三源                                    | M2-B1 |
+| M2-B3 ✅ | 合流策略（红线）       | prompt 指引模型按相关性取舍证据，**不硬编码** **`course_score *= N`**；课程材料不相关时不得强行进入最终 context（设计文档 §5 红线）                                                                                                                                                                   | 评审：非相关课程材料不出现在回答引用中                                                         | M2-B2 |
 
 ### 6.2 前端
 
-| <br />   | 任务               | 内容                                                                                             | 验收                 | 依赖           |
-| :------- | ---------------- | ---------------------------------------------------------------------------------------------- | ------------------ | ------------ |
-| M2-F1 ⏸️ | 两能力翻 `ready`     | `course_materials` → `ready`；`cs_knowledge` → `ready`（integration 注明 CS 当前为关键词检索、非向量；数据规模如实展示） | 界面自动随三态翻转变，无其他前端改动 | M2-B2 真实复测通过 |
-| M2-F2 ⏸️ | 信息源面板消费结构化 items | 右栏信息源展示 items 的 source/title/section（citation 链接）；与 M1-B4 的结构化 tool\_result 对接                 | 来源面板条目可核查          | M1-B4        |
+| <br />  | 任务               | 内容                                                                                             | 验收                 | 依赖           |
+| :------ | ---------------- | ---------------------------------------------------------------------------------------------- | ------------------ | ------------ |
+| M2-F1 ✅ | 两能力翻 `ready`     | `course_materials` → `ready`；`cs_knowledge` → `ready`（integration 注明 CS 当前为关键词检索、非向量；数据规模如实展示） | 界面自动随三态翻转变，无其他前端改动 | M2-B2 真实复测通过 |
+| M2-F2 ✅ | 信息源面板消费结构化 items | 右栏信息源展示 items 的 source/title/section（citation 链接）；与 M1-B4 的结构化 tool\_result 对接                 | 来源面板条目可核查          | M1-B4        |
 
 ***
 
@@ -165,12 +165,55 @@
 
 对应设计文档 Phase 4：不要模型输出"以下是 Word 文档内容"，要真实文件。
 
-| 任务       | 内容                  | 输出                                                                                                                                                                                                   | 验收                              | 依赖    |
-| -------- | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- | ----- |
-| M3-B1 ⏸️ | `write_artifact` 工具 | `write_artifact(type, title, content)`，P0 支持 `markdown` / `latex`（同为文本对象）；内容经 Backend 写入既有媒体/文档域（object\_key，**复用现有域，不新建平行存储**）；artifact 元数据（artifact\_id/type/title/location/created\_at）入 Nexus 域表 | 单测 mock 存储；真实链路产出可下载文件；元数据不落业务库 | 无     |
-| M3-B2 ⏸️ | 读取与下载               | Runtime `GET /api/v1/nexus/artifacts`（当前用户列表）+ `GET .../artifacts/{id}/download`（签名 URL）；Backend 反代 + `require_nexus_use` + 本人校验                                                                     | 跨用户访问 403；下载链接含 token（硬约束）      | M3-B1 |
-| M3-B3 ⏸️ | DOCX go/no-go       | 评估复用 Backend 既有文档生成能力做 docx 适配：存在且接入成本 ≤ 薄 Adapter 则做，否则记 no-go 归 P2+                                                                                                                                | 决策记录入本文档进度区                     | M3-B1 |
-| M3-F1 ⏸️ | 前端产物卡               | 消息流内 artifact 卡片（类型图标 + 标题 + 下载）；左栏"本机资料"的产物行接服务器列表（真实模式）；`file_upload` 能力按新契约重估（若上传接入成本高则维持 `unwired`）                                                                                              | 演示链"生成 Artifact"环节真实可交付文件       | M3-B2 |
+### 7.0 实现路径（2026-09-05 按代码核定细化）
+
+**数据域划分**（AGENTS.md §4.1.11/§4.1.7）：
+
+- 文件字节 → 既有对象存储（`object_storage.py`，同一存储根），object\_key 前缀
+  `nexus-artifacts/u{user_id}/{artifact_id}.{md|tex}`；metadata 只存 object\_key；
+
+- 元数据 → `nexus_checkpoints.nexus_artifacts`（PG-only 域表，ai\_course\_app
+  可读写；涉表断言由线上验收覆盖，不为 SQLite 测试引擎做方言分支）。
+
+**M3-B1 ✅（代码完成）write\_artifact 工具 + 内部写端点**：
+
+- Runtime `tools/artifact.py`：`write_artifact(type, title, content)`，type 白名单
+  `{markdown, latex}`、title≤120、content≤512KB → Backend
+  `POST /api/v1/nexus-internal/artifacts`（service token + X-Nexus-User-Id，
+  M2 同款三重校验）；未配置/失败 → `ARTIFACT_UNAVAILABLE`（fail-closed，
+  "不得声称文件已生成"）；
+
+- Backend 写端点：入参同源校验 → `storage.put` → 元数据入库 → 返回 artifact\_id；
+
+- M1-B4 结构化：`_ITEM_FIELD_BY_TOOL` 增 `write_artifact → artifact`（单条目），
+  前端 tool\_result items 直出产物卡。
+
+**M3-B2 ✅（代码完成，偏离原文已记录）列表与下载**：
+
+- **偏离**：计划原文为 "Runtime GET /artifacts + download + Backend 反代"；
+  核定后改为 **Backend 原生路由直读** **`nexus_artifacts`**——同库不同连接
+  （P1 属主转移后 ai\_course\_app 可读写），文件字节不过 Runtime 进程，
+  列表/下载复用 Backend JWT + require\_nexus\_use + owner 校验；
+
+- `GET /api/v1/nexus/artifacts`（裸 JSON，与其他 nexus 路由一致）+
+  `GET /api/v1/nexus/artifacts/{id}/download`（FileResponse，mime/filename 按
+  type/title；非 owner **404**——列表不可见即不存在，防枚举探测；
+  "链接含 token"= Authorization JWT）；
+
+- 删除端点 P0 不做（retention 另行评估）。
+
+**M3-B3 ⏸️→ no-go（P0）DOCX**：核定 `python-docx>=1.1.0` 在依赖内但仅用于
+**解析**（document\_service.\_parse\_docx / document\_intelligence provider），
+**无 markdown→docx 生成器**；自研渲染器（标题/列表/代码块/表格/内联样式
+映射 + 测试）超出"薄 Adapter"成本线 → **归 P2+ 候选池**（候选项注明支持
+子集：h1-h4/段落/ul/ol/代码块/粗斜体/表格）。LaTeX P0 直接支持（同一文本管道）。
+
+| 任务       | 内容                  | 输出                                                                   | 验收                             | 依赖    |
+| -------- | ------------------- | -------------------------------------------------------------------- | ------------------------------ | ----- |
+| M3-B1 ✅  | `write_artifact` 工具 | 见 §7.0：Runtime 工具 + 内部写端点 + 元数据表（PG-only）+ 结构化 items                 | mock 单测全绿；真实链路待部署线上验收；元数据不落业务库 | 无     |
+| M3-B2 ✅  | 读取与下载               | Backend 原生路由（偏离记录见 §14.4）：本人列表 + owner 下载（404 防 enumerate）           | 跨用户 404 实证（线上）；JWT 下载头         | M3-B1 |
+| M3-B3 ⏸️ | DOCX go/no-go       | **P0 no-go**（依据见 §7.0；python-docx 仅解析、无生成器），归 P2+                    | 决策记录入本文档进度区                    | M3-B1 |
+| M3-F1 ✅  | 前端产物卡               | 消息流产物卡（图标+标题+大小+下载 SfxButton）；本机资料 real 模式接服务器列表（逐项下载）；demo 模式保持本地统计 | 演示链"生成 Artifact"环节真实可交付文件      | M3-B2 |
 
 ***
 
@@ -312,6 +355,22 @@ Reproduction Report ────────── M4（报告 artifact 化）
 
 - 环境事实：唯一课程真实 id=15；course\_memberships 仅 user 9/1（stu101/102
   演示账号未入课）——演示"课程资料成功检索"需用已入课账号。
+
+### 14.4 2026-09-05 M3 代码完成记录（待部署验收）
+
+- **M3**：B1/B2/F1 代码完成（`write_artifact` 工具、内部写端点、Backend
+  原生列表/下载路由、前端产物卡与本机资料真实列表）。提交后待部署线上验收
+  （含 PG-only 涉表断言：写入入库、owner 404、列表过滤）。
+
+- **偏离记录（M3-B2）**：计划原文 "Runtime GET /artifacts + download +
+  Backend 反代" → 实现为 **Backend 原生路由直读 nexus\_artifacts**（同库
+  不同连接），理由：文件字节不过 Runtime 进程、Runtime 保持零存储依赖、
+  鉴权链复用既有 JWT + require\_nexus\_use。计划原文的"签名 URL"以 JWT
+  Authorization 头实现（同为"下载链接含 token"约束）。
+
+- **DOCX 判定（M3-B3）**：P0 **no-go**（python-docx 在依赖内但仅用于解析、
+  无 markdown→docx 生成器，自研渲染器超"薄 Adapter"成本线），归 P2+
+  候选池；LaTeX P0 直接支持（同一文本管道）。
 
 - 每完成一个里程碑：更新本文档 §三 状态列与任务表标记、落地计划 §九 进度追踪、`DOCUMENTATION_INDEX.md`；
 

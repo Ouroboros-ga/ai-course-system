@@ -18,12 +18,14 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlmodel import Session
 
 from app.core.config import settings
 from app.core.exceptions import unified_response
 from app.models.database import get_session
 from app.services.course_access_service import resolve_course_access
+from app.services import nexus_artifact_service
 from app.platform.knowledge.discipline_kb import search_nodes
 from app.platform.knowledge.sql_lance_provider import SqlLanceCourseKnowledgeProvider
 
@@ -144,4 +146,41 @@ async def nexus_internal_cs_knowledge(
         code=200,
         message=f"CS 知识库检索完成（{len(results)} 条）",
         data={"authority": "cs_kb", "items": results},
+    )
+
+
+class NexusArtifactWriteRequest(BaseModel):
+    """Runtime write_artifact → Backend 写入请求（M3-A，与工具侧同源校验）。"""
+
+    artifact_type: str = Field(min_length=1, max_length=16)
+    title: str = Field(min_length=1, max_length=120)
+    content: str = Field(min_length=1)
+
+
+@router.post("/artifacts")
+async def nexus_internal_write_artifact(
+    payload: NexusArtifactWriteRequest,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """产物写入（M3）：对象存储 + Nexus 域元数据，一次成功才返回 artifact_id。"""
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    error = nexus_artifact_service.validate_artifact_input(
+        payload.artifact_type, payload.title, payload.content
+    )
+    if error:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error)
+    artifact = nexus_artifact_service.create_artifact(
+        session,
+        user_id=user_id,
+        artifact_type=payload.artifact_type,
+        title=payload.title,
+        content=payload.content,
+    )
+    return unified_response(
+        code=200,
+        message="产物已写入",
+        data=artifact,
     )
