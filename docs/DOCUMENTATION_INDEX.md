@@ -1,5 +1,16 @@
 # 文档导航与状态
 
+> 2026-09-04 新增：**CodeNexus 核心目标锚点（现行，Nexus 建设主线的权威依据）**——
+> [phase1/CodeNexus_转型设计与实施方案_v1.2.md](phase1/CodeNexus_转型设计与实施方案_v1.2.md)（产品形态：TeachingAgent + Nexus AI 双入口；
+> General/Research 同一 Harness 仅 Mode Switch；P0 功能范围冻结；「最少自研代码组合成熟开源能力」开发哲学 §12-§20）。
+> 用户体验与前端规格见 [phase1/Nexus_AI_前端开发规格与UX落地说明.md](phase1/Nexus_AI_前端开发规格与UX落地说明.md)
+> 及 [phase1/2026-09-03_Nexus_UX评审与布局改版设计板.html](phase1/2026-09-03_Nexus_UX评审与布局改版设计板.html)。
+> 转型执行路线与验收进度见 [phase1/CodeNexus转型落地计划.md](phase1/CodeNexus转型落地计划.md)。
+> P1 收尾后的前后端开发主线（M0-M5 里程碑 + P2+ 候选池，含 D1-D8 缺陷修复排期）见
+> [phase1/CodeNexus_P2开发计划.md](phase1/CodeNexus_P2开发计划.md)。
+> 服务器迁移属已完成背景，细节见 [phase1/2026-09-04_服务器迁移差异审计.md](phase1/2026-09-04_服务器迁移差异审计.md)
+> 与 [phase1/验收记录/服务器迁移_2026-09-04.md](phase1/验收记录/服务器迁移_2026-09-04.md)。
+
 > 2026-09-03 新增：**CodeNexus 转型实施决策（现行）**——
 > [phase1/2026-09-03_CodeNexus转型实施决策.md](phase1/2026-09-03_CodeNexus转型实施决策.md)。
 > `feature/xh202620` 已合并回 `dev-liu`（merge `67f94026`）；产品收敛为

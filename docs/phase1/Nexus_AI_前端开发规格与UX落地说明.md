@@ -223,11 +223,13 @@ search_arxiv_papers, task, web_search, write_file
 
 > **先撤回一条误判**：此前记录的「非流式 `/chat` 传 `stream_mode="updates"` 字符串会触发 ValueError」**经实测不成立**。`Pregel.astream` 文档串（langgraph 1.2.11）明确：`stream_mode` 为 list 且 `subgraphs=False` 时产出 `(mode, data)` 二元组，`main.py:68` 解包正确；`main.py:128` 字符串模式产出 dict，`.items()` 遍历也正确。此条作废，勿据此改代码。
 
-### D1 · [P0] 默认 Deep Agent 带 shell 执行与文件写删，且无沙箱、无审批门
+### D1 · [P0] 默认 Deep Agent 带 shell 执行与文件写删，且无沙箱、无审批门 —— ✅ 已修复（2026-09-04，M0-B1）
 
 **位置**：`nexus/src/nexus/agent.py:49-54`
 
 `create_deep_agent` 未传 `backend` / `permissions` / `interrupt_on`，默认后端根落在**进程 cwd**（开发时为 `nexus/` 源码目录本身），默认挂载 `execute` + `write_file` + `delete`。
+
+> **2026-09-04 严重度勘误**：实测 deepagents 0.7.12 默认 backend 为 `StateBackend`，文件读写落在 **LangGraph state 的 `files` 通道**（随 checkpoint 持久化），**不落宿主文件系统**；`execute` 因 StateBackend 未实现 SandboxBackendProtocol，调用时只返回错误消息、不真正执行 shell。故原记录"模型可直接改运行时源码"对当前版本不成立。但工具面暴露（12 个模型可见工具中 8 个非产品工具）与提示注入后的 context/state 污染风险属实，修复仍然必要。
 
 **冲突**：`AGENTS.md` §4.1.1「不把学生代码放入主应用进程执行；代码执行经过独立沙箱服务（Judge0）」。Nexus Runtime 跑在应用侧进程，模型可直接改运行时源码。
 
@@ -235,6 +237,12 @@ search_arxiv_papers, task, web_search, write_file
 1. 整体禁用：`middleware` 里排除文件系统/`execute`，只留 `NEXUS_TOOLS`
 2. 重定向到 Judge0：自定义 backend，把 `execute` 代理到已部署的 Judge0（注意 `deploy/docker-compose.yml` 未挂 docker.sock，且 Judge0 已移除 privileged）
 3. 加审批门：`interrupt_on={"execute": True, "write_file": True, "delete": True}` + 后端 session 作用域隔离
+
+> **已实施（修法 1 + 纵深，见 [CodeNexus_P2开发计划.md](CodeNexus_P2开发计划.md) M0-B1）**，三层防御：
+> ① `FilesystemMiddleware(tools=["read_file"])` 同名替换默认全量实例——`write_file`/`edit_file`/`delete`/`ls`/`glob`/`grep`/`execute` 在 `__init__` 即不创建（结构性移除）；`read_file` 保留是因 SummarizationMiddleware 将压缩历史 offload 到 StateBackend，模型需读回。
+> ② `HarnessProfile(excluded_tools=…)` 注册在 provider 键 `"openai"`——模型请求侧过滤 + 工具调用侧拒绝（`_ToolExclusionMiddleware` 双层机制），兜底上游默认工具集演进。
+> ③ `GeneralPurposeSubagentProfile(enabled=False)` 结构性移除 GP 子代理与 `task` 工具（子代理栈会重新挂载文件工具）。
+> 验收：`nexus/tests/test_agent_tools.py` 5 项全绿（执行器注册表 = `read_file` + 4 产品工具、模型可见面同、敌意 tool_call 全拒、结构性移除失效时排除层兜底）；`/health` 新增 `tool_surface` 巡检字段（uvicorn 实测返回 5 工具）。全量 34/34 passed。
 
 **测试**：构造 `build_agent()` 后断言 `tools_by_name` 不含 `execute` / `delete`；或断言 `execute` 调用被拦截并返回明确错误码。
 
