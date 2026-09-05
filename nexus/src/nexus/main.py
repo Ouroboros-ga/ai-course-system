@@ -82,7 +82,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
 app = FastAPI(title="Nexus AI Runtime", version=__version__, lifespan=lifespan)
 
 
-def get_agent(mode: str = "research") -> Any:
+def get_agent(mode: str = "general") -> Any:
     mode = normalize_mode(mode)
     agent = _agents.get(mode)
     if agent is None:
@@ -213,7 +213,7 @@ async def _agent_stream(
     message: str,
     session_id: str,
     user_id: str | None = None,
-    mode: str = "research",
+    mode: str = "general",
     course_id: int | None = None,
 ):
     agent = get_agent(mode)

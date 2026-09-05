@@ -1,13 +1,13 @@
 # 文档导航与状态
 
-> 2026-09-04 新增：**CodeNexus 核心目标锚点（现行，Nexus 建设主线的权威依据）**——
-> [phase1/CodeNexus_转型设计与实施方案_v1.2.md](phase1/CodeNexus_转型设计与实施方案_v1.2.md)（产品形态：TeachingAgent + Nexus AI 双入口；
-> General/Research 同一 Harness 仅 Mode Switch；P0 功能范围冻结；「最少自研代码组合成熟开源能力」开发哲学 §12-§20）。
-> 用户体验与前端规格见 [phase1/Nexus_AI_前端开发规格与UX落地说明.md](phase1/Nexus_AI_前端开发规格与UX落地说明.md)
-> 及 [phase1/2026-09-03_Nexus_UX评审与布局改版设计板.html](phase1/2026-09-03_Nexus_UX评审与布局改版设计板.html)。
-> 转型执行路线与验收进度见 [phase1/CodeNexus转型落地计划.md](phase1/CodeNexus转型落地计划.md)。
-> P1 收尾后的前后端开发主线（M0-M5 里程碑 + P2+ 候选池，含 D1-D8 缺陷修复排期）见
-> [phase1/CodeNexus_P2开发计划.md](phase1/CodeNexus_P2开发计划.md)。
+> **2026-09-05 现行 Nexus 三篇（v1.3 清理版）**：
+> - [Current Architecture + Roadmap v1.3](phase1/CodeNexus_转型设计与实施方案_v1.3.md)：A 产品冻结、B 当前实现/版本证据、C 目标架构、D 主线、E 原则、F 历史。
+> - [P2 / NX 开发计划](phase1/CodeNexus_P2开发计划.md)：当前 4/7 工具面，NX-G1–G3 安全优先任务与 A/H/R/S/P/E 主线、验收、授权。
+> - [前端规格 v3.0](phase1/Nexus_AI_前端开发规格与UX落地说明.md)：Mode/effective capability/Hard Approval、附件/视觉、Console、Session；初始调查/缺陷/UX 演进移至历史附录。
+>
+> 原 [v1.2](phase1/CodeNexus_转型设计与实施方案_v1.2.md) 仅迁移入口。三篇清理前完整快照以 `_历史快照_2026-09-05.md` 保存；验收记录未改。CURRENT/NEXT/TARGET/OPTIONAL 统一使用，未提交工作区修正不等于 HEAD 或线上完成。
+> [转型落地计划](phase1/CodeNexus转型落地计划.md) 保留 S0–S3/P1 迁移历史，后续以 NX 计划为准。旧设计板仅视觉演进参考，design.md 仍为前端视觉权威。
+
 > 服务器迁移属已完成背景，细节见 [phase1/2026-09-04_服务器迁移差异审计.md](phase1/2026-09-04_服务器迁移差异审计.md)
 > 与 [phase1/验收记录/服务器迁移_2026-09-04.md](phase1/验收记录/服务器迁移_2026-09-04.md)。
 

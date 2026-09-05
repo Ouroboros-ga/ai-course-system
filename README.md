@@ -1,5 +1,7 @@
 # CodeNexus智码交响 —— 让课程回应学习：知识图谱驱动的可追溯智能教学系统
 
+> **2026-09-05 Current Architecture + Roadmap**：[v1.3 架构](docs/phase1/CodeNexus_转型设计与实施方案_v1.3.md)、[NX 开发计划](docs/phase1/CodeNexus_P2开发计划.md)、[现行前端规格](docs/phase1/Nexus_AI_前端开发规格与UX落地说明.md)。CURRENT/NEXT/TARGET/OPTIONAL 分开；M0–M5 仅为受控 MVP。首批 NX-G1–G3 修 Mode、Runtime 审批与有效能力状态，其后附件/视觉、Todo、Paper Research、Sandbox/A-B、Console/Session；Subagent 为 TARGET。HEAD 与未提交工作区差异见架构 B2，新增方向未上线。下方带历史日期的说明保留追溯，当前部署地址为 https://zsitai.xyz/，Legacy Research 已完成 S3。
+
 > **计算机学科垂类大模型与智能体应用 · 证据驱动的课程建设、互动学习与教学分析平台**
 >
 > **内容可审核 · 知识可追溯 · 判断有依据**

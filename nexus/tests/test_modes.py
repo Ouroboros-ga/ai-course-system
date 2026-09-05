@@ -30,15 +30,16 @@ from nexus.tools import NEXUS_TOOLS
 
 
 def test_normalize_mode_whitelist():
-    assert normalize_mode(None) == "research"
-    assert normalize_mode("") == "research"
+    # 安全默认：None/缺省/未知一律 General；仅显式 research 词形进 Research。
+    assert normalize_mode(None) == "general"
+    assert normalize_mode("") == "general"
     assert normalize_mode("research") == "research"
     assert normalize_mode("nexus_research") == "research"
+    assert normalize_mode("NEXUS_RESEARCH") == "research"
     assert normalize_mode("general") == "general"
     assert normalize_mode("nexus_general") == "general"
-    assert normalize_mode("NEXUS_GENERAL") == "general"
-    # 未知值不 fail，归 Research（默认全工具面，与旧行为一致）。
-    assert normalize_mode("bogus") == "research"
+    # 未知值不 fail，归 General（最小权限：忘传字段不得多出研究工具）。
+    assert normalize_mode("bogus") == "general"
 
 
 def test_research_only_tools_subset_of_product_tools():
@@ -175,14 +176,15 @@ async def test_chat_request_routes_by_mode(monkeypatch: pytest.MonkeyPatch):
 
         return _M(messages=(r for r in responses))
 
+    # general 会被 r1（显式）+ r2（缺省）调用两次，预留 3 发；research 仅 r3 用 1 发。
     general_agent = create_deep_agent(
-        model=_fake([AIMessage(content="G-回复")]),
+        model=_fake([AIMessage(content="G-回复")] * 3),
         tools=[],
         system_prompt="general",
         checkpointer=InMemorySaver(),
     )
     research_agent = create_deep_agent(
-        model=_fake([AIMessage(content="R-回复")]),
+        model=_fake([AIMessage(content="R-回复")] * 2),
         tools=[],
         system_prompt="research",
         checkpointer=InMemorySaver(),
@@ -204,9 +206,15 @@ async def test_chat_request_routes_by_mode(monkeypatch: pytest.MonkeyPatch):
                 "/api/v1/nexus/chat",
                 json={"message": "hi", "session_id": "mode-route"},
             )
-        assert r1.status_code == 200 and r2.status_code == 200
+            r3 = await client.post(
+                "/api/v1/nexus/chat",
+                json={"message": "hi", "session_id": "mode-route", "mode": "nexus_research"},
+            )
+        assert r1.status_code == 200 and r2.status_code == 200 and r3.status_code == 200
         assert r1.json()["message"] == "G-回复"
-        assert r2.json()["message"] == "R-回复"
+        # 缺省 mode 归 General（安全默认），不再是 Research。
+        assert r2.json()["message"] == "G-回复"
+        assert r3.json()["message"] == "R-回复"
     finally:
         main_module._agents = original
 

@@ -1,5 +1,7 @@
 # Nexus AI Runtime
 
+> **2026-09-05 现行开发方向**：下方 P0 清单与测试基数为早期快照，当前以 [NX 开发计划](../docs/phase1/CodeNexus_P2开发计划.md) 和 [v1.3 架构](../docs/phase1/CodeNexus_转型设计与实施方案_v1.3.md) 为准。M0–M5 为受控 MVP；后续附件/视觉、Todo/Subagent、论文研究/复现、SandboxProvider、Console、Session 产品历史均待独立验收。
+
 > **状态**：P0 已实现（2026-09-03，本地可运行 + 真实 SearXNG 链路验证通过）
 > **定位**：CodeNexus 课程外全局入口智能体——复杂问题拆解、论文研究、快速复现。
 > **决策依据**：[docs/phase1/2026-09-03_CodeNexus转型实施决策.md](../docs/phase1/2026-09-03_CodeNexus转型实施决策.md)
@@ -20,7 +22,7 @@
 
 | 能力 | 实现 | 失败语义 |
 |---|---|---|
-| 主智能体 | deepagents 0.7.12（LangGraph 编译，内置 todo 拆解/规划中间件） | LLM Key 缺失 → 503 `LLM_NOT_CONFIGURED` |
+| 主智能体 | Deep Agents / LangGraph；当前 Todo 未产品化，后续显式接中间件与状态投影 | LLM Key 缺失 → 503 `LLM_NOT_CONFIGURED` |
 | Web Search | `web_search` 工具：SearXNG 主通道（47.99.97.154 自部署）+ 本机 DuckDuckGo 降级 | 双通道失败 → `WEB_SEARCH_UNAVAILABLE`，不编造 |
 | 论文检索 | `search_arxiv_papers` 工具：arXiv Atom API，3s 限速 + 1 天缓存 | 上游失败 → `ARXIV_UNAVAILABLE` |
 | 复现规划 | `plan_reproduction` 工具：nanoGPT 预设（MIT 已核验，官方 CPU 命令） | 无预设 → 返回调研指引，不编造命令 |

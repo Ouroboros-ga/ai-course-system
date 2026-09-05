@@ -807,6 +807,13 @@ function closeDetailDrawer() {
   localStorage.setItem('nexus_detail_open', 'false')
 }
 
+/* 抽屉内 tab：只切面板，不因重复点击而收起（与图标轨上的行为区分开） */
+function selectDetailTabInDrawer(id) {
+  activeDetailTab.value = id
+  if (id === 'activity') unseenActivity.value = 0
+  detailDrawerOpen.value = true
+}
+
 function noteActivityArrived() {
   if (!detailDrawerOpen.value || activeDetailTab.value !== 'activity') {
     unseenActivity.value += 1
@@ -1470,10 +1477,13 @@ const emptySuggestions = computed(() =>
               @keydown.space.stop.prevent="dsOpen = !dsOpen"
             >
               <span class="nx-ds-dot" :class="nexusDataSourceMode" aria-hidden="true" />
-              <span class="nx-dv-label">数据源</span>
-              <span class="nx-dv-value">
-                {{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
+              <span class="nx-dv-label">
+                数据源：{{ nexusDataSourceMode === 'demo' ? '演示数据' : '真实' }}
+                <small>
+                  {{ nexusDataSourceMode === 'demo' ? '本地模拟 · 会话仅存本机' : '运行时已连通 · 会话仅存本机' }}
+                </small>
               </span>
+              <span class="nx-dv-act">切换</span>
               <ChevronDown :size="11" class="nx-ds-caret" :class="{ 'is-open': dsOpen }" />
             </div>
             <div v-if="dsOpen" class="nx-menu nx-ds-menu">
@@ -1511,8 +1521,16 @@ const emptySuggestions = computed(() =>
             @keydown.enter.stop.prevent="toggleLocalPanel"
             @keydown.space.stop.prevent="toggleLocalPanel"
           >
-            <span class="nx-dv-label">本机资料</span>
-            <span class="nx-dv-value">{{ localResourcesSummary }}</span>
+            <span class="nx-dv-ico" aria-hidden="true">
+              <FileText :size="14" />
+            </span>
+            <span class="nx-dv-label">
+              本机资料
+              <small>{{ localResourcesSummary }}</small>
+            </span>
+            <span v-if="hasLocalResources" class="nx-dv-act">
+              {{ localPanelOpen ? '收起' : '展开' }}
+            </span>
             <ChevronDown
               v-if="hasLocalResources"
               :size="11"
@@ -1724,14 +1742,18 @@ const emptySuggestions = computed(() =>
               @keydown.enter.prevent="switchMode(key)"
               @keydown.space.prevent="switchMode(key)"
             >
+              <span v-if="activeMode === key" class="nx-mc-cur">当前</span>
               <div class="nx-mc-head">
-                <component
-                  :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles"
-                  :size="16"
-                  class="nx-mc-icon"
-                />
-                <span class="nx-mc-title">{{ cfg.label }}</span>
-                <Check v-if="activeMode === key" :size="14" class="nx-mc-check" />
+                <span class="nx-mc-iconbox">
+                  <component
+                    :is="key === NEXUS_MODES.RESEARCH ? Microscope : Sparkles"
+                    :size="17"
+                  />
+                </span>
+                <div class="nx-mc-titlebox">
+                  <span class="nx-mc-title">{{ cfg.label }}</span>
+                  <span class="nx-mc-sub">可用工具 {{ cfg.tools.length }} 项</span>
+                </div>
               </div>
               <p class="nx-mc-desc">{{ cfg.desc }}</p>
               <div class="nx-mc-tools">
@@ -2098,21 +2120,38 @@ const emptySuggestions = computed(() =>
       <!-- 3.1 overlay 抽屉：覆盖主工作区右侧，不挤压主内容宽度 -->
       <section v-if="detailDrawerOpen" class="nx-detail-drawer">
         <header class="nx-dd-head">
-          <div class="nx-dd-title">
-            <component :is="activeDetailMeta.icon" :size="15" class="nx-dd-icon" />
-            <span>{{ activeDetailMeta.label }}</span>
+          <div class="nx-dd-bar">
+            <span class="nx-dd-title">回应区</span>
+            <SfxButton
+              variant="tertiary"
+              size="sm"
+              class="nx-dd-close"
+              title="收起面板"
+              aria-label="收起面板"
+              @click="closeDetailDrawer"
+            >
+              <template #icon><X :size="15" /></template>
+            </SfxButton>
           </div>
-          <span class="nx-dd-hint">{{ activeDetailMeta.hint }}</span>
-          <SfxButton
-            variant="tertiary"
-            size="sm"
-            class="nx-dd-close"
-            title="收起面板"
-            aria-label="收起面板"
-            @click="closeDetailDrawer"
-          >
-            <template #icon><X :size="15" /></template>
-          </SfxButton>
+
+          <!-- 抽屉内 tab 条（对齐设计板 Board B 状态 B）：
+               展开后可直接切三个面板，不必先收起再点图标轨 -->
+          <div class="nx-drawer-tabs">
+            <SfxButton
+              v-for="tab in detailTabs"
+              :key="tab.id"
+              variant="tertiary"
+              size="sm"
+              class="nx-dt"
+              :class="{ 'is-active': activeDetailTab === tab.id }"
+              :title="tab.hint"
+              @click="selectDetailTabInDrawer(tab.id)"
+            >
+              <span class="nx-dt-label">{{ tab.label }}</span>
+              <span v-if="tab.badge" class="nx-dt-n">{{ tab.badge }}</span>
+              <span v-else-if="tab.unseen" class="nx-dt-dot" aria-hidden="true" />
+            </SfxButton>
+          </div>
         </header>
 
         <div class="nx-detail-content">
@@ -2136,19 +2175,22 @@ const emptySuggestions = computed(() =>
 
             <div class="nx-pane-section">
               <h4 class="nx-section-eyebrow">能力状态</h4>
-              <div class="nx-cap-list">
-                <div
-                  v-for="cap in capabilitiesForMode(activeMode)"
-                  :key="cap.id"
-                  class="nx-cap-row"
-                  :class="cap.state"
-                  :title="capHint(cap.id)"
-                >
-                  <span class="nx-cap-dot" aria-hidden="true" />
+            <div class="nx-cap-list">
+              <div
+                v-for="cap in capabilitiesForMode(activeMode)"
+                :key="cap.id"
+                class="nx-cap-row"
+                :class="cap.state"
+                :title="capHint(cap.id)"
+              >
+                <component :is="capIconMap[cap.icon]" :size="14" class="nx-cap-icon" />
+                <div class="nx-cap-body">
                   <span class="nx-cap-name">{{ cap.label }}</span>
-                  <span class="nx-cap-state">{{ capStateText(cap) }}</span>
+                  <span v-if="capHint(cap.id)" class="nx-cap-hint">{{ capHint(cap.id) }}</span>
                 </div>
+                <span class="nx-cap-tag" :class="cap.state">{{ capStateTagText(cap) }}</span>
               </div>
+            </div>
             </div>
           </div>
 
@@ -2661,18 +2703,17 @@ const emptySuggestions = computed(() =>
   flex-shrink: 0;
 }
 
+/* 本机状态：两张独立白卡（UX 评审 P2-6，对齐设计板 .dev-row）
+   每张卡自带「标题 + 副标题 + 动作词」，外层只做纵向排布，不再套灰底大卡——
+   灰卡 + 灰底 + 灰字三层叠灰，整块会读成一段不可点的说明文案。 */
 .nx-device-status {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-soft);
+  gap: 6px;
 }
 
 .nx-dv-title {
-  padding: 0 6px 2px;
+  padding: 0 2px;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.08em;
@@ -2682,43 +2723,67 @@ const emptySuggestions = computed(() =>
 .nx-dv-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 5px 6px;
-  border-radius: var(--radius-sm);
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: var(--surface-panel);
   cursor: pointer;
   font-size: var(--caption-size);
   color: var(--text-secondary);
+  transition: border-color var(--duration-fast) var(--ease-out),
+    box-shadow var(--duration-fast) var(--ease-out);
 }
 
 .nx-dv-row:hover {
-  background: var(--surface-page);
+  border-color: var(--nexus-accent-line);
+  box-shadow: var(--shadow-xs);
   color: var(--text-primary);
 }
 
-/* 无数据时不给「可展开」的错觉：光标与配色都降级 */
+/* 无数据时不给「可展开」的错觉：光标、边框与配色都降级 */
 .nx-dv-row.is-static {
   cursor: default;
   color: var(--text-muted);
 }
 
 .nx-dv-row.is-static:hover {
-  background: transparent;
+  border-color: var(--border-subtle);
+  box-shadow: none;
   color: var(--text-muted);
 }
 
-.nx-dv-label {
+.nx-dv-ico {
+  display: inline-flex;
   flex-shrink: 0;
   color: var(--text-muted);
 }
 
-.nx-dv-value {
+.nx-dv-label {
   flex: 1;
   min-width: 0;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-primary);
+}
+
+.nx-dv-label small {
+  display: block;
+  margin-top: 1px;
   overflow: hidden;
+  font-size: 10.5px;
+  font-weight: 400;
+  color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 500;
-  color: inherit;
+}
+
+/* 动作词常驻：让两行都明确「可点」，不靠 hover 才暴露（键盘可达性的另一半） */
+.nx-dv-act {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--nexus-accent-strong);
 }
 
 .nx-dv-sublist {
@@ -3170,14 +3235,16 @@ const emptySuggestions = computed(() =>
 }
 
 .nx-mode-card {
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-default);
+  position: relative;
+  padding: 14px var(--space-4) var(--space-3);
+  /* 设计板 Board C：1.5px 描边 + 14px 圆角，比既有 md 圆角更舒展 */
+  border: 1.5px solid var(--border-default);
   background: var(--surface-panel);
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 9px;
   transition:
     border-color var(--duration-fast) var(--ease-out),
     box-shadow var(--duration-fast) var(--ease-out);
@@ -3187,65 +3254,105 @@ const emptySuggestions = computed(() =>
   border-color: var(--nexus-accent-line);
 }
 
+/* 选中态：accent 描边 + 极淡 accent 底（设计板是 3.5% 透明度的蓝），
+   不用 accent-soft 实底——会把卡片内容压下去 */
 .nx-mode-card.is-active {
   border-color: var(--nexus-accent);
-  box-shadow: inset 0 0 0 1px var(--nexus-accent);
+  background: linear-gradient(0deg, rgba(0, 122, 244, 0.035), rgba(0, 122, 244, 0.035)),
+    var(--surface-panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.nx-mc-cur {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  padding: 2px 9px;
+  border-radius: var(--radius-full);
   background: var(--nexus-accent-soft);
+  color: var(--nexus-accent-strong);
+  font-size: 10px;
+  font-weight: 700;
 }
 
 .nx-mc-head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
 }
 
-.nx-mc-icon {
-  color: var(--nexus-accent-strong);
+/* 图标容器块：32×32 accent-soft 底（设计板 .mcard .mi） */
+.nx-mc-iconbox {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  border-radius: 9px;
+  background: var(--nexus-accent-soft);
+  color: var(--nexus-accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
+}
+
+.nx-mc-titlebox {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-right: 44px;
 }
 
 .nx-mc-title {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--ui-sm-size);
-  font-weight: 600;
+  font-size: 14.5px;
+  font-weight: 650;
   color: var(--ink-900);
 }
 
-.nx-mc-check {
-  color: var(--nexus-accent-strong);
-  flex-shrink: 0;
+.nx-mc-sub {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-disabled);
 }
 
 .nx-mc-desc {
   margin: 0;
-  font-size: var(--caption-size);
-  line-height: var(--caption-line);
-  color: var(--text-secondary);
+  min-height: 32px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-muted);
 }
 
 .nx-mc-tools {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 2px;
+  gap: 5px;
 }
 
-/* 启动页：课程绑定引导条（UX 评审 P1-4） */
+/* 启动页的工具 pill 用绿色（设计板 .tpill），与能力三态的"已生效"同色语义 */
+.nx-mc-tools .nx-tool-pill {
+  background: var(--green-100);
+  color: var(--green-700);
+  font-weight: 600;
+}
+
+/* 启动页：课程绑定引导条（UX 评审 P1-4，对齐设计板 .bind-strip）
+   淡蓝强调条而非灰色虚线——它是"这一步能提升回答质量"的引导，不是背景信息 */
 .nx-start-course {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 10px;
   margin-top: var(--space-4);
-  padding: var(--space-2) var(--space-3);
-  border: 1px dashed var(--border-strong);
-  border-radius: var(--radius-md);
-  background: var(--surface-cool);
+  padding: 9px 14px;
+  border: 1px solid var(--nexus-accent-line);
+  border-radius: 10px;
+  background: var(--nexus-accent-soft);
   text-align: left;
 }
 
 .nx-sc-icon {
-  color: var(--text-secondary);
+  color: var(--nexus-accent-strong);
   flex-shrink: 0;
 }
 
@@ -3253,11 +3360,22 @@ const emptySuggestions = computed(() =>
   flex: 1;
   min-width: 0;
   font-size: var(--caption-size);
-  color: var(--text-secondary);
+  line-height: 1.55;
+  color: var(--nexus-accent-strong);
 }
 
+/* 幽灵按钮（设计板 .ghost-btn）：白底 + accent 描边，压得住淡蓝底 */
 .nx-sc-btn {
   flex-shrink: 0;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  background: var(--surface-panel);
+  border-color: var(--nexus-accent-line);
+  color: var(--nexus-accent-strong);
+  font-size: 11px;
+  font-weight: 600;
 }
 
 .nx-quick-cards {
@@ -4083,9 +4201,10 @@ const emptySuggestions = computed(() =>
   display: flex;
   flex-direction: column;
   background: var(--surface-page);
-  border-left: 1px solid var(--border-default);
-  border-right: 1px solid var(--border-default);
-  box-shadow: -12px 0 28px rgba(20, 33, 61, 0.07);
+  border: 1px solid var(--border-default);
+  /* 对齐设计板 Board B：14px 圆角 + shadow-md 级投影，浮层感要出来 */
+  border-radius: 14px 0 0 14px;
+  box-shadow: -12px 0 32px rgba(16, 26, 49, 0.1);
   animation: nx-drawer-in var(--duration-normal) var(--ease-out);
 }
 
@@ -4101,28 +4220,91 @@ const emptySuggestions = computed(() =>
 }
 
 .nx-dd-head {
-  height: 44px;
-  min-height: 44px;
-  padding: 0 var(--space-2) 0 var(--space-4);
+  flex-shrink: 0;
+  background: var(--surface-panel);
   border-bottom: 1px solid var(--border-subtle);
+  border-radius: 14px 0 0 0;
+}
+
+/* 标题行：46px（设计板 .drawer-head） */
+.nx-dd-bar {
+  height: 46px;
+  min-height: 46px;
+  padding: 0 var(--space-2) 0 var(--space-4);
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-2);
-  flex-shrink: 0;
 }
 
 .nx-dd-title {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-size: var(--ui-sm-size);
-  font-weight: 600;
+  font-weight: 650;
   color: var(--ink-900);
+}
+
+/* tab 条（设计板 .drawer-tabs / .dt / .dt.active） */
+.nx-drawer-tabs {
+  display: flex;
+  padding: 0 var(--space-2);
   flex-shrink: 0;
 }
 
-.nx-dd-icon {
+.nx-dt {
+  height: 38px;
+  min-height: 38px;
+  padding: 0 var(--space-3);
+  border-radius: 0;
+  gap: 5px;
+  font-size: var(--ui-sm-size);
   color: var(--text-secondary);
+  position: relative;
+}
+
+.nx-dt:hover {
+  background: var(--ink-100);
+  color: var(--ink-900);
+}
+
+.nx-dt.is-active {
+  color: var(--nexus-accent-strong);
+  font-weight: 650;
+}
+
+.nx-dt.is-active::after {
+  content: '';
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--nexus-accent);
+}
+
+.nx-dt-label {
+  white-space: nowrap;
+}
+
+.nx-dt-n {
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: var(--radius-full);
+  background: var(--nexus-accent-soft);
+  color: var(--nexus-accent-strong);
+  font-size: 9.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-dt-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--amber-500);
 }
 
 .nx-dd-hint {
@@ -4308,61 +4490,75 @@ const emptySuggestions = computed(() =>
   width: 100%;
 }
 
-/* 能力状态列表（实验记录轨同语言，取代大数字统计块） */
+/* 能力状态列表：对齐设计板 Board B（.cap-row / .state-tag）
+   —— 每项一张白卡：图标 + 名称（带说明小字）+ 彩色状态胶囊 */
 .nx-cap-list {
-  background: var(--surface-cool);
-  border: 1px solid var(--border-subtle);
-  border-left: 2px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .nx-cap-row {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: 9px var(--space-3);
-  border-top: 1px solid var(--border-subtle);
+  gap: 9px;
+  background: var(--surface-panel);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 8px 11px;
 }
 
-.nx-cap-row:first-child {
-  border-top: none;
-}
-
-.nx-cap-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: var(--radius-full);
+.nx-cap-icon {
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
-.nx-cap-row.ready .nx-cap-dot {
-  background: var(--green-500);
-}
-
-.nx-cap-row.wired .nx-cap-dot {
-  background: var(--amber-500);
-}
-
-.nx-cap-row.unwired .nx-cap-dot {
-  background: var(--border-strong);
+.nx-cap-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .nx-cap-name {
-  flex: 1;
-  min-width: 0;
   font-size: var(--ui-sm-size);
+  font-weight: 550;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.nx-cap-state {
-  font-size: var(--caption-size);
-  color: var(--text-muted);
-  text-align: right;
+.nx-cap-hint {
+  font-size: 10.5px;
+  line-height: 1.45;
+  color: var(--text-disabled);
+}
+
+/* 三态胶囊：绿=已生效 / 琥珀=已连接·未生效 / 灰=未建立（P2-8 同一语义） */
+.nx-cap-tag {
   flex-shrink: 0;
+  padding: 2.5px 9px;
+  border-radius: var(--radius-full);
+  font-size: 10.5px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.nx-cap-tag.ready {
+  background: var(--green-100);
+  color: var(--green-700);
+}
+
+.nx-cap-tag.wired {
+  background: var(--amber-100);
+  color: var(--amber-700);
+}
+
+.nx-cap-tag.unwired {
+  background: var(--ink-100);
+  color: var(--text-muted);
 }
 
 /* 执行轨迹（实验记录轨） */
