@@ -7,7 +7,8 @@ import logging
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+import httpx
+from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
@@ -450,4 +451,95 @@ async def session_messages(
     return {
         "session_id": session_id,
         "messages": _serialize_history(list(values.get("messages") or [])),
+    }
+
+
+async def _fetch_repro_job(job_id: str) -> dict[str, Any]:
+    """从 Worker 拉取作业记录（fail-closed：不可达/404 如实区分）。"""
+    settings = get_settings()
+    base = (settings.repro_worker_url or "").rstrip("/")
+    if not base:
+        raise ReproJobError("REPRO_WORKER_NOT_CONFIGURED", "Worker 未配置")
+    headers = (
+        {"Authorization": f"Bearer {settings.repro_worker_token}"}
+        if settings.repro_worker_token
+        else {}
+    )
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(f"{base}/jobs/{job_id}", headers=headers)
+    except Exception as error:  # noqa: BLE001 - Worker 不可达
+        logger.warning("repro job fetch failed: %s", type(error).__name__)
+        raise ReproJobError("REPRO_WORKER_UNAVAILABLE", f"Worker 不可达（{type(error).__name__}）") from error
+    if response.status_code == 404:
+        raise ReproJobError("JOB_NOT_FOUND", "作业不存在")
+    try:
+        return response.json()
+    except ValueError as error:
+        raise ReproJobError("WORKER_BAD_RESPONSE", "Worker 返回非 JSON") from error
+
+
+class ReproJobError(Exception):
+    """作业获取/状态错误：携带机器可读 code（fail-closed 语义）。"""
+
+    def __init__(self, code: str, detail: str) -> None:
+        super().__init__(detail)
+        self.code = code
+
+
+@app.post(
+    "/api/v1/nexus/repro/jobs/{job_id}/report",
+    dependencies=[Depends(require_api_key)],
+)
+async def repro_job_report(
+    job_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """复现报告生成（M4-B3，确定性）：
+
+    1. 从 Worker 拉取作业记录（未完成 → 409 如实返回当前状态）；
+    2. 纯函数构建报告并按预设期望指标判定 PASS/FAIL（**不经 LLM**）；
+    3. 把 report.md / report.json 以发起人身份写入 Artifact（复用 M3 链路）。
+    """
+    from nexus import repro_report
+    from nexus.artifact_client import write_artifact_via_backend
+    from nexus.tools.reproduction import REPRO_PRESETS
+
+    job_id = sanitize_session_id(job_id)
+    user_id = sanitize_user_id(x_nexus_user_id)
+    try:
+        job = await _fetch_repro_job(job_id)
+    except ReproJobError as error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND if error.code == "JOB_NOT_FOUND" else status.HTTP_503_SERVICE_UNAVAILABLE, detail=error.code) from error
+    if job.get("status") != "succeeded":
+        raise HTTPException(
+            status_code=409,
+            detail=f"JOB_NOT_FINISHED:{job.get('status', 'unknown')}",
+        )
+    preset = REPRO_PRESETS.get(str(job.get("preset_id", "")).lower())
+    report = repro_report.build_report(job=job, preset=preset)
+    markdown = repro_report.render_report_markdown(report)
+    payload_json = repro_report.render_report_json(report)
+    base_title = f"复现报告 · {report['preset_id']}".strip() or "复现报告"
+
+    artifacts: list[dict[str, Any]] = []
+    for artifact_type, title, content in (
+        ("markdown", base_title, markdown),
+        ("markdown", f"{base_title}（原始数据 JSON）", payload_json),
+    ):
+        written = await write_artifact_via_backend(
+            artifact_type=artifact_type, title=title, content=content, user_id=user_id
+        )
+        if written.get("status") != "success":
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"REPORT_ARTIFACT_WRITE_FAILED:{written.get('detail', '')[:120]}",
+            )
+        artifacts.append(written["artifact"])
+    return {
+        "job_id": job_id,
+        "verdict": report["verdict"],
+        "metrics_observed": report["metrics_observed"],
+        "comparison": report["comparison"],
+        "artifacts": artifacts,
     }

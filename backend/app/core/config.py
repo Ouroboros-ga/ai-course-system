@@ -514,6 +514,11 @@ class Settings(BaseSettings):
     # fail-closed：令牌未配置时端点一律 503，绝不开放无鉴权检索。
     NEXUS_INTERNAL_TOKEN: str = ""
 
+    # Repro Worker 直连（M4 复现体验闭环）：Backend 代理 job 状态查询用。
+    # 未配置时 M4-B1 路由 fail-closed 返回 REPRO_WORKER_NOT_CONFIGURED。
+    REPRO_WORKER_URL: str = ""
+    REPRO_WORKER_TOKEN: str = ""
+
     # 废弃接口 Sunset 日期（RFC 8594，HTTP-date 格式）。转型按里程碑推进，
     # 默认留空即不发送该头——不编造一个到期日误导调用方。
     DEPRECATION_SUNSET_DATE: str = ""

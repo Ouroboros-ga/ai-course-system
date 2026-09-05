@@ -77,12 +77,14 @@ export const NEXUS_CAPABILITIES = {
     id: 'nexuslab_repro',
     label: 'NexusLab 复现',
     icon: 'FlaskConical',
-    state: CAPABILITY_STATE.UNWIRED,
+    state: CAPABILITY_STATE.READY,
     modes: ['nexus_general', 'nexus_research'],
-    // 硬事实：Repro Worker 不存在，run_reproduction 恒返回 REPRO_WORKER_UNAVAILABLE。
+    // 已接通（M4）：run_reproduction 提交 → 受控轮询 job 阶段状态 →
+    // 确定性指标判定（PASS/FAIL 不经 LLM）→ 报告 Artifact 下载。
+    // Clean Verification（A/B 双环境）仍为 P2+ 候选，`reproducible=true`
+    // 不由此能力给出。
     integration:
-      '需 Repro Worker（P1-W1~W5）落地并提供执行/日志/指标接口后，才允许 UI 显示执行态。在此之前点击只展示未接入状态。',
-    unwiredHint: '复现执行器未接入（P1-W）',
+      '已接通：run_reproduction + GET /nexus/repro/jobs/{id} 轮询 + POST .../report（确定性判定）。',
   },
 
   file_upload: {

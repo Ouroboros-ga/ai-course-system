@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -502,6 +502,94 @@ async function downloadArtifact(artifact) {
   }
 }
 
+// ── M4：复现作业受控轮询与确定性报告（B2/B3）──
+const REPRO_POLL_INTERVAL_MS = 5000
+const REPRO_POLL_MAX = 200 // 5s × 200 ≈ 17min，覆盖 Worker 900s 硬截止 + 余量
+const reproPollTimers = new Map()
+
+const REPRO_STATUS_LABELS = {
+  queued: '排队中',
+  running: '执行中',
+  succeeded: '已完成',
+  failed: '失败',
+  rejected: '已拒绝',
+}
+
+function reproStatusLabel(run) {
+  return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
+}
+
+function stopReproPolling(jobId) {
+  const timer = reproPollTimers.get(jobId)
+  if (timer) {
+    clearInterval(timer)
+    reproPollTimers.delete(jobId)
+  }
+}
+
+function stopAllReproPolling() {
+  for (const id of reproPollTimers.keys()) stopReproPolling(id)
+}
+
+function startReproPolling(turn, jobId) {
+  if (!jobId || reproPollTimers.has(jobId)) return
+  let polls = 0
+  const tick = async () => {
+    polls += 1
+    if (polls > REPRO_POLL_MAX) {
+      stopReproPolling(jobId)
+      if (turn?.reproRun) turn.reproRun.pollExhausted = true
+      return
+    }
+    let record
+    try {
+      record = await getNexusReproJob(jobId)
+    } catch (err) {
+      // 单次失败不终止轮询（瞬时不可达）；轮询上限兜底
+      return
+    }
+    if (!record || !turn?.reproRun) return
+    turn.reproRun.status = record.status
+    turn.reproRun.code = record.code || null
+    turn.reproRun.detail = record.detail || null
+    turn.reproRun.seedUsed = !!record.seed_used
+    turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
+      index: i + 1,
+      command: s.command,
+      exit_code: s.exit_code,
+      timed_out: s.timed_out,
+      duration_s: s.duration_s
+    }))
+    persistSessions()
+    if (['succeeded', 'failed', 'rejected'].includes(record.status)) {
+      stopReproPolling(jobId)
+      if (record.status === 'succeeded') void requestReproReportFor(turn, jobId)
+    }
+  }
+  reproPollTimers.set(jobId, setInterval(tick, REPRO_POLL_INTERVAL_MS))
+  void tick()
+}
+
+async function requestReproReportFor(turn, jobId) {
+  if (!turn?.reproRun || turn.reproRun.reportRequested) return
+  turn.reproRun.reportRequested = true
+  try {
+    const res = await requestReproReport(jobId)
+    turn.reproRun.verdict = res?.verdict ?? null
+    turn.reproRun.comparison = Array.isArray(res?.comparison) ? res.comparison : []
+    for (const a of res?.artifacts || []) {
+      if (a?.artifact_id && !(turn.artifacts || []).some((x) => x.artifact_id === a.artifact_id)) {
+        turn.artifacts = [...(turn.artifacts || []), a]
+      }
+    }
+    persistSessions()
+    showToast(`复现报告已生成：${turn.reproRun.verdict || '完成'}`, 'success')
+  } catch (err) {
+    turn.reproRun.reportError = err?.message || '报告生成失败'
+    showToast(turn.reproRun.reportError, 'error')
+  }
+}
+
 // ── 3. Mode 切换与上下文 ──
 const modeDropdownOpen = ref(false)
 const pendingOpen = ref(false)
@@ -929,6 +1017,35 @@ function handleEvent(turn, { event, data }) {
       }
     }
 
+    // 解析复现执行提交（M4-B2）：job 提交成功 → 受控轮询状态
+    if (data?.name === 'run_reproduction' && data?.status !== 'error') {
+      let job = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
+      if (!job && data?.content) {
+        try {
+          job = JSON.parse(data.content)?.job
+        } catch (e) {
+          job = null
+        }
+      }
+      if (job?.job_id && job.status !== 'rejected' && !turn.reproRun) {
+        turn.reproRun = {
+          job_id: job.job_id,
+          status: job.status || 'queued',
+          stages: [],
+          verdict: null,
+          comparison: [],
+          reportRequested: false,
+          pollExhausted: false,
+          code: null,
+          detail: null,
+          seedUsed: false,
+          reportError: null
+        }
+        persistSessions()
+        startReproPolling(turn, job.job_id)
+      }
+    }
+
     // M3：write_artifact 成功 → turn.artifacts（消息流产物卡 + 本机资料计数）
     if (data?.name === 'write_artifact' && data?.status !== 'error') {
       let artifact = Array.isArray(data?.items) && data.items[0] ? data.items[0] : null
@@ -1175,6 +1292,7 @@ onBeforeUnmount(() => {
   document.removeEventListener('click', handleDocClick)
   if (elapsedTimer) clearInterval(elapsedTimer)
   if (abortController) abortController.abort()
+  stopAllReproPolling()
 })
 
 // ── 7. 空态快捷建议（数据驱动） ──
@@ -1808,6 +1926,51 @@ const emptySuggestions = computed(() =>
                   <span>{{ turn.reproStatus.repo_url }}</span>
                   <span>许可 {{ turn.reproStatus.repo_license }}</span>
                 </div>
+              </div>
+
+              <!-- M4 复现运行状态卡：阶段流水 + 确定性判定（不展示模型内部思维） -->
+              <div v-if="turn.reproRun" class="nx-repro-live">
+                <div class="nx-rl-head">
+                  <FlaskConical :size="15" class="nx-rl-icon" />
+                  <span class="nx-rl-title">复现作业 · {{ turn.reproRun.job_id }}</span>
+                  <span class="nx-rl-status" :class="turn.reproRun.status">{{ reproStatusLabel(turn.reproRun) }}</span>
+                </div>
+                <ol v-if="turn.reproRun.stages.length" class="nx-rl-stages">
+                  <li
+                    v-for="s in turn.reproRun.stages"
+                    :key="s.index"
+                    :class="{ 'is-ok': s.exit_code === 0, 'is-bad': s.timed_out || (s.exit_code != null && s.exit_code !== 0) }"
+                  >
+                    <span class="nx-rl-step-name">{{ s.command }}</span>
+                    <span class="nx-rl-step-meta">
+                      {{ s.timed_out ? '超时' : `exit=${s.exit_code}` }} · {{ s.duration_s }}s
+                    </span>
+                  </li>
+                </ol>
+                <p v-if="!turn.reproRun.stages.length && turn.reproRun.status === 'queued'" class="nx-rl-note">
+                  排队中，等待执行器开始…
+                </p>
+                <p v-if="turn.reproRun.code" class="nx-rl-note">
+                  失败语义：{{ turn.reproRun.code }}{{ turn.reproRun.detail ? ' — ' + turn.reproRun.detail : '' }}
+                </p>
+                <p v-if="turn.reproRun.pollExhausted" class="nx-rl-note">轮询已达上限，可刷新查看最新状态。</p>
+                <div
+                  v-if="turn.reproRun.verdict"
+                  class="nx-rl-verdict"
+                  :class="turn.reproRun.verdict === 'PASS' ? 'is-pass' : 'is-fail'"
+                >
+                  <span class="nx-rl-verdict-label">指标判定：{{ turn.reproRun.verdict }}</span>
+                  <span
+                    v-for="c in turn.reproRun.comparison"
+                    :key="c.metric"
+                    class="nx-rl-metric"
+                  >
+                    {{ c.metric }}：期望 {{ c.target }} ±{{ c.tolerance }}，实测
+                    {{ c.observed == null ? '未提取' : c.observed }} → {{ c.pass ? 'PASS' : 'FAIL' }}
+                  </span>
+                  <span class="nx-rl-note">PASS/FAIL 由确定性指标比较生成，非 LLM 判定</span>
+                </div>
+                <p v-if="turn.reproRun.reportError" class="nx-rl-note">{{ turn.reproRun.reportError }}</p>
               </div>
 
               <!-- Markdown 核心答复正文（节流渲染，禁止直接逐 token 调 renderContent） -->
@@ -3475,6 +3638,120 @@ const emptySuggestions = computed(() =>
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* M4 复现运行状态卡：阶段流水 + 确定性判定（沿用回应区卡片体系） */
+.nx-repro-live {
+  border: 1px solid var(--nexus-accent-line);
+  background: var(--nexus-accent-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-top: var(--space-2);
+}
+
+.nx-rl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.nx-rl-icon {
+  color: var(--nexus-accent-strong);
+  flex-shrink: 0;
+}
+
+.nx-rl-title {
+  font-weight: 600;
+  font-size: var(--ui-md-size);
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-rl-status {
+  font-size: var(--caption-size);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-secondary);
+}
+
+.nx-rl-status.succeeded {
+  color: var(--success);
+}
+
+.nx-rl-status.failed,
+.nx-rl-status.rejected {
+  color: var(--danger, var(--text-secondary));
+}
+
+.nx-rl-stages {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.nx-rl-stages li {
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.nx-rl-stages li.is-ok .nx-rl-step-meta {
+  color: var(--success);
+}
+
+.nx-rl-stages li.is-bad .nx-rl-step-meta {
+  color: var(--danger, #c0392b);
+}
+
+.nx-rl-step-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-rl-step-meta {
+  flex-shrink: 0;
+}
+
+.nx-rl-note {
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  margin-top: var(--space-1);
+}
+
+.nx-rl-verdict {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  border-top: 1px solid var(--border-secondary);
+  padding-top: var(--space-2);
+}
+
+.nx-rl-verdict.is-pass .nx-rl-verdict-label {
+  color: var(--success);
+  font-weight: 600;
+}
+
+.nx-rl-verdict.is-fail .nx-rl-verdict-label {
+  color: var(--danger, #c0392b);
+  font-weight: 600;
+}
+
+.nx-rl-metric {
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
 }
 
 .nx-rc-header {

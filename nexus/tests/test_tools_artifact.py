@@ -1,4 +1,4 @@
-"""M3：write_artifact 工具契约（全 mock，不触真实 Backend/存储）。
+﻿"""M3：write_artifact 工具契约（全 mock，不触真实 Backend/存储）。
 
 fail-closed 是核心：未配置/不可达/非 200 时必须返回 ARTIFACT_UNAVAILABLE
 并带"不得声称文件已生成"语义；成功时透传 artifact_id 与下载路径。
@@ -63,7 +63,7 @@ async def test_write_artifact_success(monkeypatch: pytest.MonkeyPatch):
         kwargs["transport"] = httpx.MockTransport(handler)
         return real_client(**kwargs)
 
-    monkeypatch.setattr(artifact_module.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(artifact_module.write_artifact_via_backend.__globals__["httpx"], "AsyncClient", factory)
     request_scope.set_scope("42", None)
     try:
         result = await write_artifact.ainvoke(
@@ -93,7 +93,7 @@ async def test_write_artifact_rejected_maps_unavailable(monkeypatch: pytest.Monk
         kwargs["transport"] = httpx.MockTransport(handler)
         return real_client(**kwargs)
 
-    monkeypatch.setattr(artifact_module.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(artifact_module.write_artifact_via_backend.__globals__["httpx"], "AsyncClient", factory)
     try:
         result = await write_artifact.ainvoke(
             {"artifact_type": "docx", "title": "t", "content": "x"}
@@ -116,7 +116,7 @@ async def test_write_artifact_unreachable_fails_closed(monkeypatch: pytest.Monke
         kwargs["transport"] = httpx.MockTransport(handler)
         return real_client(**kwargs)
 
-    monkeypatch.setattr(artifact_module.httpx, "AsyncClient", factory)
+    monkeypatch.setattr(artifact_module.write_artifact_via_backend.__globals__["httpx"], "AsyncClient", factory)
     try:
         result = await write_artifact.ainvoke(
             {"artifact_type": "markdown", "title": "t", "content": "x"}

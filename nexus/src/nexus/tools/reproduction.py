@@ -46,6 +46,16 @@ REPRO_PRESETS: dict[str, dict[str, Any]] = {
             "training loss curve (converges around 1.88 with CPU config)",
             "generated Shakespeare-style text sample",
         ],
+        # M4-B3：确定性判定的期望指标（LLM 不参与 PASS/FAIL）。
+        # 来源：官方 README CPU 配置声明（"converges around 1.88"）；
+        # 容差覆盖 CPU 数值噪声（2026-09-04 实测 val loss 1.8857）。
+        "expected_metrics": {
+            "val_loss": {"target": 1.88, "tolerance": 0.06},
+        },
+        "expected_metrics_source": (
+            "nanoGPT 官方 README CPU 配置声明（converges around 1.88）；"
+            "容差 ±0.06 覆盖 CPU 数值噪声"
+        ),
         "notes": "官方 README 的 CPU 配置命令，训练闭环完整，适合现场演示。",
     },
 }
@@ -125,6 +135,39 @@ async def _submit_to_worker(preset: dict[str, Any]) -> dict[str, Any]:
         }
 
 
+async def _record_job_ownership(job_id: str, preset: dict[str, Any]) -> bool:
+    """M4-B1：向 Backend 登记作业归属（job 查询按发起人鉴权的依据）。
+
+    best-effort：登记失败不阻断提交结果，但如实标注（前端进度查询将不可用）。
+    """
+    from nexus.artifact_client import _settings_ready
+    from nexus.request_scope import current_user_id
+
+    ready = _settings_ready()
+    user_id = current_user_id()
+    if ready is None or not user_id:
+        return False
+    url, token = ready
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                f"{url}/api/v1/nexus-internal/repro-jobs",
+                json={
+                    "job_id": job_id,
+                    "preset_id": preset.get("preset_id", ""),
+                    "repo_url": preset.get("repo_url", ""),
+                },
+                headers={
+                    "Authorization": f"Bearer {token}",
+                    "X-Nexus-User-Id": user_id,
+                },
+            )
+        return response.status_code == 200
+    except Exception as error:  # noqa: BLE001 - 登记失败如实标注
+        logger.warning("repro job ownership record failed: %s", type(error).__name__)
+        return False
+
+
 @tool
 async def run_reproduction(preset_id: str) -> dict[str, Any]:
     """把已核验预设的复现计划提交给专用 Repro Worker 执行。
@@ -142,7 +185,18 @@ async def run_reproduction(preset_id: str) -> dict[str, Any]:
             "known_presets": list(REPRO_PRESETS.keys()),
         }
     try:
-        return await _submit_to_worker(preset)
+        result = await _submit_to_worker(preset)
+        # M4-B1：提交成功（拿到 job_id）后登记归属，进度查询按发起人鉴权。
+        if result.get("status") == "submitted":
+            job_id = str((result.get("job") or {}).get("job_id", ""))
+            if job_id:
+                recorded = await _record_job_ownership(job_id, preset)
+                result["ownership_recorded"] = recorded
+                if not recorded:
+                    result["detail"] = (
+                        "作业已提交，但归属登记失败：进度查询与报告生成暂不可用。"
+                    )
+        return result
     except Exception as error:  # noqa: BLE001 - Worker 故障 fail-closed
         logger.warning("Repro Worker submit failed: %s", type(error).__name__)
         return {

@@ -341,6 +341,127 @@ async def nexus_artifact_download(
     return FileResponse(path=path, media_type=mime, filename=filename)
 
 
+# ---------------------------------------------------------------------------
+# M4：复现体验闭环——job 状态查询代理 + 报告生成代理
+# 归属鉴权（发起人）由 nexus_repro_jobs 域表裁决；Worker 本体不暴露公网。
+# ---------------------------------------------------------------------------
+
+# 日志摘要上限：只展示操作状态与安全日志摘要（计划 §8 M4-F1）。
+_LOG_TAIL_MAX = 300
+_STEP_MAX = 10
+
+
+def _worker_base() -> str:
+    return (settings.REPRO_WORKER_URL or "").rstrip("/")
+
+
+def _trim_job_record(record: dict) -> dict:
+    """裁剪 Worker 记录为前端展示形态：短日志摘要 + 阶段切片，不回传全文。"""
+    trimmed = {
+        "job_id": record.get("job_id"),
+        "status": record.get("status"),
+        "preset_id": record.get("preset_id"),
+        "repo_url": record.get("repo_url"),
+        "requested_license": record.get("requested_license"),
+        "license_checks": record.get("license_checks"),
+        "seed_used": record.get("seed_used"),
+        "submitted_at": record.get("submitted_at"),
+        "started_at": record.get("started_at"),
+        "finished_at": record.get("finished_at"),
+        "code": record.get("code"),
+        "detail": record.get("detail"),
+        "steps_result": [],
+        "artifacts": record.get("artifacts") or [],
+    }
+    for step in (record.get("steps_result") or [])[:_STEP_MAX]:
+        trimmed["steps_result"].append({
+            "command": str(step.get("command") or "")[:160],
+            "exit_code": step.get("exit_code"),
+            "timed_out": step.get("timed_out"),
+            "duration_s": step.get("duration_s"),
+            "log_tail": str(step.get("log_tail") or "")[-_LOG_TAIL_MAX:],
+        })
+    return trimmed
+
+
+def _owned_job_or_404(session, current_user: dict, job_id: str) -> dict:
+    from app.services import nexus_repro_job_service
+
+    job = nexus_repro_job_service.get_owned_job(
+        session, job_id=job_id, user_id=_artifact_user_id(current_user)
+    )
+    if job is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复现作业不存在")
+    return job
+
+
+@router.get("/repro/jobs/{job_id}")
+async def nexus_repro_job_status(
+    job_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """作业状态查询（M4-B1）：发起人鉴权后代理 Worker 记录（裁剪版）。"""
+    _owned_job_or_404(session, current_user, job_id)
+    base = _worker_base()
+    if not base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="REPRO_WORKER_NOT_CONFIGURED"
+        )
+    timeout = httpx.Timeout(15.0, connect=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base}/jobs/{job_id}",
+                headers={"Authorization": f"Bearer {settings.REPRO_WORKER_TOKEN}"}
+                if settings.REPRO_WORKER_TOKEN
+                else {},
+            )
+    except httpx.HTTPError as error:
+        logger.warning("repro worker unreachable: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="REPRO_WORKER_UNAVAILABLE"
+        ) from error
+    if response.status_code == 404:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复现作业不存在")
+    try:
+        record = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Worker 返回非 JSON"
+        ) from exc
+    return JSONResponse(status_code=200, content=_trim_job_record(record))
+
+
+@router.post("/repro/jobs/{job_id}/report")
+async def nexus_repro_job_report(
+    job_id: str,
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """报告生成代理（M4-B3）：确定性判定在 Runtime（预设期望指标所在地），
+    本层只做发起人鉴权与用户身份透传，LLM 不参与 PASS/FAIL。"""
+    _owned_job_or_404(session, current_user, job_id)
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+    timeout = httpx.Timeout(settings.NEXUS_RUNTIME_TIMEOUT_S, connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{base}/api/v1/nexus/repro/jobs/{job_id}/report",
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("repro report timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("repro report unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
 @router.post("/chat/stream")
 async def nexus_chat_stream(
     payload: NexusChatRequest,

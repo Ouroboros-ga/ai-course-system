@@ -157,6 +157,36 @@ class NexusArtifactWriteRequest(BaseModel):
     content: str = Field(min_length=1)
 
 
+class NexusReproJobRecordRequest(BaseModel):
+    """Runtime run_reproduction → Backend 归属登记（M4-B1）。"""
+
+    job_id: str = Field(min_length=4, max_length=32)
+    preset_id: str = Field(default="", max_length=64)
+    repo_url: str = Field(default="", max_length=300)
+
+
+@router.post("/repro-jobs")
+async def nexus_internal_record_repro_job(
+    payload: NexusReproJobRecordRequest,
+    authorization: str | None = Header(default=None),
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+    session: Session = Depends(get_session),
+):
+    """复现作业归属登记：之后该 job 的状态查询/报告生成按发起人鉴权。"""
+    from app.services import nexus_repro_job_service
+
+    _require_service_token(authorization)
+    user_id = str(_require_user_identity(x_nexus_user_id))
+    nexus_repro_job_service.record_job(
+        session,
+        job_id=payload.job_id,
+        user_id=user_id,
+        preset_id=payload.preset_id,
+        repo_url=payload.repo_url,
+    )
+    return unified_response(code=200, message="作业归属已登记", data={"job_id": payload.job_id})
+
+
 @router.post("/artifacts")
 async def nexus_internal_write_artifact(
     payload: NexusArtifactWriteRequest,

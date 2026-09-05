@@ -35,6 +35,27 @@ export function getNexusSessionMessages(sessionId) {
 }
 
 /**
+ * 复现作业状态（M4-B1）：发起人鉴权，返回裁剪后的 Worker 记录
+ * （status/steps_result 短日志/artifacts）。
+ */
+export function getNexusReproJob(jobId) {
+  return request.get(`/nexus/repro/jobs/${encodeURIComponent(jobId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
+ * 复现报告生成（M4-B3）：确定性判定（PASS/FAIL 不经 LLM）+ 报告 Artifact 入库。
+ */
+export function requestReproReport(jobId) {
+  return request.post(`/nexus/repro/jobs/${encodeURIComponent(jobId)}/report`, {}, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
  * 产物列表（M3）：当前用户的 Nexus Artifact（owner 过滤在 Backend）。
  */
 export function listNexusArtifacts(limit = 50) {
