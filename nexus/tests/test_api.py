@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from httpx import ASGITransport, AsyncClient
 
 from nexus.config import get_settings
@@ -27,7 +27,7 @@ async def test_chat_fails_closed_without_llm_key():
     get_settings.cache_clear()
     import nexus.main as main_module
 
-    main_module._agent = None
+    main_module._agents = {}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/nexus/chat",
@@ -41,7 +41,7 @@ async def test_chat_stream_fails_closed_without_llm_key():
     get_settings.cache_clear()
     import nexus.main as main_module
 
-    main_module._agent = None
+    main_module._agents = {}
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.post(
             "/api/v1/nexus/chat/stream",
@@ -108,8 +108,8 @@ async def test_chat_endpoints_against_real_graph(monkeypatch: pytest.MonkeyPatch
         system_prompt="test-only prompt",
         checkpointer=InMemorySaver(),
     )
-    original_agent = main_module._agent
-    main_module._agent = agent
+    original_agents = main_module._agents
+    main_module._agents = {"research": agent, "general": agent}
     get_settings.cache_clear()
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -131,5 +131,5 @@ async def test_chat_endpoints_against_real_graph(monkeypatch: pytest.MonkeyPatch
             assert "event: token" in stream.text
             assert "event: done" in stream.text
     finally:
-        main_module._agent = original_agent
+        main_module._agents = original_agents
         get_settings.cache_clear()

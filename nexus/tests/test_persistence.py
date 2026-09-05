@@ -1,4 +1,4 @@
-"""P1-C 回归：持久化降级 + 线程隔离 + Compact 接线（全 mock，不连真实 PG/LLM）."""
+﻿"""P1-C 回归：持久化降级 + 线程隔离 + Compact 接线（全 mock，不连真实 PG/LLM）."""
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -56,7 +56,7 @@ async def test_health_reports_memory_when_no_dsn():
     get_settings.cache_clear()
     import nexus.main as main_module
 
-    main_module._agent = None
+    main_module._agents = {}
     main_module._pg_saver = None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get("/health")
@@ -92,8 +92,8 @@ async def test_chat_threads_isolated_by_user_header(monkeypatch: pytest.MonkeyPa
         system_prompt="test",
         checkpointer=InMemorySaver(),
     )
-    original = main_module._agent
-    main_module._agent = agent
+    original = main_module._agents
+    main_module._agents = {"research": agent, "general": agent}
     main_module._pg_saver = None
     get_settings.cache_clear()
     try:
@@ -117,5 +117,5 @@ async def test_chat_threads_isolated_by_user_header(monkeypatch: pytest.MonkeyPa
         assert s1.values.get("messages")
         assert s2.values.get("messages")
     finally:
-        main_module._agent = original
+        main_module._agents = original
         get_settings.cache_clear()

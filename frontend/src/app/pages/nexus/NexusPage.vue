@@ -830,6 +830,7 @@ function handleEvent(turn, { event, data }) {
       name: data?.name || '未知工具',
       status: data?.status || 'success',
       content: data?.content ?? '',
+      items: Array.isArray(data?.items) ? data.items : null,
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
     })
 
@@ -856,6 +857,10 @@ function handleEvent(turn, { event, data }) {
         // pass
       }
     }
+  } else if (event === 'error') {
+    // M1-B3（D5）：流内错误以稳定错误码呈现，不再停在"进行中"。
+    // 服务端保证 done/error 互斥；本分支后流即关闭，runTurn 的 finally 复位状态。
+    turn.failure = data?.code ? `${data.code}：${data?.message || '执行失败'}` : (data?.message || '执行失败')
   } else if (event === 'done') {
     turn.tokenCount = data?.token_count ?? null
   }

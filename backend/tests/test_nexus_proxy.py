@@ -12,6 +12,7 @@ provider 测试同一手法。
 """
 from __future__ import annotations
 
+import json
 import uuid
 from contextlib import contextmanager
 from unittest.mock import patch
@@ -142,6 +143,37 @@ def test_chat_proxies_request_body_to_runtime_chat_route(
     assert response.status_code == 200
     assert response.json()["message"] == "已完成检索"
     assert seen["request"].url.path == "/api/v1/nexus/chat"
+
+
+def test_chat_proxies_mode_and_context_to_runtime(
+    client, nexus_student_token, runtime_configured
+):
+    """M1-B1（D2）：mode/context 两层 pydantic 不再静默丢弃，body 原样透传。"""
+    seen: dict[str, httpx.Request] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["request"] = request
+        return httpx.Response(
+            200,
+            json={"session_id": "s1", "message": "ok", "tool_events": []},
+        )
+
+    with mock_runtime(handler):
+        response = client.post(
+            "/api/v1/nexus/chat",
+            json={
+                "message": "检索课程资料",
+                "session_id": "s1",
+                "mode": "nexus_general",
+                "context": {"course_id": 7},
+            },
+            headers=_auth(nexus_student_token),
+        )
+
+    assert response.status_code == 200
+    upstream_body = json.loads(seen["request"].content)
+    assert upstream_body["mode"] == "nexus_general"
+    assert upstream_body["context"] == {"course_id": 7}
 
 
 def test_chat_stream_relays_upstream_sse_events(client, nexus_student_token, runtime_configured):

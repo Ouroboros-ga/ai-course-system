@@ -10,17 +10,22 @@ from typing import Any
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import BaseModel, Field
 
 from nexus import __version__
-from nexus.agent import build_agent
+from nexus.agent import build_agent, normalize_mode
 from nexus.config import get_settings
 from nexus.persistence import sanitize_session_id, sanitize_user_id, thread_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("nexus")
 
-_agent: Any = None
+# M1-B2：按模式索引的 agent 实例（general/research 共享同一 checkpointer）。
+_agents: dict[str, Any] = {}
+# 两个模式共享的本地降级 saver：保证 memory 模式下同 session 切模式上下文连续
+# （服务器上由 lifespan 注入 AsyncPostgresSaver，两者天然共享）。
+_fallback_saver = InMemorySaver()
 _pg_saver: Any = None
 _pg_ctx: Any = None
 
@@ -33,7 +38,7 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
     schema + nexus_threads 表 + saver.setup()，重启后同 thread 可续聊。
     任何 PG 故障都 fail-open 回 InMemory 语义（对话可用但重启即清），绝不 500。
     """
-    global _agent, _pg_saver, _pg_ctx
+    global _agents, _pg_saver, _pg_ctx
     settings = get_settings()
     dsn = settings.postgres_dsn.strip()
     if dsn:
@@ -52,7 +57,8 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
             await saver.setup()
             _pg_ctx = cm
             _pg_saver = saver
-            _agent = build_agent(checkpointer=saver)
+            for mode in ("research", "general"):
+                _agents[mode] = build_agent(mode=mode, checkpointer=saver)
             logger.info("nexus persistence: postgres enabled (schema=%s)", schema)
         except Exception as error:  # noqa: BLE001 - PG 故障不阻断服务启动
             # 只记步骤与错误类/文本，不记 DSN（见 2026-09-03 CREATE 权排查教训：
@@ -69,19 +75,25 @@ async def lifespan(app: FastAPI):  # noqa: ANN001, ARG001
         finally:
             _pg_ctx = None
             _pg_saver = None
+            _agents.clear()
 
 
 app = FastAPI(title="Nexus AI Runtime", version=__version__, lifespan=lifespan)
 
 
-def get_agent() -> Any:
-    global _agent
-    if _agent is None:
+def get_agent(mode: str = "research") -> Any:
+    mode = normalize_mode(mode)
+    agent = _agents.get(mode)
+    if agent is None:
         try:
-            _agent = build_agent()
+            agent = build_agent(
+                mode=mode,
+                checkpointer=_pg_saver if _pg_saver is not None else _fallback_saver,
+            )
         except RuntimeError as error:
             raise HTTPException(status_code=503, detail=str(error)) from error
-    return _agent
+        _agents[mode] = agent
+    return agent
 
 
 async def require_api_key(authorization: str | None = Header(default=None)) -> None:
@@ -93,6 +105,10 @@ async def require_api_key(authorization: str | None = Header(default=None)) -> N
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=10000)
     session_id: str = Field(default="default", max_length=128)
+    # M1-B1（D2）：mode 与 context 不再被 pydantic 静默丢弃。
+    # mode 白名单归一（agent.normalize_mode）；context 形状 M2 才消费（course_id）。
+    mode: str | None = Field(default=None, max_length=32)
+    context: dict[str, Any] | None = Field(default=None)
 
 
 def _config_for(session_id: str, user_id: str | None = None) -> dict[str, Any]:
@@ -137,64 +153,133 @@ def _summarize_tool_content(content: Any) -> str:
         return str(content)[:600]
 
 
-async def _agent_stream(message: str, session_id: str, user_id: str | None = None):
-    agent = get_agent()
+# M1-B4（D4）：按工具从 JSON 结果中抽取结构化条目；条目边界截断，
+# 不再对整个 JSON 做 600 字符腰斩（腰斩产物前端 JSON.parse 必失败）。
+_ITEM_FIELD_BY_TOOL = {
+    "web_search": "items",
+    "search_arxiv_papers": "items",
+    "plan_reproduction": "plan",
+    "run_reproduction": "job",
+}
+_ITEM_MAX_COUNT = 20
+_ITEM_STR_MAX = 300
+
+
+def _structured_tool_items(name: str, content: str) -> list[Any] | None:
+    """从工具 JSON 输出抽取条目列表；非 JSON/未知形状返回 None（走旧兜底）。"""
+    try:
+        data = json.loads(content) if isinstance(content, str) else content
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    field = _ITEM_FIELD_BY_TOOL.get(name or "", "items")
+    raw = data.get(field)
+    if field == "plan" and isinstance(raw, dict):
+        raw = [raw]
+    if field == "job" and isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return None
+
+    def _cap(value: Any) -> Any:
+        if isinstance(value, str):
+            return value[:_ITEM_STR_MAX]
+        if isinstance(value, dict):
+            return {k: _cap(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_cap(v) for v in value[:_ITEM_MAX_COUNT]]
+        return value
+
+    return [_cap(item) for item in raw[:_ITEM_MAX_COUNT]]
+
+
+def _tool_result_payload(msg: ToolMessage) -> dict[str, Any]:
+    text = msg.content if isinstance(msg.content, str) else str(msg.content)
+    items = _structured_tool_items(msg.name or "", text)
+    payload: dict[str, Any] = {
+        "name": msg.name or "",
+        "status": msg.status or "success",
+        # 可解析为结构化条目时保留完整合法 JSON（前端 parse 必成功）；
+        # 否则维持 600 字符字符串兜底，与既有消费方兼容。
+        "content": text if items is not None else _summarize_tool_content(msg.content),
+    }
+    if items is not None:
+        payload["items"] = items
+    return payload
+
+
+async def _agent_stream(
+    message: str, session_id: str, user_id: str | None = None, mode: str = "research"
+):
+    agent = get_agent(mode)
     inputs = {"messages": [{"role": "user", "content": message}]}
     config = _config_for(session_id, user_id)
     token_count = 0
-    async for mode, payload in agent.astream(inputs, config, stream_mode=["messages", "updates"]):
-        if mode == "messages":
-            chunk, _meta = payload
-            if isinstance(chunk, AIMessageChunk):
-                content = chunk.content
-                if isinstance(content, str) and content:
-                    token_count += len(content)
-                    yield _sse("token", {"content": content})
-        elif mode == "updates":
-            for _node, delta in (payload or {}).items():
-                messages = None
-                if isinstance(delta, dict):
-                    messages = delta.get("messages")
-                if not messages:
-                    continue
-                for msg in messages:
-                    if isinstance(msg, AIMessage):
-                        for call in msg.tool_calls or []:
-                            yield _sse("tool_call", {"name": call.get("name"), "args": call.get("args")})
-                    elif isinstance(msg, ToolMessage):
-                        yield _sse(
-                            "tool_result",
-                            {
-                                "name": msg.name or "",
-                                "status": msg.status or "success",
-                                "content": _summarize_tool_content(msg.content),
-                            },
-                        )
+    try:
+        # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
+        # 列表模式才产出 (mode, payload) 元组。
+        async for stream_mode, payload in agent.astream(
+            inputs, config, stream_mode=["messages", "updates"]
+        ):
+            if stream_mode == "messages":
+                chunk, _meta = payload
+                if isinstance(chunk, AIMessageChunk):
+                    content = chunk.content
+                    if isinstance(content, str) and content:
+                        token_count += len(content)
+                        yield _sse("token", {"content": content})
+            elif stream_mode == "updates":
+                for _node, delta in (payload or {}).items():
+                    messages = None
+                    if isinstance(delta, dict):
+                        messages = delta.get("messages")
+                    if not messages:
+                        continue
+                    for msg in messages:
+                        if isinstance(msg, AIMessage):
+                            for call in msg.tool_calls or []:
+                                yield _sse("tool_call", {"name": call.get("name"), "args": call.get("args")})
+                        elif isinstance(msg, ToolMessage):
+                            yield _sse("tool_result", _tool_result_payload(msg))
+    except asyncio.CancelledError:
+        # M1-B6：客户端断开导致流被取消——如实中断，绝不补发假 done。
+        raise
+    except Exception as error:  # noqa: BLE001 - Agent 循环异常必须显式到流尾
+        # M1-B3（D5）：done/error 互斥；错误码优先用工具/上游语义码。
+        code = str(getattr(error, "code", "") or type(error).__name__)[:64]
+        yield _sse("error", {"code": code, "message": str(error)[:300]})
+        return
     yield _sse("done", {"session_id": session_id, "token_count": token_count})
 
 
-def _tool_surface() -> list[str] | None:
-    """已构建 agent 的执行器工具注册表（M0-B1 巡检口径）。
+def _tool_surface() -> dict[str, list[str]] | None:
+    """已构建 agent 的执行器工具注册表（M0-B1 巡检口径，M1 起按模式上报）。
 
-    预期恰为 read_file + 四个产品工具；出现 write_file/execute/task 等即
-    表示工具面收敛失效（回归信号）。未构建 agent 时返回 null。
+    General 应为 read_file + web_search；Research 为 read_file + 四产品工具。
+    出现 write_file/execute/task 等即表示工具面收敛失效（回归信号）。
+    未构建任何 agent 时返回 null。
     """
-    if _agent is None:
+    if not _agents:
         return None
-    try:
-        return sorted(_agent.nodes["tools"].bound.tools_by_name.keys())
-    except AttributeError:
-        return None
+    surfaces: dict[str, list[str]] = {}
+    for mode, agent in _agents.items():
+        try:
+            surfaces[mode] = sorted(agent.nodes["tools"].bound.tools_by_name.keys())
+        except AttributeError:
+            continue
+    return surfaces or None
 
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
     settings = get_settings()
     dsn = settings.postgres_dsn.strip()
-    if _agent is None and settings.deepseek_api_key:
+    if not _agents and settings.deepseek_api_key:
         # 部署后无需先发起对话即可核对工具面；构建失败不阻断健康检查。
         try:
-            get_agent()
+            get_agent("research")
+            get_agent("general")
         except Exception:  # noqa: BLE001
             pass
     return {
@@ -216,13 +301,14 @@ async def chat_stream(
     request: ChatRequest,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> StreamingResponse:
-    get_agent()
+    mode = normalize_mode(request.mode)
+    get_agent(mode)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     thread_id = thread_for(session_id, user_id)
     await _touch_thread(thread_id, user_id, session_id, _title_from_message(request.message))
     return StreamingResponse(
-        _agent_stream(request.message, session_id, user_id),
+        _agent_stream(request.message, session_id, user_id, mode),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -233,7 +319,8 @@ async def chat(
     request: ChatRequest,
     x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
 ) -> dict[str, Any]:
-    agent = get_agent()
+    mode = normalize_mode(request.mode)
+    agent = get_agent(mode)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
     inputs = {"messages": [{"role": "user", "content": request.message}]}

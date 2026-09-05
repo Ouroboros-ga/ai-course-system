@@ -74,10 +74,16 @@ _HOP_BY_HOP_HEADERS = {
 
 
 class NexusChatRequest(BaseModel):
-    """与 ``nexus.main.ChatRequest`` 保持同构；上限一致以便提前拒绝超长输入。"""
+    """与 ``nexus.main.ChatRequest`` 保持同构；上限一致以便提前拒绝超长输入。
+
+    M1-B1（D2）：mode 与 context 不再被本层 pydantic 静默丢弃——
+    ``model_dump()`` 全量透传到 Runtime，由 Runtime 白名单归一 mode。
+    """
 
     message: str = Field(min_length=1, max_length=10_000)
     session_id: str = Field(default="default", max_length=128)
+    mode: str | None = Field(default=None, max_length=32)
+    context: dict[str, Any] | None = Field(default=None)
 
 
 def _runtime_base_url() -> str:

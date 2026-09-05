@@ -881,6 +881,15 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
 
   assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
 
+  // M1-F3：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
+  // Runtime：general 结构性排除 research-only 三工具；前端 NEXUS_MODE_CONFIG
+  // 的 tools 列表不得声明超出对应模式工具面的能力。
+  const agentSrc = read('nexus/src/nexus/agent.py')
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",?\s*\}\s*\)/)
+  const cfgSrc = read('frontend/src/api/nexusAdapter.js')
+  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction'\]/)
+
   assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
 })
 

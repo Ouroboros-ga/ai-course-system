@@ -1,4 +1,4 @@
-"""P1-C2 会话列表与历史 API 回归（全 mock，不连真实 PG/LLM）."""
+﻿"""P1-C2 会话列表与历史 API 回归（全 mock，不连真实 PG/LLM）."""
 
 import json
 
@@ -19,7 +19,7 @@ async def test_list_sessions_memory_mode_returns_empty():
     get_settings.cache_clear()
     import nexus.main as main_module
 
-    main_module._agent = None
+    main_module._agents = {}
     main_module._pg_saver = None
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         response = await client.get(
@@ -93,8 +93,8 @@ async def test_session_messages_from_real_checkpoint():
         system_prompt="test",
         checkpointer=InMemorySaver(),
     )
-    original = main_module._agent
-    main_module._agent = agent
+    original = main_module._agents
+    main_module._agents = {"research": agent, "general": agent}
     main_module._pg_saver = None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -116,7 +116,7 @@ async def test_session_messages_from_real_checkpoint():
             {"role": "assistant", "content": "这是回答"},
         ]
     finally:
-        main_module._agent = original
+        main_module._agents = original
 
 
 async def test_session_messages_isolated_between_users():
@@ -142,8 +142,8 @@ async def test_session_messages_isolated_between_users():
         system_prompt="test",
         checkpointer=InMemorySaver(),
     )
-    original = main_module._agent
-    main_module._agent = agent
+    original = main_module._agents
+    main_module._agents = {"research": agent, "general": agent}
     main_module._pg_saver = None
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -159,4 +159,4 @@ async def test_session_messages_isolated_between_users():
         assert other.status_code == 200
         assert other.json()["messages"] == []
     finally:
-        main_module._agent = original
+        main_module._agents = original
