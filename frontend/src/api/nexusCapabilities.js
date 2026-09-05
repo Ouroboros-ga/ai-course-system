@@ -78,7 +78,9 @@ export const NEXUS_CAPABILITIES = {
     label: 'NexusLab 复现',
     icon: 'FlaskConical',
     state: CAPABILITY_STATE.READY,
-    modes: ['nexus_general', 'nexus_research'],
+    // Research only：Runtime RESEARCH_ONLY_TOOLS 含 run_reproduction，
+    // General 模式结构性不绑定该工具，UI 不得在 General 下展示此能力。
+    modes: ['nexus_research'],
     // 已接通（M4）：run_reproduction 提交 → 受控轮询 job 阶段状态 →
     // 确定性指标判定（PASS/FAIL 不经 LLM）→ 报告 Artifact 下载。
     // Clean Verification（A/B 双环境）仍为 P2+ 候选，`reproducible=true`
