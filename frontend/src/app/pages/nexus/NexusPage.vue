@@ -383,21 +383,39 @@ function readyAttachmentIds(session) {
 // 序列化进 localStorage，刷新后恢复逻辑被脏标记永久跳过（2026-09-06 线上验收）。
 const _runsRestoredIds = new Set()
 
+const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
+const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
+
+// F4（审查 2026-09-07）：终态作业恢复时的一次性详情补齐——拉取完整
+// steps_result/日志历史填充 Console；Worker 无记录（重启丢内存，NX-E4
+// 范畴）时保持清单快照。不触发自动报告，不重新提交。
+async function backfillRestoredRunDetail(turn, jobId) {
+  let record
+  try {
+    record = await getNexusReproJob(jobId)
+  } catch {
+    return
+  }
+  if (!record?.status || !turn?.reproRun) return
+  applyReproRecord(turn, record)
+  persistSessions()
+}
+
 async function restoreSessionRuns(session) {
   if (!session || _runsRestoredIds.has(session.id) || nexusDataSourceMode.value !== 'real') return
-  _runsRestoredIds.add(session.id)
   let runs = []
   try {
     const res = await listNexusRuns(session.id)
     runs = Array.isArray(res?.items) ? res.items : []
   } catch {
-    return
+    return // F4：拉取失败不进去重标记，下次恢复触发可重试
   }
+  _runsRestoredIds.add(session.id)
   if (!Array.isArray(session.turns)) session.turns = []
   for (const run of runs) {
     if (!run?.job_id) continue
     const liveStatus = run.live?.status || run.status || 'unknown'
-    const terminal = ['succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
+    const terminal = REPRO_TERMINAL_STATUSES.includes(liveStatus)
     const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
     if (existing) {
       // 本地 turn 状态落后于远端（如轮询断档期间作业已终态）→ 也恢复一次轮询：
@@ -410,6 +428,7 @@ async function restoreSessionRuns(session) {
     }
     // 孤儿 run（换设备/刷新丢本地 turn）：建恢复 turn 展示，不重新提交；
     // reportRequested=true 抑制自动补报告（避免重复产物），用户可手动补领。
+    const known = REPRO_RESTORE_KNOWN.includes(liveStatus)
     const turn = {
       question: `（已恢复）${run.preset_id || '实验'}复现`,
       answer: '',
@@ -424,8 +443,7 @@ async function restoreSessionRuns(session) {
       createdAt: null,
       reproRun: {
         job_id: run.job_id,
-        status: ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
-          ? liveStatus : 'unknown',
+        status: known ? liveStatus : 'unknown',
         stages: [],
         stageEvents: Array.isArray(run.live?.stage_events) ? run.live.stage_events : [],
         currentStep: run.live?.current_step ?? null,
@@ -445,8 +463,13 @@ async function restoreSessionRuns(session) {
       },
     }
     session.turns.push(turn)
-    if (['queued', 'running'].includes(liveStatus)) {
+    // F4：恢复时为所有已知作业补齐详情——queued/running/**cancelling** 持续
+    // 轮询；终态（succeeded/failed/rejected/cancelled）一次性拉取历史步骤
+    // 与日志，不因"清单只给状态"而停在空 Console。
+    if (REPRO_RESTORE_NONTERMINAL.includes(liveStatus)) {
       startReproPolling(turn, run.job_id)
+    } else if (known) {
+      void backfillRestoredRunDetail(turn, run.job_id)
     }
   }
   persistSessions()
@@ -717,6 +740,29 @@ function stopAllReproPolling() {
   for (const id of reproPollTimers.keys()) stopReproPolling(id)
 }
 
+// Console 轮询与恢复共用的记录投影：把 Worker job 记录写入 turn.reproRun。
+function applyReproRecord(turn, record) {
+  if (!turn?.reproRun || !record) return
+  turn.reproRun.status = record.status
+  turn.reproRun.code = record.code || null
+  turn.reproRun.detail = record.detail || null
+  turn.reproRun.seedUsed = !!record.seed_used
+  turn.reproRun.startedAt = record.started_at ?? null
+  turn.reproRun.finishedAt = record.finished_at ?? null
+  // NX-E2：真实边界 Stage 事件 / 当前步骤 / 运行中增量日志（代理已脱敏）。
+  turn.reproRun.stageEvents = Array.isArray(record.stage_events) ? record.stage_events : []
+  turn.reproRun.currentStep = record.current_step ?? null
+  turn.reproRun.liveLog = record.live_log_tail || ''
+  turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
+    index: i + 1,
+    command: s.command,
+    exit_code: s.exit_code,
+    timed_out: s.timed_out,
+    duration_s: s.duration_s,
+    log_tail: s.log_tail || ''
+  }))
+}
+
 function startReproPolling(turn, jobId) {
   if (!jobId || reproPollTimers.has(jobId)) return
   let polls = 0
@@ -735,24 +781,7 @@ function startReproPolling(turn, jobId) {
       return
     }
     if (!record || !turn?.reproRun) return
-    turn.reproRun.status = record.status
-    turn.reproRun.code = record.code || null
-    turn.reproRun.detail = record.detail || null
-    turn.reproRun.seedUsed = !!record.seed_used
-    turn.reproRun.startedAt = record.started_at ?? null
-    turn.reproRun.finishedAt = record.finished_at ?? null
-    // NX-E2：真实边界 Stage 事件 / 当前步骤 / 运行中增量日志（代理已脱敏）。
-    turn.reproRun.stageEvents = Array.isArray(record.stage_events) ? record.stage_events : []
-    turn.reproRun.currentStep = record.current_step ?? null
-    turn.reproRun.liveLog = record.live_log_tail || ''
-    turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
-      index: i + 1,
-      command: s.command,
-      exit_code: s.exit_code,
-      timed_out: s.timed_out,
-      duration_s: s.duration_s,
-      log_tail: s.log_tail || ''
-    }))
+    applyReproRecord(turn, record)
     persistSessions()
     if (REPRO_TERMINAL_STATUSES.includes(record.status)) {
       stopReproPolling(jobId)

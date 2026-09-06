@@ -715,6 +715,32 @@ class ReproJobError(Exception):
         self.code = code
 
 
+async def _writeback_metric_verdict(job_id: str, verdict: str, summary: str) -> None:
+    """审查 F6：把报告链的真实指标判定回写 Worker metric 阶段。
+
+    best-effort：失败只记日志，不阻断报告生成（metric 阶段将停留在
+    pending，属可接受的诚实降级）；幂等由 Worker 侧 already_final 保证。
+    """
+    settings = get_settings()
+    base = (settings.repro_worker_url or "").rstrip("/")
+    if not base:
+        return
+    headers = (
+        {"Authorization": f"Bearer {settings.repro_worker_token}"}
+        if settings.repro_worker_token
+        else {}
+    )
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(
+                f"{base}/jobs/{job_id}/metric",
+                json={"verdict": verdict, "summary": summary[:500]},
+                headers=headers,
+            )
+    except Exception as error:  # noqa: BLE001 - 回写失败不影响报告
+        logger.warning("repro metric writeback failed: %s", type(error).__name__)
+
+
 @app.post(
     "/api/v1/nexus/repro/jobs/{job_id}/report",
     dependencies=[Depends(require_api_key)],
@@ -746,6 +772,12 @@ async def repro_job_report(
         )
     preset = REPRO_PRESETS.get(str(job.get("preset_id", "")).lower())
     report = repro_report.build_report(job=job, preset=preset)
+    # F6：真实比较已完成，best-effort 回写 Worker metric 阶段（失败不阻断报告）。
+    await _writeback_metric_verdict(
+        job_id,
+        report["verdict"],
+        f"报告链判定 {report['verdict']}（{len(report['comparison'])} 项可比对指标）",
+    )
     markdown = repro_report.render_report_markdown(report)
     payload_json = repro_report.render_report_json(report)
     base_title = f"复现报告 · {report['preset_id']}".strip() or "复现报告"

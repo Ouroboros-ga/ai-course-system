@@ -1066,7 +1066,7 @@ test('S2 切换期：旧科研工作台页面、路由与 API client 已删除�
   assert.doesNotMatch(courseLayout, /^\s*\{ key: 'research'/m)
 })
 
-test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', () => {
+test('S3 下线完成：旧 research-agent 路由已注销，web-research 仍注册且 410 废弃头不变', () => {
   const middleware = read('backend/app/core/deprecation_middleware.py')
   const main = read('backend/app/main.py')
 
@@ -1076,8 +1076,10 @@ test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', (
   assert.match(middleware, /"\/api\/v1\/research-agent"/)
   assert.match(middleware, /"\/api\/v1\/web-research"/)
   assert.match(main, /DeprecationHeaderMiddleware/)
-  // 路由注册与 bootstrap 保留（S3 才删），保证 revert 一个提交即可恢复双轨。
-  assert.match(main, /include_router\(research_agent\.router/)
+  // S3 已完成下线（d2c694a0 线上实证）：research-agent 路由不再注册，
+  // revert 恢复语义由 git 历史承担；web-research 仍注册（内部任务链仍用
+  // 其 service），HTTP 层由中间件 410。
+  assert.doesNotMatch(main, /include_router\(research_agent\.router/)
   assert.match(main, /include_router\(web_research\.router/)
 })
 

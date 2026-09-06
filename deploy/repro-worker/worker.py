@@ -16,11 +16,22 @@ NX-E2/E3（2026-09-06）：
 - Stage 事件：Preparing/Building/Running/Metric/Verifying/Completed 由真实
   执行边界触发（序号单调递增），preset 无独立构建阶段时 Building 如实
   skipped、无干净 B 复验时 Verifying 如实 not_applicable，不伪造阶段。
-- 增量日志：每步 stdout 逐行读入有界环形缓冲（末 ``STEP_LOG_MAX_CHARS``
+- 增量日志：每步 stdout 按有界块读入环形缓冲（末 ``STEP_LOG_MAX_CHARS``
   字符），运行中即可经 ``live_log_tail`` 观察，不必等步骤结束。
 - Cancel：``POST /jobs/{job_id}/cancel`` 幂等；子进程 ``start_new_session``
   成组，取消/超时按进程组 SIGKILL；自然完成竞争时保持真实终态（晚到取消
   不把已完成的作业改成 cancelled）。``_jobs`` 仍为内存（持久化对账属 NX-E4）。
+
+边界修复批次（2026-09-07，审查 F1–F6）：
+- F2 日志脱敏：环形缓冲快照外发前遮蔽 Bearer/Authorization/键值密钥/
+  已知令牌/URL 用户信息与 ANSI 转义；子进程环境白名单，Worker 凭据
+  不进入不可信仓库的执行环境。
+- F3 采集健壮性：readline → 有界块读，超长单行/无换行输出不再丢失或
+  伪造执行器异常；管道读异常不篡改真实退出码。
+- F5 spawn 窗口取消：句柄登记后立即重查 cancel_requested，窗口内取消
+  直接回收进程组并记 cancel_landed。
+- F6 Metric 语义：产物收集完成只置 metric pending；Runtime 报告链得出
+  真实判定后经 ``POST /jobs/{id}/metric`` 回写 done/not_applicable。
 """
 from __future__ import annotations
 
@@ -44,7 +55,7 @@ from pydantic import BaseModel, Field
 # 配置（环境变量注入；容器内不落任何生产凭据）
 # ---------------------------------------------------------------------------
 
-WORKER_VERSION = "0.2.0"
+WORKER_VERSION = "0.3.0"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -291,6 +302,76 @@ def _kill_group(proc: asyncio.subprocess.Process) -> None:
 # start_new_session 为 POSIX-only；Windows 开发环境直接省略（_kill_group 已退化）。
 _SUBPROCESS_GROUP_KWARGS = {"start_new_session": True} if os.name == "posix" else {}
 
+# NX-E2：日志泵按有界块读取（审查 F3）——readline 的 64KB 行长限制会让
+# 超长单行抛 ValueError（成功步骤被记成执行器异常）或整行丢失；块读对
+# 无换行/超长行输出同样成立。
+_PUMP_CHUNK_BYTES = 65536
+
+# 审查 F2（2026-09-07）：不可信子进程环境白名单。Worker 自身凭据
+# （REPRO_WORKER_TOKEN、REPRO_WORKER_GITHUB_TOKEN 等）只供本进程
+# License 查询与 Worker 间通信使用，绝不进入仓库代码的执行环境。
+# Windows 基线段为子进程/MSYS 运行时的启动必需系统变量（不含凭据；
+# Linux 容器上天然不存在）——缺失 SystemRoot 会让 bash 以 RPC 错误退出。
+_SUBPROC_ENV_KEEP = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "TZ",
+    "TMPDIR", "TMP", "TEMP",
+    "USER", "LOGNAME", "SHELL", "TERM",
+    "VIRTUAL_ENV", "CONDA_PREFIX", "CONDA_DEFAULT_ENV",
+    "PYTHONUNBUFFERED", "PYTHONDONTWRITEBYTECODE",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "LD_LIBRARY_PATH",
+    "SystemRoot", "SystemDrive", "windir", "ComSpec", "PATHEXT",
+    "COMPUTERNAME", "USERNAME", "USERDOMAIN", "USERPROFILE",
+    "APPDATA", "LOCALAPPDATA", "ProgramData", "ALLUSERSPROFILE",
+    "ProgramFiles", "ProgramFiles(x86)", "CommonProgramFiles",
+    "NUMBER_OF_PROCESSORS", "PROCESSOR_ARCHITECTURE", "OS",
+})
+
+
+def _subprocess_env() -> dict[str, str]:
+    # 大小写不敏感匹配：MSYS/Git Bash 传给子进程的环境键大小写不稳定，
+    # 精确匹配会漏掉 SystemRoot 等系统变量导致 bash 启动失败（本地实测）。
+    keep = {name.upper() for name in _SUBPROC_ENV_KEEP}
+    return {key: value for key, value in os.environ.items() if key.upper() in keep}
+
+
+# 审查 F2：日志脱敏——仅删控制字符不等于脱敏，凭据类内容在采集/外发前遮蔽。
+# Backend 代理层（nexus_proxy.py `_redact_secrets`）为同源独立实现——独立
+# 容器不共享代码，模式修改须两处同步。
+_REDACT_ANSI = re.compile(
+    r"\x1b(?:"
+    r"\[[0-9;?<>=!]*[ -/]*[@-~]"
+    r"|\][^\x07\x1b]{0,256}(?:\x07|\x1b\\)"
+    r"|[@-Z\\-_]"
+    r")"
+)
+_REDACT_URL_USERINFO = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^\s/@:]+):([^\s/@]+)@")
+_REDACT_URL_USER = re.compile(r"([a-zA-Z][a-zA-Z0-9+.\-]*://)([^\s/@]+)@")
+_REDACT_BEARER = re.compile(r"(?i)\bbearer\s+[a-z0-9._~+/_\-]{8,}")
+_REDACT_AUTH_HEADER = re.compile(r"(?i)\b(authorization|proxy-authorization|cookie)(\s*[:=]\s*)[^\n]{0,512}")
+_REDACT_KV_SECRET = re.compile(
+    r"(?i)\b(api[-_]?key|apikey|access[-_]?token|auth[-_]?token|secret[-_]?key|"
+    r"client[-_]?secret|private[-_]?key|passphrase|password|passwd|pwd|secret|token)(?!s)"
+    r"(\s*[:=]\s*)([\"']?)[^\s\"',;]{4,}"
+)
+_REDACT_KNOWN_TOKEN = re.compile(
+    r"(?i)\b(sk-[a-z0-9]{16,}|gh[pousrn]_[a-z0-9]{20,}|github_pat_[a-z0-9_]{20,}|"
+    r"hf_[a-z0-9]{20,}|xox[baprs]-[a-z0-9-]{10,}|akia[0-9a-z]{16}|"
+    r"eyJ[a-z0-9_-]{10,}\.[a-z0-9_-]{10,}\.[a-z0-9_-]{5,})"
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """遮蔽凭据类内容（Bearer/Authorization/键值密钥/已知令牌/URL 用户信息）
+    与 ANSI 转义序列。先于控制符清洗执行（依赖完整转义序列）。"""
+    text = _REDACT_ANSI.sub("", text)
+    text = _REDACT_BEARER.sub("Bearer ***", text)
+    text = _REDACT_AUTH_HEADER.sub(lambda m: f"{m.group(1)}{m.group(2)}***", text)
+    text = _REDACT_KV_SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}{m.group(3)}***", text)
+    text = _REDACT_KNOWN_TOKEN.sub("***", text)
+    text = _REDACT_URL_USERINFO.sub(r"\1***:***@", text)
+    return _REDACT_URL_USER.sub(r"\1***@", text)
+
 
 async def _run_step(
     command: str,
@@ -299,9 +380,10 @@ async def _run_step(
 ) -> dict[str, Any]:
     """在受限子进程中执行单步：超时按进程组 SIGKILL，输出截尾。
 
-    NX-E2：子进程 ``start_new_session`` 成组，stdout 逐行泵入有界环形缓冲，
-    运行中即可经 ``live_log_slot["live_log_tail"]`` 增量观察。取消由
-    ``/jobs/{id}/cancel`` 直接对活动进程组 SIGKILL，本函数只负责如实回传
+    NX-E2：子进程 ``start_new_session`` 成组，stdout 按有界块泵入有界环形
+    缓冲，运行中即可经 ``live_log_slot["live_log_tail"]`` 增量观察（脱敏后）。
+    取消由 ``/jobs/{id}/cancel`` 直接对活动进程组 SIGKILL；spawn 窗口内的
+    取消由句柄登记后的立即重查兜底（审查 F5）。本函数只负责如实回传
     （被杀步骤 exit=-9/None），取消语义由调用方结合 cancel 标记裁决。
     """
     started = time.monotonic()
@@ -316,7 +398,9 @@ async def _run_step(
             ring_chars -= len(ring.popleft())
 
     def _snapshot() -> str:
-        return "".join(ring)[-STEP_LOG_MAX_CHARS:]
+        # F2：环形缓冲拼接后先脱敏再截断——脱敏必须看到完整令牌，不能被
+        # 截断劈开后漏网。
+        return _redact_secrets("".join(ring))[-STEP_LOG_MAX_CHARS:]
 
     if live_log_slot is not None:
         live_log_slot["live_log_tail"] = ""
@@ -325,6 +409,7 @@ async def _run_step(
         proc = await asyncio.create_subprocess_exec(
             "bash", "-lc", command,
             cwd=str(cwd),
+            env=_subprocess_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             **_SUBPROCESS_GROUP_KWARGS,
@@ -333,16 +418,25 @@ async def _run_step(
             # NX-E3：活动进程句柄挂 record 私有键（下划线前缀，job_status 过滤不外泄），
             # cancel 端点据此对进程组 SIGKILL；步骤结束后残值无害（returncode 非 None）。
             live_log_slot["_proc"] = proc
+            # F5：spawn 窗口取消竞态——cancel 先到时记录尚无句柄只能置标志，
+            # 句柄登记后立即重查一次；落在窗口内的取消直接按组回收并留证。
+            if live_log_slot.get("cancel_requested") and proc.returncode is None:
+                live_log_slot["cancel_landed"] = True
+                _kill_group(proc)
 
         async def _pump() -> None:
             assert proc.stdout is not None
-            while True:
-                raw = await proc.stdout.readline()
-                if not raw:
-                    break
-                _append(raw.decode(errors="replace"))
-                if live_log_slot is not None:
-                    live_log_slot["live_log_tail"] = _snapshot()
+            try:
+                while True:
+                    raw = await proc.stdout.read(_PUMP_CHUNK_BYTES)
+                    if not raw:
+                        break
+                    _append(raw.decode(errors="replace"))
+                    if live_log_slot is not None:
+                        live_log_slot["live_log_tail"] = _snapshot()
+            except (ValueError, OSError):
+                # F3：管道读异常只损失日志，绝不伪造执行退出码。
+                pass
 
         pump = asyncio.create_task(_pump())
         timed_out = False
@@ -358,7 +452,7 @@ async def _run_step(
             _kill_group(proc)
             pump.cancel()
             raise
-        # 进程已退出；给泵一小段时间排干管道尾部（readline 到 EOF 自然返回）。
+        # 进程已退出；给泵一小段时间排干管道尾部（块读到 EOF 自然返回）。
         try:
             await asyncio.wait_for(pump, timeout=5.0)
         except (asyncio.TimeoutError, asyncio.CancelledError):
@@ -531,7 +625,12 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             # cancel_late 仅供验收取证；Stage 照常收尾——工作确实全部发生了。
             record["cancel_late"] = True
         _emit_stage(record, "running", "done")
-        _emit_stage(record, "metric", "started")
+        # F6：metric 阶段的真实边界是"指标判定"，发生在 Runtime 报告链
+        # （确定性 PASS/FAIL 不在本进程）。Worker 只完成产物收集，metric
+        # 如实置 pending，判定后经 POST /jobs/{id}/metric 回写终态——
+        # 不再"扫描完产物就宣称 Metric 完成"。
+        _emit_stage(record, "metric", "pending",
+                    note="产物收集完成，指标判定由报告链按需执行")
 
         record.update({
             "status": "succeeded",
@@ -539,7 +638,6 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             "artifacts": _collect_artifacts(workspace),
             "finished_at": time.time(),
         })
-        _emit_stage(record, "metric", "done")
         # A/B 干净环境复验属 NX-P2；preset 单环境如实 not_applicable。
         _emit_stage(record, "verifying", "not_applicable",
                     note="单环境 preset 运行，无干净 B 复验（A/B 属 NX-P2）")
@@ -637,7 +735,8 @@ async def _guarded_execute(job_id: str, request: JobRequest) -> None:
             _jobs[job_id].update({
                 "status": "failed",
                 "code": "WORKER_INTERNAL_ERROR",
-                "detail": f"{type(error).__name__}: {error}"[:500],
+                # F2：兜底 detail 可能内嵌异常链中的带凭据 URL，外发前脱敏。
+                "detail": _redact_secrets(f"{type(error).__name__}: {error}")[:500],
                 "finished_at": time.time(),
             })
 
@@ -656,7 +755,8 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
     """NX-E3：取消作业。幂等；与自然完成竞争时保持真实终态。
 
     - queued/cancelling → 置 cancel_requested，执行器在下一个边界（步骤前置
-      检查/入口检查）收尾；正在执行的步骤由本端点直接对进程组 SIGKILL。
+      检查/入口检查）收尾；正在执行的步骤由本端点直接对进程组 SIGKILL；
+      spawn 窗口内的取消由 _run_step 句柄登记后的立即重查兜底（F5）。
     - 已终态（succeeded/failed/rejected/cancelled）→ 幂等返回现有状态，
       不报错、不改动。
     - 回收确认（步骤进程退出、执行器落 cancelled）之前状态为 cancelling，
@@ -675,6 +775,52 @@ async def cancel_job(job_id: str) -> dict[str, Any]:
         _kill_group(proc)
         record["cancel_landed"] = True
     return {"job_id": job_id, "status": "cancelling"}
+
+
+class MetricVerdictRequest(BaseModel):
+    """F6：Runtime 报告链回写的真实指标判定（verdict ∈ PASS/FAIL/INCOMPLETE）。"""
+    verdict: str = Field(min_length=1, max_length=16)
+    summary: str = Field(default="", max_length=500)
+
+
+@app.post("/jobs/{job_id}/metric", dependencies=[Depends(_require_token)])
+async def record_metric_verdict(job_id: str, request: MetricVerdictRequest) -> dict[str, Any]:
+    """F6：报告链得出真实判定后更新 metric 阶段——Stage 事件恢复"真实边界"。
+
+    verdict 映射：PASS/FAIL → metric done（判定这一动作完成，结论在 note）；
+    INCOMPLETE → not_applicable（无可比对指标）。幂等：metric 已有终态
+    事件不覆盖；作业未 succeeded 一律 409（与报告链前置一致）。
+    """
+    record = _jobs.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+    verdict = request.verdict.strip().upper()
+    if verdict not in ("PASS", "FAIL", "INCOMPLETE"):
+        raise HTTPException(status_code=422, detail="VERDICT_MUST_BE_PASS_FAIL_INCOMPLETE")
+    if record.get("status") != "succeeded":
+        raise HTTPException(
+            status_code=409, detail=f"JOB_NOT_FINISHED:{record.get('status', 'unknown')}"
+        )
+    latest_metric = next(
+        (
+            event
+            for event in reversed(record.get("stage_events") or [])
+            if event.get("stage") == "metric"
+        ),
+        None,
+    )
+    if latest_metric and latest_metric.get("status") in ("done", "failed", "not_applicable"):
+        return {"job_id": job_id, "metric": latest_metric.get("status"), "already_final": True}
+    summary = request.summary.strip()[:200]
+    metric_status = "done" if verdict in ("PASS", "FAIL") else "not_applicable"
+    note = summary or {
+        "PASS": "报告链判定 PASS",
+        "FAIL": "报告链判定 FAIL",
+        "INCOMPLETE": "无可比对指标（INCOMPLETE）",
+    }[verdict]
+    _emit_stage(record, "metric", metric_status, note=note)
+    record["metric_verdict"] = verdict
+    return {"job_id": job_id, "metric": metric_status, "already_final": False}
 
 
 if __name__ == "__main__":  # pragma: no cover
