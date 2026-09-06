@@ -37,7 +37,8 @@ def _submit_calls(monkeypatch, calls: list):
         calls.append(preset["preset_id"])
         return {"status": "submitted", "job": {"job_id": "job-9", "status": "queued"}}
 
-    async def _fake_ownership(job_id, preset):
+    async def _fake_ownership(job_id, preset, user_id=None):
+        # NX-G2 修正后审批路径显式传 user_id；桩只消化新签名，不污染 calls。
         return True
 
     monkeypatch.setattr(repro_module, "_submit_to_worker", _fake_submit)

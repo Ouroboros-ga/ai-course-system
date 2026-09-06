@@ -176,6 +176,7 @@ class NexusRunRecordRequest(BaseModel):
     approval_id: str = Field(default="", max_length=64)
     job_id: str = Field(min_length=4, max_length=64)
     status: str = Field(default="submitted", max_length=32)
+    repo_url: str = Field(default="", max_length=300)
 
 
 @router.post("/repro-jobs")
@@ -227,6 +228,20 @@ async def nexus_internal_record_repro_run(
     if run is None:
         # run_id 冲突且属他人：拒绝覆盖（正常 run_id=approval_id 全局唯一）。
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="RUN_ID_CONFLICT")
+    # NX-G2 集成修正（2026-09-06 线上验收）：run linkage 登记时同步写 M4 归属表
+    # nexus_repro_jobs——审批执行路径上 Runtime 的 _record_job_ownership 因无聊天
+    # 请求作用域（ContextVar 为空）静默失败，导致聊天发起的作业状态查询永久 404。
+    # 幂等（ON CONFLICT DO NOTHING），与 Runtime 侧 /repro-jobs 登记互不冲突。
+    if payload.job_id:
+        from app.services import nexus_repro_job_service
+
+        nexus_repro_job_service.record_job(
+            session,
+            job_id=payload.job_id,
+            user_id=user_id,
+            preset_id=payload.preset_id,
+            repo_url=payload.repo_url,
+        )
     return unified_response(code=200, message="run 已登记", data={"run_id": run["run_id"]})
 
 

@@ -135,17 +135,21 @@ async def _submit_to_worker(preset: dict[str, Any]) -> dict[str, Any]:
         }
 
 
-async def _record_job_ownership(job_id: str, preset: dict[str, Any]) -> bool:
+async def _record_job_ownership(
+    job_id: str, preset: dict[str, Any], user_id: str | None = None
+) -> bool:
     """M4-B1：向 Backend 登记作业归属（job 查询按发起人鉴权的依据）。
 
     best-effort：登记失败不阻断提交结果，但如实标注（前端进度查询将不可用）。
+    ``user_id`` 显式传参优先（审批执行路径无聊天请求作用域，ContextVar 为空——
+    2026-09-06 线上验收发现的集成缺口）；无传参时回退请求作用域（聊天工具路径）。
     """
     from nexus.artifact_client import _settings_ready
     from nexus.request_scope import current_user_id
 
     ready = _settings_ready()
-    user_id = current_user_id()
-    if ready is None or not user_id:
+    effective_user_id = user_id or current_user_id()
+    if ready is None or not effective_user_id:
         return False
     url, token = ready
     try:
@@ -159,7 +163,7 @@ async def _record_job_ownership(job_id: str, preset: dict[str, Any]) -> bool:
                 },
                 headers={
                     "Authorization": f"Bearer {token}",
-                    "X-Nexus-User-Id": user_id,
+                    "X-Nexus-User-Id": str(effective_user_id),
                 },
             )
         return response.status_code == 200
@@ -198,6 +202,7 @@ async def _record_run_linkage(
                     "approval_id": approval_id,
                     "job_id": job_id,
                     "status": "submitted",
+                    "repo_url": preset.get("repo_url", ""),
                 },
                 headers={
                     "Authorization": f"Bearer {token}",
@@ -354,7 +359,7 @@ async def execute_approved_reproduction(
             job_id = str((result.get("job") or {}).get("job_id", ""))
             if job_id:
                 approvals.attach_job(approval_id, job_id)
-                recorded = await _record_job_ownership(job_id, preset)
+                recorded = await _record_job_ownership(job_id, preset, user_id=user_id)
                 result["ownership_recorded"] = recorded
                 await _record_run_linkage(
                     run_id=approval_id, user_id=user_id, session_id=session_id,

@@ -35,12 +35,14 @@ export function getNexusSessionMessages(sessionId) {
 }
 
 /**
- * 复现作业状态（M4-B1）：发起人鉴权，返回裁剪后的 Worker 记录
- * （status/steps_result 短日志/artifacts）。
+ * 复现作业状态（M4-B1 / NX-E2）：发起人鉴权，返回裁剪后的 Worker 记录
+ * （status/stage_events/steps_result/live_log_tail/artifacts）。
+ * flatEnvelope：记录自身带 code(业务错误码，运行中为 null) 字段，
+ * allowFlatResponse 的形状探测会把整个记录误判为错误响应（轮询数据被吞）。
  */
 export function getNexusReproJob(jobId) {
   return request.get(`/nexus/repro/jobs/${encodeURIComponent(jobId)}`, {
-    allowFlatResponse: true,
+    flatEnvelope: true,
     skipErrorToast: true,
   })
 }
@@ -93,7 +95,7 @@ export function executeApprovedRepro(approvalId, sessionId = 'default') {
  */
 export function cancelNexusReproJob(jobId) {
   return request.post(`/nexus/repro/jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
-    allowFlatResponse: true,
+    flatEnvelope: true,
     skipErrorToast: true,
   })
 }

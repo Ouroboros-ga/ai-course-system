@@ -337,6 +337,14 @@ service.interceptors.response.use(
 
     const res = response.data
 
+    // flatEnvelope：调用方声明响应就是裸数据（无统一信封），即使数据自身带
+    // 'code' 字段也不做信封形状探测。NX-E2 修正：Worker 作业记录恒有
+    // code(null) 业务码键，allowFlatResponse 的形状探测会把整个记录误判为
+    // "业务错误响应"而拒绝，轮询数据被 tick 静默吞掉，作业进度永不更新。
+    if (response.config?.flatEnvelope) {
+      return res
+    }
+
     if (response.config?.allowFlatResponse && (res === null || typeof res !== 'object' || !Object.prototype.hasOwnProperty.call(res, 'code'))) {
       return res
     }
