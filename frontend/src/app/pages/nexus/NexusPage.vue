@@ -396,9 +396,10 @@ async function restoreSessionRuns(session) {
     const terminal = ['succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
     const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
     if (existing) {
-      // 本地已有轮询中的 turn 且远端仍在跑 → 续上轮询（startReproPolling 幂等）。
+      // 本地 turn 状态落后于远端（如轮询断档期间作业已终态）→ 也恢复一次轮询：
+      // 单次拉取即更新卡片并自行停止，不重复提交。
       if (!REPRO_TERMINAL_STATUSES.includes(existing.reproRun.status)
-        && ['queued', 'running', 'cancelling'].includes(liveStatus)) {
+        && !['unknown', 'stale'].includes(liveStatus)) {
         startReproPolling(existing, run.job_id)
       }
       continue
