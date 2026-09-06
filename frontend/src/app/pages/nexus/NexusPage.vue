@@ -383,9 +383,6 @@ function readyAttachmentIds(session) {
 // 序列化进 localStorage，刷新后恢复逻辑被脏标记永久跳过（2026-09-06 线上验收）。
 const _runsRestoredIds = new Set()
 
-const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
-const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
-
 // F4（审查 2026-09-07）：终态作业恢复时的一次性详情补齐——拉取完整
 // steps_result/日志历史填充 Console；Worker 无记录（重启丢内存，NX-E4
 // 范畴）时保持清单快照。不触发自动报告，不重新提交。
@@ -710,6 +707,10 @@ const REPRO_STATUS_LABELS = {
 }
 
 const REPRO_TERMINAL_STATUSES = ['succeeded', 'failed', 'rejected', 'cancelled']
+// F4：恢复分类。注意必须声明在 REPRO_TERMINAL_STATUSES 之后——模块级
+// 展开引用，放前面会触发 TDZ ReferenceError 使整个 chunk 崩掉（线上实测）。
+const REPRO_RESTORE_NONTERMINAL = ['queued', 'running', 'cancelling']
+const REPRO_RESTORE_KNOWN = [...REPRO_RESTORE_NONTERMINAL, ...REPRO_TERMINAL_STATUSES]
 
 function reproStatusLabel(run) {
   return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
