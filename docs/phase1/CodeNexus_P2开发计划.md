@@ -14,9 +14,10 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | Tool loop、Compact、checkpoint、消息恢复                                | CURRENT  | P1/M1/M5 验收；Compact 全图触发边界保留；不是完整 Harness/跨设备产品历史 |
 | nanoGPT preset、基础步骤结果/指标/报告                                      | CURRENT  | P1/M4 验收；轮询 job 与终态步骤结果，不称实时全过程 Console           |
 | Legacy Research S3                                               | CURRENT  | M5 验收；活跃教学消费者、数据/迁移保留，不重做已下线迁移                    |
-| 服务端执行审批（NX-G2）＋mode 严格化（NX-G1）＋effective capability（NX-G3） | CURRENT  | b34ea2d9 上线、b080e269 线上只读验证；真实审批全链等交互式验收待补（§7 清单） |
-| 附件/视觉（NX-A1）、run 恢复（NX-E1）、模型网关                          | CURRENT  | 随 b34ea2d9 上线；PG 方言/OCR 回填/附件 E2E/真实恢复链待补（§7 清单）   |
-| Todo、Paper Research、SandboxProvider、受控 A/B、Console、Session        | NEXT     | 下表独立验收，不一次翻转全线 ready；Console/Cancel 批次细化见 §7     |
+| 服务端执行审批（NX-G2）＋mode 严格化（NX-G1）＋effective capability（NX-G3） | CURRENT  | b34ea2d9 上线、b080e269 线上只读验证；真实审批全链已于 09-06 浏览器验收通过（NX-E2E3 记录） |
+| 附件/视觉（NX-A1）、run 恢复（NX-E1）、模型网关                          | CURRENT  | 随 b34ea2d9 上线；PG 方言/OCR 回填/附件 E2E/真实恢复链已于 09-06 浏览器验收通过 |
+| **Experiment Console（NX-E2）、作业取消（NX-E3）**                       | CURRENT  | 09-06 上线（9cdbf8a8 线），Worker v0.2.0；浏览器真实链验收含取消/恢复/真实审批 |
+| Todo、Paper Research、SandboxProvider、受控 A/B、Session                 | NEXT     | 下表独立验收，不一次翻转全线 ready；批次建议见 §7                   |
 | Subagent/Workspace、广泛任意论文/仓库、DOCX/PPTX 输出                        | TARGET   | 门槛到位后另排批次                                         |
 | Personal Context、GPU/多云、额外模型选择器                                  | OPTIONAL | 按需评估；图片视觉模型配置仍是 NX-A1 必需项                         |
 
@@ -65,49 +66,36 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 任务    | 状态   | 改动入口与交付                                                                                                    | 验收                                                                                                |
 | ----- | ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | NX-E1 | ✅ 上线（2026-09-05，b34ea2d9）：nexus_runs 注册＋恢复查询＋前端只读恢复；run_id 冲突属他人 409；真实恢复链待补（§7 清单） | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
-| NX-E2 | NEXT | worker.py 增量 Stage/有界日志、代理脱敏、前端只读 Console                                                                  | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell |
-| NX-E3 | NEXT | Worker cancel、代理鉴权、前端 cancelling/cancelled                                                                 | 排队/运行幂等取消，进程组/容器回收确认才 cancelled；完成竞争正确；不影响其他 job，聊天 Stop 不充当 Cancel                               |
+| NX-E2 | ✅ 上线（2026-09-06，浏览器真实链验收）：Worker 增量 Stage/有界日志、代理脱敏、前端只读 Console | worker.py stage_events/live_log_tail、代理透传+清洗、NexusPage 会话内 Console | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell——全部实证（[验收记录](验收记录/NX-E2E3_验收_2026-09-06.md)） |
+| NX-E3 | ✅ 上线（2026-09-06，同上）：Worker cancel、代理归属鉴权、前端 cancelling/cancelled | 运行中取消→取消中→已取消→进程组回收（exit -9）→幂等→已完成步骤保留——全部实证 |
 | NX-E4 | NEXT | 服务端 mode/course/pin/version、最小事件/游标、Worker 快照与重启对账                                                         | 跨设备偏好/过程恢复；去重；无原始完整 Trace/思维；checkpoint 与产品历史分开；删除/保留覆盖关联资源                                       |
 
 当前 Worker 无实时连续 Console/cancel API，\_jobs 在内存；前端 local+remote merge 无完整运行恢复。历史 API 不返回 ToolMessage 不证明 checkpoint 未存。旧记录无法还原时显示不可恢复，不凭回答造 Trace。
 
 ## 6. 执行顺序与验证
 
-1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；交互式线上验收待补（§7 清单）。
-2. 下一批次 NX-E2+E3（细化见 §7）：Worker 一次升级同时交付增量 Stage/有界日志与 cancel；E2 管线为 NX-H1 的 Todo 事件预留契约。
+1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；§7 前置清单五项交互式验收已全部通过（2026-09-06 浏览器真实链，见 [NX-E2E3 验收](验收记录/NX-E2E3_验收_2026-09-06.md)）。
+2. ✅ 下一批次 NX-E2+E3 已上线并通过浏览器真实链验收（2026-09-06，Worker v0.2.0）；验收发现并修复 4 个集成缺陷（归属断层/code 键信封冲突/恢复标记误持久化/附件清单未注入），详见验收记录。
 3. 批次 2＝NX-H1＋NX-R1 薄链；批次 3＝NX-S1 接口化＋NX-E4；NX-P1/P2 按依赖接入（批次 4）。TARGET 另排批次。
 4. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
 5. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
 6. 既有两项域测试失败与 Compact 全图边界单独跟进，不能删除断言制造全绿。每任务写 commit/工作区、环境、实际链路、命令/结果和未验证项。
 
-## 7. 下一批次细化：NX-E2+E3 Console/取消闭环（2026-09-06 规划）
+## 7. NX-E2+E3 批次：✅ 已完成上线（2026-09-06）
 
-> 推荐主线，与[Console 外壳设计板](2026-09-06_NexusLab_Console_外壳设计板.html)对齐；批次主线与技术路线为建议，开工前与开发者确认一次。H1 的 Todo 事件只在 E2 管线上预留契约位，不实现。
-
-**范围**：Worker 一次升级同时交付增量 Stage/有界日志（E2 后端面）与 cancel API（E3 后端面）；Backend 代理透传＋脱敏＋归属鉴权；前端按设计板落地会话内 Console。零新增外部依赖，纯胶水。
-
-| 层 | 改动入口 | 交付 |
-| --- | --- | --- |
-| Worker | deploy/repro-worker/worker.py | Stage 由真实边界触发（Preparing/Building/Running/Metric/Verifying/Completed，事件序号单调递增）；每步有界环形日志（默认末 8KB/步，可配）；`POST /jobs/{id}/cancel`（同 Bearer 鉴权、幂等、Popen 进程组终止、回收确认才置 cancelled、与自然完成竞争保持真实终态）；`_jobs` 仍内存（持久化快照/对账属 NX-E4） |
-| Backend | nexus_proxy.py | cancel 代理（发起人＝归属校验，复用 nexus_runs 登记）；stage/log 透传；日志脱敏/控制符过滤/服务端时间戳 |
-| Runtime | tools/reproduction.py、runs API | stage 字段并入现有 runs 实时态合并；审批/提交链路不动（NX-G2 语义保持） |
-| 前端 | NexusPage.vue（按设计板 v1） | 会话内就地展开：Stage 竖轨/Command label/Elapsed/Exit code/20 行日志尾（10–30 可调）/Metric/Report/Cancel；3s 轮询（2–5s 可调，不要求 WebSocket）；cancelling/cancelled 状态机；无 B 环境 Verifying 诚实显示"未实施/不适用"；聊天 Stop 不充当 Cancel |
-
-验收＝§5 NX-E2/E3 原验收项＋真实 Worker 端到端（nanoGPT preset：提交→审批→运行中观察 Stage/日志→中途取消→后续 job 不受影响）。设计板 todo-tag"待后端 NX-E2"区块本批全部点亮。
+> 实现＋部署＋浏览器真实链验收全部完成，见[验收记录](验收记录/NX-E2E3_验收_2026-09-06.md)。
+> 验收过程发现并修复 4 个集成缺陷（归属登记断层、轮询 code 键信封冲突、
+> 恢复标记误持久化、附件清单未注入）——均为自动化测试未能覆盖、只有真实
+> 链路才能暴露的问题。§7 前置清单五项交互式验收全部通过。
+> 部署线：1338467b（归属/信封修复）→ 9cdbf8a8（恢复补状态）→ 8ce3597f
+> （恢复标记）→ b9d0ddda/9bf9e397（附件清单注入＋归属服务可移植化），
+> Worker v0.2.0 容器重建，Nexus Runtime 同步重启。
 
 **后续批次建议**：
 
 1. 批次 2＝NX-H1＋NX-R1 薄链：H1 显式 Todo 中间件（deepagents 0.7.12 无现成 todo 中间件，写小胶水：state.todos＋write_todos＋产品事件投影）；R1 走自研薄链——NX-A1 PDF locator＋arxiv/SearXNG site:arxiv.org 降级＋read_attachment＋引用 artifact 串成"问题→候选→全文→证据→比较→综合→Citation"，全文不可得诚实降级；PaperQA2 只出许可核验报告不引入。
 2. 批次 3＝NX-S1 接口化（统一 SandboxProvider port，现有 Worker 适配为首个 PresetSandboxProvider，保持 nanoGPT 链回归；SWE-ReX/repo2docker 许可核验报告）＋NX-E4（服务端 session 权威＋产品事件表＋Worker 重启对账）。
 3. 批次 4＝NX-P1/P2（依赖 S1+E3，可先用 nanoGPT preset 验证 A/B 流程）。
-
-**前置：已上线批次交互式线上验收清单**（需授权在 zsitai.xyz 做受控真实操作，或由开发者手工执行后补记验收）：
-
-1. 真实 PG：审批表/附件表/runs 表首次真实使用（建表＋方言实证）；
-2. 真实审批全链：提案→本人批准→Worker 执行→轮询→报告（nanoGPT preset 回归）；
-3. 附件 E2E：真实上传→chips→发送→模型引用 locator→恢复；
-4. PaddleOCR 8090 真实回填；DOC/PPT 转换（服务器无 LibreOffice 则维持 honest-fail）；
-5. 恢复链：提交→Runtime 重启→unknown→快照找回，不重复提交。
 
 ## 8. 依赖、自研与授权
 

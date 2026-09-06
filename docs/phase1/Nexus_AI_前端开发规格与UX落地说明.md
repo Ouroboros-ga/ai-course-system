@@ -57,9 +57,15 @@ Backend/Runtime 已接收 mode/context，旧“字段未接收”注释归档。
 
 图片缩略图、视觉可用性与 OCR 状态分开；视觉模型直传优先，无需等 OCR，不支持视觉时明确辅助模型/文字降级。文档引用页/slide/段落，Excel 引用 sheet/cell；长文按块，禁止静默截断。前端传 attachment_ids，由服务端校验 owner/session/retention；私有对象，不自动入课程 KB/LearningEvidence/Graph。删除上下文保留由服务端处理，UI 不承诺只删对象即抹净历史。
 
-## 7. Experiment Console（NX-E2 / E3）
+## 7. Experiment Console（NX-E2 / E3）——✅ 已上线（2026-09-06）
 
-CURRENT 已有命令步骤、退出码、耗时、指标和报告；主要终态步骤结果，不是连续实时阶段/日志。NEXT 沿会话实验卡展开只读详情：
+CURRENT 已由"终态步骤结果"升级为会话内只读 Console（设计板 2026-09-06 v1，
+按设计板落地）：Stage 竖轨（真实边界事件）/Command label/Elapsed/Exit code
+（运行中显示 —）/最近 20 行日志（运行中增量，服务端脱敏）/Metric/Report/
+Cancel（cancelling→cancelled 状态机，回收确认才置终态）。轮询 5s（2–5s 内
+合规），无 WebSocket、无 stdin、无命令编辑；无 B 环境 Verifying 如实显示
+"not_applicable"。恢复路径（刷新/换设备/本地落后远端终态）拉取一次快照即
+更新并自行停止。验收证据见 [NX-E2E3 记录](验收记录/NX-E2E3_验收_2026-09-06.md)。
 
 | 字段 | 规则 |
 | --- | --- |
