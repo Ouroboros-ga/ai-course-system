@@ -171,7 +171,13 @@ export function loadLocalSessions() {
       localStorage.setItem(DEMO_SESSIONS_KEY, JSON.stringify(DEFAULT_DEMO_SESSIONS))
       return DEFAULT_DEMO_SESSIONS
     }
-    return JSON.parse(raw)
+    const sessions = JSON.parse(raw)
+    // 清理历史脏数据：_runsRestored 恢复标记曾被误持久化（应只存在于页面内存），
+    // 残留会让刷新后的 runs 恢复被永久跳过（2026-09-06 线上验收发现）。
+    for (const s of Array.isArray(sessions) ? sessions : []) {
+      if (s && typeof s === 'object' && '_runsRestored' in s) delete s._runsRestored
+    }
+    return sessions
   } catch {
     return DEFAULT_DEMO_SESSIONS
   }
