@@ -3,7 +3,6 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Login from './LoginIn/login/Login.vue'
 import UserInfoCard from "./LoginIn/userinfo/UserInfoCard.vue"
-import StatsCard from "./LoginIn/stats/StatsCard.vue"
 import PreferenceSettings from "./LoginIn/preference/PreferenceSettings.vue"
 import MyCourses from "./LoginIn/courses/MyCourses.vue"
 import api from '@/api/index.js'
@@ -22,10 +21,9 @@ const showMyCoursesPanel = ref(false)
 const authLoading = ref(false)
 const authError = ref('')
 
-// 统计数据
-const courseCount = ref(0)
-const chatCount = ref(0)
-const studyMinutes = ref(0)
+// 登录/注册成功后进入跳转过渡态：隐藏本页全部内容，避免 /app 懒加载
+// chunk 下载期间闪现本页的登录后视图（被用户感知为"旧版主页"）。
+const navigating = ref(false)
 
 // --- 页面加载时恢复登录状态 ---
 onMounted(() => {
@@ -36,19 +34,12 @@ onMounted(() => {
   if (counter.token && id && !counter.userData.id) {
     counter.userData.id = id
     counter.userData.username = username
-    loadUserStats()
   }
-})
 
-// 加载统计数据
-const loadUserStats = () => {
-  if (!counter.userData.id) return
-  setTimeout(() => {
-    courseCount.value = Math.floor(Math.random() * 30 + 5)
-    chatCount.value = Math.floor(Math.random() * 200 + 20)
-    studyMinutes.value = Math.floor(Math.random() * 180 + 30)
-  }, 300)
-}
+  // 预热新壳 chunk：登录成功后跳转 /app 不再等待网络，过渡态一闪即过。
+  import('@/app/shell/AppShell.vue')
+  import('@/app/pages/home/AppHomePage.vue')
+})
 
 function nextAuthenticatedRoute() {
   const redirect = Array.isArray(route.query.redirect)
@@ -65,8 +56,12 @@ function nextAuthenticatedRoute() {
 
 async function finishAuthentication(successMessage) {
   showToast(successMessage, 'success')
-  loadUserStats()
-  await router.replace(nextAuthenticatedRoute())
+  navigating.value = true
+  try {
+    await router.replace(nextAuthenticatedRoute())
+  } catch {
+    navigating.value = false
+  }
 }
 
 // 1. 登录成功
@@ -202,22 +197,24 @@ const handleLogout = () => {
   showSettingsPanel.value = false
   showPreferencePanel.value = false
   showMyCoursesPanel.value = false
-  courseCount.value = 0
-  chatCount.value = 0
-  studyMinutes.value = 0
 }
 </script>
 
 <template>
   <div class="user-index-wrapper">
     <Login
-      v-if="!counter.userData.id"
+      v-if="!counter.userData.id && !navigating"
       class="login-modal"
       :loading="authLoading"
       :server-error="authError"
       @loginSend="handleLoginSend"
       @registerSend="handleRegisterSend"
     />
+
+    <div v-else-if="navigating" class="entering-workspace">
+      <div class="entering-spinner"></div>
+      <p>正在进入工作台…</p>
+    </div>
 
     <div v-else class="profile-content">
       <div class="user-card">
@@ -233,8 +230,6 @@ const handleLogout = () => {
           退出登录
         </button>
       </div>
-
-      <StatsCard :userStats="{ courseCount, chatCount, studyMinutes }" />
 
       <div class="menu-grid">
         <div class="menu-item" @click="handleOpenSettings">
@@ -300,6 +295,29 @@ const handleLogout = () => {
   display: flex;
   justify-content: center;
   align-items: center;
+}
+
+.entering-workspace {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-4);
+  min-height: 100vh;
+  color: var(--color-text-muted);
+}
+
+.entering-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: var(--radius-full);
+  animation: entering-spin 0.8s linear infinite;
+}
+
+@keyframes entering-spin {
+  to { transform: rotate(360deg); }
 }
 
 .profile-content {

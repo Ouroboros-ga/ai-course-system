@@ -8,11 +8,15 @@ import request from '@/utils/request.js'
  * @param {string} data.username - 用户名
  * @param {string} data.password - 密码
  */
+// skipAuthErrorHandling：后端用业务 401 表达"用户名密码错误"（HTTP 仍是 200），
+// 这属于凭据校验失败而非 token 失效，绝不能触发全局登出；错误由登录表单展示。
 export function login(data) {
   return request({
     url: '/user/login',
     method: 'post',
-    data
+    data,
+    skipErrorToast: true,
+    skipAuthErrorHandling: true
   })
 }
 
@@ -26,7 +30,9 @@ export function register(data) {
   return request({
     url: '/user/register',
     method: 'post',
-    data
+    data,
+    skipErrorToast: true,
+    skipAuthErrorHandling: true
   })
 }
 
@@ -58,11 +64,15 @@ export function getMyInfo() {
  * 更新用户信息
  * @param {Object} data - 更新数据
  */
+// 与 login/register 同口径：/user/modify 的业务 401 表示原密码/用户名校验失败，
+// 不是 token 失效，不做全局登出。
 export function updateUserInfo(data) {
   return request({
     url: '/user/modify',
     method: 'post',
-    data
+    data,
+    skipErrorToast: true,
+    skipAuthErrorHandling: true
   })
 }
 
@@ -70,15 +80,21 @@ export function modify(data) {
   return request({
     url: '/user/modify',
     method: 'post',
-    data
+    data,
+    skipErrorToast: true,
+    skipAuthErrorHandling: true
   })
 }
 
+// 修改用户名/密码：原密码验证失败时后端返回业务 401（user.py「原密码验证失败」），
+// 同样不能触发全局登出——否则改密码输错原密码会被整页踢回登录页。
 export function updateMyProfile(data) {
   return request({
     url: '/user/me/profile',
     method: 'patch',
     data,
+    skipErrorToast: true,
+    skipAuthErrorHandling: true,
   })
 }
 

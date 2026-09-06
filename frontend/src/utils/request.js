@@ -289,28 +289,36 @@ service.interceptors.request.use(
   }
 )
 
-function _isTokenExpiringSoon(token) {
+function _parseJwtPayload(token) {
   try {
     const base64Url = token.split('.')[1]
     const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
     const jsonPayload = decodeURIComponent(atob(base64).split('').map(function(c) {
       return '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
     }).join(''))
-    const payload = JSON.parse(jsonPayload)
-
-    if (payload.exp) {
-      const expirationTime = payload.exp * 1000
-      const currentTime = Date.now()
-      const timeUntilExpiration = expirationTime - currentTime
-      const tenMinutesInMs = 10 * 60 * 1000
-
-      return timeUntilExpiration > 0 && timeUntilExpiration < tenMinutesInMs
-    }
-
-    return false
+    return JSON.parse(jsonPayload)
   } catch {
-    return false
+    return null
   }
+}
+
+// 供路由守卫使用：localStorage 里的 token 可能已过夜失效，守卫在放行 /app 前
+// 先做客户端过期预检，避免「页面先渲染 → 首个 API 401 → 整页弹回登录页」的闪变。
+// 无 exp 字段或解析失败时按未过期处理（与既有行为一致，fail-open）。
+export function isTokenExpired(token) {
+  const payload = _parseJwtPayload(token)
+  if (!payload || !payload.exp) return false
+  return payload.exp * 1000 <= Date.now()
+}
+
+function _isTokenExpiringSoon(token) {
+  const payload = _parseJwtPayload(token)
+  if (!payload || !payload.exp) return false
+
+  const timeUntilExpiration = payload.exp * 1000 - Date.now()
+  const tenMinutesInMs = 10 * 60 * 1000
+
+  return timeUntilExpiration > 0 && timeUntilExpiration < tenMinutesInMs
 }
 
 // 响应拦截器
@@ -338,13 +346,18 @@ service.interceptors.response.use(
     // calls are not rejected after the HTTP request itself succeeded.
     if (typeof res.code !== 'number' || res.code < 200 || res.code >= 300) {
 
+      // 认证表单类端点（登录/注册/资料修改，见 api/user.js）用业务 401 表达
+      // "凭据校验失败"（如密码错误），不是 token 失效语义；错误交还给调用方
+      // 在表单内展示，绝不触发全局登出——否则输错一次密码就会被踢回登录页。
+      const skipAuthHandling = Boolean(response.config?.skipAuthErrorHandling)
+
       // 特殊状态码处理：Token 过期
-      if (res.code === 401) {
+      if (res.code === 401 && !skipAuthHandling) {
         showToast('登录信息过期，请重新登录', 'error')
 
         // 清除所有认证信息并跳转登录页
         _handleUnauthorized()
-      } else if (!res.config?.skipErrorToast && !response.config?.skipErrorToast) {
+      } else if (!response.config?.skipErrorToast) {
         // 普通业务错误，直接弹出后端返回的错误信息
         showToast(res.message || '请求失败', 'error')
       }
@@ -370,7 +383,11 @@ service.interceptors.response.use(
       switch (error.response.status) {
         case 401:
           message = '登录已过期，请重新登录'
-          _handleUnauthorized()
+          // 认证表单类端点声明了 skipAuthErrorHandling 时不做全局登出
+          //（HTTP 401 与业务 401 的豁免口径保持一致）。
+          if (!error.config?.skipAuthErrorHandling) {
+            _handleUnauthorized()
+          }
           break
         case 403:
           message = '拒绝访问，权限不足'
@@ -412,11 +429,15 @@ service.interceptors.response.use(
   }
 )
 
+// 并发 401（如页面挂载时多个 API 同时失败）只安排一次跳转，避免连环刷新。
+let _unauthorizedRedirectPending = false
+
 function _handleUnauthorized() {
   localStorage.removeItem('token')
   localStorage.removeItem('userId')
   localStorage.removeItem('username')
   localStorage.removeItem('userRole')
+  localStorage.removeItem('platformPermissions')
 
   try {
     const counter = useCounterStore()
@@ -425,8 +446,16 @@ function _handleUnauthorized() {
     // store may not be initialized yet
   }
 
+  if (_unauthorizedRedirectPending) return
+  _unauthorizedRedirectPending = true
+
   setTimeout(() => {
-    window.location.href = '/profile'
+    _unauthorizedRedirectPending = false
+    // 已在登录页时不做整页跳转：保留用户未提交的表单输入。
+    if (window.location.pathname === '/profile') return
+    // 带上当前地址，重新登录后能回到原页面（原来登录后会丢失上下文）。
+    const redirect = encodeURIComponent(window.location.pathname + window.location.search)
+    window.location.href = `/profile?redirect=${redirect}`
   }, 1500)
 }
 
