@@ -16,7 +16,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | Legacy Research S3                                               | CURRENT  | M5 验收；活跃教学消费者、数据/迁移保留，不重做已下线迁移                    |
 | 服务端执行审批（NX-G2）＋mode 严格化（NX-G1）＋effective capability（NX-G3） | CURRENT  | b34ea2d9 上线、b080e269 线上只读验证；真实审批全链已于 09-06 浏览器验收通过（NX-E2E3 记录） |
 | 附件/视觉（NX-A1）、run 恢复（NX-E1）、模型网关                          | CURRENT  | 随 b34ea2d9 上线；PG 方言/OCR 回填/附件 E2E/真实恢复链已于 09-06 浏览器验收通过 |
-| **Experiment Console（NX-E2）、作业取消（NX-E3）**                       | CURRENT  | 09-06 上线（9cdbf8a8 线），Worker v0.2.0；浏览器真实链验收含取消/恢复/真实审批 |
+| **Experiment Console（NX-E2）、作业取消（NX-E3）**                       | CURRENT  | 09-06 上线（9cdbf8a8 线），Worker v0.2.0；浏览器真实链验收含取消/恢复/真实审批；09-07 边界修复批次 F1–F6 全量修复并线上复验（Worker v0.3.0，见[审查记录](NX-E2E3_质量与产品符合性审查_2026-09-07.md)修复回执） |
 | Todo、Paper Research、SandboxProvider、受控 A/B、Session                 | NEXT     | 下表独立验收，不一次翻转全线 ready；批次建议见 §7                   |
 | Subagent/Workspace、广泛任意论文/仓库、DOCX/PPTX 输出                        | TARGET   | 门槛到位后另排批次                                         |
 | Personal Context、GPU/多云、额外模型选择器                                  | OPTIONAL | 按需评估；图片视觉模型配置仍是 NX-A1 必需项                         |
@@ -66,8 +66,8 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 任务    | 状态   | 改动入口与交付                                                                                                    | 验收                                                                                                |
 | ----- | ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | NX-E1 | ✅ 上线（2026-09-05，b34ea2d9）：nexus_runs 注册＋恢复查询＋前端只读恢复；run_id 冲突属他人 409；真实恢复链待补（§7 清单） | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
-| NX-E2 | ✅ 上线（2026-09-06，浏览器真实链验收）：Worker 增量 Stage/有界日志、代理脱敏、前端只读 Console | worker.py stage_events/live_log_tail、代理透传+清洗、NexusPage 会话内 Console | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell——全部实证（[验收记录](验收记录/NX-E2E3_验收_2026-09-06.md)） |
-| NX-E3 | ✅ 上线（2026-09-06，同上）：Worker cancel、代理归属鉴权、前端 cancelling/cancelled | 运行中取消→取消中→已取消→进程组回收（exit -9）→幂等→已完成步骤保留——全部实证 |
+| NX-E2 | ✅ 上线（2026-09-06，浏览器真实链验收；**09-07 边界修复**：日志真脱敏/有界块读采集/子进程环境白名单/Metric pending 语义，Worker v0.3.0） | worker.py stage_events/live_log_tail、代理透传+脱敏、NexusPage 会话内 Console | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell——全部实证（[验收记录](验收记录/NX-E2E3_验收_2026-09-06.md)、[审查记录回执](NX-E2E3_质量与产品符合性审查_2026-09-07.md)） |
+| NX-E3 | ✅ 上线（2026-09-06，同上；**09-07 边界修复**：代理取消如实映射上游错误/spawn 窗口取消重查/前端冷恢复补齐） | 运行中取消→取消中→已取消→进程组回收（exit -9）→幂等→已完成步骤保留——全部实证 |
 | NX-E4 | NEXT | 服务端 mode/course/pin/version、最小事件/游标、Worker 快照与重启对账                                                         | 跨设备偏好/过程恢复；去重；无原始完整 Trace/思维；checkpoint 与产品历史分开；删除/保留覆盖关联资源                                       |
 
 当前 Worker 无实时连续 Console/cancel API，\_jobs 在内存；前端 local+remote merge 无完整运行恢复。历史 API 不返回 ToolMessage 不证明 checkpoint 未存。旧记录无法还原时显示不可恢复，不凭回答造 Trace。
@@ -76,10 +76,11 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；§7 前置清单五项交互式验收已全部通过（2026-09-06 浏览器真实链，见 [NX-E2E3 验收](验收记录/NX-E2E3_验收_2026-09-06.md)）。
 2. ✅ 下一批次 NX-E2+E3 已上线并通过浏览器真实链验收（2026-09-06，Worker v0.2.0）；验收发现并修复 4 个集成缺陷（归属断层/code 键信封冲突/恢复标记误持久化/附件清单未注入），详见验收记录。
-3. 批次 2＝NX-H1＋NX-R1 薄链；批次 3＝NX-S1 接口化＋NX-E4；NX-P1/P2 按依赖接入（批次 4）。TARGET 另排批次。
-4. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
-5. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
-6. 既有两项域测试失败与 Compact 全图边界单独跟进，不能删除断言制造全绿。每任务写 commit/工作区、环境、实际链路、命令/结果和未验证项。
+3. ✅ NX-E2/E3 边界修复批次（2026-09-07，`5f989495`+`c89ee487`，Worker v0.3.0）：审查记录六项发现（F1 取消失败被包装成功/F2 日志真脱敏/F3 长行采集/F4 冷恢复/F5 spawn 窗口取消/F6 Metric 真实判定）全量修复；测试矩阵 Worker 20＋Nexus 102＋后端 nexus 域 59＋前端契约 89 全绿；浏览器复验通过（含 Metric pending→报告回写 done 全链、冷恢复补齐、取消链）；详见[审查记录修复回执](NX-E2E3_质量与产品符合性审查_2026-09-07.md)。
+4. 批次 2＝NX-H1＋NX-R1 薄链；批次 3＝NX-S1 接口化＋NX-E4；NX-P1/P2 按依赖接入（批次 4）。TARGET 另排批次。
+5. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
+6. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
+7. 既有两项域测试失败与 Compact 全图边界单独跟进，不能删除断言制造全绿。每任务写 commit/工作区、环境、实际链路、命令/结果和未验证项。
 
 ## 7. NX-E2+E3 批次：✅ 已完成上线（2026-09-06）
 
