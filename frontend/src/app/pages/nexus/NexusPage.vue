@@ -379,9 +379,13 @@ function readyAttachmentIds(session) {
 }
 
 // ── NX-E1 恢复：刷新/换设备找回原实验，只恢复轮询，不重新提交 ──
+// 恢复去重标记用页面级 Set，绝不写进会话对象——否则会被 persistSessions
+// 序列化进 localStorage，刷新后恢复逻辑被脏标记永久跳过（2026-09-06 线上验收）。
+const _runsRestoredIds = new Set()
+
 async function restoreSessionRuns(session) {
-  if (!session || session._runsRestored || nexusDataSourceMode.value !== 'real') return
-  session._runsRestored = true
+  if (!session || _runsRestoredIds.has(session.id) || nexusDataSourceMode.value !== 'real') return
+  _runsRestoredIds.add(session.id)
   let runs = []
   try {
     const res = await listNexusRuns(session.id)
