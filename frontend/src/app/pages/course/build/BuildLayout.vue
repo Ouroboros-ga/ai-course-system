@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, provide, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { BookOpenCheck, ChevronDown, ChevronLeft, ChevronRight, FileText, ListTree, MonitorPlay, Network, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Volume2, Wand2, Waypoints } from 'lucide-vue-next'
 import { getDraftBuildStatus } from '@/api/course_build.js'
@@ -8,6 +8,14 @@ import CourseBuildAgentPanel from './CourseBuildAgentPanel.vue'
 
 const route = useRoute()
 const courseId = computed(() => Number(route.params.courseId))
+// 建设布局由 CourseLayout 嵌套渲染，权限上下文经 provide('courseContext') 注入。
+// 学生/观察者等无 course.edit 的角色只保留「结构视图」一个页面，
+// 不再展示九步建设导航与助教智能体面板（2026-09-07 需求）。
+const { allowed } = inject('courseContext', {})
+const canEditBuild = computed(() => {
+  const permissions = allowed?.value
+  return permissions ? Boolean(permissions['course.edit']) : true
+})
 const selectedNode = ref(null)
 // 助教智能体默认展开（2026-08-20 需求）：进入建设布局即以挤压式面板呈现；
 // 但知识工作区五个小页面（/build/knowledge/*）默认收起（2026-09-02 需求），
@@ -113,6 +121,20 @@ const steps = computed(() => [
   { key: 'validate', label: '检查', description: '查看正式发布前的问题', icon: ShieldCheck, to: `/app/course/${courseId.value}/build/validate` },
   { key: 'releases', label: '正式发布', description: '让学生看到这版课程内容', icon: Waypoints, to: `/app/course/${courseId.value}/build/releases` },
 ])
+// 侧栏可见步骤：无 course.edit 的角色只有「结构视图」一个页面，
+// 整个建设侧栏（含收起按钮）对学生不再渲染——单项导航没有存在意义
+// （2026-09-07 需求），舞台直接全屏呈现结构视图。
+const visibleSteps = computed(() => {
+  if (canEditBuild.value) return steps.value
+  return steps.value
+    .filter((step) => step.key === 'knowledge')
+    .map((step) => ({
+      ...step,
+      label: '结构视图',
+      description: '查看知识结构与我的认知状态',
+      children: null,
+    }))
+})
 const activeStep = computed(() => {
   const step = steps.value.find((step) => route.name === `app-course-build-${step.key}`)
   if (step) return step
@@ -122,6 +144,10 @@ const activeStep = computed(() => {
   }
   return steps.value[0]
 })
+// 舞台标题跟随侧栏可见步骤：学生端「知识」步骤以「结构视图」呈现
+const stageTitle = computed(() =>
+  canEditBuild.value ? activeStep.value.label : '结构视图',
+)
 // 知识步骤子菜单（知识工作区页面直达）展开状态；
 // 初始值：已处于知识工作区子页面时默认展开，保证选中标识可见
 const knowledgeOpen = ref(String(route.name || '').startsWith('app-course-build-knowledge'))
@@ -135,17 +161,17 @@ function onStepClick(step) {
 
 <template>
   <div class="build-workspace">
-    <div class="mobile-workbench-tabs" role="tablist" aria-label="课程建设面板">
+    <div v-if="canEditBuild" class="mobile-workbench-tabs" role="tablist" aria-label="课程建设面板">
       <SfxButton variant="tertiary" size="sm" :class="{ active: !agentOpen }" @click="agentOpen = false">建设步骤</SfxButton>
       <SfxButton variant="tertiary" size="sm" :class="{ active: agentOpen }" @click="agentOpen = true">助教智能体</SfxButton>
     </div>
 
     <div class="build-grid" :class="{ 'rail-collapsed': railCollapsed }">
-      <aside class="build-rail">
+      <aside v-if="canEditBuild" class="build-rail">
         <div class="rail-scroll">
         <p class="rail-title">课程建设</p>
         <div
-          v-for="(step, index) in steps"
+          v-for="(step, index) in visibleSteps"
           :key="step.key"
           class="build-link-wrap"
           :class="{ 'has-children': Boolean(step.children) }"
@@ -192,10 +218,11 @@ function onStepClick(step) {
             </div>
           </div>
         </div>
-        <p class="rail-note">建设中的内容仅对课程成员可见；学生端只读取正式发布的课程版本。</p>
+        <p v-if="canEditBuild" class="rail-note">建设中的内容仅对课程成员可见；学生端只读取正式发布的课程版本。</p>
         </div>
       </aside>
       <button
+        v-if="canEditBuild"
         type="button"
         class="rail-toggle"
         :aria-label="railCollapsed ? '展开建设导航' : '收起建设导航'"
@@ -209,8 +236,8 @@ function onStepClick(step) {
       <section class="build-stage" aria-live="polite">
         <header class="stage-context">
           <div>
-            <p class="eyebrow">STEP {{ String(steps.findIndex((step) => step.key === activeStep.key) + 1).padStart(2, '0') }} · {{ activeStep.key.toUpperCase() }}</p>
-            <h1>{{ activeStep.label }}</h1>
+            <p v-if="canEditBuild" class="eyebrow">STEP {{ String(visibleSteps.findIndex((step) => step.key === activeStep.key) + 1).padStart(2, '0') }} · {{ activeStep.key.toUpperCase() }}</p>
+            <h1>{{ stageTitle }}</h1>
           </div>
           <div class="stage-context-actions">
             <template v-if="stageActions">
@@ -239,14 +266,14 @@ function onStepClick(step) {
 
         <!-- 助教智能体折叠态：舞台右上角工具球（浮动入口） -->
         <Transition name="agent-fab">
-          <button v-if="!agentOpen" type="button" class="agent-fab" aria-label="打开助教智能体" title="打开助教智能体" @click="agentOpen = true">
+          <button v-if="canEditBuild && !agentOpen" type="button" class="agent-fab" aria-label="打开助教智能体" title="打开助教智能体" @click="agentOpen = true">
             <Sparkles :size="20" aria-hidden="true" />
           </button>
         </Transition>
       </section>
 
       <!-- 助教智能体展开态：作为布局列直接挤压舞台区（宽度过渡动画） -->
-      <div class="agent-dock" :class="{ open: agentOpen }">
+      <div v-if="canEditBuild" class="agent-dock" :class="{ open: agentOpen }">
         <CourseBuildAgentPanel :course-id="courseId" :selected-node="selectedNode" @close="agentOpen = false" />
       </div>
     </div>
