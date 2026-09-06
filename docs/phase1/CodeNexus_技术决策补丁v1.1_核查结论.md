@@ -50,6 +50,13 @@
 
 ### X1 [P0] §2 全局 Nexus Session 在权限层无处安放
 
+> **✅ 已处置（2026-09-03，开发者决策 → 实施决策文档 D10）**：新增平台权限
+> `platform.nexus.use`，不强制绑定课程；**默认授予所有用户**（注册/登录/SSO
+> 同步自动授予 + 迁移 0068 回填存量用户），管理员可按用户撤销，撤销不被
+> 流程复活。落地证据见
+> [2026-09-03_CodeNexus转型实施决策.md](2026-09-03_CodeNexus转型实施决策.md) §4.3。
+> 以下为核查时的原始记录（保留供追溯）。
+
 - **文档 §2**：`active_course_id = null` 时 Nexus 仍可用；Course RAG Tool Gate = `active_course_id != null` + 用户拥有 `course.view`。
 - **代码冲突**：
   - `backend/app/models/access_control_model.py:38-44` —— `PlatformPermission` 枚举只有 6 项（`platform.admin` / `course.create` / `course.audit` / `user.manage` / `safety.manage` / `capability.manage`），**没有任何 Nexus / AI 助手使用权限**。
@@ -63,6 +70,28 @@
   3. 注意与 AGENTS.md §4.1.6 的对齐：`User.role` 不得作为兜底授权来源，因此"登录即可用 Nexus"不是合规选项。
 
 ### X2 [P0] §5 CS Knowledge Base 在 retrieval 层没有生产路径（Gate 会失败）
+
+> **⚠️ 修订（2026-09-03）：本条核心结论经复核不成立。** 开发者复核后要求重查，
+> 逐条核对代码发现核查时遗漏了学科知识库的两条真实生产路径（该 KB 于
+> 08-30~09-01 三次落地，均早于本文核查提交 `029f3c8b`）：
+>
+> 1. **概念层**：`backend/app/platform/knowledge/discipline_kb.py`
+>    （`cs-knowledge/1.0`，112 节点/106 关系，进程内 BM25），经
+>    `/api/v1/discipline-knowledge/search` 公开路由暴露（仅登录鉴权），且
+>    `providers/research/../retrieval/__init__.py` 实际导出了
+>    `DisciplineKnowledgePortImpl`（本文下方"导出清单只有 Course 域端口"的
+>    描述有误），TeachingAgent 默认消费。
+> 2. **语料层**：`backend/app/platform/knowledge/discipline_corpus.py`——
+>    FTS5（635 万段落）+ **pgvector 向量检索**（`discipline_corpus_embedding`
+>    表无 course_id，130,351 段已嵌入，bge-small-zh-v1.5 / 512 维），2026-09-01
+>    起服务器启用。"所有已落地的向量检索实现都是 course-scoped"字面为假。
+>
+> 仍然成立的仅是：课程课件证据链（`course-lancedb/1.0` +
+> `ActiveBundleCourseRetrievalPort`）course-scoped（引用的
+> `lancedb_provider.py:50`、`active_bundle.py:237` 两处无误）。
+> §5 Gate 与 §26 的 `CS RAG` 可按真实路径执行；注意学科 KB 结果强制
+> `is_supplementary`（补充参考）。完整更正口径见实施决策文档 §4.4。
+
 
 - **文档 §5**：产品上视为已完成，要求 Phase 3 前置 Gate 跑通 `query("binary search") → real production retrieval path → structured results`，并记录 active provider / index location / embedding model / dimension 等 7 项。
 - **代码冲突**：

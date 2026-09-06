@@ -335,3 +335,124 @@ def update_course_capabilities(
     session.commit()
     session.refresh(capability)
     return {"course_id": course_id, "capabilities": _capability_dict(capability)}
+
+
+# ``platform.admin`` 只经 role 同步（``_sync_admin_assignment``）与初始化脚本
+# 授予；管理端点不开放 ADMIN 授予，避免 USER_MANAGE 持有者自我提权为超级管理员。
+GRANTABLE_PLATFORM_PERMISSIONS = frozenset(
+    permission for permission in PlatformPermission if permission is not PlatformPermission.ADMIN
+)
+
+
+def ensure_default_nexus_grant(session: Session, user_id: int) -> None:
+    """默认授权语义（决策 D10 修订，2026-09-03）：所有用户默认持有 ``platform.nexus.use``。
+
+    仅在该用户从未持有过该权限时插入授权行；已存在的行（含管理员软撤销的）
+    保持原样——**显式撤销不被注册/登录/同步流程复活**。调用方负责 commit。
+    """
+    exists = session.exec(
+        select(PlatformPermissionAssignment.id).where(
+            PlatformPermissionAssignment.user_id == user_id,
+            PlatformPermissionAssignment.permission == PlatformPermission.NEXUS_USE,
+        )
+    ).first()
+    if exists is None:
+        session.add(PlatformPermissionAssignment(
+            user_id=user_id,
+            permission=PlatformPermission.NEXUS_USE,
+        ))
+
+
+def _serialize_platform_permission(assignment: PlatformPermissionAssignment) -> dict[str, Any]:
+    return {
+        "permission": assignment.permission.value,
+        "granted_by_user_id": assignment.granted_by_user_id,
+        "granted_at": assignment.granted_at.isoformat() if assignment.granted_at else None,
+        "revoked_at": assignment.revoked_at.isoformat() if assignment.revoked_at else None,
+    }
+
+
+def _parse_grantable_permission(permission_value: str) -> PlatformPermission:
+    """把外部传入的权限字符串解析为合法且可经管理端点授予的枚举值。"""
+    try:
+        permission = PlatformPermission(permission_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"未知平台权限: {permission_value}") from exc
+    if permission is PlatformPermission.ADMIN:
+        raise HTTPException(status_code=422, detail="platform.admin 仅随角色同步授予，不能经此端点授予")
+    return permission
+
+
+def list_user_platform_permissions(session: Session, target_id: int) -> dict[str, Any]:
+    """列出用户当前生效的平台权限（含权限目录，供管理界面渲染）。"""
+    user = session.get(User, target_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    rows = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == target_id,
+            PlatformPermissionAssignment.revoked_at.is_(None),
+        )
+    ).all()
+    return {
+        "user_id": target_id,
+        "items": [_serialize_platform_permission(row) for row in rows],
+        "grantable": sorted(permission.value for permission in GRANTABLE_PLATFORM_PERMISSIONS),
+    }
+
+
+def grant_platform_permission(session: Session, actor_id: int, target_id: int, permission_value: str) -> dict[str, Any]:
+    """显式授予一条平台权限；已撤销的授予记录恢复生效而非新建行。
+
+    ``platform_permission_assignments`` 对 (user_id, permission) 有唯一约束，
+    且撤销是软撤销（revoked_at），因此 re-grant 必须复用旧行。
+    """
+    user = session.get(User, target_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    permission = _parse_grantable_permission(permission_value)
+    assignment = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == target_id,
+            PlatformPermissionAssignment.permission == permission,
+        )
+    ).first()
+    if assignment is None:
+        assignment = PlatformPermissionAssignment(
+            user_id=target_id,
+            permission=permission,
+            granted_by_user_id=actor_id,
+        )
+    elif assignment.revoked_at is not None:
+        assignment.revoked_at = None
+        assignment.granted_by_user_id = actor_id
+        assignment.granted_at = utcnow_aware()
+    session.add(assignment)
+    audit(session, actor_id, "platform_permission.grant", "user", str(target_id), {"permission": permission.value})
+    session.commit()
+    session.refresh(assignment)
+    return {"user_id": target_id, **_serialize_platform_permission(assignment)}
+
+
+def revoke_platform_permission(session: Session, actor_id: int, target_id: int, permission_value: str) -> dict[str, Any]:
+    """软撤销一条平台权限（保留历史行，符合既有撤销语义）。"""
+    user = session.get(User, target_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    try:
+        permission = PlatformPermission(permission_value)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"未知平台权限: {permission_value}") from exc
+    assignment = session.exec(
+        select(PlatformPermissionAssignment).where(
+            PlatformPermissionAssignment.user_id == target_id,
+            PlatformPermissionAssignment.permission == permission,
+        )
+    ).first()
+    if assignment is None or assignment.revoked_at is not None:
+        raise HTTPException(status_code=404, detail="该用户未持有此权限")
+    assignment.revoked_at = utcnow_aware()
+    session.add(assignment)
+    audit(session, actor_id, "platform_permission.revoke", "user", str(target_id), {"permission": permission.value})
+    session.commit()
+    return {"user_id": target_id, **_serialize_platform_permission(assignment)}

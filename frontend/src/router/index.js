@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useCounterStore } from '@/stores/counter.js'
 import { shadowAppRoutes } from '@/app/router.js'
 import { getMyInfo } from '@/api/user.js'
+import { isTokenExpired } from '@/utils/request.js'
 
 const loadView = (view) => {
   return () => import(`../views/${view}.vue`)
@@ -95,6 +96,13 @@ const router = createRouter({
 router.beforeEach(async (to) => {
   const counter = useCounterStore()
   counter.checkAuth()
+
+  // Token 过期预检：localStorage 里的 token 可能已过夜失效，而 isLoggedIn 只看
+  // token 是否存在。不做预检会出现「/app 先渲染 → 首个 API 401 → 整页弹回登录页」
+  // 的闪变；预检让过期 token 直接、安静地落回登录页（带原始地址便于回跳）。
+  if (counter.token && isTokenExpired(counter.token)) {
+    counter.clearAuth()
+  }
 
   if (to.meta.requiresAuth && !counter.isLoggedIn) {
     return { path: '/profile', query: { redirect: to.fullPath } }

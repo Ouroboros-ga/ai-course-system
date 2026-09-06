@@ -42,6 +42,8 @@ class PlatformPermission(str, Enum):
     USER_MANAGE = "platform.user.manage"
     SAFETY_MANAGE = "platform.safety.manage"
     CAPABILITY_MANAGE = "platform.capability.manage"
+    # Nexus AI（课程外全局智能体入口）的使用权；显式授予，不随角色推断。
+    NEXUS_USE = "platform.nexus.use"
 
 
 class ParticipationMode(str, Enum):

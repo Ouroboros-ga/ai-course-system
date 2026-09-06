@@ -853,3 +853,243 @@ test('DisciplineKnowledgePage.vue: 消费解包后的 data（request.js 拦截�
   assert.match(src, /overview\.value = body \?\? null/)
   assert.match(src, /results\.value = body\?\.results \?\? \[\]/)
 })
+
+// ── CodeNexus 转型 S1：Nexus AI 全局入口 ────────────────────────────────────
+// 后端是纯透传反代（nexus_proxy.py → 独立进程 Nexus Runtime），因此这里锁定
+// 三件事：前端路径与反代路由一一对应、反代已在 main.py 注册、旧 research 链路
+// 被标注为废弃但**未**被改成 410（S1 必须可回退到旧链路演示）。
+
+test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
+  const src = read('frontend/src/api/nexus.js')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const main = read('backend/app/main.py')
+
+  assert.equal(extractFirstPath(src, 'getNexusHealth'), '/nexus/health')
+  assert.match(backend, /@router\.get\("\/health"\)/)
+
+  assert.equal(extractFirstPath(src, 'sendNexusMessage'), '/nexus/chat')
+  assert.match(backend, /@router\.post\("\/chat"\)/)
+
+  // P1-C2/C3：会话列表与历史消息（前端 → 反代 → Runtime）
+  assert.equal(extractFirstPath(src, 'listNexusSessions'), '/nexus/sessions')
+  assert.match(backend, /@router\.get\("\/sessions"\)/)
+  assert.equal(
+    extractFirstPath(src, 'getNexusSessionMessages'),
+    "/nexus/sessions/${encodeURIComponent(sessionId)}/messages",
+  )
+  assert.match(backend, /@router\.get\("\/sessions\/\{session_id\}\/messages"\)/)
+
+  // M3：Artifact 列表与下载（Backend 原生路由，owner 校验；列表裸 JSON）
+  assert.equal(extractFirstPath(src, 'listNexusArtifacts'), '/nexus/artifacts')
+  assert.match(backend, /@router\.get\("\/artifacts"\)/)
+  assert.match(
+    src,
+    /downloadNexusArtifact[\s\S]*?\/nexus\/artifacts\/\$\{encodeURIComponent\(artifactId\)\}\/download/,
+  )
+  assert.match(backend, /@router\.get\("\/artifacts\/\{artifact_id\}\/download"\)/)
+  // 下载必须带用户 JWT（"链接含 token"硬约束的实现口径）
+  assert.match(src, /downloadNexusArtifact[\s\S]*?Authorization: `Bearer \$\{token\}`/)
+
+  // M4：复现作业状态查询与报告（发起人鉴权；确定性判定不经 LLM）
+  assert.equal(extractFirstPath(src, 'getNexusReproJob'), '/nexus/repro/jobs/${encodeURIComponent(jobId)}')
+  assert.match(backend, /@router\.get\("\/repro\/jobs\/\{job_id\}"\)/)
+  assert.match(src, /requestReproReport[\s\S]*?\/nexus\/repro\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/report/)
+  assert.match(backend, /@router\.post\("\/repro\/jobs\/\{job_id\}\/report"\)/)
+
+  // NX-E2/E3：Console Stage/增量日志透传 + 作业取消（发起人鉴权，幂等在 Worker）。
+  const workerSrc = read('deploy/repro-worker/worker.py')
+  assert.match(workerSrc, /stage_events/)
+  assert.match(workerSrc, /@app\.post\("\/jobs\/\{job_id\}\/cancel"/)
+  assert.match(workerSrc, /def cancel_job/)
+  assert.match(src, /cancelNexusReproJob[\s\S]*?\/nexus\/repro\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/)
+  assert.match(backend, /@router\.post\("\/repro\/jobs\/\{job_id\}\/cancel"\)/)
+  // 归属校验先于 Worker 转发（防枚举优先）；幂等标记透传。
+  assert.match(backend, /async def nexus_repro_job_cancel[\s\S]*?_owned_job_or_404\(session, current_user, job_id\)/)
+  assert.match(backend, /"already_terminal": bool\(payload\.get\("already_terminal"\)\)/)
+
+  assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
+
+  // NX-G2：执行审批 client 与后端路由一一对应（批准/查询/手工执行）。
+  assert.equal(extractFirstPath(src, 'getNexusApproval'), '/nexus/approvals/${encodeURIComponent(approvalId)}')
+  assert.match(backend, /@router\.get\("\/approvals\/\{approval_id\}"\)/)
+  assert.match(src, /decideNexusApproval[\s\S]*?\/nexus\/approvals\/\$\{encodeURIComponent\(approvalId\)\}\/decide/)
+  assert.match(backend, /@router\.post\("\/approvals\/\{approval_id\}\/decide"\)/)
+  assert.match(src, /executeApprovedRepro[\s\S]*?\/nexus\/repro\/execute/)
+  assert.match(backend, /@router\.post\("\/repro\/execute"\)/)
+
+  // NX-G3：effective capability 计算与服务端健康快照同源。
+  const caps = read('frontend/src/api/nexusCapabilities.js')
+  assert.match(caps, /export function resolveEffectiveCapabilities\(\{ mode, health/)
+  assert.match(caps, /General 永无 NexusLab/)
+  assert.match(caps, /EFFECTIVE_STATE/)
+  const runtime = read('nexus/src/nexus/main.py')
+  assert.match(runtime, /"checks": await _dependency_checks\(\)/)
+  assert.match(runtime, /async def _dependency_checks/)
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(page, /resolveEffectiveCapabilities\(\{/)
+  assert.match(page, /effectiveCapabilities\.value\.filter/)
+
+  // 模型网关 P0：服务端 allowlist 是唯一真相源，前端只做清单投影＋透传。
+  const cfg = read('nexus/src/nexus/config.py')
+  assert.match(cfg, /llm_models_manifest/)
+  const proxy = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  assert.match(proxy, /model: str \| None = Field\(default=None, max_length=64\)/)
+  assert.match(src, /if \(model\) body\.model = model/)
+  assert.match(page, /nx-model-select/)
+  assert.match(page, /effectiveModel\.value \|\| null/)
+
+  // NX-A1：附件 client 与后端路由一一对应（上传/列表/详情/下载/删除/绑定）。
+  assert.match(src, /uploadNexusAttachment[\s\S]*?\/nexus\/attachments/)
+  assert.match(backend, /@router\.post\("\/attachments"\)/)
+  assert.match(src, /listNexusAttachments[\s\S]*?\/nexus\/attachments/)
+  assert.match(backend, /@router\.get\("\/attachments"\)/)
+  assert.match(src, /deleteNexusAttachment[\s\S]*?\/nexus\/attachments\/\$\{encodeURIComponent\(attachmentId\)\}/)
+  assert.match(backend, /@router\.delete\("\/attachments\/\{attachment_id\}"\)/)
+  assert.match(backend, /@router\.get\("\/attachments\/\{attachment_id\}\/download"\)/)
+  assert.match(backend, /@router\.post\("\/attachments\/\{attachment_id\}\/bind"\)/)
+  assert.match(src, /attachment_ids/)
+  assert.match(backend, /attachment_ids: list\[str\]/)
+  assert.match(page, /triggerAttachmentPicker/)
+  assert.match(page, /restoreSessionRuns/)
+  assert.match(page, /nx-attach-chips/)
+
+  // NX-E1：run 恢复查询 client/代理/内部登记一一对应；Runtime 登记 linkage。
+  assert.match(src, /listNexusRuns[\s\S]*?\/nexus\/runs/)
+  assert.match(backend, /@router\.get\("\/runs"\)/)
+  assert.match(backend, /@router\.get\("\/runs\/\{run_id\}"\)/)
+  const internal = read('backend/app/api/v1/endpoints/nexus_internal.py')
+  assert.match(internal, /@router\.post\("\/repro-runs"\)/)
+  assert.match(internal, /@router\.get\("\/attachments\/\{attachment_id\}\/content"\)/)
+  const reproTool = read('nexus/src/nexus/tools/reproduction.py')
+  assert.match(reproTool, /_record_run_linkage/)
+
+  // M1-F3 + NX-G1/NX-A1：前端模式工具声明与 Runtime 双 Profile 工具面同源（防漂移）。
+  // Runtime：general 结构性排除 research-only 三工具；read_attachment 双模式共用。
+  // 前端 NEXUS_MODE_CONFIG 的 tools 列表必须等于对应模式的真实产品工具面
+  // （General 5 项 / Research 8 项）。
+  const agentSrc = read('nexus/src/nexus/agent.py')
+  assert.match(agentSrc, /normalize_model_name/)
+  assert.match(agentSrc, /InvalidNexusModel/)
+  assert.match(runtime, /_require_model\(request\.model\)/)
+  assert.match(runtime, /"models": llm_models_manifest\(settings\)/)
+  assert.match(agentSrc, /RESEARCH_ONLY_TOOLS = frozenset\(\s*\{\s*"search_arxiv_papers",\s*"plan_reproduction",\s*"run_reproduction",?\s*\}\s*\)/)
+  const cfgSrc = read('frontend/src/api/nexusAdapter.js')
+  assert.match(cfgSrc, /model = null,/)
+  assert.match(cfgSrc, /model,/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.GENERAL\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'read_attachment'\]/)
+  assert.match(cfgSrc, /\[NEXUS_MODES\.RESEARCH\]:\s*\{[\s\S]*?tools:\s*\['web_search',\s*'search_course_materials',\s*'search_cs_knowledge',\s*'write_artifact',\s*'search_arxiv_papers',\s*'plan_reproduction',\s*'run_reproduction',\s*'read_attachment'\]/)
+
+  assert.match(main, /nexus_proxy\.router, prefix="\/api\/v1\/nexus"/)
+})
+
+test('nexus.js: 透传响应无 code/message 信封，故必须声明 allowFlatResponse', () => {
+  const src = read('frontend/src/api/nexus.js')
+  // 反代把 Runtime 的裸 JSON 原样返回；不声明该标志会被响应拦截器当成业务错误。
+  assert.match(src, /getNexusHealth[\s\S]*?allowFlatResponse: true/)
+  assert.match(src, /sendNexusMessage[\s\S]*?allowFlatResponse: true/)
+})
+
+test('nexus.js: 流式对话走 fetch + ReadableStream，并复用 request.js 的签名算法', () => {
+  const src = read('frontend/src/api/nexus.js')
+  const request = read('frontend/src/utils/request.js')
+
+  // axios 拿不到 ReadableStream，流式链路必须用 fetch。
+  assert.match(src, /streamNexusMessage[\s\S]*?fetch\(/)
+  assert.match(src, /getReader\(\)/)
+  assert.match(src, /'text\/event-stream'/)
+  // 签名器必须是 request.js 导出的同一个，不得在此另写一份。
+  assert.match(src, /import request, \{ generateSignature \} from '@\/utils\/request\.js'/)
+  assert.match(request, /export function generateSignature\(/)
+})
+
+test('nexus.js: 失败时上抛真实错误码，不伪造空回答', () => {
+  const src = read('frontend/src/api/nexus.js')
+  assert.match(src, /error\.errorCode = errorCode/)
+  assert.match(src, /payload\?\.data\?\.error_code/)
+})
+
+test('NexusPage.vue: 全局入口页遵循 SfxButton 规范且无原生 button（design.md §621）', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  assert.match(src, /SfxButton/)
+  assert.doesNotMatch(src, /<button[\s>]/)
+})
+
+test('NexusPage.vue: 工具调用过程可见，且失败以真实错误码呈现', () => {
+  const src = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // Nexus 与 TeachingAgent 的差别就在过程可见：tool_call/tool_result 必须渲染。
+  assert.match(src, /tool_call/)
+  assert.match(src, /tool_result/)
+  assert.match(src, /err\?\.errorCode/)
+})
+
+test('router.js + PrimaryNav.vue: Nexus AI 是课程外全局一级入口', () => {
+  const router = read('frontend/src/app/router.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+
+  assert.match(router, /path: 'nexus'[\s\S]*?name: 'app-nexus'/)
+  assert.match(router, /pages\/nexus\/NexusPage\.vue/)
+  assert.match(nav, /label: 'Nexus AI', to: '\/app\/nexus'/)
+})
+
+test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', () => {
+  const store = read('frontend/src/stores/counter.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  const backend = read('backend/app/api/v1/endpoints/nexus_proxy.py')
+  const model = read('backend/app/models/access_control_model.py')
+
+  // store：platform.admin 超集语义与既有 hasPlatformPermission 一致
+  assert.match(store, /canUseNexus = computed\(\(\) => hasPlatformPermission\('platform\.nexus\.use'\)\)/)
+  // 导航：无权限不渲染入口
+  assert.match(nav, /counter\.canUseNexus \? \[\.\.\.baseNavItems, nexusNavItem\] : baseNavItems/)
+  // 页面：无权限整页拦截并说明开通路径
+  assert.match(page, /v-if="counter\.canUseNexus"/)
+  assert.match(page, /暂无 Nexus AI 使用权限/)
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×3/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
+  assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 21)
+  // 权限值唯一权威来源是 PlatformPermission 枚举
+  assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
+})
+
+test('S2 切换期：旧科研工作台页面、路由与 API client 已删除，Nexus 是唯一入口', () => {
+  const router = read('frontend/src/app/router.js')
+  const nav = read('frontend/src/app/shell/PrimaryNav.vue')
+  const courseLayout = read('frontend/src/app/pages/course/CourseLayout.vue')
+
+  // 路由与页面文件删除（S1 保留的回退深链在 S2 移除）
+  assert.doesNotMatch(router, /name: 'app-course-research'/)
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/app/pages/course/research/ResearchWorkspacePage.vue')), false)
+  assert.equal(fs.existsSync(path.join(ROOT, 'frontend/src/api/research_agent.js')), false)
+  // 一级与课程内 L2 均无入口（只查生效的导航项定义，注释里提及不算）
+  assert.doesNotMatch(nav, /label: '科研/)
+  assert.doesNotMatch(courseLayout, /^\s*\{ key: 'research'/m)
+})
+
+test('S2 切换期：旧 research 接口 410 Gone，路由注册保留至 S3', () => {
+  const middleware = read('backend/app/core/deprecation_middleware.py')
+  const main = read('backend/app/main.py')
+
+  assert.match(middleware, /RESEARCH_API_RETIRED/)
+  assert.match(middleware, /status_code=410/)
+  assert.match(middleware, /Use \/api\/v1\/nexus\/\* instead/)
+  assert.match(middleware, /"\/api\/v1\/research-agent"/)
+  assert.match(middleware, /"\/api\/v1\/web-research"/)
+  assert.match(main, /DeprecationHeaderMiddleware/)
+  // 路由注册与 bootstrap 保留（S3 才删），保证 revert 一个提交即可恢复双轨。
+  assert.match(main, /include_router\(research_agent\.router/)
+  assert.match(main, /include_router\(web_research\.router/)
+})
+
+test('NexusPage.vue: 流式输出节流（防"突进式"输出）', () => {
+  const page = read('frontend/src/app/pages/nexus/NexusPage.vue')
+  // Markdown 全量重解析（marked + highlight + KaTeX + DOMPurify）跑在整个答案上，
+  // 每 token 跑一次必然"冻住—突进"。模板禁止直接逐 token 调 renderContent，
+  // 一律走带 200ms 节流 + WeakMap 缓存的 renderedAnswer（引用不变时 v-html 不写 DOM）。
+  assert.doesNotMatch(page, /v-html="renderContent\(/)
+  assert.match(page, /v-html="renderedAnswer\(turn\)"/)
+  assert.match(page, /renderCache = new WeakMap\(\)/)
+  // 滚动必须 rAF 节流且尊重用户位置：handleEvent 里禁止逐 token 强行置底。
+  assert.match(page, /requestAnimationFrame/)
+  assert.match(page, /nearBottom/)
+})

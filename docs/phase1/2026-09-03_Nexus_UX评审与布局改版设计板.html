@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus AI · UX 评审与布局改版设计板（2026-09-03）</title>
+<style>
+  :root{
+    --page:#F7F5EF; --canvas:#FBFAF7; --panel:#FFFFFF; --soft:#F0EDE6; --cool:#F7F8FA;
+    --ink:#172033; --ink2:#4E5969; --muted:#5E6776; --dis:#A7AFBC;
+    --line:#DDE2E8; --line2:#EDF0F3; --brand:#14213D; --brand-hover:#203A5F;
+    --accent:#007AF4; --accent-strong:#0563C4; --accent-soft:#E8F2FE; --accent-line:#A1D0FF;
+    --green:#3F6B52; --green-bg:#EDF5EE; --amber:#9B6618; --amber-bg:#FBF3DE;
+    --red:#8B3A3A; --red-bg:#FAEEEE;
+    --code-bg:#101820; --code-text:#E6EDF3; --code-muted:#8B98AA;
+    --shadow-xs:0 1px 2px rgba(16,26,49,.04);
+    --shadow-sm:0 4px 12px rgba(16,26,49,.06);
+    --shadow-md:0 12px 32px rgba(16,26,49,.10);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--page);color:var(--ink);font-family:Inter,"HarmonyOS Sans SC","PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  .spec-wrap{max-width:1520px;margin:0 auto;padding:48px 40px 96px}
+  .ico{display:inline-flex;flex:none}
+  .ico svg{display:block}
+
+  /* ───── 文档头 ───── */
+  .spec-header{border-bottom:2px solid var(--brand);padding-bottom:24px;margin-bottom:32px}
+  .spec-header h1{font-size:30px;font-weight:700;letter-spacing:.5px}
+  .spec-header .sub{margin-top:10px;font-size:14px;color:var(--ink2);line-height:1.7}
+  .meta-chips{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
+  .meta-chip{font-size:12px;padding:4px 12px;border-radius:999px;background:var(--soft);color:var(--ink2);border:1px solid var(--line)}
+  .meta-chip.is-accent{background:var(--accent-soft);border-color:var(--accent-line);color:var(--accent-strong)}
+
+  /* ───── 评审结论 ───── */
+  h2.sec{font-size:20px;font-weight:700;margin:56px 0 6px;display:flex;align-items:center;gap:10px}
+  h2.sec .bar{width:6px;height:22px;border-radius:3px;background:var(--accent)}
+  p.sec-note{font-size:13px;color:var(--muted);margin-bottom:20px;line-height:1.7}
+  .verdict-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(440px,1fr));gap:14px}
+  .v-card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;box-shadow:var(--shadow-xs)}
+  .v-card .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:1px;padding:2px 10px;border-radius:999px;margin-bottom:10px}
+  .tag.p0{background:var(--red-bg);color:var(--red)} .tag.p1{background:var(--amber-bg);color:var(--amber)} .tag.p2{background:var(--soft);color:var(--muted)}
+  .v-card h4{font-size:14.5px;font-weight:650;margin-bottom:8px}
+  .v-card p{font-size:12.5px;line-height:1.75;color:var(--ink2)}
+  .v-card p b{color:var(--ink)}
+  .v-card .fix{margin-top:10px;padding:8px 10px;background:var(--cool);border-radius:8px;font-size:12px;line-height:1.65;color:var(--ink2)}
+  .v-card .fix b{color:var(--accent-strong)}
+  .v-card.retracted{opacity:.72;border-style:dashed;background:var(--soft)}
+  .v-card.retracted h4{text-decoration:line-through;text-decoration-thickness:1px}
+  .v-card.retracted .tag{background:var(--soft);color:var(--muted);text-decoration:none}
+
+  /* ───── 画板容器 ───── */
+  .board-section{margin-top:28px}
+  .board-viewport{overflow:hidden;border:1px solid var(--line);border-radius:14px;background:var(--soft);padding:18px}
+  .board-outer{position:relative}
+  .board{position:relative;background:var(--canvas);border-radius:10px;overflow:hidden;transform-origin:0 0;box-shadow:var(--shadow-sm)}
+  .legend{margin:16px 4px 0;display:flex;flex-direction:column;gap:8px;list-style:none}
+  .legend li{font-size:12.5px;color:var(--ink2);line-height:1.7;display:flex;gap:10px;align-items:baseline}
+  .pin{flex:none;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:999px;background:var(--amber);color:#fff;font-size:10.5px;font-weight:700;transform:translateY(3px)}
+  .pin.abs{position:absolute;z-index:30;box-shadow:0 2px 6px rgba(16,26,49,.3)}
+
+  /* ═════════ Board A：改版全景 ═════════ */
+  .nx-nav{height:56px;background:var(--panel);border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 20px;gap:28px}
+  .nx-nav .logo{display:flex;align-items:center;gap:8px}
+  .nx-nav .logo .name{font-size:15px;font-weight:700;color:var(--brand);letter-spacing:.2px}
+  .nx-nav .items{display:flex;gap:4px;height:100%;align-items:stretch}
+  .nx-nav .nav-it{display:flex;align-items:center;padding:0 14px;font-size:13.5px;color:var(--ink2);position:relative}
+  .nx-nav .nav-it.active{color:var(--accent-strong);font-weight:650}
+  .nx-nav .nav-it.active::after{content:"";position:absolute;left:14px;right:14px;bottom:0;height:2.5px;border-radius:2px 2px 0 0;background:var(--accent)}
+  .nx-nav .right{margin-left:auto;display:flex;align-items:center;gap:14px}
+  .nx-nav .avatar{width:26px;height:26px;border-radius:999px;background:var(--soft);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:650;color:var(--ink2)}
+  .nx-nav .uname{font-size:13px;color:var(--ink2)}
+
+  .nx-body{display:flex;height:844px}
+  /* 左栏 264 */
+  .nx-rail{width:264px;flex:none;background:var(--canvas);border-right:1px solid var(--line2);display:flex;flex-direction:column;padding:12px;gap:10px}
+  .rail-top{display:flex;gap:8px;align-items:center}
+  .btn-new{flex:1;height:36px;border-radius:10px;background:var(--brand);color:#fff;font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:8px}
+  .btn-new .kbd{font-size:10px;font-weight:500;background:rgba(255,255,255,.16);border-radius:5px;padding:1px 6px;color:rgba(255,255,255,.85)}
+  .rail-collapse{width:32px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--muted)}
+  .rail-search{height:32px;border-radius:8px;background:var(--soft);display:flex;align-items:center;gap:8px;padding:0 10px;color:var(--dis);font-size:12.5px}
+  .rail-group{font-size:11px;font-weight:650;letter-spacing:1.5px;color:var(--dis);padding:6px 4px 0}
+  .sess{padding:8px 10px;border-radius:9px;display:flex;flex-direction:column;gap:3px}
+  .sess .t{font-size:13px;color:var(--ink);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .sess .m{font-size:11px;color:var(--dis)}
+  .sess.hover{background:var(--soft);position:relative;padding-right:52px}
+  .sess .ops{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:2px;color:var(--muted)}
+  .sess .ops .op{width:22px;height:22px;border-radius:6px;display:flex;align-items:center;justify-content:center;background:#fff;border:1px solid var(--line);box-shadow:var(--shadow-xs)}
+  .rail-spacer{flex:1}
+  .rail-foot{border-top:1px solid var(--line2);padding-top:10px;display:flex;flex-direction:column;gap:8px}
+  .dev-row{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:9px;border:1px solid var(--line2);background:var(--panel)}
+  .dev-row .dot{width:7px;height:7px;border-radius:999px;background:var(--green)}
+  .dev-row .lbl{font-size:12px;color:var(--ink);font-weight:550;flex:1}
+  .dev-row .lbl small{display:block;font-size:10.5px;color:var(--dis);font-weight:400;margin-top:1px}
+  .dev-row .act{font-size:11px;color:var(--accent-strong);font-weight:600}
+  .dev-row .chev{color:var(--dis)}
+
+  /* 主区 */
+  .nx-main{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--canvas)}
+  .ws-head{height:48px;display:flex;align-items:center;padding:0 20px;border-bottom:1px solid var(--line2)}
+  .mode-btn{display:flex;align-items:center;gap:7px;font-size:15px;font-weight:650;color:var(--brand)}
+  .chips-bar{display:flex;align-items:center;gap:8px;padding:8px 20px;border-bottom:1px solid var(--line2)}
+  .chip{display:flex;align-items:center;gap:6px;height:26px;padding:0 11px;border-radius:999px;font-size:12px;border:1px solid var(--line);background:var(--panel);color:var(--ink2)}
+  .chip .gdot{width:6px;height:6px;border-radius:999px;background:var(--green)}
+  .chip.pending{color:var(--muted);background:var(--cool);border-style:dashed}
+  .chip.pending .dm{width:7px;height:7px;background:transparent;border:1.5px solid var(--muted);transform:rotate(45deg);border-radius:1px}
+  .chat-scroll{flex:1;overflow:hidden;padding:22px 28px;display:flex;flex-direction:column;gap:18px}
+  .turn-user{display:flex;justify-content:flex-end;gap:10px;align-items:flex-start}
+  .turn-user .bub{background:var(--soft);border-radius:12px;padding:9px 14px;font-size:13.5px;color:var(--ink)}
+  .u-ava{width:26px;height:26px;border-radius:999px;background:var(--soft);border:1px solid var(--line);display:flex;align-items:center;justify-content:center;color:var(--muted)}
+  .turn-agent{display:flex;gap:12px}
+  .a-ava{width:26px;height:26px;border-radius:999px;background:var(--accent-soft);display:flex;align-items:center;justify-content:center;color:var(--accent);flex:none}
+  .agent-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px}
+  .proc{display:flex;align-items:center;justify-content:space-between;background:var(--cool);border:1px solid var(--line2);border-radius:9px;padding:7px 12px}
+  .proc .l{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+  .answer{font-size:14px;line-height:1.85;color:var(--ink)}
+  .codeblk{background:var(--code-bg);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:4px}
+  .codeblk .ln{font-family:"JetBrains Mono",Consolas,monospace;font-size:12px;line-height:1.7;color:var(--code-text)}
+  .codeblk .ln.cm{color:var(--code-muted)}
+  .cite-eyebrow{font-size:11px;font-weight:650;letter-spacing:1.5px;color:var(--dis)}
+  .cite{font-size:12.5px;line-height:1.8;color:var(--ink2)}
+  .cite b{color:var(--accent-strong);font-weight:600}
+  .ans-acts{display:flex;align-items:center;gap:4px;border-top:1px solid var(--line2);padding-top:10px;width:fit-content;gap:10px}
+  .ans-acts .ic{color:var(--muted)}
+  .ans-acts .gen{margin-left:14px;font-size:11px;color:var(--dis)}
+  .composer{padding:14px 20px 18px}
+  .comp-inner{background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-xs);padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+  .comp-inner .ta{font-size:13.5px;color:var(--dis);min-height:38px}
+  .comp-bar{display:flex;align-items:center;justify-content:space-between}
+  .engine{display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);background:var(--soft);border-radius:999px;padding:4px 11px}
+  .btn-send{height:30px;padding:0 16px;border-radius:8px;background:var(--accent);color:#fff;font-size:12.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+
+  /* 右侧 48px 图标轨（P0 改版点） */
+  .nx-detail-rail{width:48px;flex:none;background:var(--canvas);border-left:1px solid var(--line2);display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:6px}
+  .dr-btn{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;color:var(--muted);position:relative}
+  .dr-btn.hov{background:var(--soft)}
+  .dr-badge{position:absolute;top:2px;right:2px;min-width:14px;height:14px;border-radius:999px;background:var(--accent);color:#fff;font-size:9px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 3px}
+  .dr-sep{width:24px;height:1px;background:var(--line2);margin:4px 0}
+
+  /* ═════════ Board B：右栏两态 + 文案规范 ═════════ */
+  .bb-row{display:flex;gap:26px;align-items:flex-start;flex-wrap:wrap}
+  .bb-panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px;box-shadow:var(--shadow-xs)}
+  .bb-panel h4{font-size:13px;font-weight:700;margin-bottom:4px}
+  .bb-panel .d{font-size:11.5px;color:var(--muted);margin-bottom:14px;line-height:1.6}
+  .rail-demo{width:48px;background:var(--canvas);border:1px solid var(--line2);border-radius:10px;display:flex;flex-direction:column;align-items:center;padding:10px 0;gap:6px;margin:0 auto}
+  .drawer{width:320px;background:var(--canvas);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-md);overflow:hidden}
+  .drawer-head{height:46px;display:flex;align-items:center;justify-content:space-between;padding:0 14px;background:var(--panel);border-bottom:1px solid var(--line2)}
+  .drawer-head .t{font-size:13.5px;font-weight:650}
+  .drawer-tabs{display:flex;background:var(--panel);border-bottom:1px solid var(--line2);padding:0 8px}
+  .dt{padding:9px 12px;font-size:12.5px;color:var(--muted);position:relative;display:flex;gap:5px;align-items:center}
+  .dt.active{color:var(--accent-strong);font-weight:650}
+  .dt.active::after{content:"";position:absolute;left:10px;right:10px;bottom:-1px;height:2px;border-radius:2px;background:var(--accent)}
+  .dt .n{min-width:15px;height:15px;border-radius:999px;background:var(--accent-soft);color:var(--accent-strong);font-size:9.5px;font-weight:700;display:flex;align-items:center;justify-content:center;padding:0 4px}
+  .drawer-body{padding:14px;display:flex;flex-direction:column;gap:14px}
+  .eyebrow{font-size:10.5px;font-weight:700;letter-spacing:1.8px;color:var(--dis)}
+  .course-line{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:9px 11px}
+  .course-line .t{font-size:12.5px;font-weight:600;flex:1}
+  .course-line .t small{display:block;font-weight:400;font-size:10.5px;color:var(--dis);margin-top:1px}
+  .ghost-btn{font-size:11px;color:var(--accent-strong);border:1px solid var(--accent-line);background:var(--panel);border-radius:7px;padding:4px 10px;font-weight:600}
+  .cap-list{display:flex;flex-direction:column;gap:6px}
+  .cap-row{display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line2);border-radius:9px;padding:8px 11px}
+  .cap-row .ic{color:var(--muted)}
+  .cap-row .nm{font-size:12.5px;color:var(--ink);font-weight:550;flex:1}
+  .cap-row .nm small{display:block;font-size:10.5px;color:var(--dis);font-weight:400;margin-top:1px}
+  .state-tag{font-size:10.5px;font-weight:650;padding:2.5px 9px;border-radius:999px;flex:none}
+  .st-ready{background:var(--green-bg);color:var(--green)}
+  .st-wired{background:var(--amber-bg);color:var(--amber)}
+  .st-un{background:var(--soft);color:var(--muted)}
+  .copy-tbl{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.5px}
+  .copy-tbl th{background:var(--cool);text-align:left;padding:9px 14px;font-size:11px;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--line2)}
+  .copy-tbl td{padding:10px 14px;border-bottom:1px solid var(--line2);vertical-align:top;line-height:1.65;color:var(--ink2)}
+  .copy-tbl tr:last-child td{border-bottom:none}
+  .copy-tbl code{background:var(--soft);border-radius:5px;padding:1px 6px;font-size:11px;color:var(--red);text-decoration:line-through}
+  .copy-tbl .new{color:var(--accent-strong);font-weight:650}
+
+  /* ═════════ Board C：新会话启动页 ═════════ */
+  .board-c{width:1180px;height:760px;background:var(--canvas);display:flex;flex-direction:column}
+  .bc-main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .empty-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:20px 48px}
+  .empty-col{width:720px;display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px}
+  .empty-eyebrow{font-size:11.5px;font-weight:700;letter-spacing:3px;color:var(--accent)}
+  .empty-h{font-size:27px;font-weight:700;color:var(--brand)}
+  .empty-sub{font-size:13.5px;color:var(--muted);line-height:1.7}
+  .mode-cards{display:flex;gap:16px;margin-top:8px}
+  .mcard{width:326px;background:var(--panel);border:1.5px solid var(--line);border-radius:14px;padding:16px 17px;text-align:left;display:flex;flex-direction:column;gap:9px;position:relative}
+  .mcard.sel{border-color:var(--accent);background:linear-gradient(0deg,rgba(0,122,244,.035),rgba(0,122,244,.035)),#fff}
+  .mcard .cur{position:absolute;top:12px;right:12px;font-size:10px;font-weight:700;color:var(--accent-strong);background:var(--accent-soft);border-radius:999px;padding:2px 9px}
+  .mcard .hd{display:flex;align-items:center;gap:10px}
+  .mcard .mi{width:32px;height:32px;border-radius:9px;background:var(--accent-soft);color:var(--accent);display:flex;align-items:center;justify-content:center}
+  .mcard .mt{font-size:14.5px;font-weight:650}
+  .mcard .mt small{display:block;font-size:10.5px;color:var(--dis);font-weight:500;margin-top:1px}
+  .mcard .ds{font-size:11.5px;color:var(--muted);line-height:1.6;min-height:36px}
+  .mcard .tools{display:flex;gap:5px;flex-wrap:wrap}
+  .tpill{font-size:10px;padding:2.5px 8px;border-radius:999px;background:var(--green-bg);color:var(--green);font-weight:600}
+  .tpill.off{background:var(--soft);color:var(--muted);font-weight:500}
+  .eg-row{display:flex;gap:10px;margin-top:4px}
+  .eg-chip{font-size:12px;color:var(--ink2);background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 14px}
+  .bind-strip{margin-top:6px;width:100%;display:flex;align-items:center;gap:10px;background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:10px;padding:9px 14px;text-align:left}
+  .bind-strip .tx{flex:1;font-size:12px;color:var(--accent-strong);line-height:1.55}
+  .bind-strip .tx b{font-weight:650}
+
+  /* ───── 映射表 / 保住清单 ───── */
+  .map-tbl{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:hidden;font-size:12.5px}
+  .map-tbl th{background:var(--cool);text-align:left;padding:10px 14px;font-size:11px;letter-spacing:1px;color:var(--muted);border-bottom:1px solid var(--line2)}
+  .map-tbl td{padding:11px 14px;border-bottom:1px solid var(--line2);vertical-align:top;line-height:1.7;color:var(--ink2)}
+  .map-tbl tr:last-child td{border-bottom:none}
+  .map-tbl td:first-child{white-space:nowrap;font-weight:650;color:var(--ink)}
+  .map-tbl .code{font-family:Consolas,monospace;font-size:11px;background:var(--soft);border-radius:5px;padding:1px 6px;color:var(--ink2);white-space:nowrap}
+  .keep-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px}
+  .keep-card{background:var(--green-bg);border:1px solid #D6E5D6;border-radius:12px;padding:14px 16px}
+  .keep-card h4{font-size:13px;font-weight:650;color:var(--green);margin-bottom:6px}
+  .keep-card p{font-size:12px;line-height:1.7;color:var(--ink2)}
+  footer{margin-top:64px;padding-top:20px;border-top:1px solid var(--line);font-size:11.5px;color:var(--dis);line-height:1.8}
+</style>
+</head>
+<body>
+<div class="spec-wrap">
+
+  <!-- ═══ 文档头 ═══ -->
+  <header class="spec-header">
+    <h1>Nexus AI 工作区 · UX 评审与布局改版设计板</h1>
+    <p class="sub">评审对象：/app/nexus 线上实现（截图 2026-09-03 + NexusPage.vue 源码核对）。改版约束：<b>不改变页面功能组件类型</b>——会话栏、Mode 下拉、Context Chips、消息流、过程折叠摘要、Composer、右栏详情面板全部保留，只重排布局、收敛入口、统一状态文案。</p>
+    <div class="meta-chips">
+      <span class="meta-chip">日期 2026-09-03</span>
+      <span class="meta-chip">基准 1440×900 桌面</span>
+      <span class="meta-chip is-accent">设计令牌 design.md Academic Ink + --nexus-accent #007AF4</span>
+      <span class="meta-chip">配套文档 Nexus_AI_前端开发规格与UX落地说明.md §13</span>
+    </div>
+    <div class="meta-chips" style="margin-top:10px">
+      <span class="meta-chip is-accent">2026-09-04 更新：7 条已按本板实施落地（89/89 契约测试 + vite build 通过），实施细节见 §13.4</span>
+      <span class="meta-chip">P1-6 / P2-7 两条已撤回（判断错误，见下方虚线卡与 §13.5）</span>
+    </div>
+  </header>
+
+  <!-- ═══ 评审结论 ═══ -->
+  <h2 class="sec"><span class="bar"></span>一、评审结论（便捷性 × 功能相关性）</h2>
+  <p class="sec-note">先量后说：P0 两条均有代码与截图双重证据。总评——诚实性设计（能力三态、待接入 popover、fail-closed 状态条）是这个页面的骨架优势，全部保留；问题集中在「空间分配失衡」与「状态语言不统一」两件事上。</p>
+  <div class="verdict-grid">
+    <div class="v-card"><span class="tag p0">P0-1</span>
+      <h4>右栏桌面端常驻 340px 且不可收起</h4>
+      <p><b>证据</b>：NexusPage.vue:1527 右栏 <b>v-if="!isTablet &amp;&amp; !isMobileOrSmall"</b>，无折叠状态；tokens.css --nexus-detail-width: 340px。截图里主对话区被压到约 590px。纯问答轮次（占大多数）右栏没有任何新增信息，340px 是纯房租。</p>
+      <div class="fix"><b>修法</b>：默认收起为 48px 图标轨（上下文 / 轨迹 / 信息源，带计数徽标），点击以 320px <b>overlay 抽屉</b>展开——主区宽度不再被挤占；展开状态按 page-design §3.4 持久化到设备。</div>
+    </div>
+    <div class="v-card"><span class="tag p0">P0-2</span>
+      <h4>左栏底部三个语义层混排</h4>
+      <p><b>证据</b>：截图左栏底部依次是「本机资料（聊天记录 1 个会话 / 产物 1 个会话）」「真实数据源」「收起侧栏」。系统状态（数据源）、内容库（资料）、视图控制（收起）三类信息平铺，且「产物」并无真实数据源（SSE 无结构化产物事件），裸计数易被误读。</p>
+      <div class="fix"><b>修法</b>：底部收敛为<b>设备状态区</b>两行卡片——「数据源：真实｜切换」+「本机资料：聊天记录 · 产物｜展开」。去掉裸计数，点开才列清单；收起侧栏并入栏头。</div>
+    </div>
+    <div class="v-card"><span class="tag p1">P1-3</span>
+      <h4>评价按钮无数据通道仍渲染</h4>
+      <p><b>证据</b>：NexusPage.vue:1455-1474，点赞/点踩 onClick 是 <b>feedbackSoon</b>（title 标注「评价服务未接入」）。4 个操作图标里 2 个是死的——tooltip 诚实救不了按钮本体的存在感。</p>
+      <div class="fix"><b>修法</b>：砍掉或收进「更多」，操作条只留复制 / 重新生成；评价通道接通后随 nexusCapabilities 恢复。</div>
+    </div>
+    <div class="v-card"><span class="tag p1">P1-4</span>
+      <h4>课程绑定双入口、右栏重心错位</h4>
+      <p><b>证据</b>：chips 行「选择课程」（:1181）与右栏「未绑定课程 → 更换课程」（:1567-1574）双入口；右栏未绑定时最大的一块视觉面积给了零信息的状态卡。</p>
+      <div class="fix"><b>修法</b>：右栏课程卡紧凑化为一行（图标 + 课程名 + 更换）；「未绑定」的引导动作前置到启动页引导条（见 Board C），chips 行保持唯一常驻入口。</div>
+    </div>
+    <div class="v-card"><span class="tag p1">P1-5</span>
+      <h4>空态有示例、无模式感知</h4>
+      <p><b>证据</b>：空态已有 quick cards（:1254-1274），但通用 / Research 两种模式的差异（工具白名单）只藏在 Mode 下拉里；新用户第一眼无法理解「两种模式差别是什么」。</p>
+      <div class="fix"><b>修法</b>：空态升级为<b>启动页</b>：两张模式预设卡（含工具白名单差异 pills，选中即切模式）+ 示例问题 + 课程绑定引导条。</div>
+    </div>
+    <div class="v-card retracted"><span class="tag p1">P1-6 撤回</span>
+      <h4>会话操作不可发现 —— 原判断错误</h4>
+      <p><b>代码事实</b>：<code>.nx-session-more { display: none }</code> + <code>.nx-session-item:hover .nx-session-more { display: block }</code> 早就在，hover 操作组（置顶 / ⋯ → 重命名·删除）本来就有。</p>
+      <div class="fix"><b>真问题</b>：只靠 <code>:hover</code>，键盘 Tab 用户进不去。<b>修法</b>：补 <code>:focus-within</code>（已落地）。<br><b>教训</b>：这条来自对截图的推断，不是实测。</div>
+    </div>
+    <div class="v-card retracted"><span class="tag p2">P2-7 撤回</span>
+      <h4>Composer 下方两个浮动圆钮 —— 不存在</h4>
+      <p><b>排查结论</b>：<code>main.js</code> 只挂载 <code>App</code>；<code>App.vue</code> 仅 <code>&lt;router-view /&gt;</code>；<code>NexusPage.vue</code> 内无任何 fixed/absolute 浮动圆钮；全仓唯一全局 <code>position: fixed</code> 是 <code>PrimaryNav.vue:454</code> 的移动端导航抽屉。<b>代码中不存在这两个按钮。</b></p>
+      <div class="fix"><b>错误成因</b>：本会话模型图片输入被过滤，我实际看不到图，却按"图里有两个圆钮"写了结论。以后凡是"我在截图里看到 X"，先确认能不能真的看到图。</div>
+    </div>
+    <div class="v-card"><span class="tag p2">P2-8</span>
+      <h4>能力状态文案三套词混用</h4>
+      <p><b>证据</b>：右栏列表同时出现「已连通 / 数据就绪 · 未注入回答 / 未建立」三种表述；chips 行又用「待接入」。同一个事实（wired）有两种说法，普通用户无法建立映射。</p>
+      <div class="fix"><b>修法</b>：统一三态命名——<b>已生效 / 已连接 · 未生效 / 未建立</b>（见 Board B 文案规范），单一来源仍为 nexusCapabilities.js。</div>
+    </div>
+    <div class="v-card"><span class="tag p2">P2-9</span>
+      <h4>失败轮次的过程折叠行无告警色</h4>
+      <p><b>证据</b>：截图「执行过程 · 1 次工具调用 · 6.8s」呈中性灰，但其后答案明说 arXiv 检索不可用（ARXIV_UNAVAILABLE）。过程真实发生，展示是对的；但失败结果用完成观感呈现，状态色缺位。</p>
+      <div class="fix"><b>修法</b>：turn 内含失败工具事件时，折叠行图标与边框转 amber 告警色，一行摘要补「1 次失败」。</div>
+    </div>
+  </div>
+
+  <!-- ═══ Board A ═══ -->
+  <h2 class="sec"><span class="bar"></span>二、Board A · 改版全景（默认态：右栏收起为图标轨）</h2>
+  <p class="sec-note">组件类型与现状一一对应，无新增功能类目。改动全部是「布局重排 + 入口收敛 + 状态语言统一」。琥珀色圆点为改动标记，图例在画板下方。</p>
+  <div class="board-section">
+    <div class="board-viewport"><div class="board-outer"><div class="board" style="width:1440px;height:900px" data-board>
+
+      <!-- 全局导航 -->
+      <div class="nx-nav">
+        <div class="logo">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#007AF4"/><stop offset="1" stop-color="#A1D0FF"/></linearGradient></defs><circle cx="8.5" cy="12" r="5.5" fill="url(#lg1)"/><circle cx="15.5" cy="12" r="5.5" fill="url(#lg1)" opacity=".78"/></svg>
+          <span class="name">CodeNexus</span>
+        </div>
+        <div class="items">
+          <div class="nav-it">首页</div>
+          <div class="nav-it">我的课程</div>
+          <div class="nav-it">学科知识库</div>
+          <div class="nav-it active">Nexus AI</div>
+          <div class="nav-it">平台管理</div>
+        </div>
+        <div class="right">
+          <span class="ico" style="color:var(--muted)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></span>
+          <div style="display:flex;align-items:center;gap:7px"><span class="avatar">A</span><span class="uname">admin</span><span class="ico" style="color:var(--dis)"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span></div>
+        </div>
+      </div>
+
+      <div class="nx-body">
+        <!-- 左栏 -->
+        <aside class="nx-rail">
+          <div class="rail-top">
+            <div class="btn-new">
+              <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+              新建会话
+              <span class="kbd">Ctrl K</span>
+            </div>
+            <div class="rail-collapse"><span class="ico"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></svg></span></div>
+          </div>
+          <div class="rail-search">
+            <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg></span>
+            搜索会话
+          </div>
+
+          <div class="rail-group">置顶</div>
+          <div class="sess hover">
+            <span class="t">Transformer 架构与注意力机制讲解</span>
+            <span class="m">周四 19:57</span>
+            <div class="ops">
+              <div class="op" title="置顶"><span class="ico"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.8 5.6 12a1 1 0 0 0-.6.9V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.1a1 1 0 0 0-.6-.9L15 10.8V5a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z"/></svg></span></div>
+              <div class="op" title="更多操作"><span class="ico"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></span></div>
+            </div>
+          </div>
+
+          <div class="rail-group">今天</div>
+          <div class="sess"><span class="t">新建对话</span><span class="m">19:56</span></div>
+          <div class="sess"><span class="t">nanoGPT 复现路线与环境搭建</span><span class="m">17:26</span></div>
+          <div class="sess"><span class="t">快速推理：PyTorch 协程与异步加载</span><span class="m">17:26</span></div>
+
+          <div class="rail-spacer"></div>
+
+          <!-- 设备状态区（P0-2 改版点） -->
+          <div class="rail-foot">
+            <div class="dev-row">
+              <span class="dot"></span>
+              <span class="lbl">数据源：真实<small>运行时已连通 · 会话仅存本机</small></span>
+              <span class="act">切换</span>
+            </div>
+            <div class="dev-row">
+              <span class="ico" style="color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></span>
+              <span class="lbl">本机资料<small>聊天记录 · 产物</small></span>
+              <span class="chev"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- 主区 -->
+        <main class="nx-main">
+          <div class="ws-head">
+            <div class="mode-btn">Nexus
+              <span class="ico" style="color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+            </div>
+          </div>
+
+          <div class="chips-bar">
+            <div class="chip">
+              <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
+              选择课程
+            </div>
+            <div class="chip"><span class="gdot"></span>Web 搜索</div>
+            <div class="chip pending"><span class="dm"></span>4 项待接入
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+            </div>
+          </div>
+
+          <div class="chat-scroll">
+            <div class="turn-user">
+              <div class="bub">attention是什么</div>
+              <div class="u-ava"><span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span></div>
+            </div>
+
+            <div class="turn-agent">
+              <div class="a-ava"><span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.8 5.8 1.9-5.8 1.9L12 18.4l-1.9-5.8-5.8-1.9 5.8-1.9L12 3z"/><path d="M19 15v4M17 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></span></div>
+              <div class="agent-body">
+                <div class="proc">
+                  <span class="l">
+                    <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg></span>
+                    执行过程 · 1 次工具调用 · 6.8s
+                  </span>
+                  <span class="ico" style="color:var(--dis)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+                </div>
+                <p class="answer">在传统 Standard Attention 中，计算 Softmax 矩阵需要将 N×N 的注意力得分矩阵显式写入 HBM（高带宽显存），其显存复杂度为 O(N²)。<b>FlashAttention（Dao et al., 2022）通过 Tiling（分块计算）与 Recomputation（前向重计算）</b>避免了向 HBM 写入完整的注意力矩阵，仅在 GPU SRAM（高速片上缓存）中完成增量计算 Softmax，将显存复杂度降至 O(N)。</p>
+                <div class="codeblk">
+                  <span class="ln cm"># 标准注意力 vs FlashAttention 计算链差异</span>
+                  <span class="ln"># Standard: Q, K → S = Q·K^T (HBM) ⇒ P = softmax(S) (HBM) ⇒ O = P·V (HBM)</span>
+                  <span class="ln"># Flash:&nbsp;&nbsp;&nbsp;Q, K → 分块载入 SRAM → 局部 Softmax 归一化 → 增量输出 O</span>
+                </div>
+                <div>
+                  <div class="cite-eyebrow">核心文献</div>
+                  <p class="cite" style="margin-top:5px"><b>Attention Is All You Need</b> — Vaswani et al., 2017 · arXiv:1706.03762</p>
+                  <p class="cite"><b>FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness</b> — Dao et al., 2022 · arXiv:2205.14135</p>
+                </div>
+                <div class="ans-acts">
+                  <span class="ico ic" title="复制回答"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></span>
+                  <span class="ico ic" title="重新生成"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg></span>
+                  <span class="gen">由 AI 生成</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer">
+            <div class="comp-inner">
+              <div class="ta">输入你的问题…</div>
+              <div class="comp-bar">
+                <span class="engine">
+                  <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M12 10V6"/><circle cx="9" cy="15" r="0.8" fill="currentColor"/><circle cx="15" cy="15" r="0.8" fill="currentColor"/></svg></span>
+                  DeepSeek-V3 · Nexus Agent 编排
+                </span>
+                <div class="btn-send">
+                  发送
+                  <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <!-- 右侧 48px 图标轨（P0-1 改版点） -->
+        <aside class="nx-detail-rail">
+          <div class="dr-btn" title="展开详情面板">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+          </div>
+          <div class="dr-sep"></div>
+          <div class="dr-btn" title="上下文">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+          </div>
+          <div class="dr-btn" title="执行轨迹">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <div class="dr-btn hov" title="信息源">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7.1l1.7-1.7"/></svg>
+            <span class="dr-badge">2</span>
+          </div>
+        </aside>
+      </div>
+
+      <!-- 改动标记 -->
+      <span class="pin abs" style="left:1373px;top:130px">1</span>
+      <span class="pin abs" style="left:236px;top:742px">2</span>
+      <span class="pin abs" style="left:196px;top:196px">3</span>
+      <span class="pin abs" style="left:300px;top:105px">4</span>
+      <span class="pin abs" style="left:640px;top:330px">5</span>
+
+    </div></div></div>
+    <ol class="legend">
+      <li><span class="pin">1</span>P0-1 右栏 340px 常驻 → 48px 图标轨 + 按需 320px 抽屉（点击图标展开，不挤压主区；展开态见 Board B）。</li>
+      <li><span class="pin">2</span>P0-2 左栏底部 → 设备状态区：数据源（真实/演示 + 切换）与 本机资料（点开列清单，去裸计数）两行分层。</li>
+      <li><span class="pin">3</span>P1-6 会话行 hover 才出现「置顶 / 更多」操作组（删除走二次确认，位置不变）。</li>
+      <li><span class="pin">4</span>Chips 行保持现状结构（选择课程 + ready 能力 + 待接入 popover）——单一真相源驱动的诚实标注是骨架优势，不动。</li>
+      <li><span class="pin">5</span>过程折叠摘要保持；失败轮次按 P2-9 转告警色。消息操作条按 P1-3 砍掉赞/踩，只留复制 / 重新生成。</li>
+    </ol>
+  </div>
+
+  <!-- ═══ Board B ═══ -->
+  <h2 class="sec"><span class="bar"></span>三、Board B · 右栏两态与状态文案规范</h2>
+  <p class="sec-note">P0-1 与 P2-8 的落地规格。图标轨是「常驻的最小可见性」：工具状态必须可见（§54.3），但不需要常驻 340px。</p>
+  <div class="board-section">
+    <div class="bb-row">
+      <div class="bb-panel" style="width:130px">
+        <h4>态 A · 图标轨</h4>
+        <p class="d">48px 常驻；徽标 = 真实计数</p>
+        <div class="rail-demo">
+          <div class="dr-btn" title="展开"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg></div>
+          <div class="dr-sep"></div>
+          <div class="dr-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg></div>
+          <div class="dr-btn hov"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></div>
+          <div class="dr-btn"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7.1l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7.1l1.7-1.7"/></svg><span class="dr-badge">2</span></div>
+        </div>
+        <p class="d" style="margin-top:12px;text-align:center">点击任一图标 → 态 B</p>
+      </div>
+
+      <div class="bb-panel" style="width:368px">
+        <h4>态 B · 详情抽屉（overlay 320px）</h4>
+        <p class="d">悬浮于主区之上，不改变主区宽度；Esc / 点击外部关闭；展开状态持久化（page-design §3.4）</p>
+        <div class="drawer">
+          <div class="drawer-head">
+            <span class="t">详情</span>
+            <span class="ico" style="color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></span>
+          </div>
+          <div class="drawer-tabs">
+            <div class="dt active">上下文</div>
+            <div class="dt">执行轨迹</div>
+            <div class="dt">信息源<span class="n">2</span></div>
+          </div>
+          <div class="drawer-body">
+            <div>
+              <div class="eyebrow">当前上下文</div>
+              <div class="course-line" style="margin-top:8px">
+                <span class="ico" style="color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
+                <span class="t">未绑定课程<small>绑定后回答可参考课程资料</small></span>
+                <span class="ghost-btn">选择课程</span>
+              </div>
+            </div>
+            <div>
+              <div class="eyebrow">能力状态</div>
+              <div class="cap-list" style="margin-top:8px">
+                <div class="cap-row">
+                  <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M2.5 12h19"/><path d="M12 3a14.5 14.5 0 0 1 0 18 14.5 14.5 0 0 1 0-18"/></svg></span>
+                  <span class="nm">Web 搜索</span><span class="state-tag st-ready">已生效</span>
+                </div>
+                <div class="cap-row">
+                  <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></span>
+                  <span class="nm">课程资料<small>数据源就绪，尚未注入回答链路</small></span><span class="state-tag st-wired">已连接 · 未生效</span>
+                </div>
+                <div class="cap-row">
+                  <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span>
+                  <span class="nm">CS 知识库</span><span class="state-tag st-un">未建立</span>
+                </div>
+                <div class="cap-row">
+                  <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.5L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9.5V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/></svg></span>
+                  <span class="nm">NexusLab 复现</span><span class="state-tag st-un">未建立</span>
+                </div>
+                <div class="cap-row">
+                  <span class="ico"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.4 11-9.2 9.2a6 6 0 0 1-8.5-8.5l8.6-8.6a4 4 0 1 1 5.7 5.7l-8.6 8.6a2 2 0 0 1-2.8-2.8l8.5-8.5"/></svg></span>
+                  <span class="nm">文件上传</span><span class="state-tag st-un">未建立</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="bb-panel" style="flex:1;min-width:430px">
+        <h4>能力状态文案规范（P2-8）</h4>
+        <p class="d">三态一词一义；数据源仍唯一来自 nexusCapabilities.js（ready / wired / unwired），只改展示层映射</p>
+        <table class="copy-tbl">
+          <tr><th style="width:112px">统一文案</th><th>视觉</th><th>用户可理解的一句话</th></tr>
+          <tr>
+            <td><span class="state-tag st-ready">已生效</span></td>
+            <td>绿点 / 绿 tag</td>
+            <td>能力真实运行，结果已进入回答（如 Web 搜索的引用出现在答案里）。</td>
+          </tr>
+          <tr>
+            <td><span class="state-tag st-wired">已连接 · 未生效</span></td>
+            <td>琥珀 tag</td>
+            <td>后端数据存在，但还没接进回答链路——不撒谎，也不让用户误以为已生效。</td>
+          </tr>
+          <tr>
+            <td><span class="state-tag st-un">未建立</span></td>
+            <td>灰 tag，不显示任何数字</td>
+            <td>能力尚不存在；点击只解释缺什么，不展示假数据。</td>
+          </tr>
+        </table>
+        <p class="d" style="margin-top:12px">废弃词：<code>已连通</code>、<code>数据就绪 · 未注入回答</code>、<code>待接入</code>（chips 行 popover 可保留「N 项待接入」作聚合入口，但 popover 内条目按上表三态标注）。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ Board C ═══ -->
+  <h2 class="sec"><span class="bar"></span>四、Board C · 新会话启动页（空态改版，P1-5 / P1-4）</h2>
+  <p class="sec-note">左栏与全局导航同 Board A。启动页只解决一件事：让用户在输入第一句话之前，理解「两种模式差在哪、绑课程有什么用」。模式卡点击即切换模式（等价于 Mode 下拉，同一状态源）。</p>
+  <div class="board-section">
+    <div class="board-viewport"><div class="board-outer"><div class="board board-c" data-board>
+
+      <div class="nx-main" style="flex:1">
+        <div class="ws-head">
+          <div class="mode-btn">Nexus
+            <span class="ico" style="color:var(--muted)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></span>
+          </div>
+        </div>
+        <div class="chips-bar">
+          <div class="chip"><span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>选择课程</div>
+          <div class="chip"><span class="gdot"></span>Web 搜索</div>
+          <div class="chip pending"><span class="dm"></span>4 项待接入<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg></div>
+        </div>
+        <div class="empty-wrap">
+          <div class="empty-col">
+            <div class="empty-eyebrow">NEXUS</div>
+            <div class="empty-h">从一个问题开始</div>
+            <p class="empty-sub">Nexus 会拆解复杂任务，检索课程资料与 Web，给出可核对的过程与答案。<br>先选一个工作模式——模式决定了它能用哪些工具。</p>
+
+            <div class="mode-cards">
+              <div class="mcard sel">
+                <span class="cur">当前</span>
+                <div class="hd">
+                  <div class="mi"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3l1.9 5.8 5.8 1.9-5.8 1.9L12 18.4l-1.9-5.8-5.8-1.9 5.8-1.9L12 3z"/><path d="M19 15v4M17 17h4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" fill="none"/></svg></span></div>
+                  <div class="mt">Nexus 通用<small>复杂任务拆解 · 持续执行</small></div>
+                </div>
+                <p class="ds">讲解概念、对比方案、整理综述；结合 Web 检索给出可核对来源。</p>
+                <div class="tools"><span class="tpill">Web 搜索</span><span class="tpill">任务拆解</span><span class="tpill off">课程资料 · 未生效</span></div>
+              </div>
+              <div class="mcard">
+                <div class="hd">
+                  <div class="mi" style="background:var(--soft);color:var(--muted)"><span class="ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18h8"/><path d="M3 22h18"/><path d="M14 22a7 7 0 1 0 0-14h-1"/><path d="M9 14h2"/><path d="M9 12a2 2 0 0 1-2-2V6h6v4a2 2 0 0 1-2 2Z"/><path d="M12 6h3a1 1 0 0 1 1 1v1"/></svg></span></div>
+                  <div class="mt">Nexus Research<small>论文研究 · 快速复现</small></div>
+                </div>
+                <p class="ds">检索 arXiv、整理证据链；复现执行前强制 License 确认与审批。</p>
+                <div class="tools"><span class="tpill">Web 搜索</span><span class="tpill">arXiv 检索</span><span class="tpill off">复现执行 · 未建立</span></div>
+              </div>
+            </div>
+
+            <div class="eg-row">
+              <span class="eg-chip">讲解：Transformer 为什么需要位置编码？</span>
+              <span class="eg-chip">综述：最新的大模型上下文压缩方案</span>
+            </div>
+
+            <div class="bind-strip">
+              <span class="ico" style="color:var(--accent)"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
+              <span class="tx"><b>绑定课程后，回答可参考课程资料</b>（数据源已就绪 · 尚未注入回答链路，接入后自动生效）</span>
+              <span class="ghost-btn" style="background:var(--accent-soft)">选择课程</span>
+            </div>
+          </div>
+        </div>
+        <div class="composer">
+          <div class="comp-inner">
+            <div class="ta">输入你的问题…</div>
+            <div class="comp-bar">
+              <span class="engine">
+                <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M12 10V6"/><circle cx="9" cy="15" r="0.8" fill="currentColor"/><circle cx="15" cy="15" r="0.8" fill="currentColor"/></svg></span>
+                DeepSeek-V3 · Nexus Agent 编排
+              </span>
+              <div class="btn-send">发送<span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg></span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <span class="pin abs" style="left:396px;top:318px">A</span>
+      <span class="pin abs" style="left:170px;top:640px">B</span>
+
+    </div></div></div>
+    <ol class="legend">
+      <li><span class="pin">A</span>模式预设卡：工具白名单差异前置展示（与 Mode 下拉同一状态源，点选即切换）——模式切换从「藏在下拉里」变成「启动即可见」。</li>
+      <li><span class="pin">B</span>课程绑定引导条：把 P1-4 的「绑定课程」主引导从右栏大卡移到启动页；文案沿用三态语言（已连接 · 未生效）。</li>
+    </ol>
+  </div>
+
+  <!-- ═══ 改动映射表 ═══ -->
+  <h2 class="sec"><span class="bar"></span>五、改动映射表（评审 → 布局 → 代码落点）</h2>
+  <p class="sec-note">组件类型列 = page-design §4.1 三栏模型中的既有组件，全部保留，无一新增类目。</p>
+  <table class="map-tbl">
+    <tr><th style="width:64px">编号</th><th>问题（证据）</th><th>布局改动（组件类型不变）</th><th style="width:330px">代码落点</th></tr>
+    <tr>
+      <td>P0-1</td><td>右栏 340px 常驻不可收起<br>（NexusPage.vue:1527）</td>
+      <td>右栏改 48px 图标轨常驻 + 320px overlay 抽屉；展开态设备级持久化</td>
+      <td><span class="code">nx-detail-panel</span> → 拆 <span class="code">nx-detail-rail</span> + <span class="code">nx-detail-drawer</span>；tokens 新增 <span class="code">--nexus-detail-rail:48px</span></td>
+    </tr>
+    <tr>
+      <td>P0-2</td><td>左栏底部三类信息混排、产物裸计数无数据源</td>
+      <td>底部收敛为设备状态区两行卡：数据源 / 本机资料；收起侧栏并入栏头</td>
+      <td><span class="code">nx-rail</span> 底部区块重构；<span class="code">jumpToLocalResource()</span> 入口保留</td>
+    </tr>
+    <tr>
+      <td>P1-3</td><td>赞/踩按钮无数据通道（:1455-1474 feedbackSoon）</td>
+      <td>操作条只留复制 / 重新生成；评价通道接通后按能力状态恢复</td>
+      <td><span class="code">nx-answer-actions</span>；nexusCapabilities 增 <span class="code">feedback</span> 条目</td>
+    </tr>
+    <tr>
+      <td>P1-4</td><td>课程绑定双入口、右栏状态卡占面积</td>
+      <td>右栏课程卡一行化；未绑定引导移至启动页引导条</td>
+      <td><span class="code">nx-cc-*</span> 紧凑化；<span class="code">nx-empty-workspace</span> 增引导条</td>
+    </tr>
+    <tr>
+      <td>P1-5</td><td>空态无模式感知，白名单差异藏于下拉</td>
+      <td>空态升级启动页：模式预设卡 ×2（含工具 pills）+ 示例问题 + 引导条</td>
+      <td><span class="code">nx-quick-cards</span> → <span class="code">nx-mode-cards</span>；复用 <span class="code">NEXUS_MODE_CONFIG.tools</span></td>
+    </tr>
+    <tr>
+      <td><s>P1-6</s> 撤回</td><td>~~会话操作入口不可见~~（判断错误：hover 早已实现）</td>
+      <td>只补 <span class="code">:focus-within</span>，让键盘用户能 Tab 进操作组</td>
+      <td><span class="code">.nx-session-more</span> 选择器</td>
+    </tr>
+    <tr>
+      <td><s>P2-7</s> 撤回</td><td>~~Composer 下两个浮动圆钮~~（代码中不存在）</td><td>无需改动。排查范围：main.js / App.vue / NexusPage.vue / PrimaryNav.vue</td>
+      <td>—</td>
+    </tr>
+    <tr>
+      <td>P2-8</td><td>状态文案三套词混用</td>
+      <td>统一「已生效 / 已连接 · 未生效 / 未建立」；展示层映射，数据源不动</td>
+      <td><span class="code">capStateTagText()</span> / <span class="code">capHint()</span> 集中改</td>
+    </tr>
+    <tr>
+      <td>P2-9</td><td>失败轮次折叠行无告警色</td>
+      <td>含失败工具事件时折叠行转 amber，摘要补「1 次失败」</td>
+      <td><span class="code">nx-process-summary-card</span> 状态类；<span class="code">processSummaryLabel()</span></td>
+    </tr>
+  </table>
+
+  <!-- ═══ 值得保住 ═══ -->
+  <h2 class="sec"><span class="bar"></span>六、值得保住的设计（改版时别拆）</h2>
+  <div class="keep-grid">
+    <div class="keep-card"><h4>能力三态单一真相源</h4><p>nexusCapabilities.js 的 ready / wired / unwired 语义与 integration 契约字段是整个页面的骨架。本次改版只动展示层映射，数据结构零改动——后端接线时把 state 改成 ready 即生效的机制必须完整保留。</p></div>
+    <div class="keep-card"><h4>「N 项待接入」popover</h4><p>把未接入能力收进一个聚合入口而非常驻占位，既诚实又不污染首屏。这是对「绿色 ✓ 打在没接线的 Chip 上比不放更糟」这条原则的正确实现。</p></div>
+    <div class="keep-card"><h4>Mode 即工具白名单</h4><p>Mode 下拉里直接列出每个模式的可用工具，让模式切换可验证。Board C 的模式卡是同一机制的启动页前置，不是第二套机制。</p></div>
+    <div class="keep-card"><h4>过程折叠摘要 + 右栏轨迹</h4><p>消息流一行摘要、完整时间线在详情面板的分工，同时满足了「工具状态必须可见」与「答案可读性」。图标轨化后此分工不变，只是右栏从挤占改为按需。</p></div>
+    <div class="keep-card"><h4>fail-closed 演示数据状态条</h4><p>「演示数据：由浏览器本地模拟……」常驻状态条 + 真实模式健康错误的互斥呈现，是结果诚实性的门面，改版中位置不动。</p></div>
+    <div class="keep-card"><h4>只读引擎标识</h4><p>Composer 的「DeepSeek-V3 · Nexus Agent 编排」把价值主张讲在编排层而非模型层。保留；模型切换器继续不做，除非运行时提供 /models 驱动。</p></div>
+  </div>
+
+  <footer>
+    Nexus AI UX 评审与布局改版设计板 · 2026-09-03 · 评审基准：截图（admin 会话「attention是什么」轮次）+ NexusPage.vue / nexusCapabilities.js / tokens.css 源码核对。<br>
+    改版约束：不改变页面功能组件类型；设计令牌沿用 design.md Academic Ink 与 --nexus-accent（仅 /app/nexus 生效）。本板与 Nexus_AI_前端开发规格与UX落地说明.md §13 互为引用。
+  </footer>
+</div>
+
+<script>
+  function fitBoards(){
+    document.querySelectorAll('.board-viewport').forEach(function(vp){
+      var outer = vp.querySelector('.board-outer');
+      var board = vp.querySelector('[data-board]');
+      if(!board) return;
+      var w = parseFloat(board.style.width) || board.offsetWidth;
+      var h = parseFloat(board.style.height) || board.offsetHeight;
+      var avail = vp.clientWidth - 36;
+      var scale = Math.min(1, avail / w);
+      board.style.transform = 'scale(' + scale + ')';
+      outer.style.width = (w * scale) + 'px';
+      outer.style.height = (h * scale) + 'px';
+    });
+  }
+  window.addEventListener('resize', fitBoards);
+  window.addEventListener('load', fitBoards);
+  fitBoards();
+</script>
+</body>
+</html>

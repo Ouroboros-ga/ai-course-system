@@ -487,7 +487,8 @@ def test_course_access_data_repair_normalizes_grants_and_enrollments(tmp_path):
                 "SELECT permission FROM platform_permission_assignments "
                 "WHERE user_id IN (91001, 91002)"
             )).scalars())
-            assert permissions == {"ADMIN", "COURSE_CREATE"}
+            # 0068 迁移（dev-liu 合入）为所有存量用户回填 NEXUS_USE 平台权限
+            assert permissions == {"ADMIN", "COURSE_CREATE", "NEXUS_USE"}
 
             rows = conn.execute(text(
                 "SELECT total_nodes_completed, overall_progress, "

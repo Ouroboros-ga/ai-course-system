@@ -20,6 +20,7 @@ from app.models.course_model import Course, StudentEnrollment
 from app.models.database import get_session
 from app.core.exceptions import unified_response
 from app.services.course_access_service import CourseAccessContext, course_permission
+from app.services.platform_admin_service import ensure_default_nexus_grant
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,9 @@ def _compat_response(code: int, message: str, data=None, request_id: str | None 
 
 def _sync_platform_permissions(session: Session, user: User, upstream_role: str | None = None) -> None:
     """Persist platform abilities granted by the trusted upstream sync policy."""
+    # 默认授权（决策 D10 修订）：所有同步用户默认持有 platform.nexus.use；
+    # 已存在行（含管理员软撤销）不会被复活。
+    ensure_default_nexus_grant(session, user.id)
     # Fanya's historical teacher flag is no longer a global account role.
     # Course ownership/membership and explicit platform permissions express
     # teaching capability; sync never creates a global `teacher` role.

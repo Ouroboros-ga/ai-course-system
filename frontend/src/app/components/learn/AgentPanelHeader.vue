@@ -1,17 +1,27 @@
 <script setup>
-import { X } from 'lucide-vue-next'
+import { ExternalLink, Sparkles, X } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
 import { useSettingsStore } from '@/stores/userSettings';
 
 const settings = useSettingsStore();
+const router = useRouter();
 
-defineProps({
+const props = defineProps({
     anchor: { type: Object, default: null },
+    courseId: { type: [String, Number], default: null },
 })
 defineEmits(['exit'])
 
 function formatTime(seconds) {
     const value = Math.max(0, Number(seconds) || 0)
     return `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`
+}
+
+function goToNexus() {
+    const query = {}
+    if (props.courseId) query.courseId = props.courseId
+    if (props.anchor?.sourceNodeTitle) query.contextNode = props.anchor.sourceNodeTitle
+    router.push({ path: '/app/nexus', query })
 }
 </script>
 
@@ -33,9 +43,22 @@ function formatTime(seconds) {
                 </div>
             </div>
         </div>
-        <button type="button" class="sfx-agent-close" aria-label="关闭提问面板（Esc）" @click="$emit('exit')">
-            <X :size="18" />
-        </button>
+        <div class="sfx-agent-header-actions">
+            <!-- 学习页 Nexus 引流 CTA（idea 决策：带当前章节与课程去 Nexus 深入，不与助教 dock 发生布局冲突） -->
+            <button
+                type="button"
+                class="sfx-agent-nexus-cta"
+                title="把当前学习上下文带到 Nexus 工作区进行深度拆解或论文研究"
+                @click="goToNexus"
+            >
+                <Sparkles :size="13" class="sfx-nexus-icon" />
+                <span>Nexus 深入</span>
+                <ExternalLink :size="12" />
+            </button>
+            <button type="button" class="sfx-agent-close" aria-label="关闭提问面板（Esc）" @click="$emit('exit')">
+                <X :size="18" />
+            </button>
+        </div>
     </header>
 </template>
 
@@ -77,6 +100,37 @@ function formatTime(seconds) {
     white-space: nowrap;
     color: var(--text-muted);
     max-width: 280px;
+}
+
+.sfx-agent-header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+
+.sfx-agent-nexus-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--nexus-accent-soft, #E8F2FE);
+    color: var(--nexus-accent, #007AF4);
+    border: 1px solid var(--nexus-accent-line, #A1D0FF);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--duration-fast, 120ms);
+}
+
+.sfx-agent-nexus-cta:hover {
+    background: var(--nexus-accent, #007AF4);
+    color: #fff;
+    border-color: var(--nexus-accent, #007AF4);
+}
+
+.sfx-nexus-icon {
+    flex-shrink: 0;
 }
 
 .sfx-agent-close {

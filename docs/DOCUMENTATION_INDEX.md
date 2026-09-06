@@ -1,5 +1,16 @@
 # 文档导航与状态
 
+> **2026-09-05 现行 Nexus 三篇（v1.3 清理版）**：
+> - [Current Architecture + Roadmap v1.3](phase1/CodeNexus_转型设计与实施方案_v1.3.md)：A 产品冻结、B 当前实现/版本证据、C 目标架构、D 主线、E 原则、F 历史。
+> - [P2 / NX 开发计划](phase1/CodeNexus_P2开发计划.md)：当前 4/7 工具面，NX-G1–G3 安全优先任务与 A/H/R/S/P/E 主线、验收、授权。
+> - [前端规格 v3.0](phase1/Nexus_AI_前端开发规格与UX落地说明.md)：Mode/effective capability/Hard Approval、附件/视觉、Console、Session；初始调查/缺陷/UX 演进移至历史附录。
+>
+> 原 [v1.2](phase1/CodeNexus_转型设计与实施方案_v1.2.md) 仅迁移入口。三篇清理前完整快照以 `_历史快照_2026-09-05.md` 保存；验收记录未改。CURRENT/NEXT/TARGET/OPTIONAL 统一使用，未提交工作区修正不等于 HEAD 或线上完成。
+> [转型落地计划](phase1/CodeNexus转型落地计划.md) 保留 S0–S3/P1 迁移历史，后续以 NX 计划为准。旧设计板仅视觉演进参考，design.md 仍为前端视觉权威。
+
+> 服务器迁移属已完成背景，细节见 [phase1/2026-09-04_服务器迁移差异审计.md](phase1/2026-09-04_服务器迁移差异审计.md)
+> 与 [phase1/验收记录/服务器迁移_2026-09-04.md](phase1/验收记录/服务器迁移_2026-09-04.md)。
+
 > 2026-09-03 新增：**CodeNexus 转型实施决策（现行）**——
 > [phase1/2026-09-03_CodeNexus转型实施决策.md](phase1/2026-09-03_CodeNexus转型实施决策.md)。
 > `feature/xh202620` 已合并回 `dev-liu`（merge `67f94026`）；产品收敛为
@@ -10,7 +21,10 @@
 > 同日落地：**SearXNG 搜索主通道已部署验收**（47.99.97.154 容器 `nexus-searxng`，
 > 引擎 360search+yandex，中英文 20+ 结果/0.8–2s，见 [deploy/searxng/README.md](../deploy/searxng/README.md)）；
 > **Demo 论文候选清单已定**（主选 nanoGPT、备选 CLIP，见
-> [phase1/2026-09-03_Demo论文候选清单.md](phase1/2026-09-03_Demo论文候选清单.md)）。
+> [phase1/2026-09-03_Demo论文候选清单.md](phase1/2026-09-03_Demo论文候选清单.md)）；
+> **Nexus Runtime P0 已实现**（deepagents 0.7.12 独立环境 + Web Search/arXiv/复现工具 +
+> FastAPI/SSE，单测 18/18、本地启动验证通过；Repro Worker 与服务器部署待后续，见
+> [nexus/README.md](../nexus/README.md) 与决策文档 §4.2）。
 > 相关核查背景见
 > [phase1/CodeNexus_技术决策补丁v1.1_核查结论.md](phase1/CodeNexus_技术决策补丁v1.1_核查结论.md)。
 

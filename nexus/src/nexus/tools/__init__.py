@@ -1,0 +1,29 @@
+from nexus.tools.artifact import write_artifact
+from nexus.tools.attachments import read_attachment
+from nexus.tools.course_retrieval import search_course_materials, search_cs_knowledge
+from nexus.tools.paper_search import search_arxiv_papers
+from nexus.tools.reproduction import plan_reproduction, run_reproduction
+from nexus.tools.web_search import web_search as web_search_tool
+
+NEXUS_TOOLS = [
+    web_search_tool,
+    search_arxiv_papers,
+    search_course_materials,
+    search_cs_knowledge,
+    write_artifact,
+    plan_reproduction,
+    run_reproduction,
+    read_attachment,
+]
+
+__all__ = [
+    "NEXUS_TOOLS",
+    "web_search_tool",
+    "search_arxiv_papers",
+    "search_course_materials",
+    "search_cs_knowledge",
+    "write_artifact",
+    "plan_reproduction",
+    "run_reproduction",
+    "read_attachment",
+]
