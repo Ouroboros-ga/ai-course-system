@@ -1,9 +1,13 @@
 """Nexus 复现作业归属服务（M4-B1）。
 
 数据域（AGENTS.md §4.1.11）：作业归属表落 Nexus 域 schema
-（``nexus_checkpoints.nexus_repro_jobs``，PG-only，与 nexus_artifacts 同模式）。
+（``nexus_checkpoints.nexus_repro_jobs``，与 nexus_run_service 同模式——
+生产 PG schema 限定表名；本地测试 SQLite 无 schema 前缀、可移植 DDL）。
 作业本体（状态/日志/产物）在 Repro Worker 进程内存中，Backend 只持久化
 "谁发起了哪个作业"，用于 job 查询代理的发起人鉴权（防 job id 枚举）。
+
+登记路径（2026-09-06 收口）：Runtime /repro-jobs 与 Backend /repro-runs
+（run linkage 登记时的同步归属写入）双路写本表，幂等不冲突。
 """
 from __future__ import annotations
 
@@ -19,7 +23,7 @@ _TABLE_DDL_BODY = """
     user_id TEXT NOT NULL,
     preset_id TEXT NOT NULL DEFAULT '',
     repo_url TEXT NOT NULL DEFAULT '',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at REAL NOT NULL DEFAULT 0
 )
 """
 
@@ -32,10 +36,19 @@ def ensure_table(session: Session) -> None:
     if _table_ready:
         return
     bind = session.connection()
-    bind.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}"))
-    bind.execute(text(f"CREATE TABLE IF NOT EXISTS {_TABLE} {_TABLE_DDL_BODY}"))
+    if bind.dialect.name != "sqlite":
+        bind.execute(text(f"CREATE SCHEMA IF NOT EXISTS {_SCHEMA}"))
+    bind.execute(
+        text(
+            f"CREATE TABLE IF NOT EXISTS {_table(session)} {_TABLE_DDL_BODY}"
+        )
+    )
     session.commit()
     _table_ready = True
+
+
+def _table(session: Session) -> str:
+    return _TABLE if session.connection().dialect.name != "sqlite" else "nexus_repro_jobs"
 
 
 def record_job(
@@ -45,7 +58,7 @@ def record_job(
     ensure_table(session)
     session.connection().execute(
         text(
-            f"INSERT INTO {_TABLE} (job_id, user_id, preset_id, repo_url) "
+            f"INSERT INTO {_table(session)} (job_id, user_id, preset_id, repo_url) "
             "VALUES (:job_id, :user_id, :preset_id, :repo_url) "
             "ON CONFLICT (job_id) DO NOTHING"
         ),
@@ -59,7 +72,7 @@ def get_owned_job(session: Session, *, job_id: str, user_id: str) -> dict | None
     ensure_table(session)
     row = session.connection().execute(
         text(
-            f"SELECT job_id, user_id, preset_id, repo_url FROM {_TABLE} "
+            f"SELECT job_id, user_id, preset_id, repo_url FROM {_table(session)} "
             "WHERE job_id = :job_id AND user_id = :user_id"
         ),
         {"job_id": job_id, "user_id": user_id},
