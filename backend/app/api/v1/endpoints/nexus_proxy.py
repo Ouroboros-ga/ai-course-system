@@ -96,6 +96,8 @@ class NexusChatRequest(BaseModel):
     # NX-A1：本次对话引用的附件 id（≤5）。本层逐个验 owner 并原子绑定到
     # session 后才透传；Runtime 侧只读执行上下文，不再信任模型传参。
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+    # 附件元数据清单（Backend 验主+绑定后构建，Runtime 注入模型上下文）。
+    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=5)
 
 
 # NX-G1：mode 别名表镜像（见 NexusChatRequest 注释；与 nexus.agent 保持同构，
@@ -118,13 +120,15 @@ def _require_valid_mode(raw: str | None) -> str:
 
 def _require_attachments(
     session, current_user: dict, session_id: str, attachment_ids: list[str]
-) -> list[str]:
+) -> tuple[list[str], list[dict]]:
     """NX-A1：对话引用附件的验主 + 原子绑定（执行前完成，不依赖 Runtime）。
 
     - 每个 id 验 owner（非 owner/不存在 → 404，不区分）；
     - 未绑定 → 绑定到本 session；已绑他会话 → 403；
     - 不可用状态（failed/expired/deleted）→ 422。
-    返回清洗后的 id 列表（去重保序），由调用方透传给 Runtime。
+    返回 (清洗后的 id 列表, 附件元数据清单)。清单随 payload 透传给 Runtime
+    注入模型上下文——模型必须知道附件 id 才能调用 read_attachment
+    （2026-09-06 线上验收：只透传 id 时模型无从得知附件存在）。
     """
     from app.services import nexus_attachment_service
     from app.services.nexus_attachment_parse import AttachmentParseError
@@ -132,6 +136,7 @@ def _require_attachments(
     user_id = _artifact_user_id(current_user)
     session_id = (session_id or "").strip()[:128] or "default"
     clean: list[str] = []
+    manifest: list[dict] = []
     for raw in attachment_ids or []:
         aid = (raw or "").strip()[:16]
         if not aid or aid in clean:
@@ -154,7 +159,15 @@ def _require_attachments(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error.code
             ) from error
         clean.append(aid)
-    return clean
+        manifest.append({
+            "attachment_id": row["attachment_id"],
+            "filename": row["filename"],
+            "mime": row["mime"],
+            "size_bytes": row["size_bytes"],
+            "ocr": (row.get("stats") or {}).get("ocr", ""),
+            "vision": (row.get("stats") or {}).get("vision", ""),
+        })
+    return clean, manifest
 
 
 def _runtime_base_url() -> str:
@@ -272,7 +285,7 @@ async def nexus_chat(
 ):
     """非流式对话：等待 Agent 循环结束后一次性返回最终答复与工具事件。"""
     _require_valid_mode(payload.mode)
-    payload.attachment_ids = _require_attachments(
+    payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )
     base = _runtime_base_url()
@@ -1011,7 +1024,7 @@ async def nexus_chat_stream(
     循环中可能长时间不产出 token，用非流式的 60s 会误杀正常长任务。
     """
     _require_valid_mode(payload.mode)
-    payload.attachment_ids = _require_attachments(
+    payload.attachment_ids, payload.attachments = _require_attachments(
         session, current_user, payload.session_id, payload.attachment_ids
     )
     base = _runtime_base_url()

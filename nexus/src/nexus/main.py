@@ -149,6 +149,32 @@ class ChatRequest(BaseModel):
     approval_id: str | None = Field(default=None, max_length=64)
     model: str | None = Field(default=None, max_length=64)
     attachment_ids: list[str] = Field(default_factory=list, max_length=5)
+    # NX-A1：附件元数据清单（Backend 验主+绑定后构建，随 payload 透传）。
+    # 模型必须知道附件 id/文件名才能调用 read_attachment——只透传 id 时
+    # 模型无从得知附件存在（2026-09-06 线上验收发现），故注入消息上下文。
+    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=5)
+
+
+def _attachment_note(attachments: list[dict[str, Any]] | None) -> str:
+    """把附件清单渲染为用户消息前缀注记；空清单返回空串。"""
+    if not attachments:
+        return ""
+    lines = ["[系统注记｜本次对话已绑定附件，read_attachment 工具可读，引用须带原文 locator]"]
+    for a in attachments[:5]:
+        if not isinstance(a, dict) or not a.get("attachment_id"):
+            continue
+        lines.append(
+            "- id={id} 文件={fn} 类型={mime} 大小={size}B ocr={ocr} vision={vision}".format(
+                id=str(a.get("attachment_id"))[:16],
+                fn=str(a.get("filename") or "")[:80],
+                mime=str(a.get("mime") or "")[:40],
+                size=str(a.get("size_bytes") or 0)[:12],
+                ocr=str(a.get("ocr") or "")[:16] or "unknown",
+                vision=str(a.get("vision") or "")[:16] or "unknown",
+            )
+        )
+    lines.append("[/系统注记]")
+    return "\n".join(lines) + "\n\n"
 
 
 def _require_mode(raw: str | None) -> str:
@@ -283,9 +309,10 @@ async def _agent_stream(
     approval_id: str | None = None,
     model: str | None = None,
     attachment_ids: list[str] | None = None,
+    attachments: list[dict[str, Any]] | None = None,
 ):
     agent = get_agent(mode, model)
-    inputs = {"messages": [{"role": "user", "content": message}]}
+    inputs = {"messages": [{"role": "user", "content": _attachment_note(attachments) + message}]}
     config = _config_for(session_id, user_id)
     token_count = 0
     from nexus.request_scope import (
@@ -501,6 +528,7 @@ async def chat_stream(
             _sanitize_approval_id(request),
             model,
             _sanitize_attachment_ids(request),
+            request.attachments,
         ),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
@@ -527,7 +555,6 @@ async def chat(
     agent = get_agent(mode, model)
     user_id = sanitize_user_id(x_nexus_user_id)
     session_id = sanitize_session_id(request.session_id)
-    inputs = {"messages": [{"role": "user", "content": request.message}]}
     config = _config_for(session_id, user_id)
     tool_events: list[dict[str, Any]] = []
     from nexus.request_scope import (
@@ -542,6 +569,11 @@ async def chat(
     scope_tokens = set_scope(user_id, _context_course_id(request))
     exec_tokens = set_execution_scope(session_id, _sanitize_approval_id(request))
     attach_token = set_attachments(_sanitize_attachment_ids(request))
+    inputs = {
+        "messages": [
+            {"role": "user", "content": _attachment_note(request.attachments) + request.message}
+        ]
+    }
     # stream_mode 必须是列表形式：单字符串模式下 astream 产出单值，
     # 列表模式才产出 (mode, payload) 元组（与 _agent_stream 一致）。
     try:
