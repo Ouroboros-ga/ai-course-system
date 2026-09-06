@@ -236,6 +236,24 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+# NX-H1：计划 revision 的进程内单调计数器（按 thread 键控）。重启后从 1
+# 重新计数——前端恢复路径以 checkpoint 真值整体替换基线（planState.js），
+# 流内事件只接受严格更大的 revision，因此计数器重置不会造成乱序粘住。
+_plan_revisions: dict[str, int] = {}
+
+
+def _next_plan_revision(thread_id: str) -> int:
+    _plan_revisions[thread_id] = _plan_revisions.get(thread_id, 0) + 1
+    return _plan_revisions[thread_id]
+
+
+def _project_plan(session_id: str, thread_id: str, todos: Any) -> dict[str, Any] | None:
+    """todos（graph state）→ 计划快照；无有效条目返回 None（不 emit）。"""
+    from nexus.planning import plan_snapshot
+
+    return plan_snapshot(session_id, todos, revision=_next_plan_revision(thread_id))
+
+
 def _summarize_tool_content(content: Any) -> str:
     if isinstance(content, str):
         return content[:600]
@@ -253,6 +271,10 @@ _ITEM_FIELD_BY_TOOL = {
     "plan_reproduction": "plan",
     "run_reproduction": "job",
     "write_artifact": "artifact",
+    # NX-R1a：证据卡结构化条目（卡片字符串字段仍受 _ITEM_STR_MAX 截断，
+    # 模型消费的 ToolMessage content 为完整 JSON，不受影响）。
+    "collect_paper_evidence": "evidences",
+    "write_research_report": "artifact",
 }
 _ITEM_MAX_COUNT = 20
 _ITEM_STR_MAX = 300
@@ -314,6 +336,7 @@ async def _agent_stream(
     agent = get_agent(mode, model)
     inputs = {"messages": [{"role": "user", "content": _attachment_note(attachments) + message}]}
     config = _config_for(session_id, user_id)
+    thread_id = config["configurable"]["thread_id"]
     token_count = 0
     from nexus.request_scope import (
         reset_attachments,
@@ -342,9 +365,16 @@ async def _agent_stream(
                         yield _sse("token", {"content": content})
             elif stream_mode == "updates":
                 for _node, delta in (payload or {}).items():
-                    messages = None
-                    if isinstance(delta, dict):
-                        messages = delta.get("messages")
+                    if not isinstance(delta, dict):
+                        continue
+                    # NX-H1：计划投影——write_todos 的 Command 更新直接落在
+                    # tools 节点 delta 的 todos 键；从真实 state update 投影，
+                    # 禁止从模型自然语言解析假进度。
+                    if "todos" in delta:
+                        snapshot = _project_plan(session_id, thread_id, delta.get("todos"))
+                        if snapshot is not None:
+                            yield _sse("plan", snapshot)
+                    messages = delta.get("messages")
                     if not messages:
                         continue
                     for msg in messages:
@@ -600,6 +630,8 @@ async def chat(
         if isinstance(msg, AIMessage) and msg.content and not msg.tool_calls:
             final_message = msg.content if isinstance(msg.content, str) else str(msg.content)
             break
+    # NX-H1：同步响应同样携带计划快照（真实 state 投影；无计划为 null）。
+    plan = _project_plan(session_id, thread_for(session_id, user_id), state.values.get("todos"))
     await _touch_thread(
         thread_for(session_id, user_id), user_id, session_id, _title_from_message(request.message)
     )
@@ -607,6 +639,7 @@ async def chat(
         "session_id": session_id,
         "message": final_message,
         "tool_events": tool_events,
+        "plan": plan,
     }
 
 
@@ -680,6 +713,36 @@ async def session_messages(
         "session_id": session_id,
         "messages": _serialize_history(list(values.get("messages") or [])),
     }
+
+
+@app.get(
+    "/api/v1/nexus/plan/{session_id}",
+    dependencies=[Depends(require_api_key)],
+)
+async def plan_snapshot_endpoint(
+    session_id: str,
+    x_nexus_user_id: str | None = Header(default=None, alias="X-Nexus-User-Id"),
+) -> dict[str, Any]:
+    """NX-H1 计划恢复读取（只读）：从命名空间化 checkpoint 投影最近计划。
+
+    复用 sessions/messages 的鉴权链（require_api_key + 反代注入的用户身份
+    → thread_for 命名空间）；只返回最小白名单字段（plan_snapshot），不暴露
+    checkpoint 原文。纯读取，不触发任何执行；无 checkpoint/无计划 → plan=null。
+    """
+    agent = get_agent()
+    user_id = sanitize_user_id(x_nexus_user_id)
+    session_id = sanitize_session_id(session_id)
+    config = _config_for(session_id, user_id)
+    try:
+        state = await agent.aget_state(config)
+    except Exception as error:  # noqa: BLE001 - 无 checkpoint/读取失败都视为无计划
+        logger.warning("plan_snapshot aget_state failed: %s", error)
+        state = None
+    values = (state.values if state is not None else None) or {}
+    snapshot = _project_plan(
+        session_id, config["configurable"]["thread_id"], values.get("todos")
+    )
+    return {"session_id": session_id, "plan": snapshot}
 
 
 async def _fetch_repro_job(job_id: str) -> dict[str, Any]:

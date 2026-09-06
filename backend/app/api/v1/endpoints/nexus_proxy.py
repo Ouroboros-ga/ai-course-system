@@ -371,6 +371,38 @@ async def nexus_session_messages(
     return _passthrough(response)
 
 
+@router.get("/plan/{session_id}")
+async def nexus_plan_snapshot(
+    session_id: str,
+    request: Request,
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-H1 计划快照反代：鉴权/身份注入与 messages 同链（require_nexus_use
+    + 反代注入用户身份，Runtime 侧 thread_for 命名空间隔离）。只读投影，
+    不触发执行。"""
+    base = _runtime_base_url()
+    if not base:
+        return _not_configured()
+
+    timeout = httpx.Timeout(
+        settings.NEXUS_RUNTIME_TIMEOUT_S,
+        connect=settings.NEXUS_RUNTIME_CONNECT_TIMEOUT_S,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(
+                f"{base}/api/v1/nexus/plan/{session_id}",
+                headers=_upstream_headers(current_user, request),
+            )
+    except httpx.TimeoutException as error:
+        logger.warning("Nexus runtime plan snapshot timeout: %s", error)
+        return _timeout(str(error))
+    except httpx.HTTPError as error:
+        logger.warning("Nexus runtime plan snapshot unreachable: %s", error)
+        return _unavailable(str(error))
+    return _passthrough(response)
+
+
 # ---------------------------------------------------------------------------
 # M3 Artifact：Backend 原生路由（非透传）——元数据在 nexus_checkpoints
 # schema（P1 验收后 ai_course_app 可读写），文件字节经对象存储直出，

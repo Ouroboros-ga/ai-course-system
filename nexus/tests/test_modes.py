@@ -81,7 +81,8 @@ def _registry(agent) -> list[str]:
 
 
 async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
-    """General = read_file + 5 产品工具；Research = read_file + 8 产品工具。"""
+    """General = read_file + write_todos + 5 产品工具；Research = read_file +
+    write_todos + 全部产品工具（NX-H1 后 write_todos 双模式同置）。"""
     monkeypatch.setenv("NEXUS_DEEPSEEK_API_KEY", "dummy-key-for-modes")
     # 先 patch 再 build：两个实例都必须持 spy（不联网），否则 ainvoke 会真连 LLM。
     spy = _SpyChatOpenAI(responses=[AIMessage(content="ok")])
@@ -89,12 +90,13 @@ async def test_mode_tool_surfaces(monkeypatch: pytest.MonkeyPatch):
     research = build_agent(mode="research")
     general = build_agent(mode="general")
     product = {t.name for t in NEXUS_TOOLS}
-    assert set(_registry(research)) == {"read_file"} | product
+    assert set(_registry(research)) == {"read_file", "write_todos"} | product
     # General 含课程/CS 检索、产物写入与附件读取（普通模式 → 检索 + 资料 +
-    # Artifact），仅排除 research-only 三工具。
+    # Artifact），仅排除 research-only 五工具；write_todos 提示词约束使用
+    # 频率（简单 General 不强制建计划），工具本身两模式同置。
     assert set(_registry(general)) == {
-        "read_file", "web_search", "search_course_materials", "search_cs_knowledge", "write_artifact",
-        "read_attachment",
+        "read_file", "write_todos", "web_search", "search_course_materials",
+        "search_cs_knowledge", "write_artifact", "read_attachment",
     }
     # 模型可见面同执行器注册表（research-only 工具结构性不绑定）。
     await general.ainvoke(

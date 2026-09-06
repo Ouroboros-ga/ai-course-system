@@ -52,8 +52,8 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | 任务                       | 状态     | 交付与依赖                                                                                            | 验收门                                                                           |
 | ------------------------ | ------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
 | NX-A1 附件/视觉              | ✅ 上线（2026-09-05，b34ea2d9）：八格式入口＋解析＋配额＋生命周期；DOC/PPT 无 LibreOffice 如实 failed；图片直传＋OCR 按需；PG 方言/OCR 回填/附件 E2E 待补（§7 清单） | General/Research 八格式共用入口；复用对象存储/ParserProvider/OCR/LibreOffice，补 XLSX；先生命周期/PDF链再其他格式与论文 Profile | 八格式各一合成样例；图片直传不强制 OCR、无视觉诚实降级；页/slide/cell/段落引用；scope/限额/删除/过期/错误明确；不进课程知识域   |
-| NX-H1 Plan/Todo          | NEXT   | 显式 Todo middleware；简单 General 不强制，复杂 General 按需，Research 长任务启用；消费产品事件                            | 计划修改、实际工具状态分开；checkpoint/事件/UI 取消恢复一致，无静态假进度                                  |
-| NX-R1 Paper Research     | NEXT   | NX-A1 论文全文与 NX-H1；PaperQA/同类薄 Adapter 或隔离 sidecar                                                | 问题→候选→全文→证据→比较→综合→Citation；全文不可得诚实降级，no-go 换组件不删目标                            |
+| NX-H1 Plan/Todo          | ✅ 本地开发/验证完成（2026-09-07，[回执](验收记录/NX-H1_R1a_本地开发回执_2026-09-07.md)）；线上部署后待人工复验 | 已安装 TodoListMiddleware 显式集成（不自研 write_todos）；真实 state 投影 `plan` SSE 事件 + 同步响应 plan + `GET /nexus/plan/{sid}` 恢复（权限门同链）；前端 planState 状态机 + 折叠计划卡 | 简单 General 不强制建计划（提示词约束，无分类器）；计划修改、实际工具状态分开；checkpoint 恢复一致；取消不改写条目；跨用户隔离；无静态假进度 |
+| NX-R1 Paper Research     | **R1a 限定薄链本地完成**（2026-09-07，同回执）：上传 1–3 篇 PDF 全文→证据（evidence_id/locator/coverage）→比较/综合→服务端渲染引用→Markdown Artifact；候选与证据严格区分、abstract_only 如实、全文不可得提示上传。整体 Paper Research（自动全文获取、PaperQA 选型、大规模综述）保持 NEXT | collect_paper_evidence / write_research_report（Research-only，身份来自请求作用域）；引用服务端渲染，模型只可引用登记 id，最多 1 次修正 | 问题→证据→比较→综合→Citation→Artifact 全链本地 fake/合成验证；真实 LLM 质量验收待用户安排 |
 | NX-S1 SandboxProvider    | NEXT   | 现有 Worker 后续适配；SWE-ReX/同类执行层、repo2docker 构建层；统一创建/执行/状态/取消/清理语义                                  | 隔离、网络、凭据、挂载、预算、取消和清理；同 preset 对比；不因安装组件自动获得任意仓库/A-B 安全声明                      |
 | NX-P1 Paper-to-plan      | NEXT   | NX-A1/R1；Orchestrator：Parse→One Claim→Repo Locate/Inspect→ReproPlan→Policy→Approval              | 来源/License、repo revision、数据、命令、指标来源/容差、预算可审核；模型计划不绕 NX-G2                     |
 | NX-P2 受控 A/B             | NEXT   | NX-S1/P1/G2；A Build/Smoke/有界 Repair/Execute→Freeze→B→Metric/Report，可先用 preset 验证 A/B             | 冻结代码/镜像/依赖/数据/配置/种子/命令/比较标准；不继承 A 可变目录；修复变计划重新批准；B 成功且指标满足才 reproducible=true |
@@ -94,7 +94,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 **后续批次建议**：
 
-1. 批次 2＝NX-H1＋NX-R1 薄链：H1 显式 Todo 中间件（deepagents 0.7.12 无现成 todo 中间件，写小胶水：state.todos＋write_todos＋产品事件投影）；R1 走自研薄链——NX-A1 PDF locator＋arxiv/SearXNG site:arxiv.org 降级＋read_attachment＋引用 artifact 串成"问题→候选→全文→证据→比较→综合→Citation"，全文不可得诚实降级；PaperQA2 只出许可核验报告不引入。
+1. 批次 2＝NX-H1＋NX-R1 薄链：H1 显式复用已安装的 `langchain.agents.middleware.TodoListMiddleware`，补产品事件与恢复投影，不自研替代 `write_todos`（2026-09-07 本地导入核验通过；0.7 移出默认 Harness 不等于删除能力）。本次 R1a 限定已上传 PDF 全文→证据定位→比较/综合→引用 Artifact，候选检索复用现有工具，全文不可得诚实降级；不新增依赖，不以本次薄链替代最终 PaperQA/同类组件选型和完整 Paper Research。具体边界、任务、验收与无人值守约束见 [NX-H1/R1 夜间执行任务书](2026-09-07_NX-H1_R1_夜间执行任务书.md)。
 2. 批次 3＝NX-S1 接口化（统一 SandboxProvider port，现有 Worker 适配为首个 PresetSandboxProvider，保持 nanoGPT 链回归；SWE-ReX/repo2docker 许可核验报告）＋NX-E4（服务端 session 权威＋产品事件表＋Worker 重启对账）。
 3. 批次 4＝NX-P1/P2（依赖 S1+E3，可先用 nanoGPT preset 验证 A/B 流程）。
 

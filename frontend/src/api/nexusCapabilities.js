@@ -93,13 +93,26 @@ export const NEXUS_CAPABILITIES = {
     id: 'file_upload',
     label: '文件上传',
     icon: 'Paperclip',
-    state: CAPABILITY_STATE.UNWIRED,
+    // NX-A1（2026-09-05 上线）：附件八格式上传/解析/配额/生命周期已真实
+    // 接通——本条目从 UNWIRED 翻转为 READY（2026-09-07 更正过时状态）。
+    state: CAPABILITY_STATE.READY,
     modes: ['nexus_general', 'nexus_research'],
-    // 硬事实：Nexus Runtime 无文件工具、无 artifact 存储（见运行时缺陷清单）。
-    // 界面不提供假上传按钮，能力状态在此如实呈现。
     integration:
-      '需 Runtime 提供文件工具与 artifact 存储契约后，Composer 才恢复附件入口；在此之前 UI 不渲染上传控件。',
-    unwiredHint: '文件上传通道未建立',
+      '已接通：POST /nexus/attachments（multipart，八格式，OCR 按需）+ read_attachment 工具消费。',
+  },
+
+  paper_evidence: {
+    id: 'paper_evidence',
+    label: '论文全文证据',
+    icon: 'Quote',
+    // NX-R1a（本批）：上传论文全文 → 证据定位 → 带引用报告。Research-only：
+    // collect_paper_evidence / write_research_report 不进 General 工具面。
+    // 候选检索（arXiv/Web）与已读全文证据严格区分；全文不可得诚实降级，
+    // 不冒充读过全文。自动全文获取与 PaperQA 集成仍是后续缺口。
+    state: CAPABILITY_STATE.READY,
+    modes: ['nexus_research'],
+    integration:
+      '已接通：collect_paper_evidence（owner+会话绑定 PDF）→ evidence_id 登记 → write_research_report（服务端渲染引用）→ Markdown Artifact。',
   },
 }
 
@@ -179,6 +192,8 @@ export function resolveEffectiveCapabilities({ mode, health, trustManifest = fal
       cs_knowledge: 'backend_internal',
       arxiv_papers: null,
       nexuslab_repro: 'repro_worker',
+      // NX-R1a：证据链经 Backend 内部附件端点读取全文，依赖 backend_internal。
+      paper_evidence: 'backend_internal',
     }[cap.id] || null
     if (!depFor) {
       return { ...cap, effective: EFFECTIVE_STATE.READY, effectiveNote: '' }

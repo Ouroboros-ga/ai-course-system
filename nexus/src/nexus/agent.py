@@ -12,6 +12,7 @@ from deepagents import (
 from deepagents.backends.state import StateBackend
 from deepagents.middleware.filesystem import FilesystemMiddleware
 from deepagents.middleware.summarization import SummarizationMiddleware
+from langchain.agents.middleware import TodoListMiddleware
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -34,7 +35,9 @@ SYSTEM_PROMPT = """你是 CodeNexus 的 Nexus AI，服务对象是教师与学�
    但引用必须按相关性取舍——资料与问题无关时如实说明未找到相关课程资料
    或知识库条目，不得强行引用，也**不得**对不同来源做任何加权、打分或合成分。
 3. 语言：默认使用中文回答；技术术语与代码保持原文。
-   （原“复杂任务先建 todo”规则已按 M1-B5 暂不启用：Deep Agents 0.7 默认移除 TodoListMiddleware，但仍可通过显式 middleware 重新启用；待按任务复杂度产品化。）"""
+4. 计划（NX-H1）：TodoListMiddleware 提供 write_todos——只对真正多步骤
+   （≥3 步）的任务建计划并随执行更新；寒暄/单步问答不建计划。
+   计划状态（todos）是模型的计划标记，不等于工具成功或实验 PASS 证据。"""
 
 # 工具面收敛（M0-B1 / 前端规格 D1）。deepagents 默认挂载全部文件工具、
 # execute 与 task 子代理；这里收回到产品定义的 NEXUS_TOOLS + read_file：
@@ -54,7 +57,14 @@ NEXUS_EXCLUDED_TOOLS = frozenset(
 # Research-only 工具（M1-B2 双 Profile）：General 模式结构性不绑定，
 # 模型请求侧不可见（未传入 create_deep_agent 即不进 bind_tools）。
 RESEARCH_ONLY_TOOLS = frozenset(
-    {"search_arxiv_papers", "plan_reproduction", "run_reproduction"}
+    {
+        "search_arxiv_papers",
+        "plan_reproduction",
+        "run_reproduction",
+        # NX-R1a：上传论文全文证据薄链（Research-only）。
+        "collect_paper_evidence",
+        "write_research_report",
+    }
 )
 
 MODE_PROMPT_APPENDIX = {
@@ -70,16 +80,28 @@ MODE_PROMPT_APPENDIX = {
 
 你的职责：
 - 论文调研：检索 arXiv 元数据与公开网页信息，梳理研究脉络、方法对比、相关工作；
+- 全文证据研究（NX-R1a）：对用户上传的论文 PDF，用 collect_paper_evidence
+  读取全文块建立证据（每条证据带 evidence_id 与原文 locator），再用
+  write_research_report 写成带可核对引用的研究报告 Artifact；
 - 复现规划：为论文生成快速复现（Quick Reproduction）计划，并提交专用 Repro Worker 执行；
 - 复杂问题拆解：对开放性任务持续执行直到完成。
 
+计划要求（NX-H1）：多步骤研究任务（检索、读证据、比较、写报告等 ≥3 步）
+必须先用 write_todos 建计划，并在读完证据、完成综合等关键节点后更新计划
+状态；计划完成的条目必须与真实完成的事实一致，不得提前勾选。
+
 必须遵守的规则：
-1. 诚实性：工具失败（如 ARXIV_UNAVAILABLE、REPRO_WORKER_UNAVAILABLE）
-   时如实告知用户失败原因，绝不编造检索结果或复现结果。
+1. 诚实性：工具失败（如 ARXIV_UNAVAILABLE、REPRO_WORKER_UNAVAILABLE、
+   EVIDENCE_UNAVAILABLE）时如实告知用户失败原因，绝不编造检索结果或复现结果。
 2. 补充参考边界：web_search 与 search_arxiv_papers 的结果是"补充参考"，未经核实；
    表述时注明来源（搜索引擎/arXiv），不得宣称"已验证"或写成既定事实。
+   搜索候选（元数据）与已读全文证据（evidence_id）严格区分：只有摘要的
+   候选必须标注 abstract_only，不得冒充读过全文；全文不可得时提示用户上传。
 3. 复现安全：只有 run_reproduction 提交给 Repro Worker 的任务才算执行；
-   未知 GitHub 仓库的命令不得直接信任，必须先经论文检索/web 检索核验仓库与 License。""",
+   未知 GitHub 仓库的命令不得直接信任，必须先经论文检索/web 检索核验仓库与 License。
+4. 引用纪律：研究报告中只能引用 collect_paper_evidence 返回的 evidence_id
+   （write_research_report 服务端渲染引用，模型不得编造页码或引文）；
+   引用被拒时按返回的修复指引最多修正一次，仍失败则如实输出证据缺口。""",
 }
 
 
@@ -231,6 +253,10 @@ def build_agent(
         middleware=[
             FilesystemMiddleware(tools=["read_file"]),
             build_summarization_middleware(llm),
+            # NX-H1：显式启用已安装的 TodoListMiddleware（langchain.agents
+            # .middleware.todo）——write_todos 工具 + todos state，两模式同置，
+            # 使用频率由提示词约束（简单 General 不强制建计划），不另设分类器。
+            TodoListMiddleware(),
         ],
         checkpointer=saver,
     )

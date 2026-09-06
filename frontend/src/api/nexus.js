@@ -35,6 +35,17 @@ export function getNexusSessionMessages(sessionId) {
 }
 
 /**
+ * 会话最近计划快照（NX-H1）：checkpoint 真值投影，只读不触发执行。
+ * 无计划时 plan 为 null；恢复读取以整体替换语义消费（见 planState.js）。
+ */
+export function getNexusPlan(sessionId) {
+  return request.get(`/nexus/plan/${encodeURIComponent(sessionId)}`, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
  * 复现作业状态（M4-B1 / NX-E2）：发起人鉴权，返回裁剪后的 Worker 记录
  * （status/stage_events/steps_result/live_log_tail/artifacts）。
  * flatEnvelope：记录自身带 code(业务错误码，运行中为 null) 字段，
