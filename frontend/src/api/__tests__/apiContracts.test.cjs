@@ -896,6 +896,17 @@ test('nexus.js: Nexus 客户端路径与后端反代路由一一对应', () => {
   assert.match(src, /requestReproReport[\s\S]*?\/nexus\/repro\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/report/)
   assert.match(backend, /@router\.post\("\/repro\/jobs\/\{job_id\}\/report"\)/)
 
+  // NX-E2/E3：Console Stage/增量日志透传 + 作业取消（发起人鉴权，幂等在 Worker）。
+  const workerSrc = read('deploy/repro-worker/worker.py')
+  assert.match(workerSrc, /stage_events/)
+  assert.match(workerSrc, /@app\.post\("\/jobs\/\{job_id\}\/cancel"/)
+  assert.match(workerSrc, /def cancel_job/)
+  assert.match(src, /cancelNexusReproJob[\s\S]*?\/nexus\/repro\/jobs\/\$\{encodeURIComponent\(jobId\)\}\/cancel/)
+  assert.match(backend, /@router\.post\("\/repro\/jobs\/\{job_id\}\/cancel"\)/)
+  // 归属校验先于 Worker 转发（防枚举优先）；幂等标记透传。
+  assert.match(backend, /async def nexus_repro_job_cancel[\s\S]*?_owned_job_or_404\(session, current_user, job_id\)/)
+  assert.match(backend, /"already_terminal": bool\(payload\.get\("already_terminal"\)\)/)
+
   assert.match(backend, /@router\.post\("\/chat\/stream"\)/)
 
   // NX-G2：执行审批 client 与后端路由一一对应（批准/查询/手工执行）。
@@ -1034,9 +1045,9 @@ test('D10 门控：Nexus 入口与页面随 platform.nexus.use 显现/拦截', (
   // 页面：无权限整页拦截并说明开通路径
   assert.match(page, /v-if="counter\.canUseNexus"/)
   assert.match(page, /暂无 Nexus AI 使用权限/)
-  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×2/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
+  // 后端是真正的强制点：全部端点（health/chat/chat-stream/sessions/messages/artifacts×2/repro×3/approvals×2/repro-execute/attachments×6/runs×2）都走 require_nexus_use
   assert.match(backend, /require_platform_permission\(session, current_user, PlatformPermission\.NEXUS_USE\)/)
-  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 20)
+  assert.equal((backend.match(/Depends\(require_nexus_use\)/g) || []).length, 21)
   // 权限值唯一权威来源是 PlatformPermission 枚举
   assert.match(model, /NEXUS_USE = "platform\.nexus\.use"/)
 })

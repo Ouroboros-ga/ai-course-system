@@ -1,8 +1,8 @@
 # CodeNexus 开发计划：Current MVP → NX 必要主线
 
-> **版本**：2026-09-05 v1.3 对齐清理版；基线 dev-liu，核查 HEAD=d2c694a0，有未提交工作区差异。
+> **版本**：2026-09-06 状态刷新版；基线 dev-liu，核查 HEAD=d54b444a（a18d4f40 前端闪现修复与 d54b444a nginx 对齐与本计划无功能交集）。上一版：2026-09-05 v1.3 对齐清理版（基线 d2c694a0）。
 > **设计依据**：[v1.3 Current Architecture + Roadmap](CodeNexus_转型设计与实施方案_v1.3.md)；[前端规格](Nexus_AI_前端开发规格与UX落地说明.md)。
-> **历史**：原文件名保留以兼容链接。M0–M5 原任务、验收和工具数量完整移至[历史快照](CodeNexus_P2开发计划_历史快照_2026-09-05.md)，不代表当前工具面或未来排期。本次为文档更新，不是功能上线。
+> **历史**：原文件名保留以兼容链接。M0–M5 原任务、验收和工具数量完整移至[历史快照](CodeNexus_P2开发计划_历史快照_2026-09-05.md)，不代表当前工具面或未来排期。2026-09-06 刷新依据：git 历史 b34ea2d9/b080e269（首批 P0 提交部署与线上只读验证）、[NX-G1G2G3 验收](验收记录/NX-G1G2G3_验收_2026-09-05.md)、[NX-A1E1 验收](验收记录/NX-A1E1_验收_2026-09-05.md)。
 
 ## 1. Current / Next / Target / Optional
 
@@ -14,8 +14,9 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | Tool loop、Compact、checkpoint、消息恢复                                | CURRENT  | P1/M1/M5 验收；Compact 全图触发边界保留；不是完整 Harness/跨设备产品历史 |
 | nanoGPT preset、基础步骤结果/指标/报告                                      | CURRENT  | P1/M4 验收；轮询 job 与终态步骤结果，不称实时全过程 Console           |
 | Legacy Research S3                                               | CURRENT  | M5 验收；活跃教学消费者、数据/迁移保留，不重做已下线迁移                    |
-| 服务端执行审批                                                          | NEXT/P0  | UI gate 不算；当前 run\_reproduction 可直接提交 Worker      |
-| 附件/视觉、Todo、Paper Research、SandboxProvider、受控 A/B、Console、Session | NEXT     | 下表独立验收，不一次翻转全线 ready                              |
+| 服务端执行审批（NX-G2）＋mode 严格化（NX-G1）＋effective capability（NX-G3） | CURRENT  | b34ea2d9 上线、b080e269 线上只读验证；真实审批全链等交互式验收待补（§7 清单） |
+| 附件/视觉（NX-A1）、run 恢复（NX-E1）、模型网关                          | CURRENT  | 随 b34ea2d9 上线；PG 方言/OCR 回填/附件 E2E/真实恢复链待补（§7 清单）   |
+| Todo、Paper Research、SandboxProvider、受控 A/B、Console、Session        | NEXT     | 下表独立验收，不一次翻转全线 ready；Console/Cancel 批次细化见 §7     |
 | Subagent/Workspace、广泛任意论文/仓库、DOCX/PPTX 输出                        | TARGET   | 门槛到位后另排批次                                         |
 | Personal Context、GPU/多云、额外模型选择器                                  | OPTIONAL | 按需评估；图片视觉模型配置仍是 NX-A1 必需项                         |
 
@@ -27,12 +28,13 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | Research 产品工具（8） | 全部 General + search\_arxiv\_papers、plan\_reproduction、run\_reproduction     |
 | 两模式内部 Harness    | read\_file（StateBackend 历史读回，不是宿主通用文件）                                      |
 
-代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批的本地实现见 §3（2026-09-05，未部署）；附件与恢复见 §4 NX-A1/E1（2026-09-05，未部署）。
+代码源为 `nexus/src/nexus/tools/__init__.py` 与 `agent.py`。注册不等于可执行：`effective = manifest ∩ mode ∩ tool surface ∩ health/config ∩ user/scope policy`，提交另需 approval。聚合与强审批已随 b34ea2d9 部署上线（2026-09-05）；附件与恢复同批上线（PG 方言与真实链路验收待补，§7 清单）。
 
 ## 3. 首批 P0：NX-G1–G3
 
-> **状态（2026-09-05）**：三项本地实现＋测试验证完成，未提交未部署；
-> 证据见[验收记录](验收记录/NX-G1G2G3_验收_2026-09-05.md)。线上验收待部署后补记。
+> **状态（2026-09-06 刷新）**：已随 b34ea2d9 提交部署上线（2026-09-05），线上只读验证见 b080e269
+>（/health checks 全 ok、approvals 路由就绪、Research 8/General 5 工具面实证）；
+> 本地 94/94＋代理 27/27 证据见[验收记录](验收记录/NX-G1G2G3_验收_2026-09-05.md)。真实 PG 审批表与真实审批全链属交互式验收，待补（§7 清单）。
 
 | 任务                          | 当前差距                                                                                          | 改动入口                                                                                         | 验收                                                                                                                                   |
 | --------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -48,7 +50,7 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 | 任务                       | 状态     | 交付与依赖                                                                                            | 验收门                                                                           |
 | ------------------------ | ------ | ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------- |
-| NX-A1 附件/视觉              | ✅ 本地完成（2026-09-05）：八格式入口＋解析＋配额＋生命周期；DOC/PPT 无 LibreOffice 如实 failed；图片直传＋OCR 按需 | General/Research 八格式共用入口；复用对象存储/ParserProvider/OCR/LibreOffice，补 XLSX；先生命周期/PDF链再其他格式与论文 Profile | 八格式各一合成样例；图片直传不强制 OCR、无视觉诚实降级；页/slide/cell/段落引用；scope/限额/删除/过期/错误明确；不进课程知识域   |
+| NX-A1 附件/视觉              | ✅ 上线（2026-09-05，b34ea2d9）：八格式入口＋解析＋配额＋生命周期；DOC/PPT 无 LibreOffice 如实 failed；图片直传＋OCR 按需；PG 方言/OCR 回填/附件 E2E 待补（§7 清单） | General/Research 八格式共用入口；复用对象存储/ParserProvider/OCR/LibreOffice，补 XLSX；先生命周期/PDF链再其他格式与论文 Profile | 八格式各一合成样例；图片直传不强制 OCR、无视觉诚实降级；页/slide/cell/段落引用；scope/限额/删除/过期/错误明确；不进课程知识域   |
 | NX-H1 Plan/Todo          | NEXT   | 显式 Todo middleware；简单 General 不强制，复杂 General 按需，Research 长任务启用；消费产品事件                            | 计划修改、实际工具状态分开；checkpoint/事件/UI 取消恢复一致，无静态假进度                                  |
 | NX-R1 Paper Research     | NEXT   | NX-A1 论文全文与 NX-H1；PaperQA/同类薄 Adapter 或隔离 sidecar                                                | 问题→候选→全文→证据→比较→综合→Citation；全文不可得诚实降级，no-go 换组件不删目标                            |
 | NX-S1 SandboxProvider    | NEXT   | 现有 Worker 后续适配；SWE-ReX/同类执行层、repo2docker 构建层；统一创建/执行/状态/取消/清理语义                                  | 隔离、网络、凭据、挂载、预算、取消和清理；同 preset 对比；不因安装组件自动获得任意仓库/A-B 安全声明                      |
@@ -56,13 +58,13 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 | NX-P2 受控 A/B             | NEXT   | NX-S1/P1/G2；A Build/Smoke/有界 Repair/Execute→Freeze→B→Metric/Report，可先用 preset 验证 A/B             | 冻结代码/镜像/依赖/数据/配置/种子/命令/比较标准；不继承 A 可变目录；修复变计划重新批准；B 成功且指标满足才 reproducible=true |
 | NX-H2 Subagent/Workspace | TARGET | 先只读子任务；依赖 NX-H1/G2/S1 与事件恢复                                                                      | 父子权限/预算/取消/恢复；文件只工作区，execute 只隔离 Provider；不直接解除 excluded\_tools               |
 
-附件接口族规划为 `/api/v1/nexus/attachments` 提交/状态/删除/鉴权下载，chat 传 attachment\_ids（尚未实现）。短文件预算内全文、长文分块、表格按范围；不把课程入库流水线搬进 Nexus。v1.3 C2 的首版限额/retention 建议需样例调优。
+附件接口族已实现为 `/api/v1/nexus/attachments` 提交/状态/删除/鉴权下载，chat 传 attachment\_ids（≤5，发送时验主＋原子绑定）。短文件预算内全文、长文分块、表格按范围；不把课程入库流水线搬进 Nexus。v1.3 C2 的首版限额/retention 建议需样例调优。
 
 ## 5. Experiment Console / Session：NX-E1–E4
 
 | 任务    | 状态   | 改动入口与交付                                                                                                    | 验收                                                                                                |
 | ----- | ---- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| NX-E1 | ✅ 本地完成（2026-09-05）：nexus_runs 注册＋恢复查询＋前端只读恢复；run_id 冲突属他人 409 | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
+| NX-E1 | ✅ 上线（2026-09-05，b34ea2d9）：nexus_runs 注册＋恢复查询＋前端只读恢复；run_id 冲突属他人 409；真实恢复链待补（§7 清单） | nexus/persistence.py/main.py、Backend Nexus 代理/服务、NexusPage：owner/session/turn/run/job 持久化；为 NX-G2 先供最小归属契约 | 刷新/换设备查原 job 并恢复轮询，不重复提交；跨用户拒绝；job 缺失 unknown/interrupted                                         |
 | NX-E2 | NEXT | worker.py 增量 Stage/有界日志、代理脱敏、前端只读 Console                                                                  | Stage/Command label/Elapsed/Exit code/20 行日志/Metric/Report；运行中可见新日志；服务端时间戳；预构建/无 B 诚实显示；无交互 Shell |
 | NX-E3 | NEXT | Worker cancel、代理鉴权、前端 cancelling/cancelled                                                                 | 排队/运行幂等取消，进程组/容器回收确认才 cancelled；完成竞争正确；不影响其他 job，聊天 Stop 不充当 Cancel                               |
 | NX-E4 | NEXT | 服务端 mode/course/pin/version、最小事件/游标、Worker 快照与重启对账                                                         | 跨设备偏好/过程恢复；去重；无原始完整 Trace/思维；checkpoint 与产品历史分开；删除/保留覆盖关联资源                                       |
@@ -71,21 +73,50 @@ CURRENT=有真实验收的限定能力；NEXT=下一批必做；TARGET=最终目
 
 ## 6. 执行顺序与验证
 
-1. NX-G1/G2/G3 先行，有副作用的新增执行以审批硬门为先；保留工作区既有修正，验证后才能申请提交/上线。
-2. NX-A1 + NX-E1 打输入/归属基础；NX-H1 与 NX-E2 用同一 run/event 契约；NX-E3 单独完成取消闭环。
-3. NX-R1 与 NX-S1 可同期选型；NX-P1/P2 按依赖接入。NX-E4 完成事件历史与重启对账，TARGET 另排批次。
+1. ✅ NX-G1/G2/G3、NX-A1、NX-E1 已随 b34ea2d9 上线（2026-09-05，b080e269 线上只读验证）；交互式线上验收待补（§7 清单）。
+2. 下一批次 NX-E2+E3（细化见 §7）：Worker 一次升级同时交付增量 Stage/有界日志与 cancel；E2 管线为 NX-H1 的 Todo 事件预留契约。
+3. 批次 2＝NX-H1＋NX-R1 薄链；批次 3＝NX-S1 接口化＋NX-E4；NX-P1/P2 按依赖接入（批次 4）。TARGET 另排批次。
 4. 回退保留 preset，但不能绕过已启用强审批；关闭新 Provider 时保留状态/报告可读，不自动重放命令。
 5. 测试覆盖 Mode、恶意跨模式调用、无批准 Worker 零调用、过期/跨用户/计划篡改/并发重试、health 失联、八格式/视觉、取消、恢复、A/B 与日志脱敏。隔离 fixture/mock 不调真实付费服务；Mock 不能称线上安全验收。
 6. 既有两项域测试失败与 Compact 全图边界单独跟进，不能删除断言制造全绿。每任务写 commit/工作区、环境、实际链路、命令/结果和未验证项。
 
-## 7. 依赖、自研与授权
+## 7. 下一批次细化：NX-E2+E3 Console/取消闭环（2026-09-06 规划）
+
+> 推荐主线，与[Console 外壳设计板](2026-09-06_NexusLab_Console_外壳设计板.html)对齐；批次主线与技术路线为建议，开工前与开发者确认一次。H1 的 Todo 事件只在 E2 管线上预留契约位，不实现。
+
+**范围**：Worker 一次升级同时交付增量 Stage/有界日志（E2 后端面）与 cancel API（E3 后端面）；Backend 代理透传＋脱敏＋归属鉴权；前端按设计板落地会话内 Console。零新增外部依赖，纯胶水。
+
+| 层 | 改动入口 | 交付 |
+| --- | --- | --- |
+| Worker | deploy/repro-worker/worker.py | Stage 由真实边界触发（Preparing/Building/Running/Metric/Verifying/Completed，事件序号单调递增）；每步有界环形日志（默认末 8KB/步，可配）；`POST /jobs/{id}/cancel`（同 Bearer 鉴权、幂等、Popen 进程组终止、回收确认才置 cancelled、与自然完成竞争保持真实终态）；`_jobs` 仍内存（持久化快照/对账属 NX-E4） |
+| Backend | nexus_proxy.py | cancel 代理（发起人＝归属校验，复用 nexus_runs 登记）；stage/log 透传；日志脱敏/控制符过滤/服务端时间戳 |
+| Runtime | tools/reproduction.py、runs API | stage 字段并入现有 runs 实时态合并；审批/提交链路不动（NX-G2 语义保持） |
+| 前端 | NexusPage.vue（按设计板 v1） | 会话内就地展开：Stage 竖轨/Command label/Elapsed/Exit code/20 行日志尾（10–30 可调）/Metric/Report/Cancel；3s 轮询（2–5s 可调，不要求 WebSocket）；cancelling/cancelled 状态机；无 B 环境 Verifying 诚实显示"未实施/不适用"；聊天 Stop 不充当 Cancel |
+
+验收＝§5 NX-E2/E3 原验收项＋真实 Worker 端到端（nanoGPT preset：提交→审批→运行中观察 Stage/日志→中途取消→后续 job 不受影响）。设计板 todo-tag"待后端 NX-E2"区块本批全部点亮。
+
+**后续批次建议**：
+
+1. 批次 2＝NX-H1＋NX-R1 薄链：H1 显式 Todo 中间件（deepagents 0.7.12 无现成 todo 中间件，写小胶水：state.todos＋write_todos＋产品事件投影）；R1 走自研薄链——NX-A1 PDF locator＋arxiv/SearXNG site:arxiv.org 降级＋read_attachment＋引用 artifact 串成"问题→候选→全文→证据→比较→综合→Citation"，全文不可得诚实降级；PaperQA2 只出许可核验报告不引入。
+2. 批次 3＝NX-S1 接口化（统一 SandboxProvider port，现有 Worker 适配为首个 PresetSandboxProvider，保持 nanoGPT 链回归；SWE-ReX/repo2docker 许可核验报告）＋NX-E4（服务端 session 权威＋产品事件表＋Worker 重启对账）。
+3. 批次 4＝NX-P1/P2（依赖 S1+E3，可先用 nanoGPT preset 验证 A/B 流程）。
+
+**前置：已上线批次交互式线上验收清单**（需授权在 zsitai.xyz 做受控真实操作，或由开发者手工执行后补记验收）：
+
+1. 真实 PG：审批表/附件表/runs 表首次真实使用（建表＋方言实证）；
+2. 真实审批全链：提案→本人批准→Worker 执行→轮询→报告（nanoGPT preset 回归）；
+3. 附件 E2E：真实上传→chips→发送→模型引用 locator→恢复；
+4. PaddleOCR 8090 真实回填；DOC/PPT 转换（服务器无 LibreOffice 则维持 honest-fail）；
+5. 恢复链：提交→Runtime 重启→unknown→快照找回，不重复提交。
+
+## 8. 依赖、自研与授权
 
 通用基础设施成熟开源优先；CodeNexus 的 Course/CS/权限/对象存储现有服务优先。Reproduction Orchestrator / Policy / Verification orchestration 是自研一等业务模块，不贬为几行 glue。
 
-候选逐版本核验 License/隔离/依赖/维护成本；可 library 或 sidecar。`1a1a11a/2026_paper_reproduce`、`AI9Stars/AutoReproduce` 未确认明确许可前固定 concept-only / no source reuse，不进入可复制代码池。
+候选逐版本核验 License/隔离/依赖/维护成本；可 library 或 sidecar。当前命名候选：SWE-ReX（执行层）、repo2docker（构建层）、paper-qa/PaperQA2（论文 RAG）——未核验前只评估不依赖。`1a1a11a/2026_paper_reproduce`、`AI9Stars/AutoReproduce` 未确认明确许可前固定 concept-only / no source reuse，不进入可复制代码池。
 
 “无新增依赖/常驻服务”仅描述原 M0–M5 增量，不限制 NX。后续可经评估新增 OSS dependency/service，但安装/升级/部署仍需明确授权，Nexus/Backend 不共享 venv。不提交/push/部署或用真实密钥跑自动测试，除非按 AGENTS.md 授权。
 
-## 8. 历史附录
+## 9. 历史附录
 
 [M0–M5 完整历史快照](CodeNexus_P2开发计划_历史快照_2026-09-05.md)保留原任务与 §十四验收；[验收记录目录](验收记录/)保留原证据。本次不改历史结果，M1 四工具数字不再出现在当前快照。

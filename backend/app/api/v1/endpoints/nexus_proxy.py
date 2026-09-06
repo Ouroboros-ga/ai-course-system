@@ -15,6 +15,7 @@ JWT 鉴权与签名中间件，无需为 Nexus 单开公网端口。
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -422,8 +423,16 @@ async def nexus_artifact_download(
 # ---------------------------------------------------------------------------
 
 # 日志摘要上限：只展示操作状态与安全日志摘要（计划 §8 M4-F1）。
-_LOG_TAIL_MAX = 300
+_LOG_TAIL_MAX = 2000
 _STEP_MAX = 10
+_STAGE_EVENTS_MAX = 60
+# NX-E2：日志控制符/ANSI 转义在代理层清洗——Worker 回传原样文本，前端只做纯文本转义。
+_LOG_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
+def _sanitize_log(text: Any, limit: int = _LOG_TAIL_MAX) -> str:
+    cleaned = _LOG_CONTROL_CHARS.sub("", str(text or ""))
+    return cleaned[-limit:]
 
 
 def _worker_base() -> str:
@@ -431,7 +440,11 @@ def _worker_base() -> str:
 
 
 def _trim_job_record(record: dict) -> dict:
-    """裁剪 Worker 记录为前端展示形态：短日志摘要 + 阶段切片，不回传全文。"""
+    """裁剪 Worker 记录为前端展示形态：短日志摘要 + 阶段切片，不回传全文。
+
+    NX-E2：透传 stage_events（真实边界事件，封顶 _STAGE_EVENTS_MAX）与
+    live_log_tail（运行中当前步骤增量日志）；所有日志经控制符清洗与限长。
+    """
     trimmed = {
         "job_id": record.get("job_id"),
         "status": record.get("status"),
@@ -447,14 +460,25 @@ def _trim_job_record(record: dict) -> dict:
         "detail": record.get("detail"),
         "steps_result": [],
         "artifacts": record.get("artifacts") or [],
+        "stage_events": [],
+        "current_step": record.get("current_step"),
+        "live_log_tail": _sanitize_log(record.get("live_log_tail")),
     }
+    for event in (record.get("stage_events") or [])[-_STAGE_EVENTS_MAX:]:
+        trimmed["stage_events"].append({
+            "seq": event.get("seq"),
+            "stage": str(event.get("stage") or "")[:32],
+            "status": str(event.get("status") or "")[:32],
+            "note": str(event.get("note") or "")[:200] or None,
+            "time": event.get("time"),
+        })
     for step in (record.get("steps_result") or [])[:_STEP_MAX]:
         trimmed["steps_result"].append({
             "command": str(step.get("command") or "")[:160],
             "exit_code": step.get("exit_code"),
             "timed_out": step.get("timed_out"),
             "duration_s": step.get("duration_s"),
-            "log_tail": str(step.get("log_tail") or "")[-_LOG_TAIL_MAX:],
+            "log_tail": _sanitize_log(step.get("log_tail")),
         })
     return trimmed
 
@@ -506,6 +530,53 @@ async def nexus_repro_job_status(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Worker 返回非 JSON"
         ) from exc
     return JSONResponse(status_code=200, content=_trim_job_record(record))
+
+
+@router.post("/repro/jobs/{job_id}/cancel")
+async def nexus_repro_job_cancel(
+    job_id: str,
+    session: Session = Depends(get_session),
+    current_user: dict = Depends(require_nexus_use),
+):
+    """NX-E3 取消代理：发起人鉴权（归属 = nexus_runs 登记）后转发 Worker。
+
+    本层不解析取消语义：幂等/竞争终态由 Worker 裁决；本层只保证跨用户
+    404（防枚举）与 Worker 不可达 503。返回 Worker 的 {"job_id","status"}，
+    cancelled 之前状态为 cancelling——前端据此显示"取消中"。
+    """
+    _owned_job_or_404(session, current_user, job_id)
+    base = _worker_base()
+    if not base:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="REPRO_WORKER_NOT_CONFIGURED"
+        )
+    timeout = httpx.Timeout(15.0, connect=5.0)
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.post(
+                f"{base}/jobs/{job_id}/cancel",
+                headers={"Authorization": f"Bearer {settings.REPRO_WORKER_TOKEN}"}
+                if settings.REPRO_WORKER_TOKEN
+                else {},
+            )
+    except httpx.HTTPError as error:
+        logger.warning("repro worker cancel unreachable: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="REPRO_WORKER_UNAVAILABLE"
+        ) from error
+    if response.status_code == 404:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复现作业不存在")
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Worker 返回非 JSON"
+        ) from exc
+    return JSONResponse(status_code=200, content={
+        "job_id": payload.get("job_id", job_id),
+        "status": payload.get("status", "cancelling"),
+        "already_terminal": bool(payload.get("already_terminal")),
+    })
 
 
 @router.post("/repro/jobs/{job_id}/report")
@@ -881,6 +952,9 @@ def _merge_run_live(run: dict[str, Any], live: dict[str, Any] | None) -> dict[st
         "finished_at": live.get("finished_at"),
         "code": live.get("code"),
         "detail": live.get("detail"),
+        # NX-E2/E3：恢复视图同样需要阶段事件与当前步骤（只读投影，经 _trim 同源裁剪）。
+        "stage_events": _trim_job_record(live).get("stage_events", []),
+        "current_step": live.get("current_step"),
     }
     return merged
 

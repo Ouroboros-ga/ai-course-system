@@ -59,7 +59,7 @@ import SfxDrawer from '@/app/ui/SfxDrawer.vue'
 import { showToast } from '@/utils/toast.js'
 import { useCounterStore } from '@/stores/counter.js'
 import { renderContent } from '@/utils/markdownRenderer.js'
-import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
+import { getNexusHealth, getNexusSessionMessages, listNexusSessions, listNexusArtifacts, downloadNexusArtifact, getNexusReproJob, requestReproReport, decideNexusApproval, executeApprovedRepro, cancelNexusReproJob, uploadNexusAttachment, deleteNexusAttachment, listNexusRuns } from '@/api/nexus.js'
 import {
   NEXUS_MODES,
   NEXUS_MODE_CONFIG,
@@ -393,12 +393,12 @@ async function restoreSessionRuns(session) {
   for (const run of runs) {
     if (!run?.job_id) continue
     const liveStatus = run.live?.status || run.status || 'unknown'
-    const terminal = ['succeeded', 'failed', 'rejected'].includes(liveStatus)
+    const terminal = ['succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
     const existing = session.turns.find((t) => t.reproRun?.job_id === run.job_id)
     if (existing) {
       // 本地已有轮询中的 turn 且远端仍在跑 → 续上轮询（startReproPolling 幂等）。
-      if (!['succeeded', 'failed', 'rejected'].includes(existing.reproRun.status)
-        && ['queued', 'running'].includes(liveStatus)) {
+      if (!REPRO_TERMINAL_STATUSES.includes(existing.reproRun.status)
+        && ['queued', 'running', 'cancelling'].includes(liveStatus)) {
         startReproPolling(existing, run.job_id)
       }
       continue
@@ -419,9 +419,16 @@ async function restoreSessionRuns(session) {
       createdAt: null,
       reproRun: {
         job_id: run.job_id,
-        status: ['queued', 'running', 'succeeded', 'failed', 'rejected'].includes(liveStatus)
+        status: ['queued', 'running', 'cancelling', 'succeeded', 'failed', 'rejected', 'cancelled'].includes(liveStatus)
           ? liveStatus : 'unknown',
         stages: [],
+        stageEvents: Array.isArray(run.live?.stage_events) ? run.live.stage_events : [],
+        currentStep: run.live?.current_step ?? null,
+        liveLog: '',
+        startedAt: run.live?.started_at ?? null,
+        finishedAt: run.live?.finished_at ?? null,
+        expanded: false,
+        cancelling: false,
         verdict: null,
         comparison: [],
         reportRequested: true,
@@ -658,7 +665,7 @@ async function downloadArtifact(artifact) {
   }
 }
 
-// ── M4：复现作业受控轮询与确定性报告（B2/B3）──
+// ── M4：复现作业受控轮询与确定性报告（B2/B3）；NX-E2/E3 Console 增量接线 ──
 const REPRO_POLL_INTERVAL_MS = 5000
 const REPRO_POLL_MAX = 200 // 5s × 200 ≈ 17min，覆盖 Worker 900s 硬截止 + 余量
 const reproPollTimers = new Map()
@@ -669,8 +676,12 @@ const REPRO_STATUS_LABELS = {
   succeeded: '已完成',
   failed: '失败',
   rejected: '已拒绝',
+  cancelling: '取消中',
+  cancelled: '已取消',
   unknown: '状态未知',
 }
+
+const REPRO_TERMINAL_STATUSES = ['succeeded', 'failed', 'rejected', 'cancelled']
 
 function reproStatusLabel(run) {
   return REPRO_STATUS_LABELS[run?.status] || run?.status || '未知'
@@ -723,21 +734,140 @@ function startReproPolling(turn, jobId) {
     turn.reproRun.code = record.code || null
     turn.reproRun.detail = record.detail || null
     turn.reproRun.seedUsed = !!record.seed_used
+    turn.reproRun.startedAt = record.started_at ?? null
+    turn.reproRun.finishedAt = record.finished_at ?? null
+    // NX-E2：真实边界 Stage 事件 / 当前步骤 / 运行中增量日志（代理已脱敏）。
+    turn.reproRun.stageEvents = Array.isArray(record.stage_events) ? record.stage_events : []
+    turn.reproRun.currentStep = record.current_step ?? null
+    turn.reproRun.liveLog = record.live_log_tail || ''
     turn.reproRun.stages = (record.steps_result || []).map((s, i) => ({
       index: i + 1,
       command: s.command,
       exit_code: s.exit_code,
       timed_out: s.timed_out,
-      duration_s: s.duration_s
+      duration_s: s.duration_s,
+      log_tail: s.log_tail || ''
     }))
     persistSessions()
-    if (['succeeded', 'failed', 'rejected'].includes(record.status)) {
+    if (REPRO_TERMINAL_STATUSES.includes(record.status)) {
       stopReproPolling(jobId)
       if (record.status === 'succeeded') void requestReproReportFor(turn, jobId)
     }
   }
   reproPollTimers.set(jobId, setInterval(tick, REPRO_POLL_INTERVAL_MS))
   void tick()
+}
+
+// ── NX-E3 取消 + NX-E2 Console 投影辅助 ──
+function reproCancellable(run) {
+  return ['queued', 'running', 'cancelling'].includes(run?.status)
+}
+
+async function cancelReproRun(turn) {
+  const run = turn?.reproRun
+  if (!run?.job_id || run.cancelling || !reproCancellable(run)) return
+  run.cancelling = true
+  try {
+    const res = await cancelNexusReproJob(run.job_id)
+    run.status = res?.status || 'cancelling'
+    persistSessions()
+    if (!res?.already_terminal) showToast('已发出取消，等待回收确认…', 'warning')
+  } catch (err) {
+    showToast(err?.message || '取消失败，作业可能已结束', 'error')
+  } finally {
+    run.cancelling = false
+  }
+}
+
+function toggleReproExpanded(turn) {
+  const run = turn?.reproRun
+  if (!run) return
+  run.expanded = !run.expanded
+  persistSessions()
+}
+
+// Console 阶段条：把 Worker 真实 stage_events 投影到固定六段轨道。
+const REPRO_RAIL = [
+  { stage: 'preparing', label: 'Preparing' },
+  { stage: 'building', label: 'Building' },
+  { stage: 'running', label: 'Running' },
+  { stage: 'metric', label: 'Metric' },
+  { stage: 'verifying', label: 'Verifying' },
+  { stage: 'completed', label: 'Completed' },
+]
+
+function reproStageRail(run) {
+  const events = Array.isArray(run.stageEvents) ? run.stageEvents : []
+  const latest = {}
+  for (const event of events) {
+    const prev = latest[event.stage]
+    if (!prev || (event.seq ?? 0) >= (prev.seq ?? 0)) latest[event.stage] = event
+  }
+  const badTerminal = ['failed', 'rejected', 'cancelled'].includes(run.status)
+  return REPRO_RAIL.map(({ stage, label }) => {
+    const event = latest[stage]
+    let state = 'pending'
+    if (event) {
+      if (event.status === 'done') state = 'done'
+      else if (event.status === 'skipped' || event.status === 'not_applicable') state = 'skipped'
+      else if (event.status === 'failed') state = 'failed'
+      else if (event.status === 'started') state = badTerminal ? 'failed' : 'current'
+    }
+    return { stage, label, state, note: event?.note || '' }
+  })
+}
+
+function reproStageNotes(run) {
+  const events = Array.isArray(run.stageEvents) ? run.stageEvents : []
+  return events
+    .filter((e) => e.status === 'skipped' || e.status === 'not_applicable')
+    .map((e) => `${e.stage}：${e.note || '本批不适用'}`)
+    .join('；')
+}
+
+function reproIsCurrentStep(run, index) {
+  return run.status === 'running' && run.currentStep === index
+}
+
+function reproStepState(run, step) {
+  if (reproIsCurrentStep(run, step.index)) return 'run'
+  if (step.timed_out) return 'err'
+  if (step.exit_code === 0) return 'ok'
+  if (step.exit_code != null) return 'err'
+  return 'pend'
+}
+
+function reproStepLabel(run, step) {
+  const state = reproStepState(run, step)
+  return { ok: '完成', err: '失败', run: '运行中', pend: '待执行' }[state]
+}
+
+function reproLogText(run) {
+  if (['running', 'cancelling', 'queued'].includes(run.status) && run.liveLog) {
+    return run.liveLog
+  }
+  const withLog = (run.stages || []).filter((s) => s.log_tail)
+  return withLog.length ? withLog[withLog.length - 1].log_tail : ''
+}
+
+function reproLogSource(run) {
+  if (['running', 'cancelling'].includes(run.status)) {
+    return `运行中 · 第 ${run.currentStep ?? '—'} 步（增量）`
+  }
+  return '终态日志尾'
+}
+
+function reproLogLines(run) {
+  const text = reproLogText(run)
+  return text ? text.replace(/\n+$/, '').split('\n').slice(-20).join('\n') : ''
+}
+
+function reproElapsed(run) {
+  if (!run.startedAt) return ''
+  const end = run.finishedAt || (run.status === 'running' ? Date.now() / 1000 : null)
+  if (!end) return ''
+  const total = Math.max(0, Math.round(end - run.startedAt))
+  return total >= 60 ? `${Math.floor(total / 60)}m${String(total % 60).padStart(2, '0')}s` : `${total}s`
 }
 
 // ── NX-G2 执行审批：决定 + 手工执行（UI 只提交决定，放行由服务端核销）──
@@ -784,6 +914,13 @@ async function executeApprovalFor(turn) {
         job_id: job.job_id,
         status: job.status || 'queued',
         stages: [],
+        stageEvents: [],
+        currentStep: null,
+        liveLog: '',
+        startedAt: null,
+        finishedAt: null,
+        expanded: true,
+        cancelling: false,
         verdict: null,
         comparison: [],
         reportRequested: false,
@@ -1333,6 +1470,13 @@ function handleEvent(turn, { event, data }) {
           job_id: job.job_id,
           status: job.status || 'queued',
           stages: [],
+          stageEvents: [],
+          currentStep: null,
+          liveLog: '',
+          startedAt: null,
+          finishedAt: null,
+          expanded: true,
+          cancelling: false,
           verdict: null,
           comparison: [],
           reportRequested: false,
@@ -2305,60 +2449,114 @@ const emptySuggestions = computed(() =>
                 </div>
               </div>
 
-              <!-- M4 复现运行状态卡：阶段流水 + 确定性判定（不展示模型内部思维） -->
-              <div v-if="turn.reproRun" class="nx-repro-live">
-                <div class="nx-rl-head">
+              <!-- NX-E2/E3 实验控制台：会话内就地展开（设计板 2026-09-06 v1）。
+                   阶段条来自 Worker 真实边界事件；取消是独立作业 API，不等于聊天 Stop。 -->
+              <div v-if="turn.reproRun" class="nx-repro-live" :class="{ 'is-collapsed': !turn.reproRun.expanded }">
+                <div class="nx-rl-head nx-cs-head" @click="toggleReproExpanded(turn)">
                   <FlaskConical :size="15" class="nx-rl-icon" />
                   <span class="nx-rl-title">复现作业 · {{ turn.reproRun.job_id }}</span>
                   <span class="nx-rl-status" :class="turn.reproRun.status">{{ reproStatusLabel(turn.reproRun) }}</span>
-                </div>
-                <ol v-if="turn.reproRun.stages.length" class="nx-rl-stages">
-                  <li
-                    v-for="s in turn.reproRun.stages"
-                    :key="s.index"
-                    :class="{ 'is-ok': s.exit_code === 0, 'is-bad': s.timed_out || (s.exit_code != null && s.exit_code !== 0) }"
+                  <span class="nx-cs-spacer" />
+                  <span v-if="reproElapsed(turn.reproRun)" class="nx-cs-elapsed">{{ reproElapsed(turn.reproRun) }}</span>
+                  <SfxButton
+                    v-if="reproCancellable(turn.reproRun)"
+                    variant="secondary"
+                    size="sm"
+                    :loading="turn.reproRun.cancelling"
+                    @click.stop="cancelReproRun(turn)"
                   >
-                    <span class="nx-rl-step-name">{{ s.command }}</span>
-                    <span class="nx-rl-step-meta">
-                      {{ s.timed_out ? '超时' : `exit=${s.exit_code}` }} · {{ s.duration_s }}s
-                    </span>
-                  </li>
-                </ol>
-                <p v-if="!turn.reproRun.stages.length && turn.reproRun.status === 'queued'" class="nx-rl-note">
-                  排队中，等待执行器开始…
-                </p>
-                <p v-if="turn.reproRun.code" class="nx-rl-note">
-                  失败语义：{{ turn.reproRun.code }}{{ turn.reproRun.detail ? ' — ' + turn.reproRun.detail : '' }}
-                </p>
-                <p v-if="turn.reproRun.pollExhausted" class="nx-rl-note">轮询已达上限，可刷新查看最新状态。</p>
-                <!-- NX-E1：恢复 turn（换设备/刷新）成功态无本地报告时，手动补领。
-                     自动补会重复产物；手动一次幂等由用户控制。 -->
-                <div
-                  v-if="turn.restoredRun && turn.reproRun.status === 'succeeded' && !turn.reproRun.verdict"
-                  class="nx-answer-actions"
-                >
-                  <SfxButton variant="secondary" size="sm" @click="claimRestoredReport(turn)">
-                    补领复现报告
+                    取消
                   </SfxButton>
-                  <span class="nx-rl-note">该作业在别处完成，报告可能已在产物面板</span>
+                  <span class="nx-cs-toggle">{{ turn.reproRun.expanded ? '▾' : '▸' }}</span>
                 </div>
-                <div
-                  v-if="turn.reproRun.verdict"
-                  class="nx-rl-verdict"
-                  :class="turn.reproRun.verdict === 'PASS' ? 'is-pass' : 'is-fail'"
-                >
-                  <span class="nx-rl-verdict-label">指标判定：{{ turn.reproRun.verdict }}</span>
-                  <span
-                    v-for="c in turn.reproRun.comparison"
-                    :key="c.metric"
-                    class="nx-rl-metric"
+
+                <template v-if="turn.reproRun.expanded">
+                  <!-- 阶段条：Preparing→Building→Running→Metric→Verifying→Completed -->
+                  <div class="nx-cs-stagebar" role="list" aria-label="执行阶段">
+                    <template v-for="(st, i) in reproStageRail(turn.reproRun)" :key="st.stage">
+                      <div v-if="i" class="nx-cs-stgline" :class="{ 'is-done': st.state === 'done' }" />
+                      <div class="nx-cs-stg" :class="`is-${st.state}`" role="listitem" :title="st.note || st.label">
+                        <span class="nx-cs-stgn">{{
+                          st.state === 'done' ? '✓' : st.state === 'skipped' ? '⊘' : st.state === 'failed' ? '✕' : i + 1
+                        }}</span>
+                        {{ st.label }}
+                      </div>
+                    </template>
+                  </div>
+                  <p v-if="reproStageNotes(turn.reproRun)" class="nx-rl-note">{{ reproStageNotes(turn.reproRun) }}</p>
+
+                  <!-- 步骤表：命令为服务端审核标签，只读、无编辑 / 无 stdin -->
+                  <div v-if="turn.reproRun.stages.length" class="nx-cs-sec">
+                    <div class="nx-cs-sech">
+                      <span>步骤</span>
+                      <span class="nx-cs-secn">命令为服务端审核标签，只读、无编辑 / 无 stdin</span>
+                    </div>
+                    <table class="nx-cs-table">
+                      <thead>
+                        <tr><th>命令</th><th>退出码</th><th>耗时</th><th>状态</th></tr>
+                      </thead>
+                      <tbody>
+                        <tr
+                          v-for="s in turn.reproRun.stages"
+                          :key="s.index"
+                          :class="{ 'is-cur': reproIsCurrentStep(turn.reproRun, s.index), 'is-bad': reproStepState(turn.reproRun, s) === 'err' }"
+                        >
+                          <td class="nx-cs-cmd">{{ s.command }}</td>
+                          <td class="nx-cs-mono">{{ s.exit_code ?? '—' }}</td>
+                          <td class="nx-cs-mono">{{ s.duration_s != null ? `${s.duration_s}s` : (reproIsCurrentStep(turn.reproRun, s.index) ? '…' : '—') }}</td>
+                          <td><span class="nx-cs-chip" :class="`is-${reproStepState(turn.reproRun, s)}`">{{ reproStepLabel(turn.reproRun, s) }}</span></td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <!-- 日志：运行中当前步骤增量（服务端已脱敏），终态为最后一步日志尾 -->
+                  <div v-if="reproLogLines(turn.reproRun)" class="nx-cs-sec">
+                    <div class="nx-cs-sech">
+                      <span>日志</span>
+                      <span class="nx-cs-secn">{{ reproLogSource(turn.reproRun) }} · 最近 20 行</span>
+                    </div>
+                    <pre class="nx-cs-log">{{ reproLogLines(turn.reproRun) }}</pre>
+                  </div>
+
+                  <p v-if="!turn.reproRun.stages.length && turn.reproRun.status === 'queued'" class="nx-rl-note">
+                    排队中，等待执行器开始…
+                  </p>
+                  <p v-if="turn.reproRun.status === 'cancelling'" class="nx-rl-note">取消已受理，等待进程回收确认…</p>
+                  <p v-if="turn.reproRun.status === 'cancelled'" class="nx-rl-note">作业已取消：当前步骤进程组已回收，已完成步骤的结果如实保留。</p>
+                  <p v-if="turn.reproRun.code && turn.reproRun.status !== 'cancelled'" class="nx-rl-note">
+                    失败语义：{{ turn.reproRun.code }}{{ turn.reproRun.detail ? ' — ' + turn.reproRun.detail : '' }}
+                  </p>
+                  <p v-if="turn.reproRun.pollExhausted" class="nx-rl-note">轮询已达上限，可刷新查看最新状态。</p>
+                  <!-- NX-E1：恢复 turn（换设备/刷新）成功态无本地报告时，手动补领。
+                       自动补会重复产物；手动一次幂等由用户控制。 -->
+                  <div
+                    v-if="turn.restoredRun && turn.reproRun.status === 'succeeded' && !turn.reproRun.verdict"
+                    class="nx-answer-actions"
                   >
-                    {{ c.metric }}：期望 {{ c.target }} ±{{ c.tolerance }}，实测
-                    {{ c.observed == null ? '未提取' : c.observed }} → {{ c.pass ? 'PASS' : 'FAIL' }}
-                  </span>
-                  <span class="nx-rl-note">PASS/FAIL 由确定性指标比较生成，非 LLM 判定</span>
-                </div>
-                <p v-if="turn.reproRun.reportError" class="nx-rl-note">{{ turn.reproRun.reportError }}</p>
+                    <SfxButton variant="secondary" size="sm" @click="claimRestoredReport(turn)">
+                      补领复现报告
+                    </SfxButton>
+                    <span class="nx-rl-note">该作业在别处完成，报告可能已在产物面板</span>
+                  </div>
+                  <div
+                    v-if="turn.reproRun.verdict"
+                    class="nx-rl-verdict"
+                    :class="turn.reproRun.verdict === 'PASS' ? 'is-pass' : 'is-fail'"
+                  >
+                    <span class="nx-rl-verdict-label">指标判定：{{ turn.reproRun.verdict }}</span>
+                    <span
+                      v-for="c in turn.reproRun.comparison"
+                      :key="c.metric"
+                      class="nx-rl-metric"
+                    >
+                      {{ c.metric }}：期望 {{ c.target }} ±{{ c.tolerance }}，实测
+                      {{ c.observed == null ? '未提取' : c.observed }} → {{ c.pass ? 'PASS' : 'FAIL' }}
+                    </span>
+                    <span class="nx-rl-note">PASS/FAIL 由确定性指标比较生成，非 LLM 判定</span>
+                  </div>
+                  <p v-if="turn.reproRun.reportError" class="nx-rl-note">{{ turn.reproRun.reportError }}</p>
+                </template>
               </div>
 
               <!-- Markdown 核心答复正文（节流渲染，禁止直接逐 token 调 renderContent） -->
@@ -4267,6 +4465,196 @@ const emptySuggestions = computed(() =>
   font-size: var(--caption-size);
   color: var(--text-secondary);
   margin-top: var(--space-1);
+}
+
+/* ── NX-E2/E3 实验控制台（设计板 2026-09-06 v1）：阶段条/步骤表/日志尾 ── */
+.nx-cs-head {
+  cursor: pointer;
+  user-select: none;
+  margin-bottom: 0;
+}
+
+.nx-repro-live.is-collapsed {
+  padding: var(--space-3) var(--space-4);
+}
+
+.nx-cs-spacer {
+  flex: 1;
+}
+
+.nx-cs-elapsed {
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-cs-toggle {
+  color: var(--text-secondary);
+  font-size: var(--caption-size);
+  flex-shrink: 0;
+}
+
+.nx-cs-stagebar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.nx-cs-stg {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface-3, var(--surface-2));
+  white-space: nowrap;
+}
+
+.nx-cs-stgn {
+  font-variant-numeric: tabular-nums;
+}
+
+.nx-cs-stg.is-done {
+  color: var(--success);
+}
+
+.nx-cs-stg.is-current {
+  color: var(--nexus-accent-strong);
+  background: var(--nexus-accent-soft);
+  border: 1px solid var(--nexus-accent-line);
+}
+
+.nx-cs-stg.is-skipped {
+  color: var(--text-secondary);
+  opacity: 0.65;
+}
+
+.nx-cs-stg.is-failed {
+  color: var(--danger, #c0392b);
+}
+
+.nx-cs-stg.is-pending {
+  opacity: 0.6;
+}
+
+.nx-cs-stgline {
+  flex: 0 0 14px;
+  height: 1px;
+  background: var(--border-secondary);
+}
+
+.nx-cs-stgline.is-done {
+  background: var(--success);
+}
+
+.nx-cs-sec {
+  margin-top: var(--space-3);
+}
+
+.nx-cs-sech {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--ui-sm-size, var(--caption-size));
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--space-1);
+}
+
+.nx-cs-secn {
+  font-weight: 400;
+  font-size: var(--caption-size);
+  color: var(--text-secondary);
+}
+
+.nx-cs-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--caption-size);
+}
+
+.nx-cs-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-secondary);
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.nx-cs-table td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-secondary);
+  color: var(--text-secondary);
+}
+
+.nx-cs-table tr.is-cur td {
+  color: var(--text-primary);
+  background: var(--nexus-accent-soft);
+}
+
+.nx-cs-table tr.is-bad td.nx-cs-cmd {
+  color: var(--danger, #c0392b);
+}
+
+.nx-cs-cmd {
+  font-family: var(--font-mono, monospace);
+  font-size: var(--caption-size);
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nx-cs-mono {
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.nx-cs-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.nx-cs-chip.is-ok {
+  color: var(--success);
+}
+
+.nx-cs-chip.is-err {
+  color: var(--danger, #c0392b);
+}
+
+.nx-cs-chip.is-run {
+  color: var(--nexus-accent-strong);
+}
+
+.nx-cs-chip.is-pend {
+  opacity: 0.65;
+}
+
+.nx-cs-log {
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm, var(--radius-md));
+  background: var(--surface-3, var(--surface-2));
+  color: var(--text-secondary);
+  font-family: var(--font-mono, monospace);
+  font-size: var(--caption-size);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
 .nx-rl-verdict {

@@ -12,6 +12,8 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import tarfile
+import time
 from pathlib import Path
 
 import httpx
@@ -42,7 +44,7 @@ def _stub_clone(seed: Path):
     """
     original = worker._run_step
 
-    async def fake_run_step(command: str, cwd: Path) -> dict:
+    async def fake_run_step(command: str, cwd: Path, live_log_slot=None) -> dict:
         if command.startswith("git clone"):
             target = Path(command.split()[-1])
             shutil.copytree(seed, cwd / target.name)
@@ -188,7 +190,7 @@ async def test_seed_hit_skips_clone_and_runs(tmp_path: Path, monkeypatch: pytest
     clone_calls = {"n": 0}
     original = worker._run_step
 
-    async def spy_run_step(command: str, cwd: Path) -> dict:
+    async def spy_run_step(command: str, cwd: Path, live_log_slot=None) -> dict:
         if command.startswith("git clone"):
             clone_calls["n"] += 1
         return await original(command, cwd)
@@ -316,3 +318,170 @@ async def test_token_required_when_configured(tmp_path: Path, monkeypatch: pytes
     finally:
         worker._run_step = original
     assert record["status"] == "succeeded"
+
+
+# ---------------------------------------------------------------------------
+# NX-E2/E3：Stage 事件、增量日志、cancel（幂等 / 竞争终态 / 进程组回收）
+# ---------------------------------------------------------------------------
+
+
+def _seed_tar(tmp_path: Path, name: str = "testpreset") -> Path:
+    seeds = tmp_path / f"seeds-{name}"
+    seeds.mkdir()
+    repo = tmp_path / f"seedrepo-{name}"
+    repo.mkdir()
+    (repo / "LICENSE").write_text("MIT License")
+    with tarfile.open(seeds / f"{name}.tar.gz", "w:gz") as tar:
+        tar.add(repo, arcname="repo")
+    return seeds
+
+
+async def _wait_status(job_id: str, want: set[str], timeout: float = 25.0) -> dict:
+    deadline = time.monotonic() + timeout
+    last: dict = {}
+    for _ in range(int(timeout / 0.1)):
+        async with _client() as client:
+            response = await client.get(f"/jobs/{job_id}")
+        last = response.json()
+        if last.get("status") in want:
+            return last
+        await asyncio.sleep(0.1)
+    raise AssertionError(f"timeout waiting for {want}; last={last}")
+
+
+async def test_stage_events_success_sequence(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """成功路径 Stage 序列由真实边界触发：Preparing→Building(skipped)→Running→
+    Metric→Verifying(not_applicable)→Completed，seq 单调且不虚构阶段。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["echo hello"],
+            })
+            job_id = response.json()["job_id"]
+            record = await _wait_status(job_id, {"succeeded"})
+
+    stages = [(e["stage"], e["status"]) for e in record["stage_events"]]
+    assert stages == [
+        ("preparing", "started"),
+        ("preparing", "done"),
+        ("building", "skipped"),
+        ("running", "started"),
+        ("running", "done"),
+        ("metric", "started"),
+        ("metric", "done"),
+        ("verifying", "not_applicable"),
+        ("completed", "done"),
+    ]
+    seqs = [e["seq"] for e in record["stage_events"]]
+    assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
+    verifying_note = next(
+        e["note"] for e in record["stage_events"] if e["stage"] == "verifying"
+    )
+    assert "NX-P2" in verifying_note
+
+
+async def test_incremental_live_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """运行中即可经 live_log_tail 观察当前步骤输出（增量），终态含全部输出。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["echo line1 && sleep 4 && echo line2"],
+            })
+            job_id = response.json()["job_id"]
+            await _wait_status(job_id, {"running"})
+
+            tail = ""
+            deadline = time.monotonic() + 12.0
+            while time.monotonic() < deadline:
+                async with _client() as c:
+                    tail = (await c.get(f"/jobs/{job_id}")).json().get("live_log_tail") or ""
+                if "line1" in tail:
+                    break
+                await asyncio.sleep(0.1)
+            assert "line1" in tail, f"运行中未见增量日志: {tail!r}"
+            assert "line2" not in tail, "步骤未结束不应看到后续输出"
+
+            record = await _wait_status(job_id, {"succeeded"})
+    final_tail = record["steps_result"][0]["log_tail"]
+    assert "line1" in final_tail and "line2" in final_tail
+
+
+async def test_cancel_running_then_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """运行中取消：进程组被回收 → cancelled；重复取消幂等返回既有终态。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["echo started && sleep 30", "echo never"],
+            })
+            job_id = response.json()["job_id"]
+            await _wait_status(job_id, {"running"})
+            await asyncio.sleep(0.5)  # 让步骤子进程真正起来
+
+            cancel_response = await client.post(f"/jobs/{job_id}/cancel")
+            assert cancel_response.status_code == 200
+            assert cancel_response.json()["status"] == "cancelling"
+
+            record = await _wait_status(job_id, {"cancelled"}, timeout=15)
+            assert record["code"] == "CANCELLED"
+            assert record["steps_result"], "已完成步骤的结果应如实保留"
+            assert record["steps_result"][0]["exit_code"] != 0
+
+            again = await client.post(f"/jobs/{job_id}/cancel")
+            assert again.status_code == 200
+            assert again.json()["status"] == "cancelled"
+            assert again.json()["already_terminal"] is True
+
+
+async def test_cancel_completes_with_real_terminal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """竞争：取消与瞬时完成赛跑——cancelled 或 cancel_late succeeded 都合法，
+    但不允许卡在 cancelling，也不允许 succeeded 冒充 cancelled。"""
+    monkeypatch.setattr(worker, "SEEDS_DIR", _seed_tar(tmp_path))
+    with respx.mock:
+        respx.get("https://api.github.com/repos/a/mit/license").mock(
+            return_value=httpx.Response(200, json={"license": {"spdx_id": "MIT"}})
+        )
+        async with _client() as client:
+            response = await client.post("/jobs", json={
+                "preset_id": "testpreset", "repo_url": "https://github.com/a/mit",
+                "repo_license": "MIT", "steps": ["echo fast"],
+            })
+            job_id = response.json()["job_id"]
+            await client.post(f"/jobs/{job_id}/cancel")
+            record = await _wait_status(job_id, {"cancelled", "succeeded"}, timeout=15)
+
+    if record["status"] == "succeeded":
+        assert record.get("cancel_late") is True
+        stages = [(e["stage"], e["status"]) for e in record["stage_events"]]
+        assert ("completed", "done") in stages
+    else:
+        assert record["code"] == "CANCELLED"
+
+
+async def test_cancel_unknown_job_404():
+    async with _client() as client:
+        response = await client.post("/jobs/nonexistent/cancel")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "JOB_NOT_FOUND"
+
+
+async def test_health_reports_e2e3_capabilities():
+    async with _client() as client:
+        body = (await client.get("/health")).json()
+    assert body["stage_events_enabled"] is True
+    assert body["cancel_enabled"] is True
+    assert body["step_log_max_chars"] > 0

@@ -82,7 +82,8 @@ def test_job_status_requires_ownership_even_without_worker(
 def test_job_status_proxies_trimmed_record(
     client, session, nexus_student_token, student_user, internal_configured, monkeypatch
 ):
-    """已登记 job：发起人可查，返回裁剪记录（日志摘要 ≤300 字符）。"""
+    """已登记 job：发起人可查，返回裁剪记录（NX-E2：日志 ≤2000 字符＋控制符
+    清洗＋stage_events/current_step/live_log_tail 透传）。"""
     _skip_if_sqlite(session)
     monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "http://127.0.0.1:8400")
     monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_TOKEN", "wtok")
@@ -92,19 +93,25 @@ def test_job_status_proxies_trimmed_record(
     )
 
     seen: dict = {}
+    dirty_log = "x" * 2000 + "\x1b[31mANSI\x07\x00"
 
     def factory(**kwargs):
         def handler(request) -> Response:
             seen["path"] = request.url.path
             seen["auth"] = request.headers.get("Authorization")
-            big_log = "x" * 2000
             return Response(200, json={
                 "job_id": job_id,
-                "status": "succeeded",
+                "status": "running",
                 "preset_id": "nanogpt",
                 "license_checks": {"github_spdx": "MIT"},
-                "steps_result": [{"command": "python train.py ...", "exit_code": 0, "timed_out": False, "duration_s": 170.9, "log_tail": big_log}],
+                "steps_result": [{"command": "python train.py ...", "exit_code": 0, "timed_out": False, "duration_s": 170.9, "log_tail": dirty_log}],
                 "artifacts": [],
+                "stage_events": [
+                    {"seq": 1, "stage": "preparing", "status": "started", "time": 1.0},
+                    {"seq": 2, "stage": "running", "status": "started", "time": 2.0},
+                ],
+                "current_step": 1,
+                "live_log_tail": dirty_log,
             })
         import httpx as _httpx
         kwargs["transport"] = _httpx.MockTransport(handler)
@@ -115,9 +122,88 @@ def test_job_status_proxies_trimmed_record(
     assert response.status_code == 200
     body = response.json()
     assert body["job_id"] == job_id
-    assert len(body["steps_result"][0]["log_tail"]) <= 300
+    assert len(body["steps_result"][0]["log_tail"]) <= 2000
+    assert "\x1b" not in body["steps_result"][0]["log_tail"]
+    assert "\x00" not in body["steps_result"][0]["log_tail"]
+    assert body["current_step"] == 1
+    assert [e["stage"] for e in body["stage_events"]] == ["preparing", "running"]
+    assert len(body["live_log_tail"]) <= 2000
     assert seen["path"] == f"/jobs/{job_id}"
     assert seen["auth"] == "Bearer wtok"
+
+
+def test_cancel_requires_ownership_before_worker(
+    client, session, nexus_student_token, internal_configured
+):
+    """NX-E3：归属表无记录 → 404，先于 Worker 配置检查（防枚举优先）。"""
+    _skip_if_sqlite(session)
+    response = client.post(
+        "/api/v1/nexus/repro/jobs/nonexistent0/cancel",
+        headers=_auth(nexus_student_token),
+    )
+    assert response.status_code == 404
+
+
+def test_cancel_proxies_with_auth_and_state(
+    client, session, nexus_student_token, student_user, internal_configured, monkeypatch
+):
+    """NX-E3：发起人鉴权后转发 Worker cancel；cancelling/already_terminal 透传。"""
+    _skip_if_sqlite(session)
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "http://127.0.0.1:8400")
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_TOKEN", "wtok")
+    job_id = "cancel11job1"
+    nexus_repro_job_service.record_job(
+        session, job_id=job_id, user_id=str(student_user.id), preset_id="nanogpt"
+    )
+
+    seen: dict = {}
+
+    def factory(**kwargs):
+        def handler(request) -> Response:
+            seen["path"] = request.url.path
+            seen["method"] = request.method
+            seen["auth"] = request.headers.get("Authorization")
+            return Response(200, json={"job_id": job_id, "status": "cancelling"})
+        import httpx as _httpx
+        kwargs["transport"] = _httpx.MockTransport(handler)
+        return _httpx.AsyncClient(**kwargs)
+
+    monkeypatch.setattr(nexus_proxy.httpx, "AsyncClient", factory)
+    response = client.post(f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token))
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"job_id": job_id, "status": "cancelling", "already_terminal": False}
+    assert seen["method"] == "POST"
+    assert seen["path"] == f"/jobs/{job_id}/cancel"
+    assert seen["auth"] == "Bearer wtok"
+
+
+def test_cancel_forbids_non_owner(
+    client, session, nexus_student_token, student_user, internal_configured
+):
+    _skip_if_sqlite(session)
+    job_id = "owner99owner2"
+    nexus_repro_job_service.record_job(session, job_id=job_id, user_id="999999")
+    response = client.post(
+        f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token)
+    )
+    assert response.status_code == 404
+
+
+def test_cancel_fails_closed_without_worker(
+    client, session, nexus_student_token, student_user, internal_configured, monkeypatch
+):
+    _skip_if_sqlite(session)
+    monkeypatch.setattr(nexus_proxy.settings, "REPRO_WORKER_URL", "")
+    job_id = "abc123def456"
+    nexus_repro_job_service.record_job(
+        session, job_id=job_id, user_id=str(student_user.id), preset_id="nanogpt"
+    )
+    response = client.post(
+        f"/api/v1/nexus/repro/jobs/{job_id}/cancel", headers=_auth(nexus_student_token)
+    )
+    assert response.status_code == 503
+    assert response.json()["detail"] == "REPRO_WORKER_NOT_CONFIGURED"
 
 
 def test_job_status_forbids_non_owner(

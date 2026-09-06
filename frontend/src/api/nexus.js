@@ -88,6 +88,17 @@ export function executeApprovedRepro(approvalId, sessionId = 'default') {
 }
 
 /**
+ * 取消复现作业（NX-E3）：发起人鉴权后转发 Worker。幂等；与自然完成竞争时
+ * Worker 保持真实终态。cancelled 之前状态为 cancelling（回收中）。
+ */
+export function cancelNexusReproJob(jobId) {
+  return request.post(`/nexus/repro/jobs/${encodeURIComponent(jobId)}/cancel`, {}, {
+    allowFlatResponse: true,
+    skipErrorToast: true,
+  })
+}
+
+/**
  * 上传附件（NX-A1，multipart）：校验→配额→解析→ready/partial/failed 同步返回。
  * 八格式：pdf/docx/jpg/jpeg/png/xlsx/pptx/ppt/doc。DOC/PPT 无 LibreOffice
  * 时如实 failed，不抛错；调用方凭 status 决定展示/删除/换格式。

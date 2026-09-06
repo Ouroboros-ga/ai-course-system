@@ -11,13 +11,25 @@
 - 回传物最小化：只回传状态、每步日志尾部与 artifact 清单（文件名+大小），
   不回传任意文件；工作目录任务结束后删除。
 - 可选 Bearer 认证（``REPRO_WORKER_TOKEN``）：配置后所有 /jobs 请求必须携带。
+
+NX-E2/E3（2026-09-06）：
+- Stage 事件：Preparing/Building/Running/Metric/Verifying/Completed 由真实
+  执行边界触发（序号单调递增），preset 无独立构建阶段时 Building 如实
+  skipped、无干净 B 复验时 Verifying 如实 not_applicable，不伪造阶段。
+- 增量日志：每步 stdout 逐行读入有界环形缓冲（末 ``STEP_LOG_MAX_CHARS``
+  字符），运行中即可经 ``live_log_tail`` 观察，不必等步骤结束。
+- Cancel：``POST /jobs/{job_id}/cancel`` 幂等；子进程 ``start_new_session``
+  成组，取消/超时按进程组 SIGKILL；自然完成竞争时保持真实终态（晚到取消
+  不把已完成的作业改成 cancelled）。``_jobs`` 仍为内存（持久化对账属 NX-E4）。
 """
 from __future__ import annotations
 
 import asyncio
+import collections
 import os
 import re
 import shutil
+import signal
 import tarfile
 import time
 import uuid
@@ -32,7 +44,7 @@ from pydantic import BaseModel, Field
 # 配置（环境变量注入；容器内不落任何生产凭据）
 # ---------------------------------------------------------------------------
 
-WORKER_VERSION = "0.1.0"
+WORKER_VERSION = "0.2.0"
 
 
 def _env(name: str, default: str = "") -> str:
@@ -51,6 +63,8 @@ GITHUB_TOKEN = _env("REPRO_WORKER_GITHUB_TOKEN")
 API_TOKEN = _env("REPRO_WORKER_TOKEN")
 LOG_TAIL_CHARS = 4000
 MAX_STEPS = 10
+# NX-E2：每步增量日志环形缓冲上限（字符）。终态 log_tail 仍受 LOG_TAIL_CHARS 约束。
+STEP_LOG_MAX_CHARS = int(_env("REPRO_WORKER_STEP_LOG_MAX_CHARS", "8000"))
 
 # 允许演示/复现用途的开源 License（SPDX）。越线（GPL/AGPL/CC-BY-NC/无 License）
 # 一律拒绝——技术决策补丁 §23 红线。
@@ -232,37 +246,137 @@ def _replace_own_clone_step(step: str, repo_url: str) -> str:
     return f"true && cd {match.group(1)}" if match else "true"
 
 
-async def _run_step(command: str, cwd: Path) -> dict[str, Any]:
-    """在受限子进程中执行单步：超时 SIGKILL，输出截尾。"""
+class CancelledJobError(Exception):
+    """NX-E3：用户取消——终止当前步骤进程组并把作业置为 cancelled。"""
+
+
+# Stage 名固定为设计板/v1.3 C4 六段；preset 无独立构建阶段、无干净 B 复验时
+# 分别如实 skipped / not_applicable，绝不虚构 Building/Verifying 进度。
+STAGE_NAMES = ("preparing", "building", "running", "metric", "verifying", "completed")
+
+
+def _emit_stage(record: dict[str, Any], stage: str, status: str, note: str | None = None) -> None:
+    if stage not in STAGE_NAMES:
+        raise ValueError(f"unknown stage: {stage}")
+    record["stage_seq"] = int(record.get("stage_seq", 0)) + 1
+    event: dict[str, Any] = {
+        "seq": record["stage_seq"],
+        "stage": stage,
+        "status": status,
+        "time": time.time(),
+    }
+    if note:
+        event["note"] = str(note)[:200]
+    record.setdefault("stage_events", []).append(event)
+
+
+def _kill_group(proc: asyncio.subprocess.Process) -> None:
+    """按进程组 SIGKILL（start_new_session 使 pgid=pid）；组不存在则忽略。
+
+    POSIX（生产容器）走 killpg 整组回收；非 POSIX（本地开发/测试）退化为
+    直杀主进程——取消语义在两种平台都成立，只是子进程树回收精度不同。
+    """
+    if hasattr(os, "killpg") and hasattr(os, "getpgid"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            return
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+    try:
+        proc.kill()
+    except ProcessLookupError:
+        pass
+
+
+# start_new_session 为 POSIX-only；Windows 开发环境直接省略（_kill_group 已退化）。
+_SUBPROCESS_GROUP_KWARGS = {"start_new_session": True} if os.name == "posix" else {}
+
+
+async def _run_step(
+    command: str,
+    cwd: Path,
+    live_log_slot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """在受限子进程中执行单步：超时按进程组 SIGKILL，输出截尾。
+
+    NX-E2：子进程 ``start_new_session`` 成组，stdout 逐行泵入有界环形缓冲，
+    运行中即可经 ``live_log_slot["live_log_tail"]`` 增量观察。取消由
+    ``/jobs/{id}/cancel`` 直接对活动进程组 SIGKILL，本函数只负责如实回传
+    （被杀步骤 exit=-9/None），取消语义由调用方结合 cancel 标记裁决。
+    """
     started = time.monotonic()
+    ring: collections.deque[str] = collections.deque()
+    ring_chars = 0
+
+    def _append(chunk: str) -> None:
+        nonlocal ring_chars
+        ring.append(chunk)
+        ring_chars += len(chunk)
+        while ring_chars > STEP_LOG_MAX_CHARS and ring:
+            ring_chars -= len(ring.popleft())
+
+    def _snapshot() -> str:
+        return "".join(ring)[-STEP_LOG_MAX_CHARS:]
+
+    if live_log_slot is not None:
+        live_log_slot["live_log_tail"] = ""
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "bash", "-lc", command,
             cwd=str(cwd),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            **_SUBPROCESS_GROUP_KWARGS,
         )
+        if live_log_slot is not None:
+            # NX-E3：活动进程句柄挂 record 私有键（下划线前缀，job_status 过滤不外泄），
+            # cancel 端点据此对进程组 SIGKILL；步骤结束后残值无害（returncode 非 None）。
+            live_log_slot["_proc"] = proc
+
+        async def _pump() -> None:
+            assert proc.stdout is not None
+            while True:
+                raw = await proc.stdout.readline()
+                if not raw:
+                    break
+                _append(raw.decode(errors="replace"))
+                if live_log_slot is not None:
+                    live_log_slot["live_log_tail"] = _snapshot()
+
+        pump = asyncio.create_task(_pump())
+        timed_out = False
         try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=STEP_TIMEOUT_S)
+            await asyncio.wait_for(proc.wait(), timeout=STEP_TIMEOUT_S)
         except asyncio.TimeoutError:
-            proc.kill()
+            timed_out = True
+            _kill_group(proc)
             await proc.wait()
+        except asyncio.CancelledError:
+            # 任务被取消（进程重启/停机）时必须按组杀掉子进程，否则 Proactor
+            # 循环关闭会因存活管道挂死，未知仓库代码也会脱离控制继续运行。
+            _kill_group(proc)
+            pump.cancel()
+            raise
+        # 进程已退出；给泵一小段时间排干管道尾部（readline 到 EOF 自然返回）。
+        try:
+            await asyncio.wait_for(pump, timeout=5.0)
+        except (asyncio.TimeoutError, asyncio.CancelledError):
+            pump.cancel()
+
+        log_text = _snapshot()
+        if timed_out:
             return {
                 "command": command, "exit_code": None, "timed_out": True,
                 "duration_s": round(time.monotonic() - started, 1),
-                "log_tail": _tail(f"TIMEOUT after {STEP_TIMEOUT_S}s (SIGKILL)"),
+                "log_tail": _tail(f"TIMEOUT after {STEP_TIMEOUT_S}s (SIGKILL)\n{log_text}"),
             }
-        except asyncio.CancelledError:
-            # 任务被取消（进程重启/停机）时必须杀掉子进程，否则 Proactor 循环
-            # 关闭会因存活管道挂死，未知仓库代码也会脱离控制继续运行。
-            proc.kill()
-            raise
         return {
             "command": command,
             "exit_code": proc.returncode,
             "timed_out": False,
             "duration_s": round(time.monotonic() - started, 1),
-            "log_tail": _tail(stdout.decode(errors="replace")),
+            "log_tail": _tail(log_text),
         }
     except Exception as error:  # noqa: BLE001 - 执行器故障如实上报
         return {
@@ -293,13 +407,28 @@ def _collect_artifacts(workspace: Path) -> list[dict[str, Any]]:
     return artifacts
 
 
+def _finalize_cancelled(record: dict[str, Any]) -> None:
+    """NX-E3 终态：用户取消。已完成的步骤结果如实保留。"""
+    record.update({
+        "status": "cancelled",
+        "code": "CANCELLED",
+        "detail": "用户取消（当前步骤进程组已回收）",
+        "finished_at": time.time(),
+    })
+
+
 async def _execute_job(job_id: str, request: JobRequest) -> None:
     record = _jobs[job_id]
     workspace = WORKSPACE_ROOT / job_id
+    if record.get("cancel_requested"):
+        # 排队期被取消：尚未领取任何资源，直接落终态。
+        _finalize_cancelled(record)
+        return
     record["status"] = "running"
     record["started_at"] = time.time()
     deadline = time.monotonic() + TOTAL_TIMEOUT_S
     step_results: list[dict[str, Any]] = []
+    _emit_stage(record, "preparing", "started")
     try:
         WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
         workspace.mkdir(parents=True, exist_ok=True)
@@ -318,7 +447,8 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
         else:
             record["seed_used"] = False
             fetch = await _run_step(
-                f"git clone --depth 1 {request.repo_url} .license-check", workspace
+                f"git clone --depth 1 {request.repo_url} .license-check", workspace,
+                live_log_slot=record,
             )
             check_root = workspace / ".license-check"
             if fetch["exit_code"] != 0:
@@ -337,6 +467,7 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
         })
         shutil.rmtree(workspace / ".license-check", ignore_errors=True)
         if not allowed:
+            _emit_stage(record, "preparing", "failed", note=reason)
             record.update({
                 "status": "rejected",
                 "code": "LICENSE_VIOLATION",
@@ -344,6 +475,11 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
                 "finished_at": time.time(),
             })
             return
+        _emit_stage(record, "preparing", "done")
+        # preset 执行器没有独立构建阶段（依赖安装就是普通步骤），如实 skipped。
+        _emit_stage(record, "building", "skipped",
+                    note="preset 无独立构建阶段，依赖安装随步骤执行")
+        _emit_stage(record, "running", "started")
 
         # 2) 逐步执行（bash -lc；维护跨步 cd 语义）。
         #    种子命中时，首条"git clone <本仓库>"步已由种子替代——替换为
@@ -355,6 +491,8 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             ]
         current_rel = ""
         for index, command in enumerate(steps):
+            if record.get("cancel_requested"):
+                raise CancelledJobError(f"cancelled before step {index + 1}")
             if time.monotonic() > deadline:
                 step_results.append({
                     "command": command, "exit_code": None, "timed_out": True,
@@ -368,17 +506,32 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             step_dir = workspace / current_rel if current_rel else workspace
             # 子进程 cwd 直接设为目标目录（跨步 cd 语义由 current_rel 维护），
             # 不经 shell cd——避免 Windows 反斜杠路径在 bash 内不可用的问题。
-            result = await _run_step(command, step_dir)
+            record["current_step"] = index + 1
+            result = await _run_step(command, step_dir, live_log_slot=record)
             step_results.append(result)
+            record["steps_result"] = step_results
             match = _CD_PATTERN.search(command)
             if match and match.group(1) not in (".", ".."):
                 current_rel = (
                     f"{current_rel}/{match.group(1)}" if current_rel else match.group(1)
                 ).strip("./")
+            if record.get("cancel_requested"):
+                if result["exit_code"] != 0 or result["timed_out"]:
+                    # 取消落在执行中的步骤上（SIGKILL 生效）→ cancelled。
+                    raise CancelledJobError(f"cancelled during step {index + 1}")
+                # 步骤自身恰好完成：保留结果，交由下一轮前置检查/收尾裁决。
+                continue
             if result["exit_code"] != 0:
                 raise RuntimeError(f"step {index + 1} failed (exit={result['exit_code']})")
             if result["timed_out"]:
                 raise TimeoutError(f"step {index + 1} timeout")
+
+        if record.get("cancel_requested"):
+            # 取消晚到：全部步骤已完成，保持自然终态（真实优先于取消意图），
+            # cancel_late 仅供验收取证；Stage 照常收尾——工作确实全部发生了。
+            record["cancel_late"] = True
+        _emit_stage(record, "running", "done")
+        _emit_stage(record, "metric", "started")
 
         record.update({
             "status": "succeeded",
@@ -386,6 +539,15 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             "artifacts": _collect_artifacts(workspace),
             "finished_at": time.time(),
         })
+        _emit_stage(record, "metric", "done")
+        # A/B 干净环境复验属 NX-P2；preset 单环境如实 not_applicable。
+        _emit_stage(record, "verifying", "not_applicable",
+                    note="单环境 preset 运行，无干净 B 复验（A/B 属 NX-P2）")
+        _emit_stage(record, "completed", "done")
+    except CancelledJobError as error:
+        _emit_stage(record, "running", "failed", note=str(error))
+        _finalize_cancelled(record)
+        record["steps_result"] = step_results
     except TimeoutError as error:
         record.update({
             "status": "failed", "code": "REPRO_TIMEOUT", "detail": str(error),
@@ -393,12 +555,20 @@ async def _execute_job(job_id: str, request: JobRequest) -> None:
             "finished_at": time.time(),
         })
     except Exception as error:  # noqa: BLE001 - 失败分类如实回传
-        record.update({
-            "status": "failed", "code": "REPRO_FAILED", "detail": str(error)[:500],
-            "steps_result": step_results,
-            "finished_at": time.time(),
-        })
+        if record.get("cancel_requested"):
+            # 取消引发的连带失败（如取仓库步骤被 SIGKILL）：如实落 cancelled，
+            # 不冒充 REPRO_FAILED；Stage 列表停在真实中断处（如 preparing）。
+            _finalize_cancelled(record)
+            record["steps_result"] = step_results
+        else:
+            record.update({
+                "status": "failed", "code": "REPRO_FAILED", "detail": str(error)[:500],
+                "steps_result": step_results,
+                "finished_at": time.time(),
+            })
     finally:
+        record.pop("live_log_tail", None)
+        record.pop("current_step", None)
         # 工作目录 ephemeral：结构化结果已入 record，不保留仓库内容。
         shutil.rmtree(workspace, ignore_errors=True)
 
@@ -420,6 +590,9 @@ async def health() -> dict[str, Any]:
         "disk_quota_mb": DISK_QUOTA_BYTES // (1024 * 1024),
         "allowed_licenses": sorted(ALLOWED_LICENSES),
         "active_jobs": sum(1 for job in _jobs.values() if job["status"] == "running"),
+        "stage_events_enabled": True,
+        "cancel_enabled": True,
+        "step_log_max_chars": STEP_LOG_MAX_CHARS,
     }
 
 
@@ -474,7 +647,34 @@ async def job_status(job_id: str) -> dict[str, Any]:
     record = _jobs.get(job_id)
     if record is None:
         raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
-    return record
+    # 下划线前缀为进程内部状态（如 _proc 句柄），不属于对外契约。
+    return {key: value for key, value in record.items() if not key.startswith("_")}
+
+
+@app.post("/jobs/{job_id}/cancel", dependencies=[Depends(_require_token)])
+async def cancel_job(job_id: str) -> dict[str, Any]:
+    """NX-E3：取消作业。幂等；与自然完成竞争时保持真实终态。
+
+    - queued/cancelling → 置 cancel_requested，执行器在下一个边界（步骤前置
+      检查/入口检查）收尾；正在执行的步骤由本端点直接对进程组 SIGKILL。
+    - 已终态（succeeded/failed/rejected/cancelled）→ 幂等返回现有状态，
+      不报错、不改动。
+    - 回收确认（步骤进程退出、执行器落 cancelled）之前状态为 cancelling，
+      前端据此显示"取消中"，不以本端点返回即宣称已取消。
+    """
+    record = _jobs.get(job_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="JOB_NOT_FOUND")
+    status_now = record.get("status")
+    if status_now in ("succeeded", "failed", "rejected", "cancelled"):
+        return {"job_id": job_id, "status": status_now, "already_terminal": True}
+    record["cancel_requested"] = True
+    record["status"] = "cancelling"
+    proc = record.get("_proc")
+    if proc is not None and proc.returncode is None:
+        _kill_group(proc)
+        record["cancel_landed"] = True
+    return {"job_id": job_id, "status": "cancelling"}
 
 
 if __name__ == "__main__":  # pragma: no cover
