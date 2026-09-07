@@ -200,9 +200,7 @@
   `fake-demo`/`doubao` 页面状态与正式 Provider fail-closed 规则。
 
 - 课程 87 的浏览器功能回归已有 2026-08-10 记录；后续入口是有头目标设备连续 10 分钟性能验收，以及每次都需教师重新授权的受控真实 TTS POC。
-- `phase1/阶段8_附加_教师数字人资产中心.md`：后续教师授权资产扩展；当前不是首版发布前置。
-- `phase1/阶段8_附加_DH_live浏览器实时渲染PoC验证报告.md`：DH_live 浏览器本地实时渲染与素材预处理的独立 PoC 实测记录（2026-08-06）；不改变主链，作为 M4 引擎接入评估依据。
-- `backend/docs/数字人合成api.md`、`backend/docs/video_create.md`、`docs/refactor/R1D-DuixAvatar*`、`docs/refactor/R2B数字人与PPT任务迁移报告.md`：已废弃/仅历史追溯，不得作为当前数字人路线或完成度依据。
+- `backend/docs/video_create.md`：已废弃/仅历史追溯，不得作为当前视频生成路线或完成度依据（数字人路线相关附件与报告已于 2026-09-02 全栈清理中删除，见下节）。
 
 ## 已删除的过期活动文档
 
@@ -215,6 +213,7 @@
 - `docs/创新点建议与PPT呈现结构.md`、`docs/平台技术亮点与竞争优势说明.md`：旧宣传/呈现材料，结论需按代码复核（2026-08-20 删除）。
 - `docs/文档状态审查清单.md`、`docs/CODING_AGENT.md`、`docs/README.md`：过时入口/说明（2026-08-20 删除）。
 - `docs/赛题差距分析与重构建议.md`：2026-06-21 旧差距分析，结论已被后续开发推翻，顶部已标注废弃后删除（2026-08-20 删除）。
+- `docs/phase1/阶段8_附加_教师数字人资产中心.md`、`docs/phase1/阶段8_附加_DH_live浏览器实时渲染PoC验证报告.md`、`docs/refactor/R1D-DuixAvatar接入报告.md`、`docs/refactor/R1D-DuixAvatar部署验证清单.md`、`docs/refactor/R2B数字人与PPT任务迁移报告.md`、`backend/docs/数字人合成api.md`：数字人（avatar）功能已全栈下线，文档随代码清理删除（2026-09-02）。
 
 历史归档材料中的旧链接不再维护；它们只反映当时的文本快照。需要追溯时使用 Git 历史。
 

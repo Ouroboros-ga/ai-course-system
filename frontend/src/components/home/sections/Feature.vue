@@ -4,7 +4,6 @@ import {
   FileText,
   MessageCircle,
   Network,
-  Video,
   TrendingUp,
   Brain,
   Heart,
@@ -26,11 +25,6 @@ const features = [
     icon: Network,
     title: '知识图谱',
     desc: '自动构建学科知识网络，可视化呈现知识点关联。',
-  },
-  {
-    icon: Video,
-    title: '数字人视频',
-    desc: 'AI 数字人逐页讲解课件，打造沉浸式学习体验。',
   },
   {
     icon: TrendingUp,

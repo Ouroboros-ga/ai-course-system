@@ -174,10 +174,6 @@ class Settings(BaseSettings):
     # on a learner request and a failed build never replaces the active bundle.
     KNOWLEDGE_BUNDLE_ENABLED: bool = True
     GRAPHRAG_ENABLED: bool = False
-    # 数字人总开关（XH-202620 决策：展示效果不佳，正式关闭只保留 TTS + PPT）。
-    # 关闭后媒体发布不签发 avatar manifest / cue（走兼容模式：音频 + PPT + 字幕），
-    # 教师端不再产生数字人资产。历史不可变 release 数据与授权记录保留，不做破坏性删除。
-    MEDIA_AVATAR_ENABLED: bool = False
     # XH-202620：图候选提取的"学科知识库名称锚定"对齐。开启后，提取出的候选
     # 若未命中学科知识库（knowledge_data/）标准概念，会被分流为 needs_review
     # 强制人工审查（不再默认 proposed）；命中则保持 proposed。
@@ -275,16 +271,6 @@ class Settings(BaseSettings):
     # 火山引擎声音复刻配置（豆包语音声音复刻API）
     VOLCENGINE_VOICE_CLONE_API_KEY: str = ""  # x-api-key，用于声音复刻合成
     VOLCENGINE_VOICE_CLONE_MODEL_TYPE: int = 4  # 1=ICL1.0, 2=DiT标准, 3=DiT还原, 4=ICL2.0(默认)
-
-    # --------------------------
-    # 数字人视频生成API配置（Gradio）
-    # --------------------------
-    DIGITAL_HUMAN_API_URL: str = "http://localhost:7860/"  # 数字人Gradio服务地址
-    DIGITAL_HUMAN_PROVIDER: str = "digital_human"  # digital_human | duix
-    DUIX_BASE_URL: str = "http://127.0.0.1:8383"
-    DIGITAL_HUMAN_MIN_RESOLUTION: int = 2  # 原比例缩小倍数
-    DIGITAL_HUMAN_IF_RES: bool = False  # 是否强制缩小分辨率
-    DIGITAL_HUMAN_STEPS: int = 4  # 处理批次，越大越快但可能爆显存
 
     # --------------------------
     # 安全白名单
@@ -419,26 +405,6 @@ class Settings(BaseSettings):
     MEDIA_BATCH_MAX_NODES: int = 20
     MEDIA_BATCH_MAX_BILLABLE_CHARS: int = 50_000
     MEDIA_TTS_MAX_CONCURRENT_PER_PROVIDER: int = 2
-
-    # --------------------------
-    # 阶段8 M5 数字人 Provider 开关与健康检查
-    # --------------------------
-    STAGE8_DH_PROVIDER: str = "fake"
-    DH_PROVIDER_FALLBACK_ON_FAILURE: bool = True
-    DH_HEALTH_CHECK_INTERVAL_S: int = 60
-
-    # --------------------------
-    # 阶段8 M4 DH_live_mini 引擎配置
-    # DH_live 离线视频合成在 Windows 上更完整；资产预处理由独立 Windows Worker 完成
-    # 自动化测试不调用真实引擎，必须通过环境变量显式启用
-    # --------------------------
-    DHLIVE_ENGINE_BINARY: str = ""           # 引擎可执行文件绝对路径；空表示未配置
-    DHLIVE_WORKER_HOST: str = "127.0.0.1"    # 独立 Worker 监听地址
-    DHLIVE_WORKER_PORT: int = 0              # 0 表示未启用 Worker；非零则通过 HTTP 调用
-    DHLIVE_WORKER_TIMEOUT_S: int = 120       # 单次预处理超时
-    DHLIVE_DEFAULT_FPS: int = 25             # 默认帧率，必须以实际测试报告为准
-    DHLIVE_DEFAULT_RESOLUTION: str = "512x512"
-    DHLIVE_STRICT_REPORT: bool = True        # 严格模式：无实际测试报告时不返回 healthy=True
 
     # --------------------------
     # 科大讯飞PPT生成API配置

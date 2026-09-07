@@ -39,28 +39,41 @@ const navItems = computed(() => {
   const base = [
     { key: 'overview', label: '概览', to: `/app/course/${courseId.value}/overview`, enabled: true },
     { key: 'learn', label: '学习', to: `/app/course/${courseId.value}/learn`, enabled: true },
-    { key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: allowed.value['analytics.view_course'] },
-    {
-      key: 'experiments',
-      label: '实验任务',
-      to: `/app/course/${courseId.value}/experiments`,
-      enabled: isCodeSandboxExperimentPlatformEnabled(capabilities.value),
-    },
-    // 「科研」入口暂时隐藏（2026-08-20 按需求下线，非删除）：
-    // 路由、页面与后端全部保留，后续需要时恢复此 nav 项即可重新可见。
-    // {
-    //   key: 'research',
-    //   label: '科研',
-    //   to: `/app/course/${courseId.value}/research`,
-    //   enabled: allowed.value['course.view'],
-    //   reason: '当前课程角色无研究检索权限',
-    // },
   ]
-  if (!allowed.value['course.edit']) {
-    base.splice(3, 0, {
+  // 「学习分析」需要 analytics.view_course（教师/助教/所有者）。学生与观察者
+  // 没有该权限，原来渲染为灰色不可点；现直接在其位置显示「结构视图」
+  // （2026-09-07 需求）——学生自己的认知仪表盘与推荐卡本就在结构视图页内
+  // （KnowledgeGraphPage 按 analytics_eligible 分流），无需再摆一个置灰入口。
+  if (allowed.value['analytics.view_course']) {
+    base.push({ key: 'analytics', label: '学习分析', to: `/app/course/${courseId.value}/analytics`, enabled: true })
+  } else {
+    base.push({
+      key: 'knowledge',
+      label: '结构视图',
+      to: `/app/course/${courseId.value}/build/knowledge/graph`,
+      enabled: true,
+    })
+  }
+  base.push({
+    key: 'experiments',
+    label: '实验任务',
+    to: `/app/course/${courseId.value}/experiments`,
+    enabled: isCodeSandboxExperimentPlatformEnabled(capabilities.value),
+  })
+  // 「科研」入口暂时隐藏（2026-08-20 按需求下线，非删除）：
+  // 路由、页面与后端全部保留，后续需要时恢复此 nav 项即可重新可见。
+  // {
+  //   key: 'research',
+  //   label: '科研',
+  //   to: `/app/course/${courseId.value}/research`,
+  //   enabled: allowed.value['course.view'],
+  //   reason: '当前课程角色无研究检索权限',
+  // },
+  // 助教：有课程分析权限但无建设导航，保留「知识」入口进入结构视图（原行为）
+  if (!allowed.value['course.edit'] && allowed.value['analytics.view_course']) {
+    base.push({
       key: 'knowledge',
       label: '知识',
-      // 知识工作区已并入建设布局；学生入口直达结构视图
       to: `/app/course/${courseId.value}/build/knowledge/graph`,
       enabled: true,
     })

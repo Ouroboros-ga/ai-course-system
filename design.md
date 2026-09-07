@@ -1256,7 +1256,7 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 
 - 课程相关路由前缀：`/app/course/:courseId/`，二级菜单由 [CourseLayout.vue](./frontend/src/app/pages/course/CourseLayout.vue) 承载。
 
-- 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | knowledge/graph | knowledge/evidence | knowledge/reviews | knowledge/candidates | knowledge/snapshots | scripts | mapping | media | validate | releases`。知识工作区已整体并入建设布局（`/build/knowledge/*` 五个子页面，原 `KnowledgeLayout.vue` 已删除）；旧 `/app/course/:courseId/knowledge/*` 地址与 `/build/drafts` 均重定向到 `/build/knowledge/graph`，不再渲染独立知识布局。学生的课程顶部“知识”入口也指向 `/build/knowledge/graph`。
+- 建设子路由前缀：`/app/course/:courseId/build/:step`，step ∈ `materials | structure | knowledge/graph | knowledge/evidence | knowledge/reviews | knowledge/candidates | knowledge/snapshots | scripts | mapping | media | validate | releases`。知识工作区已整体并入建设布局（`/build/knowledge/*` 五个子页面，原 `KnowledgeLayout.vue` 已删除）；旧 `/app/course/:courseId/knowledge/*` 地址与 `/build/drafts` 均重定向到 `/build/knowledge/graph`，不再渲染独立知识布局。学生课程顶部导航的「结构视图」入口也指向 `/build/knowledge/graph`。
 
 - CourseLayout 二级导航返回按钮（`.sfx-l2nav > div > div > button`）的目标必须按当前路由路径判断：
 
@@ -1266,7 +1266,9 @@ border-radius: 0 var(--radius-md) var(--radius-md) 0;
 
   - 不允许硬编码任一固定目标，否则教师在建设页点返回会被错误带去学习列表。
 
-教师不再显示课程顶部独立“知识”入口；学生仍显示（指向 `/build/knowledge/graph`）。旧 `/app/course/:courseId/knowledge/*` 与 `/build/drafts` 仅作为兼容地址重定向到 `/build/knowledge/graph`，不是可见路由。
+教师不再显示课程顶部独立“知识”入口；无 `analytics.view_course` 的角色（学生/观察者）在二级导航原「学习分析」位置显示「结构视图」（指向 `/build/knowledge/graph`，2026-09-07 需求）——课程级学习分析（`CourseAnalyticsPage`）为教师/助教专属（`analytics.view_course`），学生的私有认知仪表盘与推荐卡本就在结构视图页内（按 `analytics_eligible` 分流），因此学生端不再展示置灰的「学习分析」占位；助教（有 `analytics.view_course` 但无 `course.edit`）保留实验任务后的「知识」入口。旧 `/app/course/:courseId/knowledge/*` 与 `/build/drafts` 仅作为兼容地址重定向到 `/build/knowledge/graph`，不是可见路由。
+
+无 `course.edit` 的角色进入 `/build/*` 建设布局时，**整个建设侧栏与收起按钮不再渲染**（2026-09-07 需求：学生仅剩「结构视图」一个页面，单项导航没有存在意义），舞台全屏呈现结构视图；九步建设导航、知识子菜单、建设提示语、助教智能体面板/工具球与 STEP 编号同样不出现，避免学生看到无权限的建设页面。
 
 ***
 

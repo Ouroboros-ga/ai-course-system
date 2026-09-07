@@ -46,7 +46,6 @@ from app.models.conversation_model import (
     DEFAULT_CONVERSATION_RETENTION_DAYS,
 )
 from app.models.platform_media_preset_model import (
-    PlatformAvatarPreset,
     PlatformPresetStatus,
     PlatformVoicePreset,
 )
@@ -98,7 +97,6 @@ __all__ = [
     "ConversationMessage",
     "CONVERSATION_DATA_POLICY_VERSION",
     "DEFAULT_CONVERSATION_RETENTION_DAYS",
-    "PlatformAvatarPreset",
     "PlatformPresetStatus",
     "PlatformVoicePreset",
     "TeachingConstraintEvaluation",

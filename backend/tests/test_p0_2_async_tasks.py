@@ -175,10 +175,8 @@ def test_business_handlers_registered_after_register_all():
         "self_check_fail",
         "document_parse",
         "experiment_run",
-        "media.avatar_preprocess",
         "media.tts",
         "media.subtitle",
-        "media.dh_render",
         "media.video_package",
         "media.timeline_publish",
     ]

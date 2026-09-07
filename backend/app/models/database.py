@@ -205,7 +205,7 @@ from app.models.resource_model import (
     LabEnrollment,
     LabRecord,
 )
-# 阶段8：媒体生成任务、发布版本、播放能力配置与教师数字人资产中心
+# 阶段8：媒体生成任务、发布版本与播放能力配置
 from app.models.media_release_model import (
     MediaGenerationJob,
     MediaGenerationAttempt,
@@ -215,17 +215,7 @@ from app.models.media_release_model import (
     MediaReleaseItem,
     PlaybackCapabilityProfile,
 )
-from app.models.platform_media_preset_model import (
-    PlatformVoicePreset,
-    PlatformAvatarPreset,
-)
-from app.models.avatar_model import (
-    AvatarProfile,
-    AvatarSourceMedia,
-    AvatarPreparationJob,
-    AvatarAssetPackage,
-    CourseAvatarBinding,
-)
+from app.models.platform_media_preset_model import PlatformVoicePreset
 # 阶段9：Agent 工具治理与教师安全阀
 from app.models.agent_governance_model import (
     AgentPolicyVersion,

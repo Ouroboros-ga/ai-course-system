@@ -26,7 +26,6 @@ const workDescription = computed(() => ({
   knowledge: '检查知识点标题、来源和前置关系。',
   mapping: '把脚本块与 PPT 页建立可人工修正的映射。',
   audio: '查看分段音频任务、错误原因并按失败节点重试。',
-  avatar: '数字人任务将在音频确认后开放。',
   preview: '在发布前按学生视角检查完整课程。',
   publish: '逐项解决阻断项后才能发布当前版本。'
 }[props.step.key] || '编辑并检查当前步骤产物。'))

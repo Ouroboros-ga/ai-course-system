@@ -13,7 +13,6 @@ class TaskType(str, Enum):
     PPT_GENERATION = "ppt_generation"
     TTS_NODE = "tts_node"
     TTS_BATCH = "tts_batch"
-    DIGITAL_HUMAN_VIDEO = "digital_human_video"
     VOICE_CLONE = "voice_clone"
     PLATFORM_SYNC = "platform_sync"
     REMOTE_VIDEO = "remote_video"

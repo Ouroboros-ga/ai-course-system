@@ -6,7 +6,7 @@
 - 所有异步任务通过 `task_service` 持久化，不在主 Web 请求里同步执行外部调用
 - `MediaGenerationJobService` 创建/查询生成任务，对接 task_service.TaskRecord
 - `MediaReleaseService` 负责发布版本管理：创建草稿 → 激活 → 回滚 → 撤回
-- `MediaPlaybackService` 为学生端提供统一播放清单（音频+字幕+PPT+数字人 manifest）
+- `MediaPlaybackService` 为学生端提供统一播放清单（音频+字幕+PPT；数字人字段兼容保留为空）
 - 失败时必须保留原始 error_code，禁止把 503/超时伪装成成功
 - 所有读取继续经过 Course Access v1，按 course_id 严格隔离
 """
@@ -632,67 +632,6 @@ class MediaReleaseService:
         session.flush()
         return release
 
-    def freeze_cues_from_timeline(
-        self,
-        session: Session,
-        *,
-        course_id: int,
-        release_id: str,
-        cues: list[MediaTimelineCue],
-    ) -> list[MediaReleaseCue]:
-        """将编辑中的 MediaTimelineCue 冻结为发布版本快照 MediaReleaseCue.
-
-        The legacy editor may still create ``MediaTimelineCue`` rows, but it
-        must not be able to mutate an active learner release.  P2's Provider
-        cue builder uses the same immutable replacement primitive below.
-        """
-        # Legacy editor cues can opt into the modern mapping snapshot through
-        # cue metadata.  Expand all mapped pages (including multiple decks)
-        # before freezing so old callers do not collapse same-numbered pages.
-        enriched_rows = []
-        from app.services.avatar_cue_service import _freeze_ppt_mapping_snapshot, _non_negative_int
-        cues_by_node: dict[int, list[MediaTimelineCue]] = {}
-        for item in cues:
-            cues_by_node.setdefault(item.node_id, []).append(item)
-        for cue in cues:
-            metadata = dict(cue.cue_metadata or {})
-            slides = []
-            outline_node_id = metadata.get("outline_node_id")
-            if outline_node_id:
-                _, slides = _freeze_ppt_mapping_snapshot(
-                    session, course_id=course_id, outline_node_id=str(outline_node_id),
-                )
-            if slides:
-                node_cues = cues_by_node.get(cue.node_id, [cue])
-                position = min(
-                    (int(cue.cue_index) * len(slides)) // max(1, len(node_cues)),
-                    len(slides) - 1,
-                )
-                selected = slides[position]
-                metadata["material_version_id"] = selected.get("material_version_id")
-                ppt_page = _non_negative_int(selected.get("page")) or None
-            else:
-                ppt_page = cue.ppt_page
-            enriched_rows.append({
-                "node_id": cue.node_id,
-                "cue_index": cue.cue_index,
-                "start_time": cue.start_time,
-                "end_time": cue.end_time,
-                "cue_type": cue.cue_type.value if hasattr(cue.cue_type, "value") else str(cue.cue_type),
-                "ppt_page": ppt_page,
-                "subtitle_text": cue.subtitle_text,
-                "script_reference": cue.script_reference,
-                "audio_object_key": cue.audio_object_key,
-                "video_object_key": cue.video_object_key,
-                "cue_metadata": metadata,
-            })
-        return self.freeze_cue_snapshot(
-            session,
-            course_id=course_id,
-            release_id=release_id,
-            cue_rows=enriched_rows,
-        )
-
     def freeze_cue_snapshot(
         self,
         session: Session,
@@ -835,19 +774,19 @@ class MediaReleaseService:
             manifest = load_avatar_cue_manifest(storage, release.avatar_cues_object_key)
         except AvatarCueBuildError as exc:
             reject_state_conflict(
-                "数字人时间轴资产不可用，发布未激活",
+                "字幕时间轴资产不可用，发布未激活",
                 details={"error_code": exc.error_code},
             )
         audio = manifest["audio"]
         expected_sha = str((release.release_metadata or {}).get("audio_sha256") or "")
         if audio.get("object_key") != release.audio_object_key or not expected_sha or audio.get("sha256") != expected_sha:
             reject_state_conflict(
-                "数字人时间轴与发布音频不匹配，发布未激活",
+                "字幕时间轴与发布音频不匹配，发布未激活",
                 details={"error_code": "AVATAR_CUES_AUDIO_MISMATCH"},
             )
         if not self.list_release_cues(session, course_id=course_id, release_id=release.release_id):
             reject_state_conflict(
-                "数字人时间轴缺少冻结字幕 Cue，发布未激活",
+                "字幕时间轴缺少冻结字幕 Cue，发布未激活",
                 details={"error_code": "RELEASE_CUES_REQUIRED"},
             )
 
@@ -877,8 +816,8 @@ class MediaReleaseService:
 class MediaPlaybackService:
     """学生端统一播放清单服务
 
-    返回音频 + 字幕 + PPT 时间轴 + 数字人 manifest + 三档模式配置。
-    数字人 manifest 仅在已绑定且资产包可用时返回；否则走兼容模式。
+    返回音频 + 字幕 + PPT 时间轴 + 三档模式配置；
+    数字人相关字段保留为空（历史兼容），实际按兼容模式播放。
     """
 
     def get_current_playback(

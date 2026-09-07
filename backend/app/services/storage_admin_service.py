@@ -58,8 +58,6 @@ _KNOWN_REFERENCE_SOURCES: tuple[_ReferenceSource, ...] = (
         ),
     ),
     _ReferenceSource("media_release_cues", ("audio_object_key", "video_object_key")),
-    _ReferenceSource("avatar_source_media", ("object_key",)),
-    _ReferenceSource("avatar_asset_packages", ("manifest_object_key",)),
     _ReferenceSource("resource_versions", ("object_key",)),
     _ReferenceSource("question_import_runs", ("source_object_key",)),
     _ReferenceSource("experiment_definitions", ("statement_object_key",)),

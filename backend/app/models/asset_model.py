@@ -32,7 +32,7 @@ class CloneStatus(str, Enum):
 class TeacherAsset(SQLModel, table=True):
     """
     老师素材表
-    存储老师上传的人脸视频、参考音频等，用于数字人视频生成
+    存储老师上传的参考音频、示例素材等
     """
 
     __tablename__ = "teacher_assets"

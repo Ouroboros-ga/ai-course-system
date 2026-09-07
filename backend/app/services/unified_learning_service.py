@@ -246,7 +246,13 @@ def record_event(
         projection.completion_ratio = 1.0
         projection.completion_reason = "explicit" if event_type == LearningEventType.EXPLICIT_COMPLETE else "threshold"
         projection.completed_at = projection.completed_at or now
-    elif projection.first_accessed_at is not None:
+    elif (
+        projection.exposure_status != ExposureStatus.COMPLETED
+        and projection.first_accessed_at is not None
+    ):
+        # Completion is sticky: a later low-ratio event (e.g. a NODE_OPENED or a
+        # heartbeat at position 0 right after a page refresh) must not roll an
+        # already-completed projection back to IN_PROGRESS.
         projection.exposure_status = ExposureStatus.IN_PROGRESS
     projection.last_event_id = event.event_id
     projection.updated_at = utcnow_aware()

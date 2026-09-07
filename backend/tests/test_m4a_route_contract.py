@@ -104,8 +104,9 @@ def test_route_contract_locks_document_router_double_mount(fastapi_app):
     assert "/api/v1/chat/file/course/{course_id}/slides" in paths
 
 
-def test_route_contract_locks_video_gen_and_known_absent_old_routes(fastapi_app):
-    """b433bae3 移除数字人/video-gen 域后，本契约更新为断言该域路由已不存在。"""
+def test_route_contract_video_gen_routes_absent(fastapi_app):
+    # XH-202620: video_generation 模块随数字人整体下线。新(video-gen)与旧
+    # (video-generation)两组前缀均不得再注册,契约测试锁定其缺席。
     rows = _route_rows(fastapi_app)
     paths = {row["path"] for row in rows}
 

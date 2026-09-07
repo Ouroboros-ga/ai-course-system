@@ -5,7 +5,7 @@ import pytest
 from sqlmodel import Session, select
 
 from app.models.user_model import User, UserRole
-from fakes import FakeDigitalHumanClient, FakeLLMClient, FakePPTClient, FakeTTSClient, FakeVoiceCloneClient
+from fakes import FakeLLMClient, FakePPTClient, FakeTTSClient, FakeVoiceCloneClient
 
 
 async def _call_fake(fake, method_name, *args, **kwargs):
@@ -84,15 +84,10 @@ def test_common_fakes_support_success_timeout_unavailable_and_malformed_modes(te
         await ppt.download_ppt("https://fake.invalid/fake.pptx", str(ppt_path))
         assert ppt_path.read_bytes() == b"FAKE_PPTX"
 
-        digital = FakeDigitalHumanClient("success")
-        assert await digital.check_health() is True
-        assert (await digital.generate_video("audio.wav", "face.mp4")).video_path.endswith(".mp4")
-
         for fake, method_name, args in [
             (FakeLLMClient("timeout"), "chat", [[]]),
             (FakeTTSClient("timeout"), "synthesize", ["hello"]),
             (FakePPTClient("timeout"), "get_theme_list", []),
-            (FakeDigitalHumanClient("timeout"), "check_health", []),
         ]:
             with pytest.raises(TimeoutError):
                 await _call_fake(fake, method_name, *args)
@@ -101,7 +96,6 @@ def test_common_fakes_support_success_timeout_unavailable_and_malformed_modes(te
             (FakeLLMClient("service_unavailable"), "chat", [[]]),
             (FakeTTSClient("service_unavailable"), "synthesize", ["hello"]),
             (FakePPTClient("service_unavailable"), "get_theme_list", []),
-            (FakeDigitalHumanClient("service_unavailable"), "check_health", []),
         ]:
             with pytest.raises(RuntimeError):
                 await _call_fake(fake, method_name, *args)
@@ -109,7 +103,6 @@ def test_common_fakes_support_success_timeout_unavailable_and_malformed_modes(te
         assert await FakeLLMClient("malformed").chat([]) == {"malformed": True}
         assert await FakeTTSClient("malformed").synthesize("hello") == {"malformed": True}
         assert await FakePPTClient("malformed").get_theme_list() == {"malformed": True}
-        assert await FakeDigitalHumanClient("malformed").check_health() == {"malformed": True}
 
     asyncio.run(run_checks())
 

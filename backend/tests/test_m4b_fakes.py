@@ -5,7 +5,6 @@ import pytest
 
 from fakes import (
     BUSINESS_FAILURE_MESSAGE,
-    FakeDigitalHumanClient,
     FakeHTTPXClient,
     FakeLLMClient,
     FakePPTClient,
@@ -112,26 +111,6 @@ def test_fake_ppt_modes_are_stable(test_artifact_dir):
         assert progress["code"] == 0
         assert progress["data"]["pptStatus"] == "failed"
         assert progress["data"]["error"] == BUSINESS_FAILURE_MESSAGE
-
-    asyncio.run(run_checks())
-
-
-def test_fake_digital_human_modes_are_stable():
-    async def run_checks():
-        assert await FakeDigitalHumanClient("success").check_health() is True
-        success = await FakeDigitalHumanClient("success").generate_video("audio.wav", "face.mp4")
-        assert success.video_path.endswith(".mp4")
-
-        await _expect_timeout(lambda: FakeDigitalHumanClient("timeout").check_health())
-        await _expect_service_unavailable(lambda: FakeDigitalHumanClient("service_unavailable").check_health())
-        assert await FakeDigitalHumanClient("malformed_response").check_health() == {"malformed": True}
-
-        assert await FakeDigitalHumanClient("business_failure").check_health() is True
-        failure = await FakeDigitalHumanClient("business_failure").generate_video("audio.wav", "face.mp4")
-        assert failure.video_path == ""
-        assert failure.download_path == ""
-        assert failure.status == "failed"
-        assert failure.error == BUSINESS_FAILURE_MESSAGE
 
     asyncio.run(run_checks())
 

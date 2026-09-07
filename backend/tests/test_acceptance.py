@@ -891,10 +891,10 @@ class TestAcceptanceApiContractsE2E:
         r = client.get("/api/v1/lab/catalog")
         assert r.status_code in (200, 401, 403)  # 路由存在（catalog 无认证守卫则 200）
 
-    def test_avatar_routes_deregistered(self, client):
-        """b433bae3 移除数字人域后，avatar 路由已不存在（404 而非 401）。"""
+    def test_avatar_routes_removed(self, client):
+        """数字人下线(XH-202620)后 /api/v1/avatar-profiles/* 不再注册。"""
         r = client.get("/api/v1/avatar-profiles/me")
-        assert r.status_code == 404
+        assert r.status_code == 404  # 路由已移除
 
     def test_health_error_monitor_route_registered(self, client):
         """/api/v1/health/error-monitor 路由已注册。"""

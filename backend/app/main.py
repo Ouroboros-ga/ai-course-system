@@ -377,7 +377,7 @@ app.include_router(nexus_internal.router, prefix="/api/v1/nexus-internal", tags=
 # XH-202620: CS 学科垂类知识库（只读检索，数据来自 knowledge_data/）
 app.include_router(discipline_knowledge.router, prefix="/api/v1/discipline-knowledge", tags=["Discipline Knowledge"])
 
-# G8: 媒体时间轴与数字人
+# G8: 媒体时间轴（字幕/PPT 逐页播放数据）
 app.include_router(media_timeline.router, prefix="/api/v1/media", tags=["G8 媒体时间轴"])
 
 # G9: Evidence与课程知识图谱生产化

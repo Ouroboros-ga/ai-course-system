@@ -107,11 +107,3 @@ class MediaTimelineCue(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow_aware)
     updated_at: datetime = Field(default_factory=utcnow_aware)
-
-
-class DigitalHumanPreset(str, Enum):
-    """数字人预设（CPU 路线）"""
-    DH_LIVE_MINI = "dh_live_mini"      # 首选：DH_live_mini / MiniMates
-    LITE_AVATAR = "lite_avatar"        # 对照：LiteAvatar
-    DUIL_AVATAR = "duix_avatar"        # 现有：Duix.Avatar (GPU)
-    NONE = "none"                      # 不使用数字人

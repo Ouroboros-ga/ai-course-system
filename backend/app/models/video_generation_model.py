@@ -18,7 +18,7 @@ class GenerationStatus(str, Enum):
     PENDING = "pending"        # 等待生成
     TTS_SYNTHESIZING = "tts_synthesizing"  # TTS合成中
     TTS_COMPLETED = "tts_completed"        # TTS合成完成
-    DH_GENERATING = "dh_generating"        # 数字人生成中
+    DH_GENERATING = "dh_generating"        # 历史枚举：旧版数字人渲染（已下线，保留兼容旧记录）
     COMPLETED = "completed"                # 全部完成
     FAILED = "failed"                      # 生成失败
 
@@ -59,15 +59,15 @@ class VideoGenerationTask(SQLModel, table=True):
         default=None, description="使用的音色"
     )
 
-    # 数字人视频相关
+    # 旧版数字人视频字段（已下线；新课程不再写入，仅旧课程回放兼容读取）
     face_video_asset_id: Optional[int] = Field(
-        default=None, description="使用的人脸视频素材ID"
+        default=None, description="历史字段：旧版人脸视频素材ID（已下线）"
     )
     dh_video_path: Optional[str] = Field(
-        default=None, description="数字人生成的视频文件路径"
+        default=None, description="历史字段：旧版数字人视频文件路径（已下线）"
     )
     dh_generation_time: Optional[str] = Field(
-        default=None, description="数字人生成耗时"
+        default=None, description="历史字段：旧版数字人生成耗时（已下线）"
     )
 
     # 最终视频（分屏合成后的路径，暂不实现）

@@ -1295,7 +1295,7 @@ async def coding_challenge_prepare_handler(ctx: TaskHandlerContext) -> None:
 
 
 async def media_generic_handler(ctx: TaskHandlerContext) -> None:
-    """媒体生成通用 handler（tts/subtitle/dh_render/video_package/timeline_publish）。
+    """媒体生成通用 handler（subtitle/video_package 等兼容路径）。
 
     当前阶段：媒体生成由各业务端点同步执行（document.py / video_generation.py），
     本 handler 仅用于"已创建 TaskRecord 但通过 worker 触发"的场景。
@@ -1418,7 +1418,7 @@ async def media_tts_handler(ctx: TaskHandlerContext) -> None:
                 project_cue_result_to_batch_item(
                     session, course_id=course_id, release_id=release_id,
                     source_tts_job=source, error_code="DEPENDENCY_UNAVAILABLE",
-                    error_message_safe="Cue Worker 未注册，未冻结字幕与数字人时间轴",
+                    error_message_safe="Cue Worker 未注册，未冻结字幕与时间轴",
                 )
                 session.commit()
             return

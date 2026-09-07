@@ -342,7 +342,6 @@ cp .env.example .env     # 若有模板；否则按 config.py 默认值 + 生产
 | `STAGE8_TTS_PROVIDER`         | —          | 正式 TTS 需 `MEDIA_DEMO_MODE=false` + `doubao`                          |
 | `JUDGE0_ENABLED`              | `false`    | Judge0 沙箱默认关闭                                                        |
 | `GRAPHRAG_ENABLED`            | `false`    | GraphRAG 构图默认关闭（等待数据外发授权/消费确认）                                       |
-| `MEDIA_AVATAR_ENABLED`        | `false`    | 数字人默认关闭（只保留 TTS + PPT）；开启才签发 avatar manifest/cue                     |
 | `VITE_ENABLE_SHADOW_FRONTEND` | `true`     | 前端 shadow 入口                                                         |
 
 ### 7.4 运行测试

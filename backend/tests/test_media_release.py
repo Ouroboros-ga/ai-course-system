@@ -278,6 +278,35 @@ def _seed_timeline_cues(session, course_id: int, node_id: int = 1) -> list[Media
     return cues
 
 
+def _freeze_release_cues_via_service(
+    session, course_id: int, release_id: str, cues: list[MediaTimelineCue],
+) -> None:
+    """通过 freeze_cue_snapshot（avatar-cues worker 同一条不可变落库路径）冻结 Cue。
+
+    freeze-cues 端点已随数字人残余清理下线；测试夹具改为直接调用保留的
+    service 落库原语，与 P2 avatar-cues/timeline_publish 链路语义一致。
+    """
+    from app.services.media_release_service import media_release_service
+
+    rows = [{
+        "node_id": c.node_id,
+        "cue_index": c.cue_index,
+        "start_time": c.start_time,
+        "end_time": c.end_time,
+        "cue_type": c.cue_type.value if hasattr(c.cue_type, "value") else str(c.cue_type),
+        "ppt_page": c.ppt_page,
+        "subtitle_text": c.subtitle_text,
+        "script_reference": c.script_reference,
+        "audio_object_key": c.audio_object_key,
+        "video_object_key": c.video_object_key,
+        "cue_metadata": dict(c.cue_metadata or {}),
+    } for c in cues]
+    media_release_service.freeze_cue_snapshot(
+        session, course_id=course_id, release_id=release_id, cue_rows=rows,
+    )
+    session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
@@ -608,27 +637,22 @@ class TestMediaReleaseLifecycle:
         token = _token(teacher_user)
 
         # 落库 MediaTimelineCue
-        _seed_timeline_cues(session, course.id)
+        cues = _seed_timeline_cues(session, course.id)
 
         r1 = _create_release_via_api(client, token, course.id, label="v1")
-        resp = client.post(
-            f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}/freeze-cues",
-            json={"cue_ids": []},
-            headers=_auth(token),
-        )
-        body = resp.json()
-        assert body["data"]["frozen_count"] == 2
-        assert body["data"]["timeline_content_hash"]
+        _freeze_release_cues_via_service(session, course.id, r1["release_id"], cues)
 
         # 详情应包含 cue 快照
         resp = client.get(
             f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}",
             headers=_auth(token),
         )
-        cues = resp.json()["data"]["cues"]
-        assert len(cues) == 2
-        assert cues[0]["ppt_page"] == 1
-        assert "二分查找" in cues[0]["subtitle_text"]
+        body = resp.json()["data"]
+        assert body["timeline_content_hash"]
+        cues_snapshot = body["cues"]
+        assert len(cues_snapshot) == 2
+        assert cues_snapshot[0]["ppt_page"] == 1
+        assert "二分查找" in cues_snapshot[0]["subtitle_text"]
 
     def test_avatar_cues_endpoint_submits_one_non_billable_worker(
         self, client, session, teacher_user, monkeypatch,
@@ -790,15 +814,12 @@ class TestPlaybackManifest:
         token = _token(teacher_user)
         stu_token = _token(student_user)
 
-        _seed_timeline_cues(session, course.id)
+        cues = _seed_timeline_cues(session, course.id)
         r1 = _create_release_via_api(
             client, token, course.id,
             label="v1", audio_object_key="tts/course_1/full.mp3",
         )
-        client.post(
-            f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}/freeze-cues",
-            json={"cue_ids": []}, headers=_auth(token),
-        )
+        _freeze_release_cues_via_service(session, course.id, r1["release_id"], cues)
         client.post(f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}/activate", headers=_auth(token))
 
         resp = client.get(f"{MEDIA}/course/{course.id}/playback", headers=_auth(stu_token))
@@ -820,12 +841,9 @@ class TestPlaybackManifest:
         token = _token(teacher_user)
         stu_token = _token(student_user)
 
-        _seed_timeline_cues(session, course.id)
+        cues = _seed_timeline_cues(session, course.id)
         r1 = _create_release_via_api(client, token, course.id, label="v1")
-        client.post(
-            f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}/freeze-cues",
-            json={"cue_ids": []}, headers=_auth(token),
-        )
+        _freeze_release_cues_via_service(session, course.id, r1["release_id"], cues)
         client.post(f"{MEDIA}/course/{course.id}/releases/{r1['release_id']}/activate", headers=_auth(token))
 
         resp = client.get(f"{MEDIA}/course/{course.id}/playback", headers=_auth(stu_token))
