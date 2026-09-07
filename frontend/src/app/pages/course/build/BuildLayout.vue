@@ -259,7 +259,11 @@ function onStepClick(step) {
         <div class="stage-body">
           <router-view v-slot="{ Component, route }">
             <Transition name="sfx-page" mode="out-in">
-              <component :is="Component" :key="route.path" />
+              <!-- key 用 route.name 而非 route.path：知识结构视图路由
+                   graph/:nodeId? 共用同一 name，nodeId 变化时不应重挂载整页
+                   （否则每次点击节点都整页重建、重拉图谱/仪表盘）。跨步骤
+                   子页面 name 不同，仍正常重挂载并播放页面过渡。 -->
+              <component :is="Component" :key="route.name || route.path" />
             </Transition>
           </router-view>
         </div>
